@@ -98,6 +98,18 @@ const getNetwork = () => {
   return Network.ETH_MAINNET;
 };
 
+// Used to rewind consolidation rows before replaying from a reset block.
+export async function fetchBlockTimestamp(
+  blockNumber: number
+): Promise<number> {
+  const block =
+    await getAlchemyInstance(getNetwork()).core.getBlock(blockNumber);
+  if (typeof block?.timestamp !== 'number') {
+    throw new Error(`Missing timestamp for block ${blockNumber}`);
+  }
+  return block.timestamp;
+}
+
 export const findDelegationTransactions = async (
   startingBlock: number,
   latestBlock?: number

@@ -1,5 +1,8 @@
 import * as fc from 'fast-check';
-import { planConsolidationEvent } from './consolidation-row-plan';
+import {
+  planConsolidationEvent,
+  planConsolidationRewind
+} from './consolidation-row-plan';
 import {
   Consolidation,
   ConsolidationEvent,
@@ -44,11 +47,14 @@ function event(
   return { type, wallet1, wallet2, block, timestamp };
 }
 
+const key = (w1: string, w2: string) => `${w1}|${w2}`;
+
 // Applies events the way persistConsolidations does, against an in-memory
 // table keyed by the (wallet1, wallet2) primary key.
-function applyEvents(events: ConsolidationEvent[]): Consolidation[] {
-  const table = new Map<string, Consolidation>();
-  const key = (w1: string, w2: string) => `${w1}|${w2}`;
+function applyEvents(
+  events: ConsolidationEvent[],
+  table = new Map<string, Consolidation>()
+): Consolidation[] {
   for (const e of events) {
     const sameDirection = table.get(key(e.wallet1, e.wallet2)) ?? null;
     const reverseDirection = sameDirection
@@ -214,6 +220,118 @@ describe('planConsolidationEvent', () => {
         }
       }),
       { numRuns: 1000 }
+    );
+  });
+});
+
+describe('planConsolidationRewind', () => {
+  const confirmed = (block: number, at1: number | null, at2: number | null) =>
+    row(A, B, {
+      block,
+      confirmed: true,
+      wallet1RegisteredAt: at1,
+      wallet2RegisteredAt: at2
+    });
+
+  it('keeps a row whose directions were registered before the reset time', () => {
+    expect(planConsolidationRewind(confirmed(50, 1000, 1100), 1200)).toEqual({
+      remove: [],
+      save: []
+    });
+  });
+
+  it('drops a direction registered at or after the reset time', () => {
+    const stored = confirmed(50, 1000, 1200);
+    expect(planConsolidationRewind(stored, 1200)).toEqual({
+      remove: [stored],
+      save: [
+        row(A, B, { block: 50, confirmed: false, wallet1RegisteredAt: 1000 })
+      ]
+    });
+  });
+
+  it('keeps the second direction as a one-way row when only the first is dropped', () => {
+    const stored = confirmed(50, 1300, 1100);
+    expect(planConsolidationRewind(stored, 1200)).toEqual({
+      remove: [stored],
+      save: [
+        row(B, A, { block: 50, confirmed: false, wallet1RegisteredAt: 1100 })
+      ]
+    });
+  });
+
+  it('removes a row whose directions were all registered after the reset time', () => {
+    const stored = confirmed(50, 1300, 1400);
+    expect(planConsolidationRewind(stored, 1200)).toEqual({
+      remove: [stored],
+      save: []
+    });
+  });
+
+  it('keeps directions registered before times were tracked', () => {
+    expect(planConsolidationRewind(confirmed(50, null, null), 1200)).toEqual({
+      remove: [],
+      save: []
+    });
+  });
+
+  it('gives the full-history links and times when the events from any reset block are replayed', () => {
+    const wallets = [A, B, '0xCccc000000000000000000000000000000000003'];
+    const anEvent = fc.record({
+      type: fc.constantFrom(EventType.REGISTER, EventType.REVOKE),
+      from: fc.constantFrom(0, 1, 2),
+      to: fc.constantFrom(0, 1, 2)
+    });
+    // Live directions and each wallet's latest registration time. A pair's
+    // block can move later than in a full replay when a direction that
+    // predates the reset block was registered again after it, because the
+    // replay orders that pair by the later registration.
+    const snapshot = (rows: Consolidation[]) =>
+      rows
+        .flatMap((it) => [
+          `${it.wallet1}>${it.wallet2}@${it.wallet1_registered_at}`,
+          ...(it.confirmed
+            ? [`${it.wallet2}>${it.wallet1}@${it.wallet2_registered_at}`]
+            : [])
+        ])
+        .sort((x, y) => x.localeCompare(y));
+    fc.assert(
+      fc.property(
+        fc.array(anEvent, { maxLength: 40 }),
+        fc.nat(),
+        (steps, resetSeed) => {
+          const events = steps
+            .filter(({ from, to }) => from !== to)
+            .map(({ type, from, to }, index) =>
+              event(
+                type,
+                wallets[from],
+                wallets[to],
+                index + 1,
+                (index + 1) * 12
+              )
+            );
+          const resetBlock = (resetSeed % (events.length + 1)) + 1;
+          const full = applyEvents(events);
+
+          const table = new Map<string, Consolidation>();
+          for (const stored of full) {
+            table.set(key(stored.wallet1, stored.wallet2), stored);
+          }
+          for (const stored of full.filter((it) => it.block >= resetBlock)) {
+            const plan = planConsolidationRewind(stored, resetBlock * 12);
+            plan.remove.forEach((r) => table.delete(key(r.wallet1, r.wallet2)));
+            plan.save.forEach((r) => table.set(key(r.wallet1, r.wallet2), r));
+          }
+          const replayed = applyEvents(
+            events.filter((it) => it.block >= resetBlock),
+            table
+          );
+
+          expect(snapshot(replayed)).toEqual(snapshot(full));
+        }
+      ),
+      { numRuns: 2000 }
     );
   });
 });

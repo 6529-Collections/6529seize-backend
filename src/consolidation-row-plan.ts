@@ -33,6 +33,52 @@ export function planConsolidationEvent(
   return planRevocation(event, sameDirection, reverseDirection);
 }
 
+/**
+ * Prepares a row for replaying events from a reset block (the
+ * DELEGATIONS_RESET_BLOCK path). Only rows last changed at or after the reset
+ * block are passed in. Each live direction's state comes from its latest
+ * registration, so directions registered at or after the reset block's time
+ * are dropped (the replay adds them back) and older ones are kept. Replaying
+ * the events from the reset block onto the result gives the same live links,
+ * with the same registration times, as a full replay. (A pair whose direction
+ * was registered again after the reset block is ordered by that later
+ * registration.) A direction with no recorded time was registered before times
+ * were tracked, so it is kept.
+ */
+export function planConsolidationRewind(
+  row: Consolidation,
+  resetBlockTimestamp: number
+): ConsolidationRowPlan {
+  const isKept = (registeredAt: number | null) =>
+    registeredAt === null || Number(registeredAt) < resetBlockTimestamp;
+  const keepFirst = isKept(row.wallet1_registered_at);
+  const keepSecond = row.confirmed && isKept(row.wallet2_registered_at);
+  if (keepFirst && (keepSecond || !row.confirmed)) {
+    return { remove: [], save: [] };
+  }
+  if (!keepFirst && !keepSecond) {
+    return { remove: [row], save: [] };
+  }
+  // Exactly one direction of a confirmed row is kept: it stays as a one-way
+  // row registered by that wallet.
+  const [wallet1, wallet2, registeredAt] = keepFirst
+    ? [row.wallet1, row.wallet2, row.wallet1_registered_at]
+    : [row.wallet2, row.wallet1, row.wallet2_registered_at];
+  return {
+    remove: [row],
+    save: [
+      newRow({
+        block: row.block,
+        wallet1,
+        wallet2,
+        confirmed: false,
+        wallet1RegisteredAt: registeredAt,
+        wallet2RegisteredAt: null
+      })
+    ]
+  };
+}
+
 function planRegistration(
   event: ConsolidationEvent,
   sameDirection: Consolidation | null,

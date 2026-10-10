@@ -13,7 +13,11 @@ import {
 } from 'typeorm';
 import { consolidationTools } from './consolidation-tools';
 import { formatConsolidationDisplay } from './consolidation-display';
-import { planConsolidationEvent } from './consolidation-row-plan';
+import {
+  ConsolidationRowPlan,
+  planConsolidationEvent,
+  planConsolidationRewind
+} from './consolidation-row-plan';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   ARTISTS_TABLE,
@@ -1509,52 +1513,87 @@ export async function fetchRoyalties(startDate: Date, endDate: Date) {
 
 export async function persistConsolidations(
   startBlock: number | undefined,
-  consolidations: ConsolidationEvent[]
+  consolidations: ConsolidationEvent[],
+  resetBlockTimestamp?: number
 ) {
   logger.info(
     `[CONSOLIDATIONS] [START_BLOCK ${startBlock}] [PERSISTING ${consolidations.length} RESULTS]`
   );
 
-  const repo = AppDataSource.getRepository(Consolidation);
+  // One transaction, so a failure part-way through a batch cannot leave a
+  // pair with its old row removed and its new row unsaved.
+  await AppDataSource.transaction(async (manager) => {
+    const repo = manager.getRepository(Consolidation);
 
-  if (startBlock) {
-    //delete all with block >= startBlock
-    await repo.delete({
-      block: MoreThanOrEqual(startBlock)
-    });
-  }
+    if (startBlock) {
+      await rewindConsolidationsForReplay(
+        repo,
+        startBlock,
+        resetBlockTimestamp
+      );
+    }
 
-  for (const consolidation of consolidations) {
-    const sameDirection = await repo.findOne({
-      where: {
-        wallet1: consolidation.wallet1,
-        wallet2: consolidation.wallet2
-      }
-    });
-    const reverseDirection = sameDirection
-      ? null
-      : await repo.findOne({
-          where: {
-            wallet1: consolidation.wallet2,
-            wallet2: consolidation.wallet1
-          }
-        });
-    const plan = planConsolidationEvent(
-      consolidation,
-      sameDirection,
-      reverseDirection
-    );
-    if (plan.remove.length) {
-      await repo.remove(plan.remove);
+    for (const consolidation of consolidations) {
+      const sameDirection = await repo.findOne({
+        where: {
+          wallet1: consolidation.wallet1,
+          wallet2: consolidation.wallet2
+        }
+      });
+      const reverseDirection = sameDirection
+        ? null
+        : await repo.findOne({
+            where: {
+              wallet1: consolidation.wallet2,
+              wallet2: consolidation.wallet1
+            }
+          });
+      await applyConsolidationRowPlan(
+        repo,
+        planConsolidationEvent(consolidation, sameDirection, reverseDirection)
+      );
     }
-    if (plan.save.length) {
-      await repo.save(plan.save);
-    }
-  }
+  });
 
   logger.info(
     `[CONSOLIDATIONS] [ALL ${consolidations.length} RESULTS PERSISTED]`
   );
+}
+
+async function applyConsolidationRowPlan(
+  repo: Repository<Consolidation>,
+  plan: ConsolidationRowPlan
+) {
+  if (plan.remove.length) {
+    await repo.remove(plan.remove);
+  }
+  if (plan.save.length) {
+    await repo.save(plan.save);
+  }
+}
+
+// Before replaying from a reset block, drop only the directions registered at
+// or after that block's time instead of whole rows, so directions registered
+// earlier (and their times) survive the replay. Without the block's time, rows
+// changed at or after the reset block are deleted as before.
+async function rewindConsolidationsForReplay(
+  repo: Repository<Consolidation>,
+  startBlock: number,
+  resetBlockTimestamp: number | undefined
+) {
+  if (resetBlockTimestamp === undefined) {
+    await repo.delete({ block: MoreThanOrEqual(startBlock) });
+    return;
+  }
+  const rows = await repo.find({
+    where: { block: MoreThanOrEqual(startBlock) }
+  });
+  for (const row of rows) {
+    await applyConsolidationRowPlan(
+      repo,
+      planConsolidationRewind(row, resetBlockTimestamp)
+    );
+  }
 }
 
 export async function persistDelegations(
