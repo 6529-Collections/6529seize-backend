@@ -3376,6 +3376,115 @@ paths:
                 $ref: "#/components/schemas/ApiRedeemConnectionShareResponse"
         "400":
           description: Invalid request
+  /auth/authorize/app-info:
+    get:
+      tags:
+        - Authentication
+      summary: Get community app metadata for the authorization page
+      description: >-
+        Validates the community app ID and redirect URI, and returns the app
+        name and description to display on the 6529.io authorization page.
+        The community app must also send a PKCE code_challenge so that the
+        flow is bound to the app instance that initiated the login.
+      operationId: getCommunityAppInfo
+      security: []
+      parameters:
+        - name: app
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 64
+          description: Community app identifier
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+          description: The callback URI the community app expects to receive
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 256
+          description: Opaque state value for CSRF protection
+        - name: code_challenge
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 43
+            maxLength: 43
+          description: >-
+            PKCE code challenge - base64url(sha256(code_verifier)). See RFC 7636.
+      responses:
+        "200":
+          description: App metadata for the authorization page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCommunityAppInfo"
+        "400":
+          description: Invalid request or unknown app
+  /auth/authorize/approve:
+    post:
+      tags:
+        - Authentication
+      summary: Approve community app identity assertion
+      description: >-
+        The authenticated 6529.io user approves the community app's request
+        to verify their identity. Requires an active auth-v2 web session.
+        Returns a redirect URL containing a one-time, PKCE-protected
+        authorization code.
+      operationId: approveCommunityAppAuth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiCommunityAppApproveRequest"
+      responses:
+        "200":
+          description: Redirect URL with authorization code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCommunityAppApproveResponse"
+        "400":
+          description: Invalid request or unknown app
+        "401":
+          description: Authentication required or no active session
+        "503":
+          description: Identity assertion service temporarily unavailable
+  /auth/authorize/exchange:
+    post:
+      tags:
+        - Authentication
+      summary: Exchange a one-time authorization code for a wallet address
+      description: >-
+        The community app exchanges the one-time code (plus PKCE code_verifier
+        and state) for the verified wallet address. The code is consumed
+        atomically and can only be exchanged once. No authentication required -
+        the PKCE verifier and state serve as proof of legitimacy.
+      operationId: exchangeCommunityAppAuthCode
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiCommunityAppExchangeRequest"
+      responses:
+        "200":
+          description: Verified wallet address
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiCommunityAppExchangeResponse"
+        "401":
+          description: Invalid or expired authorization code
   /cms/profile/{identity}/primary:
     get:
       tags:
@@ -35777,6 +35886,91 @@ components:
         refresh_token_expires_at:
           type: string
           format: date-time
+    ApiCommunityAppInfo:
+      type: object
+      required:
+        - app_id
+        - name
+        - description
+        - is_dev
+      properties:
+        app_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        is_dev:
+          type: boolean
+          description: >-
+            True if this app entry is for local development only (localhost
+            redirect URIs).
+    ApiCommunityAppApproveRequest:
+      type: object
+      required:
+        - app
+        - redirect_uri
+        - code_challenge
+      properties:
+        app:
+          type: string
+          maxLength: 64
+        redirect_uri:
+          type: string
+          format: uri
+        state:
+          type: string
+          maxLength: 256
+        code_challenge:
+          type: string
+          minLength: 43
+          maxLength: 43
+          description: PKCE code challenge - base64url(sha256(code_verifier))
+    ApiCommunityAppApproveResponse:
+      type: object
+      required:
+        - redirect_url
+      properties:
+        redirect_url:
+          type: string
+          format: uri
+          description: >-
+            The community app callback URL with code and state appended as
+            query parameters.
+    ApiCommunityAppExchangeRequest:
+      type: object
+      required:
+        - code
+        - code_verifier
+        - state
+        - app
+      properties:
+        code:
+          type: string
+          description: The one-time authorization code (64-char hex)
+        code_verifier:
+          type: string
+          minLength: 43
+          maxLength: 128
+          description: PKCE code verifier (RFC 7636 section 4.1)
+        state:
+          type: string
+          maxLength: 256
+        app:
+          type: string
+          maxLength: 64
+    ApiCommunityAppExchangeResponse:
+      type: object
+      required:
+        - address
+        - app
+      properties:
+        address:
+          type: string
+          description: The verified 6529.io wallet address
+        app:
+          type: string
+          description: The community app that received this assertion
     ApiRedeemRefreshTokenRequest:
       type: object
       required:
