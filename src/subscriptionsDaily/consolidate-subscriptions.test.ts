@@ -96,7 +96,7 @@ describe('consolidateSubscriptions', () => {
   };
 
   const fakeManager = {
-    query: jest.fn(async (sql: string, params?: any[]) => {
+    query: jest.fn(async (sql: string, params?: any[]): Promise<any[]> => {
       managerQueries.push({ sql, params });
       if (sql.includes('SUM(balance)')) {
         const total = (params ?? []).reduce(
@@ -170,12 +170,19 @@ describe('consolidateSubscriptions', () => {
       )
     ).toEqual(['0xa-0xd', '0xb', '0xc']);
 
-    // 0xa-0xb migrates to 0xa-0xd (TDH 100 beats 0xb's 50); 0xc stays
+    // 0xa-0xb migrates to 0xa-0xd (TDH 100 beats 0xb's 50); 0xc keeps its
+    // key, so its rows need no update
     const updates = managerQueries.filter((q) => q.sql.includes('UPDATE'));
     const migrationPairs = new Set(updates.map((u) => u.params?.join('<-')));
-    expect(migrationPairs).toEqual(new Set(['0xa-0xd<-0xa-0xb', '0xc<-0xc']));
-    // 4 tables per old key
-    expect(updates).toHaveLength(8);
+    expect(migrationPairs).toEqual(new Set(['0xa-0xd<-0xa-0xb']));
+    // 4 tables for the one moved key
+    expect(updates).toHaveLength(4);
+    // re-keying keeps the subscription priority timestamps
+    expect(
+      updates
+        .filter((u) => u.sql.includes('subscriptions_nfts'))
+        .every((u) => u.sql.includes('updated_at = updated_at'))
+    ).toBe(true);
 
     // balances re-inserted under the new keys with summed balances
     const balanceInserts = managerQueries.filter(
@@ -187,5 +194,67 @@ describe('consolidateSubscriptions', () => {
     );
     expect(inserted.get('0xa-0xd')).toBe(3);
     expect(inserted.get('0xc')).toBe(7);
+  });
+
+  it('combines rows for the same card instead of orphaning the old key', async () => {
+    const executor = new MockSqlExecutor(
+      [{ consolidation_key: '0xa-0xb', balance: 3 }],
+      { '0xa-0xd': 100, '0xb': 50 }
+    );
+    setSqlExecutor(executor);
+    fakeManager.query.mockImplementation(
+      async (sql: string, params?: any[]) => {
+        managerQueries.push({ sql, params });
+        if (sql.includes('surviving_subscribed')) {
+          return [
+            {
+              surviving_id: 11,
+              surviving_subscribed: 1,
+              surviving_automatic_subscription: 1,
+              surviving_subscribed_count: 2,
+              surviving_updated_at: '2026-10-05T00:00:00.000Z',
+              merged_id: 22,
+              merged_subscribed: 1,
+              merged_automatic_subscription: 0,
+              merged_subscribed_count: 3,
+              merged_updated_at: '2026-10-02T00:00:00.000Z'
+            }
+          ];
+        }
+        if (sql.includes('merged.id AS id')) {
+          return [{ id: 77, contract: '0xmemes', token_id: 400 }];
+        }
+        if (sql.includes('SUM(balance)')) {
+          return [{ total_balance: 3 }];
+        }
+        if (sql.includes('automatic_count')) {
+          return [{ automatic_count: 0 }];
+        }
+        return [];
+      }
+    );
+
+    await consolidateSubscriptions(new Set(['0xd']));
+
+    const combined = managerQueries.find((q) => q.sql.includes('WHERE id = ?'));
+    expect(combined?.params).toEqual([
+      true,
+      false,
+      3,
+      new Date('2026-10-02T00:00:00.000Z'),
+      11
+    ]);
+    const deleted = managerQueries.find((q) =>
+      q.sql.includes('DELETE FROM subscriptions_nfts WHERE id')
+    );
+    expect(deleted?.params).toEqual([22]);
+
+    // the conflicting final allocation stays under the old key
+    const finalUpdate = managerQueries.find(
+      (q) =>
+        q.sql.includes('UPDATE subscriptions_nfts_final') &&
+        q.sql.includes('NOT IN')
+    );
+    expect(finalUpdate?.params).toEqual(['0xa-0xd', '0xa-0xb', 77]);
   });
 });
