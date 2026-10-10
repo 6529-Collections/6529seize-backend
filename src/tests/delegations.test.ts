@@ -78,10 +78,43 @@ describe('findDelegationTransactions', () => {
     mockEqual.mockReturnValue(false);
     const result = await findDelegationTransactions(1, 2);
     expect(result.consolidations).toEqual([
-      { block: 1, type: 0, wallet1: '0xA', wallet2: '0xB' }
+      { block: 1, type: 0, wallet1: '0xA', wallet2: '0xB', timestamp: 123 }
     ]);
     expect(result.registrations).toEqual([]);
     expect(result.revocation).toEqual([]);
+  });
+
+  const consolidationLog = (blockNumber: number) => {
+    alchemyMock.core.getLogs.mockResolvedValue([
+      { blockNumber, transactionHash: '0x1' }
+    ]);
+    mockParseLog.mockReturnValueOnce({
+      name: 'RegisterDelegation',
+      args: {
+        collectionAddress: MEMES_CONTRACT,
+        delegator: '0xA',
+        delegationAddress: '0xB',
+        useCase: BigInt(USE_CASE_CONSOLIDATION)
+      }
+    });
+  };
+
+  it('reuses the latest block timestamp for consolidations in that block', async () => {
+    consolidationLog(2);
+    alchemyMock.core.getBlock.mockResolvedValue({ timestamp: 456 });
+    const result = await findDelegationTransactions(1, 2);
+    expect(result.consolidations[0].timestamp).toBe(456);
+    expect(alchemyMock.core.getBlock).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws instead of returning a consolidation without a timestamp', async () => {
+    consolidationLog(1);
+    alchemyMock.core.getBlock.mockImplementation(async (blockNumber: number) =>
+      blockNumber === 2 ? { timestamp: 456 } : null
+    );
+    await expect(findDelegationTransactions(1, 2)).rejects.toThrow(
+      'Missing timestamp for block 1'
+    );
   });
 
   it('registers sub delegation', async () => {
