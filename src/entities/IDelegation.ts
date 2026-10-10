@@ -35,6 +35,7 @@ export class Consolidation {
   // Unix seconds of the block in which wallet1 last registered its link to
   // wallet2 (and wallet2 to wallet1). NULL for links indexed before these
   // columns existed, which the fourth-wallet gate treats as pre-activation.
+  // Raw SQL reads may return these bigints as strings; compare via Number().
   @Column({ type: 'bigint', nullable: true, default: null })
   wallet1_registered_at!: number | null;
 
