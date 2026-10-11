@@ -15,6 +15,7 @@ describe('mapWaveToApiWaveMin', () => {
       submission_type: null,
       chat_enabled: true,
       chat_group_id: null,
+      chat_replies_open: false,
       voting_group_id: null,
       participation_group_id: null,
       admin_group_id: null,
@@ -43,6 +44,32 @@ describe('mapWaveToApiWaveMin', () => {
     });
 
     expect(mapped.authenticated_user_admin).toBe(true);
+  });
+
+  it('lets outsiders reply only when the wave opens replies', () => {
+    const map = (chatRepliesOpen: boolean) =>
+      mapWaveToApiWaveMin({
+        wave: wave({
+          chat_group_id: 'dev-team',
+          chat_replies_open: chatRepliesOpen
+        }),
+        displayByWaveId: {},
+        groupIdsUserIsEligibleFor: [],
+        noRightToVote: false,
+        noRightToParticipate: false,
+        pinned: false,
+        identityWave: false,
+        authenticatedProfileId: 'viewer'
+      });
+
+    expect(map(true)).toMatchObject({
+      authenticated_user_eligible_to_chat: false,
+      authenticated_user_eligible_to_reply: true
+    });
+    expect(map(false)).toMatchObject({
+      authenticated_user_eligible_to_chat: false,
+      authenticated_user_eligible_to_reply: false
+    });
   });
 
   it('maps card-set TDH config into ApiWaveMin', () => {

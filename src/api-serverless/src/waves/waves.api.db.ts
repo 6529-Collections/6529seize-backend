@@ -1225,6 +1225,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            chat_enabled,
            chat_slow_mode_cooldown_ms,
            chat_links_disabled,
+           chat_replies_open,
+           chat_replies_collapsed,
            participation_group_id,
            participation_max_applications_per_participant,
            participation_required_metadata,
@@ -1270,6 +1272,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :chat_enabled,
                   :chat_slow_mode_cooldown_ms,
                   :chat_links_disabled,
+                  :chat_replies_open,
+                  :chat_replies_collapsed,
                   :participation_group_id,
                   :participation_max_applications_per_participant,
                   :participation_required_metadata,
@@ -1325,6 +1329,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                             chat_enabled,
                             chat_slow_mode_cooldown_ms,
                             chat_links_disabled,
+                            chat_replies_open,
+                            chat_replies_collapsed,
                             participation_group_id,
                             participation_max_applications_per_participant,
                             participation_required_metadata,
@@ -1373,6 +1379,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :chat_enabled,
                                    :chat_slow_mode_cooldown_ms,
                                    :chat_links_disabled,
+                                   :chat_replies_open,
+                                   :chat_replies_collapsed,
                                    :participation_group_id,
                                    :participation_max_applications_per_participant,
                                    :participation_required_metadata,
@@ -4341,6 +4349,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 JOIN ${WAVE_READER_METRICS_TABLE} r
                   ON r.wave_id = d.wave_id
                   AND r.reader_id = :identityId
+                JOIN ${WAVES_TABLE} w
+                  ON w.id = d.wave_id
                 LEFT JOIN ${IDENTITY_MUTES_TABLE} im
                   ON im.muter_id = :identityId
                   AND im.muted_identity_id = d.author_id
@@ -4353,6 +4363,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   AND profile_block.id IS NULL
                   AND d.created_at > r.latest_read_timestamp
                   AND r.muted = false
+                  -- Collapsed replies live in threads, not the main feed.
+                  AND (d.reply_to_drop_id IS NULL OR w.chat_replies_collapsed = false)
                 GROUP BY d.wave_id
               `,
             { identityId: param.identityId, waveIds: uncachedWaveIds },

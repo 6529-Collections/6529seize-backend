@@ -207,6 +207,8 @@ export class ApiDropMapper {
           )
         );
 
+      const repliesCountPromise =
+        this.dropsDb.countCollapsedRepliesOfGivenDrops(dropIds, ctx);
       const dropAttachmentsPromise =
         this.attachmentsDb.getDropPartOneAttachments(dropIds, ctx);
       const attachmentsByIdPromise = dropAttachmentsPromise.then(
@@ -344,6 +346,7 @@ export class ApiDropMapper {
           : Promise.resolve({} as Record<string, number>),
         moderationPresentationsPromise
       ]);
+      const repliesCountByDropId = await repliesCountPromise;
 
       const referencedNftsByDropId = this.groupByDropId(referencedNfts);
       const mentionsByDropId = this.groupByDropId(mentions);
@@ -387,6 +390,7 @@ export class ApiDropMapper {
             hasMetadata: submissionDropIdsWithMetadata.has(drop.id),
             reactions: reactionsByDropId.get(drop.id),
             boosts: boostsCount[drop.id] ?? 0,
+            repliesCount: repliesCountByDropId[drop.id],
             boosted: boostedDropIds.has(drop.id),
             bookmarked: bookmarkedDropIds.has(drop.id),
             subscribed: (subscribedActions[drop.id] ?? []).length > 0,
@@ -489,6 +493,7 @@ export class ApiDropMapper {
     hasMetadata,
     reactions,
     boosts,
+    repliesCount,
     boosted,
     bookmarked,
     subscribed,
@@ -519,6 +524,7 @@ export class ApiDropMapper {
     hasMetadata: boolean;
     reactions?: DropReactionCountersResult;
     boosts: number;
+    repliesCount?: number;
     boosted: boolean;
     bookmarked: boolean;
     subscribed: boolean;
@@ -559,6 +565,9 @@ export class ApiDropMapper {
         replyPreview,
         replyModerationPresentation
       );
+    }
+    if (repliesCount) {
+      apiDrop.replies_count = repliesCount;
     }
     if (!moderationPresentation.moderation.can_view) {
       return apiDrop;

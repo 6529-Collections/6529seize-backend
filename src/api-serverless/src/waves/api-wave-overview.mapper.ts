@@ -58,6 +58,7 @@ import {
   writeWaveOverviewStaticCache
 } from '@/api/waves/wave-overview-static-cache';
 import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
+import { canReplyInWaveChat } from '@/waves/wave-chat-replies.helpers';
 
 export interface ApiWaveOverviewMapperOptions {
   readonly groupIdsUserIsEligibleFor?: string[];
@@ -464,6 +465,7 @@ export class ApiWaveOverviewMapper {
         hasCompetitions,
       is_dm_wave: wave.is_direct_message === true,
       links_disabled: wave.chat_links_disabled,
+      replies_collapsed: wave.chat_replies_collapsed,
       description_drop: this.mapDescriptionDrop({
         part: descriptionDropPartOnesByDropId[wave.description_drop_id],
         media: descriptionDropPartOneMediaByDropId[wave.description_drop_id]
@@ -578,6 +580,9 @@ export class ApiWaveOverviewMapper {
         wave.chat_enabled &&
         (wave.chat_group_id === null ||
           groupIdsUserIsEligibleFor.includes(wave.chat_group_id)) &&
+        nextDropAllowed === undefined,
+      can_reply:
+        canReplyInWaveChat({ wave, groupIdsUserIsEligibleFor }) &&
         nextDropAllowed === undefined,
       unread_drops: unreadDropsCount,
       subwave_unread_drops: followedSubwaveContext?.subwave_unread_drops ?? 0,

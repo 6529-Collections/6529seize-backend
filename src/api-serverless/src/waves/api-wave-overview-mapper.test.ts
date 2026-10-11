@@ -38,6 +38,8 @@ function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
     chat_group_id: null,
     chat_slow_mode_cooldown_ms: null,
     chat_links_disabled: false,
+    chat_replies_open: false,
+    chat_replies_collapsed: false,
     participation_max_applications_per_participant: null,
     participation_required_metadata: [],
     participation_required_media: [],
@@ -219,6 +221,7 @@ describe('ApiWaveOverviewMapper', () => {
       has_competition: false,
       is_dm_wave: false,
       links_disabled: false,
+      replies_collapsed: false,
       description_drop: {},
       total_drops_count: 3,
       is_private: false,
@@ -260,6 +263,45 @@ describe('ApiWaveOverviewMapper', () => {
     );
 
     expect(result['wave-1']?.links_disabled).toBe(true);
+  });
+
+  it('maps collapsed replies and open reply eligibility for outsiders', async () => {
+    const { mapper } = createMapper();
+
+    const result = await mapper.mapWaves(
+      [
+        makeWave({
+          chat_group_id: 'dev-team',
+          chat_replies_open: true,
+          chat_replies_collapsed: true
+        })
+      ],
+      {
+        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      }
+    );
+
+    expect(result['wave-1']?.replies_collapsed).toBe(true);
+    expect(result['wave-1']?.context_profile_context).toMatchObject({
+      can_chat: false,
+      can_reply: true
+    });
+  });
+
+  it('keeps replies closed to outsiders unless the wave opens them', async () => {
+    const { mapper } = createMapper();
+
+    const result = await mapper.mapWaves(
+      [makeWave({ chat_group_id: 'dev-team' })],
+      {
+        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      }
+    );
+
+    expect(result['wave-1']?.context_profile_context).toMatchObject({
+      can_chat: false,
+      can_reply: false
+    });
   });
 
   it('maps a level zero creator fallback when the profile is missing', async () => {
@@ -463,6 +505,7 @@ describe('ApiWaveOverviewMapper', () => {
       has_competition: true,
       is_dm_wave: true,
       links_disabled: false,
+      replies_collapsed: false,
       description_drop: {},
       total_drops_count: 3,
       is_private: false,
@@ -480,6 +523,7 @@ describe('ApiWaveOverviewMapper', () => {
         subscribed: true,
         pinned: true,
         can_chat: true,
+        can_reply: true,
         unread_drops: 7,
         first_unread_drop_serial_no: 19,
         subwave_unread_drops: 0,
@@ -546,6 +590,7 @@ describe('ApiWaveOverviewMapper', () => {
       subscribed: false,
       pinned: false,
       can_chat: false,
+      can_reply: false,
       next_drop_allowed: nextDropTimestamp,
       unread_drops: 0,
       subwave_unread_drops: 0,
