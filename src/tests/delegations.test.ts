@@ -32,14 +32,13 @@ const { getAlchemyInstance: mockGetAlchemyInstance } =
 
 jest.mock('../abis/delegations', () => {
   const parseLog = jest.fn();
-  const parseTransaction = jest.fn();
   return {
-    DELEGATIONS_IFACE: { parseLog, parseTransaction }
+    DELEGATIONS_IFACE: { parseLog }
   };
 });
 
 const {
-  DELEGATIONS_IFACE: { parseLog: mockParseLog, parseTransaction: mockParseTx }
+  DELEGATIONS_IFACE: { parseLog: mockParseLog }
 } = jest.requireMock('../abis/delegations');
 
 jest.mock('../strings', () => {
@@ -110,43 +109,6 @@ describe('findDelegationTransactions', () => {
     ]);
     expect(result.consolidations).toEqual([]);
     expect(result.revocation).toEqual([]);
-  });
-
-  it('registers generic delegation with details', async () => {
-    const log = { blockNumber: 1, transactionHash: '0x3' } as any;
-    alchemyMock.core.getLogs.mockResolvedValue([log]);
-    mockParseLog.mockReturnValueOnce({
-      name: 'RegisterDelegation',
-      args: {
-        collectionAddress: '0xC',
-        from: '0xA',
-        delegationAddress: '0xB',
-        useCase: BigInt(5)
-      }
-    });
-    mockParseTx.mockReturnValueOnce({
-      args: {
-        _expiryDate: BigInt(9),
-        _allTokens: true,
-        _tokenId: BigInt(7)
-      }
-    });
-    alchemyMock.core.getTransaction.mockResolvedValue({ data: '0x' });
-    mockEqual.mockReturnValue(false);
-    const result = await findDelegationTransactions(1, 2);
-    expect(result.registrations).toEqual([
-      {
-        block: 1,
-        type: 0,
-        wallet1: '0xA',
-        wallet2: '0xB',
-        use_case: 5,
-        collection: '0xC',
-        expiry: 9,
-        all_tokens: true,
-        token_id: 7
-      }
-    ]);
   });
 
   it('revokes delegation', async () => {

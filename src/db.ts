@@ -34,6 +34,7 @@ import {
   WALLETS_TDH_TABLE
 } from '@/constants';
 import { DbQueryOptions } from './db-query.options';
+import { toDelegationRow } from '@/delegation-row';
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import { Artist } from './entities/IArtist';
 import {
@@ -1625,22 +1626,7 @@ export async function persistDelegations(
   }
 
   for (const registration of registrations) {
-    const newDelegation = new Delegation();
-    newDelegation.block = registration.block;
-    newDelegation.from_address = registration.wallet1;
-    newDelegation.to_address = registration.wallet2;
-    newDelegation.collection = registration.collection;
-    newDelegation.use_case = registration.use_case;
-    if (registration.expiry) {
-      newDelegation.expiry = registration.expiry;
-    }
-    if (registration.all_tokens) {
-      newDelegation.all_tokens = registration.all_tokens;
-    }
-    if (registration.token_id) {
-      newDelegation.token_id = registration.token_id;
-    }
-    await repo.save(newDelegation);
+    await repo.save(toDelegationRow(registration));
   }
 
   for (const revocation of revocations) {

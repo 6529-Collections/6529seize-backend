@@ -530,6 +530,19 @@ class AlchemyCoreClient {
     }));
   }
 
+  /**
+   * Read-only `eth_call`. A block number `blockTag` reads historical state,
+   * which needs an archive-capable endpoint (Alchemy provides one).
+   */
+  async call(
+    transaction: { to: string; data: string },
+    blockTag: BlockTag = 'latest'
+  ): Promise<string> {
+    return await this.withProviderRetries(() =>
+      this.provider.call({ ...transaction, blockTag })
+    );
+  }
+
   async resolveName(name: string): Promise<string | null> {
     return await this.withProviderRetries(() =>
       this.provider.resolveName(name)

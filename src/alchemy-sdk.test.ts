@@ -30,6 +30,7 @@ const mockProviderInstances: Array<{
   getTransactionReceipt: jest.Mock;
   getLogs: jest.Mock;
   resolveName: jest.Mock;
+  call: jest.Mock;
 }> = [];
 
 jest.mock('ethers', () => {
@@ -40,6 +41,7 @@ jest.mock('ethers', () => {
     public readonly getTransactionReceipt = jest.fn();
     public readonly getLogs = jest.fn();
     public readonly resolveName = jest.fn();
+    public readonly call = jest.fn();
 
     constructor() {
       mockProviderInstances.push(this);
@@ -212,6 +214,56 @@ describe('Alchemy SDK replacement', () => {
 
       await expect(alchemy.core.getBlockNumber()).resolves.toBe(123);
       expect(provider.getBlockNumber).toHaveBeenCalledTimes(2);
+    });
+
+    it('runs eth_call at the requested block and retries transient failures', async () => {
+      const alchemy = new Alchemy({
+        network: Network.ETH_MAINNET,
+        apiKey: 'provider-call-key',
+        maxRetries: 2
+      });
+      const provider = mockProviderInstances.at(-1)!;
+      const rateLimitError = Object.assign(new Error('Too many requests'), {
+        status: 429
+      });
+
+      provider.call
+        .mockRejectedValueOnce(rateLimitError)
+        .mockResolvedValueOnce('0x01');
+
+      await expect(
+        alchemy.core.call({ to: '0xcontract', data: '0xabcdef' }, 1234)
+      ).resolves.toBe('0x01');
+      expect(provider.call).toHaveBeenCalledTimes(2);
+      expect(provider.call).toHaveBeenLastCalledWith({
+        to: '0xcontract',
+        data: '0xabcdef',
+        blockTag: 1234
+      });
+    });
+
+    it('does not retry a reverted eth_call', async () => {
+      const alchemy = new Alchemy({
+        network: Network.ETH_MAINNET,
+        apiKey: 'provider-call-revert-key',
+        maxRetries: 2
+      });
+      const provider = mockProviderInstances.at(-1)!;
+      provider.call.mockRejectedValue(
+        Object.assign(new Error('execution reverted'), {
+          code: 'CALL_EXCEPTION'
+        })
+      );
+
+      await expect(
+        alchemy.core.call({ to: '0xcontract', data: '0x' })
+      ).rejects.toThrow('execution reverted');
+      expect(provider.call).toHaveBeenCalledTimes(1);
+      expect(provider.call).toHaveBeenCalledWith({
+        to: '0xcontract',
+        data: '0x',
+        blockTag: 'latest'
+      });
     });
   });
 
