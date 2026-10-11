@@ -15,7 +15,12 @@ import {
   USE_CASE_MINTING,
   USE_CASE_SUB_DELEGATION
 } from '@/constants';
-import { findDelegationTransactions } from '@/delegations';
+import {
+  fetchDelegationTransaction,
+  findDelegationTransactions,
+  scanDelegationLogs
+} from '@/delegations';
+import { runDelegationScopeBackfill } from '@/delegationsLoop/delegation-scope-backfill';
 
 jest.mock('@/alchemy', () => ({
   getAlchemyInstance: jest.fn()
@@ -487,6 +492,149 @@ describe('findDelegationTransactions registration scope', () => {
 
     await expect(findDelegationTransactions(1, 20)).rejects.toThrow(
       'missing trie node'
+    );
+  });
+});
+
+describe('scope backfill over the real scan', () => {
+  const NOW = 1_800_000_000;
+
+  function backfillDeps(rows: Record<string, unknown>[]) {
+    return {
+      latestProcessedBlock: async () => 40,
+      scan: scanDelegationLogs,
+      readRows: async () =>
+        rows.map((r) => ({
+          block: 30,
+          from_address: COLD,
+          to_address: HOT_1,
+          collection: MEMES_CONTRACT,
+          use_case: USE_CASE_MINTING,
+          expiry: 64060588800,
+          all_tokens: true,
+          token_id: 0,
+          ...r
+        })),
+      getTransaction: fetchDelegationTransaction,
+      applyDiff: jest.fn(async () => undefined),
+      nowSeconds: () => NOW
+    };
+  }
+
+  beforeEach(() => {
+    alchemyMock.core.getTransaction.mockResolvedValue({
+      to: DELEGATION_CONTRACT.contract,
+      data: '0x'
+    });
+  });
+
+  it('deletes a stale row whose registration was revoked later in its block', async () => {
+    alchemyMock.core.getLogs.mockResolvedValue([
+      log(30, 'RegisterDelegation', [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_1,
+        USE_CASE_MINTING,
+        true,
+        BigInt(0)
+      ]),
+      log(30, 'RevokeDelegation', [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_1,
+        USE_CASE_MINTING
+      ])
+    ]);
+    const deps = backfillDeps([{}]);
+
+    const report = await runDelegationScopeBackfill(
+      { mode: 'apply', fromBlock: 1 },
+      deps
+    );
+
+    expect(report.diff.deletes.map((r) => r.block)).toEqual([30]);
+    expect(report.causes['revoked-same-block']).toBe(1);
+    expect(deps.applyDiff).toHaveBeenCalledTimes(1);
+    // The dropped registration needs no state read.
+    expect(alchemyMock.core.call).not.toHaveBeenCalled();
+  });
+
+  it('keeps a row registered after a revocation in its block', async () => {
+    alchemyMock.core.getLogs.mockResolvedValue([
+      log(30, 'RevokeDelegation', [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_1,
+        USE_CASE_MINTING
+      ]),
+      log(30, 'RegisterDelegation', [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_1,
+        USE_CASE_MINTING,
+        true,
+        BigInt(0)
+      ])
+    ]);
+    setState(30, COLD, MEMES_CONTRACT, USE_CASE_MINTING, [
+      [HOT_1, BigInt(64060588800), true, BigInt(0)]
+    ]);
+    const deps = backfillDeps([{}]);
+
+    const report = await runDelegationScopeBackfill(
+      { mode: 'apply', fromBlock: 1 },
+      deps
+    );
+
+    expect(report.diff.unchanged).toBe(1);
+    expect(report.diff.deletes).toEqual([]);
+    expect(deps.applyDiff).not.toHaveBeenCalled();
+  });
+
+  it('keeps only registrations after a revocation in an earlier-or-later block', async () => {
+    alchemyMock.core.getLogs.mockResolvedValue([
+      log(10, 'RegisterDelegation', [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_1,
+        USE_CASE_MINTING,
+        false,
+        BigInt(1)
+      ]),
+      log(15, 'RevokeDelegation', [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_1,
+        USE_CASE_MINTING
+      ]),
+      log(20, 'RegisterDelegation', [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_1,
+        USE_CASE_MINTING,
+        false,
+        BigInt(2)
+      ])
+    ]);
+    setState(10, COLD, MEMES_CONTRACT, USE_CASE_MINTING, [
+      [HOT_1, BigInt(64060588800), false, BigInt(1)]
+    ]);
+    setState(20, COLD, MEMES_CONTRACT, USE_CASE_MINTING, [
+      [HOT_1, BigInt(64060588800), false, BigInt(2)]
+    ]);
+    const deps = backfillDeps([
+      { block: 10, all_tokens: true, token_id: 1 },
+      { block: 20, all_tokens: true, token_id: 2 }
+    ]);
+
+    const report = await runDelegationScopeBackfill(
+      { mode: 'dry-run', fromBlock: 1 },
+      deps
+    );
+
+    expect(report.diff.deletes.map((r) => r.block)).toEqual([10]);
+    expect(report.diff.updates.map((u) => [u.current.block, u.fields])).toEqual(
+      [[20, ['all_tokens']]]
     );
   });
 });

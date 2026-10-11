@@ -1,5 +1,6 @@
 /**
  * Maps `items` with at most `size` calls in flight, keeping input order.
+ * Chunks run one after another, so `size` 1 is strictly sequential.
  * Rejects with the first failure.
  */
 export async function mapInChunks<T, R>(

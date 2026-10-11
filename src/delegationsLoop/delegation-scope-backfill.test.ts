@@ -269,6 +269,97 @@ describe('expected rows and diff', () => {
     expect(diff.unchanged).toBe(1);
   });
 
+  // A revocation deletes every registration the delegator holds for that
+  // delegate, collection and use case at that moment; later registrations
+  // survive. Rows below share one pair and differ only in block and token.
+  describe('revocation sequences for one delegator and delegate', () => {
+    const tokenA = { all_tokens: false, token_id: 1 };
+    const tokenB = { all_tokens: false, token_id: 2 };
+
+    it('register@10, revoke@15, register@20: keeps only the block-20 row', () => {
+      const current = [
+        row({ block: 10, ...tokenA }),
+        row({ block: 20, ...tokenB })
+      ];
+      const diff = diffDelegationRows(
+        current,
+        expectedFrom(
+          current,
+          [
+            registration({ block: 10, ...tokenA }),
+            registration({ block: 20, ...tokenB })
+          ],
+          [revocation({ block: 15 })]
+        )
+      );
+      expect(diff.deletes).toEqual([current[0]]);
+      expect(diff.unchanged).toBe(1);
+    });
+
+    it('register@10, register@20, revoke@25: deletes both rows', () => {
+      const current = [
+        row({ block: 10, ...tokenA }),
+        row({ block: 20, ...tokenB })
+      ];
+      const diff = diffDelegationRows(
+        current,
+        expectedFrom(
+          current,
+          [
+            registration({ block: 10, ...tokenA }),
+            registration({ block: 20, ...tokenB })
+          ],
+          [revocation({ block: 25 })]
+        )
+      );
+      expect(diff.deletes).toEqual(current);
+      expect(diff.unchanged).toBe(0);
+    });
+
+    it('register@N (log 1) then revoke@N (log 2): deletes a pre-existing stale row', () => {
+      // The scan drops this registration by log index, so the stale row the
+      // old indexer kept has no expected counterpart.
+      const stale = row({ block: 30 });
+      const diff = diffDelegationRows(
+        [stale],
+        expectedFrom([stale], [], [revocation({ block: 30 })])
+      );
+      expect(diff.deletes).toEqual([stale]);
+    });
+
+    it('revoke@N (log 1) then register@N (log 2): keeps the row', () => {
+      const current = [row({ block: 30 })];
+      const diff = diffDelegationRows(
+        current,
+        expectedFrom(
+          current,
+          [registration({ block: 30 })],
+          [revocation({ block: 30 })]
+        )
+      );
+      expect(diff.deletes).toEqual([]);
+      expect(diff.unchanged).toBe(1);
+    });
+
+    it('a stale row at or after the start block is deleted unless the scan registered it', () => {
+      const current = [
+        row({ block: 40 }),
+        row({ block: 41, to_address: HOT_2 })
+      ];
+      const diff = diffDelegationRows(
+        current,
+        expectedFrom(
+          current,
+          [registration({ block: 41, wallet2: HOT_2 })],
+          [],
+          40
+        )
+      );
+      expect(diff.deletes).toEqual([current[0]]);
+      expect(diff.unchanged).toBe(1);
+    });
+  });
+
   it('never compares or touches use case 999 rows', () => {
     const consolidation = row({ use_case: USE_CASE_CONSOLIDATION });
     const diff = diffDelegationRows(
@@ -404,6 +495,33 @@ describe('runDelegationScopeBackfill', () => {
       runDelegationScopeBackfill({ mode: 'dry-run', fromBlock: 1 }, d)
     ).rejects.toThrow('No processed delegation blocks');
     expect(d.scan).not.toHaveBeenCalled();
+  });
+
+  it('counts a registration made from a contract constructor as a contract wallet', async () => {
+    const d = deps({
+      readRows: jest.fn(async () => [row()]),
+      scan: jest.fn(async () => ({
+        logs: [
+          log(
+            10,
+            'RegisterDelegation',
+            [COLD, MEMES_CONTRACT, HOT_1, USE_CASE_MINTING, true, BigInt(0)],
+            '0xc0'
+          )
+        ],
+        registrations: [registration({ expiry: 1 })],
+        revocations: []
+      })),
+      getTransaction: jest.fn(async () => ({ to: null, data: '0x60806040' }))
+    });
+
+    const report = await runDelegationScopeBackfill(
+      { mode: 'dry-run', fromBlock: 1 },
+      d
+    );
+
+    expect(report.causes['contract-wallet']).toBe(1);
+    expect(report.causes.other).toBe(0);
   });
 
   it('counts changes by cause and the delegations they deactivate', async () => {
