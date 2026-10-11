@@ -14,6 +14,7 @@ import {
   RevocationLogRef
 } from '@/delegation-registration-expiry';
 import { MAX_STORABLE_DELEGATION_TOKEN_ID } from '@/delegation-row';
+import { mapInChunks } from '@/map-in-chunks';
 import { LogDescription } from 'ethers';
 import { DELEGATIONS_IFACE } from './abis/delegations';
 import {
@@ -40,18 +41,38 @@ const REVOKE_EVENTS = new Set([
   'RevokeDelegationUsingSubDelegation'
 ]);
 
-async function getAllDelegations(startingBlock: number, latestBlock: number) {
-  const startingBlockHex = `0x${startingBlock.toString(16)}`;
-  const latestBlockHex = `0x${latestBlock.toString(16)}`;
+// A long range (a backfill from the deployment block) is fetched in
+// consecutive chunks, one at a time, so no single response grows unbounded.
+const LOG_FETCH_CHUNK_BLOCKS = 500_000;
 
-  logger.info(`[FROM BLOCK ${startingBlockHex}] [TO BLOCK ${latestBlockHex}]`);
+const toHexBlock = (block: number) => `0x${block.toString(16)}`;
 
-  const response = await alchemy.core.getLogs({
-    address: DELEGATION_CONTRACT.contract,
-    fromBlock: startingBlockHex,
-    toBlock: latestBlockHex
-  });
-  return response;
+async function getAllDelegations(
+  startingBlock: number,
+  latestBlock: number
+): Promise<Log[]> {
+  logger.info(
+    `[FROM BLOCK ${toHexBlock(startingBlock)}] [TO BLOCK ${toHexBlock(latestBlock)}]`
+  );
+  const ranges: [number, number][] = [];
+  for (
+    let from = startingBlock;
+    from <= latestBlock;
+    from += LOG_FETCH_CHUNK_BLOCKS
+  ) {
+    ranges.push([
+      from,
+      Math.min(latestBlock, from + LOG_FETCH_CHUNK_BLOCKS - 1)
+    ]);
+  }
+  const chunks = await mapInChunks(ranges, 1, ([from, to]) =>
+    alchemy.core.getLogs({
+      address: DELEGATION_CONTRACT.contract,
+      fromBlock: toHexBlock(from),
+      toBlock: toHexBlock(to)
+    })
+  );
+  return chunks.reduce<Log[]>((all, logs) => all.concat(logs), []);
 }
 
 interface PendingRegistration {
@@ -238,6 +259,52 @@ const getNetwork = () => {
   return Network.ETH_MAINNET;
 };
 
+export interface DelegationLogScan {
+  logs: Log[];
+  consolidations: ConsolidationEvent[];
+  registrations: DelegationEvent[];
+  revocations: DelegationEvent[];
+}
+
+/**
+ * Reads NFTDelegation logs in [fromBlock, toBlock] and turns them into the
+ * events the delegations loop persists, with each registration's expiry and
+ * token scope resolved. Throws if any read fails.
+ */
+export async function scanDelegationLogs(
+  fromBlock: number,
+  toBlock: number
+): Promise<DelegationLogScan> {
+  alchemy = getAlchemyInstance(getNetwork());
+  const logs = await getAllDelegations(fromBlock, toBlock);
+
+  logger.info(`[FOUND ${logs.length} NEW TRANSACTIONS]`);
+
+  const scan: DelegationScan = {
+    consolidations: [],
+    registrations: [],
+    revocations: [],
+    pendingRegistrations: [],
+    revocationRefs: []
+  };
+  for (const d of logs) {
+    collectLog(d, scan);
+  }
+
+  const registrations = await attachRegistrationExpiries(scan);
+  return {
+    logs,
+    consolidations: scan.consolidations,
+    registrations,
+    revocations: scan.revocations
+  };
+}
+
+/** The transaction behind a delegation log, read from the contract's chain. */
+export async function fetchDelegationTransaction(hash: string) {
+  return getAlchemyInstance(getNetwork()).core.getTransaction(hash);
+}
+
 export const findDelegationTransactions = async (
   startingBlock: number,
   latestBlock?: number
@@ -254,28 +321,13 @@ export const findDelegationTransactions = async (
 
   const timestamp = (await alchemy.core.getBlock(latestBlock)).timestamp;
 
-  const allDelegations = await getAllDelegations(startingBlock, latestBlock);
-
-  logger.info(`[FOUND ${allDelegations.length} NEW TRANSACTIONS]`);
-
-  const scan: DelegationScan = {
-    consolidations: [],
-    registrations: [],
-    revocations: [],
-    pendingRegistrations: [],
-    revocationRefs: []
-  };
-  for (const d of allDelegations) {
-    collectLog(d, scan);
-  }
-
-  const registrations = await attachRegistrationExpiries(scan);
+  const scan = await scanDelegationLogs(startingBlock, latestBlock);
 
   return {
     latestBlock: latestBlock,
     latestBlockTimestamp: timestamp,
     consolidations: scan.consolidations,
-    registrations: registrations,
+    registrations: scan.registrations,
     revocation: scan.revocations
   };
 };

@@ -1,5 +1,6 @@
 import { DELEGATIONS_IFACE } from '@/abis/delegations';
 import { NEVER_DATE } from '@/constants';
+import { mapInChunks } from '@/map-in-chunks';
 import { solidityPackedKeccak256 } from 'ethers';
 
 // Delegation registrations are indexed from NFTDelegation logs. The events
@@ -161,14 +162,16 @@ export async function resolveRegistrationExpiries(
   const expiries: (number | null)[] = registrations.map(() => null);
   const groups = groupLiveRegistrations(registrations, revocations);
 
-  const delegateLists = await mapInChunks(groups, (group) =>
-    reader.readDelegates(group.query)
+  const delegateLists = await mapInChunks(
+    groups,
+    STATE_READ_CONCURRENCY,
+    (group) => reader.readDelegates(group.query)
   );
   const reads = groups.reduce<EntryRead[]>(
     (all, group, i) => all.concat(planEntryReads(group, delegateLists[i])),
     []
   );
-  const entries = await mapInChunks(reads, (read) =>
+  const entries = await mapInChunks(reads, STATE_READ_CONCURRENCY, (read) =>
     reader.readEntry(read.query, read.member.registration.delegate, read.index)
   );
   reads.forEach((read, i) => {
@@ -290,18 +293,6 @@ function matchesRegistration(
     return false;
   }
   return registration.allTokens || entry.tokenId === registration.tokenId;
-}
-
-async function mapInChunks<T, R>(
-  items: T[],
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = [];
-  for (let i = 0; i < items.length; i += STATE_READ_CONCURRENCY) {
-    const chunk = items.slice(i, i + STATE_READ_CONCURRENCY);
-    results.push(...(await Promise.all(chunk.map(fn))));
-  }
-  return results;
 }
 
 // Expiry dates beyond the safe integer range cannot be stored exactly; they

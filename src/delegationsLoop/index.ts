@@ -52,6 +52,11 @@ import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
 import { Time } from '../time';
+import { createScopeBackfillDeps } from './delegation-scope-backfill.deps';
+import {
+  readScopeBackfillConfig,
+  runDelegationScopeBackfill
+} from './delegation-scope-backfill';
 import { getAffectedWallets } from './reconsolidation';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
@@ -59,6 +64,18 @@ const logger = Logger.get('DELEGATIONS_LOOP');
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     async () => {
+      const scopeBackfill = readScopeBackfillConfig();
+      if (scopeBackfill) {
+        // One-off delegations re-index: it runs instead of the loop, writes
+        // only non-consolidation delegation rows and leaves the checkpoint
+        // alone. Remove the flag after one run.
+        await runDelegationScopeBackfill(
+          scopeBackfill,
+          createScopeBackfillDeps()
+        );
+        return;
+      }
+
       const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
       const startBlock =
         startBlockEnv && Number.isInteger(Number(startBlockEnv))
