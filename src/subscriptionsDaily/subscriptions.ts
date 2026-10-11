@@ -692,7 +692,9 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
   // Each merged consolidation is all-or-nothing: if any of its moves fails,
   // its own changes are rolled back to the savepoint and logged, and the
   // other consolidations still commit, so one bad key cannot leave half-moved
-  // rows or stop the delegations loop.
+  // rows or stop the delegations loop. A deadlock or lock-wait timeout rolls
+  // back the whole transaction, savepoints included; then the run aborts with
+  // the original error rather than continue outside a transaction.
   await getDataSource().transaction(async (manager) => {
     const uniqueValuesWithKeys = collections.getMapWithKeysAndValuesSwitched(
       replaceConsolidations
@@ -711,10 +713,21 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
         await mergeSubscriptionsIntoKey(manager, newKey, oldKeys);
         await manager.query(`RELEASE SAVEPOINT ${savepoint}`);
       } catch (e) {
-        await manager.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
         logger.error(
-          `[SUBSCRIPTION MERGE ROLLED BACK] [${oldKeys.join(', ')} -> ${newKey}]`,
+          `[SUBSCRIPTION MERGE FAILED] [${oldKeys.join(', ')} -> ${newKey}]`,
           e
+        );
+        try {
+          await manager.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+        } catch (rollbackError) {
+          logger.error(
+            `[SUBSCRIPTION MERGE ABORTED] [${savepoint} is gone; the transaction was rolled back]`,
+            rollbackError
+          );
+          throw e;
+        }
+        logger.warn(
+          `[SUBSCRIPTION MERGE ROLLED BACK] [${oldKeys.join(', ')} -> ${newKey}]`
         );
       }
     }
@@ -742,12 +755,15 @@ async function mergeSubscriptionsIntoKey(
     }
   }
 
-  const placeholders = oldKeys.map(() => '?').join(',');
+  // newKey may already hold balance and mode rows of its own (both keyed by
+  // consolidation_key), so they are folded in and replaced too.
+  const balanceAndModeKeys = Array.from(new Set([...oldKeys, newKey]));
+  const placeholders = balanceAndModeKeys.map(() => '?').join(',');
   const balanceResult = await manager.query(
     `SELECT SUM(balance) as total_balance
       FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
       WHERE consolidation_key IN (${placeholders})`,
-    oldKeys
+    balanceAndModeKeys
   );
   const totalBalance = balanceResult[0]?.total_balance;
 
@@ -756,11 +772,11 @@ async function mergeSubscriptionsIntoKey(
       FROM ${SUBSCRIPTIONS_MODE_TABLE}
       WHERE consolidation_key IN (${placeholders})
       AND automatic = true`,
-    oldKeys
+    balanceAndModeKeys
   );
   const isSubscribed = isSubscribedResult[0]?.automatic_count > 0;
 
-  for (const key of oldKeys) {
+  for (const key of balanceAndModeKeys) {
     await manager.query(
       `DELETE FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
         WHERE consolidation_key = ?`,
