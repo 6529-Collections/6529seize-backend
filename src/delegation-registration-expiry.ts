@@ -127,7 +127,7 @@ export function createDelegationStateReader(
           delegate,
           query.useCase
         ),
-        index
+        BigInt(index)
       ]);
       const raw = await call(contractAddress, data, query.block);
       const result = DELEGATIONS_IFACE.decodeFunctionResult(ENTRY_VIEW, raw);

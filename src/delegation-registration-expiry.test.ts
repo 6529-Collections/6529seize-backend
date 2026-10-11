@@ -311,6 +311,50 @@ describe('resolveRegistrationExpiries', () => {
     expect(expiries).toEqual([null, 4321]);
   });
 
+  it('keeps only the registrations after the last revocation in a block', async () => {
+    // register, revoke, register, revoke, register: each revocation deletes
+    // the delegate's whole list, so only the last registration is stored.
+    const reader = readerFor([entry(DELEGATE_A, 5000, false, 3)]);
+
+    const expiries = await resolveRegistrationExpiries(
+      [
+        registration({ logIndex: 1 }),
+        registration({ logIndex: 3, allTokens: false, tokenId: BigInt(2) }),
+        registration({ logIndex: 5, allTokens: false, tokenId: BigInt(3) })
+      ],
+      [revocation({ logIndex: 2 }), revocation({ logIndex: 4 })],
+      reader
+    );
+
+    expect(expiries).toEqual([null, null, 5000]);
+    expect(reader.readEntry.mock.calls.map(([, , index]) => index)).toEqual([
+      0
+    ]);
+  });
+
+  it('reads registrations made after a same-block revocation from the start of the list', async () => {
+    const reader = readerFor([
+      entry(DELEGATE_A, 6000, false, 1),
+      entry(DELEGATE_A, 7000, false, 2)
+    ]);
+
+    const expiries = await resolveRegistrationExpiries(
+      [
+        registration({ logIndex: 2, allTokens: false, tokenId: BigInt(1) }),
+        registration({ logIndex: 3, allTokens: false, tokenId: BigInt(2) })
+      ],
+      [revocation({ logIndex: 1 })],
+      reader
+    );
+
+    expect(expiries).toEqual([6000, 7000]);
+    expect(
+      reader.readEntry.mock.calls
+        .map(([, , index]) => index)
+        .sort((a, b) => a - b)
+    ).toEqual([0, 1]);
+  });
+
   it('throws when the contract holds fewer registrations than the logs', async () => {
     await expect(
       resolveRegistrationExpiries(

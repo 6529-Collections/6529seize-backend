@@ -31,14 +31,14 @@ let alchemy: Alchemy;
 
 const logger = Logger.get('DELEGATIONS');
 
-const REGISTER_EVENTS = [
+const REGISTER_EVENTS = new Set([
   'RegisterDelegation',
   'RegisterDelegationUsingSubDelegation'
-];
-const REVOKE_EVENTS = [
+]);
+const REVOKE_EVENTS = new Set([
   'RevokeDelegation',
   'RevokeDelegationUsingSubDelegation'
-];
+]);
 
 async function getAllDelegations(startingBlock: number, latestBlock: number) {
   const startingBlockHex = `0x${startingBlock.toString(16)}`;
@@ -187,9 +187,9 @@ function collectLog(log: Log, scan: DelegationScan) {
   ) {
     return;
   }
-  if (REGISTER_EVENTS.includes(parsed.name)) {
+  if (REGISTER_EVENTS.has(parsed.name)) {
     collectRegistration(entry, scan);
-  } else if (REVOKE_EVENTS.includes(parsed.name)) {
+  } else if (REVOKE_EVENTS.has(parsed.name)) {
     collectRevocation(entry, scan);
   }
 }
