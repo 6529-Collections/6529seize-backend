@@ -1,19 +1,20 @@
-import { getAddress } from 'ethers';
+import { concat, getAddress, keccak256, toBeHex, zeroPadValue } from 'ethers';
 import fc from 'fast-check';
 import { DELEGATIONS_IFACE } from '@/abis/delegations';
 import { NEVER_DATE } from '@/constants';
 import {
   createDelegationStateReader,
+  delegationGlobalHash,
   DelegationStateEntry,
   DelegationStateQuery,
+  DelegationStateReader,
   RegistrationLogRef,
   resolveRegistrationExpiries,
   RevocationLogRef
 } from '@/delegation-registration-expiry';
 
-const STATE_VIEW = 'retrieveDelegationAddressesTokensIDsandExpiredDates';
 const CONTRACT = '0x2202CB9c00487e7e8EF21e6d8E914B32e709f43d';
-const DELEGATOR = '0x1000000000000000000000000000000000000001';
+const DELEGATOR = getAddress('0x1000000000000000000000000000000000000001');
 const COLLECTION = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 const DELEGATE_A = getAddress('0xa00000000000000000000000000000000000000a');
 const DELEGATE_B = getAddress('0xb00000000000000000000000000000000000000b');
@@ -29,7 +30,7 @@ function registration(
     delegate: DELEGATE_A,
     useCase: 2,
     allTokens: true,
-    tokenId: 0,
+    tokenId: BigInt(0),
     ...overrides
   };
 }
@@ -52,9 +53,11 @@ function entry(
   delegate: string,
   expiry: number | bigint,
   allTokens = true,
-  tokenId: number | bigint = 0
+  tokenId: number | bigint = 0,
+  delegator = DELEGATOR
 ): DelegationStateEntry {
   return {
+    delegator,
     delegate,
     expiry: BigInt(expiry),
     allTokens,
@@ -62,81 +65,143 @@ function entry(
   };
 }
 
-describe('createDelegationStateReader', () => {
-  it('reads the stored registrations at the given block', async () => {
-    const call = jest.fn(async (to: string, data: string, blockTag: number) =>
-      DELEGATIONS_IFACE.encodeFunctionResult(STATE_VIEW, [
-        [DELEGATE_A, DELEGATE_B],
-        [BigInt(1700000000), BigInt(1800000000)],
-        [true, false],
-        [BigInt(0), BigInt(42)]
+// A reader over stored entries in registration order (as the contract keeps
+// them). The delegate list can be given in any order.
+function readerFor(
+  stored: DelegationStateEntry[],
+  delegateList = stored.map((e) => e.delegate)
+) {
+  return {
+    readDelegates: jest.fn(async (_query: DelegationStateQuery) =>
+      delegateList.slice()
+    ),
+    readEntry: jest.fn(
+      async (_query: DelegationStateQuery, delegate: string, index: number) => {
+        const own = stored.filter(
+          (e) => e.delegate.toLowerCase() === delegate.toLowerCase()
+        );
+        if (index >= own.length) {
+          throw new Error('execution reverted');
+        }
+        return own[index];
+      }
+    )
+  };
+}
+
+describe('delegationGlobalHash', () => {
+  it('packs delegator, collection, delegate and use case like the contract', () => {
+    const expected = keccak256(
+      concat([
+        DELEGATOR,
+        COLLECTION,
+        DELEGATE_A,
+        zeroPadValue(toBeHex(997), 32)
       ])
     );
-    const read = createDelegationStateReader(call, CONTRACT);
+    expect(delegationGlobalHash(DELEGATOR, COLLECTION, DELEGATE_A, 997)).toBe(
+      expected
+    );
+  });
+});
 
-    const state = await read({
-      block: 123,
-      delegator: DELEGATOR,
-      collection: COLLECTION,
-      useCase: 2
-    });
+describe('createDelegationStateReader', () => {
+  const query = {
+    block: 123,
+    delegator: DELEGATOR,
+    collection: COLLECTION,
+    useCase: 2
+  };
 
-    expect(call).toHaveBeenCalledTimes(1);
+  it('reads the delegate list at the given block', async () => {
+    const call = jest.fn(async (_to: string, _data: string, _block: number) =>
+      DELEGATIONS_IFACE.encodeFunctionResult('retrieveDelegationAddresses', [
+        [DELEGATE_A, DELEGATE_B, DELEGATE_A]
+      ])
+    );
+
+    const delegates = await createDelegationStateReader(
+      call,
+      CONTRACT
+    ).readDelegates(query);
+
+    expect(delegates).toEqual([DELEGATE_A, DELEGATE_B, DELEGATE_A]);
     const [to, data, blockTag] = call.mock.calls[0];
     expect(to).toBe(CONTRACT);
     expect(blockTag).toBe(123);
-    const args = DELEGATIONS_IFACE.decodeFunctionData(STATE_VIEW, data);
+    const args = DELEGATIONS_IFACE.decodeFunctionData(
+      'retrieveDelegationAddresses',
+      data
+    );
     expect(args[0]).toBe(DELEGATOR);
     expect(args[1]).toBe(COLLECTION);
     expect(args[2]).toBe(BigInt(2));
-    expect(state).toEqual([
-      entry(DELEGATE_A, BigInt(1700000000), true, BigInt(0)),
-      entry(DELEGATE_B, BigInt(1800000000), false, BigInt(42))
-    ]);
+  });
+
+  it('reads one stored registration by global hash and index', async () => {
+    const call = jest.fn(async (_to: string, _data: string, _block: number) =>
+      DELEGATIONS_IFACE.encodeFunctionResult('globalDelegationHashes', [
+        DELEGATOR,
+        DELEGATE_A,
+        BigInt(1_690_000_000),
+        BigInt(1_800_000_000),
+        false,
+        BigInt(42)
+      ])
+    );
+
+    const stored = await createDelegationStateReader(call, CONTRACT).readEntry(
+      query,
+      DELEGATE_A,
+      3
+    );
+
+    expect(stored).toEqual(entry(DELEGATE_A, 1_800_000_000, false, 42));
+    const [to, data, blockTag] = call.mock.calls[0];
+    expect(to).toBe(CONTRACT);
+    expect(blockTag).toBe(123);
+    const args = DELEGATIONS_IFACE.decodeFunctionData(
+      'globalDelegationHashes',
+      data
+    );
+    expect(args[0]).toBe(
+      delegationGlobalHash(DELEGATOR, COLLECTION, DELEGATE_A, 2)
+    );
+    expect(args[1]).toBe(BigInt(3));
   });
 
   it('throws when the call fails', async () => {
-    const read = createDelegationStateReader(
+    const reader = createDelegationStateReader(
       jest.fn().mockRejectedValue(new Error('rpc down')),
       CONTRACT
     );
-    await expect(
-      read({
-        block: 1,
-        delegator: DELEGATOR,
-        collection: COLLECTION,
-        useCase: 2
-      })
-    ).rejects.toThrow('rpc down');
+    await expect(reader.readDelegates(query)).rejects.toThrow('rpc down');
+    await expect(reader.readEntry(query, DELEGATE_A, 0)).rejects.toThrow(
+      'rpc down'
+    );
   });
 
   it('throws when the result cannot be decoded', async () => {
-    const read = createDelegationStateReader(
+    const reader = createDelegationStateReader(
       jest.fn().mockResolvedValue('0x'),
       CONTRACT
     );
-    await expect(
-      read({
-        block: 1,
-        delegator: DELEGATOR,
-        collection: COLLECTION,
-        useCase: 2
-      })
-    ).rejects.toThrow();
+    await expect(reader.readDelegates(query)).rejects.toThrow();
+    await expect(reader.readEntry(query, DELEGATE_A, 0)).rejects.toThrow();
   });
 });
 
 describe('resolveRegistrationExpiries', () => {
   it('reads nothing when there are no registrations', async () => {
-    const readState = jest.fn();
-    await expect(
-      resolveRegistrationExpiries([], [], readState)
-    ).resolves.toEqual([]);
-    expect(readState).not.toHaveBeenCalled();
+    const reader = readerFor([]);
+    await expect(resolveRegistrationExpiries([], [], reader)).resolves.toEqual(
+      []
+    );
+    expect(reader.readDelegates).not.toHaveBeenCalled();
   });
 
   it('matches registrations in one block to the latest stored entries in log order', async () => {
-    const readState = jest.fn(async () => [
+    const reader = readerFor([
       entry(DELEGATE_A, 1000, false, 7),
       entry(DELEGATE_B, 5555),
       entry(DELEGATE_A, 2000, false, 8),
@@ -145,39 +210,70 @@ describe('resolveRegistrationExpiries', () => {
 
     const expiries = await resolveRegistrationExpiries(
       [
-        registration({ logIndex: 9, allTokens: true, tokenId: 0 }),
-        registration({ logIndex: 4, allTokens: false, tokenId: 8 }),
+        registration({ logIndex: 9, allTokens: true, tokenId: BigInt(5) }),
+        registration({ logIndex: 4, allTokens: false, tokenId: BigInt(8) }),
         registration({ logIndex: 6, delegate: DELEGATE_B })
       ],
       [],
-      readState
+      reader
     );
 
     expect(expiries).toEqual([3000, 2000, 5555]);
-    expect(readState).toHaveBeenCalledTimes(1);
-    expect(readState).toHaveBeenCalledWith({
+    expect(reader.readDelegates).toHaveBeenCalledTimes(1);
+    expect(reader.readDelegates).toHaveBeenCalledWith({
       block: 100,
       delegator: DELEGATOR,
       collection: COLLECTION,
       useCase: 2
     });
+    const positions = reader.readEntry.mock.calls
+      .map(([, delegate, index]) => `${delegate}:${index}`)
+      .sort((a, b) => a.localeCompare(b));
+    expect(positions).toEqual([
+      `${DELEGATE_A}:1`,
+      `${DELEGATE_A}:2`,
+      `${DELEGATE_B}:0`
+    ]);
   });
 
-  it('matches delegate addresses case-insensitively', async () => {
+  it('does not depend on the order of the delegate list', async () => {
+    const stored = [
+      entry(DELEGATE_A, 1000),
+      entry(DELEGATE_B, 2000),
+      entry(DELEGATE_A, 3000)
+    ];
     const expiries = await resolveRegistrationExpiries(
-      [registration({ delegate: DELEGATE_A.toLowerCase() })],
+      [registration()],
       [],
-      async () => [entry(DELEGATE_A, 1234)]
+      readerFor(stored, [DELEGATE_B, DELEGATE_A, DELEGATE_A])
+    );
+    expect(expiries).toEqual([3000]);
+  });
+
+  it('matches addresses case-insensitively', async () => {
+    const expiries = await resolveRegistrationExpiries(
+      [
+        registration({
+          delegate: DELEGATE_A.toLowerCase(),
+          delegator: DELEGATOR.toLowerCase()
+        })
+      ],
+      [],
+      readerFor([entry(DELEGATE_A, 1234)])
     );
     expect(expiries).toEqual([1234]);
   });
 
   it('reads each block, delegator, collection and use case separately', async () => {
     const queries: DelegationStateQuery[] = [];
-    const readState = jest.fn(async (query: DelegationStateQuery) => {
-      queries.push(query);
-      return [entry(DELEGATE_A, query.block * 10 + query.useCase)];
-    });
+    const reader: DelegationStateReader = {
+      readDelegates: async (query) => {
+        queries.push(query);
+        return [DELEGATE_A];
+      },
+      readEntry: async (query) =>
+        entry(DELEGATE_A, query.block * 10 + query.useCase)
+    };
 
     const expiries = await resolveRegistrationExpiries(
       [
@@ -186,7 +282,7 @@ describe('resolveRegistrationExpiries', () => {
         registration({ block: 101, useCase: 2 })
       ],
       [],
-      readState
+      reader
     );
 
     expect(expiries).toEqual([1002, 1003, 1012]);
@@ -194,25 +290,25 @@ describe('resolveRegistrationExpiries', () => {
   });
 
   it('returns null without reading for a registration revoked later in the same block', async () => {
-    const readState = jest.fn();
+    const reader = readerFor([]);
 
     const expiries = await resolveRegistrationExpiries(
       [registration({ logIndex: 1 })],
       [revocation({ logIndex: 2 })],
-      readState
+      reader
     );
 
     expect(expiries).toEqual([null]);
-    expect(readState).not.toHaveBeenCalled();
+    expect(reader.readDelegates).not.toHaveBeenCalled();
   });
 
   it('keeps a registration made after a revocation in the same block', async () => {
     const expiries = await resolveRegistrationExpiries(
-      [registration({ logIndex: 3 })],
+      [registration({ logIndex: 1 }), registration({ logIndex: 3 })],
       [revocation({ logIndex: 2 }), revocation({ block: 99, logIndex: 9 })],
-      async () => [entry(DELEGATE_A, 4321)]
+      readerFor([entry(DELEGATE_A, 4321)])
     );
-    expect(expiries).toEqual([4321]);
+    expect(expiries).toEqual([null, 4321]);
   });
 
   it('throws when the contract holds fewer registrations than the logs', async () => {
@@ -220,32 +316,53 @@ describe('resolveRegistrationExpiries', () => {
       resolveRegistrationExpiries(
         [registration({ logIndex: 1 }), registration({ logIndex: 2 })],
         [],
-        async () => [entry(DELEGATE_A, 1)]
+        readerFor([entry(DELEGATE_A, 1)])
       )
     ).rejects.toThrow('Expected 2 stored registration(s)');
   });
 
-  it('throws when the stored scope does not match the log', async () => {
+  it('throws when the stored registration does not match the log', async () => {
+    const mismatches: [RegistrationLogRef, DelegationStateEntry][] = [
+      [
+        registration({ allTokens: false, tokenId: BigInt(5) }),
+        entry(DELEGATE_A, 1, false, 6)
+      ],
+      [registration({ allTokens: true }), entry(DELEGATE_A, 1, false, 0)],
+      [
+        registration(),
+        entry(DELEGATE_A, 1, true, 0, getAddress('0x' + '9'.repeat(40)))
+      ],
+      [registration(), entry(DELEGATE_B, 1)]
+    ];
+    for (const [log, stored] of mismatches) {
+      await expect(
+        resolveRegistrationExpiries([log], [], {
+          readDelegates: async () => [DELEGATE_A],
+          readEntry: async () => stored
+        })
+      ).rejects.toThrow('does not match');
+    }
+  });
+
+  it('compares token ids beyond the safe integer range exactly', async () => {
+    // 2^60 + 1: Number() would round it.
+    const tokenId = BigInt('1152921504606846977');
     await expect(
       resolveRegistrationExpiries(
-        [registration({ allTokens: false, tokenId: 5 })],
+        [registration({ allTokens: false, tokenId })],
         [],
-        async () => [entry(DELEGATE_A, 1, false, 6)]
+        readerFor([entry(DELEGATE_A, 77, false, tokenId)])
       )
-    ).rejects.toThrow('does not match');
-    await expect(
-      resolveRegistrationExpiries(
-        [registration({ allTokens: true })],
-        [],
-        async () => [entry(DELEGATE_A, 1, false, 0)]
-      )
-    ).rejects.toThrow('does not match');
+    ).resolves.toEqual([77]);
   });
 
   it('propagates a failed read', async () => {
     await expect(
-      resolveRegistrationExpiries([registration()], [], async () => {
-        throw new Error('archive read failed');
+      resolveRegistrationExpiries([registration()], [], {
+        readDelegates: async () => [DELEGATE_A],
+        readEntry: async () => {
+          throw new Error('archive read failed');
+        }
       })
     ).rejects.toThrow('archive read failed');
   });
@@ -254,7 +371,7 @@ describe('resolveRegistrationExpiries', () => {
     const expiries = await resolveRegistrationExpiries(
       [registration()],
       [],
-      async () => [entry(DELEGATE_A, BigInt('0x' + 'f'.repeat(64)))]
+      readerFor([entry(DELEGATE_A, BigInt('0x' + 'f'.repeat(64)))])
     );
     expect(expiries).toEqual([NEVER_DATE]);
   });
@@ -262,12 +379,16 @@ describe('resolveRegistrationExpiries', () => {
   it('runs at most five state reads at a time', async () => {
     let inFlight = 0;
     let maxInFlight = 0;
-    const readState = async (query: DelegationStateQuery) => {
+    const track = async <T>(value: T): Promise<T> => {
       inFlight++;
       maxInFlight = Math.max(maxInFlight, inFlight);
       await new Promise((resolve) => setTimeout(resolve, 1));
       inFlight--;
-      return [entry(DELEGATE_A, query.block)];
+      return value;
+    };
+    const reader: DelegationStateReader = {
+      readDelegates: () => track([DELEGATE_A]),
+      readEntry: (query) => track(entry(DELEGATE_A, query.block))
     };
     const registrations = Array.from({ length: 12 }, (_, i) =>
       registration({ block: 200 + i })
@@ -276,7 +397,7 @@ describe('resolveRegistrationExpiries', () => {
     const expiries = await resolveRegistrationExpiries(
       registrations,
       [],
-      readState
+      reader
     );
 
     expect(expiries).toEqual(registrations.map((r) => r.block));
@@ -311,29 +432,34 @@ describe('resolveRegistrationExpiries', () => {
         // Simulate the contract: a registration appends to the delegate's
         // list, a revocation deletes it. Snapshot the state after each block.
         const stored = new Map<string, DelegationStateEntry[]>();
-        const stateAtBlock = new Map<number, DelegationStateEntry[]>();
+        const stateAtBlock = new Map<
+          number,
+          Map<string, DelegationStateEntry[]>
+        >();
         const registrations: RegistrationLogRef[] = [];
         const revocations: RevocationLogRef[] = [];
         const expected: (number | null)[] = [];
         for (const op of ordered) {
           if (op.kind === 'register') {
             const list = stored.get(op.delegate) ?? [];
-            list.push(
-              entry(
-                op.delegate,
-                op.expiry,
-                op.allTokens,
-                op.allTokens ? 0 : op.tokenId
-              )
+            stored.set(
+              op.delegate,
+              list.concat([
+                entry(
+                  op.delegate,
+                  op.expiry,
+                  op.allTokens,
+                  op.allTokens ? 0 : op.tokenId
+                )
+              ])
             );
-            stored.set(op.delegate, list);
             registrations.push(
               registration({
                 block: op.block,
                 logIndex: op.logIndex,
                 delegate: op.delegate,
                 allTokens: op.allTokens,
-                tokenId: op.tokenId
+                tokenId: BigInt(op.tokenId)
               })
             );
             const revokedLater = ordered.some(
@@ -354,18 +480,23 @@ describe('resolveRegistrationExpiries', () => {
               })
             );
           }
-          stateAtBlock.set(
-            op.block,
-            ([] as DelegationStateEntry[]).concat(
-              ...Array.from(stored.values())
-            )
-          );
+          stateAtBlock.set(op.block, new Map(stored));
         }
 
+        const state = (block: number) =>
+          stateAtBlock.get(block) ?? new Map<string, DelegationStateEntry[]>();
         const expiries = await resolveRegistrationExpiries(
           registrations,
           revocations,
-          async (query) => stateAtBlock.get(query.block) ?? []
+          {
+            readDelegates: async (query) =>
+              Array.from(state(query.block).entries()).reduce<string[]>(
+                (all, [delegate, list]) => all.concat(list.map(() => delegate)),
+                []
+              ),
+            readEntry: async (query, delegate, index) =>
+              state(query.block).get(getAddress(delegate))![index]
+          }
         );
         expect(expiries).toEqual(expected);
       })

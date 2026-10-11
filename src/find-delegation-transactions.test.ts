@@ -1,4 +1,11 @@
-import { getAddress, Interface } from 'ethers';
+import {
+  concat,
+  getAddress,
+  Interface,
+  keccak256,
+  toBeHex,
+  zeroPadValue
+} from 'ethers';
 import { DELEGATIONS_IFACE } from '@/abis/delegations';
 import {
   DELEGATION_ALL_ADDRESS,
@@ -17,7 +24,6 @@ jest.mock('@/alchemy', () => ({
 const { getAlchemyInstance: mockGetAlchemyInstance } =
   jest.requireMock('@/alchemy');
 
-const STATE_VIEW = 'retrieveDelegationAddressesTokensIDsandExpiredDates';
 const SAFE = getAddress('0x5afe00000000000000000000000000000000a5fe');
 const COLD = getAddress('0xc01d000000000000000000000000000000000c01');
 const MANAGER = getAddress('0x3a3a000000000000000000000000000000003a3a');
@@ -38,6 +44,15 @@ type StoredEntry = [
   tokenId: bigint
 ];
 
+interface DelegatorState {
+  block: number;
+  delegator: string;
+  collection: string;
+  useCase: number;
+  // In registration order, as the contract appends them.
+  entries: StoredEntry[];
+}
+
 const alchemyMock = {
   core: {
     getLogs: jest.fn(),
@@ -48,20 +63,9 @@ const alchemyMock = {
   }
 };
 
-// Contract state per (block, delegator, collection, use case), as the
-// retrieveDelegationAddressesTokensIDsandExpiredDates view returns it.
-let contractState: Map<string, StoredEntry[]>;
-
-function stateKey(
-  block: number,
-  delegator: string,
-  collection: string,
-  useCase: number | bigint
-) {
-  return [block, delegator, collection, useCase]
-    .map((v) => v.toString().toLowerCase())
-    .join('|');
-}
+// Contract state at the end of each block, per delegator, collection and
+// use case.
+let contractState: DelegatorState[];
 
 function setState(
   block: number,
@@ -70,7 +74,74 @@ function setState(
   useCase: number,
   entries: StoredEntry[]
 ) {
-  contractState.set(stateKey(block, delegator, collection, useCase), entries);
+  contractState.push({ block, delegator, collection, useCase, entries });
+}
+
+function same(a: string, b: string) {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+// abi.encodePacked(delegator, collection, delegate, useCase), built by hand.
+function globalHash(
+  delegator: string,
+  collection: string,
+  delegate: string,
+  useCase: number
+) {
+  return keccak256(
+    concat([
+      delegator,
+      collection,
+      delegate,
+      zeroPadValue(toBeHex(useCase), 32)
+    ])
+  );
+}
+
+function retrieveDelegationAddresses(blockTag: number, args: any[]) {
+  const [delegator, collection, useCase] = args;
+  const state = contractState.find(
+    (s) =>
+      s.block === blockTag &&
+      same(s.delegator, delegator) &&
+      same(s.collection, collection) &&
+      BigInt(s.useCase) === useCase
+  );
+  return DELEGATIONS_IFACE.encodeFunctionResult('retrieveDelegationAddresses', [
+    (state?.entries ?? []).map((e) => e[0])
+  ]);
+}
+
+function globalDelegationHashes(blockTag: number, args: any[]) {
+  const [hash, index] = args;
+  for (const state of contractState.filter((s) => s.block === blockTag)) {
+    for (const [delegate] of state.entries) {
+      if (
+        globalHash(
+          state.delegator,
+          state.collection,
+          delegate,
+          state.useCase
+        ) !== hash
+      ) {
+        continue;
+      }
+      const own = state.entries.filter((e) => same(e[0], delegate));
+      const stored = own[Number(index)];
+      if (!stored) {
+        throw new Error('execution reverted');
+      }
+      return DELEGATIONS_IFACE.encodeFunctionResult('globalDelegationHashes', [
+        state.delegator,
+        stored[0],
+        BigInt(1_700_000_000),
+        stored[1],
+        stored[2],
+        stored[3]
+      ]);
+    }
+  }
+  throw new Error('execution reverted');
 }
 
 let nextLogIndex = 0;
@@ -110,27 +181,32 @@ function safeExecTransaction(innerData: string) {
   ]);
 }
 
+function stateCalls() {
+  return alchemyMock.core.call.mock.calls.map(
+    ([tx, blockTag]) =>
+      `${DELEGATIONS_IFACE.parseTransaction({ data: tx.data })?.name}@${blockTag}`
+  );
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   nextLogIndex = 0;
-  contractState = new Map();
+  contractState = [];
   mockGetAlchemyInstance.mockReturnValue(alchemyMock);
   alchemyMock.core.getBlock.mockResolvedValue({ timestamp: 123 });
   alchemyMock.core.getBlockNumber.mockResolvedValue(500);
   alchemyMock.core.call.mockImplementation(
     async (tx: { to: string; data: string }, blockTag: number) => {
       expect(tx.to).toBe(DELEGATION_CONTRACT.contract);
-      const [delegator, collection, useCase] =
-        DELEGATIONS_IFACE.decodeFunctionData(STATE_VIEW, tx.data);
-      const entries =
-        contractState.get(stateKey(blockTag, delegator, collection, useCase)) ??
-        [];
-      return DELEGATIONS_IFACE.encodeFunctionResult(STATE_VIEW, [
-        entries.map((e) => e[0]),
-        entries.map((e) => e[1]),
-        entries.map((e) => e[2]),
-        entries.map((e) => e[3])
-      ]);
+      const parsed = DELEGATIONS_IFACE.parseTransaction({ data: tx.data });
+      const args = parsed ? Array.from(parsed.args) : [];
+      if (parsed?.name === 'retrieveDelegationAddresses') {
+        return retrieveDelegationAddresses(blockTag, args);
+      }
+      if (parsed?.name === 'globalDelegationHashes') {
+        return globalDelegationHashes(blockTag, args);
+      }
+      throw new Error(`Unexpected call ${parsed?.name}`);
     }
   );
 });
@@ -183,8 +259,10 @@ describe('findDelegationTransactions registration scope', () => {
         token_id: 42
       }
     ]);
-    expect(alchemyMock.core.call).toHaveBeenCalledTimes(1);
-    expect(alchemyMock.core.call.mock.calls[0][1]).toBe(10);
+    expect(stateCalls()).toEqual([
+      'retrieveDelegationAddresses@10',
+      'globalDelegationHashes@10'
+    ]);
     expect(alchemyMock.core.getTransaction).not.toHaveBeenCalled();
   });
 
@@ -246,8 +324,15 @@ describe('findDelegationTransactions registration scope', () => {
       [HOT_2, GRADIENTS, USE_CASE_MINTING, 2_000_000_000, true, 0],
       [HOT_3, DELEGATION_ALL_ADDRESS, 3, 64060588800, true, 0]
     ]);
-    // One read per delegator, collection and use case in the block.
-    expect(alchemyMock.core.call).toHaveBeenCalledTimes(3);
+    // One delegate-list read per delegator, collection and use case in the
+    // block, then one read per registration.
+    const calls = stateCalls();
+    expect(
+      calls.filter((c) => c === 'retrieveDelegationAddresses@11')
+    ).toHaveLength(3);
+    expect(calls.filter((c) => c === 'globalDelegationHashes@11')).toHaveLength(
+      4
+    );
     expect(alchemyMock.core.getTransaction).not.toHaveBeenCalled();
   });
 
@@ -354,6 +439,37 @@ describe('findDelegationTransactions registration scope', () => {
       }
     ]);
     expect(alchemyMock.core.call).not.toHaveBeenCalled();
+  });
+
+  it('skips a token-specific registration whose token id does not fit the column', async () => {
+    alchemyMock.core.getLogs.mockResolvedValue([
+      log(16, 'RegisterDelegation', [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_1,
+        USE_CASE_MINTING,
+        false,
+        BigInt('1152921504606846977')
+      ]),
+      log(16, 'RegisterDelegation', [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_2,
+        USE_CASE_MINTING,
+        false,
+        BigInt(2_147_483_647)
+      ])
+    ]);
+    setState(16, COLD, MEMES_CONTRACT, USE_CASE_MINTING, [
+      [HOT_1, BigInt(1_800_000_000), false, BigInt('1152921504606846977')],
+      [HOT_2, BigInt(1_900_000_000), false, BigInt(2_147_483_647)]
+    ]);
+
+    const result = await findDelegationTransactions(1, 20);
+
+    expect(
+      result.registrations.map((r) => [r.wallet2, r.expiry, r.token_id])
+    ).toEqual([[HOT_2, 1_900_000_000, 2_147_483_647]]);
   });
 
   it('fails instead of storing defaults when the state read fails', async () => {

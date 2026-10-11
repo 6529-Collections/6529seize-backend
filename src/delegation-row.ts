@@ -1,5 +1,8 @@
 import { Delegation, DelegationEvent } from '@/entities/IDelegation';
 
+/** Largest token id the delegations.token_id column (signed INT) can hold. */
+export const MAX_STORABLE_DELEGATION_TOKEN_ID = BigInt(2_147_483_647);
+
 /**
  * Builds the stored row for a delegation registration. Values the event does
  * not carry are left unset so the column defaults apply (never expires, all

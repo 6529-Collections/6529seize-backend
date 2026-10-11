@@ -13,6 +13,7 @@ import {
   resolveRegistrationExpiries,
   RevocationLogRef
 } from '@/delegation-registration-expiry';
+import { MAX_STORABLE_DELEGATION_TOKEN_ID } from '@/delegation-row';
 import { LogDescription } from 'ethers';
 import { DELEGATIONS_IFACE } from './abis/delegations';
 import {
@@ -103,14 +104,25 @@ function collectRegistration(entry: DelegationLog, scan: DelegationScan) {
   }
   const allTokens = Boolean(parsed.args.allTokens);
   // The contract stores token 0 for all-token delegations.
-  const tokenId = allTokens ? 0 : Number(parsed.args._tokenId);
+  const tokenId = allTokens ? BigInt(0) : BigInt(parsed.args._tokenId);
+  if (tokenId > MAX_STORABLE_DELEGATION_TOKEN_ID) {
+    // Any caller can pick the token id. One the token_id column cannot hold
+    // would fail the insert, or be stored as a different token, so it is
+    // skipped rather than stalling the loop or widening the delegation.
+    logger.warn(
+      `[SKIPPING REGISTRATION] [TOKEN ID ${tokenId} DOES NOT FIT token_id] [BLOCK ${log.blockNumber}] [LOG ${log.logIndex}]`
+    );
+    return;
+  }
   const registration: DelegationEvent = {
     ...e,
     use_case: useCase,
     collection: collection,
     all_tokens: allTokens,
-    token_id: tokenId
+    token_id: Number(tokenId)
   };
+  // The same object is held in registrations and pendingRegistrations:
+  // attachRegistrationExpiries sets its expiry and filters by identity.
   scan.registrations.push(registration);
   scan.pendingRegistrations.push({
     event: registration,
