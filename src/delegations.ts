@@ -43,6 +43,9 @@ const REVOKE_EVENTS = new Set([
 
 // A long range (a backfill from the deployment block) is fetched in
 // consecutive chunks, one at a time, so no single response grows unbounded.
+// 500k blocks suits this low-traffic contract: its busiest 500k-block window
+// so far has 1,448 logs, far below provider result caps. A busier contract
+// would need smaller chunks. A provider error fails the scan before any write.
 const LOG_FETCH_CHUNK_BLOCKS = 500_000;
 
 const toHexBlock = (block: number) => `0x${block.toString(16)}`;

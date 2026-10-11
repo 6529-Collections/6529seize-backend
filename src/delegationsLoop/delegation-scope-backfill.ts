@@ -178,11 +178,26 @@ export function rowFromRegistration(event: DelegationEvent): DelegationRow {
   };
 }
 
+/** True when a scan from `fromBlock` covers the contract's whole history. */
+export function isFullHistory(fromBlock: number): boolean {
+  return fromBlock <= DELEGATION_CONTRACT_DEPLOYMENT_BLOCK;
+}
+
 /**
- * The rows the delegations loop would hold for blocks up to the end of the
- * scan: rows before `fromBlock` as they are, plus every scanned registration
- * (the last one wins on a shared key), minus every row that a revocation in
- * a later block removed.
+ * The non-999 rows the delegations loop would hold for blocks up to the end
+ * of the scan.
+ *
+ * - Every scanned registration gives a row; the last one in log order wins
+ *   on a shared key.
+ * - Full history (`fromBlock` at or before the deployment block): nothing
+ *   else. Every current row the scan does not produce is deleted.
+ * - Partial range: current rows below `fromBlock` are carried forward as
+ *   stored. They are not re-validated. At or after `fromBlock`, only scanned
+ *   rows exist, so any other current row there is deleted.
+ * - Finally, any row with a revocation for its pair in a strictly later
+ *   block is removed. A revocation deletes every registration the delegator
+ *   then holds for that delegate, collection and use case. The scan has
+ *   already dropped registrations revoked later in their own block.
  */
 export function buildExpectedRows(input: {
   fromBlock: number;
@@ -191,9 +206,11 @@ export function buildExpectedRows(input: {
   revocations: DelegationEvent[];
 }): DelegationRow[] {
   const rows = new Map<string, DelegationRow>();
-  for (const row of input.currentRows) {
-    if (row.block < input.fromBlock) {
-      rows.set(rowKey(row), row);
+  if (!isFullHistory(input.fromBlock)) {
+    for (const row of input.currentRows) {
+      if (row.block < input.fromBlock) {
+        rows.set(rowKey(row), row);
+      }
     }
   }
   for (const registration of input.registrations) {
@@ -461,6 +478,11 @@ export async function runDelegationScopeBackfill(
   logger.info(
     `[START] [${config.mode.toUpperCase()}] [FROM BLOCK ${config.fromBlock}] [TO BLOCK ${toBlock}]`
   );
+  if (!isFullHistory(config.fromBlock)) {
+    logger.warn(
+      `[PARTIAL RANGE] [ROWS BEFORE BLOCK ${config.fromBlock} ARE KEPT AS STORED AND NOT RE-VALIDATED, EXCEPT WHERE A SCANNED REVOCATION REMOVES THEM]`
+    );
+  }
   const scan = await deps.scan(config.fromBlock, toBlock);
   // Rows after the last processed block belong to the normal loop.
   const currentRows = (await deps.readRows()).filter(

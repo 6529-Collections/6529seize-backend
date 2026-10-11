@@ -14,6 +14,7 @@ import {
   buildExpectedRows,
   DelegationRow,
   diffDelegationRows,
+  isFullHistory,
   readScopeBackfillConfig,
   runDelegationScopeBackfill,
   ScopeBackfillDeps
@@ -256,17 +257,89 @@ describe('expected rows and diff', () => {
     expect(diff.unchanged).toBe(1);
   });
 
-  it('keeps rows before the start block unless a scanned revocation removed them', () => {
-    const current = [
-      row({ block: 5, to_address: HOT_1 }),
-      row({ block: 5, to_address: HOT_2 })
-    ];
-    const diff = diffDelegationRows(
-      current,
-      expectedFrom(current, [], [revocation({ block: 50, wallet2: HOT_2 })], 20)
-    );
-    expect(diff.deletes).toEqual([current[1]]);
-    expect(diff.unchanged).toBe(1);
+  describe('rules by range', () => {
+    const DEPLOYED = DELEGATION_CONTRACT_DEPLOYMENT_BLOCK;
+    const PARTIAL_FROM = DEPLOYED + 1_000_000;
+
+    it('treats a start at or before the deployment block as full history', () => {
+      expect(isFullHistory(DEPLOYED)).toBe(true);
+      expect(isFullHistory(1)).toBe(true);
+      expect(isFullHistory(DEPLOYED + 1)).toBe(false);
+    });
+
+    it('full history: deletes every current row the scan does not produce', () => {
+      const current = [
+        row({ block: 5 }),
+        row({ block: DEPLOYED + 10, to_address: HOT_2 }),
+        row({ block: DEPLOYED + 20, to_address: HOT_3 })
+      ];
+      const diff = diffDelegationRows(
+        current,
+        expectedFrom(
+          current,
+          [registration({ block: DEPLOYED + 20, wallet2: HOT_3 })],
+          [],
+          DEPLOYED
+        )
+      );
+      expect(diff.deletes).toEqual([current[0], current[1]]);
+      expect(diff.unchanged).toBe(1);
+    });
+
+    it('partial range: keeps rows below the start block as stored, without re-validating them', () => {
+      const wrongButOld = row({ block: PARTIAL_FROM - 1, token_id: 9 });
+      const diff = diffDelegationRows(
+        [wrongButOld],
+        expectedFrom([wrongButOld], [], [], PARTIAL_FROM)
+      );
+      expect(diff.unchanged).toBe(1);
+      expect(diff.deletes).toEqual([]);
+    });
+
+    it('partial range: deletes a row below the start block that a scanned revocation removed', () => {
+      const current = [
+        row({ block: PARTIAL_FROM - 5, to_address: HOT_1 }),
+        row({ block: PARTIAL_FROM - 5, to_address: HOT_2 })
+      ];
+      const diff = diffDelegationRows(
+        current,
+        expectedFrom(
+          current,
+          [],
+          [revocation({ block: PARTIAL_FROM + 5, wallet2: HOT_2 })],
+          PARTIAL_FROM
+        )
+      );
+      expect(diff.deletes).toEqual([current[1]]);
+      expect(diff.unchanged).toBe(1);
+    });
+
+    it('partial range: deletes a current row at or after the start block that the scan does not produce', () => {
+      const current = [
+        row({ block: PARTIAL_FROM }),
+        row({ block: PARTIAL_FROM + 1, to_address: HOT_2 }),
+        row({ block: PARTIAL_FROM + 2, to_address: HOT_3 })
+      ];
+      const diff = diffDelegationRows(
+        current,
+        expectedFrom(
+          current,
+          [
+            registration({
+              block: PARTIAL_FROM + 2,
+              wallet2: HOT_3,
+              expiry: 7
+            })
+          ],
+          [],
+          PARTIAL_FROM
+        )
+      );
+      expect(diff.deletes).toEqual([current[0], current[1]]);
+      expect(diff.updates.map((u) => [u.current.block, u.fields])).toEqual([
+        [PARTIAL_FROM + 2, ['expiry']]
+      ]);
+    });
   });
 
   // A revocation deletes every registration the delegator holds for that
