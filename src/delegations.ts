@@ -81,7 +81,7 @@ async function attachBlockTimestamps(
       const timestamp = blocks[index]?.timestamp;
       if (typeof timestamp !== 'number') {
         logger.error(`[MISSING TIMESTAMP FOR BLOCK ${blockNumber}]`);
-        throw new Error(`Missing timestamp for block ${blockNumber}`);
+        throw new TypeError(`Missing timestamp for block ${blockNumber}`);
       }
       timestamps.set(blockNumber, timestamp);
     });
@@ -105,7 +105,7 @@ export async function fetchBlockTimestamp(
   const block =
     await getAlchemyInstance(getNetwork()).core.getBlock(blockNumber);
   if (typeof block?.timestamp !== 'number') {
-    throw new Error(`Missing timestamp for block ${blockNumber}`);
+    throw new TypeError(`Missing timestamp for block ${blockNumber}`);
   }
   return block.timestamp;
 }

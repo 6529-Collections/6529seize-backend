@@ -52,84 +52,96 @@ export class ConsolidationTools {
         )
     );
 
-    const usedWallets = new Set<string>();
-    const clusters: string[][] = [];
-
     // Create a quick lookup of all direct consolidations
     const linksByKey = new Map<string, ConsolidationLink>();
     for (const c of consolidations) {
       linksByKey.set(this.buildConsolidationKey([c.wallet1, c.wallet2]), c);
     }
 
-    // Convert consolidations into a queue
+    const usedWallets = new Set<string>();
+    const clusters: string[][] = [];
     const queue = [...consolidations];
 
     while (queue.length > 0) {
       const current = queue.shift()!;
-      const { wallet1, wallet2 } = current;
-
-      if (usedWallets.has(wallet1) || usedWallets.has(wallet2)) {
+      if (
+        usedWallets.has(current.wallet1) ||
+        usedWallets.has(current.wallet2)
+      ) {
         continue;
       }
-
-      const cluster = new Set<string>();
-      cluster.add(wallet1);
-      cluster.add(wallet2);
-
-      let changed = true;
-
-      // Keep trying to expand this cluster
-      while (changed && cluster.size < CONSOLIDATIONS_LIMIT) {
-        changed = false;
-
-        for (let i = 0; i < queue.length; i++) {
-          const candidate = queue[i];
-          const { wallet1: w1, wallet2: w2 } = candidate;
-
-          let newWallet: string | null = null;
-
-          if (cluster.has(w1) && !cluster.has(w2) && !usedWallets.has(w2)) {
-            newWallet = w2;
-          } else if (
-            cluster.has(w2) &&
-            !cluster.has(w1) &&
-            !usedWallets.has(w1)
-          ) {
-            newWallet = w1;
-          }
-
-          if (newWallet && this.canJoin(cluster, newWallet, linksByKey)) {
-            cluster.add(newWallet);
-            queue.splice(i, 1);
-            changed = true;
-            break;
-          }
-        }
-      }
-
-      // finalize cluster
-      const clusterArray = Array.from(cluster);
-      for (const w of clusterArray) {
+      const cluster = this.growCluster(current, queue, usedWallets, linksByKey);
+      for (const w of cluster) {
         usedWallets.add(w);
       }
-      clusters.push(clusterArray);
+      clusters.push(cluster);
     }
 
-    // Any wallets left out entirely? Add them as singletons.
-    const allWallets = new Set<string>();
+    // Any wallets left out entirely are added as singletons.
     for (const c of consolidations) {
-      allWallets.add(c.wallet1);
-      allWallets.add(c.wallet2);
-    }
-
-    for (const w of Array.from(allWallets)) {
-      if (!usedWallets.has(w)) {
-        clusters.push([w]);
-        usedWallets.add(w);
+      for (const w of [c.wallet1, c.wallet2]) {
+        if (!usedWallets.has(w)) {
+          clusters.push([w]);
+          usedWallets.add(w);
+        }
       }
     }
 
     return clusters;
+  }
+
+  /**
+   * Starts a cluster from a link and keeps adding the wallet of the first
+   * queued link that can join, until none can or the limit is reached. Links
+   * that add a wallet are removed from the queue.
+   */
+  private growCluster(
+    seed: ConsolidationLink,
+    queue: ConsolidationLink[],
+    usedWallets: Set<string>,
+    linksByKey: Map<string, ConsolidationLink>
+  ): string[] {
+    const cluster = new Set<string>([seed.wallet1, seed.wallet2]);
+    while (cluster.size < CONSOLIDATIONS_LIMIT) {
+      const index = queue.findIndex((candidate) => {
+        const newWallet = this.getJoiningWallet(
+          cluster,
+          candidate,
+          usedWallets
+        );
+        return !!newWallet && this.canJoin(cluster, newWallet, linksByKey);
+      });
+      if (index === -1) {
+        break;
+      }
+      cluster.add(this.getJoiningWallet(cluster, queue[index], usedWallets)!);
+      queue.splice(index, 1);
+    }
+    return Array.from(cluster);
+  }
+
+  /** The wallet a link would add to the cluster, if it adds an unused one. */
+  private getJoiningWallet(
+    cluster: Set<string>,
+    link: ConsolidationLink,
+    usedWallets: Set<string>
+  ): string | null {
+    const { wallet1, wallet2 } = link;
+    if (
+      cluster.has(wallet1) &&
+      !cluster.has(wallet2) &&
+      !usedWallets.has(wallet2)
+    ) {
+      return wallet2;
+    }
+    if (
+      cluster.has(wallet2) &&
+      !cluster.has(wallet1) &&
+      !usedWallets.has(wallet1)
+    ) {
+      return wallet1;
+    }
+    return null;
   }
 
   public buildConsolidationKey(wallets: string[]): string {
