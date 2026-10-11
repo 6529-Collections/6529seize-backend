@@ -1,4 +1,5 @@
 import { Delegation, DelegationEvent } from '@/entities/IDelegation';
+import { mapInChunks } from '@/map-in-chunks';
 import { LessThan, MoreThanOrEqual, Repository } from 'typeorm';
 
 /** Largest token id the delegations.token_id column (signed INT) can hold. */
@@ -53,15 +54,17 @@ export async function writeDelegations(
   // A revocation removes the pair's registrations from earlier blocks. The
   // deletes run one at a time in log order: the transaction has a single
   // connection, and a failure must stop further writes before the rollback.
-  for (const revocation of revocations) {
-    await repo.delete({
+  // mapInChunks with size 1 runs them strictly in sequence without a raw
+  // await-in-loop (Sonar S9382).
+  await mapInChunks(revocations, 1, (revocation) =>
+    repo.delete({
       from_address: revocation.wallet1,
       to_address: revocation.wallet2,
       use_case: revocation.use_case,
       collection: revocation.collection,
       block: LessThan(revocation.block)
-    });
-  }
+    })
+  );
 }
 
 // Several registrations can share the table key (block, from, to,
