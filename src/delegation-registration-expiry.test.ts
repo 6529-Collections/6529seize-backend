@@ -10,7 +10,8 @@ import {
   DelegationStateReader,
   RegistrationLogRef,
   resolveRegistrationExpiries,
-  RevocationLogRef
+  RevocationLogRef,
+  toExpirySeconds
 } from '@/delegation-registration-expiry';
 
 const CONTRACT = '0x2202CB9c00487e7e8EF21e6d8E914B32e709f43d';
@@ -188,6 +189,27 @@ describe('createDelegationStateReader', () => {
     );
     await expect(reader.readDelegates(query)).rejects.toThrow();
     await expect(reader.readEntry(query, DELEGATE_A, 0)).rejects.toThrow();
+  });
+});
+
+describe('toExpirySeconds', () => {
+  it('reads 0 as no expiry', () => {
+    expect(toExpirySeconds(BigInt(0))).toBe(NEVER_DATE);
+  });
+
+  it('keeps small and real expiries as they are', () => {
+    expect(toExpirySeconds(BigInt(1))).toBe(1);
+    expect(toExpirySeconds(BigInt(1_714_521_600))).toBe(1_714_521_600);
+    expect(toExpirySeconds(BigInt(NEVER_DATE))).toBe(NEVER_DATE);
+    expect(toExpirySeconds(BigInt(Number.MAX_SAFE_INTEGER))).toBe(
+      Number.MAX_SAFE_INTEGER
+    );
+  });
+
+  it('treats values beyond the safe integer range as never expiring', () => {
+    expect(toExpirySeconds(BigInt(Number.MAX_SAFE_INTEGER) + BigInt(1))).toBe(
+      NEVER_DATE
+    );
   });
 });
 
@@ -418,6 +440,18 @@ describe('resolveRegistrationExpiries', () => {
       readerFor([entry(DELEGATE_A, BigInt('0x' + 'f'.repeat(64)))])
     );
     expect(expiries).toEqual([NEVER_DATE]);
+  });
+
+  it('reads an on-chain expiry of 0 as never expiring and keeps real expiries', async () => {
+    const expiries = await resolveRegistrationExpiries(
+      [
+        registration({ logIndex: 1 }),
+        registration({ logIndex: 2, delegate: DELEGATE_B })
+      ],
+      [],
+      readerFor([entry(DELEGATE_A, 0), entry(DELEGATE_B, 5)])
+    );
+    expect(expiries).toEqual([NEVER_DATE, 5]);
   });
 
   it('runs at most five state reads at a time', async () => {

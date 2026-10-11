@@ -657,7 +657,7 @@ describe('runDelegationScopeBackfill', () => {
           )
         ],
         registrations: [
-          registration({ block: 10, wallet1: SAFE, expiry: 0 }),
+          registration({ block: 10, wallet1: SAFE, expiry: 1 }),
           registration({ block: 11, wallet2: HOT_2, expiry: 2_000 }),
           registration({
             block: 12,
@@ -686,7 +686,7 @@ describe('runDelegationScopeBackfill', () => {
     });
     expect(report.diff.updates).toHaveLength(3);
     expect(report.diff.deletes).toHaveLength(2);
-    // Expiry 0 and 2,000 are in the past; both deleted rows were active.
+    // Expiries 1 and 2,000 are in the past; both deleted rows were active.
     expect(report.deactivates).toBe(4);
     expect(report.activates).toBe(0);
     expect(d.getTransaction).toHaveBeenCalledTimes(3);

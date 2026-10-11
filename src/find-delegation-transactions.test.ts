@@ -11,6 +11,7 @@ import {
   DELEGATION_ALL_ADDRESS,
   DELEGATION_CONTRACT,
   MEMES_CONTRACT,
+  NEVER_DATE,
   USE_CASE_CONSOLIDATION,
   USE_CASE_MINTING,
   USE_CASE_SUB_DELEGATION
@@ -636,5 +637,134 @@ describe('scope backfill over the real scan', () => {
     expect(report.diff.updates.map((u) => [u.current.block, u.fields])).toEqual(
       [[20, ['all_tokens']]]
     );
+  });
+});
+
+describe('an on-chain expiry of 0 means no expiry', () => {
+  it('stores never-expiring for a Safe-signed registration with expiry 0', async () => {
+    alchemyMock.core.getTransaction.mockResolvedValue({
+      to: SAFE,
+      data: safeExecTransaction(
+        DELEGATIONS_IFACE.encodeFunctionData('registerDelegationAddress', [
+          DELEGATION_ALL_ADDRESS,
+          HOT_1,
+          BigInt(0),
+          1,
+          true,
+          BigInt(0)
+        ])
+      )
+    });
+    alchemyMock.core.getLogs.mockResolvedValue([
+      log(50, 'RegisterDelegation', [
+        SAFE,
+        DELEGATION_ALL_ADDRESS,
+        HOT_1,
+        1,
+        true,
+        BigInt(0)
+      ])
+    ]);
+    setState(50, SAFE, DELEGATION_ALL_ADDRESS, 1, [
+      [HOT_1, BigInt(0), true, BigInt(0)]
+    ]);
+
+    const result = await findDelegationTransactions(1, 60);
+
+    expect(result.registrations.map((r) => r.expiry)).toEqual([NEVER_DATE]);
+  });
+
+  it('stores never-expiring for a direct registration with expiry 0', async () => {
+    alchemyMock.core.getLogs.mockResolvedValue([
+      log(51, 'RegisterDelegation', [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_1,
+        USE_CASE_MINTING,
+        false,
+        BigInt(4)
+      ])
+    ]);
+    setState(51, COLD, MEMES_CONTRACT, USE_CASE_MINTING, [
+      [HOT_1, BigInt(0), false, BigInt(4)]
+    ]);
+
+    const result = await findDelegationTransactions(1, 60);
+
+    expect(
+      result.registrations.map((r) => [r.expiry, r.all_tokens, r.token_id])
+    ).toEqual([[NEVER_DATE, false, 4]]);
+  });
+
+  it('reads 0 as never for a batch item and keeps a small positive expiry on another', async () => {
+    alchemyMock.core.getLogs.mockResolvedValue([
+      log(
+        52,
+        'RegisterDelegation',
+        [COLD, MEMES_CONTRACT, HOT_1, USE_CASE_MINTING, true, BigInt(0)],
+        '0xba7c4'
+      ),
+      log(
+        52,
+        'RegisterDelegation',
+        [COLD, MEMES_CONTRACT, HOT_2, USE_CASE_MINTING, true, BigInt(0)],
+        '0xba7c4'
+      )
+    ]);
+    setState(52, COLD, MEMES_CONTRACT, USE_CASE_MINTING, [
+      [HOT_1, BigInt(0), true, BigInt(0)],
+      [HOT_2, BigInt(5), true, BigInt(0)]
+    ]);
+
+    const result = await findDelegationTransactions(1, 60);
+
+    expect(result.registrations.map((r) => [r.wallet2, r.expiry])).toEqual([
+      [HOT_1, NEVER_DATE],
+      [HOT_2, 5]
+    ]);
+  });
+
+  it('leaves a stored never-expiring row unchanged in the backfill when the chain says 0', async () => {
+    alchemyMock.core.getLogs.mockResolvedValue([
+      log(53, 'RegisterDelegation', [
+        SAFE,
+        DELEGATION_ALL_ADDRESS,
+        HOT_1,
+        1,
+        true,
+        BigInt(0)
+      ])
+    ]);
+    setState(53, SAFE, DELEGATION_ALL_ADDRESS, 1, [
+      [HOT_1, BigInt(0), true, BigInt(0)]
+    ]);
+    const applyDiff = jest.fn(async () => undefined);
+
+    const report = await runDelegationScopeBackfill(
+      { mode: 'apply', fromBlock: 1 },
+      {
+        latestProcessedBlock: async () => 60,
+        scan: scanDelegationLogs,
+        readRows: async () => [
+          {
+            block: 53,
+            from_address: SAFE,
+            to_address: HOT_1,
+            collection: DELEGATION_ALL_ADDRESS,
+            use_case: 1,
+            expiry: NEVER_DATE,
+            all_tokens: true,
+            token_id: 0
+          }
+        ],
+        getTransaction: fetchDelegationTransaction,
+        applyDiff,
+        nowSeconds: () => 1_800_000_000
+      }
+    );
+
+    expect(report.diff.unchanged).toBe(1);
+    expect(report.deactivates).toBe(0);
+    expect(applyDiff).not.toHaveBeenCalled();
   });
 });

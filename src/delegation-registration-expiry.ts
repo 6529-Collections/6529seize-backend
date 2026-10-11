@@ -295,10 +295,24 @@ function matchesRegistration(
   return registration.allTokens || entry.tokenId === registration.tokenId;
 }
 
-// Expiry dates beyond the safe integer range cannot be stored exactly; they
-// are far past any meaningful date, so they are treated as never expiring.
-function toExpirySeconds(expiry: bigint): number {
-  return expiry > BigInt(Number.MAX_SAFE_INTEGER) ? NEVER_DATE : Number(expiry);
+/**
+ * The stored expiry, in Unix seconds, for a registration's on-chain expiry.
+ *
+ * - 0 means "no expiry" (NEVER_DATE). The contract's active checks would
+ *   treat 0 as already expired, but nobody registers an already-expired
+ *   delegation, so 6529 reads 0 as no expiry. The old indexer gave the same
+ *   result by accident.
+ * - Values beyond the safe integer range cannot be stored exactly and are
+ *   far past any meaningful date, so they are never expiring too.
+ *
+ * Every registration's expiry goes through here, in the delegations loop and
+ * in the scope backfill.
+ */
+export function toExpirySeconds(expiry: bigint): number {
+  if (expiry === BigInt(0) || expiry > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return NEVER_DATE;
+  }
+  return Number(expiry);
 }
 
 function registrationKey(ref: RegistrationLogRef | RevocationLogRef): string {
