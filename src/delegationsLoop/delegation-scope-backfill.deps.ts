@@ -2,7 +2,6 @@ import { USE_CASE_CONSOLIDATION } from '@/constants';
 import { fetchLatestNftDelegationBlock, getDataSource } from '@/db';
 import { fetchDelegationTransaction, scanDelegationLogs } from '@/delegations';
 import { Delegation } from '@/entities/IDelegation';
-import { mapInChunks } from '@/map-in-chunks';
 import { DataSource, Not } from 'typeorm';
 import {
   DelegationRow,
@@ -73,19 +72,19 @@ export async function applyScopeBackfillDiff(
   // further writes before the rollback starts.
   await dataSource.transaction(async (manager) => {
     const repo = manager.getRepository(Delegation);
-    await mapInChunks(sortByKey(diff.deletes), 1, (row) =>
-      repo.delete(primaryKey(row))
-    );
-    await mapInChunks(
-      sortByKey(diff.updates, (update) => update.current),
-      1,
-      ({ current, expected }) =>
-        repo.update(primaryKey(current), {
-          expiry: expected.expiry,
-          all_tokens: expected.all_tokens,
-          token_id: expected.token_id
-        })
-    );
+    for (const row of sortByKey(diff.deletes)) {
+      await repo.delete(primaryKey(row));
+    }
+    for (const { current, expected } of sortByKey(
+      diff.updates,
+      (update) => update.current
+    )) {
+      await repo.update(primaryKey(current), {
+        expiry: expected.expiry,
+        all_tokens: expected.all_tokens,
+        token_id: expected.token_id
+      });
+    }
     if (diff.inserts.length > 0) {
       await repo.save(sortByKey(diff.inserts).map(toEntity), {
         chunk: SAVE_CHUNK_SIZE

@@ -15,9 +15,10 @@ export async function mapInChunks<T, R>(
   for (let i = 0; i < items.length; i += size) {
     chunks.push(items.slice(i, i + size));
   }
-  return chunks.reduce<Promise<R[]>>(
-    async (done, chunk) =>
-      (await done).concat(await Promise.all(chunk.map(fn))),
-    Promise.resolve([])
-  );
+  const results: R[] = [];
+  await chunks.reduce<Promise<void>>(async (previous, chunk) => {
+    await previous;
+    results.push(...(await Promise.all(chunk.map(fn))));
+  }, Promise.resolve());
+  return results;
 }
