@@ -58,12 +58,57 @@ const getDelegationDetails = async (txHash: string) => {
   return null;
 };
 
+const BLOCK_TIMESTAMP_CONCURRENCY = 5;
+
+// The fourth-wallet gate compares these timestamps with the activation time,
+// so consolidation events are never returned without one: a failed or empty
+// lookup throws before anything is persisted, and the delegations loop retries
+// the whole scan.
+async function attachBlockTimestamps(
+  events: ConsolidationEvent[],
+  known: { block: number; timestamp: number }
+) {
+  const timestamps = new Map<number, number>([[known.block, known.timestamp]]);
+  const missing = Array.from(new Set(events.map((e) => e.block))).filter(
+    (blockNumber) => !timestamps.has(blockNumber)
+  );
+  for (let i = 0; i < missing.length; i += BLOCK_TIMESTAMP_CONCURRENCY) {
+    const chunk = missing.slice(i, i + BLOCK_TIMESTAMP_CONCURRENCY);
+    const blocks = await Promise.all(
+      chunk.map((blockNumber) => alchemy.core.getBlock(blockNumber))
+    );
+    chunk.forEach((blockNumber, index) => {
+      const timestamp = blocks[index]?.timestamp;
+      if (typeof timestamp !== 'number') {
+        logger.error(`[MISSING TIMESTAMP FOR BLOCK ${blockNumber}]`);
+        throw new TypeError(`Missing timestamp for block ${blockNumber}`);
+      }
+      timestamps.set(blockNumber, timestamp);
+    });
+  }
+  for (const event of events) {
+    event.timestamp = timestamps.get(event.block);
+  }
+}
+
 const getNetwork = () => {
   if (DELEGATION_CONTRACT.chain_id == sepolia.id) {
     return Network.ETH_SEPOLIA;
   }
   return Network.ETH_MAINNET;
 };
+
+// Used to rewind consolidation rows before replaying from a reset block.
+export async function fetchBlockTimestamp(
+  blockNumber: number
+): Promise<number> {
+  const block =
+    await getAlchemyInstance(getNetwork()).core.getBlock(blockNumber);
+  if (typeof block?.timestamp !== 'number') {
+    throw new TypeError(`Missing timestamp for block ${blockNumber}`);
+  }
+  return block.timestamp;
+}
 
 export const findDelegationTransactions = async (
   startingBlock: number,
@@ -164,6 +209,12 @@ export const findDelegationTransactions = async (
       }
     })
   );
+
+  // Filled in after collection so consolidation events keep their log order.
+  await attachBlockTimestamps(consolidations, {
+    block: latestBlock,
+    timestamp
+  });
 
   return {
     latestBlock: latestBlock,

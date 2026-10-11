@@ -41,7 +41,14 @@ export const ALCHEMY_SETTINGS = {
 
 export const INFURA_KEY = 'b496145d088a4fe5a5861a6db9ee2034';
 
-export const CONSOLIDATIONS_LIMIT = 3;
+export const CONSOLIDATIONS_LIMIT = 4;
+// Groups up to this size form exactly as they always have. A group can only
+// grow past it when one member registered every link in both directions at or
+// after the activation time below, so older registrations never form a group
+// of four on their own.
+export const CONSOLIDATIONS_UNGATED_LIMIT = 3;
+// 2026-10-15T00:00:00Z
+export const CONSOLIDATION_FOURTH_WALLET_ACTIVATION_TIMESTAMP = 1792022400;
 export const NEVER_DATE = 64060588800;
 
 export const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
