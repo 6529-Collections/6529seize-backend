@@ -119,6 +119,46 @@ describe('applyScopeBackfillDiff', () => {
       )
     ).rejects.toThrow('insert failed');
   });
+
+  it('writes one row at a time, in block order, and stops at the first failure', async () => {
+    const { dataSource, repo } = fakeDataSource();
+    const writes: string[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const track = async (label: string, fail = false) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      writes.push(label);
+      if (fail) {
+        throw new Error(`${label} failed`);
+      }
+      return { raw: [], affected: 1, generatedMaps: [] };
+    };
+    repo.delete.mockImplementation(((criteria: { block: number }) =>
+      track(`delete ${criteria.block}`)) as never);
+    repo.update.mockImplementation(((criteria: { block: number }) =>
+      track(`update ${criteria.block}`, criteria.block === 5)) as never);
+    const diff: DelegationRowDiff = {
+      inserts: [row({ block: 9 })],
+      deletes: [row({ block: 3 }), row({ block: 1 }), row({ block: 2 })],
+      updates: [7, 5, 6].map((block) => ({
+        current: row({ block }),
+        expected: row({ block, expiry: 1 }),
+        fields: ['expiry' as const]
+      })),
+      unchanged: 0
+    };
+
+    await expect(applyScopeBackfillDiff(diff, dataSource)).rejects.toThrow(
+      'update 5 failed'
+    );
+
+    expect(maxInFlight).toBe(1);
+    expect(writes).toEqual(['delete 1', 'delete 2', 'delete 3', 'update 5']);
+    expect(repo.save).not.toHaveBeenCalled();
+  });
 });
 
 describe('readDelegationRowsForBackfill', () => {

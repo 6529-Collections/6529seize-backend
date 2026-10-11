@@ -175,4 +175,40 @@ describe('writeDelegations', () => {
     expect(calls).toEqual([]);
     expect(repo.delete).not.toHaveBeenCalled();
   });
+
+  it('applies revocations one at a time, in log order, and stops at the first failure', async () => {
+    const { repo } = fakeRepo();
+    const deleted: number[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    (repo.delete as jest.Mock).mockImplementation(
+      async (criteria: { block: { value: number } }) => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        inFlight--;
+        deleted.push(criteria.block.value);
+        if (criteria.block.value === 14) {
+          throw new Error('delete failed');
+        }
+        return { raw: [], affected: 0 };
+      }
+    );
+
+    await expect(
+      writeDelegations(
+        repo,
+        undefined,
+        [],
+        [
+          revocation({ block: 12 }),
+          revocation({ block: 14 }),
+          revocation({ block: 13 })
+        ]
+      )
+    ).rejects.toThrow('delete failed');
+
+    expect(maxInFlight).toBe(1);
+    expect(deleted).toEqual([12, 14]);
+  });
 });

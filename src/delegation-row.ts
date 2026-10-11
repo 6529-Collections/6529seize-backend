@@ -1,4 +1,5 @@
 import { Delegation, DelegationEvent } from '@/entities/IDelegation';
+import { mapInChunks } from '@/map-in-chunks';
 import { LessThan, MoreThanOrEqual, Repository } from 'typeorm';
 
 /** Largest token id the delegations.token_id column (signed INT) can hold. */
@@ -51,18 +52,16 @@ export async function writeDelegations(
     await repo.save(rows, { chunk: SAVE_CHUNK_SIZE });
   }
   // A revocation removes the pair's registrations from earlier blocks. The
-  // deletes do not depend on each other, and the transaction's connection
-  // runs them one at a time.
-  await Promise.all(
-    revocations.map((revocation) =>
-      repo.delete({
-        from_address: revocation.wallet1,
-        to_address: revocation.wallet2,
-        use_case: revocation.use_case,
-        collection: revocation.collection,
-        block: LessThan(revocation.block)
-      })
-    )
+  // deletes run one at a time in log order: the transaction has a single
+  // connection, and a failure must stop further writes before the rollback.
+  await mapInChunks(revocations, 1, (revocation) =>
+    repo.delete({
+      from_address: revocation.wallet1,
+      to_address: revocation.wallet2,
+      use_case: revocation.use_case,
+      collection: revocation.collection,
+      block: LessThan(revocation.block)
+    })
   );
 }
 

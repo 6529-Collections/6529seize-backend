@@ -2,10 +2,12 @@ import { USE_CASE_CONSOLIDATION } from '@/constants';
 import { fetchLatestNftDelegationBlock, getDataSource } from '@/db';
 import { fetchDelegationTransaction, scanDelegationLogs } from '@/delegations';
 import { Delegation } from '@/entities/IDelegation';
+import { mapInChunks } from '@/map-in-chunks';
 import { DataSource, Not } from 'typeorm';
 import {
   DelegationRow,
   DelegationRowDiff,
+  rowKey,
   ScopeBackfillDeps
 } from './delegation-scope-backfill';
 
@@ -66,22 +68,44 @@ export async function applyScopeBackfillDiff(
   if (touched.some((row) => row.use_case === USE_CASE_CONSOLIDATION)) {
     throw new Error('Refusing to write consolidation (999) delegation rows');
   }
+  // One write at a time, in block order: the transaction has a single
+  // connection, so parallel writes gain nothing, and a failure must stop
+  // further writes before the rollback starts.
   await dataSource.transaction(async (manager) => {
     const repo = manager.getRepository(Delegation);
-    await Promise.all([
-      ...diff.deletes.map((row) => repo.delete(primaryKey(row))),
-      ...diff.updates.map(({ current, expected }) =>
+    await mapInChunks(sortByKey(diff.deletes), 1, (row) =>
+      repo.delete(primaryKey(row))
+    );
+    await mapInChunks(
+      sortByKey(diff.updates, (update) => update.current),
+      1,
+      ({ current, expected }) =>
         repo.update(primaryKey(current), {
           expiry: expected.expiry,
           all_tokens: expected.all_tokens,
           token_id: expected.token_id
         })
-      )
-    ]);
+    );
     if (diff.inserts.length > 0) {
-      await repo.save(diff.inserts.map(toEntity), { chunk: SAVE_CHUNK_SIZE });
+      await repo.save(sortByKey(diff.inserts).map(toEntity), {
+        chunk: SAVE_CHUNK_SIZE
+      });
     }
   });
+}
+
+function sortByKey<T>(
+  items: T[],
+  rowOf: (item: T) => DelegationRow = (item) => item as unknown as DelegationRow
+): T[] {
+  return items
+    .map((item) => ({
+      item,
+      key: rowKey(rowOf(item)),
+      block: rowOf(item).block
+    }))
+    .sort((a, b) => a.block - b.block || a.key.localeCompare(b.key))
+    .map(({ item }) => item);
 }
 
 export function createScopeBackfillDeps(): ScopeBackfillDeps {
