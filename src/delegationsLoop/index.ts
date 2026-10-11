@@ -108,10 +108,12 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function handleDelegations(startBlock: number | undefined) {
-  const delegationsResponse = await findNewDelegations(startBlock);
+  // Read the reset block's time before scanning, so a failed lookup ends the
+  // run before the scan rather than after it.
   const resetBlockTimestamp = startBlock
     ? await fetchBlockTimestamp(startBlock)
     : undefined;
+  const delegationsResponse = await findNewDelegations(startBlock);
   await persistConsolidations(
     startBlock,
     delegationsResponse.consolidations,
