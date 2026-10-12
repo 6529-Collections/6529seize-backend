@@ -78,7 +78,7 @@ async function attachBlockTimestamps(
   for (let i = 0; i < missing.length; i += BLOCK_TIMESTAMP_CONCURRENCY) {
     const chunk = missing.slice(i, i + BLOCK_TIMESTAMP_CONCURRENCY);
     const blocks = await Promise.all(
-      chunk.map((blockNumber) => alchemy.core.getBlock(blockNumber))
+      chunk.map((blockNumber) => rpc.getBlock(blockNumber))
     );
     chunk.forEach((blockNumber, index) => {
       const timestamp = blocks[index]?.timestamp;
@@ -105,8 +105,7 @@ const getNetwork = () => {
 export async function fetchBlockTimestamp(
   blockNumber: number
 ): Promise<number> {
-  const block =
-    await getAlchemyInstance(getNetwork()).core.getBlock(blockNumber);
+  const block = await getEthereumRpcClient(getNetwork()).getBlock(blockNumber);
   if (typeof block?.timestamp !== 'number') {
     throw new TypeError(`Missing timestamp for block ${blockNumber}`);
   }

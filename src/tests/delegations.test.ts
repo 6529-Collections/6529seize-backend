@@ -75,7 +75,7 @@ describe('findDelegationTransactions', () => {
   });
 
   const consolidationLog = (blockNumber: number) => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       { blockNumber, transactionHash: '0x1' }
     ]);
     mockParseLog.mockReturnValueOnce({
@@ -91,15 +91,15 @@ describe('findDelegationTransactions', () => {
 
   it('reuses the latest block timestamp for consolidations in that block', async () => {
     consolidationLog(2);
-    alchemyMock.core.getBlock.mockResolvedValue({ timestamp: 456 });
+    rpcMock.getBlock.mockResolvedValue({ timestamp: 456 });
     const result = await findDelegationTransactions(1, 2);
     expect(result.consolidations[0].timestamp).toBe(456);
-    expect(alchemyMock.core.getBlock).toHaveBeenCalledTimes(1);
+    expect(rpcMock.getBlock).toHaveBeenCalledTimes(1);
   });
 
   it('throws instead of returning a consolidation without a timestamp', async () => {
     consolidationLog(1);
-    alchemyMock.core.getBlock.mockImplementation(async (blockNumber: number) =>
+    rpcMock.getBlock.mockImplementation(async (blockNumber: number) =>
       blockNumber === 2 ? { timestamp: 456 } : null
     );
     await expect(findDelegationTransactions(1, 2)).rejects.toThrow(
