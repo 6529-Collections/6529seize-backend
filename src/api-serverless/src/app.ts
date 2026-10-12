@@ -105,7 +105,11 @@ import { env, loadLocalConfig, loadSecrets } from '@/env';
 import { loggerContext } from '@/logger-context';
 import { Logger } from '@/logging';
 import { numbers } from '@/numbers';
-import { getRedisClient, initRedis, redisGet } from '@/redis';
+import { getRedisClient, initRedis } from '@/redis';
+import {
+  API_REDIS_FAIL_FAST_OPTIONS,
+  createRetryableInitializer
+} from '@/api/app-initialization';
 import { parseTdhResultsFromDB } from '@/sql_helpers';
 import deployRoutes from '@/api/deploy/deploy.routes';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
@@ -114,13 +118,11 @@ import {
   DISTRIBUTION_PAGE_SIZE,
   getCorsOptionsForRequest,
   NFTS_PAGE_SIZE,
-  PaginatedResponse,
   SORT_DIRECTIONS
 } from './api-constants';
 import { seizeSettings } from '@/api/seize-settings';
 import { MEMES_EXTENDED_SORT, TRANSACTION_FILTERS } from './api-filters';
 import {
-  cacheKey,
   getPage,
   getPageSize,
   returnPaginatedResult,
@@ -157,7 +159,7 @@ import {
   cmsAgentErrorMiddleware,
   cmsAgentPrivateHeadersMiddleware
 } from '@/api/profile-cms/profile-cms-agent.http';
-import { cacheRequest, isRequestCacheEntry } from './request-cache';
+import { cacheRequest } from './request-cache';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
@@ -725,7 +727,7 @@ async function initializeApp() {
   );
 
   await loadApiSecrets();
-  await initRedis();
+  await initRedis({ failFast: API_REDIS_FAIL_FAST_OPTIONS });
   initRateLimiting();
   passport.use(
     new JwtStrategy(
@@ -747,6 +749,10 @@ async function initializeApp() {
     )
   );
   passport.use(new AnonymousStrategy());
+}
+
+// Registers middleware and routes; runs once, after initializeApp succeeds.
+function wireApp() {
   if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
     // Only enabled in AWS Lambda
     app.use(awsServerlessExpressMiddleware.eventContext());
@@ -853,30 +859,10 @@ async function initializeApp() {
     }
   };
 
-  const checkCache = async function (req: any, res: any, next: any) {
-    return redisGet(cacheKey(req))
-      .then((cachedBody) => {
-        if (!cachedBody) {
-          return next();
-        }
-        // this checks if old cache already caches it. temporary thing.
-        if (isRequestCacheEntry(cachedBody)) {
-          return next();
-        }
-        return returnPaginatedResult(
-          cachedBody as PaginatedResponse<any>,
-          req,
-          res
-        );
-      })
-      .catch(() => next());
-  };
-
   const BASE_PATH = '/api';
   const apiRouter = asyncRouter();
 
   app.all(`${BASE_PATH}*`, requireLogin);
-  app.all(`${BASE_PATH}*`, checkCache);
 
   apiRouter.get(
     `/blocks`,
@@ -1724,7 +1710,7 @@ async function initializeApp() {
   rootRouter.use(`/sitemap`, sitemapRoutes);
   rootRouter.use(`/alchemy-proxy`, alchemyProxyRoutes);
 
-  // Apply rate limiting after cache check (cached responses bypass rate limiting)
+  // Rate limiting runs before routing, so route-level cache hits count too.
   app.use(rateLimitingMiddleware());
   // The frozen GET manifest includes profile/feed/activity embedded drops too.
   // SQL rewriting is closed to twelve competition tables; unrelated tables are
@@ -1961,23 +1947,17 @@ function initializationGuard() {
   };
 }
 
-let initializationPromise: Promise<void> | null = null;
+// A transient failure (DB, secrets, Redis) is retried by the next request
+// instead of pinning this warm container to "Initialization failed".
+const initializeOnce = createRetryableInitializer({
+  prepare: initializeApp,
+  wire: wireApp,
+  onFailure: (err) => logger.error('[INITIALIZATION FAILED]', err)
+});
 
-function getInitializationPromise(): Promise<void> {
-  if (initializationPromise) {
-    return initializationPromise;
-  }
-
-  initializationPromise = initializeApp()
-    .then(() => {
-      isInitialized = true;
-    })
-    .catch((err) => {
-      logger.error('[INITIALIZATION FAILED]', err);
-      throw err;
-    });
-
-  return initializationPromise;
+async function getInitializationPromise(): Promise<void> {
+  await initializeOnce();
+  isInitialized = true;
 }
 
 app.use(initializationGuard());
