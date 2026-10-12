@@ -10,7 +10,12 @@ import {
   WaveScoreDirtyRefreshReason
 } from '../api-serverless/src/waves/wave-score.service';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
-import { FullPageRequest, Page } from '../api-serverless/src/page-request';
+import {
+  FullPageRequest,
+  normalizePage,
+  normalizePageSize,
+  Page
+} from '../api-serverless/src/page-request';
 import {
   repService,
   RepService
@@ -993,10 +998,12 @@ export class RatingsService {
     matter: RateMatter;
   }): Promise<GetRatingsByRatersForMatterParams> {
     const given = queryParams.given === 'true';
-    const page = queryParams.page ? parseInt(queryParams.page) : 1;
-    const page_size = queryParams.page_size
-      ? parseInt(queryParams.page_size)
-      : 200;
+    const page = normalizePage(queryParams.page);
+    const page_size = normalizePageSize(
+      queryParams.page_size,
+      Number.MAX_SAFE_INTEGER,
+      200
+    );
     const order = queryParams.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
     const order_by =
       queryParams.order_by?.toLowerCase() === 'rating'
