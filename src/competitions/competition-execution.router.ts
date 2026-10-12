@@ -19,11 +19,11 @@ export class CompetitionExecutionRouter {
     waveId: string,
     ctx: RequestContext
   ): Promise<boolean> {
-    const records = await this.repository.listCompetitionRecordsForWave(
-      waveId,
-      ctx
-    );
-    const primary = records.find((record) => record.legacy_wave_id === waveId);
+    const primary = ctx.connection
+      ? await this.repository.lockLegacyExecutionOwner(waveId, ctx)
+      : (await this.repository.listCompetitionRecordsForWave(waveId, ctx)).find(
+          (record) => record.legacy_wave_id === waveId
+        );
     if (!primary) {
       // A rolling deployment or a just-created legacy wave may briefly precede
       // its additive mapping. Existing execution remains authoritative.

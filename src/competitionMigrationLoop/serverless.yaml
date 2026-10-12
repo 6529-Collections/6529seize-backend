@@ -1,0 +1,95 @@
+service: competitionMigrationLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 900
+  architecture: arm64
+  logRetentionInDays: 60
+
+custom:
+  migrationEnvironments:
+    staging: staging
+    prod: production
+
+functions:
+  competitionMigrationLoop:
+    handler: index.handler
+    name: competitionMigrationLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    maximumRetryAttempts: 0
+    maximumEventAge: 60
+    # Manual invocation only. A live run queues its own bounded continuations.
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      MIGRATION_DEPLOYED_ENVIRONMENT: ${self:custom.migrationEnvironments.${opt:stage, self:provider.stage}}
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'competitionMigrationLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    CompetitionMigrationContinuationPolicy:
+      Type: AWS::IAM::Policy
+      Properties:
+        PolicyName: competition-migration-continuation-${opt:stage, self:provider.stage}
+        Roles:
+          - lambda-vpc-role
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource:
+                - Fn::GetAtt: [CompetitionMigrationLoopLambdaFunction, Arn]
+                - Fn::Join:
+                    - ':'
+                    - - Fn::GetAtt:
+                          [CompetitionMigrationLoopLambdaFunction, Arn]
+                      - '*'
+    CompetitionMigrationFailureAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-competitionMigrationLoop-errors'
+        AlarmDescription: 'Migration stopped; inspect logs and durable wave status before resuming'
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: competitionMigrationLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    CompetitionMigrationDroppedContinuationAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-competitionMigrationLoop-dropped-continuations'
+        AlarmDescription: 'Automatic continuation was dropped; inspect durable status and invoke again'
+        Namespace: AWS/Lambda
+        MetricName: AsyncEventsDropped
+        Dimensions:
+          - Name: FunctionName
+            Value: competitionMigrationLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

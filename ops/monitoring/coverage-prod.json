@@ -87,6 +87,18 @@
       ]
     },
     {
+      "service": "competitionMigrationLoop",
+      "region": "us-east-1",
+      "functions": [
+        "competitionMigrationLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "customReplayLoop",
       "region": "us-east-1",
       "functions": [

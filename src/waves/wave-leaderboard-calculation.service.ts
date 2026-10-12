@@ -118,6 +118,21 @@ export class WaveLeaderboardCalculationService {
     await this.dropVotingDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
+        if (
+          !(await this.executionRouter.shouldUseLegacyWaveExecution(
+            waveId,
+            ctxWithConnection
+          ))
+        )
+          return;
+        // Discovery may precede completion or wait behind a migration lock.
+        if (
+          !(await this.dropVotingDb.isLegacyLeaderboardWaveOngoing(
+            waveId,
+            ctxWithConnection
+          ))
+        )
+          return;
         const shouldTrackOverThreshold =
           winningMinThreshold !== null &&
           (winningThresholdMinDurationMs ?? 0) > 0;

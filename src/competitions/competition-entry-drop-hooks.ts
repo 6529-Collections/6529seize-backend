@@ -41,9 +41,14 @@ export class CompetitionEntryDropHooks {
       model.drop_id,
       ctx
     );
-    if (entries.length)
+    if (
+      entries.some(
+        (entry) =>
+          !entry.legacy_origin || entry.status === CompetitionEntryStatus.WINNER
+      )
+    )
       throw new ForbiddenException('Competition submissions cannot be edited');
-    return { entries: [] };
+    return { entries };
   }
 
   public async preparePresentationUpdate(
@@ -51,9 +56,14 @@ export class CompetitionEntryDropHooks {
     entries: readonly NativeDropEntry[],
     _ctx: RequestContext
   ): Promise<NativeEntryEdit> {
-    if (entries.length)
+    if (
+      entries.some(
+        (entry) =>
+          !entry.legacy_origin || entry.status === CompetitionEntryStatus.WINNER
+      )
+    )
       throw new ForbiddenException('Competition submissions cannot be edited');
-    return { entries: [] };
+    return { entries };
   }
 
   public async recordUpdate(

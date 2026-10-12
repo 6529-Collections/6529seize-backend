@@ -25,6 +25,7 @@ import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { competitionConflict } from '@/competitions/competition-command.repository';
 import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
+import { withoutLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 
 export type CompetitionEntryContent = Pick<
   CreateOrUpdateDropModel,
@@ -38,7 +39,10 @@ export type CompetitionEntryContent = Pick<
   | 'reply_to'
   | 'hide_link_preview'
 > & { readonly mentioned_users: Array<{ handle: string; profile_id: string }> };
-export type NativeDropEntry = CompetitionEntry & { readonly signed: boolean };
+export type NativeDropEntry = CompetitionEntry & {
+  readonly signed: boolean;
+  readonly legacy_origin?: boolean;
+};
 
 export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
   private async rows<T>(
@@ -70,17 +74,20 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
     currentRead: boolean,
     ctx: RequestContext
   ): Promise<NativeDropEntry[]> {
-    const rows = await this.rows<NativeDropEntry>(
-      'findDropEntries',
-      `select e.*, exists(select 1 from ${COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} v where v.entry_id=e.id and v.signature is not null) as signed
+    const rows = await withoutLegacyCompetitionGetFacade(() =>
+      this.rows<NativeDropEntry>(
+        'findDropEntries',
+        `select e.*, c.legacy_wave_id is not null and exists(select 1 from ${DROPS_TABLE} d where d.id=e.drop_id and d.drop_type in ('PARTICIPATORY','WINNER')) as legacy_origin, exists(select 1 from ${COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} v where v.entry_id=e.id and v.signature is not null) as signed
        from ${COMPETITION_ENTRIES_TABLE} e join ${COMPETITIONS_TABLE} c on c.id=e.competition_id
        where e.drop_id=:dropId and c.storage_mode='NATIVE' order by e.competition_id,e.id${currentRead ? ' for update' : ''}`,
-      { dropId },
-      ctx
+        { dropId },
+        ctx
+      )
     );
     return rows.map((row) => ({
       ...row,
       signed: Boolean(row.signed),
+      legacy_origin: Boolean(row.legacy_origin),
       config_version: Number(row.config_version),
       submitted_at: Number(row.submitted_at)
     }));
@@ -226,7 +233,7 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
           content?: unknown;
         }
       | undefined,
-    ctx: RequestContext
+    ctx: RequestContext & { competitionContentObservedAt?: number }
   ): Promise<number> {
     const [version] = await this.rows<{ version: number }>(
       'nextContentVersion',
@@ -255,7 +262,7 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
             ? null
             : JSON.stringify(signature.content),
         actorId,
-        now: Date.now()
+        now: ctx.competitionContentObservedAt ?? Date.now()
       },
       ctx
     );

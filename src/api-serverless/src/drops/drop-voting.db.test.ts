@@ -1,5 +1,7 @@
+import { CompetitionRepository } from '@/competitions/competition.repository';
 import 'reflect-metadata';
 import {
+  COMPETITIONS_TABLE,
   DROP_RANK_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_VOTER_STATE_TABLE,
@@ -10,6 +12,7 @@ import {
 } from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { WaveType } from '@/entities/IWave';
+import { Time } from '@/time';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -513,6 +516,228 @@ async function insertLeaderboardEntry({
   );
 }
 
+const snapshotWaveCases = [
+  {
+    name: 'completed-voting',
+    participationEnd: null,
+    votingEnd: 1,
+    decision: null,
+    ongoing: false
+  },
+  {
+    name: 'completed-participation',
+    participationEnd: 1,
+    votingEnd: null,
+    decision: null,
+    ongoing: false
+  },
+  {
+    name: 'completed-both',
+    participationEnd: 1,
+    votingEnd: 1,
+    decision: null,
+    ongoing: false
+  },
+  {
+    name: 'completion-boundary',
+    participationEnd: null,
+    votingEnd: 2000,
+    decision: null,
+    ongoing: false
+  },
+  {
+    name: 'voting-open',
+    participationEnd: 1,
+    votingEnd: 3000,
+    decision: null,
+    ongoing: true
+  },
+  {
+    name: 'participation-open',
+    participationEnd: 3000,
+    votingEnd: 1,
+    decision: null,
+    ongoing: true
+  },
+  {
+    name: 'open-ended',
+    participationEnd: null,
+    votingEnd: null,
+    decision: null,
+    ongoing: true
+  },
+  {
+    name: 'pending-final-decision',
+    participationEnd: 1,
+    votingEnd: 1,
+    decision: 1,
+    ongoing: true
+  }
+];
+const snapshotWaves = snapshotWaveCases.map((testCase, index) =>
+  aWave(
+    {
+      type: WaveType.RANK,
+      time_lock_ms: 1000,
+      participation_period_end: testCase.participationEnd,
+      voting_period_end: testCase.votingEnd,
+      next_decision_time: testCase.decision
+    },
+    { id: `snapshot-wave-${index}`, serial_no: index + 1, name: testCase.name }
+  )
+);
+
+describeWithSeed(
+  'Legacy leaderboard completion fencing',
+  withWaves(snapshotWaves),
+  () => {
+    beforeEach(() =>
+      jest.spyOn(Time, 'now').mockReturnValue(Time.millis(2000))
+    );
+    afterEach(() => jest.restoreAllMocks());
+
+    it('discovers active/open-ended and pending decisions, preserving completed snapshots', async () => {
+      for (let index = 0; index < snapshotWaves.length; index++) {
+        const wave = snapshotWaves[index];
+        await insertDrop({
+          id: `snapshot-drop-${index}`,
+          waveId: wave.id,
+          dropType: DropType.PARTICIPATORY,
+          createdAt: 1
+        });
+        await insertRealVote({
+          dropId: `snapshot-drop-${index}`,
+          waveId: wave.id,
+          timestamp: 2000,
+          vote: 7
+        });
+        expect(await repo.isLegacyLeaderboardWaveOngoing(wave.id, ctx)).toBe(
+          snapshotWaveCases[index].ongoing
+        );
+      }
+      const discovered = await repo.getDropsInNeedOfLeaderboardUpdate(ctx);
+      expect(
+        discovered.map((row) => row.wave_id).sort((a, b) => a.localeCompare(b))
+      ).toEqual(
+        snapshotWaves
+          .filter((_wave, index) => snapshotWaveCases[index].ongoing)
+          .map((wave) => wave.id)
+          .sort((a, b) => a.localeCompare(b))
+      );
+    });
+
+    it('global cleanup retains completed snapshots and cleans an ongoing wave', async () => {
+      for (const index of [0, 4]) {
+        const wave = snapshotWaves[index];
+        await insertDrop({
+          id: `cleanup-drop-${index}`,
+          waveId: wave.id,
+          dropType: DropType.WINNER,
+          createdAt: 1
+        });
+        await insertLeaderboardEntry({
+          dropId: `cleanup-drop-${index}`,
+          waveId: wave.id,
+          vote: 9,
+          timestamp: 2000,
+          voteOnDecisionTime: 9
+        });
+      }
+      await repo.deleteStaleLeaderboardEntries(ctx);
+      expect(
+        await sqlExecutor.execute(
+          `select drop_id,vote,timestamp,vote_on_decision_time from ${WAVE_LEADERBOARD_ENTRIES_TABLE}`
+        )
+      ).toEqual([
+        {
+          drop_id: 'cleanup-drop-0',
+          vote: 9,
+          timestamp: 2000,
+          vote_on_decision_time: 9
+        }
+      ]);
+    });
+
+    it('retains explicit wave-scoped decision cleanup after completion', async () => {
+      const wave = snapshotWaves[0];
+      await insertDrop({
+        id: 'scoped-cleanup-drop',
+        waveId: wave.id,
+        dropType: DropType.WINNER,
+        createdAt: 1
+      });
+      await insertLeaderboardEntry({
+        dropId: 'scoped-cleanup-drop',
+        waveId: wave.id,
+        vote: 9,
+        timestamp: 2000,
+        voteOnDecisionTime: 9
+      });
+      await repo.deleteStaleLeaderboardEntriesForWave(wave.id, ctx);
+      expect(
+        await sqlExecutor.execute(
+          `select * from ${WAVE_LEADERBOARD_ENTRIES_TABLE}`
+        )
+      ).toEqual([]);
+    });
+
+    it('rechecks completion before global cleanup writes after discovery', async () => {
+      const wave = snapshotWaves[4];
+      await insertDrop({
+        id: 'cleanup-closing-drop',
+        waveId: wave.id,
+        dropType: DropType.WINNER,
+        createdAt: 1
+      });
+      await insertLeaderboardEntry({
+        dropId: 'cleanup-closing-drop',
+        waveId: wave.id,
+        vote: 9,
+        timestamp: 2000,
+        voteOnDecisionTime: 9
+      });
+      jest
+        .spyOn(Time, 'now')
+        .mockReturnValueOnce(Time.millis(2000))
+        .mockReturnValue(Time.millis(3000));
+      await repo.deleteStaleLeaderboardEntries(ctx);
+      expect(
+        await sqlExecutor.execute(
+          `select drop_id,vote from ${WAVE_LEADERBOARD_ENTRIES_TABLE}`
+        )
+      ).toEqual([{ drop_id: 'cleanup-closing-drop', vote: 9 }]);
+    });
+
+    it('retains a wave that completes between the fenced check and delete', async () => {
+      const wave = snapshotWaves[4];
+      await insertDrop({
+        id: 'cleanup-delete-boundary-drop',
+        waveId: wave.id,
+        dropType: DropType.WINNER,
+        createdAt: 1
+      });
+      await insertLeaderboardEntry({
+        dropId: 'cleanup-delete-boundary-drop',
+        waveId: wave.id,
+        vote: 9,
+        timestamp: 2000,
+        voteOnDecisionTime: 9
+      });
+      jest
+        .spyOn(Time, 'now')
+        .mockReturnValueOnce(Time.millis(2000))
+        .mockReturnValueOnce(Time.millis(2000))
+        .mockReturnValue(Time.millis(3000));
+      await repo.deleteStaleLeaderboardEntries(ctx);
+      expect(
+        await sqlExecutor.execute(
+          `select drop_id,vote from ${WAVE_LEADERBOARD_ENTRIES_TABLE}`
+        )
+      ).toEqual([{ drop_id: 'cleanup-delete-boundary-drop', vote: 9 }]);
+    });
+  }
+);
+
 describeWithSeed(
   'DropVotingDb.getDropV2SubmissionVotingSummaries',
   withWaves([realtimeWave, timeLockedWave, winnerWave]),
@@ -600,6 +825,36 @@ describeWithSeed(
         drop_id: 'realtime-drop-3',
         place: 2
       });
+    });
+
+    it('orders text-backed realtime vote totals numerically in submission badges and legacy drop ranks', async () => {
+      const votes = [9, 12, -2, -5, -14];
+      const dropIds = votes.map((_, index) => `numeric-summary-${index}`);
+      for (let index = 0; index < votes.length; index++) {
+        const vote = votes[index];
+        await insertDrop({
+          id: dropIds[index],
+          waveId: realtimeWave.id,
+          dropType: DropType.PARTICIPATORY,
+          createdAt: 100 + index
+        });
+        await insertDropRank({
+          dropId: dropIds[index],
+          waveId: realtimeWave.id,
+          vote,
+          lastIncreased: 1000 + index
+        });
+      }
+      const result = await repo.getDropV2SubmissionVotingSummaries(
+        dropIds,
+        ctx
+      );
+      expect(dropIds.map((id) => result[id].place)).toEqual([2, 1, 3, 4, 5]);
+      const legacyRanks = await repo.getParticipationDropsRealtimeRanks(
+        dropIds,
+        ctx
+      );
+      expect(dropIds.map((id) => legacyRanks[id])).toEqual([2, 1, 3, 4, 5]);
     });
 
     it('uses weighted rank and rates for time-locked participatory drops', async () => {
@@ -750,6 +1005,46 @@ describeWithSeed(
       ).toBeNull();
     });
 
+    it.each([false, true])(
+      'distinguishes absent winner history from saved zero votes (saved=%s)',
+      async (saved) => {
+        const dropId = 'winner-with-zero-voters';
+        await insertDrop({
+          id: dropId,
+          waveId: winnerWave.id,
+          dropType: DropType.WINNER,
+          createdAt: 100
+        });
+        await sqlExecutor.execute(
+          `insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (decision_time,drop_id,wave_id,ranking,final_vote,prizes) values (1000,:dropId,:waveId,1,42,'[]')`,
+          { dropId, waveId: winnerWave.id }
+        );
+        // Current allocations must not be presented as the missing frozen decision snapshot.
+        await insertVoteState({
+          voterId: 'current-voter',
+          dropId,
+          waveId: winnerWave.id,
+          votes: 42
+        });
+        if (saved)
+          await sqlExecutor.execute(
+            `insert into ${WINNER_DROP_VOTER_VOTES_TABLE} (voter_id,drop_id,wave_id,votes) values ('saved-voter',:dropId,:waveId,0)`,
+            { dropId, waveId: winnerWave.id }
+          );
+        const result = await repo.getDropV2SubmissionVotingSummaries(
+          [dropId],
+          ctx
+        );
+        expect(result[dropId]).toMatchObject({
+          current_calculated_vote: 42,
+          voters_count: 0,
+          voters_count_available: saved
+        });
+        const counts = await repo.getWinningDropsRatersCount([dropId], ctx);
+        expect(counts[dropId]).toBe(saved ? 0 : undefined);
+      }
+    );
+
     it('returns final voting summary for winner drops', async () => {
       await insertDrop({
         id: 'winner-drop-1',
@@ -806,8 +1101,109 @@ describeWithSeed(
         current_calculated_vote: 25,
         predicted_final_vote: 25,
         voters_count: 2,
+        voters_count_available: true,
         place: 2
       });
+    });
+  }
+);
+
+const cleanupWaves = Array.from({ length: 101 }, (_, index) =>
+  aWave(
+    { type: WaveType.RANK, time_lock_ms: 300000 },
+    {
+      id: `migration-cleanup-${String(index).padStart(3, '0')}`,
+      name: `Disposable cleanup ${index}`,
+      serial_no: index + 1
+    }
+  )
+);
+const nativeCleanupWave = aWave(
+  { type: WaveType.RANK, time_lock_ms: 300000 },
+  {
+    id: 'migration-cleanup-native',
+    name: 'Disposable native cleanup owner',
+    serial_no: 102
+  }
+);
+const allCleanupWaves = [...cleanupWaves, nativeCleanupWave];
+
+describeWithSeed(
+  'owner-aware stale leaderboard maintenance',
+  [
+    withWaves(allCleanupWaves),
+    {
+      table: DROPS_TABLE,
+      rows: allCleanupWaves.map((wave) => ({
+        id: `${wave.id}-drop`,
+        wave_id: wave.id,
+        author_id: 'cleanup-author',
+        created_at: 10,
+        parts_count: 1,
+        drop_type: DropType.CHAT,
+        hide_link_preview: false
+      }))
+    },
+    {
+      table: WAVE_LEADERBOARD_ENTRIES_TABLE,
+      rows: allCleanupWaves.map((wave) => ({
+        drop_id: `${wave.id}-drop`,
+        wave_id: wave.id,
+        vote: 1,
+        timestamp: 100,
+        vote_on_decision_time: 1
+      }))
+    }
+  ],
+  () => {
+    const competitions = new CompetitionRepository();
+    beforeEach(async () => {
+      await competitions.ensureLegacyMappingForWave(nativeCleanupWave, {});
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set storage_mode='NATIVE', execution_mode='ACTIVE' where legacy_wave_id=:waveId`,
+        { waveId: nativeCleanupWave.id }
+      );
+    });
+
+    const remainingWaves = async () =>
+      (
+        await sqlExecutor.execute<{ wave_id: string }>(
+          `select wave_id from ${WAVE_LEADERBOARD_ENTRIES_TABLE} order by wave_id`
+        )
+      ).map((row) => row.wave_id);
+
+    it('drains at most 100 legacy waves and preserves native-owned rows across batches', async () => {
+      await repo.deleteStaleLeaderboardEntries({});
+      expect(await remainingWaves()).toEqual([
+        cleanupWaves[100].id,
+        nativeCleanupWave.id
+      ]);
+      await repo.deleteStaleLeaderboardEntries({});
+      expect(await remainingWaves()).toEqual([nativeCleanupWave.id]);
+    });
+
+    it('cleans only its locked wave while retaining every other legacy/native wave', async () => {
+      const target = cleanupWaves[50];
+      await competitions.ensureLegacyMappingForWave(target, {});
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const locked = await competitions.lockLegacyExecutionOwner(
+            target.id,
+            {
+              connection
+            }
+          );
+          expect(locked?.legacy_wave_id).toBe(target.id);
+          await repo.deleteStaleLeaderboardEntriesForWave(target.id, {
+            connection
+          });
+        }
+      );
+      expect(await remainingWaves()).toEqual(
+        allCleanupWaves
+          .filter((wave) => wave.id !== target.id)
+          .map((wave) => wave.id)
+      );
     });
   }
 );

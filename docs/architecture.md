@@ -14,6 +14,7 @@ or a new lease, with a 12-second request budget. Owner-checked Lua publication
 and a per-profile invalidation marker prevent stale owners from publishing
 after lease replacement or explicit invalidation. See
 [eligible-groups-coordination.md](eligible-groups-coordination.md).
+
 - SQS and EventBridge as the async execution fabric.
 - S3, CloudFront, Arweave, Ethereum/RPC providers, Firebase, Sentry, CloudWatch, Discord, and SNS around the core.
 
@@ -254,8 +255,8 @@ Exceeding a bound requires the user to reduce the selection explicitly.
 `POST /market/operations/{id}/preflight` is a read-only, authenticated
 `BUY_BATCH` check. Its small body binds the existing review revision and exact
 transaction digest; the server loads and independently validates stored Seaport
-orders, allocations and calldata. It sends only that transaction to the existing
-Alchemy provider, pinning both `eth_call` and raw `eth_estimateGas` to one fresh
+orders, allocations and calldata. It sends only that transaction to the configured
+Ethereum RPC provider, pinning both `eth_call` and raw `eth_estimateGas` to one fresh
 block and rechecking the block hash. Ownership, current profile membership,
 expiry, revision and recovery fences are checked again before returning. No
 operation, journal, send attempt, gas cap or expiry is changed. A 12-second
@@ -301,7 +302,16 @@ then deploy the dependent frontend. The exported TDH helper does not change the
 scheduled TDH calculation and does not require a TDH loop deployment.
 `MARKETPLACE_TRADING_ENABLED=false` stops new trade preparation/publication;
 inspection, transaction reconciliation and direct cancellation remain available.
-The default enables supported actions when provider/RPC configuration exists.
+Action availability follows
+[`handleGetCollectCapabilities`](../src/api-serverless/src/collect/collect.handlers.ts):
+
+- `TdhScenario` is always enabled.
+- `Cancel` requires `ETHEREUM_RPC_URL`, independently of the trading flag or
+  `OPENSEA_API_KEY`.
+- Other actions require both `ETHEREUM_RPC_URL` and `OPENSEA_API_KEY`, with
+  `MARKETPLACE_TRADING_ENABLED` either unset (defaults to `true`) or exactly `true`.
+- `RuleExecution` is always disabled; rules only prepare purchases for review.
+
 Keep operation history and exposure tables when disabling or rolling back trading.
 
 ## High-Level Diagram
@@ -441,7 +451,6 @@ frontend dependency. Code passes
 through `1a-staging` without deploying this service there. See
 [public-wave newsletter operations](public-wave-newsletter.md).
 
-
 | Lambda                                   | Purpose                                                                                                                                                             |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `nftsLoop`                               | Discover, refresh, and audit NFTs.                                                                                                                                  |
@@ -458,8 +467,8 @@ through `1a-staging` without deploying this service there. See
 | `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                                                                                     |
 | `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                                                                                   |
 | `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                                                                                      |
-| `marketStatsLoop`                        | Aggregate market stats and archive full OpenSea order books for MEMES, Lab, Gradients, and each NextGen project.                                                   |
-| `marketDepthStreamLoop`                  | Capture OpenSea order lifecycle events with overlapping scheduled subscriptions and idempotent persistence.                                                       |
+| `marketStatsLoop`                        | Aggregate market stats and archive full OpenSea order books for MEMES, Lab, Gradients, and each NextGen project.                                                    |
+| `marketDepthStreamLoop`                  | Capture OpenSea order lifecycle events with overlapping scheduled subscriptions and idempotent persistence.                                                         |
 | `rateEventProcessingLoop`                | Process DB-backed rating events.                                                                                                                                    |
 | `waveDecisionExecutionLoop`              | Execute wave decisions and enqueue claim builds.                                                                                                                    |
 | `waveLeaderboardSnapshotterLoop`         | Snapshot wave leaderboards.                                                                                                                                         |
@@ -506,28 +515,28 @@ reset behavior, and the required writer-before-collector deployment order.
 
 ### Triggered Lambdas
 
-| Lambda                           | Trigger                                                                                                                            | Purpose                                                                                                                     |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                         | Public REST API and WebSocket boundary.                                                                                     |
-| `claimsBuilder`                  | SQS `claims-builder`                                                                                                               | Build minting claims from winning drops.                                                                                    |
-| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                  | Upload claim media and metadata to Arweave.                                                                                 |
-| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                             | Mirror, compress, and upload NFT media.                                                                                     |
-| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                        | Find uploaded attachment objects, retry, and enqueue processing.                                                            |
-| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                       | Scan/process attachments.                                                                                                   |
-| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                         | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
-| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                           | Resolve external NFT links.                                                                                                 |
-| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                      | Generate media previews for NFT links.                                                                                      |
-| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                  | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.      |
-| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                             | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                       |
-| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                        | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                        |
-| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                      | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
-| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                   | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                 |
+| Lambda                           | Trigger                                                                                                                             | Purpose                                                                                                                     |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                          | Public REST API and WebSocket boundary.                                                                                     |
+| `claimsBuilder`                  | SQS `claims-builder`                                                                                                                | Build minting claims from winning drops.                                                                                    |
+| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                   | Upload claim media and metadata to Arweave.                                                                                 |
+| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                              | Mirror, compress, and upload NFT media.                                                                                     |
+| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                         | Find uploaded attachment objects, retry, and enqueue processing.                                                            |
+| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                        | Scan/process attachments.                                                                                                   |
+| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                          | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
+| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                            | Resolve external NFT links.                                                                                                 |
+| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                      |
+| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.      |
+| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                       |
+| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                         |
+| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
+| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                    | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                 |
 | `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.         |
-| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                         | Revoke over-rates after TDH changes.                                                                                        |
-| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations. |
-| `mediaResizerLoop`               | CloudFront/request path                                                                                                            | Resize images on demand.                                                                                                    |
-| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                   | Provide NextGen metadata fallback.                                                                                          |
-| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                               | Invoke MediaConvert for uploaded drop videos.                                                                               |
+| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                        |
+| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations. |
+| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                    |
+| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                          |
+| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                               |
 
 ### Manual Or One-Off Lambdas
 
@@ -580,7 +589,7 @@ successful rotation's `last_used_at`; repeated recovery does not reset it.
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.
 2. The API validates input, authenticates JWT or anonymous context, reads/writes MySQL, uses Redis for cache/rate limiting, and sometimes publishes SQS work.
-3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy, normalize chain state, and write canonical rows into MySQL. NextGen's `addRandomizer` history entries optionally enrich the contract address with a name from the public Sourcify V2 API on the configured NextGen chain. The lookup needs no API key, has a five-second timeout, and falls back to the address on unavailable or malformed responses; enrichment failures do not stop indexing.
+3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy, normalize chain state, and write canonical rows into MySQL. Ordinary mainnet reads use `ETHEREUM_RPC_URL`, independently of Alchemy NFT REST and indexed transfers. [Ethereum RPC provider portability](ethereum-rpc-provider-portability.md) records the explicit tracing, bulk-indexer and legacy proxy exceptions and rollout requirements. NextGen's `addRandomizer` history entries optionally enrich the contract address with a name from the public Sourcify V2 API on the configured NextGen chain. The lookup needs no API key, has a five-second timeout, and falls back to the address on unavailable or malformed responses; enrichment failures do not stop indexing.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
@@ -592,13 +601,36 @@ successful rotation's `last_used_at`; repeated recovery does not reset it.
 
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
-### Ordinary Ethereum RPC foundation
+### Ordinary Ethereum RPC boundary
 
-Ordinary Ethereum RPC portability is being introduced separately. The
-[RPC foundation](../ops/workstreams/ethereum-rpc-foundation/README.md) adds an
-unused provider-neutral factory and documents the existing regional shared-secret
-configuration path. Existing callers still use their previous providers; this
-foundation does not migrate runtime traffic or remove indexed Alchemy APIs.
+The shared provider in `src/ethereum-rpc/` reads the server-only
+`ETHEREUM_RPC_URL` for mainnet after environment/secrets loading. Sepolia and
+Goerli compatibility paths require their own explicit URLs; missing configuration
+or unsupported chains never fall back to mainnet or an Alchemy key-derived URL.
+Ethers retains chain-ID verification. Standard compatibility reads keep their
+retry and response-shape contracts; CMS ENS owns a separate bounded transport
+using the same URL, and marketplace batch preflight retains its abortable raw
+transport with an explicit mainnet chain check.
+
+`src/alchemy-sdk.ts` now owns only NFT REST and `alchemy_getAssetTransfers`.
+Mixed indexing jobs use both clients without changing pagination or checkpoints.
+Non-standard `trace_block` has a separate provider policy: Alchemy normally,
+or the existing mainnet 6529 trace endpoint with Alchemy fallback where selected.
+Selecting traces does not select the transaction/receipt provider. ENS no longer
+has a hidden 6529 endpoint fallback; its Universal Resolver fallback uses the
+configured ordinary provider and explicitly enables CCIP-Read for off-chain
+ENS records. Fallback errors retain their null result and emit only allowlisted
+categories, separating resolver reverts from transport and off-chain failures
+without logging raw errors or revert arguments.
+
+`NFT_INDEXER_RPC` remains the independently configured external-indexing/NFT-link
+capacity boundary, and the legacy AWS Managed Blockchain `/rpc` proxy is
+unchanged. Those explicit exceptions are not controlled by `ETHEREUM_RPC_URL`.
+See the [implementation and rollout record](ethereum-rpc-provider-portability.md)
+and the historical [foundation record](../ops/workstreams/ethereum-rpc-foundation/README.md).
+Configuration is loaded once by warm services; redeploy/restart affected services
+when changing endpoints. No database, API schema, queue or deployment-workflow
+change is needed.
 
 ### NFT link preview job recovery
 
@@ -1015,9 +1047,17 @@ the chat/visibility hub and owns zero, one, or many competition resources. The
 competition service resolves each resource through either the immutable legacy
 adapter or the native competition repositories; it never infers an
 "active/current competition." Existing unversioned and v2 wave/drop GETs remain
-permanent façades over the original legacy wave configuration. A native
+permanent façades over the immutable original primary. After a guarded migration,
+12 SQL views derive its frozen competition fields from native records and retained
+history; the request-scoped SQL read boundary excludes native v3 APIs and writes. A native
 hub therefore remains a contract-valid `CHAT` wave to those clients, and adding
 another competition cannot change a legacy Rank/Approve projection.
+
+The migrated primary's vote Activity feed combines retained pre-transfer wave logs
+with native vote history in one chronologically paginated query. It preserves original
+log JSON and proxy attribution; separate native competitions never inherit those
+wave logs. This read repair requires only an API deployment, without schema changes
+or remigrating transferred waves.
 
 Competition storage and execution ownership are explicit per competition.
 Legacy-primary mappings keep existing decision and leaderboard workers active;
@@ -1044,6 +1084,35 @@ ownership. A wave-leading legacy decision index supports bounded per-wave
 aggregation. Schema/index rollout precedes API and dependent frontend rollout;
 no execution worker changes. See [normalization and deployment order](./default-competition-navigation.md).
 
+Legacy Settings commands use the same versioned competition update and pause/resume
+API as native competitions. The legacy adapter joins the existing wave update
+transaction and retains wave permissions, validation and storage. It preserves
+chat, visibility, administration, the pinned description and unrelated metadata.
+Legacy title and presentation changes update the shared wave properties. Public
+legacy configuration versions include the wave update timestamp, detecting edits
+through the original wave API without widening the stored competition version.
+Idempotent commands lock the competition and wave and advance both versions.
+The timestamp is an optimistic-concurrency token, while the stored integer
+version remains an internal revision counter. A fresh edit uses the last returned
+token; any intervening shared wave edit requires a reload because Settings
+preserves and rewrites those shared fields. Legacy voting credit rules cannot
+change after the first recorded legacy vote; original wave validation continues
+to govern access, scheduling and Approve threshold updates.
+
+Pause reasons add a nullable `reason` column to `wave_decision_pauses`. Indefinite
+legacy pauses use a finite year-9999 end timestamp understood by existing decision
+workers; v3 reads normalize it to null. Resume shortens the active interval and
+retains the reason and history. No legacy execution worker deployment is required.
+The competition vote-activity endpoint checks wave/competition visibility before
+reading legacy wave logs or native history scoped by competition and visible entry.
+There is exactly one immutable legacy primary per wave. Legacy vote commands
+write wave logs, while every native competition writes its separate history, so
+additional native competitions in the same wave do not mix into legacy activity.
+An additive native-history index supports ordered activity pagination.
+For zero-downtime rollout, deploy and run `dbMigrationsLoop` entity synchronization
+first, then `api`, then the dependent frontend. Existing clients and workers can
+continue reading and writing the additive schema during rollout.
+
 Native command APIs now implement hub creation, versioned draft/publication,
 entry submission, voting, credits, history and
 terminal lifecycle actions. Effective-actor idempotency receipts, signature
@@ -1055,8 +1124,9 @@ Each native
 entry creates one dedicated, immutable drop; existing chat messages or competition
 drops cannot be attached or reused. Native submissions use the internal
 `COMPETITION` drop type in the existing varchar column, keeping them outside legacy
-wave voting and winner-selection queries. Public drop reads expose them as
-participatory/submission drops, and competition APIs own their votes and results.
+wave voting and winner-selection queries. Frozen unversioned/v2 GETs expose native-only submissions as CHAT; scoped native
+competition context supplies their submission/winner rendering and voting. Only
+the original migrated primary may project legacy participatory/winner semantics.
 Shared-chat voting resolves `/v3/waves/{wave_id}/drops/{drop_id}/competition-context`
 through wave, drop, moderation and competition visibility checks before selecting
 native entry credit/vote APIs. The context includes native current/projected
@@ -1064,7 +1134,9 @@ totals, viewer vote, rank and top voters for the existing chat-card presentation
 Drop voter and vote-log reads dispatch native submissions to competition vote and
 history tables after the same visibility checks. Only a successful null context selects legacy
 voting; unavailable or orphaned native entries never fall back to wave voting.
-Both content edits and presentation edits are rejected in every entry state.
+Dedicated native content and presentation edits are rejected in every entry state.
+Original legacy submissions retain their approved pre-winner edit behavior after
+migration, with native content revisions and vote resets in the same transaction.
 Accepted snapshots still enforce current moderation and visibility. Entry deletion
 uses the existing drop deletion flow and transactionally removes
 the entry, its content snapshots, current votes and leaderboard state, releasing
@@ -1102,6 +1174,64 @@ schema → message consumers → workers → API → frontend rollout and the na
 kill switches. No new Lambda or queue is introduced; all new features remain
 disabled by default.
 
+Legacy migration is explicitly invoked one wave UUID at a time. Additive migration
+entities hold durable stage/keyset checkpoints, source/applied watermarks and
+comparison reports. Transactional triggers journal accepted competition/content
+changes under the owner lock; APIs, maintenance/identity merges and actual worker
+decision transactions share that row. Legacy decisions commit stable claim/push
+publication receipts, so pending publication blocks transfer. Native workers
+retain independent aggregate/voter histories and skip already emitted lifecycle
+boundaries. No legacy history is dropped.
+
+Migration comparisons load complete source and candidate histories, including
+relations beyond 10,000 rows. The optional shadow sampler keeps its separate
+10,000-row ceiling and execution budget; migration and reverse reconciliation
+do not apply that sampling limit. Ownership transfer still requires full equality.
+Historical positive time locks below the new-competition minimum remain intact.
+Missing weighted snapshots stay absent in the compatibility projection until a
+native snapshot update, preserving both migration parity and subsequent reads.
+Decision batches budget both decision rows and their winners. Ordered catch-up
+rebuilds only captured decision keys; it does not replay unchanged decision history
+when refreshing entries, ranks, awards and archives. The applied watermark remains
+behind until these derived stages finish, and full comparison remains mandatory.
+This lets a large active history converge while recurring decisions continue.
+Imported decision winners retain a nullable `legacy_drop_id`, preserving source
+history and prizes even when the drop was deleted before migration. Historical
+winner reads do not recreate an entry or its deleted content. Deploy the additive
+column and compatibility view through `dbMigrationsLoop` first, then `api`, then
+`competitionMigrationLoop`. Older workers remain compatible with the nullable column.
+
+`competitionMigrationLoop` accepts `{"wave_id":"<uuid>"}` from an IAM-authorized
+AWS Console/SDK invocation. It derives staging (`eu-west-1`) or production
+(`us-east-1`) from its pinned deployment, loads the regional backend secret without
+schema synchronization or Redis, and runs bounded copying, concurrent-write catch-up,
+full independent comparison, atomic transfer and native verification. Application
+operators, reasons, shared acceptance records, completed-pilot ordering and seven
+timed comparison windows are not required. Signed voting, special capabilities,
+upper-threshold metadata and paginated large content comparisons are preserved.
+The immutable command snapshot retains legacy upper-threshold metadata alongside
+its normal native draft fields. Actual data mismatches retain legacy ownership;
+repair-required native ownership is never blindly reversed. Final comparison,
+effect drain and owner transfer occur under the same transaction lock.
+
+Migrated primaries inherit shared wave presentation metadata while
+`presentation_config` is null. Native appearance arrays override that inheritance,
+including an explicit empty array. Independent configuration comparison includes
+the full inherited metadata, and command snapshots, configuration export and
+cloning retain the supported competition appearance keys. This also restores
+appearance for already migrated primaries without rewriting their data.
+
+There is no EventBridge schedule: deployment invokes nothing. Clean time-budget
+pauses queue the same function/qualifier with a generated bounded continuation
+(up to 24 hours overall); a repeated wave ID resumes durable checkpoints or verifies
+an already migrated primary without copying it again. One reserved execution and
+transactional fences protect redelivery. Data failures do not queue continuation.
+Function-error retries are disabled. A narrow self-invocation role policy and
+regional error/dropped-event alarms cover the handoff. The independent monitoring
+inventory includes structured errors and Errors/Throttles alarms. Deploy the
+migration service after compatible schema/workers/API. The simplification alone
+requires redeploying `api` (legacy configuration snapshot adapter), then this Lambda; no schema, public API or frontend behavior
+change is introduced. See the [migration runbook](./legacy-competition-migration-runbook.md).
 
 Important API responsibilities:
 
@@ -1350,7 +1480,7 @@ adds no Lambda or queue; deploy `dbMigrationsLoop` before `api`. See
 Profile CMS wallet gallery snapshots are read-only API projections over
 `nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. ENS inputs use
 bounded onchain forward resolution through an isolated provider for the
-configured Alchemy RPC and a one-minute cache. Shared provider settings remain
+configured `ETHEREUM_RPC_URL` and a one-minute cache. Shared provider settings remain
 unchanged; indexed reverse displays are not proof of the current ENS address.
 Raw addresses retain indexed display labels. Snapshots do not create
 schema, run migrations, enqueue indexers, or fetch NFT holdings/metadata live.
@@ -1421,6 +1551,71 @@ Wave drop metric repairs use the same DB-backed/SQS pattern. Drop deletes apply 
 Help6529 daily activity credits use the same durable handoff shape. Drop creation inserts one `help_bot_daily_activity_credit_requests` row per profile and UTC date inside the drop transaction, then publishes a small wakeup to `help-bot-daily-activity-credits.fifo` only after commit. `helpBotDailyActivityCreditLoop` grants outside the request path, records retry state and errors on the durable row, prioritizes untouched requests over retrying failures, retains completed rows for 30 days to suppress repeated daily work, and parks repeatedly failing rows as `DEAD`. A single FIFO message group and reserved concurrency of one serialize credit processing in a Lambda isolated from normal bot replies. The queue DLQ surfaces unhandled worker failures and a dead-row log metric alarm surfaces exhausted durable retries; a one-minute EventBridge rule wakes the same queue after a recorded retry or when post-commit SQS publication fails. The existing unique `help_bot_credit_events` grant key remains the final idempotency barrier if processing is redelivered or crashes between granting and marking the request complete.
 
 The zero-downtime rollout order is mandatory: deploy `dbMigrationsLoop` first to create the request table and indexes, deploy `helpBotReplyLoop` second to create the queue and worker, and deploy `api` last to begin inserting requests and publishing wakeups. Follow the same `dbMigrationsLoop -> helpBotReplyLoop -> api` dependency chain when dispatching the services.
+
+Upcoming automatic subscription quantities are synchronized in the same primary
+DB transaction as incremental consolidated owner balances. Full resets commit
+their balance replacement first, then reconcile subscription rows in pages of
+500, each in a separate primary DB transaction with post-commit cache eviction.
+This bounds subscription reads and locks without extending the balance-replacement
+transaction across the whole subscription population. A failed reconciliation page
+rolls back and fails the reset invocation; already committed pages remain valid.
+Rerunning the reset safely reconciles the remaining rows. Only subscribed
+Meme rows marked `automatic_subscription`, with both Automatic and All eligible
+mode enabled, receive the normalized current-season eligibility count. Guarded
+updates recheck those flags at write time and preserve subscription-priority
+timestamps; manual quantities and finalized allocation tables are untouched.
+Mode and edition-preference changes invoke the same sync within their API/top-up
+transaction. The owner-balance and top-up writers invalidate upcoming subscription
+caches after commit; API settings writes retain their existing cache invalidation.
+Balance persistence also evicts eligibility responses for all affected keys,
+including manual subscriptions whose saved quantities do not change. Full resets
+also capture previously persisted keys before deleting balances, covering keys
+absent from both replacement rows and the deletion delta. They evict these
+responses after balance commit and before paged reconciliation, so
+a failed later quantity page cannot prevent eviction of committed eligibility.
+After successful reset reconciliation, the demonstrated-intent coverage refresh
+also includes removed keys so their projected eligibility is recomputed.
+
+Subscription cache invalidation records post-commit batches in
+`subscription_cache_invalidations` before attempting Redis. Each attempt scans
+subscription response keys once, deletes matching keys individually with bounded
+concurrency, and owns a separate Redis connection that closes at the 1.5-second
+deadline. Fully processed SCAN pages are checkpointed using the exact Redis cursor;
+continuations are immediately eligible for the next drain and resume there, while
+partially deleted pages are replayed. A healthy
+continuation does not increment failure counts or emit an error alert. Failed
+batches remain durable and are drained by `ownersBalancesLoop` on every invocation,
+including empty balance deltas. Requests with different cursors or retry histories
+are processed separately so a repeatedly failing request does not escalate a fresh
+one. Malformed requests are parked with a terminal diagnostic for operator repair;
+they are excluded from subsequent drains. A failed parking write is reported but
+does not block healthy requests. Checkpoint and acknowledgement write failures
+emit separate bookkeeping diagnostics, preserve existing retry rows, and do not
+increment Redis failure counts.
+The first two known timeout/network failures are reported with pending recovery;
+unclassified and later failures require investigation while retries continue.
+Missing Redis configuration retains work and reports failure; explicit
+`FORCE_AVOID_REDIS=true` skips eviction visibly and acknowledges the requests.
+
+`ownersBalancesLoop/serverless.yaml` already enforces reserved concurrency one,
+serializing the retry drain. Each writer attempts its newly recorded requests
+immediately; their initial retry eligibility is delayed by 60 seconds. The owners
+loop opts into transient Redis connection diagnostics at cold-start initialization;
+its error listener and counter remain installed on the warm shared client. The
+first two known connection errors before readiness are amber, readiness resets the
+counter, and unknown or repeated errors remain red. Other services retain their
+existing connection-alert behavior. Successful attempts delete only their captured
+request IDs, preserving concurrent writes. Bookkeeping failures cannot roll back
+committed balances; existing response TTLs remain a fallback, including the small
+post-commit gap before recording a request.
+
+The rollout order is mandatory: `dbMigrationsLoop` with full schema sync first,
+then `ownersBalancesLoop`, `subscriptionsTopUpLoop`, and `api`. The new entity is
+exported in the full TypeORM entity registry; the deploy workflow invokes the
+migration Lambda with `schema_scope=full` to create the table and its fields. The
+service catalog declares schema sync as an owners-loop dependency. Skipping that
+step causes retry reads/writes to fail and emit red bookkeeping diagnostics;
+balance processing continues, but durable invalidation recovery is unavailable.
 
 Subscription coverage uses a DB-backed scheduled reconciliation pattern without
 a cross-service dirty-event queue. Top-up, redemption, subscription
@@ -1841,7 +2036,6 @@ Registration atomically adopts only its own secret's fence and removes that row.
 ### Push installation recovery
 
 Native push UUIDs are bound by the frontend to the native device identifier so restored backups use a separate installation. Old logout jobs retain their credentials/revisions but cannot block the new namespace. The existing revoke endpoint supports independently fenced token-scoped cleanup, removing only exact old-device/token targets without claiming or advancing that installation. It retires a matching retained token when no matching registrations remain. Registration can copy the authenticated profile's previous device preferences without overwriting destination settings and queues a replacement-device badge refresh. Credentialed token rotation updates all profiles on that installation. No extra queue, table, migration or service is introduced.
-
 
 ### Foreground iOS badge refresh
 

@@ -1,4 +1,5 @@
 import * as mysql from 'mysql';
+import { legacyCompetitionGetSql } from '@/competitions/legacy-competition-get-facade';
 import { DbQueryOptions } from '../../db-query.options';
 import {
   CustomTypeCaster,
@@ -44,6 +45,7 @@ class DbImpl extends SqlExecutor {
     params?: Record<string, any>,
     options?: DbQueryOptions
   ): Promise<any> {
+    sql = legacyCompetitionGetSql(sql);
     if (
       (options?.executionBudgetToken || options?.statementLimits) &&
       !options.wrappedConnection?.connection

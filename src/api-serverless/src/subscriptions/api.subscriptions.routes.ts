@@ -10,16 +10,12 @@ import {
 import { getNft } from '@/nftsLoop/db.nfts';
 import { numbers } from '@/numbers';
 import { evictRedisCacheForPathWithTimeout } from '@/redis';
+import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
 import { equalIgnoreCase } from '@/strings';
 import { Timer } from '@/time';
 import { PaginatedResponse } from '@/api/api-constants';
 import { Logger } from '@/logging';
-import {
-  getPage,
-  getPageSize,
-  giveReadReplicaTimeToCatchUp,
-  returnCSVResult
-} from '@/api/api-helpers';
+import { getPage, getPageSize, returnCSVResult } from '@/api/api-helpers';
 import { asyncRouter } from '@/api/async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '@/api/auth/auth';
 import { populateDistribution } from '@/api/distributions/api.distributions.service';
@@ -126,38 +122,7 @@ async function invalidateMintingClaimsPhaseCache(
 }
 
 async function invalidateSubscriptionCache(consolidationKey: string) {
-  const cacheEvictions = [
-    {
-      label: 'subscription-details',
-      path: `/api/subscriptions/consolidation/details/${consolidationKey}`
-    },
-    {
-      label: 'subscription-upcoming-memes',
-      path: `/api/subscriptions/consolidation/upcoming-memes/${consolidationKey}`
-    },
-    {
-      label: 'subscription-upcoming-meme-status',
-      path: `/api/subscriptions/consolidation/upcoming-memes/*/${consolidationKey}`
-    },
-    {
-      label: 'subscription-upcoming-memes-counts',
-      path: `/api/subscriptions/upcoming-memes-counts`
-    },
-    {
-      label: 'subscription-meme-count',
-      path: `/api/subscriptions/memes/*/count`
-    }
-  ];
-
-  await Promise.allSettled([
-    giveReadReplicaTimeToCatchUp(),
-    ...cacheEvictions.map((cacheEviction) =>
-      evictCacheWithContextLogging(
-        `[consolidation_key ${consolidationKey}]`,
-        cacheEviction
-      )
-    )
-  ]);
+  await invalidateUpcomingSubscriptionCaches([consolidationKey]);
 }
 
 const router = asyncRouter();

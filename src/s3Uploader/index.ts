@@ -9,8 +9,10 @@ import * as sentryContext from '@/sentry.context';
 import { isS3UploaderEnabledForEnvironment } from '@/s3Uploader/s3-uploader.queue';
 import {
   parseS3UploaderJob,
+  S3UploaderJob,
   S3UploaderCollectionType
 } from '@/s3Uploader/s3-uploader.jobs';
+import { reportS3UploaderFailure } from './s3-uploader-failure';
 
 const logger = Logger.get('S3_UPLOADER');
 const ALERT_TITLE = 'S3 Uploader';
@@ -19,6 +21,7 @@ const S3_UPLOADER_FAILURE_ALERT_THRESHOLD = 1;
 const sqsHandler: SQSHandler = async (event) => {
   const batchItemFailures: SQSBatchResponse['batchItemFailures'] = [];
   let failedRecords = 0;
+  let priorityAlertFailures = 0;
   let skippedRecords = 0;
   let processedRecords = 0;
 
@@ -31,11 +34,12 @@ const sqsHandler: SQSHandler = async (event) => {
 
       for (const record of event.Records) {
         const messageId = record.messageId ?? 'unknown';
+        let job: S3UploaderJob | null = null;
         logger.info(
           `[RECORD START] [messageId=${messageId}] [bodyLength=${record.body?.length ?? 0}]`
         );
         try {
-          const job = parseS3UploaderJob(record.body);
+          job = parseS3UploaderJob(record.body);
           if (!job) {
             logger.warn(
               `Invalid S3 uploader job payload, skipping [messageId=${messageId}] [body=${truncateRecordBody(
@@ -70,10 +74,9 @@ const sqsHandler: SQSHandler = async (event) => {
           logger.info(
             `[JOB PROCESSED] [messageId=${messageId}] [contract=${job.contract}] [tokenId=${job.tokenId}] [jobType=${job.jobType}]`
           );
-        } catch (error: any) {
-          logger.error(
-            `Failed processing S3 uploader record [messageId=${messageId}]`,
-            error
+        } catch (error: unknown) {
+          priorityAlertFailures += Number(
+            reportS3UploaderFailure(error, record, job)
           );
           failedRecords++;
           if (record.messageId) {
@@ -85,11 +88,11 @@ const sqsHandler: SQSHandler = async (event) => {
         `[BATCH SUMMARY] [records=${event.Records.length}] [processed=${processedRecords}] [skipped=${skippedRecords}] [failed=${failedRecords}]`
       );
 
-      if (failedRecords >= S3_UPLOADER_FAILURE_ALERT_THRESHOLD) {
+      if (priorityAlertFailures >= S3_UPLOADER_FAILURE_ALERT_THRESHOLD) {
         await priorityAlertsContext.sendPriorityAlertIfConfigured(
           ALERT_TITLE,
           new Error(
-            `S3 uploader record failures reached threshold [failed=${failedRecords}] [threshold=${S3_UPLOADER_FAILURE_ALERT_THRESHOLD}]`
+            `S3 uploader record failures reached threshold [failed=${priorityAlertFailures}] [threshold=${S3_UPLOADER_FAILURE_ALERT_THRESHOLD}]`
           )
         );
       }

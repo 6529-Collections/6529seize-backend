@@ -24,6 +24,11 @@ import {
   'occurred_at',
   'sequence'
 ])
+@Index('idx_competition_vote_history_time', [
+  'competition_id',
+  'occurred_at',
+  'sequence'
+])
 @Index('idx_competition_vote_history_voter', [
   'competition_id',
   'voter_profile_id'

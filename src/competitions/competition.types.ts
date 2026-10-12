@@ -65,6 +65,8 @@ export type CompetitionWinnerConfig = {
 };
 
 export type Competition = {
+  readonly legacy_origin?: boolean;
+  readonly legacy_transferred_at?: number | null;
   readonly id: string;
   readonly wave_id: string;
   readonly storage_mode: CompetitionStorageMode;

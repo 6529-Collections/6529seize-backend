@@ -1,12 +1,15 @@
+jest.mock('@/competitions/legacy-competition-mutation', () => ({
+  withLegacyPrimaryMutation: jest.fn(
+    (_wave: string, _ctx: unknown, action: (owner: null) => unknown) =>
+      action(null)
+  ),
+  readLegacyMutationSource: (action: () => unknown) => action()
+}));
 const mockResolveName = jest.fn();
 jest.mock('@/competitions/competition-entry-drop-hooks');
 
-jest.mock('@/alchemy', () => ({
-  getAlchemyInstance: jest.fn(() => ({
-    core: {
-      resolveName: mockResolveName
-    }
-  }))
+jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
+  getEthereumRpcClient: jest.fn(() => ({ resolveName: mockResolveName }))
 }));
 
 import { identitiesDb } from '@/identities/identities.db';

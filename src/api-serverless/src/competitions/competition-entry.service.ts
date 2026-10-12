@@ -1,3 +1,4 @@
+import { legacyCompetitionEntryId } from '@/competitions/competition-id';
 import { randomUUID } from 'node:crypto';
 import { ApiCreateCompetitionEntryRequest } from '@/api/generated/models/ApiCreateCompetitionEntryRequest';
 import { ApiCreateDropRequest } from '@/api/generated/models/ApiCreateDropRequest';
@@ -190,7 +191,7 @@ export class CompetitionEntryService {
   }> {
     let pendingPushIds: number[] = [];
     let createdDropId: string | null = null;
-    const { competition } = await lockNativeCompetition(
+    const { competition, record } = await lockNativeCompetition(
       waveId,
       competitionId,
       request.config_version,
@@ -267,7 +268,9 @@ export class CompetitionEntryService {
         'Entry content must be your dedicated competition drop in this wave'
       );
     const entry: CompetitionEntry = {
-      id: randomUUID(),
+      id: record.legacy_wave_id
+        ? legacyCompetitionEntryId(competitionId, dropId)
+        : randomUUID(),
       wave_id: waveId,
       competition_id: competitionId,
       drop_id: dropId,

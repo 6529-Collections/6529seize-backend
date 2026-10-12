@@ -21,6 +21,7 @@ import {
 } from '@/s3Uploader/s3-uploader.jobs';
 import { resizeImageBufferToHeight } from '@/media/image-resize';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
+import { downloadImageBuffer } from '@/media/image-download';
 import { assertUnreachable } from '@/assertions';
 
 const logger = Logger.get('S3');
@@ -263,7 +264,7 @@ function createImageBlobProvider(imageUrl: string) {
 
     inFlightPromise ??= (async () => {
       try {
-        const blob = await fetchUrl(imageUrl);
+        const blob = await downloadImageBuffer(imageUrl);
         cachedBlob = blob;
         return blob;
       } catch (err) {
@@ -513,7 +514,9 @@ async function handleImage({
   myBucket: string;
   sourceBlobProvider?: () => Promise<Buffer>;
 }) {
-  const imageExists = await s3ObjectExists(myBucket, s3Key, imageTxId);
+  const imageExists = await s3ObjectExists(myBucket, s3Key, imageTxId, {
+    requireNonEmpty: true
+  });
   if (imageExists.exists) {
     logger.info(`[SKIP IMAGE] [KEY ${s3Key}] [reason=already_exists]`);
     return;
@@ -530,7 +533,7 @@ async function handleImage({
   }
   const blob = sourceBlobProvider
     ? await sourceBlobProvider()
-    : await fetchUrl(imageUrl);
+    : await downloadImageBuffer(imageUrl);
   logger.info(`[DOWNLOADED FOR HEIGHT ${height ?? 'original'}] [KEY ${s3Key}]`);
 
   let buffer: Buffer | undefined;
@@ -540,9 +543,8 @@ async function handleImage({
     buffer = await resizeImage(nft, toWEBP, blob, height);
   }
 
-  if (!buffer) {
-    logger.error(`[BUFFER IS EMPTY] [KEY ${s3Key}]`);
-    return;
+  if (!buffer?.length) {
+    throw new Error(`Image output buffer is empty for ${s3Key}`);
   }
 
   const result = await s3UploadObject({

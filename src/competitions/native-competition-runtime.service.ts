@@ -63,7 +63,7 @@ function aggregatePoints(
   entryId: string
 ): NativeVotePoint[] {
   return history
-    .filter((row) => row.entry_id === entryId)
+    .filter((row) => row.entry_id === entryId && row.kind !== 'VOTER')
     .map((row) => ({
       timestamp: row.occurred_at,
       vote: row.aggregate_value,
@@ -76,6 +76,7 @@ function voterPoints(
 ): Map<string, Map<string, NativeVotePoint[]>> {
   const result = new Map<string, Map<string, NativeVotePoint[]>>();
   for (const row of history) {
+    if (row.kind === 'AGGREGATE') continue;
     let entry = result.get(row.entry_id);
     if (!entry) {
       entry = new Map();
@@ -299,7 +300,8 @@ export class NativeCompetitionRuntimeService {
       competition.voting.starts_at
     ].map((time) => Math.max(time ?? publishedAt, publishedAt));
     const startedAt = Math.min(...starts);
-    if (startedAt <= now)
+    const transferredAt = competition.legacy_transferred_at ?? -1;
+    if (startedAt <= now && startedAt > transferredAt)
       await this.repository.enqueueEvent(
         {
           key: 'started',
@@ -319,7 +321,10 @@ export class NativeCompetitionRuntimeService {
           competition.voting.ends_at
         ].filter(
           (time): time is number =>
-            time !== null && time >= publishedAt && time <= now
+            time !== null &&
+            time >= publishedAt &&
+            time <= now &&
+            time > transferredAt
         )
       )
     ).sort((a, b) => a - b);
@@ -391,9 +396,21 @@ export class NativeCompetitionRuntimeService {
       (a, b) =>
         b.rating - a.rating ||
         tieTime(a) - tieTime(b) ||
-        a.entry.id.localeCompare(b.entry.id)
+        (competition.legacy_origin
+          ? a.entry.drop_id
+          : a.entry.id
+        ).localeCompare(
+          competition.legacy_origin ? b.entry.drop_id : b.entry.id
+        )
     );
     let rank = 0;
+    const decisionRatings = new Map(
+      this.scores(
+        competition,
+        state,
+        competition.decisions.next_decision_time ?? time
+      ).map((score) => [score.entry.id, score.rating])
+    );
     await this.repository.saveLeaderboard(
       competition.id,
       scores.map((score, index) => {
@@ -404,7 +421,12 @@ export class NativeCompetitionRuntimeService {
           tieTime(previous) !== tieTime(score)
         )
           rank = index + 1;
-        return { ...score, rank };
+        return {
+          ...score,
+          rank,
+          orderingTime: tieTime(score),
+          decisionRating: decisionRatings.get(score.entry.id) ?? score.rating
+        };
       }),
       time,
       ctx
@@ -450,7 +472,12 @@ export class NativeCompetitionRuntimeService {
           (timeLocked
             ? (b.lastIncreasedAt ?? 0) - (a.lastIncreasedAt ?? 0)
             : b.lastChangedAt - a.lastChangedAt) ||
-          a.entry.id.localeCompare(b.entry.id)
+          (competition.legacy_origin
+            ? a.entry.drop_id
+            : a.entry.id
+          ).localeCompare(
+            competition.legacy_origin ? b.entry.drop_id : b.entry.id
+          )
       );
       const winners = scores
         .slice(0, nativeWinnerCount(outcomes))
@@ -514,7 +541,12 @@ export class NativeCompetitionRuntimeService {
       .sort(
         (a, b) =>
           a.entry.submitted_at - b.entry.submitted_at ||
-          a.entry.id.localeCompare(b.entry.id)
+          (competition.legacy_origin
+            ? a.entry.drop_id
+            : a.entry.id
+          ).localeCompare(
+            competition.legacy_origin ? b.entry.drop_id : b.entry.id
+          )
       )
       .slice(0, remaining);
     let scheduledAt = Math.max(time, (progress.latest ?? 0) + 1);

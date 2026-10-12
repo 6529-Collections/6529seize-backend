@@ -13,6 +13,7 @@ import {
 } from '../entities/ISubscription';
 import { insertWithoutUpdate } from '../orm_helpers';
 import { sqlExecutor } from '../sql-executor';
+import { DbQueryOptions } from '@/db-query.options';
 import {
   MINIMUM_SUBSCRIPTION_ELIGIBILITY,
   normalizeSubscriptionEligibility
@@ -119,7 +120,8 @@ const ELIGIBILITY_KEYS_CHUNK_SIZE = 5000;
  * Keys of the returned map are lowercased.
  */
 export async function fetchSubscriptionEligibilityForKeys(
-  consolidationKeys: string[]
+  consolidationKeys: string[],
+  options?: DbQueryOptions
 ): Promise<Map<string, number>> {
   const eligibility = new Map<string, number>();
   consolidationKeys.forEach((key) => {
@@ -132,7 +134,9 @@ export async function fetchSubscriptionEligibilityForKeys(
   }
 
   const maxSeasonId = await sqlExecutor.execute<{ max_id: number }>(
-    `SELECT MAX(id) as max_id FROM ${MEMES_SEASONS_TABLE}`
+    `SELECT MAX(id) as max_id FROM ${MEMES_SEASONS_TABLE}`,
+    undefined,
+    options
   );
 
   if (!maxSeasonId || maxSeasonId.length === 0 || !maxSeasonId[0].max_id) {
@@ -150,7 +154,8 @@ export async function fetchSubscriptionEligibilityForKeys(
     }>(
       `SELECT consolidation_key, sets FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}
        WHERE consolidation_key IN (:chunk) AND season = :seasonId`,
-      { chunk, seasonId }
+      { chunk, seasonId },
+      options
     );
     cardSetsResult.forEach((row) => {
       if (row.consolidation_key) {

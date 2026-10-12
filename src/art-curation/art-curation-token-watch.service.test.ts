@@ -67,7 +67,7 @@ describe('ArtCurationTokenWatchService', () => {
         {
           getCurrentVoterStatesForDrops,
           insertWinnerDropsVoterVotes,
-          deleteStaleLeaderboardEntries
+          deleteStaleLeaderboardEntriesForWave: deleteStaleLeaderboardEntries
         } as any,
         {
           executeNativeQueriesInTransaction,

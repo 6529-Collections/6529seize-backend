@@ -1,3 +1,4 @@
+import { LEGACY_INDEFINITE_PAUSE_END } from './legacy-competition-settings.repository';
 import { legacyCompetitionEntryId } from '@/competitions/competition-id';
 import {
   DROPS_TABLE,
@@ -11,7 +12,8 @@ import {
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVE_OUTCOMES_TABLE,
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-  WAVES_DECISION_PAUSES_TABLE
+  WAVES_DECISION_PAUSES_TABLE,
+  WAVES_METADATA_TABLE
 } from '@/constants';
 import { IDENTITIES_TABLE, RATINGS_TABLE, TDH_NFT_TABLE } from '@/constants';
 import {
@@ -387,12 +389,13 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
   public async getSnapshot(
     record: CompetitionRoutingRecord,
     now: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    rowLimit = LEGACY_PARITY_ROW_LIMIT
   ): Promise<CompetitionSnapshot> {
     const timerName = `${this.constructor.name}->getSnapshot`;
     ctx.timer?.start(timerName);
     try {
-      return await this.load(record, now, ctx);
+      return await this.load(record, now, ctx, rowLimit);
     } finally {
       ctx.timer?.stop(timerName);
     }
@@ -401,22 +404,25 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
   private async rows<T>(
     source: keyof typeof LEGACY_SOURCE_QUERIES,
     waveId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    rowLimit: number
   ): Promise<T[]> {
     const rows = await this.db.execute<T>(
-      LEGACY_SOURCE_QUERIES[source],
-      { waveId, limit: LEGACY_PARITY_ROW_LIMIT + 1 },
+      Number.isFinite(rowLimit)
+        ? LEGACY_SOURCE_QUERIES[source]
+        : LEGACY_SOURCE_QUERIES[source].replace(/\s+limit :limit$/, ''),
+      { waveId, limit: rowLimit + 1 },
       { wrappedConnection: ctx.connection }
     );
-    if (rows.length > LEGACY_PARITY_ROW_LIMIT)
-      throw new CompetitionRowLimitError();
+    if (rows.length > rowLimit) throw new CompetitionRowLimitError();
     return rows;
   }
 
   private async load(
     record: CompetitionRoutingRecord,
     now: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    rowLimit: number
   ): Promise<CompetitionSnapshot> {
     const wave = await this.db.oneOrNull<WaveEntity>(
       `select * from ${WAVES_TABLE} where id = :waveId`,
@@ -426,7 +432,7 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
     if (!wave || wave.type === WaveType.CHAT)
       throw new Error('Legacy baseline wave unavailable');
     const read = <T>(source: keyof typeof LEGACY_SOURCE_QUERIES) =>
-      this.rows<T>(source, record.wave_id, ctx);
+      this.rows<T>(source, record.wave_id, ctx, rowLimit);
     const drops = await read<Drop>('drops');
     const ratings = await read<Rating>('ratings');
     const locked = await read<LockedRating>('locked');
@@ -441,6 +447,14 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
       end_time: Numeric | null;
     }>('pauses');
     const nfts = await read<CreditNft>('nfts');
+    const presentation = await this.db.execute<{
+      data_key: string;
+      data_value: string;
+    }>(
+      `select data_key,data_value from ${WAVES_METADATA_TABLE} where wave_id=:waveId order by id asc`,
+      { waveId: record.wave_id },
+      { wrappedConnection: ctx.connection }
+    );
     const activeDrops = drops.filter(
       (drop) => drop.drop_type === DropType.PARTICIPATORY
     );
@@ -451,7 +465,7 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
     return {
       storage_mode: CompetitionStorageMode.LEGACY_ADAPTER,
       config_version: Number(record.config_version ?? 1),
-      configuration: configuration(wave, nfts, now),
+      configuration: { ...configuration(wave, nfts, now), presentation },
       entries: entries(drops, ratings, winners),
       votes_and_credits: voters(votes, spent),
       credit_budgets: await this.creditBudgets(wave, nfts, drops, votes, ctx),
@@ -493,7 +507,10 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
       })),
       pauses: pauses.map((pause) => ({
         start_time: Number(pause.start_time),
-        end_time: numeric(pause.end_time)
+        end_time:
+          Number(pause.end_time) === LEGACY_INDEFINITE_PAUSE_END
+            ? null
+            : numeric(pause.end_time)
       })),
       capabilities: capabilities(record.wave_id)
     };

@@ -18,7 +18,10 @@ module.exports = async (globalConfig?: unknown) => {
   )
     .withEnvironment({ MYSQL_ROOT_PASSWORD: 'root' })
     .withTmpFs({ '/var/lib/mysql': 'rw' })
-    .withCommand(['--default-authentication-plugin=mysql_native_password'])
+    .withCommand([
+      '--default-authentication-plugin=mysql_native_password',
+      '--log-bin-trust-function-creators=1'
+    ])
     .start();
 
   // 2️⃣  Expose credentials via env so the app picks them up

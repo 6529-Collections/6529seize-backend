@@ -46,6 +46,7 @@ import {
   getSubscriptionCutoffMemeId
 } from '@/api/subscriptions/subscription-cutoff';
 import { markSubscriptionCoverageDirty } from '@/subscription-coverage/subscription-coverage-dirty';
+import { synchronizeAutomaticSubscriptionQuantities } from '@/subscriptionsDaily/subscription-quantity-sync.db';
 
 const SUBSCRIPTIONS_START_ID = 220;
 
@@ -209,6 +210,10 @@ async function updateSubscriptionModeInternal(
     automatic,
     wrappedConnection
   );
+  await synchronizeAutomaticSubscriptionQuantities([consolidationKey], {
+    connection: wrappedConnection,
+    timer: undefined
+  });
 }
 
 async function updateSubscriptionsAfterModeChange(
@@ -328,6 +333,10 @@ async function updateSubscribeAllEditionsInternal(
     { consolidation_key, log },
     { wrappedConnection }
   );
+  await synchronizeAutomaticSubscriptionQuantities([consolidation_key], {
+    connection: wrappedConnection,
+    timer: undefined
+  });
 }
 
 export async function fetchUpcomingMemeSubscriptions(

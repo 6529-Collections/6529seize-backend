@@ -34,8 +34,11 @@ import {
 } from './competition-command-access';
 import {
   competitionValidationWave,
+  competitionPresentationKeys,
   configurationToRecord
 } from './competition-configuration';
+import { legacyCompetitionSettingsService } from './legacy-competition-settings.service';
+import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 
 export type CompetitionLifecycleAction =
   | 'publish'
@@ -108,6 +111,30 @@ function newRecord(
 }
 
 export class CompetitionLifecycleService {
+  private async commandConfiguration(
+    record: CompetitionRecord,
+    ctx: RequestContext
+  ): Promise<ApiCompetitionDraftInput> {
+    const config =
+      await competitionCommandRepository.getConfiguration<ApiCompetitionDraftInput>(
+        record.id,
+        Number(record.config_version),
+        ctx
+      );
+    if (
+      record.legacy_wave_id !== record.wave_id ||
+      record.presentation_config != null
+    )
+      return config;
+    const metadata = await waveMetadataDb.listByWaveId(record.wave_id, ctx);
+    return {
+      ...config,
+      presentation: metadata
+        .filter((item) => competitionPresentationKeys.includes(item.data_key))
+        .map(({ data_key, data_value }) => ({ data_key, data_value }))
+    };
+  }
+
   private async normalizeConfiguration(
     config: ApiCompetitionDraftInput,
     ctx: RequestContext
@@ -154,6 +181,12 @@ export class CompetitionLifecycleService {
     ctx: RequestContext
   ): Promise<ApiCompetitionDraftInput> {
     await competitionService.getCompetition(waveId, competitionId, ctx);
+    const competition = await competitionRepository.findCompetitionRecordById(
+      competitionId,
+      ctx
+    );
+    if (competition?.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER)
+      return legacyCompetitionSettingsService.configuration(waveId, ctx);
     await administerCompetitionWave(waveId, ctx);
     const record = await competitionRepository.findCompetitionRecordById(
       competitionId,
@@ -164,11 +197,7 @@ export class CompetitionLifecycleService {
       record.storage_mode !== CompetitionStorageMode.NATIVE
     )
       competitionConflict('Native competition configuration is unavailable');
-    return competitionCommandRepository.getConfiguration(
-      competitionId,
-      Number(record.config_version),
-      ctx
-    );
+    return this.commandConfiguration(record, ctx);
   }
 
   public async update(
@@ -177,6 +206,18 @@ export class CompetitionLifecycleService {
     request: ApiUpdateCompetitionRequest,
     ctx: RequestContext
   ) {
+    await competitionService.getCompetition(waveId, competitionId, ctx);
+    const competition = await competitionRepository.findCompetitionRecordById(
+      competitionId,
+      ctx
+    );
+    if (competition?.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER)
+      return legacyCompetitionSettingsService.update(
+        waveId,
+        competitionId,
+        request,
+        ctx
+      );
     requireNativeWrites();
     await administerCompetitionWave(waveId, ctx);
     const actor = competitionActor(ctx);
@@ -271,6 +312,24 @@ export class CompetitionLifecycleService {
     request: ApiCompetitionActionRequest,
     ctx: RequestContext
   ) {
+    await competitionService.getCompetition(waveId, competitionId, ctx);
+    const competition = await competitionRepository.findCompetitionRecordById(
+      competitionId,
+      ctx
+    );
+    if (competition?.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER) {
+      if (action !== 'pause' && action !== 'resume')
+        competitionConflict(
+          'Legacy competitions support pause and resume only'
+        );
+      return legacyCompetitionSettingsService.action(
+        waveId,
+        competitionId,
+        action,
+        request,
+        ctx
+      );
+    }
     requireNativeWrites();
     await administerCompetitionWave(waveId, ctx);
     const reason = request.reason?.trim() || null;
@@ -289,12 +348,7 @@ export class CompetitionLifecycleService {
           tx
         );
         const { wave } = await administerCompetitionWave(waveId, tx);
-        const config =
-          await competitionCommandRepository.getConfiguration<ApiCompetitionDraftInput>(
-            competitionId,
-            Number(record.config_version),
-            tx
-          );
+        const config = await this.commandConfiguration(record, tx);
         const now = Date.now();
         if (action === 'clone') {
           if (

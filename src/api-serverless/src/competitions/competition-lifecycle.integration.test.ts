@@ -11,7 +11,9 @@ import {
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_CAPABILITY_AUDITS_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
-  COMPETITION_OUTCOMES_TABLE
+  COMPETITION_OUTCOMES_TABLE,
+  COMPETITION_VOTE_HISTORY_TABLE,
+  WAVES_METADATA_TABLE
 } from '@/constants';
 import { CompetitionCapability } from '@/entities/ICompetition';
 import { sqlExecutor } from '@/sql-executor';
@@ -26,6 +28,7 @@ import { nativeCompetitionRuntimeRepository } from '@/competitions/native-compet
 import { competitionCapabilityService } from '@/competitions/competition-capability.service';
 import { CompetitionDraftSchema } from './competition-configuration';
 import { competitionLifecycleService as service } from './competition-lifecycle.service';
+import { listCompetitionVoteActivity } from './competition-vote-activity.service';
 
 const actor = 'competition-admin';
 const wave = aWave(
@@ -135,6 +138,65 @@ describeWithSeed(
       delete process.env.NATIVE_COMPETITION_CAPABILITY_OPERATORS;
     });
 
+    it('scopes vote activity to visible entries in the chosen competition and masks drafts and mismatched parents', async () => {
+      const first = await draft();
+      const second = await draft();
+      await expect(
+        listCompetitionVoteActivity(wave.id, first.id, 0, 50, {})
+      ).rejects.toThrow('not found');
+      await service.action(
+        wave.id,
+        first.id,
+        'publish',
+        {
+          idempotency_key: randomUUID(),
+          config_version: first.config_version
+        },
+        ctx
+      );
+      const visible = await activity(first.id);
+      const removed = await activity(first.id);
+      const unrelated = await activity(second.id);
+      await sqlExecutor.execute(
+        `UPDATE ${COMPETITION_ENTRIES_TABLE} SET status = 'DELETED' WHERE id = :id`,
+        { id: removed }
+      );
+      for (const [competitionId, entryId, occurredAt] of [
+        [first.id, visible, 1],
+        [first.id, visible, 2],
+        [first.id, removed, 3],
+        [second.id, unrelated, 4]
+      ] as const) {
+        await sqlExecutor.execute(
+          `INSERT INTO ${COMPETITION_VOTE_HISTORY_TABLE}
+           (competition_id,entry_id,voter_profile_id,value,previous_value,aggregate_value,credit_delta,occurred_at)
+           VALUES (:competitionId,:entryId,'voter',10,5,10,5,:occurredAt)`,
+          { competitionId, entryId, occurredAt }
+        );
+      }
+      jest.spyOn(identityFetcher, 'getOverviewsByIds').mockResolvedValue({});
+      const logs = await listCompetitionVoteActivity(
+        wave.id,
+        first.id,
+        0,
+        1,
+        {}
+      );
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toMatchObject({
+        wave_id: wave.id,
+        drop_id: `drop-${visible}`,
+        contents: { oldVote: 5, newVote: 10 },
+        created_at: new Date(2)
+      });
+      expect(
+        await listCompetitionVoteActivity(wave.id, first.id, 1, 50, {})
+      ).toEqual([expect.objectContaining({ created_at: new Date(1) })]);
+      await expect(
+        listCompetitionVoteActivity('wrong-parent', first.id, 0, 50, {})
+      ).rejects.toThrow('not found');
+    });
+
     it('creates drafts idempotently, masks them from members, and leaves legacy CHAT selection empty', async () => {
       const request = { idempotency_key: randomUUID(), config: config() };
       const first = await service.create(wave.id, request, ctx);
@@ -176,6 +238,46 @@ describeWithSeed(
       expect(
         await sqlExecutor.execute(`SELECT id FROM ${COMPETITIONS_TABLE}`)
       ).toHaveLength(1);
+    });
+
+    it('inherits migrated wave appearance for configuration and clones until explicitly cleared', async () => {
+      const first = await draft();
+      const presentation = [
+        {
+          data_key: 'wave_display.approve.tabs.approved_label',
+          data_value: 'Chosen'
+        }
+      ];
+      await sqlExecutor.execute(
+        `insert into ${WAVES_METADATA_TABLE} (wave_id,data_key,data_value) values (:waveId,:key,:value)`,
+        {
+          waveId: wave.id,
+          key: presentation[0].data_key,
+          value: presentation[0].data_value
+        }
+      );
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set legacy_wave_id=wave_id,presentation_config=null,lifecycle='ENDED' where id=:id`,
+        { id: first.id }
+      );
+      expect(
+        (await service.configuration(wave.id, first.id, ctx)).presentation
+      ).toEqual(presentation);
+      const clone = await service.action(
+        wave.id,
+        first.id,
+        'clone',
+        { idempotency_key: randomUUID(), config_version: first.config_version },
+        ctx
+      );
+      expect(clone.presentation).toEqual(presentation);
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set presentation_config='[]' where id=:id`,
+        { id: first.id }
+      );
+      expect(
+        (await service.configuration(wave.id, first.id, ctx)).presentation
+      ).toEqual([]);
     });
 
     it('freezes published type, freezes rules after activity, and versions presentation without changing decision progress', async () => {

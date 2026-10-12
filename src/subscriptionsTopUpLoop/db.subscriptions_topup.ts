@@ -19,6 +19,7 @@ import {
 } from '../subscription-wave-notifier';
 import { sqlExecutor } from '../sql-executor';
 import { markSubscriptionCoverageDirty } from '../subscription-coverage/subscription-coverage-dirty';
+import { invalidateUpcomingSubscriptionCaches } from '@/subscriptionsDaily/subscription-cache';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
 
@@ -80,12 +81,16 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
           logger.warn(
             `Error setting subscription mode to auto-subscribe for ${consolidationKey}: ${e}`
           );
+          throw e;
         }
       }
       dirtyConsolidationKeys.add(consolidationKey);
       processedTopUps.push(topUp);
     }
   });
+  await invalidateUpcomingSubscriptionCaches(
+    Array.from(dirtyConsolidationKeys)
+  );
   await markSubscriptionCoverageDirty(
     Array.from(dirtyConsolidationKeys),
     'BALANCE_TOPPED_UP'

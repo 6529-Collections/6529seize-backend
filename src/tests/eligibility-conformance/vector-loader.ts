@@ -17,7 +17,7 @@ import {
   MEMES_CONTRACT
 } from '@/constants';
 import { NEXTGEN_CORE_CONTRACT } from '@/nextgen/nextgen_constants';
-import { Network } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { consolidationTools } from '@/consolidation-tools';
 import { anIdentity } from '@/tests/fixtures/identity.fixture';
 import { aUserGroup } from '@/tests/fixtures/user-group.fixture';

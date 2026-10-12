@@ -346,7 +346,7 @@ export class ArtCurationTokenWatchService {
     await this.waveDecisionsDb.updateDropsToWinners(dropIds, ctx);
     await this.waveDecisionsDb.deleteDropsRanks(dropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([wave.id], ctx);
-    await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
+    await this.dropVotingDb.deleteStaleLeaderboardEntriesForWave(wave.id, ctx);
     await this.artCurationTokenWatchDb.markResolved(
       {
         watchId: watch.id,

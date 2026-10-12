@@ -11,7 +11,7 @@ import {
 import { WaveEntity } from '@/entities/IWave';
 import { CompetitionEntity, CompetitionType } from '@/entities/ICompetition';
 
-const presentationKeys = [
+export const competitionPresentationKeys = [
   'wave_display.approve.tabs.approvals_label',
   'wave_display.approve.tabs.approved_label',
   'wave_display.submission.button_label',
@@ -47,7 +47,7 @@ export const CompetitionDraftSchema = Joi.object<ApiCompetitionDraftInput>({
     .items(
       Joi.object({
         data_key: Joi.string()
-          .valid(...presentationKeys)
+          .valid(...competitionPresentationKeys)
           .required(),
         data_value: Joi.string().allow('').max(50000).required()
       })

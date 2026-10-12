@@ -6,7 +6,7 @@ import {
 } from './profile.types';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { BadRequestException } from '../exceptions';
-import { ConnectionWrapper } from '../sql-executor';
+import { ConnectionWrapper, dbSupplier } from '../sql-executor';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import {
@@ -355,6 +355,22 @@ export class ProfilesService {
   }
 
   async mergeProfileSet(
+    command: { toBeMerged: string[]; target: string },
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    const { withLegacyCompetitionProfileMerge } =
+      await import('@/competitions/legacy-competition-profile-merge');
+    return withLegacyCompetitionProfileMerge(
+      dbSupplier(),
+      command.toBeMerged,
+      command.target,
+      () =>
+        this.mergeProfileSetUnderCompetitionLocks(command, connectionHolder),
+      { connection: connectionHolder }
+    );
+  }
+
+  private async mergeProfileSetUnderCompetitionLocks(
     {
       toBeMerged,
       target

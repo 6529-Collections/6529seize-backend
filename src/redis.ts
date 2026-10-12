@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Logger } from './logging';
 import { numbers } from './numbers';
 import { Time } from './time';
+import { redisFailureCategory } from '@/redis-recovery';
 
 let redis: Redis;
 let redisReadyEvents = 0;
@@ -195,7 +196,8 @@ export async function evictKeyFromRedisCache(key: string): Promise<any> {
   await redis.del(key);
 }
 export async function evictAllKeysMatchingPatternFromRedisCache(
-  pattern: string
+  pattern: string,
+  singleKeyDeletes = false
 ) {
   logger.info(`Evicting all keys matching pattern: ${pattern}`);
   if (!redis) {
@@ -205,10 +207,29 @@ export async function evictAllKeysMatchingPatternFromRedisCache(
   do {
     const result = await redis.scan(cursor, { MATCH: pattern, COUNT: 1000 });
     cursor = Number(result.cursor);
-    if (result.keys.length > 0) {
-      await redis.del(result.keys);
-    }
+    await deleteRedisCacheKeys(result.keys, singleKeyDeletes);
   } while (cursor !== 0);
+}
+
+async function deleteRedisCacheKeys(
+  keys: string[],
+  singleKeyDeletes: boolean
+): Promise<void> {
+  const client = redis;
+  if (!client || keys.length === 0) {
+    return;
+  }
+  if (!singleKeyDeletes) {
+    await client.del(keys);
+    return;
+  }
+  // Query variants need not share a Redis Cluster hash slot. Keep each DEL
+  // single-key and bound concurrency when a scan returns many matches.
+  for (let start = 0; start < keys.length; start += 20) {
+    await Promise.all(
+      keys.slice(start, start + 20).map((key) => client.del(key))
+    );
+  }
 }
 
 export function getRedisCacheKeyForPath(path: string): string {
@@ -219,18 +240,24 @@ export function getRedisCacheKeyPatternForPath(path: string): string {
   return getRedisCacheKeyForPath(path);
 }
 
-export async function evictRedisCacheForPath(path: string): Promise<void> {
+export async function evictRedisCacheForPath(
+  path: string,
+  singleKeyDeletes = false
+): Promise<void> {
   await evictAllKeysMatchingPatternFromRedisCache(
-    getRedisCacheKeyPatternForPath(`${path}*`)
+    getRedisCacheKeyPatternForPath(`${path}*`),
+    singleKeyDeletes
   );
 }
 
 export async function evictRedisCacheForPathWithTimeout({
   path,
-  timeoutMs = 1_500
+  timeoutMs = 1_500,
+  singleKeyDeletes = false
 }: {
   path: string;
   timeoutMs?: number;
+  singleKeyDeletes?: boolean;
 }): Promise<{
   success: boolean;
   elapsed_ms: number;
@@ -240,7 +267,10 @@ export async function evictRedisCacheForPathWithTimeout({
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   try {
-    const evictionPromise = evictRedisCacheForPath(path).finally(() => {
+    const evictionPromise = evictRedisCacheForPath(
+      path,
+      singleKeyDeletes
+    ).finally(() => {
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
@@ -272,7 +302,7 @@ export async function evictRedisCacheForPathWithTimeout({
 
 const logger = Logger.get('REDIS_CLIENT');
 
-export async function initRedis() {
+export async function initRedis(opts?: { reportConnectionRecovery?: boolean }) {
   if (process.env.FORCE_AVOID_REDIS === 'true') {
     logger.warn(`Redis is disabled with FORCE_AVOID_REDIS env`);
     return;
@@ -303,12 +333,33 @@ export async function initRedis() {
     },
     password: password
   });
-  redis.on('error', (error: Error) =>
-    logger.error('Error connecting to Redis: ' + error)
-  );
+  let connectionFailures = 0;
+  redis.on('error', (error: Error) => {
+    connectionFailures++;
+    if (!opts?.reportConnectionRecovery) {
+      logger.error('Error connecting to Redis: ' + error);
+      return;
+    }
+    const category = redisFailureCategory(error);
+    const pending = category !== 'UNKNOWN' && connectionFailures < 3;
+    logger.errorWithDiagnostic(
+      {
+        operation: 'REDIS_CONNECT',
+        category,
+        recovery: {
+          state: pending ? 'pending' : 'unknown',
+          attempt: connectionFailures,
+          maxAttempts: 3
+        }
+      },
+      'Redis connection failed; client is reconnecting',
+      { error: error.message, consecutive_failures: connectionFailures }
+    );
+  });
   redis.on('connect', () => logger.info('Redis connected!'));
   redis.on('ready', () => {
     redisReadyEvents++;
+    connectionFailures = 0;
   });
   redis.on('reconnecting', () => {
     redisReconnectEvents++;

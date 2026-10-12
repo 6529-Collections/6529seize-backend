@@ -1,3 +1,4 @@
+import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
 import { ConnectionWrapper } from '../sql-executor';
 import { dropsDb } from './drops.db';
 import { Time, Timer } from '../time';
@@ -130,28 +131,108 @@ async function reduceVotesForDrops(
   },
   ctx: RequestContext
 ) {
-  const dropsForWaves = await dropsDb.findDropVotesForWaves(
-    {
-      profile_id,
-      wave_id,
-      drop_id
-    },
-    ctx
-  );
-  const reductionCoefficient = credit_limit / total_given_votes;
-  let votes_still_given = total_given_votes;
-  for (const drop of dropsForWaves) {
-    const { drop_id, votes, author_id, visibility_group_id } = drop;
-    const now = Time.currentMillis();
-    await dropVotingDb.lockDropsCurrentRealVote(drop_id, ctx);
-    const voteAfterRevocation =
-      credit_scope === WaveCreditScope.DROP
-        ? limitVoteToCredit(votes, credit_limit)
-        : Math.floor(votes * reductionCoefficient);
-    const voteChange = voteAfterRevocation - votes;
-    if (voteChange === 0) {
+  return withLegacyPrimaryMutation(wave_id, ctx, async (nativeOwner) => {
+    const dropsForWaves = await dropsDb.findDropVotesForWaves(
+      {
+        profile_id,
+        wave_id,
+        drop_id
+      },
+      ctx
+    );
+    if (nativeOwner) {
+      const { nativeCompetitionRuntimeService } =
+        await import('@/competitions/native-competition-runtime.service');
+      const { nativeCompetitionRuntimeRepository } =
+        await import('@/competitions/native-competition-runtime.repository');
+      const { legacyCompetitionEntryId } =
+        await import('@/competitions/competition-id');
+      const now = Time.currentMillis();
+      await nativeCompetitionRuntimeService.reconcileVoterCredit(
+        {
+          competitionId: nativeOwner.id,
+          voterProfileId: profile_id,
+          availableCredit: credit_limit,
+          creditScope: credit_scope,
+          occurredAt: now
+        },
+        ctx
+      );
+      const current = new Map(
+        (
+          await nativeCompetitionRuntimeRepository.getVoterActiveVotes(
+            nativeOwner.id,
+            profile_id,
+            ctx
+          )
+        ).map((vote) => [vote.entryId, vote.value])
+      );
+      for (const drop of dropsForWaves) {
+        const value =
+          current.get(legacyCompetitionEntryId(nativeOwner.id, drop.drop_id)) ??
+          0;
+        if (value === drop.votes) continue;
+        await notifyOfDropVoteRevocation({
+          profile_id,
+          drop_id: drop.drop_id,
+          wave_id,
+          author_id: drop.author_id,
+          visibility_group_id: drop.visibility_group_id,
+          voteAfterRevocation: value,
+          voteChange: value - drop.votes,
+          ctx
+        });
+        await profileActivityLogsDb.insert(
+          {
+            profile_id,
+            type: ProfileActivityLogType.DROP_VOTE_EDIT,
+            target_id: drop.drop_id,
+            contents: JSON.stringify({
+              oldVote: drop.votes,
+              newVote: value,
+              reason: 'CREDIT_OVERSPENT'
+            }),
+            additional_data_1: drop.author_id,
+            additional_data_2: wave_id,
+            proxy_id: null
+          },
+          ctx.connection!,
+          ctx.timer
+        );
+      }
+      await nativeCompetitionRuntimeService.refreshCompetition(
+        nativeOwner.id,
+        now,
+        ctx
+      );
+      return;
+    }
+    const reductionCoefficient = credit_limit / total_given_votes;
+    let votes_still_given = total_given_votes;
+    for (const drop of dropsForWaves) {
+      const { drop_id, votes, author_id, visibility_group_id } = drop;
+      const now = Time.currentMillis();
+      await dropVotingDb.lockDropsCurrentRealVote(drop_id, ctx);
+      const voteAfterRevocation =
+        credit_scope === WaveCreditScope.DROP
+          ? limitVoteToCredit(votes, credit_limit)
+          : Math.floor(votes * reductionCoefficient);
+      const voteChange = voteAfterRevocation - votes;
+      if (voteChange === 0) {
+        logger.info(
+          `Skipping drop vote revocation for unchanged vote ${JSON.stringify({
+            ...drop,
+            reductionCoefficient,
+            credit_limit,
+            voteAfterRevocation,
+            votes_still_given
+          })}`
+        );
+        continue;
+      }
+      votes_still_given -= Math.abs(voteChange);
       logger.info(
-        `Skipping drop vote revocation for unchanged vote ${JSON.stringify({
+        `Revoking drop votes ${JSON.stringify({
           ...drop,
           reductionCoefficient,
           credit_limit,
@@ -159,89 +240,78 @@ async function reduceVotesForDrops(
           votes_still_given
         })}`
       );
-      continue;
-    }
-    votes_still_given -= Math.abs(voteChange);
-    logger.info(
-      `Revoking drop votes ${JSON.stringify({
-        ...drop,
-        reductionCoefficient,
-        credit_limit,
-        voteAfterRevocation,
-        votes_still_given
-      })}`
-    );
-    await dropVotingDb.getDropVoterStateForDrop(
-      { voterId: profile_id, drop_id },
-      ctx
-    );
-    await Promise.all([
-      dropVotingDb.upsertState(
-        {
-          voter_id: profile_id,
-          drop_id,
-          votes: voteAfterRevocation,
-          wave_id
-        },
+      await dropVotingDb.getDropVoterStateForDrop(
+        { voterId: profile_id, drop_id },
         ctx
-      ),
-      dropVotingDb.upsertAggregateDropRank(
-        {
-          drop_id,
-          change: voteChange,
-          wave_id: wave_id
-        },
-        ctx
-      )
-    ]);
-    await Promise.all([
-      notifyOfDropVoteRevocation({
-        profile_id,
-        drop_id,
-        voteAfterRevocation,
-        voteChange,
-        wave_id,
-        author_id,
-        visibility_group_id,
-        ctx
-      }),
-      profileActivityLogsDb.insert(
-        {
+      );
+      await Promise.all([
+        dropVotingDb.upsertState(
+          {
+            voter_id: profile_id,
+            drop_id,
+            votes: voteAfterRevocation,
+            wave_id
+          },
+          ctx
+        ),
+        dropVotingDb.upsertAggregateDropRank(
+          {
+            drop_id,
+            change: voteChange,
+            wave_id: wave_id
+          },
+          ctx
+        )
+      ]);
+      await Promise.all([
+        notifyOfDropVoteRevocation({
           profile_id,
-          type: ProfileActivityLogType.DROP_VOTE_EDIT,
-          target_id: drop_id,
-          contents: JSON.stringify({
-            oldVote: votes,
-            newVote: voteAfterRevocation,
-            reason: 'CREDIT_OVERSPENT'
-          }),
-          additional_data_1: drop.author_id,
-          additional_data_2: wave_id,
-          proxy_id: null
-        },
-        ctx.connection!,
-        ctx.timer
-      )
-    ]);
-    await Promise.all([
-      dropVotingDb.snapShotDropsRealVoteInTimeBasedOnRank(drop_id, now, ctx),
-      dropVotingDb.snapshotDropVotersRealVoteInTimeBasedOnVoterState(
-        {
-          voterId: profile_id,
-          dropId: drop_id,
-          now
-        },
+          drop_id,
+          voteAfterRevocation,
+          voteChange,
+          wave_id,
+          author_id,
+          visibility_group_id,
+          ctx
+        }),
+        profileActivityLogsDb.insert(
+          {
+            profile_id,
+            type: ProfileActivityLogType.DROP_VOTE_EDIT,
+            target_id: drop_id,
+            contents: JSON.stringify({
+              oldVote: votes,
+              newVote: voteAfterRevocation,
+              reason: 'CREDIT_OVERSPENT'
+            }),
+            additional_data_1: drop.author_id,
+            additional_data_2: wave_id,
+            proxy_id: null
+          },
+          ctx.connection!,
+          ctx.timer
+        )
+      ]);
+      await Promise.all([
+        dropVotingDb.snapShotDropsRealVoteInTimeBasedOnRank(drop_id, now, ctx),
+        dropVotingDb.snapshotDropVotersRealVoteInTimeBasedOnVoterState(
+          {
+            voterId: profile_id,
+            dropId: drop_id,
+            now
+          },
+          ctx
+        )
+      ]);
+      await dropVotingDb.getDropVoterStateForDrop(
+        { voterId: profile_id, drop_id },
         ctx
-      )
-    ]);
-    await dropVotingDb.getDropVoterStateForDrop(
-      { voterId: profile_id, drop_id },
-      ctx
-    );
-    if (votes_still_given <= credit_limit) {
-      break;
+      );
+      if (votes_still_given <= credit_limit) {
+        break;
+      }
     }
-  }
+  });
 }
 
 function limitVoteToCredit(votes: number, creditLimit: number): number {

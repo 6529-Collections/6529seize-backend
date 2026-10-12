@@ -2,8 +2,9 @@
 
 Native competitions share a wave's chat, visibility and administration. Each
 competition owns its entries, credits, votes, schedule, decisions, awards and
-history. Existing competitions retain the legacy engine and immutable primary
-mapping. No legacy data migration is part of this release.
+history. Existing competitions retain their immutable primary mapping. The original
+runtime release did not migrate them; the separate [legacy migration runbook](./legacy-competition-migration-runbook.md)
+defines guarded one-at-a-time engine transfers and their pending acceptance gates.
 
 ## Deployment order
 
@@ -48,7 +49,8 @@ service catalog before an authorized release.
 Enable unified reads before writes, and enable execution consistently in API
 and both native runtime workers only after their dependencies are ready. Draft
 creation can be piloted with execution disabled. Publication, entry creation
-and voting cannot. Never manually set a legacy adapter to native ownership.
+and voting cannot. Never manually set a legacy adapter to native ownership. Use only the separately
+authorized migration CLI after its complete production acceptance gates pass.
 
 Disable native writes and execution to stop new native activity while retaining
 history and old clients. Disable hub creation separately. Hiding frontend
@@ -116,9 +118,13 @@ observations.
 - Rank and Approve store immutable winner/voter snapshots and award
   descriptors; winning changes an entry, never its dedicated COMPETITION drop. Existing
   automatic REP/CIC outcome behavior creates descriptors, not new rating grants.
+  For a migrated original primary, a fenced transaction may mirror its legacy
+  PARTI/WINNER state for retained compatibility data; native records remain authoritative.
 - Administrators may archive competitions; filters retain access to history.
   Manual end/cancel and entry withdrawal/disqualification are not exposed.
-- All submitted competition content is immutable, including unsigned entries.
+- Dedicated native submission content is immutable, including unsigned entries.
+  A migrated original legacy submission retains its original pre-winner edit
+  behavior through storage-aware commands; it is not a dedicated native submission.
   Deletion uses existing drop permissions and preserves competition history. Public historical
   content observes current moderation/deletion access, so snapshots cannot
   resurrect removed content. Ordinary chat-history purge excludes competition
