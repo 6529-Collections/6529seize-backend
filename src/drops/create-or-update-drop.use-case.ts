@@ -444,11 +444,13 @@ export class CreateOrUpdateDropUseCase {
       !isNativeEntryContentPermit(nativeEntryContent, model, connection)
     )
       throw new ForbiddenException('Invalid native entry content permission');
-    // Native entry commands already hold their own competition lock. Their
-    // dedicated COMPETITION drops never mutate the legacy primary's source.
-    const withOwner: typeof withLegacyPrimaryMutation = nativeEntryContent
-      ? async (_waveId, _ctx, action) => action(null)
-      : withLegacyPrimaryMutation;
+    // Chat content does not mutate the legacy competition source. Existing
+    // entry memberships still take their own locks in prepareUpdate below.
+    // Native entry commands already hold their own competition lock.
+    const withOwner: typeof withLegacyPrimaryMutation =
+      nativeEntryContent || model.drop_type === DropType.CHAT
+        ? async (_waveId, _ctx, action) => action(null)
+        : withLegacyPrimaryMutation;
     return withOwner(
       model.wave_id,
       { timer, connection },

@@ -26,7 +26,7 @@ import {
 } from '../api-serverless/src/curations/curations.db';
 import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { WaveEntity } from '../entities/IWave';
-import { DropEntity } from '../entities/IDrop';
+import { DropEntity, DropType } from '../entities/IDrop';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import {
   artCurationTokenWatchService,
@@ -216,7 +216,13 @@ export class DeleteDropUseCase {
       connection
     );
     if (!ownershipDrop) return null;
-    return withLegacyPrimaryMutation(
+    // Chat edits replace their rows through this cleanup path. The caller has
+    // already checked entry memberships; permanent deletions stay fenced.
+    const withDropOwnershipMutation: typeof withLegacyPrimaryMutation =
+      !isPermanentDelete && ownershipDrop.drop_type === DropType.CHAT
+        ? async (_waveId, _ctx, action) => action(null)
+        : withLegacyPrimaryMutation;
+    return withDropOwnershipMutation(
       ownershipDrop.wave_id,
       { timer, connection },
       async () => {

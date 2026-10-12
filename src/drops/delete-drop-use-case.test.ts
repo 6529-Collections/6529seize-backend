@@ -12,6 +12,7 @@ import { waveScoreService } from '@/api/waves/wave-score.service';
 import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh.service';
 import { DropType } from '@/entities/IDrop';
 import { DeleteDropUseCase } from './delete-drop.use-case';
+import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -89,6 +90,42 @@ describe('DeleteDropUseCase', () => {
       wavesApiDb
     };
   }
+
+  it.each([DropType.CHAT, DropType.PARTICIPATORY])(
+    'only bypasses the competition owner for chat edit cleanup (%s)',
+    async (dropType) => {
+      const { useCase, dropsDb } = createUseCase({
+        drop: {
+          id: 'drop-1',
+          wave_id: 'wave-1',
+          author_id: 'author-1',
+          serial_no: 7,
+          drop_type: dropType
+        },
+        wave: { description_drop_id: 'description-drop' }
+      });
+      const ownerLock = jest.mocked(withLegacyPrimaryMutation);
+      ownerLock.mockClear();
+      jest
+        .spyOn(useCase as any, 'assertDeleterIsAllowedToDeleteDrop')
+        .mockResolvedValue(undefined);
+
+      await useCase.execute(
+        {
+          drop_id: 'drop-1',
+          deleter_id: 'author-1',
+          deletion_purpose: 'UPDATE'
+        },
+        { connection: {} as any }
+      );
+
+      expect(dropsDb.deleteDropEntity).toHaveBeenCalled();
+      expect(ownerLock).toHaveBeenCalledTimes(
+        dropType === DropType.CHAT ? 0 : 1
+      );
+      expect(dropsDb.applyDeletedDropMetricsDelta).not.toHaveBeenCalled();
+    }
+  );
 
   it('allows backend deletes without a user deleter and records the original drop author', async () => {
     const connection = {} as any;

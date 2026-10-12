@@ -31,6 +31,8 @@ import {
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
 import { PrePublicationModerationService } from '@/content-moderation/pre-publication-moderation.service';
+import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
+import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
 
 type ModerationServiceMock = jest.Mocked<
   Pick<PrePublicationModerationService, 'evaluate' | 'assertPostingAllowed'>
@@ -269,6 +271,68 @@ describe('CreateOrUpdateDropUseCase', () => {
       ...overrides
     };
   }
+
+  it.each([undefined, 'drop-1'])(
+    'writes ordinary chat without waiting for the competition owner (drop %s)',
+    async (dropId) => {
+      const useCase = createUseCaseWithMocks();
+      const result = {
+        drop_id: dropId ?? 'new-drop',
+        pending_push_notification_ids: [],
+        dm_unread_recipient_ids: []
+      };
+      const ownerLock = jest.mocked(withLegacyPrimaryMutation);
+      ownerLock.mockClear();
+      jest.mocked(competitionEntryDropHooks.prepareUpdate).mockResolvedValue({
+        entries: []
+      });
+      jest
+        .spyOn(useCase as any, 'createOrUpdateDrop')
+        .mockResolvedValue(result);
+
+      await expect(
+        useCase.execute(createChatDropModel({ drop_id: dropId }), false, {
+          connection: {} as any,
+          prePublication: { trustedSystem: true }
+        })
+      ).resolves.toEqual(result);
+
+      expect(ownerLock).not.toHaveBeenCalled();
+      if (dropId) {
+        expect(competitionEntryDropHooks.prepareUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({ drop_id: dropId }),
+          expect.any(Function),
+          expect.any(Object)
+        );
+      }
+    }
+  );
+
+  it('keeps competition submissions behind the legacy owner lock', async () => {
+    const useCase = createUseCaseWithMocks();
+    const ownerLock = jest.mocked(withLegacyPrimaryMutation);
+    ownerLock.mockClear();
+    jest.spyOn(useCase as any, 'createOrUpdateDrop').mockResolvedValue({
+      drop_id: 'entry-drop',
+      pending_push_notification_ids: [],
+      dm_unread_recipient_ids: []
+    });
+
+    await useCase.execute(
+      createChatDropModel({ drop_type: DropType.PARTICIPATORY }),
+      false,
+      {
+        connection: {} as any,
+        prePublication: { trustedSystem: true }
+      }
+    );
+
+    expect(ownerLock).toHaveBeenCalledWith(
+      'wave-1',
+      expect.any(Object),
+      expect.any(Function)
+    );
+  });
 
   it('rejects oversized content before an update can delete existing rows', async () => {
     const deleteDropUseCase = { execute: jest.fn() };
