@@ -15,6 +15,7 @@ import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { randomUUID } from 'node:crypto';
 import {
+  RELEASE_DIGEST_PENDING_RETRY_LIMIT,
   ReleaseDigestContributor,
   releaseDigestDb,
   ReleaseDigestDb
@@ -133,6 +134,11 @@ export class ReleaseDigestService {
     }
     // Finish any earlier digest that claimed entries but failed to post.
     const unfinished = await this.digestDb.findPendingDigests(digestKey, ctx);
+    if (unfinished.length >= RELEASE_DIGEST_PENDING_RETRY_LIMIT) {
+      this.logger.warn(
+        `Retrying the oldest ${unfinished.length} unfinished release digests; more may remain`
+      );
+    }
     for (const pending of unfinished) {
       await this.publishClaimedDigest(pending, ctx);
     }

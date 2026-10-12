@@ -42,6 +42,8 @@ export interface ClaimReleaseDigestInput {
   readonly now: number;
 }
 
+export const RELEASE_DIGEST_PENDING_RETRY_LIMIT = 5;
+
 function queryOptions(ctx: RequestContext) {
   return ctx.connection ? { wrappedConnection: ctx.connection } : undefined;
 }
@@ -128,7 +130,7 @@ export class ReleaseDigestDb extends LazyDbAccessCompatibleService {
       `select * from ${RELEASE_DIGESTS_TABLE}
        where status = :status and digest_key <> :excludeDigestKey
        order by created_at asc
-       limit 5`,
+       limit ${RELEASE_DIGEST_PENDING_RETRY_LIMIT}`,
       { status: ReleaseDigestStatus.Pending, excludeDigestKey },
       queryOptions(ctx)
     );

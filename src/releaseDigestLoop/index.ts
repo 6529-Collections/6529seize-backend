@@ -58,6 +58,9 @@ export async function runReleaseDigest(
     return { status: 'not-production' };
   }
   const request = resolveReleaseDigestRequest(event);
+  logger.info(
+    `Release digest ${request.digestKey} (cutoff ${new Date(request.cutoff).toISOString()}, dry run ${request.dryRun})`
+  );
   return doInDbContext(() => releaseDigestService.publish(request, {}), {
     logger
   });
