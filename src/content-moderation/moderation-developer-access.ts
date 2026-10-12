@@ -1,35 +1,16 @@
 import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
+import { isDevTeamMember } from '@/groups/dev-team-access';
 
-export const MODERATION_DEVELOPER_GROUP_ID =
-  '6529-dev-team-xuahLBqRGQr6yX9R5yna4V';
+export { DEV_TEAM_GROUP_ID as MODERATION_DEVELOPER_GROUP_ID } from '@/groups/dev-team-access';
 
 export async function isModerationDeveloper(
   profileId: string | null | undefined,
   ctx: RequestContext
 ): Promise<boolean> {
-  const auth = ctx.authenticationContext;
-  if (
-    !profileId ||
-    !auth?.isUserFullyAuthenticated() ||
-    auth.isAuthenticatedAsProxy() ||
-    auth.getActingAsId() !== profileId
-  ) {
-    return false;
-  }
   try {
-    // Load lazily: the group service also uses moderation services. The
-    // targeted eligibility path reads current definitions and predicates,
-    // without the cross-request eligible-group or group-definition caches.
-    const { userGroupsService } =
-      await import('@/api/community-members/user-groups.service');
-    const eligible = await userGroupsService.getGroupsUserIsEligibleForByIds(
-      profileId,
-      [MODERATION_DEVELOPER_GROUP_ID],
-      ctx.timer
-    );
-    return eligible.includes(MODERATION_DEVELOPER_GROUP_ID);
+    return await isDevTeamMember(profileId, ctx);
   } catch {
     Logger.get('ModerationDeveloperAccess').error(
       'Unable to verify moderation developer group eligibility'

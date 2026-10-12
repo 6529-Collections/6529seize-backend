@@ -843,6 +843,75 @@ It makes no upstream or cache request, including for missing or empty queries.
 The removed search wrapper has no remaining callers; ingestion, ownership
 queries, and token metadata continue using their existing supported endpoints.
 
+### Team monitoring entry
+
+`GET /api/monitoring/access` uses the saved Dev Team eligibility check shared
+with content moderation. A central guard mounted before all monitoring
+handlers requires wallet authentication and rejects non-members and proxies.
+The generated endpoint returns only `{ access: true }`; all section responses
+use `Cache-Control: private, no-store`. Membership lookup failures deny access
+with HTTP 503.
+
+`GET /api/monitoring/sentry` shares the same guard and returns a bounded 24-hour
+Sentry snapshot grouped by project: each project has up to five newly seen error
+issues and five unresolved issues ranked by window event count. Separate project
+summaries keep high-volume frontend errors from hiding backend failures.
+The API only exposes issue identifiers, titles, project slugs, window
+counts/timestamps, severity, priority, issue state and canonical Sentry links. It never
+returns provider credentials or raw event payloads. Five bounded, parallel issue
+queries per project collect new, frequent unresolved, high-priority unresolved,
+regressed and escalating issues. Dedicated queries prevent the frequent preview
+from hiding higher-priority issues. Counts use Sentry's `X-Hits` only below its
+`X-Max-Hits` cap; otherwise counts are explicitly lower bounds.
+
+Two additional queries compare all error-issue events, including warnings and
+resolved/archived issues, in adjacent 24-hour windows with the same environment
+filters. Each collection follows cursor values on the fixed Sentry URL, for at
+most five pages of 50 issues. Incomplete, duplicate or failed collection makes
+the affected trend total null, while the issue overview remains available.
+Every request uses explicit projects and environment tag filters, an
+eight-second timeout and a response-size limit. Failed issue collection returns
+sanitized HTTP 503; missing
+configuration returns `not_configured` rather than an empty healthy snapshot.
+
+The summary is cached in Redis for five minutes; its key hashes configuration
+including the token so scope or credential changes cannot reuse another
+snapshot. Concurrent requests in one process share collection. Membership and
+proxy checks run before the cache on every request. No background worker or
+persisted monitoring table is added.
+
+`GET /api/monitoring/sentry/history` uses the same central guard and returns
+per-project event and distinct-issue counts for the last 30 completed UTC
+days. It uses the existing `event:read` issue queries and environment filters,
+including resolved and archived issues. Counts are window-scoped; repeated
+events contribute to occurrences while each issue contributes once per day.
+No historical priority/status classification is inferred from today's issue
+state. Data remains in Sentry, subject to its retention.
+
+Collection runs separately from the overview, with at most four active
+requests, five pages of 50 issues per day, and an 18-second overall deadline.
+A rate-limit response stops scheduling further work. Failed, duplicate,
+truncated or unfinished days return null counts; successful empty days return
+zero. A wholly unavailable collection returns sanitized HTTP 503. History is
+cached for 15 minutes with a shared Redis refresh lease and in-process
+deduplication. Cache keys include the configuration hash and UTC end date so
+midnight rolls the window forward. Missing history never blocks the current
+overview; the frontend displays gaps, daily tables and a separate retry action.
+
+Configure `MONITORING_SENTRY_TOKEN` (Sentry `event:read`),
+`MONITORING_SENTRY_ORG`, `MONITORING_SENTRY_PROJECTS` (explicit IDs or slugs,
+semicolon-separated), and optional `MONITORING_SENTRY_ENVIRONMENT` (defaults to
+`production`, also used as the display label). Optional
+`MONITORING_SENTRY_ENVIRONMENT_FILTERS` accepts semicolon-separated exact names
+or `*_suffix` patterns and defaults to the display environment. For the frontend
+and backend production overview, configure projects `6529-frontend;seize-backend`
+and filters `production;*_prod`. The explicit `tags[environment]` search supports
+suffix wildcards, unlike the environment URL parameter. This automatically
+includes all backend services following the `<service>_prod` convention and
+excludes staging/local events. Local values live in the root `.env.local`;
+Lambda values use the existing regional `prod/lambdas` secret. All keys are
+server-only.
+
 ### Content moderation
 
 See [Content moderation](./content-moderation.md) for the complete feature

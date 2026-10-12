@@ -1,4 +1,4 @@
-import * as passport from 'passport';
+import passport from 'passport';
 import { NextFunction, Request, RequestHandler, Response } from 'express';
 import {
   isProxyActionActive,
