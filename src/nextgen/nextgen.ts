@@ -1,3 +1,4 @@
+import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
 import { Alchemy } from '@/alchemy-sdk';
 import { NextGenBlock } from '../entities/INextGen';
 import { findCoreEvents } from './nextgen_core_events';
@@ -25,7 +26,7 @@ export async function findNextGenTransactions() {
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const latestBlock = await alchemy.core.getBlockNumber();
+  const latestBlock = await getEthereumRpcClient(network).getBlockNumber();
   const dataSource = getDataSource();
   await withNextgenDbLockRetry(
     async () =>
@@ -55,10 +56,11 @@ export async function findNextGenTransactions() {
           startBlock,
           endBlock
         );
-        await findCoreEvents(entityManager, alchemy, startBlock, endBlock);
+        await findCoreEvents(entityManager, startBlock, endBlock);
 
-        const blockTimestamp = (await alchemy.core.getBlock(endBlock))
-          .timestamp;
+        const blockTimestamp = (
+          await getEthereumRpcClient(network).getBlock(endBlock)
+        ).timestamp;
 
         const nextgenBlock: NextGenBlock = {
           block: endBlock,

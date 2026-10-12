@@ -23,13 +23,15 @@ describe('DropSignatureVerifier', () => {
   );
   const termsOfService = 'Terms accepted';
   let isValidSignatureMock: jest.Mock;
+  let contractConstructor: jest.Mock;
 
   beforeEach(() => {
     clearStructuredWalletSignatureReplayCacheForTests();
     process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS = 'example.com';
-    process.env.ALCHEMY_API_KEY = 'test-key';
+    process.env.ETHEREUM_RPC_URL = 'https://rpc.example.test';
+    delete process.env.ALCHEMY_API_KEY;
     isValidSignatureMock = jest.fn().mockResolvedValue(EIP1271_INVALID_VALUE);
-    const contractConstructor = jest.fn().mockImplementation(() => ({
+    contractConstructor = jest.fn().mockImplementation(() => ({
       isValidSignature: isValidSignatureMock
     }));
     jest
@@ -42,7 +44,7 @@ describe('DropSignatureVerifier', () => {
   afterEach(() => {
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS;
     delete process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED;
-    delete process.env.ALCHEMY_API_KEY;
+    delete process.env.ETHEREUM_RPC_URL;
     jest.restoreAllMocks();
   });
 
@@ -248,7 +250,7 @@ describe('DropSignatureVerifier', () => {
     ).resolves.toBe(false);
   });
 
-  it('accepts legacy EIP-1271 signatures even when the Safe hint is false', async () => {
+  it('accepts legacy EIP-1271 signatures via the configured RPC without an Alchemy key when the Safe hint is false', async () => {
     isValidSignatureMock.mockResolvedValue(EIP1271_MAGIC_VALUE);
     const contractWalletAddress = otherWallet.address;
     const drop = {
@@ -264,6 +266,10 @@ describe('DropSignatureVerifier', () => {
         termsOfService
       })
     ).resolves.toBe(true);
+    expect(isValidSignatureMock).toHaveBeenCalled();
+    const provider = contractConstructor.mock
+      .calls[0][2] as ethers.JsonRpcProvider;
+    expect(provider._getConnection().url).toBe('https://rpc.example.test');
   });
 
   it('rejects signatures from wallets outside the candidate list', async () => {
