@@ -1,4 +1,7 @@
-import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
+import {
+  withLegacyPrimaryMutation,
+  readLegacyMutationSource
+} from '@/competitions/legacy-competition-mutation';
 import { dropsDb, DropsDb } from './drops.db';
 import { Time, Timer } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
@@ -26,7 +29,7 @@ import {
 } from '../api-serverless/src/curations/curations.db';
 import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { WaveEntity } from '../entities/IWave';
-import { DropEntity } from '../entities/IDrop';
+import { DropEntity, DropType } from '../entities/IDrop';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 import {
   artCurationTokenWatchService,
@@ -212,12 +215,17 @@ export class DeleteDropUseCase {
       throw new Error('Expected deleter_id to be resolved');
     }
     const resolvedDeleterId = deleterId ?? null;
-    const ownershipDrop = await this.dropsDb.findDropById(
-      model.drop_id,
-      connection
+    const ownershipDrop = await readLegacyMutationSource(() =>
+      this.dropsDb.findDropById(model.drop_id, connection)
     );
     if (!ownershipDrop) return null;
-    return withLegacyPrimaryMutation(
+    // Chat edits replace their rows through this cleanup path. The caller has
+    // already checked entry memberships; permanent deletions stay fenced.
+    const withDropOwnershipMutation: typeof withLegacyPrimaryMutation =
+      !isPermanentDelete && ownershipDrop.drop_type === DropType.CHAT
+        ? async (_waveId, _ctx, action) => action(null)
+        : withLegacyPrimaryMutation;
+    return withDropOwnershipMutation(
       ownershipDrop.wave_id,
       { timer, connection },
       async () => {
@@ -275,7 +283,9 @@ export class DeleteDropUseCase {
             connection
           }),
           this.dropPollsDb.deleteByDropId(dropId, { timer, connection }),
-          this.dropVotingService.deleteVotes(dropId, { timer, connection }),
+          !isPermanentDelete && ownershipDrop.drop_type === DropType.CHAT
+            ? undefined
+            : this.dropVotingService.deleteVotes(dropId, { timer, connection }),
           this.curationsDb.deleteDropCurationsByDropId(dropId, {
             timer,
             connection
