@@ -2,6 +2,18 @@ const mockCacheStore = new Map<string, string>();
 const mockGetPublicSubscriptions = jest.fn();
 const mockValidateDistribution = jest.fn();
 
+// The allowlist handler logs every step; keep the test output readable.
+jest.mock('@/logging', () => ({
+  Logger: {
+    get: () => ({
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn()
+    })
+  }
+}));
+
 jest.mock('@/redis', () => ({
   redisGet: jest.fn(async (key: string) => {
     const stored = mockCacheStore.get(key);
