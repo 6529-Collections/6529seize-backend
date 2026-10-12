@@ -110,5 +110,9 @@ describeWithSeed(
     it('returns nothing for an unknown audience wave', async () => {
       await expect(readable('missing-wave')).resolves.toEqual([]);
     });
+
+    it('returns nothing for an audience wave deeper than the supported hierarchy', async () => {
+      await expect(readable(grandchildWave.id)).resolves.toEqual([]);
+    });
   }
 );

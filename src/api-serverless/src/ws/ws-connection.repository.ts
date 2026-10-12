@@ -332,7 +332,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
    * Returns the given drop ids that every reader of `waveId` can also read:
    * each visibility group required by the drop's wave or parent wave must
    * also be required by `waveId` or its parent. Missing drops and invalid
-   * wave hierarchies are excluded.
+   * wave hierarchies (on either side, as in getWaveRecipients) are excluded.
    */
   async findDropIdsReadableByWaveAudience(
     { waveId, dropIds }: { waveId: string; dropIds: string[] },
@@ -349,6 +349,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
        join ${WAVES_TABLE} rw on rw.id = :waveId
        left join ${WAVES_TABLE} rp on rp.id = rw.parent_wave_id
        where d.id in (:dropIds)
+         and (rw.parent_wave_id is null
+           or (rp.id is not null and rp.parent_wave_id is null))
          and (qw.parent_wave_id is null
            or (qp.id is not null and qp.parent_wave_id is null))
          and (qw.visibility_group_id is null

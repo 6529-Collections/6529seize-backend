@@ -104,6 +104,12 @@ const logs = [
     id: 'handle',
     type: ProfileActivityLogType.HANDLE_EDIT,
     minute: 8
+  }),
+  aLog({
+    id: 'legacy-comment-without-wave',
+    type: ProfileActivityLogType.DROP_COMMENT,
+    minute: 0,
+    target_id: 'drop-6'
   })
 ];
 
@@ -166,6 +172,7 @@ describeWithSeed(
           type: [
             ProfileActivityLogType.DROP_VOTE_EDIT,
             ProfileActivityLogType.DROP_CLAPPED,
+            ProfileActivityLogType.DROP_COMMENT,
             ProfileActivityLogType.RATING_EDIT
           ]
         })
