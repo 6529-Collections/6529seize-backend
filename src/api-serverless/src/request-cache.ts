@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { NextFunction, Request, RequestHandler, Response } from 'express';
 import { OutgoingHttpHeaders } from 'http';
 import { Logger } from '../../logging';
@@ -205,8 +206,12 @@ function sanitizeHeaders(
 function withAuthCacheDependency(baseKey: string, req: Request): string {
   const rawHeader = req.headers?.authorization;
   const header = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
-  const normalizedAuth = header?.trim() || ANONYMOUS_CACHE_KEY;
-  return `${baseKey}${AUTH_CACHE_KEY_SEPARATOR}${normalizedAuth}`;
+  const normalizedAuth = header?.trim();
+  // Hash the credential so bearer tokens are never stored in Redis key names.
+  const authKeyPart = normalizedAuth
+    ? createHash('sha256').update(normalizedAuth).digest('hex')
+    : ANONYMOUS_CACHE_KEY;
+  return `${baseKey}${AUTH_CACHE_KEY_SEPARATOR}${authKeyPart}`;
 }
 
 function isDefaultCacheableStatus(statusCode: number) {

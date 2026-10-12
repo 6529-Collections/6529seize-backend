@@ -85,6 +85,11 @@ x-6529-router:
 - `cache.ttlSeconds` emits `cacheRequest({ ttl: Time.seconds(value) })`.
 - `cache.authDependent: true` includes the authenticated/anonymous identity in the cache key.
 - Use `cache.methods` when a generated route should cache non-GET methods.
+- `cacheRequest()` answers from Redis before the handler runs. Never leave an
+  authorization check (admin, ownership, proxy) inside a cached handler: run it
+  as middleware before `cacheRequest()` (for example
+  `requireSubscriptionsAdmin()` after `needsAuthenticatedUser()`), and set
+  `authDependent: true` whenever the response varies by viewer.
 
 ## Handler Rules
 
