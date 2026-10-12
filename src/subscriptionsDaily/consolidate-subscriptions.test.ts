@@ -172,7 +172,10 @@ describe('consolidateSubscriptions', () => {
 
     // 0xa-0xb migrates to 0xa-0xd (TDH 100 beats 0xb's 50); 0xc keeps its
     // key, so its rows need no update
-    const updates = managerQueries.filter((q) => q.sql.includes('UPDATE'));
+    // UPDATE statements only; the conflict read is a SELECT ... FOR UPDATE.
+    const updates = managerQueries.filter((q) =>
+      q.sql.trimStart().startsWith('UPDATE')
+    );
     const migrationPairs = new Set(updates.map((u) => u.params?.join('<-')));
     expect(migrationPairs).toEqual(new Set(['0xa-0xd<-0xa-0xb']));
     // 4 tables for the one moved key
