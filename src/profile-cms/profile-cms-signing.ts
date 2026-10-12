@@ -1,4 +1,4 @@
-import { Network } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import { getRpcProvider } from '@/rpc-provider';
 import { ethers } from 'ethers';
 

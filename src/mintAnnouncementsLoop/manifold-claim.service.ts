@@ -4,7 +4,7 @@ import {
   MANIFOLD_LAZY_CLAIM_CONTRACT,
   MEMES_CONTRACT
 } from '@/constants';
-import { getRpcUrl } from '@/alchemy';
+import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { numbers } from '@/numbers';
 import { RequestContext } from '@/request.context';
 
@@ -18,7 +18,7 @@ export class ManifoldClaimService {
         `${this.constructor.name}->getRemainingEditionsForLatestMeme`
       );
 
-      const provider = new ethers.JsonRpcProvider(getRpcUrl(1));
+      const provider = getEthereumRpcProvider();
       const contract = new ethers.Contract(
         MANIFOLD_LAZY_CLAIM_CONTRACT,
         MANIFOLD_LAZY_CLAIM_ABI,
