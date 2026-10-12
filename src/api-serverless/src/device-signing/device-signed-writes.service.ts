@@ -134,7 +134,7 @@ export function stripDeviceSignature<T>(body: T): StrippedDeviceSignature<T> {
     typeof body !== 'object' ||
     body === null ||
     Array.isArray(body) ||
-    !Object.prototype.hasOwnProperty.call(body, DEVICE_SIGNATURE_FIELD)
+    !(DEVICE_SIGNATURE_FIELD in body)
   ) {
     return { body, envelope: undefined };
   }

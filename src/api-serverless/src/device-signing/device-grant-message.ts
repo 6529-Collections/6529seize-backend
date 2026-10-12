@@ -128,7 +128,7 @@ export function joinScopesAsEnglish(scopes: readonly string[]): string {
     return scopes.join('');
   }
   const head = scopes.slice(0, -1).join(', ');
-  return `${head} and ${scopes[scopes.length - 1]}`;
+  return `${head} and ${scopes.at(-1)}`;
 }
 
 function rawKeyHex(deviceKey: string): string {
