@@ -13,7 +13,8 @@ import {
 import { Logger } from '../../../logging';
 import { numbers } from '../../../numbers';
 import { equalIgnoreCase } from '../../../strings';
-import { getRpcUrl } from '../../../alchemy';
+import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
+import { getNextgenRpcErrorCode } from '@/api/nextgen/nextgen-rpc-error';
 import {
   hashStructuredWalletSignaturePayload,
   isStructuredSignaturesRequired,
@@ -421,8 +422,7 @@ async function computeMerkleBurn(
 
 async function validateAdmin(collection_id: number, address: string) {
   const chainId = getNextGenChainId();
-  const rpcUrl = getRpcUrl(chainId);
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const provider = getEthereumRpcProvider(chainId);
 
   const contract = new ethers.Contract(
     NEXTGEN_ADMIN[chainId],
@@ -449,11 +449,10 @@ async function validateAdmin(collection_id: number, address: string) {
     });
     return isGlobalAdmin || isFunctionAdmin || isCollectionAdmin;
   } catch (error) {
-    logger.error(
-      `Error calling retrieveGlobalAdmin method. rpcUrl: '${rpcUrl}' error: ${JSON.stringify(
-        error
-      )}`
-    );
+    // Fail closed without logging provider errors, which can contain RPC credentials.
+    logger.error('Error calling NextGen admin validation contract', {
+      code: getNextgenRpcErrorCode(error)
+    });
     return false;
   }
 }

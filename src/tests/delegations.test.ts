@@ -5,30 +5,20 @@ import {
   USE_CASE_SUB_DELEGATION
 } from '@/constants';
 
-type AlchemyMock = {
-  core: {
-    getLogs: jest.Mock;
-    getTransaction: jest.Mock;
-    getBlockNumber: jest.Mock;
-    getBlock: jest.Mock;
-  };
+const rpcMock = {
+  getLogs: jest.fn(),
+  getTransaction: jest.fn(),
+  getBlockNumber: jest.fn(),
+  getBlock: jest.fn()
 };
 
-const alchemyMock: AlchemyMock = {
-  core: {
-    getLogs: jest.fn(),
-    getTransaction: jest.fn(),
-    getBlockNumber: jest.fn(),
-    getBlock: jest.fn()
-  }
-};
-
-jest.mock('../alchemy', () => ({
-  getAlchemyInstance: jest.fn()
+jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
+  getEthereumRpcClient: jest.fn()
 }));
 
-const { getAlchemyInstance: mockGetAlchemyInstance } =
-  jest.requireMock('../alchemy');
+const { getEthereumRpcClient: mockGetEthereumRpcClient } = jest.requireMock(
+  '@/ethereum-rpc/ethereum-rpc-client'
+);
 
 jest.mock('../abis/delegations', () => {
   const parseLog = jest.fn();
@@ -50,21 +40,21 @@ jest.mock('../strings', () => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockGetAlchemyInstance.mockReturnValue(alchemyMock);
+  mockGetEthereumRpcClient.mockReturnValue(rpcMock);
 });
 
 const mockEqual = jest.fn();
 beforeEach(() => {
   jest.clearAllMocks();
-  mockGetAlchemyInstance.mockReturnValue(alchemyMock);
-  alchemyMock.core.getBlock.mockResolvedValue({ timestamp: 123 });
-  alchemyMock.core.getBlockNumber.mockResolvedValue(5);
+  mockGetEthereumRpcClient.mockReturnValue(rpcMock);
+  rpcMock.getBlock.mockResolvedValue({ timestamp: 123 });
+  rpcMock.getBlockNumber.mockResolvedValue(5);
 });
 
 describe('findDelegationTransactions', () => {
   it('registers consolidation events', async () => {
     const log = { blockNumber: 1, transactionHash: '0x1' } as any;
-    alchemyMock.core.getLogs.mockResolvedValue([log]);
+    rpcMock.getLogs.mockResolvedValue([log]);
     mockParseLog.mockReturnValueOnce({
       name: 'RegisterDelegation',
       args: {
@@ -85,7 +75,7 @@ describe('findDelegationTransactions', () => {
 
   it('registers sub delegation', async () => {
     const log = { blockNumber: 1, transactionHash: '0x2' } as any;
-    alchemyMock.core.getLogs.mockResolvedValue([log]);
+    rpcMock.getLogs.mockResolvedValue([log]);
     mockParseLog.mockReturnValueOnce({
       name: 'RegisterDelegationUsingSubDelegation',
       args: {
@@ -113,7 +103,7 @@ describe('findDelegationTransactions', () => {
 
   it('revokes delegation', async () => {
     const log = { blockNumber: 2, transactionHash: '0x4' } as any;
-    alchemyMock.core.getLogs.mockResolvedValue([log]);
+    rpcMock.getLogs.mockResolvedValue([log]);
     mockParseLog.mockReturnValueOnce({
       name: 'RevokeDelegation',
       args: {

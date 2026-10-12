@@ -1,7 +1,7 @@
-import { Alchemy, Log } from '@/alchemy-sdk';
+import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
+import type { Log } from '@/ethereum-rpc/ethereum-rpc-types';
 import { NEXTGEN_CORE_IFACE } from '@/abis/nextgen';
 import { NULL_ADDRESS, NULL_ADDRESS_DEAD } from '@/constants';
-import { getAlchemyInstance } from '@/alchemy';
 import {
   NextGenCollection,
   NextGenLog,
@@ -42,22 +42,18 @@ export type NextGenTokenMetadata = {
   pending: boolean;
 };
 
-let alchemy: Alchemy;
-
 export async function findCoreEvents(
   entityManager: EntityManager,
-  a: Alchemy,
   startBlock: number,
   endBlock: number,
   pageKey?: string
 ) {
-  alchemy = a;
   const network = getNextgenNetwork();
   logger.info(
     `[NETWORK ${network}] : [FINDING EVENTS] : [START BLOCK ${startBlock}] : [END BLOCK ${endBlock}] : [PAGE KEY ${pageKey}]`
   );
 
-  const response = await alchemy.core.getLogs({
+  const response = await getEthereumRpcClient(network).getLogs({
     address: NEXTGEN_CORE_CONTRACT[network],
     fromBlock: `0x${startBlock.toString(16)}`,
     toBlock: `0x${endBlock.toString(16)}`
@@ -67,8 +63,9 @@ export async function findCoreEvents(
   for (const log of response) {
     const processedLog = await processLog(entityManager, log);
     if (processedLog) {
-      const blockTimestamp = (await alchemy.core.getBlock(log.blockNumber))
-        .timestamp;
+      const blockTimestamp = (
+        await getEthereumRpcClient(network).getBlock(log.blockNumber)
+      ).timestamp;
       const l: NextGenLog = {
         id: `${log.transactionHash}-${log.logIndex}`,
         transaction: log.transactionHash,
@@ -151,12 +148,10 @@ async function processTransfer(
   description: string;
 }> {
   const network = getNextgenNetwork();
-  if (!alchemy) {
-    alchemy = getAlchemyInstance(network);
-  }
 
-  const blockTimestamp = (await alchemy.core.getBlock(log.blockNumber))
-    .timestamp;
+  const blockTimestamp = (
+    await getEthereumRpcClient(network).getBlock(log.blockNumber)
+  ).timestamp;
 
   const tokenId = parseInt(logInfo.args.tokenId);
   const collectionId = Math.round(tokenId / 10000000000);

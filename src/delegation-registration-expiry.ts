@@ -22,6 +22,9 @@ import { solidityPackedKeccak256 } from 'ethers';
 //
 // Each read costs at most O(list length) gas, so no delegator can grow its
 // own lists until a read exceeds the eth_call gas cap and stalls the loop.
+//
+// The reads are eth_calls at past blocks, so the ETHEREUM_RPC_URL endpoint
+// must serve archive state for the delegations loop and its scope backfill.
 
 const DELEGATES_VIEW = 'retrieveDelegationAddresses';
 const ENTRY_VIEW = 'globalDelegationHashes';

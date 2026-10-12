@@ -1,4 +1,9 @@
-import { Alchemy, Log, Network } from '@/alchemy-sdk';
+import {
+  EthereumRpcClient,
+  getEthereumRpcClient
+} from '@/ethereum-rpc/ethereum-rpc-client';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
+import type { Log } from '@/ethereum-rpc/ethereum-rpc-types';
 import {
   DELEGATION_ALL_ADDRESS,
   DELEGATION_CONTRACT,
@@ -24,11 +29,10 @@ import {
   EventType
 } from './entities/IDelegation';
 import { Logger } from './logging';
-import { getAlchemyInstance } from './alchemy';
 import { sepolia } from '@wagmi/chains';
 import { equalIgnoreCase } from './strings';
 
-let alchemy: Alchemy;
+let rpc: EthereumRpcClient;
 
 const logger = Logger.get('DELEGATIONS');
 
@@ -69,7 +73,7 @@ async function getAllDelegations(
     ]);
   }
   const chunks = await mapInChunks(ranges, 1, ([from, to]) =>
-    alchemy.core.getLogs({
+    rpc.getLogs({
       address: DELEGATION_CONTRACT.contract,
       fromBlock: toHexBlock(from),
       toBlock: toHexBlock(to)
@@ -234,7 +238,7 @@ async function attachRegistrationExpiries(
     pending.map((p) => p.ref),
     scan.revocationRefs,
     createDelegationStateReader(
-      (to, data, blockTag) => alchemy.core.call({ to, data }, blockTag),
+      (to, data, blockTag) => rpc.call({ to, data }, blockTag),
       DELEGATION_CONTRACT.contract
     )
   );
@@ -278,7 +282,7 @@ export async function scanDelegationLogs(
   fromBlock: number,
   toBlock: number
 ): Promise<DelegationLogScan> {
-  alchemy = getAlchemyInstance(getNetwork());
+  rpc = getEthereumRpcClient(getNetwork());
   const logs = await getAllDelegations(fromBlock, toBlock);
 
   logger.info(`[FOUND ${logs.length} NEW TRANSACTIONS]`);
@@ -305,7 +309,7 @@ export async function scanDelegationLogs(
 
 /** The transaction behind a delegation log, read from the contract's chain. */
 export async function fetchDelegationTransaction(hash: string) {
-  return getAlchemyInstance(getNetwork()).core.getTransaction(hash);
+  return getEthereumRpcClient(getNetwork()).getTransaction(hash);
 }
 
 export const findDelegationTransactions = async (
@@ -313,16 +317,16 @@ export const findDelegationTransactions = async (
   latestBlock?: number
 ) => {
   const network = getNetwork();
-  alchemy = getAlchemyInstance(network);
+  rpc = getEthereumRpcClient(network);
 
   if (!latestBlock) {
-    latestBlock = await alchemy.core.getBlockNumber();
+    latestBlock = await rpc.getBlockNumber();
     logger.info(
       `[STARTING BLOCK ${startingBlock}] [LATEST BLOCK ON CHAIN ${latestBlock}]`
     );
   }
 
-  const timestamp = (await alchemy.core.getBlock(latestBlock)).timestamp;
+  const timestamp = (await rpc.getBlock(latestBlock)).timestamp;
 
   const scan = await scanDelegationLogs(startingBlock, latestBlock);
 

@@ -1,5 +1,5 @@
 import { DELEGATIONS_IFACE } from '@/abis/delegations';
-import type { Log } from '@/alchemy-sdk';
+import type { Log } from '@/ethereum-rpc/ethereum-rpc-types';
 import {
   DELEGATION_CONTRACT,
   DELEGATION_CONTRACT_DEPLOYMENT_BLOCK,

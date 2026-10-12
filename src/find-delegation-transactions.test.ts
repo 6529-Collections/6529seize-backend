@@ -23,12 +23,13 @@ import {
 } from '@/delegations';
 import { runDelegationScopeBackfill } from '@/delegationsLoop/delegation-scope-backfill';
 
-jest.mock('@/alchemy', () => ({
-  getAlchemyInstance: jest.fn()
+jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
+  getEthereumRpcClient: jest.fn()
 }));
 
-const { getAlchemyInstance: mockGetAlchemyInstance } =
-  jest.requireMock('@/alchemy');
+const { getEthereumRpcClient: mockGetEthereumRpcClient } = jest.requireMock(
+  '@/ethereum-rpc/ethereum-rpc-client'
+);
 
 const SAFE = getAddress('0x5afe00000000000000000000000000000000a5fe');
 const COLD = getAddress('0xc01d000000000000000000000000000000000c01');
@@ -59,14 +60,12 @@ interface DelegatorState {
   entries: StoredEntry[];
 }
 
-const alchemyMock = {
-  core: {
-    getLogs: jest.fn(),
-    getTransaction: jest.fn(),
-    getBlockNumber: jest.fn(),
-    getBlock: jest.fn(),
-    call: jest.fn()
-  }
+const rpcMock = {
+  getLogs: jest.fn(),
+  getTransaction: jest.fn(),
+  getBlockNumber: jest.fn(),
+  getBlock: jest.fn(),
+  call: jest.fn()
 };
 
 // Contract state at the end of each block, per delegator, collection and
@@ -188,7 +187,7 @@ function safeExecTransaction(innerData: string) {
 }
 
 function stateCalls() {
-  return alchemyMock.core.call.mock.calls.map(
+  return rpcMock.call.mock.calls.map(
     ([tx, blockTag]) =>
       `${DELEGATIONS_IFACE.parseTransaction({ data: tx.data })?.name}@${blockTag}`
   );
@@ -198,10 +197,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   nextLogIndex = 0;
   contractState = [];
-  mockGetAlchemyInstance.mockReturnValue(alchemyMock);
-  alchemyMock.core.getBlock.mockResolvedValue({ timestamp: 123 });
-  alchemyMock.core.getBlockNumber.mockResolvedValue(500);
-  alchemyMock.core.call.mockImplementation(
+  mockGetEthereumRpcClient.mockReturnValue(rpcMock);
+  rpcMock.getBlock.mockResolvedValue({ timestamp: 123 });
+  rpcMock.getBlockNumber.mockResolvedValue(500);
+  rpcMock.call.mockImplementation(
     async (tx: { to: string; data: string }, blockTag: number) => {
       expect(tx.to).toBe(DELEGATION_CONTRACT.contract);
       const parsed = DELEGATIONS_IFACE.parseTransaction({ data: tx.data });
@@ -232,11 +231,11 @@ describe('findDelegationTransactions registration scope', () => {
     );
     // The top-level call is the Safe's execTransaction, not the delegation
     // contract, so the transaction input carries none of these values.
-    alchemyMock.core.getTransaction.mockResolvedValue({
+    rpcMock.getTransaction.mockResolvedValue({
       to: SAFE,
       data: safeExecTransaction(inner)
     });
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(10, 'RegisterDelegation', [
         SAFE,
         MEMES_CONTRACT,
@@ -269,12 +268,12 @@ describe('findDelegationTransactions registration scope', () => {
       'retrieveDelegationAddresses@10',
       'globalDelegationHashes@10'
     ]);
-    expect(alchemyMock.core.getTransaction).not.toHaveBeenCalled();
+    expect(rpcMock.getTransaction).not.toHaveBeenCalled();
   });
 
   it('gives each batchDelegations item its own expiry and token scope', async () => {
     const tx = '0xba7c4';
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(
         11,
         'RegisterDelegation',
@@ -339,11 +338,11 @@ describe('findDelegationTransactions registration scope', () => {
     expect(calls.filter((c) => c === 'globalDelegationHashes@11')).toHaveLength(
       4
     );
-    expect(alchemyMock.core.getTransaction).not.toHaveBeenCalled();
+    expect(rpcMock.getTransaction).not.toHaveBeenCalled();
   });
 
   it('records a Delegation Manager registration against the delegator', async () => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(12, 'RegisterDelegationUsingSubDelegation', [
         COLD,
         MANAGER,
@@ -376,7 +375,7 @@ describe('findDelegationTransactions registration scope', () => {
   });
 
   it('leaves sub-delegation and consolidation registrations unchanged', async () => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(13, 'RegisterDelegation', [
         COLD,
         DELEGATION_ALL_ADDRESS,
@@ -410,11 +409,11 @@ describe('findDelegationTransactions registration scope', () => {
     expect(result.consolidations).toEqual([
       { block: 13, type: 0, wallet1: COLD, wallet2: HOT_1 }
     ]);
-    expect(alchemyMock.core.call).not.toHaveBeenCalled();
+    expect(rpcMock.call).not.toHaveBeenCalled();
   });
 
   it('drops a registration revoked later in the same block but keeps the revocation', async () => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(14, 'RegisterDelegation', [
         COLD,
         MEMES_CONTRACT,
@@ -444,11 +443,11 @@ describe('findDelegationTransactions registration scope', () => {
         collection: MEMES_CONTRACT
       }
     ]);
-    expect(alchemyMock.core.call).not.toHaveBeenCalled();
+    expect(rpcMock.call).not.toHaveBeenCalled();
   });
 
   it('skips a token-specific registration whose token id does not fit the column', async () => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(16, 'RegisterDelegation', [
         COLD,
         MEMES_CONTRACT,
@@ -479,7 +478,7 @@ describe('findDelegationTransactions registration scope', () => {
   });
 
   it('fails instead of storing defaults when the state read fails', async () => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(15, 'RegisterDelegation', [
         SAFE,
         MEMES_CONTRACT,
@@ -489,7 +488,7 @@ describe('findDelegationTransactions registration scope', () => {
         BigInt(1)
       ])
     ]);
-    alchemyMock.core.call.mockRejectedValue(new Error('missing trie node'));
+    rpcMock.call.mockRejectedValue(new Error('missing trie node'));
 
     await expect(findDelegationTransactions(1, 20)).rejects.toThrow(
       'missing trie node'
@@ -523,14 +522,14 @@ describe('scope backfill over the real scan', () => {
   }
 
   beforeEach(() => {
-    alchemyMock.core.getTransaction.mockResolvedValue({
+    rpcMock.getTransaction.mockResolvedValue({
       to: DELEGATION_CONTRACT.contract,
       data: '0x'
     });
   });
 
   it('deletes a stale row whose registration was revoked later in its block', async () => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(30, 'RegisterDelegation', [
         COLD,
         MEMES_CONTRACT,
@@ -557,11 +556,11 @@ describe('scope backfill over the real scan', () => {
     expect(report.causes['revoked-same-block']).toBe(1);
     expect(deps.applyDiff).toHaveBeenCalledTimes(1);
     // The dropped registration needs no state read.
-    expect(alchemyMock.core.call).not.toHaveBeenCalled();
+    expect(rpcMock.call).not.toHaveBeenCalled();
   });
 
   it('keeps a row registered after a revocation in its block', async () => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(30, 'RevokeDelegation', [
         COLD,
         MEMES_CONTRACT,
@@ -593,7 +592,7 @@ describe('scope backfill over the real scan', () => {
   });
 
   it('keeps only registrations after a revocation in an earlier-or-later block', async () => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(10, 'RegisterDelegation', [
         COLD,
         MEMES_CONTRACT,
@@ -642,7 +641,7 @@ describe('scope backfill over the real scan', () => {
 
 describe('an on-chain expiry of 0 means no expiry', () => {
   it('stores never-expiring for a Safe-signed registration with expiry 0', async () => {
-    alchemyMock.core.getTransaction.mockResolvedValue({
+    rpcMock.getTransaction.mockResolvedValue({
       to: SAFE,
       data: safeExecTransaction(
         DELEGATIONS_IFACE.encodeFunctionData('registerDelegationAddress', [
@@ -655,7 +654,7 @@ describe('an on-chain expiry of 0 means no expiry', () => {
         ])
       )
     });
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(50, 'RegisterDelegation', [
         SAFE,
         DELEGATION_ALL_ADDRESS,
@@ -675,7 +674,7 @@ describe('an on-chain expiry of 0 means no expiry', () => {
   });
 
   it('stores never-expiring for a direct registration with expiry 0', async () => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(51, 'RegisterDelegation', [
         COLD,
         MEMES_CONTRACT,
@@ -697,7 +696,7 @@ describe('an on-chain expiry of 0 means no expiry', () => {
   });
 
   it('reads 0 as never for a batch item and keeps a small positive expiry on another', async () => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(
         52,
         'RegisterDelegation',
@@ -725,7 +724,7 @@ describe('an on-chain expiry of 0 means no expiry', () => {
   });
 
   it('leaves a stored never-expiring row unchanged in the backfill when the chain says 0', async () => {
-    alchemyMock.core.getLogs.mockResolvedValue([
+    rpcMock.getLogs.mockResolvedValue([
       log(53, 'RegisterDelegation', [
         SAFE,
         DELEGATION_ALL_ADDRESS,

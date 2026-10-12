@@ -117,22 +117,45 @@ describe('Ethereum RPC provider foundation', () => {
     await expect(provider.getNetwork()).rejects.toThrow(/network changed/);
   });
 
-  it('does not repoint the existing providers during the foundation phase', () => {
-    process.env.ALCHEMY_API_KEY = 'test-legacy-key';
-    process.env.ETHEREUM_RPC_URL = 'https://new.example.test';
-    const { getRpcProvider, get6529RpcProvider } =
-      require('../rpc-provider') as {
-        getRpcProvider: () => JsonRpcProvider;
-        get6529RpcProvider: () => JsonRpcProvider;
-      };
-    const legacy = getRpcProvider();
-    const internal = get6529RpcProvider();
-    providers.add(legacy);
-    providers.add(internal);
-    expect(legacy._getConnection().url).toBe(
-      'https://eth-mainnet.g.alchemy.com/v2/test-legacy-key'
+  it('uses the configured endpoint for code and contract reads without an Alchemy key', async () => {
+    process.env.ETHEREUM_RPC_URL = 'https://contract-rpc.example.test';
+    const provider = loadFactory()();
+    const { Contract } = require('ethers') as typeof import('ethers');
+    const send = jest
+      .spyOn(provider, '_send')
+      .mockImplementation(async (payload) => {
+        const requests = Array.isArray(payload) ? payload : [payload];
+        return requests.map((request) => {
+          const results: Record<string, string> = {
+            eth_chainId: '0x1',
+            eth_getCode: '0x6000',
+            eth_call: '0x' + '2a'.padStart(64, '0')
+          };
+          if (!(request.method in results))
+            throw new Error('Unexpected RPC method');
+          return { id: request.id, result: results[request.method] };
+        });
+      });
+    const address = '0x' + '11'.repeat(20);
+    const contract = new Contract(
+      address,
+      ['function totalSupply() view returns (uint256)'],
+      provider
     );
-    expect(internal._getConnection().url).toBe('https://rpc1.6529.io');
-    expect(loadFactory()()).not.toBe(legacy);
+    await expect(provider.getCode(address)).resolves.toBe('0x6000');
+    await expect(contract.totalSupply()).resolves.toBe(BigInt(42));
+    expect(provider._getConnection().url).toBe(process.env.ETHEREUM_RPC_URL);
+    expect(send).toHaveBeenCalled();
+  });
+
+  it('routes the existing factory through the canonical URL without an Alchemy key', () => {
+    process.env.ETHEREUM_RPC_URL = 'https://new.example.test';
+    const { getRpcProvider } = require('../rpc-provider') as {
+      getRpcProvider: () => JsonRpcProvider;
+    };
+    const provider = getRpcProvider();
+    providers.add(provider);
+    expect(provider._getConnection().url).toBe('https://new.example.test');
+    expect(loadFactory()()).toBe(provider);
   });
 });
