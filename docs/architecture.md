@@ -1180,7 +1180,12 @@ Important API responsibilities:
   requested with `client_type=native` or `client_type=desktop`. Both formats
   complete all semantic and wallet-signature checks before a final atomic nonce
   consumption. The full auth contract is documented in
-  [Wallet Authentication](auth/wallet-auth.md).
+  [Wallet Authentication](auth/wallet-auth.md). Web SIWE logins can also grant
+  a browser Ed25519 device key (`device_grants`) that then signs drop creates,
+  edits, deletes and reactions; the API verifies and stores those events in
+  `device_signed_events` and `drop_author_signatures` and serves them at
+  `/drops/{dropId}/signed-events`. See the device signing grants section of
+  that document.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
   subscriptions, and notifications. Wallet distribution allocation reads
   combine Phase 0–2 distribution rows with Public subscription airdrops, while
