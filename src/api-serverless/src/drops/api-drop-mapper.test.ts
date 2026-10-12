@@ -67,6 +67,7 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
     findDropIdsWithMetadata: jest.fn().mockResolvedValue(new Set<string>()),
     findMetadataByDropIds: jest.fn().mockResolvedValue([]),
     countBoostsOfGivenDrops: jest.fn().mockResolvedValue({}),
+    countCollapsedRepliesOfGivenDrops: jest.fn().mockResolvedValue({}),
     whichOfGivenDropsAreBoostedByIdentity: jest
       .fn()
       .mockResolvedValue(new Set<string>()),
@@ -294,6 +295,23 @@ describe('ApiDropMapper', () => {
     expect(result['drop-1']).not.toHaveProperty('referenced_nfts');
     expect(result['drop-1']).not.toHaveProperty('has_metadata');
     expect(deps.dropsDb.findDropIdsWithMetadata).not.toHaveBeenCalled();
+  });
+
+  it('maps thread sizes for drops in collapsed-reply waves', async () => {
+    const { mapper, deps } = createMapper();
+    deps.dropsDb.countCollapsedRepliesOfGivenDrops.mockResolvedValue({
+      'drop-1': 4
+    });
+
+    const result = await mapper.mapDrops([makeDrop()], {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    });
+
+    expect(result['drop-1']?.replies_count).toBe(4);
+    expect(deps.dropsDb.countCollapsedRepliesOfGivenDrops).toHaveBeenCalledWith(
+      ['drop-1'],
+      expect.anything()
+    );
   });
 
   it('maps chat poll details', async () => {

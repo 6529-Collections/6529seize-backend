@@ -457,6 +457,102 @@ describe('DeleteDropUseCase', () => {
       dm_unread_recipient_ids: []
     });
   });
+
+  describe('replies in waves with open replies', () => {
+    const openRepliesWave = {
+      description_drop_id: 'description-drop',
+      visibility_group_id: null,
+      created_by: 'wave-creator',
+      admin_group_id: 'admin-group',
+      chat_group_id: 'dev-team',
+      chat_replies_open: true,
+      admin_drop_deletion_enabled: false
+    };
+    const replyDrop = {
+      id: 'reply-1',
+      wave_id: 'wave-1',
+      serial_no: 8,
+      created_at: 124,
+      author_id: 'replier',
+      drop_type: DropType.CHAT,
+      reply_to_drop_id: 'announcement-1'
+    };
+
+    const deleteAs = (
+      deleterId: string,
+      {
+        drop = replyDrop,
+        wave = openRepliesWave
+      }: { drop?: Record<string, unknown>; wave?: Record<string, unknown> } = {}
+    ) => {
+      const { useCase } = createUseCase({
+        drop: drop as any,
+        wave: wave as any
+      });
+      return useCase.execute(
+        {
+          drop_id: String(drop.id),
+          deleter_id: deleterId,
+          deletion_purpose: 'DELETE'
+        },
+        { connection: {} as any }
+      );
+    };
+
+    it('lets people who can post delete replies', async () => {
+      jest
+        .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
+        .mockResolvedValue(['dev-team']);
+
+      await expect(deleteAs('poster')).resolves.toMatchObject({
+        id: 'reply-1'
+      });
+    });
+
+    it('lets wave admins delete replies without admin drop deletion', async () => {
+      jest
+        .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
+        .mockResolvedValue(['admin-group']);
+
+      await expect(deleteAs('admin')).resolves.toMatchObject({
+        id: 'reply-1'
+      });
+    });
+
+    it('does not let posters delete top-level drops', async () => {
+      jest
+        .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
+        .mockResolvedValue(['dev-team']);
+
+      await expect(
+        deleteAs('poster', {
+          drop: { ...replyDrop, reply_to_drop_id: null }
+        })
+      ).rejects.toThrow('User is not allowed to delete this drop');
+    });
+
+    it('does not let other repliers delete replies', async () => {
+      jest
+        .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
+        .mockResolvedValue([]);
+
+      await expect(deleteAs('other-replier')).rejects.toThrow(
+        'User is not allowed to delete this drop'
+      );
+    });
+
+    it('keeps reply deletion closed when replies are not open', async () => {
+      jest
+        .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
+        .mockResolvedValue(['dev-team']);
+
+      await expect(
+        deleteAs('poster', {
+          wave: { ...openRepliesWave, chat_replies_open: false }
+        })
+      ).rejects.toThrow('User is not allowed to delete this drop');
+    });
+  });
 });
 
 describe('DeleteDropUseCase chat history batch', () => {

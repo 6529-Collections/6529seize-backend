@@ -2278,3 +2278,94 @@ describeWithSeed(
     });
   }
 );
+
+const collapsedRepliesUnreadWave = aWave(
+  { visibility_group_id: null, chat_replies_collapsed: true },
+  {
+    id: 'collapsed-replies-unread-wave',
+    serial_no: 91,
+    name: 'Collapsed Replies Unread'
+  }
+);
+
+function aCollapsedRepliesUnreadDrop({
+  id,
+  serial_no,
+  created_at,
+  reply_to_drop_id
+}: {
+  id: string;
+  serial_no: number;
+  created_at: number;
+  reply_to_drop_id: string | null;
+}) {
+  return {
+    serial_no,
+    id,
+    wave_id: collapsedRepliesUnreadWave.id,
+    author_id: author.profile_id!,
+    created_at,
+    updated_at: null,
+    title: null,
+    parts_count: 1,
+    reply_to_drop_id,
+    reply_to_part_id: reply_to_drop_id ? 1 : null,
+    drop_type: DropType.CHAT,
+    signature: null,
+    hide_link_preview: false
+  };
+}
+
+describeWithSeed(
+  'WavesApiDb unread summaries with collapsed replies',
+  [
+    withIdentities([author, unreadReader]),
+    withWaves([collapsedRepliesUnreadWave]),
+    {
+      table: DROPS_TABLE,
+      rows: [
+        aCollapsedRepliesUnreadDrop({
+          id: 'collapsed-unread-reply-to-read-drop',
+          serial_no: 9001,
+          created_at: 1100,
+          reply_to_drop_id: 'collapsed-read-root'
+        }),
+        aCollapsedRepliesUnreadDrop({
+          id: 'collapsed-unread-root',
+          serial_no: 9002,
+          created_at: 1200,
+          reply_to_drop_id: null
+        })
+      ]
+    },
+    {
+      table: WAVE_READER_METRICS_TABLE,
+      rows: [
+        {
+          wave_id: collapsedRepliesUnreadWave.id,
+          reader_id: unreadReader.profile_id!,
+          latest_read_timestamp: 1000,
+          muted: false
+        }
+      ]
+    }
+  ],
+  () => {
+    it('does not count collapsed replies as unread', async () => {
+      await expect(
+        repo.findIdentityUnreadDropsSummaryByWaveId(
+          {
+            identityId: unreadReader.profile_id!,
+            waveIds: [collapsedRepliesUnreadWave.id]
+          },
+          ctx
+        )
+      ).resolves.toEqual({
+        [collapsedRepliesUnreadWave.id]: {
+          unread_drops_count: 1,
+          first_unread_drop_serial_no: 9002
+        }
+      });
+    });
+  }
+);
