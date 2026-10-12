@@ -66,7 +66,7 @@ export function buildReleaseDigestEntries({
 }: BuildReleaseDigestEntriesInput): NewReleaseDigestEntry[] {
   const deployedAt = Date.parse(request.deployed_at);
   if (!Number.isFinite(deployedAt)) {
-    throw new Error(
+    throw new TypeError(
       `Release digest entries need a valid deployed_at, got ${request.deployed_at}`
     );
   }

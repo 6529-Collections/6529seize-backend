@@ -141,15 +141,18 @@ function cleanText(value: unknown, maxLength: number): string {
   if (typeof value !== 'string') {
     return '';
   }
-  return value
-    .replace(/\s+/g, ' ')
-    .replace(/@\[/g, '@(')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/[`*~[\]#<>]/g, '')
-    .replace(/^\s*[-•]\s*/, '')
-    .trim()
-    .slice(0, maxLength)
-    .trim();
+  return (
+    value
+      .replace(/\s+/g, ' ')
+      .replace(/@\[/g, '@(')
+      // Bounded quantifiers keep link stripping linear on hostile input.
+      .replace(/\[([^\]]{0,300})\]\([^)\s]{0,500}\)/g, '$1')
+      .replace(/[`*~[\]#<>]/g, '')
+      .replace(/^\s*[-•]\s*/, '')
+      .trim()
+      .slice(0, maxLength)
+      .trim()
+  );
 }
 
 function parseItems(

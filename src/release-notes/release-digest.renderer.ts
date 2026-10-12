@@ -142,10 +142,8 @@ function buildCredits(credits: readonly ReleaseDigestCredit[]): {
 
 function buildBuildersLine(buildersNote: string, detailsUrl: string): string[] {
   const details = `Each change with its pull request is in [Deploys · Production](${detailsUrl}).`;
-  return [
-    '',
-    `**For builders:** ${buildersNote ? `${buildersNote} ` : ''}${details}`
-  ];
+  const text = buildersNote ? [buildersNote, details].join(' ') : details;
+  return ['', `**For builders:** ${text}`];
 }
 
 export function renderReleaseDigest(
