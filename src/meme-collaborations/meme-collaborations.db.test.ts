@@ -307,6 +307,24 @@ describeWithSeed(
             {
               ...artworkModel,
               drop_id: 'drop',
+              metadata: artworkModel.metadata.map((item) =>
+                item.data_key === 'artist'
+                  ? { ...item, data_value: 'Artist A, ArtistB' }
+                  : item
+              )
+            },
+            'drop',
+            { connection }
+          )
+        )
+      ).resolves.toEqual([]);
+      expect((await db.context('drop', {}))?.base_artist).toBe('Artist A');
+      await expect(
+        db.executeNativeQueriesInTransaction((connection) =>
+          service.onWrite(
+            {
+              ...artworkModel,
+              drop_id: 'drop',
               parts: [
                 {
                   ...artworkModel.parts[0],

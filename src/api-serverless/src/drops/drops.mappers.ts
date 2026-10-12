@@ -1,4 +1,5 @@
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import { collaborationMetadataValues } from '@/meme-collaborations/meme-collaboration-credit';
 import {
   DropEntity,
   DropMediaEntity,
@@ -900,18 +901,15 @@ export class DropsMappers {
       });
       drop.collaborators = collaboratorsByDropId[dropEntity.id] ?? [];
       const presentation = collaborationPresentation[dropEntity.id];
-      if (presentation) {
+      if (
+        presentation &&
+        moderationPresentations[dropEntity.id]?.moderation.can_view !== false
+      ) {
         drop.submission_artist = presentation.submission_artist;
+        const creditValues = collaborationMetadataValues(presentation.credit);
         drop.metadata = drop.metadata.map((item) => ({
           ...item,
-          data_value:
-            item.data_key === 'artist'
-              ? presentation.credit.artist
-              : item.data_key === 'seizeArtistProfile'
-                ? presentation.credit.artist_profiles
-                : item.data_key === 'collab'
-                  ? String(presentation.credit.collab)
-                  : item.data_value
+          data_value: creditValues.get(item.data_key) ?? item.data_value
         }));
       }
       return this.applyModerationPresentation(
@@ -1025,6 +1023,7 @@ export class DropsMappers {
       };
     });
     if (!presentation.moderation.can_view) {
+      delete drop.submission_artist;
       drop.title = null;
       drop.referenced_nfts = [];
       drop.mentioned_users = [];

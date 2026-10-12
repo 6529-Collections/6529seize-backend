@@ -29,6 +29,8 @@ describe('DropsMappers moderation presentation', () => {
     const root = drop('root', 'root');
     const firstCopy = drop('repeated', 'first secret');
     const repeatedCopy = drop('repeated', 'second secret');
+    firstCopy.submission_artist = 'first secret artist';
+    repeatedCopy.submission_artist = 'second secret artist';
     root.parts[0].quoted_drop = { drop: firstCopy };
     firstCopy.parts[0].quoted_drop = { drop: repeatedCopy };
     const mapper = new DropsMappers(
@@ -67,5 +69,7 @@ describe('DropsMappers moderation presentation', () => {
     expect(firstCopy.parts[0].content).toBeNull();
     expect(repeatedCopy.parts[0].content).toBeNull();
     expect(repeatedCopy.title).toBeNull();
+    expect(firstCopy.submission_artist).toBeUndefined();
+    expect(repeatedCopy.submission_artist).toBeUndefined();
   });
 });

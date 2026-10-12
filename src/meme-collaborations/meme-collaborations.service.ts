@@ -173,10 +173,33 @@ export class MemeCollaborationsService {
     const artworkHash = collaborationArtworkHash(model);
     const artwork = collaborationArtworkDetails(model);
     if (existing.artwork_hash !== artworkHash) {
-      const accepted = (await this.db.invitations(dropId, ctx)).some(
+      const accepted = (await this.db.invitations(dropId, ctx)).filter(
         (item) => item.status === 'ACCEPTED'
       );
-      if (accepted || existing.closed_at !== null)
+      const presentedArtist =
+        existing.credit?.artist ??
+        [
+          existing.base_artist,
+          ...accepted.map((item) => item.profile.display)
+        ].join(', ');
+      const incomingArtist = model.metadata
+        .find((item) => item.data_key === 'artist')
+        ?.data_value.trim();
+      // API reads expose combined credits; an unchanged read/write round trip
+      // must not be interpreted as replacing the submitter's artist name.
+      if (
+        incomingArtist === presentedArtist &&
+        collaborationArtworkHash({
+          ...model,
+          metadata: model.metadata.map((item) =>
+            item.data_key === 'artist'
+              ? { ...item, data_value: existing.base_artist }
+              : item
+          )
+        }) === existing.artwork_hash
+      )
+        return;
+      if (accepted.length > 0 || existing.closed_at !== null)
         throw new BadRequestException(
           'Collaborator consent locks this artwork and artist credit. Create a new submission to replace it.'
         );

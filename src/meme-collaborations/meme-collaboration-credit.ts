@@ -1,6 +1,16 @@
 import { MemeCollaborationCredit } from '@/entities/IMemeCollaboration';
 import { BadRequestException } from '@/exceptions';
 
+export function collaborationMetadataValues(
+  credit: MemeCollaborationCredit
+): ReadonlyMap<string, string> {
+  return new Map([
+    ['artist', credit.artist],
+    ['seizeArtistProfile', credit.artist_profiles],
+    ['collab', String(credit.collab)]
+  ]);
+}
+
 export function withCollaborationCredit<
   T extends { trait_type: string; value: string | number }
 >(
