@@ -20,6 +20,10 @@ export class ConsolidationTools {
     private readonly policy: () => ApiConsolidationPolicy = getConsolidationPolicy
   ) {}
 
+  private activationSeconds(): number {
+    return Date.parse(this.policy().four_wallet_activation_at) / 1000;
+  }
+
   public extractConsolidationWallets(
     consolidations: ConsolidationLink[],
     wallet: string
@@ -47,8 +51,7 @@ export class ConsolidationTools {
   public extractConsolidations(
     consolidations: ConsolidationLink[]
   ): string[][] {
-    const activation =
-      Date.parse(this.policy().four_wallet_activation_at) / 1000;
+    const activation = this.activationSeconds();
     // Newest link first. Links confirmed in the same block are ordered by
     // their pair key so every caller groups the same rows the same way.
     consolidations.sort(
@@ -172,16 +175,17 @@ export class ConsolidationTools {
 
   public isPostActivationLink(
     link: ConsolidationLink | undefined,
-    activation = Date.parse(this.policy().four_wallet_activation_at) / 1000
+    activation?: number
   ): boolean {
     if (!link) {
       return false;
     }
+    const cutoff = activation ?? this.activationSeconds();
     return [link.wallet1_registered_at, link.wallet2_registered_at].every(
       (registeredAt) =>
         registeredAt !== null &&
         registeredAt !== undefined &&
-        Number(registeredAt) >= activation
+        Number(registeredAt) >= cutoff
     );
   }
 

@@ -55,3 +55,19 @@ test.each([
     CONSOLIDATION_ACTIVATION_ENV
   );
 });
+
+test('validates each configured value once and still rejects a bad one', () => {
+  process.env[CONSOLIDATION_ACTIVATION_ENV] = '2026-10-15T00:00:00Z';
+  const first = getConsolidationPolicy();
+  expect(getConsolidationPolicy()).toBe(first);
+  expect(Object.isFrozen(first)).toBe(true);
+
+  process.env[CONSOLIDATION_ACTIVATION_ENV] = '2026-10-12T00:00:00Z';
+  expect(getConsolidationPolicy().four_wallet_activation_at).toBe(
+    '2026-10-12T00:00:00.000Z'
+  );
+
+  process.env[CONSOLIDATION_ACTIVATION_ENV] = 'soon';
+  expect(getConsolidationPolicy).toThrow(CONSOLIDATION_ACTIVATION_ENV);
+  expect(getConsolidationPolicy).toThrow(CONSOLIDATION_ACTIVATION_ENV);
+});
