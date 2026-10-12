@@ -28,6 +28,10 @@ export function sanitizeDeviceVideoPoster(base64: string): Buffer {
   ) {
     throw new Error('Invalid device poster encoding');
   }
+  // Dispatch only JPEG bytes to the size detector, never other image parsers.
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
+    throw new Error('Device poster must be a JPEG');
+  }
   const dimensions = imageSize(bytes);
   if (
     dimensions.type !== 'jpg' ||
@@ -37,6 +41,11 @@ export function sanitizeDeviceVideoPoster(base64: string): Buffer {
     dimensions.height > 640
   ) {
     throw new Error('Device poster must be a JPEG within 640 by 640 pixels');
+  }
+  // Canvas captures already contain oriented pixels. Preserve backend fallback
+  // for other clients whose JPEG relies on metadata we would otherwise strip.
+  if (dimensions.orientation !== undefined && dimensions.orientation !== 1) {
+    throw new Error('Device poster requires EXIF orientation');
   }
   const image = decode(bytes, {
     tolerantDecoding: false,
