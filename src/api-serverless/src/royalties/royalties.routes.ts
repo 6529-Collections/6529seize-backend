@@ -2,13 +2,11 @@ import { Request, Response } from 'express';
 import * as mcache from 'memory-cache';
 import { fetchRoyaltiesUploads } from '../../../db-api';
 import { Logger } from '../../../logging';
-import {
-  CACHE_TIME_MS,
-  DEFAULT_PAGE_SIZE,
-  PaginatedResponse
-} from '../api-constants';
+import { CACHE_TIME_MS, PaginatedResponse } from '../api-constants';
 import {
   cacheKey,
+  getPage,
+  getPageSize,
   resolveIntParam,
   returnCSVResult,
   returnPaginatedResult
@@ -87,11 +85,8 @@ router.get(
     >,
     res: Response<PaginatedResponse<RoyaltyUploadResponse>>
   ) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? req.query.page_size
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? req.query.page : 1;
+    const pageSize = getPageSize(req);
+    const page = getPage(req);
     await fetchRoyaltiesUploads(pageSize, page).then((result) => {
       return returnPaginatedResult<RoyaltyUploadResponse>(result, req, res);
     });
