@@ -823,10 +823,20 @@ Sentry snapshot grouped by project: each project has up to five newly seen error
 issues and five unresolved issues ranked by window event count. Separate project
 summaries keep high-volume frontend errors from hiding backend failures.
 The API only exposes issue identifiers, titles, project slugs, window
-counts/timestamps and canonical Sentry links. It never
-returns provider credentials or raw event payloads. Two bounded, parallel Sentry
-requests per project use explicit projects and environment tag filters, an
-eight-second timeout and a response-size limit. Failed collection returns
+counts/timestamps, severity, priority, issue state and canonical Sentry links. It never
+returns provider credentials or raw event payloads. Five bounded, parallel issue
+queries per project collect new, frequent unresolved, high-priority unresolved,
+regressed and escalating issues. Dedicated queries prevent the frequent preview
+from hiding higher-priority issues. Counts use Sentry's `X-Hits` only below its
+`X-Max-Hits` cap; otherwise counts are explicitly lower bounds.
+
+Two additional queries compare all error-issue events, including warnings and
+resolved/archived issues, in adjacent 24-hour windows with the same environment
+filters. Each collection follows cursor values on the fixed Sentry URL, for at
+most five pages of 50 issues. Incomplete, duplicate or failed collection makes
+the affected trend total null, while the issue overview remains available.
+Every request uses explicit projects and environment tag filters, an
+eight-second timeout and a response-size limit. Failed issue collection returns
 sanitized HTTP 503; missing
 configuration returns `not_configured` rather than an empty healthy snapshot.
 
@@ -835,6 +845,24 @@ including the token so scope or credential changes cannot reuse another
 snapshot. Concurrent requests in one process share collection. Membership and
 proxy checks run before the cache on every request. No background worker or
 persisted monitoring table is added.
+
+`GET /api/monitoring/sentry/history` uses the same central guard and returns
+per-project event and distinct-issue counts for the last 30 completed UTC
+days. It uses the existing `event:read` issue queries and environment filters,
+including resolved and archived issues. Counts are window-scoped; repeated
+events contribute to occurrences while each issue contributes once per day.
+No historical priority/status classification is inferred from today's issue
+state. Data remains in Sentry, subject to its retention.
+
+Collection runs separately from the overview, with at most four active
+requests, five pages of 50 issues per day, and an 18-second overall deadline.
+A rate-limit response stops scheduling further work. Failed, duplicate,
+truncated or unfinished days return null counts; successful empty days return
+zero. A wholly unavailable collection returns sanitized HTTP 503. History is
+cached for 15 minutes with a shared Redis refresh lease and in-process
+deduplication. Cache keys include the configuration hash and UTC end date so
+midnight rolls the window forward. Missing history never blocks the current
+overview; the frontend displays gaps, daily tables and a separate retry action.
 
 Configure `MONITORING_SENTRY_TOKEN` (Sentry `event:read`),
 `MONITORING_SENTRY_ORG`, `MONITORING_SENTRY_PROJECTS` (explicit IDs or slugs,

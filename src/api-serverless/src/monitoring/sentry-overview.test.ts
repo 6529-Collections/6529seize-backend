@@ -1,7 +1,11 @@
 import fetch, { Response } from 'node-fetch';
 import { redisCached } from '@/redis';
 import { Time } from '@/time';
-import { getSentryOverview } from './sentry-overview';
+import {
+  getSentryOverview,
+  getSentryConfig,
+  countSentryWindow
+} from './sentry-overview';
 
 jest.mock('node-fetch', () => ({ __esModule: true, default: jest.fn() }));
 jest.mock('@/redis', () => ({ redisCached: jest.fn() }));
@@ -21,6 +25,10 @@ function issue(id = '123') {
     shortId: 'WEB-123',
     title: 'TypeError: failed',
     project: { slug: 'web' },
+    level: 'error',
+    priority: 'high',
+    status: 'unresolved',
+    substatus: 'ongoing',
     count: '9999',
     firstSeen: '2020-01-01T00:00:00Z',
     lastSeen: '2026-10-08T00:00:00Z',
@@ -34,8 +42,16 @@ function issue(id = '123') {
   };
 }
 
-function response(body: unknown, ok = true): Response {
-  return { ok, json: async () => body } as Response;
+function response(
+  body: unknown,
+  ok = true,
+  headers: Record<string, string | undefined> = {}
+): Response {
+  return {
+    ok,
+    json: async () => body,
+    headers: { get: (name: string) => headers[name] ?? null }
+  } as Response;
 }
 
 describe('Sentry monitoring collection', () => {
@@ -72,7 +88,7 @@ describe('Sentry monitoring collection', () => {
 
   it('bounds project, environment, time, sort, size and timeout; returns only window aggregates and safe links', async () => {
     const result = await getSentryOverview();
-    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenCalledTimes(14);
     const urls = jest
       .mocked(fetch)
       .mock.calls.map(([url]) => new URL(String(url)));
@@ -85,7 +101,7 @@ describe('Sentry monitoring collection', () => {
       expect(url.searchParams.get('query')).toContain(
         'tags[environment]:[production]'
       );
-      expect(url.searchParams.get('limit')).toBe('6');
+      expect(['6', '50']).toContain(url.searchParams.get('limit'));
       expect(
         Date.parse(url.searchParams.get('end')!) -
           Date.parse(url.searchParams.get('start')!)
@@ -109,15 +125,34 @@ describe('Sentry monitoring collection', () => {
       occurrences: 12,
       first_seen: '2026-10-07T10:00:00.000Z',
       last_seen: '2026-10-08T00:00:00.000Z',
-      url: 'https://sentry.io/organizations/team/issues/123/'
+      url: 'https://sentry.io/organizations/team/issues/123/',
+      level: 'error',
+      priority: 'high',
+      state: 'ongoing'
     });
     expect(JSON.stringify(result)).not.toContain('private');
     expect(redisCached).toHaveBeenCalledWith(
-      expect.stringMatching(/^monitoring:sentry:v2:[a-f0-9]{64}$/),
+      expect.stringMatching(/^monitoring:sentry:v3:[a-f0-9]{64}$/),
       expect.any(Time),
       expect.any(Function)
     );
     expect(jest.mocked(redisCached).mock.calls[0][1].toSeconds()).toBe(300);
+  });
+
+  it('counts repeated events separately from distinct daily issues and ignores lifetime totals', async () => {
+    jest
+      .mocked(fetch)
+      .mockResolvedValue(response([issue('123'), issue('456')]));
+    const config = getSentryConfig();
+    if (!config) throw new Error('Missing fixture configuration');
+    expect(
+      await countSentryWindow(
+        config,
+        'web',
+        '2026-10-07T00:00:00Z',
+        '2026-10-08T00:00:00Z'
+      )
+    ).toEqual({ events: 24, issues: 2 });
   });
 
   it('limits lists to five and identifies additional matches without claiming a total', async () => {
@@ -222,7 +257,7 @@ describe('Sentry monitoring collection', () => {
       getSentryOverview()
     ]);
     expect(a).toEqual(b);
-    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch).toHaveBeenCalledTimes(14);
     jest.mocked(fetch).mockRejectedValueOnce(new Error('timeout'));
     await expect(getSentryOverview()).rejects.toThrow();
     await expect(getSentryOverview()).resolves.toMatchObject({
@@ -253,5 +288,170 @@ describe('Sentry monitoring collection', () => {
     process.env.MONITORING_SENTRY_ORG = 'https://untrusted.example';
     await expect(getSentryOverview()).rejects.toThrow();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('counts priority and change groups independently of the frequent issue preview', async () => {
+    process.env.MONITORING_SENTRY_PROJECTS = 'web';
+    jest.mocked(fetch).mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      const query = url.searchParams.get('query')!;
+      if (query.includes('issue.priority:high'))
+        return response([issue('900')], true, {
+          'x-hits': '9',
+          'x-max-hits': '1000'
+        });
+      if (query.includes('is:regressed'))
+        return response([{ ...issue('901'), substatus: 'regressed' }]);
+      if (query.includes('is:escalating'))
+        return response([{ ...issue('902'), substatus: 'escalating' }]);
+      return response([
+        { ...issue('123'), level: 'warning', priority: 'medium' }
+      ]);
+    });
+    const project = (await getSentryOverview()).projects[0];
+    expect(project.high_priority).toMatchObject({
+      count: 9,
+      count_exact: true,
+      issues: [{ id: '900' }]
+    });
+    expect(project.top_issues[0]).toMatchObject({
+      level: 'warning',
+      priority: 'medium'
+    });
+    expect(project.regressed.issues[0].state).toBe('regressed');
+    expect(project.escalating.issues[0].state).toBe('escalating');
+  });
+
+  it.each([
+    { 'x-hits': '1000', 'x-max-hits': '1000' },
+    { 'x-hits': '9' },
+    { 'x-hits': 'invalid', 'x-max-hits': '1000' }
+  ])(
+    'keeps capped or unverifiable counts as lower bounds: %j',
+    async (headers) => {
+      jest.mocked(fetch).mockResolvedValue(
+        response(
+          Array.from({ length: 6 }, (_, index) => issue(String(index))),
+          true,
+          headers
+        )
+      );
+      expect(
+        (await getSentryOverview()).projects[0].high_priority
+      ).toMatchObject({ count: 6, count_exact: false, has_more: true });
+    }
+  );
+
+  it('compares all captured events in adjacent windows, including resolved issues and warnings', async () => {
+    process.env.MONITORING_SENTRY_PROJECTS = 'web';
+    const windows: Array<{ start: string; end: string }> = [];
+    jest.mocked(fetch).mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get('limit') !== '50') return response([issue()]);
+      expect(url.searchParams.get('query')).toBe(
+        'issue.category:error tags[environment]:[production]'
+      );
+      const window = {
+        start: url.searchParams.get('start')!,
+        end: url.searchParams.get('end')!
+      };
+      windows.push(window);
+      const current = windows.length === 1;
+      return response([
+        {
+          ...issue(current ? '1' : '2'),
+          status: 'resolved',
+          level: 'warning',
+          filtered: { count: current ? '30' : '10' }
+        }
+      ]);
+    });
+    expect((await getSentryOverview()).projects[0].event_trend).toEqual({
+      current_events: 30,
+      previous_events: 10
+    });
+    expect(windows[1].end).toBe(windows[0].start);
+    expect(Date.parse(windows[0].end) - Date.parse(windows[1].start)).toBe(
+      172_800_000
+    );
+  });
+
+  it('follows only cursor values on the fixed provider URL to collect beyond the first page', async () => {
+    process.env.MONITORING_SENTRY_PROJECTS = 'web';
+    jest.mocked(fetch).mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get('limit') !== '50') return response([issue()]);
+      expect(url.origin).toBe('https://sentry.io');
+      if (!url.searchParams.has('cursor'))
+        return response(
+          Array.from({ length: 50 }, (_, i) => issue(String(i))),
+          true,
+          {
+            link: '<https://untrusted.example/>; rel="next"; results="true"; cursor="1:50:0"'
+          }
+        );
+      expect(url.searchParams.get('cursor')).toBe('1:50:0');
+      return response([issue('51')], true, {
+        link: '<https://sentry.io/>; rel="next"; results="false"; cursor="0:0:0"'
+      });
+    });
+    expect((await getSentryOverview()).projects[0].event_trend).toEqual({
+      current_events: 612,
+      previous_events: 612
+    });
+  });
+
+  it('keeps trend unavailable when pagination hits the bound or repeats an issue', async () => {
+    process.env.MONITORING_SENTRY_PROJECTS = 'web';
+    jest.mocked(fetch).mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get('limit') !== '50') return response([issue()]);
+      const page = Number(url.searchParams.get('cursor')?.split(':')[1] ?? 0);
+      return response(
+        Array.from({ length: 50 }, (_, i) => issue(String(page * 50 + i))),
+        true,
+        {
+          link: `<https://sentry.io/>; rel="next"; results="true"; cursor="1:${page + 1}:0"`
+        }
+      );
+    });
+    expect((await getSentryOverview()).projects[0].event_trend).toEqual({
+      current_events: null,
+      previous_events: null
+    });
+    expect(fetch).toHaveBeenCalledTimes(15);
+  });
+
+  it('retains the issue overview when trend collection fails', async () => {
+    jest
+      .mocked(fetch)
+      .mockImplementation(async (input) =>
+        new URL(String(input)).searchParams.get('limit') === '50'
+          ? response({}, false)
+          : response([issue()])
+      );
+    const result = await getSentryOverview();
+    expect(result.status).toBe('ready');
+    expect(result.projects[0].high_priority.count).toBe(1);
+    expect(result.projects[0].event_trend).toEqual({
+      current_events: null,
+      previous_events: null
+    });
+  });
+
+  it('marks unfamiliar severity, priority and status values as unknown', async () => {
+    jest.mocked(fetch).mockResolvedValue(
+      response([
+        {
+          ...issue(),
+          level: 'custom',
+          priority: 'critical',
+          status: 'custom'
+        }
+      ])
+    );
+    expect((await getSentryOverview()).projects[0].top_issues[0]).toMatchObject(
+      { level: 'unknown', priority: 'unknown', state: 'unknown' }
+    );
   });
 });

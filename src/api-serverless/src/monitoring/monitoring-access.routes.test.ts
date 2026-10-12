@@ -8,6 +8,8 @@ import { Timer } from '@/time';
 import { Logger } from '@/logging';
 
 const mockSentryOverview = jest.fn();
+const mockSentryHistory = jest.fn();
+jest.mock('./sentry-history', () => ({ getSentryHistory: mockSentryHistory }));
 jest.mock('./sentry-overview', () => ({
   getSentryOverview: mockSentryOverview
 }));
@@ -68,6 +70,9 @@ async function withServer(run: (base: string) => Promise<void>) {
 
 describe('monitoring section authorization', () => {
   beforeEach(() => {
+    mockSentryHistory
+      .mockReset()
+      .mockResolvedValue({ status: 'ready', projects: [] });
     mockSentryOverview
       .mockReset()
       .mockResolvedValue({ status: 'ready', projects: [] });
@@ -88,6 +93,7 @@ describe('monitoring section authorization', () => {
       for (const path of [
         '/monitoring/access',
         '/monitoring/sentry',
+        '/monitoring/sentry/history',
         '/monitoring/probe'
       ]) {
         const response = await fetch(base + path);
@@ -99,6 +105,7 @@ describe('monitoring section authorization', () => {
       userGroupsService.getGroupsUserIsEligibleForByIds
     ).not.toHaveBeenCalled();
     expect(mockSentryOverview).not.toHaveBeenCalled();
+    expect(mockSentryHistory).not.toHaveBeenCalled();
   });
 
   it('allows members and returns only the access contract', async () => {
@@ -124,6 +131,7 @@ describe('monitoring section authorization', () => {
       for (const path of [
         '/monitoring/access',
         '/monitoring/sentry',
+        '/monitoring/sentry/history',
         '/monitoring/probe'
       ]) {
         const response = await fetch(base + path, { headers: authHeaders });
@@ -171,22 +179,56 @@ describe('monitoring section authorization', () => {
     expect(mockSentryOverview).not.toHaveBeenCalled();
   });
 
-  it('rechecks membership before a cached Sentry snapshot after removal', async () => {
-    jest
-      .mocked(userGroupsService.getGroupsUserIsEligibleForByIds)
-      .mockResolvedValueOnce([DEV_TEAM_GROUP_ID])
-      .mockResolvedValueOnce([]);
+  it.each(['/monitoring/sentry', '/monitoring/sentry/history'])(
+    'rechecks membership before the cached snapshot at %s after removal',
+    async (path) => {
+      jest
+        .mocked(userGroupsService.getGroupsUserIsEligibleForByIds)
+        .mockResolvedValueOnce([DEV_TEAM_GROUP_ID])
+        .mockResolvedValueOnce([]);
+      await withServer(async (base) => {
+        expect(
+          (await fetch(base + path, { headers: authHeaders })).status
+        ).toBe(200);
+        expect(
+          (await fetch(base + path, { headers: authHeaders })).status
+        ).toBe(403);
+      });
+      expect(
+        mockSentryOverview.mock.calls.length +
+          mockSentryHistory.mock.calls.length
+      ).toBe(1);
+    }
+  );
+
+  it('sanitizes history errors and denies proxy access before collecting history', async () => {
+    mockSentryHistory.mockRejectedValue(new Error('private provider context'));
     await withServer(async (base) => {
+      const response = await fetch(base + '/monitoring/sentry/history', {
+        headers: authHeaders
+      });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: 'Sentry history is temporarily unavailable',
+        code: 'MONITORING_SENTRY_HISTORY_UNAVAILABLE'
+      });
+      mockAuthenticationContext.mockResolvedValue(
+        new AuthenticationContext({
+          authenticatedWallet: 'delegate-wallet',
+          authenticatedProfileId: 'delegate',
+          roleProfileId: 'member',
+          activeProxyActions: []
+        })
+      );
       expect(
-        (await fetch(base + '/monitoring/sentry', { headers: authHeaders }))
-          .status
-      ).toBe(200);
-      expect(
-        (await fetch(base + '/monitoring/sentry', { headers: authHeaders }))
-          .status
+        (
+          await fetch(base + '/monitoring/sentry/history', {
+            headers: authHeaders
+          })
+        ).status
       ).toBe(403);
+      expect(mockSentryHistory).toHaveBeenCalledTimes(1);
     });
-    expect(mockSentryOverview).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed and sanitizes membership lookup failures', async () => {

@@ -153,6 +153,7 @@ import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCh
 import { ApiModerationCheckPage } from '@/api/generated/models/ApiModerationCheckPage';
 import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts';
 import { ApiMonitoringAccess } from '@/api/generated/models/ApiMonitoringAccess';
+import { ApiMonitoringSentryHistory } from '@/api/generated/models/ApiMonitoringSentryHistory';
 import { ApiMonitoringSentryOverview } from '@/api/generated/models/ApiMonitoringSentryOverview';
 import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
@@ -1715,6 +1716,20 @@ export type GetMonitoringSentryRequest = Request<
   ApiResponse<GetMonitoringSentryResponse>,
   never,
   GetMonitoringSentryQuery,
+  Record<string, never>
+>;
+
+export type GetMonitoringSentryHistoryPathParams = Record<string, never>;
+
+export type GetMonitoringSentryHistoryQuery = Record<string, never>;
+
+export type GetMonitoringSentryHistoryResponse = ApiMonitoringSentryHistory;
+
+export type GetMonitoringSentryHistoryRequest = Request<
+  GetMonitoringSentryHistoryPathParams,
+  ApiResponse<GetMonitoringSentryHistoryResponse>,
+  never,
+  GetMonitoringSentryHistoryQuery,
   Record<string, never>
 >;
 
