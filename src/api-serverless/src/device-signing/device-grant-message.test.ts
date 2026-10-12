@@ -86,6 +86,7 @@ describe('device grant message', () => {
       ['unknown', 'post,admin'],
       ['empty item', 'post,'],
       ['uppercase', 'POST'],
+      ['whitespace', 'post, edit'],
       ['empty', '']
     ])('rejects %s', (_name, raw) => {
       expect(parseDeviceScopesParam(raw)).toBeNull();
