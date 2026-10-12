@@ -10,7 +10,8 @@ import {
 import {
   LaunchAction,
   LaunchRecord,
-  LaunchSafetyError
+  LaunchSafetyError,
+  assertPhaseScopedPlan
 } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
 
@@ -78,6 +79,12 @@ export class DropForgeWorker {
       throw new LaunchSafetyError(
         'Signer ledger is inconsistent; manual recovery required'
       );
+    if (record.data.plan_version !== 2)
+      setLaunchState(
+        record,
+        'BLOCKED',
+        'Legacy launch plan requires manual reconciliation before phase-scoped execution'
+      );
     if (action.state === 'RESERVED' && !runnable(record)) {
       action.state = 'PENDING';
       delete action.unsigned_tx;
@@ -115,6 +122,7 @@ export class DropForgeWorker {
     pending: PendingSigner,
     ctx: RequestContext
   ): Promise<Work | null> {
+    assertPhaseScopedPlan(record.data);
     await this.assertCanonical(record);
     const action = record.data.actions.find((it) => it.state !== 'CONFIRMED');
     if (!action) {
@@ -219,6 +227,15 @@ export class DropForgeWorker {
           record.data.events.some((event) => !event.drop_id)
         )
           return;
+        if ((await this.chain.now()) >= action.deadline - 120) {
+          setLaunchState(
+            record,
+            'BLOCKED',
+            `Signing deadline passed while signing ${action.id}; no signed intent committed`
+          );
+          await this.repository.save(record, ctx);
+          return;
+        }
         action.signed_tx = raw;
         action.hash = signed.hash!;
         action.state = 'SIGNED';
@@ -243,7 +260,22 @@ export class DropForgeWorker {
         if (action.state !== 'SIGNED') return null;
         const receipt = await this.chain.receipt(action.hash!);
         if (receipt && receipt.confirmations >= this.config.confirmations) {
-          this.applyReceipt(record, action, receipt, pending);
+          this.applyReceipt(
+            record,
+            action,
+            receipt,
+            pending,
+            await this.chain.now()
+          );
+          await this.repository.save(record, ctx);
+          return null;
+        }
+        if (record.data.plan_version !== 2) {
+          setLaunchState(
+            record,
+            'BLOCKED',
+            'Legacy signed intent requires manual reconciliation; rebroadcast is prohibited'
+          );
           await this.repository.save(record, ctx);
           return null;
         }
@@ -254,7 +286,13 @@ export class DropForgeWorker {
           const included = await this.chain.receipt(action.hash!);
           if (included) {
             if (included.confirmations >= this.config.confirmations) {
-              this.applyReceipt(record, action, included, pending);
+              this.applyReceipt(
+                record,
+                action,
+                included,
+                pending,
+                await this.chain.now()
+              );
               await this.repository.save(record, ctx);
             }
             return null;
@@ -295,19 +333,26 @@ export class DropForgeWorker {
     record: LaunchRecord,
     action: LaunchAction,
     receipt: ChainReceipt,
-    pending: PendingSigner
+    pending: PendingSigner,
+    confirmedAt: number
   ): void {
     action.block_number = receipt.blockNumber;
     action.block_hash = receipt.blockHash;
     action.state = receipt.status === 1 ? 'CONFIRMED' : 'FAILED';
     pending.launch_id = null;
     pending.action_id = null;
-    if (receipt.status === 1)
+    if (receipt.status === 1) {
       addLaunchEvent(
         record,
         `Confirmed ${action.id}: ${action.hash} (${receipt.confirmations} confirmations)`
       );
-    else
+      if (confirmedAt >= action.deadline && record.state !== 'CANCELLED')
+        setLaunchState(
+          record,
+          'BLOCKED',
+          `Confirmation deadline missed for ${action.id}; transaction mined and must not be replayed`
+        );
+    } else
       setLaunchState(
         record,
         'BLOCKED',

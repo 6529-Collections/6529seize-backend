@@ -1785,6 +1785,14 @@ permission, nonce availability, and gas budgets. Confirmation is distinct from a
 scheduled mint window becoming active. Already-signed transactions cannot be
 revoked or guaranteed to mine before a deadline.
 
+Phase-scoped plans initialize and execute only Phase 0 allocations before its
+window, then update and airdrop each later phase inside its own closed transition
+gap. Gapless public subscriptions share the preceding Phase 2 transition, matching
+the existing launch UI; the public update waits until Phase 2 closes. Updates
+persist a minted-supply checkpoint so legitimate prior-phase mints do not block
+later airdrops. Legacy flattened plans fail closed while outstanding receipts
+remain reconcilable. Confirmation observed past a deadline blocks dependent work.
+
 EMMA phase results, subscription assignments, distribution rows, and Merkle
 proofs commit together with a replayable result. EMMA reads happen outside the
 claim preparation lock; publication rechecks cached results and current launch

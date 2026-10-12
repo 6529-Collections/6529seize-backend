@@ -9,7 +9,8 @@ import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import {
   LaunchAction,
   LaunchData,
-  LaunchSafetyError
+  LaunchSafetyError,
+  assertPhaseScopedPlan
 } from '@/drop-forge/drop-forge.types';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 
@@ -136,7 +137,12 @@ export class EthereumLaunchChain implements LaunchChain {
     );
     return adminAbi.decodeFunctionResult('isAdmin', result)[0] === true;
   }
-  async verify(data: LaunchData, action: LaunchAction): Promise<void> {
+  async verify(
+    data: LaunchData,
+    action: LaunchAction,
+    captureSupply = false
+  ): Promise<void> {
+    assertPhaseScopedPlan(data);
     if (
       data.chain_id !== this.config.chainId ||
       data.contract !== this.config.creator ||
@@ -177,7 +183,8 @@ export class EthereumLaunchChain implements LaunchChain {
         'Claim is already initialized; automatic adoption is prohibited'
       );
     const claim = claimAbi.decodeFunctionResult('getClaim', result)[0];
-    const phase = data.phases[action.kind === 'UPDATE' ? action.phase - 1 : 0];
+    const phase =
+      data.phases[action.kind === 'UPDATE' ? action.phase - 1 : action.phase];
     const equalAddress = (actual: string, expected: string) =>
       actual.toLowerCase() === expected.toLowerCase();
     const matches = [
@@ -198,22 +205,59 @@ export class EthereumLaunchChain implements LaunchChain {
       throw new LaunchSafetyError(
         'Claim configuration changed outside this launch'
       );
+    await this.verifySupply(data, action, Number(claim.total), captureSupply);
+  }
+
+  private async verifySupply(
+    data: LaunchData,
+    action: LaunchAction,
+    total: number,
+    capture: boolean
+  ): Promise<void> {
+    const phaseActions = data.actions.filter((it) => it.phase === action.phase);
+    const airdropAmount = (it: LaunchAction) =>
+      it.recipients.reduce((sum, row) => sum + row.amount, 0);
+    let expected = action.expected_supply;
     if (action.kind === 'AIRDROP') {
-      const expectedTotal = data.actions
-        .filter((it) => it.kind === 'AIRDROP' && it.state === 'CONFIRMED')
-        .reduce(
-          (sum, it) =>
-            sum + it.recipients.reduce((n, row) => n + row.amount, 0),
-          0
-        );
-      if (Number(claim.total) !== expectedTotal)
+      const update = phaseActions.find((it) => it.kind === 'UPDATE');
+      const baseline = action.phase === 0 ? 0 : update?.expected_supply;
+      if (baseline === undefined || (update && update.state !== 'CONFIRMED'))
         throw new LaunchSafetyError(
-          'Claim supply changed before the planned airdrop'
+          'Phase supply checkpoint is missing or unconfirmed'
+        );
+      expected =
+        baseline +
+        phaseActions
+          .filter((it) => it.kind === 'AIRDROP' && it.state === 'CONFIRMED')
+          .reduce((sum, it) => sum + airdropAmount(it), 0);
+    }
+    if (expected !== undefined && total !== expected)
+      throw new LaunchSafetyError(
+        'Claim supply changed before the planned transaction'
+      );
+    const remaining = phaseActions
+      .filter((it) => it.kind === 'AIRDROP' && it.state !== 'CONFIRMED')
+      .reduce((sum, it) => sum + airdropAmount(it), 0);
+    if (total + remaining > data.edition_size)
+      throw new LaunchSafetyError(
+        'Remaining phase airdrops exceed available edition supply'
+      );
+    // Capture real mints from the preceding phase once, while its window is
+    // closed. Persist this checkpoint with the reserved unsigned transaction.
+    if (capture || action.state === 'RESERVED') {
+      const now = await this.now();
+      if (
+        now < action.due ||
+        (action.kind === 'AIRDROP' && now >= data.phases[action.phase].start)
+      )
+        throw new LaunchSafetyError(
+          'Phase transaction is outside its closed minting gap'
         );
     }
+    if (capture) action.expected_supply = total;
   }
   async prepare(data: LaunchData, action: LaunchAction): Promise<string> {
-    await this.verify(data, action);
+    await this.verify(data, action, true);
     const [latest, pending, fee] = await Promise.all([
       this.nonce(data.signer, false),
       this.nonce(data.signer, true),

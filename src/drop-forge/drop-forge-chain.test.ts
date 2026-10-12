@@ -157,6 +157,137 @@ describe('Drop Forge transaction boundary', () => {
     claim[0] = 0;
     await expect(chain.verify(data, second)).rejects.toThrow('supply changed');
   });
+  it('snapshots legitimate preceding-phase mints and rejects changes after reservation or between phase batches', async () => {
+    const { chain, provider } = setup();
+    jest.restoreAllMocks();
+    jest.spyOn(chain, 'now').mockResolvedValue(5100);
+    const data = testLaunchData();
+    const previous = data.phases[0];
+    const update = data.actions[2];
+    const batch = {
+      ...data.actions[1],
+      id: 'phase-1-airdrop-0',
+      phase: 1,
+      due: update.due,
+      deadline: update.deadline
+    };
+    data.actions.push(batch);
+    const claim = [
+      35,
+      data.edition_size,
+      0,
+      previous.start,
+      previous.end,
+      2,
+      previous.root,
+      data.metadata,
+      data.claim_id,
+      previous.price_wei,
+      data.receiver,
+      ZeroAddress,
+      ZeroAddress
+    ];
+    provider.call.mockImplementation(({ data: calldata }: { data: string }) =>
+      Promise.resolve(
+        calldata.startsWith(claimAbi.getFunction('getClaim')!.selector)
+          ? claimAbi.encodeFunctionResult('getClaim', [claim])
+          : '0x' + '0'.repeat(63) + '1'
+      )
+    );
+    await chain.prepare(data, update);
+    expect(update.expected_supply).toBe(35);
+    update.state = 'RESERVED';
+    claim[0] = 36;
+    await expect(chain.verify(data, update)).rejects.toThrow('supply changed');
+    claim[0] = 35;
+    await expect(chain.verify(data, update)).resolves.toBeUndefined();
+    update.state = 'CONFIRMED';
+    claim[3] = data.phases[1].start;
+    claim[4] = data.phases[1].end;
+    claim[6] = data.phases[1].root;
+    await chain.prepare(data, batch);
+    expect(batch.expected_supply).toBe(35);
+    batch.state = 'CONFIRMED';
+    const second = {
+      ...batch,
+      id: 'phase-1-airdrop-1',
+      state: 'PENDING' as const,
+      expected_supply: undefined
+    };
+    data.actions.push(second);
+    claim[0] = 36;
+    await expect(chain.verify(data, second)).resolves.toBeUndefined();
+    claim[0] = 37;
+    await expect(chain.verify(data, second)).rejects.toThrow('supply changed');
+  });
+  it('does not reserve an update while the previous window is live or a batch after its mint window starts', async () => {
+    const { chain, provider } = setup();
+    jest.restoreAllMocks();
+    const data = testLaunchData();
+    const phase = data.phases[0];
+    const claim = [
+      0,
+      data.edition_size,
+      0,
+      phase.start,
+      phase.end,
+      2,
+      phase.root,
+      data.metadata,
+      data.claim_id,
+      phase.price_wei,
+      data.receiver,
+      ZeroAddress,
+      ZeroAddress
+    ];
+    provider.call.mockImplementation(({ data: calldata }: { data: string }) =>
+      Promise.resolve(
+        calldata.startsWith(claimAbi.getFunction('getClaim')!.selector)
+          ? claimAbi.encodeFunctionResult('getClaim', [claim])
+          : '0x' + '0'.repeat(63) + '1'
+      )
+    );
+    jest.spyOn(chain, 'now').mockResolvedValue(phase.end);
+    await expect(chain.prepare(data, data.actions[2])).rejects.toThrow(
+      'closed minting gap'
+    );
+    jest.spyOn(chain, 'now').mockResolvedValue(phase.start);
+    await expect(chain.prepare(data, data.actions[1])).rejects.toThrow(
+      'closed minting gap'
+    );
+  });
+  it('checks edition headroom against legitimate mints before the next phase airdrops', async () => {
+    const { chain, provider } = setup();
+    jest.restoreAllMocks();
+    const data = testLaunchData();
+    const phase = data.phases[0];
+    data.actions.push({ ...data.actions[1], phase: 1, id: 'next-airdrop' });
+    const claim = [
+      100,
+      data.edition_size,
+      0,
+      phase.start,
+      phase.end,
+      2,
+      phase.root,
+      data.metadata,
+      data.claim_id,
+      phase.price_wei,
+      data.receiver,
+      ZeroAddress,
+      ZeroAddress
+    ];
+    provider.call.mockImplementation(({ data: calldata }: { data: string }) =>
+      Promise.resolve(
+        calldata.startsWith(claimAbi.getFunction('getClaim')!.selector)
+          ? claimAbi.encodeFunctionResult('getClaim', [claim])
+          : '0x' + '0'.repeat(63) + '1'
+      )
+    );
+    await expect(chain.prepare(data, data.actions[2])).rejects.toThrow(
+      'available edition'
+    );
+  });
   it('rejects initialization adoption and a token ID different from the prepared card', async () => {
     const { chain, provider } = setup();
     jest.restoreAllMocks();

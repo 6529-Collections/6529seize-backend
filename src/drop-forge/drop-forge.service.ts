@@ -16,7 +16,8 @@ import {
 import {
   LaunchRecord,
   LaunchSafetyError,
-  LaunchRevisionConflict
+  LaunchRevisionConflict,
+  assertPhaseScopedPlan
 } from '@/drop-forge/drop-forge.types';
 import { ForbiddenException, NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
@@ -174,6 +175,7 @@ export async function controlLaunch(
           throw new LaunchSafetyError(
             'A reverted transaction requires manual recovery; automatic replay is prohibited'
           );
+        assertPhaseScopedPlan(record.data);
         const source = await dropForgeRepository.source(contract, claim, txCtx);
         if (hashLaunchSource(source) !== record.data.distribution_hash)
           throw new LaunchSafetyError(

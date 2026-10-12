@@ -52,6 +52,7 @@ export function buildLaunchPlan(
   )
     throw new LaunchSafetyError('Invalid claim or edition');
   if (
+    !Number.isSafeInteger(input.initialize_at) ||
     input.initialize_at < now + 300 ||
     input.phases.length < 1 ||
     input.phases.length > 20
@@ -64,10 +65,10 @@ export function buildLaunchPlan(
     if (names.has(phase.name) || automaticPhases.has(phase.name))
       throw new LaunchSafetyError('Phase names must be unique minting phases');
     names.add(phase.name);
+    if (phase.is_public && index !== input.phases.length - 1)
+      throw new LaunchSafetyError('Only the final minting phase can be public');
     const earliest =
-      index === 0
-        ? input.initialize_at + 1800
-        : input.phases[index - 1].end + 900;
+      index === 0 ? input.initialize_at + 1 : input.phases[index - 1].end;
     if (
       !Number.isSafeInteger(phase.start) ||
       !Number.isSafeInteger(phase.end) ||
@@ -76,7 +77,7 @@ export function buildLaunchPlan(
       phase.end > 0xffffffffffff
     )
       throw new LaunchSafetyError(
-        'Phases need ordered windows, a 30 minute preparation lead, and 15 minute transition gaps'
+        'Phases need ordered, non-overlapping windows after initialization'
       );
     if (
       !/^\d+$/.test(phase.price_wei) ||
@@ -103,7 +104,10 @@ export function buildLaunchPlan(
     return { ...phase, price_wei: BigInt(phase.price_wei).toString(), root };
   });
   const unmapped = source.rows.some(
-    (row) => Number(row.count_allowlist) > 0 && !names.has(row.phase)
+    (row) =>
+      !automaticPhases.has(row.phase) &&
+      (Number(row.count_allowlist) > 0 || Number(row.count_airdrop) > 0) &&
+      !names.has(row.phase)
   );
   if (unmapped)
     throw new LaunchSafetyError(
@@ -115,54 +119,66 @@ export function buildLaunchPlan(
       (name === 'Airdrop - Artist' && input.include_artist_airdrops) ||
       (name === 'Airdrop - Team' && input.include_team_airdrops)
   );
-  const sorted = deriveAirdropRecipients(source.rows, categories);
-  if (sorted.reduce((sum, row) => sum + row.amount, 0) > source.edition)
+  // Public subscriptions belong to the preceding allowlist transition when
+  // public minting starts immediately after that window (the existing UI flow).
+  const recipients = phases.map((phase, index) => {
+    const selectedNames = [phase.name];
+    if (index === 0) selectedNames.push(...categories);
+    const next = input.phases[index + 1];
+    if (next?.is_public && next.start === phase.end)
+      selectedNames.push(next.name);
+    const previous = phases[index - 1];
+    if (input.phases[index].is_public && previous?.end === phase.start)
+      return [];
+    return deriveAirdropRecipients(source.rows, selectedNames);
+  });
+  const allRecipients = recipients.flat();
+  if (allRecipients.reduce((sum, row) => sum + row.amount, 0) > source.edition)
     throw new LaunchSafetyError('Airdrops exceed edition size');
-  if (sorted.length > 20000)
+  if (allRecipients.length > 20000)
     throw new LaunchSafetyError(
       'Airdrop plan exceeds the 20000 recipient safety limit'
     );
-  const minimumLead = Math.max(
-    1800,
-    (Math.ceil(sorted.length / 100) + 1) * (config.confirmations * 15 + 120) +
-      120
-  );
-  if (phases[0].start - input.initialize_at < minimumLead)
-    throw new LaunchSafetyError(
-      `Initialization needs at least ${minimumLead} seconds before the first window for this batch count and confirmation policy`
-    );
-  const actions: LaunchAction[] = [
-    {
-      id: 'initialize',
-      kind: 'INITIALIZE',
-      phase: 0,
-      due: input.initialize_at,
-      deadline: phases[0].start,
-      recipients: [],
-      state: 'PENDING'
-    }
-  ];
-  for (let offset = 0; offset < sorted.length; offset += 100)
+  const actions: LaunchAction[] = [];
+  for (let phase = 0; phase < phases.length; phase++) {
+    const due = phase === 0 ? input.initialize_at : phases[phase - 1].end + 1;
+    const batches = Math.ceil(recipients[phase].length / 100);
+    const minimumLead = launchPreparationSeconds(config, batches + 1);
+    const gaplessPublic =
+      input.phases[phase].is_public &&
+      phase > 0 &&
+      phases[phase].start === phases[phase - 1].end;
+    // A gapless public cutover becomes eligible only after Phase 2 closes.
+    // It can therefore open late while its update obtains confirmations.
+    const deadline = gaplessPublic
+      ? Math.min(phases[phase].end, due + minimumLead)
+      : phases[phase].start;
+    if (deadline - due < minimumLead)
+      throw new LaunchSafetyError(
+        `Phase ${phases[phase].name} needs at least ${minimumLead} seconds for its update/initialization and ${batches} airdrop batches`
+      );
     actions.push({
-      id: `airdrop-${offset / 100}`,
-      kind: 'AIRDROP',
-      phase: 0,
-      due: input.initialize_at,
-      deadline: phases[0].start,
-      recipients: sorted.slice(offset, offset + 100),
-      state: 'PENDING'
-    });
-  for (let phase = 1; phase < phases.length; phase++)
-    actions.push({
-      id: `phase-${phase}`,
-      kind: 'UPDATE',
+      id: phase === 0 ? 'initialize' : `phase-${phase}`,
+      kind: phase === 0 ? 'INITIALIZE' : 'UPDATE',
       phase,
-      due: phases[phase - 1].end + 1,
-      deadline: phases[phase].start,
+      due,
+      deadline,
       recipients: [],
       state: 'PENDING'
     });
+    for (let offset = 0; offset < recipients[phase].length; offset += 100)
+      actions.push({
+        id: `phase-${phase}-airdrop-${offset / 100}`,
+        kind: 'AIRDROP',
+        phase,
+        due,
+        deadline,
+        recipients: recipients[phase].slice(offset, offset + 100),
+        state: 'PENDING'
+      });
+  }
   return {
+    plan_version: 2,
     chain_id: config.chainId,
     contract: config.creator,
     claim_id: claim,
@@ -185,8 +201,7 @@ function deriveAirdropRecipients(
 ): Array<{ address: string; amount: number }> {
   const recipients = new Map<string, number>();
   for (const row of rows) {
-    const selected =
-      !automaticPhases.has(row.phase) || categories.includes(row.phase);
+    const selected = categories.includes(row.phase);
     const amount = Number(row.count_airdrop);
     if (!Number.isSafeInteger(amount) || amount < 0)
       throw new LaunchSafetyError('Invalid distribution amount');
@@ -199,4 +214,14 @@ function deriveAirdropRecipients(
     address,
     amount
   })).sort((a, b) => a.address.localeCompare(b.address));
+}
+
+// Ethereum slots plus one scheduler interval per serial transaction and the
+// existing two-minute no-new-submission cutoff. This is admission budgeting,
+// not a guarantee that a network or reporting outage will fit the window.
+export function launchPreparationSeconds(
+  config: DropForgeConfig,
+  transactions: number
+): number {
+  return transactions * (config.confirmations * 12 + 60) + 120;
 }

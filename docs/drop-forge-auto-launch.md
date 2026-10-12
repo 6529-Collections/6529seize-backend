@@ -81,14 +81,47 @@ payment receiver. Every worker transaction sends zero ETH; Pay Artist is exclude
    Use the latest revision in a `POST .../control` request with `operation=ARM`.
    Draft edits require the current revision. After arming, inputs are immutable.
 
-Initialization needs at least 30 minutes before the first mint window, increased
-for the airdrop batch count and confirmation policy. Airdrops use at most 100
-recipients per transaction, with at most 20,000 recipients per plan. Every later
-phase starts at least 15 minutes after the preceding window ends. Updates become
-eligible after that preceding end, so they cannot replace a live mint window.
-The worker stops creating or rebroadcasting transactions two minutes before an
-action's deadline. Lead-time checks are a planning allowance, not a guarantee of
-chain inclusion; a busy network or stuck transaction still requires attention.
+The existing Drop Forge schedule is expressed in `Europe/Athens` wall time
+(EET/EEST, including daylight saving): Phase 0 17:40–18:20, Phase 1
+18:30–18:50, Phase 2 19:00–19:20, and public 19:20–17:00 the next day.
+The API receives exact Unix-second instants, so the caller resolves that mint
+day's timezone before saving. `initialize_at` is the exact initialization
+eligibility time; the first phase's `start` is its confirmation deadline.
+There is no inferred or hardcoded earlier initialization time.
+
+Each phase has its own deterministic recipient batches (at most 100 wallets
+per transaction, at most 20,000 phase-recipient entries per plan):
+
+- Before Phase 0: initialize and airdrop Phase 0 subscribers plus selected
+  general/artist/team allocations.
+- After Phase 0 closes: update to Phase 1, then airdrop only Phase 1 subscribers
+  before Phase 1 opens (18:20–18:30 in the standard schedule).
+- After Phase 1 closes: update to Phase 2, then airdrop Phase 2 and public
+  subscribers before Phase 2 opens (18:50–19:00). This follows the existing
+  UI's grouping when public starts immediately at Phase 2's end.
+- After Phase 2 closes: update to public. Because the standard schedule has no
+  gap at 19:20, public activation necessarily waits for that transaction's
+  inclusion; confirmation/reporting can follow later. It never replaces a live
+  Phase 2 window. The cutover confirmation deadline is its due time plus one
+  transaction's planning allowance, capped at the public end.
+
+For each initialization/transition, admission requires
+`transaction_count * (confirmations * 12 + 60) + 120` seconds: Ethereum slot
+budget, one scheduler interval per serial transaction, and the two-minute
+no-new-submission cutoff. Ten-minute gaps are accepted when their own batch
+count fits; a large later batch cannot borrow time before Phase 0. This allowance
+is not a guarantee of inclusion/finality; reporting, RPC or network delays can
+still block a launch. The worker starts no fresh transaction or rebroadcast in
+the last two minutes, records receipts even when late, and blocks dependent work
+if confirmation is observed at or after the deadline.
+
+Phase updates snapshot the actual minted supply once the preceding window has
+closed. Subsequent batches validate that persisted baseline plus only the
+confirmed batches from that transition. Normal earlier-phase mints are therefore
+allowed; unexpected supply changes inside the transition and insufficient edition
+headroom block execution. Old flattened plans have no version-2 marker and cannot
+be armed, resumed, newly signed or rebroadcast; existing signed receipts remain
+reconcilable. Recreate an unstarted draft, or manually reconcile a started ledger.
 
 All prepared allowlist phases must be mapped, non-public roots cannot be empty,
 stored proofs must match the distribution, and normalization must be complete

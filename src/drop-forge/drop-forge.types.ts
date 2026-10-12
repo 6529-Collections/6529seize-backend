@@ -27,6 +27,7 @@ export interface LaunchAction {
   deadline: number;
   recipients: Array<{ address: string; amount: number }>;
   state: ActionState;
+  expected_supply?: number;
   unsigned_tx?: string;
   signed_tx?: string;
   hash?: string;
@@ -41,6 +42,7 @@ export interface LaunchEvent {
   drop_id?: string;
 }
 export interface LaunchData {
+  plan_version?: number;
   chain_id: number;
   contract: string;
   claim_id: number;
@@ -79,3 +81,10 @@ export class LaunchSafetyError extends Error {
 }
 
 export class LaunchRevisionConflict extends LaunchSafetyError {}
+
+export function assertPhaseScopedPlan(data: LaunchData): void {
+  if (data.plan_version !== 2)
+    throw new LaunchSafetyError(
+      'Legacy launch plan uses pre-window airdrops; recreate an unstarted draft or reconcile started work manually'
+    );
+}

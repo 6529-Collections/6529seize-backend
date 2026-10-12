@@ -27,6 +27,18 @@ service names, signing provider, retry limits, and timing policy remain design
 decisions. Winning-submission selection and craft approval remain inputs to this
 launch workflow, not newly automated behavior in this proposal.
 
+## Confirmed scheduling behavior
+
+The current mint schedule uses Europe/Athens, including DST: Phase 0
+17:40–18:20; Phase 1 18:30–18:50; Phase 2 19:00–19:20; public from
+19:20 until 17:00 the next day. Initialization is due at the explicitly saved
+`initialize_at`, with confirmation required before Phase 0 starts. Each phase's
+subscriber allocations remain separate. Phase 1 runs in the first ten-minute gap;
+Phase 2 and public subscription batches run in the second, matching the current
+UI. The gapless public update waits until Phase 2 closes and may activate after
+19:20 while the transaction is included. Plan validation budgets every gap's own
+transactions; prior mint supply is captured at its update and checked across batches.
+
 ## Current code evidence
 
 - [Claim action persistence](../../../src/api-serverless/src/minting-claims/minting-claim-actions.db.ts)

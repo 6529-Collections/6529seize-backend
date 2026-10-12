@@ -78,6 +78,99 @@ describe('Drop Forge durable worker', () => {
     await acknowledgeReports();
     await worker.tick();
   };
+  it('blocks legacy flattened plans without signing or broadcasting', async () => {
+    await repository.change(
+      id,
+      async (record) => {
+        delete record.data.plan_version;
+      },
+      {}
+    );
+    await worker.tick();
+    expect((await read())!.state).toBe('BLOCKED');
+    expect(signer.sign).not.toHaveBeenCalled();
+    expect(chain.broadcast).not.toHaveBeenCalled();
+  });
+  it('reconciles a legacy signed receipt but never rebroadcasts that intent', async () => {
+    await start();
+    await repository.change(
+      id,
+      async (record) => {
+        delete record.data.plan_version;
+      },
+      {}
+    );
+    chain.broadcast.mockClear();
+    await worker.tick();
+    expect((await read())!.state).toBe('BLOCKED');
+    expect(chain.broadcast).not.toHaveBeenCalled();
+    chain.receipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'block',
+      confirmations: 12
+    });
+    await worker.tick();
+    expect((await read())!.data.actions[0].state).toBe('CONFIRMED');
+    expect((await read())!.state).toBe('BLOCKED');
+    expect(chain.broadcast).not.toHaveBeenCalled();
+  });
+  it('leaves the next phase pending until the preceding mint window closes', async () => {
+    await repository.change(
+      id,
+      async (record) => {
+        for (const action of record.data.actions.slice(0, 2)) {
+          action.state = 'CONFIRMED';
+          action.hash = 'confirmed';
+          action.block_hash = 'block';
+        }
+      },
+      {}
+    );
+    chain.receipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'block',
+      confirmations: 12
+    });
+    chain.now.mockResolvedValue(5000);
+    await worker.tick();
+    expect(chain.prepare).not.toHaveBeenCalled();
+    chain.now.mockResolvedValue(5001);
+    await worker.tick();
+    expect(chain.prepare.mock.calls[0][1].kind).toBe('UPDATE');
+    expect(chain.prepare.mock.calls[0][1].phase).toBe(1);
+  });
+  it('records a late initialization receipt without allowing dependent transactions', async () => {
+    await start();
+    chain.now.mockResolvedValue(4000);
+    chain.receipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'block',
+      confirmations: 12
+    });
+    await worker.tick();
+    const saved = (await read())!;
+    expect(saved.data.actions[0].state).toBe('CONFIRMED');
+    expect(saved.state).toBe('BLOCKED');
+    expect(saved.error).toContain('Confirmation deadline missed');
+    await acknowledgeReports();
+    await worker.tick();
+    expect(chain.prepare).toHaveBeenCalledTimes(1);
+  });
+  it('does not commit signed intent when KMS returns after the submission cutoff', async () => {
+    signer.sign.mockImplementation(async (unsigned) => {
+      chain.now.mockResolvedValue(3880);
+      return testWallet.signTransaction(Transaction.from(unsigned));
+    });
+    await start();
+    const saved = (await read())!;
+    expect(saved.state).toBe('BLOCKED');
+    expect(saved.data.actions[0].state).toBe('RESERVED');
+    expect(saved.data.actions[0].signed_tx).toBeUndefined();
+    expect(chain.broadcast).not.toHaveBeenCalled();
+  });
   it('persists before broadcast and retries the identical hash after an ambiguous timeout', async () => {
     await start();
     const saved = (await read())!;
