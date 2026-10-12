@@ -95,36 +95,46 @@ describe('getIp', () => {
     expect(getIp(req)).toBe('');
   });
 
-  it('ignores a spoofed X-Forwarded-For behind serverless-http even when Express trusts proxies', async () => {
-    const app = express();
-    app.enable('trust proxy');
-    app.get('/ip', (req, res) => {
-      res.json({ ip: getIp(req) });
-    });
-    const handler = serverlessHttp(app);
+  it.each([true, false])(
+    'ignores a spoofed X-Forwarded-For behind serverless-http and keeps https (trust proxy %p)',
+    async (trustProxy) => {
+      const app = express();
+      app.set('trust proxy', trustProxy);
+      app.get('/ip', (req, res) => {
+        res.json({ ip: getIp(req), protocol: req.protocol });
+      });
+      const handler = serverlessHttp(app);
 
-    const response = await handler(
-      {
-        httpMethod: 'GET',
-        path: '/ip',
-        headers: { 'X-Forwarded-For': `${SPOOFED_IP}, 203.0.113.10` },
-        multiValueHeaders: {
-          'X-Forwarded-For': [`${SPOOFED_IP}, 203.0.113.10`]
+      const response = await handler(
+        {
+          httpMethod: 'GET',
+          path: '/ip',
+          headers: {
+            'X-Forwarded-For': `${SPOOFED_IP}, 203.0.113.10`,
+            'X-Forwarded-Proto': 'https'
+          },
+          multiValueHeaders: {
+            'X-Forwarded-For': [`${SPOOFED_IP}, 203.0.113.10`],
+            'X-Forwarded-Proto': ['https']
+          },
+          queryStringParameters: null,
+          multiValueQueryStringParameters: null,
+          body: null,
+          isBase64Encoded: false,
+          requestContext: {
+            requestId: 'request-id',
+            identity: { sourceIp: '203.0.113.10' }
+          }
         },
-        queryStringParameters: null,
-        multiValueQueryStringParameters: null,
-        body: null,
-        isBase64Encoded: false,
-        requestContext: {
-          requestId: 'request-id',
-          identity: { sourceIp: '203.0.113.10' }
-        }
-      },
-      {}
-    );
+        {}
+      );
 
-    expect(JSON.parse(response.body)).toEqual({ ip: '203.0.113.10' });
-  });
+      expect(JSON.parse(response.body)).toEqual({
+        ip: '203.0.113.10',
+        protocol: 'https'
+      });
+    }
+  );
 
   it('ignores a spoofed X-Forwarded-For on the local server even when Express trusts proxies', async () => {
     const app = express();
@@ -214,5 +224,19 @@ describe('getIpInfo', () => {
     await expect(getIpInfo('203.0.113.7')).resolves.toEqual(expected);
     await expect(getIpInfo('203.0.113.7')).resolves.toEqual(expected);
     expect(mockedGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns no location fields on a cache hit when the lookup had none', async () => {
+    mockedGet.mockResolvedValue({ data: { city: null } });
+
+    const miss = await getIpInfo('203.0.113.8');
+    const hit = await getIpInfo('203.0.113.8');
+
+    expect(mockedGet).toHaveBeenCalledTimes(1);
+    for (const result of [miss, hit]) {
+      expect(result?.city_name).toBeUndefined();
+      expect(result?.country_name).toBeUndefined();
+      expect(result?.country).toBeUndefined();
+    }
   });
 });
