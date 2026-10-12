@@ -624,8 +624,11 @@ categories, separating resolver reverts from transport and off-chain failures
 without logging raw errors or revert arguments.
 
 `NFT_INDEXER_RPC` remains the independently configured external-indexing/NFT-link
-capacity boundary, and the legacy AWS Managed Blockchain `/rpc` proxy is
-unchanged. Those explicit exceptions are not controlled by `ETHEREUM_RPC_URL`.
+capacity boundary, and the legacy AWS Managed Blockchain `/rpc` proxy stays
+independent of `ETHEREUM_RPC_URL`. That proxy accepts only `POST /rpc` with an
+allowlist of read-only `eth_`/`net_` methods, at most 25 calls per batch and a
+bounded request size, and calls the node with a ten-second timeout and a capped
+response size. Those explicit exceptions are not controlled by `ETHEREUM_RPC_URL`.
 See the [implementation and rollout record](ethereum-rpc-provider-portability.md)
 and the historical [foundation record](../ops/workstreams/ethereum-rpc-foundation/README.md).
 Configuration is loaded once by warm services; redeploy/restart affected services
