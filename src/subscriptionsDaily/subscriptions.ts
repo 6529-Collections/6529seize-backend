@@ -774,10 +774,12 @@ async function mergeSubscriptionsIntoKey(
       WHERE consolidation_key IN (${placeholders})`,
     balanceAndModeKeys
   );
-  const isSubscribed = modeResult[0]?.automatic_count > 0;
+  // SUM over no rows is NULL, and MySQL returns DECIMAL sums as strings.
+  const isSubscribed = Number(modeResult[0]?.automatic_count ?? 0) > 0;
   // Preserve All eligible if any source or existing destination selected it,
   // including when the preference was saved while that group was in Manual mode.
-  const subscribeAllEditions = modeResult[0]?.all_editions_count > 0;
+  const subscribeAllEditions =
+    Number(modeResult[0]?.all_editions_count ?? 0) > 0;
 
   for (const key of balanceAndModeKeys) {
     await manager.query(

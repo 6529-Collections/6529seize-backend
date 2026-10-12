@@ -20,6 +20,12 @@ import {
 import { consolidateSubscriptions } from './subscriptions';
 import { synchronizeAutomaticSubscriptionQuantities } from './subscription-quantity-sync.db';
 
+// The re-key statement for upcoming subscriptions, whatever its whitespace.
+// Whitespace after the table name keeps longer table names from matching.
+const REKEY_NFTS_SQL = new RegExp(
+  String.raw`UPDATE\s+${SUBSCRIPTIONS_NFTS_TABLE}\s+SET\s+consolidation_key\b`
+);
+
 // Exercise the real consolidation transaction against the isolated Jest MySQL database.
 const A = '0xa';
 const B = '0xb';
@@ -508,12 +514,7 @@ describeWithSeed('Real MySQL: lost transaction abort', faultSeeds, () => {
         const runner = createRunner(mode);
         const query = runner.query.bind(runner);
         jest.spyOn(runner, 'query').mockImplementation(async (sql, params) => {
-          if (
-            !injected &&
-            sql.includes(`UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}\n`) &&
-            sql.includes('SET consolidation_key') &&
-            params?.[1] === B
-          ) {
+          if (!injected && REKEY_NFTS_SQL.test(sql) && params?.[1] === B) {
             injected = true;
             // Deliberately reproduce lost-transaction semantics in MySQL.
             // This is fault injection, not a naturally occurring deadlock.
