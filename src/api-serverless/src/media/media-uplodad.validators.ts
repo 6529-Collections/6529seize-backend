@@ -4,6 +4,7 @@ import { ApiCompleteMultipartUploadRequestPart } from '../generated/models/ApiCo
 import { ApiCompleteMultipartUploadRequest } from '../generated/models/ApiCompleteMultipartUploadRequest';
 import { ApiCreateMediaUploadUrlRequest } from '../generated/models/ApiCreateMediaUploadUrlRequest';
 import { DANGEROUS_MEDIA_FILE_EXTENSIONS } from '@/api/media/media-mime-types';
+import { MAX_DEVICE_POSTER_BASE64_LENGTH } from '@/media/chat-video-poster';
 
 export const ApiUploadPartOfMultipartUploadRequestSchema: Joi.ObjectSchema<ApiUploadPartOfMultipartUploadRequest> =
   Joi.object({
@@ -22,6 +23,9 @@ export const ApiCompleteMultipartUploadRequestSchema: Joi.ObjectSchema<ApiComple
   Joi.object({
     upload_id: Joi.string().required(),
     key: Joi.string().required(),
+    video_poster_base64: Joi.string()
+      .max(MAX_DEVICE_POSTER_BASE64_LENGTH)
+      .optional(),
     parts: Joi.array()
       .required()
       .min(1)

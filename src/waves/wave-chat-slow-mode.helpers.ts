@@ -1,6 +1,7 @@
 import { WaveEntity } from '@/entities/IWave';
 import { Time } from '@/time';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
+import { canReplyInWaveChat } from '@/waves/wave-chat-replies.helpers';
 
 export function isWaveChatSlowModeActive(
   wave: Pick<WaveEntity, 'chat_slow_mode_cooldown_ms'>
@@ -38,6 +39,7 @@ export function resolveNextDropAllowed({
     WaveEntity,
     | 'chat_enabled'
     | 'chat_group_id'
+    | 'chat_replies_open'
     | 'created_by'
     | 'admin_group_id'
     | 'chat_slow_mode_cooldown_ms'
@@ -50,9 +52,8 @@ export function resolveNextDropAllowed({
   if (
     !authenticatedProfileId ||
     !isWaveChatSlowModeActive(wave) ||
-    !wave.chat_enabled ||
-    (wave.chat_group_id !== null &&
-      !groupIdsUserIsEligibleFor.includes(wave.chat_group_id)) ||
+    // Open repliers outside the chat group are still subject to slow mode.
+    !canReplyInWaveChat({ wave, groupIdsUserIsEligibleFor }) ||
     isWaveChatSlowModeExempt({
       authenticatedProfileId,
       wave,

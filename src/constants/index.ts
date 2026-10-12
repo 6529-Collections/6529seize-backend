@@ -1,4 +1,4 @@
-import { Network } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 
 export * from './db-tables';
 export * from './delegations';

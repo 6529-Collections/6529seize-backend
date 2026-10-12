@@ -255,8 +255,8 @@ Exceeding a bound requires the user to reduce the selection explicitly.
 `POST /market/operations/{id}/preflight` is a read-only, authenticated
 `BUY_BATCH` check. Its small body binds the existing review revision and exact
 transaction digest; the server loads and independently validates stored Seaport
-orders, allocations and calldata. It sends only that transaction to the existing
-Alchemy provider, pinning both `eth_call` and raw `eth_estimateGas` to one fresh
+orders, allocations and calldata. It sends only that transaction to the configured
+Ethereum RPC provider, pinning both `eth_call` and raw `eth_estimateGas` to one fresh
 block and rechecking the block hash. Ownership, current profile membership,
 expiry, revision and recovery fences are checked again before returning. No
 operation, journal, send attempt, gas cap or expiry is changed. A 12-second
@@ -302,7 +302,16 @@ then deploy the dependent frontend. The exported TDH helper does not change the
 scheduled TDH calculation and does not require a TDH loop deployment.
 `MARKETPLACE_TRADING_ENABLED=false` stops new trade preparation/publication;
 inspection, transaction reconciliation and direct cancellation remain available.
-The default enables supported actions when provider/RPC configuration exists.
+Action availability follows
+[`handleGetCollectCapabilities`](../src/api-serverless/src/collect/collect.handlers.ts):
+
+- `TdhScenario` is always enabled.
+- `Cancel` requires `ETHEREUM_RPC_URL`, independently of the trading flag or
+  `OPENSEA_API_KEY`.
+- Other actions require both `ETHEREUM_RPC_URL` and `OPENSEA_API_KEY`, with
+  `MARKETPLACE_TRADING_ENABLED` either unset (defaults to `true`) or exactly `true`.
+- `RuleExecution` is always disabled; rules only prepare purchases for review.
+
 Keep operation history and exposure tables when disabling or rolling back trading.
 
 ## High-Level Diagram
@@ -580,25 +589,48 @@ successful rotation's `last_used_at`; repeated recovery does not reset it.
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.
 2. The API validates input, authenticates JWT or anonymous context, reads/writes MySQL, uses Redis for cache/rate limiting, and sometimes publishes SQS work.
-3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy, normalize chain state, and write canonical rows into MySQL. NextGen's `addRandomizer` history entries optionally enrich the contract address with a name from the public Sourcify V2 API on the configured NextGen chain. The lookup needs no API key, has a five-second timeout, and falls back to the address on unavailable or malformed responses; enrichment failures do not stop indexing.
+3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy, normalize chain state, and write canonical rows into MySQL. Ordinary mainnet reads use `ETHEREUM_RPC_URL`, independently of Alchemy NFT REST and indexed transfers. [Ethereum RPC provider portability](ethereum-rpc-provider-portability.md) records the explicit tracing, bulk-indexer and legacy proxy exceptions and rollout requirements. NextGen's `addRandomizer` history entries optionally enrich the contract address with a name from the public Sourcify V2 API on the configured NextGen chain. The lookup needs no API key, has a five-second timeout, and falls back to the address on unavailable or malformed responses; enrichment failures do not stop indexing.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
 6. S3 and CloudFront serve media. AVIF still-image drop uploads always use private ingest and the sanitizer, even when `DROP_MEDIA_SANITIZE_IMAGES=false`. The worker applies orientation, strips metadata, and publishes WebP at quality 95 for compatibility with older supported mobile viewers. Multipart completion/status responses return the published `mime_type`, and drop references validate that type. AVIF admission rejects sequences, invalid content, images over 64 million pixels, dimensions over 16,383 pixels, and file-type headers over 4 KiB before publication. These decoder and header bounds apply only to AVIF; other formats retain their existing behavior. The existing 500 MB media byte limit remains. Verify shared ingest storage, then deploy the sanitizer in each environment before enabling AVIF through the API and frontend. API deployment verifies the ingest bucket and sanitizer queue exist.
 
-   Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception.
+   Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for alert and recovery limits.
    The animation-preview implementation (requires `mediaResizerLoop` deployment) handles versioned GIF requests (`AUTOx450_gifv2`, and the other existing sizes with `_gifv2` appended) with animation-preserving processing instead of the legacy first-frame fallback. The suffix is removed before checking the existing size whitelist and resolving the original key, but retained in the S3 derivative key. AUTO sizes use a sequential native decode and one resize directly to bounded output dimensions; fixed crop sizes retain individually coalesced frames and a repeated-scan guard. The bounded RGBA strip is spooled before encoding; output resolution can shrink further to bound the complete animation. The deployment catalog sets this worker to 2048 MiB for CPU headroom while retaining its processing deadline and source/output safety limits. Frame timing, loop count, and transparency are retained. Admission limits cover source bytes, per-frame pixels, frame count, repeated decoder work, retained output, and processing time. An eligible original that already fits an AUTO dimension is copied unchanged. See [GIF animation previews](gif-animation-previews.md) for limits, rollout, and compatibility. Originals and legacy derivative keys are not overwritten.
 
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
-### Ordinary Ethereum RPC foundation
+### Ordinary Ethereum RPC boundary
 
-Ordinary Ethereum RPC portability is being introduced separately. The
-[RPC foundation](../ops/workstreams/ethereum-rpc-foundation/README.md) adds an
-unused provider-neutral factory and documents the existing regional shared-secret
-configuration path. Existing callers still use their previous providers; this
-foundation does not migrate runtime traffic or remove indexed Alchemy APIs.
+The shared provider in `src/ethereum-rpc/` reads the server-only
+`ETHEREUM_RPC_URL` for mainnet after environment/secrets loading. Sepolia and
+Goerli compatibility paths require their own explicit URLs; missing configuration
+or unsupported chains never fall back to mainnet or an Alchemy key-derived URL.
+Ethers retains chain-ID verification. Standard compatibility reads keep their
+retry and response-shape contracts; CMS ENS owns a separate bounded transport
+using the same URL, and marketplace batch preflight retains its abortable raw
+transport with an explicit mainnet chain check.
+
+`src/alchemy-sdk.ts` now owns only NFT REST and `alchemy_getAssetTransfers`.
+Mixed indexing jobs use both clients without changing pagination or checkpoints.
+Non-standard `trace_block` has a separate provider policy: Alchemy normally,
+or the existing mainnet 6529 trace endpoint with Alchemy fallback where selected.
+Selecting traces does not select the transaction/receipt provider. ENS no longer
+has a hidden 6529 endpoint fallback; its Universal Resolver fallback uses the
+configured ordinary provider and explicitly enables CCIP-Read for off-chain
+ENS records. Fallback errors retain their null result and emit only allowlisted
+categories, separating resolver reverts from transport and off-chain failures
+without logging raw errors or revert arguments.
+
+`NFT_INDEXER_RPC` remains the independently configured external-indexing/NFT-link
+capacity boundary, and the legacy AWS Managed Blockchain `/rpc` proxy is
+unchanged. Those explicit exceptions are not controlled by `ETHEREUM_RPC_URL`.
+See the [implementation and rollout record](ethereum-rpc-provider-portability.md)
+and the historical [foundation record](../ops/workstreams/ethereum-rpc-foundation/README.md).
+Configuration is loaded once by warm services; redeploy/restart affected services
+when changing endpoints. No database, API schema, queue or deployment-workflow
+change is needed.
 
 ### NFT link preview job recovery
 
@@ -1207,6 +1239,15 @@ Wave rows can be top-level waves or subwaves through the nullable `parent_wave_i
 
 Wave overview `has_competition` is true for Rank or Approve wave types, or when the wave has any competition record, including drafts and completed competitions. Competition existence is fetched in one batch for the overview page and its visible parent waves.
 
+Ordinary chat drop creates and edits do not acquire the legacy competition
+ownership lock. Edits still lock any existing competition entry memberships,
+and use the stored drop type to decide whether the legacy owner lock is needed.
+Chat persistence does not initialize legacy leaderboard/vote-history rows, and
+chat edit row replacement does not clear legacy voting state; these writes
+otherwise acquire the same ownership lock through migration triggers. Competition
+submissions and permanent drop deletions retain the ownership fence so writes
+cannot race a legacy-to-native competition transfer.
+
 Wave writes enforce that every active Drop, Vote, Chat, and Admin membership is
 contained by the Wave View membership. The generated
 `POST /wave-group-validation` boundary exposes the same privacy-preserving
@@ -1379,7 +1420,7 @@ adds no Lambda or queue; deploy `dbMigrationsLoop` before `api`. See
 Profile CMS wallet gallery snapshots are read-only API projections over
 `nft_owners`, `ens`, `nfts`, `nfts_meme_lab`, and `nextgen_tokens`. ENS inputs use
 bounded onchain forward resolution through an isolated provider for the
-configured Alchemy RPC and a one-minute cache. Shared provider settings remain
+configured `ETHEREUM_RPC_URL` and a one-minute cache. Shared provider settings remain
 unchanged; indexed reverse displays are not proof of the current ENS address.
 Raw addresses retain indexed display labels. Snapshots do not create
 schema, run migrations, enqueue indexers, or fetch NFT holdings/metadata live.

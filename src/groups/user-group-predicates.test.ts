@@ -49,7 +49,7 @@ import {
 } from '../entities/IUserGroup';
 import { Time } from '../time';
 import { NEXTGEN_CORE_CONTRACT } from '../nextgen/nextgen_constants';
-import { Network } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,

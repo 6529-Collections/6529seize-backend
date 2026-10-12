@@ -6,7 +6,7 @@ import { ProfileClassification } from '../../../entities/IProfile';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Time, Timer } from '../../../time';
 import { identityFetcher } from '../identities/identity.fetcher';
-import { getWalletFromEns } from '../../../alchemy';
+import { getWalletFromEns } from '@/ethereum-rpc/ens-forward';
 import { ethTools } from '../../../eth-tools';
 import { AuthenticationContext } from '../../../auth-context';
 
