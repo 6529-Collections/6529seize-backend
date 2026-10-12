@@ -1311,6 +1311,9 @@ export class DropsMappers {
       realtime_rating,
       rating_prediction,
       raters_count,
+      voters_count_available:
+        dropEntity.drop_type !== DropType.WINNER ||
+        winningDropsRatersCounts[dropEntity.id] !== undefined,
       top_raters,
       context_profile_context,
       subscribed_actions: subscribedActions[dropEntity.id] ?? [],

@@ -22,6 +22,35 @@ under the ownership lock and transfers ownership atomically. Wave and drop URLs
 are preserved. Signed voting, special capabilities and existing upper-threshold
 metadata are retained; large content comparisons use pagination.
 
+Comparison freshness is measured when the independent comparison finishes.
+After readiness passes, the Lambda calls live cutover once; that transaction
+performs the final comparison and invariants under the ownership lock before any
+ownership change. It does not repeat the same expensive check in a separate dry
+run. The 60-second comparison age limit, watermark checks and mismatch rejection
+remain in force. Deploy only `competitionMigrationLoop` for this correction;
+an interrupted legacy-owned copy can resume from its existing checkpoint.
+
+Completed waves preserve historical data exactly, including existing differences
+between stored scores and individual votes or historical credits that exceed a
+voter's current budget. Verification compares the native copy against the retained
+source; it does not recalculate or repair historical scores, votes, winners or
+outcomes. A newly introduced difference, missing runtime or orphaned native vote
+still fails verification. Live waves additionally require aggregate and credit
+consistency, checked before ownership changes. A competition that ends after a
+live migration retains those native aggregate checks.
+
+The legacy leaderboard snapshot worker leaves completed-wave snapshots unchanged,
+including global stale-entry maintenance. Active/open-ended waves and pending final
+decisions continue to refresh; explicit decision cleanup remains scoped to its wave.
+Completion is rechecked under the execution lock before a worker writes. Deploy
+`waveLeaderboardSnapshotterLoop`, then `waveDecisionExecutionLoop`, which also
+refreshes weighted entries before its APPROVE pass. No schema, API or frontend
+deployment is needed.
+
+This verification correction requires only `competitionMigrationLoop`. No schema,
+API or frontend deployment is needed. Reinvoking an already transferred completed
+wave rechecks source fidelity without rewriting its data.
+
 The Activity feed of a transferred primary combines its retained historical
 `DROP_VOTE_EDIT` wave logs (up to transfer time) with new native vote history.
 Original log IDs, timestamps, vote values, system-adjustment reasons and proxy
@@ -44,10 +73,10 @@ the function; do not add it to a console event. A run can continue for up to 24
 hours. Reinvoke with the same wave ID to resume a paused or interrupted migration.
 An already migrated wave is verified without recopying or changing ownership.
 
-If comparison finds a mismatch or the source has invalid data, the function
+If comparison finds a copy mismatch or a live source fails consistency checks, the function
 reports an error and retains legacy ownership. Investigate the CloudWatch error
 and migration report, fix the cause, then invoke again. If verification fails
-after transfer, native ownership is retained: investigate/fix native data rather
+after transfer, native ownership is retained: investigate the introduced difference rather
 than blindly switching back and losing new native changes. Migration errors and
 dropped continuations have regional alarms. Durable diagnostics remain in
 `competition_migrations` and `competition_migration_audit`.
