@@ -84,6 +84,10 @@ x-6529-router:
 - `cache: true` emits `cacheRequest()`.
 - `cache.ttlSeconds` emits `cacheRequest({ ttl: Time.seconds(value) })`.
 - `cache.authDependent: true` includes the authenticated/anonymous identity in the cache key.
+- Auth-dependent keys use the verified `req.user` wallet and proxy role, not
+  the Authorization header. Run authentication before caching so rejected or
+  expired credentials use the anonymous entry; token refreshes for the same
+  wallet and role share an entry.
 - Use `cache.methods` when a generated route should cache non-GET methods.
 - `cacheRequest()` answers from Redis before the handler runs. Never leave an
   authorization check (admin, ownership, proxy) inside a cached handler: run it
