@@ -85,6 +85,7 @@ import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiWaveMin } from '@/api/generated/models/ApiWaveMin';
 import { apiDropMapper, ApiDropMapper } from '@/api/drops/api-drop.mapper';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
+import { isWaveMainFeedWithoutReplies } from '@/waves/wave-chat-replies.helpers';
 import {
   contentModerationDb,
   ContentModerationDb
@@ -672,7 +673,11 @@ export class DropsApiService {
           curation_id: curationFilter,
           drop_type: drop_type
             ? enums.resolveOrThrow(DropType, drop_type)
-            : null
+            : null,
+          exclude_replies: isWaveMainFeedWithoutReplies({
+            wave: visibleWave,
+            curationId: curationFilter
+          })
         },
         ctx
       );
