@@ -83,7 +83,7 @@ async function getAllDelegations(
 }
 
 interface PendingRegistration {
-  event: DelegationEvent;
+  event: DelegationEvent | null;
   ref: RegistrationLogRef;
 }
 
@@ -92,6 +92,10 @@ interface DelegationScan {
   registrations: DelegationEvent[];
   revocations: DelegationEvent[];
   pendingRegistrations: PendingRegistration[];
+  subDelegationRegistrations: {
+    event: DelegationEvent;
+    ref: RevocationLogRef;
+  }[];
   revocationRefs: RevocationLogRef[];
 }
 
@@ -123,16 +127,38 @@ function collectRegistration(entry: DelegationLog, scan: DelegationScan) {
     return;
   }
   if (useCase == USE_CASE_SUB_DELEGATION) {
-    scan.registrations.push({
+    const registration = {
       ...e,
       use_case: useCase,
       collection: collection
+    };
+    scan.registrations.push(registration);
+    scan.subDelegationRegistrations.push({
+      event: registration,
+      ref: {
+        block: log.blockNumber,
+        logIndex: log.logIndex,
+        delegator: from,
+        collection,
+        delegate: to,
+        useCase
+      }
     });
     return;
   }
   const allTokens = Boolean(parsed.args.allTokens);
   // The contract stores token 0 for all-token delegations.
   const tokenId = allTokens ? BigInt(0) : BigInt(parsed.args._tokenId);
+  const ref: RegistrationLogRef = {
+    block: log.blockNumber,
+    logIndex: log.logIndex,
+    delegator: from,
+    collection,
+    delegate: to,
+    useCase,
+    allTokens,
+    tokenId
+  };
   if (tokenId > MAX_STORABLE_DELEGATION_TOKEN_ID) {
     // Any caller can pick the token id. One the token_id column cannot hold
     // would fail the insert, or be stored as a different token, so it is
@@ -140,6 +166,9 @@ function collectRegistration(entry: DelegationLog, scan: DelegationScan) {
     logger.warn(
       `[SKIPPING REGISTRATION] [TOKEN ID ${tokenId} DOES NOT FIT token_id] [BLOCK ${log.blockNumber}] [LOG ${log.logIndex}]`
     );
+    // Keep its position in the contract's entry list so other registrations
+    // for this delegate in the same block resolve their own expiry.
+    scan.pendingRegistrations.push({ event: null, ref });
     return;
   }
   const registration: DelegationEvent = {
@@ -154,16 +183,7 @@ function collectRegistration(entry: DelegationLog, scan: DelegationScan) {
   scan.registrations.push(registration);
   scan.pendingRegistrations.push({
     event: registration,
-    ref: {
-      block: log.blockNumber,
-      logIndex: log.logIndex,
-      delegator: from,
-      collection,
-      delegate: to,
-      useCase,
-      allTokens,
-      tokenId
-    }
+    ref
   });
 }
 
@@ -230,7 +250,20 @@ function collectLog(log: Log, scan: DelegationScan) {
 async function attachRegistrationExpiries(
   scan: DelegationScan
 ): Promise<DelegationEvent[]> {
-  const { registrations, pendingRegistrations: pending } = scan;
+  const revoked = new Set<DelegationEvent>();
+  for (const { event, ref } of scan.subDelegationRegistrations) {
+    if (
+      scan.revocationRefs.some((revocation) =>
+        revokedLaterInBlock(ref, revocation)
+      )
+    ) {
+      revoked.add(event);
+    }
+  }
+  const registrations = scan.registrations.filter(
+    (event) => !revoked.has(event)
+  );
+  const pending = scan.pendingRegistrations;
   if (pending.length === 0) {
     return registrations;
   }
@@ -242,8 +275,10 @@ async function attachRegistrationExpiries(
       DELEGATION_CONTRACT.contract
     )
   );
-  const revoked = new Set<DelegationEvent>();
   pending.forEach(({ event }, index) => {
+    if (!event) {
+      return;
+    }
     const expiry = expiries[index];
     if (expiry === null) {
       revoked.add(event);
@@ -257,6 +292,20 @@ async function attachRegistrationExpiries(
     );
   }
   return registrations.filter((r) => !revoked.has(r));
+}
+
+function revokedLaterInBlock(
+  registration: RevocationLogRef,
+  revocation: RevocationLogRef
+): boolean {
+  return (
+    registration.block === revocation.block &&
+    registration.logIndex < revocation.logIndex &&
+    registration.useCase === revocation.useCase &&
+    equalIgnoreCase(registration.delegator, revocation.delegator) &&
+    equalIgnoreCase(registration.delegate, revocation.delegate) &&
+    equalIgnoreCase(registration.collection, revocation.collection)
+  );
 }
 
 const getNetwork = () => {
@@ -292,6 +341,7 @@ export async function scanDelegationLogs(
     registrations: [],
     revocations: [],
     pendingRegistrations: [],
+    subDelegationRegistrations: [],
     revocationRefs: []
   };
   for (const d of logs) {

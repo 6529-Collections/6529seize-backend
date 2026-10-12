@@ -477,6 +477,110 @@ describe('findDelegationTransactions registration scope', () => {
     ).toEqual([[HOT_2, 1_900_000_000, 2_147_483_647]]);
   });
 
+  it.each([false, true])(
+    'preserves expiry positions with an oversized token for the same delegate (oversized first: %s)',
+    async (oversizedFirst) => {
+      const entries: StoredEntry[] = [
+        [HOT_1, BigInt(1_800_000_000), false, BigInt(42)],
+        [HOT_1, BigInt(1_900_000_000), false, BigInt('1152921504606846977')]
+      ];
+      if (oversizedFirst) entries.reverse();
+      rpcMock.getLogs.mockResolvedValue(
+        entries.map(([delegate, , allTokens, tokenId]) =>
+          log(16, 'RegisterDelegation', [
+            COLD,
+            MEMES_CONTRACT,
+            delegate,
+            USE_CASE_MINTING,
+            allTokens,
+            tokenId
+          ])
+        )
+      );
+      setState(16, COLD, MEMES_CONTRACT, USE_CASE_MINTING, entries);
+
+      const result = await findDelegationTransactions(1, 20);
+      expect(
+        result.registrations.map((r) => [r.wallet2, r.expiry, r.token_id])
+      ).toEqual([[HOT_1, 1_800_000_000, 42]]);
+    }
+  );
+
+  it('drops a manager registration revoked later in its block without reading expiry', async () => {
+    rpcMock.getLogs.mockResolvedValue([
+      log(17, 'RegisterDelegation', [
+        COLD,
+        DELEGATION_ALL_ADDRESS,
+        MANAGER,
+        USE_CASE_SUB_DELEGATION,
+        true,
+        BigInt(0)
+      ]),
+      log(17, 'RevokeDelegation', [
+        COLD,
+        DELEGATION_ALL_ADDRESS,
+        MANAGER,
+        USE_CASE_SUB_DELEGATION
+      ])
+    ]);
+    const result = await findDelegationTransactions(1, 20);
+    expect(result.registrations).toEqual([]);
+    expect(result.revocation).toHaveLength(1);
+    expect(rpcMock.call).not.toHaveBeenCalled();
+  });
+
+  it('keeps a manager re-registered after a revocation in the same block', async () => {
+    rpcMock.getLogs.mockResolvedValue([
+      log(17, 'RevokeDelegation', [
+        COLD,
+        DELEGATION_ALL_ADDRESS,
+        MANAGER,
+        USE_CASE_SUB_DELEGATION
+      ]),
+      log(17, 'RegisterDelegation', [
+        COLD,
+        DELEGATION_ALL_ADDRESS,
+        MANAGER,
+        USE_CASE_SUB_DELEGATION,
+        true,
+        BigInt(0)
+      ])
+    ]);
+    const result = await findDelegationTransactions(1, 20);
+    expect(result.registrations).toEqual([
+      expect.objectContaining({
+        wallet1: COLD,
+        wallet2: MANAGER,
+        use_case: USE_CASE_SUB_DELEGATION
+      })
+    ]);
+    expect(rpcMock.call).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [HOT_1, DELEGATION_ALL_ADDRESS, USE_CASE_SUB_DELEGATION],
+    [MANAGER, MEMES_CONTRACT, USE_CASE_SUB_DELEGATION],
+    [MANAGER, DELEGATION_ALL_ADDRESS, USE_CASE_MINTING]
+  ])(
+    'keeps a manager registration when an unrelated record is revoked (%s, %s, %s)',
+    async (delegate, collection, useCase) => {
+      rpcMock.getLogs.mockResolvedValue([
+        log(17, 'RegisterDelegation', [
+          COLD,
+          DELEGATION_ALL_ADDRESS,
+          MANAGER,
+          USE_CASE_SUB_DELEGATION,
+          true,
+          BigInt(0)
+        ]),
+        log(17, 'RevokeDelegation', [COLD, collection, delegate, useCase])
+      ]);
+      const result = await findDelegationTransactions(1, 20);
+      expect(result.registrations).toHaveLength(1);
+      expect(result.registrations[0]?.wallet2).toBe(MANAGER);
+    }
+  );
+
   it('fails instead of storing defaults when the state read fails', async () => {
     rpcMock.getLogs.mockResolvedValue([
       log(15, 'RegisterDelegation', [
@@ -589,6 +693,45 @@ describe('scope backfill over the real scan', () => {
     expect(report.diff.unchanged).toBe(1);
     expect(report.diff.deletes).toEqual([]);
     expect(deps.applyDiff).not.toHaveBeenCalled();
+  });
+
+  it('removes a stale manager row revoked later in the same block during backfill', async () => {
+    rpcMock.getLogs.mockResolvedValue([
+      log(30, 'RegisterDelegation', [
+        COLD,
+        DELEGATION_ALL_ADDRESS,
+        MANAGER,
+        USE_CASE_SUB_DELEGATION,
+        true,
+        BigInt(0)
+      ]),
+      log(30, 'RevokeDelegation', [
+        COLD,
+        DELEGATION_ALL_ADDRESS,
+        MANAGER,
+        USE_CASE_SUB_DELEGATION
+      ])
+    ]);
+    const deps = backfillDeps([
+      {
+        to_address: MANAGER,
+        collection: DELEGATION_ALL_ADDRESS,
+        use_case: USE_CASE_SUB_DELEGATION
+      }
+    ]);
+    const report = await runDelegationScopeBackfill(
+      { mode: 'apply', fromBlock: 1 },
+      deps
+    );
+    expect(report.diff.deletes).toEqual([
+      expect.objectContaining({
+        to_address: MANAGER,
+        use_case: USE_CASE_SUB_DELEGATION
+      })
+    ]);
+    expect(report.diff.inserts).toEqual([]);
+    expect(deps.applyDiff).toHaveBeenCalledTimes(1);
+    expect(rpcMock.call).not.toHaveBeenCalled();
   });
 
   it('keeps only registrations after a revocation in an earlier-or-later block', async () => {
