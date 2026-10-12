@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import fc from 'fast-check';
 import { fetchPaginated } from '@/db-api';
+import { MAX_PAGE } from '@/api/page-request';
 import { setSqlExecutor, SqlExecutor } from '@/sql-executor';
 
 jest.mock('@/redis', () => ({
@@ -99,6 +100,18 @@ describe('fetchPaginated pagination inputs', () => {
       expect(result.page).toBe(1);
     }
   );
+
+  it('stops advertising a next page at the page ceiling', async () => {
+    const beforeCeiling = await run(1, MAX_PAGE - 1, MAX_PAGE * 2);
+    const atCeiling = await run(1, MAX_PAGE, MAX_PAGE * 2);
+    const beyondCeiling = await run(1, MAX_PAGE + 5, MAX_PAGE * 2);
+
+    expect(beforeCeiling.result.next).toBe('true');
+    expect(atCeiling.result.next).toBeNull();
+    expect(atCeiling.result.page).toBe(MAX_PAGE);
+    expect(beyondCeiling.result.next).toBeNull();
+    expect(beyondCeiling.result.page).toBe(MAX_PAGE);
+  });
 
   it('does not let a negative page size produce a negative OFFSET', async () => {
     const { sql } = await run(-10, 4);

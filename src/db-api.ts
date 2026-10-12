@@ -52,6 +52,7 @@ import {
 } from './api-serverless/src/api-constants';
 import { constructFilters } from './api-serverless/src/api-helpers';
 import {
+  MAX_PAGE,
   normalizePage,
   normalizePageSize
 } from './api-serverless/src/page-request';
@@ -354,9 +355,10 @@ export async function fetchPaginated<T = any>(
     DEFAULT_PAGE_SIZE
   );
   const pageNo = normalizePage(page);
+  const groupByClause = groups ? `group by ${groups}` : '';
   let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
     joins ? joins : ''
-  } ${filters} ${groups ? `group by ${groups}` : ``} order by ${orderBy} LIMIT ${limit}`;
+  } ${filters} ${groupByClause} order by ${orderBy} LIMIT ${limit}`;
   if (pageNo > 1) {
     const offset = Math.min(limit * (pageNo - 1), Number.MAX_SAFE_INTEGER);
     resultsSql += ` OFFSET ${offset}`;
@@ -375,7 +377,7 @@ export async function fetchPaginated<T = any>(
   return {
     count,
     page: pageNo,
-    next: count > limit * pageNo ? 'true' : null,
+    next: pageNo < MAX_PAGE && count > limit * pageNo ? 'true' : null,
     data
   };
 }
