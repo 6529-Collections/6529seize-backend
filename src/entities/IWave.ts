@@ -37,6 +37,8 @@ export interface WaveBaseType {
   readonly chat_group_id: string | null;
   readonly chat_slow_mode_cooldown_ms: number | null;
   readonly chat_links_disabled: boolean;
+  readonly chat_replies_open: boolean;
+  readonly chat_replies_collapsed: boolean;
   readonly participation_max_applications_per_participant: number | null;
   readonly participation_required_metadata: WaveRequiredMetadataItem[];
   readonly participation_required_media: ParticipationRequiredMedia[];
@@ -129,6 +131,16 @@ export class WaveBase implements WaveBaseType {
 
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly chat_links_disabled!: boolean;
+
+  // Lets everyone who can view the wave reply to drops, even when they are
+  // outside chat_group_id. Top-level drops still require chat_group_id.
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly chat_replies_open!: boolean;
+
+  // Keeps replies out of the wave's main feed; clients show them as an
+  // expandable thread under the drop they reply to.
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly chat_replies_collapsed!: boolean;
 
   @Column({ type: 'bigint', nullable: true })
   readonly participation_max_applications_per_participant!: number | null;

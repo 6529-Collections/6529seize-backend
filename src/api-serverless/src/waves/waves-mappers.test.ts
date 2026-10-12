@@ -214,6 +214,8 @@ describe('WavesMappers', () => {
       existingWaveSettings: {
         max_votes_per_identity_to_drop: 7,
         chat_links_disabled: true,
+        chat_replies_open: true,
+        chat_replies_collapsed: true,
         voting_credit_scope: WaveCreditScope.DROP,
         parent_wave_id: null
       }
@@ -223,6 +225,8 @@ describe('WavesMappers', () => {
     expect(mapped.voting_credit_scope).toBe(WaveCreditScope.DROP);
     expect(mapped.chat_slow_mode_cooldown_ms).toBeNull();
     expect(mapped.chat_links_disabled).toBe(true);
+    expect(mapped.chat_replies_open).toBe(true);
+    expect(mapped.chat_replies_collapsed).toBe(true);
   });
 
   it('maps chat slow mode config into entity fields', async () => {
@@ -257,7 +261,8 @@ describe('WavesMappers', () => {
         scope: { group_id: null },
         enabled: true,
         slow_mode_cooldown_ms: 45000,
-        links_disabled: true
+        links_disabled: true,
+        replies: { open: true, collapsed: false }
       },
       wave: {
         type: ApiWaveType.Chat,
@@ -284,6 +289,8 @@ describe('WavesMappers', () => {
 
     expect(mapped.chat_slow_mode_cooldown_ms).toBe(45000);
     expect(mapped.chat_links_disabled).toBe(true);
+    expect(mapped.chat_replies_open).toBe(true);
+    expect(mapped.chat_replies_collapsed).toBe(false);
   });
 
   it('maps card-set TDH config into entity fields and API output', async () => {
