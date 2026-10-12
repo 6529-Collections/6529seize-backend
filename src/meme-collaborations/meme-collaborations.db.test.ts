@@ -5,6 +5,7 @@ import {
   MEME_COLLABORATIONS_TABLE,
   MEME_COLLABORATION_INVITATIONS_TABLE
 } from '@/constants';
+import { PROFILES_TABLE } from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { env } from '@/env';
 import { identitiesDb } from '@/identities/identities.db';
@@ -190,6 +191,12 @@ describeWithSeed(
         invites[1].id,
         body('ACCEPT'),
         auth('C'),
+        {}
+      );
+      await db.query(
+        'clearHandle',
+        `update ${PROFILES_TABLE} set handle=null where external_id='B'`,
+        {},
         {}
       );
       const credit = await db.executeNativeQueriesInTransaction((connection) =>
@@ -391,6 +398,32 @@ describeWithSeed(
       expect((await service.state('new-drop', null, {})).collaborators).toEqual(
         []
       );
+      expect(
+        await db.executeNativeQueriesInTransaction((connection) =>
+          service.onWrite(
+            { ...artworkModel, collaborator_ids: ['B', 'C'] },
+            'collab-drop',
+            { connection }
+          )
+        )
+      ).toEqual([42, 42]);
+      const createdInvitations = (await service.state('collab-drop', 'A', {}))
+        .invitations;
+      expect(createdInvitations).toHaveLength(2);
+      expect(
+        createdInvitations.map((invitation) => [
+          invitation.profile.id,
+          invitation.status
+        ])
+      ).toEqual(
+        expect.arrayContaining([
+          ['B', 'PENDING'],
+          ['C', 'PENDING']
+        ])
+      );
+      expect(
+        (await service.state('collab-drop', null, {})).invitations
+      ).toEqual([]);
     });
   }
 );

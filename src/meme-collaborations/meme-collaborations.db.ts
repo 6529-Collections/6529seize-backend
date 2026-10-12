@@ -96,11 +96,11 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
     );
     return rows.map((row) => ({
       ...row,
-      profile: profiles.get(row.profile_id) ?? {
+      profile: {
         id: row.profile_id,
-        handle: row.profile_handle,
-        display: row.profile_handle,
-        pfp: null
+        handle: profiles.get(row.profile_id)?.handle || row.profile_handle,
+        display: profiles.get(row.profile_id)?.display || row.profile_handle,
+        pfp: profiles.get(row.profile_id)?.pfp ?? null
       }
     }));
   }
@@ -112,7 +112,7 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
     if (!dropIds.length) return {};
     const rows = await this.query<CollaboratorProfile & { drop_id: string }>(
       'acceptedByDrops',
-      `select i.drop_id, i.profile_id as id, coalesce(p.handle,i.profile_handle) as handle, coalesce(p.handle,i.profile_handle) as display, p.pfp_url as pfp from ${MEME_COLLABORATION_INVITATIONS_TABLE} i left join ${PROFILES_TABLE} p on p.external_id=i.profile_id where i.drop_id in (:dropIds) and i.status='ACCEPTED' order by i.created_at asc, i.id asc`,
+      `select i.drop_id, i.profile_id as id, coalesce(nullif(p.handle,''),i.profile_handle) as handle, coalesce(nullif(p.handle,''),i.profile_handle) as display, p.pfp_url as pfp from ${MEME_COLLABORATION_INVITATIONS_TABLE} i left join ${PROFILES_TABLE} p on p.external_id=i.profile_id where i.drop_id in (:dropIds) and i.status='ACCEPTED' order by i.created_at asc, i.id asc`,
       { dropIds },
       ctx
     );
@@ -142,7 +142,7 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
       MemeCollaborationEntity & { current_author_handle: string }
     >(
       'presentationByDrops',
-      `select c.*, coalesce(p.handle,c.author_handle) as current_author_handle from ${MEME_COLLABORATIONS_TABLE} c left join ${PROFILES_TABLE} p on p.external_id=c.author_id where c.drop_id in (:dropIds)`,
+      `select c.*, coalesce(nullif(p.handle,''),c.author_handle) as current_author_handle from ${MEME_COLLABORATIONS_TABLE} c left join ${PROFILES_TABLE} p on p.external_id=c.author_id where c.drop_id in (:dropIds)`,
       { dropIds },
       ctx
     );

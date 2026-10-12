@@ -436,7 +436,7 @@ export class MemeCollaborationsService {
     const [author] = await this.db.profiles([context.author_id], ctx);
     const credit = buildCollaborationCredit(
       context.base_artist,
-      author?.handle ?? context.author_handle,
+      author?.handle || context.author_handle,
       invitations
     );
     await this.db.query(
