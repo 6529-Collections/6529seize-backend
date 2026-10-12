@@ -1,3 +1,4 @@
+import fc from 'fast-check';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
 import {
   DROP_PART_MAX_UTF16_CODE_UNITS,
@@ -7,6 +8,24 @@ import {
   NewWaveDropSchema,
   UpdateDropSchema
 } from '@/api/drops/drop.validator';
+import {
+  DROP_ATTACHMENT_ID_MAX_LENGTH,
+  DROP_MAX_ATTACHMENTS,
+  DROP_MAX_MEDIA,
+  DROP_MAX_METADATA_ENTRIES,
+  DROP_MAX_MENTIONED_USERS,
+  DROP_MAX_MENTIONED_WAVES,
+  DROP_MAX_PARTS,
+  DROP_MAX_REFERENCED_NFTS,
+  DROP_MEDIA_MIME_TYPE_MAX_LENGTH,
+  DROP_MEDIA_UPLOAD_ID_MAX_LENGTH,
+  DROP_MEDIA_URL_MAX_LENGTH,
+  DROP_MENTIONED_WAVE_NAME_MAX_LENGTH,
+  DROP_PART_MAX_ATTACHMENTS,
+  DROP_PART_MAX_MEDIA,
+  DROP_REFERENCED_NFT_NAME_MAX_LENGTH,
+  DROP_REFERENCED_NFT_TOKEN_MAX_LENGTH
+} from '@/drops/drop-payload-limits';
 
 describe('NewDropSchema', () => {
   const futureTimestamp = Date.now() + 60_000;
@@ -544,5 +563,416 @@ describe('shared drop content limits', () => {
     expect(aggregateError.error?.message).not.toContain(
       `${DROP_PART_MAX_UTF8_BYTES} UTF-8 bytes`
     );
+  });
+});
+
+describe('drop payload limits', () => {
+  const schemas = [
+    ['create drop', NewDropSchema],
+    ['update drop', UpdateDropSchema],
+    ['create-wave initial drop', NewWaveDropSchema]
+  ] as const;
+  const anySchema = fc.constantFrom(...schemas.map(([, schema]) => schema));
+  const RUNS = { numRuns: 20 };
+
+  type Schema = (typeof schemas)[number][1];
+
+  function baseDrop(schema: Schema): Record<string, unknown> {
+    return {
+      ...(schema === NewDropSchema
+        ? { wave_id: 'wave-1', drop_type: ApiDropType.Chat }
+        : {}),
+      title: null,
+      parts: [{ content: 'content', media: [], attachments: [] }],
+      referenced_nfts: [],
+      mentioned_users: [],
+      mentioned_waves: [],
+      metadata: [],
+      signature: null
+    };
+  }
+
+  function validate(schema: Schema, overrides: Record<string, unknown>) {
+    return schema.validate({ ...baseDrop(schema), ...overrides });
+  }
+
+  function each<T>(count: number, build: (index: number) => T): T[] {
+    return Array.from({ length: count }, (_, index) => build(index));
+  }
+
+  const part = (index: number) => ({
+    content: `part ${index}`,
+    media: [],
+    attachments: []
+  });
+  const mediaItem = (index: number) => ({
+    mime_type: 'image/png',
+    url: `https://example.com/${index}.png`
+  });
+  const attachment = (index: number) => ({ attachment_id: `att-${index}` });
+
+  const countedFields = [
+    [
+      'parts',
+      DROP_MAX_PARTS,
+      (count: number) => ({ parts: each(count, part) })
+    ],
+    [
+      'metadata',
+      DROP_MAX_METADATA_ENTRIES,
+      (count: number) => ({
+        metadata: each(count, (index) => ({
+          data_key: `key-${index}`,
+          data_value: 'value'
+        }))
+      })
+    ],
+    [
+      'mentioned_users',
+      DROP_MAX_MENTIONED_USERS,
+      (count: number) => ({
+        mentioned_users: each(count, (index) => ({
+          mentioned_profile_id: `profile-${index}`,
+          handle_in_content: `handle-${index}`
+        }))
+      })
+    ],
+    [
+      'mentioned_waves',
+      DROP_MAX_MENTIONED_WAVES,
+      (count: number) => ({
+        mentioned_waves: each(count, (index) => ({
+          wave_id: `wave-${index}`,
+          wave_name_in_content: `wave ${index}`
+        }))
+      })
+    ],
+    [
+      'referenced_nfts',
+      DROP_MAX_REFERENCED_NFTS,
+      (count: number) => ({
+        referenced_nfts: each(count, (index) => ({
+          contract: `0x${'1'.repeat(40)}`,
+          token: `${index}`,
+          name: `nft ${index}`
+        }))
+      })
+    ]
+  ] as const;
+
+  it.each(countedFields)(
+    'accepts up to the %s cap of %s items and rejects the next one on every drop schema',
+    (field, cap, build) => {
+      fc.assert(
+        fc.property(
+          anySchema,
+          fc.integer({ min: field === 'parts' ? 1 : 0, max: cap }),
+          (schema, count) => {
+            expect(validate(schema, build(count)).error).toBeUndefined();
+          }
+        ),
+        RUNS
+      );
+      fc.assert(
+        fc.property(
+          anySchema,
+          fc.integer({ min: 1, max: 40 }),
+          (schema, extra) => {
+            expect(
+              validate(schema, build(cap + extra)).error?.message
+            ).toContain(
+              `"${field}" must contain less than or equal to ${cap} items`
+            );
+          }
+        ),
+        RUNS
+      );
+    }
+  );
+
+  it.each(schemas)(
+    '%s accepts exactly the cap and rejects cap + 1 for every counted field',
+    (_name, schema) => {
+      for (const [field, cap, build] of countedFields) {
+        expect(validate(schema, build(cap)).error).toBeUndefined();
+        expect(validate(schema, build(cap + 1)).error?.message).toContain(
+          `"${field}" must contain less than or equal to ${cap} items`
+        );
+      }
+    }
+  );
+
+  it('bounds media and attachments per part', () => {
+    fc.assert(
+      fc.property(
+        anySchema,
+        fc.integer({ min: 0, max: DROP_PART_MAX_MEDIA }),
+        fc.integer({ min: 0, max: DROP_PART_MAX_ATTACHMENTS }),
+        (schema, mediaCount, attachmentCount) => {
+          const result = validate(schema, {
+            parts: [
+              {
+                content: 'content',
+                media: each(mediaCount, mediaItem),
+                attachments: each(attachmentCount, attachment)
+              }
+            ]
+          });
+          expect(result.error).toBeUndefined();
+        }
+      ),
+      RUNS
+    );
+    fc.assert(
+      fc.property(
+        anySchema,
+        fc.integer({ min: 1, max: 30 }),
+        (schema, extra) => {
+          const tooMuchMedia = validate(schema, {
+            parts: [
+              {
+                content: 'content',
+                media: each(DROP_PART_MAX_MEDIA + extra, mediaItem)
+              }
+            ]
+          });
+          expect(tooMuchMedia.error?.message).toContain(
+            `"parts[0].media" must contain less than or equal to ${DROP_PART_MAX_MEDIA} items`
+          );
+          const tooManyAttachments = validate(schema, {
+            parts: [
+              {
+                content: 'content',
+                attachments: each(DROP_PART_MAX_ATTACHMENTS + extra, attachment)
+              }
+            ]
+          });
+          expect(tooManyAttachments.error?.message).toContain(
+            `"parts[0].attachments" must contain less than or equal to ${DROP_PART_MAX_ATTACHMENTS} items`
+          );
+        }
+      ),
+      RUNS
+    );
+  });
+
+  describe.each(schemas)('%s totals across parts', (_name, schema) => {
+    function spread<T>(
+      total: number,
+      perPart: number,
+      field: 'media' | 'attachments',
+      build: (index: number) => T
+    ) {
+      const parts: Array<Record<string, unknown>> = [];
+      for (let used = 0; used < total; used += perPart) {
+        const count = Math.min(perPart, total - used);
+        parts.push({
+          content: 'content',
+          [field]: each(count, (index) => build(used + index))
+        });
+      }
+      return parts;
+    }
+
+    it('caps media across all parts', () => {
+      expect(
+        validate(schema, {
+          parts: spread(DROP_MAX_MEDIA, DROP_PART_MAX_MEDIA, 'media', mediaItem)
+        }).error
+      ).toBeUndefined();
+      expect(
+        validate(schema, {
+          parts: spread(
+            DROP_MAX_MEDIA + 1,
+            DROP_PART_MAX_MEDIA,
+            'media',
+            mediaItem
+          )
+        }).error?.message
+      ).toContain(
+        `media across all drop parts must contain at most ${DROP_MAX_MEDIA} items in total`
+      );
+    });
+
+    it('caps attachments across all parts', () => {
+      expect(
+        validate(schema, {
+          parts: spread(
+            DROP_MAX_ATTACHMENTS,
+            DROP_PART_MAX_ATTACHMENTS,
+            'attachments',
+            attachment
+          )
+        }).error
+      ).toBeUndefined();
+      expect(
+        validate(schema, {
+          parts: spread(
+            DROP_MAX_ATTACHMENTS + 1,
+            DROP_PART_MAX_ATTACHMENTS,
+            'attachments',
+            attachment
+          )
+        }).error?.message
+      ).toContain(
+        `attachments across all drop parts must contain at most ${DROP_MAX_ATTACHMENTS} items in total`
+      );
+    });
+  });
+
+  const stringFields = [
+    [
+      'media url',
+      DROP_MEDIA_URL_MAX_LENGTH,
+      'parts[0].media[0].url',
+      (value: string) => ({
+        parts: [
+          {
+            content: 'content',
+            media: [{ mime_type: 'image/png', url: value }]
+          }
+        ]
+      })
+    ],
+    [
+      'media mime_type',
+      DROP_MEDIA_MIME_TYPE_MAX_LENGTH,
+      'parts[0].media[0].mime_type',
+      (value: string) => ({
+        parts: [
+          {
+            content: 'content',
+            media: [{ mime_type: value, url: 'https://example.com/a.png' }]
+          }
+        ]
+      })
+    ],
+    [
+      'media media_upload_id',
+      DROP_MEDIA_UPLOAD_ID_MAX_LENGTH,
+      'parts[0].media[0].media_upload_id',
+      (value: string) => ({
+        parts: [
+          {
+            content: 'content',
+            media: [
+              {
+                mime_type: 'image/png',
+                url: 'https://example.com/a.png',
+                media_upload_id: value
+              }
+            ]
+          }
+        ]
+      })
+    ],
+    [
+      'attachment id',
+      DROP_ATTACHMENT_ID_MAX_LENGTH,
+      'parts[0].attachments[0].attachment_id',
+      (value: string) => ({
+        parts: [{ content: 'content', attachments: [{ attachment_id: value }] }]
+      })
+    ],
+    [
+      'referenced nft token',
+      DROP_REFERENCED_NFT_TOKEN_MAX_LENGTH,
+      'referenced_nfts[0].token',
+      (value: string) => ({
+        referenced_nfts: [
+          {
+            contract: `0x${'1'.repeat(40)}`,
+            token: '1'.repeat(value.length),
+            name: 'nft'
+          }
+        ]
+      })
+    ],
+    [
+      'referenced nft name',
+      DROP_REFERENCED_NFT_NAME_MAX_LENGTH,
+      'referenced_nfts[0].name',
+      (value: string) => ({
+        referenced_nfts: [
+          { contract: `0x${'1'.repeat(40)}`, token: '1', name: value }
+        ]
+      })
+    ],
+    [
+      'mentioned wave name',
+      DROP_MENTIONED_WAVE_NAME_MAX_LENGTH,
+      'mentioned_waves[0].wave_name_in_content',
+      (value: string) => ({
+        mentioned_waves: [{ wave_id: 'wave-2', wave_name_in_content: value }]
+      })
+    ]
+  ] as const;
+
+  it.each(stringFields)(
+    'bounds %s to its column size (%s) on every drop schema',
+    (_name, cap, path, build) => {
+      fc.assert(
+        fc.property(
+          anySchema,
+          fc.integer({ min: 1, max: cap }),
+          (schema, length) => {
+            expect(
+              validate(schema, build('a'.repeat(length))).error
+            ).toBeUndefined();
+          }
+        ),
+        RUNS
+      );
+      fc.assert(
+        fc.property(
+          anySchema,
+          fc.integer({ min: 1, max: 300 }),
+          (schema, extra) => {
+            expect(
+              validate(schema, build('a'.repeat(cap + extra))).error?.message
+            ).toContain(
+              `"${path}" length must be less than or equal to ${cap} characters long`
+            );
+          }
+        ),
+        RUNS
+      );
+    }
+  );
+
+  it.each(schemas)(
+    '%s still accepts null or omitted optional lists',
+    (_name, schema) => {
+      const withNulls = validate(schema, {
+        referenced_nfts: null,
+        mentioned_users: null
+      });
+      expect(withNulls.error).toBeUndefined();
+
+      const { mentioned_waves, ...withoutWaves } = baseDrop(schema);
+      expect(mentioned_waves).toEqual([]);
+      expect(schema.validate(withoutWaves).error).toBeUndefined();
+    }
+  );
+
+  it('does not echo oversized values back in the validation error', () => {
+    const secret = 'media-url-that-must-not-appear-in-validation-errors';
+    const result = validate(NewDropSchema, {
+      parts: [
+        {
+          content: 'content',
+          media: [
+            {
+              mime_type: 'image/png',
+              url: `https://example.com/${'a'.repeat(DROP_MEDIA_URL_MAX_LENGTH)}${secret}`
+            }
+          ]
+        }
+      ]
+    });
+    expect(result.error?.message).toContain(
+      `"parts[0].media[0].url" length must be less than or equal to ${DROP_MEDIA_URL_MAX_LENGTH} characters long`
+    );
+    expect(result.error?.message).not.toContain(secret);
   });
 });
