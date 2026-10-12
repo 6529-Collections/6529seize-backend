@@ -94,31 +94,82 @@ it.each([
   expect(imageSize).not.toHaveBeenCalled();
 });
 
-it.each([true, false])(
-  'strips normal EXIF orientation without changing dimensions (littleEndian=%s)',
-  (littleEndian) => {
-    const clean = sanitizeDeviceVideoPoster(
-      orientedJpeg(1, littleEndian).toString('base64')
-    );
-    expect(decode(clean)).toMatchObject({ width: 36, height: 64 });
-    expect(imageSize(clean).orientation).toBeUndefined();
-  }
-);
-
-it.each([2, 3, 4, 5, 6, 7, 8])(
-  'rejects EXIF transform %s instead of publishing unrotated pixels',
+it.each([1, 2, 3, 4, 5, 6, 7, 8])(
+  'rejects EXIF metadata with orientation %s before image parsing',
   (orientation) => {
     for (const littleEndian of [true, false]) {
       expect(() =>
         sanitizeDeviceVideoPoster(
           orientedJpeg(orientation, littleEndian).toString('base64')
         )
-      ).toThrow('EXIF orientation');
+      ).toThrow('APP1 metadata');
     }
+    expect(imageSize).not.toHaveBeenCalled();
   }
 );
 
-it('strips client comments and EXIF segments when publishing the JPEG', () => {
+it('rejects conflicting duplicate APP1 blocks regardless of their order', () => {
+  for (const orientations of [
+    [6, 1],
+    [1, 6]
+  ]) {
+    const first = orientedJpeg(orientations[0]!);
+    const second = orientedJpeg(orientations[1]!);
+    const duplicate = Buffer.concat([
+      first.subarray(0, 38),
+      second.subarray(2)
+    ]);
+    expect(() =>
+      sanitizeDeviceVideoPoster(duplicate.toString('base64'))
+    ).toThrow('APP1 metadata');
+  }
+  expect(imageSize).not.toHaveBeenCalled();
+});
+
+it('rejects APP1 metadata after the scan instead of relying on the size detector', () => {
+  const bytes = jpeg();
+  const app1 = orientedJpeg(6).subarray(2, 38);
+  const lateMetadata = Buffer.concat([
+    bytes.subarray(0, bytes.length - 2),
+    app1,
+    bytes.subarray(bytes.length - 2)
+  ]);
+  expect(() =>
+    sanitizeDeviceVideoPoster(lateMetadata.toString('base64'))
+  ).toThrow('APP1 metadata');
+  expect(imageSize).not.toHaveBeenCalled();
+});
+
+it('rejects XMP APP1 display metadata without interpreting it', () => {
+  const payload = Buffer.from(
+    'http://ns.adobe.com/xap/1.0/\0<exif:Orientation>6</exif:Orientation>'
+  );
+  const header = Buffer.alloc(4);
+  header.writeUInt16BE(0xffe1, 0);
+  header.writeUInt16BE(payload.length + 2, 2);
+  const bytes = jpeg();
+  const input = Buffer.concat([
+    bytes.subarray(0, 2),
+    header,
+    payload,
+    bytes.subarray(2)
+  ]);
+  expect(() => sanitizeDeviceVideoPoster(input.toString('base64'))).toThrow(
+    'APP1 metadata'
+  );
+  expect(imageSize).not.toHaveBeenCalled();
+});
+
+it('rejects zero-length header segments without entering the size detector', () => {
+  expect(() =>
+    sanitizeDeviceVideoPoster(
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]).toString('base64')
+    )
+  ).toThrow('Invalid JPEG segment');
+  expect(imageSize).not.toHaveBeenCalled();
+});
+
+it('strips client comments when publishing a canvas JPEG', () => {
   const comment = 'private-client-comment';
   const encoded = encode(
     {
@@ -129,20 +180,10 @@ it('strips client comments and EXIF segments when publishing the JPEG', () => {
     },
     75
   ).data;
-  const exif = Buffer.from('Exif\0\0private-client-metadata');
-  const header = Buffer.alloc(4);
-  header.writeUInt16BE(0xffe1, 0);
-  header.writeUInt16BE(exif.length + 2, 2);
-  const original = Buffer.concat([
-    encoded.subarray(0, 2),
-    header,
-    exif,
-    encoded.subarray(2)
-  ]);
+  const original = encoded;
   const clean = sanitizeDeviceVideoPoster(original.toString('base64'));
   expect(original.includes(Buffer.from(comment))).toBe(true);
   expect(clean.includes(Buffer.from(comment))).toBe(false);
-  expect(clean.includes(exif)).toBe(false);
   expect(decode(clean)).toMatchObject({ width: 36, height: 64 });
 });
 

@@ -20,10 +20,12 @@ After checking upload ownership, the API rejects non-canonical base64. A raw
 base64-length check limits allocation before decoding; the decoded 128 KiB
 compressed limit is authoritative. It checks the JPEG signature before dimension
 parsing, validates 640 by 640 dimensions, then decodes and re-encodes the JPEG
-at quality 80 to strip client metadata. EXIF orientations that require rotation
-or mirroring are rejected so the converter generates an automatically rotated
+at quality 80 to strip client metadata. JPEG APP1 metadata (including EXIF and
+XMP) is rejected before dimension parsing, including duplicate blocks and blocks
+after scan data, so conflicting or unrecognized display transforms cannot be
+discarded accidentally. Such uploads use the converter's automatically rotated
 preview instead. Normal canvas captures already contain oriented pixels and
-do not require EXIF. It confirms the multipart upload still
+do not require APP1 metadata. It confirms the multipart upload still
 exists before writing. Both S3 operations share a three-second deadline. Invalid
 images, failed storage, and missing device images leave video completion usable;
 the converter remains the fallback. Oversized request fields are rejected by the
