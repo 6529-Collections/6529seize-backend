@@ -1,4 +1,10 @@
-import { FetchRequest, Interface, JsonRpcProvider, makeError } from 'ethers';
+import {
+  FetchRequest,
+  Interface,
+  JsonRpcProvider,
+  Network,
+  makeError
+} from 'ethers';
 import { getRpcProvider } from '@/rpc-provider';
 import {
   createWalletGalleryEnsProvider,
@@ -8,17 +14,17 @@ import {
 const ADDRESS = '0xfD22004806A6846EA67ad883356be810F0428793';
 
 describe('CMS onchain ENS resolver', () => {
-  const originalKey = process.env.ALCHEMY_API_KEY;
+  const originalKey = process.env.ETHEREUM_RPC_URL;
   beforeEach(() => {
-    process.env.ALCHEMY_API_KEY = 'configured-test-key';
+    process.env.ETHEREUM_RPC_URL = 'https://rpc.example.test';
     jest.useFakeTimers();
   });
   afterEach(() => {
     jest.runOnlyPendingTimers();
     jest.useRealTimers();
     jest.restoreAllMocks();
-    if (originalKey === undefined) delete process.env.ALCHEMY_API_KEY;
-    else process.env.ALCHEMY_API_KEY = originalKey;
+    if (originalKey === undefined) delete process.env.ETHEREUM_RPC_URL;
+    else process.env.ETHEREUM_RPC_URL = originalKey;
   });
 
   it('uses only the configured mainnet RPC with bounded transport and leaves shared providers unchanged', () => {
@@ -29,9 +35,7 @@ describe('CMS onchain ENS resolver', () => {
     try {
       expect(provider).not.toBe(shared);
       expect(provider.disableCcipRead).toBe(true);
-      expect(provider._getConnection().url).toBe(
-        'https://eth-mainnet.g.alchemy.com/v2/configured-test-key'
-      );
+      expect(provider._getConnection().url).toBe('https://rpc.example.test');
       expect(provider._getConnection().timeout).toBe(1500);
       expect(shared.disableCcipRead).toBe(previousCcipSetting);
       expect(shared._getConnection().timeout).toBe(previousTimeout);
@@ -63,6 +67,8 @@ describe('CMS onchain ENS resolver', () => {
         revert: null
       })
     );
+    // Chain verification is an ordinary RPC request, not a CCIP fetch.
+    jest.spyOn(provider, 'getNetwork').mockResolvedValue(Network.from(1));
     const offchainFetch = jest.spyOn(provider, 'ccipReadFetch');
     const httpSend = jest
       .spyOn(FetchRequest.prototype, 'send')
@@ -150,7 +156,7 @@ describe('CMS onchain ENS resolver', () => {
   });
 
   it('requires configured credentials before creating a provider', () => {
-    delete process.env.ALCHEMY_API_KEY;
-    expect(createWalletGalleryEnsProvider).toThrow('not configured');
+    delete process.env.ETHEREUM_RPC_URL;
+    expect(createWalletGalleryEnsProvider).toThrow('ETHEREUM_RPC_URL');
   });
 });

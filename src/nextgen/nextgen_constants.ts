@@ -1,5 +1,5 @@
 import { goerli, sepolia } from '@wagmi/chains';
-import { Network } from '@/alchemy-sdk';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 
 export const NEXTGEN_BLOCKS_TABLE = 'nextgen_blocks';
 export const NEXTGEN_LOGS_TABLE = 'nextgen_logs';
@@ -33,16 +33,11 @@ export type NextgenNetwork =
   | Network.ETH_GOERLI;
 
 export function getNextgenNetwork(): NextgenNetwork {
-  if (process.env.NEXTGEN_CHAIN_ID) {
-    const chainId: number = parseInt(process.env.NEXTGEN_CHAIN_ID);
-    if (chainId == sepolia.id) {
-      return Network.ETH_SEPOLIA;
-    }
-    if (chainId == goerli.id) {
-      return Network.ETH_GOERLI;
-    }
-  }
-  return Network.ETH_MAINNET;
+  const chainId = process.env.NEXTGEN_CHAIN_ID;
+  if (!chainId || chainId === '1') return Network.ETH_MAINNET;
+  if (chainId === sepolia.id.toString()) return Network.ETH_SEPOLIA;
+  if (chainId === goerli.id.toString()) return Network.ETH_GOERLI;
+  throw new Error('Unsupported NEXTGEN_CHAIN_ID');
 }
 
 export const NEXTGEN_CORE_CONTRACT = {
