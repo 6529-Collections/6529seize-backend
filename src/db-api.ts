@@ -52,6 +52,7 @@ import {
 } from './api-serverless/src/api-constants';
 import { constructFilters } from './api-serverless/src/api-helpers';
 import {
+  ALL_ROWS_PAGE_SIZE,
   MAX_PAGE,
   normalizePage,
   normalizePageSize
@@ -351,7 +352,7 @@ export async function fetchPaginated<T = any>(
 
   const limit = normalizePageSize(
     pageSize,
-    Number.MAX_SAFE_INTEGER,
+    ALL_ROWS_PAGE_SIZE,
     DEFAULT_PAGE_SIZE
   );
   const pageNo = normalizePage(page);
@@ -666,7 +667,7 @@ export async function fetchMemesLite(sortDir: string) {
     NFTS_TABLE,
     params,
     `id ${sortDir}`,
-    0,
+    ALL_ROWS_PAGE_SIZE,
     1,
     filters,
     'id, name, contract, icon, thumbnail, scaled, image, animation',
@@ -685,7 +686,7 @@ export async function fetchMemelabLite(sortDir: string) {
     NFTS_MEME_LAB_TABLE,
     params,
     `id ${sortDir}`,
-    0,
+    ALL_ROWS_PAGE_SIZE,
     1,
     filters,
     'id, name, contract, icon, thumbnail, scaled, image, animation',

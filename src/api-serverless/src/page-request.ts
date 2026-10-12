@@ -8,6 +8,12 @@ export const DEFAULT_MAX_SIZE = 2000;
  * OFFSET is always an exactly representable, valid integer.
  */
 export const MAX_PAGE = 1_000_000;
+/**
+ * Explicit page size for callers that intentionally fetch every row in a
+ * single page (small, bounded reference tables and full exports). A page size
+ * of zero or below never means "no limit".
+ */
+export const ALL_ROWS_PAGE_SIZE = Number.MAX_SAFE_INTEGER;
 
 /**
  * Normalises an untrusted page size to an integer in `[1, max]`.
@@ -17,7 +23,7 @@ export const MAX_PAGE = 1_000_000;
  */
 export function normalizePageSize(
   value: unknown,
-  max: number = Number.MAX_SAFE_INTEGER,
+  max: number = ALL_ROWS_PAGE_SIZE,
   fallback: number = max
 ): number {
   const ceiling =

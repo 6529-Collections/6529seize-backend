@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import fc from 'fast-check';
-import { fetchPaginated } from '@/db-api';
-import { MAX_PAGE } from '@/api/page-request';
+import { fetchMemelabLite, fetchMemesLite, fetchPaginated } from '@/db-api';
+import { ALL_ROWS_PAGE_SIZE, MAX_PAGE } from '@/api/page-request';
 import { setSqlExecutor, SqlExecutor } from '@/sql-executor';
 
 jest.mock('@/redis', () => ({
@@ -98,6 +98,24 @@ describe('fetchPaginated pagination inputs', () => {
       expect(sql).toMatch(/order by id asc LIMIT 10$/);
       expect(sql).not.toContain('OFFSET');
       expect(result.page).toBe(1);
+    }
+  );
+
+  it.each([
+    ['fetchMemesLite', fetchMemesLite],
+    ['fetchMemelabLite', fetchMemelabLite]
+  ])(
+    '%s still returns every row in a single page',
+    async (_name, fetchLite) => {
+      useExecutor(3);
+
+      const result = await fetchLite('asc');
+
+      expect(dataSql()).toMatch(
+        new RegExp(`order by id asc LIMIT ${ALL_ROWS_PAGE_SIZE}$`)
+      );
+      expect(result.page).toBe(1);
+      expect(result.next).toBeNull();
     }
   );
 

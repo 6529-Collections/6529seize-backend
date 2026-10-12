@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { DEFAULT_PAGE_SIZE } from './api-constants';
-import { getPage, getPageSize } from './api-helpers';
+import { getPage, getPageSize, returnPaginatedResult } from './api-helpers';
 import { MAX_PAGE } from './page-request';
 
 const arbitraryQueryValue = fc.oneof(
@@ -90,5 +90,39 @@ describe('getPage', () => {
     expect(getPage(reqWith({ page: 'abc' }))).toBe(1);
     expect(getPage(reqWith({ page: '7' }))).toBe(7);
     expect(getPage(reqWith({ page: '99999999999999999999' }))).toBe(MAX_PAGE);
+  });
+});
+
+describe('returnPaginatedResult next link', () => {
+  function respond(originalUrl: string) {
+    const json = jest.fn((body: unknown) => body);
+    const request = {
+      protocol: 'https',
+      get: () => 'api.example.com',
+      originalUrl
+    } as any;
+    const result = { count: 10, page: 1, next: 'true', data: [] as number[] };
+    returnPaginatedResult(result, request, { json } as any);
+    return json.mock.calls[0][0] as { next: string | null };
+  }
+
+  it('advances the page parameter', () => {
+    expect(respond('/api/things?page=3&page_size=10').next).toBe(
+      'https://api.example.com/api/things?page_size=10&page=4'
+    );
+  });
+
+  it('points a non-positive or invalid page at the following first-page window', () => {
+    expect(respond('/api/things?page=0').next).toBe(
+      'https://api.example.com/api/things?page=2'
+    );
+    expect(respond('/api/things?page=-4').next).toBe(
+      'https://api.example.com/api/things?page=2'
+    );
+  });
+
+  it('does not emit a link beyond the page ceiling', () => {
+    expect(respond(`/api/things?page=${MAX_PAGE}`).next).toBeNull();
+    expect(respond('/api/things?page=99999999999').next).toBeNull();
   });
 });

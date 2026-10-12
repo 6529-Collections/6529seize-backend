@@ -7,7 +7,7 @@ import {
   PaginatedResponse,
   SORT_DIRECTIONS
 } from './api-constants';
-import { normalizePage, normalizePageSize } from './page-request';
+import { MAX_PAGE, normalizePage, normalizePageSize } from './page-request';
 
 const { json2csv } = require('json-2-csv');
 
@@ -33,6 +33,9 @@ function fullUrl(req: Request, next: string | null) {
 
   if (params.has('page')) {
     const page = normalizePage(params.get('page'));
+    if (page >= MAX_PAGE) {
+      return null;
+    }
     newUrl.searchParams.delete('page');
     newUrl.searchParams.append('page', String(page + 1));
     return newUrl.toString();
