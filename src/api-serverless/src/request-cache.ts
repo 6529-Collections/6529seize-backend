@@ -204,12 +204,15 @@ function sanitizeHeaders(
 }
 
 function withAuthCacheDependency(baseKey: string, req: Request): string {
-  const rawHeader = req.headers?.authorization;
-  const header = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
-  const normalizedAuth = header?.trim();
-  // Hash the credential so bearer tokens are never stored in Redis key names.
-  const authKeyPart = normalizedAuth
-    ? createHash('sha256').update(normalizedAuth).digest('hex')
+  const user = req.user as
+    | { wallet?: string; role?: string | null }
+    | undefined;
+  // Authentication must run first: rejected credentials share the anonymous
+  // entry, while verified wallets and proxy roles define the response viewer.
+  const authKeyPart = user?.wallet
+    ? createHash('sha256')
+        .update(JSON.stringify([user.wallet.toLowerCase(), user.role ?? null]))
+        .digest('hex')
     : ANONYMOUS_CACHE_KEY;
   return `${baseKey}${AUTH_CACHE_KEY_SEPARATOR}${authKeyPart}`;
 }
