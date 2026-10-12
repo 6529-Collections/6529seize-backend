@@ -7,6 +7,7 @@ import {
   PaginatedResponse,
   SORT_DIRECTIONS
 } from './api-constants';
+import { normalizePage, normalizePageSize } from './page-request';
 
 const { json2csv } = require('json-2-csv');
 
@@ -31,7 +32,7 @@ function fullUrl(req: Request, next: string | null) {
   const params = newUrl.searchParams;
 
   if (params.has('page')) {
-    const page = numbers.parseIntOrNull(params.get('page')!) ?? 1;
+    const page = normalizePage(params.get('page'));
     newUrl.searchParams.delete('page');
     newUrl.searchParams.append('page', String(page + 1));
     return newUrl.toString();
@@ -127,12 +128,18 @@ export function getSearchFilters(columnNames: string[], search: string) {
   return { filters, params };
 }
 
+/**
+ * Resolves the requested page size to an integer in [1, max]. An absent or
+ * invalid value resolves to `max`, and values below 1 resolve to 1.
+ */
 export function getPageSize(req: any, maxSize?: number): number {
-  const max = maxSize ?? DEFAULT_PAGE_SIZE;
-  const parsed = numbers.parseIntOrNull(req.query.page_size);
-  return parsed !== null && parsed < max ? parsed : max;
+  return normalizePageSize(req.query.page_size, maxSize ?? DEFAULT_PAGE_SIZE);
 }
 
+/**
+ * Resolves the requested page to an integer in [1, MAX_PAGE]. An absent,
+ * invalid or non-positive value resolves to the first page.
+ */
 export function getPage(req: any): number {
-  return numbers.parseIntOrNull(req.query.page) ?? 1;
+  return normalizePage(req.query.page);
 }

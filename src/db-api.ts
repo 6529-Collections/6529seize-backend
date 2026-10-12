@@ -51,6 +51,10 @@ import {
   PaginatedResponse
 } from './api-serverless/src/api-constants';
 import { constructFilters } from './api-serverless/src/api-helpers';
+import {
+  normalizePage,
+  normalizePageSize
+} from './api-serverless/src/page-request';
 import { ApiNftMedia } from './api-serverless/src/generated/models/ApiNftMedia';
 import { ApiTransaction } from './api-serverless/src/generated/models/ApiTransaction';
 import { ApiTransactionPage } from './api-serverless/src/generated/models/ApiTransactionPage';
@@ -344,13 +348,17 @@ export async function fetchPaginated<T = any>(
     !opts?.skipJoinsOnCountQuery ? (joins ?? '') : ''
   } ${filters}${groupPart}) inner_q`;
 
+  const limit = normalizePageSize(
+    pageSize,
+    Number.MAX_SAFE_INTEGER,
+    DEFAULT_PAGE_SIZE
+  );
+  const pageNo = normalizePage(page);
   let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
     joins ? joins : ''
-  } ${filters} ${groups ? `group by ${groups}` : ``} order by ${orderBy} ${
-    pageSize > 0 ? `LIMIT ${pageSize}` : ``
-  }`;
-  if (page > 1) {
-    const offset = pageSize * (page - 1);
+  } ${filters} ${groups ? `group by ${groups}` : ``} order by ${orderBy} LIMIT ${limit}`;
+  if (pageNo > 1) {
+    const offset = Math.min(limit * (pageNo - 1), Number.MAX_SAFE_INTEGER);
     resultsSql += ` OFFSET ${offset}`;
   }
   logger.debug(`Count sql: '${countSql}`);
@@ -366,8 +374,8 @@ export async function fetchPaginated<T = any>(
 
   return {
     count,
-    page,
-    next: pageSize > 0 && count > pageSize * page ? 'true' : null,
+    page: pageNo,
+    next: count > limit * pageNo ? 'true' : null,
     data
   };
 }
