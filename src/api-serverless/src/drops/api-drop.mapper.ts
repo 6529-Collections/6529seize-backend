@@ -732,6 +732,7 @@ export class ApiDropMapper {
       current_calculated_vote: votingSummary.current_calculated_vote,
       predicted_final_vote: votingSummary.predicted_final_vote,
       voters_count: votingSummary.voters_count,
+      voters_count_available: votingSummary.voters_count_available,
       place: votingSummary.place
     };
     if (contextProfileId) {
