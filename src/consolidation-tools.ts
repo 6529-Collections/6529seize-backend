@@ -1,6 +1,7 @@
+import { getConsolidationPolicy } from './consolidation-policy';
+import type { ApiConsolidationPolicy } from '@/api/generated/models/ApiConsolidationPolicy';
 import { equalIgnoreCase } from './strings';
 import {
-  CONSOLIDATION_FOURTH_WALLET_ACTIVATION_TIMESTAMP,
   CONSOLIDATIONS_LIMIT,
   CONSOLIDATIONS_UNGATED_LIMIT
 } from '@/constants';
@@ -15,6 +16,10 @@ export type ConsolidationLink = Pick<
   >;
 
 export class ConsolidationTools {
+  constructor(
+    private readonly policy: () => ApiConsolidationPolicy = getConsolidationPolicy
+  ) {}
+
   public extractConsolidationWallets(
     consolidations: ConsolidationLink[],
     wallet: string
@@ -37,11 +42,13 @@ export class ConsolidationTools {
    * CONSOLIDATIONS_LIMIT wallets. Past CONSOLIDATIONS_UNGATED_LIMIT, a wallet
    * may only join if the resulting group has a member whose links to all other
    * members were registered in both directions at or after
-   * CONSOLIDATION_FOURTH_WALLET_ACTIVATION_TIMESTAMP.
+   * the configured activation time.
    */
   public extractConsolidations(
     consolidations: ConsolidationLink[]
   ): string[][] {
+    const activation =
+      Date.parse(this.policy().four_wallet_activation_at) / 1000;
     // Newest link first. Links confirmed in the same block are ordered by
     // their pair key so every caller groups the same rows the same way.
     consolidations.sort(
@@ -70,7 +77,13 @@ export class ConsolidationTools {
       ) {
         continue;
       }
-      const cluster = this.growCluster(current, queue, usedWallets, linksByKey);
+      const cluster = this.growCluster(
+        current,
+        queue,
+        usedWallets,
+        linksByKey,
+        activation
+      );
       for (const w of cluster) {
         usedWallets.add(w);
       }
@@ -99,7 +112,8 @@ export class ConsolidationTools {
     seed: ConsolidationLink,
     queue: ConsolidationLink[],
     usedWallets: Set<string>,
-    linksByKey: Map<string, ConsolidationLink>
+    linksByKey: Map<string, ConsolidationLink>,
+    activation: number
   ): string[] {
     const cluster = new Set<string>([seed.wallet1, seed.wallet2]);
     while (cluster.size < CONSOLIDATIONS_LIMIT) {
@@ -109,7 +123,10 @@ export class ConsolidationTools {
           candidate,
           usedWallets
         );
-        return !!newWallet && this.canJoin(cluster, newWallet, linksByKey);
+        return (
+          !!newWallet &&
+          this.canJoin(cluster, newWallet, linksByKey, activation)
+        );
       });
       if (index === -1) {
         break;
@@ -153,7 +170,10 @@ export class ConsolidationTools {
     return sortedWallets.join('-');
   }
 
-  public isPostActivationLink(link: ConsolidationLink | undefined): boolean {
+  public isPostActivationLink(
+    link: ConsolidationLink | undefined,
+    activation = Date.parse(this.policy().four_wallet_activation_at) / 1000
+  ): boolean {
     if (!link) {
       return false;
     }
@@ -161,14 +181,15 @@ export class ConsolidationTools {
       (registeredAt) =>
         registeredAt !== null &&
         registeredAt !== undefined &&
-        Number(registeredAt) >= CONSOLIDATION_FOURTH_WALLET_ACTIVATION_TIMESTAMP
+        Number(registeredAt) >= activation
     );
   }
 
   private canJoin(
     cluster: Set<string>,
     wallet: string,
-    linksByKey: Map<string, ConsolidationLink>
+    linksByKey: Map<string, ConsolidationLink>,
+    activation: number
   ): boolean {
     const members = Array.from(cluster);
     const linkedToEveryMember = members.every((member) =>
@@ -180,7 +201,11 @@ export class ConsolidationTools {
     if (cluster.size < CONSOLIDATIONS_UNGATED_LIMIT) {
       return true;
     }
-    return this.hasPostActivationMember([...members, wallet], linksByKey);
+    return this.hasPostActivationMember(
+      [...members, wallet],
+      linksByKey,
+      activation
+    );
   }
 
   // The gate is checked on the whole group rather than on the wallet being
@@ -188,14 +213,16 @@ export class ConsolidationTools {
   // wallet before an older member.
   private hasPostActivationMember(
     wallets: string[],
-    linksByKey: Map<string, ConsolidationLink>
+    linksByKey: Map<string, ConsolidationLink>,
+    activation: number
   ): boolean {
     return wallets.some((candidate) =>
       wallets.every(
         (other) =>
           other === candidate ||
           this.isPostActivationLink(
-            linksByKey.get(this.buildConsolidationKey([candidate, other]))
+            linksByKey.get(this.buildConsolidationKey([candidate, other])),
+            activation
           )
       )
     );

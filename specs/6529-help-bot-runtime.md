@@ -347,7 +347,7 @@ counting, setup, or consolidation relationship. The answer distinguishes
 registration capacity from the effective metrics group: any number of
 addresses can have consolidation records, but at most four count as one
 consolidation, every pair must be linked both ways, and a fourth address counts
-only when its links were registered from 2026-10-15 00:00 UTC. Counts above
+only when its links were registered from the selected backend’s activation cutoff. Production launch is configured for 2026-10-15 00:00 UTC; staging can use an earlier cutoff. Counts above
 `CONSOLIDATIONS_LIMIT` (four) use the over-limit routing; four-wallet setup
 questions route like other setup questions. Removal and unlinking wording with explicit
 multi-wallet or consolidation context routes to consolidation revoke guidance,

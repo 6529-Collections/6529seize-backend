@@ -1,12 +1,14 @@
 import * as fc from 'fast-check';
-import { CONSOLIDATION_FOURTH_WALLET_ACTIVATION_TIMESTAMP } from '@/constants';
 import { ConsolidationLink, ConsolidationTools } from './consolidation-tools';
 
-const ACTIVATION = CONSOLIDATION_FOURTH_WALLET_ACTIVATION_TIMESTAMP;
+const ACTIVATION = Date.parse('2026-10-15T00:00:00Z') / 1000;
 const BEFORE = ACTIVATION - 86_400;
 const AFTER = ACTIVATION + 3_600;
 
-const tools = new ConsolidationTools();
+const tools = new ConsolidationTools(() => ({
+  four_wallet_activation_at: '2026-10-15T00:00:00Z',
+  four_wallet_signing_opens_at: '2026-10-15T00:10:00Z'
+}));
 
 function legacy(wallet1: string, wallet2: string, block: number) {
   return {
