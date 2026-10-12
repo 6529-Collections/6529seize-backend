@@ -1,4 +1,7 @@
-import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
+import {
+  withLegacyPrimaryMutation,
+  readLegacyMutationSource
+} from '@/competitions/legacy-competition-mutation';
 import { dropsDb, DropsDb } from './drops.db';
 import { Time, Timer } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
@@ -211,9 +214,8 @@ export class DeleteDropUseCase {
       throw new Error('Expected deleter_id to be resolved');
     }
     const resolvedDeleterId = deleterId ?? null;
-    const ownershipDrop = await this.dropsDb.findDropById(
-      model.drop_id,
-      connection
+    const ownershipDrop = await readLegacyMutationSource(() =>
+      this.dropsDb.findDropById(model.drop_id, connection)
     );
     if (!ownershipDrop) return null;
     // Chat edits replace their rows through this cleanup path. The caller has
@@ -280,7 +282,9 @@ export class DeleteDropUseCase {
             connection
           }),
           this.dropPollsDb.deleteByDropId(dropId, { timer, connection }),
-          this.dropVotingService.deleteVotes(dropId, { timer, connection }),
+          !isPermanentDelete && ownershipDrop.drop_type === DropType.CHAT
+            ? undefined
+            : this.dropVotingService.deleteVotes(dropId, { timer, connection }),
           this.curationsDb.deleteDropCurationsByDropId(dropId, {
             timer,
             connection

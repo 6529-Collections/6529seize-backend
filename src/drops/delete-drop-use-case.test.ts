@@ -84,6 +84,7 @@ describe('DeleteDropUseCase', () => {
         wavesApiDb as any
       ),
       dropsDb,
+      dropVotingService,
       artCurationTokenWatchService,
       attachmentsDb,
       dropPollsDb,
@@ -94,7 +95,7 @@ describe('DeleteDropUseCase', () => {
   it.each([DropType.CHAT, DropType.PARTICIPATORY])(
     'only bypasses the competition owner for chat edit cleanup (%s)',
     async (dropType) => {
-      const { useCase, dropsDb } = createUseCase({
+      const { useCase, dropsDb, dropVotingService } = createUseCase({
         drop: {
           id: 'drop-1',
           wave_id: 'wave-1',
@@ -121,6 +122,9 @@ describe('DeleteDropUseCase', () => {
 
       expect(dropsDb.deleteDropEntity).toHaveBeenCalled();
       expect(ownerLock).toHaveBeenCalledTimes(
+        dropType === DropType.CHAT ? 0 : 1
+      );
+      expect(dropVotingService.deleteVotes).toHaveBeenCalledTimes(
         dropType === DropType.CHAT ? 0 : 1
       );
       expect(dropsDb.applyDeletedDropMetricsDelta).not.toHaveBeenCalled();

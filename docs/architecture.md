@@ -1241,7 +1241,10 @@ Wave overview `has_competition` is true for Rank or Approve wave types, or when 
 
 Ordinary chat drop creates and edits do not acquire the legacy competition
 ownership lock. Edits still lock any existing competition entry memberships,
-and chat edit row replacement also skips the legacy owner lock. Competition
+and use the stored drop type to decide whether the legacy owner lock is needed.
+Chat persistence does not initialize legacy leaderboard/vote-history rows, and
+chat edit row replacement does not clear legacy voting state; these writes
+otherwise acquire the same ownership lock through migration triggers. Competition
 submissions and permanent drop deletions retain the ownership fence so writes
 cannot race a legacy-to-native competition transfer.
 

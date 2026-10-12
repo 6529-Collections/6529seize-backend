@@ -33,6 +33,8 @@ import {
 import { PrePublicationModerationService } from '@/content-moderation/pre-publication-moderation.service';
 import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
 import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
+import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 
 type ModerationServiceMock = jest.Mocked<
   Pick<PrePublicationModerationService, 'evaluate' | 'assertPostingAllowed'>
@@ -82,6 +84,8 @@ describe('CreateOrUpdateDropUseCase', () => {
   function createUseCaseWithMocks(
     overrides: {
       dropsDb?: any;
+      dropVotingDb?: any;
+      dropNftLinksDb?: any;
       wavesApiDb?: any;
       userGroupsService?: any;
       userNotifier?: any;
@@ -97,7 +101,7 @@ describe('CreateOrUpdateDropUseCase', () => {
   ) {
     return new CreateOrUpdateDropUseCase(
       overrides.dropsDb ?? ({} as any),
-      {} as any,
+      overrides.dropVotingDb ?? ({} as any),
       overrides.userGroupsService ?? ({} as any),
       overrides.wavesApiDb ?? ({} as any),
       overrides.userNotifier ?? ({} as any),
@@ -106,7 +110,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       {} as any,
       overrides.deleteDropUseCase ?? ({} as any),
       overrides.metricsRecorder ?? ({} as any),
-      {} as any,
+      overrides.dropNftLinksDb ?? ({} as any),
       overrides.artCurationTokenWatchService ?? ({} as any),
       overrides.attachmentsDb ?? ({} as any),
       overrides.dropMediaUploadsDb ?? ({} as any),
@@ -275,7 +279,13 @@ describe('CreateOrUpdateDropUseCase', () => {
   it.each([undefined, 'drop-1'])(
     'writes ordinary chat without waiting for the competition owner (drop %s)',
     async (dropId) => {
-      const useCase = createUseCaseWithMocks();
+      const useCase = createUseCaseWithMocks({
+        dropsDb: {
+          findDropById: jest
+            .fn()
+            .mockResolvedValue({ drop_type: DropType.CHAT })
+        }
+      });
       const result = {
         drop_id: dropId ?? 'new-drop',
         pending_push_notification_ids: [],
@@ -308,31 +318,194 @@ describe('CreateOrUpdateDropUseCase', () => {
     }
   );
 
-  it('keeps competition submissions behind the legacy owner lock', async () => {
-    const useCase = createUseCaseWithMocks();
-    const ownerLock = jest.mocked(withLegacyPrimaryMutation);
-    ownerLock.mockClear();
-    jest.spyOn(useCase as any, 'createOrUpdateDrop').mockResolvedValue({
-      drop_id: 'entry-drop',
-      pending_push_notification_ids: [],
-      dm_unread_recipient_ids: []
-    });
+  it.each([DropType.PARTICIPATORY, DropType.COMPETITION, DropType.WINNER])(
+    'keeps non-chat type %s behind the legacy owner lock',
+    async (dropType) => {
+      const useCase = createUseCaseWithMocks();
+      const ownerLock = jest.mocked(withLegacyPrimaryMutation);
+      ownerLock.mockClear();
+      jest.spyOn(useCase as any, 'createOrUpdateDrop').mockResolvedValue({
+        drop_id: 'entry-drop',
+        pending_push_notification_ids: [],
+        dm_unread_recipient_ids: []
+      });
 
-    await useCase.execute(
-      createChatDropModel({ drop_type: DropType.PARTICIPATORY }),
-      false,
-      {
+      await useCase.execute(
+        createChatDropModel({ drop_type: dropType }),
+        false,
+        {
+          connection: {} as any,
+          prePublication: { trustedSystem: true }
+        }
+      );
+
+      expect(ownerLock).toHaveBeenCalledWith(
+        'wave-1',
+        expect.any(Object),
+        expect.any(Function)
+      );
+    }
+  );
+
+  it.each([null, 'drop-1'])(
+    'creates/edits chat in a competition wave without acquiring its owner (drop %s)',
+    async (dropId) => {
+      const model = createChatDropModel({ drop_id: dropId });
+      const deleteDropUseCase = {
+        execute: jest.fn().mockResolvedValue(undefined)
+      };
+      const useCase = createUseCaseWithMocks({
+        dropsDb: {
+          findDropById: jest.fn().mockResolvedValue({
+            id: 'drop-1',
+            wave_id: 'wave-1',
+            author_id: 'author-profile',
+            drop_type: DropType.CHAT,
+            created_at: Date.now(),
+            updated_at: Date.now(),
+            serial_no: 1
+          }),
+          applyInsertedDropMetricsDelta: jest.fn().mockResolvedValue(undefined)
+        },
+        wavesApiDb: {
+          findById: jest.fn().mockResolvedValue(
+            createSlowModeWave({
+              type: WaveType.RANK,
+              chat_slow_mode_cooldown_ms: null,
+              is_direct_message: false
+            })
+          )
+        },
+        deleteDropUseCase,
+        metricsRecorder: {
+          recordDrop: jest.fn(),
+          recordActiveIdentity: jest.fn()
+        },
+        artCurationTokenWatchService: { registerDrop: jest.fn() }
+      });
+      const ownerLock = jest.mocked(withLegacyPrimaryMutation);
+      ownerLock.mockClear();
+      const memberships = jest.mocked(competitionEntryDropHooks.prepareUpdate);
+      memberships.mockClear();
+      memberships.mockResolvedValue({ entries: [] });
+      jest.spyOn(useCase as any, 'validateReferences').mockResolvedValue({
+        validatedModel: model,
+        groupIdsUserIsEligibleFor: []
+      });
+      jest
+        .spyOn(useCase as any, 'insertAllDropComponents')
+        .mockResolvedValue([]);
+      jest.spyOn(env, 'getIntOrNull').mockReturnValue(60_000);
+
+      await useCase.execute(model, false, {
         connection: {} as any,
         prePublication: { trustedSystem: true }
-      }
-    );
+      });
 
-    expect(ownerLock).toHaveBeenCalledWith(
-      'wave-1',
-      expect.any(Object),
-      expect.any(Function)
-    );
+      expect(ownerLock).not.toHaveBeenCalled();
+      if (dropId) {
+        expect(memberships).toHaveBeenCalledTimes(1);
+        expect(memberships.mock.invocationCallOrder[0]).toBeLessThan(
+          deleteDropUseCase.execute.mock.invocationCallOrder[0]
+        );
+      }
+    }
+  );
+
+  it('does not trust a CHAT request when editing a stored competition submission', async () => {
+    const useCase = createUseCaseWithMocks({
+      dropsDb: {
+        findDropById: jest
+          .fn()
+          .mockResolvedValue({ drop_type: DropType.PARTICIPATORY })
+      }
+    });
+    const ownerLock = jest.mocked(withLegacyPrimaryMutation);
+    ownerLock.mockClear();
+    jest
+      .mocked(competitionEntryDropHooks.prepareUpdate)
+      .mockResolvedValue({ entries: [] });
+    jest
+      .spyOn(useCase as any, 'createOrUpdateDrop')
+      .mockRejectedValue(new Error("Can't change type of a drop"));
+
+    await expect(
+      useCase.execute(createChatDropModel({ drop_id: 'entry-drop' }), false, {
+        connection: {} as any,
+        prePublication: { trustedSystem: true }
+      })
+    ).rejects.toThrow("Can't change type of a drop");
+    expect(ownerLock).toHaveBeenCalledTimes(1);
   });
+
+  it.each([DropType.CHAT, DropType.PARTICIPATORY])(
+    'only initializes legacy voting state for competition content (%s)',
+    async (dropType) => {
+      const dropsDb = {
+        insertDrop: jest.fn(),
+        insertMentionedWaves: jest.fn(),
+        insertDropGroupMentions: jest.fn(),
+        insertReferencedNfts: jest.fn(),
+        insertDropMetadata: jest.fn(),
+        insertDropMedia: jest.fn(),
+        insertDropParts: jest.fn()
+      };
+      const votingDb = {
+        upsertWaveLeaderboardEntry: jest.fn(),
+        saveDropRealVoteInTime: jest.fn()
+      };
+      const useCase = createUseCaseWithMocks({
+        dropsDb,
+        dropVotingDb: votingDb,
+        identitySubscriptionsDb: { addIdentitySubscription: jest.fn() },
+        attachmentsDb: { insertDropAttachments: jest.fn() },
+        dropNftLinksDb: { replaceDropLinks: jest.fn() },
+        dropMediaUploadsDb: { attachUploadsToDrop: jest.fn() }
+      });
+      jest.spyOn(profileActivityLogsDb, 'insert').mockResolvedValue(undefined);
+      jest
+        .spyOn(waveScoreService, 'markWaveScoresDirtyBestEffort')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(useCase as any, 'resolveMentionedUsers')
+        .mockResolvedValue({ mentionEntities: [], mentionedUserIds: [] });
+      jest
+        .spyOn(useCase as any, 'recordDropCreatedActivity')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(useCase as any, 'insertMentionsInDrop')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(useCase as any, 'notifyWaveDropRecipients')
+        .mockResolvedValue([]);
+
+      await (useCase as any).insertAllDropComponents(
+        {
+          model: createChatDropModel({
+            drop_id: 'drop-1',
+            drop_type: dropType
+          }),
+          wave: createSlowModeWave({
+            type: WaveType.RANK,
+            next_decision_time: null
+          }),
+          createdAt: Date.now(),
+          updatedAt: null,
+          serialNo: null
+        },
+        { connection: {} }
+      );
+
+      expect(dropsDb.insertDrop).toHaveBeenCalledWith(
+        expect.objectContaining({ drop_type: dropType }),
+        expect.any(Object),
+        expect.any(Object)
+      );
+      const calls = dropType === DropType.CHAT ? 0 : 1;
+      expect(votingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledTimes(calls);
+      expect(votingDb.saveDropRealVoteInTime).toHaveBeenCalledTimes(calls);
+    }
+  );
 
   it('rejects oversized content before an update can delete existing rows', async () => {
     const deleteDropUseCase = { execute: jest.fn() };
