@@ -534,14 +534,17 @@ function upcomingSubscriptionState(
 // Upcoming subscriptions are unique per (consolidation_key, contract,
 // token_id). Rows of oldKey that newKey already has for the same card are
 // combined into newKey's row; the rest are re-keyed. `updated_at` orders
-// subscription priority, so re-keying keeps it.
+// subscription priority, so re-keying keeps it. The conflicting rows are
+// read FOR UPDATE: a plain read takes no locks, so a user's change between
+// the read and the merge would be overwritten without an error. The unique
+// key gives each merged row at most one surviving row, so no DISTINCT.
 async function moveUpcomingSubscriptions(
   manager: QueryRunner,
   oldKey: string,
   newKey: string
 ) {
   const conflicts: UpcomingSubscriptionConflict[] = await manager.query(
-    `SELECT DISTINCT
+    `SELECT
         surviving.id AS surviving_id,
         surviving.subscribed AS surviving_subscribed,
         surviving.automatic_subscription AS surviving_automatic_subscription,
@@ -557,7 +560,8 @@ async function moveUpcomingSubscriptions(
         ON surviving.contract = merged.contract
         AND surviving.token_id = merged.token_id
         AND surviving.consolidation_key = ?
-      WHERE merged.consolidation_key = ?`,
+      WHERE merged.consolidation_key = ?
+      FOR UPDATE`,
     [newKey, oldKey]
   );
   for (const conflict of conflicts) {
