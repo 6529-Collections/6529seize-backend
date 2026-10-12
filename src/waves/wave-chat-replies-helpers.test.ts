@@ -178,6 +178,14 @@ describe('wave chat replies helpers', () => {
       expect(canDelete(null, ['dev-team'])).toBe(false);
     });
 
+    it('requires being able to see the wave', () => {
+      const privateWave = { visibility_group_id: 'viewers' };
+      expect(canDelete('poster', ['dev-team'], privateWave)).toBe(false);
+      expect(canDelete('poster', ['dev-team', 'viewers'], privateWave)).toBe(
+        true
+      );
+    });
+
     it('only applies to waves with open replies', () => {
       expect(
         canDelete('poster', ['dev-team'], { chat_replies_open: false })

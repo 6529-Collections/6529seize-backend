@@ -88,6 +88,13 @@ export function canDeleteRepliesInWave({
   if (!authenticatedProfileId || !wave.chat_replies_open) {
     return false;
   }
+  // Every moderator role needs to be able to see the wave.
+  if (
+    wave.visibility_group_id !== null &&
+    !groupIdsUserIsEligibleFor.includes(wave.visibility_group_id)
+  ) {
+    return false;
+  }
   return (
     isWaveCreatorOrAdmin({
       authenticatedProfileId,
