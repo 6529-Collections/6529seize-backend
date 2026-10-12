@@ -194,8 +194,8 @@ describeWithSeed(
         {}
       );
       await db.query(
-        'clearHandle',
-        `update ${PROFILES_TABLE} set handle=null where external_id='B'`,
+        'removeProfile',
+        `delete from ${PROFILES_TABLE} where external_id='B'`,
         {},
         {}
       );
