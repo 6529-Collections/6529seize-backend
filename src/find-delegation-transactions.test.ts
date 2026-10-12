@@ -506,6 +506,52 @@ describe('findDelegationTransactions registration scope', () => {
     }
   );
 
+  it.each([false, true])(
+    'keeps expiries aligned when a same-block revocation separates an oversized token from a storable one (oversized after the revocation: %s)',
+    async (oversizedLast) => {
+      const storableArgs = [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_1,
+        USE_CASE_MINTING,
+        false,
+        BigInt(42)
+      ];
+      const oversizedArgs = [
+        COLD,
+        MEMES_CONTRACT,
+        HOT_1,
+        USE_CASE_MINTING,
+        false,
+        BigInt('1152921504606846977')
+      ];
+      const [beforeArgs, afterArgs] = oversizedLast
+        ? [storableArgs, oversizedArgs]
+        : [oversizedArgs, storableArgs];
+      rpcMock.getLogs.mockResolvedValue([
+        log(16, 'RegisterDelegation', beforeArgs),
+        log(16, 'RevokeDelegation', [
+          COLD,
+          MEMES_CONTRACT,
+          HOT_1,
+          USE_CASE_MINTING
+        ]),
+        log(16, 'RegisterDelegation', afterArgs)
+      ]);
+      // The revocation removes the first entry; only the second is stored.
+      setState(16, COLD, MEMES_CONTRACT, USE_CASE_MINTING, [
+        [HOT_1, BigInt(1_900_000_000), false, afterArgs[5] as bigint]
+      ]);
+
+      const result = await findDelegationTransactions(1, 20);
+
+      expect(
+        result.registrations.map((r) => [r.wallet2, r.expiry, r.token_id])
+      ).toEqual(oversizedLast ? [] : [[HOT_1, 1_900_000_000, 42]]);
+      expect(result.revocation).toHaveLength(1);
+    }
+  );
+
   it('drops a manager registration revoked later in its block without reading expiry', async () => {
     rpcMock.getLogs.mockResolvedValue([
       log(17, 'RegisterDelegation', [
