@@ -29260,6 +29260,16 @@ components:
       required:
         - operation
       properties:
+        action:
+          type: string
+          enum:
+            - ARTIST_AIRDROP
+            - TEAM_AIRDROP
+            - PHASE0_AIRDROP
+            - PHASE1_AIRDROP
+            - PHASE2_AIRDROP
+            - PUBLIC_PHASE_AIRDROP
+            - RESEARCH_AIRDROP
         operation:
           type: string
           enum:

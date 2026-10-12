@@ -1273,7 +1273,7 @@ import { ApiDropForgeJobRequest  , ApiDropForgeJobRequestKindEnum     } from '..
 import { ApiDropForgeLaunch    , ApiDropForgeLaunchStateEnum             } from '../models/ApiDropForgeLaunch';
 import { ApiDropForgeListPage } from '../models/ApiDropForgeListPage';
 import { ApiDropForgeListPageRowsInner } from '../models/ApiDropForgeListPageRowsInner';
-import { ApiDropForgeManualRequest, ApiDropForgeManualRequestOperationEnum     } from '../models/ApiDropForgeManualRequest';
+import { ApiDropForgeManualRequest, ApiDropForgeManualRequestActionEnum  , ApiDropForgeManualRequestOperationEnum     } from '../models/ApiDropForgeManualRequest';
 import { ApiDropForgeManualResponse } from '../models/ApiDropForgeManualResponse';
 import { ApiDropForgePhase } from '../models/ApiDropForgePhase';
 import { ApiDropForgePhaseInput } from '../models/ApiDropForgePhaseInput';
@@ -1934,6 +1934,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiDropForgeJobStatusEnum",
     "ApiDropForgeJobRequestKindEnum",
     "ApiDropForgeLaunchStateEnum",
+    "ApiDropForgeManualRequestActionEnum",
     "ApiDropForgeManualRequestOperationEnum",
     "ApiDropGroupMention",
     "ApiDropMainType",

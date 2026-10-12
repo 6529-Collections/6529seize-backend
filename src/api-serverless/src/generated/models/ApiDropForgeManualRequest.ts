@@ -13,6 +13,7 @@
 import { HttpFile } from '../http/http';
 
 export class ApiDropForgeManualRequest {
+    'action'?: ApiDropForgeManualRequestActionEnum;
     'operation': ApiDropForgeManualRequestOperationEnum;
     'lease_id'?: string;
     'hash'?: string;
@@ -22,6 +23,12 @@ export class ApiDropForgeManualRequest {
     static readonly mapping: {[index: string]: string} | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
+        {
+            "name": "action",
+            "baseName": "action",
+            "type": "ApiDropForgeManualRequestActionEnum",
+            "format": ""
+        },
         {
             "name": "operation",
             "baseName": "operation",
@@ -49,6 +56,15 @@ export class ApiDropForgeManualRequest {
     }
 }
 
+export enum ApiDropForgeManualRequestActionEnum {
+    ArtistAirdrop = 'ARTIST_AIRDROP',
+    TeamAirdrop = 'TEAM_AIRDROP',
+    Phase0Airdrop = 'PHASE0_AIRDROP',
+    Phase1Airdrop = 'PHASE1_AIRDROP',
+    Phase2Airdrop = 'PHASE2_AIRDROP',
+    PublicPhaseAirdrop = 'PUBLIC_PHASE_AIRDROP',
+    ResearchAirdrop = 'RESEARCH_AIRDROP'
+}
 export enum ApiDropForgeManualRequestOperationEnum {
     Begin = 'BEGIN',
     Submit = 'SUBMIT',
