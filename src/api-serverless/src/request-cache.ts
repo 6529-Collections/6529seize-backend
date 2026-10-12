@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { NextFunction, Request, RequestHandler, Response } from 'express';
 import { OutgoingHttpHeaders } from 'http';
 import { Logger } from '../../logging';
@@ -203,10 +204,17 @@ function sanitizeHeaders(
 }
 
 function withAuthCacheDependency(baseKey: string, req: Request): string {
-  const rawHeader = req.headers?.authorization;
-  const header = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
-  const normalizedAuth = header?.trim() || ANONYMOUS_CACHE_KEY;
-  return `${baseKey}${AUTH_CACHE_KEY_SEPARATOR}${normalizedAuth}`;
+  const user = req.user as
+    | { wallet?: string; role?: string | null }
+    | undefined;
+  // Authentication must run first: rejected credentials share the anonymous
+  // entry, while verified wallets and proxy roles define the response viewer.
+  const authKeyPart = user?.wallet
+    ? createHash('sha256')
+        .update(JSON.stringify([user.wallet.toLowerCase(), user.role ?? null]))
+        .digest('hex')
+    : ANONYMOUS_CACHE_KEY;
+  return `${baseKey}${AUTH_CACHE_KEY_SEPARATOR}${authKeyPart}`;
 }
 
 function isDefaultCacheableStatus(statusCode: number) {

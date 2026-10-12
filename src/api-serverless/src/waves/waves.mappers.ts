@@ -75,6 +75,10 @@ import {
 } from '@/waves/wave-approve.helpers';
 import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
 import {
+  canDeleteRepliesInWave,
+  canReplyInWaveChat
+} from '@/waves/wave-chat-replies.helpers';
+import {
   mapWaveRepSummary,
   mapWaveScore
 } from '@/api/waves/wave-score.api-mapper';
@@ -148,6 +152,8 @@ export class WavesMappers {
       WaveEntity,
       | 'max_votes_per_identity_to_drop'
       | 'chat_links_disabled'
+      | 'chat_replies_open'
+      | 'chat_replies_collapsed'
       | 'voting_credit_scope'
       | 'parent_wave_id'
     > | null;
@@ -219,6 +225,14 @@ export class WavesMappers {
       chat_links_disabled:
         request.chat.links_disabled ??
         existingWaveSettings?.chat_links_disabled ??
+        false,
+      chat_replies_open:
+        request.chat.replies?.open ??
+        existingWaveSettings?.chat_replies_open ??
+        false,
+      chat_replies_collapsed:
+        request.chat.replies?.collapsed ??
+        existingWaveSettings?.chat_replies_collapsed ??
         false,
       participation_max_applications_per_participant:
         request.participation.no_of_applications_allowed_per_participant,
@@ -459,13 +473,27 @@ export class WavesMappers {
         groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)) &&
       waveEntity.chat_enabled &&
       nextDropAllowed === undefined;
+    const authenticatedUserEligibleToReply =
+      authenticatedUserCanView &&
+      canReplyInWaveChat({ wave: waveEntity, groupIdsUserIsEligibleFor }) &&
+      nextDropAllowed === undefined;
     const chat: ApiWaveChatConfig = {
       scope: {
         group: resolveGroup(waveEntity.chat_group_id)
       },
       enabled: waveEntity.chat_enabled,
       links_disabled: waveEntity.chat_links_disabled,
-      authenticated_user_eligible: authenticatedUserEligibleToChat
+      authenticated_user_eligible: authenticatedUserEligibleToChat,
+      replies: {
+        open: waveEntity.chat_replies_open,
+        collapsed: waveEntity.chat_replies_collapsed,
+        authenticated_user_eligible: authenticatedUserEligibleToReply,
+        authenticated_user_can_delete: canDeleteRepliesInWave({
+          wave: waveEntity,
+          authenticatedProfileId: relatedData.authenticatedUserId,
+          groupIdsUserIsEligibleFor
+        })
+      }
     };
     if (nextDropAllowed !== undefined) {
       chat.next_drop_allowed = nextDropAllowed;

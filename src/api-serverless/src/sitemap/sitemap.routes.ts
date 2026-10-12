@@ -11,7 +11,7 @@ import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE
 } from '../../../nextgen/nextgen_constants';
-import { returnPaginatedResult } from '../api-helpers';
+import { getPage, getPageSize, returnPaginatedResult } from '../api-helpers';
 import { ApiResponse } from '../api-response';
 import { asyncRouter } from '../async.router';
 import { cacheRequest } from '../request-cache';
@@ -41,11 +41,8 @@ async function handlePaginatedRequest(
   const filter = contract ? `WHERE contract = :contract` : '';
   const params = contract ? { contract } : {};
 
-  const pageSize: number =
-    req.query.page_size && req.query.page_size <= PAGE_SIZE
-      ? req.query.page_size
-      : PAGE_SIZE;
-  const page: number = req.query.page || 1;
+  const pageSize = getPageSize(req, PAGE_SIZE);
+  const page = getPage(req);
 
   const results = await fetchPaginated<any>(
     table,
