@@ -116,8 +116,10 @@ router.get(
 
 router.get(
   '/tokens',
-  cacheRequest(),
   maybeAuthenticatedUser(),
+  // Owner profiles carry viewer-specific fields (subscribed_actions), so the
+  // cache key must include the caller's identity.
+  cacheRequest({ authDependent: true }),
   async (
     req: Request<any, any, any, XTdhTokensQueryParams, any>,
     res: Response<ApiResponse<ApiXTdhTokensPage>>
