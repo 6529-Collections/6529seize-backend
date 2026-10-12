@@ -103,7 +103,7 @@ This is ordinary-RPC portability, not complete removal of Alchemy.
 | Non-standard `trace_block` | Isolated in `trace-provider.ts`. Alchemy by default; existing mainnet 6529-first consumers retain Alchemy fallback. Ordinary transactions/receipts always use the canonical RPC |
 | Trace failure | Preserve the existing empty-internal-transfers failure behavior and per-invocation cache eviction; can leave trace-derived value attribution incomplete. No ordinary-provider fallback is attempted |
 | `NFT_INDEXER_RPC` | Retained as the independent bulk external-indexing and NFT-link capacity boundary, including its specialized resolution deadlines/transport. Changing `ETHEREUM_RPC_URL` does not change it |
-| Legacy AWS Managed Blockchain `/rpc` | Public proxy, still independent of `ETHEREUM_RPC_URL`. Hardened to `POST /rpc` only (no sub-paths, no `GET /rpc/test`), an allowlist of read-only methods, a 25-call batch cap, bounded request/response sizes and a ten-second upstream timeout. No in-repo caller was found; any removal/repointing still requires separate scoped work |
+| Legacy API-root AWS Managed Blockchain `/rpc` | Removed, including `/rpc/test` and sub-paths; requests receive the normal 404 response. No frontend/backend caller or production `/rpc` request was found in the October 5–12, 2026 observation window. `rpc1.6529.io` uses a separate API Gateway and `rpcProxy` Lambda that still forwards directly to the same managed node; app-wallet fallback and mainnet tracing remain available |
 | Browser wallets and transaction submission | Outside this server-read migration; wallet-selected transports remain unchanged |
 
 The retained bulk indexer already accepts a provider-neutral URL. Consolidating
