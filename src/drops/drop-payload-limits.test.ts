@@ -264,6 +264,24 @@ describe('drop payload limits', () => {
     }
   );
 
+  it('treats missing or null media fields and lists as empty', () => {
+    expect(
+      getDropPayloadLimitViolation({
+        parts: [
+          {
+            media: [
+              { url: null, mime_type: null, media_upload_id: null },
+              {},
+              { url: undefined }
+            ],
+            attachments: undefined
+          },
+          { media: null, attachments: null }
+        ]
+      })
+    ).toBeNull();
+  });
+
   it('checks list sizes before walking parts so oversized input is rejected cheaply', () => {
     const hugeParts = items(DROP_MAX_PARTS + 1).map(() => ({
       media: media(DROP_PART_MAX_MEDIA + 1)
