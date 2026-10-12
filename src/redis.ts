@@ -9,6 +9,107 @@ let redis: Redis;
 let redisReadyEvents = 0;
 let redisReconnectEvents = 0;
 
+/**
+ * Opt-in behavior for processes that must keep serving while Redis is
+ * unreachable (the API). Without it, the client keeps node-redis defaults:
+ * commands queue until the connection is back and initRedis waits for the
+ * first connection indefinitely.
+ */
+export interface RedisFailFastOptions {
+  /** Upper bound for each cache/rate-limit helper command. */
+  readonly commandTimeoutMs: number;
+  /** Per-attempt socket connect timeout. */
+  readonly connectTimeoutMs: number;
+  /** How long initRedis waits for the first connection before continuing. */
+  readonly initialConnectTimeoutMs: number;
+  /** Cap for the exponential reconnect backoff. Reconnects never give up. */
+  readonly maxReconnectDelayMs: number;
+}
+
+/**
+ * Raised by fail-fast helpers when Redis is not connected or a command
+ * outlives its budget. A timed-out command may still reach Redis later, so
+ * its outcome is unknown: never treat it as a completed write or a lock held.
+ */
+export class RedisUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.name = 'RedisUnavailableError';
+  }
+}
+
+const RECONNECT_BASE_DELAY_MS = 50;
+const UNAVAILABLE_WARNING_INTERVAL_MS = 10_000;
+let failFastOptions: RedisFailFastOptions | null = null;
+let lastUnavailableWarningAt: number | null = null;
+
+export function failFastReconnectDelayMs(
+  retries: number,
+  maxDelayMs: number
+): number {
+  return Math.min(RECONNECT_BASE_DELAY_MS * 2 ** retries, maxDelayMs);
+}
+
+async function runBoundedCommand<T>(
+  operation: string,
+  command: (client: Redis) => Promise<T>
+): Promise<T> {
+  const options = failFastOptions;
+  if (!options) {
+    return command(redis);
+  }
+  if (!redis.isReady) {
+    throw new RedisUnavailableError(
+      `Redis ${operation} skipped: client is not connected`
+    );
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new RedisUnavailableError(
+          `Redis ${operation} timed out after ${options.commandTimeoutMs}ms`
+        )
+      );
+    }, options.commandTimeoutMs);
+  });
+  try {
+    return await Promise.race([command(redis), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Cache reads and writes treat an unavailable Redis as a miss / no-op. */
+async function runFailOpenCommand<T>(
+  operation: string,
+  fallback: T,
+  command: (client: Redis) => Promise<T>
+): Promise<T> {
+  try {
+    return await runBoundedCommand(operation, command);
+  } catch (error) {
+    if (!(error instanceof RedisUnavailableError)) {
+      throw error;
+    }
+    warnRedisUnavailable(error);
+    return fallback;
+  }
+}
+
+function warnRedisUnavailable(error: RedisUnavailableError) {
+  const now = Date.now();
+  if (
+    lastUnavailableWarningAt !== null &&
+    now - lastUnavailableWarningAt < UNAVAILABLE_WARNING_INTERVAL_MS
+  ) {
+    return;
+  }
+  lastUnavailableWarningAt = now;
+  logger.warn(`${error.message}; continuing without Redis`);
+}
+
 export const WAVE_GROUPS_CACHE_KEY = 'cache_6529_wave_groups';
 export const WAVE_GROUPS_VERSION_CACHE_KEY = 'cache_6529_wave_groups_version';
 
@@ -16,7 +117,11 @@ export async function redisGet<T>(key: string): Promise<T | null> {
   if (!redis) {
     return null;
   }
-  const valueFromRedisRaw = await redis.get(key);
+  const valueFromRedisRaw = await runFailOpenCommand<string | null>(
+    'GET',
+    null,
+    (client) => client.get(key)
+  );
   return valueFromRedisRaw ? JSON.parse(valueFromRedisRaw) : null;
 }
 
@@ -48,7 +153,11 @@ export async function redisGetMany<T>(
   if (keys.length === 0) {
     return {};
   }
-  const valuesFromRedisRaw = await redis.mGet(keys);
+  const valuesFromRedisRaw = await runFailOpenCommand<(string | null)[]>(
+    'MGET',
+    [],
+    (client) => client.mGet(keys)
+  );
   return valuesFromRedisRaw.reduce(
     (acc: Record<string, T>, value: string | null, index: number) => {
       if (value) {
@@ -88,11 +197,13 @@ export async function redisSetJson<T>(
     return;
   }
   const payload = JSON.stringify(value);
-  if (ttl) {
-    await redis.set(key, payload, { EX: ttl.toSeconds() });
-  } else {
-    await redis.set(key, payload);
-  }
+  await runFailOpenCommand<void>('SET', undefined, async (client) => {
+    if (ttl) {
+      await client.set(key, payload, { EX: ttl.toSeconds() });
+    } else {
+      await client.set(key, payload);
+    }
+  });
 }
 
 /** Return undefined while another instance owns a cold-cache refresh. */
@@ -302,7 +413,10 @@ export async function evictRedisCacheForPathWithTimeout({
 
 const logger = Logger.get('REDIS_CLIENT');
 
-export async function initRedis(opts?: { reportConnectionRecovery?: boolean }) {
+export async function initRedis(opts?: {
+  reportConnectionRecovery?: boolean;
+  failFast?: RedisFailFastOptions;
+}) {
   if (process.env.FORCE_AVOID_REDIS === 'true') {
     logger.warn(`Redis is disabled with FORCE_AVOID_REDIS env`);
     return;
@@ -325,14 +439,24 @@ export async function initRedis(opts?: { reportConnectionRecovery?: boolean }) {
     );
   }
   const password = process.env.REDIS_PASSWORD;
+  const failFast = opts?.failFast ?? null;
   redis = createClient({
     socket: {
       host: url,
       port: port,
-      tls: process.env.REDIS_TLS === 'true'
+      tls: process.env.REDIS_TLS === 'true',
+      ...(failFast && {
+        connectTimeout: failFast.connectTimeoutMs,
+        reconnectStrategy: (retries: number) =>
+          failFastReconnectDelayMs(retries, failFast.maxReconnectDelayMs)
+      })
     },
-    password: password
+    password: password,
+    // Reject commands while disconnected instead of queueing them until the
+    // connection returns; callers fail open (caches) or closed (leases).
+    ...(failFast && { disableOfflineQueue: true })
   });
+  failFastOptions = failFast;
   let connectionFailures = 0;
   redis.on('error', (error: Error) => {
     connectionFailures++;
@@ -364,7 +488,43 @@ export async function initRedis(opts?: { reportConnectionRecovery?: boolean }) {
   redis.on('reconnecting', () => {
     redisReconnectEvents++;
   });
-  await redis.connect();
+  if (!failFast) {
+    await redis.connect();
+    return;
+  }
+  await connectWithinBudget(redis, failFast.initialConnectTimeoutMs);
+}
+
+/**
+ * Waits for the first connection for at most budgetMs. On timeout the client
+ * keeps reconnecting in the background and fail-fast helpers fail open until
+ * it is ready, so a cold start never blocks on an unreachable Redis.
+ */
+async function connectWithinBudget(
+  client: Redis,
+  budgetMs: number
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), budgetMs);
+  });
+  try {
+    const connected = await Promise.race([
+      client.connect().then(() => true),
+      budget
+    ]);
+    if (!connected) {
+      logger.warn(
+        `[REDIS NOT READY AFTER ${budgetMs}ms] Continuing without Redis while the client reconnects in the background`
+      );
+    }
+  } catch (error) {
+    logger.error(
+      `[REDIS INITIAL CONNECTION FAILED] Continuing without Redis: ${error}`
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Process-local connection events for interval diagnostics; no stale timestamps. */
@@ -419,13 +579,16 @@ export async function redisSortedSetAddAndCount(
     return 0;
   }
 
-  const pipeline = redis.multi();
-  pipeline.zAdd(key, { score, value });
-  pipeline.zRemRangeByScore(key, 0, minScore);
-  pipeline.zCard(key);
-  pipeline.expire(key, expireSeconds);
-
-  const results = await pipeline.exec();
+  // Fail-fast mode rejects with RedisUnavailableError instead of returning a
+  // count, so the rate limiter's error path decides to fail open.
+  const results = await runBoundedCommand('rate-limit pipeline', (client) => {
+    const pipeline = client.multi();
+    pipeline.zAdd(key, { score, value });
+    pipeline.zRemRangeByScore(key, 0, minScore);
+    pipeline.zCard(key);
+    pipeline.expire(key, expireSeconds);
+    return pipeline.exec();
+  });
   if (results?.length !== 4) {
     throw new TypeError('Unexpected Redis pipeline result');
   }
