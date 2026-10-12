@@ -1,7 +1,7 @@
-import { Alchemy } from '@/alchemy-sdk';
+import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
+import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { ethers } from 'ethers';
 import {
-  ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
   MEME_8_BURN_TRANSACTION,
   MEMES_CONTRACT,
@@ -62,8 +62,6 @@ export {
 } from './tdh-rules';
 
 const logger = Logger.get('TDH');
-
-let alchemy: Alchemy;
 
 export async function getWalletsTdhs(
   {
@@ -159,14 +157,7 @@ export const updateTDH = async (
   lastTDHCalc: Date,
   startingWallets?: string[]
 ): Promise<{ block: number; blockTimestamp: Date; tdh: TDH[] }> => {
-  alchemy = new Alchemy({
-    ...ALCHEMY_SETTINGS,
-    apiKey: process.env.ALCHEMY_API_KEY
-  });
-
-  const provider = new ethers.JsonRpcProvider(
-    `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
-  );
+  const provider = getEthereumRpcProvider();
   const beforeBlock = await findLatestBlockBeforeTimestamp(
     provider,
     lastTDHCalc.getTime() / 1000
@@ -212,7 +203,7 @@ export const updateTDH = async (
   logger.info(`[UNIQUE WALLETS ${combinedAddresses.size}]`);
 
   const blockTimestamp = new Date(
-    (await alchemy.core.getBlock(block)).timestamp * 1000
+    (await getEthereumRpcClient().getBlock(block)).timestamp * 1000
   );
 
   const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =

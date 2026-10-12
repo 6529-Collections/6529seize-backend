@@ -1,4 +1,4 @@
-import { getRpcUrl } from '@/alchemy';
+import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import {
   MANIFOLD_LAZY_CLAIM_ABI,
   MANIFOLD_LAZY_CLAIM_CONTRACT,
@@ -106,7 +106,7 @@ async function safeFetchOnChainClaimMaxes(
 
 export async function fetchOnChainMemeClaimMaxEditionSizes(
   tokenIds: readonly number[],
-  provider: ethers.Provider = new ethers.JsonRpcProvider(getRpcUrl(1))
+  provider: ethers.Provider = getEthereumRpcProvider()
 ): Promise<Map<number, number>> {
   const uniqueTokenIds = uniquePositiveTokenIds(tokenIds);
   const claimMaxes = new Map<number, number>();
