@@ -29,6 +29,14 @@ import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVot
 import { WaveType } from '@/entities/IWave';
 import mysql from 'mysql';
 
+// A pending decision still needs its final snapshot, even after voting ends.
+const ONGOING_LEGACY_LEADERBOARD_WAVE_SQL = `(
+  w.next_decision_time is not null
+  or (w.participation_period_end is null and w.voting_period_end is null)
+  or w.participation_period_end > :now
+  or w.voting_period_end > :now
+)`;
+
 type MergedDropRealVoterVoteChange = {
   id: number;
   original_drop_id: string;
@@ -67,6 +75,7 @@ export interface DropSubmissionVotingSummary {
   current_calculated_vote: number;
   predicted_final_vote: number;
   voters_count: number;
+  voters_count_available?: boolean;
   place: number;
   forbid_negative_votes: boolean;
 }
@@ -775,10 +784,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
           group by 1
         ),
         winner_voter_counts as (
-          select drop_id, count(*) as voters_count
+          select drop_id, count(nullif(votes, 0)) as voters_count
           from ${WINNER_DROP_VOTER_VOTES_TABLE}
           where drop_id in (:dropIds)
-            and votes <> 0
           group by 1
         ),
         decision_counts as (
@@ -871,6 +879,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
             when t.drop_type = '${DropType.WINNER}' then coalesce(wvc.voters_count, 0)
             else coalesce(vc.voters_count, 0)
           end as voters_count,
+          (t.drop_type <> '${DropType.WINNER}' or wvc.drop_id is not null) as voters_count_available,
           case
             when t.drop_type = '${DropType.WINNER}' then coalesce(wd.ranking, 0)
             else coalesce(wr.rnk, rr.rnk, 0)
@@ -919,6 +928,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
             current_calculated_vote: Number(row.current_calculated_vote),
             predicted_final_vote: Number(row.predicted_final_vote),
             voters_count: Number(row.voters_count),
+            voters_count_available: Boolean(Number(row.voters_count_available)),
             place: Number(row.place)
           };
           return acc;
@@ -1354,7 +1364,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       return {};
     }
     ctx.timer?.start(`${this.constructor.name}->getWinningDropsRatersCount`);
-    const sql = `select drop_id, count(*) as raters_count from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id in (:dropIds) and votes <> 0 group by 1`;
+    const sql = `select drop_id, count(nullif(votes, 0)) as raters_count from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id in (:dropIds) group by 1`;
     const results = await this.db.execute<{
       drop_id: string;
       raters_count: number;
@@ -1542,13 +1552,27 @@ from (select d.drop_id, d.wave_id as wave_id, w.time_lock_ms as time_lock_ms, w.
                     on w.id = d.wave_id and w.time_lock_ms is not null and w.time_lock_ms > 0
                join ${DROPS_TABLE} dr on d.drop_id = dr.id
                where dr.drop_type = '${DropType.PARTICIPATORY}'
+                 and ${ONGOING_LEGACY_LEADERBOARD_WAVE_SQL}
       group by 1, 2, 3, 4, 5, 6) lvc
          left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb
                    on lvc.drop_id = lb.drop_id and lvc.wave_id = lb.wave_id
 where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
-      undefined,
+      { now: Time.now().toMillis() },
       { wrappedConnection: ctx.connection }
     );
+  }
+
+  async isLegacyLeaderboardWaveOngoing(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const row = await this.db.oneOrNull<{ id: string }>(
+      `select w.id from ${WAVES_TABLE} w where w.id=:waveId
+       and ${ONGOING_LEGACY_LEADERBOARD_WAVE_SQL}`,
+      { waveId, now: Time.now().toMillis() },
+      { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+    );
+    return row !== null;
   }
 
   async getWaveLeaderboardEntryThresholdStateForUpdate(
@@ -1811,6 +1835,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     ctx.timer?.start(timerName);
     try {
       const repository = new CompetitionRepository(() => this.db);
+      const globalMaintenance = waveId === null;
       // Global maintenance drains at most 100 eligible waves per invocation.
       // A decision already holding an owner lock cleans only its own wave.
       const waves = await this.db.execute<{ wave_id: string }>(
@@ -1818,10 +1843,11 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
          join ${DROPS_TABLE} d on d.id=lb.drop_id join ${WAVES_TABLE} w on w.id=lb.wave_id
          left join ${COMPETITIONS_TABLE} c on c.legacy_wave_id=lb.wave_id
          where (:waveId is null or lb.wave_id=:waveId)
+           and (:waveId is not null or ${ONGOING_LEGACY_LEADERBOARD_WAVE_SQL})
            and (d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0)
            and (c.id is null or (c.storage_mode='LEGACY_ADAPTER' and c.execution_mode='ACTIVE'))
          order by lb.wave_id limit 100`,
-        { waveId },
+        { waveId, now: Time.now().toMillis() },
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );
       for (const { wave_id: waveId } of waves) {
@@ -1840,10 +1866,20 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
             // Native saveLeaderboard owns active-entry/orphan cleanup. Frozen
             // GETs read that table; retained legacy rows are not native inputs.
             return;
+          if (
+            globalMaintenance &&
+            !(await this.isLegacyLeaderboardWaveOngoing(waveId, {
+              ...ctx,
+              connection
+            }))
+          )
+            return;
           await this.db.execute(
             `delete lb from ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb join ${DROPS_TABLE} d on d.id=lb.drop_id join ${WAVES_TABLE} w on w.id=lb.wave_id
-             where lb.wave_id=:waveId and (d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0)`,
-            { waveId },
+             where lb.wave_id=:waveId
+               and (:globalMaintenance = 0 or ${ONGOING_LEGACY_LEADERBOARD_WAVE_SQL})
+               and (d.drop_type <> '${DropType.PARTICIPATORY}' or coalesce(w.time_lock_ms,0)=0)`,
+            { waveId, globalMaintenance, now: Time.now().toMillis() },
             { wrappedConnection: connection }
           );
         };
