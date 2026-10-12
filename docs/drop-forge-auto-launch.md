@@ -193,6 +193,15 @@ rechecks source, proofs, scope and timing. It does not replace a transaction,
 reset a nonce, or replay a reverted airdrop. Outstanding transactions can block
 other launches using the same signer until reconciled.
 
+A signed intent with no canonical receipt may retain the shared signer lock
+indefinitely, even if it never reached or disappeared from the mempool. This is
+a known availability limitation. Do not clear that lock based solely on empty
+RPC results or matching latest/pending nonces: the signed transaction can still
+be broadcast later. A supported operator recovery endpoint is deferred; enabling
+unattended operation requires a reviewed recovery path proving canonical nonce
+consumption before releasing the signer. Never use a database reset as proof
+that the transaction is invalid, and do not rebroadcast after the safe deadline.
+
 For a stuck or unknown transaction, inspect the exact persisted hash/nonce and
 canonical receipt before any operator action. There is intentionally no
 automatic replacement, cancellation transaction, ledger reset, or fresh-plan

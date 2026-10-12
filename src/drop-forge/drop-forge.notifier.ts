@@ -1,3 +1,4 @@
+import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
 import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
@@ -47,8 +48,11 @@ export async function reportLaunchEvents(
       } catch {
         logger.warn('Drop Forge push delivery failed; wave report is durable');
       }
-    } catch {
-      logger.warn(`Drop Forge wave delivery deferred for ${candidate.id}`);
+    } catch (error_) {
+      logger.warn(
+        `Drop Forge wave delivery deferred for ${candidate.id}`,
+        reportDiagnostic(error_)
+      );
       delivered = false;
     }
   }
@@ -110,9 +114,14 @@ export async function reportPreparationJob(
     const pushes = await dropForgeJobsRepository.reportOne((job, ctx) => {
       const reset = job.error === 'Distribution reset; process again';
       const detail = job.error ? '\n' + job.error : '';
+      const operation = preparationOperation(job.kind);
+      let outcome = 'failed.';
+      if (reset) outcome = 'invalidated by an explicit reset.';
+      else if (job.status === 'COMPLETED')
+        outcome = 'completed. Read-only results are ready.';
       return postForgeReport(
         config,
-        `Claim #${job.claim_id}: ${job.kind === 'PROCESS_ALL' ? 'Distribution processing and finalization' : job.kind === 'FINALIZE' ? 'Distribution finalization' : 'Distribution phase preparation'} ${reset ? 'invalidated by an explicit reset.' : job.status === 'COMPLETED' ? 'completed. Read-only results are ready.' : 'failed.'}${detail}`,
+        `Claim #${job.claim_id}: ${operation} ${outcome}${detail}`,
         job.status === 'FAILED' && !reset,
         ctx
       );
@@ -125,8 +134,26 @@ export async function reportPreparationJob(
       );
     }
     return true;
-  } catch {
-    logger.warn('Drop Forge preparation report deferred');
+  } catch (error_) {
+    logger.warn(
+      'Drop Forge preparation report deferred',
+      reportDiagnostic(error_)
+    );
     return false;
   }
+}
+
+function preparationOperation(kind: string): string {
+  if (kind === 'PROCESS_ALL') return 'Distribution processing and finalization';
+  if (kind === 'FINALIZE') return 'Distribution finalization';
+  return 'Distribution phase preparation';
+}
+function reportDiagnostic(error_: unknown): {
+  error_type: string;
+  reason?: string;
+} {
+  return {
+    error_type: error_ instanceof Error ? error_.name : 'UnknownError',
+    ...(error_ instanceof LaunchSafetyError ? { reason: error_.message } : {})
+  };
 }

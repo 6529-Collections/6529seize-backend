@@ -7,7 +7,7 @@ import {
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 
-// These tests mock the published source and use only the four Drop Forge
+// These tests mock the published source and use only the five Drop Forge
 // tables. Leave unrelated domain tables to their owning suites.
 export async function clearDropForgeTestTables(): Promise<void> {
   for (const table of [

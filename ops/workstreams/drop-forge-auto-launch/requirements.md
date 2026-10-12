@@ -39,7 +39,7 @@ UI. The gapless public update waits until Phase 2 closes and may activate after
 19:20 while the transaction is included. Plan validation budgets every gap's own
 transactions; prior mint supply is captured at its update and checked across batches.
 
-## Current code evidence
+## Historical code evidence (2026-10-09)
 
 - [Claim action persistence](../../../src/api-serverless/src/minting-claims/minting-claim-actions.db.ts)
   stores completion flags and audit wallets/timestamps, not transaction hashes,
@@ -202,7 +202,7 @@ These are investigation leads, not a verified root cause of reported timeouts.
    `ALLOWLIST_API_ENDPOINT` implementation is outside the inspected local paths;
    a confirmed upstream defect may require separately scoped repository work.
 
-## Acceptance scenarios for later implementation
+## Historical acceptance scenarios (2026-10-09)
 
 | Scenario | Required outcome |
 | --- | --- |
@@ -216,7 +216,7 @@ These are investigation leads, not a verified root cause of reported timeouts.
 | Slow/special EMMA phase or finalize retry | Discoverable durable outcome, consistent published data, and no duplicate processing |
 | Input version changes after arming | Launch blocks or requires explicit revision/rearming |
 
-## Implementation dependencies and open decisions
+## Historical implementation proposals (2026-10-09)
 
 Resolve signer provider, recovery controls, gas funding/budgets, confirmations,
 late-window policy, automated airdrop categories/order, bot author, mention
@@ -239,3 +239,11 @@ architecture diagram change. Later runtime/infrastructure changes must update
 AWS references: [Scheduler delivery](https://docs.aws.amazon.com/scheduler/latest/UserGuide/what-is-scheduler.html),
 [schedule precision](https://docs.aws.amazon.com/scheduler/latest/UserGuide/schedule-types.html),
 and [KMS key specs](https://docs.aws.amazon.com/kms/latest/developerguide/symm-asymm-choose-key-spec.html).
+
+## Current rollout requirements
+
+The durable EMMA workflow, KMS signer, Craft controls, phase execution and reports
+are implemented. Supply the manually confirmed key/role/gas/wave/profile/EMMA
+configuration, verify creator-admin permission, and exercise on Sepolia before
+any separately authorized rollout. Database validation and live execution gaps
+are listed in the operator guide/report. Both workers remain disabled.

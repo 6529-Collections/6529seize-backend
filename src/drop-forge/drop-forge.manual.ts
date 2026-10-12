@@ -1,9 +1,6 @@
 import { claimAbi, LaunchChain } from '@/drop-forge/drop-forge.chain';
 import { LaunchRecord, LaunchSafetyError } from '@/drop-forge/drop-forge.types';
-import {
-  addLaunchEvent,
-  setLaunchState
-} from '@/drop-forge/drop-forge.repository';
+import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 
 function matchesManualAction(

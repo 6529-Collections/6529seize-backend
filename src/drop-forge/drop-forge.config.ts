@@ -44,13 +44,13 @@ function integer(
   min: number,
   max: number
 ): number {
-  const value = Number(process.env[name] ?? fallback);
+  const value = Number(process.env[name]?.trim() || fallback);
   if (!Number.isSafeInteger(value) || value < min || value > max)
     throw new LaunchSafetyError(`${name} is out of range`);
   return value;
 }
 export function getDropForgeConfig(): DropForgeConfig {
-  const chainId = Number(process.env.DROP_FORGE_CHAIN_ID ?? 11155111);
+  const chainId = Number(process.env.DROP_FORGE_CHAIN_ID?.trim() || 11155111);
   if (chainId !== 1 && chainId !== 11155111)
     throw new LaunchSafetyError('Drop Forge supports mainnet and Sepolia only');
   const { waveId, botId, recipientIds } = getDropForgeReportingConfig();
