@@ -1,4 +1,5 @@
 import { DropModerationStatus } from '@/entities/IContentModeration';
+import { applyCollaborationPresentation } from '@/meme-collaborations/meme-collaboration-presentation';
 import { DropsMappers } from './drops.mappers';
 
 function drop(id: string, content: string): any {
@@ -52,6 +53,22 @@ describe('DropsMappers moderation presentation', () => {
       null as any
     );
 
+    applyCollaborationPresentation(
+      root,
+      {},
+      {
+        repeated: {
+          submission_artist: 'private original artist',
+          credit: {
+            artist: 'Private A, B',
+            artist_profiles: 'A, B',
+            collab: true
+          }
+        }
+      }
+    );
+    expect(firstCopy.submission_artist).toBe('private original artist');
+    expect(repeatedCopy.submission_artist).toBe('private original artist');
     (mapper as any).applyModerationPresentation(
       root,
       {

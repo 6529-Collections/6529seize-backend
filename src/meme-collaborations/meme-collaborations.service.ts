@@ -123,6 +123,10 @@ export class MemeCollaborationsService {
     ctx: RequestContext,
     competitionId?: string
   ): Promise<number[]> {
+    if (model.drop_id && model.collaborator_ids !== undefined)
+      throw new BadRequestException(
+        'Collaborator invitations can only be set when submitting a new artwork'
+      );
     const artworkSubmission =
       model.drop_type === DropType.PARTICIPATORY &&
       model.metadata.some((item) => item.data_key === 'memeName') &&

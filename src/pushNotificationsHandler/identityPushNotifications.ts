@@ -647,6 +647,7 @@ async function generateNotificationData(
         wavePresentationResolver
       );
     case IdentityNotificationCause.MEME_COLLABORATION: {
+      const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
       const data = extractAdditionalData<{
         event_type: string;
         drop_id: string;
@@ -661,7 +662,7 @@ async function generateNotificationData(
         data: {
           redirect: 'waves',
           wave_id: data.wave_id,
-          drop_id: data.drop_id
+          drop_id: dropSerialNo
         },
         imageUrl: null
       };

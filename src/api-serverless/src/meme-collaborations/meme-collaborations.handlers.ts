@@ -13,11 +13,13 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { Timer } from '@/time';
+import { Logger } from '@/logging';
 import { ForbiddenException } from '@/exceptions';
 
 export async function getMemeCollaborationState(
   req: GetMemeCollaborationStateRequest
 ): Promise<ApiMemeCollaborationState> {
+  req.res?.setHeader('Cache-Control', 'private, no-store');
   const auth = await getAuthenticationContext(req);
   const ctx = { authenticationContext: auth, timer: Timer.getFromRequest(req) };
   const drop = await dropsService.findDropByIdOrThrow(
@@ -48,6 +50,7 @@ export async function getMemeCollaborationState(
 export async function respondToMemeCollaboration(
   req: RespondToMemeCollaborationRequest
 ): Promise<ApiMemeCollaborationState> {
+  req.res?.setHeader('Cache-Control', 'private, no-store');
   const auth = await getAuthenticationContext(req);
   const ctx = { authenticationContext: auth, timer: Timer.getFromRequest(req) };
   const visibleDrop = await dropsService.findDropByIdOrThrow(
@@ -73,14 +76,21 @@ export async function respondToMemeCollaboration(
     auth,
     ctx
   );
-  if (notificationIds.length) {
-    const drop = await dropsService.findDropByIdOrThrow(
-      { dropId: req.params.drop_id },
-      ctx
+  try {
+    if (notificationIds.length) {
+      const drop = await dropsService.findDropByIdOrThrow(
+        { dropId: req.params.drop_id },
+        ctx
+      );
+      await wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, {
+        reason: 'collaboration_accepted'
+      });
+    }
+  } catch (error) {
+    Logger.get('MEME_COLLABORATIONS').error(
+      'Failed to announce committed collaboration response',
+      error
     );
-    await wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, {
-      reason: 'collaboration_accepted'
-    });
   }
   await sendIdentityPushNotifications(notificationIds);
   const state = await memeCollaborationsService.state(

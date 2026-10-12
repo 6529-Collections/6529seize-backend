@@ -7,6 +7,7 @@ import {
   MemeCollaborationEntity,
   MemeCollaborationInvitationEntity
 } from '@/entities/IMemeCollaboration';
+import { DbPoolName } from '@/db-query.options';
 import { RequestContext } from '@/request.context';
 import { LazyDbAccessCompatibleService, dbSupplier } from '@/sql-executor';
 
@@ -25,7 +26,8 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
     operation: string,
     sql: string,
     params: Record<string, unknown>,
-    ctx: RequestContext
+    ctx: RequestContext,
+    forcePool?: DbPoolName
   ): Promise<T[]> {
     const name = `${this.constructor.name}->${operation}`;
     try {
@@ -33,7 +35,7 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
       return await this.db.execute<T>(
         sql,
         params,
-        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        ctx.connection ? { wrappedConnection: ctx.connection } : { forcePool }
       );
     } finally {
       ctx.timer?.stop(name);
@@ -51,7 +53,8 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
       'context',
       `select * from ${MEME_COLLABORATIONS_TABLE} where drop_id=:dropId${lock ? ' for update' : ''}`,
       { dropId },
-      ctx
+      ctx,
+      DbPoolName.WRITE
     );
     if (!row) return null;
     return {
@@ -84,7 +87,8 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
       'invitations',
       `select * from ${MEME_COLLABORATION_INVITATIONS_TABLE} where drop_id=:dropId order by created_at asc, id asc`,
       { dropId },
-      ctx
+      ctx,
+      DbPoolName.WRITE
     );
     const profiles = new Map(
       (

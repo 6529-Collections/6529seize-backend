@@ -8,6 +8,8 @@ import type {
   GetMemeCollaborationStateRequest,
   RespondToMemeCollaborationRequest
 } from '@/api/generated/routes/operations';
+import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
+import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { AuthenticationContext } from '@/auth-context';
 
 jest.mock('@/api/auth/auth', () => ({
@@ -70,4 +72,40 @@ describe('Collaboration API visibility', () => {
     expect(memeCollaborationsService.state).not.toHaveBeenCalled();
     expect(memeCollaborationsService.respond).not.toHaveBeenCalled();
   });
+});
+
+it('returns committed acceptance despite a websocket failure and disables shared caching', async () => {
+  jest
+    .mocked(dropsService.findDropByIdOrThrow)
+    .mockResolvedValue({ id: 'drop' } as Awaited<
+      ReturnType<typeof dropsService.findDropByIdOrThrow>
+    >);
+  jest.mocked(memeCollaborationsService.respond).mockResolvedValue([12]);
+  const state = {
+    managed: true,
+    closed: false,
+    artwork_hash: 'a'.repeat(64),
+    terms_version: 'b'.repeat(64),
+    acceptance_copy: 'Final',
+    terms: null,
+    artwork: undefined,
+    collaborators: [],
+    invitations: []
+  };
+  jest.mocked(memeCollaborationsService.state).mockResolvedValue(state);
+  jest
+    .mocked(wsListenersNotifier.notifyAboutDropUpdate)
+    .mockRejectedValue(new Error('Websocket unavailable'));
+  const setHeader = jest.fn();
+  const req = {
+    ...request,
+    res: { setHeader }
+  } as unknown as RespondToMemeCollaborationRequest;
+  await expect(respondToMemeCollaboration(req)).resolves.toEqual(state);
+  expect(setHeader).toHaveBeenCalledWith('Cache-Control', 'private, no-store');
+  expect(sendIdentityPushNotifications).toHaveBeenCalledWith([12]);
+  await getMemeCollaborationState(
+    req as unknown as GetMemeCollaborationStateRequest
+  );
+  expect(setHeader).toHaveBeenCalledTimes(2);
 });

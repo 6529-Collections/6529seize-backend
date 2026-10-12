@@ -1,5 +1,5 @@
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
-import { collaborationMetadataValues } from '@/meme-collaborations/meme-collaboration-credit';
+import { applyCollaborationPresentation } from '@/meme-collaborations/meme-collaboration-presentation';
 import {
   DropEntity,
   DropMediaEntity,
@@ -849,12 +849,12 @@ export class DropsMappers {
       ctx.connection
     );
     const collaboratorsByDropId = await memeCollaborationsDb.acceptedByDrops(
-      entities.map((entity) => entity.id),
+      allEntities.map((entity) => entity.id),
       ctx
     );
     const collaborationPresentation =
       await memeCollaborationsDb.presentationByDrops(
-        entities.map((entity) => entity.id),
+        allEntities.map((entity) => entity.id),
         ctx,
         collaboratorsByDropId
       );
@@ -899,19 +899,11 @@ export class DropsMappers {
         rootDropIds,
         visibleQuotedDropIds
       });
-      drop.collaborators = collaboratorsByDropId[dropEntity.id] ?? [];
-      const presentation = collaborationPresentation[dropEntity.id];
-      if (
-        presentation &&
-        moderationPresentations[dropEntity.id]?.moderation.can_view !== false
-      ) {
-        drop.submission_artist = presentation.submission_artist;
-        const creditValues = collaborationMetadataValues(presentation.credit);
-        drop.metadata = drop.metadata.map((item) => ({
-          ...item,
-          data_value: creditValues.get(item.data_key) ?? item.data_value
-        }));
-      }
+      applyCollaborationPresentation(
+        drop,
+        collaboratorsByDropId,
+        collaborationPresentation
+      );
       return this.applyModerationPresentation(
         drop,
         moderationPresentations,
