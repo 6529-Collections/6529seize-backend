@@ -188,6 +188,11 @@ export async function redisCached<T>(
   return value;
 }
 
+/**
+ * Cache write. In fail-fast mode a timed-out SET is reported as skipped but
+ * may still land later, so use it only for values where last-write-wins
+ * ordering does not matter (TTL-bounded cache entries).
+ */
 export async function redisSetJson<T>(
   key: string,
   value: T,
@@ -423,6 +428,7 @@ export async function initRedis(opts?: {
   }
   if (redis) {
     logger.info('Redis client already initialized');
+    adoptFailFastOnExistingClient(opts?.failFast);
     return;
   }
   const url = process.env.REDIS_URL;
@@ -493,6 +499,21 @@ export async function initRedis(opts?: {
     return;
   }
   await connectWithinBudget(redis, failFast.initialConnectTimeoutMs);
+}
+
+/**
+ * Client options are fixed by the first initRedis call. A later fail-fast
+ * request still bounds the helpers; a later plain call never turns fail-fast
+ * off for a process that asked for it.
+ */
+function adoptFailFastOnExistingClient(requested?: RedisFailFastOptions) {
+  if (!requested || failFastOptions) {
+    return;
+  }
+  failFastOptions = requested;
+  logger.warn(
+    'Redis client was created without fail-fast options; only helper command budgets apply'
+  );
 }
 
 /**

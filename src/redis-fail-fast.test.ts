@@ -110,6 +110,23 @@ describe('redis fail-fast mode', () => {
     expect(client.get).toHaveBeenCalledWith('key');
   });
 
+  it('keeps fail-fast helper budgets regardless of initialization order', async () => {
+    const { client, createClient } = mockRedisClient({
+      get: jest.fn(() => never())
+    });
+    const redisModule = await import('./redis');
+
+    await redisModule.initRedis();
+    await redisModule.initRedis({ failFast: FAIL_FAST });
+    await redisModule.initRedis();
+
+    expect(createClient).toHaveBeenCalledTimes(1);
+    const { value, elapsedMs } = await timed(redisModule.redisGet('key'));
+    expect(value).toBeNull();
+    expect(elapsedMs).toBeLessThan(WITHIN_BUDGET_MS);
+    expect(client.get).toHaveBeenCalledWith('key');
+  });
+
   it('starts within the initial budget when Redis never becomes reachable', async () => {
     const { client } = mockRedisClient({
       isReady: false,
