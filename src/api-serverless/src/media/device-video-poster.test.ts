@@ -169,6 +169,51 @@ it('rejects zero-length header segments without entering the size detector', () 
   expect(imageSize).not.toHaveBeenCalled();
 });
 
+it('rejects a crafted scan marker whose claimed length would hide a later APP1', () => {
+  const bytes = jpeg();
+  const app1 = orientedJpeg(6).subarray(2, 38);
+  const fakeMarker = Buffer.from([0xff, 0x02, 0, app1.length + 2]);
+  const input = Buffer.concat([
+    bytes.subarray(0, bytes.length - 2),
+    fakeMarker,
+    app1,
+    bytes.subarray(bytes.length - 2)
+  ]);
+  expect(() => sanitizeDeviceVideoPoster(input.toString('base64'))).toThrow(
+    'Invalid JPEG marker'
+  );
+  expect(imageSize).not.toHaveBeenCalled();
+});
+
+it('rejects truncated marker padding before entering the size detector', () => {
+  const bytes = jpeg();
+  const input = Buffer.concat([
+    bytes.subarray(0, bytes.length - 2),
+    Buffer.from([0xff, 0xff])
+  ]);
+  expect(() => sanitizeDeviceVideoPoster(input.toString('base64'))).toThrow(
+    'Invalid JPEG marker'
+  );
+  expect(imageSize).not.toHaveBeenCalled();
+});
+
+it('does not interpret APP1-shaped bytes inside a different marker payload', () => {
+  const bytes = jpeg();
+  const payload = orientedJpeg(6).subarray(2, 38);
+  const header = Buffer.alloc(4);
+  header.writeUInt16BE(0xffe0, 0);
+  header.writeUInt16BE(payload.length + 2, 2);
+  const input = Buffer.concat([
+    bytes.subarray(0, 2),
+    header,
+    payload,
+    bytes.subarray(2)
+  ]);
+  const clean = sanitizeDeviceVideoPoster(input.toString('base64'));
+  expect(decode(clean)).toMatchObject({ width: 36, height: 64 });
+  expect(imageSize(clean).orientation).toBeUndefined();
+});
+
 it('strips client comments when publishing a canvas JPEG', () => {
   const comment = 'private-client-comment';
   const encoded = encode(

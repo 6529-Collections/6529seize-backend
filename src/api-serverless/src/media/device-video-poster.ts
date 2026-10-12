@@ -33,17 +33,20 @@ function assertNoApp1Metadata(bytes: Buffer): void {
     if (offset < 0) return;
     // Skip marker padding; FF00 is an escaped byte in scan data.
     while (bytes[offset] === 0xff) offset++;
-    const marker = bytes[offset++];
+    // A trailing run of FF bytes has no marker code and is malformed.
+    const marker = bytes[offset++] ?? -1;
     if (marker === 0xe1) {
       throw new Error('Device poster contains APP1 metadata');
     }
     if (
-      marker === undefined ||
       marker === 0x00 ||
       marker === 0x01 ||
       (marker >= 0xd0 && marker <= 0xd9)
     ) {
       continue;
+    }
+    if (marker < 0xc0 || marker > 0xfe) {
+      throw new Error('Invalid JPEG marker');
     }
     // Skip complete segments, including SOS headers, but continue across scans
     // so metadata after the first scan cannot bypass the policy either.

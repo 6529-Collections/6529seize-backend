@@ -24,8 +24,11 @@ at quality 80 to strip client metadata. JPEG APP1 metadata (including EXIF and
 XMP) is rejected before dimension parsing, including duplicate blocks and blocks
 after scan data, so conflicting or unrecognized display transforms cannot be
 discarded accidentally. Such uploads use the converter's automatically rotated
-preview instead. Normal canvas captures already contain oriented pixels and
-do not require APP1 metadata. It confirms the multipart upload still
+preview instead. Unknown or truncated marker codes and invalid segment lengths
+are rejected rather than using their claimed lengths to skip more input. A
+segment's payload is data, so APP1-shaped bytes inside another segment are not
+interpreted as display metadata. Normal canvas captures already contain oriented
+pixels and do not require APP1 metadata. It confirms the multipart upload still
 exists before writing. Both S3 operations share a three-second deadline. Invalid
 images, failed storage, and missing device images leave video completion usable;
 the converter remains the fallback. Oversized request fields are rejected by the
