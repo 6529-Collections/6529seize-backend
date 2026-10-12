@@ -948,6 +948,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
              from ${WAVES_TABLE} w
              where w.id = :wave_id
                and (${visibleWaveFilter})
+               and (d.reply_to_drop_id is null or w.chat_replies_collapsed = false)
            )
          order by d.serial_no ${older_first ? 'asc' : 'desc'}
          limit :limit`,
@@ -1141,7 +1142,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       search_strategy,
       wave_id,
       curation_id,
-      drop_type
+      drop_type,
+      exclude_replies = false
     }: {
       serial_no_limit: number | null;
       search_strategy: string;
@@ -1149,6 +1151,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       wave_id: string;
       curation_id?: string | null;
       drop_type: DropType | null;
+      exclude_replies?: boolean;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
@@ -1159,15 +1162,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
+    const filters = `${curationFilter} ${
+      exclude_replies ? 'and d.reply_to_drop_id is null' : ''
+    }`;
     const sqlForOlder = `(select d.* from ${DROPS_TABLE} d where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
-    } d.wave_id = :wave_id and d.serial_no < :serial_no_limit ${curationFilter} order by d.serial_no desc limit ${amount})`;
+    } d.wave_id = :wave_id and d.serial_no < :serial_no_limit ${filters} order by d.serial_no desc limit ${amount})`;
     const sqlForNewer = `(select d.* from ${DROPS_TABLE} d where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
-    } d.wave_id = :wave_id and d.serial_no > :serial_no_limit ${curationFilter} order by d.serial_no asc limit ${amount})`;
+    } d.wave_id = :wave_id and d.serial_no > :serial_no_limit ${filters} order by d.serial_no asc limit ${amount})`;
     const sqlForThis = `(select d.* from ${DROPS_TABLE} d where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
-    } d.wave_id = :wave_id and d.serial_no = :serial_no_limit ${curationFilter})`;
+    } d.wave_id = :wave_id and d.serial_no = :serial_no_limit ${filters})`;
     const sql = `with dr_results as (${[
       search_strategy === ApiDropSearchStrategy.Newer ||
       search_strategy === ApiDropSearchStrategy.Both
@@ -1216,6 +1222,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       where d.wave_id = :wave_id
         and d.serial_no >= :min_serial_no
         and d.serial_no <= :max_serial_no
+        and (d.reply_to_drop_id is null or w.chat_replies_collapsed = false)
       order by d.serial_no asc
       limit :limit`;
     return this.db.execute(
@@ -3712,6 +3719,46 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       );
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->countBoostsOfGivenDrops`);
+    }
+  }
+
+  /**
+   * Thread sizes for drops in waves with collapsed replies. drop_relations
+   * lists every ancestor, so this counts the whole thread under each drop.
+   * Drops without replies are omitted.
+   */
+  public async countCollapsedRepliesOfGivenDrops(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    const timerKey = `${this.constructor.name}->countCollapsedRepliesOfGivenDrops`;
+    try {
+      ctx.timer?.start(timerKey);
+      if (!dropIds.length) {
+        return {};
+      }
+      const res = await this.db.execute<{ drop_id: string; cnt: number }>(
+        `
+          select r.parent_id as drop_id, count(*) as cnt
+          from ${DROP_RELATIONS_TABLE} r
+          join ${WAVES_TABLE} w
+            on w.id = r.wave_id and w.chat_replies_collapsed = true
+          join ${DROPS_TABLE} d on d.id = r.child_id
+          where r.parent_id in (:dropIds)
+          group by r.parent_id
+        `,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return res.reduce(
+        (acc, it) => {
+          acc[it.drop_id] = +it.cnt;
+          return acc;
+        },
+        {} as Record<string, number>
+      );
+    } finally {
+      ctx.timer?.stop(timerKey);
     }
   }
 

@@ -127,6 +127,10 @@ import {
   isWaveChatSlowModeActive,
   isWaveChatSlowModeExempt
 } from '@/waves/wave-chat-slow-mode.helpers';
+import {
+  canReplyInWaveChat,
+  isCollapsedWaveReply
+} from '@/waves/wave-chat-replies.helpers';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 import { Logger } from '@/logging';
@@ -1250,7 +1254,11 @@ export class CreateOrUpdateDropUseCase {
       !isDescriptionDrop &&
       !isNativeEntryContent &&
       groupId &&
-      !groupIdsUserIsEligibleFor.includes(groupId)
+      !groupIdsUserIsEligibleFor.includes(groupId) &&
+      !(await this.isOpenReplyAllowed(
+        { model, wave, groupIdsUserIsEligibleFor },
+        connection
+      ))
     ) {
       throw new ForbiddenException(`User is not eligible for this wave`);
     }
@@ -1291,6 +1299,39 @@ export class CreateOrUpdateDropUseCase {
         );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
     return validatedModel;
+  }
+
+  /**
+   * Waves with open replies let people outside the chat group reply to drops
+   * they can see. They still can't start top-level drops.
+   */
+  private async isOpenReplyAllowed(
+    {
+      model,
+      wave,
+      groupIdsUserIsEligibleFor
+    }: {
+      model: CreateOrUpdateDropModel;
+      wave: WaveEntity;
+      groupIdsUserIsEligibleFor: string[];
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<boolean> {
+    const replyTo = model.reply_to;
+    if (
+      !replyTo ||
+      model.drop_type !== DropType.CHAT ||
+      !canReplyInWaveChat({ wave, groupIdsUserIsEligibleFor })
+    ) {
+      return false;
+    }
+    const visibleReplyTarget =
+      await this.dropsDb.findDropByIdWithEligibilityCheck(
+        replyTo.drop_id,
+        groupIdsUserIsEligibleFor,
+        connection
+      );
+    return visibleReplyTarget?.wave_id === wave.id;
   }
 
   private async verifyChatSlowModeLimitations(
@@ -2357,7 +2398,12 @@ export class CreateOrUpdateDropUseCase {
         // Group mention notifications, including @all, are create-only so an
         // edit cannot resend a wave-wide or permission-derived notification.
         groupMentionNotificationsEnabled: updatedAt === null,
-        suppressFollowerNotifications: isNativeEntryContent
+        suppressFollowerNotifications:
+          isNativeEntryContent ||
+          isCollapsedWaveReply({
+            wave,
+            replyToDropId: model.reply_to?.drop_id
+          })
       },
       { timer, connection }
     );

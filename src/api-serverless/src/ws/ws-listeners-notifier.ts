@@ -166,6 +166,8 @@ function removeDropsAuthRequestContext(
     (modifiedWave as any).authenticated_user_eligible_to_participate =
       undefined;
     (modifiedWave as any).authenticated_user_eligible_to_chat = undefined;
+    (modifiedWave as any).authenticated_user_eligible_to_reply = undefined;
+    (modifiedWave as any).authenticated_user_can_delete_replies = undefined;
     (modifiedWave as any).authenticated_user_admin = undefined;
     (modifiedWave as any).credit_left = creditLeft;
     (modifiedDrop.wave as any) = modifiedWave;

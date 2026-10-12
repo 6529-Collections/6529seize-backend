@@ -61,6 +61,8 @@ function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
     chat_group_id: null,
     chat_slow_mode_cooldown_ms: null,
     chat_links_disabled: false,
+    chat_replies_open: false,
+    chat_replies_collapsed: false,
     participation_max_applications_per_participant: null,
     participation_required_metadata: [],
     participation_required_media: [],
@@ -463,7 +465,8 @@ describe('ApiWaveV2Service', () => {
         serial_no_limit: 99,
         search_strategy: ApiDropSearchStrategy.Older,
         curation_id: 'curation-1',
-        drop_type: DropType.CHAT
+        drop_type: DropType.CHAT,
+        exclude_replies: false
       },
       ctx
     );
@@ -476,6 +479,35 @@ describe('ApiWaveV2Service', () => {
       [makeDrop()],
       ctx,
       { groupIdsUserIsEligibleFor: ['group-1'] }
+    );
+  });
+
+  it('leaves replies out of the main feed of collapsed-reply waves', async () => {
+    const { service, deps } = createService();
+    deps.dropsDb.findWaveByIdOrNull.mockResolvedValue(
+      makeWave({ chat_replies_collapsed: true })
+    );
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1'),
+      connection: {} as any
+    };
+
+    await service.findDropsFeed(
+      {
+        wave_id: 'wave-1',
+        drop_id: null,
+        amount: 10,
+        serial_no_limit: 99,
+        search_strategy: ApiDropSearchStrategy.Older,
+        drop_type: ApiDropType.Chat,
+        curation_id: null
+      },
+      ctx
+    );
+
+    expect(deps.dropsDb.findLatestDropsSimple).toHaveBeenCalledWith(
+      expect.objectContaining({ wave_id: 'wave-1', exclude_replies: true }),
+      ctx
     );
   });
 

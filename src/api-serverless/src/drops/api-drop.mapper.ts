@@ -263,7 +263,8 @@ export class ApiDropMapper {
         winningDropsRatingsByVoter,
         pollsByDropId,
         memeCardIdsByDropId,
-        moderationPresentations
+        moderationPresentations,
+        repliesCountByDropId
       ] = await Promise.all([
         this.identityFetcher.getApiIdentityOverviewsByIds(authorIds, ctx),
         this.dropsDb.findAuthorWaveParticipationByDropContexts(
@@ -342,7 +343,8 @@ export class ApiDropMapper {
               ctx
             )
           : Promise.resolve({} as Record<string, number>),
-        moderationPresentationsPromise
+        moderationPresentationsPromise,
+        this.dropsDb.countCollapsedRepliesOfGivenDrops(dropIds, ctx)
       ]);
 
       const referencedNftsByDropId = this.groupByDropId(referencedNfts);
@@ -387,6 +389,7 @@ export class ApiDropMapper {
             hasMetadata: submissionDropIdsWithMetadata.has(drop.id),
             reactions: reactionsByDropId.get(drop.id),
             boosts: boostsCount[drop.id] ?? 0,
+            repliesCount: repliesCountByDropId[drop.id],
             boosted: boostedDropIds.has(drop.id),
             bookmarked: bookmarkedDropIds.has(drop.id),
             subscribed: (subscribedActions[drop.id] ?? []).length > 0,
@@ -489,6 +492,7 @@ export class ApiDropMapper {
     hasMetadata,
     reactions,
     boosts,
+    repliesCount,
     boosted,
     bookmarked,
     subscribed,
@@ -519,6 +523,7 @@ export class ApiDropMapper {
     hasMetadata: boolean;
     reactions?: DropReactionCountersResult;
     boosts: number;
+    repliesCount?: number;
     boosted: boolean;
     bookmarked: boolean;
     subscribed: boolean;
@@ -559,6 +564,9 @@ export class ApiDropMapper {
         replyPreview,
         replyModerationPresentation
       );
+    }
+    if (repliesCount) {
+      apiDrop.replies_count = repliesCount;
     }
     if (!moderationPresentation.moderation.can_view) {
       return apiDrop;
