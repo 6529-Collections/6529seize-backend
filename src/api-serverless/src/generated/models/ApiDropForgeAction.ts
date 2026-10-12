@@ -13,6 +13,7 @@
 import { HttpFile } from '../http/http';
 
 export class ApiDropForgeAction {
+    'label'?: string;
     'id': string;
     'kind': ApiDropForgeActionKindEnum;
     'state': ApiDropForgeActionStateEnum;
@@ -31,6 +32,12 @@ export class ApiDropForgeAction {
     static readonly mapping: {[index: string]: string} | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
+        {
+            "name": "label",
+            "baseName": "label",
+            "type": "string",
+            "format": ""
+        },
         {
             "name": "id",
             "baseName": "id",
@@ -97,7 +104,8 @@ export class ApiDropForgeAction {
 export enum ApiDropForgeActionKindEnum {
     Initialize = 'INITIALIZE',
     Airdrop = 'AIRDROP',
-    Update = 'UPDATE'
+    Update = 'UPDATE',
+    Metadata = 'METADATA'
 }
 export enum ApiDropForgeActionStateEnum {
     Pending = 'PENDING',

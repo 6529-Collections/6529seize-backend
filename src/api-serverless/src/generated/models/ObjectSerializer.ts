@@ -366,6 +366,10 @@ export * from '../models/ApiDropForgeControlRequest';
 export * from '../models/ApiDropForgeJob';
 export * from '../models/ApiDropForgeJobRequest';
 export * from '../models/ApiDropForgeLaunch';
+export * from '../models/ApiDropForgeListPage';
+export * from '../models/ApiDropForgeListPageRowsInner';
+export * from '../models/ApiDropForgeManualRequest';
+export * from '../models/ApiDropForgeManualResponse';
 export * from '../models/ApiDropForgePhase';
 export * from '../models/ApiDropForgePhaseInput';
 export * from '../models/ApiDropForgePlanRequest';
@@ -1262,11 +1266,15 @@ import { ApiDropCompetitionContext } from '../models/ApiDropCompetitionContext';
 import { ApiDropContextProfileContext } from '../models/ApiDropContextProfileContext';
 import { ApiDropCuration } from '../models/ApiDropCuration';
 import { ApiDropCurationRequest } from '../models/ApiDropCurationRequest';
-import { ApiDropForgeAction , ApiDropForgeActionKindEnum  , ApiDropForgeActionStateEnum         } from '../models/ApiDropForgeAction';
+import { ApiDropForgeAction  , ApiDropForgeActionKindEnum  , ApiDropForgeActionStateEnum         } from '../models/ApiDropForgeAction';
 import { ApiDropForgeControlRequest , ApiDropForgeControlRequestOperationEnum   } from '../models/ApiDropForgeControlRequest';
-import { ApiDropForgeJob   , ApiDropForgeJobKindEnum  , ApiDropForgeJobStatusEnum      } from '../models/ApiDropForgeJob';
-import { ApiDropForgeJobRequest , ApiDropForgeJobRequestKindEnum     } from '../models/ApiDropForgeJobRequest';
-import { ApiDropForgeLaunch  , ApiDropForgeLaunchStateEnum             } from '../models/ApiDropForgeLaunch';
+import { ApiDropForgeJob     , ApiDropForgeJobKindEnum  , ApiDropForgeJobStatusEnum      } from '../models/ApiDropForgeJob';
+import { ApiDropForgeJobRequest  , ApiDropForgeJobRequestKindEnum     } from '../models/ApiDropForgeJobRequest';
+import { ApiDropForgeLaunch    , ApiDropForgeLaunchStateEnum             } from '../models/ApiDropForgeLaunch';
+import { ApiDropForgeListPage } from '../models/ApiDropForgeListPage';
+import { ApiDropForgeListPageRowsInner } from '../models/ApiDropForgeListPageRowsInner';
+import { ApiDropForgeManualRequest, ApiDropForgeManualRequestOperationEnum     } from '../models/ApiDropForgeManualRequest';
+import { ApiDropForgeManualResponse } from '../models/ApiDropForgeManualResponse';
 import { ApiDropForgePhase } from '../models/ApiDropForgePhase';
 import { ApiDropForgePhaseInput } from '../models/ApiDropForgePhaseInput';
 import { ApiDropForgePlanRequest } from '../models/ApiDropForgePlanRequest';
@@ -1926,6 +1934,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiDropForgeJobStatusEnum",
     "ApiDropForgeJobRequestKindEnum",
     "ApiDropForgeLaunchStateEnum",
+    "ApiDropForgeManualRequestOperationEnum",
     "ApiDropGroupMention",
     "ApiDropMainType",
     "ApiDropMediaStatus",
@@ -2435,6 +2444,10 @@ let typeMap: {[index: string]: any} = {
     "ApiDropForgeJob": ApiDropForgeJob,
     "ApiDropForgeJobRequest": ApiDropForgeJobRequest,
     "ApiDropForgeLaunch": ApiDropForgeLaunch,
+    "ApiDropForgeListPage": ApiDropForgeListPage,
+    "ApiDropForgeListPageRowsInner": ApiDropForgeListPageRowsInner,
+    "ApiDropForgeManualRequest": ApiDropForgeManualRequest,
+    "ApiDropForgeManualResponse": ApiDropForgeManualResponse,
     "ApiDropForgePhase": ApiDropForgePhase,
     "ApiDropForgePhaseInput": ApiDropForgePhaseInput,
     "ApiDropForgePlanRequest": ApiDropForgePlanRequest,

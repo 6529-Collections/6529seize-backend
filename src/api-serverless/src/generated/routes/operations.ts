@@ -112,6 +112,9 @@ import { ApiDropForgeControlRequest } from '@/api/generated/models/ApiDropForgeC
 import { ApiDropForgeJob } from '@/api/generated/models/ApiDropForgeJob';
 import { ApiDropForgeJobRequest } from '@/api/generated/models/ApiDropForgeJobRequest';
 import { ApiDropForgeLaunch } from '@/api/generated/models/ApiDropForgeLaunch';
+import { ApiDropForgeListPage } from '@/api/generated/models/ApiDropForgeListPage';
+import { ApiDropForgeManualRequest } from '@/api/generated/models/ApiDropForgeManualRequest';
+import { ApiDropForgeManualResponse } from '@/api/generated/models/ApiDropForgeManualResponse';
 import { ApiDropForgePlanRequest } from '@/api/generated/models/ApiDropForgePlanRequest';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
 import { ApiDropPartV2 } from '@/api/generated/models/ApiDropPartV2';
@@ -1397,6 +1400,25 @@ export type GetDmUnreadSnapshotRequest = Request<
   Record<string, never>
 >;
 
+export interface GetLatestDropForgeProcessPathParams {
+  "contract": string;
+  "claim_id": number;
+}
+
+export interface GetLatestDropForgeProcessQuery {
+  "plan_id"?: string;
+}
+
+export type GetLatestDropForgeProcessResponse = ApiDropForgeJob[];
+
+export type GetLatestDropForgeProcessRequest = Request<
+  GetLatestDropForgeProcessPathParams,
+  ApiResponse<GetLatestDropForgeProcessResponse>,
+  never,
+  GetLatestDropForgeProcessQuery,
+  Record<string, never>
+>;
+
 export interface CreateDropForgeDistributionJobPathParams {
   "contract": string;
   "claim_id": number;
@@ -1427,6 +1449,26 @@ export type GetDropForgeDistributionJobRequest = Request<
   ApiResponse<GetDropForgeDistributionJobResponse>,
   never,
   GetDropForgeDistributionJobQuery,
+  Record<string, never>
+>;
+
+export interface GetDropForgeCompletedListPathParams {
+  "job_id": string;
+  "phase_id": string;
+  "list": "airdrops" | "airdrops_unconsolidated" | "allowlists";
+}
+
+export interface GetDropForgeCompletedListQuery {
+  "offset"?: number;
+}
+
+export type GetDropForgeCompletedListResponse = ApiDropForgeListPage;
+
+export type GetDropForgeCompletedListRequest = Request<
+  GetDropForgeCompletedListPathParams,
+  ApiResponse<GetDropForgeCompletedListResponse>,
+  never,
+  GetDropForgeCompletedListQuery,
   Record<string, never>
 >;
 
@@ -1478,6 +1520,57 @@ export type ControlDropForgeLaunchRequest = Request<
   ApiResponse<ControlDropForgeLaunchResponse>,
   ApiDropForgeControlRequest,
   ControlDropForgeLaunchQuery,
+  Record<string, never>
+>;
+
+export interface CoordinateDropForgeManualActionPathParams {
+  "contract": string;
+  "claim_id": number;
+}
+
+export type CoordinateDropForgeManualActionQuery = Record<string, never>;
+
+export type CoordinateDropForgeManualActionResponse = ApiDropForgeManualResponse;
+
+export type CoordinateDropForgeManualActionRequest = Request<
+  CoordinateDropForgeManualActionPathParams,
+  ApiResponse<CoordinateDropForgeManualActionResponse>,
+  ApiDropForgeManualRequest,
+  CoordinateDropForgeManualActionQuery,
+  Record<string, never>
+>;
+
+export interface UpdateDropForgeMetadataPathParams {
+  "contract": string;
+  "claim_id": number;
+}
+
+export type UpdateDropForgeMetadataQuery = Record<string, never>;
+
+export type UpdateDropForgeMetadataResponse = ApiDropForgeLaunch;
+
+export type UpdateDropForgeMetadataRequest = Request<
+  UpdateDropForgeMetadataPathParams,
+  ApiResponse<UpdateDropForgeMetadataResponse>,
+  never,
+  UpdateDropForgeMetadataQuery,
+  Record<string, never>
+>;
+
+export interface ReadyDropForgeLaunchPathParams {
+  "contract": string;
+  "claim_id": number;
+}
+
+export type ReadyDropForgeLaunchQuery = Record<string, never>;
+
+export type ReadyDropForgeLaunchResponse = ApiDropForgeLaunch;
+
+export type ReadyDropForgeLaunchRequest = Request<
+  ReadyDropForgeLaunchPathParams,
+  ApiResponse<ReadyDropForgeLaunchResponse>,
+  never,
+  ReadyDropForgeLaunchQuery,
   Record<string, never>
 >;
 
