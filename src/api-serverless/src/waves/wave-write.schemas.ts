@@ -6,6 +6,7 @@ import { Time } from '@/time';
 import { NewWaveDropSchema } from '@/api/drops/drop.validator';
 import { ApiCreateNewWave } from '@/api/generated/models/ApiCreateNewWave';
 import { ApiCreateNewWaveChatConfig } from '@/api/generated/models/ApiCreateNewWaveChatConfig';
+import { ApiCreateNewWaveChatRepliesConfig } from '@/api/generated/models/ApiCreateNewWaveChatRepliesConfig';
 import { ApiCreateNewWaveParticipationConfig } from '@/api/generated/models/ApiCreateNewWaveParticipationConfig';
 import { ApiCreateNewWaveScope } from '@/api/generated/models/ApiCreateNewWaveScope';
 import { ApiCreateNewWaveVisibilityConfig } from '@/api/generated/models/ApiCreateNewWaveVisibilityConfig';
@@ -197,7 +198,11 @@ export const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
     .integer()
     .optional()
     .min(Time.seconds(1).toMillis()),
-  links_disabled: Joi.boolean().optional()
+  links_disabled: Joi.boolean().optional(),
+  replies: Joi.object<ApiCreateNewWaveChatRepliesConfig>({
+    open: Joi.boolean().required(),
+    collapsed: Joi.boolean().required()
+  }).optional()
 });
 
 function createWaveDecisionsStrategySchema({

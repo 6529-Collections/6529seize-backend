@@ -2727,6 +2727,137 @@ describe('CreateOrUpdateDropUseCase', () => {
     expect(wavesApiDb.countWaveDecisionsByWaveIds).not.toHaveBeenCalled();
   });
 
+  describe('open replies', () => {
+    function createRestrictedChatWave(overrides: Record<string, unknown> = {}) {
+      return {
+        ...createSlowModeWave({
+          chat_group_id: 'dev-team',
+          chat_slow_mode_cooldown_ms: null
+        }),
+        type: WaveType.CHAT,
+        visibility_group_id: null,
+        participation_group_id: null,
+        participation_period_start: null,
+        participation_period_end: null,
+        participation_max_applications_per_participant: null,
+        participation_required_media: [],
+        participation_required_metadata: [],
+        chat_replies_open: true,
+        chat_replies_collapsed: true,
+        ...overrides
+      };
+    }
+
+    function createGateUseCase({
+      wave,
+      replyTarget
+    }: {
+      wave: Record<string, unknown>;
+      replyTarget: Record<string, unknown> | null;
+    }) {
+      const dropsDb = {
+        findDropByIdWithEligibilityCheck: jest
+          .fn()
+          .mockResolvedValue(replyTarget)
+      };
+      const wavesApiDb = { findById: jest.fn().mockResolvedValue(wave) };
+      const useCase = createUseCaseWithMocks({ dropsDb, wavesApiDb });
+      return { useCase, dropsDb };
+    }
+
+    function verifyGate(
+      useCase: CreateOrUpdateDropUseCase,
+      model: Record<string, unknown>,
+      groupIdsUserIsEligibleFor: string[] = []
+    ) {
+      return (useCase as any).verifyWaveLimitations(
+        {
+          isDescriptionDrop: false,
+          model,
+          groupIdsUserIsEligibleFor,
+          preExistingGroupMentions: []
+        },
+        { connection: {} }
+      );
+    }
+
+    const replyTo = { drop_id: 'announcement-1', drop_part_id: 1 };
+
+    it('lets outsiders reply to drops they can see', async () => {
+      const { useCase, dropsDb } = createGateUseCase({
+        wave: createRestrictedChatWave(),
+        replyTarget: { id: 'announcement-1', wave_id: 'wave-1' }
+      });
+
+      await expect(
+        verifyGate(useCase, createChatDropModel({ reply_to: replyTo }))
+      ).resolves.toBeDefined();
+      expect(dropsDb.findDropByIdWithEligibilityCheck).toHaveBeenCalledWith(
+        'announcement-1',
+        [],
+        {}
+      );
+    });
+
+    it('keeps top-level drops limited to the chat group', async () => {
+      const { useCase, dropsDb } = createGateUseCase({
+        wave: createRestrictedChatWave(),
+        replyTarget: { id: 'announcement-1', wave_id: 'wave-1' }
+      });
+
+      await expect(verifyGate(useCase, createChatDropModel())).rejects.toThrow(
+        'User is not eligible for this wave'
+      );
+      expect(dropsDb.findDropByIdWithEligibilityCheck).not.toHaveBeenCalled();
+    });
+
+    it('rejects outsider replies when replies are not open', async () => {
+      const { useCase, dropsDb } = createGateUseCase({
+        wave: createRestrictedChatWave({ chat_replies_open: false }),
+        replyTarget: { id: 'announcement-1', wave_id: 'wave-1' }
+      });
+
+      await expect(
+        verifyGate(useCase, createChatDropModel({ reply_to: replyTo }))
+      ).rejects.toThrow('User is not eligible for this wave');
+      expect(dropsDb.findDropByIdWithEligibilityCheck).not.toHaveBeenCalled();
+    });
+
+    it('rejects outsider replies to drops they cannot see', async () => {
+      const { useCase } = createGateUseCase({
+        wave: createRestrictedChatWave(),
+        replyTarget: null
+      });
+
+      await expect(
+        verifyGate(useCase, createChatDropModel({ reply_to: replyTo }))
+      ).rejects.toThrow('User is not eligible for this wave');
+    });
+
+    it('rejects outsider replies to drops in another wave', async () => {
+      const { useCase } = createGateUseCase({
+        wave: createRestrictedChatWave(),
+        replyTarget: { id: 'announcement-1', wave_id: 'wave-2' }
+      });
+
+      await expect(
+        verifyGate(useCase, createChatDropModel({ reply_to: replyTo }))
+      ).rejects.toThrow('User is not eligible for this wave');
+    });
+
+    it('rejects outsider replies when chat is disabled', async () => {
+      const { useCase, dropsDb } = createGateUseCase({
+        wave: createRestrictedChatWave({ chat_enabled: false }),
+        replyTarget: { id: 'announcement-1', wave_id: 'wave-1' }
+      });
+
+      await expect(
+        verifyGate(useCase, createChatDropModel({ reply_to: replyTo }))
+      ).rejects.toThrow('User is not eligible for this wave');
+      expect(dropsDb.findDropByIdWithEligibilityCheck).not.toHaveBeenCalled();
+    });
+  });
+
   it('reserves chat slow mode cooldown for non-admin chat drops', async () => {
     const wavesApiDb = {
       reserveWaveChatDropCooldown: jest.fn().mockResolvedValue(null)
