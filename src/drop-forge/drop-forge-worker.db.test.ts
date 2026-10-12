@@ -13,6 +13,8 @@ import {
   testWallet
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
+import { DROP_FORGE_LAUNCHES_TABLE } from '@/constants';
+import { sqlExecutor } from '@/sql-executor';
 
 describe('Drop Forge durable worker', () => {
   beforeEach(clearDropForgeTestTables);
@@ -177,6 +179,69 @@ describe('Drop Forge durable worker', () => {
     await acknowledgeReports();
     await worker.tick();
     expect(signer.sign).toHaveBeenCalledTimes(1);
+  });
+  it('rechecks new pause/resume reports when signing finishes', async () => {
+    await worker.tick();
+    await acknowledgeReports();
+    signer.sign.mockImplementationOnce(async (unsigned) => {
+      await repository.change(
+        id,
+        async (record) => {
+          setLaunchState(record, 'PAUSED', 'Paused during signing');
+          setLaunchState(record, 'RUNNING', 'Resumed during signing');
+        },
+        {}
+      );
+      return testWallet.signTransaction(Transaction.from(unsigned));
+    });
+    await worker.tick();
+    const saved = (await read())!;
+    expect(saved.data.actions[0].state).toBe('RESERVED');
+    expect(saved.data.actions[0].signed_tx).toBeUndefined();
+    expect(chain.broadcast).not.toHaveBeenCalled();
+    await acknowledgeReports();
+    await worker.tick();
+    expect((await read())!.data.actions[0].state).toBe('SIGNED');
+    expect(chain.broadcast).toHaveBeenCalledTimes(1);
+  });
+  it('finds a due launch behind twenty older future launches', async () => {
+    await repository.change(
+      id,
+      async (record) => {
+        for (const action of record.data.actions) action.due += 10000;
+      },
+      {}
+    );
+    const launches = Array.from({ length: 20 }, (_, index) => {
+      const claim = index + 2;
+      const data = testLaunchData();
+      data.claim_id = claim;
+      if (claim < 21) for (const action of data.actions) action.due += 10000;
+      return {
+        id: launchId(testConfig.chainId, testConfig.creator, claim),
+        revision: 1,
+        state: 'ARMED',
+        error: null,
+        data: JSON.stringify(data),
+        updated_at: claim,
+        report_pending: 0
+      };
+    });
+    await sqlExecutor.execute(
+      `UPDATE ${DROP_FORGE_LAUNCHES_TABLE} SET updated_at = 1 WHERE id = :id`,
+      { id }
+    );
+    await sqlExecutor.bulkInsert(
+      DROP_FORGE_LAUNCHES_TABLE,
+      launches,
+      Object.keys(launches[0])
+    );
+    await worker.tick();
+    const dueId = launchId(testConfig.chainId, testConfig.creator, 21);
+    const due = (await repository.find(dueId, {}))!;
+    expect(due.data.actions[0].state).toBe('RESERVED');
+    expect((await read())!.data.actions[0].state).toBe('PENDING');
+    expect(chain.prepare).toHaveBeenCalledTimes(1);
   });
   it('does not reopen a cancelled launch when signing fails', async () => {
     await worker.tick();

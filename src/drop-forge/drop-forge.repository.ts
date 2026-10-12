@@ -141,13 +141,28 @@ export class DropForgeRepository {
       parentCtx.timer?.stop(timer);
     }
   }
-  async active(ctx: RequestContext): Promise<LaunchRecord[]> {
+  async active(now: number, ctx: RequestContext): Promise<LaunchRecord[]> {
     const timer = 'DropForgeRepository->active';
     ctx.timer?.start(timer);
     try {
       const rows = await sqlExecutor.execute<StoredLaunch>(
-        `SELECT * FROM ${DROP_FORGE_LAUNCHES_TABLE} WHERE state IN ('ARMED','RUNNING') ORDER BY updated_at ASC LIMIT 20`,
-        {},
+        `SELECT eligible.id, eligible.revision, eligible.state, eligible.error, eligible.data, eligible.updated_at
+         FROM (
+           SELECT launches.*,
+             (SELECT actions.action_due
+              FROM JSON_TABLE(launches.data, '$.actions[*]' COLUMNS (
+                action_index FOR ORDINALITY,
+                action_state VARCHAR(16) PATH '$.state',
+                action_due BIGINT PATH '$.due'
+              )) actions
+              WHERE actions.action_state <> 'CONFIRMED'
+              ORDER BY actions.action_index LIMIT 1) AS next_due
+           FROM ${DROP_FORGE_LAUNCHES_TABLE} launches
+           WHERE launches.state IN ('ARMED','RUNNING') AND launches.report_pending = 0
+         ) eligible
+         WHERE eligible.next_due IS NULL OR eligible.next_due <= :now
+         ORDER BY eligible.next_due ASC, eligible.id ASC LIMIT 20`,
+        { now },
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );
       return rows.map(decodeLaunch);

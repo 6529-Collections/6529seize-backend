@@ -33,7 +33,10 @@ export class DropForgeWorker {
       walletId,
       async (pending, ctx): Promise<Work | null> => {
         if (pending.launch_id) return this.pendingWork(pending, ctx);
-        for (const candidate of await this.repository.active(ctx)) {
+        for (const candidate of await this.repository.active(
+          await this.chain.now(),
+          ctx
+        )) {
           const record = await this.repository.lockLaunch(candidate.id, ctx);
           if (!runnable(record)) continue;
           if (record.data.events.some((event) => !event.drop_id)) continue;
@@ -210,7 +213,12 @@ export class DropForgeWorker {
         const action = record.data.actions.find(
           (it) => it.id === work.action.id
         )!;
-        if (action.state !== 'RESERVED' || !runnable(record)) return;
+        if (
+          action.state !== 'RESERVED' ||
+          !runnable(record) ||
+          record.data.events.some((event) => !event.drop_id)
+        )
+          return;
         action.signed_tx = raw;
         action.hash = signed.hash!;
         action.state = 'SIGNED';

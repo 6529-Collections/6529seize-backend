@@ -1775,6 +1775,9 @@ flowchart LR
 
 The worker reserves an unsigned intent under a signer row lock, persists its
 signed bytes and hash in another commit, and only then broadcasts. Pending
+reports are rechecked at the final signature commit. Candidate selection filters
+by the next unfinished action's due time and report acknowledgement before its
+20-row limit, preventing future launches from starving due work. Pending
 receipts reconcile across pause/cancel, with configurable confirmations and no
 automatic transaction replacement. Each subsequent action checks the latest
 confirmed canonical receipt, frozen source hash, claim configuration, creator-admin

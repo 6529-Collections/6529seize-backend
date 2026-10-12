@@ -150,6 +150,10 @@ Wave drop creation and acknowledgement commit together; a reporting retry does
 not repost a committed event. Push delivery after that commit is best effort.
 Before reserving the next action, the worker waits for prior wave reports. An
 unsigned RESERVED intent waits for its pending wave reports before signing.
+The worker rechecks acknowledgement under the signer lock before persisting a
+signature, including reports added by concurrent controls. Candidate selection
+uses the next unfinished action's due time, so future launches cannot hide due
+work behind the scan limit.
 Already-signed intent continues receipt reconciliation during a reporting outage;
 wave delivery failures do not cause replacement transactions. Each reporting pass
 drains up to five events per launch, and the worker runs reporting both before and
