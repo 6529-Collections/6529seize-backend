@@ -1,5 +1,17 @@
 # Drop Forge Auto Launch — Backend Requirements Analysis
 
+## Current Research requirement
+
+Research is the final automated Launch action; only Pay Artist remains excluded.
+Eligibility is fifteen minutes after the calendar's mint end (17:15 Europe/Athens
+on the following day). Target total is `min(310, frozen Craft edition size)` and
+quantity is `max(0, target - fresh on-chain total minted)`. Verify Craft edition
+equals on-chain `totalMax`; for edition 305 and total 287, send 18. Recheck supply
+before signing, retain one durable signed intent, reconcile confirmed manual
+Research receipts separately, skip satisfied targets, mirror the Research flag,
+and report activity/transactions/failures in the configured wave. Version 3 plans
+include this step; older plans require reconciliation before automatic execution.
+
 Status: original requirements analysis, 2026-10-09, retained as design context.
 The backend implementation now accompanies this analysis. Confirmed choices and
 remaining rollout boundaries are in [the operational guide](../../../docs/drop-forge-auto-launch.md).

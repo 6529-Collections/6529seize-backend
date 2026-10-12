@@ -2,6 +2,7 @@ import { claimAbi, LaunchChain } from '@/drop-forge/drop-forge.chain';
 import { LaunchRecord, LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
+import { creditManualResearch } from '@/drop-forge/drop-forge.research';
 
 function matchesManualAction(
   label: string | undefined,
@@ -62,7 +63,18 @@ export async function reconcileManual(
       throw new LaunchSafetyError(`Manual transaction reverted: ${proof.hash}`);
     }
     const decoded = claimAbi.parseTransaction({ data: evidence.calldata })!;
-    if (
+    if (decoded.name === 'airdrop' && proof.action === 'RESEARCH_AIRDROP') {
+      const allocations = new Map<string, number>();
+      const amounts = decoded.args[3] as bigint[];
+      (decoded.args[2] as string[]).forEach((address, index) => {
+        const amount = Number(amounts[index]);
+        if (!Number.isSafeInteger(amount) || amount <= 0)
+          throw new LaunchSafetyError('Invalid manual research airdrop amount');
+        const key = address.toLowerCase();
+        allocations.set(key, (allocations.get(key) ?? 0) + amount);
+      });
+      creditManualResearch(record.data, allocations, proof.hash);
+    } else if (
       decoded.name === 'airdrop' &&
       record.data.actions.some(
         (it) => it.kind === 'AIRDROP' && it.state !== 'CONFIRMED'

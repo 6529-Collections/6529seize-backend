@@ -17,7 +17,8 @@ describe('Drop Forge launch planning', () => {
     expect(plan.actions.map((action) => action.kind)).toEqual([
       'INITIALIZE',
       'AIRDROP',
-      'UPDATE'
+      'UPDATE',
+      'AIRDROP'
     ]);
     expect(plan.actions[1].recipients[0].amount).toBe(1);
     const parameters = claimAbi.decodeFunctionData(
@@ -66,7 +67,11 @@ describe('Drop Forge launch planning', () => {
       included.actions
         .filter((it) => it.kind === 'AIRDROP')
         .map((it) => it.label)
-    ).toEqual(['Airdrop - Artist', 'Phase 0 Subscription Airdrops']);
+    ).toEqual([
+      'Airdrop - Artist',
+      'Phase 0 Subscription Airdrops',
+      'Research airdrop'
+    ]);
   });
   it('rejects a public phase containing an allowlist and an unmapped phase', () => {
     expect(() =>
@@ -141,9 +146,12 @@ describe('Drop Forge launch planning', () => {
       ['AIRDROP', 1],
       ['UPDATE', 2],
       ['AIRDROP', 2],
-      ['UPDATE', 3]
+      ['UPDATE', 3],
+      ['AIRDROP', 3]
     ]);
-    const batches = plan.actions.filter((it) => it.kind === 'AIRDROP');
+    const batches = plan.actions.filter(
+      (it) => it.kind === 'AIRDROP' && it.id !== 'research-airdrop'
+    );
     expect(batches.map((it) => it.recipients[0].amount)).toEqual([1, 2, 7]);
     expect(batches.map((it) => [it.due, it.deadline])).toEqual([
       [1000, 4000],
@@ -154,6 +162,9 @@ describe('Drop Forge launch planning', () => {
     expect(publicUpdate.due).toBe(10001);
     expect(publicUpdate.deadline).toBeGreaterThan(publicUpdate.due);
     expect(publicUpdate.deadline).toBeLessThan(input.phases[3].end);
+    const research = plan.actions[7];
+    expect(research.due).toBe(input.phases[3].end + 900);
+    expect(research.recipients).toEqual([]);
   });
   it('rejects unmapped subscriber-only phases rather than airdropping them early', () => {
     expect(() =>

@@ -5,6 +5,10 @@ import {
   testLaunchData
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
+import {
+  isResearchAirdrop,
+  RESEARCH_AIRDROP_ADDRESS
+} from '@/drop-forge/drop-forge.research';
 function setup(amount = 2) {
   const data = testLaunchData();
   data.actions[1].recipients[0].amount = amount;
@@ -114,4 +118,43 @@ it('blocks ambiguous undeclared categories before allocating any credits', async
     'ambiguous'
   );
   expect(first.credited_tokens).toBeUndefined();
+});
+
+it('records confirmed manual research without crediting phase allocations or repeating the proof', async () => {
+  const { record, chain, inspectTransaction, receipt } = setup();
+  record.data.edition_size = 305;
+  record.data.manual_transactions![0].action = 'RESEARCH_AIRDROP';
+  inspectTransaction.mockResolvedValue({
+    receipt,
+    calldata: claimAbi.encodeFunctionData('airdrop', [
+      record.data.contract,
+      record.data.claim_id,
+      [RESEARCH_AIRDROP_ADDRESS],
+      [18]
+    ])
+  });
+  await reconcileManual(record, chain, testConfig);
+  const research = record.data.actions.find(isResearchAirdrop)!;
+  expect(research.credited_tokens).toBe(18);
+  expect(research.manual_hashes).toEqual(['manual-hash']);
+  expect(research.state).toBe('PENDING');
+  expect(record.data.actions[1].credited_tokens).toBeUndefined();
+  await reconcileManual(record, chain, testConfig);
+  expect(inspectTransaction).toHaveBeenCalledTimes(1);
+  expect(research.credited_tokens).toBe(18);
+  chain.receipt.mockResolvedValue(null);
+  await expect(reconcileManual(record, chain, testConfig)).rejects.toThrow(
+    'canonical'
+  );
+});
+
+it('rejects a manual research declaration that sends tokens to another wallet', async () => {
+  const { record, chain } = setup();
+  record.data.manual_transactions![0].action = 'RESEARCH_AIRDROP';
+  await expect(reconcileManual(record, chain, testConfig)).rejects.toThrow(
+    'Manual research transaction'
+  );
+  expect(
+    record.data.actions.find(isResearchAirdrop)!.credited_tokens
+  ).toBeUndefined();
 });

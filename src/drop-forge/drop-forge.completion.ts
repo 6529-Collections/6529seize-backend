@@ -22,6 +22,7 @@ export async function mirrorCompletion(
     let flags: string[] = [];
     if (label === 'Airdrop - Artist') flags = ['ARTIST_AIRDROP'];
     else if (label === 'Airdrop - Team') flags = ['TEAM_AIRDROP'];
+    else if (label === 'Research airdrop') flags = ['RESEARCH_AIRDROP'];
     else if (label.toLowerCase().includes('public'))
       flags = ['PUBLIC_PHASE_AIRDROP'];
     else {

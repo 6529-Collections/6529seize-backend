@@ -127,6 +127,21 @@ per transaction, at most 20,000 phase-recipient entries per plan):
   inclusion; confirmation/reporting can follow later. It never replaces a live
   Phase 2 window. The cutover confirmation deadline is its due time plus one
   transaction's planning allowance, capped at the public end.
+- At 17:15 the next day: Research becomes eligible, fifteen minutes after the
+  calendar's public mint close. The target is `min(310, frozen Craft edition)`;
+  the amount is `max(0, target - current on-chain total)`, counting paid mints
+  and every earlier airdrop. Craft edition and on-chain `totalMax` must match.
+  For edition 305 and total 287, exactly 18 tokens go to the existing Research
+  wallet. An already-filled target completes without sending a transaction.
+  Research uses a 24-hour execution/confirmation window after eligibility, with
+  the same two-minute submission cutoff, gas limits and report gates. Scheduler
+  or network delays can delay inclusion; 17:15 is eligibility, not guaranteed
+  block inclusion. Supply is captured before reservation and rechecked before
+  signing. Confirmed manual Research receipts are reconciled separately from
+  subscriber allocations, and their supply reduces any remaining top-up.
+  Completion mirrors `RESEARCH_AIRDROP` into Launch and posts wave activity with
+  transaction links; failures use the existing `@dropforgers6529` alert path.
+  Pay Artist remains manual.
 
 For each initialization/transition, admission requires
 `transaction_count * (confirmations * 12 + 60) + 120` seconds: Ethereum slot
@@ -142,7 +157,8 @@ Phase updates snapshot the actual minted supply once the preceding window has
 closed. Subsequent batches validate that persisted baseline plus only the
 confirmed batches from that transition. Normal earlier-phase mints are therefore
 allowed; unexpected supply changes inside the transition and insufficient edition
-headroom block execution. Old flattened plans have no version-2 marker and cannot
+headroom block execution. Current plans use version 3 and include post-mint
+Research. Older plans (including version 2, which omitted Research) cannot
 be armed, resumed, newly signed or rebroadcast; existing signed receipts remain
 reconcilable. Recreate an unstarted draft, or manually reconcile a started ledger.
 

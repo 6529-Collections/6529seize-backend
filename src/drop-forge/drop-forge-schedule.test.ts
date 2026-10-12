@@ -1,6 +1,9 @@
 import fetch from 'node-fetch';
 import { standardLaunchPlan } from '@/drop-forge/drop-forge.schedule';
 import { testSource } from '@/drop-forge/drop-forge.test-fixtures';
+import { buildLaunchPlan } from '@/drop-forge/drop-forge.plan';
+import { testConfig } from '@/drop-forge/drop-forge.test-fixtures';
+import { isResearchAirdrop } from '@/drop-forge/drop-forge.research';
 jest.mock('node-fetch', () => ({ __esModule: true, default: jest.fn() }));
 const source = {
   ...testSource,
@@ -27,6 +30,22 @@ it.each(['2026-10-12T14:40:00Z', '2026-11-02T15:40:00Z'])(
       [start + 4800, start + 6000],
       [start + 6000, end]
     ]);
+    const launch = buildLaunchPlan(
+      testConfig,
+      123,
+      plan,
+      source,
+      start - 3600,
+      true
+    );
+    expect(
+      new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/Athens',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).format(new Date(launch.actions.find(isResearchAirdrop)!.due * 1000))
+    ).toBe('17:15');
   }
 );
 it('rejects a calendar for another claim or a mint already started', async () => {

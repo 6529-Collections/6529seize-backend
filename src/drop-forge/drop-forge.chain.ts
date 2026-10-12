@@ -14,6 +14,12 @@ import {
   assertPhaseScopedPlan
 } from '@/drop-forge/drop-forge.types';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
+import {
+  assertResearchTiming,
+  isResearchAirdrop,
+  researchAirdropAmount,
+  verifyResearchSupply
+} from '@/drop-forge/drop-forge.research';
 
 async function rpcWithDeadline<T>(request: Promise<T>): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -220,6 +226,10 @@ export class EthereumLaunchChain implements LaunchChain {
     total: number,
     capture: boolean
   ): Promise<void> {
+    if (isResearchAirdrop(action)) {
+      verifyResearchSupply(data, action, total, await this.now(), capture);
+      return;
+    }
     const phaseActions = data.actions.filter((it) => it.phase === action.phase);
     const airdropAmount = (it: LaunchAction) =>
       it.recipients.reduce((sum, row) => sum + row.amount, 0);
@@ -354,7 +364,10 @@ export class EthereumLaunchChain implements LaunchChain {
     action: LaunchAction
   ): Promise<{ total: number; metadata?: string } | null> {
     this.assertBinding(data);
-    if (!['INITIALIZE', 'UPDATE', 'METADATA'].includes(action.kind))
+    if (
+      !['INITIALIZE', 'UPDATE', 'METADATA'].includes(action.kind) &&
+      !isResearchAirdrop(action)
+    )
       return null;
     const claim = await this.readClaim(data);
     if (!claim) return null;
@@ -363,6 +376,23 @@ export class EthereumLaunchChain implements LaunchChain {
         'Initialized claim token does not match the prepared claim'
       );
     const phase = data.phases[action.phase];
+    if (isResearchAirdrop(action)) {
+      assertResearchTiming(data, action, await this.now());
+      // Validate the complete frozen claim configuration even when no top-up is
+      // required. Reuse the metadata observation encoding without changing it.
+      const configured = await this.completed(data, {
+        ...action,
+        kind: 'METADATA',
+        target_metadata: data.metadata
+      });
+      if (!configured)
+        throw new LaunchSafetyError(
+          'Claim configuration changed before research reconciliation'
+        );
+      return researchAirdropAmount(configured.total, data.edition_size) === 0
+        ? { total: configured.total }
+        : null;
+    }
     if (action.kind === 'METADATA') {
       if (claim.location !== action.target_metadata) return null;
     } else if (

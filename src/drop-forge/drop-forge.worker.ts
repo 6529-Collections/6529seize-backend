@@ -13,14 +13,24 @@ import {
   LaunchAction,
   LaunchRecord,
   LaunchSafetyError,
+  DROP_FORGE_PLAN_VERSION,
   assertPhaseScopedPlan
 } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
+import { isResearchAirdrop } from '@/drop-forge/drop-forge.research';
 
 type Work = { record: LaunchRecord; action: LaunchAction };
 type PendingSigner = { launch_id: string | null; action_id: string | null };
 const runnable = (record: LaunchRecord) =>
   ['ARMED', 'RUNNING'].includes(record.state);
+
+function observedMessage(action: LaunchAction, total: number): string {
+  if (isResearchAirdrop(action))
+    return `Research target already satisfied (${total} total minted); no research transaction needed`;
+  if (action.kind === 'INITIALIZE') return 'Already initialized';
+  if (action.kind === 'METADATA') return 'Metadata already synchronized';
+  return 'Phase configuration already applied';
+}
 
 export class DropForgeWorker {
   constructor(
@@ -113,11 +123,11 @@ export class DropForgeWorker {
       throw new LaunchSafetyError(
         'Signer ledger is inconsistent; manual recovery required'
       );
-    if (record.data.plan_version !== 2)
+    if (record.data.plan_version !== DROP_FORGE_PLAN_VERSION)
       setLaunchState(
         record,
         'BLOCKED',
-        'Legacy launch plan requires manual reconciliation before phase-scoped execution'
+        'Legacy launch plan requires manual reconciliation before phase/research execution'
       );
     if (action.state === 'RESERVED' && !runnable(record)) {
       action.state = 'PENDING';
@@ -185,7 +195,7 @@ export class DropForgeWorker {
       setLaunchState(
         record,
         'COMPLETED',
-        'All launch transactions confirmed. Mint windows continue to enforce their configured times on-chain.'
+        'All launch work completed, including post-mint Research reconciliation.'
       );
       await this.repository.save(record, ctx);
       return null;
@@ -203,12 +213,15 @@ export class DropForgeWorker {
         .find(
           (it) =>
             it.state === 'CONFIRMED' &&
-            it.phase === action.phase &&
-            it.method ===
-              (action.kind === 'INITIALIZE'
-                ? 'initializeClaim'
-                : 'updateClaim') &&
-            it.metadata === (action.target_metadata ?? record.data.metadata)
+            (isResearchAirdrop(action)
+              ? it.action === 'RESEARCH_AIRDROP' && it.method === 'airdrop'
+              : it.phase === action.phase &&
+                it.method ===
+                  (action.kind === 'INITIALIZE'
+                    ? 'initializeClaim'
+                    : 'updateClaim') &&
+                it.metadata ===
+                  (action.target_metadata ?? record.data.metadata))
         );
       if (proof) {
         action.hash = proof.hash;
@@ -227,7 +240,7 @@ export class DropForgeWorker {
         record.data.metadata = action.target_metadata!;
       addLaunchEvent(
         record,
-        `Claim #${record.data.claim_id}: ${action.kind === 'INITIALIZE' ? 'Already initialized' : action.kind === 'METADATA' ? 'Metadata already synchronized' : 'Phase configuration already applied'}; verified on-chain (${action.id}).${proof ? ` ${proof.hash}` : ''}`
+        `Claim #${record.data.claim_id}: ${observedMessage(action, completed.total)}; verified on-chain (${action.id}).${proof ? ` ${proof.hash}` : ''}`
       );
       await this.repository.save(record, ctx);
       return null;
@@ -381,7 +394,7 @@ export class DropForgeWorker {
           await this.repository.save(record, ctx);
           return null;
         }
-        if (record.data.plan_version !== 2) {
+        if (record.data.plan_version !== DROP_FORGE_PLAN_VERSION) {
           setLaunchState(
             record,
             'BLOCKED',

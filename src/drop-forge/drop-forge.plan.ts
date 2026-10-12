@@ -8,8 +8,10 @@ import {
   LaunchAction,
   LaunchData,
   LaunchPhase,
+  DROP_FORGE_PLAN_VERSION,
   LaunchSafetyError
 } from '@/drop-forge/drop-forge.types';
+import { RESEARCH_DELAY_SECONDS } from '@/drop-forge/drop-forge.research';
 
 const automaticPhases = new Set<string>(DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES);
 
@@ -198,8 +200,20 @@ export function buildLaunchPlan(
         });
     }
   }
+  const finalPhase = phases.length - 1;
+  const researchDue = phases[finalPhase].end + RESEARCH_DELAY_SECONDS;
+  actions.push({
+    id: 'research-airdrop',
+    label: 'Research airdrop',
+    kind: 'AIRDROP',
+    phase: finalPhase,
+    due: researchDue,
+    deadline: researchDue + 24 * 60 * 60,
+    recipients: [],
+    state: 'PENDING'
+  });
   return {
-    plan_version: 2,
+    plan_version: DROP_FORGE_PLAN_VERSION,
     chain_id: config.chainId,
     contract: config.creator,
     claim_id: claim,

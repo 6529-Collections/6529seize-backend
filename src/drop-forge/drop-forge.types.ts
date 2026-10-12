@@ -1,3 +1,4 @@
+export const DROP_FORGE_PLAN_VERSION = 3;
 export type LaunchState =
   | 'DRAFT'
   | 'ARMED'
@@ -109,8 +110,8 @@ export class LaunchSafetyError extends Error {
 export class LaunchRevisionConflict extends LaunchSafetyError {}
 
 export function assertPhaseScopedPlan(data: LaunchData): void {
-  if (data.plan_version !== 2)
+  if (data.plan_version !== DROP_FORGE_PLAN_VERSION)
     throw new LaunchSafetyError(
-      'Legacy launch plan uses pre-window airdrops; recreate an unstarted draft or reconcile started work manually'
+      'Legacy launch plan lacks the current phase/research workflow; recreate an unstarted draft or reconcile started work manually'
     );
 }
