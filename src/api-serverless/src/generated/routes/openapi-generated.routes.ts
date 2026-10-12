@@ -8,6 +8,7 @@ import { Response } from 'express';
 import { ArtworkDocumentationAppendMuseumRecordRequest, ArtworkDocumentationAppendMuseumRecordResponse, ArtworkDocumentationCancelDocumentationUploadRequest, ArtworkDocumentationCancelDocumentationUploadResponse, ArtworkDocumentationCommentDocumentationThreadRequest, ArtworkDocumentationCommentDocumentationThreadResponse, ArtworkDocumentationCompleteDocumentationUploadRequest, ArtworkDocumentationCompleteDocumentationUploadResponse, ArtworkDocumentationConfirmDocumentationRequest, ArtworkDocumentationConfirmDocumentationResponse, ArtworkDocumentationCreateArtworkDossierExportRequest, ArtworkDocumentationCreateArtworkDossierExportResponse, ArtworkDocumentationCreateDocumentationContextRequest, ArtworkDocumentationCreateDocumentationContextResponse, ArtworkDocumentationCreateDocumentationThreadRequest, ArtworkDocumentationCreateDocumentationThreadResponse, ArtworkDocumentationCreateDocumentationWorkRequest, ArtworkDocumentationCreateDocumentationWorkResponse, ArtworkDocumentationDownloadDocumentationAssetRequest, ArtworkDocumentationDownloadDocumentationAssetResponse, ArtworkDocumentationGetArtworkArtistRecordRequest, ArtworkDocumentationGetArtworkArtistRecordResponse, ArtworkDocumentationGetArtworkDossierExportRequest, ArtworkDocumentationGetArtworkDossierExportResponse, ArtworkDocumentationGetArtworkDossierRequest, ArtworkDocumentationGetArtworkDossierResponse, ArtworkDocumentationGetDocumentationContextRequest, ArtworkDocumentationGetDocumentationContextResponse, ArtworkDocumentationGetDocumentationProfilesRequest, ArtworkDocumentationGetDocumentationProfilesResponse, ArtworkDocumentationGetDocumentationPublicPreviewRequest, ArtworkDocumentationGetDocumentationPublicPreviewResponse, ArtworkDocumentationGetDocumentationRevisionRequest, ArtworkDocumentationGetDocumentationRevisionResponse, ArtworkDocumentationGetDocumentationUploadRequest, ArtworkDocumentationGetDocumentationUploadResponse, ArtworkDocumentationGetDocumentationWorkRequest, ArtworkDocumentationGetDocumentationWorkResponse, ArtworkDocumentationGrantDocumentationAccessRequest, ArtworkDocumentationGrantDocumentationAccessResponse, ArtworkDocumentationImportDocumentationSourceRequest, ArtworkDocumentationImportDocumentationSourceResponse, ArtworkDocumentationLinkDocumentationAssetRequest, ArtworkDocumentationLinkDocumentationAssetResponse, ArtworkDocumentationLinkDocumentationSourceRequest, ArtworkDocumentationLinkDocumentationSourceResponse, ArtworkDocumentationListDocumentationGrantsRequest, ArtworkDocumentationListDocumentationGrantsResponse, ArtworkDocumentationListDocumentationProgramRequest, ArtworkDocumentationListDocumentationProgramResponse, ArtworkDocumentationListDocumentationRevisionsRequest, ArtworkDocumentationListDocumentationRevisionsResponse, ArtworkDocumentationListDocumentationThreadsRequest, ArtworkDocumentationListDocumentationThreadsResponse, ArtworkDocumentationListDocumentationWorksRequest, ArtworkDocumentationListDocumentationWorksResponse, ArtworkDocumentationListMuseumRecordsRequest, ArtworkDocumentationListMuseumRecordsResponse, ArtworkDocumentationPatchDocumentationAssetLinkRequest, ArtworkDocumentationPatchDocumentationAssetLinkResponse, ArtworkDocumentationPatchDocumentationContextRequest, ArtworkDocumentationPatchDocumentationContextResponse, ArtworkDocumentationPatchDocumentationModuleRequest, ArtworkDocumentationPatchDocumentationModuleResponse, ArtworkDocumentationPatchDocumentationThreadRequest, ArtworkDocumentationPatchDocumentationThreadResponse, ArtworkDocumentationPinDocumentationArtistRequest, ArtworkDocumentationPinDocumentationArtistResponse, ArtworkDocumentationPreviewDocumentationSourceRequest, ArtworkDocumentationPreviewDocumentationSourceResponse, ArtworkDocumentationPreviewDocumentationUpgradeRequest, ArtworkDocumentationPreviewDocumentationUpgradeResponse, ArtworkDocumentationReviewDocumentationRequest, ArtworkDocumentationReviewDocumentationResponse, ArtworkDocumentationRevokeDocumentationAccessRequest, ArtworkDocumentationRevokeDocumentationAccessResponse, ArtworkDocumentationSignDocumentationPartsRequest, ArtworkDocumentationSignDocumentationPartsResponse, ArtworkDocumentationStartDocumentationUploadRequest, ArtworkDocumentationStartDocumentationUploadResponse, ArtworkDocumentationUnlinkDocumentationAssetRequest, ArtworkDocumentationUnlinkDocumentationAssetResponse, ArtworkDocumentationUpgradeDocumentationProfileRequest, ArtworkDocumentationUpgradeDocumentationProfileResponse } from './operations';
 import { AdvanceCollectPlanRequest, AdvanceCollectPlanResponse, AnalyzeCollectGoalRequest, AnalyzeCollectGoalResponse, AnalyzeCollectOffersRequest, AnalyzeCollectOffersResponse, CreateCollectDailyTdhPlanRequest, CreateCollectDailyTdhPlanResponse, CreateCollectPlanRequest, CreateCollectPlanResponse, CreateCollectRuleRequest, CreateCollectRuleResponse, CreateCollectTdhTargetPlanRequest, CreateCollectTdhTargetPlanResponse, GetCollectAssetsRequest, GetCollectAssetsResponse, GetCollectCapabilitiesRequest, GetCollectCapabilitiesResponse, GetCollectCatalogRequest, GetCollectCatalogResponse, GetCollectPlanRequest, GetCollectPlanResponse, GetCollectRuleRequest, GetCollectRuleResponse, GetCollectRulesRequest, GetCollectRulesResponse, GetCollectTdhListingsRequest, GetCollectTdhListingsResponse, GetMarketListingsRequest, GetMarketListingsResponse, PauseCollectRuleRequest, PauseCollectRuleResponse, PrepareCollectRuleRequest, PrepareCollectRuleResponse, ProjectCollectPurchasesRequest, ProjectCollectPurchasesResponse, RankCollectTdhPurchasesRequest, RankCollectTdhPurchasesResponse, ReconcileCollectRuleRequest, ReconcileCollectRuleResponse } from './operations';
 import { GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetDropCompetitionContextV3Request, GetDropCompetitionContextV3Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveHubV3Request, GetWaveHubV3Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVoteActivityV3Request, ListCompetitionVoteActivityV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response } from './operations';
+import { GetDeviceGrantsRequest, GetDeviceGrantsResponse, GetDropSignedEventsRequest, GetDropSignedEventsResponse, RevokeDeviceGrantRequest, RevokeDeviceGrantResponse } from './operations';
 import { BeginMarketTransactionAttemptRequest, BeginMarketTransactionAttemptResponse, ContinueMarketOperationRequest, ContinueMarketOperationResponse, GetMarketBatchCapabilitiesRequest, GetMarketBatchCapabilitiesResponse, GetMarketOperationRequest, GetMarketOperationResponse, GetMarketOrderRequest, GetMarketOrderResponse, GetMarketOrdersRequest, GetMarketOrdersResponse, GetMyMarketOperationsRequest, GetMyMarketOperationsResponse, PreflightMarketBatchRequest, PreflightMarketBatchResponse, PrepareMarketOperationRequest, PrepareMarketOperationResponse, PublishMarketOperationRequest, PublishMarketOperationResponse, RejectMarketTransactionAttemptRequest, RejectMarketTransactionAttemptResponse, SubmitMarketOperationRequest, SubmitMarketOperationResponse } from './operations';
 import { GetModerationAccessRequest, GetModerationAccessResponse, GetModerationCheckRequest, GetModerationCheckResponse, GetModerationChecksRequest, GetModerationChecksResponse, GetModerationCountsRequest, GetModerationCountsResponse, GetModerationProfileCheckRequest, GetModerationProfileCheckResponse, GetModerationReportCheckRequest, GetModerationReportCheckResponse, ModerationCheckActionRequest, ModerationCheckActionResponse } from './operations';
 import { GetProfilePreferencesRequest, GetProfilePreferencesResponse, PutProfilePreferencesRequest, PutProfilePreferencesResponse } from './operations';
@@ -27,6 +28,7 @@ import { handleGetCompetitionEntryV3, handleGetDefaultWaveCompetitionV3, handleG
 import { handleGetContentModerationBlockActivity } from '@/api/content-moderation/get-block-activity.handler';
 import { handleGetPublicContentModerationProfileStatus } from '@/api/content-moderation/get-public-profile-status.handler';
 import { handleGetModerationAccess, handleGetModerationCheck, handleGetModerationChecks, handleGetModerationCounts, handleGetModerationProfileCheck, handleGetModerationReportCheck, handleModerationCheckAction } from '@/api/content-moderation/moderation-review.handlers';
+import { handleGetDeviceGrants, handleGetDropSignedEvents, handleRevokeDeviceGrant } from '@/api/device-signing/device-signing.handlers';
 import { handleGetWalletDistributionAllocations } from '@/api/distributions/get-wallet-distribution-allocations.handler';
 import { handleGetDmDropsUnread, handleGetDmUnreadSnapshot } from '@/api/dm-drops/dm-drops.handlers';
 import { handleGetDropPollOptionVotersV2, handleGetWavePollsV2, handleVoteDropPollV2 } from '@/api/drops/drop-polls.handlers';
@@ -823,6 +825,28 @@ router.get(
 );
 
 router.get(
+  '/device-grants',
+  needsAuthenticatedUser(),
+  async (
+    req: GetDeviceGrantsRequest,
+    res: Response<ApiResponse<GetDeviceGrantsResponse>>
+  ) => {
+    res.send(await handleGetDeviceGrants(req));
+  }
+);
+
+router.post(
+  '/device-grants/:grantId/revoke',
+  needsAuthenticatedUser(),
+  async (
+    req: RevokeDeviceGrantRequest,
+    res: Response<ApiResponse<RevokeDeviceGrantResponse>>
+  ) => {
+    res.send(await handleRevokeDeviceGrant(req));
+  }
+);
+
+router.get(
   '/distributions/:contract/:card_id/wallet-allocations',
   cacheRequest({ ttl: Time.seconds(60) }),
   async (
@@ -863,6 +887,17 @@ router.post(
     res: Response<ApiResponse<CreateProposalFrameResponse>>
   ) => {
     res.send(await handleCreateProposalFrame(req));
+  }
+);
+
+router.get(
+  '/drops/:dropId/signed-events',
+  maybeAuthenticatedUser(),
+  async (
+    req: GetDropSignedEventsRequest,
+    res: Response<ApiResponse<GetDropSignedEventsResponse>>
+  ) => {
+    res.send(await handleGetDropSignedEvents(req));
   }
 );
 

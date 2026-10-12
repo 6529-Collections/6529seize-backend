@@ -308,3 +308,6 @@ export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export * from './ICompetitionMigration';
 
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
+export { DeviceGrantEntity } from './IDeviceGrant';
+export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
+export { DropAuthorSignatureEntity } from './IDropAuthorSignature';

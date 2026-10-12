@@ -6,6 +6,16 @@ import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
 import { normalizeWebAppOrigin } from '@/api/web-app-origins';
 import {
+  buildDeviceGrantUrn,
+  computeGrantExpiresAtSeconds,
+  DEVICE_GRANT_KEY_TYPE,
+  DeviceGrantScope,
+  DeviceGrantTerms,
+  isGrantLifetimeValid,
+  parseDeviceGrantUrn,
+  renderDeviceGrantStatement
+} from '@/api/device-signing/device-grant-message';
+import {
   getStructuredWalletSignatureAudienceForHost,
   isStructuredSignatureDomainAllowed,
   isStructuredWalletSignatureMessage,
@@ -49,6 +59,12 @@ export interface CreatedSiweWebAuthChallenge {
   readonly nonce: string;
   readonly issuedAt: Date;
   readonly expirationTime: Date;
+  readonly deviceGrant: DeviceGrantTerms | null;
+}
+
+export interface SiweDeviceGrantRequest {
+  readonly deviceKey: string;
+  readonly scopes: readonly DeviceGrantScope[];
 }
 
 export interface ParsedSiweWebAuthMessage {
@@ -61,6 +77,8 @@ export interface ParsedSiweWebAuthMessage {
   readonly nonce: string;
   readonly issuedAt: Date;
   readonly expirationTime: Date;
+  // Present only for messages that also grant a device signing key.
+  readonly deviceGrant: DeviceGrantTerms | null;
 }
 
 export interface VerifiedSiweWebAuth {
@@ -68,6 +86,9 @@ export interface VerifiedSiweWebAuth {
   readonly domain: string;
   readonly nonce: string;
   readonly expirationTime: Date;
+  readonly chainId: number;
+  readonly issuedAt: Date;
+  readonly deviceGrant: DeviceGrantTerms | null;
 }
 
 export type VerifiedSessionChallenge =
@@ -88,6 +109,7 @@ interface CreateSiweWebAuthChallengeParams {
   readonly chainId: number;
   readonly nonce?: string;
   readonly issuedAt?: Date;
+  readonly deviceGrant?: SiweDeviceGrantRequest | null;
 }
 
 interface SignSiweWebAuthChallengeParams {
@@ -171,7 +193,8 @@ export function createSiweWebAuthChallenge({
   clientOrigin,
   chainId,
   nonce = generateSiweWalletAuthNonce(),
-  issuedAt = new Date()
+  issuedAt = new Date(),
+  deviceGrant = null
 }: CreateSiweWebAuthChallengeParams): CreatedSiweWebAuthChallenge {
   const normalizedOrigin = normalizeWebAppOrigin(clientOrigin);
   const issuedAtSeconds = toWholeSecondDate(issuedAt);
@@ -191,17 +214,23 @@ export function createSiweWebAuthChallenge({
   const expirationTime = new Date(
     issuedAtSeconds.getTime() + SIWE_WALLET_AUTH_TTL_SECONDS * 1000
   );
+  const grantTerms = deviceGrant
+    ? toDeviceGrantTerms(deviceGrant, issuedAtSeconds)
+    : null;
   const siweMessage = new SiweMessage({
     scheme: originUrl.protocol.slice(0, -1),
     domain: originUrl.host,
     address: checksummedAddress,
-    statement: SIWE_WALLET_AUTH_STATEMENT,
+    statement: grantTerms
+      ? renderDeviceGrantStatement(grantTerms)
+      : SIWE_WALLET_AUTH_STATEMENT,
     uri: normalizedOrigin,
     version: SIWE_VERSION,
     chainId,
     nonce,
     issuedAt: issuedAtSeconds.toISOString(),
-    expirationTime: expirationTime.toISOString()
+    expirationTime: expirationTime.toISOString(),
+    ...(grantTerms ? { resources: [buildDeviceGrantUrn(grantTerms)] } : {})
   });
 
   return {
@@ -210,8 +239,27 @@ export function createSiweWebAuthChallenge({
     domain: originUrl.host,
     nonce,
     issuedAt: issuedAtSeconds,
-    expirationTime
+    expirationTime,
+    deviceGrant: grantTerms
   };
+}
+
+function toDeviceGrantTerms(
+  request: SiweDeviceGrantRequest,
+  issuedAt: Date
+): DeviceGrantTerms {
+  const terms: DeviceGrantTerms = {
+    keyType: DEVICE_GRANT_KEY_TYPE,
+    deviceKey: request.deviceKey,
+    scopes: [...request.scopes],
+    expiresAtSeconds: computeGrantExpiresAtSeconds(issuedAt)
+  };
+  // Round trip through the parser so only messages it accepts are issued.
+  const parsed = parseDeviceGrantUrn(buildDeviceGrantUrn(terms));
+  if (!parsed || !isGrantLifetimeValid(parsed.expiresAtSeconds, issuedAt)) {
+    throw new Error('Invalid SIWE device grant');
+  }
+  return parsed;
 }
 
 export function signSiweWebAuthChallenge({
@@ -314,7 +362,6 @@ export function parseSiweWebAuthMessage(
       parsed.prepareMessage() !== message ||
       parsed.scheme === undefined ||
       parsed.version !== SIWE_VERSION ||
-      parsed.statement !== SIWE_WALLET_AUTH_STATEMENT ||
       parsed.address !== checksummedAddress ||
       !normalizedUri ||
       parsed.uri !== normalizedUri ||
@@ -329,9 +376,16 @@ export function parseSiweWebAuthMessage(
       expirationTime.getTime() - issuedAt.getTime() >
         SIWE_WALLET_AUTH_TTL_SECONDS * 1000 ||
       parsed.notBefore !== undefined ||
-      parsed.requestId !== undefined ||
-      parsed.resources !== undefined
+      parsed.requestId !== undefined
     ) {
+      return null;
+    }
+    const variant = parseStatementVariant(
+      parsed.statement,
+      parsed.resources,
+      issuedAt
+    );
+    if (!variant) {
       return null;
     }
 
@@ -344,11 +398,41 @@ export function parseSiweWebAuthMessage(
       chainId: parsed.chainId,
       nonce: parsed.nonce,
       issuedAt,
-      expirationTime
+      expirationTime,
+      deviceGrant: variant.deviceGrant
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Accepts exactly two shapes: the plain login (constant statement, no
+ * resources) or a device grant (one valid grant URN and the statement
+ * rendered from it). Everything else fails closed.
+ */
+function parseStatementVariant(
+  statement: string | undefined,
+  resources: string[] | undefined,
+  issuedAt: Date
+): { readonly deviceGrant: DeviceGrantTerms | null } | null {
+  if (resources === undefined) {
+    return statement === SIWE_WALLET_AUTH_STATEMENT
+      ? { deviceGrant: null }
+      : null;
+  }
+  if (!Array.isArray(resources) || resources.length !== 1) {
+    return null;
+  }
+  const grant = parseDeviceGrantUrn(resources[0]);
+  if (
+    !grant ||
+    !isGrantLifetimeValid(grant.expiresAtSeconds, issuedAt) ||
+    statement !== renderDeviceGrantStatement(grant)
+  ) {
+    return null;
+  }
+  return { deviceGrant: grant };
 }
 
 export async function verifySiweWebAuthSignature({
@@ -389,7 +473,10 @@ export async function verifySiweWebAuthSignature({
     address: signingAddress,
     domain: parsed.domain,
     nonce: parsed.nonce,
-    expirationTime: parsed.expirationTime
+    expirationTime: parsed.expirationTime,
+    chainId: parsed.chainId,
+    issuedAt: parsed.issuedAt,
+    deviceGrant: parsed.deviceGrant
   };
 }
 
