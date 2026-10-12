@@ -236,8 +236,10 @@ uses the next unfinished action's due time, so future launches cannot hide due
 work behind the scan limit.
 Already-signed intent continues receipt reconciliation during a reporting outage;
 wave delivery failures do not cause replacement transactions. Each reporting pass
-drains up to five events per launch, and the worker runs reporting both before and
-after transaction work. Canonicality is rechecked against the latest confirmed
+drains up to five events per launch. A Launch invocation reports once before work
+and after each of up to three work cycles; larger backlogs remain durable and
+drain across passes and the one-minute schedule. New signing waits for the backlog
+to clear. Canonicality is rechecked against the latest confirmed
 action; serialized actions share the same chain ancestry. Missing wave/profile
 permissions require operator correction. CloudWatch invocation-error alarms cover
 worker/config failures when wave delivery cannot report an error. Arming checks

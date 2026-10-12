@@ -31,6 +31,22 @@ function observedMessage(action: LaunchAction, total: number): string {
   if (action.kind === 'METADATA') return 'Metadata already synchronized';
   return 'Phase configuration already applied';
 }
+function matchesObservedProof(
+  record: LaunchRecord,
+  action: LaunchAction,
+  proof: NonNullable<LaunchRecord['data']['manual_transactions']>[number]
+): boolean {
+  if (proof.state !== 'CONFIRMED') return false;
+  if (isResearchAirdrop(action))
+    return proof.action === 'RESEARCH_AIRDROP' && proof.method === 'airdrop';
+  const method =
+    action.kind === 'INITIALIZE' ? 'initializeClaim' : 'updateClaim';
+  return (
+    proof.phase === action.phase &&
+    proof.method === method &&
+    proof.metadata === (action.target_metadata ?? record.data.metadata)
+  );
+}
 
 export class DropForgeWorker {
   constructor(
@@ -210,19 +226,7 @@ export class DropForgeWorker {
         record.data.metadata = completed.metadata;
       const proof = [...(record.data.manual_transactions ?? [])]
         .reverse()
-        .find(
-          (it) =>
-            it.state === 'CONFIRMED' &&
-            (isResearchAirdrop(action)
-              ? it.action === 'RESEARCH_AIRDROP' && it.method === 'airdrop'
-              : it.phase === action.phase &&
-                it.method ===
-                  (action.kind === 'INITIALIZE'
-                    ? 'initializeClaim'
-                    : 'updateClaim') &&
-                it.metadata ===
-                  (action.target_metadata ?? record.data.metadata))
-        );
+        .find((it) => matchesObservedProof(record, action, it));
       if (proof) {
         action.hash = proof.hash;
         action.block_hash = proof.block_hash;
@@ -238,9 +242,10 @@ export class DropForgeWorker {
       }
       if (action.kind === 'METADATA')
         record.data.metadata = action.target_metadata!;
+      const proofLink = proof ? ' ' + proof.hash : '';
       addLaunchEvent(
         record,
-        `Claim #${record.data.claim_id}: ${observedMessage(action, completed.total)}; verified on-chain (${action.id}).${proof ? ` ${proof.hash}` : ''}`
+        `Claim #${record.data.claim_id}: ${observedMessage(action, completed.total)}; verified on-chain (${action.id}).${proofLink}`
       );
       await this.repository.save(record, ctx);
       return null;

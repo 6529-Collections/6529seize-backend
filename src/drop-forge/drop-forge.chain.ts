@@ -359,15 +359,31 @@ export class EthereumLaunchChain implements LaunchChain {
       );
     return { calldata: tx.data, receipt: await this.receipt(hash) };
   }
+  private async researchCompleted(
+    data: LaunchData,
+    action: LaunchAction
+  ): Promise<{ total: number } | null> {
+    assertResearchTiming(data, action, await this.now());
+    const configured = await this.completed(data, {
+      ...action,
+      kind: 'METADATA',
+      target_metadata: data.metadata
+    });
+    if (!configured)
+      throw new LaunchSafetyError(
+        'Claim configuration changed before research reconciliation'
+      );
+    return researchAirdropAmount(configured.total, data.edition_size) === 0
+      ? { total: configured.total }
+      : null;
+  }
   async completed(
     data: LaunchData,
     action: LaunchAction
   ): Promise<{ total: number; metadata?: string } | null> {
     this.assertBinding(data);
-    if (
-      !['INITIALIZE', 'UPDATE', 'METADATA'].includes(action.kind) &&
-      !isResearchAirdrop(action)
-    )
+    if (isResearchAirdrop(action)) return this.researchCompleted(data, action);
+    if (!['INITIALIZE', 'UPDATE', 'METADATA'].includes(action.kind))
       return null;
     const claim = await this.readClaim(data);
     if (!claim) return null;
@@ -376,23 +392,6 @@ export class EthereumLaunchChain implements LaunchChain {
         'Initialized claim token does not match the prepared claim'
       );
     const phase = data.phases[action.phase];
-    if (isResearchAirdrop(action)) {
-      assertResearchTiming(data, action, await this.now());
-      // Validate the complete frozen claim configuration even when no top-up is
-      // required. Reuse the metadata observation encoding without changing it.
-      const configured = await this.completed(data, {
-        ...action,
-        kind: 'METADATA',
-        target_metadata: data.metadata
-      });
-      if (!configured)
-        throw new LaunchSafetyError(
-          'Claim configuration changed before research reconciliation'
-        );
-      return researchAirdropAmount(configured.total, data.edition_size) === 0
-        ? { total: configured.total }
-        : null;
-    }
     if (action.kind === 'METADATA') {
       if (claim.location !== action.target_metadata) return null;
     } else if (
