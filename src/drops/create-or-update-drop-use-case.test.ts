@@ -32,10 +32,6 @@ import {
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
 import { PrePublicationModerationService } from '@/content-moderation/pre-publication-moderation.service';
-import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
-import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
-import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
-import { waveScoreService } from '@/api/waves/wave-score.service';
 import {
   DROP_MAX_MEDIA,
   DROP_MAX_METADATA_ENTRIES,
@@ -48,6 +44,10 @@ import {
   DROP_PART_MAX_ATTACHMENTS,
   DROP_PART_MAX_MEDIA
 } from './drop-payload-limits';
+import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
+import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
+import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
+import { waveScoreService } from '@/api/waves/wave-score.service';
 
 type ModerationServiceMock = jest.Mocked<
   Pick<PrePublicationModerationService, 'evaluate' | 'assertPostingAllowed'>
