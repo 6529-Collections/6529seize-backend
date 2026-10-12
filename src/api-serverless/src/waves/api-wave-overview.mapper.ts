@@ -58,7 +58,10 @@ import {
   writeWaveOverviewStaticCache
 } from '@/api/waves/wave-overview-static-cache';
 import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
-import { canReplyInWaveChat } from '@/waves/wave-chat-replies.helpers';
+import {
+  canDeleteRepliesInWave,
+  canReplyInWaveChat
+} from '@/waves/wave-chat-replies.helpers';
 
 export interface ApiWaveOverviewMapperOptions {
   readonly groupIdsUserIsEligibleFor?: string[];
@@ -584,6 +587,11 @@ export class ApiWaveOverviewMapper {
       can_reply:
         canReplyInWaveChat({ wave, groupIdsUserIsEligibleFor }) &&
         nextDropAllowed === undefined,
+      can_delete_replies: canDeleteRepliesInWave({
+        wave,
+        authenticatedProfileId: contextProfileId,
+        groupIdsUserIsEligibleFor
+      }),
       unread_drops: unreadDropsCount,
       subwave_unread_drops: followedSubwaveContext?.subwave_unread_drops ?? 0,
       followed_subwaves_count:

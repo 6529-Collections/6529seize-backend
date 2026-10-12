@@ -59,6 +59,7 @@ import {
   ChatHistoryPurgeDb,
   ChatHistoryPurgeScope
 } from '@/drops/chat-history-purge.db';
+import { canDeleteRepliesInWave } from '@/waves/wave-chat-replies.helpers';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -354,25 +355,34 @@ export class DeleteDropUseCase {
     model: DeleteDropModel;
     timer?: Timer;
   }) {
-    if (drop.author_id !== deleterId) {
-      if (
-        !wave?.admin_drop_deletion_enabled ||
-        model.deletion_purpose !== 'DELETE'
-      ) {
-        throw new ForbiddenException('User is not allowed to delete this drop');
-      }
-      if (wave.created_by === deleterId) {
-        return;
-      }
-      const adminGroupId = wave?.admin_group_id;
-      if (!adminGroupId) {
-        throw new ForbiddenException('User is not allowed to delete this drop');
-      }
-      const groupsUserIsEligibleIn =
-        await userGroupsService.getGroupsUserIsEligibleFor(deleterId, timer);
-      if (!groupsUserIsEligibleIn.includes(adminGroupId)) {
-        throw new ForbiddenException('User is not allowed to delete this drop');
-      }
+    if (drop.author_id === deleterId) {
+      return;
+    }
+    if (model.deletion_purpose !== 'DELETE' || !wave) {
+      throw new ForbiddenException('User is not allowed to delete this drop');
+    }
+    if (wave.admin_drop_deletion_enabled && wave.created_by === deleterId) {
+      return;
+    }
+    const groupsUserIsEligibleIn =
+      await userGroupsService.getGroupsUserIsEligibleFor(deleterId, timer);
+    if (
+      drop.reply_to_drop_id &&
+      canDeleteRepliesInWave({
+        wave,
+        authenticatedProfileId: deleterId,
+        groupIdsUserIsEligibleFor: groupsUserIsEligibleIn
+      })
+    ) {
+      return;
+    }
+    const adminGroupId = wave.admin_group_id;
+    if (
+      !wave.admin_drop_deletion_enabled ||
+      !adminGroupId ||
+      !groupsUserIsEligibleIn.includes(adminGroupId)
+    ) {
+      throw new ForbiddenException('User is not allowed to delete this drop');
     }
   }
 }

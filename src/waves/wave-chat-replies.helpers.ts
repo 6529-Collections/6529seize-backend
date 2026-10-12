@@ -1,4 +1,5 @@
 import { WaveEntity } from '@/entities/IWave';
+import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 
 type WaveChatAccessFields = Pick<
   WaveEntity,
@@ -62,4 +63,38 @@ export function isCollapsedWaveReply({
   replyToDropId: string | null | undefined;
 }): boolean {
   return wave.chat_replies_collapsed && !!replyToDropId;
+}
+
+/**
+ * Waves with open replies let the people who run them moderate replies: the
+ * creator, admins and, when chat is limited to a group, everyone in it.
+ */
+export function canDeleteRepliesInWave({
+  wave,
+  authenticatedProfileId,
+  groupIdsUserIsEligibleFor
+}: {
+  wave: Pick<
+    WaveEntity,
+    | 'chat_replies_open'
+    | 'chat_group_id'
+    | 'created_by'
+    | 'admin_group_id'
+    | 'visibility_group_id'
+  >;
+  authenticatedProfileId: string | null | undefined;
+  groupIdsUserIsEligibleFor: readonly string[];
+}): boolean {
+  if (!authenticatedProfileId || !wave.chat_replies_open) {
+    return false;
+  }
+  return (
+    isWaveCreatorOrAdmin({
+      authenticatedProfileId,
+      wave,
+      groupIdsUserIsEligibleFor
+    }) ||
+    (wave.chat_group_id !== null &&
+      groupIdsUserIsEligibleFor.includes(wave.chat_group_id))
+  );
 }

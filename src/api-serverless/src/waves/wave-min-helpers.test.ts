@@ -64,7 +64,8 @@ describe('mapWaveToApiWaveMin', () => {
 
     expect(map(true)).toMatchObject({
       authenticated_user_eligible_to_chat: false,
-      authenticated_user_eligible_to_reply: true
+      authenticated_user_eligible_to_reply: true,
+      authenticated_user_can_delete_replies: false
     });
     expect(map(false)).toMatchObject({
       authenticated_user_eligible_to_chat: false,

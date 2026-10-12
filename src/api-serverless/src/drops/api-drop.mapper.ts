@@ -207,8 +207,6 @@ export class ApiDropMapper {
           )
         );
 
-      const repliesCountPromise =
-        this.dropsDb.countCollapsedRepliesOfGivenDrops(dropIds, ctx);
       const dropAttachmentsPromise =
         this.attachmentsDb.getDropPartOneAttachments(dropIds, ctx);
       const attachmentsByIdPromise = dropAttachmentsPromise.then(
@@ -265,7 +263,8 @@ export class ApiDropMapper {
         winningDropsRatingsByVoter,
         pollsByDropId,
         memeCardIdsByDropId,
-        moderationPresentations
+        moderationPresentations,
+        repliesCountByDropId
       ] = await Promise.all([
         this.identityFetcher.getApiIdentityOverviewsByIds(authorIds, ctx),
         this.dropsDb.findAuthorWaveParticipationByDropContexts(
@@ -344,9 +343,9 @@ export class ApiDropMapper {
               ctx
             )
           : Promise.resolve({} as Record<string, number>),
-        moderationPresentationsPromise
+        moderationPresentationsPromise,
+        this.dropsDb.countCollapsedRepliesOfGivenDrops(dropIds, ctx)
       ]);
-      const repliesCountByDropId = await repliesCountPromise;
 
       const referencedNftsByDropId = this.groupByDropId(referencedNfts);
       const mentionsByDropId = this.groupByDropId(mentions);

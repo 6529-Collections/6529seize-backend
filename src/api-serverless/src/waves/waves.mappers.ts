@@ -74,7 +74,10 @@ import {
   isApproveWaveClosed
 } from '@/waves/wave-approve.helpers';
 import { resolveNextDropAllowed } from '@/waves/wave-chat-slow-mode.helpers';
-import { canReplyInWaveChat } from '@/waves/wave-chat-replies.helpers';
+import {
+  canDeleteRepliesInWave,
+  canReplyInWaveChat
+} from '@/waves/wave-chat-replies.helpers';
 import {
   mapWaveRepSummary,
   mapWaveScore
@@ -484,7 +487,12 @@ export class WavesMappers {
       replies: {
         open: waveEntity.chat_replies_open,
         collapsed: waveEntity.chat_replies_collapsed,
-        authenticated_user_eligible: authenticatedUserEligibleToReply
+        authenticated_user_eligible: authenticatedUserEligibleToReply,
+        authenticated_user_can_delete: canDeleteRepliesInWave({
+          wave: waveEntity,
+          authenticatedProfileId: relatedData.authenticatedUserId,
+          groupIdsUserIsEligibleFor
+        })
       }
     };
     if (nextDropAllowed !== undefined) {

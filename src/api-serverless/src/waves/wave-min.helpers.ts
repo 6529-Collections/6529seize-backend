@@ -11,7 +11,10 @@ import {
   WaveDisplayOverride
 } from '@/api/waves/direct-message-wave-display.service';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
-import { canReplyInWaveChat } from '@/waves/wave-chat-replies.helpers';
+import {
+  canDeleteRepliesInWave,
+  canReplyInWaveChat
+} from '@/waves/wave-chat-replies.helpers';
 
 export type WaveMinSource = {
   id: string;
@@ -111,6 +114,11 @@ export function mapWaveToApiWaveMin({
     authenticated_user_eligible_to_reply:
       authenticatedUserCanView &&
       canReplyInWaveChat({ wave, groupIdsUserIsEligibleFor }),
+    authenticated_user_can_delete_replies: canDeleteRepliesInWave({
+      wave,
+      authenticatedProfileId,
+      groupIdsUserIsEligibleFor
+    }),
     authenticated_user_admin:
       authenticatedUserCanView &&
       isWaveCreatorOrAdmin({

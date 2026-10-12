@@ -284,7 +284,8 @@ describe('ApiWaveOverviewMapper', () => {
     expect(result['wave-1']?.replies_collapsed).toBe(true);
     expect(result['wave-1']?.context_profile_context).toMatchObject({
       can_chat: false,
-      can_reply: true
+      can_reply: true,
+      can_delete_replies: false
     });
   });
 
@@ -524,6 +525,7 @@ describe('ApiWaveOverviewMapper', () => {
         pinned: true,
         can_chat: true,
         can_reply: true,
+        can_delete_replies: false,
         unread_drops: 7,
         first_unread_drop_serial_no: 19,
         subwave_unread_drops: 0,
@@ -591,6 +593,7 @@ describe('ApiWaveOverviewMapper', () => {
       pinned: false,
       can_chat: false,
       can_reply: false,
+      can_delete_replies: false,
       next_drop_allowed: nextDropTimestamp,
       unread_drops: 0,
       subwave_unread_drops: 0,

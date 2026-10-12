@@ -1,5 +1,6 @@
 import fc from 'fast-check';
 import {
+  canDeleteRepliesInWave,
   canReplyInWaveChat,
   isCollapsedWaveReply,
   isWaveChatGroupMember,
@@ -138,6 +139,56 @@ describe('wave chat replies helpers', () => {
           replyToDropId: 'drop-1'
         })
       ).toBe(false);
+    });
+  });
+
+  describe('canDeleteRepliesInWave', () => {
+    const wave: {
+      chat_replies_open: boolean;
+      chat_group_id: string | null;
+      created_by: string;
+      admin_group_id: string | null;
+      visibility_group_id: string | null;
+    } = {
+      chat_replies_open: true,
+      chat_group_id: 'dev-team',
+      created_by: 'creator',
+      admin_group_id: 'admins',
+      visibility_group_id: null
+    };
+    const canDelete = (
+      authenticatedProfileId: string | null,
+      groupIdsUserIsEligibleFor: string[],
+      overrides: Partial<typeof wave> = {}
+    ) =>
+      canDeleteRepliesInWave({
+        wave: { ...wave, ...overrides },
+        authenticatedProfileId,
+        groupIdsUserIsEligibleFor
+      });
+
+    it('lets the creator, admins and posters moderate replies', () => {
+      expect(canDelete('creator', [])).toBe(true);
+      expect(canDelete('admin', ['admins'])).toBe(true);
+      expect(canDelete('poster', ['dev-team'])).toBe(true);
+    });
+
+    it('keeps everyone else out', () => {
+      expect(canDelete('replier', [])).toBe(false);
+      expect(canDelete(null, ['dev-team'])).toBe(false);
+    });
+
+    it('only applies to waves with open replies', () => {
+      expect(
+        canDelete('poster', ['dev-team'], { chat_replies_open: false })
+      ).toBe(false);
+    });
+
+    it('does not make everyone a moderator when chat is open to all', () => {
+      expect(canDelete('anyone', [], { chat_group_id: null })).toBe(false);
+      expect(canDelete('admin', ['admins'], { chat_group_id: null })).toBe(
+        true
+      );
     });
   });
 });
