@@ -16,6 +16,9 @@ describe('WaveLeaderboardCalculationService', () => {
     (
       executionRouter.shouldUseLegacyWaveExecution as jest.Mock
     ).mockResolvedValue(true);
+    (
+      dropVotingDb.isLegacyLeaderboardWaveOngoing as jest.Mock
+    ).mockResolvedValue(true);
     service = new WaveLeaderboardCalculationService(
       dropVotingDb,
       executionRouter
@@ -197,6 +200,26 @@ describe('WaveLeaderboardCalculationService', () => {
       (
         dropVotingDb.getWaveLeaderboardEntryThresholdStateForUpdate as jest.Mock
       ).mockResolvedValue(null);
+    });
+
+    it('does not rewrite a wave that completed after discovery', async () => {
+      (
+        dropVotingDb.isLegacyLeaderboardWaveOngoing as jest.Mock
+      ).mockResolvedValue(false);
+      await service.calculateLeaderboardEntryForDrop(
+        {
+          dropId: 'drop-id',
+          waveId: 'wave-id',
+          winningMinThreshold: null,
+          winningThresholdMinDurationMs: null,
+          startTime: Time.millis(0),
+          endTime: Time.millis(1000),
+          nextDecisionTime: null
+        },
+        {}
+      );
+      expect(dropVotingDb.getDropVoteStatesInTimespan).not.toHaveBeenCalled();
+      expect(dropVotingDb.upsertWaveLeaderboardEntry).not.toHaveBeenCalled();
     });
 
     it('starts weighted over-threshold time when weighted vote reaches threshold', async () => {

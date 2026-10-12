@@ -691,6 +691,7 @@ describe('ApiDropMapper', () => {
       },
       'other-winner': {
         drop_id: 'other-winner',
+        voters_count_available: false,
         status: DropType.WINNER,
         is_open: false,
         total_votes_given: 5,
@@ -721,6 +722,10 @@ describe('ApiDropMapper', () => {
     expect(result['main-stage-winner'].submission_context).toMatchObject({
       status: ApiSubmissionDropStatus.Winner,
       meme_card_id: 521
+    });
+    expect(result['other-winner'].submission_context?.voting).toMatchObject({
+      voters_count_available: false,
+      current_calculated_vote: 5
     });
     expect(result['other-winner'].submission_context).not.toHaveProperty(
       'meme_card_id'
