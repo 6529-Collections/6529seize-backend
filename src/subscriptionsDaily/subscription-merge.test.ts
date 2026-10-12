@@ -58,6 +58,26 @@ describe('mergeUpcomingSubscriptions', () => {
     ).toBe(false);
   });
 
+  it.each([true, false])(
+    'keeps a smaller manual request regardless of merge order (%s)',
+    (manualSurvives) => {
+      const manual = row({
+        subscribed_count: 2,
+        automatic_subscription: false
+      });
+      const automatic = row({
+        subscribed_count: 8,
+        automatic_subscription: true
+      });
+      const result = mergeUpcomingSubscriptions(
+        manualSurvives ? manual : automatic,
+        manualSurvives ? automatic : manual
+      );
+      expect(result.subscribed_count).toBe(2);
+      expect(result.automatic_subscription).toBe(false);
+    }
+  );
+
   it('leaves the surviving row unchanged when neither is subscribed', () => {
     const surviving = row({ subscribed: false, subscribed_count: 4 });
     expect(
@@ -68,7 +88,7 @@ describe('mergeUpcomingSubscriptions', () => {
     ).toBe(surviving);
   });
 
-  it('never exceeds the larger subscribed count and never unsubscribes', () => {
+  it('honors subscribed manual quantities and never unsubscribes', () => {
     const state = fc.record({
       subscribed: fc.boolean(),
       automatic_subscription: fc.boolean(),
@@ -84,8 +104,10 @@ describe('mergeUpcomingSubscriptions', () => {
         const subscribed = [surviving, merged].filter((it) => it.subscribed);
         expect(result.subscribed).toBe(subscribed.length > 0);
         if (subscribed.length > 0) {
+          const manual = subscribed.filter((it) => !it.automatic_subscription);
+          const quantityRows = manual.length > 0 ? manual : subscribed;
           expect(result.subscribed_count).toBe(
-            Math.max(...subscribed.map((it) => it.subscribed_count))
+            Math.max(...quantityRows.map((it) => it.subscribed_count))
           );
           expect(subscribed.map((it) => it.updated_at.getTime())).toContain(
             result.updated_at.getTime()

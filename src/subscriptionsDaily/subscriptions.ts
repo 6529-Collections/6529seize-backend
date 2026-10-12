@@ -767,14 +767,17 @@ async function mergeSubscriptionsIntoKey(
   );
   const totalBalance = balanceResult[0]?.total_balance;
 
-  const isSubscribedResult = await manager.query(
-    `SELECT COUNT(*) as automatic_count
+  const modeResult = await manager.query(
+    `SELECT SUM(automatic = true) AS automatic_count,
+      SUM(subscribe_all_editions = true) AS all_editions_count
       FROM ${SUBSCRIPTIONS_MODE_TABLE}
-      WHERE consolidation_key IN (${placeholders})
-      AND automatic = true`,
+      WHERE consolidation_key IN (${placeholders})`,
     balanceAndModeKeys
   );
-  const isSubscribed = isSubscribedResult[0]?.automatic_count > 0;
+  const isSubscribed = modeResult[0]?.automatic_count > 0;
+  // Preserve All eligible if any source or existing destination selected it,
+  // including when the preference was saved while that group was in Manual mode.
+  const subscribeAllEditions = modeResult[0]?.all_editions_count > 0;
 
   for (const key of balanceAndModeKeys) {
     await manager.query(
@@ -795,8 +798,9 @@ async function mergeSubscriptionsIntoKey(
     [newKey, totalBalance]
   );
   await manager.query(
-    `INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, automatic)
-      VALUES (?, ?)`,
-    [newKey, isSubscribed]
+    `INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE}
+      (consolidation_key, automatic, subscribe_all_editions)
+      VALUES (?, ?, ?)`,
+    [newKey, isSubscribed, subscribeAllEditions]
   );
 }
