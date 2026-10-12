@@ -106,14 +106,16 @@ function toClientResponse(id: RpcId, upstream: unknown): RpcResponse {
   return upstreamFailure(id);
 }
 
+function printable(value: unknown): string {
+  return typeof value === 'string' || typeof value === 'number'
+    ? String(value)
+    : 'n/a';
+}
+
 function describeFailure(error: unknown): string {
-  const failure = (isPlainObject(error) ? error : {}) as {
-    code?: unknown;
-    message?: unknown;
-    response?: { status?: unknown };
-  };
-  const status = failure.response?.status;
-  return `status=${String(status)} code=${String(failure.code)} message=${String(failure.message)}`;
+  const failure = isPlainObject(error) ? error : {};
+  const response = isPlainObject(failure.response) ? failure.response : {};
+  return `status=${printable(response.status)} code=${printable(failure.code)} message=${printable(failure.message)}`;
 }
 
 async function forwardCall(call: RpcCall): Promise<RpcResponse> {
@@ -140,9 +142,11 @@ async function forwardCall(call: RpcCall): Promise<RpcResponse> {
   }
 }
 
-async function processItem(item: unknown): Promise<RpcResponse> {
+function processItem(item: unknown): Promise<RpcResponse> {
   const validation = validateRpcCall(item);
-  return validation.ok ? forwardCall(validation.call) : validation.response;
+  return validation.ok
+    ? forwardCall(validation.call)
+    : Promise.resolve(validation.response);
 }
 
 interface Rejection {
