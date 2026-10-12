@@ -22,6 +22,7 @@ import {
   userIsTypingMessage
 } from './ws-message';
 import { ApiDropWithoutWave } from '../generated/models/ApiDropWithoutWave';
+import { ApiQuotedDropResponse } from '@/api/generated/models/ApiQuotedDropResponse';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { Logger } from '@/logging';
@@ -152,6 +153,75 @@ function applyGlobalModerationForRecipient(
   };
   apply(recipientDrop, new Set<string>());
   return recipientDrop;
+}
+
+function collectQuotedDropIds(
+  drop: ApiDrop | ApiDropWithoutWave,
+  quotedDropIds: Set<string>
+): Set<string> {
+  for (const part of drop.parts) {
+    const quotedDrop = part.quoted_drop;
+    if (quotedDrop) {
+      quotedDropIds.add(quotedDrop.drop_id);
+      if (quotedDrop.drop) {
+        collectQuotedDropIds(quotedDrop.drop, quotedDropIds);
+      }
+    }
+  }
+  if (drop.reply_to?.drop) {
+    collectQuotedDropIds(drop.reply_to.drop, quotedDropIds);
+  }
+  return quotedDropIds;
+}
+
+function redactQuotedDropsInPlace(
+  drop: ApiDrop | ApiDropWithoutWave,
+  visibleQuotedDropIds: ReadonlySet<string>
+): void {
+  for (const part of drop.parts) {
+    const quotedDrop = part.quoted_drop;
+    if (!quotedDrop) {
+      continue;
+    }
+    if (!visibleQuotedDropIds.has(quotedDrop.drop_id)) {
+      const reference: ApiQuotedDropResponse & { is_deleted: boolean } = {
+        drop_id: quotedDrop.drop_id,
+        drop_part_id: quotedDrop.drop_part_id,
+        is_deleted: false
+      };
+      part.quoted_drop = reference;
+    } else if (quotedDrop.drop) {
+      redactQuotedDropsInPlace(quotedDrop.drop, visibleQuotedDropIds);
+    }
+  }
+  if (drop.reply_to?.drop) {
+    redactQuotedDropsInPlace(drop.reply_to.drop, visibleQuotedDropIds);
+  }
+}
+
+export function getQuotedDropIds(drop: ApiDrop): string[] {
+  return Array.from(collectQuotedDropIds(drop, new Set<string>()));
+}
+
+/**
+ * Websocket payloads are built once and fanned out to the whole wave audience,
+ * so a quote stays embedded only when that entire audience can read it. Other
+ * quotes keep their reference and clients resolve them with their own access.
+ */
+export function redactQuotedDropsOutsideAudience(
+  inputDrop: ApiDrop,
+  visibleQuotedDropIds: ReadonlySet<string>
+): ApiDrop {
+  if (
+    getQuotedDropIds(inputDrop).every((dropId) =>
+      visibleQuotedDropIds.has(dropId)
+    )
+  ) {
+    return inputDrop;
+  }
+  const audienceDrop = structuredClone(inputDrop);
+  redactQuotedDropsInPlace(audienceDrop, visibleQuotedDropIds);
+  return audienceDrop;
 }
 
 function removeDropsAuthRequestContext(
@@ -511,6 +581,10 @@ export class WsListenersNotifier {
         ctx
       );
       if (!onlineProfiles.length) return;
+      const audienceDrop = await this.restrictQuotesToWaveAudience(
+        inputDrop,
+        ctx
+      );
 
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
@@ -530,7 +604,7 @@ export class WsListenersNotifier {
         onlineProfiles,
         ({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
-            inputDrop,
+            audienceDrop,
             profileId
           );
           recipientDrop.viewer_context =
@@ -576,6 +650,7 @@ export class WsListenersNotifier {
         ctx
       );
       if (!onlineProfiles.length) return;
+      const audienceDrop = await this.restrictQuotesToWaveAudience(drop, ctx);
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
         drop
@@ -594,7 +669,7 @@ export class WsListenersNotifier {
         onlineProfiles,
         ({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
-            drop,
+            audienceDrop,
             profileId
           );
           recipientDrop.viewer_context =
@@ -639,6 +714,7 @@ export class WsListenersNotifier {
         ctx
       );
       if (!onlineProfiles.length) return;
+      const audienceDrop = await this.restrictQuotesToWaveAudience(drop, ctx);
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
         drop
@@ -657,7 +733,7 @@ export class WsListenersNotifier {
         onlineProfiles,
         ({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
-            drop,
+            audienceDrop,
             profileId
           );
           recipientDrop.viewer_context =
@@ -789,6 +865,22 @@ export class WsListenersNotifier {
       }
       throw error;
     }
+  }
+
+  private async restrictQuotesToWaveAudience(
+    inputDrop: ApiDrop,
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
+    const quotedDropIds = getQuotedDropIds(inputDrop);
+    if (!quotedDropIds.length) {
+      return inputDrop;
+    }
+    const visibleQuotedDropIds =
+      await this.wsConnectionRepository.findDropIdsReadableByWaveAudience(
+        { waveId: inputDrop.wave.id, dropIds: quotedDropIds },
+        ctx
+      );
+    return redactQuotedDropsOutsideAudience(inputDrop, visibleQuotedDropIds);
   }
 
   private async getCreditLeftsForOnlineProfiles(
