@@ -25,6 +25,10 @@ import {
   formatDropContentLimitViolation,
   getDropContentLimitViolation
 } from './drop-content-limits';
+import {
+  formatDropPayloadLimitViolation,
+  getDropPayloadLimitViolation
+} from './drop-payload-limits';
 import { Time, Timer } from '@/time';
 import { ConnectionWrapper } from '@/sql-executor';
 import { dropsDb, DropsDb } from './drops.db';
@@ -357,12 +361,23 @@ export class CreateOrUpdateDropUseCase {
     private readonly entryHooks: CompetitionEntryDropHooks = competitionEntryDropHooks
   ) {}
 
-  private assertDropContentLimits(
-    parts: readonly CreateOrUpdateDropPartModel[]
-  ): void {
-    const violation = getDropContentLimitViolation(parts);
-    if (violation) {
-      throw new BadRequestException(formatDropContentLimitViolation(violation));
+  /**
+   * Persistence-boundary guard shared by every caller (API requests as well as
+   * the Lambda loops that post drops): bounded structure first, so the content
+   * checks below only ever walk a bounded number of parts.
+   */
+  private assertDropLimits(model: CreateOrUpdateDropModel): void {
+    const payloadViolation = getDropPayloadLimitViolation(model);
+    if (payloadViolation) {
+      throw new BadRequestException(
+        formatDropPayloadLimitViolation(payloadViolation)
+      );
+    }
+    const contentViolation = getDropContentLimitViolation(model.parts);
+    if (contentViolation) {
+      throw new BadRequestException(
+        formatDropContentLimitViolation(contentViolation)
+      );
     }
   }
 
@@ -459,7 +474,7 @@ export class CreateOrUpdateDropUseCase {
           nativeEntryContent
         );
         let resolvedModel = sanitizeDropStructuredFields(model);
-        this.assertDropContentLimits(resolvedModel.parts);
+        this.assertDropLimits(resolvedModel);
         timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
         let authorId = resolvedModel.author_id;
         if (!authorId) {
@@ -770,7 +785,7 @@ export class CreateOrUpdateDropUseCase {
     pending_push_notification_ids: number[];
     dm_unread_recipient_ids: string[];
   }> {
-    this.assertDropContentLimits(model.parts);
+    this.assertDropLimits(model);
     if (!('trustedSystem' in prePublication)) {
       const tx = {
         timer,
@@ -2123,7 +2138,7 @@ export class CreateOrUpdateDropUseCase {
     // Keep this guard at the persistence boundary too; this method can be
     // reused independently of execute() and the normalization is idempotent.
     const model = this.normalizeMentionedGroups(inputModel);
-    this.assertDropContentLimits(model.parts);
+    this.assertDropLimits(model);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
     const parts = model.parts;
