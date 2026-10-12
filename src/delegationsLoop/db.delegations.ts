@@ -2,6 +2,7 @@ import {
   DELEGATIONS_TABLE,
   DELEGATION_ALL_ADDRESS,
   MEMES_CONTRACT,
+  NFTDELEGATION_BLOCKS_TABLE,
   USE_CASE_AIRDROPS,
   USE_CASE_ALL,
   USE_CASE_PRIMARY_ADDRESS,
@@ -111,19 +112,32 @@ export async function getHighestTdhWallet(wallets: string[]): Promise<string> {
   return tdhWallet;
 }
 
+// About seven days of 12-second Ethereum slots. A primary-address delegation
+// must be at least this old, measured against the last block the delegations
+// loop processed, before it decides which part of a split consolidation keeps
+// the profile. A newly registered one still sets the primary address at once.
+export const PRIMARY_ADDRESS_RETENTION_MATURITY_BLOCKS = 50400;
+
 export async function getDelegationPrimaryAddressForConsolidation(
-  consolidationKey: string
+  consolidationKey: string,
+  { matureOnly = false }: { matureOnly?: boolean } = {}
 ): Promise<string | null> {
   const wallets = consolidationKey.toLowerCase().split('-');
+  const maturityFilter = matureOnly
+    ? `AND block <= (
+        SELECT COALESCE(MAX(block), 0) FROM ${NFTDELEGATION_BLOCKS_TABLE}
+      ) - :maturityBlocks`
+    : '';
   const result = await sqlExecutor.execute(
     `
     SELECT * FROM ${DELEGATIONS_TABLE}
-    WHERE 
+    WHERE
       LOWER(from_address) in (:wallets)
       AND LOWER(to_address) in (:wallets)
       AND use_case = :useCase
       AND expiry >= :expiry
       AND collection in (:collections)
+      ${maturityFilter}
     ORDER BY block DESC
     LIMIT 1;
     `,
@@ -131,7 +145,8 @@ export async function getDelegationPrimaryAddressForConsolidation(
       wallets,
       useCase: USE_CASE_PRIMARY_ADDRESS,
       expiry: Date.now() / 1000,
-      collections: [MEMES_CONTRACT, DELEGATION_ALL_ADDRESS]
+      collections: [MEMES_CONTRACT, DELEGATION_ALL_ADDRESS],
+      maturityBlocks: PRIMARY_ADDRESS_RETENTION_MATURITY_BLOCKS
     }
   );
   return result[0]?.to_address.toLowerCase() ?? null;
