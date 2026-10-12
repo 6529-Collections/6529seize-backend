@@ -394,3 +394,40 @@ describe('Drop Forge metadata and manual observation', () => {
     expect(args.cost.toString()).toBe('100');
   });
 });
+
+it('reconstructs signed EIP-1559 recovery evidence from an RPC response without substituting its effective gas price', async () => {
+  const { testWallet } = await import('@/drop-forge/drop-forge.test-fixtures');
+  const raw = await testWallet.signTransaction({
+    type: 2,
+    chainId: 11155111,
+    nonce: 7,
+    to: testConfig.proxy,
+    data: '0x',
+    value: BigInt(0),
+    gasLimit: BigInt(21000),
+    maxFeePerGas: BigInt(100),
+    maxPriorityFeePerGas: BigInt(2)
+  });
+  const tx = Transaction.from(raw);
+  const provider = {
+    getTransaction: jest.fn().mockResolvedValue({
+      type: tx.type,
+      to: tx.to,
+      chainId: tx.chainId,
+      nonce: tx.nonce,
+      value: tx.value,
+      data: tx.data,
+      gasLimit: tx.gasLimit,
+      gasPrice: BigInt(5),
+      maxFeePerGas: tx.maxFeePerGas,
+      maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
+      accessList: tx.accessList,
+      signature: tx.signature
+    })
+  };
+  const chain = new EthereumLaunchChain(
+    testConfig,
+    provider as unknown as JsonRpcProvider
+  );
+  expect(await chain.inspectRecovery(tx.hash!)).toBe(raw);
+});

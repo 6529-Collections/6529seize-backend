@@ -1,3 +1,4 @@
+import { DropForgeRecovery } from '@/drop-forge/drop-forge.recovery';
 import { Transaction } from 'ethers';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import { LaunchChain, ChainReceipt } from '@/drop-forge/drop-forge.chain';
@@ -53,7 +54,8 @@ export class DropForgeWorker {
     private readonly config: DropForgeConfig,
     private readonly repository: DropForgeRepository,
     private readonly chain: LaunchChain,
-    private readonly signer: { sign(unsigned: string): Promise<string> }
+    private readonly signer: { sign(unsigned: string): Promise<string> },
+    private readonly scheduledEnabled = true
   ) {}
 
   async tick(): Promise<void> {
@@ -67,7 +69,7 @@ export class DropForgeWorker {
           ctx
         )) {
           const record = await this.repository.lockLaunch(candidate.id, ctx);
-          if (!runnable(record)) {
+          if (!runnable(record) || !this.scheduledEnabled) {
             if (
               record.data.manual_transactions?.some(
                 (it) => it.state === 'PENDING'
@@ -120,7 +122,16 @@ export class DropForgeWorker {
       {}
     );
     if (!work) return;
-    if (work.action.state === 'RESERVED') {
+    if (work.action.recovery) {
+      await new DropForgeRecovery(
+        this.config,
+        this.repository,
+        this.chain,
+        this.signer
+      ).tick(work.record.id);
+      return;
+    }
+    if (work.action.state === 'RESERVED' && this.scheduledEnabled) {
       if (work.record.data.events.some((event) => !event.drop_id)) return;
       await this.sign(walletId, work);
     }
@@ -145,7 +156,10 @@ export class DropForgeWorker {
         'BLOCKED',
         'Legacy launch plan requires manual reconciliation before phase/research execution'
       );
-    if (action.state === 'RESERVED' && !runnable(record)) {
+    if (
+      action.state === 'RESERVED' &&
+      (!runnable(record) || !this.scheduledEnabled)
+    ) {
       action.state = 'PENDING';
       delete action.unsigned_tx;
       pending.launch_id = null;
@@ -157,6 +171,22 @@ export class DropForgeWorker {
   }
 
   private async assertCanonical(record: LaunchRecord): Promise<void> {
+    for (const action of record.data.actions) {
+      for (const recovery of [
+        ...(action.recovery_history ?? []),
+        ...(action.recovery?.outcome ? [action.recovery] : [])
+      ]) {
+        const evidence = await this.chain.receipt(recovery.winner_hash!);
+        if (
+          !evidence ||
+          evidence.blockHash !== recovery.block_hash ||
+          evidence.confirmations < this.config.confirmations
+        )
+          throw new LaunchSafetyError(
+            'A finalized recovery winner is no longer canonical; further writes are prohibited'
+          );
+      }
+    }
     const confirmed = record.data.actions.filter(
       (it) => it.state === 'CONFIRMED' && !!it.hash
     );
@@ -217,6 +247,10 @@ export class DropForgeWorker {
       return null;
     }
     const now = await this.chain.now();
+    if (['CANCELLED', 'FAILED'].includes(action.state))
+      throw new LaunchSafetyError(
+        'Outstanding action requires an authorized recovery delivery'
+      );
     if (now < action.due) return null;
     const completed = await this.chain.completed?.(record.data, action);
     if (completed) {
@@ -385,7 +419,7 @@ export class DropForgeWorker {
         const action = record.data.actions.find(
           (it) => it.id === pending.action_id
         )!;
-        if (action.state !== 'SIGNED') return null;
+        if (action.state !== 'SIGNED' || action.recovery) return null;
         const receipt = await this.chain.receipt(action.hash!);
         if (receipt && receipt.confirmations >= this.config.confirmations) {
           this.applyReceipt(
@@ -408,7 +442,7 @@ export class DropForgeWorker {
           await this.repository.save(record, ctx);
           return null;
         }
-        if (receipt || !runnable(record)) return null;
+        if (receipt || !runnable(record) || !this.scheduledEnabled) return null;
         const nonce = Transaction.from(action.signed_tx!).nonce;
         if ((await this.chain.nonce(record.data.signer, false)) > nonce) {
           // Inclusion may happen between the first receipt and nonce reads.

@@ -17,6 +17,7 @@ services need the same `DROP_FORGERS_6529_MENTION_PROFILE_IDS` configuration.
 | Setting                                 | Meaning                                                                          |
 | --------------------------------------- | -------------------------------------------------------------------------------- |
 | `DROP_FORGE_AUTOMATION_ENABLED`         | Exact `true` enables transaction work; otherwise disabled                        |
+| `DROP_FORGE_RECOVERY_ENABLED` | Exact `true` permits exceptional replacement/cancellation and receipt recovery without enabling scheduled execution; disabled by default |
 | `DROP_FORGE_PREPARATION_ENABLED`        | Exact `true` enables queued EMMA preparation/finalization                        |
 | `DROP_FORGE_CHAIN_ID`                   | Mainnet `1` or Sepolia `11155111`; defaults to Sepolia                           |
 | `DROP_FORGE_CREATOR_CONTRACT`           | Single configured creator scope; required on Sepolia                             |
@@ -209,22 +210,48 @@ rechecks source, proofs, scope and timing. It does not replace a transaction,
 reset a nonce, or replay a reverted airdrop. Outstanding transactions can block
 other launches using the same signer until reconciled.
 
-A signed intent with no canonical receipt may retain the shared signer lock
-indefinitely, even if it never reached or disappeared from the mempool. This is
-a known availability limitation. Do not clear that lock based solely on empty
-RPC results or matching latest/pending nonces: the signed transaction can still
-be broadcast later. A supported operator recovery endpoint is deferred; enabling
-unattended operation requires a reviewed recovery path proving canonical nonce
-consumption before releasing the signer. Never use a database reset as proof
-that the transaction is invalid, and do not rebroadcast after the safe deadline.
+An authorized Launch administrator can inspect the exact action, signer, nonce,
+original/replacement hashes and allocation amounts. Recovery requests carry a
+stable request ID, expected action hash and launch revision. The API queues work;
+the same launch loop prepares and signs asynchronously through KMS. No signed
+bytes are returned through the API.
 
-For a stuck or unknown transaction, inspect the exact persisted hash/nonce and
-canonical receipt before any operator action. There is intentionally no
-automatic replacement, cancellation transaction, ledger reset, or fresh-plan
-restart for a terminal claim. A manual recovery procedure/change must reconcile
-the original nonce and resulting supply first. Keep the signed transaction
-ledger protected: copying signed bytes permits later broadcast, and deadlines
-cannot prevent a previously broadcast airdrop from mining late.
+`SPEED_UP` preserves the original nonce, destination, value and calldata and
+raises both gas fee caps above all tracked attempts within configured budgets.
+It requires the original execution window, frozen source and current claim
+checks to remain valid. `CANCEL` signs a zero-value, empty-calldata transaction
+to the operational wallet at the same nonce. The wallet must have no delegated
+code. Cancellation supersedes unsigned speed-ups and prohibits further action
+broadcasts; an already-broadcast original can still win. An existing matching
+replacement/cancellation can be registered by hash through `RECORD_WINNER`.
+Unrelated or mismatched transaction evidence remains blocked.
+
+All attempts remain attached to one action. Recovery checks each canonical
+receipt and waits until its block is finalized and the configured confirmation
+threshold is met. Successful airdrops must have exact ERC-1155 mint events for
+the frozen claim, recipients and quantities; total supply alone is insufficient.
+Supply is read at the winning block. Before any fresh-nonce retry, canonical
+finalized evidence is rechecked. A pre-finality reorg retains the reservation and
+continues reconciliation. Unavailable/unknown evidence never releases the wallet.
+
+Winning evidence, action outcome, manual completion flags, wallet release and
+wave outbox entry commit atomically. Original or speed-up success credits the
+action once, even when late. Cancellation/revert credits nothing and leaves
+outstanding allocations visible. The launch remains blocked for operator review.
+`RETRY` permits reviewed outstanding work within its original execution window;
+`DELIVER_REMAINING` permits airdrop delivery after all minting closes and opens a
+24-hour operator recovery window. It preserves category and remaining recipients,
+requires compatible current claim configuration and supply headroom, and rechecks
+supply before signing. Research still derives its remaining target from fresh
+supply. Terminal launches are not restarted; coordinated manual proof can credit
+outstanding allocations instead. Every retry archives the settled nonce evidence.
+
+`DROP_FORGE_RECOVERY_ENABLED=true` enables the same loop's exceptional recovery
+without scheduling fresh phase actions. Fresh-nonce retry/delivery also requires
+`DROP_FORGE_AUTOMATION_ENABLED=true`. Both flags default to disabled. Provision
+keys, permission, gas budgets and reporting configuration before use. Empty RPC
+results, a timeout, a missed deadline, pause or launch cancellation never prove
+that signed bytes are invalid. Never clear signer reservations through a DB reset.
 
 Wave drop creation and acknowledgement commit together; a reporting retry does
 not repost a committed event. Push delivery after that commit is best effort.

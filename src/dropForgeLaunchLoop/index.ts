@@ -1,6 +1,7 @@
 import type { Handler } from 'aws-lambda';
 import {
   automationEnabled,
+  recoveryEnabled,
   getDropForgeConfig
 } from '@/drop-forge/drop-forge.config';
 import { EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
@@ -14,18 +15,19 @@ import { wrapLambdaHandler } from '@/sentry.context';
 
 const logger = Logger.get('DROP_FORGE_LAUNCH_LOOP');
 export async function runDropForgeTick(): Promise<void> {
-  if (!automationEnabled()) return;
+  if (!recoveryEnabled()) return;
   // Validate reporting before any new preparation or signing work. Durable
   // outboxes retry independently of transaction reconciliation.
   let reportsDelivered = true;
-  if (automationEnabled()) {
+  if (recoveryEnabled()) {
     const config = getDropForgeConfig();
     reportsDelivered = await reportLaunchEvents(config, dropForgeRepository);
     const worker = new DropForgeWorker(
       config,
       dropForgeRepository,
       new EthereumLaunchChain(config),
-      new KmsTransactionSigner(config.keyId, config.signer)
+      new KmsTransactionSigner(config.keyId, config.signer),
+      automationEnabled()
     );
     // A reservation report must commit before signing. Drain that boundary in
     // this invocation instead of losing another scheduler interval per intent.

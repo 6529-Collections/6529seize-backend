@@ -12,7 +12,8 @@ export type ActionState =
   | 'RESERVED'
   | 'SIGNED'
   | 'CONFIRMED'
-  | 'FAILED';
+  | 'FAILED'
+  | 'CANCELLED';
 export interface LaunchPhase {
   name: string;
   start: number;
@@ -20,7 +21,36 @@ export interface LaunchPhase {
   price_wei: string;
   root: string;
 }
+export interface RecoveryAttempt {
+  id: string;
+  operation: 'ORIGINAL' | 'SPEED_UP' | 'CANCEL';
+  requested_by: string;
+  requested_at: number;
+  unsigned_tx?: string;
+  signed_tx?: string;
+  hash?: string;
+}
+export interface RecoveryLedger {
+  nonce: number;
+  cancel_requested: boolean;
+  attempts: RecoveryAttempt[];
+  outcome?: 'EXECUTED' | 'CANCELLED' | 'REVERTED';
+  winner_hash?: string;
+  supply?: number;
+  block_number?: number;
+  block_hash?: string;
+}
 export interface LaunchAction {
+  recovery?: RecoveryLedger;
+  recovery_history?: RecoveryLedger[];
+  recovery_requests?: Array<{
+    id: string;
+    operation: string;
+    wallet: string;
+    expected_hash: string;
+    transaction_hash?: string;
+  }>;
+  late_delivery?: boolean;
   id: string;
   kind: 'INITIALIZE' | 'AIRDROP' | 'UPDATE' | 'METADATA';
   label?: string;

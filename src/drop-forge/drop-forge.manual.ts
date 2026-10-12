@@ -1,8 +1,15 @@
 import { claimAbi, LaunchChain } from '@/drop-forge/drop-forge.chain';
-import { LaunchRecord, LaunchSafetyError } from '@/drop-forge/drop-forge.types';
+import {
+  LaunchRecord,
+  LaunchSafetyError,
+  LaunchAction
+} from '@/drop-forge/drop-forge.types';
 import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
-import { creditManualResearch } from '@/drop-forge/drop-forge.research';
+import {
+  creditManualResearch,
+  isResearchAirdrop
+} from '@/drop-forge/drop-forge.research';
 
 function matchesManualAction(
   label: string | undefined,
@@ -21,6 +28,14 @@ function matchesManualAction(
     label?.includes('Subscription') === true
   );
 }
+function manualAllocationAvailable(action: LaunchAction): boolean {
+  return (
+    action.state === 'PENDING' ||
+    (['FAILED', 'CANCELLED'].includes(action.state) &&
+      !!action.recovery?.outcome &&
+      action.recovery.outcome !== 'EXECUTED')
+  );
+}
 export async function reconcileManual(
   record: LaunchRecord,
   chain: LaunchChain,
@@ -28,6 +43,18 @@ export async function reconcileManual(
   publishedMetadata: string = record.data.metadata
 ): Promise<boolean> {
   if (record.data.manual_lease) return false;
+  for (const action of record.data.actions.filter(manualAllocationAvailable)) {
+    if (!action.recovery?.outcome) continue;
+    const winner = await chain.receipt(action.recovery.winner_hash!);
+    if (
+      !winner ||
+      winner.blockHash !== action.recovery.block_hash ||
+      winner.confirmations < config.confirmations
+    )
+      throw new LaunchSafetyError(
+        'Recovery nonce settlement is no longer canonical; manual credits are prohibited'
+      );
+  }
   const latest = [...(record.data.manual_transactions ?? [])]
     .filter((it) => it.state === 'CONFIRMED' || it.state === 'FAILED')
     .sort((a, b) => (b.block_number ?? 0) - (a.block_number ?? 0))[0];
@@ -101,7 +128,8 @@ export async function reconcileManual(
                 .filter(
                   (it) =>
                     it.kind === 'AIRDROP' &&
-                    it.state === 'PENDING' &&
+                    !isResearchAirdrop(it) &&
+                    manualAllocationAvailable(it) &&
                     (it.remaining_recipients ?? it.recipients).some(
                       (row) => row.address.toLowerCase() === address
                     )
@@ -118,7 +146,8 @@ export async function reconcileManual(
       for (const action of record.data.actions.filter(
         (it) =>
           it.kind === 'AIRDROP' &&
-          it.state === 'PENDING' &&
+          !isResearchAirdrop(it) &&
+          manualAllocationAvailable(it) &&
           matchesManualAction(it.label, it.phase, proof.action)
       ))
         for (const row of action.remaining_recipients ?? action.recipients)
@@ -137,9 +166,11 @@ export async function reconcileManual(
       for (const action of record.data.actions.filter(
         (it) =>
           it.kind === 'AIRDROP' &&
-          it.state === 'PENDING' &&
+          !isResearchAirdrop(it) &&
+          manualAllocationAvailable(it) &&
           matchesManualAction(it.label, it.phase, proof.action)
       )) {
+        const creditedBefore = action.credited_tokens ?? 0;
         const remaining = (action.remaining_recipients ?? action.recipients)
           .map((row) => {
             const available = allocations.get(row.address.toLowerCase()) ?? 0;
@@ -150,7 +181,18 @@ export async function reconcileManual(
           })
           .filter((row) => row.amount > 0);
         action.remaining_recipients = remaining;
-        if (!remaining.length) {
+        if (
+          !remaining.length &&
+          (action.credited_tokens ?? 0) > creditedBefore
+        ) {
+          if (action.recovery?.outcome) {
+            action.recovery_history = [
+              ...(action.recovery_history ?? []),
+              action.recovery
+            ];
+            delete action.recovery;
+            delete action.signed_tx;
+          }
           action.state = 'CONFIRMED';
           action.hash = proof.hash;
           action.block_number = receipt.blockNumber;

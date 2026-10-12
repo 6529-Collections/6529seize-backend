@@ -24,6 +24,9 @@ export interface DropForgeConfig extends DropForgeReportingConfig {
   maxGas: bigint;
   maxCost: bigint;
 }
+export const recoveryEnabled = () =>
+  automationEnabled() || process.env.DROP_FORGE_RECOVERY_ENABLED === 'true';
+
 export const automationEnabled = () =>
   process.env.DROP_FORGE_AUTOMATION_ENABLED === 'true';
 

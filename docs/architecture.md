@@ -1839,8 +1839,9 @@ signed bytes and hash in another commit, and only then broadcasts. Pending
 reports are rechecked at the final signature commit. Candidate selection filters
 by the next unfinished action's due time and report acknowledgement before its
 20-row limit, preventing future launches from starving due work. Pending
-receipts reconcile across pause/cancel, with configurable confirmations and no
-automatic transaction replacement. Each subsequent action checks the latest
+receipts reconcile across pause/cancel, with configurable confirmations. Exceptional administrator recovery tracks
+same-nonce replacements and waits for finalized winning evidence; normal scheduling
+does not replace transactions automatically. Each subsequent action checks the latest
 confirmed canonical receipt, frozen source hash, claim configuration, creator-admin
 permission, nonce availability, and gas budgets. Confirmation is distinct from a
 scheduled mint window becoming active. Already-signed transactions cannot be
@@ -1869,6 +1870,17 @@ through existing visibility and notification rules. Initial wave reporting is
 required before new launch signing; receipt reconciliation continues separately.
 See [configuration and recovery](drop-forge-auto-launch.md). The creator owner
 still grants/revokes on-chain admins, and Pay Artist remains outside automation.
+
+### Drop Forge exceptional transaction recovery
+
+The existing Launch API queues revision-checked administrator recovery requests.
+`dropForgeLaunchLoop` tracks same-nonce original, speed-up and cancellation attempts,
+signs with AWS KMS and waits for canonical finalized evidence. Winning ERC-1155
+mint events reconcile exact recipient allocations; receipt-block supply, action
+outcome, completion flags, signer reservation release and wave outbox commit
+atomically. A recovery-only flag permits this path while normal scheduling remains
+disabled. Signed bytes stay server-side. Reviewed fresh-nonce delivery requires
+proven prior nonce settlement; unknown evidence blocks further wallet use.
 
 ## Architecture Notes
 

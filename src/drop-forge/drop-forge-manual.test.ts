@@ -158,3 +158,24 @@ it('rejects a manual research declaration that sends tokens to another wallet', 
     record.data.actions.find(isResearchAirdrop)!.credited_tokens
   ).toBeUndefined();
 });
+
+it('keeps the dynamic Research action pending after an ordinary undeclared manual airdrop', async () => {
+  const { record, chain } = setup(1);
+  const research = record.data.actions.find(isResearchAirdrop)!;
+  expect(research.recipients).toEqual([]);
+  await reconcileManual(record, chain, testConfig);
+  expect(record.data.actions[1].state).toBe('CONFIRMED');
+  expect(research.state).toBe('PENDING');
+  expect(research.hash).toBeUndefined();
+});
+it('does not confirm an empty unrelated batch that this proof did not credit', async () => {
+  const { record, chain } = setup(1);
+  const empty = {
+    ...record.data.actions[1],
+    id: 'empty-category',
+    recipients: []
+  };
+  record.data.actions.push(empty);
+  await reconcileManual(record, chain, testConfig);
+  expect(empty.state).toBe('PENDING');
+});

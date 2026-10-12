@@ -85,7 +85,8 @@ export function creditManualResearch(
   const amount = allocations.get(RESEARCH_AIRDROP_ADDRESS.toLowerCase());
   if (
     !action ||
-    !['PENDING', 'CONFIRMED'].includes(action.state) ||
+    (!['PENDING', 'CONFIRMED'].includes(action.state) &&
+      !(action.recovery?.outcome && action.recovery.outcome !== 'EXECUTED')) ||
     allocations.size !== 1 ||
     amount === undefined ||
     !Number.isSafeInteger(amount) ||
@@ -98,6 +99,16 @@ export function creditManualResearch(
   action.credited_tokens = (action.credited_tokens ?? 0) + amount;
   action.manual_hashes = [...(action.manual_hashes ?? []), hash];
   if (action.state === 'CONFIRMED') return;
+  if (action.recovery?.outcome) {
+    action.recovery_history = [
+      ...(action.recovery_history ?? []),
+      action.recovery
+    ];
+    delete action.recovery;
+    delete action.signed_tx;
+    delete action.hash;
+    action.state = 'PENDING';
+  }
   // Research has a dynamic top-up quantity. Recompute from canonical total after
   // minting closes rather than crediting this transaction into phase batches.
   action.recipients = [];

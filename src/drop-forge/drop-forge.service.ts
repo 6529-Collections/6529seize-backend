@@ -1,3 +1,6 @@
+import { ApiDropForgeRecovery } from '@/api/generated/models/ApiDropForgeRecovery';
+import { ApiDropForgeRecoveryAttempt } from '@/api/generated/models/ApiDropForgeRecoveryAttempt';
+import { originalRecovery } from '@/drop-forge/drop-forge.recovery';
 import { ApiDropForgeControlRequest } from '@/api/generated/models/ApiDropForgeControlRequest';
 import { ApiDropForgeLaunch } from '@/api/generated/models/ApiDropForgeLaunch';
 import { ApiDropForgePlanRequest } from '@/api/generated/models/ApiDropForgePlanRequest';
@@ -52,19 +55,47 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
         deadline,
         recipients,
         hash,
-        block_number
-      }) => ({
-        id,
-        label,
-        kind: kind as ApiDropForgeLaunch['actions'][number]['kind'],
-        state: state as ApiDropForgeLaunch['actions'][number]['state'],
-        phase,
-        due,
-        deadline,
-        recipients: recipients.length,
-        hash: hash ?? null,
-        block_number: block_number ?? null
-      })
+        block_number,
+        recovery,
+        remaining_recipients
+      }) => {
+        const inspection =
+          recovery ??
+          (['SIGNED', 'FAILED'].includes(state) && hash
+            ? originalRecovery(
+                record.data.actions.find((action) => action.id === id)!
+              )
+            : undefined);
+        return {
+          recovery: inspection
+            ? {
+                ...inspection,
+                outcome: inspection.outcome as ApiDropForgeRecovery['outcome'],
+                attempts: inspection.attempts.map(
+                  ({ id, operation, requested_by, requested_at, hash }) => ({
+                    id,
+                    operation:
+                      operation as ApiDropForgeRecoveryAttempt['operation'],
+                    requested_by,
+                    requested_at,
+                    hash: hash ?? null
+                  })
+                ),
+                allocations: remaining_recipients ?? recipients
+              }
+            : undefined,
+          id,
+          label,
+          kind: kind as ApiDropForgeLaunch['actions'][number]['kind'],
+          state: state as ApiDropForgeLaunch['actions'][number]['state'],
+          phase,
+          due,
+          deadline,
+          recipients: recipients.length,
+          hash: hash ?? null,
+          block_number: block_number ?? null
+        };
+      }
     ),
     updated_at: record.updated_at
   };
@@ -177,7 +208,11 @@ export async function controlLaunch(
           throw new LaunchSafetyError(
             'Control is not valid for the current launch state'
           );
-        if (record.data.actions.some((action) => action.state === 'FAILED'))
+        if (
+          record.data.actions.some((action) =>
+            ['FAILED', 'CANCELLED'].includes(action.state)
+          )
+        )
           throw new LaunchSafetyError(
             'A reverted transaction requires manual recovery; automatic replay is prohibited'
           );

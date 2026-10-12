@@ -1,4 +1,8 @@
 import {
+  RecoveryChain,
+  RecoveryEvidence
+} from '@/drop-forge/drop-forge.recovery-chain';
+import {
   Interface,
   isError,
   JsonRpcProvider,
@@ -11,6 +15,7 @@ import {
   LaunchAction,
   LaunchData,
   LaunchSafetyError,
+  RecoveryAttempt,
   assertPhaseScopedPlan
 } from '@/drop-forge/drop-forge.types';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
@@ -69,6 +74,17 @@ export interface LaunchChain {
     hash: string,
     sender?: string
   ): Promise<{ calldata: string; receipt: ChainReceipt | null }>;
+  inspectRecovery?(hash: string): Promise<string>;
+  prepareRecovery?(
+    data: LaunchData,
+    action: LaunchAction,
+    operation: 'SPEED_UP' | 'CANCEL'
+  ): Promise<string>;
+  recoveryEvidence?(
+    data: LaunchData,
+    action: LaunchAction,
+    attempt: RecoveryAttempt
+  ): Promise<RecoveryEvidence | null>;
   completed?(
     data: LaunchData,
     action: LaunchAction
@@ -146,6 +162,60 @@ export class EthereumLaunchChain implements LaunchChain {
       confirmations: await rpcWithDeadline(receipt.confirmations())
     };
   }
+  async inspectRecovery(hash: string): Promise<string> {
+    const tx = await rpcWithDeadline(this.provider.getTransaction(hash));
+    if (!tx)
+      throw new LaunchSafetyError(
+        'Recovery transaction is not available; retain the hash and retry'
+      );
+    if (![0, 1, 2].includes(tx.type))
+      throw new LaunchSafetyError('Unsupported recovery transaction type');
+    const raw = Transaction.from({
+      type: tx.type,
+      to: tx.to,
+      chainId: tx.chainId,
+      nonce: tx.nonce,
+      value: tx.value,
+      data: tx.data,
+      gasLimit: tx.gasLimit,
+      gasPrice: tx.type < 2 ? tx.gasPrice : null,
+      maxFeePerGas: tx.maxFeePerGas,
+      maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
+      accessList: tx.accessList,
+      signature: tx.signature
+    }).serialized;
+    if (Transaction.from(raw).hash !== hash)
+      throw new LaunchSafetyError('RPC recovery transaction hash differs');
+    return raw;
+  }
+  async prepareRecovery(
+    data: LaunchData,
+    action: LaunchAction,
+    operation: 'SPEED_UP' | 'CANCEL'
+  ): Promise<string> {
+    this.assertBinding(data);
+    return rpcWithDeadline(
+      new RecoveryChain(this.config, this.provider).prepare(
+        data,
+        action,
+        operation
+      )
+    );
+  }
+  async recoveryEvidence(
+    data: LaunchData,
+    action: LaunchAction,
+    attempt: RecoveryAttempt
+  ): Promise<RecoveryEvidence | null> {
+    this.assertBinding(data);
+    return rpcWithDeadline(
+      new RecoveryChain(this.config, this.provider).evidence(
+        data,
+        action,
+        attempt
+      )
+    );
+  }
   async broadcast(raw: string): Promise<void> {
     await rpcWithDeadline(this.provider.broadcastTransaction(raw));
   }
@@ -195,8 +265,18 @@ export class EthereumLaunchChain implements LaunchChain {
         'Claim is already initialized; automatic adoption is prohibited'
       );
     const claim = claimAbi.decodeFunctionResult('getClaim', result)[0];
-    const phase =
-      data.phases[action.kind === 'UPDATE' ? action.phase - 1 : action.phase];
+    const phase = action.late_delivery
+      ? data.phases.find(
+          (it) =>
+            it.start === Number(claim.startDate) &&
+            it.end === Number(claim.endDate) &&
+            it.root === claim.merkleRoot
+        )
+      : data.phases[action.kind === 'UPDATE' ? action.phase - 1 : action.phase];
+    if (!phase)
+      throw new LaunchSafetyError(
+        'Current mint configuration is outside the frozen launch'
+      );
     const equalAddress = (actual: string, expected: string) =>
       actual.toLowerCase() === expected.toLowerCase();
     const matches = [
@@ -217,9 +297,49 @@ export class EthereumLaunchChain implements LaunchChain {
       throw new LaunchSafetyError(
         'Claim configuration changed outside this launch'
       );
+    if (action.late_delivery) {
+      await this.verifyLateDelivery(
+        data,
+        action,
+        Number(claim.total),
+        captureSupply
+      );
+      return;
+    }
     await this.verifySupply(data, action, Number(claim.total), captureSupply);
   }
 
+  private async verifyLateDelivery(
+    data: LaunchData,
+    action: LaunchAction,
+    total: number,
+    capture: boolean
+  ): Promise<void> {
+    if (
+      action.kind !== 'AIRDROP' ||
+      (await this.now()) < data.phases[data.phases.length - 1].end
+    )
+      throw new LaunchSafetyError(
+        'Outstanding allocations can be delivered only after all minting closes'
+      );
+    if (isResearchAirdrop(action)) {
+      verifyResearchSupply(data, action, total, await this.now(), capture);
+      return;
+    }
+    const remaining = (action.remaining_recipients ?? action.recipients).reduce(
+      (sum, row) => sum + row.amount,
+      0
+    );
+    if (remaining <= 0 || total + remaining > data.edition_size)
+      throw new LaunchSafetyError(
+        'Outstanding allocations exceed remaining edition supply'
+      );
+    if (capture) action.expected_supply = total;
+    if (action.expected_supply !== total)
+      throw new LaunchSafetyError(
+        'Claim supply changed before recovery delivery'
+      );
+  }
   private async verifySupply(
     data: LaunchData,
     action: LaunchAction,

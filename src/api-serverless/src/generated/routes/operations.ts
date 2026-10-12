@@ -116,6 +116,7 @@ import { ApiDropForgeListPage } from '@/api/generated/models/ApiDropForgeListPag
 import { ApiDropForgeManualRequest } from '@/api/generated/models/ApiDropForgeManualRequest';
 import { ApiDropForgeManualResponse } from '@/api/generated/models/ApiDropForgeManualResponse';
 import { ApiDropForgePlanRequest } from '@/api/generated/models/ApiDropForgePlanRequest';
+import { ApiDropForgeRecoveryRequest } from '@/api/generated/models/ApiDropForgeRecoveryRequest';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
 import { ApiDropPartV2 } from '@/api/generated/models/ApiDropPartV2';
 import { ApiDropPollsPage } from '@/api/generated/models/ApiDropPollsPage';
@@ -1571,6 +1572,23 @@ export type ReadyDropForgeLaunchRequest = Request<
   ApiResponse<ReadyDropForgeLaunchResponse>,
   never,
   ReadyDropForgeLaunchQuery,
+  Record<string, never>
+>;
+
+export interface RecoverDropForgeLaunchPathParams {
+  "contract": string;
+  "claim_id": number;
+}
+
+export type RecoverDropForgeLaunchQuery = Record<string, never>;
+
+export type RecoverDropForgeLaunchResponse = ApiDropForgeLaunch;
+
+export type RecoverDropForgeLaunchRequest = Request<
+  RecoverDropForgeLaunchPathParams,
+  ApiResponse<RecoverDropForgeLaunchResponse>,
+  ApiDropForgeRecoveryRequest,
+  RecoverDropForgeLaunchQuery,
   Record<string, never>
 >;
 

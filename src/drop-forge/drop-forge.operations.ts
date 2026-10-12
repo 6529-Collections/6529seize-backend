@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import {
   automationEnabled,
+  recoveryEnabled,
   getDropForgeConfig
 } from '@/drop-forge/drop-forge.config';
 import {
@@ -208,7 +209,7 @@ export async function coordinateManual(
   ctx: RequestContext
 ): Promise<string | null> {
   // Existing manual operations remain usable before automation is configured.
-  if (!automationEnabled()) return null;
+  if (!recoveryEnabled()) return null;
   const config = getDropForgeConfig();
   const chain = new EthereumLaunchChain(config);
   const id = launchId(config.chainId, config.creator, claim);
@@ -231,10 +232,6 @@ export async function coordinateManual(
             if (pending.launch_id === id || record.data.manual_lease)
               throw new LaunchSafetyError(
                 'A transaction is already in flight; wait for reconciliation before manual work'
-              );
-            if (record.state === 'CANCELLED')
-              throw new LaunchSafetyError(
-                'Cancelled launch requires manual recovery'
               );
             leaseId = randomUUID();
             record.data.manual_lease = {
