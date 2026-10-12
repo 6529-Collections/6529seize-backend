@@ -84,7 +84,9 @@ payment receiver. Every worker transaction sends zero ETH; Pay Artist is exclude
 3. Craft shows initialization and update progress from the backend. After edits
    are saved and republished, **Update Claim** queues a metadata-only transaction.
    It preserves live phase windows, roots, prices, receiver and allocations.
-   Urgent due phase work takes precedence. A completed launch can reopen for this
+   Urgent due phase work takes precedence. A newer publication can supersede
+   an unsigned pending metadata request; an already signed/reserved transaction
+   must reconcile before another publication can replace it. A completed launch can reopen for this
    update without resetting or replaying its airdrops. Edition/distribution
    changes are not metadata-only updates and require explicit recovery review.
 4. Existing Launch controls remain available to contract admins. Before a wallet
