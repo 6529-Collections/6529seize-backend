@@ -1255,6 +1255,15 @@ Wave rows can be top-level waves or subwaves through the nullable `parent_wave_i
 
 Wave overview `has_competition` is true for Rank or Approve wave types, or when the wave has any competition record, including drafts and completed competitions. Competition existence is fetched in one batch for the overview page and its visible parent waves.
 
+Ordinary chat drop creates and edits do not acquire the legacy competition
+ownership lock. Edits still lock any existing competition entry memberships,
+and use the stored drop type to decide whether the legacy owner lock is needed.
+Chat persistence does not initialize legacy leaderboard/vote-history rows, and
+chat edit row replacement does not clear legacy voting state; these writes
+otherwise acquire the same ownership lock through migration triggers. Competition
+submissions and permanent drop deletions retain the ownership fence so writes
+cannot race a legacy-to-native competition transfer.
+
 Wave writes enforce that every active Drop, Vote, Chat, and Admin membership is
 contained by the Wave View membership. The generated
 `POST /wave-group-validation` boundary exposes the same privacy-preserving
