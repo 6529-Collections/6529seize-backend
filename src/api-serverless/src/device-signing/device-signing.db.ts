@@ -194,7 +194,9 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
       'upsertDropAuthorSignature',
       `insert into ${DROP_AUTHOR_SIGNATURES_TABLE} (drop_id, event_id, signed_at)
        values (:dropId, :eventId, :signedAt)
-       on duplicate key update event_id = values(event_id), signed_at = values(signed_at)`,
+       on duplicate key update
+         event_id = if(values(signed_at) >= signed_at, values(event_id), event_id),
+         signed_at = greatest(signed_at, values(signed_at))`,
       { dropId, eventId, signedAt },
       ctx
     );

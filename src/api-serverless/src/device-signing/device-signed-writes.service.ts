@@ -117,6 +117,8 @@ export interface ReservedDeviceEvent {
   readonly eventId: string;
   readonly grantId: string;
   readonly kind: DeviceEventKind;
+  // Server receive time; orders concurrent signed writes on one drop.
+  readonly receivedAt: number;
 }
 
 export interface StrippedDeviceSignature<T> {
@@ -265,6 +267,11 @@ export class DeviceSignedWritesService {
       { kind, waveId: storedWaveId, refs: [dropId], body },
       ctx
     );
+    if (SIGNED_AUTHOR_SIGNATURE_EFFECT[kind] !== 'none') {
+      // Fail safe: if finalize later fails, the drop reads as not author
+      // signed instead of pointing at an event for older content.
+      await this.clearAuthorSignatureBestEffort(dropId, ctx);
+    }
     return this.runReserved(reservation, write, () => dropId, ctx);
   }
 
@@ -342,7 +349,12 @@ export class DeviceSignedWritesService {
         'event or sequence number was already used'
       );
     }
-    return { eventId, grantId: grant.id, kind: target.kind };
+    return {
+      eventId,
+      grantId: grant.id,
+      kind: target.kind,
+      receivedAt: now
+    };
   }
 
   private validateEnvelope(rawEnvelope: unknown): DeviceSignatureEnvelope {
@@ -472,7 +484,11 @@ export class DeviceSignedWritesService {
         );
         if (effect === 'set') {
           await this.db.upsertDropAuthorSignature(
-            { dropId, eventId: reservation.eventId, signedAt: now },
+            {
+              dropId,
+              eventId: reservation.eventId,
+              signedAt: reservation.receivedAt
+            },
             txCtx
           );
         } else if (effect === 'clear') {

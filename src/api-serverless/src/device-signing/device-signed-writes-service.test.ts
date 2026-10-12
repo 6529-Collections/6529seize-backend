@@ -608,6 +608,39 @@ describe('DeviceSignedWritesService', () => {
       );
     });
 
+    it('clears the author signature before a signed EDIT so a failed finalize fails safe', async () => {
+      const body = { parts: [] };
+      const canonical = '{"parts":[]}';
+      const { envelope } = signedEnvelope({
+        kind: DeviceEventKind.EDIT,
+        seq: 12,
+        refs: [DROP_ID],
+        bodyHash: ethers.keccak256(ethers.toUtf8Bytes(canonical)),
+        bodySize: canonical.length
+      });
+      const write = jest.fn().mockResolvedValue({ id: DROP_ID });
+      jest
+        .mocked(db.executeNativeQueriesInTransaction)
+        .mockRejectedValueOnce(new Error('finalize failed'));
+
+      await service.mutateDrop(
+        {
+          envelope,
+          kind: DeviceEventKind.EDIT,
+          dropId: DROP_ID,
+          waveId: WAVE_ID,
+          body
+        },
+        write,
+        ctx()
+      );
+
+      const clearOrder = jest.mocked(db.deleteDropAuthorSignature).mock
+        .invocationCallOrder[0];
+      expect(clearOrder).toBeLessThan(write.mock.invocationCallOrder[0]);
+      expect(db.upsertDropAuthorSignature).not.toHaveBeenCalled();
+    });
+
     it('signs a REACT without touching the author signature', async () => {
       const canonical = '{"on":true,"reaction":":+1:"}';
       const { envelope, eventId } = signedEnvelope({
