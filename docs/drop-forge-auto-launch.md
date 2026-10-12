@@ -1,10 +1,11 @@
 # Drop Forge automated launch operations
 
-The backend implements a manually armed, default-disabled launch worker and a
-separate default-disabled EMMA preparation queue. It does not select winners,
-approve crafts, fund wallets, create keys, grant creator admins, or pay artists.
-Frontend controls are still a separate implementation; the frontend companion
-PR currently carries the requirements and generated API contracts.
+EMMA exposes one durable **Process and Finalize** operation. Craft exposes
+**Launch** after publication and **Update Claim** after republishing metadata.
+The backend initializes immediately after Launch is accepted and continues phase
+transitions from a one-minute EventBridge recovery schedule. Both workers default
+to disabled. Winner selection, craft publication, keys, gas funding, creator-admin
+grants, and Pay Artist remain operator responsibilities.
 
 ## Configuration and authority
 
@@ -33,6 +34,14 @@ services need the same `DROP_FORGERS_6529_MENTION_PROFILE_IDS` configuration.
 | `DROP_FORGE_MAX_TX_COST_ETH`            | Required positive total transaction cost cap                                     |
 | `DROP_FORGE_EMMA_AUTH_TOKEN`            | Full Authorization header for a provisioned EMMA service account                 |
 
+The separate `dropForgePreparationLoop` role is supplied through
+`DROP_FORGE_PREPARATION_ROLE_ARN`. API roles need `lambda:InvokeFunction` on
+`dropForgeLaunchLoop` and `dropForgePreparationLoop`; the preparation role needs
+self-invocation permission. Scope those resources to the actual deployed function
+ARNs. The preparation worker does not need KMS signing permission.
+`DROP_FORGE_CALENDAR_BASE_URL` defaults to `https://6529.io` and supplies the
+mint-day calendar used by the server to derive the fixed schedule.
+
 Mainnet creator and receiver defaults follow the existing Memes flow. No private
 wallet key is stored in the backend. The KMS public key must match the pinned
 signer address. Configure the existing `ETHEREUM_RPC_URL` (mainnet) or
@@ -57,37 +66,49 @@ creator. The operational wallet must independently pass that on-chain check.
 Admin grant/revocation remains creator-owner-only. Mint proceeds use the frozen
 payment receiver. Every worker transaction sends zero ETH; Pay Artist is excluded.
 
-## Prepare and arm
+## Process, craft and launch
 
-1. Publish claim metadata and edition size using the existing flow. The target
-   claim must be uninitialized on-chain; automatic adoption is prohibited.
-2. Queue one phase at a time using
-   `POST /drop-forge/distribution-jobs/{contract}/{claim_id}` with a stable UUID
-   `request_id`, `kind=PHASE`, `plan_id`, and `phase_id` (or `public`). Retrying
-   the same request ID retrieves the same job. Completed phase inputs are reused
-   until an explicit allowlist reset clears the preparation results.
-3. Read `GET /drop-forge/distribution-jobs/{job_id}` on refresh for
-   `PENDING`, `COMPLETED`, or `FAILED`. Download data is in `result_json`.
-   A failed job is terminal; after fixing the cause, use a new request ID.
-   Finalize through the same create endpoint with `kind=FINALIZE`, omitting
-   phase/plan IDs. Distribution-admin authorization controls these APIs.
-4. Save `PUT /drop-forge/launches/{contract}/{claim_id}` with `revision=0`
-   for a new draft. Set `initialize_at` and each phase's exact distribution
-   name, Unix-second `start`/`end`, `price_wei`, and explicit `is_public` flag.
-   Artist and team airdrops require explicit opt-ins. Subscriber allocations
-   across the prepared phases and general Airdrop rows are included.
-5. Review `GET` on the same path. It exposes revision, configuration, roots,
-   action states, recipient counts, and hashes; signed bytes are never returned.
-   Use the latest revision in a `POST .../control` request with `operation=ARM`.
-   Draft edits require the current revision. After arming, inputs are immutable.
+1. Actor 1 confirms the token ID in EMMA, uploads the artist/team allocations,
+   and clicks **Process and Finalize**. The API returns a durable job immediately.
+   The worker snapshots the three ordered upstream phase inputs, processes them
+   and public subscriptions in checkpoints, then finalizes. Refresh retrieves
+   progress; completion enables read-only paginated list downloads. Downloads
+   cannot mutate assignments or normalize data. Reset explicitly invalidates the
+   completed version; reset/upload operations conflict while processing is pending.
+2. Actor 2 saves and publishes Craft, then clicks **Launch**. The API checks the
+   completed distribution version, roots, edition, reporting access, and timing.
+   It derives the standard windows from the mint calendar and immediately wakes
+   the launch worker. Repeated clicks return the same armed ledger. No per-drop
+   launch time or separate arm handoff is required. Initialization must confirm
+   before Phase 0 opens; an insufficient remaining time budget rejects launch.
+3. Craft shows initialization and update progress from the backend. After edits
+   are saved and republished, **Update Claim** queues a metadata-only transaction.
+   It preserves live phase windows, roots, prices, receiver and allocations.
+   Urgent due phase work takes precedence. A completed launch can reopen for this
+   update without resetting or replaying its airdrops. Edition/distribution
+   changes are not metadata-only updates and require explicit recovery review.
+4. Existing Launch controls remain available to contract admins. Before a wallet
+   request the UI obtains a backend manual lease, pausing new automatic work.
+   The transaction hash is submitted with its action category and persisted in
+   the browser until accepted; refresh retries that submission. The worker waits
+   for canonical confirmations, credits only the supplied allocations, and
+   continues the remainder. Rejected wallet requests release the lease only if
+   no nonce was consumed. An uncertain submission remains paused until its hash
+   is reconciled or safe cancellation is proved.
 
-The existing Drop Forge schedule is expressed in `Europe/Athens` wall time
-(EET/EEST, including daylight saving): Phase 0 17:40–18:20, Phase 1
-18:30–18:50, Phase 2 19:00–19:20, and public 19:20–17:00 the next day.
-The API receives exact Unix-second instants, so the caller resolves that mint
-day's timezone before saving. `initialize_at` is the exact initialization
-eligibility time; the first phase's `start` is its confirmation deadline.
-There is no inferred or hardcoded earlier initialization time.
+A compatible initialized claim or already-applied phase configuration is observed
+without another transaction. Manual hashes submitted before Launch are imported
+when the ledger is created. Arbitrary transactions sent outside these coordinated
+controls require supplying their hashes for reconciliation; minted supply alone
+cannot prove which recipient/category received an airdrop. Unknown state blocks
+execution rather than assuming allocations were delivered. Automation writes
+completed category flags into the existing manual UI after all batches confirm.
+
+The fixed schedule uses `Europe/Athens` wall time with DST: Phase 0
+17:40–18:20, Phase 1 18:30–18:50, Phase 2 19:00–19:20, and public
+19:20–17:00 the next day. Calendar timestamps resolve the actual mint day.
+Launch eligibility starts at request acceptance; no earlier trigger is invented.
+The legacy revisioned draft/control API remains available for compatibility.
 
 Each phase has its own deterministic recipient batches (at most 100 wallets
 per transaction, at most 20,000 phase-recipient entries per plan):
@@ -125,29 +146,28 @@ reconcilable. Recreate an unstarted draft, or manually reconcile a started ledge
 
 All prepared allowlist phases must be mapped, non-public roots cannot be empty,
 stored proofs must match the distribution, and normalization must be complete
-before arming. Airdrops exceeding the edition size are rejected. Treat the
-operational wallet and selected claim as exclusive to this worker while armed;
-manual transactions or source changes cause a safety block. The initialized
+before launching. Airdrops exceeding the edition size are rejected. Do not use the operational signer for unrelated transactions. Manual claim work
+uses the coordination endpoint; unknown nonce consumption or distribution changes
+cause a safety block. The initialized
 on-chain token ID must match the prepared card/claim ID before any airdrop or
 phase update.
 
 ## Timeouts and retries
 
-An HTTP timeout does not prove that preparation failed. Finalization may finish
-its writes after the client has disconnected, which explains a success visible
-after refresh. The legacy normalize/download endpoints remain synchronous for
-compatibility. Use the job API to make request completion independent of the
-write workload; frontend adoption is still required to remove those waits from
-the existing buttons.
+An HTTP timeout does not prove preparation failed. The single job makes request
+completion independent of the write workload and refresh discovers its status.
+Each phase's writes and checkpoint commit together. Lambda termination rolls
+back the unfinished stage, which the recovery schedule can retry. Ordinary stage
+errors become FAILED; correcting the cause and retrying uses a new request ID
+and reuses compatible committed phase results. A completed job binds its
+read-only lists to the distribution version. Source changes require reset rather
+than silently mixing completed versions. Snapshot inputs are capped at 16 MiB;
+upstream reads also have time and response limits.
 
-Phase processing now commits subscription assignments, distribution rows,
-Merkle data, and the downloadable result together. Concurrent retries share a
-preparation lock and receive the stored result. Public subscriber results are
-also persisted into the distribution. Finalization shares that lock and inserts
-normalized rows in chunks. TDH enrichment fetches only intersecting wallet sets.
-EMMA reads have a 20-second timeout and a 32 MiB response cap. Production traces
-are still needed to attribute the reported timeout frequency and tune workload
-limits; no production root cause or load-test result is claimed here.
+Finalization uses chunked inserts and TDH enrichment reads intersecting wallet
+sets. Legacy synchronous endpoints remain compatible. Production traces and
+large-plan exercises are still required to confirm the reported timeout cause
+and workload limits; no production root-cause measurement is claimed.
 
 ## Pause, cancellation and recovery
 
@@ -203,7 +223,8 @@ exercised in local validation.
 ## Future rollout order
 
 Deploy `dbMigrationsLoop` for entity sync, then `api`, then
-`dropForgeLaunchLoop` with both flags disabled. Redeploy the existing wave-report
+`dropForgePreparationLoop` and `dropForgeLaunchLoop` with both flags disabled,
+then the dependent frontend controls. Redeploy the existing wave-report
 consumers `subscriptionsDaily`, `subscriptionsTopUpLoop`,
 `transactionsProcessingLoop`, `helpBotReplyLoop`, `nftsLoop`,
 `mintAnnouncementsLoop`, and `waveDecisionExecutionLoop` so the new configured mention group resolves

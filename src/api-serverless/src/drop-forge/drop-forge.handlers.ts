@@ -33,6 +33,8 @@ import {
   ForbiddenException
 } from '@/exceptions';
 import { Timer } from '@/time';
+import { createProcess } from '@/drop-forge/drop-forge.workflow';
+import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
 import { isAddress } from 'ethers';
 
 const paramsSchema = Joi.object<{ contract: string; claim_id: number }>({
@@ -68,13 +70,26 @@ const controlSchema = Joi.object<ApiDropForgeControlRequest>({
   operation: Joi.string().valid('ARM', 'PAUSE', 'RESUME', 'CANCEL').required()
 });
 const jobSchema = Joi.object<ApiDropForgeJobRequest>({
+  phase_ids: Joi.array()
+    .length(3)
+    .unique()
+    .items(
+      Joi.string()
+        .pattern(/^[a-zA-Z0-9_-]+$/)
+        .max(100)
+    )
+    .when('kind', {
+      is: 'PROCESS_ALL',
+      then: Joi.required(),
+      otherwise: Joi.forbidden()
+    }),
   request_id: Joi.string().guid().required(),
-  kind: Joi.string().valid('PHASE', 'FINALIZE').required(),
+  kind: Joi.string().valid('PHASE', 'FINALIZE', 'PROCESS_ALL').required(),
   plan_id: Joi.string()
     .pattern(/^[a-zA-Z0-9_-]+$/)
     .max(100)
     .when('kind', {
-      is: 'PHASE',
+      is: Joi.valid('PHASE', 'PROCESS_ALL'),
       then: Joi.required(),
       otherwise: Joi.forbidden()
     }),
@@ -119,7 +134,8 @@ export async function getDropForgeLaunch(
       req.params,
       paramsSchema
     );
-    await assertLaunchAccess(getAuthenticatedWalletOrNull(req), contract);
+    if (!authenticateSubscriptionsAdmin(req))
+      await assertLaunchAccess(getAuthenticatedWalletOrNull(req), contract);
     return mapLaunch(
       await getLaunch(contract, claim_id, { timer: Timer.getFromRequest(req) })
     );
@@ -159,12 +175,17 @@ export async function controlDropForgeLaunch(
     );
   });
 }
-function mapJob(job: DropForgeJobEntity): ApiDropForgeJob {
+export function mapJob(job: DropForgeJobEntity): ApiDropForgeJob {
   let resultJson: string | null = null;
-  if (job.result)
+  if (job.result && job.kind !== 'PROCESS_ALL')
     resultJson =
       typeof job.result === 'string' ? job.result : JSON.stringify(job.result);
   return {
+    step: Number(job.step ?? 0),
+    phase_ids:
+      typeof job.phase_ids === 'string'
+        ? JSON.parse(job.phase_ids)
+        : (job.phase_ids ?? []),
     id: job.id,
     contract: job.contract,
     claim_id: Number(job.claim_id),
@@ -188,6 +209,10 @@ export async function createDropForgeDistributionJob(
       paramsSchema
     );
     const body = getValidatedByJoiOrThrow(req.body, jobSchema);
+    if (process.env.DROP_FORGE_PREPARATION_ENABLED !== 'true')
+      throw new BadRequestException(
+        'Background distribution processing is disabled'
+      );
     const job = Object.assign(new DropForgeJobEntity(), {
       id: body.request_id,
       contract,
@@ -195,13 +220,18 @@ export async function createDropForgeDistributionJob(
       kind: body.kind,
       plan_id: body.plan_id ?? null,
       phase_id: body.phase_id ?? null,
+      phase_ids: body.phase_ids ?? null,
+      step: 0,
       updated_at: Date.now()
     });
-    return mapJob(
-      await dropForgeJobsRepository.create(job, {
-        timer: Timer.getFromRequest(req)
-      })
-    );
+    const saved =
+      job.kind === 'PROCESS_ALL'
+        ? await createProcess(job, { timer: Timer.getFromRequest(req) })
+        : await dropForgeJobsRepository.create(job, {
+            timer: Timer.getFromRequest(req)
+          });
+    await wakeDropForge(true);
+    return mapJob(saved);
   });
 }
 export async function getDropForgeDistributionJob(

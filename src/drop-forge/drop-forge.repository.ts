@@ -158,9 +158,9 @@ export class DropForgeRepository {
               WHERE actions.action_state <> 'CONFIRMED'
               ORDER BY actions.action_index LIMIT 1) AS next_due
            FROM ${DROP_FORGE_LAUNCHES_TABLE} launches
-           WHERE launches.state IN ('ARMED','RUNNING') AND launches.report_pending = 0
+           WHERE (launches.state IN ('ARMED','RUNNING') OR JSON_SEARCH(launches.data, 'one', 'PENDING', NULL, '$.manual_transactions[*].state') IS NOT NULL) AND launches.report_pending = 0
          ) eligible
-         WHERE eligible.next_due IS NULL OR eligible.next_due <= :now
+         WHERE eligible.next_due IS NULL OR eligible.next_due <= :now OR JSON_SEARCH(eligible.data, 'one', 'PENDING', NULL, '$.manual_transactions[*].state') IS NOT NULL
          ORDER BY eligible.next_due ASC, eligible.id ASC LIMIT 20`,
         { now },
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
@@ -311,7 +311,7 @@ export class DropForgeRepository {
         parameters,
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );
-      if (!metadata?.metadata_location || !metadata.edition_size)
+      if (!metadata?.edition_size)
         throw new NotFoundException(
           'Published claim metadata and edition size are required'
         );
@@ -321,7 +321,7 @@ export class DropForgeRepository {
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );
       return {
-        metadata: metadata.metadata_location,
+        metadata: metadata.metadata_location ?? '',
         edition: Number(metadata.edition_size),
         rows
       };

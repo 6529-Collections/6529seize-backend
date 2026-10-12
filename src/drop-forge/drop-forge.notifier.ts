@@ -108,11 +108,12 @@ export async function reportPreparationJob(
 ): Promise<boolean> {
   try {
     const pushes = await dropForgeJobsRepository.reportOne((job, ctx) => {
+      const reset = job.error === 'Distribution reset; process again';
       const detail = job.error ? '\n' + job.error : '';
       return postForgeReport(
         config,
-        `Drop Forge preparation ${job.id}: ${job.kind} ${job.contract} / claim ${job.claim_id} ${job.status}${detail}`,
-        job.status === 'FAILED',
+        `Claim #${job.claim_id}: ${job.kind === 'PROCESS_ALL' ? 'Distribution processing and finalization' : job.kind === 'FINALIZE' ? 'Distribution finalization' : 'Distribution phase preparation'} ${reset ? 'invalidated by an explicit reset.' : job.status === 'COMPLETED' ? 'completed. Read-only results are ready.' : 'failed.'}${detail}`,
+        job.status === 'FAILED' && !reset,
         ctx
       );
     }, {});

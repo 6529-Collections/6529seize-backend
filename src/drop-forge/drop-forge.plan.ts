@@ -38,7 +38,8 @@ export function buildLaunchPlan(
   claim: number,
   input: LaunchPlanInput,
   source: LaunchSource,
-  now: number
+  now: number,
+  immediate = false
 ): LaunchData {
   if (!source.metadata || source.edition < 1 || !source.rows.length)
     throw new LaunchSafetyError(
@@ -53,7 +54,7 @@ export function buildLaunchPlan(
     throw new LaunchSafetyError('Invalid claim or edition');
   if (
     !Number.isSafeInteger(input.initialize_at) ||
-    input.initialize_at < now + 300 ||
+    input.initialize_at < now + (immediate ? 0 : 300) ||
     input.phases.length < 1 ||
     input.phases.length > 20
   )
@@ -123,7 +124,7 @@ export function buildLaunchPlan(
   // public minting starts immediately after that window (the existing UI flow).
   const recipients = phases.map((phase, index) => {
     const selectedNames = [phase.name];
-    if (index === 0) selectedNames.push(...categories);
+
     const next = input.phases[index + 1];
     if (next?.is_public && next.start === phase.end)
       selectedNames.push(next.name);
@@ -132,7 +133,14 @@ export function buildLaunchPlan(
       return [];
     return deriveAirdropRecipients(source.rows, selectedNames);
   });
-  const allRecipients = recipients.flat();
+  const categoryRecipients = categories.map((category) => ({
+    label: category,
+    recipients: deriveAirdropRecipients(source.rows, [category])
+  }));
+  const allRecipients = [
+    ...recipients.flat(),
+    ...categoryRecipients.flatMap((it) => it.recipients)
+  ];
   if (allRecipients.reduce((sum, row) => sum + row.amount, 0) > source.edition)
     throw new LaunchSafetyError('Airdrops exceed edition size');
   if (allRecipients.length > 20000)
@@ -142,7 +150,17 @@ export function buildLaunchPlan(
   const actions: LaunchAction[] = [];
   for (let phase = 0; phase < phases.length; phase++) {
     const due = phase === 0 ? input.initialize_at : phases[phase - 1].end + 1;
-    const batches = Math.ceil(recipients[phase].length / 100);
+    const groups = [
+      ...(phase === 0 ? categoryRecipients : []),
+      {
+        label: `${phases[phase].name} Subscription Airdrops`,
+        recipients: recipients[phase]
+      }
+    ];
+    const batches = groups.reduce(
+      (n, group) => n + Math.ceil(group.recipients.length / 100),
+      0
+    );
     const minimumLead = launchPreparationSeconds(config, batches + 1);
     const gaplessPublic =
       input.phases[phase].is_public &&
@@ -166,16 +184,19 @@ export function buildLaunchPlan(
       recipients: [],
       state: 'PENDING'
     });
-    for (let offset = 0; offset < recipients[phase].length; offset += 100)
-      actions.push({
-        id: `phase-${phase}-airdrop-${offset / 100}`,
-        kind: 'AIRDROP',
-        phase,
-        due,
-        deadline,
-        recipients: recipients[phase].slice(offset, offset + 100),
-        state: 'PENDING'
-      });
+    for (const [groupIndex, group] of Array.from(groups.entries())) {
+      for (let offset = 0; offset < group.recipients.length; offset += 100)
+        actions.push({
+          id: `phase-${phase}-group-${groupIndex}-airdrop-${offset / 100}`,
+          label: group.label,
+          kind: 'AIRDROP',
+          phase,
+          due,
+          deadline,
+          recipients: group.recipients.slice(offset, offset + 100),
+          state: 'PENDING'
+        });
+    }
   }
   return {
     plan_version: 2,
@@ -225,3 +246,9 @@ export function launchPreparationSeconds(
 ): number {
   return transactions * (config.confirmations * 12 + 60) + 120;
 }
+
+export const hashLaunchDistribution = (source: LaunchSource) =>
+  hashLaunchSource({ ...source, metadata: '' });
+export const sourceMatchesLaunch = (source: LaunchSource, data: LaunchData) =>
+  (data.managed ? hashLaunchDistribution(source) : hashLaunchSource(source)) ===
+  data.distribution_hash;

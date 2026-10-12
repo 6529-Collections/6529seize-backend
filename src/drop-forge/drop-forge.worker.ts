@@ -1,7 +1,9 @@
 import { Transaction } from 'ethers';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import { LaunchChain, ChainReceipt } from '@/drop-forge/drop-forge.chain';
-import { hashLaunchSource } from '@/drop-forge/drop-forge.plan';
+import { mirrorCompletion } from '@/drop-forge/drop-forge.completion';
+import { reconcileManual } from '@/drop-forge/drop-forge.manual';
+import { sourceMatchesLaunch } from '@/drop-forge/drop-forge.plan';
 import {
   addLaunchEvent,
   DropForgeRepository,
@@ -39,7 +41,39 @@ export class DropForgeWorker {
           ctx
         )) {
           const record = await this.repository.lockLaunch(candidate.id, ctx);
-          if (!runnable(record)) continue;
+          if (!runnable(record)) {
+            if (
+              record.data.manual_transactions?.some(
+                (it) => it.state === 'PENDING'
+              )
+            ) {
+              try {
+                await reconcileManual(
+                  record,
+                  this.chain,
+                  this.config,
+                  (
+                    await this.repository.source(
+                      record.data.contract,
+                      record.data.claim_id,
+                      ctx
+                    )
+                  ).metadata
+                );
+                await mirrorCompletion(record, ctx);
+              } catch (error) {
+                setLaunchState(
+                  record,
+                  'BLOCKED',
+                  error instanceof LaunchSafetyError
+                    ? error.message
+                    : 'Manual transaction reconciliation failed'
+                );
+              }
+              await this.repository.save(record, ctx);
+            }
+            continue;
+          }
           if (record.data.events.some((event) => !event.drop_id)) continue;
           try {
             const reserved = await this.reserve(record, pending, ctx);
@@ -98,7 +132,7 @@ export class DropForgeWorker {
 
   private async assertCanonical(record: LaunchRecord): Promise<void> {
     const confirmed = record.data.actions.filter(
-      (it) => it.state === 'CONFIRMED'
+      (it) => it.state === 'CONFIRMED' && !!it.hash
     );
     // Actions confirm serially on one chain. A reorg removing an earlier
     // receipt also removes its latest confirmed descendant's block.
@@ -124,6 +158,28 @@ export class DropForgeWorker {
   ): Promise<Work | null> {
     assertPhaseScopedPlan(record.data);
     await this.assertCanonical(record);
+    if (
+      !(await reconcileManual(
+        record,
+        this.chain,
+        this.config,
+        (
+          await this.repository.source(
+            record.data.contract,
+            record.data.claim_id,
+            ctx
+          )
+        ).metadata
+      ))
+    ) {
+      await this.repository.save(record, ctx);
+      return null;
+    }
+    await mirrorCompletion(record, ctx);
+    if (record.data.events.some((event) => !event.drop_id)) {
+      await this.repository.save(record, ctx);
+      return null;
+    }
     const action = record.data.actions.find((it) => it.state !== 'CONFIRMED');
     if (!action) {
       setLaunchState(
@@ -136,6 +192,46 @@ export class DropForgeWorker {
     }
     const now = await this.chain.now();
     if (now < action.due) return null;
+    const completed = await this.chain.completed?.(record.data, action);
+    if (completed) {
+      action.state = 'CONFIRMED';
+      action.observed = true;
+      if (action.kind === 'INITIALIZE' && completed.metadata !== undefined)
+        record.data.metadata = completed.metadata;
+      const proof = [...(record.data.manual_transactions ?? [])]
+        .reverse()
+        .find(
+          (it) =>
+            it.state === 'CONFIRMED' &&
+            it.phase === action.phase &&
+            it.method ===
+              (action.kind === 'INITIALIZE'
+                ? 'initializeClaim'
+                : 'updateClaim') &&
+            it.metadata === (action.target_metadata ?? record.data.metadata)
+        );
+      if (proof) {
+        action.hash = proof.hash;
+        action.block_hash = proof.block_hash;
+        action.block_number = proof.block_number;
+      }
+      if (action.kind === 'UPDATE') {
+        action.expected_supply = completed.total;
+        action.airdrop_baseline =
+          completed.total -
+          record.data.actions
+            .filter((it) => it.phase === action.phase)
+            .reduce((n, it) => n + (it.credited_tokens ?? 0), 0);
+      }
+      if (action.kind === 'METADATA')
+        record.data.metadata = action.target_metadata!;
+      addLaunchEvent(
+        record,
+        `Claim #${record.data.claim_id}: ${action.kind === 'INITIALIZE' ? 'Already initialized' : action.kind === 'METADATA' ? 'Metadata already synchronized' : 'Phase configuration already applied'}; verified on-chain (${action.id}).${proof ? ` ${proof.hash}` : ''}`
+      );
+      await this.repository.save(record, ctx);
+      return null;
+    }
     if (now >= action.deadline - 120)
       throw new LaunchSafetyError(
         `Missed safe execution window for ${action.id}`
@@ -147,9 +243,16 @@ export class DropForgeWorker {
       record.data.claim_id,
       ctx
     );
-    if (hashLaunchSource(source) !== record.data.distribution_hash)
+    if (!sourceMatchesLaunch(source, record.data))
       throw new LaunchSafetyError(
         'Prepared distribution or metadata changed after the launch was frozen'
+      );
+    if (
+      action.kind === 'METADATA' &&
+      source.metadata !== action.target_metadata
+    )
+      throw new LaunchSafetyError(
+        'A newer Craft publication exists; request its metadata update'
       );
     action.unsigned_tx = await this.chain.prepare(record.data, action);
     action.state = 'RESERVED';
@@ -172,9 +275,16 @@ export class DropForgeWorker {
         work.record.data.claim_id,
         {}
       );
-      if (hashLaunchSource(source) !== work.record.data.distribution_hash)
+      if (!sourceMatchesLaunch(source, work.record.data))
         throw new LaunchSafetyError(
           'Prepared distribution or metadata changed before signing'
+        );
+      if (
+        work.action.kind === 'METADATA' &&
+        source.metadata !== work.action.target_metadata
+      )
+        throw new LaunchSafetyError(
+          'Craft publication changed before metadata signing'
         );
       const nonce = Transaction.from(work.action.unsigned_tx!).nonce;
       const [latest, pending] = await Promise.all([
@@ -267,6 +377,7 @@ export class DropForgeWorker {
             pending,
             await this.chain.now()
           );
+          await mirrorCompletion(record, ctx);
           await this.repository.save(record, ctx);
           return null;
         }
@@ -293,6 +404,7 @@ export class DropForgeWorker {
                 pending,
                 await this.chain.now()
               );
+              await mirrorCompletion(record, ctx);
               await this.repository.save(record, ctx);
             }
             return null;
@@ -342,6 +454,8 @@ export class DropForgeWorker {
     pending.launch_id = null;
     pending.action_id = null;
     if (receipt.status === 1) {
+      if (action.kind === 'METADATA')
+        record.data.metadata = action.target_metadata!;
       addLaunchEvent(
         record,
         `Confirmed ${action.id}: ${action.hash} (${receipt.confirmations} confirmations)`

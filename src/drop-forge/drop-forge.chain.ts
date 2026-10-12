@@ -3,7 +3,8 @@ import {
   isError,
   JsonRpcProvider,
   Transaction,
-  ZeroAddress
+  ZeroAddress,
+  Result
 } from 'ethers';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import {
@@ -56,6 +57,16 @@ export interface LaunchChain {
   receipt(hash: string): Promise<ChainReceipt | null>;
   broadcast(raw: string): Promise<void>;
   verify(data: LaunchData, action: LaunchAction): Promise<void>;
+  inspectTransaction?(
+    contract: string,
+    claim: number,
+    hash: string,
+    sender?: string
+  ): Promise<{ calldata: string; receipt: ChainReceipt | null }>;
+  completed?(
+    data: LaunchData,
+    action: LaunchAction
+  ): Promise<{ total: number; metadata?: string } | null>;
 }
 export function encodeLaunchAction(
   data: LaunchData,
@@ -65,8 +76,12 @@ export function encodeLaunchAction(
     return claimAbi.encodeFunctionData('airdrop', [
       data.contract,
       data.claim_id,
-      action.recipients.map((row) => row.address),
-      action.recipients.map((row) => row.amount)
+      (action.remaining_recipients ?? action.recipients).map(
+        (row) => row.address
+      ),
+      (action.remaining_recipients ?? action.recipients).map(
+        (row) => row.amount
+      )
     ]);
   const phase = data.phases[action.phase];
   return claimAbi.encodeFunctionData(
@@ -81,7 +96,7 @@ export function encodeLaunchAction(
         phase.end,
         2,
         phase.root,
-        data.metadata,
+        action.target_metadata ?? data.metadata,
         phase.price_wei,
         data.receiver,
         ZeroAddress,
@@ -143,16 +158,7 @@ export class EthereumLaunchChain implements LaunchChain {
     captureSupply = false
   ): Promise<void> {
     assertPhaseScopedPlan(data);
-    if (
-      data.chain_id !== this.config.chainId ||
-      data.contract !== this.config.creator ||
-      data.signer !== this.config.signer ||
-      data.proxy !== this.config.proxy ||
-      data.receiver !== this.config.receiver
-    )
-      throw new LaunchSafetyError(
-        'Runtime configuration differs from the frozen launch'
-      );
+    this.assertBinding(data);
     if (!(await this.assertAdmin(data.signer)))
       throw new LaunchSafetyError(
         'Operational signer lacks creator-admin permission'
@@ -218,9 +224,13 @@ export class EthereumLaunchChain implements LaunchChain {
     const airdropAmount = (it: LaunchAction) =>
       it.recipients.reduce((sum, row) => sum + row.amount, 0);
     let expected = action.expected_supply;
+    if (action.kind === 'METADATA') return;
     if (action.kind === 'AIRDROP') {
       const update = phaseActions.find((it) => it.kind === 'UPDATE');
-      const baseline = action.phase === 0 ? 0 : update?.expected_supply;
+      const baseline =
+        action.phase === 0
+          ? 0
+          : (update?.airdrop_baseline ?? update?.expected_supply);
       if (baseline === undefined || (update && update.state !== 'CONFIRMED'))
         throw new LaunchSafetyError(
           'Phase supply checkpoint is missing or unconfirmed'
@@ -229,7 +239,10 @@ export class EthereumLaunchChain implements LaunchChain {
         baseline +
         phaseActions
           .filter((it) => it.kind === 'AIRDROP' && it.state === 'CONFIRMED')
-          .reduce((sum, it) => sum + airdropAmount(it), 0);
+          .reduce((sum, it) => sum + airdropAmount(it), 0) +
+        phaseActions
+          .filter((it) => it.kind === 'AIRDROP' && it.state !== 'CONFIRMED')
+          .reduce((sum, it) => sum + (it.credited_tokens ?? 0), 0);
     }
     if (expected !== undefined && total !== expected)
       throw new LaunchSafetyError(
@@ -237,7 +250,15 @@ export class EthereumLaunchChain implements LaunchChain {
       );
     const remaining = phaseActions
       .filter((it) => it.kind === 'AIRDROP' && it.state !== 'CONFIRMED')
-      .reduce((sum, it) => sum + airdropAmount(it), 0);
+      .reduce(
+        (sum, it) =>
+          sum +
+          (it.remaining_recipients ?? it.recipients).reduce(
+            (n, row) => n + row.amount,
+            0
+          ),
+        0
+      );
     if (total + remaining > data.edition_size)
       throw new LaunchSafetyError(
         'Remaining phase airdrops exceed available edition supply'
@@ -254,9 +275,166 @@ export class EthereumLaunchChain implements LaunchChain {
           'Phase transaction is outside its closed minting gap'
         );
     }
-    if (capture) action.expected_supply = total;
+    if (capture) {
+      action.expected_supply = total;
+      if (action.kind === 'UPDATE')
+        action.airdrop_baseline =
+          total -
+          phaseActions.reduce((sum, it) => sum + (it.credited_tokens ?? 0), 0);
+    }
+  }
+  private assertBinding(data: LaunchData): void {
+    if (
+      data.chain_id !== this.config.chainId ||
+      data.contract !== this.config.creator ||
+      data.signer !== this.config.signer ||
+      data.proxy !== this.config.proxy ||
+      data.receiver !== this.config.receiver
+    )
+      throw new LaunchSafetyError(
+        'Runtime configuration differs from the frozen launch'
+      );
+  }
+  async readClaim(
+    data: Pick<LaunchData, 'contract' | 'claim_id' | 'proxy'>
+  ): Promise<Result | null> {
+    try {
+      const result = await rpcWithDeadline(
+        this.provider.call({
+          to: data.proxy,
+          data: claimAbi.encodeFunctionData('getClaim', [
+            data.contract,
+            data.claim_id
+          ])
+        })
+      );
+      return claimAbi.decodeFunctionResult('getClaim', result)[0] as Result;
+    } catch (error) {
+      if (
+        isError(error, 'CALL_EXCEPTION') &&
+        (error.data === claimAbi.getError('ClaimNotInitialized')?.selector ||
+          error.reason === 'Claim not initialized')
+      )
+        return null;
+      throw error;
+    }
+  }
+  async inspectTransaction(
+    contract: string,
+    claim: number,
+    hash: string,
+    sender?: string
+  ): Promise<{ calldata: string; receipt: ChainReceipt | null }> {
+    const tx = await rpcWithDeadline(this.provider.getTransaction(hash));
+    if (!tx)
+      throw new LaunchSafetyError(
+        'Manual transaction is not yet available; retain its hash and retry'
+      );
+    const decoded = claimAbi.parseTransaction({
+      data: tx.data,
+      value: tx.value
+    });
+    if (
+      tx.chainId !== BigInt(this.config.chainId) ||
+      tx.to?.toLowerCase() !== this.config.proxy.toLowerCase() ||
+      tx.value !== BigInt(0) ||
+      !decoded ||
+      !['initializeClaim', 'updateClaim', 'airdrop'].includes(decoded.name) ||
+      decoded.args[0].toLowerCase() !== contract.toLowerCase() ||
+      Number(decoded.args[1]) !== claim ||
+      (sender && tx.from.toLowerCase() !== sender.toLowerCase())
+    )
+      throw new LaunchSafetyError(
+        'Manual transaction does not match this wallet, chain, proxy and claim'
+      );
+    return { calldata: tx.data, receipt: await this.receipt(hash) };
+  }
+  async completed(
+    data: LaunchData,
+    action: LaunchAction
+  ): Promise<{ total: number; metadata?: string } | null> {
+    this.assertBinding(data);
+    if (!['INITIALIZE', 'UPDATE', 'METADATA'].includes(action.kind))
+      return null;
+    const claim = await this.readClaim(data);
+    if (!claim) return null;
+    if (Number(claim.tokenId) !== data.claim_id)
+      throw new LaunchSafetyError(
+        'Initialized claim token does not match the prepared claim'
+      );
+    const phase = data.phases[action.phase];
+    if (action.kind === 'METADATA') {
+      if (claim.location !== action.target_metadata) return null;
+    } else if (
+      Number(claim.startDate) !== phase.start ||
+      Number(claim.endDate) !== phase.end ||
+      claim.merkleRoot !== phase.root
+    ) {
+      if (action.kind === 'INITIALIZE')
+        throw new LaunchSafetyError(
+          'Claim is already initialized with a different configuration; reconcile it rather than initialize again'
+        );
+      return null;
+    }
+    const params = [
+      Number(claim.totalMax),
+      Number(claim.walletMax),
+      Number(claim.startDate),
+      Number(claim.endDate),
+      Number(claim.storageProtocol),
+      claim.merkleRoot,
+      claim.location,
+      claim.cost.toString(),
+      claim.paymentReceiver,
+      claim.erc20,
+      claim.signingAddress
+    ];
+    const observedAction =
+      action.kind === 'INITIALIZE'
+        ? { ...action, target_metadata: String(claim.location) }
+        : action;
+    const intended = claimAbi.parseTransaction({
+      data: encodeLaunchAction(data, observedAction)
+    })!;
+    if (
+      claimAbi.encodeFunctionData('updateClaim', [
+        data.contract,
+        data.claim_id,
+        params
+      ]) !==
+      claimAbi.encodeFunctionData('updateClaim', [
+        data.contract,
+        data.claim_id,
+        intended.args[2]
+      ])
+    )
+      return null;
+    return {
+      total: Number(claim.total),
+      ...(action.kind === 'INITIALIZE'
+        ? { metadata: String(claim.location) }
+        : {})
+    };
   }
   async prepare(data: LaunchData, action: LaunchAction): Promise<string> {
+    if (action.kind === 'METADATA') {
+      const current = await this.readClaim(data);
+      if (!current)
+        throw new LaunchSafetyError(
+          'Initialize the claim before updating metadata'
+        );
+      const phase = data.phases.findIndex(
+        (it) =>
+          it.start === Number(current.startDate) &&
+          it.end === Number(current.endDate) &&
+          it.root === current.merkleRoot
+      );
+      if (phase < 0)
+        throw new LaunchSafetyError(
+          'Current mint configuration is outside the launch plan'
+        );
+      action.phase = phase;
+    }
     await this.verify(data, action, true);
     const [latest, pending, fee] = await Promise.all([
       this.nonce(data.signer, false),

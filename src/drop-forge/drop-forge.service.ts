@@ -6,7 +6,7 @@ import { EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
 import { getDropForgeConfig } from '@/drop-forge/drop-forge.config';
 import {
   buildLaunchPlan,
-  hashLaunchSource
+  sourceMatchesLaunch
 } from '@/drop-forge/drop-forge.plan';
 import {
   dropForgeRepository,
@@ -26,6 +26,10 @@ import { validateForgeReporting } from '@/drop-forge/drop-forge.reporting-access
 
 export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
   return {
+    metadata_location: record.data.metadata,
+    manual_pending:
+      !!record.data.manual_lease ||
+      !!record.data.manual_transactions?.some((it) => it.state === 'PENDING'),
     id: record.id,
     revision: record.revision,
     state: record.state as ApiDropForgeLaunch['state'],
@@ -40,6 +44,7 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
     actions: record.data.actions.map(
       ({
         id,
+        label,
         kind,
         state,
         phase,
@@ -50,6 +55,7 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
         block_number
       }) => ({
         id,
+        label,
         kind: kind as ApiDropForgeLaunch['actions'][number]['kind'],
         state: state as ApiDropForgeLaunch['actions'][number]['state'],
         phase,
@@ -177,7 +183,7 @@ export async function controlLaunch(
           );
         assertPhaseScopedPlan(record.data);
         const source = await dropForgeRepository.source(contract, claim, txCtx);
-        if (hashLaunchSource(source) !== record.data.distribution_hash)
+        if (!sourceMatchesLaunch(source, record.data))
           throw new LaunchSafetyError(
             'Distribution or metadata changed; recreate the draft before arming'
           );

@@ -1,5 +1,6 @@
 import {
   DROP_FORGE_LAUNCHES_TABLE,
+  DROP_FORGE_JOBS_TABLE,
   DROP_FORGE_PREPARATIONS_TABLE
 } from '@/constants';
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
@@ -9,6 +10,7 @@ import { DbPoolName } from '@/db-query.options';
 import { launchId } from '@/drop-forge/drop-forge.repository';
 
 export interface PhasePreparationResult {
+  source_hash?: string;
   phase: string;
   airdrops: Array<{ wallet: string; amount: number }>;
   airdrops_unconsolidated: Array<{ wallet: string; amount: number }>;
@@ -49,11 +51,20 @@ export class DropForgePreparationRepository {
     contract: string,
     claim: number,
     fn: (results: PreparationResults, ctx: RequestContext) => Promise<T>,
-    ctx: RequestContext
+    ctx: RequestContext,
+    allowPending = false,
+    allowArmedRead = false
   ): Promise<T> {
     if (!ctx.connection)
       return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-        this.run(contract, claim, fn, { ...ctx, connection })
+        this.run(
+          contract,
+          claim,
+          fn,
+          { ...ctx, connection },
+          allowPending,
+          allowArmedRead
+        )
       );
     const timer = 'DropForgePreparationRepository->run';
     ctx.timer?.start(timer);
@@ -84,9 +95,23 @@ export class DropForgePreparationRepository {
         },
         { wrappedConnection: ctx.connection }
       );
-      if (launches.some((launch) => launch.state !== 'DRAFT'))
+      if (
+        !allowArmedRead &&
+        launches.some((launch) => launch.state !== 'DRAFT')
+      )
         throw new LaunchSafetyError(
           'Distribution is frozen for an armed or terminal launch'
+        );
+      const pending = await sqlExecutor.execute<{ id: string }>(
+        `SELECT id FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' AND status = 'PENDING' ${allowPending ? '' : 'FOR SHARE NOWAIT'}`,
+        { contract: contract.toLowerCase(), claim },
+        { wrappedConnection: ctx.connection }
+      );
+      const ownJob = (ctx as RequestContext & { dropForgeJobId?: string })
+        .dropForgeJobId;
+      if (!allowPending && pending.some((job) => job.id !== ownJob))
+        throw new LaunchSafetyError(
+          'Distribution processing is in progress; wait for completion before changing inputs'
         );
       const results =
         typeof stored.results === 'string'
@@ -118,6 +143,11 @@ export async function resetDistributionPreparation(
     async (results, txCtx) => {
       await reset(txCtx);
       for (const key of Object.keys(results)) delete results[key];
+      await sqlExecutor.execute(
+        `UPDATE ${DROP_FORGE_JOBS_TABLE} SET status = 'FAILED', error = 'Distribution reset; process again', drop_id = NULL WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' AND status <> 'FAILED'`,
+        { contract: contract.toLowerCase(), claim },
+        { wrappedConnection: txCtx.connection }
+      );
     },
     ctx
   );

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   populateDistribution,
   populateDistributionNormalized
@@ -23,7 +24,11 @@ export async function prepareDistributionPhase(
   plan: string,
   phase: string,
   auth: string,
-  ctx: RequestContext = {}
+  ctx: RequestContext = {},
+  frozenInput?: {
+    name: string;
+    rows: Awaited<ReturnType<typeof fetchPhaseResults>>;
+  }
 ): Promise<PhasePreparationResult> {
   const key = JSON.stringify([plan, phase]);
   const cachedResult = await dropForgePreparationRepository.findResult(
@@ -32,11 +37,18 @@ export async function prepareDistributionPhase(
     key,
     ctx
   );
+  const sourceHash = frozenInput
+    ? createHash('sha256').update(JSON.stringify(frozenInput)).digest('hex')
+    : undefined;
+  if (sourceHash && cachedResult && cachedResult.source_hash !== sourceHash)
+    throw new LaunchSafetyError(
+      'EMMA inputs changed since prior processing; reset the distribution before processing again'
+    );
   let phaseInput: {
     name: string;
     rows: Awaited<ReturnType<typeof fetchPhaseResults>>;
-  } | null = null;
-  if (!cachedResult) {
+  } | null = frozenInput ?? null;
+  if (!cachedResult && !frozenInput) {
     // Network work must not hold the claim's preparation lock. Recheck the
     // cache and freeze state under the lock before publishing any DB writes.
     const valid = await validateDistribution(auth, plan, phase);
@@ -56,7 +68,13 @@ export async function prepareDistributionPhase(
     contract,
     claim,
     async (cached, txCtx) => {
-      if (cached[key]) return cached[key];
+      if (cached[key]) {
+        if (sourceHash && cached[key].source_hash !== sourceHash)
+          throw new LaunchSafetyError(
+            'EMMA inputs changed; reset before processing'
+          );
+        return cached[key];
+      }
       if (cachedResult)
         throw new LaunchSafetyError(
           'Preparation was reset during result retrieval; retry the request'
@@ -87,6 +105,7 @@ export async function prepareDistributionPhase(
           ...(await splitAllowlistResults(contract, claim, name, rows, txCtx))
         };
       }
+      if (sourceHash) result.source_hash = sourceHash;
       await populateDistribution(contract, claim, result.phase, result, txCtx);
       cached[key] = result;
       return result;

@@ -325,3 +325,72 @@ describe('Drop Forge transaction boundary', () => {
     await expect(chain.verify(data, data.actions[1])).resolves.toBeUndefined();
   });
 });
+
+describe('Drop Forge metadata and manual observation', () => {
+  function setup() {
+    const data = testLaunchData();
+    const phase = data.phases[0];
+    const tuple = [
+      0,
+      data.edition_size,
+      0,
+      phase.start,
+      phase.end,
+      2,
+      phase.root,
+      data.metadata,
+      data.claim_id,
+      phase.price_wei,
+      data.receiver,
+      ZeroAddress,
+      ZeroAddress
+    ];
+    const provider = {
+      call: jest
+        .fn()
+        .mockImplementation(({ data: calldata }: { data: string }) =>
+          Promise.resolve(
+            calldata.startsWith(claimAbi.getFunction('getClaim')!.selector)
+              ? claimAbi.encodeFunctionResult('getClaim', [tuple])
+              : '0x' + '0'.repeat(63) + '1'
+          )
+        ),
+      getTransactionCount: jest.fn().mockResolvedValue(0),
+      getFeeData: jest.fn().mockResolvedValue({
+        maxFeePerGas: BigInt(100),
+        maxPriorityFeePerGas: BigInt(1)
+      }),
+      estimateGas: jest.fn().mockResolvedValue(BigInt(50000)),
+      getBalance: jest.fn().mockResolvedValue(testConfig.maxCost)
+    };
+    const chain = new EthereumLaunchChain(
+      testConfig,
+      provider as unknown as JsonRpcProvider
+    );
+    return { data, tuple, provider, chain };
+  }
+  it('recognizes a matching manual initialization without sending another initialize call', async () => {
+    const { chain, data } = setup();
+    expect(await chain.completed(data, data.actions[0])).toEqual(
+      expect.objectContaining({ total: 0 })
+    );
+  });
+  it('encodes metadata updates with the current mint window, root, receiver and cost preserved', async () => {
+    const { chain, data, tuple } = setup();
+    tuple[0] = 35;
+    const action = {
+      ...data.actions[0],
+      id: 'metadata',
+      kind: 'METADATA' as const,
+      target_metadata: 'new-metadata'
+    };
+    const tx = Transaction.from(await chain.prepare(data, action));
+    const args = claimAbi.decodeFunctionData('updateClaim', tx.data)[2];
+    expect(args.location).toBe('new-metadata');
+    expect(args.startDate.toString()).toBe(String(tuple[3]));
+    expect(args.endDate.toString()).toBe(String(tuple[4]));
+    expect(args.merkleRoot).toBe(tuple[6]);
+    expect(args.paymentReceiver.toLowerCase()).toBe(data.receiver);
+    expect(args.cost.toString()).toBe('100');
+  });
+});

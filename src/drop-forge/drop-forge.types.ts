@@ -21,13 +21,20 @@ export interface LaunchPhase {
 }
 export interface LaunchAction {
   id: string;
-  kind: 'INITIALIZE' | 'AIRDROP' | 'UPDATE';
+  kind: 'INITIALIZE' | 'AIRDROP' | 'UPDATE' | 'METADATA';
+  label?: string;
+  target_metadata?: string;
+  observed?: boolean;
+  manual_hashes?: string[];
   phase: number;
   due: number;
   deadline: number;
   recipients: Array<{ address: string; amount: number }>;
   state: ActionState;
   expected_supply?: number;
+  airdrop_baseline?: number;
+  remaining_recipients?: Array<{ address: string; amount: number }>;
+  credited_tokens?: number;
   unsigned_tx?: string;
   signed_tx?: string;
   hash?: string;
@@ -43,6 +50,25 @@ export interface LaunchEvent {
 }
 export interface LaunchData {
   plan_version?: number;
+  managed?: boolean;
+  completion_flags?: string[];
+  manual_transactions?: Array<{
+    hash: string;
+    state: 'PENDING' | 'CONFIRMED' | 'FAILED';
+    action?: string;
+    method?: string;
+    phase?: number;
+    metadata?: string;
+    block_hash?: string;
+    block_number?: number;
+  }>;
+  manual_lease?: {
+    id: string;
+    wallet: string;
+    action?: string;
+    previous_state: LaunchState;
+    nonce: number;
+  };
   chain_id: number;
   contract: string;
   claim_id: number;

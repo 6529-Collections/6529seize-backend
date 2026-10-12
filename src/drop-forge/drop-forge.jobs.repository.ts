@@ -53,6 +53,24 @@ export class DropForgeJobsRepository {
       ctx.timer?.stop(timer);
     }
   }
+  async latest(
+    contract: string,
+    claim: number,
+    plan: string | undefined,
+    ctx: RequestContext
+  ): Promise<DropForgeJobEntity | null> {
+    const timer = 'DropForgeJobsRepository->latest';
+    ctx.timer?.start(timer);
+    try {
+      return await sqlExecutor.oneOrNull<DropForgeJobEntity>(
+        `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' ${plan ? 'AND plan_id = :plan' : ''} ORDER BY updated_at DESC, id DESC LIMIT 1`,
+        { contract: contract.toLowerCase(), claim, plan: plan ?? null },
+        { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+      );
+    } finally {
+      ctx.timer?.stop(timer);
+    }
+  }
   async create(
     job: DropForgeJobEntity,
     ctx: RequestContext
@@ -61,8 +79,11 @@ export class DropForgeJobsRepository {
     ctx.timer?.start(timer);
     try {
       await sqlExecutor.execute(
-        `INSERT IGNORE INTO ${DROP_FORGE_JOBS_TABLE} (id,contract,claim_id,kind,plan_id,phase_id,status,updated_at) VALUES (:id,:contract,:claim_id,:kind,:plan_id,:phase_id,'PENDING',:updated_at)`,
-        { ...job },
+        `INSERT IGNORE INTO ${DROP_FORGE_JOBS_TABLE} (id,contract,claim_id,kind,plan_id,phase_id,phase_ids,step,status,updated_at) VALUES (:id,:contract,:claim_id,:kind,:plan_id,:phase_id,:phase_ids,0,'PENDING',:updated_at)`,
+        {
+          ...job,
+          phase_ids: job.phase_ids ? JSON.stringify(job.phase_ids) : null
+        },
         { wrappedConnection: ctx.connection }
       );
       const saved = await this.find(job.id, ctx);
@@ -104,7 +125,10 @@ export class DropForgeJobsRepository {
           let error: string | null = null;
           let result: object | null = null;
           try {
-            result = await process(job, txCtx);
+            result = await process(job, {
+              ...txCtx,
+              dropForgeJobId: job.id
+            } as RequestContext);
           } catch (error_) {
             await sqlExecutor.execute(
               'ROLLBACK TO SAVEPOINT drop_forge_job',
@@ -117,11 +141,17 @@ export class DropForgeJobsRepository {
                 ? error_.message
                 : 'Preparation failed or timed out; retry with a new request ID after checking EMMA and source data';
           }
+          const continuing =
+            (result as { continue?: boolean } | null)?.continue === true;
+          if (continuing) status = 'PENDING';
           await sqlExecutor.execute(
-            `UPDATE ${DROP_FORGE_JOBS_TABLE} SET status = :status, error = :error, result = :result, updated_at = :updated_at WHERE id = :id`,
+            `UPDATE ${DROP_FORGE_JOBS_TABLE} SET step = :step, status = :status, error = :error, result = :result, updated_at = :updated_at WHERE id = :id`,
             {
               id: job.id,
               status,
+              step: continuing
+                ? Number(job.step ?? 0) + 1
+                : Number(job.step ?? 0),
               error,
               result: result ? JSON.stringify(result) : null,
               updated_at: Date.now()

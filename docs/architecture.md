@@ -1786,24 +1786,38 @@ For a documentation-only change, no Lambda redeploy is required.
 
 ## Drop Forge Automated Launch
 
-`dropForgeLaunchLoop` receives an EventBridge invocation every minute. Runtime
-flags independently enable launch execution and EMMA preparation; both default
-to disabled. The API saves a revisioned draft from published claim metadata and
-prepared distribution rows, then an authorized administrator explicitly arms it
-after reporting access is checked.
+`dropForgeLaunchLoop` and `dropForgePreparationLoop` have independent one-minute
+EventBridge recovery schedules and default-disabled flags. The API returns a
+single PROCESS_ALL job for EMMA, immediately wakes preparation, and exposes
+read-only completed list pages. Preparation snapshots upstream phase inputs,
+commits ordered phase checkpoints and finalizes. Craft Launch derives the fixed
+mint calendar and arms execution immediately; Craft Update Claim queues a
+metadata-only action without reopening completed allocations.
 
 ```mermaid
 flowchart LR
-  Admin[Claims administrator] --> API[Launch and job APIs]
-  API --> DB[Launch, signer, preparation and job tables]
-  EventBridge --> Worker[dropForgeLaunchLoop]
+  EMMA[EMMA Process and Finalize] --> API[Operation APIs]
+  Craft[Craft Launch / Update Claim] --> API
+  Manual[Manual Launch wallet controls] --> API
+  API --> DB[Launch, signer, evidence, preparation and job tables]
+  API --> Prep[dropForgePreparationLoop]
+  API --> Worker[dropForgeLaunchLoop]
+  EventBridge --> Prep
+  EventBridge --> Worker
+  Prep --> DB
   Worker --> DB
   Worker --> KMS[AWS KMS secp256k1]
-  KMS --> Worker
   Worker --> Chain[Creator and lazy claim contracts]
-  Worker --> Wave[Durable wave reports]
+  Prep --> Wave[Durable wave reports]
+  Worker --> Wave
   Wave --> Alerts[Configured dropforgers6529 profiles]
 ```
+
+Manual controls acquire a durable lease before prompting the wallet. Confirmed
+transaction evidence carries the action category and credits exact remaining
+allocations. Compatible initialize/update configuration is observed on chain;
+ambiguous state blocks. Completion is mirrored into existing manual action flags.
+Metadata updates retain current mint configuration and cannot replay airdrops.
 
 The worker reserves an unsigned intent under a signer row lock, persists its
 signed bytes and hash in another commit, and only then broadcasts. Pending
@@ -1825,16 +1839,14 @@ persist a minted-supply checkpoint so legitimate prior-phase mints do not block
 later airdrops. Legacy flattened plans fail closed while outstanding receipts
 remain reconcilable. Confirmation observed past a deadline blocks dependent work.
 
-EMMA phase results, subscription assignments, distribution rows, and Merkle
-proofs commit together with a replayable result. EMMA reads happen outside the
-claim preparation lock; publication rechecks cached results and current launch
-state under locks, even within a previously established transaction snapshot.
-Finalization uses the same preparation lock and chunked normalized-row inserts.
-A queued job returns its
-request ID immediately; a database savepoint rolls back partial preparation
-before persisting a failure. The legacy synchronous endpoints retain their
-response shapes and can still outlive an HTTP timeout; the job API is the path
-for removing that wait from the client request.
+EMMA phase results, subscription assignments, distribution rows and Merkle
+proofs commit with replayable checkpoints under the preparation lock. The
+PROCESS_ALL job snapshots upstream inputs once and processes each stage in a
+separate invocation. Pending jobs block conflicting preparation/reset operations.
+Finalization shares that lock and chunks normalized-row inserts. A savepoint
+rolls back a failed stage before persisting the failure; invocation loss rolls
+back the stage for scheduler retry. Legacy synchronous endpoints retain their
+response shapes. Completed downloads are paginated reads of persisted results.
 
 Reporting drops and outbox acknowledgements share a DB transaction. Push
 transport runs after commit. `@dropforgers6529` resolves configured profile IDs

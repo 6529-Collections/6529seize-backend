@@ -54,7 +54,19 @@ describe('Drop Forge launch planning', () => {
         source,
         0
       ).actions[1].recipients
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+    const included = buildLaunchPlan(
+      testConfig,
+      1,
+      { ...testPlan, include_artist_airdrops: true },
+      source,
+      0
+    );
+    expect(
+      included.actions
+        .filter((it) => it.kind === 'AIRDROP')
+        .map((it) => it.label)
+    ).toEqual(['Airdrop - Artist', 'Phase 0 Subscription Airdrops']);
   });
   it('rejects a public phase containing an allowlist and an unmapped phase', () => {
     expect(() =>
@@ -186,7 +198,7 @@ describe('Drop Forge launch planning', () => {
     const hash = '0x' + 'aa'.repeat(32);
     const event = {
       id: 'event',
-      content: 'Confirmed phase-0-airdrop-0: ' + hash,
+      content: 'Confirmed ' + data.actions[1].id + ': ' + hash,
       at: 1,
       error: false
     };

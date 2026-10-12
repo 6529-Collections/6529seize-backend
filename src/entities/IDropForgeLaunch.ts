@@ -49,6 +49,8 @@ export class DropForgeJobEntity {
   @Column({ type: 'varchar', length: 100, nullable: true }) phase_id!:
     | string
     | null;
+  @Column({ type: 'json', nullable: true }) phase_ids!: string[] | null;
+  @Column({ type: 'int', default: 0 }) step!: number;
   @Column({ type: 'varchar', length: 16 }) status!: string;
   @Column({ type: 'json', nullable: true }) result!: object | null;
   @Column({ type: 'text', nullable: true }) error!: string | null;

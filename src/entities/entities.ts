@@ -308,3 +308,4 @@ export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalid
 export * from './ICompetitionMigration';
 
 export * from './IDropForgeLaunch';
+export * from './IDropForgeEvidence';
