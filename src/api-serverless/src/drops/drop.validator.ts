@@ -16,6 +16,24 @@ import { ApiDropAttachmentReference } from '../generated/models/ApiDropAttachmen
 import { ApiCreateDropPollRequest } from '../generated/models/ApiCreateDropPollRequest';
 import { Time } from '@/time';
 import { getDropContentLimitViolation } from '@/drops/drop-content-limits';
+import {
+  DROP_ATTACHMENT_ID_MAX_LENGTH,
+  DROP_MAX_METADATA_ENTRIES,
+  DROP_MAX_MENTIONED_USERS,
+  DROP_MAX_MENTIONED_WAVES,
+  DROP_MAX_PARTS,
+  DROP_MAX_REFERENCED_NFTS,
+  DROP_MEDIA_MIME_TYPE_MAX_LENGTH,
+  DROP_MEDIA_UPLOAD_ID_MAX_LENGTH,
+  DROP_MEDIA_URL_MAX_LENGTH,
+  DROP_MENTIONED_WAVE_NAME_MAX_LENGTH,
+  DROP_PART_MAX_ATTACHMENTS,
+  DROP_PART_MAX_MEDIA,
+  DROP_REFERENCED_NFT_NAME_MAX_LENGTH,
+  DROP_REFERENCED_NFT_TOKEN_MAX_LENGTH,
+  formatDropPayloadLimitViolation,
+  getDropMediaTotalsViolation
+} from '@/drops/drop-payload-limits';
 
 export {
   DROP_PART_MAX_UTF16_CODE_UNITS,
@@ -76,8 +94,8 @@ export const ApiAddReactionToDropRequestSchema: Joi.ObjectSchema<ApiAddReactionT
 
 const NftSchema: Joi.ObjectSchema<ApiDropReferencedNFT> = Joi.object({
   contract: Joi.string().regex(WALLET_REGEX).lowercase(),
-  token: Joi.string().regex(/^\d+$/),
-  name: Joi.string().min(1)
+  token: Joi.string().regex(/^\d+$/).max(DROP_REFERENCED_NFT_TOKEN_MAX_LENGTH),
+  name: Joi.string().min(1).max(DROP_REFERENCED_NFT_NAME_MAX_LENGTH)
 });
 
 const MentionedUserSchema: Joi.ObjectSchema<ApiDropReferencedNFT> = Joi.object({
@@ -86,7 +104,10 @@ const MentionedUserSchema: Joi.ObjectSchema<ApiDropReferencedNFT> = Joi.object({
 });
 
 const MentionedWaveSchema: Joi.ObjectSchema = Joi.object({
-  wave_name_in_content: Joi.string().min(1).required(),
+  wave_name_in_content: Joi.string()
+    .min(1)
+    .max(DROP_MENTIONED_WAVE_NAME_MAX_LENGTH)
+    .required(),
   wave_id: Joi.string().min(1).max(100).required()
 });
 
@@ -146,19 +167,27 @@ const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
   quoted_drop: QuotedDropSchema.optional().default(null).allow(null),
   media: Joi.array()
     .optional()
+    .max(DROP_PART_MAX_MEDIA)
     .items(
       Joi.object({
-        mime_type: Joi.string().required(),
-        url: Joi.string().required(),
-        media_upload_id: Joi.string().optional().allow(null).default(null)
+        mime_type: Joi.string().max(DROP_MEDIA_MIME_TYPE_MAX_LENGTH).required(),
+        url: Joi.string().max(DROP_MEDIA_URL_MAX_LENGTH).required(),
+        media_upload_id: Joi.string()
+          .max(DROP_MEDIA_UPLOAD_ID_MAX_LENGTH)
+          .optional()
+          .allow(null)
+          .default(null)
       })
     )
     .default([]),
   attachments: Joi.array()
     .optional()
+    .max(DROP_PART_MAX_ATTACHMENTS)
     .items(
       Joi.object<ApiDropAttachmentReference>({
-        attachment_id: Joi.string().required()
+        attachment_id: Joi.string()
+          .max(DROP_ATTACHMENT_ID_MAX_LENGTH)
+          .required()
       })
     )
     .unique('attachment_id')
@@ -189,15 +218,24 @@ function validateDropParts(
     }
   }
 
+  const totalsViolation = getDropMediaTotalsViolation(parts);
+  if (totalsViolation) {
+    return helpers.error('dropParts.payloadLimit', {
+      message: formatDropPayloadLimitViolation(totalsViolation)
+    });
+  }
+
   return parts;
 }
 
 const DropPartsSchema = Joi.array()
   .required()
-  .items(NewDropPartSchema)
   .min(1)
+  .max(DROP_MAX_PARTS)
+  .items(NewDropPartSchema)
   .custom(validateDropParts)
   .messages({
+    'dropParts.payloadLimit': '{{#message}}',
     'dropPart.contentUtf16Max':
       'drop part {{#partIndex}} content must be at most {{#limit}} UTF-16 code units',
     'dropPart.contentUtf8Max':
@@ -236,19 +274,26 @@ const baseDropFieldsValidators = {
   parts: DropPartsSchema,
   referenced_nfts: Joi.array()
     .optional()
+    .max(DROP_MAX_REFERENCED_NFTS)
     .items(NftSchema)
     .default([])
     .allow(null),
   mentioned_users: Joi.array()
     .optional()
+    .max(DROP_MAX_MENTIONED_USERS)
     .items(MentionedUserSchema)
     .default([])
     .allow(null),
   mentioned_waves: Joi.array()
     .optional()
+    .max(DROP_MAX_MENTIONED_WAVES)
     .items(MentionedWaveSchema)
     .default([]),
-  metadata: Joi.array().optional().items(MetadataSchema).default([]),
+  metadata: Joi.array()
+    .optional()
+    .max(DROP_MAX_METADATA_ENTRIES)
+    .items(MetadataSchema)
+    .default([]),
   signature: Joi.string().optional().allow(null).default(null),
   signature_message: Joi.string().optional().allow(null).default(null),
   is_safe_signature: Joi.boolean().optional(),
