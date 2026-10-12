@@ -114,7 +114,7 @@ import {
   UUID_REGEX,
   WALLET_REGEX
 } from '@/constants';
-import { getAlchemyInstance } from '@/alchemy';
+import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
 import { profilesService } from '@/profiles/profiles.service';
 import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
 import { attachmentsDb, AttachmentsDb } from '@/attachments/attachments.db';
@@ -720,7 +720,7 @@ export class CreateOrUpdateDropUseCase {
       }
 
       const resolvedWallet =
-        await getAlchemyInstance().core.resolveName(normalizedInput);
+        await getEthereumRpcClient().resolveName(normalizedInput);
       if (!resolvedWallet) {
         throw new BadRequestException(
           `ENS name ${nominationInput} could not be resolved`
