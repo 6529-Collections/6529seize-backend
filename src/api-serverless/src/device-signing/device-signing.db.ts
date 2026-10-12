@@ -35,6 +35,11 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Reads from the primary on purpose: a grant must be usable right after the
+   * login that stored it, and a revocation must stop signed writes at once,
+   * without waiting for replica lag.
+   */
   async findGrantById(
     id: string,
     ctx: RequestContext
@@ -79,8 +84,7 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
        order by g.created_at desc, g.id desc
        limit ${DEVICE_GRANTS_LIST_LIMIT}`,
       { profileId },
-      ctx,
-      DbPoolName.WRITE
+      ctx
     );
   }
 
@@ -94,8 +98,7 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
        order by created_at desc, id desc
        limit ${DEVICE_GRANTS_LIST_LIMIT}`,
       { wallet },
-      ctx,
-      DbPoolName.WRITE
+      ctx
     );
   }
 

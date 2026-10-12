@@ -393,6 +393,12 @@ export class DeviceSignedWritesService {
     return grant;
   }
 
+  /**
+   * Grants are profile scoped: a grant from any wallet of the acting profile
+   * authorizes writes for that profile. Ownership is resolved on every write,
+   * so a wallet that leaves the profile's consolidation stops authorizing
+   * writes immediately, whatever the grant's expiry.
+   */
   private async assertGrantWalletIsActingProfile(
     grant: DeviceGrantEntity,
     authenticationContext: AuthenticationContext

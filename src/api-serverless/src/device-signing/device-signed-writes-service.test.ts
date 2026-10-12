@@ -423,6 +423,22 @@ describe('DeviceSignedWritesService', () => {
       expect(identities.getProfileIdByWallet).toHaveBeenCalledWith(WALLET);
     });
 
+    it('rejects a grant whose wallet left the acting profile after the grant was issued', async () => {
+      // The grant was valid when issued; the wallet then moved to another
+      // consolidation. Ownership is re-checked on every write, not at issuance.
+      jest
+        .mocked(identities.getProfileIdByWallet)
+        .mockResolvedValueOnce('profile-after-consolidation-change');
+      await expectInvalid(createVectorDrop(), /acting profile/);
+      expect(db.reserveEvent).not.toHaveBeenCalled();
+    });
+
+    it('rejects a grant whose wallet no longer maps to any profile', async () => {
+      jest.mocked(identities.getProfileIdByWallet).mockResolvedValueOnce(null);
+      await expectInvalid(createVectorDrop(), /acting profile/);
+      expect(db.reserveEvent).not.toHaveBeenCalled();
+    });
+
     it('rejects callers without a profile', async () => {
       await expectInvalid(
         createVectorDrop(VECTOR_ENVELOPE, undefined, {

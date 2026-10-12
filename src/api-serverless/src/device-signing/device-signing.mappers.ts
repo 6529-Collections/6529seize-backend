@@ -3,7 +3,20 @@ import { ApiDeviceGrantProof } from '@/api/generated/models/ApiDeviceGrantProof'
 import { ApiDeviceSignedEvent } from '@/api/generated/models/ApiDeviceSignedEvent';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
+import { Logger } from '@/logging';
 import { deserializeDeviceGrantScopes } from './device-grant-message';
+
+const logger = Logger.get('DEVICE_SIGNING_MAPPERS');
+
+function toApiScopes(entity: DeviceGrantEntity): string[] {
+  const scopes = deserializeDeviceGrantScopes(entity.scopes);
+  if (scopes.join(',') !== entity.scopes) {
+    logger.warn(
+      `Device grant ${entity.id} has unrecognised stored scopes: ${entity.scopes}`
+    );
+  }
+  return scopes;
+}
 
 function toNullableNumber(value: number | string | null): number | null {
   return value === null ? null : Number(value);
@@ -15,7 +28,7 @@ export function toApiDeviceGrant(entity: DeviceGrantEntity): ApiDeviceGrant {
     wallet: entity.wallet,
     key_type: entity.key_type,
     device_key: entity.device_key,
-    scopes: deserializeDeviceGrantScopes(entity.scopes),
+    scopes: toApiScopes(entity),
     device_label: entity.device_label,
     domain: entity.domain,
     issued_at: Number(entity.issued_at),
