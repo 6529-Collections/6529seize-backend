@@ -16,9 +16,19 @@ uses JPEG quality 75. Capture stops after eight seconds, cancellation, or app/ta
 backgrounding; unsupported codecs and encoder failures omit the field. Parts
 transfer concurrently with capture. Completion waits for the attempt to settle.
 
-After checking upload ownership, the API checks canonical base64, a 128 KiB
-compressed limit and 640 by 640 dimensions, then decodes and re-encodes the JPEG
-at quality 80 to strip client metadata. It confirms the multipart upload still
+After checking upload ownership, the API rejects non-canonical base64. A raw
+base64-length check limits allocation before decoding; the decoded 128 KiB
+compressed limit is authoritative. It checks the JPEG signature before dimension
+parsing, validates 640 by 640 dimensions, then decodes and re-encodes the JPEG
+at quality 80 to strip client metadata. JPEG APP1 metadata (including EXIF and
+XMP) is rejected before dimension parsing, including duplicate blocks and blocks
+after scan data, so conflicting or unrecognized display transforms cannot be
+discarded accidentally. Such uploads use the converter's automatically rotated
+preview instead. Unknown or truncated marker codes and invalid segment lengths
+are rejected rather than using their claimed lengths to skip more input. A
+segment's payload is data, so APP1-shaped bytes inside another segment are not
+interpreted as display metadata. Normal canvas captures already contain oriented
+pixels and do not require APP1 metadata. It confirms the multipart upload still
 exists before writing. Both S3 operations share a three-second deadline. Invalid
 images, failed storage, and missing device images leave video completion usable;
 the converter remains the fallback. Oversized request fields are rejected by the
@@ -43,7 +53,8 @@ best-effort path does not add a separate metric publisher or fail video posting.
 For `drops/<author>/<upload-uuid>/<name>.<extension>`, the API writes
 `renditions/drops/<author>/<upload-uuid>/<name>/poster/<name>_device.jpg`
 with `Content-Type: image/jpeg` and metadata `chat-video-poster: validated-v1`.
-S3 publishes the video-created event only after this write attempt. The worker
+The API awaits the poster write before issuing multipart completion, which
+triggers the video-created event. The worker
 checks this image's type, length and validation marker; a failed lookup generates
 the backend preview instead. The two image paths are independent and cannot
 overwrite each other. The uploaded original video is immediately playable;
@@ -51,7 +62,11 @@ HLS/MP4 renditions still arrive asynchronously.
 
 Fallback is selected from S3 state when the conversion job is submitted. A
 successful HEAD with the validation marker omits backend JPEG capture for that
-job; S3 existence does not prove public CloudFront delivery. A later CDN error
+job. HEAD is best effort: an unavailable lookup generates backend JPEGs even if
+the device poster exists, and the frontend continues to prefer the device image.
+Redelivery rechecks that state, but does not promise a replacement job within
+MediaConvert's token-deduplication window. S3 existence does not prove public
+CloudFront delivery. A later CDN error
 can therefore leave this video without a visible poster until public delivery
 is repaired. The frontend's bounded retries do not request backend regeneration.
 This follows the device-first design and avoids generating duplicate previews
@@ -112,6 +127,9 @@ policy gains `s3:GetObject` and `s3:PutObject` for device-poster keys and
 The API deployment reuses its existing function and execution role. There is
 no separate pre-rollout API-role inspection gate for this change. Poster
 lookup/write failures retain normal video completion and backend fallback.
+During IAM propagation, a failed converter HEAD can temporarily generate backend
+JPEGs alongside an existing device poster. The frontend still prefers the device
+poster; this safe fallback does not block uploads or require a new rollout gate.
 
 Existing endpoint, execution role, template, bucket, and region configuration
 remain required. There are no new environment variables, services, queues or
