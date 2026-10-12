@@ -1,3 +1,5 @@
+import { assertCollaborationCredit } from '@/meme-collaborations/meme-collaboration-credit';
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import {
   fetchMaxSeasonId,
   fetchMintingClaimByClaimId,
@@ -360,6 +362,26 @@ export async function buildUpdatesForClaimPatch(
   existing: MintingClaimRow,
   isMemesContract: boolean
 ): Promise<MintingClaimUpdates> {
+  const collaboration = await memeCollaborationsDb.context(
+    existing.drop_id,
+    {}
+  );
+  if (collaboration?.credit) {
+    if (body.attributes !== undefined)
+      assertCollaborationCredit(body.attributes, collaboration.credit);
+    if (
+      collaboration.credit.collab &&
+      Object.keys(collaboration.artwork).some(
+        (key) =>
+          body[key as keyof MintingClaimUpdateRequest] !== undefined &&
+          body[key as keyof MintingClaimUpdateRequest] !==
+            collaboration.artwork[key as keyof typeof collaboration.artwork]
+      )
+    )
+      throw new BadRequestException(
+        'Accepted collaboration locks the artwork, title and description. Create a new submission to replace them.'
+      );
+  }
   const updates: MintingClaimUpdates = {};
   let shouldResetMetadataLocation = false;
   let nextImageUrl: string | null = normalizeOptionalUrl(existing.image_url);

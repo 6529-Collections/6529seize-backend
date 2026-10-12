@@ -18,6 +18,11 @@ import {
 import { upsertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
 import { MEMES_CONTRACT } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+
+jest.mock('@/meme-collaborations/meme-collaborations.db', () => ({
+  memeCollaborationsDb: { context: jest.fn().mockResolvedValue(null) }
+}));
 
 jest.mock('@/minting-claims/media-inspector', () => ({
   computeImageDetails: jest.fn(),
@@ -80,6 +85,45 @@ function baseClaim(overrides: Partial<MintingClaimRow> = {}): MintingClaimRow {
 }
 
 describe('buildUpdatesForClaimPatch', () => {
+  it('preserves consented credits and artwork while allowing mint operational corrections', async () => {
+    const context = jest.mocked(memeCollaborationsDb.context);
+    const existing = baseClaim();
+    context.mockResolvedValue({
+      drop_id: existing.drop_id,
+      author_id: 'A',
+      author_handle: 'userA',
+      wave_id: 'wave',
+      artwork_hash: 'a'.repeat(64),
+      terms_version: 'b'.repeat(64),
+      base_artist: 'A',
+      terms: null,
+      closed_at: 1,
+      artwork: {
+        name: existing.name,
+        description: existing.description,
+        image_url: existing.image_url,
+        animation_url: existing.animation_url
+      },
+      credit: { artist: 'A, B', artist_profiles: 'userA, userB', collab: true }
+    });
+    try {
+      await expect(
+        buildUpdatesForClaimPatch({ name: 'Replacement' }, existing, true)
+      ).rejects.toThrow('locks the artwork');
+      await expect(
+        buildUpdatesForClaimPatch(
+          { attributes: [{ trait_type: 'Artist', value: 'A, unaccepted' }] },
+          existing,
+          true
+        )
+      ).rejects.toThrow('fixed');
+      await expect(
+        buildUpdatesForClaimPatch({ edition_size: 500 }, existing, true)
+      ).resolves.toMatchObject({ edition_size: 500 });
+    } finally {
+      context.mockResolvedValue(null);
+    }
+  });
   const computeImageDetailsMock = computeImageDetails as jest.MockedFunction<
     typeof computeImageDetails
   >;

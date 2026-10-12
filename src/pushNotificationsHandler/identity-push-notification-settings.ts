@@ -15,6 +15,7 @@ const CAUSE_TO_SETTING_KEY: Partial<
   [IdentityNotificationCause.DROP_REACTED]: 'drop_reacted',
   [IdentityNotificationCause.DROP_BOOSTED]: 'drop_boosted',
   [IdentityNotificationCause.WAVE_CREATED]: 'wave_created',
+  [IdentityNotificationCause.MEME_COLLABORATION]: 'identity_mentioned',
   [IdentityNotificationCause.COMPETITION_LIFECYCLE]: 'wave_created',
   [IdentityNotificationCause.SUBSCRIPTION_COVERAGE]: 'subscription_coverage'
 };

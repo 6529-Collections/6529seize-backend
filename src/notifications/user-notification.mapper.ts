@@ -55,6 +55,20 @@ export class UserNotificationMapper {
         return this.mapDropQuoteNotification(entity);
       case IdentityNotificationCause.WAVE_CREATED:
         return this.mapWaveCreatedNotification(entity);
+      case IdentityNotificationCause.MEME_COLLABORATION:
+        return {
+          id: entity.id,
+          created_at: entity.created_at,
+          read_at: entity.read_at,
+          cause: IdentityNotificationCause.MEME_COLLABORATION,
+          data: {
+            event_type: entity.additional_data.event_type,
+            drop_id: entity.related_drop_id!,
+            wave_id: entity.wave_id!,
+            actor_id: entity.additional_identity_id!,
+            invitation_id: String(entity.additional_data.invitation_id)
+          }
+        };
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
         return {
           id: entity.id,

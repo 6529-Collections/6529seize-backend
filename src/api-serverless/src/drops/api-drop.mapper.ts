@@ -1,3 +1,4 @@
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import {
   ActivityEventAction,
   ActivityEventTargetType
@@ -355,6 +356,16 @@ export class ApiDropMapper {
       const priorityMetadataByDropId =
         this.mapPriorityMetadataByDropId(priorityMetadataRows);
 
+      const collaboratorsByDropId = await memeCollaborationsDb.acceptedByDrops(
+        dropIds,
+        ctx
+      );
+      const collaborationPresentation =
+        await memeCollaborationsDb.presentationByDrops(
+          dropIds,
+          ctx,
+          collaboratorsByDropId
+        );
       const dropsById = entities.reduce(
         (acc, drop) => {
           const participation = authorWaveParticipationByWave[drop.wave_id]?.[
@@ -413,6 +424,24 @@ export class ApiDropMapper {
                 )
               : undefined
           });
+          acc[drop.id].collaborators = collaboratorsByDropId[drop.id] ?? [];
+          const presentation = collaborationPresentation[drop.id];
+          if (presentation) {
+            acc[drop.id].submission_artist = presentation.submission_artist;
+            acc[drop.id].priority_metadata = acc[
+              drop.id
+            ].priority_metadata?.map((item) => ({
+              ...item,
+              data_value:
+                item.data_key === 'artist'
+                  ? presentation.credit.artist
+                  : item.data_key === 'seizeArtistProfile'
+                    ? presentation.credit.artist_profiles
+                    : item.data_key === 'collab'
+                      ? String(presentation.credit.collab)
+                      : item.data_value
+            }));
+          }
           return acc;
         },
         {} as Record<string, ApiDropV2>

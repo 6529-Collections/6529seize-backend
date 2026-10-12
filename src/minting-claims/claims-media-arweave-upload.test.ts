@@ -1,6 +1,16 @@
 import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { createHash } from 'node:crypto';
 import { validGlb } from '@/tests/fixtures/glb';
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import { withCollaborationCredit } from '@/meme-collaborations/meme-collaboration-credit';
+
+jest.mock('@/meme-collaborations/meme-collaborations.db', () => ({
+  memeCollaborationsDb: {
+    context: jest
+      .fn<typeof memeCollaborationsDb.context>()
+      .mockResolvedValue(null)
+  }
+}));
 import { BadRequestException } from '@/exceptions';
 import type { MintingClaimRow } from '@/api/minting-claims/api.minting-claims.db';
 import { arweaveFileUploader } from '@/arweave';
@@ -226,6 +236,53 @@ function baseClaim(overrides: Partial<MintingClaimRow> = {}): MintingClaimRow {
 }
 
 describe('validateMintingClaimReadyForArweaveUpload', () => {
+  it('rejects unapproved artist credits or replaced collaboration media before any Arweave upload', async () => {
+    const claim = baseClaim();
+    const credit = {
+      artist: 'A, B',
+      artist_profiles: 'userA, userB',
+      collab: true
+    };
+    const context = jest.mocked(memeCollaborationsDb.context);
+    context.mockResolvedValue({
+      drop_id: claim.drop_id,
+      author_id: 'A',
+      author_handle: 'userA',
+      wave_id: 'wave',
+      artwork_hash: 'a'.repeat(64),
+      terms_version: 'b'.repeat(64),
+      base_artist: 'A',
+      terms: null,
+      closed_at: 1,
+      credit,
+      artwork: {
+        name: claim.name,
+        description: claim.description,
+        image_url: claim.image_url,
+        animation_url: claim.animation_url
+      }
+    });
+    try {
+      await expect(
+        validateMintingClaimReadyForArweaveUpload(claim, MEMES_CONTRACT)
+      ).rejects.toThrow('fixed');
+      await expect(
+        validateMintingClaimReadyForArweaveUpload(
+          {
+            ...claim,
+            image_url: 'https://cdn.example.com/replaced.png',
+            attributes: JSON.stringify(
+              withCollaborationCredit(buildMemesRawAttributes(), credit)
+            )
+          },
+          MEMES_CONTRACT
+        )
+      ).rejects.toThrow('differs from accepted');
+      expect(arweaveFileUploader.uploadFile).not.toHaveBeenCalled();
+    } finally {
+      context.mockResolvedValue(null);
+    }
+  });
   const fetchMaxSeasonIdMock = fetchMaxSeasonId as jest.MockedFunction<
     typeof fetchMaxSeasonId
   >;

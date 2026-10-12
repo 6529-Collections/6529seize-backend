@@ -29,6 +29,29 @@ describe('UserNotificationMapper', () => {
     } as IdentityNotificationDeserialized;
   }
 
+  it.each(['INVITED', 'ACCEPTED'])(
+    'maps %s collaboration notifications to the artwork and invitation',
+    (event_type) => {
+      expect(
+        mapper.mapNotifications([
+          notificationEntity({
+            cause: IdentityNotificationCause.MEME_COLLABORATION,
+            additional_data: { event_type, invitation_id: 'invitation' }
+          })
+        ])[0]
+      ).toMatchObject({
+        cause: IdentityNotificationCause.MEME_COLLABORATION,
+        data: {
+          event_type,
+          drop_id: 'drop-1',
+          wave_id: 'wave-1',
+          actor_id: 'sender-1',
+          invitation_id: 'invitation'
+        }
+      });
+    }
+  );
+
   it('preserves wave id for all-drops and priority-alert notifications', () => {
     expect(
       mapper.mapNotifications([

@@ -1,3 +1,5 @@
+import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
+import { competitionMainStageRepository } from './competition-main-stage.repository';
 import { randomUUID } from 'node:crypto';
 import {
   mirrorNativeLegacyVote,
@@ -585,6 +587,17 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
           ctx
         );
       }
+    }
+    if (
+      !params.skipped &&
+      params.competition.capabilities.some(
+        (capability) => capability === 'MAIN_STAGE'
+      ) &&
+      (await competitionMainStageRepository.isDesignated(competitionId, ctx))
+    ) {
+      const nextMint = params.winners.find((winner) => winner.rank === 1);
+      if (nextMint)
+        await memeCollaborationsService.freezeForMint(nextMint.drop_id, ctx);
     }
     if (!params.skipped)
       await this.enqueueEvent(

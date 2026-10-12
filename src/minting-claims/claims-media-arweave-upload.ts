@@ -1,3 +1,5 @@
+import { assertCollaborationCredit } from '@/meme-collaborations/meme-collaboration-credit';
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import { assertValidGlb } from '@/minting-claims/glb-validation';
 import {
   IMAGE_DETAILS_KEYS,
@@ -849,6 +851,28 @@ export async function validateMintingClaimReadyForArweaveUpload(
   const memesContract = isMemesContract(contract);
   const missing: string[] = [];
   const invalid: string[] = [];
+  const collaboration = await memeCollaborationsDb.context(claim.drop_id, {});
+  if (collaboration && !collaboration.credit)
+    throw new BadRequestException(
+      'Missing accepted-artist snapshot for this claim'
+    );
+  if (collaboration?.credit) {
+    assertCollaborationCredit(
+      parseJsonOrNull<unknown>(claim.attributes),
+      collaboration.credit
+    );
+    if (
+      collaboration.credit.collab &&
+      Object.keys(collaboration.artwork).some(
+        (key) =>
+          claim[key as keyof MintingClaimRow] !==
+          collaboration.artwork[key as keyof typeof collaboration.artwork]
+      )
+    )
+      throw new BadRequestException(
+        'Claim artwork differs from accepted collaboration artwork'
+      );
+  }
   const imageUrl = claim.image_url?.trim() ?? '';
   if (imageUrl === '') missing.push('Image URL');
   if (memesContract) {

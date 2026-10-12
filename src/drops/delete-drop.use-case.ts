@@ -1,3 +1,4 @@
+import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
 import {
   withLegacyPrimaryMutation,
   readLegacyMutationSource
@@ -260,6 +261,7 @@ export class DeleteDropUseCase {
             { timer, connection }
           );
         await Promise.all([
+          memeCollaborationsService.closeDeleted(dropId, { timer, connection }),
           this.dropsDb.deleteDropParts(dropId, { timer, connection }),
           this.dropsDb.deleteDropMentions(dropId, { timer, connection }),
           this.dropsDb.deleteDropMentionedWaves(dropId, {

@@ -1,3 +1,4 @@
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import {
   DropEntity,
   DropMediaEntity,
@@ -160,6 +161,7 @@ export class DropsMappers {
     request: ApiUpdateDropRequest & {
       drop_type: ApiDropType;
       mentioned_groups?: ApiDropGroupMention[];
+      collaborator_ids?: string[];
       is_additional_action_promised?: boolean | null;
     };
     waveId: string;
@@ -169,6 +171,7 @@ export class DropsMappers {
     dropId?: string;
   }): CreateOrUpdateDropModel {
     return {
+      collaborator_ids: request.collaborator_ids,
       author_identity: authorId,
       author_id: authorId,
       proxy_identity: proxyId,
@@ -844,6 +847,16 @@ export class DropsMappers {
       contextProfileId ?? null,
       ctx.connection
     );
+    const collaboratorsByDropId = await memeCollaborationsDb.acceptedByDrops(
+      entities.map((entity) => entity.id),
+      ctx
+    );
+    const collaborationPresentation =
+      await memeCollaborationsDb.presentationByDrops(
+        entities.map((entity) => entity.id),
+        ctx,
+        collaboratorsByDropId
+      );
     return entities.map<ApiDropWithoutWave>((dropEntity) => {
       const drop = this.toDrop({
         dropEntity,
@@ -885,6 +898,22 @@ export class DropsMappers {
         rootDropIds,
         visibleQuotedDropIds
       });
+      drop.collaborators = collaboratorsByDropId[dropEntity.id] ?? [];
+      const presentation = collaborationPresentation[dropEntity.id];
+      if (presentation) {
+        drop.submission_artist = presentation.submission_artist;
+        drop.metadata = drop.metadata.map((item) => ({
+          ...item,
+          data_value:
+            item.data_key === 'artist'
+              ? presentation.credit.artist
+              : item.data_key === 'seizeArtistProfile'
+                ? presentation.credit.artist_profiles
+                : item.data_key === 'collab'
+                  ? String(presentation.credit.collab)
+                  : item.data_value
+        }));
+      }
       return this.applyModerationPresentation(
         drop,
         moderationPresentations,

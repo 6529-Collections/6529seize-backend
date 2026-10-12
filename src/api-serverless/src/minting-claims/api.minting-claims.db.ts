@@ -1,3 +1,4 @@
+import { MEME_COLLABORATIONS_TABLE } from '@/constants';
 import {
   DISTRIBUTION_TABLE,
   MEMES_EXTENDED_DATA_TABLE,
@@ -282,6 +283,7 @@ export async function fetchMintingAllowlists(
 }
 
 export interface MintingClaimRow {
+  collaboration_credit?: string | null;
   drop_id: string;
   contract: string;
   claim_id: number;
@@ -306,7 +308,7 @@ export async function fetchMintingClaimByDropId(
   options?: DbQueryOptions
 ): Promise<MintingClaimRow | null> {
   const rows = await sqlExecutor.execute<MintingClaimRow>(
-    `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, external_url, attributes, image_details, animation_url, animation_details
+    `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, external_url, attributes, image_details, animation_url, animation_details, (select credit from ${MEME_COLLABORATIONS_TABLE} collaboration where collaboration.drop_id=${MINTING_CLAIMS_TABLE}.drop_id) as collaboration_credit
      FROM ${MINTING_CLAIMS_TABLE}
      WHERE contract = :contract
        AND drop_id = :dropId
@@ -323,7 +325,7 @@ export async function fetchMintingClaimByClaimId(
   options?: DbQueryOptions
 ): Promise<MintingClaimRow | null> {
   const rows = await sqlExecutor.execute<MintingClaimRow>(
-    `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, external_url, attributes, image_details, animation_url, animation_details
+    `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, external_url, attributes, image_details, animation_url, animation_details, (select credit from ${MEME_COLLABORATIONS_TABLE} collaboration where collaboration.drop_id=${MINTING_CLAIMS_TABLE}.drop_id) as collaboration_credit
      FROM ${MINTING_CLAIMS_TABLE}
      WHERE contract = :contract
        AND claim_id = :claimId
@@ -334,7 +336,7 @@ export async function fetchMintingClaimByClaimId(
   return rows.length > 0 ? rows[0] : null;
 }
 
-const MINTING_CLAIMS_SELECT = `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, external_url, attributes, image_details, animation_url, animation_details
+const MINTING_CLAIMS_SELECT = `SELECT drop_id, contract, claim_id, image_location, animation_location, metadata_location, media_uploading, edition_size, description, name, image_url, external_url, attributes, image_details, animation_url, animation_details, (select credit from ${MEME_COLLABORATIONS_TABLE} collaboration where collaboration.drop_id=${MINTING_CLAIMS_TABLE}.drop_id) as collaboration_credit
 FROM ${MINTING_CLAIMS_TABLE}
 WHERE contract = :contract`;
 

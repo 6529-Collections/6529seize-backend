@@ -1,3 +1,4 @@
+import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
 import {
   dropVotingDb,
   DropVotingDb
@@ -691,6 +692,8 @@ export class WaveDecisionsService {
       mainStageWaveId && waveId === mainStageWaveId && winnerDrops.length > 0
         ? winnerDrops[0].drop_id
         : null;
+    if (claimBuildDropId)
+      await memeCollaborationsService.freezeForMint(claimBuildDropId, ctx);
     await this.waveDecisionsDb.deleteDropsRanks(winnerDropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([waveId], ctx);
     await this.dropVotingDb.deleteStaleLeaderboardEntriesForWave(waveId, ctx);
