@@ -1,4 +1,8 @@
-import { Alchemy, Network } from '@/alchemy-sdk';
+import {
+  EthereumRpcClient,
+  getEthereumRpcClient
+} from '@/ethereum-rpc/ethereum-rpc-client';
+import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import {
   DELEGATION_ALL_ADDRESS,
   DELEGATION_CONTRACT,
@@ -15,11 +19,10 @@ import {
   EventType
 } from './entities/IDelegation';
 import { Logger } from './logging';
-import { getAlchemyInstance } from './alchemy';
 import { sepolia } from '@wagmi/chains';
 import { equalIgnoreCase } from './strings';
 
-let alchemy: Alchemy;
+let rpc: EthereumRpcClient;
 
 const logger = Logger.get('DELEGATIONS');
 
@@ -29,7 +32,7 @@ async function getAllDelegations(startingBlock: number, latestBlock: number) {
 
   logger.info(`[FROM BLOCK ${startingBlockHex}] [TO BLOCK ${latestBlockHex}]`);
 
-  const response = await alchemy.core.getLogs({
+  const response = await rpc.getLogs({
     address: DELEGATION_CONTRACT.contract,
     fromBlock: startingBlockHex,
     toBlock: latestBlockHex
@@ -38,7 +41,7 @@ async function getAllDelegations(startingBlock: number, latestBlock: number) {
 }
 
 const getDelegationDetails = async (txHash: string) => {
-  const tx = await alchemy.core.getTransaction(txHash);
+  const tx = await rpc.getTransaction(txHash);
   if (tx) {
     const data = tx.data;
     try {
@@ -70,16 +73,16 @@ export const findDelegationTransactions = async (
   latestBlock?: number
 ) => {
   const network = getNetwork();
-  alchemy = getAlchemyInstance(network);
+  rpc = getEthereumRpcClient(network);
 
   if (!latestBlock) {
-    latestBlock = await alchemy.core.getBlockNumber();
+    latestBlock = await rpc.getBlockNumber();
     logger.info(
       `[STARTING BLOCK ${startingBlock}] [LATEST BLOCK ON CHAIN ${latestBlock}]`
     );
   }
 
-  const timestamp = (await alchemy.core.getBlock(latestBlock)).timestamp;
+  const timestamp = (await rpc.getBlock(latestBlock)).timestamp;
 
   const allDelegations = await getAllDelegations(startingBlock, latestBlock);
 
