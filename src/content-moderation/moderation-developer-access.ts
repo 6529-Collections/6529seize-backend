@@ -1,9 +1,9 @@
 import { CustomApiCompliantException, ForbiddenException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
-import { DEV_TEAM_GROUP_ID, isDevTeamMember } from '@/groups/dev-team-access';
+import { isDevTeamMember } from '@/groups/dev-team-access';
 
-export const MODERATION_DEVELOPER_GROUP_ID = DEV_TEAM_GROUP_ID;
+export { DEV_TEAM_GROUP_ID as MODERATION_DEVELOPER_GROUP_ID } from '@/groups/dev-team-access';
 
 export async function isModerationDeveloper(
   profileId: string | null | undefined,

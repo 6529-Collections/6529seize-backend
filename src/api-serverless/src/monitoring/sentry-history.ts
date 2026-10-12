@@ -113,7 +113,7 @@ export async function getSentryHistory(): Promise<ApiMonitoringSentryHistory> {
     .digest('hex');
   const key = `monitoring:sentry:history:v1:${hash}:${end.toISOString().slice(0, 10)}`;
   const pending = inFlight.get(key);
-  if (pending) return await pending;
+  if (pending !== undefined) return await pending;
   const task = (async () => {
     // Reuse the shared Redis refresh lease to avoid duplicate collection across Lambdas.
     const snapshot = await redisCachedWithRefreshLease(

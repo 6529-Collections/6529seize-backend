@@ -52,9 +52,7 @@ export function getSentryConfig(): SentryConfig | null {
   if (
     !/^[a-zA-Z0-9_-]{1,100}$/.test(organization) ||
     projects.length > 10 ||
-    projects.some(
-      (project) => !/^[a-zA-Z0-9_][a-zA-Z0-9_-]{0,99}$/.test(project)
-    ) ||
+    projects.some((project) => !/^\w[a-zA-Z0-9_-]{0,99}$/.test(project)) ||
     environment.length > 100 ||
     /[\r\n]/.test(environment) ||
     environmentFilters.length > 10 ||
@@ -87,7 +85,7 @@ function textField(value: unknown, maxLength: number): string {
   if (typeof value !== 'string' || !value.trim())
     throw new Error('Invalid Sentry text');
   return Array.from(value, (character) => {
-    const code = character.charCodeAt(0);
+    const code = character.codePointAt(0) ?? 0;
     return code < 32 || code === 127 ? ' ' : character;
   })
     .join('')
@@ -97,7 +95,7 @@ function textField(value: unknown, maxLength: number): string {
 
 function dateField(value: unknown): string {
   if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
-    throw new Error('Invalid Sentry date');
+    throw new TypeError('Invalid Sentry date');
   }
   return new Date(value).toISOString();
 }
@@ -168,9 +166,11 @@ async function fetchIssuePage(
   end: string,
   query: string,
   sort: string,
-  limit: number,
-  cursor?: string,
-  signal?: AbortSignal
+  {
+    limit,
+    cursor,
+    signal
+  }: { limit: number; cursor?: string; signal?: AbortSignal }
 ) {
   const url = new URL(
     `/api/0/organizations/${encodeURIComponent(config.organization)}/issues/`,
@@ -223,7 +223,7 @@ async function fetchIssues(
     end,
     query,
     sort,
-    ISSUE_LIMIT + 1
+    { limit: ISSUE_LIMIT + 1 }
   );
   const hasMore =
     body.length > ISSUE_LIMIT ||
@@ -267,6 +267,23 @@ export class SentryRateLimitError extends Error {
   }
 }
 
+function addPageOccurrences(
+  body: unknown[],
+  seen: Set<string>,
+  total: number
+): number | null {
+  for (const value of body) {
+    const issue = record(value);
+    const id = textField(issue.id, 30);
+    if (seen.has(id)) return null; // Pagination moved while collecting; don't claim a total.
+    seen.add(id);
+    const scoped = issue.filtered ? record(issue.filtered) : issue;
+    total += countField(scoped.count);
+    if (!Number.isSafeInteger(total)) throw new Error('Invalid Sentry total');
+  }
+  return total;
+}
+
 export async function countSentryWindow(
   config: SentryConfig,
   project: string,
@@ -286,19 +303,11 @@ export async function countSentryWindow(
       end,
       'issue.category:error',
       'freq',
-      TREND_PAGE_SIZE,
-      cursor,
-      signal
+      { limit: TREND_PAGE_SIZE, cursor, signal }
     );
-    for (const value of body) {
-      const issue = record(value);
-      const id = textField(issue.id, 30);
-      if (seen.has(id)) return null; // Pagination moved while collecting; don't claim a total.
-      seen.add(id);
-      const scoped = issue.filtered ? record(issue.filtered) : issue;
-      total += countField(scoped.count);
-      if (!Number.isSafeInteger(total)) throw new Error('Invalid Sentry total');
-    }
+    const pageTotal = addPageOccurrences(body, seen, total);
+    if (pageTotal === null) return null;
+    total = pageTotal;
     const link = response.headers.get('link');
     const next = nextCursor(link);
     if (!next) {
@@ -435,7 +444,7 @@ export async function getSentryOverview(): Promise<ApiMonitoringSentryOverview> 
     };
   const key = `monitoring:sentry:v3:${createHash('sha256').update(JSON.stringify(config)).digest('hex')}`;
   const pending = inFlight.get(key);
-  if (pending) return await pending;
+  if (pending !== undefined) return await pending;
   const task = redisCached(key, Time.minutes(5), () => collectOverview(config));
   inFlight.set(key, task);
   try {
