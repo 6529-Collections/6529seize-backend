@@ -891,6 +891,20 @@ describeWithSeed(
           hide_link_preview: false
         },
         {
+          id: 'beta-muted-subwave-other-author-drop',
+          wave_id: betaSubwave.id,
+          author_id: unreadReader.profile_id!,
+          created_at: 990,
+          updated_at: null,
+          title: null,
+          parts_count: 1,
+          reply_to_drop_id: null,
+          reply_to_part_id: null,
+          drop_type: DropType.CHAT,
+          signature: null,
+          hide_link_preview: false
+        },
+        {
           id: 'unfollowed-subwave-unread-drop',
           wave_id: unfollowedUnreadSubwave.id,
           author_id: unreadReader.profile_id!,
@@ -976,7 +990,7 @@ describeWithSeed(
       ]);
     });
 
-    it('summarizes followed activity and all visible subwave unread counts', async () => {
+    it('counts unread drops only in followed, unmuted subwaves', async () => {
       const contexts =
         await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
           {
@@ -987,16 +1001,19 @@ describeWithSeed(
           ctx
         );
 
+      // alpha (followed, unmuted) contributes its one unread drop from another
+      // unmuted author; beta (followed, muted) and the unfollowed subwave
+      // contribute nothing.
       expect(contexts[parentWave.id]).toEqual({
         followed_subwaves_count: 2,
         latest_followed_subwave_activity_timestamp: 900,
-        subwave_unread_drops: 2,
+        subwave_unread_drops: 1,
         hidden_followed_subwave_unread_drops: 1,
         first_hidden_followed_subwave_unread_drop_serial_no: expect.any(Number)
       });
     });
 
-    it('returns subwave unread counts when no child is followed', async () => {
+    it('does not count unread drops in unfollowed subwaves', async () => {
       const contexts =
         await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
           {
@@ -1007,13 +1024,7 @@ describeWithSeed(
           ctx
         );
 
-      expect(contexts[unfollowedOnlyParentWave.id]).toEqual({
-        followed_subwaves_count: 0,
-        latest_followed_subwave_activity_timestamp: null,
-        subwave_unread_drops: 1,
-        hidden_followed_subwave_unread_drops: 0,
-        first_hidden_followed_subwave_unread_drop_serial_no: null
-      });
+      expect(contexts[unfollowedOnlyParentWave.id]).toBeUndefined();
     });
 
     it('does not surface followed child aggregates for hidden parents', async () => {
