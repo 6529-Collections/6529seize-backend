@@ -151,6 +151,7 @@ import {
   initRateLimiting,
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
+import { ACCESS_TOKEN_ALGORITHMS } from '@/api/auth/access-token-wallet';
 import { setNoStoreHeaders } from '@/api/response-headers';
 import {
   isCmsAgentRequest,
@@ -732,7 +733,8 @@ async function initializeApp() {
     new JwtStrategy(
       {
         jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-        secretOrKey: getJwtSecret()
+        secretOrKey: getJwtSecret(),
+        algorithms: ACCESS_TOKEN_ALGORITHMS
       },
       function (
         {
@@ -826,7 +828,9 @@ function wireApp() {
       }
     })
   );
-  app.enable('trust proxy');
+  // Client identity comes from the API Gateway source IP (see getIp), so
+  // client-supplied X-Forwarded-* headers are never trusted.
+  app.disable('trust proxy');
 
   const pass = process.env.API_PASSWORD
     ? process.env.API_PASSWORD.split(',')

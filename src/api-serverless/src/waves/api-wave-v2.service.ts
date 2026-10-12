@@ -46,6 +46,7 @@ import {
   WavesApiDb
 } from '@/api/waves/waves.api.db';
 import { withWaveOverviewResponseCache } from './wave-overview-response-cache';
+import { isWaveMainFeedWithoutReplies } from '@/waves/wave-chat-replies.helpers';
 
 export interface FindWaveDropsFeedV2Request {
   readonly drop_id: string | null;
@@ -807,7 +808,11 @@ export class ApiWaveV2Service {
           serial_no_limit,
           search_strategy,
           curation_id: curationFilter,
-          drop_type: this.resolveDropType(drop_type)
+          drop_type: this.resolveDropType(drop_type),
+          exclude_replies: isWaveMainFeedWithoutReplies({
+            wave,
+            curationId: curationFilter
+          })
         },
         ctx
       ),
