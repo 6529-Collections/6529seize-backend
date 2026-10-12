@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
+import { getVerifiedAccessTokenWalletOrNull } from '@/api/auth/access-token-wallet';
 import { Logger } from '../../../logging';
-import { getAuthenticatedWalletOrNull } from '../auth/auth';
+import { getJwtSecret } from '../auth/auth';
 import { getIp } from '../policies/policies';
 import { rateLimitingService } from './rate-limiting.service';
 import {
@@ -38,6 +39,27 @@ export function clearConfigCache() {
   configCache = null;
 }
 
+interface RateLimitIdentity {
+  readonly identifier: string;
+  readonly isAuthenticated: boolean;
+}
+
+// Route-level passport authentication runs after this middleware, so req.user
+// is never populated here. Verify the Bearer access token directly (same
+// secret and algorithm as the JwtStrategy, no DB access); a missing, invalid
+// or expired token falls back to the client IP and never rejects the request.
+function getRateLimitIdentityOrNull(req: Request): RateLimitIdentity | null {
+  const wallet = getVerifiedAccessTokenWalletOrNull(
+    req.headers.authorization,
+    getJwtSecret
+  );
+  if (wallet) {
+    return { identifier: `wallet:${wallet}`, isAuthenticated: true };
+  }
+  const ip = getIp(req);
+  return ip ? { identifier: `ip:${ip}`, isAuthenticated: false } : null;
+}
+
 export function rateLimitingMiddleware() {
   return async (req: Request, res: Response, next: NextFunction) => {
     const config = getConfig();
@@ -47,44 +69,34 @@ export function rateLimitingMiddleware() {
       return next();
     }
 
-    // Get user identifier with priority:
-    // 1. Authenticated wallet (highest priority - most specific)
-    // 2. Signed Internal Request (for server-side requests from web app)
+    // Identity priority:
+    // 1. Signed Internal Request (for server-side requests from web app)
     //    - Must include: X-6529-Internal-Id, X-6529-Internal-Timestamp, X-6529-Internal-Signature
     //    - Signature: HMAC-SHA256(secret, `${clientId}\n${timestamp}\n${method}\n${path}`)
     //    - Timestamp tolerance: 5 minutes
-    // 3. IP address (fallback)
-    const authenticatedWallet = getAuthenticatedWalletOrNull(req);
-    const ip = getIp(req);
-
-    let identifier: string;
-    let isAuthenticated: boolean;
-
-    if (authenticatedWallet) {
-      identifier = `wallet:${authenticatedWallet.toLowerCase()}`;
-      isAuthenticated = true;
-    } else if (verifyInternalRequest(req, config.internal)) {
+    //    Checked first: server-side requests also forward the viewer's Bearer
+    //    token and must not consume that wallet's budget.
+    // 2. Wallet from a verified Bearer access token (authenticated limits)
+    // 3. Client IP from the API Gateway source IP (never X-Forwarded-For)
+    if (verifyInternalRequest(req, config.internal)) {
       // Verified internal requests skip rate limiting entirely
       // The signature ensures only the web app (with the secret) can generate valid requests
       logger.info(
         '[SSR REQUEST] Received signed internal request, skipping rate limiting'
       );
       return next();
-    } else if (ip) {
-      identifier = `ip:${ip}`;
-      isAuthenticated = false;
-    } else {
-      identifier = '';
-      isAuthenticated = false;
     }
 
-    if (!identifier || identifier === 'ip:') {
+    const identity = getRateLimitIdentityOrNull(req);
+    if (!identity) {
       // If we can't identify the user, allow the request
       logger.warn(
         'Could not identify user for rate limiting, allowing request'
       );
       return next();
     }
+    const { isAuthenticated } = identity;
+    let { identifier } = identity;
 
     // Select appropriate config based on authentication status
     const isSessionRefresh =
