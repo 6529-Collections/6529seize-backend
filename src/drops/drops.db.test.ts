@@ -1006,3 +1006,174 @@ describeWithSeed(
     });
   }
 );
+
+const collapsedRepliesWave = aWave(
+  { visibility_group_id: null, chat_replies_collapsed: true },
+  { id: 'wave-collapsed-replies', serial_no: 21, name: 'Collapsed Replies' }
+);
+const inlineRepliesWave = aWave(
+  { visibility_group_id: null },
+  { id: 'wave-inline-replies', serial_no: 22, name: 'Inline Replies' }
+);
+
+describeWithSeed(
+  'DropsDb collapsed replies',
+  [
+    withWaves([collapsedRepliesWave, inlineRepliesWave]),
+    {
+      table: DROPS_TABLE,
+      rows: [
+        aDropRow({
+          id: 'collapsed-root',
+          serial_no: 501,
+          wave_id: collapsedRepliesWave.id,
+          author_id: 'profile-alice',
+          created_at: 501
+        }),
+        aDropRow({
+          id: 'collapsed-reply',
+          serial_no: 502,
+          wave_id: collapsedRepliesWave.id,
+          author_id: 'profile-bob',
+          created_at: 502,
+          reply_to_drop_id: 'collapsed-root'
+        }),
+        aDropRow({
+          id: 'collapsed-nested-reply',
+          serial_no: 503,
+          wave_id: collapsedRepliesWave.id,
+          author_id: 'profile-carol',
+          created_at: 503,
+          reply_to_drop_id: 'collapsed-reply'
+        }),
+        aDropRow({
+          id: 'inline-root',
+          serial_no: 511,
+          wave_id: inlineRepliesWave.id,
+          author_id: 'profile-alice',
+          created_at: 511
+        }),
+        aDropRow({
+          id: 'inline-reply',
+          serial_no: 512,
+          wave_id: inlineRepliesWave.id,
+          author_id: 'profile-bob',
+          created_at: 512,
+          reply_to_drop_id: 'inline-root'
+        })
+      ]
+    },
+    {
+      table: DROP_RELATIONS_TABLE,
+      rows: [
+        {
+          parent_id: 'collapsed-root',
+          child_id: 'collapsed-reply',
+          child_serial_no: 502,
+          wave_id: collapsedRepliesWave.id
+        },
+        {
+          parent_id: 'collapsed-root',
+          child_id: 'collapsed-nested-reply',
+          child_serial_no: 503,
+          wave_id: collapsedRepliesWave.id
+        },
+        {
+          parent_id: 'collapsed-reply',
+          child_id: 'collapsed-nested-reply',
+          child_serial_no: 503,
+          wave_id: collapsedRepliesWave.id
+        },
+        {
+          parent_id: 'collapsed-root',
+          child_id: 'collapsed-deleted-reply',
+          child_serial_no: 504,
+          wave_id: collapsedRepliesWave.id
+        },
+        {
+          parent_id: 'inline-root',
+          child_id: 'inline-reply',
+          child_serial_no: 512,
+          wave_id: inlineRepliesWave.id
+        }
+      ]
+    }
+  ],
+  () => {
+    const feedIds = (wave_id: string, exclude_replies: boolean) =>
+      repo
+        .findLatestDropsSimple(
+          {
+            wave_id,
+            amount: 10,
+            serial_no_limit: null,
+            search_strategy: 'FIND_OLDER',
+            drop_type: null,
+            exclude_replies
+          },
+          ctx
+        )
+        .then((drops) => drops.map((drop) => drop.id));
+
+    it('leaves replies out of the wave feed only when asked', async () => {
+      await expect(feedIds(collapsedRepliesWave.id, true)).resolves.toEqual([
+        'collapsed-root'
+      ]);
+      await expect(feedIds(collapsedRepliesWave.id, false)).resolves.toEqual([
+        'collapsed-nested-reply',
+        'collapsed-reply',
+        'collapsed-root'
+      ]);
+    });
+
+    it('counts existing thread replies only in collapsed-reply waves', async () => {
+      await expect(
+        repo.countCollapsedRepliesOfGivenDrops(
+          ['collapsed-root', 'collapsed-reply', 'inline-root'],
+          ctx
+        )
+      ).resolves.toEqual({ 'collapsed-root': 2, 'collapsed-reply': 1 });
+      await expect(
+        repo.countCollapsedRepliesOfGivenDrops([], ctx)
+      ).resolves.toEqual({});
+    });
+
+    it('leaves collapsed replies out of light drop id pages', async () => {
+      const lightIds = (wave_id: string) =>
+        repo.findLightDropIdsByWave(
+          {
+            limit: 10,
+            max_serial_no: null,
+            min_serial_no: null,
+            older_first: false,
+            group_ids_user_is_eligible_for: [],
+            wave_id
+          },
+          ctx
+        );
+
+      await expect(lightIds(collapsedRepliesWave.id)).resolves.toEqual([
+        { id: 'collapsed-root', serial_no: 501 }
+      ]);
+      await expect(lightIds(inlineRepliesWave.id)).resolves.toEqual([
+        { id: 'inline-reply', serial_no: 512 },
+        { id: 'inline-root', serial_no: 511 }
+      ]);
+    });
+
+    it('leaves collapsed replies out of drop id ranges', async () => {
+      await expect(
+        repo.findDropIdsInWaveRange(
+          {
+            wave_id: collapsedRepliesWave.id,
+            min_serial_no: 0,
+            max_serial_no: 1000,
+            limit: 10,
+            group_ids_user_is_eligible_for: []
+          },
+          ctx
+        )
+      ).resolves.toEqual([{ id: 'collapsed-root', serial_no: 501 }]);
+    });
+  }
+);

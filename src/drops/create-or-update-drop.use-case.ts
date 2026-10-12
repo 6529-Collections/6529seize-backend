@@ -126,6 +126,10 @@ import {
   isWaveChatSlowModeActive,
   isWaveChatSlowModeExempt
 } from '@/waves/wave-chat-slow-mode.helpers';
+import {
+  canReplyInWaveChat,
+  isCollapsedWaveReply
+} from '@/waves/wave-chat-replies.helpers';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 import { Logger } from '@/logging';
@@ -413,6 +417,20 @@ export class CreateOrUpdateDropUseCase {
       );
   }
 
+  private async isOrdinaryChatMutation(
+    model: CreateOrUpdateDropModel,
+    connection: ConnectionWrapper<any>
+  ): Promise<boolean> {
+    if (model.drop_type !== DropType.CHAT) return false;
+    const dropId = model.drop_id;
+    if (!dropId) return true;
+    // An edit's client-supplied type must not bypass a competition source lock.
+    const existing = await readLegacyMutationSource(() =>
+      this.dropsDb.findDropById(dropId, connection)
+    );
+    return existing?.drop_type === DropType.CHAT;
+  }
+
   public async execute(
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
@@ -439,16 +457,20 @@ export class CreateOrUpdateDropUseCase {
     pending_push_notification_ids: number[];
     dm_unread_recipient_ids: string[];
   }> {
+    this.assertDropContentLimits(model.parts);
     if (
       nativeEntryContent &&
       !isNativeEntryContentPermit(nativeEntryContent, model, connection)
     )
       throw new ForbiddenException('Invalid native entry content permission');
-    // Native entry commands already hold their own competition lock. Their
-    // dedicated COMPETITION drops never mutate the legacy primary's source.
-    const withOwner: typeof withLegacyPrimaryMutation = nativeEntryContent
-      ? async (_waveId, _ctx, action) => action(null)
-      : withLegacyPrimaryMutation;
+    // Chat persistence skips legacy voting rows as well as the owner fence.
+    // Edits use the stored source type and lock entry memberships before cleanup.
+    // Native entry commands already hold their own competition lock.
+    const withOwner: typeof withLegacyPrimaryMutation =
+      nativeEntryContent ||
+      (await this.isOrdinaryChatMutation(model, connection))
+        ? async (_waveId, _ctx, action) => action(null)
+        : withLegacyPrimaryMutation;
     return withOwner(
       model.wave_id,
       { timer, connection },
@@ -459,7 +481,6 @@ export class CreateOrUpdateDropUseCase {
           nativeEntryContent
         );
         let resolvedModel = sanitizeDropStructuredFields(model);
-        this.assertDropContentLimits(resolvedModel.parts);
         timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
         let authorId = resolvedModel.author_id;
         if (!authorId) {
@@ -1248,7 +1269,11 @@ export class CreateOrUpdateDropUseCase {
       !isDescriptionDrop &&
       !isNativeEntryContent &&
       groupId &&
-      !groupIdsUserIsEligibleFor.includes(groupId)
+      !groupIdsUserIsEligibleFor.includes(groupId) &&
+      !(await this.isOpenReplyAllowed(
+        { model, wave, groupIdsUserIsEligibleFor },
+        connection
+      ))
     ) {
       throw new ForbiddenException(`User is not eligible for this wave`);
     }
@@ -1289,6 +1314,39 @@ export class CreateOrUpdateDropUseCase {
         );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
     return validatedModel;
+  }
+
+  /**
+   * Waves with open replies let people outside the chat group reply to drops
+   * they can see. They still can't start top-level drops.
+   */
+  private async isOpenReplyAllowed(
+    {
+      model,
+      wave,
+      groupIdsUserIsEligibleFor
+    }: {
+      model: CreateOrUpdateDropModel;
+      wave: WaveEntity;
+      groupIdsUserIsEligibleFor: string[];
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<boolean> {
+    const replyTo = model.reply_to;
+    if (
+      !replyTo ||
+      model.drop_type !== DropType.CHAT ||
+      !canReplyInWaveChat({ wave, groupIdsUserIsEligibleFor })
+    ) {
+      return false;
+    }
+    const visibleReplyTarget =
+      await this.dropsDb.findDropByIdWithEligibilityCheck(
+        replyTo.drop_id,
+        groupIdsUserIsEligibleFor,
+        connection
+      );
+    return visibleReplyTarget?.wave_id === wave.id;
   }
 
   private async verifyChatSlowModeLimitations(
@@ -2181,6 +2239,10 @@ export class CreateOrUpdateDropUseCase {
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
     const parts = model.parts;
+    // These legacy vote tables have migration capture triggers. Chat content
+    // must not initialize them, including when its wave has a competition.
+    const skipLegacyVotingState =
+      isNativeEntryContent || model.drop_type === DropType.CHAT;
     const dropNftLinks = this.buildDropNftLinks(model);
     const resolvedMentionedUsers = await this.resolveMentionedUsers(
       model,
@@ -2307,7 +2369,7 @@ export class CreateOrUpdateDropUseCase {
       ),
       // Dedicated native entries initialize their own runtime. A migrated
       // primary's legacy voting tables must remain frozen for these drops.
-      isNativeEntryContent
+      skipLegacyVotingState
         ? undefined
         : this.dropVotingDb.upsertWaveLeaderboardEntry(
             {
@@ -2369,7 +2431,7 @@ export class CreateOrUpdateDropUseCase {
         },
         { connection, timer }
       ),
-      isNativeEntryContent
+      skipLegacyVotingState
         ? undefined
         : this.dropVotingDb.saveDropRealVoteInTime(
             {
@@ -2406,7 +2468,12 @@ export class CreateOrUpdateDropUseCase {
         // Group mention notifications, including @all, are create-only so an
         // edit cannot resend a wave-wide or permission-derived notification.
         groupMentionNotificationsEnabled: updatedAt === null,
-        suppressFollowerNotifications: isNativeEntryContent
+        suppressFollowerNotifications:
+          isNativeEntryContent ||
+          isCollapsedWaveReply({
+            wave,
+            replyToDropId: model.reply_to?.drop_id
+          })
       },
       { timer, connection }
     );
