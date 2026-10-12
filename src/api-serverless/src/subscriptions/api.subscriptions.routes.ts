@@ -30,6 +30,7 @@ import { SubscriptionDetails } from '@/api/generated/models/SubscriptionDetails'
 import { SubscriptionTopUp } from '@/api/generated/models/SubscriptionTopUp';
 import { cacheRequest } from '@/api/request-cache';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
+import { requireSubscriptionsAdmin } from '@/api/subscriptions/require-subscriptions-admin';
 import {
   authenticateSubscriptionsAdmin,
   resetAllowlist,
@@ -779,6 +780,10 @@ router.get(
 router.get(
   `/allowlists/:contract/:token_id/:allowlist_id/:phase_id`,
   needsAuthenticatedUser(),
+  requireSubscriptionsAdmin(
+    'Only Subscription Admins can download allowlists',
+    UnauthorisedException
+  ),
   async function (
     req: Request<
       {
@@ -812,13 +817,6 @@ router.get(
         valid: false,
         statusText: 'Invalid token ID'
       });
-    }
-
-    const authenticated = authenticateSubscriptionsAdmin(req);
-    if (!authenticated) {
-      throw new UnauthorisedException(
-        'Only Subscription Admins can download allowlists'
-      );
     }
 
     const prepared = await prepareDistributionPhase(

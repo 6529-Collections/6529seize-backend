@@ -18,6 +18,7 @@ import { asyncRouter } from '@/api/async.router';
 import { needsAuthenticatedUser } from '@/api/auth/auth';
 import { cacheRequest } from '@/api/request-cache';
 import { authenticateSubscriptionsAdmin } from '@/api/subscriptions/api.subscriptions.allowlist';
+import { requireSubscriptionsAdmin } from '@/api/subscriptions/require-subscriptions-admin';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { ForbiddenException } from '@/exceptions';
 import { numbers } from '@/numbers';
@@ -331,15 +332,12 @@ router.get(
 router.get(
   `/distributions/:contract/:id/overview`,
   needsAuthenticatedUser(),
+  // Authorize before cacheRequest(): cache hits are served before the handler.
+  requireSubscriptionsAdmin(
+    'Only Subscription Admins can fetch distribution overview'
+  ),
   cacheRequest(),
   async function (req: any, res: any) {
-    const authenticated = authenticateSubscriptionsAdmin(req);
-    if (!authenticated) {
-      throw new ForbiddenException(
-        'Only Subscription Admins can fetch distribution overview'
-      );
-    }
-
     const contract = req.params.contract;
     const cardId = numbers.parseIntOrNull(req.params.id);
 
