@@ -38,6 +38,7 @@ import {
   DropMediaUploadStatus
 } from '@/entities/IDropMediaUpload';
 import { enqueueDropMediaSanitization } from '@/drops/drop-media-sanitizer-queue';
+import { storeDeviceVideoPoster } from './device-video-poster';
 
 type MediaUploadSource =
   | DropMediaUploadSource.DROP
@@ -158,12 +159,14 @@ export class UploadMediaService {
     key,
     upload_id,
     parts,
-    authenticatedProfileId
+    authenticatedProfileId,
+    video_poster_base64
   }: {
     upload_id: string;
     key: string;
     parts: { etag: string; part_no: number }[];
     authenticatedProfileId?: string;
+    video_poster_base64?: string;
   }): Promise<ApiCompleteMultipartUploadResponse> {
     const upload = await this.findTrackedDropMediaUpload({ key, upload_id });
     this.assertDropMediaUploadOwner({ upload, key, authenticatedProfileId });
@@ -173,6 +176,14 @@ export class UploadMediaService {
         parts
       });
     }
+
+    await storeDeviceVideoPoster({
+      s3: this.getS3(),
+      bucket: this.getS3Bucket(),
+      key,
+      uploadId: upload_id,
+      base64: video_poster_base64
+    });
 
     const completeCmd = new CompleteMultipartUploadCommand({
       Bucket: this.getS3Bucket(),
