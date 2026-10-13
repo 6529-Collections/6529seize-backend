@@ -176,35 +176,42 @@ describe('WsListenersNotifier quoted drop audience', () => {
   ] as const)(
     'redacts legacy %s fan-out and wakes capable delivery once',
     async (method) => {
-      const { appWebSockets, wsConnectionRepository } = createNotifier([]);
-      const repository = {
-        ...wsConnectionRepository,
-        filterConnectionIdsByDeliveryMode: jest
-          .fn()
-          .mockResolvedValue(['connection-anon'])
-      };
-      const wake = jest.fn().mockResolvedValue(undefined);
-      const notifier = new WsListenersNotifier(
-        appWebSockets as any,
-        repository as any,
-        { getViewerContextsForDrop: jest.fn().mockResolvedValue({}) },
-        wake
-      );
-      const drop = aRootDrop(
-        aQuote(aDropWithoutWave('quoted', 'restricted content'))
-      );
-      await notifier[method](drop, {});
-      expect(wake).toHaveBeenCalledTimes(1);
-      expect(appWebSockets.send).toHaveBeenCalledTimes(1);
-      expect(appWebSockets.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          connectionId: 'connection-anon',
-          legacyOnly: true
-        })
-      );
-      expect(appWebSockets.send.mock.calls[0][0].message).not.toContain(
-        'restricted content'
-      );
+      const previousEnvironment = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'staging';
+      try {
+        const { appWebSockets, wsConnectionRepository } = createNotifier([]);
+        const repository = {
+          ...wsConnectionRepository,
+          filterConnectionIdsByDeliveryMode: jest
+            .fn()
+            .mockResolvedValue(['connection-anon'])
+        };
+        const wake = jest.fn().mockResolvedValue(undefined);
+        const notifier = new WsListenersNotifier(
+          appWebSockets as any,
+          repository as any,
+          { getViewerContextsForDrop: jest.fn().mockResolvedValue({}) },
+          wake
+        );
+        const drop = aRootDrop(
+          aQuote(aDropWithoutWave('quoted', 'restricted content'))
+        );
+        await notifier[method](drop, {});
+        expect(wake).toHaveBeenCalledTimes(1);
+        expect(appWebSockets.send).toHaveBeenCalledTimes(1);
+        expect(appWebSockets.send).toHaveBeenCalledWith(
+          expect.objectContaining({
+            connectionId: 'connection-anon',
+            legacyOnly: true
+          })
+        );
+        expect(appWebSockets.send.mock.calls[0][0].message).not.toContain(
+          'restricted content'
+        );
+      } finally {
+        if (previousEnvironment === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = previousEnvironment;
+      }
     }
   );
 
