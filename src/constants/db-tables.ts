@@ -327,3 +327,7 @@ export const E2EE_BLOB_CHUNKS_TABLE = 'e2ee_blob_chunks';
 export const E2EE_REPORTS_TABLE = 'e2ee_reports';
 export const E2EE_PUSH_THROTTLE_TABLE = 'e2ee_push_throttle';
 export const E2EE_RATE_COUNTERS_TABLE = 'e2ee_rate_counters';
+
+export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
+export const MEME_COLLABORATION_INVITATIONS_TABLE =
+  'meme_collaboration_invitations';

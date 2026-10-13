@@ -1,4 +1,5 @@
 import { recordWebSocketEvent } from '@/websocket-outbox/outbox.db';
+import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
 import type { CompetitionRoutingRecord } from '@/competitions/competition.types';
 import {
   COMPETITION_VOTES_TABLE,
@@ -576,6 +577,16 @@ export class CreateOrUpdateDropUseCase {
             isNativeEntryContent,
             prePublication
           }
+        );
+        const collaborationNotificationIds =
+          await memeCollaborationsService.onWrite(
+            resolvedModel,
+            result.drop_id,
+            entryCtx,
+            contentPermit?.competitionId
+          );
+        result.pending_push_notification_ids.push(
+          ...collaborationNotificationIds
         );
         if (entryEdit?.entries.length) {
           const drop = await this.dropsDb.findDropById(

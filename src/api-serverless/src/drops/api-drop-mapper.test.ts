@@ -12,6 +12,7 @@ import { ApiDropMainType } from '@/api/generated/models/ApiDropMainType';
 import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import { ApiSubmissionDropStatus } from '@/api/generated/models/ApiSubmissionDropStatus';
 import { ApiDropMapper } from './api-drop.mapper';
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 
 function makeDrop(overrides: Partial<DropEntity> = {}): DropEntity {
   return {
@@ -812,6 +813,36 @@ describe('ApiDropMapper', () => {
         }
       ]
     });
+  });
+
+  it('hides the managed submission artist in a moderated tombstone', async () => {
+    const presentation = jest
+      .spyOn(memeCollaborationsDb, 'presentationByDrops')
+      .mockResolvedValue({
+        'drop-1': {
+          submission_artist: 'private artist',
+          credit: {
+            artist: 'private artist',
+            artist_profiles: 'author-1',
+            collab: false
+          }
+        }
+      });
+    try {
+      const { mapper, deps } = createMapper();
+      deps.moderationDb.getPresentations.mockResolvedValue({
+        'drop-1': {
+          viewer: { author_blocked: false, drop_hidden: false },
+          moderation: { status: 'MODERATOR_REMOVED', can_view: false }
+        }
+      });
+      const result = await mapper.mapDrops([makeDrop()], {
+        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      });
+      expect(result['drop-1'].submission_artist).toBeUndefined();
+    } finally {
+      presentation.mockRestore();
+    }
   });
 
   it('returns a structural tombstone without content for a globally unavailable drop', async () => {

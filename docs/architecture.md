@@ -30,6 +30,34 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Meme collaborator invitations
+
+Artwork submissions retain one author, voting result and minting claim. The API
+stores invitation status and the artwork/terms snapshot in `meme_collaborations`
+and `meme_collaboration_invitations`, created by entity synchronization. Only
+the invited identity can accept or decline; a proxy cannot consent. Acceptance
+is final. Pending identities are visible only to the submitter and their own
+invitee. Public drop V1/V2 mappings expose accepted collaborators and derive
+artist/profile/Collab metadata from those records.
+
+Legacy Main Stage and native MAIN_STAGE decision transactions lock the same
+collaboration row used by acceptance, save the accepted artist roster, and close
+pending invitations. Claims Builder consumes that saved roster for initial
+claim credits; pending invitations do not delay minting. Admins can edit all final claim credits, traits
+and artwork in Craft. The Arweave API and uploader use the saved claim with
+normal metadata/media validation, without consulting invitations or comparing
+it with the collaboration snapshot. Admin edits do not change invitation status
+or accepted-submission profile attribution. Existing submissions without a
+managed record remain compatible.
+
+Invitation and acceptance notifications use the existing identity-notification
+and push pipelines with cause `MEME_COLLABORATION`. New generated endpoints are
+`GET /drops/{drop_id}/collaborations` and
+`POST /drops/{drop_id}/collaborations/{invitation_id}/response`; both use the
+existing wave visibility checks. Accepted identities participate in Main Stage
+profile artwork queries, without changing submission ownership or allowances.
+No new Lambda, queue, environment variable, or on-chain contract is introduced.
+
 ## Active TDH voting discovery
 
 `GET /v2/waves/active-votes` is an optional-auth read in the existing API Lambda.
