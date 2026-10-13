@@ -370,6 +370,24 @@ function isWebE2EAlert(request: CiPipelineAlertRequest): boolean {
   return request.alert_type === 'web_e2e';
 }
 
+// Staging E2E does not gate releases, so its failures notify only the targeted
+// validator/deploy initiator. Every other failure still pings the dev group.
+function shouldMentionDevsOnFailure(request: CiPipelineAlertRequest): boolean {
+  if (request.status !== 'failure') {
+    return false;
+  }
+  return !(
+    isWebE2EAlert(request) &&
+    normalizeTargetEnvironment(request.environment) === 'staging'
+  );
+}
+
+function formatDevsMentionLines(request: CiPipelineAlertRequest): string[] {
+  return shouldMentionDevsOnFailure(request)
+    ? ['', `cc ${DEVS_6529_MENTION}`]
+    : [];
+}
+
 function isSuccessfulWebDeployAlert(request: CiPipelineAlertRequest): boolean {
   return (
     request.alert_type === 'deploy' &&
@@ -769,8 +787,7 @@ export class CiPipelineAlertService {
     request: CiPipelineAlertRequest,
     mentions: AlertMentions
   ): string {
-    const failureMentionLines =
-      request.status === 'failure' ? ['', `cc ${DEVS_6529_MENTION}`] : [];
+    const failureMentionLines = formatDevsMentionLines(request);
 
     const branch = normalizeOptionalValue(request.branch);
     const commit = formatCommit(request);
@@ -818,8 +835,7 @@ export class CiPipelineAlertService {
     const commit = deployTarget
       ? formatCommit(request, deployTarget.sha)
       : null;
-    const failureMentionLines =
-      request.status === 'failure' ? ['', `cc ${DEVS_6529_MENTION}`] : [];
+    const failureMentionLines = formatDevsMentionLines(request);
     const lines = [
       formatAlertHeading(request),
       '',
