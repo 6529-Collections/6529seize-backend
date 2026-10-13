@@ -228,15 +228,55 @@ describe('delegations loop on-demand reconsolidation', () => {
     expect(db.persistNftDelegationBlock).not.toHaveBeenCalled();
   });
 
-  it.each(['delegationsLoop_prod', undefined])(
-    'rejects non-staging runtime %s before opening the database',
+  it.each([
+    'delegationsLoop_staging',
+    'delegationsLoop_prod',
+    'staging',
+    'prod'
+  ])('runs maintenance with environment label %s', async (environment) => {
+    process.env.SENTRY_ENVIRONMENT = environment;
+    await expect(
+      invoke({ action: 'reconsolidate', wallets: [COLD] })
+    ).resolves.toMatchObject({ action: 'reconsolidate', status: 'completed' });
+    expect(consolidateSubscriptions).toHaveBeenCalledWith(affected);
+    expect(identitiesService.updatePrimaryAddresses).toHaveBeenCalledWith(
+      affected
+    );
+  });
+
+  it.each(['staging', 'prod'])(
+    'runs maintenance after a scheduled invocation loads %s secrets in the same runtime',
     async (environment) => {
-      if (environment) process.env.SENTRY_ENVIRONMENT = environment;
-      else delete process.env.SENTRY_ENVIRONMENT;
+      process.env.SENTRY_ENVIRONMENT = `delegationsLoop_${environment}`;
+      jest.mocked(doInDbContext).mockImplementation(async (work) => {
+        process.env.SENTRY_ENVIRONMENT = environment;
+        return work();
+      });
+      jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+        latestBlock: 26_000_001,
+        latestBlockTimestamp: 1,
+        consolidations: [],
+        registrations: [],
+        revocation: []
+      });
+
+      await invoke({ source: 'aws.events' });
+      expect(process.env.SENTRY_ENVIRONMENT).toBe(environment);
       await expect(
         invoke({ action: 'reconsolidate', wallets: [COLD] })
-      ).rejects.toThrow('only in staging');
-      expect(doInDbContext).not.toHaveBeenCalled();
+      ).resolves.toMatchObject({
+        action: 'reconsolidate',
+        status: 'completed'
+      });
+      expect(doInDbContext).toHaveBeenCalledTimes(2);
+      expect(getAffectedWalletsForAddresses).toHaveBeenCalledWith(
+        [COLD],
+        originalSnapshot
+      );
+      expect(consolidateSubscriptions).toHaveBeenCalledWith(affected);
+      expect(identitiesService.updatePrimaryAddresses).toHaveBeenCalledWith(
+        affected
+      );
     }
   );
 
