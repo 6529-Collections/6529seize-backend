@@ -305,3 +305,5 @@ export const COMPETITION_LEGACY_MIRROR_PERMITS_TABLE =
   'competition_legacy_mirror_permits';
 export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
   'competition_legacy_execution_effects';
+
+export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';

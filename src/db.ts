@@ -1,5 +1,6 @@
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import 'reflect-metadata';
+import { enqueueTransfersWithManager } from './transactions/transfer-reconciliation.db';
 import {
   DataSource,
   EntityManager,
@@ -817,7 +818,8 @@ export async function fetchAllConsolidationAddresses() {
 export async function fetchWalletTransactions(
   contracts: string[],
   wallet: string,
-  block?: number
+  block?: number,
+  options?: DbQueryOptions
 ) {
   const sql = `SELECT * FROM ${TRANSACTIONS_TABLE}`;
   const params: any = {
@@ -846,7 +848,7 @@ export async function fetchWalletTransactions(
 
   const fullSql = `${sql} ${filters}`;
 
-  return await sqlExecutor.execute(fullSql, params);
+  return await sqlExecutor.execute(fullSql, params, options);
 }
 
 export async function fetchEnsRefresh() {
@@ -933,6 +935,7 @@ export async function persistTransactions(transactions: BaseTransaction[]) {
           'to_address',
           'token_id'
         ]);
+      await enqueueTransfersWithManager(manager, consolidatedTransactions);
     });
 
     logger.info(

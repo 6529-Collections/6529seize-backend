@@ -2104,3 +2104,16 @@ interval and now redrive after five receives to `xtdh-dead-letter.fifo`. Dead le
 are retained for 14 days and have a visible-message CloudWatch alarm on the existing
 alarm topic. Repeated consolidation drift therefore cannot block the FIFO group
 until source retention expires. Deploying `xTdhLoop` also provisions these resources.
+
+### Transfer reconciliation after late indexing
+
+Independent contract indexers atomically queue per-wallet `owners` and `activity`
+refreshes alongside transfer upserts in `transfer_reconciliations`. Ownership and
+activity consumers combine those durable requests with normal block selection,
+rebuild from primary transfer history, and acknowledge only the consumed revision
+after raw and consolidated publication. Ownership then queues `balances` refreshes
+for `ownersBalancesLoop`. An IAM-only `repair-wallets` action on `nftOwnersLoop`
+queues bounded repair of previously missed transfers without running calculations.
+Schema sync precedes consumers, which precede transaction producers. See
+[late-indexed transfer reconciliation](transfer-reconciliation.md) for deployment
+order, retry/concurrency guarantees, repair and limits.

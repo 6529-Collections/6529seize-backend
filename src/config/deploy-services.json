@@ -37,7 +37,9 @@
         "aggregatedActivityLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "attachmentsOrchestrator",
@@ -456,7 +458,9 @@
         "nextgenContractLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "nextgenMediaImageResolutions",
@@ -589,7 +593,9 @@
         "nftOwnersLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "nftsLoop",
@@ -930,7 +936,9 @@
         "memeLabTransactionsLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "transactionsProcessingLoop",
