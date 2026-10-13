@@ -1,4 +1,3 @@
-import { MEME_COLLABORATIONS_TABLE } from '@/constants';
 import {
   DISTRIBUTION_TABLE,
   MEMES_EXTENDED_DATA_TABLE,
@@ -6,7 +5,8 @@ import {
   MINTING_CLAIMS_TABLE,
   MINTING_MERKLE_PROOFS_TABLE,
   MINTING_MERKLE_ROOTS_TABLE,
-  SUBSCRIPTIONS_NFTS_FINAL_TABLE
+  SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+  MEME_COLLABORATIONS_TABLE
 } from '@/constants';
 import type { DbQueryOptions } from '@/db-query.options';
 import { sqlExecutor } from '@/sql-executor';

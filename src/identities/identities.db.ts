@@ -1,4 +1,3 @@
-import { MEME_COLLABORATION_INVITATIONS_TABLE } from '@/constants';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -22,7 +21,8 @@ import {
   WALLET_REGEX,
   WALLETS_TDH_TABLE,
   WAVES_TABLE,
-  X_TDH_COEFFICIENT
+  X_TDH_COEFFICIENT,
+  MEME_COLLABORATION_INVITATIONS_TABLE
 } from '@/constants';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';

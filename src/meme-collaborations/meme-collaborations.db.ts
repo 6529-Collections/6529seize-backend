@@ -121,8 +121,11 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
       ctx
     );
     const result: Record<string, CollaboratorProfile[]> = {};
-    for (const { drop_id, ...profile } of rows)
-      (result[drop_id] ??= []).push(profile);
+    for (const { drop_id, ...profile } of rows) {
+      const profiles = result[drop_id] ?? [];
+      profiles.push(profile);
+      result[drop_id] = profiles;
+    }
     return result;
   }
 

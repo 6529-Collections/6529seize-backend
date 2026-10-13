@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { AuthenticationContext } from '@/auth-context';
 import {
   DROPS_TABLE,
@@ -28,6 +28,12 @@ import {
   MemeCollaborationsDb,
   memeCollaborationsDb
 } from './meme-collaborations.db';
+
+const INVITATION_RESPONSE_STATUS = {
+  ACCEPT: 'ACCEPTED',
+  DECLINE: 'DECLINED',
+  CANCEL: 'CANCELLED'
+} as const;
 
 export const COLLABORATION_COPY_VERSION = '1';
 export const COLLABORATION_ACCEPTANCE_COPY =
@@ -291,6 +297,8 @@ export class MemeCollaborationsService {
       ctx
     );
     const notificationIds: number[] = [];
+    // Serialize writes on the caller's single MySQL transaction connection.
+    // Persist each invitation before inserting its dependent notification.
     for (const profileId of ids) {
       const id = randomUUID();
       await this.db.query(
@@ -395,12 +403,7 @@ export class MemeCollaborationsService {
           409,
           'Artwork or terms changed. Review the invitation again.'
         );
-      const next =
-        body.action === 'ACCEPT'
-          ? 'ACCEPTED'
-          : body.action === 'DECLINE'
-            ? 'DECLINED'
-            : 'CANCELLED';
+      const next = INVITATION_RESPONSE_STATUS[body.action];
       if (invitation.status === next) return [];
       if (context.closed_at !== null || invitation.status !== 'PENDING')
         throw new CustomApiCompliantException(

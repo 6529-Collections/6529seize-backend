@@ -23,7 +23,10 @@ import {
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE
 } from '@/constants';
-import { CompetitionDecisionStatus } from '@/entities/ICompetition';
+import {
+  CompetitionCapability,
+  CompetitionDecisionStatus
+} from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
 import { BadRequestException } from '@/exceptions';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
@@ -590,8 +593,8 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     }
     if (
       !params.skipped &&
-      params.competition.capabilities.some(
-        (capability) => capability === 'MAIN_STAGE'
+      params.competition.capabilities.includes(
+        CompetitionCapability.MAIN_STAGE
       ) &&
       (await competitionMainStageRepository.isDesignated(competitionId, ctx))
     ) {
