@@ -1,0 +1,68 @@
+{
+  "account_id": "987989283142",
+  "region": "us-east-1",
+  "role_name": "gha-backend-deploy-production",
+  "source_commit": "b84b58468619072bb3d9778a23c361140bf36398",
+  "policies": [
+    {
+      "name": "BackendProductionDeployment",
+      "file": "BackendProductionDeployment.json",
+      "characters": 6075,
+      "sha256": "bcbeb60b29f9a3387d2059a53649e63e3a52bffd1bb8028b7a56718557b231ec"
+    },
+    {
+      "name": "BackendProductionDeployment02",
+      "file": "BackendProductionDeployment02.json",
+      "characters": 6010,
+      "sha256": "b81e154a180802dec870abd3c93adc07bf110b9e1cbcbe56c6eb9b0e0fe87198"
+    },
+    {
+      "name": "BackendProductionDeployment03",
+      "file": "BackendProductionDeployment03.json",
+      "characters": 6043,
+      "sha256": "c4476d2d6fcbc6ed4506e1cd7a45eabe363f6a8cc55b333d49fb12fb62e0c002"
+    },
+    {
+      "name": "BackendProductionDeployment04",
+      "file": "BackendProductionDeployment04.json",
+      "characters": 6037,
+      "sha256": "72feebae2d7cf4d2dcb116c2f25684416ea57c2867a6c20ea40c5c8e57c1a43b"
+    },
+    {
+      "name": "BackendProductionDeployment05",
+      "file": "BackendProductionDeployment05.json",
+      "characters": 6075,
+      "sha256": "1bf7ca741dc2625ba177fdf1c2f375556930585c1a581a8344b8febc3bc5fd51"
+    },
+    {
+      "name": "BackendProductionDeployment06",
+      "file": "BackendProductionDeployment06.json",
+      "characters": 6071,
+      "sha256": "c3aeee1763a69c0aa4a43da9edc95cfb3fd9ad927833218b79d418388839dd3a"
+    },
+    {
+      "name": "BackendProductionDeployment07",
+      "file": "BackendProductionDeployment07.json",
+      "characters": 6026,
+      "sha256": "baa786e278298090b0bbef0fe10e5d41fab07fddddc968eadc588da0ad664003"
+    },
+    {
+      "name": "BackendProductionDeployment08",
+      "file": "BackendProductionDeployment08.json",
+      "characters": 6095,
+      "sha256": "6c95d099000d72d499233b9fe8bdb02c30a3cef142c75fc5566051c2a438996f"
+    },
+    {
+      "name": "BackendProductionDeployment09",
+      "file": "BackendProductionDeployment09.json",
+      "characters": 6037,
+      "sha256": "ab81332d9b4d2f0141b124645958b040c6354f43547dd41ab90d010513ff533e"
+    },
+    {
+      "name": "BackendProductionDeployment10",
+      "file": "BackendProductionDeployment10.json",
+      "characters": 5558,
+      "sha256": "1fc581cbefde26df9228d9c06f7ef3d4a2339dc50c0deda17854befffb62fd7f"
+    }
+  ]
+}

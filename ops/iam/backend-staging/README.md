@@ -12,9 +12,9 @@ temporary session `backend-staging-<GitHub run ID>` for audit correlation.
 The account check is performed by the credential action when assuming the role;
 the earlier validation checks ARN syntax. Configure the role from account
 `987989283142` documented here.
-Staging has no legacy-key fallback. Production uses the `production` GitHub
-environment and retains the existing repository deployment-key secrets during
-this first rollout.
+Staging has no legacy-key fallback. Production uses a separate OIDC role in the
+`production` GitHub environment, with policies and rollout evidence documented
+in [the production runbook](../backend-production/README.md).
 
 `manifest.json` records the source commit and SHA-256 of each compact JSON
 policy. Ten policy documents keep exact resource lists within IAM's 6,144

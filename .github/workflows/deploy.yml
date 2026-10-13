@@ -244,16 +244,15 @@ jobs:
               exit 1
               ;;
           esac
-      - name: Validate staging OIDC configuration
-        id: staging_role
-        if: github.event.inputs.environment == 'staging'
+      - name: Validate deployment OIDC configuration
+        id: deploy_role
         shell: bash
         env:
           AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
         run: |
           set -euo pipefail
           if ! [[ "$AWS_DEPLOY_ROLE_ARN" =~ ^arn:aws:iam::([0-9]{12}):role/[A-Za-z0-9_+=,.@/-]+$ ]]; then
-            echo "::error::Configure AWS_DEPLOY_ROLE_ARN in the staging GitHub environment with a valid IAM role ARN"
+            echo "::error::Configure AWS_DEPLOY_ROLE_ARN in the selected GitHub environment with a valid IAM role ARN"
             exit 1
           fi
           echo "account_id=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
@@ -304,18 +303,19 @@ jobs:
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          allowed-account-ids: ${{ steps.staging_role.outputs.account_id }}
+          allowed-account-ids: ${{ steps.deploy_role.outputs.account_id }}
           role-session-name: backend-staging-${{ github.run_id }}
           unset-current-credentials: true
           aws-region: eu-west-1
-      - name: Configure production AWS credentials
+      - name: Configure production AWS credentials through OIDC
         id: aws_credentials
         if: github.event.inputs.environment == 'prod'
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          force-skip-oidc: true
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: ${{ steps.deploy_role.outputs.account_id }}
+          role-session-name: backend-prod-${{ github.run_id }}
+          unset-current-credentials: true
           aws-region: us-east-1
       - name: Require successful AWS authentication
         shell: bash

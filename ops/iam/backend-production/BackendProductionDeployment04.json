@@ -1,0 +1,140 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageApprovedStacks2",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CancelUpdateStack",
+        "cloudformation:ContinueUpdateRollback",
+        "cloudformation:CreateChangeSet",
+        "cloudformation:CreateStack",
+        "cloudformation:DeleteChangeSet",
+        "cloudformation:DeleteStack",
+        "cloudformation:DescribeChangeSet",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStackResource",
+        "cloudformation:DescribeStackResources",
+        "cloudformation:DescribeStacks",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:GetStackPolicy",
+        "cloudformation:GetTemplate",
+        "cloudformation:GetTemplateSummary",
+        "cloudformation:ListStackResources",
+        "cloudformation:TagResource",
+        "cloudformation:UntagResource",
+        "cloudformation:UpdateStack"
+      ],
+      "Resource": [
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/artworkDocumentationStorage-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/attachmentsOrchestrator-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/attachmentsProcessor-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/claimsBuilder-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/claimsMediaArweaveUploader-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/competitionMigrationLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/customReplayLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/dbDumpsDaily-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/dbMigrationsLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/delegationsLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/discoverEnsLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/dropMediaSanitizer-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/ethPriceLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/externalCollectionLiveTailingLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/externalCollectionSnapshottingLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/helpBotReplyLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/marketDepthStreamLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/marketStatsLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/mintAnnouncementsLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/newsletterLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/nextgenContractLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/nextgenMediaImageResolutions-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/nextgenMediaUploader-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/nextgenMetadataLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/nftHistoryLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/nftLinkMediaPreviewLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/nftLinkRefresherLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/nftOwnersLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/nftsLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/overRatesRevocationLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/ownersBalancesLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/populateHistoricConsolidatedTdh-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/pushNotificationsHandler-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/rateEventProcessingLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/refreshENS-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/releaseDigestLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/releaseNotesGenerationLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/rememesLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/royaltiesLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/s3Uploader-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/subscriptionsDaily-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/subscriptionsTopUpLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/tdhHistoryLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/tdhLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/teamLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/transactionsLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/transactionsProcessingLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/waveDecisionExecutionLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/waveDropMetricsRefreshLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/waveLeaderboardSnapshotterLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/waveScoreRefreshLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/xTdhGrantsReviewerLoop-prod/*",
+        "arn:aws:cloudformation:us-east-1:987989283142:stack/xTdhLoop-prod/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "ValidateDeploymentTemplates1",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:ValidateTemplate"
+      ],
+      "Resource": [
+        "*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageDeploymentBucketConfiguration1",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:DeleteBucketPolicy",
+        "s3:GetBucketAcl",
+        "s3:GetBucketLocation",
+        "s3:GetBucketOwnershipControls",
+        "s3:GetBucketPolicy",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketTagging",
+        "s3:GetBucketVersioning",
+        "s3:GetEncryptionConfiguration",
+        "s3:ListBucket",
+        "s3:ListBucketMultipartUploads",
+        "s3:ListBucketVersions",
+        "s3:PutBucketAcl",
+        "s3:PutBucketOwnershipControls",
+        "s3:PutBucketPolicy",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketTagging",
+        "s3:PutBucketVersioning",
+        "s3:PutEncryptionConfiguration"
+      ],
+      "Resource": [
+        "arn:aws:s3:::aggregatedactivityloop-pr-serverlessdeploymentbuck-l0alfdoxag3u"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    }
+  ]
+}

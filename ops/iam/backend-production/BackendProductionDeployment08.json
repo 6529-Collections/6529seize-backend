@@ -1,0 +1,113 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageApprovedRules2",
+      "Effect": "Allow",
+      "Action": [
+        "events:DeleteRule",
+        "events:DescribeRule",
+        "events:ListTagsForResource",
+        "events:ListTargetsByRule",
+        "events:PutRule",
+        "events:PutTargets",
+        "events:RemoveTargets",
+        "events:TagResource",
+        "events:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:events:us-east-1:987989283142:rule/helpBotReplyLoop-prod-HelpBotDailyActivityCreditsFa-B3SY7lmWchmS",
+        "arn:aws:events:us-east-1:987989283142:rule/marketDepthStreamLoop-pro-MarketDepthStreamLoopEven-RKBnLef7uJap",
+        "arn:aws:events:us-east-1:987989283142:rule/marketStatsLoop-prod-MarketStatsGRADIENTEventsRuleS-kmM0Pqn0uR8D",
+        "arn:aws:events:us-east-1:987989283142:rule/marketStatsLoop-prod-MarketStatsLABEventsRuleSchedu-qEpTr13elW3j",
+        "arn:aws:events:us-east-1:987989283142:rule/marketStatsLoop-prod-MarketStatsMEMESEventsRuleSche-7GYUTW6SYpyA",
+        "arn:aws:events:us-east-1:987989283142:rule/marketStatsLoop-prod-MarketStatsNEXTGENEventsRuleSc-x5scPYODklZu",
+        "arn:aws:events:us-east-1:987989283142:rule/newsletterLoop-prod-NewsletterLoopEventsRuleSchedul-65zwdoB7sggC",
+        "arn:aws:events:us-east-1:987989283142:rule/nextgenContractLoop-prod-NextgenContractLoopEventsR-0HXlVswTWdqw",
+        "arn:aws:events:us-east-1:987989283142:rule/nextgenMediaImageResoluti-NextgenMediaImageResoluti-ePYN7Wes2Uyp",
+        "arn:aws:events:us-east-1:987989283142:rule/nextgenMediaUploader-prod-NextgenMediaUploaderEvent-G4xrAZMRv0sM",
+        "arn:aws:events:us-east-1:987989283142:rule/nextgenMetadataLoop-prod-NextgenMetadataLoopEventsR-viawTGMU5Y1H",
+        "arn:aws:events:us-east-1:987989283142:rule/nftHistoryLoop-prod-NftHistoryLoopEventsRuleSchedul-fMBuGbkymdWx",
+        "arn:aws:events:us-east-1:987989283142:rule/nftOwnersLoop-prod-NftOwnersLoopEventsRuleSchedule1-KEMh4fgwpTFW",
+        "arn:aws:events:us-east-1:987989283142:rule/nftsLoop-prod-NftsLoopEventsRuleSchedule1-ayuJj7tsaPUJ",
+        "arn:aws:events:us-east-1:987989283142:rule/nftsLoop-prod-NftsLoopEventsRuleSchedule2-ZGYQaTn6vfCu",
+        "arn:aws:events:us-east-1:987989283142:rule/nftsLoop-prod-NftsLoopEventsRuleSchedule3-DdQ3t5k8P3aV",
+        "arn:aws:events:us-east-1:987989283142:rule/ownersBalancesLoop-prod-OwnersBalancesLoopEventsRul-dDUkJQghPTJU",
+        "arn:aws:events:us-east-1:987989283142:rule/pushNotificationsHandler--PushNotificationsHandlerE-5V5tRKtLwSd4",
+        "arn:aws:events:us-east-1:987989283142:rule/rateEventProcessingLoop-p-RateEventProcessingLoopEv-uhDw5YZtWffK",
+        "arn:aws:events:us-east-1:987989283142:rule/refreshENS-prod-RefreshENSEventsRuleSchedule1-UuT1ACrFx9fc",
+        "arn:aws:events:us-east-1:987989283142:rule/releaseDigestLoop-prod-ReleaseDigestLoopEventsRuleS-GXxaKFAcb5IE",
+        "arn:aws:events:us-east-1:987989283142:rule/rememesLoop-prod-RememesRefreshMetadataLoopEventsRu-XCGkwN6eHWin",
+        "arn:aws:events:us-east-1:987989283142:rule/rememesLoop-prod-RememesS3LoopEventsRuleSchedule1-PiHNgX5wykdw",
+        "arn:aws:events:us-east-1:987989283142:rule/royaltiesLoop-prod-RoyaltiesLoopEventsRuleSchedule1-qa3ybqxOt6L7",
+        "arn:aws:events:us-east-1:987989283142:rule/subscriptionsDaily-prod-SubscriptionCoverageReconci-dJHAbGl8UwLy",
+        "arn:aws:events:us-east-1:987989283142:rule/subscriptionsDaily-prod-SubscriptionCoverageReconci-h1JMrCn0K4Ux",
+        "arn:aws:events:us-east-1:987989283142:rule/subscriptionsDaily-prod-SubscriptionsDailyEventsRul-qqjTlHnVyM1e",
+        "arn:aws:events:us-east-1:987989283142:rule/subscriptionsTopUpLoop-pr-SubscriptionsTopUpLoopEve-6SMVSEYuUeJt",
+        "arn:aws:events:us-east-1:987989283142:rule/tdhHistoryLoop-prod-TdhHistoryLoopEventsRuleSchedul-ksvlcpQMNy9R",
+        "arn:aws:events:us-east-1:987989283142:rule/tdhLoop-prod-TdhLoopEventsRuleSchedule1-6OnUAXU0lYrL",
+        "arn:aws:events:us-east-1:987989283142:rule/transactionsLoop-prod-GradientsTransactionsLoopEven-0LueZwhagWSQ",
+        "arn:aws:events:us-east-1:987989283142:rule/transactionsLoop-prod-MemeLabTransactionsLoopEvents-m7tBjBIxzjhY",
+        "arn:aws:events:us-east-1:987989283142:rule/transactionsLoop-prod-MemesTransactionsLoopEventsRu-nOBct2StkfaC",
+        "arn:aws:events:us-east-1:987989283142:rule/transactionsProcessingLoo-TransactionsProcessingLoo-4vNfvI1maEps",
+        "arn:aws:events:us-east-1:987989283142:rule/waveDecisionExecutionLoop-WaveDecisionExecutionLoop-bQJfOMfSbUhR",
+        "arn:aws:events:us-east-1:987989283142:rule/waveDropMetricsRefreshLoo-WaveDropMetricsRefreshLoo-da6m5GFJl6yb",
+        "arn:aws:events:us-east-1:987989283142:rule/waveLeaderboardSnapshotte-WaveLeaderboardSnapshotte-UWtmc2PFlWsj",
+        "arn:aws:events:us-east-1:987989283142:rule/waveScoreRefreshLoop-prod-WaveScoreRefreshLoopEvent-QCw7Cn79af3D",
+        "arn:aws:events:us-east-1:987989283142:rule/xTdhGrantsReviewerLoop-pr-XTdhGrantsReviewerLoopEve-t1kv9Bv5pxLR"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageApprovedSchedules1",
+      "Effect": "Allow",
+      "Action": [
+        "scheduler:CreateSchedule",
+        "scheduler:DeleteSchedule",
+        "scheduler:GetSchedule",
+        "scheduler:UpdateSchedule"
+      ],
+      "Resource": [
+        "arn:aws:scheduler:us-east-1:987989283142:schedule/default/mintAnnouncementsLoop-pro-MintAnnouncementsLoopSch-14Y0AG23CWV7D",
+        "arn:aws:scheduler:us-east-1:987989283142:schedule/default/mintAnnouncementsLoop-pro-MintAnnouncementsLoopSch-1CKRUHWH3MWJ6",
+        "arn:aws:scheduler:us-east-1:987989283142:schedule/default/mintAnnouncementsLoop-pro-MintAnnouncementsLoopSch-1JIVSWQWF6NZO",
+        "arn:aws:scheduler:us-east-1:987989283142:schedule/default/mintAnnouncementsLoop-pro-MintAnnouncementsLoopSch-1L0ANQXAZFZ39",
+        "arn:aws:scheduler:us-east-1:987989283142:schedule/default/mintAnnouncementsLoop-pro-MintAnnouncementsLoopSch-KMYA13REQCES",
+        "arn:aws:scheduler:us-east-1:987989283142:schedule/default/mintAnnouncementsLoop-pro-MintAnnouncementsLoopSch-XATH10WC5ETY"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageApprovedQueues1",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ListQueueTags",
+        "sqs:SetQueueAttributes",
+        "sqs:TagQueue",
+        "sqs:UntagQueue"
+      ],
+      "Resource": [
+        "arn:aws:sqs:us-east-1:987989283142:attachments-orchestration",
+        "arn:aws:sqs:us-east-1:987989283142:attachments-orchestration-dlq",
+        "arn:aws:sqs:us-east-1:987989283142:attachments-processing"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    }
+  ]
+}

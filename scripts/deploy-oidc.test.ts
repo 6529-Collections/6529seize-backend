@@ -31,7 +31,7 @@ const steps: WorkflowStep[] = job.steps;
 const stagingCondition = "github.event.inputs.environment == 'staging'";
 const productionCondition = "github.event.inputs.environment == 'prod'";
 const roleArn = 'arn:aws:iam::123456789012:role/gha-backend-deploy-staging';
-const validation = steps.find((step) => step.id === 'staging_role')!;
+const validation = steps.find((step) => step.id === 'deploy_role')!;
 
 function validateRole(value: string) {
   const directory = mkdtempSync(path.join(tmpdir(), 'deploy-oidc-'));
@@ -51,7 +51,7 @@ function validateRole(value: string) {
   }
 }
 
-describe('staging deployment OIDC boundary', () => {
+describe('backend deployment OIDC boundary', () => {
   it('matches the workflow generated from the committed source files', () => {
     const directory = mkdtempSync(
       path.join(tmpdir(), 'deploy-oidc-generator-')
@@ -152,7 +152,7 @@ describe('staging deployment OIDC boundary', () => {
     expect(workflow.permissions['id-token']).toBeUndefined();
   });
 
-  it('never passes legacy keys to the staging credential action', () => {
+  it('never passes legacy keys to either environment credential action', () => {
     const credentials = steps.filter((step) =>
       step.uses?.startsWith('aws-actions/configure-aws-credentials@')
     );
@@ -161,7 +161,7 @@ describe('staging deployment OIDC boundary', () => {
     expect(staging.id).toBe('aws_credentials_staging');
     expect(staging.with).toEqual({
       'role-to-assume': '${{ vars.AWS_DEPLOY_ROLE_ARN }}',
-      'allowed-account-ids': '${{ steps.staging_role.outputs.account_id }}',
+      'allowed-account-ids': '${{ steps.deploy_role.outputs.account_id }}',
       'role-session-name': 'backend-staging-${{ github.run_id }}',
       'unset-current-credentials': true,
       'aws-region': 'eu-west-1'
@@ -171,15 +171,16 @@ describe('staging deployment OIDC boundary', () => {
     )!;
     expect(production.id).toBe('aws_credentials');
     expect(production.with).toEqual({
-      'aws-access-key-id': '${{ secrets.AWS_ACCESS_KEY_ID }}',
-      'aws-secret-access-key': '${{ secrets.AWS_SECRET_ACCESS_KEY }}',
-      'force-skip-oidc': true,
+      'role-to-assume': '${{ vars.AWS_DEPLOY_ROLE_ARN }}',
+      'allowed-account-ids': '${{ steps.deploy_role.outputs.account_id }}',
+      'role-session-name': 'backend-prod-${{ github.run_id }}',
+      'unset-current-credentials': true,
       'aws-region': 'us-east-1'
     });
   });
 
   it('validates the environment variable before checkout, builds, or authentication', () => {
-    expect(validation.if).toBe(stagingCondition);
+    expect(validation.if).toBeUndefined();
     expect(validation.env).toEqual({
       AWS_DEPLOY_ROLE_ARN: '${{ vars.AWS_DEPLOY_ROLE_ARN }}'
     });
