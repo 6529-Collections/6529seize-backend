@@ -54,7 +54,7 @@ describe('HelpBotBedrockRenderer', () => {
       },
       canonicalUrl: 'https://6529.io/about/6529-apps'
     });
-    expect(readBody(send).max_tokens).toBe(1600);
+    expect(readBody(send).max_tokens).toBe(2400);
     expect(readPrompt(send)).toContain('data-loss warning in the same step');
     expect(readPrompt(send)).toContain('cannot inspect or operate');
     expect(readPrompt(send)).toContain('Do not turn Desktop-only paths');
@@ -64,7 +64,7 @@ describe('HelpBotBedrockRenderer', () => {
       record: { ...RECORD, id: 'desktop.overview', tags: ['desktop-core'] },
       canonicalUrl: 'https://6529.io/about/6529-apps'
     });
-    expect(readBody(send).max_tokens).toBe(350);
+    expect(readBody(send).max_tokens).toBe(525);
     expect(readPrompt(send)).toContain('two to four short sentences');
     expect(readPrompt(send)).toContain(
       'Do not repeat steps they have completed'
@@ -78,7 +78,7 @@ describe('HelpBotBedrockRenderer', () => {
       record: RECORD,
       canonicalUrl: 'https://6529.io/network/tdh'
     });
-    expect(readBody(send).max_tokens).toBe(220);
+    expect(readBody(send).max_tokens).toBe(400);
     expect(readPrompt(send)).toContain('one or two short paragraphs');
   });
 
@@ -133,7 +133,7 @@ describe('HelpBotBedrockRenderer', () => {
     expect(send.mock.calls[0][1]?.abortSignal).toBeInstanceOf(AbortSignal);
   });
 
-  it('sends Anthropic Bedrock payloads without top_p', async () => {
+  it('sends Claude Sonnet 5.5 payloads with low effort and no sampling parameters', async () => {
     const send = jest.fn().mockResolvedValue({
       body: Buffer.from(
         JSON.stringify({
@@ -142,7 +142,36 @@ describe('HelpBotBedrockRenderer', () => {
       )
     });
     const renderer = new HelpBotBedrockRenderer(
-      'anthropic.test-model',
+      'us.anthropic.claude-sonnet-5-5',
+      () => ({ send }) as never,
+      100
+    );
+
+    await renderer.renderAnswer({
+      question: 'what is tdh?',
+      record: RECORD,
+      canonicalUrl: 'https://6529.io/network/tdh'
+    });
+
+    expect(readBody(send)).toMatchObject({
+      output_config: { effort: 'low' }
+    });
+    expect(readBody(send)).not.toHaveProperty('temperature');
+    expect(readBody(send)).not.toHaveProperty('top_k');
+    expect(readBody(send)).not.toHaveProperty('top_p');
+    expect(readBody(send)).not.toHaveProperty('thinking');
+  });
+
+  it('keeps the Sonnet 4.5 sampling payload when the model is overridden back', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({
+          content: [{ type: 'text', text: 'TDH is Total Days Held.' }]
+        })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
       () => ({ send }) as never,
       100
     );
@@ -157,7 +186,59 @@ describe('HelpBotBedrockRenderer', () => {
       temperature: 0.2,
       top_k: 20
     });
-    expect(readBody(send)).not.toHaveProperty('top_p');
+    expect(readBody(send)).not.toHaveProperty('output_config');
+  });
+
+  it('reads the answer from the text block after a thinking block', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({
+          content: [
+            { type: 'thinking', thinking: '', signature: 'sig' },
+            { type: 'text', text: 'TDH is Total Days Held.' }
+          ],
+          stop_reason: 'end_turn'
+        })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'us.anthropic.claude-sonnet-5-5',
+      () => ({ send }) as never,
+      100
+    );
+
+    await expect(
+      renderer.renderAnswer({
+        question: 'what is tdh?',
+        record: RECORD,
+        canonicalUrl: 'https://6529.io/network/tdh'
+      })
+    ).resolves.toBe('TDH is Total Days Held.');
+  });
+
+  it('fails instead of answering when the model declines', async () => {
+    const send = jest.fn().mockResolvedValue({
+      body: Buffer.from(
+        JSON.stringify({
+          content: [],
+          stop_reason: 'refusal',
+          stop_details: { type: 'refusal', category: 'cyber' }
+        })
+      )
+    });
+    const renderer = new HelpBotBedrockRenderer(
+      'us.anthropic.claude-sonnet-5-5',
+      () => ({ send }) as never,
+      100
+    );
+
+    await expect(
+      renderer.renderAnswer({
+        question: 'what is tdh?',
+        record: RECORD,
+        canonicalUrl: 'https://6529.io/network/tdh'
+      })
+    ).rejects.toThrow('Bedrock model declined the request (cyber)');
   });
 
   it('includes bounded tone guidance in natural answer prompts', async () => {
@@ -285,7 +366,7 @@ describe('HelpBotBedrockRenderer', () => {
     expect(prompt).not.toContain(
       'Include this URL exactly once as a Markdown link target'
     );
-    expect(readBody(send)).toMatchObject({ max_tokens: 320 });
+    expect(readBody(send)).toMatchObject({ max_tokens: 480 });
   });
 
   it('rejects token-limited answers instead of returning partial text', async () => {
