@@ -17,11 +17,11 @@ import { mapInChunks } from '@/map-in-chunks';
 // profile or primary-address work, and the nftdelegation_blocks checkpoint
 // stays where it is. Operators remove the flag after one run.
 
-const logger = Logger.get('DELEGATIONS_SCOPE_BACKFILL');
+const logger = Logger.get('DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL');
 
-export const SCOPE_BACKFILL_FLAG = 'DELEGATIONS_SCOPE_BACKFILL';
+export const SCOPE_BACKFILL_FLAG = 'DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL';
 export const SCOPE_BACKFILL_FROM_BLOCK_FLAG =
-  'DELEGATIONS_SCOPE_BACKFILL_FROM_BLOCK';
+  'DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL_FROM_BLOCK';
 
 const LOGGED_ROW_DIFFS = 25;
 const TRANSACTION_READ_CONCURRENCY = 5;
