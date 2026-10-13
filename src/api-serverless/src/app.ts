@@ -160,7 +160,6 @@ import {
   cmsAgentPrivateHeadersMiddleware
 } from '@/api/profile-cms/profile-cms-agent.http';
 import { cacheRequest } from './request-cache';
-import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 import { getValidatedByJoiOrThrow } from './validation';
@@ -1706,7 +1705,6 @@ function wireApp() {
   rootRouter.use(BASE_PATH, apiRouter);
   rootRouter.use(`/desktop`, desktopRoutes);
   rootRouter.use(`/oracle`, oracleRoutes);
-  rootRouter.use(`/rpc`, rpcRoutes);
   rootRouter.use(`/sitemap`, sitemapRoutes);
   rootRouter.use(`/alchemy-proxy`, alchemyProxyRoutes);
 
