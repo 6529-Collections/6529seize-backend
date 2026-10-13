@@ -40,6 +40,7 @@ import {
   WALLETS_TDH_TABLE
 } from '@/constants';
 import { DbQueryOptions } from './db-query.options';
+import { writeDelegations } from '@/delegation-row';
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import { Artist } from './entities/IArtist';
 import {
@@ -1605,49 +1606,17 @@ export async function persistDelegations(
     `[DELEGATIONS] [START_BLOCK ${startBlock}] [PERSISTING ${registrations.length} REGISTRATIONS] [PERSISTING ${revocations.length} REVOCATIONS]`
   );
 
-  const repo = AppDataSource.getRepository(Delegation);
-
-  if (startBlock) {
-    //delete all with block >= startBlock
-    await repo.delete({
-      block: MoreThanOrEqual(startBlock)
-    });
-  }
-
-  for (const registration of registrations) {
-    const newDelegation = new Delegation();
-    newDelegation.block = registration.block;
-    newDelegation.from_address = registration.wallet1;
-    newDelegation.to_address = registration.wallet2;
-    newDelegation.collection = registration.collection;
-    newDelegation.use_case = registration.use_case;
-    if (registration.expiry) {
-      newDelegation.expiry = registration.expiry;
-    }
-    if (registration.all_tokens) {
-      newDelegation.all_tokens = registration.all_tokens;
-    }
-    if (registration.token_id) {
-      newDelegation.token_id = registration.token_id;
-    }
-    await repo.save(newDelegation);
-  }
-
-  for (const revocation of revocations) {
-    const r = await repo.find({
-      where: {
-        from_address: revocation.wallet1,
-        to_address: revocation.wallet2,
-        use_case: revocation.use_case,
-        collection: revocation.collection,
-        block: LessThan(revocation.block)
-      }
-    });
-
-    if (r) {
-      await repo.remove(r);
-    }
-  }
+  // One transaction, so a failure part-way through cannot leave the replay
+  // delete or some registrations applied without the rest, and readers never
+  // see a replay half-written.
+  await AppDataSource.transaction((manager) =>
+    writeDelegations(
+      manager.getRepository(Delegation),
+      startBlock,
+      registrations,
+      revocations
+    )
+  );
 
   logger.info(
     `[DELEGATIONS] [${registrations.length} REGISTRATIONS PERSISTED] [${revocations.length} REVOCATIONS PERSISTED]`
