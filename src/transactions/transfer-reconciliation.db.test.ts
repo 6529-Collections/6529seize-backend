@@ -114,6 +114,22 @@ describeWithSeed('Transfer reconciliation durable requests', [], () => {
     expect(await db.pending('balances')).toHaveLength(1);
   });
 
+  it('drains in database insertion order despite producer clock skew', async () => {
+    const now = jest.spyOn(Date, 'now');
+    try {
+      now.mockReturnValueOnce(2000);
+      await db.enqueueRepair([B]);
+      now.mockReturnValueOnce(1000);
+      await db.enqueueRepair([A]);
+      expect((await db.pending('owners')).map((row) => row.wallet)).toEqual([
+        B,
+        A
+      ]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('requires enqueueing on the caller transaction', async () => {
     await expect(db.enqueue([A], ['owners'], {})).rejects.toThrow(
       'requires a transaction'

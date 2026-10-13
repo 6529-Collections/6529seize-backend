@@ -13,7 +13,8 @@ This includes the discovery SQL path, legacy TypeORM persistence and NextGen.
 Rollback removes both the transfer and its pending refreshes. Duplicate upserts
 refresh the request revision; requests coalesce per consumer and wallet.
 
-Each consumer reads up to 250 oldest pending wallets from the primary database,
+Each consumer reads up to 250 pending wallets by a database-generated insertion
+sequence from the primary database,
 adds them to its normal block-based selection, and rebuilds their raw and
 consolidated values. Ownership replays each selected wallet from the committed
 transfer ledger, rather than adding deltas to possibly stale balances. Activity
@@ -22,8 +23,11 @@ Unknown Meme season metadata leaves work pending instead of publishing an
 incomplete activity result. The historical block selection remains for rollout
 compatibility and existing reset operations.
 
+The database allocates `enqueue_order`; producer wall clocks do not control drain
+priority. Re-enqueue preserves that sequence while rotating the revision.
+
 Only after raw and consolidated publication does a consumer acknowledge the
-exact revision it read. A concurrent transfer upsert changes that revision, so
+exact revision it read, with one batched, revision-guarded delete. A concurrent transfer upsert changes that revision, so
 an old acknowledgement cannot delete the new request. Failure leaves requests
 pending and ledger rebuilds are safe to retry without applying deltas twice.
 The existing reserved concurrency of one per loop must remain in place.

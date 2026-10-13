@@ -46,11 +46,12 @@ export async function enqueueTransfersWithManager(
 ): Promise<void> {
   const rows = requests(transferWallets(transactions), ['owners', 'activity']);
   for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
-    await manager
+    await manager // NOSONAR -- Batches share a transaction connection and must run sequentially.
       .createQueryBuilder()
       .insert()
       .into(TRANSFER_RECONCILIATIONS_TABLE)
       .values(rows.slice(offset, offset + BATCH_SIZE))
+      // Both producer paths must rotate revision on conflict and retain enqueue_order.
       .orUpdate(['revision'], ['consumer', 'wallet'])
       .execute();
   }
@@ -67,6 +68,7 @@ export class TransferReconciliationDb extends LazyDbAccessCompatibleService {
     const timerName = 'TransferReconciliationDb->enqueue';
     ctx.timer?.start(timerName);
     try {
+      // Match the TypeORM producer: rotate revision, retain original enqueue_order.
       await this.db.bulkUpsert(
         TRANSFER_RECONCILIATIONS_TABLE,
         requests(wallets, consumers),
@@ -87,7 +89,7 @@ export class TransferReconciliationDb extends LazyDbAccessCompatibleService {
     return this.query<PendingTransferReconciliation>(
       'pending',
       `SELECT consumer, wallet, revision, requested_at FROM ${TRANSFER_RECONCILIATIONS_TABLE}
-       WHERE consumer = :consumer ORDER BY requested_at, wallet LIMIT :limit`,
+       WHERE consumer = :consumer ORDER BY enqueue_order LIMIT :limit`,
       { consumer, limit: BATCH_SIZE },
       ctx
     );
@@ -97,15 +99,14 @@ export class TransferReconciliationDb extends LazyDbAccessCompatibleService {
     rows: PendingTransferReconciliation[],
     ctx: RequestContext = {}
   ): Promise<void> {
-    for (const row of rows) {
-      await this.query(
-        'acknowledge',
-        `DELETE FROM ${TRANSFER_RECONCILIATIONS_TABLE}
-        WHERE consumer = :consumer AND wallet = :wallet AND revision = :revision`,
-        { ...row },
-        ctx
-      );
-    }
+    if (!rows.length) return;
+    await this.query(
+      'acknowledge',
+      `DELETE FROM ${TRANSFER_RECONCILIATIONS_TABLE}
+       WHERE (consumer, wallet, revision) IN (:keys)`,
+      { keys: rows.map((row) => [row.consumer, row.wallet, row.revision]) },
+      ctx
+    );
   }
 
   async enqueueRepair(
@@ -166,7 +167,7 @@ export class TransferReconciliationDb extends LazyDbAccessCompatibleService {
     const result: Transaction[] = [];
     for (let offset = 0; offset < wallets.length; offset += BATCH_SIZE) {
       result.push(
-        ...(await this.query<Transaction>(
+        ...(await this.query<Transaction>( // NOSONAR -- Bound memory and primary load by reading one batch at a time.
           'history',
           `SELECT * FROM ${TRANSACTIONS_TABLE}
         WHERE contract IN (:contracts) AND block <= :toBlock
