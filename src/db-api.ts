@@ -51,6 +51,12 @@ import {
   PaginatedResponse
 } from './api-serverless/src/api-constants';
 import { constructFilters } from './api-serverless/src/api-helpers';
+import {
+  ALL_ROWS_PAGE_SIZE,
+  MAX_PAGE,
+  normalizePage,
+  normalizePageSize
+} from './api-serverless/src/page-request';
 import { ApiNftMedia } from './api-serverless/src/generated/models/ApiNftMedia';
 import { ApiTransaction } from './api-serverless/src/generated/models/ApiTransaction';
 import { ApiTransactionPage } from './api-serverless/src/generated/models/ApiTransactionPage';
@@ -344,13 +350,18 @@ export async function fetchPaginated<T = any>(
     !opts?.skipJoinsOnCountQuery ? (joins ?? '') : ''
   } ${filters}${groupPart}) inner_q`;
 
+  const limit = normalizePageSize(
+    pageSize,
+    ALL_ROWS_PAGE_SIZE,
+    DEFAULT_PAGE_SIZE
+  );
+  const pageNo = normalizePage(page);
+  const groupByClause = groups ? `group by ${groups}` : '';
   let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
     joins ? joins : ''
-  } ${filters} ${groups ? `group by ${groups}` : ``} order by ${orderBy} ${
-    pageSize > 0 ? `LIMIT ${pageSize}` : ``
-  }`;
-  if (page > 1) {
-    const offset = pageSize * (page - 1);
+  } ${filters} ${groupByClause} order by ${orderBy} LIMIT ${limit}`;
+  if (pageNo > 1) {
+    const offset = Math.min(limit * (pageNo - 1), Number.MAX_SAFE_INTEGER);
     resultsSql += ` OFFSET ${offset}`;
   }
   logger.debug(`Count sql: '${countSql}`);
@@ -366,8 +377,8 @@ export async function fetchPaginated<T = any>(
 
   return {
     count,
-    page,
-    next: pageSize > 0 && count > pageSize * page ? 'true' : null,
+    page: pageNo,
+    next: pageNo < MAX_PAGE && count > limit * pageNo ? 'true' : null,
     data
   };
 }
@@ -656,7 +667,7 @@ export async function fetchMemesLite(sortDir: string) {
     NFTS_TABLE,
     params,
     `id ${sortDir}`,
-    0,
+    ALL_ROWS_PAGE_SIZE,
     1,
     filters,
     'id, name, contract, icon, thumbnail, scaled, image, animation',
@@ -675,7 +686,7 @@ export async function fetchMemelabLite(sortDir: string) {
     NFTS_MEME_LAB_TABLE,
     params,
     `id ${sortDir}`,
-    0,
+    ALL_ROWS_PAGE_SIZE,
     1,
     filters,
     'id, name, contract, icon, thumbnail, scaled, image, animation',

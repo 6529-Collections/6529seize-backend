@@ -1,7 +1,7 @@
 import { AiPrompter } from '@/abusiveness/ai-prompter';
 import { getBedrockClient } from '@/bedrock';
 import {
-  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
+  DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID,
   getConfiguredBedrockAnthropicModelId
 } from '@/bedrock.config';
 import {
@@ -14,7 +14,7 @@ import { TextDecoder } from 'node:util';
 export const RELEASE_NOTES_BEDROCK_MODEL_ID_ENV =
   'RELEASE_NOTES_BEDROCK_MODEL_ID';
 export const DEFAULT_RELEASE_NOTES_BEDROCK_MODEL_ID =
-  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID;
+  DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID;
 
 const RELEASE_NOTES_MAX_OUTPUT_TOKENS = 8192;
 const RELEASE_NOTES_BEDROCK_TIMEOUT_MS = 60_000;
@@ -50,7 +50,9 @@ export function buildReleaseNotesBedrockInvokeModelInput(
           content: [{ type: 'text', text: prompt }]
         }
       ],
-      temperature: 0
+      // Claude Sonnet 5.5 rejects sampling parameters such as temperature;
+      // medium effort keeps per-PR summaries inside the request timeout.
+      output_config: { effort: 'medium' }
     })
   };
 }

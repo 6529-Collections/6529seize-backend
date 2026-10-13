@@ -13,6 +13,11 @@ import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
 import { RateMatter } from '../../../entities/IRating';
 import { RequestContext } from '../../../request.context';
 import { identitiesDb } from '../../../identities/identities.db';
+import {
+  userGroupsService,
+  UserGroupsService
+} from '@/api/community-members/user-groups.service';
+import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
 
 export interface ProfileActivityLogsSearchRequest {
   profileId?: string;
@@ -29,7 +34,8 @@ export interface ProfileActivityLogsSearchRequest {
 export class ProfileActivityLogsApiService {
   constructor(
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
-    private readonly profilesDb: ProfilesDb
+    private readonly profilesDb: ProfilesDb,
+    private readonly userGroupsService: UserGroupsService
   ) {}
 
   async getProfileActivityLogsFiltered(
@@ -53,7 +59,12 @@ export class ProfileActivityLogsApiService {
       order,
       pageRequest,
       includeProfileIdToIncoming,
-      group_id: group_id ?? null
+      group_id: group_id ?? null,
+      // Wave-scoped rows (drop activity, wave rep) follow wave read access.
+      viewer_eligible_group_ids: await getGroupsUserIsEligibleForReadContext(
+        this.userGroupsService,
+        ctx
+      )
     };
 
     if (category) {
@@ -152,5 +163,6 @@ export interface ApiProfileActivityLog extends Omit<
 
 export const profileActivityLogsApiService = new ProfileActivityLogsApiService(
   profileActivityLogsDb,
-  profilesDb
+  profilesDb,
+  userGroupsService
 );
