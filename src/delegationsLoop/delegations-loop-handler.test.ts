@@ -126,7 +126,7 @@ const loopPaths = () => [
   identitiesService.updatePrimaryAddresses
 ];
 
-describe('delegations loop handler with DELEGATIONS_SCOPE_BACKFILL', () => {
+describe('delegations loop handler with DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL', () => {
   const env = process.env;
 
   beforeEach(() => {
@@ -158,7 +158,7 @@ describe('delegations loop handler with DELEGATIONS_SCOPE_BACKFILL', () => {
   });
 
   it('applies only the delegation diff, in one transaction', async () => {
-    process.env.DELEGATIONS_SCOPE_BACKFILL = 'apply';
+    process.env.DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL = 'apply';
     const { dataSource, repo } = fakeDataSource();
     jest.mocked(db.getDataSource).mockReturnValue(dataSource as never);
 
@@ -188,7 +188,7 @@ describe('delegations loop handler with DELEGATIONS_SCOPE_BACKFILL', () => {
   });
 
   it('writes nothing in dry-run', async () => {
-    process.env.DELEGATIONS_SCOPE_BACKFILL = 'dry-run';
+    process.env.DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL = 'dry-run';
     const { dataSource } = fakeDataSource();
     jest.mocked(db.getDataSource).mockReturnValue(dataSource as never);
 
@@ -202,7 +202,7 @@ describe('delegations loop handler with DELEGATIONS_SCOPE_BACKFILL', () => {
   });
 
   it('runs the normal loop when the flag is not set', async () => {
-    delete process.env.DELEGATIONS_SCOPE_BACKFILL;
+    delete process.env.DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL;
     jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
       latestBlock: 26_000_001,
       latestBlockTimestamp: 1,

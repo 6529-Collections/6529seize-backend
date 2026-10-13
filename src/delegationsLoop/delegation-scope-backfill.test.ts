@@ -126,13 +126,15 @@ describe('readScopeBackfillConfig', () => {
   it('is off unless the flag is set', () => {
     expect(readScopeBackfillConfig({})).toBeNull();
     expect(
-      readScopeBackfillConfig({ DELEGATIONS_SCOPE_BACKFILL: ' ' })
+      readScopeBackfillConfig({ DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL: ' ' })
     ).toBeNull();
   });
 
   it('defaults the start to the contract deployment block', () => {
     expect(
-      readScopeBackfillConfig({ DELEGATIONS_SCOPE_BACKFILL: 'dry-run' })
+      readScopeBackfillConfig({
+        DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL: 'dry-run'
+      })
     ).toEqual({
       mode: 'dry-run',
       fromBlock: DELEGATION_CONTRACT_DEPLOYMENT_BLOCK
@@ -142,20 +144,22 @@ describe('readScopeBackfillConfig', () => {
   it('accepts apply and an explicit start block', () => {
     expect(
       readScopeBackfillConfig({
-        DELEGATIONS_SCOPE_BACKFILL: 'apply',
-        DELEGATIONS_SCOPE_BACKFILL_FROM_BLOCK: '20000000'
+        DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL: 'apply',
+        DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL_FROM_BLOCK: '20000000'
       })
     ).toEqual({ mode: 'apply', fromBlock: 20_000_000 });
   });
 
   it('rejects an unknown mode or a bad start block', () => {
     expect(() =>
-      readScopeBackfillConfig({ DELEGATIONS_SCOPE_BACKFILL: 'yes' })
+      readScopeBackfillConfig({
+        DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL: 'yes'
+      })
     ).toThrow('must be "dry-run" or "apply"');
     expect(() =>
       readScopeBackfillConfig({
-        DELEGATIONS_SCOPE_BACKFILL: 'apply',
-        DELEGATIONS_SCOPE_BACKFILL_FROM_BLOCK: '-5'
+        DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL: 'apply',
+        DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL_FROM_BLOCK: '-5'
       })
     ).toThrow('must be a block number');
   });
