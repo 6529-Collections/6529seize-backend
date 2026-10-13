@@ -1,9 +1,11 @@
 import { isAddress, Wallet } from 'ethers';
 
 export const MAIN_STAGE_WAVE_ID = 'b6128077-ea78-4dd9-b381-52c4eadb2077';
+// 6529 Tech Feedback, Follow The Repo (dev team chat), 6529 Releases and
+// Announcements. Dev Team Chat (bf945b75-...) was archived into Follow The Repo.
 export const TEAM_WAVE_IDS = [
   'e933d8d6-0c78-4e8f-aa12-f67d8c11b4dc',
-  'bf945b75-2912-4ce6-b1f5-95b5b667b7c9',
+  '49f0e595-ec7c-4235-8695-a527f61b69f4',
   '05b14183-e153-4e47-bc66-42a0f49102d4',
   'da16201a-f4d0-40cf-b888-9f3a4a86a894'
 ];
