@@ -28,6 +28,8 @@ describe('bedrock anthropic helpers', () => {
     'us.anthropic.claude-haiku-5-5',
     'us.anthropic.claude-sonnet-4-6',
     'us.anthropic.claude-opus-4-6-v1',
+    'us.anthropic.claude-sonnet-4-6-20260101-v1:0',
+    'us.anthropic.claude-opus-4-7-20260301-v1:0',
     'global.anthropic.claude-opus-5-5',
     'anthropic.test-model'
   ])('treats %s as an effort model', (modelId) => {
