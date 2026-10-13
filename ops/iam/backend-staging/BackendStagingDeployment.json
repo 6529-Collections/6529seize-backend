@@ -1,0 +1,131 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageApprovedFunctions1",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:AddPermission",
+        "lambda:CreateFunction",
+        "lambda:DeleteFunction",
+        "lambda:DeleteFunctionConcurrency",
+        "lambda:DeleteFunctionEventInvokeConfig",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConcurrency",
+        "lambda:GetFunctionConfiguration",
+        "lambda:GetFunctionEventInvokeConfig",
+        "lambda:GetPolicy",
+        "lambda:ListTags",
+        "lambda:ListVersionsByFunction",
+        "lambda:PublishVersion",
+        "lambda:PutFunctionConcurrency",
+        "lambda:PutFunctionEventInvokeConfig",
+        "lambda:RemovePermission",
+        "lambda:TagResource",
+        "lambda:UntagResource",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration",
+        "lambda:UpdateFunctionEventInvokeConfig"
+      ],
+      "Resource": [
+        "arn:aws:lambda:eu-west-1:987989283142:function:aggregatedActivityLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:artCurationNftWatchLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:artworkDocumentationProcessor",
+        "arn:aws:lambda:eu-west-1:987989283142:function:attachmentsOrchestrator",
+        "arn:aws:lambda:eu-west-1:987989283142:function:attachmentsProcessor",
+        "arn:aws:lambda:eu-west-1:987989283142:function:claimsBuilder",
+        "arn:aws:lambda:eu-west-1:987989283142:function:claimsMediaArweaveUploader",
+        "arn:aws:lambda:eu-west-1:987989283142:function:competitionMigrationLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:customReplayLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:dbDumpsDaily",
+        "arn:aws:lambda:eu-west-1:987989283142:function:dbMigrationsLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:delegationsLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:discoverEnsLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:dropMediaSanitizer",
+        "arn:aws:lambda:eu-west-1:987989283142:function:dropVideoConversionInvokerLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:ethPriceLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:externalCollectionLiveTailingLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:externalCollectionSnapshottingLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:gradientsTransactionsLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:helpBotDailyActivityCreditLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:helpBotReplyLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:marketDepthStreamLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:marketStatsGRADIENT",
+        "arn:aws:lambda:eu-west-1:987989283142:function:marketStatsLAB",
+        "arn:aws:lambda:eu-west-1:987989283142:function:marketStatsMEMES",
+        "arn:aws:lambda:eu-west-1:987989283142:function:marketStatsNEXTGEN",
+        "arn:aws:lambda:eu-west-1:987989283142:function:memeLabTransactionsLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:memesTransactionsLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:mintAnnouncementsLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nextgenContractLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nextgenMetadataLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nftHistoryLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nftLinkMediaPreviewLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nftLinkRefresherLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nftOwnersLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nftsLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:overRatesRevocationLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:ownersBalancesLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:populateHistoricConsolidatedTdh",
+        "arn:aws:lambda:eu-west-1:987989283142:function:pushNotificationsHandler",
+        "arn:aws:lambda:eu-west-1:987989283142:function:rateEventProcessingLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:refreshENS",
+        "arn:aws:lambda:eu-west-1:987989283142:function:rememesFileLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:rememesRefreshMetadataLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:rememesS3Loop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:royaltiesLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:s3Uploader",
+        "arn:aws:lambda:eu-west-1:987989283142:function:seizeAPI",
+        "arn:aws:lambda:eu-west-1:987989283142:function:subscriptionCoverageReconciliationLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:subscriptionsDaily",
+        "arn:aws:lambda:eu-west-1:987989283142:function:subscriptionsTopUpLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:tdhHistoryLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:tdhLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:teamLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:transactionsProcessingLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:waveDecisionExecutionLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:waveDropMetricsRefreshLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:waveLeaderboardSnapshotterLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:waveScoreRefreshLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:xTdhGrantsReviewerLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:xTdhLoop"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageApprovedFunctionVersions1",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:AddPermission",
+        "lambda:DeleteFunction",
+        "lambda:DeleteFunctionEventInvokeConfig",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:GetFunctionEventInvokeConfig",
+        "lambda:GetPolicy",
+        "lambda:PutFunctionEventInvokeConfig",
+        "lambda:RemovePermission",
+        "lambda:UpdateFunctionEventInvokeConfig"
+      ],
+      "Resource": [
+        "arn:aws:lambda:eu-west-1:987989283142:function:aggregatedActivityLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:artCurationNftWatchLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:artworkDocumentationProcessor:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:attachmentsOrchestrator:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:attachmentsProcessor:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:claimsBuilder:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:claimsMediaArweaveUploader:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:competitionMigrationLoop:*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    }
+  ]
+}

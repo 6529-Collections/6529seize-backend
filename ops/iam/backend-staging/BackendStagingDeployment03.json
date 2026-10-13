@@ -1,0 +1,199 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CreateMappingsForApprovedFunctions1",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateEventSourceMapping"
+      ],
+      "Resource": [
+        "*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        },
+        "ArnEquals": {
+          "lambda:FunctionArn": [
+            "arn:aws:lambda:eu-west-1:987989283142:function:attachmentsOrchestrator",
+            "arn:aws:lambda:eu-west-1:987989283142:function:attachmentsProcessor",
+            "arn:aws:lambda:eu-west-1:987989283142:function:claimsBuilder",
+            "arn:aws:lambda:eu-west-1:987989283142:function:claimsMediaArweaveUploader",
+            "arn:aws:lambda:eu-west-1:987989283142:function:dropMediaSanitizer",
+            "arn:aws:lambda:eu-west-1:987989283142:function:helpBotDailyActivityCreditLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:helpBotReplyLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:nftLinkMediaPreviewLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:nftLinkRefresherLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:overRatesRevocationLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:pushNotificationsHandler",
+            "arn:aws:lambda:eu-west-1:987989283142:function:s3Uploader",
+            "arn:aws:lambda:eu-west-1:987989283142:function:waveDropMetricsRefreshLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:waveScoreRefreshLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:xTdhLoop"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ManageMappingsForApprovedFunctions1",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:DeleteEventSourceMapping",
+        "lambda:UpdateEventSourceMapping"
+      ],
+      "Resource": [
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        },
+        "ArnEquals": {
+          "lambda:FunctionArn": [
+            "arn:aws:lambda:eu-west-1:987989283142:function:attachmentsOrchestrator",
+            "arn:aws:lambda:eu-west-1:987989283142:function:attachmentsProcessor",
+            "arn:aws:lambda:eu-west-1:987989283142:function:claimsBuilder",
+            "arn:aws:lambda:eu-west-1:987989283142:function:claimsMediaArweaveUploader",
+            "arn:aws:lambda:eu-west-1:987989283142:function:dropMediaSanitizer",
+            "arn:aws:lambda:eu-west-1:987989283142:function:helpBotDailyActivityCreditLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:helpBotReplyLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:nftLinkMediaPreviewLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:nftLinkRefresherLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:overRatesRevocationLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:pushNotificationsHandler",
+            "arn:aws:lambda:eu-west-1:987989283142:function:s3Uploader",
+            "arn:aws:lambda:eu-west-1:987989283142:function:waveDropMetricsRefreshLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:waveScoreRefreshLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:xTdhLoop"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "RunSchemaDeploymentStep1",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:InvokeFunction"
+      ],
+      "Resource": [
+        "arn:aws:lambda:eu-west-1:987989283142:function:dbMigrationsLoop"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "PassRuntimeRole1",
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::987989283142:role/lambda-vpc-role"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": [
+            "lambda.amazonaws.com",
+            "scheduler.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadRuntimeRole1",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::987989283142:role/lambda-vpc-role"
+      ]
+    },
+    {
+      "Sid": "ReadVpcDeploymentMetadata1",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcs"
+      ],
+      "Resource": [
+        "*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadDeploymentVpcSecurityGroups1",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:GetSecurityGroupsForVpc"
+      ],
+      "Resource": [
+        "arn:aws:ec2:eu-west-1:987989283142:vpc/vpc-0061bb5b0440d8c98"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageApprovedStacks1",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CancelUpdateStack",
+        "cloudformation:ContinueUpdateRollback",
+        "cloudformation:CreateChangeSet",
+        "cloudformation:CreateStack",
+        "cloudformation:DeleteChangeSet",
+        "cloudformation:DeleteStack",
+        "cloudformation:DescribeChangeSet",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStackResource",
+        "cloudformation:DescribeStackResources",
+        "cloudformation:DescribeStacks",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:GetStackPolicy",
+        "cloudformation:GetTemplate",
+        "cloudformation:GetTemplateSummary",
+        "cloudformation:ListStackResources",
+        "cloudformation:TagResource",
+        "cloudformation:UntagResource",
+        "cloudformation:UpdateStack"
+      ],
+      "Resource": [
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/aggregatedActivityLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/artCurationNftWatchLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/artworkDocumentationProcessor-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/artworkDocumentationStorage-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/attachmentsOrchestrator-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/attachmentsProcessor-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/claimsBuilder-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/claimsMediaArweaveUploader-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/competitionMigrationLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/customReplayLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dbDumpsDaily-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dbMigrationsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/delegationsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/discoverEnsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropMediaIngestStorage-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropMediaSanitizer-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropVideoConversionInvokerLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/ethPriceLoop-staging/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    }
+  ]
+}

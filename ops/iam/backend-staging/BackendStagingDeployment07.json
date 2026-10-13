@@ -1,0 +1,121 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageApprovedLogGroups2",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:DeleteMetricFilter",
+        "logs:DeleteRetentionPolicy",
+        "logs:DescribeMetricFilters",
+        "logs:ListTagsForResource",
+        "logs:ListTagsLogGroup",
+        "logs:PutMetricFilter",
+        "logs:PutRetentionPolicy",
+        "logs:TagLogGroup",
+        "logs:TagResource",
+        "logs:UntagLogGroup",
+        "logs:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/populateHistoricConsolidatedTdh",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/pushNotificationsHandler",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/rateEventProcessingLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/refreshENS",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/rememesFileLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/rememesRefreshMetadataLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/rememesS3Loop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/royaltiesLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/s3Uploader",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/seizeAPI",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/subscriptionCoverageReconciliationLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/subscriptionsDaily",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/subscriptionsTopUpLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/tdhHistoryLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/tdhLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/teamLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/transactionsProcessingLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/waveDecisionExecutionLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/waveDropMetricsRefreshLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/waveLeaderboardSnapshotterLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/waveScoreRefreshLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/xTdhGrantsReviewerLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/xTdhLoop"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadLogGroupDeploymentMetadata1",
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": [
+        "*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageApprovedRules1",
+      "Effect": "Allow",
+      "Action": [
+        "events:DeleteRule",
+        "events:DescribeRule",
+        "events:ListTagsForResource",
+        "events:ListTargetsByRule",
+        "events:PutRule",
+        "events:PutTargets",
+        "events:RemoveTargets",
+        "events:TagResource",
+        "events:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:events:eu-west-1:987989283142:rule/DropsVideoCreated-staging",
+        "arn:aws:events:eu-west-1:987989283142:rule/aggregatedActivityLoop-st-AggregatedActivityLoopEve-pcXLGPBlKbBi",
+        "arn:aws:events:eu-west-1:987989283142:rule/artCurationNftWatchLoop-s-ArtCurationNftWatchLoopEv-ywlAAw2DzmnM",
+        "arn:aws:events:eu-west-1:987989283142:rule/artworkDocumentationProce-ArtworkDocumentationProce-42SFmsBtWX4D",
+        "arn:aws:events:eu-west-1:987989283142:rule/attachmentsOrchestrator-rule-2",
+        "arn:aws:events:eu-west-1:987989283142:rule/dbDumpsDaily-staging-DbDumpsDailyEventsRuleSchedule-9qu5DvYTuBnS",
+        "arn:aws:events:eu-west-1:987989283142:rule/dbMigrationsLoop-staging-DbMigrationsLoopEventsRule-MXtKD9nxryRe",
+        "arn:aws:events:eu-west-1:987989283142:rule/delegationsLoop-staging-DelegationsLoopEventsRuleSc-Oc0pgUpCOsjX",
+        "arn:aws:events:eu-west-1:987989283142:rule/discoverEnsLoop-staging-DiscoverEnsLoopEventsRuleSc-bXNlsBGVbv92",
+        "arn:aws:events:eu-west-1:987989283142:rule/ethPriceLoop-staging-EthPriceLoopEventsRuleSchedule-PSUw1pxCPkXd",
+        "arn:aws:events:eu-west-1:987989283142:rule/externalCollectionLiveTai-ExternalCollectionLiveTai-xrLFW6QOyFqU",
+        "arn:aws:events:eu-west-1:987989283142:rule/externalCollectionSnapsho-ExternalCollectionSnapsho-weaz9g31W1kD",
+        "arn:aws:events:eu-west-1:987989283142:rule/helpBotReplyLoop-staging-HelpBotDailyActivityCredit-NaKJVvi2fZxj",
+        "arn:aws:events:eu-west-1:987989283142:rule/marketDepthStreamLoop-sta-MarketDepthStreamLoopEven-V1kXP0JlVvH7",
+        "arn:aws:events:eu-west-1:987989283142:rule/marketStatsLoop-staging-MarketStatsGRADIENTEventsRu-stAi3yFrOyTB",
+        "arn:aws:events:eu-west-1:987989283142:rule/marketStatsLoop-staging-MarketStatsLABEventsRuleSch-WDIfAZK3Khtq",
+        "arn:aws:events:eu-west-1:987989283142:rule/marketStatsLoop-staging-MarketStatsMEMESEventsRuleS-qYEQJPRDa7iv",
+        "arn:aws:events:eu-west-1:987989283142:rule/marketStatsLoop-staging-MarketStatsNEXTGENEventsRul-hAn2fMrqLEUl",
+        "arn:aws:events:eu-west-1:987989283142:rule/nextgenContractLoop-stagi-NextgenContractLoopEvents-HbWFqnTh2Fkq",
+        "arn:aws:events:eu-west-1:987989283142:rule/nextgenMetadataLoop-stagi-NextgenMetadataLoopEvents-YokuDfAYVyQV",
+        "arn:aws:events:eu-west-1:987989283142:rule/nftHistoryLoop-staging-NftHistoryLoopEventsRuleSche-0xM8Ie495QXa",
+        "arn:aws:events:eu-west-1:987989283142:rule/nftOwnersLoop-staging-NftOwnersLoopEventsRuleSchedu-gzkepAZyPqq1",
+        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule1-afIJRs8t7Osg",
+        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule2-1jaGnbJNqsO5",
+        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule3-vRaRMmWmqPBx",
+        "arn:aws:events:eu-west-1:987989283142:rule/ownersBalancesLoop-stagin-OwnersBalancesLoopEventsR-WWEsjlA8A7Wg",
+        "arn:aws:events:eu-west-1:987989283142:rule/pushNotificationsHandler--PushNotificationsHandlerE-tXizKA8vK0Dx",
+        "arn:aws:events:eu-west-1:987989283142:rule/rateEventProcessingLoop-s-RateEventProcessingLoopEv-xkOQAvk42lfR",
+        "arn:aws:events:eu-west-1:987989283142:rule/refreshENS-staging-RefreshENSEventsRuleSchedule1-XFu7AvqRY2gf",
+        "arn:aws:events:eu-west-1:987989283142:rule/rememesLoop-staging-RememesRefreshMetadataLoopEvent-3HHEyeNy71Zx"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    }
+  ]
+}
