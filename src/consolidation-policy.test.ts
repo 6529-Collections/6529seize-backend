@@ -46,6 +46,7 @@ test.each([
   'soon',
   '2026-10-15T00:00:00',
   '2026-02-30T00:00:00Z',
+  '2026-10-15T24:00:00Z',
   '2026-10-15T00:00:00.123Z'
 ])('rejects absent or invalid cutoff %s', (value) => {
   if (value === undefined) delete process.env[CONSOLIDATION_ACTIVATION_ENV];
@@ -70,4 +71,12 @@ test('validates each configured value once and still rejects a bad one', () => {
   process.env[CONSOLIDATION_ACTIVATION_ENV] = 'soon';
   expect(getConsolidationPolicy).toThrow(CONSOLIDATION_ACTIVATION_ENV);
   expect(getConsolidationPolicy).toThrow(CONSOLIDATION_ACTIVATION_ENV);
+});
+
+test('accepts a valid time that is not midnight', () => {
+  process.env[CONSOLIDATION_ACTIVATION_ENV] = '2026-10-15T13:45:30Z';
+  expect(getConsolidationPolicy()).toEqual({
+    four_wallet_activation_at: '2026-10-15T13:45:30.000Z',
+    four_wallet_signing_opens_at: '2026-10-15T13:55:30.000Z'
+  });
 });
