@@ -25,6 +25,10 @@ import {
   formatDropContentLimitViolation,
   getDropContentLimitViolation
 } from './drop-content-limits';
+import {
+  formatDropPayloadLimitViolation,
+  getDropPayloadLimitViolation
+} from './drop-payload-limits';
 import { Time, Timer } from '@/time';
 import { ConnectionWrapper } from '@/sql-executor';
 import { dropsDb, DropsDb } from './drops.db';
@@ -361,12 +365,23 @@ export class CreateOrUpdateDropUseCase {
     private readonly entryHooks: CompetitionEntryDropHooks = competitionEntryDropHooks
   ) {}
 
-  private assertDropContentLimits(
-    parts: readonly CreateOrUpdateDropPartModel[]
-  ): void {
-    const violation = getDropContentLimitViolation(parts);
-    if (violation) {
-      throw new BadRequestException(formatDropContentLimitViolation(violation));
+  /**
+   * Persistence-boundary guard shared by every caller (API requests as well as
+   * the Lambda loops that post drops): bounded structure first, so the content
+   * checks below only ever walk a bounded number of parts.
+   */
+  private assertDropLimits(model: CreateOrUpdateDropModel): void {
+    const payloadViolation = getDropPayloadLimitViolation(model);
+    if (payloadViolation) {
+      throw new BadRequestException(
+        formatDropPayloadLimitViolation(payloadViolation)
+      );
+    }
+    const contentViolation = getDropContentLimitViolation(model.parts);
+    if (contentViolation) {
+      throw new BadRequestException(
+        formatDropContentLimitViolation(contentViolation)
+      );
     }
   }
 
@@ -457,7 +472,7 @@ export class CreateOrUpdateDropUseCase {
     pending_push_notification_ids: number[];
     dm_unread_recipient_ids: string[];
   }> {
-    this.assertDropContentLimits(model.parts);
+    this.assertDropLimits(model);
     if (
       nativeEntryContent &&
       !isNativeEntryContentPermit(nativeEntryContent, model, connection)
@@ -791,7 +806,7 @@ export class CreateOrUpdateDropUseCase {
     pending_push_notification_ids: number[];
     dm_unread_recipient_ids: string[];
   }> {
-    this.assertDropContentLimits(model.parts);
+    this.assertDropLimits(model);
     if (!('trustedSystem' in prePublication)) {
       const tx = {
         timer,
@@ -1227,7 +1242,10 @@ export class CreateOrUpdateDropUseCase {
         { model, groupIdsUserIsEligibleFor },
         { timer, connection }
       ),
-      this.verifyQuotedDrops(model, { timer, connection }),
+      this.verifyQuotedDrops(
+        { model, groupIdsUserIsEligibleFor },
+        { timer, connection }
+      ),
       this.verifyReplyDrop(model, { timer, connection })
     ]);
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->validateReferences`);
@@ -2074,9 +2092,16 @@ export class CreateOrUpdateDropUseCase {
   }
 
   private async verifyQuotedDrops(
-    model: CreateOrUpdateDropModel,
     {
-      timer
+      model,
+      groupIdsUserIsEligibleFor
+    }: {
+      model: CreateOrUpdateDropModel;
+      groupIdsUserIsEligibleFor: string[];
+    },
+    {
+      timer,
+      connection
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
@@ -2094,28 +2119,72 @@ export class CreateOrUpdateDropUseCase {
           `Participatory drops can't be quote drops`
         );
       }
-      if (model.drop_type === DropType.CHAT) {
-        const dropIds = quotedDrops.map((it) => it.drop_id);
-        const entities = await this.dropsDb.getDropsByIds(dropIds);
-        const invalidQuotedDrops = quotedDrops.filter(
-          (quotedDrop) =>
-            !entities.find((it) => {
-              return (
-                it.id === quotedDrop.drop_id &&
-                quotedDrop.drop_part_id <= it.parts_count
-              );
-            })
+      const dropIds = collections.distinct(quotedDrops.map((it) => it.drop_id));
+      const entities = await this.dropsDb.getDropsByIds(dropIds, connection);
+      const readableWaveIds = await this.findWaveIdsReadableForQuoting(
+        {
+          model,
+          waveIds: collections.distinct(entities.map((it) => it.wave_id)),
+          groupIdsUserIsEligibleFor
+        },
+        connection
+      );
+      // Missing, out-of-range and unreadable quotes share one response so the
+      // error does not reveal whether a drop exists in a wave the author can't read.
+      const invalidQuotedDrops = quotedDrops.filter(
+        (quotedDrop) =>
+          !entities.some(
+            (it) =>
+              it.id === quotedDrop.drop_id &&
+              quotedDrop.drop_part_id <= it.parts_count &&
+              readableWaveIds.has(it.wave_id)
+          )
+      );
+      if (invalidQuotedDrops.length) {
+        throw new BadRequestException(
+          `Invalid quoted drops: ${invalidQuotedDrops
+            .map((it) => `${it.drop_id}/${it.drop_part_id}`)
+            .join(', ')}`
         );
-        if (invalidQuotedDrops.length) {
-          throw new BadRequestException(
-            `Invalid quoted drops: ${invalidQuotedDrops
-              .map((it) => `${it.drop_id}/${it.drop_part_id}`)
-              .join(', ')}`
-          );
-        }
       }
     }
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->verifyQuotedDrops`);
+  }
+
+  /**
+   * Quoting embeds the quoted drop, so the quoting identity must be able to
+   * read its wave and parent wave. A proxy without READ_WAVE reads like an
+   * anonymous viewer, matching the API read context.
+   */
+  private async findWaveIdsReadableForQuoting(
+    {
+      model,
+      waveIds,
+      groupIdsUserIsEligibleFor
+    }: {
+      model: CreateOrUpdateDropModel;
+      waveIds: string[];
+      groupIdsUserIsEligibleFor: string[];
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<Set<string>> {
+    if (!waveIds.length) {
+      return new Set();
+    }
+    const proxyId = model.proxy_id;
+    const canReadAsAuthor =
+      !proxyId ||
+      (await this.proxyService.hasActiveProxyAction({
+        granted_by_profile_id: this.getRequiredAuthorId(model),
+        granted_to_profile_id: proxyId,
+        action: ProfileProxyActionType.READ_WAVE
+      }));
+    const readableWaves = await this.wavesApiDb.findWavesByIdsEligibleForRead(
+      waveIds,
+      canReadAsAuthor ? groupIdsUserIsEligibleFor : [],
+      connection
+    );
+    return new Set(readableWaves.map((wave) => wave.id));
   }
 
   private async verifyReplyDrop(
@@ -2181,7 +2250,7 @@ export class CreateOrUpdateDropUseCase {
     // Keep this guard at the persistence boundary too; this method can be
     // reused independently of execute() and the normalization is idempotent.
     const model = this.normalizeMentionedGroups(inputModel);
-    this.assertDropContentLimits(model.parts);
+    this.assertDropLimits(model);
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
     const parts = model.parts;

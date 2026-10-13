@@ -645,7 +645,8 @@ export class DropsMappers {
       mentionedWaveEntities,
       mentionedWaveCreditNftsByWaveId,
       pinnedMentionedWaveIds,
-      identityWaveIds
+      identityWaveIds,
+      visibleQuotedDropIds
     ] = await Promise.all([
       mentionedWaveIds.length
         ? this.wavesApiDb.findWavesByIdsEligibleForRead(
@@ -665,7 +666,16 @@ export class DropsMappers {
         },
         { connection: ctx.connection }
       ),
-      profileWavesDb.findSelectedWaveIdsByWaveIds(mentionedWaveIds, ctx)
+      profileWavesDb.findSelectedWaveIdsByWaveIds(mentionedWaveIds, ctx),
+      this.findQuotedDropIdsVisibleToContext(
+        {
+          dropsParts,
+          allEntities,
+          deletedDrops,
+          groupIdsUserIsEligibleFor
+        },
+        ctx.connection
+      )
     ]);
     const mentionedWaveDisplayByWaveId =
       await directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
@@ -872,7 +882,8 @@ export class DropsMappers {
         bookmarksByAuthenticatedUser,
         dropPollsByDropId,
         rootDropNftLinksByDropId,
-        rootDropIds
+        rootDropIds,
+        visibleQuotedDropIds
       });
       return this.applyModerationPresentation(
         drop,
@@ -880,6 +891,68 @@ export class DropsMappers {
         new Set<string>()
       );
     });
+  }
+
+  /**
+   * Quoted drops may live in other waves than the drops quoting them, so a
+   * quote is embedded only when the viewer can read the quoted drop's wave
+   * and parent wave. One batched wave lookup covers every quote in the call.
+   */
+  private async findQuotedDropIdsVisibleToContext(
+    {
+      dropsParts,
+      allEntities,
+      deletedDrops,
+      groupIdsUserIsEligibleFor
+    }: {
+      dropsParts: Record<string, DropPartEntity[]>;
+      allEntities: DropEntity[];
+      deletedDrops: Record<string, DeletedDropEntity>;
+      groupIdsUserIsEligibleFor: string[];
+    },
+    connection?: ConnectionWrapper<any>
+  ): Promise<Set<string>> {
+    const quotedDropIds = collections.distinct(
+      Object.values(dropsParts)
+        .flat()
+        .map((part) => part.quoted_drop_id)
+        .filter((dropId): dropId is string => !!dropId)
+    );
+    if (!quotedDropIds.length) {
+      return new Set();
+    }
+    const waveIdsByDropId = new Map<string, string>();
+    for (const entity of allEntities) {
+      waveIdsByDropId.set(entity.id, entity.wave_id);
+    }
+    const quotedWaveIdsByDropId = new Map<string, string>();
+    for (const dropId of quotedDropIds) {
+      const waveId =
+        waveIdsByDropId.get(dropId) ?? deletedDrops[dropId]?.wave_id;
+      if (waveId) {
+        quotedWaveIdsByDropId.set(dropId, waveId);
+      }
+    }
+    const quotedWaveIds = collections.distinct(
+      Array.from(quotedWaveIdsByDropId.values())
+    );
+    if (!quotedWaveIds.length) {
+      return new Set();
+    }
+    const readableWaveIds = new Set(
+      (
+        await this.wavesApiDb.findWavesByIdsEligibleForRead(
+          quotedWaveIds,
+          groupIdsUserIsEligibleFor,
+          connection
+        )
+      ).map((wave) => wave.id)
+    );
+    return new Set(
+      Array.from(quotedWaveIdsByDropId.entries())
+        .filter(([, waveId]) => readableWaveIds.has(waveId))
+        .map(([dropId]) => dropId)
+    );
   }
 
   private applyModerationPresentation(
@@ -980,7 +1053,8 @@ export class DropsMappers {
     bookmarksByAuthenticatedUser,
     dropPollsByDropId,
     rootDropNftLinksByDropId,
-    rootDropIds
+    rootDropIds,
+    visibleQuotedDropIds
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
@@ -1025,6 +1099,7 @@ export class DropsMappers {
     dropPollsByDropId: Record<string, DropPollWithOptions>;
     rootDropNftLinksByDropId: Record<string, ApiDropNftLink[]>;
     rootDropIds: Set<string>;
+    visibleQuotedDropIds: Set<string>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -1191,7 +1266,8 @@ export class DropsMappers {
                   bookmarksByAuthenticatedUser,
                   dropPollsByDropId,
                   rootDropNftLinksByDropId,
-                  rootDropIds
+                  rootDropIds,
+                  visibleQuotedDropIds
                 })
               : undefined
           }
@@ -1201,17 +1277,25 @@ export class DropsMappers {
       parts:
         dropsParts[dropEntity.id]?.map<ApiDropPart>((it) => {
           const quotedDropId = it.quoted_drop_id;
+          // Unreadable quotes keep only the reference, like a missing drop.
+          const isQuotedDropVisible =
+            !!quotedDropId && visibleQuotedDropIds.has(quotedDropId);
+          const visibleQuotedEntity =
+            quotedDropId && isQuotedDropVisible
+              ? allEntities[quotedDropId]
+              : undefined;
           return {
             content: it.content,
             quoted_drop:
               quotedDropId && it.quoted_drop_part_id
                 ? {
-                    is_deleted: !!deletedDrops[quotedDropId],
+                    is_deleted:
+                      isQuotedDropVisible && !!deletedDrops[quotedDropId],
                     drop_id: quotedDropId,
                     drop_part_id: it.quoted_drop_part_id,
-                    drop: allEntities[quotedDropId]
+                    drop: visibleQuotedEntity
                       ? this.toDrop({
-                          dropEntity: allEntities[quotedDropId],
+                          dropEntity: visibleQuotedEntity,
                           deletedDrops,
                           profilesByIds,
                           resolvedProfilesByIds,
@@ -1247,7 +1331,8 @@ export class DropsMappers {
                           bookmarksByAuthenticatedUser,
                           dropPollsByDropId,
                           rootDropNftLinksByDropId,
-                          rootDropIds
+                          rootDropIds,
+                          visibleQuotedDropIds
                         })
                       : undefined
                   }

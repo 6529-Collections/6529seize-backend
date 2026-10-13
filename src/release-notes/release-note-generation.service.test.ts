@@ -1,3 +1,7 @@
+jest.mock('./release-digest.db', () => ({
+  releaseDigestDb: { recordEntries: jest.fn().mockResolvedValue(undefined) }
+}));
+
 import { AiPrompter } from '@/abusiveness/ai-prompter';
 import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
 import { IdentitiesDb } from '@/identities/identities.db';
@@ -132,10 +136,12 @@ describe('getFrontendReleaseNoteLabel', () => {
 describe('ReleaseNoteGenerationService', () => {
   const originalBotProfileId = process.env.CI_PIPELINES_BOT_PROFILE_ID;
   const originalWaveId = process.env.CI_RELEASES_WAVE_ID;
+  const originalDeployWaveId = process.env.CI_PIPELINES_PROD_WAVE_ID;
 
   beforeEach(() => {
     process.env.CI_PIPELINES_BOT_PROFILE_ID = 'bot-profile';
     process.env.CI_RELEASES_WAVE_ID = 'releases-wave';
+    process.env.CI_PIPELINES_PROD_WAVE_ID = 'deploy-wave';
   });
 
   afterAll(() => {
@@ -148,6 +154,11 @@ describe('ReleaseNoteGenerationService', () => {
       delete process.env.CI_RELEASES_WAVE_ID;
     } else {
       process.env.CI_RELEASES_WAVE_ID = originalWaveId;
+    }
+    if (originalDeployWaveId === undefined) {
+      delete process.env.CI_PIPELINES_PROD_WAVE_ID;
+    } else {
+      process.env.CI_PIPELINES_PROD_WAVE_ID = originalDeployWaveId;
     }
   });
 
@@ -206,7 +217,7 @@ describe('ReleaseNoteGenerationService', () => {
         representativeId: 'bot-profile',
         hideLinkPreview: true,
         createDropRequest: expect.objectContaining({
-          wave_id: 'releases-wave',
+          wave_id: 'deploy-wave',
           metadata: expect.arrayContaining([
             expect.objectContaining({
               data_key: 'release_note_id',
@@ -797,10 +808,13 @@ describe('ReleaseNoteGenerationService', () => {
       title: `Release change ${index + 1}`,
       contributors: []
     }));
+    // Each receipt check queries the deploy feed, then the legacy Releases wave.
     const findDropIdByMetadata = jest
       .fn()
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce('completed-first-batch')
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null);
     const promptAndGetReply = jest.fn().mockResolvedValue(
       JSON.stringify({
@@ -886,6 +900,8 @@ describe('ReleaseNoteGenerationService', () => {
       .fn()
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce('completed-second-batch')
       .mockResolvedValueOnce('completed-final-batch');
     const promptAndGetReply = jest.fn().mockResolvedValue(
@@ -929,7 +945,7 @@ describe('ReleaseNoteGenerationService', () => {
     expect(content).toContain('[PR #1]');
     expect(content).not.toContain('[PR #21]');
     const queriedBatchIds = findDropIdByMetadata.mock.calls
-      .slice(1)
+      .slice(2)
       .map(([query]) => query.dataValue);
     expect(new Set(queriedBatchIds)).toHaveProperty('size', 3);
   });
@@ -1051,14 +1067,22 @@ describe('ReleaseNoteGenerationService', () => {
         frontend_sha: frontendSha,
         triggered_by_github_login: 'prxt6529'
       };
-      const findReleaseNoteDropBySourceSha = jest.fn().mockResolvedValue({
-        id: 'frontend-drop',
-        serial_no: 1292112,
-        content:
-          '### Frontend Deploy [#1636](https://github.com/6529-Collections/6529seize-frontend/actions/runs/1) · commit [63630a3e](https://github.com/6529-Collections/6529seize-frontend/commit/63630a3e27c37296bbe39d9813b014a824265a56) — Aug 12, 11:02 AM UTC',
-        run_number: null,
-        deployed_at: null
-      });
+      // A historical Frontend note: published to Releases before deploy notes
+      // moved to the deploy feed, which is searched first.
+      const findReleaseNoteDropBySourceSha = jest
+        .fn()
+        .mockImplementation(async ({ waveId }: { waveId: string }) =>
+          waveId === 'releases-wave'
+            ? {
+                id: 'frontend-drop',
+                serial_no: 1292112,
+                content:
+                  '### Frontend Deploy [#1636](https://github.com/6529-Collections/6529seize-frontend/actions/runs/1) · commit [63630a3e](https://github.com/6529-Collections/6529seize-frontend/commit/63630a3e27c37296bbe39d9813b014a824265a56) — Aug 12, 11:02 AM UTC',
+                run_number: null,
+                deployed_at: null
+              }
+            : null
+        );
       const promptAndGetReply = jest.fn().mockResolvedValue(
         JSON.stringify({
           bullets: [
@@ -1097,14 +1121,22 @@ describe('ReleaseNoteGenerationService', () => {
         'published'
       );
 
-      expect(findReleaseNoteDropBySourceSha).toHaveBeenCalledWith(
+      expect(findReleaseNoteDropBySourceSha).toHaveBeenNthCalledWith(
+        1,
         expect.objectContaining({
+          waveId: 'deploy-wave',
           repository: '6529-Collections/6529seize-frontend',
           sha: frontendSha
         }),
         {}
       );
+      expect(findReleaseNoteDropBySourceSha).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ waveId: 'releases-wave' }),
+        {}
+      );
       const createDropRequest = createDrop.mock.calls[0][0].createDropRequest;
+      expect(createDropRequest.wave_id).toBe('releases-wave');
       expect(createDropRequest.parts[0].content).toBe(
         [
           '## 🖥️ 6529 Desktop Release v0.3.13',

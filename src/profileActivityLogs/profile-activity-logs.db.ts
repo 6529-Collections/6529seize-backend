@@ -6,13 +6,15 @@ import {
 } from '../sql-executor';
 import { randomInt } from 'crypto';
 import {
+  DROP_LOG_TYPES,
   isTargetOfTypeDrop,
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../entities/IProfileActivityLog';
 import {
   PROFILE_LATEST_LOG_TABLE,
-  PROFILES_ACTIVITY_LOGS_TABLE
+  PROFILES_ACTIVITY_LOGS_TABLE,
+  WAVES_TABLE
 } from '@/constants';
 import { PageRequest } from '../api-serverless/src/page-request';
 import { RateMatter } from '../entities/IRating';
@@ -23,6 +25,7 @@ import {
 import { Time, Timer } from '../time';
 import { RequestContext } from '../request.context';
 import { ids } from '../ids';
+import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 
 const mysql = require('mysql');
 
@@ -32,6 +35,68 @@ const PROFILE_LATEST_LOG_RETRY_CODES = new Set([
 ]);
 const PROFILE_LATEST_LOG_RETRY_DELAYS_MS = [25, 75];
 const PROFILE_LATEST_LOG_RETRY_JITTER_MS = 25;
+
+// Rows of these types target a drop and store the drop's wave id in
+// additional_data_2.
+const WAVE_SCOPED_DROP_LOG_TYPES: readonly ProfileActivityLogType[] = [
+  ...DROP_LOG_TYPES,
+  ProfileActivityLogType.DROP_REACTED
+];
+const WAVE_ACCESS_DROP_LOG_TYPES_PARAM = 'wave_access_drop_log_types';
+const WAVE_ACCESS_RATING_EDIT_TYPE_PARAM = 'wave_access_rating_edit_type';
+const WAVE_ACCESS_WAVE_REP_MATTER_PARAM = 'wave_access_wave_rep_matter';
+const WAVE_ACCESS_GROUP_IDS_PARAM = 'wave_access_group_ids';
+
+function isWaveScopedLogType(type: ProfileActivityLogType): boolean {
+  return (
+    type === ProfileActivityLogType.RATING_EDIT ||
+    WAVE_SCOPED_DROP_LOG_TYPES.includes(type)
+  );
+}
+
+/**
+ * Log rows tied to a wave (drop activity, and wave rep ratings whose target is
+ * the wave) are returned only when the viewer can read that wave and its
+ * parent. Other rows are unaffected. No condition is needed when the requested
+ * types cannot include wave-scoped rows.
+ */
+export function buildProfileLogWaveAccessFilter({
+  types,
+  eligibleGroupIds
+}: {
+  types?: ProfileActivityLogType[];
+  eligibleGroupIds: string[];
+}): { conditions: string[]; params: Record<string, any> } {
+  if (types?.length && !types.some(isWaveScopedLogType)) {
+    return { conditions: [], params: {} };
+  }
+  const hasEligibleGroups = eligibleGroupIds.length > 0;
+  const readableWave = (waveIdColumn: string) => `exists (
+        select 1 from ${WAVES_TABLE} pa_log_wave
+        where pa_log_wave.id = ${waveIdColumn}
+          and ${waveReadAccessSql('pa_log_wave', hasEligibleGroups, WAVE_ACCESS_GROUP_IDS_PARAM)}
+      )`;
+  return {
+    conditions: [
+      `(case
+      when pa_logs.type in (:${WAVE_ACCESS_DROP_LOG_TYPES_PARAM})
+        then ${readableWave('pa_logs.additional_data_2')}
+      when pa_logs.type = :${WAVE_ACCESS_RATING_EDIT_TYPE_PARAM}
+        and pa_logs.additional_data_1 = :${WAVE_ACCESS_WAVE_REP_MATTER_PARAM}
+        then ${readableWave('pa_logs.target_id')}
+      else true
+    end)`
+    ],
+    params: {
+      [WAVE_ACCESS_DROP_LOG_TYPES_PARAM]: [...WAVE_SCOPED_DROP_LOG_TYPES],
+      [WAVE_ACCESS_RATING_EDIT_TYPE_PARAM]: ProfileActivityLogType.RATING_EDIT,
+      [WAVE_ACCESS_WAVE_REP_MATTER_PARAM]: RateMatter.WAVE_REP,
+      ...(hasEligibleGroups
+        ? { [WAVE_ACCESS_GROUP_IDS_PARAM]: eligibleGroupIds }
+        : {})
+    }
+  };
+}
 
 export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -265,11 +330,20 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       };
     })();
 
+    // Filter before each branch limit so pagination stays exact.
+    const waveAccess = buildProfileLogWaveAccessFilter({
+      types: params.type,
+      eligibleGroupIds: params.viewer_eligible_group_ids
+    });
+
     // Build one branch that returns only (id, created_at)
     const buildIdsBranch = (
       matchColumn: 'profile_id' | 'proxy_id' | 'target_id'
     ) => {
-      const p: Record<string, any> = { ...groupPieces.params };
+      const p: Record<string, any> = {
+        ...groupPieces.params,
+        ...waveAccess.params
+      };
       const paramPrefix = `b_${matchColumn}`;
 
       // Choose the best available index; prefer the new composite, otherwise fallback
@@ -299,6 +373,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         baseConditions.push(`pa_logs.target_id = :${paramPrefix}_target_id`);
         p[`${paramPrefix}_target_id`] = params.target_id;
       }
+      baseConditions.push(...waveAccess.conditions);
 
       const buildSingleTypeSelect = (typeParamName?: string) => {
         let typeCondition = '';
@@ -388,7 +463,10 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       }
     } else {
       // No profile_id: single scan path (keep it simple)
-      const p: Record<string, any> = { ...groupPieces.params };
+      const p: Record<string, any> = {
+        ...groupPieces.params,
+        ...waveAccess.params
+      };
 
       let single = '';
       if (groupPieces.where) single += `${groupPieces.where} `;
@@ -416,6 +494,9 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         single += ` AND pa_logs.type IN (:type)`;
         p.type = params.type;
       }
+      single += waveAccess.conditions
+        .map((condition) => ` AND ${condition}`)
+        .join('');
 
       // If this path is hot, add a compound index that matches those filters.
       single += ` ORDER BY pa_logs.created_at ${orderDir} LIMIT ${perBranchLimit}`;
@@ -591,6 +672,8 @@ export type NewProfileActivityLog = Omit<
 
 export interface ProfileLogSearchParams {
   readonly group_id: string | null;
+  // Read-context groups of the viewer; empty for anonymous viewers.
+  readonly viewer_eligible_group_ids: string[];
   profile_id?: string;
   target_id?: string;
   rating_matter?: RateMatter;
