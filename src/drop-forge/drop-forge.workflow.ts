@@ -22,6 +22,7 @@ import { DISTRIBUTION_TABLE } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
 import { DbPoolName } from '@/db-query.options';
+import { encryptPreparationAuth } from '@/drop-forge/drop-forge.preparation-auth';
 
 export interface ProcessResult {
   continue: boolean;
@@ -66,7 +67,8 @@ export async function distributionHash(
 }
 export async function createProcess(
   job: DropForgeJobEntity,
-  ctx: RequestContext
+  ctx: RequestContext,
+  authorization: string
 ): Promise<DropForgeJobEntity> {
   return dropForgePreparationRepository.run(
     job.contract,
@@ -78,7 +80,10 @@ export async function createProcess(
         undefined,
         txCtx
       );
-      if (existing && ['PENDING', 'COMPLETED'].includes(existing.status)) {
+      if (
+        existing &&
+        ['PENDING', 'COMPLETED', 'AWAITING_AUTH'].includes(existing.status)
+      ) {
         if (
           existing.plan_id !== job.plan_id ||
           JSON.stringify(phaseIds(existing)) !== JSON.stringify(job.phase_ids)
@@ -94,8 +99,15 @@ export async function createProcess(
           throw new LaunchSafetyError(
             'Distribution changed after processing; reset and process again'
           );
+        if (existing.status === 'AWAITING_AUTH')
+          return dropForgeJobsRepository.resumeAuthentication(
+            existing,
+            encryptPreparationAuth(existing, authorization),
+            txCtx
+          );
         return existing;
       }
+      job.encrypted_auth = encryptPreparationAuth(job, authorization);
       return dropForgeJobsRepository.create(job, txCtx);
     },
     ctx,

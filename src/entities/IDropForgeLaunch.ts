@@ -53,6 +53,7 @@ export class DropForgeJobEntity {
   @Column({ type: 'int', default: 0 }) step!: number;
   @Column({ type: 'varchar', length: 16 }) status!: string;
   @Column({ type: 'json', nullable: true }) result!: object | null;
+  @Column({ type: 'text', nullable: true }) encrypted_auth!: string | null;
   @Column({ type: 'text', nullable: true }) error!: string | null;
   @Column({ type: 'varchar', length: 100, nullable: true }) drop_id!:
     | string

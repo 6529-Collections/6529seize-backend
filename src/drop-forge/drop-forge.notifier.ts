@@ -117,12 +117,14 @@ export async function reportPreparationJob(
       const operation = preparationOperation(job.kind);
       let outcome = 'failed.';
       if (reset) outcome = 'invalidated by an explicit reset.';
+      else if (job.status === 'AWAITING_AUTH')
+        outcome = 'paused. Sign in to resume EMMA input retrieval.';
       else if (job.status === 'COMPLETED')
         outcome = 'completed. Read-only results are ready.';
       return postForgeReport(
         config,
         `Claim #${job.claim_id}: ${operation} ${outcome}${detail}`,
-        job.status === 'FAILED' && !reset,
+        ['FAILED', 'AWAITING_AUTH'].includes(job.status) && !reset,
         ctx
       );
     }, {});

@@ -1,7 +1,7 @@
 import { RequestContext } from '@/request.context';
 import { resetDistributionPreparation } from '@/drop-forge/drop-forge.preparation.repository';
 import { Request } from 'express';
-import fetch from 'node-fetch';
+import fetch, { Response } from 'node-fetch';
 import { DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES } from '@/airdrop-phases';
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
@@ -95,11 +95,7 @@ export async function fetchDistributionOperations(
       Authorization: auth
     }
   });
-  const json = await response.json();
-  if (response.status !== 200) {
-    throw new CustomApiCompliantException(response.status, json.message);
-  }
-  return json;
+  return readEmmaResponse<ALOperationsResponse[]>(response);
 }
 
 export async function fetchPhaseName(
@@ -116,10 +112,7 @@ export async function fetchPhaseName(
       Authorization: auth
     }
   });
-  const json = await response.json();
-  if (response.status !== 200) {
-    throw new CustomApiCompliantException(response.status, json.message);
-  }
+  const json = await readEmmaResponse<{ name: string }>(response);
   return json.name;
 }
 
@@ -137,10 +130,18 @@ export async function fetchPhaseResults(
       Authorization: auth
     }
   });
+  return readEmmaResponse<ALResultsResponse[]>(response);
+}
+
+async function readEmmaResponse<T>(response: Response): Promise<T> {
+  if (response.status === 401 || response.status === 403)
+    throw new CustomApiCompliantException(
+      response.status,
+      'EMMA access expired or was denied'
+    );
   const json = await response.json();
-  if (response.status !== 200) {
+  if (response.status !== 200)
     throw new CustomApiCompliantException(response.status, json.message);
-  }
   return json;
 }
 

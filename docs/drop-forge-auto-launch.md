@@ -33,7 +33,6 @@ services need the same `DROP_FORGERS_6529_MENTION_PROFILE_IDS` configuration.
 | `DROP_FORGE_MAX_FEE_PER_GAS_WEI`        | Required positive fee cap                                                        |
 | `DROP_FORGE_MAX_GAS_PER_TX`             | Required positive gas-limit cap                                                  |
 | `DROP_FORGE_MAX_TX_COST_ETH`            | Required positive total transaction cost cap                                     |
-| `DROP_FORGE_EMMA_AUTH_TOKEN`            | Full Authorization header for a provisioned EMMA service account                 |
 
 The separate `dropForgePreparationLoop` role is supplied through
 `DROP_FORGE_PREPARATION_ROLE_ARN`. API roles need `lambda:InvokeFunction` on
@@ -71,10 +70,22 @@ payment receiver. Every worker transaction sends zero ETH; Pay Artist is exclude
 
 1. Actor 1 confirms the token ID in EMMA, uploads the artist/team allocations,
    and clicks **Process and Finalize**. The API returns a durable job immediately.
+   The clicking distribution admin supplies their current Authorization header;
+   the API verifies admin access and stores it encrypted, bound to this job.
    The worker snapshots the three ordered upstream phase inputs, processes them
    and public subscriptions in checkpoints, then finalizes. Refresh retrieves
    progress; completion enables read-only paginated list downloads. Downloads
-   cannot mutate assignments or normalize data. Reset explicitly invalidates the
+   cannot mutate assignments or normalize data. Once the input snapshot commits,
+   the stored credential is cleared and subsequent stages need no EMMA login.
+   An EMMA 401/403 or unavailable credential pauses the job as AWAITING_AUTH.
+   Sign in to resume supplies fresh authorization to the same job, preserving
+   checkpoints; any current distribution admin with EMMA access can resume it.
+   Waiting jobs do not run repeatedly or allow conflicting distribution edits.
+   Credentials also clear on failure/completion and never appear in API results,
+   wave messages or plaintext persistence. Encryption derives a purpose-specific
+   key from the existing JWT_SECRET shared by API and preparation worker; no
+   additional token or encryption secret needs prepopulation.
+   Reset explicitly invalidates the
    completed version; reset/upload operations conflict while processing is pending.
 2. Actor 2 saves and publishes Craft, then clicks **Launch**. The API checks the
    completed distribution version, roots, edition, reporting access, and timing.
@@ -273,7 +284,7 @@ worker/config failures when wave delivery cannot report an error. Arming checks
 the reporting bot's chat/visibility access and recipient visibility; actual
 posting still passes the ordinary drop creation checks. Action reports
 include chain-specific transaction links, batch counts and UTC phase windows.
-No live KMS key, funded wallet, EMMA service token, or production wave was
+No live KMS key, funded wallet, live EMMA authorization, or production wave was
 exercised in local validation.
 
 ## Future rollout order

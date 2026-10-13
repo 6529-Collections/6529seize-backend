@@ -29229,6 +29229,7 @@ components:
             - PENDING
             - COMPLETED
             - FAILED
+            - AWAITING_AUTH
         result_json:
           type: string
           nullable: true

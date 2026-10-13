@@ -36,6 +36,7 @@ import { Timer } from '@/time';
 import { createProcess } from '@/drop-forge/drop-forge.workflow';
 import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
 import { isAddress } from 'ethers';
+import { encryptPreparationAuth } from '@/drop-forge/drop-forge.preparation-auth';
 
 const paramsSchema = Joi.object<{ contract: string; claim_id: number }>({
   contract: Joi.string()
@@ -226,13 +227,35 @@ export async function createDropForgeDistributionJob(
     });
     const saved =
       job.kind === 'PROCESS_ALL'
-        ? await createProcess(job, { timer: Timer.getFromRequest(req) })
-        : await dropForgeJobsRepository.create(job, {
-            timer: Timer.getFromRequest(req)
-          });
+        ? await createProcess(
+            job,
+            { timer: Timer.getFromRequest(req) },
+            req.headers.authorization ?? ''
+          )
+        : await createLegacyPreparationJob(
+            job,
+            req.headers.authorization ?? '',
+            Timer.getFromRequest(req)
+          );
     await wakeDropForge(true);
     return mapJob(saved);
   });
+}
+async function createLegacyPreparationJob(
+  job: DropForgeJobEntity,
+  authorization: string,
+  timer: Timer
+): Promise<DropForgeJobEntity> {
+  if (job.kind === 'PHASE' && job.phase_id !== 'public')
+    job.encrypted_auth = encryptPreparationAuth(job, authorization);
+  const saved = await dropForgeJobsRepository.create(job, { timer });
+  if (saved.status === 'AWAITING_AUTH')
+    return dropForgeJobsRepository.resumeAuthentication(
+      saved,
+      encryptPreparationAuth(saved, authorization),
+      { timer }
+    );
+  return saved;
 }
 export async function getDropForgeDistributionJob(
   req: GetDropForgeDistributionJobRequest

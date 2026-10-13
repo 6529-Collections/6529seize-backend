@@ -103,7 +103,7 @@ export class DropForgePreparationRepository {
           'Distribution is frozen for an armed or terminal launch'
         );
       const pending = await sqlExecutor.execute<{ id: string }>(
-        `SELECT id FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' AND status = 'PENDING' ${allowPending ? '' : 'FOR SHARE NOWAIT'}`,
+        `SELECT id FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' AND status IN ('PENDING', 'AWAITING_AUTH') ${allowPending ? '' : 'FOR SHARE NOWAIT'}`,
         { contract: contract.toLowerCase(), claim },
         { wrappedConnection: ctx.connection }
       );
@@ -144,7 +144,7 @@ export async function resetDistributionPreparation(
       await reset(txCtx);
       for (const key of Object.keys(results)) delete results[key];
       await sqlExecutor.execute(
-        `UPDATE ${DROP_FORGE_JOBS_TABLE} SET status = 'FAILED', error = 'Distribution reset; process again', drop_id = NULL WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' AND status <> 'FAILED'`,
+        `UPDATE ${DROP_FORGE_JOBS_TABLE} SET status = 'FAILED', error = 'Distribution reset; process again', encrypted_auth = NULL, drop_id = NULL WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' AND status <> 'FAILED'`,
         { contract: contract.toLowerCase(), claim },
         { wrappedConnection: txCtx.connection }
       );

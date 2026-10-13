@@ -5,7 +5,14 @@ import {
   prepareDistributionPhase,
   finalizeDistribution
 } from '@/drop-forge/drop-forge.preparation';
-import { processStep } from '@/drop-forge/drop-forge.workflow';
+import {
+  processStep,
+  decodeProcessResult
+} from '@/drop-forge/drop-forge.workflow';
+import {
+  decryptPreparationAuth,
+  withPreparationAuth
+} from '@/drop-forge/drop-forge.preparation-auth';
 import { reportPreparationJob } from '@/drop-forge/drop-forge.notifier';
 import { evictRedisCacheForPathWithTimeout } from '@/redis';
 import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
@@ -24,11 +31,15 @@ export async function runPreparationTick(): Promise<void> {
       await finalizeDistribution(job.contract, job.claim_id, ctx);
       return { normalized: true };
     }
-    const auth = process.env.DROP_FORGE_EMMA_AUTH_TOKEN?.trim();
-    if (!auth)
-      throw new LaunchSafetyError('EMMA service authentication is required');
+    const needsAuth =
+      job.kind === 'PROCESS_ALL'
+        ? !decodeProcessResult(job)?.inputs
+        : job.phase_id !== 'public';
+    const auth = needsAuth ? decryptPreparationAuth(job) : '';
     if (job.kind === 'PROCESS_ALL') {
-      const result = await processStep(job, auth, ctx);
+      const result = await withPreparationAuth(() =>
+        processStep(job, auth, ctx)
+      );
       continuing = result.continue;
       if (!continuing)
         completed = { contract: job.contract, claim: job.claim_id };
@@ -36,13 +47,17 @@ export async function runPreparationTick(): Promise<void> {
     }
     if (!job.plan_id || !job.phase_id)
       throw new LaunchSafetyError('Phase identifiers are missing');
-    return prepareDistributionPhase(
-      job.contract,
-      job.claim_id,
-      job.plan_id,
-      job.phase_id,
-      auth,
-      ctx
+    const planId = job.plan_id;
+    const phaseId = job.phase_id;
+    return withPreparationAuth(() =>
+      prepareDistributionPhase(
+        job.contract,
+        job.claim_id,
+        planId,
+        phaseId,
+        auth,
+        ctx
+      )
     );
   }, {});
   if (completed) {

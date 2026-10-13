@@ -5,6 +5,12 @@ import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { NotFoundException } from '@/exceptions';
 import { DbPoolName } from '@/db-query.options';
+import { PreparationAuthRequired } from '@/drop-forge/drop-forge.preparation-auth';
+
+function storedJobResult(job: DropForgeJobEntity): object | null {
+  if (!job.result) return null;
+  return typeof job.result === 'string' ? JSON.parse(job.result) : job.result;
+}
 
 export class DropForgeJobsRepository {
   async reportOne(
@@ -79,9 +85,10 @@ export class DropForgeJobsRepository {
     ctx.timer?.start(timer);
     try {
       await sqlExecutor.execute(
-        `INSERT IGNORE INTO ${DROP_FORGE_JOBS_TABLE} (id,contract,claim_id,kind,plan_id,phase_id,phase_ids,step,status,updated_at) VALUES (:id,:contract,:claim_id,:kind,:plan_id,:phase_id,:phase_ids,0,'PENDING',:updated_at)`,
+        `INSERT IGNORE INTO ${DROP_FORGE_JOBS_TABLE} (id,contract,claim_id,kind,plan_id,phase_id,phase_ids,step,status,updated_at,encrypted_auth) VALUES (:id,:contract,:claim_id,:kind,:plan_id,:phase_id,:phase_ids,0,'PENDING',:updated_at,:encrypted_auth)`,
         {
           ...job,
+          encrypted_auth: job.encrypted_auth ?? null,
           phase_ids: job.phase_ids ? JSON.stringify(job.phase_ids) : null
         },
         { wrappedConnection: ctx.connection }
@@ -92,7 +99,12 @@ export class DropForgeJobsRepository {
         Number(saved.claim_id) !== job.claim_id ||
         saved.kind !== job.kind ||
         saved.plan_id !== job.plan_id ||
-        saved.phase_id !== job.phase_id
+        saved.phase_id !== job.phase_id ||
+        JSON.stringify(
+          typeof saved.phase_ids === 'string'
+            ? JSON.parse(saved.phase_ids)
+            : (saved.phase_ids ?? null)
+        ) !== JSON.stringify(job.phase_ids ?? null)
       )
         throw new LaunchSafetyError(
           'Request ID already belongs to a different preparation job'
@@ -101,6 +113,18 @@ export class DropForgeJobsRepository {
     } finally {
       ctx.timer?.stop(timer);
     }
+  }
+  async resumeAuthentication(
+    job: DropForgeJobEntity,
+    encryptedAuth: string,
+    ctx: RequestContext
+  ): Promise<DropForgeJobEntity> {
+    await sqlExecutor.execute(
+      `UPDATE ${DROP_FORGE_JOBS_TABLE} SET encrypted_auth = :encrypted_auth, status = 'PENDING', error = NULL, drop_id = NULL, updated_at = :updated_at WHERE id = :id AND status = 'AWAITING_AUTH'`,
+      { id: job.id, encrypted_auth: encryptedAuth, updated_at: Date.now() },
+      { wrappedConnection: ctx.connection }
+    );
+    return this.find(job.id, ctx);
   }
   async processOne(
     process: (job: DropForgeJobEntity, ctx: RequestContext) => Promise<object>,
@@ -135,7 +159,11 @@ export class DropForgeJobsRepository {
               undefined,
               { wrappedConnection: connection }
             );
-            status = 'FAILED';
+            status =
+              error_ instanceof PreparationAuthRequired
+                ? 'AWAITING_AUTH'
+                : 'FAILED';
+            if (status === 'AWAITING_AUTH') result = storedJobResult(job);
             error =
               error_ instanceof LaunchSafetyError
                 ? error_.message
@@ -143,15 +171,22 @@ export class DropForgeJobsRepository {
           }
           const continuing =
             (result as { continue?: boolean } | null)?.continue === true;
-          if (continuing) status = 'PENDING';
+          if (continuing && status === 'COMPLETED') status = 'PENDING';
+          const encryptedAuth =
+            status === 'PENDING' &&
+            !(result as { inputs?: object } | null)?.inputs
+              ? (job.encrypted_auth ?? null)
+              : null;
           await sqlExecutor.execute(
-            `UPDATE ${DROP_FORGE_JOBS_TABLE} SET step = :step, status = :status, error = :error, result = :result, updated_at = :updated_at WHERE id = :id`,
+            `UPDATE ${DROP_FORGE_JOBS_TABLE} SET step = :step, status = :status, error = :error, result = :result, encrypted_auth = :encrypted_auth, updated_at = :updated_at WHERE id = :id`,
             {
               id: job.id,
               status,
-              step: continuing
-                ? Number(job.step ?? 0) + 1
-                : Number(job.step ?? 0),
+              encrypted_auth: encryptedAuth,
+              step:
+                continuing && status === 'PENDING'
+                  ? Number(job.step ?? 0) + 1
+                  : Number(job.step ?? 0),
               error,
               result: result ? JSON.stringify(result) : null,
               updated_at: Date.now()

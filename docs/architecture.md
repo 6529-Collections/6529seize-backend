@@ -1802,7 +1802,11 @@ For a documentation-only change, no Lambda redeploy is required.
 `dropForgeLaunchLoop` and `dropForgePreparationLoop` have independent one-minute
 EventBridge recovery schedules and default-disabled flags. The API returns a
 single PROCESS_ALL job for EMMA, immediately wakes preparation, and exposes
-read-only completed list pages. Preparation snapshots upstream phase inputs,
+read-only completed list pages. The operator's Authorization header is encrypted
+for its specific preparation job using a key derived from the existing JWT secret,
+then cleared when upstream inputs commit or the job fails. Expired or denied
+EMMA access pauses for authenticated resumption of the same job and checkpoints;
+no preconfigured EMMA token is required. Preparation snapshots upstream phase inputs,
 commits ordered phase checkpoints and finalizes. Craft Launch derives the fixed
 mint calendar and arms execution immediately; Craft Update Claim queues a
 metadata-only action without reopening completed allocations.
