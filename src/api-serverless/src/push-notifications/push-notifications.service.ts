@@ -100,6 +100,37 @@ export async function requestInstallationBadgeRefresh(
   ]);
 }
 
+export type E2eeWakeReason = 'message' | 'added';
+
+/** Profiles per SQS message; keeps bodies far below the SQS size limit. */
+const E2EE_WAKE_PROFILES_PER_MESSAGE = 100;
+
+/**
+ * Content-free wakes for encrypted messaging (D109). The body names only
+ * the recipients and a reason: no sender, group handle or text.
+ */
+export async function enqueueE2eeWake(
+  profileIds: string[],
+  reason: E2eeWakeReason
+): Promise<void> {
+  if (!isActivated()) return;
+  const uniqueIds = collections.distinct(profileIds);
+  const entries: NonNullable<SendMessageBatchCommandInput['Entries']> = [];
+  for (let i = 0; i < uniqueIds.length; i += E2EE_WAKE_PROFILES_PER_MESSAGE) {
+    entries.push({
+      Id: `e2ee-wake-${entries.length}`,
+      MessageBody: JSON.stringify({
+        type: 'e2ee_wake',
+        profile_ids: uniqueIds.slice(i, i + E2EE_WAKE_PROFILES_PER_MESSAGE),
+        reason
+      })
+    });
+  }
+  for (let i = 0; i < entries.length; i += 10) {
+    await sendBatchMessagesToSQS(entries.slice(i, i + 10));
+  }
+}
+
 export const sendBatchMessagesToSQS = async (
   entries: NonNullable<SendMessageBatchCommandInput['Entries']>
 ) => {
