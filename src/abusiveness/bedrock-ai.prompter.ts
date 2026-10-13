@@ -5,7 +5,7 @@ import {
   parseBedrockAnthropicReply
 } from '@/bedrock-anthropic';
 import {
-  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
+  DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID,
   getConfiguredBedrockAnthropicModelId
 } from '@/bedrock.config';
 import {
@@ -16,7 +16,7 @@ import {
 
 export const ABUSIVENESS_BEDROCK_MODEL_ID_ENV = 'ABUSIVENESS_BEDROCK_MODEL_ID';
 export const DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID =
-  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID;
+  DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID;
 
 const ABUSIVENESS_RESPONSE_SCHEMA = {
   type: 'object',

@@ -344,7 +344,7 @@ after the backend API is available.
 | Variable                              | Purpose                                                                                                                          |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `CONTENT_MODERATION_BLOCKED_HOSTS`    | Comma-separated exact or parent hosts for deterministic unsafe-destination rejection. Empty disables this direct-rejection list. |
-| `CONTENT_MODERATION_BEDROCK_MODEL_ID` | Optional moderation-specific Bedrock model; defaults to Claude Sonnet 4.5 (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`).      |
+| `CONTENT_MODERATION_BEDROCK_MODEL_ID` | Optional moderation-specific Bedrock model; defaults to Claude Sonnet 5.5 (`us.anthropic.claude-sonnet-5-5`).                    |
 | `CONTENT_MODERATION_REPORTS_PER_HOUR` | Per-profile report ceiling; defaults to `100`.                                                                                   |
 
 ## Related documentation

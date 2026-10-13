@@ -206,9 +206,8 @@ describe('ContentModerationAiService', () => {
     expect(send.mock.calls[0]?.[0].input.modelId).toBe('runtime-model-id');
     expect(send.mock.calls[0]?.[1]?.abortSignal).toBeInstanceOf(AbortSignal);
   });
-  it('sends Claude Sonnet 5.5 low effort and a JSON schema', async () => {
-    process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID =
-      'us.anthropic.claude-sonnet-5-5';
+  it('defaults to Claude Sonnet 5.5 with low effort and a JSON schema', async () => {
+    delete process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID;
     const { send, service } = createService(ALLOWED_REPORT);
 
     await service.assessReportedContent({
@@ -262,8 +261,9 @@ describe('ContentModerationAiService', () => {
     });
   });
 
-  it('keeps the Sonnet 4.5 deterministic payload by default', async () => {
-    delete process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID;
+  it('keeps the Sonnet 4.5 deterministic payload for a rollback override', async () => {
+    process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID =
+      'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
     const { send, service } = createService(ALLOWED_REPORT);
 
     await service.assessReportedContent({
