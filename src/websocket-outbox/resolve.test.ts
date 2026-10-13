@@ -340,3 +340,50 @@ it('carries capability through media expansion so historical and new intents do 
     ]);
   }
 });
+
+it.each(['DROP_UPDATE', 'DROP_RATING_UPDATE', 'DROP_REACTION_UPDATE'] as const)(
+  'never embeds root or quoted content when resolving capable %s intent',
+  async (updateType) => {
+    setDropAudience();
+    jest
+      .mocked(connections.filterConnectionIdsByDeliveryMode)
+      .mockResolvedValue(['c']);
+    mockDb.oneOrNull.mockResolvedValue({
+      id: 'd',
+      wave_id: 'w',
+      author_id: 'a',
+      serial_no: '9',
+      parts: [
+        {
+          content: 'root secret',
+          quoted_drop: { drop: { content: 'quote secret' } }
+        }
+      ]
+    });
+    const [job] = await resolveWebSocketEvent(
+      {
+        type: 'drop',
+        dropId: 'd',
+        updateType,
+        deliveryCapability: 'durable_updates_v1'
+      },
+      ctx
+    );
+    expect(job).toMatchObject({
+      type: 'delivery',
+      deliveryCapability: 'durable_updates_v1'
+    });
+    if (job.type !== 'delivery') throw new Error('Expected recipient job');
+    expect(JSON.parse(job.message)).toEqual({
+      type: 'DROP_UPDATE_REF',
+      data: {
+        drop_id: 'd',
+        wave_id: 'w',
+        author_id: 'a',
+        serial_no: 9,
+        update_type: updateType
+      }
+    });
+    expect(job.message).not.toContain('secret');
+  }
+);

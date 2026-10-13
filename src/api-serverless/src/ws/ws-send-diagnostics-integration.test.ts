@@ -54,7 +54,7 @@ import { enqueueWebSocketFrame } from './ws-outbound-queue';
 import { HttpResponse } from '@smithy/protocol-http';
 import { NftLinkRefreshNotifier } from '@/nftLinkRefresherLoop/nft-link-refresh-notifier';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
-import { AppWebSockets, appWebSockets } from '@/api/ws/ws';
+import { AppWebSockets, appWebSockets, ANON_USER_ID } from '@/api/ws/ws';
 import { WsConnectionRepository } from '@/api/ws/ws-connection.repository';
 import { withLambdaRemainingTime } from '@/lambda-deadline';
 import {
@@ -85,7 +85,8 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     })),
     deleteByConnectionId: jest.fn(async () => undefined),
     findNotificationConnectionIdsByIdentityIds: jest.fn(),
-    canIdentityReadQueuedResource: jest.fn()
+    canIdentityReadQueuedResource: jest.fn(),
+    findDropIdsReadableByWaveAudience: jest.fn()
   };
   const sockets = new AppWebSockets(
     repository as unknown as WsConnectionRepository
@@ -106,6 +107,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     repository.getByConnectionId.mockClear();
     repository.findNotificationConnectionIdsByIdentityIds.mockReset();
     repository.canIdentityReadQueuedResource.mockReset();
+    repository.findDropIdsReadableByWaveAudience.mockReset();
   });
 
   it('sends legacy frames immediately without enqueueing and still reports throttling', async () => {
@@ -182,6 +184,244 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     });
     expect(mockHandle).toHaveBeenCalledTimes(1);
     expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+  });
+
+  const quoteSnapshot = () => ({
+    id: 'root',
+    wave: { id: 'root-wave' },
+    parts: [
+      {
+        quoted_drop: {
+          drop_id: 'visible',
+          drop_part_id: 1,
+          is_deleted: false,
+          drop: {
+            id: 'visible',
+            parts: [
+              {
+                content: 'shared quote',
+                quoted_drop: {
+                  drop_id: 'restricted',
+                  drop_part_id: 1,
+                  is_deleted: true,
+                  drop: {
+                    id: 'restricted',
+                    parts: [{ content: 'restricted secret' }]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ],
+    reply_to: {
+      drop: {
+        id: 'reply',
+        parts: [
+          {
+            quoted_drop: {
+              drop_id: 'reply-quote',
+              drop_part_id: 2,
+              is_deleted: true,
+              drop: { id: 'reply-quote', parts: [{ content: 'reply secret' }] }
+            }
+          }
+        ]
+      }
+    }
+  });
+
+  it.each([
+    ['DROP_UPDATE', false, false],
+    ['DROP_UPDATE', true, false],
+    ['DROP_UPDATE', true, true],
+    ['DROP_RATING_UPDATE', false, false],
+    ['DROP_RATING_UPDATE', true, false],
+    ['DROP_RATING_UPDATE', true, true],
+    ['DROP_REACTION_UPDATE', false, false],
+    ['DROP_REACTION_UPDATE', true, false],
+    ['DROP_REACTION_UPDATE', true, true]
+  ] as const)(
+    'rechecks %s snapshot quotes before Gateway delivery (capable=%s, marked=%s)',
+    async (type, capable, marked) => {
+      repository.getByConnectionId.mockResolvedValueOnce({
+        identity_id: 'profile',
+        durable_updates: capable,
+        jwt_expiry: 2000000000
+      });
+      repository.canIdentityReadQueuedResource.mockResolvedValue(true);
+      repository.findDropIdsReadableByWaveAudience.mockResolvedValue(
+        new Set(['visible'])
+      );
+      mockHandle.mockResolvedValue(response(200));
+      const message = JSON.stringify({
+        type,
+        data: quoteSnapshot(),
+        reason: 'POLL_RESPONSE'
+      });
+      await sockets.deliverQueued({
+        version: 1,
+        id: 'snapshot',
+        connectionId: 'synthetic',
+        identityId: 'profile',
+        jwtExpiry: 2000000000,
+        message,
+        ...(marked ? { deliveryCapability: 'durable_updates_v1' as const } : {})
+      });
+      expect(repository.findDropIdsReadableByWaveAudience).toHaveBeenCalledWith(
+        {
+          waveId: 'root-wave',
+          dropIds: ['visible', 'restricted', 'reply-quote']
+        },
+        {}
+      );
+      const sent = JSON.parse(String(mockHandle.mock.calls[0][0].body));
+      expect(sent.type).toBe(type);
+      expect(sent.reason).toBe('POLL_RESPONSE');
+      expect(sent.data.parts[0].quoted_drop.drop.parts[0].content).toBe(
+        'shared quote'
+      );
+      expect(sent.data.parts[0].quoted_drop.drop.parts[0].quoted_drop).toEqual({
+        drop_id: 'restricted',
+        drop_part_id: 1,
+        is_deleted: false
+      });
+      expect(sent.data.reply_to.drop.parts[0].quoted_drop).toEqual({
+        drop_id: 'reply-quote',
+        drop_part_id: 2,
+        is_deleted: false
+      });
+      expect(JSON.stringify(sent)).not.toContain('secret');
+      expect(message).toContain('restricted secret');
+      expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+      expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    }
+  );
+
+  it('retains quote-lookup failure and rechecks the stored snapshot on retry', async () => {
+    repository.canIdentityReadQueuedResource.mockResolvedValue(true);
+    repository.findDropIdsReadableByWaveAudience
+      .mockRejectedValueOnce(new Error('database unavailable'))
+      .mockResolvedValueOnce(new Set());
+    mockHandle.mockResolvedValue(response(200));
+    const batch = {
+      Records: [
+        {
+          messageId: 'quote-retry',
+          body: JSON.stringify({
+            version: 1,
+            id: 'quote-retry',
+            connectionId: 'synthetic',
+            identityId: 'profile',
+            jwtExpiry: 2000000000,
+            message: JSON.stringify({
+              type: 'DROP_UPDATE',
+              data: quoteSnapshot()
+            })
+          })
+        }
+      ]
+    } as SQSEvent;
+    const report = jest.fn();
+    const defer = jest.fn();
+    const deliver = () =>
+      processWebSocketBatch(
+        batch,
+        (frame) => sockets.deliverQueued(frame),
+        report,
+        defer
+      );
+    expect(await deliver()).toEqual({
+      batchItemFailures: [{ itemIdentifier: 'quote-retry' }]
+    });
+    expect(mockHandle).not.toHaveBeenCalled();
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(defer).toHaveBeenCalledWith(batch.Records[0]);
+    expect(await deliver()).toEqual({ batchItemFailures: [] });
+    expect(repository.findDropIdsReadableByWaveAudience).toHaveBeenCalledTimes(
+      2
+    );
+    expect(String(mockHandle.mock.calls[0][0].body)).not.toContain('secret');
+  });
+
+  it('redacts historical full-drop quotes for an anonymous queued session', async () => {
+    repository.getByConnectionId.mockResolvedValueOnce({
+      identity_id: ANON_USER_ID,
+      durable_updates: false,
+      jwt_expiry: 2000000000
+    });
+    repository.canIdentityReadQueuedResource.mockResolvedValue(true);
+    repository.findDropIdsReadableByWaveAudience.mockResolvedValue(new Set());
+    mockHandle.mockResolvedValue(response(200));
+    await sockets.deliverQueued({
+      version: 1,
+      id: 'anonymous',
+      connectionId: 'synthetic',
+      identityId: ANON_USER_ID,
+      jwtExpiry: 2000000000,
+      message: JSON.stringify({ type: 'DROP_UPDATE', data: quoteSnapshot() })
+    });
+    expect(String(mockHandle.mock.calls[0][0].body)).not.toContain('secret');
+    expect(repository.findDropIdsReadableByWaveAudience).toHaveBeenCalledTimes(
+      1
+    );
+  });
+
+  it('rejects revoked root access before resolving or sending embedded quotes', async () => {
+    repository.canIdentityReadQueuedResource.mockResolvedValue(false);
+    await sockets.deliverQueued({
+      version: 1,
+      id: 'revoked',
+      connectionId: 'synthetic',
+      identityId: 'profile',
+      jwtExpiry: 2000000000,
+      message: JSON.stringify({ type: 'DROP_UPDATE', data: quoteSnapshot() })
+    });
+    expect(repository.findDropIdsReadableByWaveAudience).not.toHaveBeenCalled();
+    expect(mockHandle).not.toHaveBeenCalled();
+  });
+
+  it('retains an embedded quote snapshot lacking its root wave instead of sending it', async () => {
+    const snapshot = { ...quoteSnapshot(), wave: undefined };
+    await expect(
+      sockets.deliverQueued({
+        version: 1,
+        id: 'invalid',
+        connectionId: 'synthetic',
+        identityId: 'profile',
+        jwtExpiry: 2000000000,
+        message: JSON.stringify({ type: 'DROP_UPDATE', data: snapshot })
+      })
+    ).rejects.toThrow('Missing queued drop wave');
+    expect(repository.findDropIdsReadableByWaveAudience).not.toHaveBeenCalled();
+    expect(mockHandle).not.toHaveBeenCalled();
+  });
+
+  it('keeps reference-only outbox messages unchanged without a quote lookup', async () => {
+    repository.canIdentityReadQueuedResource.mockResolvedValue(true);
+    mockHandle.mockResolvedValue(response(200));
+    const message = JSON.stringify({
+      type: 'DROP_UPDATE_REF',
+      data: {
+        drop_id: 'root',
+        wave_id: 'root-wave',
+        author_id: 'author',
+        serial_no: 1,
+        update_type: 'DROP_UPDATE'
+      }
+    });
+    await sockets.deliverQueued({
+      version: 1,
+      id: 'ref',
+      connectionId: 'synthetic',
+      identityId: 'profile',
+      jwtExpiry: 2000000000,
+      message,
+      deliveryCapability: 'durable_updates_v1'
+    });
+    expect(String(mockHandle.mock.calls[0][0].body)).toBe(message);
+    expect(repository.findDropIdsReadableByWaveAudience).not.toHaveBeenCalled();
   });
 
   it('does not deliver a capability-marked queued frame to an incompatible session or delete it as stale', async () => {

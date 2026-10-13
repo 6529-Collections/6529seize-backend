@@ -37,6 +37,20 @@ for one recipient does not require republishing the entire audience. Drop
 updates use `DROP_UPDATE_REF`, causing the client to fetch canonical content;
 deletions preserve their routing metadata after the drop row disappears.
 
+Quote visibility uses the same audience rule introduced by backend #2159. Legacy
+immediate update/rating/reaction fan-out embeds a quote only when the entire
+root wave audience can read its wave and parent. Unreadable quotes retain only
+their IDs, with no embedded content or deletion-state disclosure. This filtering
+also applies to nested quotes and quotes inside embedded replies.
+
+Retained SQS full-drop snapshots are checked against current quote visibility
+again before Gateway delivery, including unmarked backlog for legacy clients.
+A lookup failure fails the job for retry rather than sending unchecked content
+or acknowledging lost delivery. New capable-client outbox jobs contain only
+`DROP_UPDATE_REF`; canonical REST reads apply the viewer's quote access (v1) or
+return quote IDs only (v2). Quote checks do not bypass root access or session
+cancellation and require no new frontend protocol or schema.
+
 The worker normalizes raw database drop serials to safe, nonnegative JSON
 numbers before building update references and deletion frames. Its TypeORM
 adapter returns MySQL `BIGINT` columns as strings, unlike the API adapter; raw

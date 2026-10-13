@@ -139,29 +139,74 @@ describe('WsListenersNotifier quoted drop audience', () => {
     return { notifier, appWebSockets, wsConnectionRepository };
   }
 
-  it('omits quoted content the wave audience cannot read from every payload', async () => {
-    const { notifier, appWebSockets, wsConnectionRepository } = createNotifier(
-      []
-    );
-    const drop = aRootDrop(
-      aQuote(aDropWithoutWave('quoted', 'restricted content'))
-    );
+  it.each([
+    'notifyAboutDropUpdate',
+    'notifyAboutDropRatingUpdate',
+    'notifyAboutDropReactionUpdate'
+  ] as const)(
+    'omits unreadable quotes from direct %s payloads',
+    async (method) => {
+      const { notifier, appWebSockets, wsConnectionRepository } =
+        createNotifier([]);
+      const drop = aRootDrop(
+        aQuote(aDropWithoutWave('quoted', 'restricted content'))
+      );
 
-    await notifier.notifyAboutDropUpdate(drop, {});
+      await notifier[method](drop, {});
 
-    expect(
-      wsConnectionRepository.findDropIdsReadableByWaveAudience
-    ).toHaveBeenCalledWith({ waveId: 'root-wave', dropIds: ['quoted'] }, {});
-    expect(appWebSockets.send).toHaveBeenCalledTimes(2);
-    for (const [{ message }] of appWebSockets.send.mock.calls) {
-      expect(message).not.toContain('restricted content');
-      expect(JSON.parse(message).data.parts[0].quoted_drop).toEqual({
-        drop_id: 'quoted',
-        drop_part_id: 1,
-        is_deleted: false
-      });
+      expect(
+        wsConnectionRepository.findDropIdsReadableByWaveAudience
+      ).toHaveBeenCalledWith({ waveId: 'root-wave', dropIds: ['quoted'] }, {});
+      expect(appWebSockets.send).toHaveBeenCalledTimes(2);
+      for (const [{ message }] of appWebSockets.send.mock.calls) {
+        expect(message).not.toContain('restricted content');
+        expect(JSON.parse(message).data.parts[0].quoted_drop).toEqual({
+          drop_id: 'quoted',
+          drop_part_id: 1,
+          is_deleted: false
+        });
+      }
     }
-  });
+  );
+
+  it.each([
+    'notifyAboutDropUpdate',
+    'notifyAboutDropRatingUpdate',
+    'notifyAboutDropReactionUpdate'
+  ] as const)(
+    'redacts legacy %s fan-out and wakes capable delivery once',
+    async (method) => {
+      const { appWebSockets, wsConnectionRepository } = createNotifier([]);
+      const repository = {
+        ...wsConnectionRepository,
+        filterConnectionIdsByDeliveryMode: jest
+          .fn()
+          .mockResolvedValue(['connection-anon'])
+      };
+      const wake = jest.fn().mockResolvedValue(undefined);
+      const notifier = new WsListenersNotifier(
+        appWebSockets as any,
+        repository as any,
+        { getViewerContextsForDrop: jest.fn().mockResolvedValue({}) },
+        wake
+      );
+      const drop = aRootDrop(
+        aQuote(aDropWithoutWave('quoted', 'restricted content'))
+      );
+      await notifier[method](drop, {});
+      expect(wake).toHaveBeenCalledTimes(1);
+      expect(appWebSockets.send).toHaveBeenCalledTimes(1);
+      expect(appWebSockets.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          connectionId: 'connection-anon',
+          legacyOnly: true
+        })
+      );
+      expect(appWebSockets.send.mock.calls[0][0].message).not.toContain(
+        'restricted content'
+      );
+    }
+  );
 
   it('keeps quoted content the wave audience can read', async () => {
     const { notifier, appWebSockets } = createNotifier(['quoted']);

@@ -1,3 +1,9 @@
+import type { ApiDrop } from '@/api/generated/models/ApiDrop';
+import { WsMessageType } from '@/api/ws/ws-message';
+import {
+  getQuotedDropIds,
+  redactQuotedDropsOutsideAudience
+} from '@/api/ws/ws-quote-visibility';
 import { Logger } from '../../../logging';
 import * as process from 'node:process';
 import WebSocket from 'ws';
@@ -298,8 +304,33 @@ export class AppWebSockets {
     if (!(await this.canDeliverQueuedPayload(frame))) return;
     await this.deliver({
       connectionId: frame.connectionId,
-      message: frame.message,
+      message: await this.restrictQueuedDropQuotes(frame.message),
       skipStaleConnectionCheck: true
+    });
+  }
+
+  /** Historical queued snapshots must satisfy today's quote audience, not their enqueue-time access. */
+  private async restrictQueuedDropQuotes(message: string): Promise<string> {
+    const payload = JSON.parse(message) as { type?: string; data?: ApiDrop };
+    if (
+      payload.type !== WsMessageType.DROP_UPDATE &&
+      payload.type !== WsMessageType.DROP_RATING_UPDATE &&
+      payload.type !== WsMessageType.DROP_REACTION_UPDATE
+    )
+      return message;
+    if (!payload.data) throw new Error('Missing queued drop payload');
+    const dropIds = getQuotedDropIds(payload.data);
+    if (!dropIds.length) return message;
+    const waveId = payload.data.wave?.id;
+    if (!waveId) throw new Error('Missing queued drop wave');
+    const visible =
+      await this.wsConnectionRepository.findDropIdsReadableByWaveAudience(
+        { waveId, dropIds },
+        {}
+      );
+    return JSON.stringify({
+      ...payload,
+      data: redactQuotedDropsOutsideAudience(payload.data, visible)
     });
   }
 
