@@ -32,6 +32,9 @@ function parseConsolidationPolicy(value: string): ApiConsolidationPolicy {
   const normalized = value.endsWith('.000Z')
     ? value
     : value.replace(/Z$/, '.000Z');
+  // The regex only checks the shape. Date silently rolls impossible values
+  // over (24:00:00 to the next day, 30 February to March), so the round trip
+  // back to the same ISO string is what rejects them. Keep both checks.
   if (
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.000)?Z$/.test(value) ||
     !Number.isFinite(activationMs) ||
