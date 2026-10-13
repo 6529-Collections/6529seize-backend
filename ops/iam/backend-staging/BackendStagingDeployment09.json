@@ -1,0 +1,130 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageApprovedQueues2",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ListQueueTags",
+        "sqs:SetQueueAttributes",
+        "sqs:TagQueue",
+        "sqs:UntagQueue"
+      ],
+      "Resource": [
+        "arn:aws:sqs:eu-west-1:987989283142:wave-drop-metrics-refresh-dirty-dlq.fifo",
+        "arn:aws:sqs:eu-west-1:987989283142:wave-drop-metrics-refresh-dirty.fifo",
+        "arn:aws:sqs:eu-west-1:987989283142:wave-score-refresh-dirty-dlq.fifo",
+        "arn:aws:sqs:eu-west-1:987989283142:wave-score-refresh-dirty.fifo",
+        "arn:aws:sqs:eu-west-1:987989283142:wave-score-refresh-start.fifo",
+        "arn:aws:sqs:eu-west-1:987989283142:websocket-outbound-dlq.fifo",
+        "arn:aws:sqs:eu-west-1:987989283142:websocket-outbound.fifo",
+        "arn:aws:sqs:eu-west-1:987989283142:xtdh-dead-letter.fifo",
+        "arn:aws:sqs:eu-west-1:987989283142:xtdh-start.fifo"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "SubscribeApprovedQueues1",
+      "Effect": "Allow",
+      "Action": [
+        "sns:Subscribe"
+      ],
+      "Resource": [
+        "arn:aws:sns:eu-west-1:987989283142:tdh-calculation-done.fifo"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1",
+          "sns:Protocol": "sqs",
+          "sns:Endpoint": [
+            "arn:aws:sqs:eu-west-1:987989283142:over-rates-revocation-start.fifo",
+            "arn:aws:sqs:eu-west-1:987989283142:wave-score-refresh-start.fifo",
+            "arn:aws:sqs:eu-west-1:987989283142:xtdh-start.fifo"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ManageCalculationSubscriptions1",
+      "Effect": "Allow",
+      "Action": [
+        "sns:GetSubscriptionAttributes",
+        "sns:SetSubscriptionAttributes",
+        "sns:Unsubscribe"
+      ],
+      "Resource": [
+        "arn:aws:sns:eu-west-1:987989283142:tdh-calculation-done.fifo"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageApprovedAlarms1",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:ListTagsForResource",
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:TagResource",
+        "cloudwatch:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:aggregatedActivityLoop-staging-aggregatedActivityLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:artCurationNftWatchLoop-staging-artCurationNftWatchLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:artworkDocumentationProcessor-staging-ArtworkDocumentationProcessingFailures-Nbw9eHxhuCsJ",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:artworkDocumentationProcessor-staging-ArtworkDocumentationProcessorErrors-IHS9xpZcmRYw",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:artworkDocumentationProcessor-staging-ArtworkDocumentationQueueDelay-zYLH8H4UP8w5",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:claimsBuilder-staging-claimsBuilder-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:claimsMediaArweaveUploader-staging-claimsMediaArweaveUploader-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:competitionMigrationLoop-staging-competitionMigrationLoop-dropped-continuations",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:competitionMigrationLoop-staging-competitionMigrationLoop-errors",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:customReplayLoop-staging-customReplayLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:dbDumpsDaily-staging-dbDumpsDaily-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:dbMigrationsLoop-staging-dbMigrationsLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:delegationsLoop-staging-delegationsLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:discoverEnsLoop-staging-discoverEnsLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:dropVideoConversionInvokerLoop-staging-dropVideoConversionInvokerLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:ethPriceLoop-staging-ethPriceLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:externalCollectionLiveTailingLoop-staging-externalCollectionLiveTailingLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:externalCollectionSnapshottingLoop-staging-externalCollectionSnapshottingLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:helpBotReplyLoop-staging-helpBotDailyActivityCredits-DLQ",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:helpBotReplyLoop-staging-helpBotDailyActivityCredits-DeadRequest",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:helpBotReplyLoop-staging-helpBotReplyLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:marketStatsLoop-staging-marketStatsGRADIENT-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:marketStatsLoop-staging-marketStatsLAB-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:marketStatsLoop-staging-marketStatsMEMES-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:marketStatsLoop-staging-marketStatsNEXTGEN-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:mintAnnouncementsLoop-staging-mintAnnouncementsLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:nextgenContractLoop-staging-nextgenContractLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:nextgenMetadataLoop-staging-nextgenMetadataLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:nftHistoryLoop-staging-nftHistoryLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:nftLinkMediaPreviewLoop-staging-nftLinkMediaPreviewLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:nftLinkRefresherLoop-staging-nftLinkRefresherLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:nftOwnersLoop-staging-nftOwnersLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:nftsLoop-staging-nftsLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:overRatesRevocationLoop-staging-overRatesRevocationLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:ownersBalancesLoop-staging-ownersBalancesLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:populateHistoricConsolidatedTdh-staging-populateHistoricConsolidatedTdh-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:pushNotificationsHandler-staging-pushNotificationsHandler-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:rateEventProcessingLoop-staging-rateEventProcessingLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:refreshENS-staging-refreshENS-OOM"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    }
+  ]
+}

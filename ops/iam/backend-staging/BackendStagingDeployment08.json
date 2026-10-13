@@ -1,0 +1,121 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageApprovedRules2",
+      "Effect": "Allow",
+      "Action": [
+        "events:DeleteRule",
+        "events:DescribeRule",
+        "events:ListTagsForResource",
+        "events:ListTargetsByRule",
+        "events:PutRule",
+        "events:PutTargets",
+        "events:RemoveTargets",
+        "events:TagResource",
+        "events:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:events:eu-west-1:987989283142:rule/nftOwnersLoop-staging-NftOwnersLoopEventsRuleSchedu-gzkepAZyPqq1",
+        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule1-afIJRs8t7Osg",
+        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule2-1jaGnbJNqsO5",
+        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule3-vRaRMmWmqPBx",
+        "arn:aws:events:eu-west-1:987989283142:rule/ownersBalancesLoop-stagin-OwnersBalancesLoopEventsR-WWEsjlA8A7Wg",
+        "arn:aws:events:eu-west-1:987989283142:rule/pushNotificationsHandler--PushNotificationsHandlerE-tXizKA8vK0Dx",
+        "arn:aws:events:eu-west-1:987989283142:rule/rateEventProcessingLoop-s-RateEventProcessingLoopEv-xkOQAvk42lfR",
+        "arn:aws:events:eu-west-1:987989283142:rule/refreshENS-staging-RefreshENSEventsRuleSchedule1-XFu7AvqRY2gf",
+        "arn:aws:events:eu-west-1:987989283142:rule/rememesLoop-staging-RememesRefreshMetadataLoopEvent-3HHEyeNy71Zx",
+        "arn:aws:events:eu-west-1:987989283142:rule/rememesLoop-staging-RememesS3LoopEventsRuleSchedule-YB6kk5ocy7GC",
+        "arn:aws:events:eu-west-1:987989283142:rule/royaltiesLoop-staging-RoyaltiesLoopEventsRuleSchedu-Fas7mVlRJohk",
+        "arn:aws:events:eu-west-1:987989283142:rule/subscriptionsDaily-stagin-SubscriptionCoverageRecon-AD8kjFQYdSZE",
+        "arn:aws:events:eu-west-1:987989283142:rule/subscriptionsDaily-stagin-SubscriptionCoverageRecon-kpSP9FUZJv7W",
+        "arn:aws:events:eu-west-1:987989283142:rule/subscriptionsDaily-stagin-SubscriptionsDailyEventsR-PzioJmYYTJrx",
+        "arn:aws:events:eu-west-1:987989283142:rule/subscriptionsTopUpLoop-st-SubscriptionsTopUpLoopEve-0z5Fnefw4myE",
+        "arn:aws:events:eu-west-1:987989283142:rule/tdhHistoryLoop-staging-TdhHistoryLoopEventsRuleSche-hlfaELPqd32r",
+        "arn:aws:events:eu-west-1:987989283142:rule/tdhLoop-staging-TdhLoopEventsRuleSchedule1-cIaQt90PcEJF",
+        "arn:aws:events:eu-west-1:987989283142:rule/transactionsLoop-staging-GradientsTransactionsLoopE-RNmJb7JdySwX",
+        "arn:aws:events:eu-west-1:987989283142:rule/transactionsLoop-staging-MemeLabTransactionsLoopEve-FTpwQ52KhSRL",
+        "arn:aws:events:eu-west-1:987989283142:rule/transactionsLoop-staging-MemesTransactionsLoopEvent-OVmiHrQEkKM0",
+        "arn:aws:events:eu-west-1:987989283142:rule/transactionsProcessingLoo-TransactionsProcessingLoo-lzJGBBZBMVQT",
+        "arn:aws:events:eu-west-1:987989283142:rule/waveDecisionExecutionLoop-WaveDecisionExecutionLoop-9Yo5xkdxYl09",
+        "arn:aws:events:eu-west-1:987989283142:rule/waveDropMetricsRefreshLoo-WaveDropMetricsRefreshLoo-FGsZkZlTVxhH",
+        "arn:aws:events:eu-west-1:987989283142:rule/waveLeaderboardSnapshotte-WaveLeaderboardSnapshotte-ZA2zG3OiNBYz",
+        "arn:aws:events:eu-west-1:987989283142:rule/waveScoreRefreshLoop-stag-WaveScoreRefreshLoopEvent-j13izL1hN7Pa",
+        "arn:aws:events:eu-west-1:987989283142:rule/websocketOutboundHandler--WebsocketOutboundHandlerE-DtIZBYNNcwGT",
+        "arn:aws:events:eu-west-1:987989283142:rule/xTdhGrantsReviewerLoop-st-XTdhGrantsReviewerLoopEve-1z81cPzDVYeo"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageApprovedSchedules1",
+      "Effect": "Allow",
+      "Action": [
+        "scheduler:CreateSchedule",
+        "scheduler:DeleteSchedule",
+        "scheduler:GetSchedule",
+        "scheduler:UpdateSchedule"
+      ],
+      "Resource": [
+        "arn:aws:scheduler:eu-west-1:987989283142:schedule/default/mintAnnouncementsLoop-sta-MintAnnouncementsLoopSch-1NEK4W11ODKI6",
+        "arn:aws:scheduler:eu-west-1:987989283142:schedule/default/mintAnnouncementsLoop-sta-MintAnnouncementsLoopSch-1X5RK9YRAORVI",
+        "arn:aws:scheduler:eu-west-1:987989283142:schedule/default/mintAnnouncementsLoop-sta-MintAnnouncementsLoopSch-1XU9YVFRNIVP",
+        "arn:aws:scheduler:eu-west-1:987989283142:schedule/default/mintAnnouncementsLoop-sta-MintAnnouncementsLoopSch-N71GVYEAWCHF",
+        "arn:aws:scheduler:eu-west-1:987989283142:schedule/default/mintAnnouncementsLoop-sta-MintAnnouncementsLoopSch-O7GK7TBF17WK",
+        "arn:aws:scheduler:eu-west-1:987989283142:schedule/default/mintAnnouncementsLoop-sta-MintAnnouncementsLoopSch-RPXFQM3RD72Y"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageApprovedQueues1",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ListQueueTags",
+        "sqs:SetQueueAttributes",
+        "sqs:TagQueue",
+        "sqs:UntagQueue"
+      ],
+      "Resource": [
+        "arn:aws:sqs:eu-west-1:987989283142:attachments-orchestration",
+        "arn:aws:sqs:eu-west-1:987989283142:attachments-orchestration-dlq",
+        "arn:aws:sqs:eu-west-1:987989283142:attachments-processing",
+        "arn:aws:sqs:eu-west-1:987989283142:attachments-processing-dlq",
+        "arn:aws:sqs:eu-west-1:987989283142:claims-builder",
+        "arn:aws:sqs:eu-west-1:987989283142:claims-builder-dlq",
+        "arn:aws:sqs:eu-west-1:987989283142:claims-media-arweave-upload",
+        "arn:aws:sqs:eu-west-1:987989283142:claims-media-arweave-upload-dlq",
+        "arn:aws:sqs:eu-west-1:987989283142:drop-media-sanitizer",
+        "arn:aws:sqs:eu-west-1:987989283142:drop-media-sanitizer-dlq",
+        "arn:aws:sqs:eu-west-1:987989283142:firebase-push-notifications",
+        "arn:aws:sqs:eu-west-1:987989283142:firebase-push-notifications-dlq",
+        "arn:aws:sqs:eu-west-1:987989283142:help-bot-daily-activity-credits-dlq.fifo",
+        "arn:aws:sqs:eu-west-1:987989283142:help-bot-daily-activity-credits.fifo",
+        "arn:aws:sqs:eu-west-1:987989283142:help-bot-replies",
+        "arn:aws:sqs:eu-west-1:987989283142:help-bot-replies-dlq",
+        "arn:aws:sqs:eu-west-1:987989283142:nft-link-media-previews",
+        "arn:aws:sqs:eu-west-1:987989283142:nft-link-media-previews-dlq",
+        "arn:aws:sqs:eu-west-1:987989283142:nft-link-refreshes",
+        "arn:aws:sqs:eu-west-1:987989283142:nft-link-refreshes-dlq",
+        "arn:aws:sqs:eu-west-1:987989283142:over-rates-revocation-start.fifo",
+        "arn:aws:sqs:eu-west-1:987989283142:s3-uploader-jobs",
+        "arn:aws:sqs:eu-west-1:987989283142:s3-uploader-jobs-dlq"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    }
+  ]
+}
