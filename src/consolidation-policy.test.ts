@@ -4,6 +4,10 @@ import {
 } from './consolidation-policy';
 import { seizeSettings } from './api-serverless/src/seize-settings';
 import { ConsolidationTools } from './consolidation-tools';
+import {
+  CONSOLIDATIONS_LIMIT,
+  CONSOLIDATIONS_UNGATED_LIMIT
+} from './constants';
 
 const original = process.env[CONSOLIDATION_ACTIVATION_ENV];
 afterEach(() => {
@@ -17,6 +21,8 @@ test.each(['2026-10-15T00:00:00Z', '2026-10-12T00:00:00Z'])(
     process.env[CONSOLIDATION_ACTIVATION_ENV] = cutoff;
     const policy = getConsolidationPolicy();
     expect(seizeSettings().consolidation).toEqual(policy);
+    expect(policy.max_wallets).toBe(CONSOLIDATIONS_LIMIT);
+    expect(policy.ungated_max_wallets).toBe(CONSOLIDATIONS_UNGATED_LIMIT);
     expect(
       Date.parse(policy.four_wallet_signing_opens_at) -
         Date.parse(policy.four_wallet_activation_at)
@@ -76,6 +82,8 @@ test('validates each configured value once and still rejects a bad one', () => {
 test('accepts a valid time that is not midnight', () => {
   process.env[CONSOLIDATION_ACTIVATION_ENV] = '2026-10-15T13:45:30Z';
   expect(getConsolidationPolicy()).toEqual({
+    max_wallets: 4,
+    ungated_max_wallets: 3,
     four_wallet_activation_at: '2026-10-15T13:45:30.000Z',
     four_wallet_signing_opens_at: '2026-10-15T13:55:30.000Z'
   });

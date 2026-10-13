@@ -6,6 +6,8 @@ const BEFORE = ACTIVATION - 86_400;
 const AFTER = ACTIVATION + 3_600;
 
 const tools = new ConsolidationTools(() => ({
+  max_wallets: 4,
+  ungated_max_wallets: 3,
   four_wallet_activation_at: '2026-10-15T00:00:00Z',
   four_wallet_signing_opens_at: '2026-10-15T00:10:00Z'
 }));

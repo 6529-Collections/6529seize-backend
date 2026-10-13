@@ -1,4 +1,8 @@
 import { env } from './env';
+import {
+  CONSOLIDATIONS_LIMIT,
+  CONSOLIDATIONS_UNGATED_LIMIT
+} from './constants';
 import type { ApiConsolidationPolicy } from '@/api/generated/models/ApiConsolidationPolicy';
 
 export const CONSOLIDATION_ACTIVATION_ENV =
@@ -39,6 +43,8 @@ function parseConsolidationPolicy(value: string): ApiConsolidationPolicy {
     );
   }
   return {
+    max_wallets: CONSOLIDATIONS_LIMIT,
+    ungated_max_wallets: CONSOLIDATIONS_UNGATED_LIMIT,
     four_wallet_activation_at: new Date(activationMs).toISOString(),
     four_wallet_signing_opens_at: new Date(
       activationMs + SIGNING_MARGIN_MS
