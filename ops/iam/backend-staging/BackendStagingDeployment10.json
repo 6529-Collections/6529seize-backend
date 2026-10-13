@@ -1,0 +1,72 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageApprovedAlarms2",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:ListTagsForResource",
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:TagResource",
+        "cloudwatch:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:rememesLoop-staging-rememesFileLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:rememesLoop-staging-rememesRefreshMetadataLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:rememesLoop-staging-rememesS3Loop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:royaltiesLoop-staging-royaltiesLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:s3Uploader-staging-s3Uploader-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:subscriptionsDaily-staging-subscriptionCoverageReconciliationLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:subscriptionsDaily-staging-subscriptionsDaily-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:subscriptionsTopUpLoop-staging-subscriptionsTopUpLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:tdhHistoryLoop-staging-tdhHistoryLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:tdhLoop-staging-tdhLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:teamLoop-staging-teamLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:transactionsLoop-staging-gradientsTransactionsLoop-Errors",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:transactionsLoop-staging-gradientsTransactionsLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:transactionsLoop-staging-gradientsTransactionsLoop-Throttles",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:transactionsLoop-staging-memeLabTransactionsLoop-Errors",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:transactionsLoop-staging-memeLabTransactionsLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:transactionsLoop-staging-memeLabTransactionsLoop-Throttles",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:transactionsLoop-staging-memesTransactionsLoop-Errors",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:transactionsLoop-staging-memesTransactionsLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:transactionsLoop-staging-memesTransactionsLoop-Throttles",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:transactionsLoop-staging-transactionIngestion-Incident",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:transactionsProcessingLoop-staging-transactionsProcessingLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:waveDecisionExecutionLoop-staging-waveDecisionExecutionLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:waveDropMetricsRefreshLoop-staging-waveDropMetricsRefreshLoop-DLQ",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:waveDropMetricsRefreshLoop-staging-waveDropMetricsRefreshLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:waveLeaderboardSnapshotterLoop-staging-waveLeaderboardSnapshotterLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:waveScoreRefreshLoop-staging-waveScoreRefreshLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:websocketOutboundHandler-staging-backlog-age",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:websocketOutboundHandler-staging-dead-letters",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:websocketOutboundHandler-staging-outbox-age",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:xTdhGrantsReviewerLoop-staging-xTdhGrantsReviewerLoop-OOM",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:xTdhLoop-staging-xTdhLoop-DeadLetters",
+        "arn:aws:cloudwatch:eu-west-1:987989283142:alarm:xTdhLoop-staging-xTdhLoop-OOM"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "CompositeAlarmDeploymentOperations1",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:PutCompositeAlarm"
+      ],
+      "Resource": [
+        "*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    }
+  ]
+}

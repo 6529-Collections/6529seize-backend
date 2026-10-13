@@ -1,0 +1,139 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageApprovedStacks2",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CancelUpdateStack",
+        "cloudformation:ContinueUpdateRollback",
+        "cloudformation:CreateChangeSet",
+        "cloudformation:CreateStack",
+        "cloudformation:DeleteChangeSet",
+        "cloudformation:DeleteStack",
+        "cloudformation:DescribeChangeSet",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStackResource",
+        "cloudformation:DescribeStackResources",
+        "cloudformation:DescribeStacks",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:GetStackPolicy",
+        "cloudformation:GetTemplate",
+        "cloudformation:GetTemplateSummary",
+        "cloudformation:ListStackResources",
+        "cloudformation:TagResource",
+        "cloudformation:UntagResource",
+        "cloudformation:UpdateStack"
+      ],
+      "Resource": [
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dbDumpsDaily-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dbMigrationsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/delegationsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/discoverEnsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropMediaIngestStorage-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropMediaSanitizer-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropVideoConversionInvokerLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/ethPriceLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/externalCollectionLiveTailingLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/externalCollectionSnapshottingLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/helpBotReplyLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/marketDepthStreamLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/marketStatsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/mintAnnouncementsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/nextgenContractLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/nextgenMetadataLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/nftHistoryLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/nftLinkMediaPreviewLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/nftLinkRefresherLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/nftOwnersLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/nftsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/overRatesRevocationLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/ownersBalancesLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/populateHistoricConsolidatedTdh-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/pushNotificationsHandler-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/rateEventProcessingLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/refreshENS-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/rememesLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/royaltiesLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/s3Uploader-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/subscriptionsDaily-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/subscriptionsTopUpLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/tdhHistoryLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/tdhLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/teamLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/transactionsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/transactionsProcessingLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/waveDecisionExecutionLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/waveDropMetricsRefreshLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/waveLeaderboardSnapshotterLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/waveScoreRefreshLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/websocketOutboundHandler-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/xTdhGrantsReviewerLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/xTdhLoop-staging/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ValidateDeploymentTemplates1",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:ValidateTemplate"
+      ],
+      "Resource": [
+        "*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageDeploymentBucketConfiguration1",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:DeleteBucketPolicy",
+        "s3:GetBucketAcl",
+        "s3:GetBucketLocation",
+        "s3:GetBucketOwnershipControls",
+        "s3:GetBucketPolicy",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketTagging",
+        "s3:GetBucketVersioning",
+        "s3:GetEncryptionConfiguration",
+        "s3:ListBucket",
+        "s3:ListBucketMultipartUploads",
+        "s3:ListBucketVersions",
+        "s3:PutBucketAcl",
+        "s3:PutBucketOwnershipControls",
+        "s3:PutBucketPolicy",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketTagging",
+        "s3:PutBucketVersioning",
+        "s3:PutEncryptionConfiguration"
+      ],
+      "Resource": [
+        "arn:aws:s3:::aggregatedactivityloop-st-serverlessdeploymentbuck-78lm9goxh37m",
+        "arn:aws:s3:::artcurationnftwatchloop-s-serverlessdeploymentbuck-m2kvichwrnms",
+        "arn:aws:s3:::artworkdocumentationproce-serverlessdeploymentbuck-sfiw93auexqz",
+        "arn:aws:s3:::artworkdocumentationstora-serverlessdeploymentbuck-umo42stvph0j",
+        "arn:aws:s3:::attachmentsorchestrator-s-serverlessdeploymentbuck-akocdridzwap",
+        "arn:aws:s3:::attachmentsprocessor-stag-serverlessdeploymentbuck-hkl8fax8akdl",
+        "arn:aws:s3:::claimsbuilder-staging-serverlessdeploymentbucket-on3mpwjgda9g",
+        "arn:aws:s3:::claimsmediaarweaveuploade-serverlessdeploymentbuck-2e6uoihpqyln",
+        "arn:aws:s3:::competitionmigrationloop--serverlessdeploymentbuck-t0tw1odesgdq"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    }
+  ]
+}
