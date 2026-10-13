@@ -268,8 +268,7 @@ export class E2eeGroupsService {
       items: page.map((row) =>
         toApiE2eeLogItem(row, data.get(Number(row.seq)) ?? '')
       ),
-      next_after_seq:
-        hasMore && page.length ? Number(page[page.length - 1].seq) : null,
+      next_after_seq: hasMore && page.length ? Number(page.at(-1)?.seq) : null,
       group: toApiE2eeGroup(groupRow, roster)
     };
   }

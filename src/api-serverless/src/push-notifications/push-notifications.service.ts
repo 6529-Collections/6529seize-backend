@@ -126,9 +126,11 @@ export async function enqueueE2eeWake(
       })
     });
   }
+  const batches: (typeof entries)[] = [];
   for (let i = 0; i < entries.length; i += 10) {
-    await sendBatchMessagesToSQS(entries.slice(i, i + 10));
+    batches.push(entries.slice(i, i + 10));
   }
+  await Promise.all(batches.map((batch) => sendBatchMessagesToSQS(batch)));
 }
 
 export const sendBatchMessagesToSQS = async (

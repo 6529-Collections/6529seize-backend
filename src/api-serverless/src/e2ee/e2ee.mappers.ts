@@ -110,6 +110,10 @@ function toApiKind(kind: number | null): ApiE2eeLogItemKindEnum | null {
   return null;
 }
 
+function rowKind(row: { kind: number | string | null }): number | null {
+  return row.kind === null ? null : Number(row.kind);
+}
+
 export function toApiE2eeLogItem(
   row: E2eeLogMetaRow,
   dataBase64: string
@@ -121,9 +125,7 @@ export function toApiE2eeLogItem(
       ? ApiE2eeLogItemTypeEnum.Entry
       : ApiE2eeLogItemTypeEnum.Message,
     epoch: Number(row.epoch),
-    kind: isEntry
-      ? toApiKind(row.kind === null ? null : Number(row.kind))
-      : null,
+    kind: isEntry ? toApiKind(rowKind(row)) : null,
     data: dataBase64,
     entry_hash: row.entry_hash,
     epoch_commitment: row.epoch_commitment,

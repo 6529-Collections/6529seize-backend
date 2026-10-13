@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { ethers } from 'ethers';
 import { E2eeEventPublisher, e2eeEventPublisher } from '@/api/e2ee/e2ee-events';
 import { verifyContractWalletSignatureHash } from '@/api/wallet-signatures/structured-wallet-signatures';
@@ -51,7 +51,8 @@ export const defaultE2eeServiceDeps: E2eeServiceDeps = {
   contractWalletVerifier: mainnetContractWalletVerifier,
   resolveWalletProfileId: (wallet) => identitiesDb.getProfileIdByWallet(wallet),
   now: () => Date.now(),
-  random: () => Math.random(),
+  // Uniform [0, 1) from the CSPRNG (used for pruning odds and jitter).
+  random: () => randomInt(0, 0x100000000) / 0x100000000,
   randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`
 };
 
@@ -75,8 +76,7 @@ export async function requireOwnActiveDevice(
 ): Promise<E2eeDeviceRow> {
   const device = await deps.db.getDevice(deviceKey, connection);
   if (
-    !device ||
-    device.profile_id !== callerProfileId ||
+    device?.profile_id !== callerProfileId ||
     !isActiveDevice(device, nowSeconds(deps))
   ) {
     throw e2eeErrors.notYourDevice();

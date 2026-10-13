@@ -244,8 +244,7 @@ export class E2eeDevicesService {
     if (revokerDeviceKey === target.device_key) return;
     const revoker = await this.db.getDevice(revokerDeviceKey);
     if (
-      !revoker ||
-      revoker.profile_id !== callerProfileId ||
+      revoker?.profile_id !== callerProfileId ||
       !isActiveDevice(revoker, nowSeconds(this.deps))
     ) {
       throw e2eeErrors.notYourDevice();
@@ -294,7 +293,7 @@ export class E2eeDevicesService {
     const revoked = await this.db.executeNativeQueriesInTransaction(
       async (connection) => {
         const locked = await this.db.lockDevice(deviceKey, connection);
-        if (locked && locked.revoked_at === null) {
+        if (locked?.revoked_at === null) {
           await this.db.markDeviceRevoked(
             {
               deviceKey,

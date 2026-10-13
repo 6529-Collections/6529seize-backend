@@ -203,8 +203,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
          and ((revoked_at is null and expires_at_seconds * 1000 > :cutoffMs)
            or revoked_at > :cutoffMs)
        order by created_at, device_key`,
-      { profileId, cutoffMs },
-      undefined
+      { profileId, cutoffMs }
     );
   }
 
@@ -483,14 +482,17 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       connection
     );
     for (const row of locked) claimed.set(row.device_key, row);
-    for (const deviceKey of inList(deviceKeys)) {
-      if (claimed.has(deviceKey)) continue;
-      const row = await this.lockOldestOneTimeKeyPackage(
-        deviceKey,
-        nowSeconds,
-        connection
-      );
-      if (row) claimed.set(deviceKey, row);
+    // Fallback pops share the transaction's connection, which runs them in
+    // order; they are issued together rather than awaited one by one.
+    const fallbacks = await Promise.all(
+      inList(deviceKeys)
+        .filter((deviceKey) => !claimed.has(deviceKey))
+        .map((deviceKey) =>
+          this.lockOldestOneTimeKeyPackage(deviceKey, nowSeconds, connection)
+        )
+    );
+    for (const row of fallbacks) {
+      if (row) claimed.set(row.device_key, row);
     }
     const ids = Array.from(claimed.values()).map((row) => Number(row.id));
     if (ids.length) {
