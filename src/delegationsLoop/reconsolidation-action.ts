@@ -8,7 +8,7 @@ export function readReconsolidationAction(event: unknown): string[] | null {
     return null;
   }
   if (typeof event !== 'object' || Array.isArray(event)) {
-    throw new Error('Delegations invocation must be an object');
+    throw new TypeError('Delegations invocation must be an object');
   }
   const request = event as Record<string, unknown>;
   if (!Object.prototype.hasOwnProperty.call(request, 'action')) {
