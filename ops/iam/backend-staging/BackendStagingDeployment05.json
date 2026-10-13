@@ -28,6 +28,16 @@
         "s3:PutEncryptionConfiguration"
       ],
       "Resource": [
+        "arn:aws:s3:::customreplayloop-staging-serverlessdeploymentbucke-7rqnhflqsbme",
+        "arn:aws:s3:::dbdumpsdaily-staging-serverlessdeploymentbucket-zvw3w9rhwbkb",
+        "arn:aws:s3:::dbmigrationsloop-staging-serverlessdeploymentbucke-ttbizns358sm",
+        "arn:aws:s3:::delegationsloop-staging-serverlessdeploymentbucket-ym7rhz7wep1t",
+        "arn:aws:s3:::discoverensloop-staging-serverlessdeploymentbucket-fetnrmpt4udk",
+        "arn:aws:s3:::dropmediaingeststorage-st-serverlessdeploymentbuck-nos3mioyveah",
+        "arn:aws:s3:::dropmediasanitizer-stagin-serverlessdeploymentbuck-ixqb0lkjhov1",
+        "arn:aws:s3:::dropvideoconversioninvoke-serverlessdeploymentbuck-uavyiopppbya",
+        "arn:aws:s3:::ethpriceloop-staging-serverlessdeploymentbucket-axpe6qk5eb8l",
+        "arn:aws:s3:::externalcollectionlivetai-serverlessdeploymentbuck-hn4wr37khh7q",
         "arn:aws:s3:::externalcollectionsnapsho-serverlessdeploymentbuck-3nslhecnt3qb",
         "arn:aws:s3:::helpbotreplyloop-staging-serverlessdeploymentbucke-c47wybskhqpi",
         "arn:aws:s3:::marketdepthstreamloop-sta-serverlessdeploymentbuck-3rita1fvnqee",
@@ -60,6 +70,7 @@
         "arn:aws:s3:::wavedropmetricsrefreshloo-serverlessdeploymentbuck-donbdbtuasru",
         "arn:aws:s3:::waveleaderboardsnapshotte-serverlessdeploymentbuck-x5mdth10pdfq",
         "arn:aws:s3:::wavescorerefreshloop-stag-serverlessdeploymentbuck-z1igizswlogc",
+        "arn:aws:s3:::websocketoutboundhandler--serverlessdeploymentbuck-d7lkawpjqi9q",
         "arn:aws:s3:::xtdhgrantsreviewerloop-st-serverlessdeploymentbuck-mvvi5eyaoiei",
         "arn:aws:s3:::xtdhloop-staging-serverlessdeploymentbucket-fqz8zrexn9z4"
       ],
@@ -102,17 +113,7 @@
         "arn:aws:s3:::dropmediasanitizer-stagin-serverlessdeploymentbuck-ixqb0lkjhov1/*",
         "arn:aws:s3:::dropvideoconversioninvoke-serverlessdeploymentbuck-uavyiopppbya/*",
         "arn:aws:s3:::ethpriceloop-staging-serverlessdeploymentbucket-axpe6qk5eb8l/*",
-        "arn:aws:s3:::externalcollectionlivetai-serverlessdeploymentbuck-hn4wr37khh7q/*",
-        "arn:aws:s3:::externalcollectionsnapsho-serverlessdeploymentbuck-3nslhecnt3qb/*",
-        "arn:aws:s3:::helpbotreplyloop-staging-serverlessdeploymentbucke-c47wybskhqpi/*",
-        "arn:aws:s3:::marketdepthstreamloop-sta-serverlessdeploymentbuck-3rita1fvnqee/*",
-        "arn:aws:s3:::marketstatsloop-staging-serverlessdeploymentbucket-1k8em1wdzaaq/*",
-        "arn:aws:s3:::mintannouncementsloop-sta-serverlessdeploymentbuck-sggfsqmy4v9s/*",
-        "arn:aws:s3:::nextgencontractloop-stagi-serverlessdeploymentbuck-b0qwu3rtyzaq/*",
-        "arn:aws:s3:::nextgenmetadataloop-stagi-serverlessdeploymentbuck-7ehe6mhuzynf/*",
-        "arn:aws:s3:::nfthistoryloop-staging-serverlessdeploymentbucket-4dqkgbehcntd/*",
-        "arn:aws:s3:::nftlinkmediapreviewloop-s-serverlessdeploymentbuck-rfs9yiwy1hkz/*",
-        "arn:aws:s3:::nftlinkrefresherloop-stag-serverlessdeploymentbuck-p5uf8adjjqh2/*"
+        "arn:aws:s3:::externalcollectionlivetai-serverlessdeploymentbuck-hn4wr37khh7q/*"
       ],
       "Condition": {
         "StringEquals": {

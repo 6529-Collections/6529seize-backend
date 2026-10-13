@@ -1,5 +1,5 @@
 {
-  "recorded_at": "2026-10-13T09:16:35.353970+00:00",
+  "recorded_at": "2026-10-13T11:14:13.768254+00:00",
   "account_id": "987989283142",
   "region": "eu-west-1",
   "role_name": "gha-backend-deploy-staging",
@@ -9,62 +9,62 @@
     {
       "name": "BackendStagingDeployment",
       "arn": "arn:aws:iam::987989283142:policy/BackendStagingDeployment",
-      "version": "v1",
-      "sha256": "644ee343e2431d3bd1c1eda2d84f18c9bf2e364d4157fa928372aa7e5bc49493"
+      "version": "v2",
+      "sha256": "52fad8446e0ffed86a277f583090b49e079279e8c21b6c29c2937dca22236dda"
     },
     {
       "name": "BackendStagingDeployment02",
       "arn": "arn:aws:iam::987989283142:policy/BackendStagingDeployment02",
-      "version": "v1",
-      "sha256": "56929872b88e2696626cfdb51db059c6cb86fd90847ce75e51d9c2700ea08c58"
+      "version": "v2",
+      "sha256": "9e6e5e3b5bea427bedda549edbc1d6db784ec314917c165fcbde85c7ae89c108"
     },
     {
       "name": "BackendStagingDeployment03",
       "arn": "arn:aws:iam::987989283142:policy/BackendStagingDeployment03",
-      "version": "v1",
-      "sha256": "b17d3b573ffe83f4ef8d7195a9f0c4a0008317cdea590da833365e62e6024dea"
+      "version": "v2",
+      "sha256": "4bd57906fcb0b96d2a89e25e11fe6128f6b26e7fb16d5b3e6a5222f0f9447a08"
     },
     {
       "name": "BackendStagingDeployment04",
       "arn": "arn:aws:iam::987989283142:policy/BackendStagingDeployment04",
-      "version": "v1",
-      "sha256": "4e293e31961396b14c8469c893d58bddf3f47b907539c31e34246784bc4f88bd"
+      "version": "v2",
+      "sha256": "3f7182ddadc8c3a000281a6da12a71b49c647f608ed3edf370d753870134cdb6"
     },
     {
       "name": "BackendStagingDeployment05",
       "arn": "arn:aws:iam::987989283142:policy/BackendStagingDeployment05",
-      "version": "v1",
-      "sha256": "0126fac09afed3915f11603f3e491ccb4ed5b1c8fd11e97f78ac5c7a47fec30a"
+      "version": "v2",
+      "sha256": "1ae9cd0d9685d0f8dda0f2191c359c541d1c9ecfb9e24332c09ccd8351321aeb"
     },
     {
       "name": "BackendStagingDeployment06",
       "arn": "arn:aws:iam::987989283142:policy/BackendStagingDeployment06",
-      "version": "v1",
-      "sha256": "76665b7b8f60081f9d26d994273b206bbb5bf95a1c2a410eb37a0928d3021ced"
+      "version": "v2",
+      "sha256": "4c4f8cb3d5d6842d23f9fa7ee2676ca473230ec5bed6b4ce1ea986609dcedf92"
     },
     {
       "name": "BackendStagingDeployment07",
       "arn": "arn:aws:iam::987989283142:policy/BackendStagingDeployment07",
-      "version": "v1",
-      "sha256": "a52de52df6c7684ce5e2b868a6ce9ec66d703ff75a4cf33cca19782331432669"
+      "version": "v2",
+      "sha256": "cd37164d60b30aeb54a9486baa26aa45b4a344a4a4240389bfe89d5e2407c28c"
     },
     {
       "name": "BackendStagingDeployment08",
       "arn": "arn:aws:iam::987989283142:policy/BackendStagingDeployment08",
-      "version": "v1",
-      "sha256": "6668bae7b8e0a272feaeb165bfc7f0d99054676d6a0d5b0f101311171d02c534"
+      "version": "v2",
+      "sha256": "b147ce5bc29bb079a4cb7f4a22b8dc97759473a513ef64089114d6589663a29a"
     },
     {
       "name": "BackendStagingDeployment09",
       "arn": "arn:aws:iam::987989283142:policy/BackendStagingDeployment09",
-      "version": "v1",
-      "sha256": "0ab3cda829bf527d478aa44d4381c54fdf8d0134e25da592f9b1c65a313c2005"
+      "version": "v2",
+      "sha256": "0c1179dfb36e27c3ecaf24d2cea1dbb341f372b6e0a5be287692d84a4e57b18f"
     },
     {
       "name": "BackendStagingDeployment10",
       "arn": "arn:aws:iam::987989283142:policy/BackendStagingDeployment10",
-      "version": "v1",
-      "sha256": "4d085be4b2c504cce724b19bb20f45f1bcb9175c2968e6c52a21489db84c2443"
+      "version": "v2",
+      "sha256": "83b6b751f3fdd256482297a428954ecff0958b9adcbfdcc20867d439bc336673"
     }
   ],
   "access_analyzer": {
@@ -72,7 +72,7 @@
     "findings": 0
   },
   "simulation": {
-    "positive_cases_passed": 26,
+    "positive_cases_passed": 27,
     "negative_cases_passed": 22,
     "negative_cases_total": 22,
     "sns_subscription_case": "Simulator discrepancy; topic-scoped read verified against live subscription; live writes not performed"
@@ -136,6 +136,14 @@
   ],
   "temporary_roles_deleted": true,
   "backend_lint": "passed",
-  "oidc_deployment_test": "not run; deploy workflow still uses the existing AWS access keys",
-  "application_deployments": []
+  "oidc_deployment_test": "Pending first staging API OIDC deployment",
+  "application_deployments": [],
+  "additional_staging_inventory": {
+    "source_branch": "1a-staging",
+    "source_commit": "9dd87893542030b029117b3e9484f787ffa34fde",
+    "services": [
+      "websocketOutboundHandler"
+    ]
+  },
+  "live_read_checks_scope": "Initial policy installation; additional websocket resources validated by live inventory and policy simulation"
 }

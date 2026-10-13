@@ -20,6 +20,17 @@
         "logs:UntagResource"
       ],
       "Resource": [
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/memesTransactionsLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/mintAnnouncementsLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/nextgenContractLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/nextgenMetadataLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/nftHistoryLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/nftLinkMediaPreviewLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/nftLinkRefresherLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/nftOwnersLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/nftsLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/overRatesRevocationLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/ownersBalancesLoop",
         "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/populateHistoricConsolidatedTdh",
         "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/pushNotificationsHandler",
         "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/rateEventProcessingLoop",
@@ -41,6 +52,7 @@
         "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/waveDropMetricsRefreshLoop",
         "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/waveLeaderboardSnapshotterLoop",
         "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/waveScoreRefreshLoop",
+        "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/websocketOutboundHandler",
         "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/xTdhGrantsReviewerLoop",
         "arn:aws:logs:eu-west-1:987989283142:log-group:/aws/lambda/xTdhLoop"
       ],
@@ -100,16 +112,7 @@
         "arn:aws:events:eu-west-1:987989283142:rule/marketStatsLoop-staging-MarketStatsNEXTGENEventsRul-hAn2fMrqLEUl",
         "arn:aws:events:eu-west-1:987989283142:rule/nextgenContractLoop-stagi-NextgenContractLoopEvents-HbWFqnTh2Fkq",
         "arn:aws:events:eu-west-1:987989283142:rule/nextgenMetadataLoop-stagi-NextgenMetadataLoopEvents-YokuDfAYVyQV",
-        "arn:aws:events:eu-west-1:987989283142:rule/nftHistoryLoop-staging-NftHistoryLoopEventsRuleSche-0xM8Ie495QXa",
-        "arn:aws:events:eu-west-1:987989283142:rule/nftOwnersLoop-staging-NftOwnersLoopEventsRuleSchedu-gzkepAZyPqq1",
-        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule1-afIJRs8t7Osg",
-        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule2-1jaGnbJNqsO5",
-        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule3-vRaRMmWmqPBx",
-        "arn:aws:events:eu-west-1:987989283142:rule/ownersBalancesLoop-stagin-OwnersBalancesLoopEventsR-WWEsjlA8A7Wg",
-        "arn:aws:events:eu-west-1:987989283142:rule/pushNotificationsHandler--PushNotificationsHandlerE-tXizKA8vK0Dx",
-        "arn:aws:events:eu-west-1:987989283142:rule/rateEventProcessingLoop-s-RateEventProcessingLoopEv-xkOQAvk42lfR",
-        "arn:aws:events:eu-west-1:987989283142:rule/refreshENS-staging-RefreshENSEventsRuleSchedule1-XFu7AvqRY2gf",
-        "arn:aws:events:eu-west-1:987989283142:rule/rememesLoop-staging-RememesRefreshMetadataLoopEvent-3HHEyeNy71Zx"
+        "arn:aws:events:eu-west-1:987989283142:rule/nftHistoryLoop-staging-NftHistoryLoopEventsRuleSche-0xM8Ie495QXa"
       ],
       "Condition": {
         "StringEquals": {

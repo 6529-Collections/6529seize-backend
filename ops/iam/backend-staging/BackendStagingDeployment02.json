@@ -17,6 +17,7 @@
         "lambda:UpdateFunctionEventInvokeConfig"
       ],
       "Resource": [
+        "arn:aws:lambda:eu-west-1:987989283142:function:competitionMigrationLoop:*",
         "arn:aws:lambda:eu-west-1:987989283142:function:customReplayLoop:*",
         "arn:aws:lambda:eu-west-1:987989283142:function:dbDumpsDaily:*",
         "arn:aws:lambda:eu-west-1:987989283142:function:dbMigrationsLoop:*",
@@ -68,6 +69,7 @@
         "arn:aws:lambda:eu-west-1:987989283142:function:waveDropMetricsRefreshLoop:*",
         "arn:aws:lambda:eu-west-1:987989283142:function:waveLeaderboardSnapshotterLoop:*",
         "arn:aws:lambda:eu-west-1:987989283142:function:waveScoreRefreshLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:websocketOutboundHandler:*",
         "arn:aws:lambda:eu-west-1:987989283142:function:xTdhGrantsReviewerLoop:*",
         "arn:aws:lambda:eu-west-1:987989283142:function:xTdhLoop:*"
       ],
@@ -90,6 +92,7 @@
         "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:032401d8-835e-434e-91ff-7fc9a12552b3",
         "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:2c16f3f5-ad3c-4169-a75e-0746d5a381bb",
         "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:2f1a8ae1-6177-4669-8e85-061e4871aea0",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:3c6fd5ab-11aa-40c3-a9ac-bad1c1ae9f0e",
         "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:44ac6ada-7100-4dcc-b596-f4adf54410ef",
         "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:4ad82a90-bc16-4496-b987-b5f7dc098811",
         "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:4e086c19-f917-451f-8816-9315a66bd475",
@@ -99,10 +102,7 @@
         "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:6e9887e9-c441-4690-a491-9b6908bb0ffa",
         "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:7a2411c7-15b6-4ff6-9e5a-70c8b8e42c53",
         "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:8c498ea6-3bfa-4869-8296-ca2062b3de0b",
-        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:90bda318-39e4-4d5e-ba82-79bd6471f13f",
-        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:97bd982c-deac-4feb-bc04-103bf74987c3",
-        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:c4f31562-3106-49f7-9260-d0090625fef3",
-        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:cde8f1db-f110-4dd6-a4fa-1c305c9d9529"
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:90bda318-39e4-4d5e-ba82-79bd6471f13f"
       ],
       "Condition": {
         "StringEquals": {

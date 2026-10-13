@@ -2,6 +2,26 @@
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "ReadApprovedMappings2",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetEventSourceMapping",
+        "lambda:ListTags",
+        "lambda:TagResource",
+        "lambda:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:97bd982c-deac-4feb-bc04-103bf74987c3",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:c4f31562-3106-49f7-9260-d0090625fef3",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:cde8f1db-f110-4dd6-a4fa-1c305c9d9529"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
       "Sid": "CreateMappingsForApprovedFunctions1",
       "Effect": "Allow",
       "Action": [
@@ -30,6 +50,7 @@
             "arn:aws:lambda:eu-west-1:987989283142:function:s3Uploader",
             "arn:aws:lambda:eu-west-1:987989283142:function:waveDropMetricsRefreshLoop",
             "arn:aws:lambda:eu-west-1:987989283142:function:waveScoreRefreshLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:websocketOutboundHandler",
             "arn:aws:lambda:eu-west-1:987989283142:function:xTdhLoop"
           ]
         }
@@ -65,6 +86,7 @@
             "arn:aws:lambda:eu-west-1:987989283142:function:s3Uploader",
             "arn:aws:lambda:eu-west-1:987989283142:function:waveDropMetricsRefreshLoop",
             "arn:aws:lambda:eu-west-1:987989283142:function:waveScoreRefreshLoop",
+            "arn:aws:lambda:eu-west-1:987989283142:function:websocketOutboundHandler",
             "arn:aws:lambda:eu-west-1:987989283142:function:xTdhLoop"
           ]
         }
@@ -179,15 +201,7 @@
         "arn:aws:cloudformation:eu-west-1:987989283142:stack/claimsBuilder-staging/*",
         "arn:aws:cloudformation:eu-west-1:987989283142:stack/claimsMediaArweaveUploader-staging/*",
         "arn:aws:cloudformation:eu-west-1:987989283142:stack/competitionMigrationLoop-staging/*",
-        "arn:aws:cloudformation:eu-west-1:987989283142:stack/customReplayLoop-staging/*",
-        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dbDumpsDaily-staging/*",
-        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dbMigrationsLoop-staging/*",
-        "arn:aws:cloudformation:eu-west-1:987989283142:stack/delegationsLoop-staging/*",
-        "arn:aws:cloudformation:eu-west-1:987989283142:stack/discoverEnsLoop-staging/*",
-        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropMediaIngestStorage-staging/*",
-        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropMediaSanitizer-staging/*",
-        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropVideoConversionInvokerLoop-staging/*",
-        "arn:aws:cloudformation:eu-west-1:987989283142:stack/ethPriceLoop-staging/*"
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/customReplayLoop-staging/*"
       ],
       "Condition": {
         "StringEquals": {

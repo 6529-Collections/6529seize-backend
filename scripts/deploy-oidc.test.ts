@@ -1,5 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'yaml';
@@ -46,6 +52,94 @@ function validateRole(value: string) {
 }
 
 describe('staging deployment OIDC boundary', () => {
+  it('matches the workflow generated from the committed source files', () => {
+    const directory = mkdtempSync(
+      path.join(tmpdir(), 'deploy-oidc-generator-')
+    );
+    try {
+      for (const subdirectory of [
+        'scripts',
+        'src/config',
+        '.github/workflows'
+      ]) {
+        mkdirSync(path.join(directory, subdirectory), { recursive: true });
+      }
+      for (const file of [
+        'scripts/generate-deploy-config.mjs',
+        'src/config/deploy-config.validation.js',
+        'src/config/deploy-services.json'
+      ]) {
+        copyFileSync(
+          path.resolve(__dirname, '..', file),
+          path.join(directory, file)
+        );
+      }
+      const result = spawnSync(
+        process.execPath,
+        [path.join(directory, 'scripts/generate-deploy-config.mjs')],
+        {
+          encoding: 'utf8',
+          timeout: 10000
+        }
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(
+        readFileSync(
+          path.join(directory, '.github/workflows/deploy.yml'),
+          'utf8'
+        )
+      ).toBe(
+        readFileSync(
+          path.resolve(__dirname, '../.github/workflows/deploy.yml'),
+          'utf8'
+        )
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['staging', 'success', '', 0],
+    ['prod', '', 'success', 0],
+    ['staging', '', 'success', 1],
+    ['prod', 'success', '', 1],
+    ['staging', 'skipped', '', 1],
+    ['prod', '', 'failure', 1],
+    ['unknown', 'success', 'success', 1]
+  ])(
+    'requires the selected credential action to succeed for %s (%s, %s)',
+    (environment, staging, production, status) => {
+      const authentication = steps.find(
+        (step) => step.name === 'Require successful AWS authentication'
+      )!;
+      expect(authentication.env).toEqual({
+        STAGING_CREDENTIALS_OUTCOME:
+          '${{ steps.aws_credentials_staging.outcome }}',
+        PRODUCTION_CREDENTIALS_OUTCOME: '${{ steps.aws_credentials.outcome }}'
+      });
+      const result = spawnSync('bash', ['-c', authentication.run!], {
+        encoding: 'utf8',
+        timeout: 10000,
+        env: {
+          ...process.env,
+          INPUT_ENVIRONMENT: String(environment),
+          STAGING_CREDENTIALS_OUTCOME: String(staging),
+          PRODUCTION_CREDENTIALS_OUTCOME: String(production),
+          AWS_ACCESS_KEY_ID: 'ambient-credentials-must-not-bypass-the-guard'
+        }
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(status);
+      expect(steps.indexOf(authentication)).toBeLessThan(
+        steps.findIndex(
+          (step) => step.name === 'Select environment-specific config'
+        )
+      );
+    }
+  );
+
   it('binds deployments to the protected GitHub environments and grants only required token permissions', () => {
     expect(job.environment).toBe(
       "${{ github.event.inputs.environment == 'staging' && 'staging' || 'production' }}"
@@ -64,6 +158,7 @@ describe('staging deployment OIDC boundary', () => {
     );
     expect(credentials).toHaveLength(2);
     const staging = credentials.find((step) => step.if === stagingCondition)!;
+    expect(staging.id).toBe('aws_credentials_staging');
     expect(staging.with).toEqual({
       'role-to-assume': '${{ vars.AWS_DEPLOY_ROLE_ARN }}',
       'allowed-account-ids': '${{ steps.staging_role.outputs.account_id }}',
@@ -74,6 +169,7 @@ describe('staging deployment OIDC boundary', () => {
     const production = credentials.find(
       (step) => step.if === productionCondition
     )!;
+    expect(production.id).toBe('aws_credentials');
     expect(production.with).toEqual({
       'aws-access-key-id': '${{ secrets.AWS_ACCESS_KEY_ID }}',
       'aws-secret-access-key': '${{ secrets.AWS_SECRET_ACCESS_KEY }}',

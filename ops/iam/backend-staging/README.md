@@ -9,6 +9,9 @@ Set its environment variable `AWS_DEPLOY_ROLE_ARN` to the role ARN above. The
 workflow rejects missing or malformed role configuration before building or
 authenticating, checks the assumed account against the ARN, and names the
 temporary session `backend-staging-<GitHub run ID>` for audit correlation.
+The account check is performed by the credential action when assuming the role;
+the earlier validation checks ARN syntax. Configure the role from account
+`987989283142` documented here.
 Staging has no legacy-key fallback. Production uses the `production` GitHub
 environment and retains the existing repository deployment-key secrets during
 this first rollout.
@@ -25,14 +28,20 @@ Serverless definitions, deployment workflow, installed Serverless deployment
 implementation, and the physical resources of all 53 matching CloudFormation
 stacks in `eu-west-1`.
 
-- Function operations cover the 60 stack-owned functions and `seizeAPI` in
+Before rollout, the inventory was extended using `1a-staging` to include the
+existing `websocketOutboundHandler-staging` stack, which was not yet on main.
+The final scope covers 55 staging services, 54 stacks and deployment buckets,
+62 functions including `seizeAPI`, and the additional handler's exact queues,
+rule, mapping, alarms, and log group. `manifest.json` records both source refs.
+
+- Function operations cover the 61 stack-owned functions and `seizeAPI` in
   `eu-west-1`, including their published versions. Only `dbMigrationsLoop` can
   be invoked directly by the deployment role.
-- CloudFormation operations are limited to the 53 catalog-owned staging stacks.
+- CloudFormation operations are limited to the 54 catalog-owned staging stacks.
   The current stacks have no CloudFormation execution role; resource operations
   therefore remain subject to this deployment role's permissions. No
   CloudFormation service role may be passed.
-- Artifact access is limited to the 53 existing Serverless deployment buckets.
+- Artifact access is limited to the 54 existing Serverless deployment buckets.
   The shared private ingest bucket has only the read-only bucket preflight
   permissions needed by the API deployment. Its objects and bucket policy
   cannot be accessed or changed through this role.
@@ -84,7 +93,7 @@ separating and reducing application execution roles remains a separate change.
 
 The policies were attached and verified on 2026-10-13. IAM Access Analyzer
 reported no findings across all ten documents. IAM custom-policy simulation
-passed 26 positive cases and all 22 negative cases covering production,
+passed 27 positive cases and all 22 negative cases covering production,
 unrelated resources, credential administration, runtime-policy administration,
 Secrets Manager, SSM, EC2 destruction, RDS destruction, and KMS.
 
@@ -101,6 +110,9 @@ CloudFormation stack metadata, deployment-bucket and ingest-bucket preflight,
 queue URL, rule metadata, schedule metadata, log-filter metadata, alarm
 metadata, subnet metadata, and subscription metadata. Both temporary roles were
 deleted after verification; temporary session credentials were never saved.
+Those read checks covered the initial inventory. The additional WebSocket
+resources were verified through live stack inventory and the repeated policy
+simulation, including its event-source mapping function condition.
 Remote managed-policy versions match the local documents. The staging OIDC
 role has exactly these ten attached policies, no inline policy, and its original
 restricted trust policy. The backend lint command also passed.
@@ -122,6 +134,11 @@ For subsequent policy updates, review the changed service/resource inventory,
 revalidate and simulate the resulting documents, then publish new managed
 policy versions through the administrative identity. Never give the deployment
 role permission to modify these policies or its trust configuration.
+
+Follow-up: separate staging and production Lambda execution roles and reduce
+their runtime permissions before treating this migration as runtime isolation.
+The first live rollout is limited to the API smoke test; validate each remaining
+deployment adapter before relying on it for ordinary infrastructure changes.
 
 References:
 

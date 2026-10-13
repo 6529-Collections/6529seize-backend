@@ -87,6 +87,7 @@
         "arn:aws:lambda:eu-west-1:987989283142:function:waveDropMetricsRefreshLoop",
         "arn:aws:lambda:eu-west-1:987989283142:function:waveLeaderboardSnapshotterLoop",
         "arn:aws:lambda:eu-west-1:987989283142:function:waveScoreRefreshLoop",
+        "arn:aws:lambda:eu-west-1:987989283142:function:websocketOutboundHandler",
         "arn:aws:lambda:eu-west-1:987989283142:function:xTdhGrantsReviewerLoop",
         "arn:aws:lambda:eu-west-1:987989283142:function:xTdhLoop"
       ],
@@ -118,8 +119,7 @@
         "arn:aws:lambda:eu-west-1:987989283142:function:attachmentsOrchestrator:*",
         "arn:aws:lambda:eu-west-1:987989283142:function:attachmentsProcessor:*",
         "arn:aws:lambda:eu-west-1:987989283142:function:claimsBuilder:*",
-        "arn:aws:lambda:eu-west-1:987989283142:function:claimsMediaArweaveUploader:*",
-        "arn:aws:lambda:eu-west-1:987989283142:function:competitionMigrationLoop:*"
+        "arn:aws:lambda:eu-west-1:987989283142:function:claimsMediaArweaveUploader:*"
       ],
       "Condition": {
         "StringEquals": {

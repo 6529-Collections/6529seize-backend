@@ -16,6 +16,15 @@
         "events:UntagResource"
       ],
       "Resource": [
+        "arn:aws:events:eu-west-1:987989283142:rule/nftOwnersLoop-staging-NftOwnersLoopEventsRuleSchedu-gzkepAZyPqq1",
+        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule1-afIJRs8t7Osg",
+        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule2-1jaGnbJNqsO5",
+        "arn:aws:events:eu-west-1:987989283142:rule/nftsLoop-staging-NftsLoopEventsRuleSchedule3-vRaRMmWmqPBx",
+        "arn:aws:events:eu-west-1:987989283142:rule/ownersBalancesLoop-stagin-OwnersBalancesLoopEventsR-WWEsjlA8A7Wg",
+        "arn:aws:events:eu-west-1:987989283142:rule/pushNotificationsHandler--PushNotificationsHandlerE-tXizKA8vK0Dx",
+        "arn:aws:events:eu-west-1:987989283142:rule/rateEventProcessingLoop-s-RateEventProcessingLoopEv-xkOQAvk42lfR",
+        "arn:aws:events:eu-west-1:987989283142:rule/refreshENS-staging-RefreshENSEventsRuleSchedule1-XFu7AvqRY2gf",
+        "arn:aws:events:eu-west-1:987989283142:rule/rememesLoop-staging-RememesRefreshMetadataLoopEvent-3HHEyeNy71Zx",
         "arn:aws:events:eu-west-1:987989283142:rule/rememesLoop-staging-RememesS3LoopEventsRuleSchedule-YB6kk5ocy7GC",
         "arn:aws:events:eu-west-1:987989283142:rule/royaltiesLoop-staging-RoyaltiesLoopEventsRuleSchedu-Fas7mVlRJohk",
         "arn:aws:events:eu-west-1:987989283142:rule/subscriptionsDaily-stagin-SubscriptionCoverageRecon-AD8kjFQYdSZE",
@@ -32,6 +41,7 @@
         "arn:aws:events:eu-west-1:987989283142:rule/waveDropMetricsRefreshLoo-WaveDropMetricsRefreshLoo-FGsZkZlTVxhH",
         "arn:aws:events:eu-west-1:987989283142:rule/waveLeaderboardSnapshotte-WaveLeaderboardSnapshotte-ZA2zG3OiNBYz",
         "arn:aws:events:eu-west-1:987989283142:rule/waveScoreRefreshLoop-stag-WaveScoreRefreshLoopEvent-j13izL1hN7Pa",
+        "arn:aws:events:eu-west-1:987989283142:rule/websocketOutboundHandler--WebsocketOutboundHandlerE-DtIZBYNNcwGT",
         "arn:aws:events:eu-west-1:987989283142:rule/xTdhGrantsReviewerLoop-st-XTdhGrantsReviewerLoopEve-1z81cPzDVYeo"
       ],
       "Condition": {
@@ -99,39 +109,11 @@
         "arn:aws:sqs:eu-west-1:987989283142:nft-link-refreshes-dlq",
         "arn:aws:sqs:eu-west-1:987989283142:over-rates-revocation-start.fifo",
         "arn:aws:sqs:eu-west-1:987989283142:s3-uploader-jobs",
-        "arn:aws:sqs:eu-west-1:987989283142:s3-uploader-jobs-dlq",
-        "arn:aws:sqs:eu-west-1:987989283142:wave-drop-metrics-refresh-dirty-dlq.fifo",
-        "arn:aws:sqs:eu-west-1:987989283142:wave-drop-metrics-refresh-dirty.fifo",
-        "arn:aws:sqs:eu-west-1:987989283142:wave-score-refresh-dirty-dlq.fifo",
-        "arn:aws:sqs:eu-west-1:987989283142:wave-score-refresh-dirty.fifo",
-        "arn:aws:sqs:eu-west-1:987989283142:wave-score-refresh-start.fifo",
-        "arn:aws:sqs:eu-west-1:987989283142:xtdh-dead-letter.fifo",
-        "arn:aws:sqs:eu-west-1:987989283142:xtdh-start.fifo"
+        "arn:aws:sqs:eu-west-1:987989283142:s3-uploader-jobs-dlq"
       ],
       "Condition": {
         "StringEquals": {
           "aws:RequestedRegion": "eu-west-1"
-        }
-      }
-    },
-    {
-      "Sid": "SubscribeApprovedQueues1",
-      "Effect": "Allow",
-      "Action": [
-        "sns:Subscribe"
-      ],
-      "Resource": [
-        "arn:aws:sns:eu-west-1:987989283142:tdh-calculation-done.fifo"
-      ],
-      "Condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "eu-west-1",
-          "sns:Protocol": "sqs",
-          "sns:Endpoint": [
-            "arn:aws:sqs:eu-west-1:987989283142:over-rates-revocation-start.fifo",
-            "arn:aws:sqs:eu-west-1:987989283142:wave-score-refresh-start.fifo",
-            "arn:aws:sqs:eu-west-1:987989283142:xtdh-start.fifo"
-          ]
         }
       }
     }

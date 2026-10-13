@@ -7,62 +7,69 @@
     {
       "name": "BackendStagingDeployment",
       "file": "BackendStagingDeployment.json",
-      "characters": 6088,
-      "sha256": "644ee343e2431d3bd1c1eda2d84f18c9bf2e364d4157fa928372aa7e5bc49493"
+      "characters": 6086,
+      "sha256": "52fad8446e0ffed86a277f583090b49e079279e8c21b6c29c2937dca22236dda"
     },
     {
       "name": "BackendStagingDeployment02",
       "file": "BackendStagingDeployment02.json",
-      "characters": 6065,
-      "sha256": "56929872b88e2696626cfdb51db059c6cb86fd90847ce75e51d9c2700ea08c58"
+      "characters": 6021,
+      "sha256": "9e6e5e3b5bea427bedda549edbc1d6db784ec314917c165fcbde85c7ae89c108"
     },
     {
       "name": "BackendStagingDeployment03",
       "file": "BackendStagingDeployment03.json",
-      "characters": 6051,
-      "sha256": "b17d3b573ffe83f4ef8d7195a9f0c4a0008317cdea590da833365e62e6024dea"
+      "characters": 6064,
+      "sha256": "4bd57906fcb0b96d2a89e25e11fe6128f6b26e7fb16d5b3e6a5222f0f9447a08"
     },
     {
       "name": "BackendStagingDeployment04",
       "file": "BackendStagingDeployment04.json",
-      "characters": 6098,
-      "sha256": "4e293e31961396b14c8469c893d58bddf3f47b907539c31e34246784bc4f88bd"
+      "characters": 6063,
+      "sha256": "3f7182ddadc8c3a000281a6da12a71b49c647f608ed3edf370d753870134cdb6"
     },
     {
       "name": "BackendStagingDeployment05",
       "file": "BackendStagingDeployment05.json",
-      "characters": 6025,
-      "sha256": "0126fac09afed3915f11603f3e491ccb4ed5b1c8fd11e97f78ac5c7a47fec30a"
+      "characters": 6079,
+      "sha256": "1ae9cd0d9685d0f8dda0f2191c359c541d1c9ecfb9e24332c09ccd8351321aeb"
     },
     {
       "name": "BackendStagingDeployment06",
       "file": "BackendStagingDeployment06.json",
-      "characters": 6033,
-      "sha256": "76665b7b8f60081f9d26d994273b206bbb5bf95a1c2a410eb37a0928d3021ced"
+      "characters": 6053,
+      "sha256": "4c4f8cb3d5d6842d23f9fa7ee2676ca473230ec5bed6b4ce1ea986609dcedf92"
     },
     {
       "name": "BackendStagingDeployment07",
       "file": "BackendStagingDeployment07.json",
-      "characters": 6046,
-      "sha256": "a52de52df6c7684ce5e2b868a6ce9ec66d703ff75a4cf33cca19782331432669"
+      "characters": 6035,
+      "sha256": "cd37164d60b30aeb54a9486baa26aa45b4a344a4a4240389bfe89d5e2407c28c"
     },
     {
       "name": "BackendStagingDeployment08",
       "file": "BackendStagingDeployment08.json",
-      "characters": 5879,
-      "sha256": "6668bae7b8e0a272feaeb165bfc7f0d99054676d6a0d5b0f101311171d02c534"
+      "characters": 6038,
+      "sha256": "b147ce5bc29bb079a4cb7f4a22b8dc97759473a513ef64089114d6589663a29a"
     },
     {
       "name": "BackendStagingDeployment09",
       "file": "BackendStagingDeployment09.json",
-      "characters": 6001,
-      "sha256": "0ab3cda829bf527d478aa44d4381c54fdf8d0134e25da592f9b1c65a313c2005"
+      "characters": 6094,
+      "sha256": "0c1179dfb36e27c3ecaf24d2cea1dbb341f372b6e0a5be287692d84a4e57b18f"
     },
     {
       "name": "BackendStagingDeployment10",
       "file": "BackendStagingDeployment10.json",
-      "characters": 2342,
-      "sha256": "4d085be4b2c504cce724b19bb20f45f1bcb9175c2968e6c52a21489db84c2443"
+      "characters": 3871,
+      "sha256": "83b6b751f3fdd256482297a428954ecff0958b9adcbfdcc20867d439bc336673"
     }
-  ]
+  ],
+  "additional_staging_inventory": {
+    "source_branch": "1a-staging",
+    "source_commit": "9dd87893542030b029117b3e9484f787ffa34fde",
+    "services": [
+      "websocketOutboundHandler"
+    ]
+  }
 }

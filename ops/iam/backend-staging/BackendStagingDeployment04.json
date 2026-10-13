@@ -26,6 +26,14 @@
         "cloudformation:UpdateStack"
       ],
       "Resource": [
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dbDumpsDaily-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dbMigrationsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/delegationsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/discoverEnsLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropMediaIngestStorage-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropMediaSanitizer-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/dropVideoConversionInvokerLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/ethPriceLoop-staging/*",
         "arn:aws:cloudformation:eu-west-1:987989283142:stack/externalCollectionLiveTailingLoop-staging/*",
         "arn:aws:cloudformation:eu-west-1:987989283142:stack/externalCollectionSnapshottingLoop-staging/*",
         "arn:aws:cloudformation:eu-west-1:987989283142:stack/helpBotReplyLoop-staging/*",
@@ -59,6 +67,7 @@
         "arn:aws:cloudformation:eu-west-1:987989283142:stack/waveDropMetricsRefreshLoop-staging/*",
         "arn:aws:cloudformation:eu-west-1:987989283142:stack/waveLeaderboardSnapshotterLoop-staging/*",
         "arn:aws:cloudformation:eu-west-1:987989283142:stack/waveScoreRefreshLoop-staging/*",
+        "arn:aws:cloudformation:eu-west-1:987989283142:stack/websocketOutboundHandler-staging/*",
         "arn:aws:cloudformation:eu-west-1:987989283142:stack/xTdhGrantsReviewerLoop-staging/*",
         "arn:aws:cloudformation:eu-west-1:987989283142:stack/xTdhLoop-staging/*"
       ],
@@ -118,17 +127,7 @@
         "arn:aws:s3:::attachmentsprocessor-stag-serverlessdeploymentbuck-hkl8fax8akdl",
         "arn:aws:s3:::claimsbuilder-staging-serverlessdeploymentbucket-on3mpwjgda9g",
         "arn:aws:s3:::claimsmediaarweaveuploade-serverlessdeploymentbuck-2e6uoihpqyln",
-        "arn:aws:s3:::competitionmigrationloop--serverlessdeploymentbuck-t0tw1odesgdq",
-        "arn:aws:s3:::customreplayloop-staging-serverlessdeploymentbucke-7rqnhflqsbme",
-        "arn:aws:s3:::dbdumpsdaily-staging-serverlessdeploymentbucket-zvw3w9rhwbkb",
-        "arn:aws:s3:::dbmigrationsloop-staging-serverlessdeploymentbucke-ttbizns358sm",
-        "arn:aws:s3:::delegationsloop-staging-serverlessdeploymentbucket-ym7rhz7wep1t",
-        "arn:aws:s3:::discoverensloop-staging-serverlessdeploymentbucket-fetnrmpt4udk",
-        "arn:aws:s3:::dropmediaingeststorage-st-serverlessdeploymentbuck-nos3mioyveah",
-        "arn:aws:s3:::dropmediasanitizer-stagin-serverlessdeploymentbuck-ixqb0lkjhov1",
-        "arn:aws:s3:::dropvideoconversioninvoke-serverlessdeploymentbuck-uavyiopppbya",
-        "arn:aws:s3:::ethpriceloop-staging-serverlessdeploymentbucket-axpe6qk5eb8l",
-        "arn:aws:s3:::externalcollectionlivetai-serverlessdeploymentbuck-hn4wr37khh7q"
+        "arn:aws:s3:::competitionmigrationloop--serverlessdeploymentbuck-t0tw1odesgdq"
       ],
       "Condition": {
         "StringEquals": {
