@@ -170,6 +170,11 @@ jobs:
   build-and-deploy:
     name: Build and deploy \${{ github.event.inputs.service }} to \${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
+    environment: \${{ github.event.inputs.environment == 'staging' && 'staging' || 'production' }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
     concurrency:
       group: deploy-service-\${{ github.event.inputs.environment }}-\${{ github.event.inputs.service }}
       cancel-in-progress: false
@@ -259,6 +264,18 @@ jobs:
               exit 1
               ;;
           esac
+      - name: Validate deployment OIDC configuration
+        id: deploy_role
+        shell: bash
+        env:
+          AWS_DEPLOY_ROLE_ARN: \${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$AWS_DEPLOY_ROLE_ARN" =~ ^arn:aws:iam::([0-9]{12}):role/[A-Za-z0-9_+=,.@/-]+$ ]]; then
+            echo "::error::Configure AWS_DEPLOY_ROLE_ARN in the selected GitHub environment with a valid IAM role ARN"
+            exit 1
+          fi
+          echo "account_id=\${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
       - name: Checkout
         id: source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -300,13 +317,38 @@ jobs:
       - name: Build API
         if: github.event.inputs.service == 'api'
         run: pushd src/api-serverless && ../../bin/6529 run build && popd
-      - name: Configure AWS credentials
-        id: aws_credentials
+      - name: Configure staging AWS credentials through OIDC
+        id: aws_credentials_staging
+        if: github.event.inputs.environment == 'staging'
         uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
         with:
-          aws-access-key-id: \${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: \${{ github.event.inputs.environment == 'prod' && 'us-east-1' || 'eu-west-1' }}
+          role-to-assume: \${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: \${{ steps.deploy_role.outputs.account_id }}
+          role-session-name: backend-staging-\${{ github.run_id }}
+          unset-current-credentials: true
+          aws-region: eu-west-1
+      - name: Configure production AWS credentials through OIDC
+        id: aws_credentials
+        if: github.event.inputs.environment == 'prod'
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          role-to-assume: \${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          allowed-account-ids: \${{ steps.deploy_role.outputs.account_id }}
+          role-session-name: backend-prod-\${{ github.run_id }}
+          unset-current-credentials: true
+          aws-region: us-east-1
+      - name: Require successful AWS authentication
+        shell: bash
+        env:
+          STAGING_CREDENTIALS_OUTCOME: \${{ steps.aws_credentials_staging.outcome }}
+          PRODUCTION_CREDENTIALS_OUTCOME: \${{ steps.aws_credentials.outcome }}
+        run: |
+          set -euo pipefail
+          case "$INPUT_ENVIRONMENT" in
+            staging) test "$STAGING_CREDENTIALS_OUTCOME" = success ;;
+            prod) test "$PRODUCTION_CREDENTIALS_OUTCOME" = success ;;
+            *) echo "::error::Unsupported AWS deployment environment"; exit 1 ;;
+          esac
       - name: Select environment-specific config
         shell: bash
         run: |
@@ -355,6 +397,8 @@ jobs:
           DROP_MEDIA_SANITIZER_QUEUE="\${DROP_MEDIA_SANITIZER_QUEUE:-drop-media-sanitizer}"
 
           if [ "$INPUT_SERVICE" = api ]; then
+            # Both environments preflight the shared ingest bucket in its own
+            # region; the sanitizer queue uses the deployment credential region.
             aws s3api head-bucket --bucket "$DROP_MEDIA_INGEST_BUCKET" --region "$DROP_MEDIA_INGEST_REGION"
             aws sqs get-queue-url --queue-name "$DROP_MEDIA_SANITIZER_QUEUE" --query QueueUrl --output text > /dev/null
           fi
