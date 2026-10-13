@@ -78,10 +78,11 @@ export class WsE2eeEventPublisher implements E2eeEventPublisher {
       connectionId: string,
       message: string
     ) => Promise<void>,
+    /** Resolves false when nothing was queued (push delivery switched off). */
     private readonly enqueueWake: (
       profileIds: string[],
       reason: E2eeWakeReason
-    ) => Promise<void>,
+    ) => Promise<boolean | void>,
     private readonly now: () => number = () => Date.now()
   ) {}
 
@@ -186,15 +187,35 @@ export class WsE2eeEventPublisher implements E2eeEventPublisher {
   async wake(group: string, profileIds: string[], reason: E2eeWakeReason) {
     const unique = Array.from(new Set(profileIds.filter((id) => !!id)));
     if (!unique.length) return;
+    const claimedAt = this.now();
+    let eligible: string[] = [];
     try {
-      const eligible = await this.db.claimPushWakes(group, unique, this.now());
-      if (eligible.length) await this.enqueueWake(eligible, reason);
+      eligible = await this.db.claimPushWakes(group, unique, claimedAt);
+      if (!eligible.length) return;
+      if ((await this.enqueueWake(eligible, reason)) === false) {
+        await this.releaseWakes(group, eligible, claimedAt);
+      }
     } catch (error) {
+      // A wake that never reached the queue must not hold the 60 s slot.
+      await this.releaseWakes(group, eligible, claimedAt);
       this.logger.warn(
         `E2EE push wake failed for ${unique.length} profiles: ${
           (error as Error)?.message ?? 'unknown'
         }`
       );
+    }
+  }
+
+  private async releaseWakes(
+    group: string,
+    profileIds: string[],
+    claimedAt: number
+  ): Promise<void> {
+    if (!profileIds.length) return;
+    try {
+      await this.db.releasePushWakes(group, profileIds, claimedAt);
+    } catch {
+      this.logger.warn('E2EE push wake release failed');
     }
   }
 }

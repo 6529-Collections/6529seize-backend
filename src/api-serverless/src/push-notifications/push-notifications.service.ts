@@ -112,8 +112,8 @@ const E2EE_WAKE_PROFILES_PER_MESSAGE = 100;
 export async function enqueueE2eeWake(
   profileIds: string[],
   reason: E2eeWakeReason
-): Promise<void> {
-  if (!isActivated()) return;
+): Promise<boolean> {
+  if (!isActivated()) return false;
   const uniqueIds = collections.distinct(profileIds);
   const entries: NonNullable<SendMessageBatchCommandInput['Entries']> = [];
   for (let i = 0; i < uniqueIds.length; i += E2EE_WAKE_PROFILES_PER_MESSAGE) {
@@ -131,6 +131,7 @@ export async function enqueueE2eeWake(
     batches.push(entries.slice(i, i + 10));
   }
   await Promise.all(batches.map((batch) => sendBatchMessagesToSQS(batch)));
+  return true;
 }
 
 export const sendBatchMessagesToSQS = async (

@@ -1186,6 +1186,22 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
    * Claims a content-free wake per (profile, group) at most once per 60 s.
    * Returns the profiles whose wake may be sent now.
    */
+  /** Undoes a claim whose wake was never queued (only rows still at it). */
+  async releasePushWakes(
+    group: string,
+    profileIds: readonly string[],
+    claimedAtMs: number
+  ): Promise<void> {
+    const ids = inList(profileIds);
+    if (!ids.length) return;
+    await this.write(
+      `update ${E2EE_PUSH_THROTTLE_TABLE} set last_sent_at = 0
+       where group_handle = :group and profile_id in (:ids)
+         and last_sent_at = :claimedAtMs`,
+      { group, ids, claimedAtMs }
+    );
+  }
+
   async claimPushWakes(
     group: string,
     profileIds: readonly string[],

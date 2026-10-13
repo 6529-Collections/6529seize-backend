@@ -161,7 +161,7 @@ too; the caller's own profile always skips them.
 | Unclaimed one-time KeyPackages per device | 100 (`409 E2EE_KEY_PACKAGE_LIMIT` beyond) |
 | KeyPackage size | 4 KiB |
 | Entry data | an entry bucket, at most 2 MiB |
-| Welcome plus ratchet tree | 3.5 MiB raw |
+| Welcome plus ratchet tree | 1.25 MiB raw (with a 2 MiB entry, the request stays under the 5 MB JSON limit) |
 | Message data | a message bucket, at most 64 KiB |
 | Attachment | at most 25 chunks of 1 MiB plaintext (each chunk at most 1 MiB + 16 bytes of ciphertext) |
 | Attachment storage per uploading profile | 200 MiB declared bytes per rolling 24 h (`429 E2EE_RATE_LIMITED`), 1 GiB live (`413 E2EE_TOO_LARGE`) |

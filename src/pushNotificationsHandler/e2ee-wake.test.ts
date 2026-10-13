@@ -149,4 +149,36 @@ describe('content-free E2EE wakes', () => {
       ]);
     }
   });
+
+  it('does not rethrow when the send fails part-way, so SQS does not redeliver', async () => {
+    const deps: E2eeWakeDeps = {
+      loadDevices: async () => [
+        { device_id: 'd1', profile_id: 'alice', token: 't1' }
+      ],
+      loadHandles: async () => new Map(),
+      loadPreferences: async () => new Map(),
+      send: async () => {
+        throw new Error('second FCM chunk failed');
+      },
+      deleteDevice: async () => undefined
+    };
+    await expect(
+      sendE2eeWakes([{ profileIds: ['alice'], reason: 'message' }], deps)
+    ).resolves.toBeUndefined();
+  });
+
+  it('still throws when a lookup fails before anything was sent', async () => {
+    const deps: E2eeWakeDeps = {
+      loadDevices: async () => {
+        throw new Error('db down');
+      },
+      loadHandles: async () => new Map(),
+      loadPreferences: async () => new Map(),
+      send: async () => [],
+      deleteDevice: async () => undefined
+    };
+    await expect(
+      sendE2eeWakes([{ profileIds: ['alice'], reason: 'message' }], deps)
+    ).rejects.toThrow('db down');
+  });
 });

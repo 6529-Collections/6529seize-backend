@@ -35,7 +35,7 @@ export const E2EE_MESSAGE_BUCKETS: readonly number[] = [
 export const E2EE_MAX_ENTRY_BYTES = 2 * MIB;
 export const E2EE_MAX_MESSAGE_BYTES = 64 * KIB;
 /** Welcome plus optional ratchet tree, raw bytes (keeps base64 under 5 MB). */
-export const E2EE_MAX_WELCOME_BYTES = 3.5 * MIB;
+export const E2EE_MAX_WELCOME_BYTES = 1.25 * MIB;
 export const E2EE_MAX_PROPOSALS_PER_EPOCH = 64;
 export const E2EE_MAX_ROSTER_DEVICES = 2048;
 export const E2EE_MAX_ROSTER_DELTA = 2048;

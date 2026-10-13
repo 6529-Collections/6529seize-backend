@@ -123,4 +123,45 @@ describe('E2EE websocket events', () => {
     await publisher.wake('0xg', [], 'added');
     expect(claimPushWakes).toHaveBeenCalledTimes(1);
   });
+
+  it('releases the throttle slot when the wake was not queued', async () => {
+    for (const enqueue of [
+      jest.fn(async () => false),
+      jest.fn(async () => {
+        throw new Error('sqs down');
+      })
+    ]) {
+      const releasePushWakes = jest.fn(async () => undefined);
+      const publisher = new WsE2eeEventPublisher(
+        {
+          claimPushWakes: jest.fn(async () => ['p1']),
+          releasePushWakes
+        } as unknown as E2eeDb,
+        async () => [],
+        async () => undefined,
+        enqueue,
+        () => 42
+      );
+      await expect(
+        publisher.wake('0xg', ['p1'], 'message')
+      ).resolves.toBeUndefined();
+      expect(releasePushWakes).toHaveBeenCalledWith('0xg', ['p1'], 42);
+    }
+  });
+
+  it('keeps the slot once the wake is queued', async () => {
+    const releasePushWakes = jest.fn(async () => undefined);
+    const publisher = new WsE2eeEventPublisher(
+      {
+        claimPushWakes: jest.fn(async () => ['p1']),
+        releasePushWakes
+      } as unknown as E2eeDb,
+      async () => [],
+      async () => undefined,
+      jest.fn(async () => true),
+      () => 42
+    );
+    await publisher.wake('0xg', ['p1'], 'message');
+    expect(releasePushWakes).not.toHaveBeenCalled();
+  });
 });

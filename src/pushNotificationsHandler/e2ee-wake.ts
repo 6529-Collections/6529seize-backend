@@ -184,16 +184,29 @@ export async function sendE2eeWakes(
     isE2eeWakeEnabled(preferences.get(device.profile_id))
   );
   if (!targets.length) return;
-  const results = await deps.send(
-    targets.map((device) =>
-      buildE2eeWakeInput({
-        token: device.token,
-        profileId: device.profile_id,
-        handle: handles.get(device.profile_id) ?? device.profile_id,
-        reason: reasonByProfile.get(device.profile_id)!
-      })
-    )
-  );
+  // Wakes are not retried: a send that fails part-way must not make SQS
+  // redeliver the whole batch to devices that already got it. Only the loads
+  // above may throw (and then nothing was sent).
+  let results: Awaited<ReturnType<E2eeWakeDeps['send']>>;
+  try {
+    results = await deps.send(
+      targets.map((device) =>
+        buildE2eeWakeInput({
+          token: device.token,
+          profileId: device.profile_id,
+          handle: handles.get(device.profile_id) ?? device.profile_id,
+          reason: reasonByProfile.get(device.profile_id)!
+        })
+      )
+    );
+  } catch (error) {
+    logger.warn(
+      `Encrypted-message wakes failed part-way: ${
+        (error as Error)?.message ?? 'unknown'
+      }`
+    );
+    return;
+  }
   let delivered = 0;
   await Promise.all(
     results.map(async (result, index) => {
