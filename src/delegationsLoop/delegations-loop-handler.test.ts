@@ -52,7 +52,10 @@ jest.mock('../tdhLoop/tdh', () => ({ updateTDH: jest.fn() }));
 jest.mock('../tdhLoop/tdh_consolidation', () => ({
   consolidateAndPersistTDH: jest.fn()
 }));
-jest.mock('./reconsolidation', () => ({ getAffectedWallets: jest.fn() }));
+jest.mock('./reconsolidation', () => ({
+  getAffectedWallets: jest.fn(),
+  getAffectedWalletsForAddresses: jest.fn()
+}));
 
 import * as db from '../db';
 import * as delegations from '../delegations';
@@ -65,6 +68,12 @@ import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
 import { handler } from './index';
+import { doInDbContext } from '../secrets';
+import {
+  getAffectedWallets,
+  getAffectedWalletsForAddresses
+} from './reconsolidation';
+import type { ConsolidatedTDH } from '../entities/ITDH';
 
 const COLD = '0xc01d000000000000000000000000000000000c01';
 const HOT = '0x1111111111111111111111111111111111111111';
@@ -86,6 +95,167 @@ function storedRow(overrides: Record<string, unknown>) {
 const consolidationRow = storedRow({
   block: 20_000_001,
   use_case: USE_CASE_CONSOLIDATION
+});
+
+describe('delegations loop on-demand reconsolidation', () => {
+  const env = process.env;
+  const affected = new Set([COLD, HOT]);
+  const originalSnapshot = [{ consolidation_key: COLD }] as ConsolidatedTDH[];
+  const replacementSnapshot = [{ consolidation_key: HOT }] as ConsolidatedTDH[];
+  const blockTimestamp = new Date('2026-10-13T00:00:00Z');
+  const invoke = (event: unknown) =>
+    (handler as unknown as (event: unknown) => Promise<unknown>)(event);
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    process.env = { ...env, SENTRY_ENVIRONMENT: 'delegationsLoop_staging' };
+    delete process.env.DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL;
+    jest.mocked(doInDbContext).mockImplementation(async (work) => work());
+    jest
+      .mocked(db.fetchAllConsolidatedTdh)
+      .mockResolvedValueOnce(originalSnapshot)
+      .mockResolvedValueOnce(replacementSnapshot);
+    jest.mocked(getAffectedWalletsForAddresses).mockResolvedValue(affected);
+    jest.mocked(getAffectedWallets).mockResolvedValue(affected);
+    jest.mocked(updateTDH).mockResolvedValue({
+      block: 26_000_000,
+      blockTimestamp,
+      tdh: []
+    });
+  });
+
+  afterAll(() => {
+    process.env = env;
+  });
+
+  it('runs the complete shared pipeline and primary update without indexing', async () => {
+    const result = await invoke({ action: 'reconsolidate', wallets: [COLD] });
+    expect(getAffectedWalletsForAddresses).toHaveBeenCalledWith(
+      [COLD],
+      originalSnapshot
+    );
+    expect(consolidateAndPersistTDH).toHaveBeenCalledWith(
+      26_000_000,
+      blockTimestamp,
+      {
+        mode: 'PARTIAL',
+        wallets: [COLD, HOT],
+        currentConsolidatedTdh: replacementSnapshot
+      }
+    );
+    const pipeline = [
+      updateTDH,
+      consolidateAndPersistTDH,
+      consolidateNftOwners,
+      consolidateOwnerBalances,
+      consolidateActivity,
+      consolidateSubscriptions,
+      identitiesService.updatePrimaryAddresses
+    ];
+    pipeline.forEach((fn) => expect(fn).toHaveBeenCalledTimes(1));
+    const calls = pipeline.map(
+      (fn) => jest.mocked(fn).mock.invocationCallOrder[0]
+    );
+    expect(calls).toEqual([...calls].sort((a, b) => a - b));
+    [
+      consolidateNftOwners,
+      consolidateOwnerBalances,
+      consolidateActivity,
+      consolidateSubscriptions,
+      identitiesService.updatePrimaryAddresses
+    ].forEach((fn) => expect(fn).toHaveBeenCalledWith(affected));
+    [
+      delegations.findDelegationTransactions,
+      delegations.scanDelegationLogs,
+      db.fetchLatestNftDelegationBlock,
+      db.persistConsolidations,
+      db.persistDelegations,
+      db.persistNftDelegationBlock,
+      ens.discoverEnsConsolidations,
+      ens.discoverEnsDelegations
+    ].forEach((fn) => expect(fn).not.toHaveBeenCalled());
+    expect(result).toEqual({
+      action: 'reconsolidate',
+      status: 'completed',
+      requested_wallets: [COLD],
+      affected_wallets: [COLD, HOT],
+      block: 26_000_000
+    });
+  });
+
+  it('keeps the chain-event path on the same reconsolidation pipeline', async () => {
+    jest.mocked(delegations.findDelegationTransactions).mockResolvedValue({
+      latestBlock: 26_000_001,
+      latestBlockTimestamp: 1,
+      consolidations: [
+        {
+          block: 26_000_001,
+          type: EventType.REGISTER,
+          wallet1: COLD,
+          wallet2: HOT
+        }
+      ],
+      registrations: [],
+      revocation: []
+    });
+    await invoke({ source: 'aws.events' });
+    expect(getAffectedWallets).toHaveBeenCalledWith(
+      expect.any(Array),
+      originalSnapshot
+    );
+    expect(getAffectedWalletsForAddresses).not.toHaveBeenCalled();
+    [
+      updateTDH,
+      consolidateAndPersistTDH,
+      consolidateNftOwners,
+      consolidateOwnerBalances,
+      consolidateActivity,
+      consolidateSubscriptions
+    ].forEach((fn) => expect(fn).toHaveBeenCalledTimes(1));
+    expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(26_000_001, 1);
+  });
+
+  it('stops the pipeline and rejects the invocation when a stage fails', async () => {
+    jest
+      .mocked(consolidateOwnerBalances)
+      .mockRejectedValue(new Error('balance failure'));
+    await expect(
+      invoke({ action: 'reconsolidate', wallets: [COLD] })
+    ).rejects.toThrow('balance failure');
+    expect(consolidateActivity).not.toHaveBeenCalled();
+    expect(consolidateSubscriptions).not.toHaveBeenCalled();
+    expect(identitiesService.updatePrimaryAddresses).not.toHaveBeenCalled();
+    expect(db.persistNftDelegationBlock).not.toHaveBeenCalled();
+  });
+
+  it.each(['delegationsLoop_prod', undefined])(
+    'rejects non-staging runtime %s before opening the database',
+    async (environment) => {
+      if (environment) process.env.SENTRY_ENVIRONMENT = environment;
+      else delete process.env.SENTRY_ENVIRONMENT;
+      await expect(
+        invoke({ action: 'reconsolidate', wallets: [COLD] })
+      ).rejects.toThrow('only in staging');
+      expect(doInDbContext).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects an action while the backfill mode is configured', async () => {
+    process.env.DELEGATIONS_EXPIRY_TOKEN_SCOPE_BACKFILL = 'apply';
+    await expect(
+      invoke({ action: 'reconsolidate', wallets: [COLD] })
+    ).rejects.toThrow('backfill flag');
+    loopPaths().forEach((fn) => expect(fn).not.toHaveBeenCalled());
+    expect(getAffectedWalletsForAddresses).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed maintenance input before indexing or opening the database', async () => {
+    await expect(
+      invoke({ action: 'reconsolidate', wallets: [] })
+    ).rejects.toThrow();
+    expect(doInDbContext).not.toHaveBeenCalled();
+    loopPaths().forEach((fn) => expect(fn).not.toHaveBeenCalled());
+  });
 });
 const tokenSpecificRow = storedRow({});
 
