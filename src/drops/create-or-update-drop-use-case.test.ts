@@ -12,6 +12,7 @@ jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
   getEthereumRpcClient: jest.fn(() => ({ resolveName: mockResolveName }))
 }));
 
+import fc from 'fast-check';
 import { identitiesDb } from '@/identities/identities.db';
 import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
@@ -31,6 +32,18 @@ import {
   validateDropMediaAttachment
 } from './create-or-update-drop.use-case';
 import { PrePublicationModerationService } from '@/content-moderation/pre-publication-moderation.service';
+import {
+  DROP_MAX_MEDIA,
+  DROP_MAX_METADATA_ENTRIES,
+  DROP_MAX_MENTIONED_USERS,
+  DROP_MAX_MENTIONED_WAVES,
+  DROP_MAX_PARTS,
+  DROP_MAX_REFERENCED_NFTS,
+  DROP_MEDIA_MIME_TYPE_MAX_LENGTH,
+  DROP_MEDIA_URL_MAX_LENGTH,
+  DROP_PART_MAX_ATTACHMENTS,
+  DROP_PART_MAX_MEDIA
+} from './drop-payload-limits';
 import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
 import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
@@ -533,6 +546,254 @@ describe('CreateOrUpdateDropUseCase', () => {
       'drop part 1 content must be at most 25000 UTF-16 code units'
     );
     expect(deleteDropUseCase.execute).not.toHaveBeenCalled();
+  });
+
+  describe('drop payload limits', () => {
+    const each = <T>(count: number, build: (index: number) => T): T[] =>
+      Array.from({ length: count }, (_, index) => build(index));
+    const part = (overrides: Record<string, unknown> = {}) => ({
+      content: 'hello',
+      quoted_drop: null,
+      media: [],
+      ...overrides
+    });
+    const media = (index: number) => ({
+      url: `https://example.com/${index}.png`,
+      mime_type: 'image/png'
+    });
+    const attachment = (index: number) => ({ attachment_id: `att-${index}` });
+    const mediaParts = (total: number) => {
+      const parts: Array<ReturnType<typeof part>> = [];
+      for (let used = 0; used < total; used += DROP_PART_MAX_MEDIA) {
+        parts.push(
+          part({
+            media: each(Math.min(DROP_PART_MAX_MEDIA, total - used), media)
+          })
+        );
+      }
+      return parts;
+    };
+
+    const overCap: Array<[string, Record<string, unknown>, string]> = [
+      [
+        'parts',
+        { parts: each(DROP_MAX_PARTS + 1, () => part()) },
+        `parts must contain at most ${DROP_MAX_PARTS} items`
+      ],
+      [
+        'metadata',
+        {
+          metadata: each(DROP_MAX_METADATA_ENTRIES + 1, (index) => ({
+            data_key: `key-${index}`,
+            data_value: 'value'
+          }))
+        },
+        `metadata must contain at most ${DROP_MAX_METADATA_ENTRIES} items`
+      ],
+      [
+        'mentioned_users',
+        {
+          mentioned_users: each(DROP_MAX_MENTIONED_USERS + 1, (index) => ({
+            handle: `handle-${index}`
+          }))
+        },
+        `mentioned_users must contain at most ${DROP_MAX_MENTIONED_USERS} items`
+      ],
+      [
+        'mentioned_waves',
+        {
+          mentioned_waves: each(DROP_MAX_MENTIONED_WAVES + 1, (index) => ({
+            wave_id: `wave-${index}`,
+            wave_name_in_content: `wave ${index}`
+          }))
+        },
+        `mentioned_waves must contain at most ${DROP_MAX_MENTIONED_WAVES} items`
+      ],
+      [
+        'referenced_nfts',
+        {
+          referenced_nfts: each(DROP_MAX_REFERENCED_NFTS + 1, (index) => ({
+            contract: `0x${'1'.repeat(40)}`,
+            token: `${index}`,
+            name: `nft ${index}`
+          }))
+        },
+        `referenced_nfts must contain at most ${DROP_MAX_REFERENCED_NFTS} items`
+      ],
+      [
+        'media in one part',
+        { parts: [part({ media: each(DROP_PART_MAX_MEDIA + 1, media) })] },
+        `parts[0].media must contain at most ${DROP_PART_MAX_MEDIA} items`
+      ],
+      [
+        'attachments in one part',
+        {
+          parts: [
+            part({
+              attachments: each(DROP_PART_MAX_ATTACHMENTS + 1, attachment)
+            })
+          ]
+        },
+        `parts[0].attachments must contain at most ${DROP_PART_MAX_ATTACHMENTS} items`
+      ],
+      [
+        'media across parts',
+        { parts: mediaParts(DROP_MAX_MEDIA + 1) },
+        `media across all drop parts must contain at most ${DROP_MAX_MEDIA} items in total`
+      ],
+      [
+        'media url length',
+        {
+          parts: [
+            part({
+              media: [
+                {
+                  url: `https://example.com/${'a'.repeat(DROP_MEDIA_URL_MAX_LENGTH)}`,
+                  mime_type: 'image/png'
+                }
+              ]
+            })
+          ]
+        },
+        `parts[0].media[0].url must be at most ${DROP_MEDIA_URL_MAX_LENGTH} characters long`
+      ],
+      [
+        'media mime_type length',
+        {
+          parts: [
+            part({
+              media: [
+                {
+                  url: 'https://example.com/a.png',
+                  mime_type: 'a'.repeat(DROP_MEDIA_MIME_TYPE_MAX_LENGTH + 1)
+                }
+              ]
+            })
+          ]
+        },
+        `parts[0].media[0].mime_type must be at most ${DROP_MEDIA_MIME_TYPE_MAX_LENGTH} characters long`
+      ]
+    ];
+
+    it.each(overCap)(
+      'rejects too many %s before an update can delete existing rows',
+      async (_name, overrides, message) => {
+        const deleteDropUseCase = { execute: jest.fn() };
+        const useCase = createUseCaseWithMocks({ deleteDropUseCase });
+
+        await expect(
+          useCase.execute(
+            createChatDropModel({ drop_id: 'drop-1', ...overrides }),
+            false,
+            {
+              connection: {} as any,
+              prePublication: { trustedSystem: true }
+            }
+          )
+        ).rejects.toThrow(message);
+        expect(deleteDropUseCase.execute).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each(overCap)(
+      'rejects too many %s again at the persistence boundary',
+      async (_name, overrides, message) => {
+        const dropsDb = {
+          insertDrop: jest.fn(),
+          insertDropParts: jest.fn(),
+          insertDropMedia: jest.fn()
+        };
+        const useCase = createUseCaseWithMocks({ dropsDb });
+
+        await expect(
+          (useCase as any).insertAllDropComponents(
+            {
+              model: createChatDropModel({ drop_id: 'drop-1', ...overrides }),
+              wave: { id: 'wave-1' },
+              createdAt: 1,
+              updatedAt: null,
+              serialNo: 1
+            },
+            { connection: {} as any }
+          )
+        ).rejects.toThrow(message);
+        expect(dropsDb.insertDrop).not.toHaveBeenCalled();
+        expect(dropsDb.insertDropParts).not.toHaveBeenCalled();
+        expect(dropsDb.insertDropMedia).not.toHaveBeenCalled();
+      }
+    );
+
+    it('rejects any count above a cap for every counted field', () => {
+      const useCase = createUseCaseWithMocks();
+      const countedFields = overCap.slice(0, 5);
+      fc.assert(
+        fc.property(
+          fc.constantFrom(...countedFields),
+          fc.integer({ min: 0, max: 25 }),
+          ([, overrides, message], extra) => {
+            const [field] = Object.keys(overrides);
+            const items = (overrides as Record<string, unknown[]>)[field];
+            const model = createChatDropModel({
+              [field]: [...items, ...items.slice(0, extra)]
+            });
+            expect(() => (useCase as any).assertDropLimits(model)).toThrow(
+              message
+            );
+          }
+        ),
+        { numRuns: 25 }
+      );
+    });
+
+    it('accepts every field exactly at its cap', () => {
+      const useCase = createUseCaseWithMocks();
+      const atCap = createChatDropModel({
+        parts: mediaParts(DROP_MAX_MEDIA).concat(
+          each(
+            DROP_MAX_PARTS - Math.ceil(DROP_MAX_MEDIA / DROP_PART_MAX_MEDIA),
+            () => part()
+          )
+        ),
+        metadata: each(DROP_MAX_METADATA_ENTRIES, (index) => ({
+          data_key: `key-${index}`,
+          data_value: 'value'
+        })),
+        mentioned_users: each(DROP_MAX_MENTIONED_USERS, (index) => ({
+          handle: `handle-${index}`
+        })),
+        mentioned_waves: each(DROP_MAX_MENTIONED_WAVES, (index) => ({
+          wave_id: `wave-${index}`,
+          wave_name_in_content: `wave ${index}`
+        })),
+        referenced_nfts: each(DROP_MAX_REFERENCED_NFTS, (index) => ({
+          contract: `0x${'1'.repeat(40)}`,
+          token: `${index}`,
+          name: `nft ${index}`
+        }))
+      });
+      expect(atCap.parts).toHaveLength(DROP_MAX_PARTS);
+
+      expect(() => (useCase as any).assertDropLimits(atCap)).not.toThrow();
+    });
+
+    it('keeps the drops posted by internal callers far inside the caps', () => {
+      const useCase = createUseCaseWithMocks();
+      // Lambda loops (subscription notifier, deployer dropper, help bot,
+      // newsletter, release notes) post one text part, no media, and at most a
+      // handful of mentions and metadata entries.
+      const internalDrop = createChatDropModel({
+        parts: [part({ content: 'x'.repeat(25_000) })],
+        mentioned_users: each(20, (index) => ({ handle: `handle-${index}` })),
+        metadata: each(5, (index) => ({
+          data_key: `key-${index}`,
+          data_value: 'value'
+        }))
+      });
+
+      expect(() =>
+        (useCase as any).assertDropLimits(internalDrop)
+      ).not.toThrow();
+    });
   });
 
   it('prepares moderation before the caller opens the write transaction', async () => {

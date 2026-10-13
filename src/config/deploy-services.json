@@ -698,6 +698,22 @@
       "default_dependencies": []
     },
     {
+      "name": "releaseDigestLoop",
+      "allowed_environments": [
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "releaseDigestLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
       "name": "releaseNotesGenerationLoop",
       "allowed_environments": [
         "prod"

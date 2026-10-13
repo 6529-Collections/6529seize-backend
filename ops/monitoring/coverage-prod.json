@@ -463,6 +463,18 @@
       ]
     },
     {
+      "service": "releaseDigestLoop",
+      "region": "us-east-1",
+      "functions": [
+        "releaseDigestLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "releaseNotesGenerationLoop",
       "region": "us-east-1",
       "functions": [
