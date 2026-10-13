@@ -30,15 +30,31 @@ import {
   MarketDepthReconciliationInput,
   MarketDepthReconciliationResolveInput,
   MarketDepthReconciliationRetryInput,
+  MarketDepthReconciliationStatus,
   MarketDepthSnapshotArchive,
   MarketDepthSnapshotMetadata,
   MarketDepthSnapshotReadOptions,
   NormalizedMarketDepthOrder,
   PublishMarketDepthSnapshotInput
 } from './market-depth.types';
+import {
+  MarketDepthEventPurgeBatch,
+  MarketDepthEventPurgeKey
+} from './market-depth-retention';
 
 type DbConnection = ConnectionWrapper<unknown>;
 const logger = Logger.get('MARKET_DEPTH_DB');
+
+const RECONCILIATION_STATUSES: readonly MarketDepthReconciliationStatus[] = [
+  'RESOLVED',
+  'PENDING'
+];
+
+interface PurgePartition {
+  source: string;
+  collection_slug: string;
+  latest_snapshot_id: string | null;
+}
 
 type SnapshotRow = Omit<MarketDepthSnapshotMetadata, 'chain' | 'chain_id'> & {
   chain: string;
@@ -99,6 +115,12 @@ function normalizePartition(value: string): string {
 function assertNonNegativeInteger(value: number, field: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${field} must be a non-negative safe integer`);
+  }
+}
+
+function assertPurgeLimit(limit: number): void {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 5_000) {
+    throw new Error('Purge limit must be between 1 and 5000');
   }
 }
 
@@ -887,6 +909,192 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
       }
     );
     return this.db.getAffectedRows(result) === 1;
+  }
+
+  private async getPurgePartitions(
+    contract: string
+  ): Promise<PurgePartition[]> {
+    return this.query<PurgePartition>(
+      `SELECT source, collection_slug, latest_snapshot_id
+       FROM ${MARKET_DEPTH_COLLECTION_STATE_TABLE}
+       WHERE chain_id=:chainId AND contract=:contract
+       ORDER BY source ASC, collection_slug ASC`,
+      { chainId: MARKET_DEPTH_CHAIN_ID, contract }
+    );
+  }
+
+  async purgeSnapshotsCompletedBefore(input: {
+    contract: string;
+    cutoff: Date;
+    limit: number;
+  }): Promise<number> {
+    assertPurgeLimit(input.limit);
+    const contract = normalizeContract(input.contract);
+    const ids: string[] = [];
+    for (const partition of await this.getPurgePartitions(contract)) {
+      if (ids.length >= input.limit) break;
+      // The latest snapshot and any snapshot the live book still points at
+      // are kept regardless of age.
+      const rows = await this.query<{ id: string }>(
+        `SELECT s.id FROM ${MARKET_DEPTH_SNAPSHOTS_TABLE} s
+         FORCE INDEX (idx_market_depth_snapshots_collection_completed)
+         WHERE s.source=:source AND s.chain_id=:chainId AND s.contract=:contract
+           AND s.collection_slug=:collectionSlug AND s.completed_at<:cutoff
+           AND s.id<>:latestSnapshotId
+           AND NOT EXISTS (
+             SELECT 1 FROM ${MARKET_DEPTH_CURRENT_ORDERS_TABLE} c
+             WHERE c.snapshot_id=s.id
+           )
+         ORDER BY s.completed_at ASC, s.id ASC LIMIT :limit`,
+        {
+          source: partition.source,
+          chainId: MARKET_DEPTH_CHAIN_ID,
+          contract,
+          collectionSlug: partition.collection_slug,
+          cutoff: input.cutoff,
+          latestSnapshotId: partition.latest_snapshot_id ?? '',
+          limit: input.limit - ids.length
+        }
+      );
+      ids.push(...rows.map((row) => row.id));
+    }
+    if (!ids.length) return 0;
+    // Re-check at deletion time so a concurrent publish cannot lose the
+    // snapshot it just made current.
+    const result = await this.query<unknown>(
+      `DELETE FROM ${MARKET_DEPTH_SNAPSHOTS_TABLE}
+       WHERE id IN (:ids) AND completed_at<:cutoff
+         AND NOT EXISTS (
+           SELECT 1 FROM ${MARKET_DEPTH_COLLECTION_STATE_TABLE} state
+           WHERE state.latest_snapshot_id=${MARKET_DEPTH_SNAPSHOTS_TABLE}.id
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM ${MARKET_DEPTH_CURRENT_ORDERS_TABLE} c
+           WHERE c.snapshot_id=${MARKET_DEPTH_SNAPSHOTS_TABLE}.id
+         )`,
+      { ids, cutoff: input.cutoff }
+    );
+    return this.db.getAffectedRows(result);
+  }
+
+  async purgeReconciliationsDueBefore(input: {
+    contract: string;
+    cutoff: Date;
+    limit: number;
+  }): Promise<number> {
+    assertPurgeLimit(input.limit);
+    const contract = normalizeContract(input.contract);
+    const ids: string[] = [];
+    for (const partition of await this.getPurgePartitions(contract)) {
+      for (const status of RECONCILIATION_STATUSES) {
+        if (ids.length >= input.limit) break;
+        // Retried rows move next_attempt_at forward, so an old value means the
+        // row was resolved or has waited unprocessed for the whole window.
+        const rows = await this.query<{ id: string }>(
+          `SELECT id FROM ${MARKET_DEPTH_RECONCILIATION_QUEUE_TABLE}
+           FORCE INDEX (idx_market_depth_reconciliation_due)
+           WHERE source=:source AND chain_id=:chainId AND contract=:contract
+             AND collection_slug=:collectionSlug AND status=:status
+             AND next_attempt_at<:cutoff
+           ORDER BY next_attempt_at ASC, id ASC LIMIT :limit`,
+          {
+            source: partition.source,
+            chainId: MARKET_DEPTH_CHAIN_ID,
+            contract,
+            collectionSlug: partition.collection_slug,
+            status,
+            cutoff: input.cutoff,
+            limit: input.limit - ids.length
+          }
+        );
+        ids.push(...rows.map((row) => row.id));
+      }
+    }
+    if (!ids.length) return 0;
+    const result = await this.query<unknown>(
+      `DELETE FROM ${MARKET_DEPTH_RECONCILIATION_QUEUE_TABLE}
+       WHERE id IN (:ids) AND next_attempt_at<:cutoff`,
+      { ids, cutoff: input.cutoff }
+    );
+    return this.db.getAffectedRows(result);
+  }
+
+  async purgeEventsObservedBefore(input: {
+    contract: string;
+    cutoff: Date;
+    after: MarketDepthEventPurgeKey | null;
+    limit: number;
+  }): Promise<MarketDepthEventPurgeBatch> {
+    assertPurgeLimit(input.limit);
+    const params = {
+      chainId: MARKET_DEPTH_CHAIN_ID,
+      contract: normalizeContract(input.contract),
+      cutoff: input.cutoff
+    };
+    const afterClause = input.after
+      ? 'AND (observed_at>:afterAt OR (observed_at=:afterAt AND event_id>:afterId))'
+      : '';
+    const candidates = await this.query<{
+      event_id: string;
+      order_id: string | null;
+      observed_at: Date;
+    }>(
+      `SELECT event_id, order_id, observed_at FROM ${MARKET_DEPTH_EVENTS_TABLE}
+       FORCE INDEX (idx_market_depth_events_contract_observed)
+       WHERE chain_id=:chainId AND contract=:contract AND observed_at<:cutoff
+         ${afterClause}
+       ORDER BY observed_at ASC, event_id ASC LIMIT :limit`,
+      {
+        ...params,
+        afterAt: input.after?.observed_at,
+        afterId: input.after?.event_id,
+        limit: input.limit
+      }
+    );
+    const last = candidates.at(-1);
+    if (!last) return { scanned: 0, deleted: 0, last: input.after };
+
+    // Orders still in the live book keep their whole history: the depth API
+    // applies their latest terminal event even when it predates the window.
+    const orderIds = Array.from(
+      new Set(
+        candidates.flatMap((event) => (event.order_id ? [event.order_id] : []))
+      )
+    );
+    const liveOrderIds = new Set(
+      orderIds.length
+        ? (
+            await this.query<{ order_id: string }>(
+              `SELECT DISTINCT order_id FROM ${MARKET_DEPTH_CURRENT_ORDERS_TABLE}
+               WHERE chain_id=:chainId AND contract=:contract
+                 AND order_id IN (:orderIds)`,
+              { ...params, orderIds }
+            )
+          ).map((row) => row.order_id.toLowerCase())
+        : []
+    );
+    const ids = candidates
+      .filter(
+        (event) =>
+          event.order_id === null ||
+          !liveOrderIds.has(event.order_id.toLowerCase())
+      )
+      .map((event) => event.event_id);
+    let deleted = 0;
+    if (ids.length) {
+      const result = await this.query<unknown>(
+        `DELETE FROM ${MARKET_DEPTH_EVENTS_TABLE}
+         WHERE event_id IN (:ids) AND chain_id=:chainId AND contract=:contract
+           AND observed_at<:cutoff`,
+        { ...params, ids }
+      );
+      deleted = this.db.getAffectedRows(result);
+    }
+    return {
+      scanned: candidates.length,
+      deleted,
+      last: { observed_at: new Date(last.observed_at), event_id: last.event_id }
+    };
   }
 }
 
