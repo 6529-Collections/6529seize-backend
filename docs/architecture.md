@@ -1830,13 +1830,14 @@ the next dispatch. The service catalog records allowed environments and
 default dependencies. The workflow's environment concurrency avoids overlapping
 backend deployment runs; it does not create a cross-repository scheduler.
 
-Backend staging deployment uses a dedicated IAM role through GitHub OIDC in
-the `staging` GitHub environment, restricted to `1a-staging`. The environment's
-`AWS_DEPLOY_ROLE_ARN` selects the role; missing configuration stops the run.
-The scoped deployment policies and infrastructure boundaries are documented in
-[`ops/iam/backend-staging`](../ops/iam/backend-staging/README.md). Production
-uses the `production` GitHub environment, restricted to `main`, and retains
-the existing deployment keys during the staging-first credential migration.
+Backend deployment uses separate IAM roles through GitHub OIDC in the
+`staging` and `production` GitHub environments, restricted to `1a-staging` and
+`main` respectively. Each environment's `AWS_DEPLOY_ROLE_ARN` selects its role;
+missing configuration stops the run. Both environments use temporary role
+credentials without a static-key fallback. The scoped deployment policies and
+infrastructure boundaries are documented in
+[`ops/iam/backend-staging`](../ops/iam/backend-staging/README.md) and
+[`ops/iam/backend-production`](../ops/iam/backend-production/README.md).
 
 Frontend staging continues to deploy automatically on application/workflow
 pushes to `1a-staging`; frontend production is dispatched through
