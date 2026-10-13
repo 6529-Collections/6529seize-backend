@@ -24,7 +24,8 @@ const RETIRED_OPERATIONAL_ROUTES = new Set([
   '/deploy/release-trains/:id',
   '/deploy/ui/branch-head',
   '/deploy/ui/bus',
-  '/deploy/ui/bus/app.js'
+  '/deploy/ui/bus/app.js',
+  '/rpc/test'
 ]);
 
 const HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT = 250;
@@ -155,7 +156,7 @@ describe('Phase 0 permanent mounted GET route census', () => {
       manifest.routes.filter(
         (route) => !RETIRED_OPERATIONAL_ROUTES.has(route.path)
       )
-    ).toHaveLength(289);
+    ).toHaveLength(288);
   });
 
   it('keeps every non-retired route declaration mounted in its owning source', () => {
