@@ -209,8 +209,12 @@ These are investigation leads, not a verified root cause of reported timeouts.
    phase preparation, freeze launch inputs, and bound/chunk heavy SQL or artifact
    generation where profiling identifies a bottleneck. Increasing HTTP timeout
    alone does not establish safe replay or completion semantics.
-5. Define service authentication for automated upstream EMMA access. Do not
-   depend on an operator's expiring browser JWT. Upstream
+5. Use the clicking distribution administrator's authorization for background
+   EMMA input capture. Encrypt it for the specific durable job and clear it when
+   inputs commit or the job fails/completes. Expired or denied access pauses for
+   authenticated resumption of the same job with checkpoints preserved. Later
+   stages use captured inputs without a login token; no preconfigured EMMA
+   service credential is required. Upstream
    `ALLOWLIST_API_ENDPOINT` implementation is outside the inspected local paths;
    a confirmed upstream defect may require separately scoped repository work.
 
