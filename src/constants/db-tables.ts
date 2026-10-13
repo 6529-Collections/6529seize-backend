@@ -311,3 +311,19 @@ export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
 
 export const SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE =
   'subscription_cache_invalidations';
+
+// End-to-end encrypted DMs and groups (D109). The server stores ciphertext
+// and delivery metadata only; see docs/e2ee-messaging.md.
+export const E2EE_DEVICES_TABLE = 'e2ee_devices';
+export const E2EE_KEY_PACKAGES_TABLE = 'e2ee_key_packages';
+export const E2EE_GROUPS_TABLE = 'e2ee_groups';
+export const E2EE_GROUP_EPOCHS_TABLE = 'e2ee_group_epochs';
+export const E2EE_GROUP_ROSTER_TABLE = 'e2ee_group_roster';
+export const E2EE_LOG_TABLE = 'e2ee_log';
+export const E2EE_WELCOMES_TABLE = 'e2ee_welcomes';
+export const E2EE_WELCOME_DELIVERIES_TABLE = 'e2ee_welcome_deliveries';
+export const E2EE_BLOBS_TABLE = 'e2ee_blobs';
+export const E2EE_BLOB_CHUNKS_TABLE = 'e2ee_blob_chunks';
+export const E2EE_REPORTS_TABLE = 'e2ee_reports';
+export const E2EE_PUSH_THROTTLE_TABLE = 'e2ee_push_throttle';
+export const E2EE_RATE_COUNTERS_TABLE = 'e2ee_rate_counters';

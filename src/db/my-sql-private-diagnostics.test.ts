@@ -83,6 +83,17 @@ describe('private SQL diagnostics', () => {
       inline: 'private-provider-payload',
       bound: 'private-order-payload'
     },
+    ...[
+      'e2ee_log',
+      'e2ee_welcomes',
+      'e2ee_key_packages',
+      'e2ee_blob_chunks',
+      'e2ee_reports'
+    ].map((table) => ({
+      table,
+      inline: 'private-inline-ciphertext',
+      bound: 'private-bound-notify-hint'
+    })),
     ...membershipRuntimeTables.map((table) => ({
       table,
       inline: 'private-inline-membership-authority-token',

@@ -9,6 +9,7 @@ import { ArtworkDocumentationAppendMuseumRecordRequest, ArtworkDocumentationAppe
 import { AdvanceCollectPlanRequest, AdvanceCollectPlanResponse, AnalyzeCollectGoalRequest, AnalyzeCollectGoalResponse, AnalyzeCollectOffersRequest, AnalyzeCollectOffersResponse, CreateCollectDailyTdhPlanRequest, CreateCollectDailyTdhPlanResponse, CreateCollectPlanRequest, CreateCollectPlanResponse, CreateCollectRuleRequest, CreateCollectRuleResponse, CreateCollectTdhTargetPlanRequest, CreateCollectTdhTargetPlanResponse, GetCollectAssetsRequest, GetCollectAssetsResponse, GetCollectCapabilitiesRequest, GetCollectCapabilitiesResponse, GetCollectCatalogRequest, GetCollectCatalogResponse, GetCollectPlanRequest, GetCollectPlanResponse, GetCollectRuleRequest, GetCollectRuleResponse, GetCollectRulesRequest, GetCollectRulesResponse, GetCollectTdhListingsRequest, GetCollectTdhListingsResponse, GetMarketListingsRequest, GetMarketListingsResponse, PauseCollectRuleRequest, PauseCollectRuleResponse, PrepareCollectRuleRequest, PrepareCollectRuleResponse, ProjectCollectPurchasesRequest, ProjectCollectPurchasesResponse, RankCollectTdhPurchasesRequest, RankCollectTdhPurchasesResponse, ReconcileCollectRuleRequest, ReconcileCollectRuleResponse } from './operations';
 import { GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetDropCompetitionContextV3Request, GetDropCompetitionContextV3Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveHubV3Request, GetWaveHubV3Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVoteActivityV3Request, ListCompetitionVoteActivityV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response } from './operations';
 import { GetDeviceGrantsRequest, GetDeviceGrantsResponse, GetDropSignedEventsRequest, GetDropSignedEventsResponse, RevokeDeviceGrantRequest, RevokeDeviceGrantResponse } from './operations';
+import { E2eeAckWelcomeRequest, E2eeAckWelcomeResponse, E2eeCheckEligibilityRequest, E2eeCheckEligibilityResponse, E2eeClaimKeyPackagesRequest, E2eeClaimKeyPackagesResponse, E2eeCompleteBlobRequest, E2eeCompleteBlobResponse, E2eeCreateBlobRequest, E2eeCreateBlobResponse, E2eeCreateGroupRequest, E2eeCreateGroupResponse, E2eeGetBlobChunkRequest, E2eeGetBlobChunkResponse, E2eeGetDeviceGroupsRequest, E2eeGetDeviceGroupsResponse, E2eeGetDeviceRequest, E2eeGetDeviceResponse, E2eeGetGroupLogRequest, E2eeGetGroupLogResponse, E2eeGetGroupRequest, E2eeGetGroupResponse, E2eeGetMeRequest, E2eeGetMeResponse, E2eeGetProfileDevicesRequest, E2eeGetProfileDevicesResponse, E2eeGetWelcomesRequest, E2eeGetWelcomesResponse, E2eeLookupDevicesRequest, E2eeLookupDevicesResponse, E2eePutBlobChunkRequest, E2eePutBlobChunkResponse, E2eeRegisterDeviceRequest, E2eeRegisterDeviceResponse, E2eeRepairRosterRequest, E2eeRepairRosterResponse, E2eeReportMessageRequest, E2eeReportMessageResponse, E2eeRevokeDeviceRequest, E2eeRevokeDeviceResponse, E2eeSendMessageRequest, E2eeSendMessageResponse, E2eeSubmitEntryRequest, E2eeSubmitEntryResponse, E2eeUploadKeyPackagesRequest, E2eeUploadKeyPackagesResponse } from './operations';
 import { BeginMarketTransactionAttemptRequest, BeginMarketTransactionAttemptResponse, ContinueMarketOperationRequest, ContinueMarketOperationResponse, GetMarketBatchCapabilitiesRequest, GetMarketBatchCapabilitiesResponse, GetMarketOperationRequest, GetMarketOperationResponse, GetMarketOrderRequest, GetMarketOrderResponse, GetMarketOrdersRequest, GetMarketOrdersResponse, GetMyMarketOperationsRequest, GetMyMarketOperationsResponse, PreflightMarketBatchRequest, PreflightMarketBatchResponse, PrepareMarketOperationRequest, PrepareMarketOperationResponse, PublishMarketOperationRequest, PublishMarketOperationResponse, RejectMarketTransactionAttemptRequest, RejectMarketTransactionAttemptResponse, SubmitMarketOperationRequest, SubmitMarketOperationResponse } from './operations';
 import { GetModerationAccessRequest, GetModerationAccessResponse, GetModerationCheckRequest, GetModerationCheckResponse, GetModerationChecksRequest, GetModerationChecksResponse, GetModerationCountsRequest, GetModerationCountsResponse, GetModerationProfileCheckRequest, GetModerationProfileCheckResponse, GetModerationReportCheckRequest, GetModerationReportCheckResponse, ModerationCheckActionRequest, ModerationCheckActionResponse } from './operations';
 import { GetProfilePreferencesRequest, GetProfilePreferencesResponse, PutProfilePreferencesRequest, PutProfilePreferencesResponse } from './operations';
@@ -35,6 +36,7 @@ import { handleGetDropPollOptionVotersV2, handleGetWavePollsV2, handleVoteDropPo
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
 import { handleGetDropV2VoteSummaryById } from '@/api/drops/get-drop-vote-summary.handler';
 import { handleCreateProposalFrame } from '@/api/drops/proposal-frame.handlers';
+import { handleE2eeAckWelcome, handleE2eeCheckEligibility, handleE2eeClaimKeyPackages, handleE2eeCompleteBlob, handleE2eeCreateBlob, handleE2eeCreateGroup, handleE2eeGetBlobChunk, handleE2eeGetDevice, handleE2eeGetDeviceGroups, handleE2eeGetGroup, handleE2eeGetGroupLog, handleE2eeGetMe, handleE2eeGetProfileDevices, handleE2eeGetWelcomes, handleE2eeLookupDevices, handleE2eePutBlobChunk, handleE2eeRegisterDevice, handleE2eeRepairRoster, handleE2eeReportMessage, handleE2eeRevokeDevice, handleE2eeSendMessage, handleE2eeSubmitEntry, handleE2eeUploadKeyPackages } from '@/api/e2ee/e2ee.handlers';
 import { handleGetNftMarketActivity, handleGetNftMarketDepth } from '@/api/market-depth/market-depth.handlers';
 import { handlePreflightMarketBatch } from '@/api/marketplace/marketplace-batch-preflight.handler';
 import { handleBeginMarketTransactionAttempt, handleContinueMarketOperation, handleGetMarketBatchCapabilities, handleGetMarketOperation, handleGetMarketOrder, handleGetMarketOrders, handleGetMyMarketOperations, handlePrepareMarketOperation, handlePublishMarketOperation, handleRejectMarketTransactionAttempt, handleSubmitMarketOperation } from '@/api/marketplace/marketplace.handlers';
@@ -898,6 +900,259 @@ router.get(
     res: Response<ApiResponse<GetDropSignedEventsResponse>>
   ) => {
     res.send(await handleGetDropSignedEvents(req));
+  }
+);
+
+router.post(
+  '/e2ee/blobs',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeCreateBlobRequest,
+    res: Response<ApiResponse<E2eeCreateBlobResponse>>
+  ) => {
+    res.send(await handleE2eeCreateBlob(req));
+  }
+);
+
+router.get(
+  '/e2ee/blobs/:blob_id/chunks/:index',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetBlobChunkRequest,
+    res: Response<ApiResponse<E2eeGetBlobChunkResponse>>
+  ) => {
+    res.send(await handleE2eeGetBlobChunk(req));
+  }
+);
+
+router.put(
+  '/e2ee/blobs/:blob_id/chunks/:index',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eePutBlobChunkRequest,
+    res: Response<ApiResponse<E2eePutBlobChunkResponse>>
+  ) => {
+    res.send(await handleE2eePutBlobChunk(req));
+  }
+);
+
+router.post(
+  '/e2ee/blobs/:blob_id/complete',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeCompleteBlobRequest,
+    res: Response<ApiResponse<E2eeCompleteBlobResponse>>
+  ) => {
+    res.send(await handleE2eeCompleteBlob(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeRegisterDeviceRequest,
+    res: Response<ApiResponse<E2eeRegisterDeviceResponse>>
+  ) => {
+    res.send(await handleE2eeRegisterDevice(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices/lookup',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeLookupDevicesRequest,
+    res: Response<ApiResponse<E2eeLookupDevicesResponse>>
+  ) => {
+    res.send(await handleE2eeLookupDevices(req));
+  }
+);
+
+router.get(
+  '/e2ee/devices/:device_key',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetDeviceRequest,
+    res: Response<ApiResponse<E2eeGetDeviceResponse>>
+  ) => {
+    res.send(await handleE2eeGetDevice(req));
+  }
+);
+
+router.get(
+  '/e2ee/devices/:device_key/groups',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetDeviceGroupsRequest,
+    res: Response<ApiResponse<E2eeGetDeviceGroupsResponse>>
+  ) => {
+    res.send(await handleE2eeGetDeviceGroups(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices/:device_key/key-packages',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeUploadKeyPackagesRequest,
+    res: Response<ApiResponse<E2eeUploadKeyPackagesResponse>>
+  ) => {
+    res.send(await handleE2eeUploadKeyPackages(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices/:device_key/revoke',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeRevokeDeviceRequest,
+    res: Response<ApiResponse<E2eeRevokeDeviceResponse>>
+  ) => {
+    res.send(await handleE2eeRevokeDevice(req));
+  }
+);
+
+router.get(
+  '/e2ee/devices/:device_key/welcomes',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetWelcomesRequest,
+    res: Response<ApiResponse<E2eeGetWelcomesResponse>>
+  ) => {
+    res.send(await handleE2eeGetWelcomes(req));
+  }
+);
+
+router.post(
+  '/e2ee/devices/:device_key/welcomes/:welcome_id/ack',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeAckWelcomeRequest,
+    res: Response<ApiResponse<E2eeAckWelcomeResponse>>
+  ) => {
+    res.send(await handleE2eeAckWelcome(req));
+  }
+);
+
+router.post(
+  '/e2ee/eligibility',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeCheckEligibilityRequest,
+    res: Response<ApiResponse<E2eeCheckEligibilityResponse>>
+  ) => {
+    res.send(await handleE2eeCheckEligibility(req));
+  }
+);
+
+router.post(
+  '/e2ee/groups',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeCreateGroupRequest,
+    res: Response<ApiResponse<E2eeCreateGroupResponse>>
+  ) => {
+    res.send(await handleE2eeCreateGroup(req));
+  }
+);
+
+router.get(
+  '/e2ee/groups/:group',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetGroupRequest,
+    res: Response<ApiResponse<E2eeGetGroupResponse>>
+  ) => {
+    res.send(await handleE2eeGetGroup(req));
+  }
+);
+
+router.post(
+  '/e2ee/groups/:group/entries',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeSubmitEntryRequest,
+    res: Response<ApiResponse<E2eeSubmitEntryResponse>>
+  ) => {
+    res.send(await handleE2eeSubmitEntry(req));
+  }
+);
+
+router.get(
+  '/e2ee/groups/:group/log',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetGroupLogRequest,
+    res: Response<ApiResponse<E2eeGetGroupLogResponse>>
+  ) => {
+    res.send(await handleE2eeGetGroupLog(req));
+  }
+);
+
+router.post(
+  '/e2ee/groups/:group/messages',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeSendMessageRequest,
+    res: Response<ApiResponse<E2eeSendMessageResponse>>
+  ) => {
+    res.send(await handleE2eeSendMessage(req));
+  }
+);
+
+router.post(
+  '/e2ee/groups/:group/roster',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeRepairRosterRequest,
+    res: Response<ApiResponse<E2eeRepairRosterResponse>>
+  ) => {
+    res.send(await handleE2eeRepairRoster(req));
+  }
+);
+
+router.post(
+  '/e2ee/key-packages/claim',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeClaimKeyPackagesRequest,
+    res: Response<ApiResponse<E2eeClaimKeyPackagesResponse>>
+  ) => {
+    res.send(await handleE2eeClaimKeyPackages(req));
+  }
+);
+
+router.get(
+  '/e2ee/me',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetMeRequest,
+    res: Response<ApiResponse<E2eeGetMeResponse>>
+  ) => {
+    res.send(await handleE2eeGetMe(req));
+  }
+);
+
+router.get(
+  '/e2ee/profiles/:profile_id/devices',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetProfileDevicesRequest,
+    res: Response<ApiResponse<E2eeGetProfileDevicesResponse>>
+  ) => {
+    res.send(await handleE2eeGetProfileDevices(req));
+  }
+);
+
+router.post(
+  '/e2ee/reports',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeReportMessageRequest,
+    res: Response<ApiResponse<E2eeReportMessageResponse>>
+  ) => {
+    res.send(await handleE2eeReportMessage(req));
   }
 );
 

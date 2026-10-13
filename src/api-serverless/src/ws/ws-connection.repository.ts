@@ -754,6 +754,31 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       .then((res) => res.map((it) => it.connection_id));
   }
 
+  /** Primary (identity-authenticated) connections with an unexpired JWT. */
+  async findPrimaryConnectionIdsByIdentityIds(
+    identityIds: string[]
+  ): Promise<{ connectionId: string; identityId: string }[]> {
+    const uniqueIdentityIds = Array.from(
+      new Set(identityIds.filter((identityId) => !!identityId))
+    ).filter((identityId) => identityId !== ANON_USER_ID);
+    if (!uniqueIdentityIds.length) {
+      return [];
+    }
+    return this.db
+      .execute<{ connection_id: string; identity_id: string }>(
+        `select connection_id, identity_id from ${WS_CONNECTIONS_TABLE}
+         where identity_id in (:identityIds)
+           and jwt_expiry > unix_timestamp()`,
+        { identityIds: uniqueIdentityIds }
+      )
+      .then((rows) =>
+        rows.map((row) => ({
+          connectionId: row.connection_id,
+          identityId: row.identity_id
+        }))
+      );
+  }
+
   async findNotificationConnectionIdsByIdentityIds(
     identityIds: string[],
     ctx: RequestContext = {}
