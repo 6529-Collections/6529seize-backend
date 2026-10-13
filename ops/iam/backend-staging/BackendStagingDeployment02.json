@@ -1,0 +1,114 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageApprovedFunctionVersions2",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:AddPermission",
+        "lambda:DeleteFunction",
+        "lambda:DeleteFunctionEventInvokeConfig",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:GetFunctionEventInvokeConfig",
+        "lambda:GetPolicy",
+        "lambda:PutFunctionEventInvokeConfig",
+        "lambda:RemovePermission",
+        "lambda:UpdateFunctionEventInvokeConfig"
+      ],
+      "Resource": [
+        "arn:aws:lambda:eu-west-1:987989283142:function:competitionMigrationLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:customReplayLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:dbDumpsDaily:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:dbMigrationsLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:delegationsLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:discoverEnsLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:dropMediaSanitizer:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:dropVideoConversionInvokerLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:ethPriceLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:externalCollectionLiveTailingLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:externalCollectionSnapshottingLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:gradientsTransactionsLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:helpBotDailyActivityCreditLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:helpBotReplyLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:marketDepthStreamLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:marketStatsGRADIENT:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:marketStatsLAB:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:marketStatsMEMES:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:marketStatsNEXTGEN:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:memeLabTransactionsLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:memesTransactionsLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:mintAnnouncementsLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nextgenContractLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nextgenMetadataLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nftHistoryLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nftLinkMediaPreviewLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nftLinkRefresherLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nftOwnersLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:nftsLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:overRatesRevocationLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:ownersBalancesLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:populateHistoricConsolidatedTdh:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:pushNotificationsHandler:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:rateEventProcessingLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:refreshENS:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:rememesFileLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:rememesRefreshMetadataLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:rememesS3Loop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:royaltiesLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:s3Uploader:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:seizeAPI:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:subscriptionCoverageReconciliationLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:subscriptionsDaily:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:subscriptionsTopUpLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:tdhHistoryLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:tdhLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:teamLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:transactionsProcessingLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:waveDecisionExecutionLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:waveDropMetricsRefreshLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:waveLeaderboardSnapshotterLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:waveScoreRefreshLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:websocketOutboundHandler:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:xTdhGrantsReviewerLoop:*",
+        "arn:aws:lambda:eu-west-1:987989283142:function:xTdhLoop:*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadApprovedMappings1",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:GetEventSourceMapping",
+        "lambda:ListTags",
+        "lambda:TagResource",
+        "lambda:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:032401d8-835e-434e-91ff-7fc9a12552b3",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:2c16f3f5-ad3c-4169-a75e-0746d5a381bb",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:2f1a8ae1-6177-4669-8e85-061e4871aea0",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:3c6fd5ab-11aa-40c3-a9ac-bad1c1ae9f0e",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:44ac6ada-7100-4dcc-b596-f4adf54410ef",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:4ad82a90-bc16-4496-b987-b5f7dc098811",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:4e086c19-f917-451f-8816-9315a66bd475",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:5d4dcb72-f9e7-492b-b9cf-65e2b529d2c0",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:66a751e7-5100-41d6-b090-677ccbf35342",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:6cf88aca-5bde-4434-ade0-1b85db566c99",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:6e9887e9-c441-4690-a491-9b6908bb0ffa",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:7a2411c7-15b6-4ff6-9e5a-70c8b8e42c53",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:8c498ea6-3bfa-4869-8296-ca2062b3de0b",
+        "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:90bda318-39e4-4d5e-ba82-79bd6471f13f"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    }
+  ]
+}
