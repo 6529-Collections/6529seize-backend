@@ -1,5 +1,3 @@
-import { assertCollaborationClaimPublication } from '@/meme-collaborations/meme-collaboration-claim-validation';
-import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import { assertValidGlb } from '@/minting-claims/glb-validation';
 import {
   IMAGE_DETAILS_KEYS,
@@ -851,12 +849,6 @@ export async function validateMintingClaimReadyForArweaveUpload(
   const memesContract = isMemesContract(contract);
   const missing: string[] = [];
   const invalid: string[] = [];
-  const collaboration = await memeCollaborationsDb.context(claim.drop_id, {});
-  assertCollaborationClaimPublication(
-    claim,
-    parseJsonOrNull<unknown>(claim.attributes),
-    collaboration
-  );
   const imageUrl = claim.image_url?.trim() ?? '';
   if (imageUrl === '') missing.push('Image URL');
   if (memesContract) {

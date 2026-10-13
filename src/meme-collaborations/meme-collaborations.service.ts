@@ -35,9 +35,9 @@ const INVITATION_RESPONSE_STATUS = {
   CANCEL: 'CANCELLED'
 } as const;
 
-export const COLLABORATION_COPY_VERSION = '1';
+export const COLLABORATION_COPY_VERSION = '2';
 export const COLLABORATION_ACCEPTANCE_COPY =
-  'I agree to be credited as a collaborating artist on this artwork and accept its submission and minting terms. Acceptance is final and cannot be withdrawn. It does not grant editing rights or establish payment splits. If I accept before this artwork is selected for minting, my credit will be included in the mint.';
+  'I agree to be credited as a collaborating artist on this artwork and accept its submission and minting terms. Acceptance is final and cannot be withdrawn. It does not grant editing rights or establish payment splits. If I accept before this artwork is selected for minting, my credit will be included in the initial minting claim. Admins can edit the final mint artwork and credits in Drop Forge.';
 const hash = (value: string) =>
   createHash('sha256').update(value).digest('hex');
 

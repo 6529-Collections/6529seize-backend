@@ -236,53 +236,6 @@ function baseClaim(overrides: Partial<MintingClaimRow> = {}): MintingClaimRow {
 }
 
 describe('validateMintingClaimReadyForArweaveUpload', () => {
-  it('rejects unapproved artist credits or replaced collaboration media before any Arweave upload', async () => {
-    const claim = baseClaim();
-    const credit = {
-      artist: 'A, B',
-      artist_profiles: 'userA, userB',
-      collab: true
-    };
-    const context = jest.mocked(memeCollaborationsDb.context);
-    context.mockResolvedValue({
-      drop_id: claim.drop_id,
-      author_id: 'A',
-      author_handle: 'userA',
-      wave_id: 'wave',
-      artwork_hash: 'a'.repeat(64),
-      terms_version: 'b'.repeat(64),
-      base_artist: 'A',
-      terms: null,
-      closed_at: 1,
-      credit,
-      artwork: {
-        name: claim.name,
-        description: claim.description,
-        image_url: claim.image_url,
-        animation_url: claim.animation_url
-      }
-    });
-    try {
-      await expect(
-        validateMintingClaimReadyForArweaveUpload(claim, MEMES_CONTRACT)
-      ).rejects.toThrow('fixed');
-      await expect(
-        validateMintingClaimReadyForArweaveUpload(
-          {
-            ...claim,
-            image_url: 'https://cdn.example.com/replaced.png',
-            attributes: JSON.stringify(
-              withCollaborationCredit(buildMemesRawAttributes(), credit)
-            )
-          },
-          MEMES_CONTRACT
-        )
-      ).rejects.toThrow('differs from accepted');
-      expect(arweaveFileUploader.uploadFile).not.toHaveBeenCalled();
-    } finally {
-      context.mockResolvedValue(null);
-    }
-  });
   const fetchMaxSeasonIdMock = fetchMaxSeasonId as jest.MockedFunction<
     typeof fetchMaxSeasonId
   >;
@@ -583,6 +536,79 @@ describe('uploadMintingClaimToArweave', () => {
         url: 'https://arweave.net/_MSzxiISR3AgFJqhzBoAbCtFGMglSqRmZi5NTgZLfL4'
       });
   });
+
+  it.each([false, true])(
+    'publishes saved admin credits and artwork independently of the initial collaboration roster (collab=%s)',
+    async (collab) => {
+      const initial = baseClaim();
+      const context = jest.mocked(memeCollaborationsDb.context);
+      context.mockResolvedValue({
+        drop_id: initial.drop_id,
+        author_id: 'A',
+        author_handle: 'userA',
+        wave_id: 'wave',
+        artwork_hash: 'a'.repeat(64),
+        terms_version: 'b'.repeat(64),
+        base_artist: 'A',
+        terms: null,
+        closed_at: 1,
+        credit: {
+          artist: collab ? 'A, B' : 'A',
+          artist_profiles: collab ? 'userA, userB' : 'userA',
+          collab
+        },
+        artwork: {
+          name: initial.name,
+          description: initial.description,
+          image_url: initial.image_url,
+          animation_url: initial.animation_url
+        }
+      });
+      const adminCredit = {
+        artist: 'A, unaccepted',
+        artist_profiles: 'userA, unaccepted',
+        collab: true
+      };
+      const adminImageUrl = 'https://cdn.example.com/admin.png';
+      const claim = baseClaim({
+        name: 'Admin title',
+        description: 'Admin description',
+        image_url: adminImageUrl,
+        attributes: JSON.stringify(
+          withCollaborationCredit(buildMemesRawAttributes(), adminCredit)
+        )
+      });
+
+      await uploadMintingClaimToArweave(MEMES_CONTRACT, claim);
+
+      const metadataBuffer = uploadFileMock.mock.calls[1]?.[0] as Buffer;
+      const metadata = JSON.parse(metadataBuffer.toString('utf8'));
+      expect(metadata).toMatchObject({
+        name: claim.name,
+        description: claim.description
+      });
+      expect(metadata.attributes).toEqual(
+        expect.arrayContaining([
+          {
+            trait_type: 'Artist',
+            value: adminCredit.artist,
+            display_type: 'text'
+          },
+          {
+            trait_type: 'SEIZE Artist Profile',
+            value: adminCredit.artist_profiles
+          },
+          { trait_type: 'Collab', value: 'Yes' }
+        ])
+      );
+      expect(fetchPublicUrlToBufferMock).toHaveBeenCalledWith(
+        adminImageUrl,
+        expect.any(Object)
+      );
+      expect(context).not.toHaveBeenCalled();
+      context.mockResolvedValue(null);
+    }
+  );
 
   it('uploads only the known MEMES metadata keys', async () => {
     await uploadMintingClaimToArweave(

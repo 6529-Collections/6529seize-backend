@@ -1,5 +1,3 @@
-import { assertCollaborationClaimPatch } from '@/meme-collaborations/meme-collaboration-claim-validation';
-import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import {
   fetchMaxSeasonId,
   fetchMintingClaimByClaimId,
@@ -362,11 +360,6 @@ export async function buildUpdatesForClaimPatch(
   existing: MintingClaimRow,
   isMemesContract: boolean
 ): Promise<MintingClaimUpdates> {
-  const collaboration = await memeCollaborationsDb.context(
-    existing.drop_id,
-    {}
-  );
-  assertCollaborationClaimPatch(body, collaboration);
   const updates: MintingClaimUpdates = {};
   let shouldResetMetadataLocation = false;
   let nextImageUrl: string | null = normalizeOptionalUrl(existing.image_url);

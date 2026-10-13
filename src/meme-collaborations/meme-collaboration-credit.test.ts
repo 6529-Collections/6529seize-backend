@@ -1,7 +1,4 @@
-import {
-  assertCollaborationCredit,
-  withCollaborationCredit
-} from './meme-collaboration-credit';
+import { withCollaborationCredit } from './meme-collaboration-credit';
 import { collaborationArtworkHash } from './meme-collaborations.service';
 
 const credit = {
@@ -28,19 +25,8 @@ describe('Managed mint collaboration credits', () => {
       trait_type: 'SEIZE Artist Profile',
       value: 'userA, userB'
     });
-    expect(() => assertCollaborationCredit(attributes, credit)).not.toThrow();
-    expect(() =>
-      assertCollaborationCredit(
-        [...attributes, { trait_type: 'Artist', value: 'fake' }],
-        credit
-      )
-    ).toThrow('fixed');
-    expect(() =>
-      assertCollaborationCredit(
-        attributes.filter((item) => item.trait_type !== 'Collab'),
-        credit
-      )
-    ).toThrow('fixed');
+    expect(attributes).toContainEqual({ trait_type: 'Artist', value: 'A, B' });
+    expect(attributes).toContainEqual({ trait_type: 'Collab', value: 'Yes' });
   });
   it('binds consent to both animation and its preview image', () => {
     const model = {

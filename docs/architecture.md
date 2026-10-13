@@ -42,11 +42,13 @@ artist/profile/Collab metadata from those records.
 
 Legacy Main Stage and native MAIN_STAGE decision transactions lock the same
 collaboration row used by acceptance, save the accepted artist roster, and close
-pending invitations. Claims Builder consumes that saved roster; pending
-invitations do not delay minting. Craft claim patches preserve saved artist
-credits and accepted artwork. The Arweave API and uploader revalidate those
-credits and artwork before publication. Existing submissions without a managed
-record remain compatible.
+pending invitations. Claims Builder consumes that saved roster for initial
+claim credits; pending invitations do not delay minting. Admins can edit all final claim credits, traits
+and artwork in Craft. The Arweave API and uploader use the saved claim with
+normal metadata/media validation, without consulting invitations or comparing
+it with the collaboration snapshot. Admin edits do not change invitation status
+or accepted-submission profile attribution. Existing submissions without a
+managed record remain compatible.
 
 Invitation and acceptance notifications use the existing identity-notification
 and push pipelines with cause `MEME_COLLABORATION`. New generated endpoints are

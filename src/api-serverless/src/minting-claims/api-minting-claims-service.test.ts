@@ -85,45 +85,6 @@ function baseClaim(overrides: Partial<MintingClaimRow> = {}): MintingClaimRow {
 }
 
 describe('buildUpdatesForClaimPatch', () => {
-  it('preserves consented credits and artwork while allowing mint operational corrections', async () => {
-    const context = jest.mocked(memeCollaborationsDb.context);
-    const existing = baseClaim();
-    context.mockResolvedValue({
-      drop_id: existing.drop_id,
-      author_id: 'A',
-      author_handle: 'userA',
-      wave_id: 'wave',
-      artwork_hash: 'a'.repeat(64),
-      terms_version: 'b'.repeat(64),
-      base_artist: 'A',
-      terms: null,
-      closed_at: 1,
-      artwork: {
-        name: existing.name,
-        description: existing.description,
-        image_url: existing.image_url,
-        animation_url: existing.animation_url
-      },
-      credit: { artist: 'A, B', artist_profiles: 'userA, userB', collab: true }
-    });
-    try {
-      await expect(
-        buildUpdatesForClaimPatch({ name: 'Replacement' }, existing, true)
-      ).rejects.toThrow('locks the artwork');
-      await expect(
-        buildUpdatesForClaimPatch(
-          { attributes: [{ trait_type: 'Artist', value: 'A, unaccepted' }] },
-          existing,
-          true
-        )
-      ).rejects.toThrow('fixed');
-      await expect(
-        buildUpdatesForClaimPatch({ edition_size: 500 }, existing, true)
-      ).resolves.toMatchObject({ edition_size: 500 });
-    } finally {
-      context.mockResolvedValue(null);
-    }
-  });
   const computeImageDetailsMock = computeImageDetails as jest.MockedFunction<
     typeof computeImageDetails
   >;
@@ -425,6 +386,100 @@ describe('patchMintingClaim', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
+
+  it.each([false, true])(
+    'saves admin artwork and artist credits independently of the initial collaboration roster (collab=%s)',
+    async (collab) => {
+      const originalAttributes = [
+        { trait_type: 'Artist', value: collab ? 'A, B' : 'A' },
+        {
+          trait_type: 'SEIZE Artist Profile',
+          value: collab ? 'userA, userB' : 'userA'
+        },
+        { trait_type: 'Collab', value: collab ? 'Yes' : 'No' },
+        { trait_type: 'Type - Season', value: 14, display_type: 'number' }
+      ];
+      const attributes = [
+        { trait_type: 'Artist', value: 'A, unaccepted' },
+        { trait_type: 'SEIZE Artist Profile', value: 'userA, unaccepted' },
+        { trait_type: 'Collab', value: 'Yes' },
+        { trait_type: 'Type - Season', value: 14, display_type: 'number' }
+      ];
+      const existing = baseClaim({
+        attributes: JSON.stringify(originalAttributes)
+      });
+      const context = jest.mocked(memeCollaborationsDb.context);
+      context.mockResolvedValue({
+        drop_id: existing.drop_id,
+        author_id: 'A',
+        author_handle: 'userA',
+        wave_id: 'wave',
+        artwork_hash: 'a'.repeat(64),
+        terms_version: 'b'.repeat(64),
+        base_artist: 'A',
+        terms: null,
+        closed_at: 1,
+        artwork: {
+          name: existing.name,
+          description: existing.description,
+          image_url: existing.image_url,
+          animation_url: existing.animation_url
+        },
+        credit: {
+          artist: collab ? 'A, B' : 'A',
+          artist_profiles: collab ? 'userA, userB' : 'userA',
+          collab
+        }
+      });
+      const body = {
+        name: 'Admin title',
+        description: 'Admin description',
+        attributes,
+        image_url: 'https://cdn.example.com/admin.png',
+        animation_url: null
+      };
+      const imageDetails = {
+        bytes: 200,
+        format: 'PNG',
+        sha256: 'c'.repeat(64),
+        width: 20,
+        height: 20
+      };
+      jest.mocked(computeImageDetails).mockResolvedValue(imageDetails);
+      const updated = baseClaim({
+        ...body,
+        attributes: JSON.stringify(attributes)
+      });
+      fetchMintingClaimByClaimIdMock.mockReset();
+      fetchMintingClaimByClaimIdMock
+        .mockResolvedValueOnce(existing)
+        .mockResolvedValueOnce(updated);
+      updateMintingClaimIfEditableMock.mockResolvedValue(true);
+
+      const result = await patchMintingClaim(
+        existing.contract,
+        existing.claim_id,
+        body,
+        true
+      );
+
+      expect(result).toEqual(updated);
+      expect(updateMintingClaimIfEditableMock).toHaveBeenCalledWith(
+        existing.contract,
+        existing.claim_id,
+        expect.objectContaining({
+          ...body,
+          image_details: imageDetails,
+          image_location: null,
+          animation_location: null,
+          metadata_location: null
+        }),
+        existing.attributes
+      );
+      expect(context).not.toHaveBeenCalled();
+      context.mockResolvedValue(null);
+    }
+  );
 
   it('uses the write pool when patching edition_size so reserve sync sees the latest claim row', async () => {
     const existing = baseClaim({ edition_size: null });
