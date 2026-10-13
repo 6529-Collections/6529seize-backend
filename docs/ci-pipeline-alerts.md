@@ -41,8 +41,10 @@ A successful WEB E2E alert is a single line with no mentions:
 ```
 
 Attempt 1 has no attempt suffix. A failed WEB E2E alert is detailed and
-mentions the mapped manual initiator, the original deploy initiator when
-different, and `@devs6529`.
+mentions the mapped manual initiator and the original deploy initiator when
+different. A failed production WEB E2E alert also ends with `cc @devs6529`; a
+failed staging WEB E2E alert does not, because staging E2E does not gate
+releases and a group ping on every staging failure is noise.
 
 ## Deploy Reply Correlation
 
@@ -69,8 +71,10 @@ without a parent identity posts standalone.
 
 Successful WEB E2E results never mention anyone. Failed results notify the
 manual validation initiator and, when distinct and resolvable, the deploy
-initiator, followed by the developers group. Automation actors are not treated
-as people to mention.
+initiator. Production failures are followed by the developers group; staging
+failures are not. Deploy and workflow failures in either environment always
+mention the developers group. Automation actors are not treated as people to
+mention.
 
 ## Deployment And Rollback
 

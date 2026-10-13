@@ -1,0 +1,35 @@
+service: releaseDigestLoop
+
+package:
+  artifact: dist/index.zip
+
+provider:
+  name: aws
+  stage: prod
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 600
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  releaseDigestLoop:
+    handler: index.handler
+    name: releaseDigestLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule:
+          # EventBridge rules use UTC. 23:30 lets the 00:00 UTC Daily Post
+          # include the digest, and the event time is the digest cutoff.
+          rate: cron(30 23 * * ? *)
+          enabled: true
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      RELEASE_DIGEST_STAGE: ${opt:stage, self:provider.stage}
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: releaseDigestLoop_${opt:stage, self:provider.stage}
+      API_GATEWAY_WS_ENDPOINT: ${env:API_GATEWAY_WS_ENDPOINT}

@@ -28,6 +28,8 @@ import {
   ReleaseNoteRunReference
 } from './release-note-generation-queue';
 import { NonRetryableReleaseNoteError } from './release-note-errors';
+import { releaseDigestDb, ReleaseDigestDb } from './release-digest.db';
+import { buildReleaseDigestEntries } from './release-digest-entries';
 
 interface GeneratedReleaseNote {
   readonly number: number;
@@ -509,7 +511,11 @@ export class ReleaseNoteGenerationService {
     private readonly contributorsConfig: Readonly<
       Record<string, string>
     > = GITHUB_TO_6529_HANDLES,
-    private readonly dropsRepository: DropsDb = dropsDb
+    private readonly dropsRepository: DropsDb = dropsDb,
+    private readonly digestEntries: Pick<
+      ReleaseDigestDb,
+      'recordEntries'
+    > = releaseDigestDb
   ) {}
 
   public async generateAndPost(
@@ -518,17 +524,22 @@ export class ReleaseNoteGenerationService {
     options?: ReleaseNoteGenerationOptions
   ): Promise<ReleaseNoteGenerationOutcome> {
     const botProfileId = env.getStringOrThrow('CI_PIPELINES_BOT_PROFILE_ID');
-    const waveId = env.getStringOrThrow('CI_RELEASES_WAVE_ID');
+    const releasesWaveId = env.getStringOrThrow('CI_RELEASES_WAVE_ID');
+    const deployNotesWaveId = env.getStringOrThrow('CI_PIPELINES_PROD_WAVE_ID');
+    // Desktop releases stay in the public Releases wave. Frontend and Backend
+    // deploy notes go to the production deploy feed, and the daily digest
+    // summarizes them for Releases. Receipts also check Releases, where these
+    // notes were published before the split.
+    const waveId = isDesktopRelease(request)
+      ? releasesWaveId
+      : deployNotesWaveId;
+    const receiptWaveIds = Array.from(new Set([waveId, releasesWaveId]));
     const publicationId = buildReleaseNotePublicationId(request);
-    const existingReleaseDropId =
-      await this.dropsRepository.findDropIdByMetadata(
-        {
-          waveId,
-          dataKey: RELEASE_NOTE_ID_METADATA_KEY,
-          dataValue: publicationId
-        },
-        ctx
-      );
+    const existingReleaseDropId = await this.findReleaseNoteReceipt(
+      receiptWaveIds,
+      publicationId,
+      ctx
+    );
     if (existingReleaseDropId) {
       await options?.onPlan?.(1);
       await options?.onPartCompleted?.({
@@ -547,6 +558,7 @@ export class ReleaseNoteGenerationService {
         ctx,
         botProfileId,
         waveId,
+        frontendNoteWaveIds: [deployNotesWaveId, releasesWaveId],
         publicationId,
         options
       });
@@ -576,15 +588,11 @@ export class ReleaseNoteGenerationService {
         batch
       );
       if (batch.total > 1) {
-        const existingBatchDropId =
-          await this.dropsRepository.findDropIdByMetadata(
-            {
-              waveId,
-              dataKey: RELEASE_NOTE_ID_METADATA_KEY,
-              dataValue: batchPublicationId
-            },
-            ctx
-          );
+        const existingBatchDropId = await this.findReleaseNoteReceipt(
+          receiptWaveIds,
+          batchPublicationId,
+          ctx
+        );
         if (existingBatchDropId) {
           await options?.onPartCompleted?.({
             partNumber: batch.number,
@@ -604,6 +612,16 @@ export class ReleaseNoteGenerationService {
       );
       const contributors = await this.resolveContributors(
         batchContext.pull_requests
+      );
+      await this.digestEntries.recordEntries(
+        buildReleaseDigestEntries({
+          request,
+          context: batchContext,
+          generatedNotes,
+          contributors,
+          publicationId: batchPublicationId
+        }),
+        ctx
       );
       const createDropRequest = this.buildCreateDropRequest({
         request,
@@ -637,6 +655,7 @@ export class ReleaseNoteGenerationService {
     ctx,
     botProfileId,
     waveId,
+    frontendNoteWaveIds,
     publicationId,
     options
   }: {
@@ -644,6 +663,7 @@ export class ReleaseNoteGenerationService {
     readonly ctx: RequestContext;
     readonly botProfileId: string;
     readonly waveId: string;
+    readonly frontendNoteWaveIds: readonly string[];
     readonly publicationId: string;
     readonly options?: ReleaseNoteGenerationOptions;
   }): Promise<ReleaseNoteGenerationOutcome> {
@@ -653,7 +673,7 @@ export class ReleaseNoteGenerationService {
     const frontendRelease = await this.getFrontendReleaseNoteReference({
       frontendSha,
       botProfileId,
-      waveId,
+      waveIds: frontendNoteWaveIds,
       ctx
     });
     const context = await this.githubService.getReleaseContext(
@@ -692,34 +712,56 @@ export class ReleaseNoteGenerationService {
   private async getFrontendReleaseNoteReference({
     frontendSha,
     botProfileId,
-    waveId,
+    waveIds,
     ctx
   }: {
     readonly frontendSha: string;
     readonly botProfileId: string;
-    readonly waveId: string;
+    readonly waveIds: readonly string[];
     readonly ctx: RequestContext;
   }): Promise<FrontendReleaseNoteReference> {
     const commitUrl = `https://github.com/${FRONTEND_REPOSITORY}/commit/${frontendSha}`;
-    const reference = await this.dropsRepository.findReleaseNoteDropBySourceSha(
-      {
-        waveId,
-        authorId: botProfileId,
-        repository: FRONTEND_REPOSITORY,
-        sha: frontendSha,
-        commitUrl
-      },
-      ctx
-    );
-    if (!reference) {
-      throw new Error(
-        `No Frontend release note contains commit ${frontendSha}`
-      );
+    for (const waveId of waveIds) {
+      const reference =
+        await this.dropsRepository.findReleaseNoteDropBySourceSha(
+          {
+            waveId,
+            authorId: botProfileId,
+            repository: FRONTEND_REPOSITORY,
+            sha: frontendSha,
+            commitUrl
+          },
+          ctx
+        );
+      if (reference) {
+        return {
+          label: getFrontendReleaseNoteLabel(reference, frontendSha),
+          url: `${RELEASES_WEB_BASE_URL}/${waveId}?serialNo=${reference.serial_no}`
+        };
+      }
     }
-    return {
-      label: getFrontendReleaseNoteLabel(reference, frontendSha),
-      url: `${RELEASES_WEB_BASE_URL}/${waveId}?serialNo=${reference.serial_no}`
-    };
+    throw new Error(`No Frontend release note contains commit ${frontendSha}`);
+  }
+
+  private async findReleaseNoteReceipt(
+    waveIds: readonly string[],
+    publicationId: string,
+    ctx: RequestContext
+  ): Promise<string | null> {
+    for (const waveId of waveIds) {
+      const dropId = await this.dropsRepository.findDropIdByMetadata(
+        {
+          waveId,
+          dataKey: RELEASE_NOTE_ID_METADATA_KEY,
+          dataValue: publicationId
+        },
+        ctx
+      );
+      if (dropId) {
+        return dropId;
+      }
+    }
+    return null;
   }
 
   private async generateDesktopBullets(

@@ -2,6 +2,8 @@ import { env } from './env';
 
 export const DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID =
   'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
+export const DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID =
+  'us.anthropic.claude-sonnet-5-5';
 export const DEFAULT_HELP_BOT_BEDROCK_MODEL_ID =
   DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID;
 

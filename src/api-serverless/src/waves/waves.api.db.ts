@@ -135,11 +135,10 @@ type FollowedSubwaveActivityRow = {
   latest_followed_subwave_activity_timestamp: number | string | null;
 };
 
-type HiddenFollowedSubwaveUnreadRow = {
+type FollowedSubwaveUnreadRow = {
   parent_wave_id: string;
-  subwave_unread_drops: number | string;
-  hidden_followed_subwave_unread_drops: number | string;
-  first_hidden_followed_subwave_unread_drop_serial_no: number | string | null;
+  followed_subwave_unread_drops: number | string;
+  first_followed_subwave_unread_drop_serial_no: number | string | null;
 };
 
 type WaveUnreadSummaryRow = {
@@ -220,7 +219,16 @@ type DmUnreadConversationStateRow = {
 export interface FollowedSubwaveOverviewContext {
   readonly followed_subwaves_count: number;
   readonly latest_followed_subwave_activity_timestamp: number | null;
+  /**
+   * Unread drops across visible subwaves the profile follows and has not
+   * muted. Unfollowed or muted subwaves contribute nothing.
+   */
   readonly subwave_unread_drops: number;
+  /**
+   * Followed subwaves are folded into (hidden behind) their parent container,
+   * so this is the same followed-and-unmuted unread total as
+   * `subwave_unread_drops`. Kept for API compatibility.
+   */
   readonly hidden_followed_subwave_unread_drops: number;
   readonly first_hidden_followed_subwave_unread_drop_serial_no: number | null;
 }
@@ -1230,6 +1238,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            chat_enabled,
            chat_slow_mode_cooldown_ms,
            chat_links_disabled,
+           chat_replies_open,
+           chat_replies_collapsed,
            participation_group_id,
            participation_max_applications_per_participant,
            participation_required_metadata,
@@ -1275,6 +1285,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :chat_enabled,
                   :chat_slow_mode_cooldown_ms,
                   :chat_links_disabled,
+                  :chat_replies_open,
+                  :chat_replies_collapsed,
                   :participation_group_id,
                   :participation_max_applications_per_participant,
                   :participation_required_metadata,
@@ -1330,6 +1342,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                             chat_enabled,
                             chat_slow_mode_cooldown_ms,
                             chat_links_disabled,
+                            chat_replies_open,
+                            chat_replies_collapsed,
                             participation_group_id,
                             participation_max_applications_per_participant,
                             participation_required_metadata,
@@ -1378,6 +1392,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :chat_enabled,
                                    :chat_slow_mode_cooldown_ms,
                                    :chat_links_disabled,
+                                   :chat_replies_open,
+                                   :chat_replies_collapsed,
                                    :participation_group_id,
                                    :participation_max_applications_per_participant,
                                    :participation_required_metadata,
@@ -1910,38 +1926,21 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         eligibleGroups,
         getValue: async () => {
           // Unread is not persistently cached. Equivalent concurrent reads are
-          // coalesced only until this query settles, so read and mute changes
-          // are visible on the next request.
-          return this.db.execute<HiddenFollowedSubwaveUnreadRow>(
+          // coalesced only until this query settles, so read, follow and mute
+          // changes are visible on the next request.
+          //
+          // Only followed, unmuted subwaves count: parents can hold bot feed
+          // subwaves most parent followers never follow, and counting those
+          // would pin the parent "N new" pill at a meaningless high value.
+          // The follow join uses the unique (subscriber_id, target_id,
+          // target_type, target_action) index, so it also prunes drop scans
+          // for unfollowed subwaves.
+          return this.db.execute<FollowedSubwaveUnreadRow>(
             `
               select
                 child.parent_wave_id,
-                count(
-                  case
-                    when d.author_id != :identityId
-                      and muted_author.id is null
-                      and blocked_author.id is null
-                      then d.id
-                  end
-                ) as subwave_unread_drops,
-                count(
-                  case
-                    when child_follow.id is not null
-                      and d.author_id != :identityId
-                      and muted_author.id is null
-                      and blocked_author.id is null
-                      then d.id
-                  end
-                ) as hidden_followed_subwave_unread_drops,
-                min(
-                  case
-                    when child_follow.id is not null
-                      and d.author_id != :identityId
-                      and muted_author.id is null
-                      and blocked_author.id is null
-                      then d.serial_no
-                  end
-                ) as first_hidden_followed_subwave_unread_drop_serial_no
+                count(d.id) as followed_subwave_unread_drops,
+                min(d.serial_no) as first_followed_subwave_unread_drop_serial_no
               from ${WAVES_TABLE} child
               join ${WAVES_TABLE} parent
                 on parent.id = child.parent_wave_id
@@ -1949,7 +1948,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               left join ${WAVE_READER_METRICS_TABLE} parent_reader
                 on parent_reader.wave_id = parent.id
                and parent_reader.reader_id = :identityId
-              left join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
+              join ${IDENTITY_SUBSCRIPTIONS_TABLE} child_follow
                 on child_follow.subscriber_id = :identityId
                and child_follow.target_id = child.id
                and child_follow.target_type = :waveTargetType
@@ -1962,6 +1961,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               join ${DROPS_TABLE} d
                 on d.wave_id = child.id
                and d.created_at > child_reader.latest_read_timestamp
+               and d.author_id != :identityId
               left join ${IDENTITY_MUTES_TABLE} muted_author
                 on muted_author.muter_id = :identityId
                and muted_author.muted_identity_id = d.author_id
@@ -1970,6 +1970,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                and blocked_author.blocked_profile_id = d.author_id
               where child.parent_wave_id in (:parentWaveIds)
                 and coalesce(parent_reader.muted, false) = false
+                and muted_author.id is null
+                and blocked_author.id is null
                 and ${this.getWaveVisibilityFilter(
                   'child',
                   eligibleGroups,
@@ -2010,6 +2012,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       );
 
       for (const row of unreadRows) {
+        // The activity read may be served from its short-lived cache, so a
+        // just-followed subwave can have unread rows before activity catches up.
         const existing = result[row.parent_wave_id] ?? {
           followed_subwaves_count: 0,
           latest_followed_subwave_activity_timestamp: null,
@@ -2017,15 +2021,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           hidden_followed_subwave_unread_drops: 0,
           first_hidden_followed_subwave_unread_drop_serial_no: null
         };
+        const followedSubwaveUnreadDrops = Number(
+          row.followed_subwave_unread_drops
+        );
         result[row.parent_wave_id] = {
           ...existing,
-          subwave_unread_drops: Number(row.subwave_unread_drops),
-          hidden_followed_subwave_unread_drops: Number(
-            row.hidden_followed_subwave_unread_drops
-          ),
+          subwave_unread_drops: followedSubwaveUnreadDrops,
+          hidden_followed_subwave_unread_drops: followedSubwaveUnreadDrops,
           first_hidden_followed_subwave_unread_drop_serial_no:
             this.toNullableNumber(
-              row.first_hidden_followed_subwave_unread_drop_serial_no
+              row.first_followed_subwave_unread_drop_serial_no
             )
         };
       }
@@ -4407,6 +4412,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 JOIN ${WAVE_READER_METRICS_TABLE} r
                   ON r.wave_id = d.wave_id
                   AND r.reader_id = :identityId
+                JOIN ${WAVES_TABLE} w
+                  ON w.id = d.wave_id
                 LEFT JOIN ${IDENTITY_MUTES_TABLE} im
                   ON im.muter_id = :identityId
                   AND im.muted_identity_id = d.author_id
@@ -4419,6 +4426,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   AND profile_block.id IS NULL
                   AND d.created_at > r.latest_read_timestamp
                   AND r.muted = false
+                  -- Collapsed replies live in threads, not the main feed.
+                  AND (d.reply_to_drop_id IS NULL OR w.chat_replies_collapsed = false)
                 GROUP BY d.wave_id
               `,
             { identityId: param.identityId, waveIds: uncachedWaveIds },

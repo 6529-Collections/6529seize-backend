@@ -175,6 +175,11 @@ export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
 export { RefreshToken } from './IRefreshToken';
 export {
+  ReleaseDigestEntity,
+  ReleaseDigestEntryEntity,
+  ReleaseDigestStatus
+} from './IReleaseDigest';
+export {
   ReleaseNotePublicationEntity,
   ReleaseNotePublicationStatus
 } from './IReleaseNotePublication';
