@@ -3,6 +3,7 @@ import {
   getEthereumRpcClient
 } from '@/ethereum-rpc/ethereum-rpc-client';
 import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
+import type { Log } from '@/ethereum-rpc/ethereum-rpc-types';
 import {
   DELEGATION_ALL_ADDRESS,
   DELEGATION_CONTRACT,
@@ -11,6 +12,15 @@ import {
   USE_CASE_PRIMARY_ADDRESS,
   USE_CASE_SUB_DELEGATION
 } from '@/constants';
+import {
+  createDelegationStateReader,
+  RegistrationLogRef,
+  resolveRegistrationExpiries,
+  RevocationLogRef
+} from '@/delegation-registration-expiry';
+import { MAX_STORABLE_DELEGATION_TOKEN_ID } from '@/delegation-row';
+import { mapInChunks } from '@/map-in-chunks';
+import { LogDescription } from 'ethers';
 import { DELEGATIONS_IFACE } from './abis/delegations';
 import {
   ConsolidationEvent,
@@ -26,40 +36,310 @@ let rpc: EthereumRpcClient;
 
 const logger = Logger.get('DELEGATIONS');
 
-async function getAllDelegations(startingBlock: number, latestBlock: number) {
-  const startingBlockHex = `0x${startingBlock.toString(16)}`;
-  const latestBlockHex = `0x${latestBlock.toString(16)}`;
+const REGISTER_EVENTS = new Set([
+  'RegisterDelegation',
+  'RegisterDelegationUsingSubDelegation'
+]);
+const REVOKE_EVENTS = new Set([
+  'RevokeDelegation',
+  'RevokeDelegationUsingSubDelegation'
+]);
 
-  logger.info(`[FROM BLOCK ${startingBlockHex}] [TO BLOCK ${latestBlockHex}]`);
+// A long range (a backfill from the deployment block) is fetched in
+// consecutive chunks, one at a time, so no single response grows unbounded.
+// 500k blocks suits this low-traffic contract: its busiest 500k-block window
+// so far has 1,448 logs, far below provider result caps. A busier contract
+// would need smaller chunks. A provider error fails the scan before any write.
+const LOG_FETCH_CHUNK_BLOCKS = 500_000;
 
-  const response = await rpc.getLogs({
-    address: DELEGATION_CONTRACT.contract,
-    fromBlock: startingBlockHex,
-    toBlock: latestBlockHex
-  });
-  return response;
+const toHexBlock = (block: number) => `0x${block.toString(16)}`;
+
+async function getAllDelegations(
+  startingBlock: number,
+  latestBlock: number
+): Promise<Log[]> {
+  logger.info(
+    `[FROM BLOCK ${toHexBlock(startingBlock)}] [TO BLOCK ${toHexBlock(latestBlock)}]`
+  );
+  const ranges: [number, number][] = [];
+  for (
+    let from = startingBlock;
+    from <= latestBlock;
+    from += LOG_FETCH_CHUNK_BLOCKS
+  ) {
+    ranges.push([
+      from,
+      Math.min(latestBlock, from + LOG_FETCH_CHUNK_BLOCKS - 1)
+    ]);
+  }
+  const chunks = await mapInChunks(ranges, 1, ([from, to]) =>
+    rpc.getLogs({
+      address: DELEGATION_CONTRACT.contract,
+      fromBlock: toHexBlock(from),
+      toBlock: toHexBlock(to)
+    })
+  );
+  return chunks.reduce<Log[]>((all, logs) => all.concat(logs), []);
 }
 
-const getDelegationDetails = async (txHash: string) => {
-  const tx = await rpc.getTransaction(txHash);
-  if (tx) {
-    const data = tx.data;
-    try {
-      const parsed = DELEGATIONS_IFACE.parseTransaction({ data, value: 0 });
-      if (parsed && parsed.args._expiryDate) {
-        return {
-          expiry: Number(parsed.args._expiryDate),
-          allTokens: parsed.args._allTokens,
-          tokenId: Number(parsed.args._tokenId)
-        };
+interface PendingRegistration {
+  event: DelegationEvent | null;
+  ref: RegistrationLogRef;
+}
+
+interface DelegationScan {
+  consolidations: ConsolidationEvent[];
+  registrations: DelegationEvent[];
+  revocations: DelegationEvent[];
+  pendingRegistrations: PendingRegistration[];
+  subDelegationRegistrations: {
+    event: DelegationEvent;
+    ref: RevocationLogRef;
+  }[];
+  revocationRefs: RevocationLogRef[];
+}
+
+interface DelegationLog {
+  log: Log;
+  parsed: LogDescription;
+  from: string;
+  to: string;
+  collection: string;
+  useCase: number;
+}
+
+function isConsolidationCollection(collection: string) {
+  return [MEMES_CONTRACT, DELEGATION_ALL_ADDRESS].includes(collection);
+}
+
+function collectRegistration(entry: DelegationLog, scan: DelegationScan) {
+  const { log, parsed, from, to, collection, useCase } = entry;
+  const e: Event = {
+    block: log.blockNumber,
+    type: EventType.REGISTER,
+    wallet1: from,
+    wallet2: to
+  };
+  if (useCase == USE_CASE_CONSOLIDATION) {
+    if (isConsolidationCollection(collection)) {
+      scan.consolidations.push(e);
+    }
+    return;
+  }
+  if (useCase == USE_CASE_SUB_DELEGATION) {
+    const registration = {
+      ...e,
+      use_case: useCase,
+      collection: collection
+    };
+    scan.registrations.push(registration);
+    scan.subDelegationRegistrations.push({
+      event: registration,
+      ref: {
+        block: log.blockNumber,
+        logIndex: log.logIndex,
+        delegator: from,
+        collection,
+        delegate: to,
+        useCase
       }
-    } catch (e) {
-      logger.info(`[ERROR PARSING TX ${txHash}]`);
-      return null;
+    });
+    return;
+  }
+  const allTokens = Boolean(parsed.args.allTokens);
+  // The contract stores token 0 for all-token delegations.
+  const tokenId = allTokens ? BigInt(0) : BigInt(parsed.args._tokenId);
+  const ref: RegistrationLogRef = {
+    block: log.blockNumber,
+    logIndex: log.logIndex,
+    delegator: from,
+    collection,
+    delegate: to,
+    useCase,
+    allTokens,
+    tokenId
+  };
+  if (tokenId > MAX_STORABLE_DELEGATION_TOKEN_ID) {
+    // Any caller can pick the token id. One the token_id column cannot hold
+    // would fail the insert, or be stored as a different token, so it is
+    // skipped rather than stalling the loop or widening the delegation.
+    logger.warn(
+      `[SKIPPING REGISTRATION] [TOKEN ID ${tokenId} DOES NOT FIT token_id] [BLOCK ${log.blockNumber}] [LOG ${log.logIndex}]`
+    );
+    // Keep its position in the contract's entry list so other registrations
+    // for this delegate in the same block resolve their own expiry.
+    scan.pendingRegistrations.push({ event: null, ref });
+    return;
+  }
+  const registration: DelegationEvent = {
+    ...e,
+    use_case: useCase,
+    collection: collection,
+    all_tokens: allTokens,
+    token_id: Number(tokenId)
+  };
+  // The same object is held in registrations and pendingRegistrations:
+  // attachRegistrationExpiries sets its expiry and filters by identity.
+  scan.registrations.push(registration);
+  scan.pendingRegistrations.push({
+    event: registration,
+    ref
+  });
+}
+
+function collectRevocation(entry: DelegationLog, scan: DelegationScan) {
+  const { log, from, to, collection, useCase } = entry;
+  const e: Event = {
+    block: log.blockNumber,
+    type: EventType.REVOKE,
+    wallet1: from,
+    wallet2: to
+  };
+  if (useCase == USE_CASE_CONSOLIDATION) {
+    if (isConsolidationCollection(collection)) {
+      scan.consolidations.push(e);
+    }
+    return;
+  }
+  scan.revocations.push({
+    ...e,
+    use_case: useCase,
+    collection: collection
+  });
+  scan.revocationRefs.push({
+    block: log.blockNumber,
+    logIndex: log.logIndex,
+    delegator: from,
+    collection,
+    delegate: to,
+    useCase
+  });
+}
+
+function collectLog(log: Log, scan: DelegationScan) {
+  const parsed = DELEGATIONS_IFACE.parseLog(log);
+  if (!parsed) {
+    return;
+  }
+  const entry: DelegationLog = {
+    log,
+    parsed,
+    from: parsed.args.delegator ? parsed.args.delegator : parsed.args.from,
+    to: parsed.args.delegationAddress,
+    collection: parsed.args.collectionAddress,
+    useCase: Number(parsed.args.useCase)
+  };
+  if (
+    equalIgnoreCase(entry.from, entry.to) &&
+    entry.useCase !== USE_CASE_PRIMARY_ADDRESS
+  ) {
+    return;
+  }
+  if (REGISTER_EVENTS.has(parsed.name)) {
+    collectRegistration(entry, scan);
+  } else if (REVOKE_EVENTS.has(parsed.name)) {
+    collectRevocation(entry, scan);
+  }
+}
+
+// allTokens and the token id come from the event. The expiry is not in the
+// event, so it is read from contract state at the event's block; decoding the
+// transaction input instead misses Safe-signed and batched registrations.
+// A failed read throws before anything is persisted, and the delegations loop
+// retries the scan. Registrations revoked later in the same block are dropped.
+async function attachRegistrationExpiries(
+  scan: DelegationScan
+): Promise<DelegationEvent[]> {
+  const revoked = new Set<DelegationEvent>();
+  for (const { event, ref } of scan.subDelegationRegistrations) {
+    if (
+      scan.revocationRefs.some((revocation) =>
+        revokedLaterInBlock(ref, revocation)
+      )
+    ) {
+      revoked.add(event);
     }
   }
-  return null;
-};
+  const registrations = scan.registrations.filter(
+    (event) => !revoked.has(event)
+  );
+  const pending = scan.pendingRegistrations;
+  if (pending.length === 0) {
+    return registrations;
+  }
+  const expiries = await resolveRegistrationExpiries(
+    pending.map((p) => p.ref),
+    scan.revocationRefs,
+    createDelegationStateReader(
+      (to, data, blockTag) => rpc.call({ to, data }, blockTag),
+      DELEGATION_CONTRACT.contract
+    )
+  );
+  pending.forEach(({ event }, index) => {
+    if (!event) {
+      return;
+    }
+    const expiry = expiries[index];
+    if (expiry === null) {
+      revoked.add(event);
+    } else {
+      event.expiry = expiry;
+    }
+  });
+  if (revoked.size > 0) {
+    logger.info(
+      `[SKIPPING ${revoked.size} REGISTRATIONS REVOKED IN THE SAME BLOCK]`
+    );
+  }
+  return registrations.filter((r) => !revoked.has(r));
+}
+
+function revokedLaterInBlock(
+  registration: RevocationLogRef,
+  revocation: RevocationLogRef
+): boolean {
+  return (
+    registration.block === revocation.block &&
+    registration.logIndex < revocation.logIndex &&
+    registration.useCase === revocation.useCase &&
+    equalIgnoreCase(registration.delegator, revocation.delegator) &&
+    equalIgnoreCase(registration.delegate, revocation.delegate) &&
+    equalIgnoreCase(registration.collection, revocation.collection)
+  );
+}
+
+const BLOCK_TIMESTAMP_CONCURRENCY = 5;
+
+// The fourth-wallet gate compares these timestamps with the activation time,
+// so consolidation events are never returned without one: a failed or empty
+// lookup throws before anything is persisted, and the delegations loop retries
+// the whole scan.
+async function attachBlockTimestamps(
+  events: ConsolidationEvent[],
+  known: { block: number; timestamp: number }
+) {
+  const timestamps = new Map<number, number>([[known.block, known.timestamp]]);
+  const missing = Array.from(new Set(events.map((e) => e.block))).filter(
+    (blockNumber) => !timestamps.has(blockNumber)
+  );
+  for (let i = 0; i < missing.length; i += BLOCK_TIMESTAMP_CONCURRENCY) {
+    const chunk = missing.slice(i, i + BLOCK_TIMESTAMP_CONCURRENCY);
+    const blocks = await Promise.all(
+      chunk.map((blockNumber) => rpc.getBlock(blockNumber))
+    );
+    chunk.forEach((blockNumber, index) => {
+      const timestamp = blocks[index]?.timestamp;
+      if (typeof timestamp !== 'number') {
+        logger.error(`[MISSING TIMESTAMP FOR BLOCK ${blockNumber}]`);
+        throw new TypeError(`Missing timestamp for block ${blockNumber}`);
+      }
+      timestamps.set(blockNumber, timestamp);
+    });
+  }
+  for (const event of events) {
+    event.timestamp = timestamps.get(event.block);
+  }
+}
 
 const getNetwork = () => {
   if (DELEGATION_CONTRACT.chain_id == sepolia.id) {
@@ -67,6 +347,64 @@ const getNetwork = () => {
   }
   return Network.ETH_MAINNET;
 };
+
+// Used to rewind consolidation rows before replaying from a reset block.
+export async function fetchBlockTimestamp(
+  blockNumber: number
+): Promise<number> {
+  const block = await getEthereumRpcClient(getNetwork()).getBlock(blockNumber);
+  if (typeof block?.timestamp !== 'number') {
+    throw new TypeError(`Missing timestamp for block ${blockNumber}`);
+  }
+  return block.timestamp;
+}
+
+export interface DelegationLogScan {
+  logs: Log[];
+  consolidations: ConsolidationEvent[];
+  registrations: DelegationEvent[];
+  revocations: DelegationEvent[];
+}
+
+/**
+ * Reads NFTDelegation logs in [fromBlock, toBlock] and turns them into the
+ * events the delegations loop persists, with each registration's expiry and
+ * token scope resolved. Throws if any read fails.
+ */
+export async function scanDelegationLogs(
+  fromBlock: number,
+  toBlock: number
+): Promise<DelegationLogScan> {
+  rpc = getEthereumRpcClient(getNetwork());
+  const logs = await getAllDelegations(fromBlock, toBlock);
+
+  logger.info(`[FOUND ${logs.length} NEW TRANSACTIONS]`);
+
+  const scan: DelegationScan = {
+    consolidations: [],
+    registrations: [],
+    revocations: [],
+    pendingRegistrations: [],
+    subDelegationRegistrations: [],
+    revocationRefs: []
+  };
+  for (const d of logs) {
+    collectLog(d, scan);
+  }
+
+  const registrations = await attachRegistrationExpiries(scan);
+  return {
+    logs,
+    consolidations: scan.consolidations,
+    registrations,
+    revocations: scan.revocations
+  };
+}
+
+/** The transaction behind a delegation log, read from the contract's chain. */
+export async function fetchDelegationTransaction(hash: string) {
+  return getEthereumRpcClient(getNetwork()).getTransaction(hash);
+}
 
 export const findDelegationTransactions = async (
   startingBlock: number,
@@ -84,95 +422,19 @@ export const findDelegationTransactions = async (
 
   const timestamp = (await rpc.getBlock(latestBlock)).timestamp;
 
-  const allDelegations = await getAllDelegations(startingBlock, latestBlock);
+  const scan = await scanDelegationLogs(startingBlock, latestBlock);
 
-  logger.info(`[FOUND ${allDelegations.length} NEW TRANSACTIONS]`);
-
-  const consolidations: ConsolidationEvent[] = [];
-  const registrations: DelegationEvent[] = [];
-  const revocation: DelegationEvent[] = [];
-
-  await Promise.all(
-    allDelegations.map(async (d) => {
-      const delResult = DELEGATIONS_IFACE.parseLog(d);
-      if (!delResult) {
-        return;
-      }
-      const collection = delResult.args.collectionAddress;
-      const from = delResult.args.delegator
-        ? delResult.args.delegator
-        : delResult.args.from;
-      const to = delResult.args.delegationAddress;
-      const useCase = Number(delResult.args.useCase);
-
-      if (!equalIgnoreCase(from, to) || useCase === USE_CASE_PRIMARY_ADDRESS) {
-        if (
-          [
-            'RegisterDelegation',
-            'RegisterDelegationUsingSubDelegation'
-          ].includes(delResult.name)
-        ) {
-          const e: Event = {
-            block: d.blockNumber,
-            type: EventType.REGISTER,
-            wallet1: from,
-            wallet2: to
-          };
-          if (useCase == USE_CASE_CONSOLIDATION) {
-            if ([MEMES_CONTRACT, DELEGATION_ALL_ADDRESS].includes(collection)) {
-              consolidations.push(e);
-            }
-          } else if (useCase == USE_CASE_SUB_DELEGATION) {
-            registrations.push({
-              ...e,
-              use_case: useCase,
-              collection: collection
-            });
-          } else {
-            const delegationDetails = await getDelegationDetails(
-              d.transactionHash
-            );
-            registrations.push({
-              ...e,
-              use_case: useCase,
-              collection: collection,
-              expiry: delegationDetails?.expiry,
-              all_tokens: delegationDetails?.allTokens,
-              token_id: delegationDetails?.tokenId
-            });
-          }
-        } else if (
-          ['RevokeDelegation', 'RevokeDelegationUsingSubDelegation'].includes(
-            delResult.name
-          )
-        ) {
-          const e: Event = {
-            block: d.blockNumber,
-            type: EventType.REVOKE,
-            wallet1: from,
-            wallet2: to
-          };
-          if (useCase == USE_CASE_CONSOLIDATION) {
-            if ([MEMES_CONTRACT, DELEGATION_ALL_ADDRESS].includes(collection)) {
-              consolidations.push(e);
-            }
-          } else {
-            revocation.push({
-              ...e,
-              use_case: useCase,
-              collection: collection
-            });
-          }
-        }
-      }
-    })
-  );
+  // Filled in after collection so consolidation events keep their log order.
+  await attachBlockTimestamps(scan.consolidations, {
+    block: latestBlock,
+    timestamp
+  });
 
   return {
     latestBlock: latestBlock,
     latestBlockTimestamp: timestamp,
-    consolidations: consolidations,
-    registrations: registrations,
-    revocation: revocation
+    consolidations: scan.consolidations,
+    registrations: scan.registrations,
+    revocation: scan.revocations
   };
 };

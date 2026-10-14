@@ -3,9 +3,8 @@ import * as Joi from 'joi';
 import * as db from '@/api/oracle/api.oracle.db';
 import { asyncRouter } from '@/api/async.router';
 import * as SwaggerUI from 'swagger-ui-express';
-import { getIp, isLocalhost } from '@/api/policies/policies';
-import { getPage, getPageSize } from '@/api/api-helpers';
 import { numbers } from '@/numbers';
+import { CustomApiCompliantException } from '@/exceptions';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 
 const YAML = require('yamljs');
@@ -34,22 +33,12 @@ const OracleNftsParamsSchema = Joi.object<OracleNftsParams>({
   id: Joi.number().integer().optional()
 });
 
-function isValidIP(ip: string): boolean {
-  const ipv4FormatRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-  if (!ipv4FormatRegex.test(ip)) {
-    return false;
-  }
-
-  const octets = ip.split('.').map(Number);
-  return octets.every((octet) => octet >= 0 && octet <= 255);
-}
-
 const swaggerDocumentOracle = YAML.load('openapi.oracle.yaml');
 router.use(
   '/docs',
   SwaggerUI.serveFiles(swaggerDocumentOracle, { explorer: true }),
   SwaggerUI.setup(swaggerDocumentOracle, {
-    customSiteTitle: '6529 PreNode API',
+    customSiteTitle: '6529 Oracle TDH API',
     customCss: '.topbar { display: none }'
   })
 );
@@ -317,34 +306,14 @@ router.get(
   }
 );
 
-router.post('/register-prenode', async (req: Request, res: Response) => {
-  const { domain, tdh, block } = req.body;
+// Keep terminal responses for legacy registry clients without reading or writing data.
+function retiredPrenodeRegistry(_req: Request, res: Response) {
+  res.setHeader('Cache-Control', 'no-store');
+  throw new CustomApiCompliantException(
+    410,
+    '6529 Prenodes have been deprecated. Use the 6529 Desktop app to calculate TDH.'
+  );
+}
 
-  const ip = getIp(req);
-
-  if (!ip) {
-    return res.status(400).send({ message: 'Failed to get IP address' });
-  }
-  if (domain === undefined) {
-    return res.status(400).send({ message: 'Missing domain' });
-  }
-  if (!tdh) {
-    return res.status(400).send({ message: 'Missing tdh' });
-  }
-  if (!block) {
-    return res.status(400).send({ message: 'Missing block' });
-  }
-  if (!isValidIP(ip) && !isLocalhost(ip)) {
-    return res.status(400).send('Invalid IP');
-  }
-
-  const validation = await db.validatePrenode(ip, domain, tdh, block);
-  return res.status(201).send(validation);
-});
-
-router.get('/prenodes', async (req: Request, res: Response) => {
-  const pageSize = getPageSize(req);
-  const page = getPage(req);
-  const prenodes = await db.fetchPrenodes(pageSize, page);
-  return res.json(prenodes);
-});
+router.post('/register-prenode', retiredPrenodeRegistry);
+router.get('/prenodes', retiredPrenodeRegistry);

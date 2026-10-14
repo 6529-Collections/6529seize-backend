@@ -146,11 +146,11 @@ const tdhEntryArb: fc.Arbitrary<TDHENS> = fc
   );
 
 /**
- * Random partition of the wallet pool into consolidation clusters of size 1-3.
+ * Random partition of the wallet pool into consolidation clusters of size 1-4.
  * Returns wallet (lowercase) -> consolidation key.
  */
 const partitionArb: fc.Arbitrary<Record<string, string>> = fc
-  .array(fc.integer({ min: 0, max: 2 }), {
+  .array(fc.integer({ min: 0, max: 3 }), {
     minLength: WALLET_POOL.length,
     maxLength: WALLET_POOL.length
   })
@@ -306,6 +306,67 @@ function stripDates(consolidations: any[]): any[] {
 describe('consolidateTDHForWallets', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('includes all four wallets in TDH, holdings and completed sets', async () => {
+    const wallets = WALLET_POOL.slice(0, 4).map((wallet) =>
+      wallet.toLowerCase()
+    );
+    const key = buildConsolidationKey(wallets);
+    const entries = wallets.map((wallet, index) => {
+      const tdh = 10 ** index;
+      return {
+        wallet,
+        block: 99,
+        tdh,
+        tdh__raw: tdh,
+        balance: 1,
+        memes_tdh: tdh,
+        memes_tdh__raw: tdh,
+        memes_balance: 1,
+        gradients_tdh: 0,
+        gradients_tdh__raw: 0,
+        gradients_balance: 0,
+        nextgen_tdh: 0,
+        nextgen_tdh__raw: 0,
+        nextgen_balance: 0,
+        memes: [
+          {
+            id: index + 1,
+            balance: 1,
+            tdh,
+            tdh__raw: tdh,
+            days_held_per_edition: [tdh]
+          }
+        ],
+        gradients: [],
+        nextgen: []
+      } as unknown as TDHENS;
+    });
+    mockedRetrieveConsolidationsForWallets.mockResolvedValue(
+      Object.fromEntries(wallets.map((wallet) => [wallet, key]))
+    );
+    mockedFetchConsolidationDisplays.mockResolvedValue({
+      [key]: 'A - B - C - D'
+    });
+
+    const result = await consolidateTDHForWallets(entries, 4);
+
+    expect(result.consolidatedTdh).toHaveLength(1);
+    expect(result.consolidatedTdh[0]).toMatchObject({
+      consolidation_key: key,
+      wallets: key.split('-'),
+      tdh: 1111,
+      tdh__raw: 1111,
+      balance: 4,
+      memes_balance: 4,
+      memes_tdh: 1111,
+      unique_memes: 4,
+      memes_cards_sets: 1
+    });
+    expect(result.consolidatedTdh[0].memes.map((token) => token.id)).toEqual([
+      1, 2, 3, 4
+    ]);
   });
 
   it('produces exactly the same output as the pre-optimization reference implementation', async () => {
