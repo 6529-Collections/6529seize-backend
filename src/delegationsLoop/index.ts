@@ -71,13 +71,6 @@ const logger = Logger.get('DELEGATIONS_LOOP');
 export const handler = sentryContext.wrapLambdaHandler(
   async (event: unknown) => {
     const requestedWallets = readReconsolidationAction(event);
-    // Deployment-owned marker, checked before regional secrets can overwrite env.
-    if (
-      requestedWallets &&
-      process.env.SENTRY_ENVIRONMENT !== 'delegationsLoop_staging'
-    ) {
-      throw new Error('On-demand reconsolidation is available only in staging');
-    }
     return await doInDbContext(
       async () => {
         const scopeBackfill = readScopeBackfillConfig();

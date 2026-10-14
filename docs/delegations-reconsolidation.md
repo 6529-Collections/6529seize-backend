@@ -1,4 +1,4 @@
-# On-demand staging reconsolidation
+# On-demand reconsolidation
 
 The existing `delegationsLoop` Lambda accepts a permanent maintenance action:
 
@@ -9,11 +9,11 @@ The existing `delegationsLoop` Lambda accepts a permanent maintenance action:
 }
 ```
 
-Invoke it synchronously using the existing AWS Lambda invocation permissions.
-This action is restricted to the deployment-owned
-`SENTRY_ENVIRONMENT=delegationsLoop_staging` runtime marker. It is not an HTTP
-endpoint, and no persistent flag enables or repeats it. Production invocations
-of this action fail before connecting to the database.
+Invoke it synchronously in staging or production using the existing AWS Lambda
+invocation permissions. Select the intended environment's AWS region and Lambda;
+the action operates on that deployment's configured database. Authorization is
+provided by AWS IAM, independently of Sentry environment labels. It is not an
+HTTP endpoint, and no persistent flag enables or repeats it.
 
 Supply 1–100 valid, nonzero Ethereum addresses. Addresses are normalized and
 deduplicated. Invalid actions, invalid addresses, missing/empty wallet lists,
@@ -45,6 +45,11 @@ It ignores the normal `DELEGATIONS_RESET_BLOCK` scanning option. Ordinary
 scheduled invocations without an action continue indexing normally. This action
 recalculates existing data; it does not insert test links or change the activation
 policy.
+
+Maintenance and scheduled invocations share the Lambda's reserved concurrency.
+A maintenance run longer than the schedule interval can temporarily throttle
+scheduled invocations and their retries. Scheduled indexing resumes from its
+unchanged checkpoint when the maintenance invocation releases the slot.
 
 Deploy only `delegationsLoop` to make this handler change available. No schema,
 API contract, IAM policy, schedule, or queue configuration change is required.
