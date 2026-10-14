@@ -301,6 +301,40 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     expect(Number(row_count)).toBe(2);
   });
 
+  it('preserves key-score associations in history when input rank order differs from primary-key order', async () => {
+    const rows = [consolidatedRow(['z'], 123), consolidatedRow(['a'], 456)];
+    for (const row of rows) {
+      delete (row as Partial<ConsolidatedTDH>).boosted_tdh_rate;
+    }
+    const before = structuredClone(rows);
+
+    await persistConsolidatedTDH(BLOCK, rows, [], [], [], {
+      mode: 'PARTIAL',
+      wallets: ['a', 'b', 'c', 'z'],
+      consolidationKeysToReplace: [A_C, B]
+    });
+
+    expect(rows).toEqual(before);
+    for (const entity of [ConsolidatedTDH, HistoricConsolidatedTDH]) {
+      for (const expected of before) {
+        const stored = await dataSource.getRepository(entity).findOneByOrFail({
+          block: BLOCK,
+          consolidation_key: expected.consolidation_key
+        });
+        expect(stored).toEqual(
+          expect.objectContaining({
+            block: BLOCK,
+            consolidation_key: expected.consolidation_key,
+            tdh: expected.tdh,
+            tdh__raw: expected.tdh__raw,
+            boosted_tdh: expected.boosted_tdh,
+            tdh_rank: expected.tdh_rank
+          })
+        );
+      }
+    }
+  });
+
   async function seedUnaffectedGroups() {
     const rows = Array.from({ length: TDH_SAVE_BATCH_SIZE + 1 }, (_, i) =>
       consolidatedRow([`unaffected${i}`], 1)

@@ -41,5 +41,5 @@ The dependency diagnostic is imported only by the six media entry points.
 - Keep production release-note grouping metadata identical across sequential
   runs; publish signal belongs only on the last successful service.
 
-Coordinator release recording precedes staging merge; its outcome is reused
-for production continuation. All fixes originate on the development branch.
+Follow the deployment skill for authorized staging and production rollout.
+All fixes originate on the development branch.
