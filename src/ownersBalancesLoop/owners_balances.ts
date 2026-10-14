@@ -1,3 +1,4 @@
+import { transferReconciliationDb } from '@/transactions/transfer-reconciliation.db';
 import {
   GRADIENT_CONTRACT,
   MEME_8_EDITION_BURN_ADJUSTMENT,
@@ -82,6 +83,7 @@ interface MemesBalancesFields {
 }
 
 export const updateOwnerBalances = async (reset?: boolean) => {
+  const pending = await transferReconciliationDb.pending('balances');
   const lastBalancesBlock = await getMaxOwnerBalancesBlockReference();
 
   reset = reset || lastBalancesBlock === 0;
@@ -97,12 +99,12 @@ export const updateOwnerBalances = async (reset?: boolean) => {
     NEXTGEN_CONTRACT
   ];
 
-  const addresses = new Set<string>();
+  const addresses = new Set<string>(pending.map((row) => row.wallet));
   let owners: NFTOwner[] = [];
 
   if (reset) {
     owners = await fetchAllNftOwners(allContracts);
-    addresses.clear();
+
     owners.forEach((o) => addresses.add(o.wallet.toLowerCase()));
   } else {
     const transactionAddresses: { from_address: string; to_address: string }[] =
@@ -203,6 +205,7 @@ export const updateOwnerBalances = async (reset?: boolean) => {
   );
 
   await consolidateOwnerBalances(addresses, reset);
+  if (isValidOwners) await transferReconciliationDb.acknowledge(pending);
 };
 
 function buildOwnerBalance(
