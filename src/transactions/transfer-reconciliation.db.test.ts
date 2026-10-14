@@ -82,6 +82,24 @@ describeWithSeed('Transfer reconciliation durable requests', [], () => {
     expect(await db.pending('activity')).toHaveLength(2);
   });
 
+  it('a mixed-consumer stale batch deletes only exact current revisions', async () => {
+    await db.enqueueRepair([A, B]);
+    const owners = await db.pending('owners');
+    const activity = await db.pending('activity');
+    const staleOwnerA = owners.find((row) => row.wallet === A)!;
+    await db.enqueueRepair([A]);
+    const ownerB = owners.find((row) => row.wallet === B)!;
+    const activityB = activity.find((row) => row.wallet === B)!;
+    await db.acknowledge([staleOwnerA, ownerB, activityB]);
+    expect((await db.pending('owners')).map((row) => row.wallet)).toEqual([A]);
+    expect((await db.pending('activity')).map((row) => row.wallet)).toEqual([
+      A
+    ]);
+    expect((await db.pending('owners'))[0].revision).not.toBe(
+      staleOwnerA.revision
+    );
+  });
+
   it('rolls back pending requests with the failed enclosing transfer transaction', async () => {
     await expect(
       sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {

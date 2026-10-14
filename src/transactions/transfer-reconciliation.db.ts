@@ -49,7 +49,12 @@ export async function enqueueTransfersWithManager(
     await manager // NOSONAR -- Batches share a transaction connection and must run sequentially.
       .createQueryBuilder()
       .insert()
-      .into(TRANSFER_RECONCILIATIONS_TABLE)
+      .into(TRANSFER_RECONCILIATIONS_TABLE, [
+        'consumer',
+        'wallet',
+        'revision',
+        'requested_at'
+      ])
       .values(rows.slice(offset, offset + BATCH_SIZE))
       // Both producer paths must rotate revision on conflict and retain enqueue_order.
       .orUpdate(['revision'], ['consumer', 'wallet'])
@@ -100,11 +105,19 @@ export class TransferReconciliationDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext = {}
   ): Promise<void> {
     if (!rows.length) return;
+    const params: Record<string, string> = {};
+    const tuples = rows.map((row, index) => {
+      params[`consumer${index}`] = row.consumer;
+      params[`wallet${index}`] = row.wallet;
+      params[`revision${index}`] = row.revision;
+      return `(:consumer${index}, :wallet${index}, :revision${index})`;
+    });
+    // The shared SQL binder flattens array parameters; bind each tuple's scalars explicitly.
     await this.query(
       'acknowledge',
       `DELETE FROM ${TRANSFER_RECONCILIATIONS_TABLE}
-       WHERE (consumer, wallet, revision) IN (:keys)`,
-      { keys: rows.map((row) => [row.consumer, row.wallet, row.revision]) },
+       WHERE (consumer, wallet, revision) IN (${tuples.join(', ')})`,
+      params,
       ctx
     );
   }
