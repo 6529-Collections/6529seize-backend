@@ -2130,12 +2130,22 @@ universe so changed members also update unaffected owners' rank positions.
 Partial raw, consolidated, historic and per-NFT persistence uses sequential
 TypeORM upserts of at most 500 rows through the existing transaction managers.
 MySQL matches composite primary keys directly, avoiding ORM bigint string/number
-mismatches and loaded-entity scans.
+mismatches and loaded-entity scans. The insert query builders disable entity
+hydration, so returned default values cannot reassign input keys before those
+rows are reused for historical persistence.
 Batch failures propagate to those managers and roll back the scoped deletes and
 earlier writes; batching adds no transaction or publication boundary. Full TDH
 and historical replay retain their bulk-insert persistence paths. Verify partial
 refresh runtime separately from the full calculation; see [TDH ranking
 parity](./tdh-ranking.md).
+
+When consolidation links simultaneously split and merge old groups, profile
+retention is resolved for all resulting identities before merging profile data.
+A profile retained by another resulting identity is excluded from merge sources;
+its profile row and related data stay with that identity. Every resulting
+registered identity refreshes metadata from its own surviving profile, including
+when all potential merge sources were excluded. Pure merges and the existing
+mature-primary/highest-TDH split retention rules remain unchanged.
 
 `CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT` is required by settings and consolidation grouping after environment preparation. It is a valid ISO UTC datetime at whole-second precision. The regional `prod/lambdas` configuration is distinct in staging (`eu-west-1`) and production (`us-east-1`); do not select it from `NODE_ENV`, which is production in both. Local runs supply the same key in their normal environment file.
 
