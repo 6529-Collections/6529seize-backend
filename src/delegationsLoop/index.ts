@@ -8,7 +8,10 @@ import {
   persistDelegations,
   persistNftDelegationBlock
 } from '../db';
-import { findDelegationTransactions } from '../delegations';
+import {
+  fetchBlockTimestamp,
+  findDelegationTransactions
+} from '../delegations';
 import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
 import {
   AggregatedActivity,
@@ -137,8 +140,17 @@ export const handler = sentryContext.wrapLambdaHandler(
 );
 
 async function handleDelegations(startBlock: number | undefined) {
+  // Read the reset block's time before scanning, so a failed lookup ends the
+  // run before the scan rather than after it.
+  const resetBlockTimestamp = startBlock
+    ? await fetchBlockTimestamp(startBlock)
+    : undefined;
   const delegationsResponse = await findNewDelegations(startBlock);
-  await persistConsolidations(startBlock, delegationsResponse.consolidations);
+  await persistConsolidations(
+    startBlock,
+    delegationsResponse.consolidations,
+    resetBlockTimestamp
+  );
   await persistDelegations(
     startBlock,
     delegationsResponse.registrations,
