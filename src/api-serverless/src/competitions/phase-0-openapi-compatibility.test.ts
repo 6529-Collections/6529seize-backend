@@ -17,7 +17,10 @@ const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
     'MEME_COLLABORATION'
   ],
   'schema ApiProfileCmsPointerEvent.properties.event_type.enum': ['unpublish'],
-  'schema ApiPushNotificationSettings.required': ['subscription_coverage']
+  'schema ApiPushNotificationSettings.required': ['subscription_coverage'],
+  // Settings responses gain the four-wallet consolidation policy; existing
+  // fields are unchanged, so older clients keep working.
+  'schema ApiSeizeSettings.required': ['consolidation']
 };
 
 const ACCEPTED_NULLABLE_REFERENCE_EXTENSIONS = new Set([

@@ -309,3 +309,4 @@ export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
 export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
 export const MEME_COLLABORATION_INVITATIONS_TABLE =
   'meme_collaboration_invitations';
+export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';

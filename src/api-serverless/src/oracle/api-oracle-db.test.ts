@@ -3,7 +3,8 @@ import { setSqlExecutor, SqlExecutor } from '@/sql-executor';
 import {
   fetchNfts,
   fetchSingleAddressTDH,
-  fetchTDHAbove
+  fetchTDHAbove,
+  fetchTotalTDH
 } from '@/api/oracle/api.oracle.db';
 
 class MockSqlExecutor extends SqlExecutor {
@@ -61,6 +62,39 @@ describe('api.oracle.db', () => {
     setSqlExecutor(new MockSqlExecutor(execute));
     return execute;
   }
+
+  it('retains totals, season aggregation, block and merkle metadata', async () => {
+    const execute = installSqlExecutor();
+    execute.mockImplementation(async (sql: string) => {
+      if (sql.includes('MAX(block)')) return [{ block: 123 }];
+      if (sql.includes('merkle_root')) return [{ merkle_root: 'root' }];
+      if (sql.includes('SUM(boosted_memes_tdh)')) {
+        return [
+          {
+            boosted_tdh: 100,
+            memes_tdh: 60,
+            gradients_tdh: 30,
+            nextgen_tdh: 10
+          }
+        ];
+      }
+      if (sql.includes('GROUP BY season')) return [{ season: 1, tdh: 60 }];
+      return [];
+    });
+
+    expect(await fetchTotalTDH()).toEqual({
+      tdh: 100,
+      memes_tdh: 60,
+      gradients_tdh: 30,
+      nextgen_tdh: 10,
+      memes_tdh_szn1: 60,
+      block: 123,
+      merkle_root: 'root'
+    });
+    expect(
+      execute.mock.calls.every(([sql]) => !/INSERT|UPDATE|DELETE/i.test(sql))
+    ).toBe(true);
+  });
 
   it('binds address search input as a query parameter', async () => {
     const execute = installSqlExecutor();

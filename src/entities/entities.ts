@@ -316,3 +316,4 @@ export {
   MemeCollaborationEntity,
   MemeCollaborationInvitationEntity
 } from './IMemeCollaboration';
+export { TransferReconciliationEntity } from './ITransferReconciliation';
