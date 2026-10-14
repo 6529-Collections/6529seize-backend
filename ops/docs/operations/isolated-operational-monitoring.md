@@ -49,9 +49,9 @@ A monitoring-runtime change uses `Deploy operational monitoring` with the
 environment-selected branch (`main` for `prod`, `1a-staging` for `staging`).
 The run pins its dispatch commit automatically; there is no commit-SHA input. The shared monitoring bundle updates the configured
 runtime functions, including both dispatchers; unchanged application producers,
-source relay stacks, IAM policies and subscriptions do not need a rollout. Keep
-the existing Coordinator workstream identity and follow current deployment
-authorization and validation gates. Observe natural traffic after deployment;
+source relay stacks, IAM policies and subscriptions do not need a rollout.
+Follow current deployment authorization and validation gates. Observe natural
+traffic after deployment;
 unit tests use mocked transport and do not require new live alert events.
 
 ## Bootstrap and identities
