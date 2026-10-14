@@ -223,6 +223,18 @@ function sanitizeAlertText(value: string): string {
     .trim();
 }
 
+function formatAlertDescription(
+  request: CiPipelineAlertRequest
+): string | null {
+  const description = normalizeOptionalValue(request.description);
+  if (!description) return null;
+  const formatted =
+    request.status === 'failure'
+      ? description.split(/\r?\n/).map(sanitizeAlertText).join('\n')
+      : sanitizeAlertText(description);
+  return truncate(formatted, MAX_ALERT_DESCRIPTION_LENGTH);
+}
+
 function formatAlertHeading(request: CiPipelineAlertRequest): string {
   const environmentPrefix = formatEnvironmentPrefix(request.environment);
   const statusEmoji = formatStatusEmoji(request.status);
@@ -791,10 +803,7 @@ export class CiPipelineAlertService {
 
     const branch = normalizeOptionalValue(request.branch);
     const commit = formatCommit(request);
-    const description = normalizeOptionalValue(request.description);
-    const formattedDescription = description
-      ? truncate(sanitizeAlertText(description), MAX_ALERT_DESCRIPTION_LENGTH)
-      : null;
+    const formattedDescription = formatAlertDescription(request);
     const triggeredBy = formatInitiator(mentions);
     const lines = [
       formatAlertHeading(request),
@@ -832,6 +841,7 @@ export class CiPipelineAlertService {
       mentions.deployInitiator !== null &&
       mentions.deployInitiator.profileId !== mentions.triggeredBy?.profileId;
     const validationPack = normalizeOptionalValue(request.validation_pack);
+    const description = formatAlertDescription(request);
     const commit = deployTarget
       ? formatCommit(request, deployTarget.sha)
       : null;
@@ -848,6 +858,7 @@ export class CiPipelineAlertService {
         : []),
       ...(commit ? [`Commit: ${commit}`] : []),
       `Run: ${formatRun(request, true)}`,
+      ...(description ? ['', description] : []),
       ...failureMentionLines
     ];
 
