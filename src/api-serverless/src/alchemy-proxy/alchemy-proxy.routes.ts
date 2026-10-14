@@ -10,7 +10,9 @@ import { handleContractMetadataBatch } from '@/api/alchemy-proxy/contract-metada
 const router = Router();
 
 // Legacy proxy routes live outside /api; the generated router mounts inside it.
-router.post('/contracts', handleContractMetadataBatch);
+router.post('/contracts', (req, res, next) => {
+  void handleContractMetadataBatch(req, res).catch(next);
+});
 
 function isValidEthAddress(address: string): boolean {
   return /^0x[0-9a-fA-F]{40}$/.test(address);

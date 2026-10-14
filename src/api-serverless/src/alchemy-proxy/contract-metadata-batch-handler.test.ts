@@ -231,3 +231,41 @@ it('bounds concurrency for a maximum-sized batch and configures finite upstream 
     expect.objectContaining({ timeoutMs: 5000, maxRetries: 0 })
   );
 });
+
+it('preserves completed metadata and returns per-contract errors when the batch budget is exhausted', async () => {
+  const clock = jest
+    .spyOn(Date, 'now')
+    .mockReturnValueOnce(0)
+    .mockReturnValueOnce(0)
+    .mockReturnValue(16000);
+  mockLookup.mockResolvedValue({ name: 'Available' });
+  const contracts = Array.from({ length: 20 }, (_, id) => ({
+    address: `0x${id.toString(16).padStart(40, '0')}`
+  }));
+  try {
+    const res = await request({ contracts });
+    expect(mockLookup).toHaveBeenCalledTimes(10);
+    expect(res.json).toHaveBeenCalledWith({
+      contracts: contracts.map((contract, index) =>
+        index < 10
+          ? {
+              address: ethers.getAddress(contract.address),
+              chain: 'ethereum',
+              metadata: {
+                name: 'Available',
+                _checksum: ethers.getAddress(contract.address)
+              }
+            }
+          : {
+              address: ethers.getAddress(contract.address),
+              chain: 'ethereum',
+              metadata: null,
+              error: 'Contract metadata lookup budget exceeded',
+              status: 504
+            }
+      )
+    });
+  } finally {
+    clock.mockRestore();
+  }
+});

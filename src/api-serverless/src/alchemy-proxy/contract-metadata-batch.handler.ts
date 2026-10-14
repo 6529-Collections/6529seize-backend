@@ -21,6 +21,7 @@ import { CustomApiCompliantException } from '@/exceptions';
 const MAX_CONTRACTS = 50;
 const LOOKUP_CONCURRENCY = 10;
 const LOOKUP_TIMEOUT_MS = 5000;
+const BATCH_LOOKUP_BUDGET_MS = 20000;
 const boundedClients = new WeakMap<Alchemy, Alchemy>();
 const logger = Logger.get('ALCHEMY_METADATA_BATCH');
 const requestSchema = Joi.object<ApiAlchemyContractMetadataBatchRequest>({
@@ -36,27 +37,32 @@ const requestSchema = Joi.object<ApiAlchemyContractMetadataBatchRequest>({
     .required()
 }).required();
 
-function getBatchAlchemyClient(): Alchemy {
+function getBatchAlchemyClient(contractCount: number): Alchemy {
+  let sharedClient: Alchemy;
   try {
-    const sharedClient = getAlchemyInstance(Network.ETH_MAINNET);
-    const cached = boundedClients.get(sharedClient);
-    if (cached) return cached;
-    // Reuse the central configuration, with a cached client whose finite budget
-    // keeps a 50-contract batch within the API request deadline.
-    const client = new Alchemy({
-      ...sharedClient.config,
-      maxRetries: 0,
-      timeoutMs: LOOKUP_TIMEOUT_MS
-    });
-    boundedClients.set(sharedClient, client);
-    return client;
-  } catch {
-    logger.error('Unable to initialize the contract metadata provider');
+    sharedClient = getAlchemyInstance(Network.ETH_MAINNET);
+  } catch (error: unknown) {
+    // Initialization is synchronous and cannot contain an upstream request URL.
+    logger.error(
+      `Unable to initialize the contract metadata provider for ${contractCount} contracts`,
+      error
+    );
     throw new CustomApiCompliantException(
       500,
       'Contract metadata provider is unavailable'
     );
   }
+  const cached = boundedClients.get(sharedClient);
+  if (cached) return cached;
+  // Reuse the central configuration, with a cached client whose finite budget
+  // keeps a 50-contract batch within the API request deadline.
+  const client = new Alchemy({
+    ...sharedClient.config,
+    maxRetries: 0,
+    timeoutMs: LOOKUP_TIMEOUT_MS
+  });
+  boundedClients.set(sharedClient, client);
+  return client;
 }
 
 function normalizeContracts(
@@ -146,12 +152,27 @@ export async function handleContractMetadataBatch(
   if (contracts.length === 0) {
     return res.json(result);
   }
-  const alchemy = getBatchAlchemyClient();
+  const alchemy = getBatchAlchemyClient(contracts.length);
+  const deadline = Date.now() + BATCH_LOOKUP_BUDGET_MS;
   for (
     let offset = 0;
     offset < contracts.length;
     offset += LOOKUP_CONCURRENCY
   ) {
+    // Reserve a full lookup timeout before starting another chunk, leaving
+    // initialization and response headroom within the 30-second API Lambda.
+    if (Date.now() + LOOKUP_TIMEOUT_MS > deadline) {
+      result.contracts.push(
+        ...contracts.slice(offset).map((contract) => ({
+          address: contract.address,
+          chain: ApiAlchemyContractMetadataResultChainEnum.Ethereum,
+          metadata: null,
+          error: 'Contract metadata lookup budget exceeded',
+          status: 504
+        }))
+      );
+      break;
+    }
     const entries = await Promise.all(
       contracts
         .slice(offset, offset + LOOKUP_CONCURRENCY)

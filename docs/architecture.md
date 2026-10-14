@@ -846,7 +846,11 @@ and deduplicates case variants before lookup. It returns `{ contracts: [...] }`
 with checksummed addresses, chain, and provider metadata including `_checksum`.
 Provider 404 produces null metadata; other failures remain per-contract errors
 so successful entries are preserved. Lookups run at most ten at a time with
-five-second timeouts and no retries. Responses use `Cache-Control: no-store`.
+five-second timeouts and no retries. A 20-second lookup scheduling budget
+reserves time for initialization and response handling within the API Lambda's
+30-second timeout. Once another full lookup cannot fit, remaining entries
+receive per-contract 504 errors while completed results are preserved.
+Responses use `Cache-Control: no-store`.
 The bounded lookup client reuses centralized Alchemy configuration and is
 cached per shared client. Provider initialization failures are logged and
 return HTTP 500 before individual lookups. Invalid provider payloads are
