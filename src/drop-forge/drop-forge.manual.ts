@@ -4,6 +4,7 @@ import {
   LaunchSafetyError,
   LaunchAction
 } from '@/drop-forge/drop-forge.types';
+import { reportActionSkip } from '@/drop-forge/drop-forge.groups';
 import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import {
@@ -197,6 +198,8 @@ export async function reconcileManual(
           action.hash = proof.hash;
           action.block_number = receipt.blockNumber;
           action.block_hash = receipt.blockHash;
+          action.observed = true;
+          reportActionSkip(record, action);
         }
       }
       if (Array.from(allocations.values()).some((it) => it !== 0))

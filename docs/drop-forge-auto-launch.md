@@ -14,25 +14,25 @@ Keep signer settings stable until every outstanding transaction is reconciled.
 The API and worker need the same launch configuration; notification-producing
 services need the same `DROP_FORGERS_6529_MENTION_PROFILE_IDS` configuration.
 
-| Setting                                 | Meaning                                                                          |
-| --------------------------------------- | -------------------------------------------------------------------------------- |
-| `DROP_FORGE_AUTOMATION_ENABLED`         | Exact `true` enables transaction work; otherwise disabled                        |
-| `DROP_FORGE_RECOVERY_ENABLED` | Exact `true` permits exceptional replacement/cancellation and receipt recovery without enabling scheduled execution; disabled by default |
-| `DROP_FORGE_PREPARATION_ENABLED`        | Exact `true` enables queued EMMA preparation/finalization                        |
-| `DROP_FORGE_CHAIN_ID`                   | Mainnet `1` or Sepolia `11155111`; defaults to Sepolia                           |
-| `DROP_FORGE_CREATOR_CONTRACT`           | Single configured creator scope; required on Sepolia                             |
-| `DROP_FORGE_LAZY_CLAIM_CONTRACT`        | Manifold proxy; defaults to the existing lazy-claim address                      |
-| `DROP_FORGE_PAYMENT_RECEIVER`           | Fixed receiver frozen in each plan; required on Sepolia                          |
-| `DROP_FORGE_SIGNER_ADDRESS`             | Expected operational wallet address derived from the KMS public key              |
-| `DROP_FORGE_KMS_KEY_ID`                 | KMS asymmetric `ECC_SECG_P256K1`, `SIGN_VERIFY` key in the worker's AWS region   |
-| `DROP_FORGE_WORKER_ROLE_ARN`            | Dedicated deployment/execution role; manually provisioned                        |
-| `DROP_FORGE_OPERATIONS_WAVE_ID`         | Manually confirmed operations wave UUID                                          |
-| `DROP_FORGE_BOT_PROFILE_ID`             | Existing bot profile UUID, with permission to chat in that wave                  |
-| `DROP_FORGERS_6529_MENTION_PROFILE_IDS` | Manually supplied comma-separated profile UUIDs; all must exist and see the wave |
-| `DROP_FORGE_CONFIRMATIONS`              | Confirmations before advancing, default 12, permitted range 2–64                 |
-| `DROP_FORGE_MAX_FEE_PER_GAS_WEI`        | Required positive fee cap                                                        |
-| `DROP_FORGE_MAX_GAS_PER_TX`             | Required positive gas-limit cap                                                  |
-| `DROP_FORGE_MAX_TX_COST_ETH`            | Required positive total transaction cost cap                                     |
+| Setting                                 | Meaning                                                                                                                                  |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `DROP_FORGE_AUTOMATION_ENABLED`         | Exact `true` enables transaction work; otherwise disabled                                                                                |
+| `DROP_FORGE_RECOVERY_ENABLED`           | Exact `true` permits exceptional replacement/cancellation and receipt recovery without enabling scheduled execution; disabled by default |
+| `DROP_FORGE_PREPARATION_ENABLED`        | Exact `true` enables queued EMMA preparation/finalization                                                                                |
+| `DROP_FORGE_CHAIN_ID`                   | Mainnet `1` or Sepolia `11155111`; defaults to Sepolia                                                                                   |
+| `DROP_FORGE_CREATOR_CONTRACT`           | Single configured creator scope; required on Sepolia                                                                                     |
+| `DROP_FORGE_LAZY_CLAIM_CONTRACT`        | Manifold proxy; defaults to the existing lazy-claim address                                                                              |
+| `DROP_FORGE_PAYMENT_RECEIVER`           | Fixed receiver frozen in each plan; required on Sepolia                                                                                  |
+| `DROP_FORGE_SIGNER_ADDRESS`             | Expected operational wallet address derived from the KMS public key                                                                      |
+| `DROP_FORGE_KMS_KEY_ID`                 | KMS asymmetric `ECC_SECG_P256K1`, `SIGN_VERIFY` key in the worker's AWS region                                                           |
+| `DROP_FORGE_WORKER_ROLE_ARN`            | Dedicated deployment/execution role; manually provisioned                                                                                |
+| `DROP_FORGE_OPERATIONS_WAVE_ID`         | Manually confirmed operations wave UUID                                                                                                  |
+| `DROP_FORGE_BOT_PROFILE_ID`             | Existing bot profile UUID, with permission to chat in that wave                                                                          |
+| `DROP_FORGERS_6529_MENTION_PROFILE_IDS` | Manually supplied comma-separated profile UUIDs; all must exist and see the wave                                                         |
+| `DROP_FORGE_CONFIRMATIONS`              | Confirmations before advancing, default 12, permitted range 2–64                                                                         |
+| `DROP_FORGE_MAX_FEE_PER_GAS_WEI`        | Required positive fee cap                                                                                                                |
+| `DROP_FORGE_MAX_GAS_PER_TX`             | Required positive gas-limit cap                                                                                                          |
+| `DROP_FORGE_MAX_TX_COST_ETH`            | Required positive total transaction cost cap                                                                                             |
 
 The separate `dropForgePreparationLoop` role is supplied through
 `DROP_FORGE_PREPARATION_ROLE_ARN`. API roles need `lambda:InvokeFunction` on
@@ -162,8 +162,8 @@ no-new-submission cutoff. Ten-minute gaps are accepted when their own batch
 count fits; a large later batch cannot borrow time before Phase 0. This allowance
 is not a guarantee of inclusion/finality; reporting, RPC or network delays can
 still block a launch. The worker starts no fresh transaction or rebroadcast in
-the last two minutes, records receipts even when late, and blocks dependent work
-if confirmation is observed at or after the deadline.
+the last two minutes, records receipts even when late, and leaves outstanding work
+only for that action when its submission window expires. Confirmed late work is credited and never repeated; later groups retain their own eligibility.
 
 Phase updates snapshot the actual minted supply once the preceding window has
 closed. Subsequent batches validate that persisted baseline plus only the
@@ -248,7 +248,7 @@ continues reconciliation. Unavailable/unknown evidence never releases the wallet
 Winning evidence, action outcome, manual completion flags, wallet release and
 wave outbox entry commit atomically. Original or speed-up success credits the
 action once, even when late. Cancellation/revert credits nothing and leaves
-outstanding allocations visible. The launch remains blocked for operator review.
+outstanding allocations visible. Later scheduled groups resume after finalized settlement when recovery interrupted automatic execution; an explicit operator pause remains paused. Unsuccessful actions still require reviewed recovery, never automatic replay.
 `RETRY` permits reviewed outstanding work within its original execution window;
 `DELIVER_REMAINING` permits airdrop delivery after all minting closes and opens a
 24-hour operator recovery window. It preserves category and remaining recipients,
@@ -302,3 +302,31 @@ compatibility before enablement.
 No data migration is introduced. Enable and exercise a manually configured
 Sepolia launch before a separately authorized mainnet rollout. No deployment is
 part of this PR implementation request.
+
+## Grouped readiness and wave reporting
+
+The opening group contains initialization and general/artist/team/Phase 0 airdrops.
+Subsequent phase groups contain their claim update and subscriber batches; Public
+and Research retain the existing schedule. Group identity is returned with each
+action, along with attempt count, readiness error, retry eligibility and observed
+completion. Each group may span worker invocations while transactions confirm.
+
+Each due action checks its own completed state and readiness. An initialization
+or funding/admin failure stays on that action and does not suspend later groups.
+Unsigned failures retry no more than once per minute while their submission window
+is open. Expired work remains outstanding and is not sent late automatically.
+Current matching configuration is read at the configured confirmation depth;
+manual airdrops require confirmed exact ERC-1155 mint events and category-aware
+remaining-allocation credits. A manual initialization and Phase 0 deliveries can
+therefore be skipped while the next scheduled group proceeds without Resume.
+A later update may advance any compatible earlier configuration once its own
+scheduled gap opens. Missing initialization or incompatible state fails readiness.
+
+The wave receives completion and transaction links, every actual failed attempt
+with its error and alert mention, and a skip when already-completed work is first
+recognized. Durable acknowledgements prevent repeated skip/completion posts.
+An expired window is reported once, rather than producing a fake attempt every
+minute. Reporting must commit before signing. Outstanding signed/unknown nonces,
+manual leases and noncanonical evidence continue to stop conflicting sends.
+Research waits for outstanding fixed airdrop allocations to be reconciled so its
+dynamic top-up cannot consume the edition supply still owed to them.

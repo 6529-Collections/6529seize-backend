@@ -31,6 +31,7 @@ export interface RecoveryAttempt {
   hash?: string;
 }
 export interface RecoveryLedger {
+  resume_scheduled?: boolean;
   nonce: number;
   cancel_requested: boolean;
   attempts: RecoveryAttempt[];
@@ -41,6 +42,10 @@ export interface RecoveryLedger {
   block_hash?: string;
 }
 export interface LaunchAction {
+  attempt_count?: number;
+  attempt_error?: string;
+  retry_at?: number;
+  window_reported?: boolean;
   recovery?: RecoveryLedger;
   recovery_history?: RecoveryLedger[];
   recovery_requests?: Array<{

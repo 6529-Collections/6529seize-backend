@@ -263,3 +263,16 @@ are implemented. Supply the manually confirmed key/role/gas/wave/profile/EMMA
 configuration, verify creator-admin permission, and exercise on Sepolia before
 any separately authorized rollout. Database validation and live execution gaps
 are listed in the operator guide/report. Both workers remain disabled.
+
+## Scheduled groups and independent readiness
+
+Use the Launch phase grouping: opening initialization plus general/artist/team
+and Phase 0 airdrops, each later phase configuration plus its subscribers,
+Public configuration, metadata requests, and post-mint Research. Completion,
+errors and signed intents remain per action. Failed unsigned readiness attempts
+retry within the action window; missed or unsuccessful earlier work does not
+prevent a later group from checking its own readiness. Confirmed manual
+configuration and exact delivered allocations are skipped without replay.
+Every actual attempt failure, completion and detected-complete skip must commit
+a wave report. Uncertain signed nonces and noncanonical evidence remain safety
+fences. Research must not consume supply still owed to outstanding fixed airdrops.

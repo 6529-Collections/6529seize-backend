@@ -1,6 +1,7 @@
 import {
   RecoveryChain,
-  RecoveryEvidence
+  RecoveryEvidence,
+  verifyRecoveryMints
 } from '@/drop-forge/drop-forge.recovery-chain';
 import {
   Interface,
@@ -252,12 +253,15 @@ export class EthereumLaunchChain implements LaunchChain {
       );
     } catch (error) {
       if (
-        action.kind === 'INITIALIZE' &&
         isError(error, 'CALL_EXCEPTION') &&
         (error.data === claimAbi.getError('ClaimNotInitialized')?.selector ||
           error.reason === 'Claim not initialized')
-      )
-        return;
+      ) {
+        if (action.kind === 'INITIALIZE') return;
+        throw new LaunchSafetyError(
+          'Claim is not initialized; this action is not ready'
+        );
+      }
       throw error;
     }
     if (action.kind === 'INITIALIZE')
@@ -272,7 +276,7 @@ export class EthereumLaunchChain implements LaunchChain {
             it.end === Number(claim.endDate) &&
             it.root === claim.merkleRoot
         )
-      : data.phases[action.kind === 'UPDATE' ? action.phase - 1 : action.phase];
+      : this.requiredPhase(data, action, claim);
     if (!phase)
       throw new LaunchSafetyError(
         'Current mint configuration is outside the frozen launch'
@@ -307,6 +311,24 @@ export class EthereumLaunchChain implements LaunchChain {
       return;
     }
     await this.verifySupply(data, action, Number(claim.total), captureSupply);
+  }
+
+  private requiredPhase(
+    data: LaunchData,
+    action: LaunchAction,
+    claim: Result
+  ): LaunchData['phases'][number] | undefined {
+    if (action.kind !== 'UPDATE') return data.phases[action.phase];
+    // A skipped earlier update must not prevent a later scheduled group from
+    // advancing a compatible initialized claim while the earlier window is closed.
+    const index = data.phases.findIndex(
+      (phase) =>
+        phase.start === Number(claim.startDate) &&
+        phase.end === Number(claim.endDate) &&
+        phase.root === claim.merkleRoot
+    );
+    if (index < 0 || index >= action.phase) return undefined;
+    return data.phases[index];
   }
 
   private async verifyLateDelivery(
@@ -426,12 +448,14 @@ export class EthereumLaunchChain implements LaunchChain {
       );
   }
   async readClaim(
-    data: Pick<LaunchData, 'contract' | 'claim_id' | 'proxy'>
+    data: Pick<LaunchData, 'contract' | 'claim_id' | 'proxy'>,
+    blockTag?: number
   ): Promise<Result | null> {
     try {
       const result = await rpcWithDeadline(
         this.provider.call({
           to: data.proxy,
+          blockTag,
           data: claimAbi.encodeFunctionData('getClaim', [
             data.contract,
             data.claim_id
@@ -477,13 +501,49 @@ export class EthereumLaunchChain implements LaunchChain {
       throw new LaunchSafetyError(
         'Manual transaction does not match this wallet, chain, proxy and claim'
       );
-    return { calldata: tx.data, receipt: await this.receipt(hash) };
+    const receipt = await this.receipt(hash);
+    if (
+      decoded.name === 'airdrop' &&
+      receipt?.status === 1 &&
+      receipt.confirmations >= this.config.confirmations
+    ) {
+      const mined = await rpcWithDeadline(
+        this.provider.getTransactionReceipt(hash)
+      );
+      if (!mined || mined.blockHash !== receipt.blockHash)
+        throw new LaunchSafetyError(
+          'Manual airdrop receipt changed during verification'
+        );
+      const recipients = (decoded.args[2] as string[]).map(
+        (address, index) => ({
+          address,
+          amount: Number(decoded.args[3][index])
+        })
+      );
+      verifyRecoveryMints(
+        { contract, claim_id: claim },
+        { recipients },
+        mined.logs
+      );
+    }
+    return { calldata: tx.data, receipt };
   }
   private async researchCompleted(
     data: LaunchData,
     action: LaunchAction
   ): Promise<{ total: number } | null> {
     assertResearchTiming(data, action, await this.now());
+    if (
+      data.actions.some(
+        (it) =>
+          it.kind === 'AIRDROP' &&
+          !isResearchAirdrop(it) &&
+          it.state !== 'CONFIRMED'
+      )
+    )
+      throw new LaunchSafetyError(
+        'Reconcile outstanding subscriber, artist and team deliveries before Research top-up'
+      );
     const configured = await this.completed(data, {
       ...action,
       kind: 'METADATA',
@@ -505,13 +565,29 @@ export class EthereumLaunchChain implements LaunchChain {
     if (isResearchAirdrop(action)) return this.researchCompleted(data, action);
     if (!['INITIALIZE', 'UPDATE', 'METADATA'].includes(action.kind))
       return null;
-    const claim = await this.readClaim(data);
+    const head = await rpcWithDeadline(this.provider.getBlockNumber());
+    const claim = await this.readClaim(
+      data,
+      Math.max(0, head - this.config.confirmations + 1)
+    );
     if (!claim) return null;
     if (Number(claim.tokenId) !== data.claim_id)
       throw new LaunchSafetyError(
         'Initialized claim token does not match the prepared claim'
       );
-    const phase = data.phases[action.phase];
+    const observedPhase = data.phases.findIndex(
+      (phase) =>
+        Number(claim.startDate) === phase.start &&
+        Number(claim.endDate) === phase.end &&
+        claim.merkleRoot === phase.root
+    );
+    const phaseIndex =
+      action.kind === 'INITIALIZE' ? observedPhase : action.phase;
+    const phase = data.phases[phaseIndex];
+    if (!phase)
+      throw new LaunchSafetyError(
+        'Initialized claim configuration is outside the frozen launch'
+      );
     if (action.kind === 'METADATA') {
       if (claim.location !== action.target_metadata) return null;
     } else if (
@@ -540,7 +616,11 @@ export class EthereumLaunchChain implements LaunchChain {
     ];
     const observedAction =
       action.kind === 'INITIALIZE'
-        ? { ...action, target_metadata: String(claim.location) }
+        ? {
+            ...action,
+            phase: phaseIndex,
+            target_metadata: String(claim.location)
+          }
         : action;
     const intended = claimAbi.parseTransaction({
       data: encodeLaunchAction(data, observedAction)

@@ -156,7 +156,7 @@ export class DropForgeRepository {
                 action_due BIGINT PATH '$.due'
               )) actions
               WHERE actions.action_state <> 'CONFIRMED'
-              ORDER BY actions.action_index LIMIT 1) AS next_due
+              ORDER BY actions.action_due LIMIT 1) AS next_due
            FROM ${DROP_FORGE_LAUNCHES_TABLE} launches
            WHERE (launches.state IN ('ARMED','RUNNING') OR JSON_SEARCH(launches.data, 'one', 'PENDING', NULL, '$.manual_transactions[*].state') IS NOT NULL) AND launches.report_pending = 0
          ) eligible

@@ -1,4 +1,4 @@
-import { JsonRpcProvider, Transaction, ZeroAddress } from 'ethers';
+import { Interface, JsonRpcProvider, Transaction, ZeroAddress } from 'ethers';
 import { claimAbi, EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
 import {
   testConfig,
@@ -8,6 +8,7 @@ import {
 describe('Drop Forge transaction boundary', () => {
   function setup() {
     const provider = {
+      getBlockNumber: jest.fn().mockResolvedValue(100),
       call: jest
         .fn()
         .mockResolvedValue(claimAbi.getError('ClaimNotInitialized')!.selector),
@@ -346,6 +347,7 @@ describe('Drop Forge metadata and manual observation', () => {
       ZeroAddress
     ];
     const provider = {
+      getBlockNumber: jest.fn().mockResolvedValue(100),
       call: jest
         .fn()
         .mockImplementation(({ data: calldata }: { data: string }) =>
@@ -370,10 +372,26 @@ describe('Drop Forge metadata and manual observation', () => {
     return { data, tuple, provider, chain };
   }
   it('recognizes a matching manual initialization without sending another initialize call', async () => {
-    const { chain, data } = setup();
+    const { chain, data, provider } = setup();
     expect(await chain.completed(data, data.actions[0])).toEqual(
       expect.objectContaining({ total: 0 })
     );
+    expect(provider.call).toHaveBeenCalledWith(
+      expect.objectContaining({ blockTag: 89 })
+    );
+  });
+  it('advances a compatible earlier configuration when an intermediate scheduled group was missed', async () => {
+    const { chain, data } = setup();
+    data.phases.push({
+      ...data.phases[1],
+      name: 'Later',
+      start: 8000,
+      end: 9000
+    });
+    const action = { ...data.actions[2], phase: 2, due: 7001, deadline: 8000 };
+    jest.spyOn(chain, 'now').mockResolvedValue(7001);
+    await expect(chain.verify(data, action, true)).resolves.toBeUndefined();
+    expect(action.airdrop_baseline).toBe(0);
   });
   it('encodes metadata updates with the current mint window, root, receiver and cost preserved', async () => {
     const { chain, data, tuple } = setup();
@@ -410,6 +428,7 @@ it('reconstructs signed EIP-1559 recovery evidence from an RPC response without 
   });
   const tx = Transaction.from(raw);
   const provider = {
+    getBlockNumber: jest.fn().mockResolvedValue(100),
     getTransaction: jest.fn().mockResolvedValue({
       type: tx.type,
       to: tx.to,
@@ -430,4 +449,56 @@ it('reconstructs signed EIP-1559 recovery evidence from an RPC response without 
     provider as unknown as JsonRpcProvider
   );
   expect(await chain.inspectRecovery(tx.hash!)).toBe(raw);
+});
+
+it('credits manual airdrops only when canonical mint events match every recipient and amount', async () => {
+  const data = testLaunchData();
+  const recipients = data.actions[1].recipients;
+  const logs: Array<{ address: string; topics: string[]; data: string }> = [];
+  const receipt = {
+    status: 1,
+    blockNumber: 10,
+    blockHash: 'canonical',
+    logs,
+    confirmations: jest.fn().mockResolvedValue(12)
+  };
+  const provider = {
+    getTransaction: jest.fn().mockResolvedValue({
+      chainId: BigInt(data.chain_id),
+      to: data.proxy,
+      from: data.signer,
+      value: BigInt(0),
+      data: claimAbi.encodeFunctionData('airdrop', [
+        data.contract,
+        data.claim_id,
+        recipients.map((row) => row.address),
+        recipients.map((row) => row.amount)
+      ])
+    }),
+    getTransactionReceipt: jest.fn().mockResolvedValue(receipt),
+    getBlock: jest.fn().mockResolvedValue({ hash: 'canonical' })
+  };
+  const chain = new EthereumLaunchChain(
+    testConfig,
+    provider as unknown as JsonRpcProvider
+  );
+  await expect(
+    chain.inspectTransaction(data.contract, data.claim_id, 'manual')
+  ).rejects.toThrow('mint events');
+  const events = new Interface([
+    'event TransferSingle(address indexed operator,address indexed from,address indexed to,uint256 id,uint256 value)'
+  ]);
+  const event = events.encodeEventLog('TransferSingle', [
+    data.signer,
+    ZeroAddress,
+    recipients[0].address,
+    data.claim_id,
+    recipients[0].amount
+  ]);
+  logs.push({ address: data.contract, ...event });
+  await expect(
+    chain.inspectTransaction(data.contract, data.claim_id, 'manual')
+  ).resolves.toEqual(
+    expect.objectContaining({ receipt: expect.objectContaining({ status: 1 }) })
+  );
 });

@@ -59,8 +59,8 @@ function allocationMap(
   return result;
 }
 export function verifyRecoveryMints(
-  data: LaunchData,
-  action: LaunchAction,
+  data: Pick<LaunchData, 'contract' | 'claim_id'>,
+  action: Pick<LaunchAction, 'recipients' | 'remaining_recipients'>,
   logs: ReadonlyArray<{
     address: string;
     topics: ReadonlyArray<string>;

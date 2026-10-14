@@ -136,6 +136,7 @@ export class DropForgeRecovery {
     request: ApiDropForgeRecoveryRequest
   ): Promise<void> {
     this.reserveRecovery(record, action, pending);
+    action.recovery!.resume_scheduled ??= record.state !== 'PAUSED';
     if (request.operation === 'RECORD_WINNER') {
       await this.adoptReplacement(record, action, wallet, request);
     } else {
@@ -301,6 +302,9 @@ export class DropForgeRecovery {
     delete action.block_hash;
     delete action.block_number;
     action.state = 'PENDING';
+    delete action.attempt_error;
+    delete action.retry_at;
+    delete action.window_reported;
     record.state = 'RUNNING';
     record.error = null;
   }
@@ -507,11 +511,12 @@ export class DropForgeRecovery {
       await mirrorCompletion(record, ctx);
       setLaunchState(
         record,
-        recovery.outcome === 'EXECUTED' ? 'PAUSED' : 'BLOCKED',
-        recovery.outcome === 'EXECUTED'
-          ? 'Recovery execution finalized; review timing before resuming'
-          : 'Recovery finalized without executing the action; outstanding allocations require delivery'
+        recovery.resume_scheduled ? 'RUNNING' : 'PAUSED',
+        'Recovery finalized; later scheduled groups retain independent readiness checks, outstanding work is not replayed'
       );
+      if (action.state !== 'CONFIRMED')
+        action.attempt_error =
+          'Recovery finalized without delivery; outstanding allocations require operator recovery';
       addLaunchEvent(
         record,
         `Claim #${record.data.claim_id}: Recovery ${recovery.outcome} for ${action.id}; winning transaction ${attempt.hash}; ${evidence.total} total minted.`,

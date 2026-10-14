@@ -12,6 +12,11 @@ import {
 function setup(total = 287, edition = 305) {
   const data = testLaunchData();
   data.edition_size = edition;
+  data.actions
+    .filter((it) => it.kind === 'AIRDROP' && !isResearchAirdrop(it))
+    .forEach((it) => {
+      it.state = 'CONFIRMED';
+    });
   const action = data.actions.find(isResearchAirdrop)!;
   const phase = data.phases[action.phase];
   const tuple = [
@@ -30,6 +35,7 @@ function setup(total = 287, edition = 305) {
     ZeroAddress
   ];
   const provider = {
+    getBlockNumber: jest.fn().mockResolvedValue(100),
     call: jest
       .fn()
       .mockImplementation(({ data: calldata }: { data: string }) =>
@@ -95,4 +101,12 @@ it('rejects early execution, Craft/max mismatches and changed supply after reser
   action.state = 'RESERVED';
   tuple[0] = 288;
   await expect(chain.verify(data, action)).rejects.toThrow('supply changed');
+});
+
+it('keeps Research from consuming supply owed to outstanding phase allocations', async () => {
+  const { data, action, chain } = setup();
+  data.actions[1].state = 'PENDING';
+  await expect(chain.completed(data, action)).rejects.toThrow(
+    'outstanding subscriber'
+  );
 });

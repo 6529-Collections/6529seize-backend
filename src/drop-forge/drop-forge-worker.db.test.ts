@@ -5,7 +5,7 @@ import {
   launchId,
   setLaunchState
 } from '@/drop-forge/drop-forge.repository';
-import { LaunchChain } from '@/drop-forge/drop-forge.chain';
+import { claimAbi, LaunchChain } from '@/drop-forge/drop-forge.chain';
 import {
   testConfig,
   testLaunchData,
@@ -141,7 +141,7 @@ describe('Drop Forge durable worker', () => {
     expect(chain.prepare.mock.calls[0][1].kind).toBe('UPDATE');
     expect(chain.prepare.mock.calls[0][1].phase).toBe(1);
   });
-  it('records a late initialization receipt without allowing dependent transactions', async () => {
+  it('records late initialization without repeating it or closing future groups', async () => {
     await start();
     chain.now.mockResolvedValue(4000);
     chain.receipt.mockResolvedValue({
@@ -153,8 +153,12 @@ describe('Drop Forge durable worker', () => {
     await worker.tick();
     const saved = (await read())!;
     expect(saved.data.actions[0].state).toBe('CONFIRMED');
-    expect(saved.state).toBe('BLOCKED');
-    expect(saved.error).toContain('Confirmation deadline missed');
+    expect(saved.state).toBe('RUNNING');
+    expect(
+      saved.data.events.some((event) =>
+        event.content.includes('after its deadline')
+      )
+    ).toBe(true);
     await acknowledgeReports();
     await worker.tick();
     expect(chain.prepare).toHaveBeenCalledTimes(1);
@@ -166,8 +170,8 @@ describe('Drop Forge durable worker', () => {
     });
     await start();
     const saved = (await read())!;
-    expect(saved.state).toBe('BLOCKED');
-    expect(saved.data.actions[0].state).toBe('RESERVED');
+    expect(saved.state).toBe('RUNNING');
+    expect(saved.data.actions[0].state).toBe('PENDING');
     expect(saved.data.actions[0].signed_tx).toBeUndefined();
     expect(chain.broadcast).not.toHaveBeenCalled();
   });
@@ -178,6 +182,7 @@ describe('Drop Forge durable worker', () => {
     expect(saved.data.actions[0].signed_tx).toBe(
       chain.broadcast.mock.calls[0][0]
     );
+    chain.now.mockResolvedValue(1160);
     await new DropForgeWorker(testConfig, repository, chain, signer).tick();
     expect(chain.broadcast.mock.calls[1][0]).toBe(
       chain.broadcast.mock.calls[0][0]
@@ -196,6 +201,20 @@ describe('Drop Forge durable worker', () => {
     expect(
       (await read())!.data.actions.filter((action) => action.state === 'SIGNED')
     ).toHaveLength(1);
+  });
+  it('rolls back an unsigned reservation when persistence fails instead of moving to another action', async () => {
+    const save = repository.save.bind(repository);
+    jest.spyOn(repository, 'save').mockImplementation(async (record, ctx) => {
+      if (record.data.actions.some((action) => action.state === 'RESERVED'))
+        throw new Error('reservation persistence failed');
+      return save(record, ctx);
+    });
+    await expect(worker.tick()).rejects.toThrow(
+      'reservation persistence failed'
+    );
+    expect((await read())!.data.actions[0].state).toBe('PENDING');
+    expect(signer.sign).not.toHaveBeenCalled();
+    expect(chain.prepare).toHaveBeenCalledTimes(1);
   });
   it('never broadcasts when committing the signed transaction fails', async () => {
     const original = repository.save.bind(repository);
@@ -218,7 +237,7 @@ describe('Drop Forge durable worker', () => {
       .spyOn(repository, 'source')
       .mockResolvedValue({ ...testSource, metadata: 'changed' });
     await worker.tick();
-    expect((await read())!.state).toBe('BLOCKED');
+    expect((await read())!.data.actions[0].attempt_error).toContain('changed');
     expect(signer.sign).not.toHaveBeenCalled();
   });
   it('reconciles confirmations while paused and submits no further action', async () => {
@@ -253,7 +272,7 @@ describe('Drop Forge durable worker', () => {
     });
     await worker.tick();
     await worker.tick();
-    expect((await read())!.state).toBe('BLOCKED');
+    expect((await read())!.state).toBe('RUNNING');
     expect((await read())!.data.actions[0].state).toBe('FAILED');
     expect(signer.sign).toHaveBeenCalledTimes(1);
   });
@@ -450,5 +469,162 @@ describe('Drop Forge durable worker', () => {
     );
     await worker.tick();
     expect(signer.sign).not.toHaveBeenCalled();
+  });
+});
+
+describe('scheduled groups and manual takeover', () => {
+  beforeEach(clearDropForgeTestTables);
+  afterEach(() => jest.restoreAllMocks());
+  async function setup() {
+    const repository = new DropForgeRepository();
+    jest.spyOn(repository, 'source').mockResolvedValue(testSource);
+    const data = testLaunchData();
+    const id = launchId(testConfig.chainId, testConfig.creator, 1);
+    await repository.putDraft(id, 0, data, {});
+    await repository.change(
+      id,
+      async (record) => {
+        record.state = 'RUNNING';
+      },
+      {}
+    );
+    const unsigned = Transaction.from({
+      chainId: testConfig.chainId,
+      nonce: 0,
+      to: testConfig.proxy,
+      data: '0x1234',
+      gasLimit: 50000,
+      gasPrice: 1
+    }).unsignedSerialized;
+    const chain: jest.Mocked<LaunchChain> = {
+      now: jest.fn().mockResolvedValue(1100),
+      nonce: jest.fn().mockResolvedValue(0),
+      prepare: jest.fn().mockRejectedValue(new Error('unfunded')),
+      completed: jest.fn().mockResolvedValue(null),
+      verify: jest.fn().mockResolvedValue(undefined),
+      receipt: jest.fn().mockResolvedValue(null),
+      broadcast: jest.fn().mockResolvedValue(undefined),
+      inspectTransaction: jest.fn()
+    };
+    const signer = {
+      sign: jest.fn((raw: string) =>
+        testWallet.signTransaction(Transaction.from(raw))
+      )
+    };
+    const worker = new DropForgeWorker(testConfig, repository, chain, signer);
+    const acknowledge = () =>
+      repository.change(
+        id,
+        async (record) => {
+          record.data.events.forEach((event) => {
+            event.drop_id = event.id;
+          });
+        },
+        {}
+      );
+    return {
+      id,
+      repository,
+      chain,
+      signer,
+      worker,
+      acknowledge,
+      unsigned,
+      read: () => repository.find(id, {})
+    };
+  }
+  it('reports each failed readiness check, then skips manual init and Phase 0 delivery and runs the next group without Resume', async () => {
+    const f = await setup();
+    await f.worker.tick();
+    let saved = (await f.read())!;
+    expect(saved.state).toBe('RUNNING');
+    expect(
+      saved.data.actions.slice(0, 2).every((action) => !!action.attempt_error)
+    ).toBe(true);
+    expect(saved.data.events.filter((event) => event.error)).toHaveLength(2);
+    await f.acknowledge();
+    const receipt = {
+      status: 1,
+      confirmations: 12,
+      blockHash: 'manual',
+      blockNumber: 100
+    };
+    f.chain.receipt.mockResolvedValue(receipt);
+    jest.mocked(f.chain.inspectTransaction!).mockResolvedValue({
+      receipt,
+      calldata: claimAbi.encodeFunctionData('airdrop', [
+        testConfig.creator,
+        1,
+        [testSource.rows[0].wallet],
+        [1]
+      ])
+    });
+    await f.repository.change(
+      f.id,
+      async (record) => {
+        record.data.manual_transactions = [
+          { hash: 'manual-airdrop', state: 'PENDING', action: 'PHASE0_AIRDROP' }
+        ];
+      },
+      {}
+    );
+    f.chain.now.mockResolvedValue(5001);
+    jest
+      .mocked(f.chain.completed!)
+      .mockImplementation(async (_, action) =>
+        action.kind === 'INITIALIZE'
+          ? { total: 1, metadata: testSource.metadata }
+          : null
+      );
+    f.chain.prepare.mockResolvedValue(f.unsigned);
+    await f.worker.tick(); // confirmed manual allocation and its outbox
+    await f.acknowledge();
+    await f.worker.tick(); // observe init even though the opening window expired
+    saved = (await f.read())!;
+    expect(saved.data.actions[0].state).toBe('CONFIRMED');
+    expect(saved.data.actions[1].state).toBe('CONFIRMED');
+    expect(saved.data.actions[2].state).toBe('RESERVED');
+    expect(
+      f.chain.prepare.mock.calls[f.chain.prepare.mock.calls.length - 1][1]
+    ).toMatchObject({ kind: 'UPDATE', phase: 1 });
+    expect(
+      saved.data.events.filter((event) => event.content.includes('Skipped'))
+    ).toHaveLength(2);
+    await f.acknowledge();
+    await f.worker.tick();
+    expect(f.signer.sign).toHaveBeenCalledTimes(1);
+    expect(
+      f.chain.prepare.mock.calls.filter((call) => call[1].kind === 'AIRDROP')
+    ).toHaveLength(1); // only the original failed readiness attempt
+  });
+  it('does not let an expired uncompleted group prevent the next scheduled readiness attempt', async () => {
+    const f = await setup();
+    f.chain.now.mockResolvedValue(5001);
+    await f.worker.tick();
+    const saved = (await f.read())!;
+    expect(saved.state).toBe('RUNNING');
+    expect(saved.data.actions[0].window_reported).toBe(true);
+    expect(saved.data.actions[1].state).toBe('PENDING');
+    expect(f.chain.prepare).toHaveBeenCalledTimes(1);
+    expect(f.chain.prepare.mock.calls[0][1]).toMatchObject({
+      phase: 1,
+      kind: 'UPDATE'
+    });
+    expect(saved.data.actions[2].attempt_count).toBe(1);
+  });
+  it('retries unfunded actions after the retry interval and preserves the wave report boundary', async () => {
+    const f = await setup();
+    await f.worker.tick();
+    await f.acknowledge();
+    await f.worker.tick();
+    expect(f.chain.prepare).toHaveBeenCalledTimes(2);
+    f.chain.now.mockResolvedValue(1160);
+    f.chain.prepare.mockResolvedValue(f.unsigned);
+    await f.worker.tick();
+    expect((await f.read())!.data.actions[0].state).toBe('RESERVED');
+    expect(f.signer.sign).not.toHaveBeenCalled();
+    await f.acknowledge();
+    await f.worker.tick();
+    expect(f.signer.sign).toHaveBeenCalledTimes(1);
   });
 });

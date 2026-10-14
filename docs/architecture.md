@@ -1875,7 +1875,7 @@ gap. Gapless public subscriptions share the preceding Phase 2 transition, matchi
 the existing launch UI; the public update waits until Phase 2 closes. Updates
 persist a minted-supply checkpoint so legitimate prior-phase mints do not block
 later airdrops. Legacy flattened plans fail closed while outstanding receipts
-remain reconcilable. Confirmation observed past a deadline blocks dependent work.
+remain reconcilable. Late confirmations credit completed work without reopening expired submission windows or stopping later groups.
 
 EMMA phase results, subscription assignments, distribution rows and Merkle
 proofs commit with replayable checkpoints under the preparation lock. The
@@ -1892,6 +1892,8 @@ through existing visibility and notification rules. Initial wave reporting is
 required before new launch signing; receipt reconciliation continues separately.
 See [configuration and recovery](drop-forge-auto-launch.md). The creator owner
 still grants/revokes on-chain admins, and Pay Artist remains outside automation.
+
+Drop Forge launch scheduling groups actions by phase, with independent completed-state and readiness checks. Unsigned action failures and missed windows remain visible without blocking later groups; a persisted signed nonce remains reserved until reconciled. The Launch API exposes groups, attempt errors and observed skips, and each outcome is committed to the operations-wave outbox.
 
 ### Drop Forge exceptional transaction recovery
 

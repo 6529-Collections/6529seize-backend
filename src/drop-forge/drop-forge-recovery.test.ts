@@ -188,6 +188,7 @@ it.each(['original', 'replacement'])(
     f.mined(attempt.hash!);
     await f.recovery.tick('launch');
     expect(f.action.state).toBe('CONFIRMED');
+    expect(f.record.state).toBe('RUNNING');
     expect(f.pending.launch_id).toBeNull();
     expect(f.action.recovery!.winner_hash).toBe(attempt.hash);
     const events = f.data.events.length;
@@ -409,4 +410,17 @@ it('recovery-only execution releases unsigned reservations without signing or st
   expect(f.pending.launch_id).toBeNull();
   expect(f.signer.sign).not.toHaveBeenCalled();
   expect(f.chain.broadcast).not.toHaveBeenCalled();
+});
+
+it('preserves an explicit operator pause after finalized recovery instead of reopening scheduled execution', async () => {
+  const f = setup();
+  await f.start();
+  f.record.state = 'PAUSED';
+  await f.request('CANCEL');
+  f.ack();
+  await f.recovery.tick('launch');
+  f.mined(f.action.recovery!.attempts[1].hash!);
+  await f.recovery.tick('launch');
+  expect(f.pending.launch_id).toBeNull();
+  expect(f.record.state).toBe('PAUSED');
 });

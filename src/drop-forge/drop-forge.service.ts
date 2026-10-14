@@ -1,3 +1,4 @@
+import { launchGroup } from '@/drop-forge/drop-forge.groups';
 import { ApiDropForgeRecovery } from '@/api/generated/models/ApiDropForgeRecovery';
 import { ApiDropForgeRecoveryAttempt } from '@/api/generated/models/ApiDropForgeRecoveryAttempt';
 import { originalRecovery } from '@/drop-forge/drop-forge.recovery';
@@ -57,7 +58,11 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
         hash,
         block_number,
         recovery,
-        remaining_recipients
+        remaining_recipients,
+        attempt_count,
+        attempt_error,
+        retry_at,
+        observed
       }) => {
         const inspection =
           recovery ??
@@ -69,7 +74,12 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
         return {
           recovery: inspection
             ? {
-                ...inspection,
+                nonce: inspection.nonce,
+                cancel_requested: inspection.cancel_requested,
+                winner_hash: inspection.winner_hash,
+                supply: inspection.supply,
+                block_number: inspection.block_number,
+                block_hash: inspection.block_hash,
                 outcome: inspection.outcome as ApiDropForgeRecovery['outcome'],
                 attempts: inspection.attempts.map(
                   ({ id, operation, requested_by, requested_at, hash }) => ({
@@ -85,6 +95,13 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
               }
             : undefined,
           id,
+          group: launchGroup(
+            record.data.actions.find((action) => action.id === id)!
+          ),
+          attempt_count: attempt_count ?? 0,
+          attempt_error: attempt_error ?? null,
+          retry_at: retry_at ?? null,
+          observed: observed ?? false,
           label,
           kind: kind as ApiDropForgeLaunch['actions'][number]['kind'],
           state: state as ApiDropForgeLaunch['actions'][number]['state'],
@@ -208,14 +225,6 @@ export async function controlLaunch(
           throw new LaunchSafetyError(
             'Control is not valid for the current launch state'
           );
-        if (
-          record.data.actions.some((action) =>
-            ['FAILED', 'CANCELLED'].includes(action.state)
-          )
-        )
-          throw new LaunchSafetyError(
-            'A reverted transaction requires manual recovery; automatic replay is prohibited'
-          );
         assertPhaseScopedPlan(record.data);
         const source = await dropForgeRepository.source(contract, claim, txCtx);
         if (!sourceMatchesLaunch(source, record.data))
@@ -223,19 +232,16 @@ export async function controlLaunch(
             'Distribution or metadata changed; recreate the draft before arming'
           );
         await dropForgeRepository.assertPrepared(record.data, txCtx);
-        const next = record.data.actions.find(
-          (action) => action.state !== 'CONFIRMED'
-        );
-        if (!next) throw new LaunchSafetyError('No remaining launch action');
-        const chain = new EthereumLaunchChain(config);
-        const now = await chain.now();
-        if (now >= next.deadline - 120 || (arming && now >= next.due))
-          throw new LaunchSafetyError(
-            'Execution window is too close or has passed'
-          );
-        // Reserved or signed intent is immutable. Reconciliation must determine its
-        // outcome before another nonce can be used; resuming never replaces it.
-        if (next.state === 'PENDING') await chain.verify(record.data, next);
+        if (!record.data.actions.some((action) => action.state !== 'CONFIRMED'))
+          throw new LaunchSafetyError('No remaining launch action');
+        if (arming) {
+          const next = record.data.actions[0];
+          const now = await new EthereumLaunchChain(config).now();
+          if (now >= next.due || now >= next.deadline - 120)
+            throw new LaunchSafetyError(
+              'Execution window is too close or has passed'
+            );
+        }
         setLaunchState(
           record,
           arming ? 'ARMED' : 'RUNNING',

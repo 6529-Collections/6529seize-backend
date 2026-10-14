@@ -47,7 +47,7 @@ describe('Drop Forge operator controls', () => {
       {}
     );
     expect(armed.state).toBe('ARMED');
-    expect(EthereumLaunchChain.prototype.verify).toHaveBeenCalled();
+    expect(EthereumLaunchChain.prototype.verify).not.toHaveBeenCalled();
     await expect(
       controlLaunch(
         testConfig.creator,

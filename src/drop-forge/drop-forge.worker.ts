@@ -1,4 +1,12 @@
-import { DropForgeRecovery } from '@/drop-forge/drop-forge.recovery';
+import {
+  dueActions,
+  reportActionFailure,
+  reportActionSkip
+} from '@/drop-forge/drop-forge.groups';
+import {
+  DropForgeRecovery,
+  originalRecovery
+} from '@/drop-forge/drop-forge.recovery';
 import { Transaction } from 'ethers';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import { LaunchChain, ChainReceipt } from '@/drop-forge/drop-forge.chain';
@@ -25,13 +33,6 @@ type PendingSigner = { launch_id: string | null; action_id: string | null };
 const runnable = (record: LaunchRecord) =>
   ['ARMED', 'RUNNING'].includes(record.state);
 
-function observedMessage(action: LaunchAction, total: number): string {
-  if (isResearchAirdrop(action))
-    return `Research target already satisfied (${total} total minted); no research transaction needed`;
-  if (action.kind === 'INITIALIZE') return 'Already initialized';
-  if (action.kind === 'METADATA') return 'Metadata already synchronized';
-  return 'Phase configuration already applied';
-}
 function matchesObservedProof(
   record: LaunchRecord,
   action: LaunchAction,
@@ -107,6 +108,7 @@ export class DropForgeWorker {
             const reserved = await this.reserve(record, pending, ctx);
             if (reserved) return reserved;
           } catch (error) {
+            if (pending.launch_id === record.id) throw error;
             setLaunchState(
               record,
               'BLOCKED',
@@ -236,8 +238,7 @@ export class DropForgeWorker {
       await this.repository.save(record, ctx);
       return null;
     }
-    const action = record.data.actions.find((it) => it.state !== 'CONFIRMED');
-    if (!action) {
+    if (record.data.actions.every((action) => action.state === 'CONFIRMED')) {
       setLaunchState(
         record,
         'COMPLETED',
@@ -247,13 +248,53 @@ export class DropForgeWorker {
       return null;
     }
     const now = await this.chain.now();
-    if (['CANCELLED', 'FAILED'].includes(action.state))
-      throw new LaunchSafetyError(
-        'Outstanding action requires an authorized recovery delivery'
-      );
-    if (now < action.due) return null;
+    for (const action of dueActions(record, now)) {
+      let work: Work | null = null;
+      try {
+        if ((action.retry_at ?? 0) > now) continue;
+        if (await this.observe(record, action)) continue;
+        if (this.deferAction(record, action, now)) continue;
+        work = await this.prepareAction(record, action, pending, ctx);
+      } catch (error) {
+        if (now < action.deadline - 120 || !action.window_reported) {
+          reportActionFailure(
+            record,
+            action,
+            now,
+            error instanceof LaunchSafetyError
+              ? error.message
+              : 'RPC or readiness check failed'
+          );
+          if (now >= action.deadline - 120) action.window_reported = true;
+        }
+      }
+      if (work) {
+        await this.repository.save(record, ctx);
+        return work;
+      }
+    }
+    await mirrorCompletion(record, ctx);
+    await this.repository.save(record, ctx);
+    return null;
+  }
+
+  private async observe(
+    record: LaunchRecord,
+    action: LaunchAction
+  ): Promise<boolean> {
     const completed = await this.chain.completed?.(record.data, action);
     if (completed) {
+      if (action.recovery?.outcome) {
+        action.recovery_history = [
+          ...(action.recovery_history ?? []),
+          action.recovery
+        ];
+        delete action.recovery;
+        delete action.signed_tx;
+        delete action.hash;
+        delete action.block_hash;
+        delete action.block_number;
+      }
       action.state = 'CONFIRMED';
       action.observed = true;
       if (action.kind === 'INITIALIZE' && completed.metadata !== undefined)
@@ -276,18 +317,48 @@ export class DropForgeWorker {
       }
       if (action.kind === 'METADATA')
         record.data.metadata = action.target_metadata!;
-      const proofLink = proof ? ' ' + proof.hash : '';
-      addLaunchEvent(
-        record,
-        `Claim #${record.data.claim_id}: ${observedMessage(action, completed.total)}; verified on-chain (${action.id}).${proofLink}`
-      );
-      await this.repository.save(record, ctx);
-      return null;
+      reportActionSkip(record, action);
+      return true;
     }
-    if (now >= action.deadline - 120)
-      throw new LaunchSafetyError(
-        `Missed safe execution window for ${action.id}`
-      );
+    return false;
+  }
+
+  private deferAction(
+    record: LaunchRecord,
+    action: LaunchAction,
+    now: number
+  ): boolean {
+    if (now >= action.deadline - 120 && !action.late_delivery) {
+      if (!action.window_reported) {
+        reportActionFailure(
+          record,
+          action,
+          now,
+          'Safe execution window closed; outstanding work requires operator reconciliation'
+        );
+        action.window_reported = true;
+      }
+      return true;
+    }
+    if (['FAILED', 'CANCELLED'].includes(action.state)) {
+      if (!action.attempt_error)
+        reportActionFailure(
+          record,
+          action,
+          now,
+          'Finalized unsuccessful transaction; outstanding work requires authorized recovery'
+        );
+      return true;
+    }
+    return (action.retry_at ?? 0) > now;
+  }
+
+  private async prepareAction(
+    record: LaunchRecord,
+    action: LaunchAction,
+    pending: PendingSigner,
+    ctx: RequestContext
+  ): Promise<Work> {
     if (action.state !== 'PENDING')
       throw new LaunchSafetyError('Action state differs from signer ledger');
     const source = await this.repository.source(
@@ -306,12 +377,17 @@ export class DropForgeWorker {
       throw new LaunchSafetyError(
         'A newer Craft publication exists; request its metadata update'
       );
+    if (action.kind === 'UPDATE') {
+      delete action.expected_supply;
+      delete action.airdrop_baseline;
+    }
     action.unsigned_tx = await this.chain.prepare(record.data, action);
     action.state = 'RESERVED';
+    delete action.attempt_error;
+    delete action.retry_at;
     pending.launch_id = record.id;
     pending.action_id = action.id;
     setLaunchState(record, 'RUNNING', `Reserved transaction for ${action.id}`);
-    await this.repository.save(record, ctx);
     return { record, action };
   }
 
@@ -355,19 +431,11 @@ export class DropForgeWorker {
           'Signer returned a different transaction or wallet'
         );
     } catch (error) {
-      await this.repository.change(
-        work.record.id,
-        (record) => {
-          setLaunchState(
-            record,
-            'BLOCKED',
-            error instanceof LaunchSafetyError
-              ? error.message
-              : 'KMS signing failed; review configuration before resuming'
-          );
-          return Promise.resolve();
-        },
-        {}
+      await this.releaseUnsigned(
+        walletId,
+        work,
+        error,
+        await this.chain.now().catch(() => Math.floor(Date.now() / 1000))
       );
       return;
     }
@@ -390,10 +458,15 @@ export class DropForgeWorker {
         )
           return;
         if ((await this.chain.now()) >= action.deadline - 120) {
-          setLaunchState(
+          action.state = 'PENDING';
+          delete action.unsigned_tx;
+          pending.launch_id = null;
+          pending.action_id = null;
+          reportActionFailure(
             record,
-            'BLOCKED',
-            `Signing deadline passed while signing ${action.id}; no signed intent committed`
+            action,
+            await this.chain.now(),
+            'Signing deadline passed; no signed intent committed'
           );
           await this.repository.save(record, ctx);
           return;
@@ -402,6 +475,43 @@ export class DropForgeWorker {
         action.hash = signed.hash!;
         action.state = 'SIGNED';
         addLaunchEvent(record, `Signed ${action.id}: ${action.hash}`);
+        await this.repository.save(record, ctx);
+      },
+      {}
+    );
+  }
+
+  private async releaseUnsigned(
+    walletId: string,
+    work: Work,
+    error: unknown,
+    now: number
+  ): Promise<void> {
+    await this.repository.wallet(
+      walletId,
+      async (pending, ctx) => {
+        if (
+          pending.launch_id !== work.record.id ||
+          pending.action_id !== work.action.id
+        )
+          return;
+        const record = await this.repository.lockLaunch(work.record.id, ctx);
+        const action = record.data.actions.find(
+          (it) => it.id === work.action.id
+        )!;
+        if (action.state !== 'RESERVED' || action.signed_tx) return;
+        action.state = 'PENDING';
+        delete action.unsigned_tx;
+        pending.launch_id = null;
+        pending.action_id = null;
+        reportActionFailure(
+          record,
+          action,
+          now,
+          error instanceof LaunchSafetyError
+            ? error.message
+            : 'KMS signing failed'
+        );
         await this.repository.save(record, ctx);
       },
       {}
@@ -478,6 +588,10 @@ export class DropForgeWorker {
           await this.repository.save(record, ctx);
           return null;
         }
+        const now = await this.chain.now();
+        if ((action.retry_at ?? 0) > now) return null;
+        action.retry_at = now + 60;
+        await this.repository.save(record, ctx);
         return action.signed_tx!;
       },
       {}
@@ -488,7 +602,22 @@ export class DropForgeWorker {
       try {
         await this.chain.broadcast(broadcast);
       } catch {
-        /* persisted intent remains the only transaction eligible for retry */
+        await this.repository.wallet(
+          walletId,
+          async (_, ctx) => {
+            const record = await this.repository.lockLaunch(launch, ctx);
+            const hash = Transaction.from(broadcast).hash;
+            const action = record.data.actions.find((it) => it.hash === hash);
+            if (!action) return;
+            addLaunchEvent(
+              record,
+              `Claim #${record.data.claim_id}: Broadcast attempt failed for ${action.id}: ${hash}; exact signed transaction retained pending receipt reconciliation.`,
+              true
+            );
+            await this.repository.save(record, ctx);
+          },
+          {}
+        );
       }
     }
   }
@@ -512,17 +641,27 @@ export class DropForgeWorker {
         record,
         `Confirmed ${action.id}: ${action.hash} (${receipt.confirmations} confirmations)`
       );
-      if (confirmedAt >= action.deadline && record.state !== 'CANCELLED')
-        setLaunchState(
+      delete action.attempt_error;
+      delete action.retry_at;
+      if (confirmedAt >= action.deadline)
+        addLaunchEvent(
           record,
-          'BLOCKED',
-          `Confirmation deadline missed for ${action.id}; transaction mined and must not be replayed`
+          `Claim #${record.data.claim_id}: ${action.id} confirmed after its deadline; completed work will not be repeated. ${action.hash}`
         );
-    } else
-      setLaunchState(
+    } else {
+      action.recovery = {
+        ...originalRecovery(action),
+        outcome: 'REVERTED',
+        winner_hash: action.hash,
+        block_number: receipt.blockNumber,
+        block_hash: receipt.blockHash
+      };
+      reportActionFailure(
         record,
-        'BLOCKED',
-        `Transaction reverted for ${action.id}: ${action.hash}; manual recovery required`
+        action,
+        confirmedAt,
+        `Transaction reverted: ${action.hash}; manual recovery required`
       );
+    }
   }
 }
