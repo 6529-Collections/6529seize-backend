@@ -193,11 +193,11 @@ describe('deterministic TDH ranking', () => {
       [{ contract: MEMES_CONTRACT, id: 1 }],
       []
     );
-    expect(rows.find((r) => r.wallet === '0xaa')?.memes_ranks).toEqual([
-      { id: 1, rank: 1 }
-    ]);
-    expect(rows.find((r) => r.wallet === '0xbb')?.memes_ranks).toEqual([
-      { id: 1, rank: 2 }
-    ]);
+    expect(
+      rows.find((r) => 'wallet' in r && r.wallet === '0xaa')?.memes_ranks
+    ).toEqual([{ id: 1, rank: 1 }]);
+    expect(
+      rows.find((r) => 'wallet' in r && r.wallet === '0xbb')?.memes_ranks
+    ).toEqual([{ id: 1, rank: 2 }]);
   });
 });
