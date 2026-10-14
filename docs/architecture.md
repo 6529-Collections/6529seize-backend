@@ -30,6 +30,17 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Oracle TDH API and retired Prenode registry
+
+The existing `api` service retains Oracle TDH totals, thresholds, percentile,
+cutoff, address breakdowns, season aggregations and NFT reads under `/oracle`.
+`POST /oracle/register-prenode` and `GET /oracle/prenodes` return uncached
+`410 Gone` responses with a 6529 Desktop deprecation notice. These terminal
+routes do not access the registry or geolocation service. The historical
+Prenode entity/table remains intact; no schema sync, migration or data deletion
+is needed. `/oracle/docs` continues to describe the preserved TDH API.
+Only `api` needs redeployment for this retirement.
+
 ## Active TDH voting discovery
 
 `GET /v2/waves/active-votes` is an optional-auth read in the existing API Lambda.
