@@ -2133,3 +2133,37 @@ interval and now redrive after five receives to `xtdh-dead-letter.fifo`. Dead le
 are retained for 14 days and have a visible-message CloudWatch alarm on the existing
 alarm topic. Repeated consolidation drift therefore cannot block the FIFO group
 until source retention expires. Deploying `xTdhLoop` also provisions these resources.
+
+## Consolidation activation policy
+
+Delegation-driven partial TDH refreshes rank the complete current wallet/group
+universe so changed members also update unaffected owners' rank positions.
+Partial raw, consolidated, historic and per-NFT persistence uses sequential
+TypeORM upserts of at most 500 rows through the existing transaction managers.
+MySQL matches composite primary keys directly, avoiding ORM bigint string/number
+mismatches and loaded-entity scans. The insert query builders disable entity
+hydration, so returned default values cannot reassign input keys before those
+rows are reused for historical persistence.
+Batch failures propagate to those managers and roll back the scoped deletes and
+earlier writes; batching adds no transaction or publication boundary. Full TDH
+and historical replay retain their bulk-insert persistence paths. Verify partial
+refresh runtime separately from the full calculation; see [TDH ranking
+parity](./tdh-ranking.md).
+
+When consolidation links simultaneously split and merge old groups, profile
+retention is resolved for all resulting identities before merging profile data.
+A profile retained by another resulting identity is excluded from merge sources;
+its profile row and related data stay with that identity. Every resulting
+registered identity refreshes metadata from its own surviving profile, including
+when all potential merge sources were excluded. Pure merges and the existing
+mature-primary/highest-TDH split retention rules remain unchanged.
+
+`CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT` is required by settings and consolidation grouping after environment preparation. It is a valid ISO UTC datetime at whole-second precision. The regional `prod/lambdas` configuration is distinct in staging (`eu-west-1`) and production (`us-east-1`); do not select it from `NODE_ENV`, which is production in both. Local runs supply the same key in their normal environment file.
+
+The grouping resolver and `GET /api/settings` use the same value. Settings expose `consolidation.max_wallets` (4) and `ungated_max_wallets` (3), sourced from the existing backend constants, plus `four_wallet_activation_at` and `four_wallet_signing_opens_at` (derived ten minutes later). The limits are fixed backend policy, not new secret/configuration knobs; FE and native Core consume them instead of maintaining duplicate constants. No deployment-date fallback is supplied. Missing or malformed configuration fails the settings/grouping operation before writing a grouping result. Warm processes retain loaded regional configuration; restart affected services after changing it, verify `/api/settings`, and refresh existing browser sessions. A policy change requires full reconsolidation/TDH recalculation so persisted results match the new cutoff.
+
+The runtime grouping callers are `api` (`db-api.fetchConsolidationsForWallet`), `tdhLoop` (`tdh.ts` and `tdh_consolidation.ts`) and `delegationsLoop` (affected-wallet grouping and the TDH functions it invokes). The two loop handlers enter `doInDbContext`, which awaits `prepEnvironment` before work; the API initializes local configuration and its optional regional secret before wiring/serving routes. The singleton constructor captures a resolver without reading configuration at import time. Other imports such as `tdhHistoryLoop` only build deterministic consolidation keys and do not resolve policy.
+
+The required key must be present and valid for all three runtimes in both regions before rollout. In particular, an unconfigured API fails the whole `/api/settings` response, not just consolidation setup. This is the agreed fail-closed policy, not a nullable-settings fallback. Configuration presence has to be verified as a deployment prerequisite; source inspection is not proof that a live secret contains the value.
+
+Configure production as `2026-10-15T00:00:00Z` and staging with its intended earlier cutoff before deployment. Schema sync still precedes the delegation indexer, TDH loop and API. Both environments index the same mainnet contract: staging registrations are real registrations, and pre-production-cutoff links require renewed consent after the production cutoff.
