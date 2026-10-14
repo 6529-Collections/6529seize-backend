@@ -445,6 +445,7 @@ describe('CiPipelineAlertService', () => {
       {
         ...baseRequest,
         alert_type: 'web_e2e',
+        description: null,
         workflow: 'Staging E2E',
         title: 'WEB E2E failed',
         triggered_by_github_login: 'ragnep',
@@ -498,6 +499,47 @@ describe('CiPipelineAlertService', () => {
     ).toBe(true);
     expect(normalizeDropGroupMentions({ parts: request.parts })).toEqual([]);
   });
+
+  it.each(['6529seize-frontend', '6529seize-backend'])(
+    'renders multiline failure details for %s',
+    async (repo) => {
+      const service = new CiPipelineAlertService(
+        dropCreationApiService as unknown as ConstructorParameters<
+          typeof CiPipelineAlertService
+        >[0],
+        identitiesRepository as unknown as ConstructorParameters<
+          typeof CiPipelineAlertService
+        >[1],
+        releaseNotesQueue as unknown as ConstructorParameters<
+          typeof CiPipelineAlertService
+        >[2],
+        alertTargetStore as unknown as ConstructorParameters<
+          typeof CiPipelineAlertService
+        >[3]
+      );
+      const description =
+        '**1 failed test across 1 pack**\n\n**social-readonly — mobile Chromium**\n\n- renders the public [profile]';
+      await service.postAlert(
+        {
+          ...baseRequest,
+          repo,
+          alert_type: repo === '6529seize-frontend' ? 'web_e2e' : 'deploy',
+          service: repo === '6529seize-frontend' ? 'web' : 'api',
+          validation_pack: repo === '6529seize-frontend' ? 'all' : null,
+          description
+        },
+        {}
+      );
+      const content =
+        dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+          .parts[0].content;
+      expect(content).toContain(
+        '**1 failed test across 1 pack**\n\n**social-readonly — mobile Chromium**\n\n- renders the public \\[profile\\]'
+      );
+      expect(content).toContain('Run: [#6082]');
+      expect(content).toContain('cc @devs6529');
+    }
+  );
 
   it('keeps the developer group out of automatic staging E2E failures', async () => {
     identitiesRepository.getIdsByHandles.mockResolvedValue({
