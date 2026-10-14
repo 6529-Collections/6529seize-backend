@@ -212,6 +212,11 @@ export * from '../models/ApiCollectTdhTargetSearch';
 export * from '../models/ApiCollectTrait';
 export * from '../models/ApiCollectedStats';
 export * from '../models/ApiCollectedStatsSeason';
+export * from '../models/ApiCommunityAppApproveRequest';
+export * from '../models/ApiCommunityAppApproveResponse';
+export * from '../models/ApiCommunityAppExchangeRequest';
+export * from '../models/ApiCommunityAppExchangeResponse';
+export * from '../models/ApiCommunityAppInfo';
 export * from '../models/ApiCommunityMemberMinimal';
 export * from '../models/ApiCommunityMemberOverview';
 export * from '../models/ApiCommunityMembersPage';
@@ -1112,6 +1117,11 @@ import { ApiCollectTdhTargetSearch, ApiCollectTdhTargetSearchOptimalityEnum   , 
 import { ApiCollectTrait } from '../models/ApiCollectTrait';
 import { ApiCollectedStats } from '../models/ApiCollectedStats';
 import { ApiCollectedStatsSeason } from '../models/ApiCollectedStatsSeason';
+import { ApiCommunityAppApproveRequest } from '../models/ApiCommunityAppApproveRequest';
+import { ApiCommunityAppApproveResponse } from '../models/ApiCommunityAppApproveResponse';
+import { ApiCommunityAppExchangeRequest } from '../models/ApiCommunityAppExchangeRequest';
+import { ApiCommunityAppExchangeResponse } from '../models/ApiCommunityAppExchangeResponse';
+import { ApiCommunityAppInfo } from '../models/ApiCommunityAppInfo';
 import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
 import { ApiCommunityMemberOverview } from '../models/ApiCommunityMemberOverview';
 import { ApiCommunityMembersPage } from '../models/ApiCommunityMembersPage';
@@ -2290,6 +2300,11 @@ let typeMap: {[index: string]: any} = {
     "ApiCollectTrait": ApiCollectTrait,
     "ApiCollectedStats": ApiCollectedStats,
     "ApiCollectedStatsSeason": ApiCollectedStatsSeason,
+    "ApiCommunityAppApproveRequest": ApiCommunityAppApproveRequest,
+    "ApiCommunityAppApproveResponse": ApiCommunityAppApproveResponse,
+    "ApiCommunityAppExchangeRequest": ApiCommunityAppExchangeRequest,
+    "ApiCommunityAppExchangeResponse": ApiCommunityAppExchangeResponse,
+    "ApiCommunityAppInfo": ApiCommunityAppInfo,
     "ApiCommunityMemberMinimal": ApiCommunityMemberMinimal,
     "ApiCommunityMemberOverview": ApiCommunityMemberOverview,
     "ApiCommunityMembersPage": ApiCommunityMembersPage,
