@@ -397,15 +397,13 @@ export const consolidateTDH = async (
       .filter((t: ConsolidatedTDH) => !containsStartingWallet(t))
       .concat(consolidatedBoostedTdh);
     assertNoOverlappingConsolidationWallets(allTdh);
-    const allRankedTdh = await calculateRanks(
-      allGradientsTDH,
-      allNextgenTDH,
+    // Persist rank shifts for unchanged groups alongside replacement groups.
+    rankedTdh = await calculateRanks(
+      allTdh.flatMap((t) => t.gradients),
+      allTdh.flatMap((t) => t.nextgen),
       allTdh,
       ADJUSTED_NFTS,
       NEXTGEN_NFTS
-    );
-    rankedTdh = allRankedTdh.filter((t: ConsolidatedTDH) =>
-      containsStartingWallet(t)
     );
   } else {
     rankedTdh = await calculateRanks(

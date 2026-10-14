@@ -217,6 +217,13 @@ changes, and displayed/final quantities are capped without rewriting manual
 requests or historical finalized allocations. These facts continue to be served
 through the frontend's generated `/help-index.json`.
 
+Backend TDH ranking authoring facts are maintained in
+[`docs/tdh-ranking.md`](../docs/tdh-ranking.md#help-knowledge-authoring-facts):
+ordinal ranks use the existing score criteria followed by a canonical-address
+tie-break, and empty singleton candidates are excluded while funded zero-score
+wallets and consolidation members remain included. These facts still require a
+frontend corpus update; the document does not add a second live knowledge source.
+
 ### 4.5 Backend-owned public data query mode
 
 Some questions should be answered from public indexed data, not from the
