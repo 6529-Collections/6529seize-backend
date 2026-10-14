@@ -1,3 +1,4 @@
+import { getConsolidationPolicy } from '@/consolidation-policy';
 import { env } from '@/env';
 import type { ApiAuthSettings } from '@/api/generated/models/ApiAuthSettings';
 import type { ApiSeizeSettings } from '@/api/generated/models/ApiSeizeSettings';
@@ -62,6 +63,7 @@ export const seizeSettings = (): ApiSeizeSettings => {
     claims_admin_wallets,
     announcements_wave_id,
     quorum_wave_id,
-    auth: authSettings()
+    auth: authSettings(),
+    consolidation: getConsolidationPolicy()
   };
 };
