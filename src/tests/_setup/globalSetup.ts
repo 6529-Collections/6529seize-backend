@@ -34,6 +34,8 @@ module.exports = async (globalConfig?: unknown) => {
   process.env.DB_USER_READ = container.getUsername();
   process.env.DB_PASS_READ = container.getUserPassword();
   process.env.NODE_ENV = 'local';
+  // Explicit fixture for the newly required environment policy; never a runtime default.
+  process.env.CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT = '2026-10-15T00:00:00Z';
   process.env.FEATURE_DB_MIGRATE_DISABLED = 'true';
   process.env.FORCE_AVOID_REDIS = 'true';
 

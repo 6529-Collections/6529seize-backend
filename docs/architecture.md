@@ -30,6 +30,17 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Oracle TDH API and retired Prenode registry
+
+The existing `api` service retains Oracle TDH totals, thresholds, percentile,
+cutoff, address breakdowns, season aggregations and NFT reads under `/oracle`.
+`POST /oracle/register-prenode` and `GET /oracle/prenodes` return uncached
+`410 Gone` responses with a 6529 Desktop deprecation notice. These terminal
+routes do not access the registry or geolocation service. The historical
+Prenode entity/table remains intact; no schema sync, migration or data deletion
+is needed. `/oracle/docs` continues to describe the preserved TDH API.
+Only `api` needs redeployment for this retirement.
+
 ## Active TDH voting discovery
 
 `GET /v2/waves/active-votes` is an optional-auth read in the existing API Lambda.
@@ -841,6 +852,24 @@ metadata with `_checksum`, or JSON `null` when the provider returns 404. The
 route retains its five-minute request-cache middleware. FE uses this endpoint
 as fallback for its address-only picker.
 
+`POST /alchemy-proxy/contracts` accepts up to 50 Ethereum contract addresses
+and deduplicates case variants before lookup. It returns `{ contracts: [...] }`
+with checksummed addresses, chain, and provider metadata including `_checksum`.
+Provider 404 produces null metadata; other failures remain per-contract errors
+so successful entries are preserved. Lookups run at most ten at a time with
+five-second timeouts and no retries. A 20-second lookup scheduling budget
+reserves time for initialization and response handling within the API Lambda's
+30-second timeout. Once another full lookup cannot fit, remaining entries
+receive per-contract 504 errors while completed results are preserved.
+Responses use `Cache-Control: no-store`.
+The bounded lookup client reuses centralized Alchemy configuration and is
+cached per shared client. Provider initialization failures are logged and
+return HTTP 500 before individual lookups. Invalid provider payloads are
+reported as per-contract lookup failures.
+This completes the fallback used by the desktop xTDH Granted list without
+requiring a desktop update. Its OpenAPI path overrides the `/api` server base
+because the existing proxy router is mounted at the root.
+
 Collection-name search is retired: `GET /alchemy-proxy/collections` returns
 HTTP 410 with `Cache-Control: no-store` and the error message
 `Collection name search is no longer available. Use a contract address.`
@@ -1617,6 +1646,18 @@ changing alert or dirty state, while
 No request cache is used for the coverage read boundary, so a confirmed top-up
 or redemption can be reflected immediately.
 
+`delegationsLoop` also supports the explicit maintenance payload in staging and production
+`{"action":"reconsolidate","wallets":["<Ethereum address>"]}`. It expands
+requested seeds through old persisted and current confirmed groups, runs the
+same partial reconsolidation pipeline as chain-event handling, then updates
+affected primary addresses. It does not scan chain events or advance the
+delegation-indexing checkpoint. Scheduled indexing remains unchanged; there is
+no persistent action flag or new public API. See
+[on-demand reconsolidation](delegations-reconsolidation.md) for validation,
+completion semantics and AWS IAM invocation permissions. This action does not
+depend on mutable Sentry environment labels, including when AWS reuses a runtime
+that has already loaded regional secrets.
+
 `xTdhLoop` uses a two-phase FIFO queue flow. A full nightly TDH run relies only
 on the TDH completion SNS topic, published after the remaining TDH work
 finishes, to deliver the universe phase through `xtdh-start.fifo`. A partial TDH
@@ -2199,3 +2240,50 @@ interval and now redrive after five receives to `xtdh-dead-letter.fifo`. Dead le
 are retained for 14 days and have a visible-message CloudWatch alarm on the existing
 alarm topic. Repeated consolidation drift therefore cannot block the FIFO group
 until source retention expires. Deploying `xTdhLoop` also provisions these resources.
+
+### Transfer reconciliation after late indexing
+
+Independent contract indexers atomically queue per-wallet `owners` and `activity`
+refreshes alongside transfer upserts in `transfer_reconciliations`. Ownership and
+activity consumers combine those durable requests with normal block selection,
+rebuild from primary transfer history, and acknowledge only the consumed revision
+after raw and consolidated publication. Ownership then queues `balances` refreshes
+for `ownersBalancesLoop`. An IAM-only `repair-wallets` action on `nftOwnersLoop`
+queues bounded repair of previously missed transfers without running calculations.
+Schema sync precedes consumers, which precede transaction producers. See
+[late-indexed transfer reconciliation](transfer-reconciliation.md) for deployment
+order, retry/concurrency guarantees, repair and limits.
+
+## Consolidation activation policy
+
+Delegation-driven partial TDH refreshes rank the complete current wallet/group
+universe so changed members also update unaffected owners' rank positions.
+Partial raw, consolidated, historic and per-NFT persistence uses sequential
+TypeORM upserts of at most 500 rows through the existing transaction managers.
+MySQL matches composite primary keys directly, avoiding ORM bigint string/number
+mismatches and loaded-entity scans. The insert query builders disable entity
+hydration, so returned default values cannot reassign input keys before those
+rows are reused for historical persistence.
+Batch failures propagate to those managers and roll back the scoped deletes and
+earlier writes; batching adds no transaction or publication boundary. Full TDH
+and historical replay retain their bulk-insert persistence paths. Verify partial
+refresh runtime separately from the full calculation; see [TDH ranking
+parity](./tdh-ranking.md).
+
+When consolidation links simultaneously split and merge old groups, profile
+retention is resolved for all resulting identities before merging profile data.
+A profile retained by another resulting identity is excluded from merge sources;
+its profile row and related data stay with that identity. Every resulting
+registered identity refreshes metadata from its own surviving profile, including
+when all potential merge sources were excluded. Pure merges and the existing
+mature-primary/highest-TDH split retention rules remain unchanged.
+
+`CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT` is required by settings and consolidation grouping after environment preparation. It is a valid ISO UTC datetime at whole-second precision. The regional `prod/lambdas` configuration is distinct in staging (`eu-west-1`) and production (`us-east-1`); do not select it from `NODE_ENV`, which is production in both. Local runs supply the same key in their normal environment file.
+
+The grouping resolver and `GET /api/settings` use the same value. Settings expose `consolidation.max_wallets` (4) and `ungated_max_wallets` (3), sourced from the existing backend constants, plus `four_wallet_activation_at` and `four_wallet_signing_opens_at` (derived ten minutes later). The limits are fixed backend policy, not new secret/configuration knobs; FE and native Core consume them instead of maintaining duplicate constants. No deployment-date fallback is supplied. Missing or malformed configuration fails the settings/grouping operation before writing a grouping result. Warm processes retain loaded regional configuration; restart affected services after changing it, verify `/api/settings`, and refresh existing browser sessions. A policy change requires full reconsolidation/TDH recalculation so persisted results match the new cutoff.
+
+The runtime grouping callers are `api` (`db-api.fetchConsolidationsForWallet`), `tdhLoop` (`tdh.ts` and `tdh_consolidation.ts`) and `delegationsLoop` (affected-wallet grouping and the TDH functions it invokes). The two loop handlers enter `doInDbContext`, which awaits `prepEnvironment` before work; the API initializes local configuration and its optional regional secret before wiring/serving routes. The singleton constructor captures a resolver without reading configuration at import time. Other imports such as `tdhHistoryLoop` only build deterministic consolidation keys and do not resolve policy.
+
+The required key must be present and valid for all three runtimes in both regions before rollout. In particular, an unconfigured API fails the whole `/api/settings` response, not just consolidation setup. This is the agreed fail-closed policy, not a nullable-settings fallback. Configuration presence has to be verified as a deployment prerequisite; source inspection is not proof that a live secret contains the value.
+
+Configure production as `2026-10-15T00:00:00Z` and staging with its intended earlier cutoff before deployment. Schema sync still precedes the delegation indexer, TDH loop and API. Both environments index the same mainnet contract: staging registrations are real registrations, and pre-production-cutoff links require renewed consent after the production cutoff.

@@ -337,6 +337,22 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     }
   }
 
+  private excludeRetainedProfilesFromMergeSources(
+    identitiesToMerge: IdentityMergeTarget[]
+  ) {
+    // A simultaneous split/merge can mention the same old profile as a
+    // merge source and as another group's retained target. Keep that profile
+    // and its related data with the group selected by retention above.
+    const retainedProfileIds = new Set(
+      identitiesToMerge.map((it) => it.targetIdentity.profile_id)
+    );
+    for (const mergeTarget of identitiesToMerge) {
+      mergeTarget.sourceIdentities = mergeTarget.sourceIdentities.filter(
+        (identity) => !retainedProfileIds.has(identity.profile_id)
+      );
+    }
+  }
+
   private async syncIdentityMetadataFromMergedProfiles(
     identitiesToMerge: IdentityMergeTarget[],
     connection: ConnectionWrapper<any>
@@ -344,7 +360,6 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     const mergeTargetsWithProfiles = collections
       .distinct(
         identitiesToMerge
-          .filter((mergeTarget) => mergeTarget.sourceIdentities.length > 0)
           .map((mergeTarget) => mergeTarget.targetIdentity.profile_id)
           .filter((profileId): profileId is string => !!profileId)
       )
@@ -1106,6 +1121,7 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
         });
       }
       await this.applyExplicitProfileRetention(identitiesToMerge);
+      this.excludeRetainedProfilesFromMergeSources(identitiesToMerge);
       affectedReaderWavesForUnreadCache.push(
         ...(await this.findWaveUnreadReaderWavesForMergeTargets(
           identitiesToMerge,
