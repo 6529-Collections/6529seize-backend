@@ -33,18 +33,31 @@ Only the requested wallets and their exact previous consolidation keys are
 deleted before upserting those rows; unaffected scores and memberships are
 retained. Partial calculations build token-level ranking catalogs from all
 current rows rather than only the recalculated subset.
-Persisting global rank shifts increases partial-refresh work. Check duration and
-memory with a representative staging reconsolidation before production rollout;
-the saved-data comparison validates rank values, not Lambda runtime cost.
+Partial raw, consolidated, historic and per-NFT writes save at most 500 rows per
+awaited TypeORM call, using the caller's existing transaction repository. A
+failure in any batch aborts that transaction, including the preceding scoped
+deletes and saves. Do not replace this with parallel saves or one unbounded
+`save()` of the global dataset: TypeORM matches loaded entities against save
+subjects, making a large call quadratic. Reducing the requested wallet count
+does not reduce that global ranking dataset. Table-completion logs distinguish
+wallet/group, Meme and edition persistence.
+
+Full calculations retain their existing bulk-insert path. Persisting global
+rank shifts still increases partial-refresh work; check duration and memory
+with a representative staging reconsolidation before production rollout.
 Rank ordering changes do not change holdings, TDH scoring, boosts or Merkle leaf
 values. The correction can reorder displayed positions for tied wallets and
 correct collection positions previously affected by the missing lower-total-
 balance comparison.
 
-To validate runtime parity, first deploy `delegationsLoop` and `tdhLoop` with the
-same backend source, rebuild Core, then calculate both at the same block and
-policy. Compare row membership, overall/collection/per-token ranks, scores and
-Merkle roots. Deployment alone does not rewrite previously calculated ranks.
+To validate runtime parity, first deploy `delegationsLoop`, `tdhLoop` and
+`populateHistoricConsolidatedTdh` with the same backend ranking source, rebuild
+Core, then calculate both at the same block and policy. Compare row membership,
+overall/collection/per-token ranks, scores and Merkle roots. Validate the partial
+delegation path separately: a successful full calculation does not exercise its
+upsert path. The persistence-batching correction executes in `delegationsLoop`;
+full TDH and historical replay use the unchanged bulk-insert branches.
+Deployment alone does not rewrite previously calculated ranks.
 
 ## Help knowledge authoring facts
 
