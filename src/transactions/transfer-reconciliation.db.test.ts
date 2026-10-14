@@ -48,6 +48,24 @@ describeWithSeed('Transfer reconciliation durable requests', [], () => {
     ).toEqual([26056042]);
   });
 
+  it('loads burns for the zero address without replaying unrelated historical mints', async () => {
+    const mintA = buildTransaction(NULL_ADDRESS, A, MEMELAB_CONTRACT, 71, 5);
+    const mintB = buildTransaction(NULL_ADDRESS, B, MEMELAB_CONTRACT, 72, 7);
+    const burnA = buildTransaction(A, NULL_ADDRESS, MEMELAB_CONTRACT, 71, 2);
+    await discovery.batchUpsertTransactions([mintA, mintB, burnA]);
+    const history = await db.history([MEMELAB_CONTRACT], [NULL_ADDRESS, A], 1);
+    expect(
+      history.map((tx) => tx.transaction).sort((a, b) => a.localeCompare(b))
+    ).toEqual(
+      [mintA.transaction, burnA.transaction].sort((a, b) => a.localeCompare(b))
+    );
+    expect(
+      (await db.history([MEMELAB_CONTRACT], [NULL_ADDRESS], 1)).map(
+        (tx) => tx.transaction
+      )
+    ).toEqual([burnA.transaction]);
+  });
+
   it('rolls back the transfer itself when enqueueing its refresh fails', async () => {
     const enqueue = jest
       .spyOn(transferReconciliationDb, 'enqueue')

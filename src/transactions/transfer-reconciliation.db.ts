@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { EntityManager } from 'typeorm';
 import {
+  NULL_ADDRESS,
   TRANSACTIONS_TABLE,
   TRANSFER_RECONCILIATIONS_TABLE
 } from '@/constants';
@@ -177,6 +178,8 @@ export class TransferReconciliationDb extends LazyDbAccessCompatibleService {
     toBlock: number,
     ctx: RequestContext = {}
   ): Promise<Transaction[]> {
+    // The zero address is never debited: its owner rows depend only on incoming burns.
+    // Still include mint history where a selected regular wallet is the recipient.
     const result: Transaction[] = [];
     for (let offset = 0; offset < wallets.length; offset += BATCH_SIZE) {
       result.push(
@@ -184,11 +187,13 @@ export class TransferReconciliationDb extends LazyDbAccessCompatibleService {
           'history',
           `SELECT * FROM ${TRANSACTIONS_TABLE}
         WHERE contract IN (:contracts) AND block <= :toBlock
-        AND (from_address IN (:wallets) OR to_address IN (:wallets))`,
+        AND ((from_address IN (:wallets) AND from_address <> :nullAddress)
+             OR to_address IN (:wallets))`,
           {
             contracts,
             wallets: wallets.slice(offset, offset + BATCH_SIZE),
-            toBlock
+            toBlock,
+            nullAddress: NULL_ADDRESS.toLowerCase()
           },
           ctx
         ))

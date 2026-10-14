@@ -17,7 +17,10 @@ Each consumer reads up to 250 pending wallets by a database-generated insertion
 sequence from the primary database,
 adds them to its normal block-based selection, and rebuilds their raw and
 consolidated values. Ownership replays each selected wallet from the committed
-transfer ledger, rather than adding deltas to possibly stale balances. Activity
+transfer ledger, rather than adding deltas to possibly stale balances. For the
+zero address, ownership history includes only incoming burns; a mint run does
+not replay all historical zero-address outbound mints. Selected recipient
+wallets still include their own mint history. Activity
 reads full wallet histories from the primary capped at the selected target block.
 Unknown Meme season metadata leaves work pending instead of publishing an
 incomplete activity result. The historical block selection remains for rollout

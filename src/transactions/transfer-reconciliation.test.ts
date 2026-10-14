@@ -1,3 +1,4 @@
+import { NULL_ADDRESS, MEMELAB_CONTRACT } from '@/constants';
 import {
   DataSource,
   InsertQueryBuilder,
@@ -109,4 +110,21 @@ it('specifies the four insert columns when queue metadata is absent from a TypeO
   } finally {
     insert.mockRestore();
   }
+});
+
+it('excludes zero-address outbound history while retaining incoming burns and regular-wallet mint history', async () => {
+  await db.history([MEMELAB_CONTRACT], [NULL_ADDRESS, '0xalice'], 20);
+  expect(execute).toHaveBeenCalledWith(
+    expect.stringContaining(
+      'from_address IN (:wallets) AND from_address <> :nullAddress'
+    ),
+    {
+      contracts: [MEMELAB_CONTRACT],
+      wallets: [NULL_ADDRESS, '0xalice'],
+      toBlock: 20,
+      nullAddress: NULL_ADDRESS.toLowerCase()
+    },
+    expect.objectContaining({ forcePool: DbPoolName.WRITE })
+  );
+  expect(execute.mock.calls[0][0]).toContain('OR to_address IN (:wallets)');
 });
