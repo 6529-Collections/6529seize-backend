@@ -847,6 +847,10 @@ with checksummed addresses, chain, and provider metadata including `_checksum`.
 Provider 404 produces null metadata; other failures remain per-contract errors
 so successful entries are preserved. Lookups run at most ten at a time with
 five-second timeouts and no retries. Responses use `Cache-Control: no-store`.
+The bounded lookup client reuses centralized Alchemy configuration and is
+cached per shared client. Provider initialization failures are logged and
+return HTTP 500 before individual lookups. Invalid provider payloads are
+reported as per-contract lookup failures.
 This completes the fallback used by the desktop xTDH Granted list without
 requiring a desktop update. Its OpenAPI path overrides the `/api` server base
 because the existing proxy router is mounted at the root.

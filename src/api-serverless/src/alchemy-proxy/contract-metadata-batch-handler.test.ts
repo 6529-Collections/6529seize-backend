@@ -2,10 +2,12 @@ import type { Request, Response } from 'express';
 import { ethers } from 'ethers';
 import * as fc from 'fast-check';
 import { Alchemy } from '@/alchemy-sdk';
+import { getAlchemyInstance } from '@/alchemy';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 import { handleContractMetadataBatch } from '@/api/alchemy-proxy/contract-metadata-batch.handler';
 
 jest.mock('@/alchemy-sdk', () => ({ Alchemy: jest.fn() }));
+jest.mock('@/alchemy', () => ({ getAlchemyInstance: jest.fn() }));
 
 const ADDRESS = '0xa94161fbe69e08ff5a36dfafa61bdf29dd2fb928';
 const CHECKSUM = ethers.getAddress(ADDRESS);
@@ -27,6 +29,10 @@ async function request(body: unknown) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockLookup.mockReset();
+  jest.mocked(getAlchemyInstance).mockReset();
+  jest.mocked(getAlchemyInstance).mockReturnValue({
+    config: { network: 'eth-mainnet', apiKey: 'test-key' }
+  } as Alchemy);
   jest.mocked(Alchemy).mockImplementation(
     () =>
       ({
@@ -84,7 +90,53 @@ it('returns an empty batch without constructing an upstream client', async () =>
   const res = await request({ contracts: [] });
   expect(res.json).toHaveBeenCalledWith({ contracts: [] });
   expect(Alchemy).not.toHaveBeenCalled();
+  expect(getAlchemyInstance).not.toHaveBeenCalled();
 });
+
+it('surfaces a provider configuration failure before any contract lookup', async () => {
+  jest.mocked(getAlchemyInstance).mockImplementation(() => {
+    throw new Error('missing key');
+  });
+  await expect(
+    request({ contracts: [{ address: ADDRESS }] })
+  ).rejects.toMatchObject({
+    message: 'Contract metadata provider is unavailable'
+  });
+  expect(mockLookup).not.toHaveBeenCalled();
+});
+
+it('reuses the bounded client derived from the shared configuration', async () => {
+  mockLookup.mockResolvedValue({});
+  await request({ contracts: [{ address: ADDRESS }] });
+  await request({ contracts: [{ address: ADDRESS }] });
+  expect(Alchemy).toHaveBeenCalledTimes(1);
+  expect(Alchemy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      apiKey: 'test-key',
+      timeoutMs: 5000,
+      maxRetries: 0
+    })
+  );
+});
+
+it.each([null, [], 'invalid', 42])(
+  'returns a per-contract error for invalid provider metadata: %j',
+  async (metadata) => {
+    mockLookup.mockResolvedValue(metadata);
+    const res = await request({ contracts: [{ address: ADDRESS }] });
+    expect(res.json).toHaveBeenCalledWith({
+      contracts: [
+        {
+          address: CHECKSUM,
+          chain: 'ethereum',
+          metadata: null,
+          error: 'Failed to fetch contract metadata',
+          status: 502
+        }
+      ]
+    });
+  }
+);
 
 it.each([
   null,

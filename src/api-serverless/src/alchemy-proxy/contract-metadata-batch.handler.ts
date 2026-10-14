@@ -2,6 +2,8 @@ import type { Request, Response } from 'express';
 import * as Joi from 'joi';
 import { ethers } from 'ethers';
 import { Alchemy } from '@/alchemy-sdk';
+import { getAlchemyInstance } from '@/alchemy';
+import { Logger } from '@/logging';
 import { Network } from '@/ethereum-rpc/ethereum-rpc-network';
 import type { ApiAlchemyContractMetadataBatchRequest } from '@/api/generated/models/ApiAlchemyContractMetadataBatchRequest';
 import type { ApiAlchemyContractMetadataBatchResponse } from '@/api/generated/models/ApiAlchemyContractMetadataBatchResponse';
@@ -19,6 +21,8 @@ import { CustomApiCompliantException } from '@/exceptions';
 const MAX_CONTRACTS = 50;
 const LOOKUP_CONCURRENCY = 10;
 const LOOKUP_TIMEOUT_MS = 5000;
+const boundedClients = new WeakMap<Alchemy, Alchemy>();
+const logger = Logger.get('ALCHEMY_METADATA_BATCH');
 const requestSchema = Joi.object<ApiAlchemyContractMetadataBatchRequest>({
   contracts: Joi.array()
     .items(
@@ -29,16 +33,39 @@ const requestSchema = Joi.object<ApiAlchemyContractMetadataBatchRequest>({
         chain: Joi.string().valid('ethereum').default('ethereum')
       })
     )
-    .max(MAX_CONTRACTS)
     .required()
 }).required();
+
+function getBatchAlchemyClient(): Alchemy {
+  try {
+    const sharedClient = getAlchemyInstance(Network.ETH_MAINNET);
+    const cached = boundedClients.get(sharedClient);
+    if (cached) return cached;
+    // Reuse the central configuration, with a cached client whose finite budget
+    // keeps a 50-contract batch within the API request deadline.
+    const client = new Alchemy({
+      ...sharedClient.config,
+      maxRetries: 0,
+      timeoutMs: LOOKUP_TIMEOUT_MS
+    });
+    boundedClients.set(sharedClient, client);
+    return client;
+  } catch {
+    logger.error('Unable to initialize the contract metadata provider');
+    throw new CustomApiCompliantException(
+      500,
+      'Contract metadata provider is unavailable'
+    );
+  }
+}
 
 function normalizeContracts(
   contracts: ApiAlchemyContractMetadataRequest[]
 ): ApiAlchemyContractMetadataRequest[] {
   const unique = new Map<string, ApiAlchemyContractMetadataRequest>();
   for (const contract of contracts) {
-    // Lowercase first so differently cased aliases share one lookup.
+    // Joi guarantees 40 hex digits. Lowercase first so differently cased
+    // aliases share one lookup without mixed-case checksum ambiguity.
     const address = ethers.getAddress(contract.address.toLowerCase());
     unique.set(address, {
       address,
@@ -72,7 +99,16 @@ async function lookupContract(
     chain: ApiAlchemyContractMetadataResultChainEnum.Ethereum
   };
   try {
-    const metadata = await alchemy.nft.getContractMetadata(contract.address);
+    const metadata: unknown = await alchemy.nft.getContractMetadata(
+      contract.address
+    );
+    if (
+      typeof metadata !== 'object' ||
+      metadata === null ||
+      Array.isArray(metadata)
+    ) {
+      throw new Error('Invalid contract metadata response');
+    }
     return { ...base, metadata: { ...metadata, _checksum: contract.address } };
   } catch (error: unknown) {
     const status = upstreamStatus(error);
@@ -94,6 +130,7 @@ export async function handleContractMetadataBatch(
   res: Response
 ): Promise<Response> {
   res.setHeader('Cache-Control', 'no-store');
+  // An oversized array takes precedence over item validation and returns 413.
   if (
     Array.isArray(req.body?.contracts) &&
     req.body.contracts.length > MAX_CONTRACTS
@@ -109,12 +146,7 @@ export async function handleContractMetadataBatch(
   if (contracts.length === 0) {
     return res.json(result);
   }
-  const alchemy = new Alchemy({
-    network: Network.ETH_MAINNET,
-    apiKey: process.env.ALCHEMY_API_KEY,
-    maxRetries: 0,
-    timeoutMs: LOOKUP_TIMEOUT_MS
-  });
+  const alchemy = getBatchAlchemyClient();
   for (
     let offset = 0;
     offset < contracts.length;
