@@ -46,6 +46,25 @@ different. A failed production WEB E2E alert also ends with `cc @devs6529`; a
 failed staging WEB E2E alert does not, because staging E2E does not gate
 releases and a group ping on every staging failure is noise.
 
+Failure senders enrich the existing optional `description` field. The receiver
+preserves its line breaks for failures, including WEB E2E replies. No new
+request fields are required; old senders continue to work and successful WEB
+E2E messages remain one line.
+
+Frontend E2E failures list final failed test names grouped by pack and browser.
+Names shared by desktop and mobile appear once with both browsers in the
+heading. Counts include both executions. Recovered retries and flaky tests do
+not appear in the final failure list. Evidence comes from the final pack
+attempt's retained `output.log` and `evidence.json`.
+
+E2E summaries describe the deployed app, including failures caused by backend
+changes. The frontend E2E workflow reports the failed tests regardless of which
+repository's PR caused the regression. Already-published messages are not
+modified. When test evidence is missing, the sender identifies failed workflow
+steps from the current GitHub run attempt or preserves an explicit fallback
+with the original run link. Notifications remain best effort, and summaries
+are bounded below the receiver's description limit.
+
 ## Deploy Reply Correlation
 
 After creating a successful frontend WEB deploy drop, the service stores:

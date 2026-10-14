@@ -591,7 +591,7 @@ successful rotation's `last_used_at`; repeated recovery does not reset it.
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.
 2. The API validates input, authenticates JWT or anonymous context, reads/writes MySQL, uses Redis for cache/rate limiting, and sometimes publishes SQS work.
-3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy, normalize chain state, and write canonical rows into MySQL. Ordinary mainnet reads use `ETHEREUM_RPC_URL`, independently of Alchemy NFT REST and indexed transfers. [Ethereum RPC provider portability](ethereum-rpc-provider-portability.md) records the explicit tracing, bulk-indexer and legacy proxy exceptions and rollout requirements. NextGen's `addRandomizer` history entries optionally enrich the contract address with a name from the public Sourcify V2 API on the configured NextGen chain. The lookup needs no API key, has a five-second timeout, and falls back to the address on unavailable or malformed responses; enrichment failures do not stop indexing.
+3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy, normalize chain state, and write canonical rows into MySQL. Ordinary mainnet reads use `ETHEREUM_RPC_URL`, independently of Alchemy NFT REST and indexed transfers. [Ethereum RPC provider portability](ethereum-rpc-provider-portability.md) records the explicit tracing and bulk-indexer exceptions and rollout requirements. NextGen's `addRandomizer` history entries optionally enrich the contract address with a name from the public Sourcify V2 API on the configured NextGen chain. The lookup needs no API key, has a five-second timeout, and falls back to the address on unavailable or malformed responses; enrichment failures do not stop indexing.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
@@ -626,8 +626,13 @@ categories, separating resolver reverts from transport and off-chain failures
 without logging raw errors or revert arguments.
 
 `NFT_INDEXER_RPC` remains the independently configured external-indexing/NFT-link
-capacity boundary, and the legacy AWS Managed Blockchain `/rpc` proxy is
-unchanged. Those explicit exceptions are not controlled by `ETHEREUM_RPC_URL`.
+capacity boundary. The unused API-root AWS Managed Blockchain `/rpc` proxy,
+including `/rpc/test` and all sub-paths, has been removed; requests fall through
+to the normal 404 response. The separate `rpc1.6529.io` API Gateway and `rpcProxy`
+Lambda continue to serve app-wallet fallback and mainnet tracing traffic to the
+same managed Ethereum node. Neither that Lambda nor the node is removed by this
+API retirement. The bulk indexer and tracing exceptions are not controlled by
+`ETHEREUM_RPC_URL`.
 See the [implementation and rollout record](ethereum-rpc-provider-portability.md)
 and the historical [foundation record](../ops/workstreams/ethereum-rpc-foundation/README.md).
 Configuration is loaded once by warm services; redeploy/restart affected services
@@ -1776,6 +1781,15 @@ sequentially in dependency order, with each run observed to completion before
 the next dispatch. The service catalog records allowed environments and
 default dependencies. The workflow's environment concurrency avoids overlapping
 backend deployment runs; it does not create a cross-repository scheduler.
+
+Backend deployment uses separate IAM roles through GitHub OIDC in the
+`staging` and `production` GitHub environments, restricted to `1a-staging` and
+`main` respectively. Each environment's `AWS_DEPLOY_ROLE_ARN` selects its role;
+missing configuration stops the run. Both environments use temporary role
+credentials without a static-key fallback. The scoped deployment policies and
+infrastructure boundaries are documented in
+[`ops/iam/backend-staging`](../ops/iam/backend-staging/README.md) and
+[`ops/iam/backend-production`](../ops/iam/backend-production/README.md).
 
 Frontend staging continues to deploy automatically on application/workflow
 pushes to `1a-staging`; frontend production is dispatched through

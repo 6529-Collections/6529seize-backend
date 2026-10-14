@@ -1,0 +1,125 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageApprovedAlarms2",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:ListTagsForResource",
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:TagResource",
+        "cloudwatch:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:nextgenMediaUploader-prod-nextgenMediaUploader-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:nextgenMetadataLoop-prod-nextgenMetadataLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:nftHistoryLoop-prod-nftHistoryLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:nftLinkMediaPreviewLoop-prod-nftLinkMediaPreviewLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:nftLinkRefresherLoop-prod-nftLinkRefresherLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:nftOwnersLoop-prod-nftOwnersLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:nftsLoop-prod-nftsLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:overRatesRevocationLoop-prod-overRatesRevocationLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:ownersBalancesLoop-prod-ownersBalancesLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:populateHistoricConsolidatedTdh-prod-populateHistoricConsolidatedTdh-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:pushNotificationsHandler-prod-pushNotificationsHandler-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:rateEventProcessingLoop-prod-rateEventProcessingLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:refreshENS-prod-refreshENS-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:rememesLoop-prod-rememesFileLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:rememesLoop-prod-rememesRefreshMetadataLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:rememesLoop-prod-rememesS3Loop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:royaltiesLoop-prod-royaltiesLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:s3Uploader-prod-s3Uploader-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:subscriptionsDaily-prod-subscriptionCoverageReconciliationLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:subscriptionsDaily-prod-subscriptionsDaily-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:subscriptionsTopUpLoop-prod-subscriptionsTopUpLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:tdhHistoryLoop-prod-tdhHistoryLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:tdhLoop-prod-tdhLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:teamLoop-prod-teamLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:transactionsLoop-prod-gradientsTransactionsLoop-Errors",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:transactionsLoop-prod-gradientsTransactionsLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:transactionsLoop-prod-gradientsTransactionsLoop-Throttles",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:transactionsLoop-prod-memeLabTransactionsLoop-Errors",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:transactionsLoop-prod-memeLabTransactionsLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:transactionsLoop-prod-memeLabTransactionsLoop-Throttles",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:transactionsLoop-prod-memesTransactionsLoop-Errors",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:transactionsLoop-prod-memesTransactionsLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:transactionsLoop-prod-memesTransactionsLoop-Throttles",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:transactionsLoop-prod-transactionIngestion-Incident",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:transactionsProcessingLoop-prod-transactionsProcessingLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:waveDecisionExecutionLoop-prod-waveDecisionExecutionLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:waveDropMetricsRefreshLoop-prod-waveDropMetricsRefreshLoop-DLQ",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:waveDropMetricsRefreshLoop-prod-waveDropMetricsRefreshLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:waveLeaderboardSnapshotterLoop-prod-waveLeaderboardSnapshotterLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:waveScoreRefreshLoop-prod-waveScoreRefreshLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:xTdhGrantsReviewerLoop-prod-xTdhGrantsReviewerLoop-OOM",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:xTdhLoop-prod-xTdhLoop-DeadLetters",
+        "arn:aws:cloudwatch:us-east-1:987989283142:alarm:xTdhLoop-prod-xTdhLoop-OOM"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "CompositeAlarmDeploymentOperations1",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:PutCompositeAlarm"
+      ],
+      "Resource": [
+        "*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadProductionSecretMetadata1",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:DescribeSecret"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:us-east-1:987989283142:secret:prod/lambdas-ZDzF7a"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageNextgenEdgeDistribution1",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:GetDistribution",
+        "cloudfront:GetDistributionConfig",
+        "cloudfront:UpdateDistribution"
+      ],
+      "Resource": [
+        "arn:aws:cloudfront::987989283142:distribution/E1RI37JRN0ZK6J"
+      ]
+    },
+    {
+      "Sid": "ManageNextgenEdgeReplication1",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:DisableReplication*",
+        "lambda:EnableReplication*"
+      ],
+      "Resource": [
+        "arn:aws:lambda:us-east-1:987989283142:function:nextgenMediaProxyInterceptor:*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    }
+  ]
+}
