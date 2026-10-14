@@ -23,6 +23,8 @@ import {
 import { describeWithSeed, Seed } from '@/tests/_setup/seed';
 import { aTdhConsolidation } from '@/tests/fixtures/tdh_consolidation.fixture';
 import { DbQueryOptions } from '@/db-query.options';
+import { insertWithoutUpdate } from '@/orm_helpers';
+import { TDH_SAVE_BATCH_SIZE } from './tdh-persistence-batches';
 import * as waveUnreadCache from '@/api/waves/wave-unread-cache';
 import * as mysql from 'mysql';
 import { DataSource, QueryRunner } from 'typeorm';
@@ -297,5 +299,123 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     );
     expect(Number(total)).toBe(60);
     expect(Number(row_count)).toBe(2);
+  });
+
+  async function seedUnaffectedGroups() {
+    const rows = Array.from({ length: TDH_SAVE_BATCH_SIZE + 1 }, (_, i) =>
+      consolidatedRow([`unaffected${i}`], 1)
+    );
+    await insertWithoutUpdate(dataSource.getRepository(ConsolidatedTDH), rows);
+    await insertWithoutUpdate(
+      dataSource.getRepository(HistoricConsolidatedTDH),
+      rows
+    );
+    await insertWithoutUpdate(
+      dataSource.getRepository(ConsolidatedTDHMemes),
+      rows.map((row) => memesRow(row.consolidation_key, 1))
+    );
+    await insertWithoutUpdate(
+      dataSource.getRepository(ConsolidatedTDHEditions),
+      rows.map((row) => editionRow(row.consolidation_key))
+    );
+    await insertWithoutUpdate(
+      dataSource.getRepository(NftTDH),
+      rows.map((row) => nftRow(row.consolidation_key, 1))
+    );
+    return rows;
+  }
+
+  it('preserves unaffected scores and persists global ranks beyond an upsert batch', async () => {
+    const unaffected = await seedUnaffectedGroups();
+    const ranked = unaffected.map((row, i) => ({ ...row, tdh_rank: i + 3 }));
+    await persistConsolidatedTDH(
+      BLOCK,
+      [...newConsolidated, ...ranked],
+      [
+        ...newMemes,
+        ...ranked.map((row) => ({
+          ...memesRow(row.consolidation_key, 1),
+          tdh_rank: row.tdh_rank
+        }))
+      ],
+      [
+        ...newEditions,
+        ...ranked.map((row) => ({
+          ...editionRow(row.consolidation_key),
+          days_held: 7
+        }))
+      ],
+      [
+        ...newNft,
+        ...ranked.map((row) => ({
+          ...nftRow(row.consolidation_key, 1),
+          tdh_rank: row.tdh_rank
+        }))
+      ],
+      {
+        mode: 'PARTIAL',
+        wallets: ['a', 'b', 'c'],
+        consolidationKeysToReplace: [A_C, B]
+      }
+    );
+
+    await expectPersistedKeys(
+      [A_B, C, ...ranked.map((row) => row.consolidation_key)].sort((a, b) =>
+        a.localeCompare(b)
+      )
+    );
+    const last = ranked[ranked.length - 1];
+    for (const entity of [
+      ConsolidatedTDH,
+      HistoricConsolidatedTDH,
+      ConsolidatedTDHMemes,
+      NftTDH
+    ]) {
+      const row = await dataSource.getRepository(entity).findOneByOrFail({
+        consolidation_key: last.consolidation_key
+      });
+      expect(row.boosted_tdh).toBe(1);
+      expect(row.tdh_rank).toBe(last.tdh_rank);
+    }
+    const edition = await dataSource
+      .getRepository(ConsolidatedTDHEditions)
+      .findOneByOrFail({ consolidation_key: last.consolidation_key });
+    expect(edition.days_held).toBe(7);
+  });
+
+  it('rolls back earlier batches and scoped deletes when a later batch fails', async () => {
+    const unaffected = await seedUnaffectedGroups();
+    const ranked = unaffected.map((row, i) => ({ ...row, tdh_rank: i + 3 }));
+    // A non-nullable field fails in the second upsert call, after the first
+    // batch has inserted replacements and updated unaffected rank rows.
+    ranked[ranked.length - 1].block = null as unknown as number;
+
+    await expect(
+      persistConsolidatedTDH(
+        BLOCK,
+        [...newConsolidated, ...ranked],
+        newMemes,
+        newEditions,
+        newNft,
+        {
+          mode: 'PARTIAL',
+          wallets: ['a', 'b', 'c'],
+          consolidationKeysToReplace: [A_C, B]
+        }
+      )
+    ).rejects.toThrow();
+
+    await expectPersistedKeys(
+      [A_C, B, ...unaffected.map((row) => row.consolidation_key)].sort((a, b) =>
+        a.localeCompare(b)
+      )
+    );
+    const first = await dataSource
+      .getRepository(ConsolidatedTDH)
+      .findOneByOrFail({
+        consolidation_key: unaffected[0].consolidation_key
+      });
+    expect(first.tdh_rank).toBe(unaffected[0].tdh_rank);
+    expect(first.boosted_tdh).toBe(1);
   });
 });

@@ -2241,6 +2241,18 @@ until source retention expires. Deploying `xTdhLoop` also provisions these resou
 
 ## Consolidation activation policy
 
+Delegation-driven partial TDH refreshes rank the complete current wallet/group
+universe so changed members also update unaffected owners' rank positions.
+Partial raw, consolidated, historic and per-NFT persistence uses sequential
+TypeORM upserts of at most 500 rows through the existing transaction managers.
+MySQL matches composite primary keys directly, avoiding ORM bigint string/number
+mismatches and loaded-entity scans.
+Batch failures propagate to those managers and roll back the scoped deletes and
+earlier writes; batching adds no transaction or publication boundary. Full TDH
+and historical replay retain their bulk-insert persistence paths. Verify partial
+refresh runtime separately from the full calculation; see [TDH ranking
+parity](./tdh-ranking.md).
+
 `CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT` is required by settings and consolidation grouping after environment preparation. It is a valid ISO UTC datetime at whole-second precision. The regional `prod/lambdas` configuration is distinct in staging (`eu-west-1`) and production (`us-east-1`); do not select it from `NODE_ENV`, which is production in both. Local runs supply the same key in their normal environment file.
 
 The grouping resolver and `GET /api/settings` use the same value. Settings expose `consolidation.max_wallets` (4) and `ungated_max_wallets` (3), sourced from the existing backend constants, plus `four_wallet_activation_at` and `four_wallet_signing_opens_at` (derived ten minutes later). The limits are fixed backend policy, not new secret/configuration knobs; FE and native Core consume them instead of maintaining duplicate constants. No deployment-date fallback is supplied. Missing or malformed configuration fails the settings/grouping operation before writing a grouping result. Warm processes retain loaded regional configuration; restart affected services after changing it, verify `/api/settings`, and refresh existing browser sessions. A policy change requires full reconsolidation/TDH recalculation so persisted results match the new cutoff.
