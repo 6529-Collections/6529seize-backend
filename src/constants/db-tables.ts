@@ -252,6 +252,8 @@ export const WS_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'ws_notification_subscriptions';
 export const RELEASE_NOTE_STREAM_STATES_TABLE = 'release_note_stream_states';
 export const RELEASE_NOTE_PUBLICATIONS_TABLE = 'release_note_publications';
+export const RELEASE_DIGEST_ENTRIES_TABLE = 'release_digest_entries';
+export const RELEASE_DIGESTS_TABLE = 'release_digests';
 export const MARKET_DEPTH_SNAPSHOTS_TABLE = 'market_depth_snapshots';
 export const MARKET_DEPTH_COLLECTION_STATE_TABLE =
   'market_depth_collection_state';
@@ -306,3 +308,5 @@ export const COMPETITION_LEGACY_MIRROR_PERMITS_TABLE =
   'competition_legacy_mirror_permits';
 export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
   'competition_legacy_execution_effects';
+
+export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';

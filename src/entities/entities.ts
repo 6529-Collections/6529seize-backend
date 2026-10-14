@@ -175,6 +175,11 @@ export { PushNotificationSettingsEntity } from './IPushNotificationSettings';
 export { Rating } from './IRating';
 export { RefreshToken } from './IRefreshToken';
 export {
+  ReleaseDigestEntity,
+  ReleaseDigestEntryEntity,
+  ReleaseDigestStatus
+} from './IReleaseDigest';
+export {
   ReleaseNotePublicationEntity,
   ReleaseNotePublicationStatus
 } from './IReleaseNotePublication';
@@ -309,3 +314,4 @@ export * from './ICompetitionMigration';
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export { TransferReconciliationEntity } from './ITransferReconciliation';

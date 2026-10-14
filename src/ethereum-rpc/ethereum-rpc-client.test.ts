@@ -99,6 +99,40 @@ describe('provider-neutral standard RPC client', () => {
     expect(read).toHaveBeenCalledTimes(3);
   });
 
+  it('runs eth_call at the requested block and retries transient failures', async () => {
+    const error = Object.assign(new Error('rate limit'), { status: 429 });
+    const call = jest
+      .spyOn(provider, 'call')
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce('0x01');
+    const client = new EthereumRpcClient(Network.ETH_MAINNET, 2);
+    await expect(
+      client.call({ to: '0xcontract', data: '0xabcdef' }, 1234)
+    ).resolves.toBe('0x01');
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(call).toHaveBeenLastCalledWith({
+      to: '0xcontract',
+      data: '0xabcdef',
+      blockTag: 1234
+    });
+  });
+
+  it('does not retry a reverted eth_call and defaults to the latest block', async () => {
+    const error = Object.assign(new Error('execution reverted'), {
+      code: 'CALL_EXCEPTION'
+    });
+    const call = jest.spyOn(provider, 'call').mockRejectedValue(error);
+    await expect(
+      getEthereumRpcClient().call({ to: '0xcontract', data: '0x' })
+    ).rejects.toBe(error);
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(call).toHaveBeenCalledWith({
+      to: '0xcontract',
+      data: '0x',
+      blockTag: 'latest'
+    });
+  });
+
   it.each([0, 1, 2])(
     'preserves the retry limit of %i for synchronous provider failures',
     async (maxRetries) => {

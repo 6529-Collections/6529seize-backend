@@ -30,6 +30,17 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Oracle TDH API and retired Prenode registry
+
+The existing `api` service retains Oracle TDH totals, thresholds, percentile,
+cutoff, address breakdowns, season aggregations and NFT reads under `/oracle`.
+`POST /oracle/register-prenode` and `GET /oracle/prenodes` return uncached
+`410 Gone` responses with a 6529 Desktop deprecation notice. These terminal
+routes do not access the registry or geolocation service. The historical
+Prenode entity/table remains intact; no schema sync, migration or data deletion
+is needed. `/oracle/docs` continues to describe the preserved TDH API.
+Only `api` needs redeployment for this retirement.
+
 ## Active TDH voting discovery
 
 `GET /v2/waves/active-votes` is an optional-auth read in the existing API Lambda.
@@ -591,7 +602,7 @@ successful rotation's `last_used_at`; repeated recovery does not reset it.
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.
 2. The API validates input, authenticates JWT or anonymous context, reads/writes MySQL, uses Redis for cache/rate limiting, and sometimes publishes SQS work.
-3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy, normalize chain state, and write canonical rows into MySQL. Ordinary mainnet reads use `ETHEREUM_RPC_URL`, independently of Alchemy NFT REST and indexed transfers. [Ethereum RPC provider portability](ethereum-rpc-provider-portability.md) records the explicit tracing, bulk-indexer and legacy proxy exceptions and rollout requirements. NextGen's `addRandomizer` history entries optionally enrich the contract address with a name from the public Sourcify V2 API on the configured NextGen chain. The lookup needs no API key, has a five-second timeout, and falls back to the address on unavailable or malformed responses; enrichment failures do not stop indexing.
+3. Scheduled ingestion Lambdas poll Ethereum/RPC/Alchemy, normalize chain state, and write canonical rows into MySQL. Ordinary mainnet reads use `ETHEREUM_RPC_URL`, independently of Alchemy NFT REST and indexed transfers. [Ethereum RPC provider portability](ethereum-rpc-provider-portability.md) records the explicit tracing and bulk-indexer exceptions and rollout requirements. NextGen's `addRandomizer` history entries optionally enrich the contract address with a name from the public Sourcify V2 API on the configured NextGen chain. The lookup needs no API key, has a five-second timeout, and falls back to the address on unavailable or malformed responses; enrichment failures do not stop indexing.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
@@ -626,8 +637,13 @@ categories, separating resolver reverts from transport and off-chain failures
 without logging raw errors or revert arguments.
 
 `NFT_INDEXER_RPC` remains the independently configured external-indexing/NFT-link
-capacity boundary, and the legacy AWS Managed Blockchain `/rpc` proxy is
-unchanged. Those explicit exceptions are not controlled by `ETHEREUM_RPC_URL`.
+capacity boundary. The unused API-root AWS Managed Blockchain `/rpc` proxy,
+including `/rpc/test` and all sub-paths, has been removed; requests fall through
+to the normal 404 response. The separate `rpc1.6529.io` API Gateway and `rpcProxy`
+Lambda continue to serve app-wallet fallback and mainnet tracing traffic to the
+same managed Ethereum node. Neither that Lambda nor the node is removed by this
+API retirement. The bulk indexer and tracing exceptions are not controlled by
+`ETHEREUM_RPC_URL`.
 See the [implementation and rollout record](ethereum-rpc-provider-portability.md)
 and the historical [foundation record](../ops/workstreams/ethereum-rpc-foundation/README.md).
 Configuration is loaded once by warm services; redeploy/restart affected services
@@ -835,6 +851,24 @@ returns HTTP 400. It uses V3 `getContractMetadata` and returns the provider
 metadata with `_checksum`, or JSON `null` when the provider returns 404. The
 route retains its five-minute request-cache middleware. FE uses this endpoint
 as fallback for its address-only picker.
+
+`POST /alchemy-proxy/contracts` accepts up to 50 Ethereum contract addresses
+and deduplicates case variants before lookup. It returns `{ contracts: [...] }`
+with checksummed addresses, chain, and provider metadata including `_checksum`.
+Provider 404 produces null metadata; other failures remain per-contract errors
+so successful entries are preserved. Lookups run at most ten at a time with
+five-second timeouts and no retries. A 20-second lookup scheduling budget
+reserves time for initialization and response handling within the API Lambda's
+30-second timeout. Once another full lookup cannot fit, remaining entries
+receive per-contract 504 errors while completed results are preserved.
+Responses use `Cache-Control: no-store`.
+The bounded lookup client reuses centralized Alchemy configuration and is
+cached per shared client. Provider initialization failures are logged and
+return HTTP 500 before individual lookups. Invalid provider payloads are
+reported as per-contract lookup failures.
+This completes the fallback used by the desktop xTDH Granted list without
+requiring a desktop update. Its OpenAPI path overrides the `/api` server base
+because the existing proxy router is mounted at the root.
 
 Collection-name search is retired: `GET /alchemy-proxy/collections` returns
 HTTP 410 with `Cache-Control: no-store` and the error message
@@ -1485,11 +1519,13 @@ Most long-running scheduled jobs have reserved concurrency set low, usually `1`,
 
 Production CI notifications also feed the release-note queue; staging notifications never carry release-note fields. The API first posts the normal CI status drop. For a successful production notification with an allowlisted repository prompt path, it accepts either the legacy single release group or a v2 array of PR-scoped groups and enqueues one message per group. The queue defers initial delivery for 15 seconds so GitHub can settle the notifying workflow before validation. Each group contains its merged PR number and complete canonical service set, so one service deployment may update multiple overlapping PR groups. Frontend and Desktop publishes are one-service groups. Each successful backend service deploy records its workflow run under the merged PR number; runs may use different descendant SHAs. Every applicable successful service persists the group-level publish request, so no particular service or completion order owns finalization. The canonical completed-service set gates generation. Redis retains that group coordination and supplies a short-lived publication mutex, while MySQL owns durable run-range publication state.
 
-`releaseNotesGenerationLoop` validates the completed successful GitHub run, then freezes its baseline in `release_note_publications` from the per-workflow cursor in `release_note_stream_states`. A trusted notifying run that GitHub still reports as queued or in progress remains retryable, because the success-notification step can finish just before GitHub settles the enclosing workflow. Immutable run identity, SHA, workflow, branch, and terminal-conclusion mismatches still fail closed. Only an empty stream performs workflow-history bootstrap: it requests newest-first pages of 100 runs without GitHub's broken status, conclusion, or branch filters, validates production status, workflow identity, and branch locally, and fails closed after 1,000 candidates. Completing all parts, or determining that the range contains no PRs, advances the stream cursor in the same transaction that completes the publication. A partial or failed publication leaves the cursor unchanged and blocks later runs in that stream until it resumes. The worker loads the reviewed prompt from the deployed repository SHA and calls Amazon Bedrock using `RELEASE_NOTES_BEDROCK_MODEL_ID` or the Claude Sonnet 4.5 US geo inference profile by default. A Bedrock system instruction treats the tagged release context as untrusted data and rejects instructions embedded in pull requests, commits, or filenames. Frontend PR discovery follows only first-parent mainline commits between production SHAs, while contributor enrichment still loads every commit author and committer from each selected PR. Backend and Frontend notes resolve configured GitHub contributors to 6529 profile mentions and render deterministic repository-specific headings and service links. Backend headings include every distinct grouped workflow run number as a link, ordered by run number. Genuine large releases are published in resumable groups of at most 20 PRs, with a distinct deterministic metadata id for every part. Desktop notes are requested only by the production `Publish` flow after its S3 download pages exist. They retain the Core first-parent change history so imported Frontend history is not summarized twice and resolve the exact Frontend release-note drop from the renderer-source SHA. New release drops carry repository, SHA, run, and deployment metadata; historical Frontend notes are matched only when their content contains the exact full commit URL. Desktop output has a deterministic heading, Frontend release link, and platform download links around compact model-generated user-facing bullets, with no PR or contributor lines.
+`releaseNotesGenerationLoop` validates the completed successful GitHub run, then freezes its baseline in `release_note_publications` from the per-workflow cursor in `release_note_stream_states`. A trusted notifying run that GitHub still reports as queued or in progress remains retryable, because the success-notification step can finish just before GitHub settles the enclosing workflow. Immutable run identity, SHA, workflow, branch, and terminal-conclusion mismatches still fail closed. Only an empty stream performs workflow-history bootstrap: it requests newest-first pages of 100 runs without GitHub's broken status, conclusion, or branch filters, validates production status, workflow identity, and branch locally, and fails closed after 1,000 candidates. Completing all parts, or determining that the range contains no PRs, advances the stream cursor in the same transaction that completes the publication. A partial or failed publication leaves the cursor unchanged and blocks later runs in that stream until it resumes. The worker loads the reviewed prompt from the deployed repository SHA and calls Amazon Bedrock using `RELEASE_NOTES_BEDROCK_MODEL_ID` or the Claude Sonnet 5.5 US geo inference profile (`us.anthropic.claude-sonnet-5-5`, medium effort, no sampling parameters) by default. A Bedrock system instruction treats the tagged release context as untrusted data and rejects instructions embedded in pull requests, commits, or filenames. Frontend PR discovery follows only first-parent mainline commits between production SHAs, while contributor enrichment still loads every commit author and committer from each selected PR. Backend and Frontend notes resolve configured GitHub contributors to 6529 profile mentions and render deterministic repository-specific headings and service links. Backend headings include every distinct grouped workflow run number as a link, ordered by run number. Genuine large releases are published in resumable groups of at most 20 PRs, with a distinct deterministic metadata id for every part. Desktop notes are requested only by the production `Publish` flow after its S3 download pages exist. They retain the Core first-parent change history so imported Frontend history is not summarized twice and resolve the exact Frontend release-note drop from the renderer-source SHA. New release drops carry repository, SHA, run, and deployment metadata; historical Frontend notes are matched only when their content contains the exact full commit URL. Desktop output has a deterministic heading, Frontend release link, and platform download links around compact model-generated user-facing bullets, with no PR or contributor lines.
 
 Deploy `dbMigrationsLoop` first so TypeORM creates the durable release-note tables, then deploy `releaseNotesGenerationLoop`, which depends on those tables.
 
-All notes publish to `CI_RELEASES_WAVE_ID` as the profile configured by `CI_PIPELINES_BOT_PROFILE_ID`. Each published drop or multi-part batch carries a deterministic release-note metadata id. The worker reconciles those drop receipts with `next_part`, so a crash after drop creation but before the publication progress update still resumes without duplicating the part. Redis is required; PR-scoped group, publish-request, and dedupe state is retained for 7 days. The deterministic metadata on published drops remains the durable PR-scoped publication receipt, while MySQL is the durable publication and stream authority for non-PR releases. The processing lock lasts four minutes, shorter than the five-minute SQS visibility timeout, uses an owner token for release, and lock contention fails the invocation so SQS retains the message. Before starting another part, the worker leaves a 45-second Lambda budget and retries cleanly instead of relying on the three-minute hard timeout. A failed Desktop queue handoff immediately posts a normal production CI failure with the shared 🚨 heading and `@devs6529` mention. Deterministic queued failures post that same class of alert to `CI_PIPELINES_PROD_WAVE_ID`, report to Sentry, and stop retrying once the alert succeeds. Transient Desktop failures retain three SQS retries and post the terminal alert on attempt four; an alert-delivery failure uses the fifth receive to fail closed into the DLQ. Transient Backend and Frontend failures use four SQS retries, post the terminal production alert on attempt five, and then move to the DLQ. Malformed messages and GitHub run-metadata mismatches that cannot supply trusted run metadata are reported to Sentry and drained without attempting a CI alert.
+Desktop notes publish to the public Releases wave `CI_RELEASES_WAVE_ID`. Backend and Frontend deploy notes publish to the production deploy feed `CI_PIPELINES_PROD_WAVE_ID` ("Deploys · Production"); receipt lookups also check `CI_RELEASES_WAVE_ID`, where those notes were published before the split, and Desktop notes link the Frontend note from whichever of the two waves holds it. All notes post as the profile configured by `CI_PIPELINES_BOT_PROFILE_ID`. Before each Backend or Frontend part is posted, its summarized pull requests are upserted into `release_digest_entries` for the daily digest; regenerated parts refresh their text but never release an entry a digest already claimed. Each published drop or multi-part batch carries a deterministic release-note metadata id. The worker reconciles those drop receipts with `next_part`, so a crash after drop creation but before the publication progress update still resumes without duplicating the part. Redis is required; PR-scoped group, publish-request, and dedupe state is retained for 7 days. The deterministic metadata on published drops remains the durable PR-scoped publication receipt, while MySQL is the durable publication and stream authority for non-PR releases. The processing lock lasts four minutes, shorter than the five-minute SQS visibility timeout, uses an owner token for release, and lock contention fails the invocation so SQS retains the message. Before starting another part, the worker leaves a 45-second Lambda budget and retries cleanly instead of relying on the three-minute hard timeout. A failed Desktop queue handoff immediately posts a normal production CI failure with the shared 🚨 heading and `@devs6529` mention. Deterministic queued failures post that same class of alert to `CI_PIPELINES_PROD_WAVE_ID`, report to Sentry, and stop retrying once the alert succeeds. Transient Desktop failures retain three SQS retries and post the terminal alert on attempt four; an alert-delivery failure uses the fifth receive to fail closed into the DLQ. Transient Backend and Frontend failures use four SQS retries, post the terminal production alert on attempt five, and then move to the DLQ. Malformed messages and GitHub run-metadata mismatches that cannot supply trusted run metadata are reported to Sentry and drained without attempting a CI alert.
+
+`releaseDigestLoop` publishes one daily digest to `CI_RELEASES_WAVE_ID` at 23:30 UTC (before the 00:00 UTC Daily Post), as the CI bot profile. A scheduled run uses its EventBridge event time as the cutoff and its UTC date as the digest key, so retries repeat the same digest. In one transaction it creates the `release_digests` row for that key and claims every unclaimed `release_digest_entries` row deployed up to the cutoff (at most 200); an existing row for the key is reused, and no row is created when nothing is waiting. Before claiming, it finishes any earlier digest left `PENDING`. Generation calls Bedrock with `RELEASE_DIGEST_BEDROCK_MODEL_ID` or Claude Sonnet 5.5 by default, using schema-constrained JSON and the plain-language style in `src/release-notes/release-digest.prompt.ts`; code renders the heading, counts, sections, contributor credits and the link to the deploy feed. Model output may only reference supplied entry ids, and any entry the model omits is counted as behind-the-scenes work. After two failed generations it posts a plain one-line-per-change fallback. The drop carries `release_digest_id` metadata as its durable receipt, so a crash between posting and marking the digest published reconciles without a second post. Manual invocations accept `digest_key` (`YYYY-MM-DD` with an optional suffix) and `dry_run: true`, which returns the rendered text without claiming or posting. The function deploys only to production; deploy `dbMigrationsLoop` before `releaseNotesGenerationLoop` and `releaseDigestLoop` so the digest tables exist.
 
 Wave Score refreshes use a hybrid DB-backed/SQS pattern. Request-path mutations write `wave_score_refresh_requests` rows inside the same primary-DB transaction as the drop, rating, or subscription change, then publish a small wakeup message to `wave-score-refresh-dirty.fifo` after commit. `waveScoreRefreshLoop` drains dirty rows from the write pool, recalculates scores, and deletes a row only if its selected `(wave_id, dirty_at)` version still matches, so a wave dirtied again during processing remains queued. A one-minute EventBridge fallback invokes the same dirty drain in case enqueueing fails after the transaction commits.
 
@@ -1614,6 +1650,18 @@ changing alert or dirty state, while
 `SUBSCRIPTION_COVERAGE_BASELINE_ONLY=true` persists state but emits nothing.
 No request cache is used for the coverage read boundary, so a confirmed top-up
 or redemption can be reflected immediately.
+
+`delegationsLoop` also supports the explicit maintenance payload in staging and production
+`{"action":"reconsolidate","wallets":["<Ethereum address>"]}`. It expands
+requested seeds through old persisted and current confirmed groups, runs the
+same partial reconsolidation pipeline as chain-event handling, then updates
+affected primary addresses. It does not scan chain events or advance the
+delegation-indexing checkpoint. Scheduled indexing remains unchanged; there is
+no persistent action flag or new public API. See
+[on-demand reconsolidation](delegations-reconsolidation.md) for validation,
+completion semantics and AWS IAM invocation permissions. This action does not
+depend on mutable Sentry environment labels, including when AWS reuses a runtime
+that has already loaded regional secrets.
 
 `xTdhLoop` uses a two-phase FIFO queue flow. A full nightly TDH run relies only
 on the TDH completion SNS topic, published after the remaining TDH work
@@ -1763,6 +1811,15 @@ sequentially in dependency order, with each run observed to completion before
 the next dispatch. The service catalog records allowed environments and
 default dependencies. The workflow's environment concurrency avoids overlapping
 backend deployment runs; it does not create a cross-repository scheduler.
+
+Backend deployment uses separate IAM roles through GitHub OIDC in the
+`staging` and `production` GitHub environments, restricted to `1a-staging` and
+`main` respectively. Each environment's `AWS_DEPLOY_ROLE_ARN` selects its role;
+missing configuration stops the run. Both environments use temporary role
+credentials without a static-key fallback. The scoped deployment policies and
+infrastructure boundaries are documented in
+[`ops/iam/backend-staging`](../ops/iam/backend-staging/README.md) and
+[`ops/iam/backend-production`](../ops/iam/backend-production/README.md).
 
 Frontend staging continues to deploy automatically on application/workflow
 pushes to `1a-staging`; frontend production is dispatched through
@@ -2093,3 +2150,50 @@ interval and now redrive after five receives to `xtdh-dead-letter.fifo`. Dead le
 are retained for 14 days and have a visible-message CloudWatch alarm on the existing
 alarm topic. Repeated consolidation drift therefore cannot block the FIFO group
 until source retention expires. Deploying `xTdhLoop` also provisions these resources.
+
+### Transfer reconciliation after late indexing
+
+Independent contract indexers atomically queue per-wallet `owners` and `activity`
+refreshes alongside transfer upserts in `transfer_reconciliations`. Ownership and
+activity consumers combine those durable requests with normal block selection,
+rebuild from primary transfer history, and acknowledge only the consumed revision
+after raw and consolidated publication. Ownership then queues `balances` refreshes
+for `ownersBalancesLoop`. An IAM-only `repair-wallets` action on `nftOwnersLoop`
+queues bounded repair of previously missed transfers without running calculations.
+Schema sync precedes consumers, which precede transaction producers. See
+[late-indexed transfer reconciliation](transfer-reconciliation.md) for deployment
+order, retry/concurrency guarantees, repair and limits.
+
+## Consolidation activation policy
+
+Delegation-driven partial TDH refreshes rank the complete current wallet/group
+universe so changed members also update unaffected owners' rank positions.
+Partial raw, consolidated, historic and per-NFT persistence uses sequential
+TypeORM upserts of at most 500 rows through the existing transaction managers.
+MySQL matches composite primary keys directly, avoiding ORM bigint string/number
+mismatches and loaded-entity scans. The insert query builders disable entity
+hydration, so returned default values cannot reassign input keys before those
+rows are reused for historical persistence.
+Batch failures propagate to those managers and roll back the scoped deletes and
+earlier writes; batching adds no transaction or publication boundary. Full TDH
+and historical replay retain their bulk-insert persistence paths. Verify partial
+refresh runtime separately from the full calculation; see [TDH ranking
+parity](./tdh-ranking.md).
+
+When consolidation links simultaneously split and merge old groups, profile
+retention is resolved for all resulting identities before merging profile data.
+A profile retained by another resulting identity is excluded from merge sources;
+its profile row and related data stay with that identity. Every resulting
+registered identity refreshes metadata from its own surviving profile, including
+when all potential merge sources were excluded. Pure merges and the existing
+mature-primary/highest-TDH split retention rules remain unchanged.
+
+`CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT` is required by settings and consolidation grouping after environment preparation. It is a valid ISO UTC datetime at whole-second precision. The regional `prod/lambdas` configuration is distinct in staging (`eu-west-1`) and production (`us-east-1`); do not select it from `NODE_ENV`, which is production in both. Local runs supply the same key in their normal environment file.
+
+The grouping resolver and `GET /api/settings` use the same value. Settings expose `consolidation.max_wallets` (4) and `ungated_max_wallets` (3), sourced from the existing backend constants, plus `four_wallet_activation_at` and `four_wallet_signing_opens_at` (derived ten minutes later). The limits are fixed backend policy, not new secret/configuration knobs; FE and native Core consume them instead of maintaining duplicate constants. No deployment-date fallback is supplied. Missing or malformed configuration fails the settings/grouping operation before writing a grouping result. Warm processes retain loaded regional configuration; restart affected services after changing it, verify `/api/settings`, and refresh existing browser sessions. A policy change requires full reconsolidation/TDH recalculation so persisted results match the new cutoff.
+
+The runtime grouping callers are `api` (`db-api.fetchConsolidationsForWallet`), `tdhLoop` (`tdh.ts` and `tdh_consolidation.ts`) and `delegationsLoop` (affected-wallet grouping and the TDH functions it invokes). The two loop handlers enter `doInDbContext`, which awaits `prepEnvironment` before work; the API initializes local configuration and its optional regional secret before wiring/serving routes. The singleton constructor captures a resolver without reading configuration at import time. Other imports such as `tdhHistoryLoop` only build deterministic consolidation keys and do not resolve policy.
+
+The required key must be present and valid for all three runtimes in both regions before rollout. In particular, an unconfigured API fails the whole `/api/settings` response, not just consolidation setup. This is the agreed fail-closed policy, not a nullable-settings fallback. Configuration presence has to be verified as a deployment prerequisite; source inspection is not proof that a live secret contains the value.
+
+Configure production as `2026-10-15T00:00:00Z` and staging with its intended earlier cutoff before deployment. Schema sync still precedes the delegation indexer, TDH loop and API. Both environments index the same mainnet contract: staging registrations are real registrations, and pre-production-cutoff links require renewed consent after the production cutoff.

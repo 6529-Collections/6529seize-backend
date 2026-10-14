@@ -1,0 +1,135 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageDeploymentArtifacts2",
+      "Effect": "Allow",
+      "Action": [
+        "s3:AbortMultipartUpload",
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:GetObject",
+        "s3:GetObjectTagging",
+        "s3:GetObjectVersion",
+        "s3:ListMultipartUploadParts",
+        "s3:PutObject",
+        "s3:PutObjectTagging"
+      ],
+      "Resource": [
+        "arn:aws:s3:::dbdumpsdaily-prod-serverlessdeploymentbucket-m05jr5yv4xqo/*",
+        "arn:aws:s3:::dbmigrationsloop-prod-serverlessdeploymentbucket-ymgjgvj6em9h/*",
+        "arn:aws:s3:::delegationsloop-prod-serverlessdeploymentbucket-9i4hmiaxedbx/*",
+        "arn:aws:s3:::discoverensloop-prod-serverlessdeploymentbucket-79jeqcz0eack/*",
+        "arn:aws:s3:::dropmediasanitizer-prod-serverlessdeploymentbucket-udyo9b7o7tbv/*",
+        "arn:aws:s3:::ethpriceloop-prod-serverlessdeploymentbucket-j7cggftr4e6z/*",
+        "arn:aws:s3:::externalcollectionlivetai-serverlessdeploymentbuck-rayfqc8xuiir/*",
+        "arn:aws:s3:::externalcollectionsnapsho-serverlessdeploymentbuck-e3r1k90ybfur/*",
+        "arn:aws:s3:::helpbotreplyloop-prod-serverlessdeploymentbucket-9afsmcdkn7i9/*",
+        "arn:aws:s3:::marketdepthstreamloop-pro-serverlessdeploymentbuck-t1s0jm3yczv4/*",
+        "arn:aws:s3:::marketstatsloop-prod-serverlessdeploymentbucket-6gp6pyhadcmo/*",
+        "arn:aws:s3:::mintannouncementsloop-pro-serverlessdeploymentbuck-svsuv4addqkm/*",
+        "arn:aws:s3:::newsletterloop-prod-serverlessdeploymentbucket-bnuiv4v6i5ys/*",
+        "arn:aws:s3:::nextgencontractloop-prod-serverlessdeploymentbucke-pptfw38madni/*",
+        "arn:aws:s3:::nextgenmediaimageresoluti-serverlessdeploymentbuck-ijlsqsuratt0/*",
+        "arn:aws:s3:::nextgenmediauploader-prod-serverlessdeploymentbuck-w8kshrkitzsb/*",
+        "arn:aws:s3:::nextgenmetadataloop-prod-serverlessdeploymentbucke-1ohljkw21awr/*",
+        "arn:aws:s3:::nfthistoryloop-prod-serverlessdeploymentbucket-rixk0nzap3hn/*",
+        "arn:aws:s3:::nftlinkmediapreviewloop-p-serverlessdeploymentbuck-tcgkhkiaksrz/*",
+        "arn:aws:s3:::nftlinkrefresherloop-prod-serverlessdeploymentbuck-0vs7j3dgoppn/*",
+        "arn:aws:s3:::nftownersloop-prod-serverlessdeploymentbucket-z2wdnuvom9ou/*",
+        "arn:aws:s3:::nftsloop-prod-serverlessdeploymentbucket-d02n37almwnq/*",
+        "arn:aws:s3:::overratesrevocationloop-p-serverlessdeploymentbuck-dug4116hjiyf/*",
+        "arn:aws:s3:::ownersbalancesloop-prod-serverlessdeploymentbucket-mhj7hjtwj2im/*",
+        "arn:aws:s3:::populatehistoricconsolida-serverlessdeploymentbuck-mluw58oig0eh/*",
+        "arn:aws:s3:::pushnotificationshandler--serverlessdeploymentbuck-f3exlxdc6tnh/*",
+        "arn:aws:s3:::rateeventprocessingloop-p-serverlessdeploymentbuck-swcufk4ov3dc/*",
+        "arn:aws:s3:::refreshens-prod-serverlessdeploymentbucket-aachoms38h6s/*",
+        "arn:aws:s3:::releasedigestloop-prod-serverlessdeploymentbucket-6aqmkhghtb6f/*",
+        "arn:aws:s3:::releasenotesgenerationloo-serverlessdeploymentbuck-joe4pdhfjoyc/*",
+        "arn:aws:s3:::rememesloop-prod-serverlessdeploymentbucket-innipj1s5m2v/*",
+        "arn:aws:s3:::royaltiesloop-prod-serverlessdeploymentbucket-dqmcidzreqrh/*",
+        "arn:aws:s3:::s3uploader-prod-serverlessdeploymentbucket-v4kcop2g1c7i/*",
+        "arn:aws:s3:::subscriptionsdaily-prod-serverlessdeploymentbucket-opevrcn0mtht/*",
+        "arn:aws:s3:::subscriptionstopuploop-pr-serverlessdeploymentbuck-lxycqh1lpfa3/*",
+        "arn:aws:s3:::tdhhistoryloop-prod-serverlessdeploymentbucket-h0esxb6b13kt/*",
+        "arn:aws:s3:::tdhloop-prod-serverlessdeploymentbucket-kkowh9plg0je/*",
+        "arn:aws:s3:::teamloop-prod-serverlessdeploymentbucket-fqqimp5ibvr0/*",
+        "arn:aws:s3:::transactionsloop-prod-serverlessdeploymentbucket-ori2pn1fld3o/*",
+        "arn:aws:s3:::transactionsprocessingloo-serverlessdeploymentbuck-gycb4oq6wiwy/*",
+        "arn:aws:s3:::wavedecisionexecutionloop-serverlessdeploymentbuck-hl2ls8n3gcag/*",
+        "arn:aws:s3:::wavedropmetricsrefreshloo-serverlessdeploymentbuck-dfpwbsmvegx6/*",
+        "arn:aws:s3:::waveleaderboardsnapshotte-serverlessdeploymentbuck-ld5ty3bl2hce/*",
+        "arn:aws:s3:::wavescorerefreshloop-prod-serverlessdeploymentbuck-qxuwvhyosren/*",
+        "arn:aws:s3:::xtdhgrantsreviewerloop-pr-serverlessdeploymentbuck-cf2pel3qwxzs/*",
+        "arn:aws:s3:::xtdhloop-prod-serverlessdeploymentbucket-x0ofhwkkmnhy/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "CheckPrivateIngestBucket1",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::6529-drop-media-ingest-987989283142"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": [
+            "eu-west-1",
+            "us-east-1"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ManageApprovedLogGroups1",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:DeleteMetricFilter",
+        "logs:DeleteRetentionPolicy",
+        "logs:DescribeMetricFilters",
+        "logs:ListTagsForResource",
+        "logs:ListTagsLogGroup",
+        "logs:PutMetricFilter",
+        "logs:PutRetentionPolicy",
+        "logs:TagLogGroup",
+        "logs:TagResource",
+        "logs:UntagLogGroup",
+        "logs:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/aggregatedActivityLoop",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/artCurationNftWatchLoop",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/artworkDocumentationProcessor",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/attachmentsOrchestrator",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/attachmentsProcessor",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/claimsBuilder",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/claimsMediaArweaveUploader",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/competitionMigrationLoop",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/customReplayLoop",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/dbDumpsDaily",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/dbMigrationsLoop",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/delegationsLoop",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/discoverEnsLoop",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/dropMediaSanitizer",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/ethPriceLoop",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/externalCollectionLiveTailingLoop",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/externalCollectionSnapshottingLoop"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    }
+  ]
+}

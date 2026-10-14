@@ -1,0 +1,125 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageDeploymentBucketConfiguration2",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:DeleteBucketPolicy",
+        "s3:GetBucketAcl",
+        "s3:GetBucketLocation",
+        "s3:GetBucketOwnershipControls",
+        "s3:GetBucketPolicy",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketTagging",
+        "s3:GetBucketVersioning",
+        "s3:GetEncryptionConfiguration",
+        "s3:ListBucket",
+        "s3:ListBucketMultipartUploads",
+        "s3:ListBucketVersions",
+        "s3:PutBucketAcl",
+        "s3:PutBucketOwnershipControls",
+        "s3:PutBucketPolicy",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketTagging",
+        "s3:PutBucketVersioning",
+        "s3:PutEncryptionConfiguration"
+      ],
+      "Resource": [
+        "arn:aws:s3:::customreplayloop-staging-serverlessdeploymentbucke-7rqnhflqsbme",
+        "arn:aws:s3:::dbdumpsdaily-staging-serverlessdeploymentbucket-zvw3w9rhwbkb",
+        "arn:aws:s3:::dbmigrationsloop-staging-serverlessdeploymentbucke-ttbizns358sm",
+        "arn:aws:s3:::delegationsloop-staging-serverlessdeploymentbucket-ym7rhz7wep1t",
+        "arn:aws:s3:::discoverensloop-staging-serverlessdeploymentbucket-fetnrmpt4udk",
+        "arn:aws:s3:::dropmediaingeststorage-st-serverlessdeploymentbuck-nos3mioyveah",
+        "arn:aws:s3:::dropmediasanitizer-stagin-serverlessdeploymentbuck-ixqb0lkjhov1",
+        "arn:aws:s3:::dropvideoconversioninvoke-serverlessdeploymentbuck-uavyiopppbya",
+        "arn:aws:s3:::ethpriceloop-staging-serverlessdeploymentbucket-axpe6qk5eb8l",
+        "arn:aws:s3:::externalcollectionlivetai-serverlessdeploymentbuck-hn4wr37khh7q",
+        "arn:aws:s3:::externalcollectionsnapsho-serverlessdeploymentbuck-3nslhecnt3qb",
+        "arn:aws:s3:::helpbotreplyloop-staging-serverlessdeploymentbucke-c47wybskhqpi",
+        "arn:aws:s3:::marketdepthstreamloop-sta-serverlessdeploymentbuck-3rita1fvnqee",
+        "arn:aws:s3:::marketstatsloop-staging-serverlessdeploymentbucket-1k8em1wdzaaq",
+        "arn:aws:s3:::mintannouncementsloop-sta-serverlessdeploymentbuck-sggfsqmy4v9s",
+        "arn:aws:s3:::nextgencontractloop-stagi-serverlessdeploymentbuck-b0qwu3rtyzaq",
+        "arn:aws:s3:::nextgenmetadataloop-stagi-serverlessdeploymentbuck-7ehe6mhuzynf",
+        "arn:aws:s3:::nfthistoryloop-staging-serverlessdeploymentbucket-4dqkgbehcntd",
+        "arn:aws:s3:::nftlinkmediapreviewloop-s-serverlessdeploymentbuck-rfs9yiwy1hkz",
+        "arn:aws:s3:::nftlinkrefresherloop-stag-serverlessdeploymentbuck-p5uf8adjjqh2",
+        "arn:aws:s3:::nftownersloop-staging-serverlessdeploymentbucket-xvxhejifbsip",
+        "arn:aws:s3:::nftsloop-staging-serverlessdeploymentbucket-36bzacylacdu",
+        "arn:aws:s3:::overratesrevocationloop-s-serverlessdeploymentbuck-ravn341wxxpn",
+        "arn:aws:s3:::ownersbalancesloop-stagin-serverlessdeploymentbuck-6dd6afjksdob",
+        "arn:aws:s3:::populatehistoricconsolida-serverlessdeploymentbuck-1odwqwqacxyn",
+        "arn:aws:s3:::pushnotificationshandler--serverlessdeploymentbuck-piqnizu2ope6",
+        "arn:aws:s3:::rateeventprocessingloop-s-serverlessdeploymentbuck-4a3ow9anzow7",
+        "arn:aws:s3:::refreshens-staging-serverlessdeploymentbucket-0uiix1hdytsw",
+        "arn:aws:s3:::rememesloop-staging-serverlessdeploymentbucket-leio6if6y8sz",
+        "arn:aws:s3:::royaltiesloop-staging-serverlessdeploymentbucket-dbpd2bovgj35",
+        "arn:aws:s3:::s3uploader-staging-serverlessdeploymentbucket-deihquzmnrvc",
+        "arn:aws:s3:::subscriptionsdaily-stagin-serverlessdeploymentbuck-ukdxesdq8h2k",
+        "arn:aws:s3:::subscriptionstopuploop-st-serverlessdeploymentbuck-6wevbdveh36g",
+        "arn:aws:s3:::tdhhistoryloop-staging-serverlessdeploymentbucket-jsxfpqluony1",
+        "arn:aws:s3:::tdhloop-staging-serverlessdeploymentbucket-fmnxatvz5n7n",
+        "arn:aws:s3:::teamloop-staging-serverlessdeploymentbucket-8kzcl5zvu8h9",
+        "arn:aws:s3:::transactionsloop-staging-serverlessdeploymentbucke-1fkbe3f7wx07",
+        "arn:aws:s3:::transactionsprocessingloo-serverlessdeploymentbuck-ny2uo8biay02",
+        "arn:aws:s3:::wavedecisionexecutionloop-serverlessdeploymentbuck-lmlgat5cqiig",
+        "arn:aws:s3:::wavedropmetricsrefreshloo-serverlessdeploymentbuck-donbdbtuasru",
+        "arn:aws:s3:::waveleaderboardsnapshotte-serverlessdeploymentbuck-x5mdth10pdfq",
+        "arn:aws:s3:::wavescorerefreshloop-stag-serverlessdeploymentbuck-z1igizswlogc",
+        "arn:aws:s3:::websocketoutboundhandler--serverlessdeploymentbuck-d7lkawpjqi9q",
+        "arn:aws:s3:::xtdhgrantsreviewerloop-st-serverlessdeploymentbuck-mvvi5eyaoiei",
+        "arn:aws:s3:::xtdhloop-staging-serverlessdeploymentbucket-fqz8zrexn9z4"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    },
+    {
+      "Sid": "ManageDeploymentArtifacts1",
+      "Effect": "Allow",
+      "Action": [
+        "s3:AbortMultipartUpload",
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion",
+        "s3:GetObject",
+        "s3:GetObjectTagging",
+        "s3:GetObjectVersion",
+        "s3:ListMultipartUploadParts",
+        "s3:PutObject",
+        "s3:PutObjectTagging"
+      ],
+      "Resource": [
+        "arn:aws:s3:::aggregatedactivityloop-st-serverlessdeploymentbuck-78lm9goxh37m/*",
+        "arn:aws:s3:::artcurationnftwatchloop-s-serverlessdeploymentbuck-m2kvichwrnms/*",
+        "arn:aws:s3:::artworkdocumentationproce-serverlessdeploymentbuck-sfiw93auexqz/*",
+        "arn:aws:s3:::artworkdocumentationstora-serverlessdeploymentbuck-umo42stvph0j/*",
+        "arn:aws:s3:::attachmentsorchestrator-s-serverlessdeploymentbuck-akocdridzwap/*",
+        "arn:aws:s3:::attachmentsprocessor-stag-serverlessdeploymentbuck-hkl8fax8akdl/*",
+        "arn:aws:s3:::claimsbuilder-staging-serverlessdeploymentbucket-on3mpwjgda9g/*",
+        "arn:aws:s3:::claimsmediaarweaveuploade-serverlessdeploymentbuck-2e6uoihpqyln/*",
+        "arn:aws:s3:::competitionmigrationloop--serverlessdeploymentbuck-t0tw1odesgdq/*",
+        "arn:aws:s3:::customreplayloop-staging-serverlessdeploymentbucke-7rqnhflqsbme/*",
+        "arn:aws:s3:::dbdumpsdaily-staging-serverlessdeploymentbucket-zvw3w9rhwbkb/*",
+        "arn:aws:s3:::dbmigrationsloop-staging-serverlessdeploymentbucke-ttbizns358sm/*",
+        "arn:aws:s3:::delegationsloop-staging-serverlessdeploymentbucket-ym7rhz7wep1t/*",
+        "arn:aws:s3:::discoverensloop-staging-serverlessdeploymentbucket-fetnrmpt4udk/*",
+        "arn:aws:s3:::dropmediaingeststorage-st-serverlessdeploymentbuck-nos3mioyveah/*",
+        "arn:aws:s3:::dropmediasanitizer-stagin-serverlessdeploymentbuck-ixqb0lkjhov1/*",
+        "arn:aws:s3:::dropvideoconversioninvoke-serverlessdeploymentbuck-uavyiopppbya/*",
+        "arn:aws:s3:::ethpriceloop-staging-serverlessdeploymentbucket-axpe6qk5eb8l/*",
+        "arn:aws:s3:::externalcollectionlivetai-serverlessdeploymentbuck-hn4wr37khh7q/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-1"
+        }
+      }
+    }
+  ]
+}

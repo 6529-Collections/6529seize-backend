@@ -223,6 +223,18 @@ function sanitizeAlertText(value: string): string {
     .trim();
 }
 
+function formatAlertDescription(
+  request: CiPipelineAlertRequest
+): string | null {
+  const description = normalizeOptionalValue(request.description);
+  if (!description) return null;
+  const formatted =
+    request.status === 'failure'
+      ? description.split(/\r?\n/).map(sanitizeAlertText).join('\n')
+      : sanitizeAlertText(description);
+  return truncate(formatted, MAX_ALERT_DESCRIPTION_LENGTH);
+}
+
 function formatAlertHeading(request: CiPipelineAlertRequest): string {
   const environmentPrefix = formatEnvironmentPrefix(request.environment);
   const statusEmoji = formatStatusEmoji(request.status);
@@ -368,6 +380,24 @@ function getRunLabelParts(request: CiPipelineAlertRequest): {
 
 function isWebE2EAlert(request: CiPipelineAlertRequest): boolean {
   return request.alert_type === 'web_e2e';
+}
+
+// Staging E2E does not gate releases, so its failures notify only the targeted
+// validator/deploy initiator. Every other failure still pings the dev group.
+function shouldMentionDevsOnFailure(request: CiPipelineAlertRequest): boolean {
+  if (request.status !== 'failure') {
+    return false;
+  }
+  return !(
+    isWebE2EAlert(request) &&
+    normalizeTargetEnvironment(request.environment) === 'staging'
+  );
+}
+
+function formatDevsMentionLines(request: CiPipelineAlertRequest): string[] {
+  return shouldMentionDevsOnFailure(request)
+    ? ['', `cc ${DEVS_6529_MENTION}`]
+    : [];
 }
 
 function isSuccessfulWebDeployAlert(request: CiPipelineAlertRequest): boolean {
@@ -769,15 +799,11 @@ export class CiPipelineAlertService {
     request: CiPipelineAlertRequest,
     mentions: AlertMentions
   ): string {
-    const failureMentionLines =
-      request.status === 'failure' ? ['', `cc ${DEVS_6529_MENTION}`] : [];
+    const failureMentionLines = formatDevsMentionLines(request);
 
     const branch = normalizeOptionalValue(request.branch);
     const commit = formatCommit(request);
-    const description = normalizeOptionalValue(request.description);
-    const formattedDescription = description
-      ? truncate(sanitizeAlertText(description), MAX_ALERT_DESCRIPTION_LENGTH)
-      : null;
+    const formattedDescription = formatAlertDescription(request);
     const triggeredBy = formatInitiator(mentions);
     const lines = [
       formatAlertHeading(request),
@@ -815,11 +841,11 @@ export class CiPipelineAlertService {
       mentions.deployInitiator !== null &&
       mentions.deployInitiator.profileId !== mentions.triggeredBy?.profileId;
     const validationPack = normalizeOptionalValue(request.validation_pack);
+    const description = formatAlertDescription(request);
     const commit = deployTarget
       ? formatCommit(request, deployTarget.sha)
       : null;
-    const failureMentionLines =
-      request.status === 'failure' ? ['', `cc ${DEVS_6529_MENTION}`] : [];
+    const failureMentionLines = formatDevsMentionLines(request);
     const lines = [
       formatAlertHeading(request),
       '',
@@ -832,6 +858,7 @@ export class CiPipelineAlertService {
         : []),
       ...(commit ? [`Commit: ${commit}`] : []),
       `Run: ${formatRun(request, true)}`,
+      ...(description ? ['', description] : []),
       ...failureMentionLines
     ];
 
