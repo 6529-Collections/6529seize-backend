@@ -233,8 +233,10 @@ required for this backend PR.
    affected processes because warm secrets and provider caches persist.
 6. Later, qualify a replacement such as `rpc1.6529.io` for chain ID, historical
    state/archive depth, log range limits, rate limits, latency, batch behavior,
-   standard methods and production load. Change only `ETHEREUM_RPC_URL` for
-   the ordinary mainnet boundary; separately manage the exceptions above.
+   standard methods and production load. Archive depth is required: the
+   delegations loop reads each registration's expiry with `eth_call` at the
+   event block. Change only `ETHEREUM_RPC_URL` for the ordinary mainnet
+   boundary; separately manage the exceptions above.
 7. Roll back a provider switch by restoring the prior URL and restarting affected
    services. To roll back the code, redeploy the previous service artifacts with
    their old credentials intact. **Do not remove the new URL while migrated

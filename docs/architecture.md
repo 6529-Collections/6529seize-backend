@@ -1646,6 +1646,18 @@ changing alert or dirty state, while
 No request cache is used for the coverage read boundary, so a confirmed top-up
 or redemption can be reflected immediately.
 
+`delegationsLoop` also supports the explicit maintenance payload in staging and production
+`{"action":"reconsolidate","wallets":["<Ethereum address>"]}`. It expands
+requested seeds through old persisted and current confirmed groups, runs the
+same partial reconsolidation pipeline as chain-event handling, then updates
+affected primary addresses. It does not scan chain events or advance the
+delegation-indexing checkpoint. Scheduled indexing remains unchanged; there is
+no persistent action flag or new public API. See
+[on-demand reconsolidation](delegations-reconsolidation.md) for validation,
+completion semantics and AWS IAM invocation permissions. This action does not
+depend on mutable Sentry environment labels, including when AWS reuses a runtime
+that has already loaded regional secrets.
+
 `xTdhLoop` uses a two-phase FIFO queue flow. A full nightly TDH run relies only
 on the TDH completion SNS topic, published after the remaining TDH work
 finishes, to deliver the universe phase through `xtdh-start.fifo`. A partial TDH
