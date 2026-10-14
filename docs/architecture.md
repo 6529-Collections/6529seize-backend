@@ -2110,9 +2110,11 @@ until source retention expires. Deploying `xTdhLoop` also provisions these resou
 Delegation-driven partial TDH refreshes rank the complete current wallet/group
 universe so changed members also update unaffected owners' rank positions.
 Partial raw, consolidated, historic and per-NFT persistence uses sequential
-TypeORM saves of at most 500 rows through the existing transaction managers.
+TypeORM upserts of at most 500 rows through the existing transaction managers.
+MySQL matches composite primary keys directly, avoiding ORM bigint string/number
+mismatches and loaded-entity scans.
 Batch failures propagate to those managers and roll back the scoped deletes and
-earlier saves; batching adds no transaction or publication boundary. Full TDH
+earlier writes; batching adds no transaction or publication boundary. Full TDH
 and historical replay retain their bulk-insert persistence paths. Verify partial
 refresh runtime separately from the full calculation; see [TDH ranking
 parity](./tdh-ranking.md).

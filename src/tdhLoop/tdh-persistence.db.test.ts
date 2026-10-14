@@ -325,7 +325,7 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     return rows;
   }
 
-  it('preserves unaffected scores and persists global ranks beyond a save batch', async () => {
+  it('preserves unaffected scores and persists global ranks beyond an upsert batch', async () => {
     const unaffected = await seedUnaffectedGroups();
     const ranked = unaffected.map((row, i) => ({ ...row, tdh_rank: i + 3 }));
     await persistConsolidatedTDH(
@@ -340,7 +340,10 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
       ],
       [
         ...newEditions,
-        ...ranked.map((row) => editionRow(row.consolidation_key))
+        ...ranked.map((row) => ({
+          ...editionRow(row.consolidation_key),
+          days_held: 7
+        }))
       ],
       [
         ...newNft,
@@ -374,12 +377,16 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
       expect(row.boosted_tdh).toBe(1);
       expect(row.tdh_rank).toBe(last.tdh_rank);
     }
+    const edition = await dataSource
+      .getRepository(ConsolidatedTDHEditions)
+      .findOneByOrFail({ consolidation_key: last.consolidation_key });
+    expect(edition.days_held).toBe(7);
   });
 
   it('rolls back earlier batches and scoped deletes when a later batch fails', async () => {
     const unaffected = await seedUnaffectedGroups();
     const ranked = unaffected.map((row, i) => ({ ...row, tdh_rank: i + 3 }));
-    // A non-nullable field fails in the second save call, after the first
+    // A non-nullable field fails in the second upsert call, after the first
     // batch has inserted replacements and updated unaffected rank rows.
     ranked[ranked.length - 1].block = null as unknown as number;
 

@@ -98,7 +98,7 @@ import { identityConsolidationEffects } from './identity';
 import { Logger } from './logging';
 import { metricsRecorder } from './metrics/MetricsRecorder';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
-import { saveTdhInBatches } from '@/tdhLoop/tdh-persistence-batches';
+import { upsertTdhInBatches } from '@/tdhLoop/tdh-persistence-batches';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -1121,11 +1121,11 @@ export async function persistTDH(
             .execute();
         })
       );
-      await saveTdhInBatches(tdhRepo, tdh);
+      await upsertTdhInBatches(tdhRepo, tdh);
       logger.info(`[TDH] [SAVED WALLET ROWS ${tdh.length}]`);
-      await saveTdhInBatches(tdhMemesRepo, memesTdh);
+      await upsertTdhInBatches(tdhMemesRepo, memesTdh);
       logger.info(`[TDH] [SAVED MEMES ROWS ${memesTdh.length}]`);
-      await saveTdhInBatches(tdhEditionsRepo, tdhEditions);
+      await upsertTdhInBatches(tdhEditionsRepo, tdhEditions);
       logger.info(`[TDH] [SAVED EDITION ROWS ${tdhEditions.length}]`);
     } else {
       logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
@@ -1207,11 +1207,11 @@ export async function persistConsolidatedTDH(
         tdhEditionsRepo,
         scope.consolidationKeysToReplace
       );
-      await saveTdhInBatches(tdhRepo, tdh);
+      await upsertTdhInBatches(tdhRepo, tdh);
       logger.info(`[CONSOLIDATED TDH] [SAVED GROUP ROWS ${tdh.length}]`);
-      await saveTdhInBatches(tdhMemesRepo, memesTdh);
+      await upsertTdhInBatches(tdhMemesRepo, memesTdh);
       logger.info(`[CONSOLIDATED TDH] [SAVED MEMES ROWS ${memesTdh.length}]`);
-      await saveTdhInBatches(tdhEditionsRepo, tdhEditions);
+      await upsertTdhInBatches(tdhEditionsRepo, tdhEditions);
       logger.info(
         `[CONSOLIDATED TDH] [SAVED EDITION ROWS ${tdhEditions.length}]`
       );
@@ -1329,7 +1329,7 @@ export async function persistHistoricConsolidatedTDH(
       consolidationKeysToReplace,
       block
     );
-    await saveTdhInBatches(historicTdhRepo, tdh);
+    await upsertTdhInBatches(historicTdhRepo, tdh);
   } else {
     await historicTdhRepo.delete({ block: block });
     await insertWithoutUpdate(historicTdhRepo, tdh);
@@ -1371,7 +1371,7 @@ async function persistNftTdhWithManager(
   if (wallets) {
     logger.info(`[NFT TDH] [DELETING ${wallets.length} WALLETS]`);
     await deleteConsolidationsByKeys(nftTdhRepo, consolidationKeysToReplace!);
-    await saveTdhInBatches(nftTdhRepo, nftTdh);
+    await upsertTdhInBatches(nftTdhRepo, nftTdh);
   } else {
     logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);
     await deleteAll(nftTdhRepo);

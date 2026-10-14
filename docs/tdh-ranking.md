@@ -33,13 +33,15 @@ Only the requested wallets and their exact previous consolidation keys are
 deleted before upserting those rows; unaffected scores and memberships are
 retained. Partial calculations build token-level ranking catalogs from all
 current rows rather than only the recalculated subset.
-Partial raw, consolidated, historic and per-NFT writes save at most 500 rows per
-awaited TypeORM call, using the caller's existing transaction repository. A
-failure in any batch aborts that transaction, including the preceding scoped
-deletes and saves. Do not replace this with parallel saves or one unbounded
-`save()` of the global dataset: TypeORM matches loaded entities against save
-subjects, making a large call quadratic. Reducing the requested wallet count
-does not reduce that global ranking dataset. Table-completion logs distinguish
+Partial raw, consolidated, historic and per-NFT writes upsert at most 500 rows
+per awaited TypeORM call, using the caller's existing transaction repository.
+MySQL matches the complete composite primary key, including bigint IDs, so an
+existing edition or per-NFT row updates even when a loaded ID is a string and
+the calculated ID is a number. A failure in any batch aborts that transaction,
+including the preceding scoped deletes and writes. Sequential upserts bound
+memory and avoid TypeORM's quadratic loaded-entity matching in `save()`, while
+preserving all global rank updates. Reducing the requested wallet count does
+not reduce that global ranking dataset. Table-completion logs distinguish
 wallet/group, Meme and edition persistence.
 
 Full calculations retain their existing bulk-insert path. Persisting global
