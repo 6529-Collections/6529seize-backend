@@ -1860,7 +1860,7 @@ The worker reserves an unsigned intent under a signer row lock, persists its
 signed bytes and hash in another commit, and only then broadcasts. Pending
 reports are rechecked at the final signature commit. Candidate selection filters
 by the next unfinished action's due time and report acknowledgement before its
-20-row limit, preventing future launches from starving due work. Pending
+20-row limit, preventing future launches from starving due work. Fully missed launches stay available for manual reconciliation without occupying scheduled candidate slots. Pending
 receipts reconcile across pause/cancel, with configurable confirmations. Exceptional administrator recovery tracks
 same-nonce replacements and waits for finalized winning evidence; normal scheduling
 does not replace transactions automatically. Each subsequent action checks the latest

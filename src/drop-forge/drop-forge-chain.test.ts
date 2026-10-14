@@ -54,6 +54,14 @@ describe('Drop Forge transaction boundary', () => {
       'untracked'
     );
     provider.getTransactionCount.mockResolvedValue(0);
+    provider.estimateGas.mockRejectedValueOnce(
+      Object.assign(new Error('provider gas allowance'), {
+        code: 'INSUFFICIENT_FUNDS'
+      })
+    );
+    await expect(chain.prepare(data, data.actions[0])).rejects.toThrow(
+      'insufficient gas funds'
+    );
     provider.getBalance.mockResolvedValue(BigInt(0));
     await expect(chain.prepare(data, data.actions[0])).rejects.toThrow(
       'insufficient'
@@ -392,6 +400,22 @@ describe('Drop Forge metadata and manual observation', () => {
     jest.spyOn(chain, 'now').mockResolvedValue(7001);
     await expect(chain.verify(data, action, true)).resolves.toBeUndefined();
     expect(action.airdrop_baseline).toBe(0);
+  });
+  it('skips a matching manual metadata update against the current phase when an earlier group was missed', async () => {
+    const { chain, data, tuple } = setup();
+    const phase = data.phases[1];
+    tuple[0] = 35;
+    tuple[3] = phase.start;
+    tuple[4] = phase.end;
+    tuple[6] = phase.root;
+    tuple[7] = 'new-metadata';
+    const action = {
+      ...data.actions[0],
+      kind: 'METADATA' as const,
+      target_metadata: 'new-metadata'
+    };
+    await expect(chain.completed(data, action)).resolves.toEqual({ total: 35 });
+    expect(action.phase).toBe(1);
   });
   it('encodes metadata updates with the current mint window, root, receiver and cost preserved', async () => {
     const { chain, data, tuple } = setup();

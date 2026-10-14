@@ -153,14 +153,19 @@ export class DropForgeRepository {
               FROM JSON_TABLE(launches.data, '$.actions[*]' COLUMNS (
                 action_index FOR ORDINALITY,
                 action_state VARCHAR(16) PATH '$.state',
-                action_due BIGINT PATH '$.due'
+                action_due BIGINT PATH '$.due',
+                window_reported INT PATH '$.window_reported' NULL ON EMPTY
               )) actions
-              WHERE actions.action_state <> 'CONFIRMED'
+              WHERE actions.action_state <> 'CONFIRMED' AND COALESCE(actions.window_reported, 0) = 0
               ORDER BY actions.action_due LIMIT 1) AS next_due
            FROM ${DROP_FORGE_LAUNCHES_TABLE} launches
            WHERE (launches.state IN ('ARMED','RUNNING') OR JSON_SEARCH(launches.data, 'one', 'PENDING', NULL, '$.manual_transactions[*].state') IS NOT NULL) AND launches.report_pending = 0
          ) eligible
-         WHERE eligible.next_due IS NULL OR eligible.next_due <= :now OR JSON_SEARCH(eligible.data, 'one', 'PENDING', NULL, '$.manual_transactions[*].state') IS NOT NULL
+         WHERE (eligible.next_due IS NULL AND NOT EXISTS (
+           SELECT 1 FROM JSON_TABLE(eligible.data, '$.actions[*]' COLUMNS (
+             action_state VARCHAR(16) PATH '$.state'
+           )) unfinished WHERE unfinished.action_state <> 'CONFIRMED'
+         )) OR eligible.next_due <= :now OR JSON_SEARCH(eligible.data, 'one', 'PENDING', NULL, '$.manual_transactions[*].state') IS NOT NULL
          ORDER BY eligible.next_due ASC, eligible.id ASC LIMIT 20`,
         { now },
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }

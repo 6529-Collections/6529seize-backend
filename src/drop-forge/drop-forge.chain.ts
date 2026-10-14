@@ -581,8 +581,9 @@ export class EthereumLaunchChain implements LaunchChain {
         Number(claim.endDate) === phase.end &&
         claim.merkleRoot === phase.root
     );
-    const phaseIndex =
-      action.kind === 'INITIALIZE' ? observedPhase : action.phase;
+    const phaseIndex = action.kind === 'UPDATE' ? action.phase : observedPhase;
+    if (action.kind === 'METADATA' && phaseIndex >= 0)
+      action.phase = phaseIndex;
     const phase = data.phases[phaseIndex];
     if (!phase)
       throw new LaunchSafetyError(
@@ -691,7 +692,15 @@ export class EthereumLaunchChain implements LaunchChain {
       maxFeePerGas: fee.maxFeePerGas,
       maxPriorityFeePerGas: fee.maxPriorityFeePerGas
     };
-    const estimate = await rpcWithDeadline(this.provider.estimateGas(request));
+    const estimate = await rpcWithDeadline(
+      this.provider.estimateGas(request).catch((error: unknown) => {
+        if (isError(error, 'INSUFFICIENT_FUNDS'))
+          throw new LaunchSafetyError(
+            'Operational signer has insufficient gas funds'
+          );
+        throw error;
+      })
+    );
     const gasLimit = (estimate * BigInt(120)) / BigInt(100);
     if (
       gasLimit > this.config.maxGas ||

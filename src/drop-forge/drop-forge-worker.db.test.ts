@@ -78,6 +78,44 @@ describe('Drop Forge durable worker', () => {
     await acknowledgeReports();
     await worker.tick();
   };
+  it('keeps fully missed launches out of the candidate limit while retaining manual reconciliation', async () => {
+    const missed = Array.from({ length: 25 }, (_, index) => {
+      const data = testLaunchData();
+      data.claim_id = 100 + index;
+      data.actions.forEach((action) => {
+        action.window_reported = true;
+      });
+      return {
+        id: launchId(testConfig.chainId, testConfig.creator, data.claim_id),
+        revision: 1,
+        state: 'RUNNING',
+        error: null,
+        data: JSON.stringify(data),
+        updated_at: 0,
+        report_pending: false
+      };
+    });
+    await sqlExecutor.bulkInsert(
+      DROP_FORGE_LAUNCHES_TABLE,
+      missed,
+      Object.keys(missed[0])
+    );
+    expect(
+      (await repository.active(1100, {})).map((record) => record.id)
+    ).toEqual([id]);
+    await repository.change(
+      missed[0].id,
+      async (record) => {
+        record.data.manual_transactions = [
+          { hash: 'manual-proof', state: 'PENDING' }
+        ];
+      },
+      {}
+    );
+    expect(
+      (await repository.active(1100, {})).map((record) => record.id)
+    ).toContain(missed[0].id);
+  });
   it('blocks legacy flattened plans without signing or broadcasting', async () => {
     await repository.change(
       id,
@@ -282,6 +320,28 @@ describe('Drop Forge durable worker', () => {
     await worker.tick();
     expect((await read())!.error).toContain('nonce was consumed');
     expect(chain.broadcast).toHaveBeenCalledTimes(1);
+  });
+  it('releases an expired unsigned reservation even when reporting is unavailable', async () => {
+    await worker.tick();
+    chain.now.mockResolvedValue(3880);
+    await worker.tick();
+    const saved = (await read())!;
+    expect(saved.state).toBe('RUNNING');
+    expect(saved.data.actions[0].state).toBe('PENDING');
+    expect(saved.data.actions[0].unsigned_tx).toBeUndefined();
+    expect(saved.data.actions[0].attempt_error).toContain(
+      'Unsigned reservation expired'
+    );
+    expect(signer.sign).not.toHaveBeenCalled();
+    expect(chain.broadcast).not.toHaveBeenCalled();
+    await repository.wallet(
+      `${testConfig.chainId}:${testConfig.signer.toLowerCase()}`,
+      async (pending) => {
+        expect(pending.launch_id).toBeNull();
+        expect(pending.action_id).toBeNull();
+      },
+      {}
+    );
   });
   it('keeps a reserved intent unsigned while its report is unavailable', async () => {
     await worker.tick();

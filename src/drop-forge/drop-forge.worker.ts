@@ -158,10 +158,24 @@ export class DropForgeWorker {
         'BLOCKED',
         'Legacy launch plan requires manual reconciliation before phase/research execution'
       );
+    const expiredUnsigned =
+      action.state === 'RESERVED' &&
+      runnable(record) &&
+      this.scheduledEnabled &&
+      (await this.chain.now()) >= action.deadline - 120;
     if (
       action.state === 'RESERVED' &&
-      (!runnable(record) || !this.scheduledEnabled)
+      (!runnable(record) || !this.scheduledEnabled || expiredUnsigned)
     ) {
+      if (expiredUnsigned) {
+        reportActionFailure(
+          record,
+          action,
+          await this.chain.now(),
+          'Unsigned reservation expired; no transaction was submitted'
+        );
+        action.window_reported = true;
+      }
       action.state = 'PENDING';
       delete action.unsigned_tx;
       pending.launch_id = null;
