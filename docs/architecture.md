@@ -841,6 +841,24 @@ metadata with `_checksum`, or JSON `null` when the provider returns 404. The
 route retains its five-minute request-cache middleware. FE uses this endpoint
 as fallback for its address-only picker.
 
+`POST /alchemy-proxy/contracts` accepts up to 50 Ethereum contract addresses
+and deduplicates case variants before lookup. It returns `{ contracts: [...] }`
+with checksummed addresses, chain, and provider metadata including `_checksum`.
+Provider 404 produces null metadata; other failures remain per-contract errors
+so successful entries are preserved. Lookups run at most ten at a time with
+five-second timeouts and no retries. A 20-second lookup scheduling budget
+reserves time for initialization and response handling within the API Lambda's
+30-second timeout. Once another full lookup cannot fit, remaining entries
+receive per-contract 504 errors while completed results are preserved.
+Responses use `Cache-Control: no-store`.
+The bounded lookup client reuses centralized Alchemy configuration and is
+cached per shared client. Provider initialization failures are logged and
+return HTTP 500 before individual lookups. Invalid provider payloads are
+reported as per-contract lookup failures.
+This completes the fallback used by the desktop xTDH Granted list without
+requiring a desktop update. Its OpenAPI path overrides the `/api` server base
+because the existing proxy router is mounted at the root.
+
 Collection-name search is retired: `GET /alchemy-proxy/collections` returns
 HTTP 410 with `Cache-Control: no-store` and the error message
 `Collection name search is no longer available. Use a contract address.`
