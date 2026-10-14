@@ -331,3 +331,5 @@ export const E2EE_RATE_COUNTERS_TABLE = 'e2ee_rate_counters';
 export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
 export const MEME_COLLABORATION_INVITATIONS_TABLE =
   'meme_collaboration_invitations';
+
+export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';

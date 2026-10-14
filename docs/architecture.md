@@ -2221,3 +2221,16 @@ The runtime grouping callers are `api` (`db-api.fetchConsolidationsForWallet`), 
 The required key must be present and valid for all three runtimes in both regions before rollout. In particular, an unconfigured API fails the whole `/api/settings` response, not just consolidation setup. This is the agreed fail-closed policy, not a nullable-settings fallback. Configuration presence has to be verified as a deployment prerequisite; source inspection is not proof that a live secret contains the value.
 
 Configure production as `2026-10-15T00:00:00Z` and staging with its intended earlier cutoff before deployment. Schema sync still precedes the delegation indexer, TDH loop and API. Both environments index the same mainnet contract: staging registrations are real registrations, and pre-production-cutoff links require renewed consent after the production cutoff.
+
+### Transfer reconciliation after late indexing
+
+Independent contract indexers atomically queue per-wallet `owners` and `activity`
+refreshes alongside transfer upserts in `transfer_reconciliations`. Ownership and
+activity consumers combine those durable requests with normal block selection,
+rebuild from primary transfer history, and acknowledge only the consumed revision
+after raw and consolidated publication. Ownership then queues `balances` refreshes
+for `ownersBalancesLoop`. An IAM-only `repair-wallets` action on `nftOwnersLoop`
+queues bounded repair of previously missed transfers without running calculations.
+Schema sync precedes consumers, which precede transaction producers. See
+[late-indexed transfer reconciliation](transfer-reconciliation.md) for deployment
+order, retry/concurrency guarantees, repair and limits.
