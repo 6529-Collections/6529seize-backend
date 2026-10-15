@@ -545,6 +545,21 @@ describeWithSeed(
       });
       expect(await history()).toEqual(afterHistory);
       clock.value += 1;
+      await service.enroll(id, operator, 'PRIVILEGED');
+      let sawShadowReset = false;
+      for (let batch = 0; batch < 50; batch++) {
+        await service.backfill(id, operator, 100);
+        const entries = await sqlExecutor.execute(
+          `SELECT id FROM ${tables.COMPETITION_ENTRIES_TABLE} WHERE competition_id=:id`,
+          { id }
+        );
+        if (!entries.length) {
+          sawShadowReset = true;
+          expect(await activity()).toEqual(legacy);
+          break;
+        }
+      }
+      expect(sawShadowReset).toBe(true);
       await migrate();
       expect(await history()).toEqual(afterHistory);
       expect(await activity()).toEqual(legacy);

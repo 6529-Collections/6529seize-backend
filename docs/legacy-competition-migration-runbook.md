@@ -218,6 +218,9 @@ idempotency retries, compatibility double writes, an accepted vote between
 reverse batches, a stale completed reverse snapshot, pending effects,
 legacy voting immediately after rollback in the same second, another migration,
 Activity identity/timestamp/content/proxy retention and stable pagination.
+Activity also remains readable while a legacy-owned re-migration resets shadow
+entries, using exact linked logs and the current legacy drop; that fallback never
+exposes missing native entries or sibling COMPETITION drops.
 A TDH reduction retains `-29 -> -3`, spending of `3` and its adjustment reason.
 Repository/service tests also retain deleted historical references while hiding
 native withdrawn/deleted entries, siblings and unreadable/private competitions.
@@ -298,7 +301,7 @@ vote/credit writers sequentially before permitting another migration:
 `delegationsLoop`, `helpBotReplyLoop`,
 `waveDecisionExecutionLoop`, then `api`, then `competitionMigrationLoop`.
 These are the deployed entry points for the changed native runtime, TDH/REP
-revocation and voting paths; the migration Lambda records ownership boundaries.
+revocation and voting paths; the migration Lambda marks exact-identity cutovers.
 Verify versions/health after each. No entity, schema sync,
 OpenAPI or frontend build is required. The frontend already calls native voting
 when entry context exists and renders the unchanged Activity response contract;
@@ -307,7 +310,8 @@ applicable. No deployment is performed by the Phase 2 qualification task.
 
 The exact lineage guarantee starts when all writers and migration transitions
 carry this correction, before Main Stage's first cutover. Older native histories
-without linked logs remain readable with their existing native IDs/timestamps;
+without linked logs remain readable with their existing native IDs/timestamps
+while their retained entries are present;
 older cutovers without the identity marker retain the original timestamp cutoff
 fallback. Old random compatibility-log IDs have no recorded shared event identity,
 and old transition seconds can be ambiguous. Do not infer a proxy or adjustment

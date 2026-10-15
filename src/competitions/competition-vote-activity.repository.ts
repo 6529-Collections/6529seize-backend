@@ -1,5 +1,8 @@
 import {
   COMPETITION_ENTRIES_TABLE,
+  COMPETITIONS_TABLE,
+  DROPS_TABLE,
+  DELETED_DROPS_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
   COMPETITION_MIGRATION_AUDIT_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE
@@ -36,7 +39,10 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
     // Exact-lineage cutovers need no timestamp heuristics: every native primary
     // vote has its canonical log ID. Only older cutovers retain the original
     // cutoff fallback for unlinked compatibility logs already covered by history.
-    // Legacy intervals and retained deleted-drop logs survive.
+    // Legacy intervals and retained deleted-drop logs survive. During a legacy-
+    // owned re-migration, shadow entry resets must not hide accepted history:
+    // exact linked logs plus the live legacy drop provide its retained identity.
+    // Never use that fallback for missing native entries or sibling COMPETITION drops.
     // Each source contributes its first offset+limit rows BEFORE global paging.
     const timerName = `${this.constructor.name}->listTransferred`;
     try {
@@ -53,17 +59,27 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
         )
       )
       SELECT activity.* FROM (
-        (SELECT 1 AS source_order, history.sequence, entry.drop_id, history.voter_profile_id,
-          entry.submitter_id, history.previous_value, history.value,
+        (SELECT 1 AS source_order, history.sequence, COALESCE(entry.drop_id, native_log.target_id) AS drop_id, history.voter_profile_id,
+          COALESCE(entry.submitter_id, native_log.additional_data_1) AS submitter_id, history.previous_value, history.value,
           history.occurred_at, NULL AS legacy_id, CAST(native_log.contents AS CHAR) AS legacy_contents,
           native_log.proxy_id
         FROM ${COMPETITION_VOTE_HISTORY_TABLE} history
-        JOIN ${COMPETITION_ENTRIES_TABLE} entry
+        LEFT JOIN ${COMPETITION_ENTRIES_TABLE} entry
           ON entry.competition_id = history.competition_id AND entry.id = history.entry_id
         LEFT JOIN ${PROFILES_ACTIVITY_LOGS_TABLE} native_log
           ON native_log.id = CONCAT(history.competition_id, ':', history.sequence)
           AND native_log.additional_data_2 = :waveId AND native_log.type = :logType
-        WHERE history.competition_id = :competitionId AND ${competitionEntryVisibleSql('entry')}
+        WHERE history.competition_id = :competitionId AND (
+          ${competitionEntryVisibleSql('entry')}
+          OR (entry.id IS NULL AND native_log.id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM ${COMPETITIONS_TABLE} owner JOIN ${DROPS_TABLE} source_drop
+              ON source_drop.wave_id = owner.wave_id AND source_drop.id = native_log.target_id
+            WHERE owner.id = :competitionId AND owner.legacy_wave_id = :waveId
+              AND owner.storage_mode = 'LEGACY_ADAPTER'
+              AND source_drop.drop_type IN ('PARTICIPATORY', 'WINNER')
+              AND NOT EXISTS (SELECT 1 FROM ${DELETED_DROPS_TABLE} deleted WHERE deleted.id = source_drop.id)
+          ))
+        )
         ORDER BY history.occurred_at DESC, history.sequence DESC LIMIT :candidateLimit)
         UNION ALL
         (SELECT 0 AS source_order, 0 AS sequence, log.target_id AS drop_id,
