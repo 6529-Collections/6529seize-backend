@@ -337,6 +337,46 @@ describe('DropVotingDb.getDropV2SubmissionVotingSummaries', () => {
 const repo = new DropVotingDb(() => sqlExecutor);
 const ctx: RequestContext = { timer: undefined };
 
+describeWithSeed('Leaderboard snapshot ordering', [], () => {
+  it.each([
+    { name: 'older', timestamp: 1000, shouldUpdate: false },
+    { name: 'equal-time', timestamp: 2000, shouldUpdate: true },
+    { name: 'newer', timestamp: 3000, shouldUpdate: true }
+  ])(
+    'handles the $name refresh finishing last',
+    async ({ timestamp, shouldUpdate }) => {
+      const snapshotDb = new DropVotingDb(() => sqlExecutor);
+      const current = {
+        drop_id: 'overlapping-refresh-drop',
+        wave_id: 'overlapping-refresh-wave',
+        timestamp: 2000,
+        vote: 20,
+        vote_on_decision_time: 30,
+        over_threshold_since_ms: 1500
+      };
+      const finishingLast = {
+        ...current,
+        timestamp,
+        vote: 5,
+        vote_on_decision_time: 7,
+        over_threshold_since_ms: null
+      };
+      await snapshotDb.upsertWaveLeaderboardEntry(current, ctx);
+      await snapshotDb.upsertWaveLeaderboardEntry(finishingLast, ctx);
+
+      expect(
+        await sqlExecutor.execute(
+          `select drop_id, wave_id, timestamp, vote, vote_on_decision_time,
+                over_threshold_since_ms
+         from ${WAVE_LEADERBOARD_ENTRIES_TABLE}
+         where drop_id = :dropId`,
+          { dropId: current.drop_id }
+        )
+      ).toEqual([shouldUpdate ? finishingLast : current]);
+    }
+  );
+});
+
 const realtimeWave = aWave(
   {
     type: WaveType.APPROVE,

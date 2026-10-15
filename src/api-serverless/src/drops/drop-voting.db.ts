@@ -1735,6 +1735,8 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     entry: WaveLeaderboardEntryEntity,
     ctx: RequestContext
   ) {
+    // Queued refreshes in overlapping workers can finish out of timestamp order.
+    // Assign timestamp last so every field compares with the stored timestamp.
     await this.db.execute(
       `
           insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (
@@ -1754,10 +1756,10 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
             :over_threshold_since_ms
           )
           on duplicate key update
-            vote = :vote,
-            vote_on_decision_time = :vote_on_decision_time,
-            timestamp = :timestamp,
-            over_threshold_since_ms = :over_threshold_since_ms
+            vote = if(timestamp <= :timestamp, :vote, vote),
+            vote_on_decision_time = if(timestamp <= :timestamp, :vote_on_decision_time, vote_on_decision_time),
+            over_threshold_since_ms = if(timestamp <= :timestamp, :over_threshold_since_ms, over_threshold_since_ms),
+            timestamp = greatest(timestamp, :timestamp)
       `,
       entry,
       { wrappedConnection: ctx.connection }
