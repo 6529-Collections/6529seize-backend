@@ -1102,6 +1102,16 @@ also compares independently derived available/spent/remaining credit.
 Operational deployment, verification, and rollback are documented in the
 [competition read boundary runbook](./competition-read-boundary-runbook.md).
 
+Both legacy leaderboard workers refresh entries sequentially within each wave,
+with at most four waves being refreshed concurrently per invocation. Every entry
+retains its own transaction and execution-owner lock, including the ownership
+recheck after discovery. Background refresh upserts preserve a newer snapshot when
+an older queued refresh finishes last; authoritative historical APPROVE corrections
+retain their existing write behavior. Single-entry history reads use scalar
+maximum-ID lookups to avoid scanning unrelated history while holding that lock. Deploy
+`waveLeaderboardSnapshotterLoop`, followed by `waveDecisionExecutionLoop`;
+no schema or API/frontend contract change is required.
+
 Implicit wave navigation has an additive unified-read boundary,
 `GET /v3/waves/{wave_id}/default-competition`. It selects across all visible
 competitions using active/upcoming/completed priority, authoritative legacy/native
