@@ -350,34 +350,52 @@ describe('market depth stream runtime', () => {
     );
   });
 
-  it('retries a cancelled pre-commit save only after its cleanup has settled', async () => {
-    jest.useFakeTimers();
+  it.each(['WORK', 'COMMIT'] as const)(
+    'retries a NOT_SENT save in phase %s only after its cleanup has settled',
+    async (phase) => {
+      jest.useFakeTimers();
+      const f = fixture();
+      f.subscribe(() => f.emit(makeEvent()));
+      let finishCleanup!: () => void;
+      const cleanup = new Promise<void>((resolve) => {
+        finishCleanup = resolve;
+      });
+      const failure = new SqlExecutionBudgetExceededError(
+        'SQL_BUDGET_EXCEEDED',
+        phase,
+        'NOT_SENT'
+      );
+      failure.connectionDestroyed = true;
+      f.appendEvents.mockImplementationOnce(async () => {
+        await cleanup;
+        throw failure;
+      });
+      const running = runMarketDepthStream(f.options);
+      await jest.advanceTimersByTimeAsync(6000);
+      expect(f.appendEvents).toHaveBeenCalledTimes(1);
+      expect(f.disconnect).not.toHaveBeenCalled();
+      finishCleanup();
+      await running;
+      expect(f.appendEvents).toHaveBeenCalledTimes(2);
+      expect(f.appendEvents.mock.calls[1][0].events).toEqual(
+        f.appendEvents.mock.calls[0][0].events
+      );
+      expect(f.log.info).toHaveBeenCalledWith(
+        expect.stringContaining('pending=0')
+      );
+    }
+  );
+
+  it('leaves work and finalization time for a retry near shutdown', async () => {
     const f = fixture();
     f.subscribe(() => f.emit(makeEvent()));
-    let finishCleanup!: () => void;
-    const cleanup = new Promise<void>((resolve) => {
-      finishCleanup = resolve;
-    });
-    const failure = new SqlExecutionBudgetExceededError(
-      'SQL_BUDGET_EXCEEDED',
-      'WORK',
-      'NOT_SENT'
-    );
-    failure.connectionDestroyed = true;
-    f.appendEvents.mockImplementationOnce(async () => {
-      await cleanup;
-      throw failure;
-    });
-    const running = runMarketDepthStream(f.options);
-    await jest.advanceTimersByTimeAsync(6000);
-    expect(f.appendEvents).toHaveBeenCalledTimes(1);
-    expect(f.disconnect).not.toHaveBeenCalled();
-    finishCleanup();
-    await running;
+    f.appendEvents.mockRejectedValueOnce(new Error('pre-commit failure'));
+    await runMarketDepthStream({ ...f.options, runMs: 1100 });
     expect(f.appendEvents).toHaveBeenCalledTimes(2);
-    expect(f.appendEvents.mock.calls[1][0].events).toEqual(
-      f.appendEvents.mock.calls[0][0].events
-    );
+    expect(f.appendEvents.mock.calls[1][1]).toMatchObject({
+      maxStatementMillis: 50,
+      finalizationReserveMillis: 1000
+    });
     expect(f.log.info).toHaveBeenCalledWith(
       expect.stringContaining('pending=0')
     );

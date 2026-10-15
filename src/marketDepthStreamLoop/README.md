@@ -29,6 +29,8 @@ waits for transaction cleanup before retrying. Shutdown unsubscribes,
 attempts a bounded disconnect, then drains accepted events even after callback
 or subscription errors. Buffer overflow, malformed event handling, exhausted
 retries, and incomplete draining fail the invocation visibly.
+Retry backoff is capped at half the remaining SQL work duration, excluding the
+one-second finalization reserve.
 
 Each stream database operation uses the SQL owner's monotonic five-second budget,
 shortened to the remaining run budget, with one second reserved for finalization.
@@ -40,8 +42,11 @@ transaction behavior. Each transport disconnect remains bounded to two seconds.
 
 An unacknowledged COMMIT remains uncertain even after connection disposal. The
 runtime leaves that batch unconfirmed and does not retry or final-drain it during
-the invocation. A save aborted before COMMIT can be retried after cleanup, using
-the same lifecycle IDs. An acknowledged commit stays confirmed even if session
-cleanup requires discarding its connection. Transport error objects and authenticated socket
+the invocation. `NOT_SENT` means the SQL owner never transmitted the outer COMMIT,
+even if a before-commit hook failed in the `COMMIT` phase. Event inserts and cursor
+updates then roll back together before a healthy session is released, or their
+connection is disposed of. The same lifecycle IDs can be retried after cleanup.
+An acknowledged commit stays confirmed even if session cleanup requires
+discarding its connection. Transport error objects and authenticated socket
 URLs are never logged; the worker logs only static recovery messages and run
 counts for accepted, persisted, duplicate, pending, and transport-error events.

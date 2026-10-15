@@ -39,7 +39,11 @@ export interface StreamCollection {
 }
 
 export interface StreamDatabase {
-  /** Settle only after the transaction is finalized or its connection is disposed. */
+  /**
+   * Settle only after finalization or connection disposal. Uncertain commits must
+   * reject with SqlExecutionBudgetExceededError/UNKNOWN; acknowledged commits
+   * resolve even when cleanup requires disposal. Other failures did not commit.
+   */
   appendEvents(
     input: AppendMarketDepthEventsInput,
     executionBudget: SqlExecutionBudget
@@ -138,30 +142,19 @@ export function streamEventInput(
   };
 }
 
-class StreamTimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    // The ES5 test target otherwise loses Error subclass identity.
-    Object.setPrototypeOf(this, StreamTimeoutError.prototype);
-  }
-}
-
 /** Only transport shutdown uses a promise timeout; SQL owns its cancellation. */
 async function bounded<T>(
   operation: () => Promise<T>,
   timeoutMs: number,
   message: string
 ): Promise<T> {
-  if (timeoutMs <= 0) throw new StreamTimeoutError(message);
+  if (timeoutMs <= 0) throw new Error(message);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       Promise.resolve().then(operation),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new StreamTimeoutError(message)),
-          timeoutMs
-        );
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
       })
     ]);
   } finally {
@@ -185,6 +178,8 @@ class StreamPersistenceError extends Error {
 }
 
 function persistenceBudget(remainingMs: number): SqlExecutionBudget {
+  // remainingMs is a duration sampled from the run/Lambda clocks, not an absolute
+  // wall-clock deadline. Start the SQL owner's deadline on its monotonic clock.
   const totalMs = Math.min(OPERATION_TIMEOUT_MS, remainingMs);
   if (totalMs <= SQL_FINALIZATION_MS) {
     throw new StreamPersistenceError(
@@ -328,7 +323,9 @@ async function flushBatch(
           'OpenSea Stream persistence failed after 3 attempts'
         );
       }
-      await sleep(Math.max(0, Math.min(attempt * 100, budgetMs())));
+      const remainingWorkMs = Math.max(0, budgetMs() - SQL_FINALIZATION_MS);
+      // Preserve finalization time and at least half the sampled work duration.
+      await sleep(Math.min(attempt * 100, Math.floor(remainingWorkMs / 2)));
     }
   }
 }
