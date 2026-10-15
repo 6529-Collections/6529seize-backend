@@ -12,7 +12,8 @@ import {
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  type SqlExecutionBudget
 } from '@/sql-executor';
 import {
   AppendMarketDepthEventsInput,
@@ -592,27 +593,19 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
       : null;
   }
 
-  async appendEvents(input: AppendMarketDepthEventsInput): Promise<void> {
+  async appendEvents(
+    input: AppendMarketDepthEventsInput,
+    executionBudget?: SqlExecutionBudget
+  ): Promise<void> {
     const source = normalizePartition(input.source);
     const contract = normalizeContract(input.contract);
     const collectionSlug = normalizePartition(input.collection_slug);
 
-    await this.executeNativeQueriesInTransaction(async (connection) => {
-      const session = (
-        await this.query<{ lock_wait_timeout: number }>(
-          'SELECT @@SESSION.innodb_lock_wait_timeout AS lock_wait_timeout',
-          {},
-          connection
-        )
-      )[0];
-      if (!session || !Number.isInteger(Number(session.lock_wait_timeout))) {
-        throw new Error('Could not read market-depth session lock timeout');
-      }
-      await this.query(
-        'SET SESSION innodb_lock_wait_timeout=3',
-        {},
-        connection
-      );
+    const append = async (connection: DbConnection) => {
+      // Budgeted transactions own session setup/restoration and physical disposal.
+      const lockWaitTimeout = executionBudget
+        ? null
+        : await this.prepareEventSession(connection);
       let operationFailed = false;
       try {
         await this.query(
@@ -698,13 +691,34 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
         operationFailed = true;
         throw error;
       } finally {
-        await this.restoreEventSession(
-          connection,
-          Number(session.lock_wait_timeout),
-          operationFailed
-        );
+        if (lockWaitTimeout !== null) {
+          await this.restoreEventSession(
+            connection,
+            lockWaitTimeout,
+            operationFailed
+          );
+        }
       }
-    });
+    };
+    await this.executeNativeQueriesInTransaction(
+      append,
+      executionBudget ? { executionBudget } : undefined
+    );
+  }
+
+  private async prepareEventSession(connection: DbConnection): Promise<number> {
+    const session = (
+      await this.query<{ lock_wait_timeout: number }>(
+        'SELECT @@SESSION.innodb_lock_wait_timeout AS lock_wait_timeout',
+        {},
+        connection
+      )
+    )[0];
+    if (!session || !Number.isInteger(Number(session.lock_wait_timeout))) {
+      throw new Error('Could not read market-depth session lock timeout');
+    }
+    await this.query('SET SESSION innodb_lock_wait_timeout=3', {}, connection);
+    return Number(session.lock_wait_timeout);
   }
 
   private async restoreEventSession(

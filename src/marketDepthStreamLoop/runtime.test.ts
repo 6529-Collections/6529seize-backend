@@ -2,6 +2,10 @@ import { EventType, type BaseStreamMessage } from '@opensea/sdk/stream';
 import { normalizeOpenSeaEvent } from '@/market-depth/opensea-normalizer';
 import type { AppendMarketDepthEventsInput } from '@/market-depth/market-depth.types';
 import {
+  SqlExecutionBudgetExceededError,
+  type SqlExecutionBudget
+} from '@/db/sql-execution-budget';
+import {
   runMarketDepthStream,
   streamEventInput,
   type StreamClient,
@@ -49,7 +53,10 @@ function fixture() {
     disconnect
   };
   const appendEvents = jest.fn(
-    async (_input: AppendMarketDepthEventsInput) => undefined
+    async (
+      _input: AppendMarketDepthEventsInput,
+      _budget: SqlExecutionBudget
+    ): Promise<void> => undefined
   );
   const log = { info: jest.fn(), warn: jest.fn() };
   const options: StreamRuntimeOptions = {
@@ -318,18 +325,132 @@ describe('market depth stream runtime', () => {
     expect(f.appendEvents).toHaveBeenCalledTimes(1);
   });
 
-  it('bounds a stalled write without starting a concurrent uncertain retry', async () => {
+  it('awaits a slow successful save before disconnecting and acknowledges it once', async () => {
     jest.useFakeTimers();
     const f = fixture();
     f.subscribe(() => f.emit(makeEvent()));
-    f.appendEvents.mockImplementation(() => new Promise(() => undefined));
-    const checked = expect(runMarketDepthStream(f.options)).rejects.toThrow(
-      'persistence timed out; 1 events remain unconfirmed'
+    let complete!: () => void;
+    f.appendEvents.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          complete = resolve;
+        })
     );
-    await jest.advanceTimersByTimeAsync(5000);
+    const running = runMarketDepthStream(f.options);
+    // An injected DB can finalize late; the runtime must never abandon its promise.
+    await jest.advanceTimersByTimeAsync(6000);
+    expect(f.disconnect).not.toHaveBeenCalled();
+    expect(f.appendEvents).toHaveBeenCalledTimes(1);
+    complete();
+    await running;
+    expect(f.disconnect).toHaveBeenCalledTimes(1);
+    expect(f.appendEvents).toHaveBeenCalledTimes(1);
+    expect(f.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('persisted=1')
+    );
+  });
+
+  it.each(['WORK', 'COMMIT'] as const)(
+    'retries a NOT_SENT save in phase %s only after its cleanup has settled',
+    async (phase) => {
+      jest.useFakeTimers();
+      const f = fixture();
+      f.subscribe(() => f.emit(makeEvent()));
+      let finishCleanup!: () => void;
+      const cleanup = new Promise<void>((resolve) => {
+        finishCleanup = resolve;
+      });
+      const failure = new SqlExecutionBudgetExceededError(
+        'SQL_BUDGET_EXCEEDED',
+        phase,
+        'NOT_SENT'
+      );
+      failure.connectionDestroyed = true;
+      f.appendEvents.mockImplementationOnce(async () => {
+        await cleanup;
+        throw failure;
+      });
+      const running = runMarketDepthStream(f.options);
+      await jest.advanceTimersByTimeAsync(6000);
+      expect(f.appendEvents).toHaveBeenCalledTimes(1);
+      expect(f.disconnect).not.toHaveBeenCalled();
+      finishCleanup();
+      await running;
+      expect(f.appendEvents).toHaveBeenCalledTimes(2);
+      expect(f.appendEvents.mock.calls[1][0].events).toEqual(
+        f.appendEvents.mock.calls[0][0].events
+      );
+      expect(f.log.info).toHaveBeenCalledWith(
+        expect.stringContaining('pending=0')
+      );
+    }
+  );
+
+  it('leaves work and finalization time for a retry near shutdown', async () => {
+    const f = fixture();
+    f.subscribe(() => f.emit(makeEvent()));
+    f.appendEvents.mockRejectedValueOnce(new Error('pre-commit failure'));
+    await runMarketDepthStream({ ...f.options, runMs: 1100 });
+    expect(f.appendEvents).toHaveBeenCalledTimes(2);
+    expect(f.appendEvents.mock.calls[1][1]).toMatchObject({
+      maxStatementMillis: 50,
+      finalizationReserveMillis: 1000
+    });
+    expect(f.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('pending=0')
+    );
+  });
+
+  it('keeps an uncertain commit unconfirmed without retrying or disconnecting ahead of cleanup', async () => {
+    jest.useFakeTimers();
+    const f = fixture();
+    f.subscribe(() => f.emit(makeEvent()));
+    let finishCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve;
+    });
+    f.appendEvents.mockImplementationOnce(async () => {
+      await cleanup;
+      throw new SqlExecutionBudgetExceededError(
+        'SQL_BUDGET_EXCEEDED',
+        'COMMIT',
+        'UNKNOWN'
+      );
+    });
+    const checked = expect(runMarketDepthStream(f.options)).rejects.toThrow(
+      'commit outcome unknown; 1 events remain unconfirmed'
+    );
+    await jest.advanceTimersByTimeAsync(6000);
+    expect(f.disconnect).not.toHaveBeenCalled();
+    finishCleanup();
     await checked;
     expect(f.appendEvents).toHaveBeenCalledTimes(1);
     expect(f.disconnect).toHaveBeenCalledTimes(1);
+    expect(f.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('persisted=0')
+    );
+  });
+
+  it('reserves SQL finalization time within the remaining stream budget', async () => {
+    const f = fixture();
+    f.subscribe(() => f.emit(makeEvent()));
+    await runMarketDepthStream({ ...f.options, runMs: 1500 });
+    expect(f.appendEvents.mock.calls[0][1]).toMatchObject({
+      maxStatementMillis: 500,
+      finalizationReserveMillis: 1000,
+      lockWaitSeconds: 3
+    });
+  });
+
+  it('does not start SQL when only finalization time remains', async () => {
+    const f = fixture();
+    f.subscribe(() => f.emit(makeEvent()));
+    await expect(
+      runMarketDepthStream({ ...f.options, runMs: 1000 })
+    ).rejects.toThrow(
+      'persistence budget exhausted; 1 events remain unconfirmed'
+    );
+    expect(f.appendEvents).not.toHaveBeenCalled();
   });
 
   it('rejects insufficient Lambda time before opening a socket', async () => {
