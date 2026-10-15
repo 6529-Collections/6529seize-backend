@@ -6,6 +6,7 @@ import { getAuthenticationContext } from '@/api/auth/auth';
 import { dropsService } from '@/api/drops/drops.api.service';
 import { ApiMemeCollaborationState } from '@/api/generated/models/ApiMemeCollaborationState';
 import {
+  InviteMemeCollaboratorsRequest,
   GetMemeCollaborationStateRequest,
   RespondToMemeCollaborationRequest
 } from '@/api/generated/routes/operations';
@@ -92,6 +93,55 @@ export async function respondToMemeCollaboration(
       error
     );
   }
+  await sendIdentityPushNotifications(notificationIds);
+  const state = await memeCollaborationsService.state(
+    req.params.drop_id,
+    auth.getActingAsId(),
+    ctx
+  );
+  return {
+    ...state,
+    invitations: state.invitations.map((item) => ({
+      ...item,
+      status: enums.resolveOrThrow(
+        ApiMemeCollaborationInvitationStatusEnum,
+        item.status
+      )
+    }))
+  };
+}
+
+export async function inviteMemeCollaborators(
+  req: InviteMemeCollaboratorsRequest
+): Promise<ApiMemeCollaborationState> {
+  req.res?.setHeader('Cache-Control', 'private, no-store');
+  const auth = await getAuthenticationContext(req);
+  const ctx = { authenticationContext: auth, timer: Timer.getFromRequest(req) };
+  const drop = await dropsService.findDropByIdOrThrow(
+    { dropId: req.params.drop_id },
+    ctx
+  );
+  if (drop.moderation?.can_view === false)
+    throw new ForbiddenException(
+      'This artwork is not available for collaboration review'
+    );
+  const body = getValidatedByJoiOrThrow(
+    req.body,
+    Joi.object({
+      collaborator_ids: Joi.array()
+        .items(Joi.string().required())
+        .unique()
+        .min(1)
+        .max(20)
+        .required()
+    })
+  );
+  const notificationIds = await memeCollaborationsService.inviteExisting(
+    req.params.drop_id,
+    body.collaborator_ids,
+    auth,
+    ctx
+  );
   await sendIdentityPushNotifications(notificationIds);
   const state = await memeCollaborationsService.state(
     req.params.drop_id,

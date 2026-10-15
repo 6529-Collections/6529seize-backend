@@ -16,6 +16,10 @@ import { ApiMemeCollaboratorProfile } from '../models/ApiMemeCollaboratorProfile
 import { HttpFile } from '../http/http';
 
 export class ApiMemeCollaborationState {
+    /**
+    * Whether this viewer can append invitations to this active Memes Main Stage artwork.
+    */
+    'can_invite'?: boolean;
     'artwork'?: ApiMemeCollaborationArtwork;
     'managed': boolean;
     'closed': boolean;
@@ -34,6 +38,12 @@ export class ApiMemeCollaborationState {
     static readonly mapping: {[index: string]: string} | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
+        {
+            "name": "can_invite",
+            "baseName": "can_invite",
+            "type": "boolean",
+            "format": ""
+        },
         {
             "name": "artwork",
             "baseName": "artwork",

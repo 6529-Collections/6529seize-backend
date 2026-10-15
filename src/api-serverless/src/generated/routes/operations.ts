@@ -177,6 +177,7 @@ import { ApiMarketTradeOrder } from '@/api/generated/models/ApiMarketTradeOrder'
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
+import { ApiMemeCollaborationInviteRequest } from '@/api/generated/models/ApiMemeCollaborationInviteRequest';
 import { ApiMemeCollaborationResponseRequest } from '@/api/generated/models/ApiMemeCollaborationResponseRequest';
 import { ApiMemeCollaborationState } from '@/api/generated/models/ApiMemeCollaborationState';
 import { ApiModerationAccess } from '@/api/generated/models/ApiModerationAccess';
@@ -1481,6 +1482,22 @@ export type GetMemeCollaborationStateRequest = Request<
   ApiResponse<GetMemeCollaborationStateResponse>,
   never,
   GetMemeCollaborationStateQuery,
+  Record<string, never>
+>;
+
+export interface InviteMemeCollaboratorsPathParams {
+  "drop_id": string;
+}
+
+export type InviteMemeCollaboratorsQuery = Record<string, never>;
+
+export type InviteMemeCollaboratorsResponse = ApiMemeCollaborationState;
+
+export type InviteMemeCollaboratorsRequest = Request<
+  InviteMemeCollaboratorsPathParams,
+  ApiResponse<InviteMemeCollaboratorsResponse>,
+  ApiMemeCollaborationInviteRequest,
+  InviteMemeCollaboratorsQuery,
   Record<string, never>
 >;
 

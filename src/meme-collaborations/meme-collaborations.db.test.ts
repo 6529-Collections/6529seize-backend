@@ -22,6 +22,7 @@ import {
   collaborationArtworkHash
 } from './meme-collaborations.service';
 
+const originalGetStringOrNull = env.getStringOrNull.bind(env);
 const wallet = (index: number) => `0x${String(index).padStart(40, '0')}`;
 const artworkModel: CreateOrUpdateDropModel = {
   drop_id: null,
@@ -95,7 +96,7 @@ describeWithSeed(
   'Meme collaborator consent and mint selection',
   [
     withProfiles(
-      ['A', 'B', 'C', 'D'].map((id, index) =>
+      ['A', 'B', 'C', 'D', 'E'].map((id, index) =>
         aProfile({
           external_id: id,
           handle: `Artist${id}`,
@@ -131,10 +132,42 @@ describeWithSeed(
     const service = new MemeCollaborationsService(db);
     beforeEach(() => {
       jest
+        .spyOn(env, 'getStringOrNull')
+        .mockImplementation((key) =>
+          key === 'MAIN_STAGE_WAVE_ID' ? 'wave' : originalGetStringOrNull(key)
+        );
+      jest
         .spyOn(userNotifier, 'notifyOfMemeCollaboration')
         .mockResolvedValue([42]);
     });
     afterEach(() => jest.restoreAllMocks());
+
+    it('adds invitations after voting has started while preserving accepted consent and freezes the extended roster', async () => {
+      await service.respond(
+        'drop',
+        invites[0].id,
+        body('ACCEPT'),
+        auth('B'),
+        {}
+      );
+      const before = await db.context('drop', {});
+      await service.inviteExisting('drop', ['E'], auth('A'), {});
+      expect(await db.context('drop', {})).toEqual(before);
+      const state = await service.state('drop', 'A', {});
+      expect(state.invitations).toHaveLength(4);
+      expect(
+        state.invitations.find((item) => item.profile.id === 'B')?.status
+      ).toBe('ACCEPTED');
+      const added = state.invitations.find((item) => item.profile.id === 'E')!;
+      await service.respond('drop', added.id, body('ACCEPT'), auth('E'), {});
+      const credit = await db.executeNativeQueriesInTransaction((connection) =>
+        service.freezeForMint('drop', { connection })
+      );
+      expect(credit?.artist_profiles).toContain('ArtistE');
+      await expect(
+        service.inviteExisting('drop', ['C'], auth('A'), {})
+      ).rejects.toThrow('active Memes Main Stage');
+    });
 
     it('keeps pending profiles private to the author and their own invitee', async () => {
       expect((await service.state('drop', null, {})).invitations).toEqual([]);
