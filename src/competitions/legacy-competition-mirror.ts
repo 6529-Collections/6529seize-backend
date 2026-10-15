@@ -142,6 +142,9 @@ export async function mirrorNativeLegacyVoteActivity(
   ctx: RequestContext
 ): Promise<void> {
   const timerName = 'mirrorNativeLegacyVoteActivity';
+  if (!ctx.connection) {
+    throw new Error('Native vote Activity requires a transaction');
+  }
   ctx.timer?.start(timerName);
   try {
     const inserted = await db.execute(
@@ -165,18 +168,19 @@ export async function mirrorNativeLegacyVoteActivity(
       },
       { wrappedConnection: ctx.connection }
     );
-    if (db.getAffectedRows(inserted)) {
-      await db.execute(
-        `INSERT INTO ${PROFILE_LATEST_LOG_TABLE} (profile_id, latest_activity)
+    if (db.getAffectedRows(inserted) !== 1) {
+      throw new Error('Native primary vote requires exactly one Activity log');
+    }
+    await db.execute(
+      `INSERT INTO ${PROFILE_LATEST_LOG_TABLE} (profile_id, latest_activity)
          VALUES (:voterProfileId, DATE_ADD('1970-01-01', INTERVAL :occurredAt MICROSECOND))
          ON DUPLICATE KEY UPDATE latest_activity = GREATEST(latest_activity, VALUES(latest_activity))`,
-        {
-          voterProfileId: params.voterProfileId,
-          occurredAt: params.occurredAt * 1000
-        },
-        { wrappedConnection: ctx.connection }
-      );
-    }
+      {
+        voterProfileId: params.voterProfileId,
+        occurredAt: params.occurredAt * 1000
+      },
+      { wrappedConnection: ctx.connection }
+    );
   } finally {
     ctx.timer?.stop(timerName);
   }

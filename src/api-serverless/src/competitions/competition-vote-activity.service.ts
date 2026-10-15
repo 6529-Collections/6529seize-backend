@@ -1,8 +1,11 @@
 import { competitionService } from '@/competitions/competition.service';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionVoteActivityRepository } from '@/competitions/competition-vote-activity.repository';
+import { CompetitionStorageMode } from '@/entities/ICompetition';
+import { dropsService } from '@/api/drops/drops.api.service';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { ApiWaveLog } from '@/api/generated/models/ApiWaveLog';
+import { PageSortDirection } from '@/api/page-request';
 import { RequestContext } from '@/request.context';
 import { NotFoundException } from '@/exceptions';
 
@@ -25,12 +28,37 @@ export async function listCompetitionVoteActivity(
   );
   if (!record || record.wave_id !== waveId)
     throw new NotFoundException('Competition not found');
+  const exactLineage =
+    record.legacy_wave_id === waveId &&
+    (await competitionVoteActivityRepository.hasExactLineage(
+      competitionId,
+      ctx
+    ));
+  // Earlier cutovers can contain unlinked compatibility logs. Keep their
+  // established reader until their historical provenance is independently proven.
+  if (
+    record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER &&
+    !exactLineage
+  ) {
+    return dropsService.findWaveLogs(
+      {
+        wave_id: waveId,
+        offset,
+        limit,
+        drop_id: null,
+        log_types: ['DROP_VOTE_EDIT'],
+        sort_direction: PageSortDirection.DESC
+      },
+      ctx
+    );
+  }
+  const transferredAt = competition.legacy_transferred_at;
   const rows =
-    record.legacy_wave_id === waveId
+    exactLineage || (record.legacy_wave_id === waveId && transferredAt != null)
       ? await competitionVoteActivityRepository.listTransferred(
           competitionId,
           waveId,
-          competition.legacy_transferred_at ?? null,
+          exactLineage ? null : (transferredAt ?? null),
           offset,
           limit,
           ctx
@@ -65,7 +93,7 @@ export async function listCompetitionVoteActivity(
     // The retained contents column is NOT NULL JSON, validated by MySQL.
     // Preserve its complete original payload, as the legacy log API does.
     contents: row.legacy_contents
-      ? JSON.parse(row.legacy_contents!)
+      ? JSON.parse(row.legacy_contents)
       : {
           oldVote: Number(row.previous_value),
           newVote: Number(row.value)

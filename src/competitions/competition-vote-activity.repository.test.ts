@@ -275,7 +275,14 @@ describeWithSeed(
           report: JSON.stringify({ voteActivityIdentity: 'NATIVE_ID_V1' })
         }
       );
-      const expected = await list(0, 30);
+      const expected = await repository.listTransferred(
+        competitionId,
+        waveId,
+        null,
+        0,
+        30,
+        {}
+      );
       expect(
         expected.map((row) => row.legacy_id ?? Number(row.sequence))
       ).toContain('after-transfer');
@@ -321,7 +328,39 @@ describeWithSeed(
           report: JSON.stringify({ voteActivityIdentity: 'NATIVE_ID_V1' })
         }
       );
-      expect(await list(0, 30)).toEqual(rows);
+      expect(
+        await repository.listTransferred(competitionId, waveId, null, 0, 30, {})
+      ).toEqual(rows);
+    });
+
+    it('requires every cutover to certify exact lineage, including across rollback and re-migration', async () => {
+      expect(await repository.hasExactLineage(competitionId, {})).toBe(false);
+      const audit = async (id: string, action: string, report: object) =>
+        sqlExecutor.execute(
+          `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
+          (id,competition_id,actor,action,reason,report,created_at)
+          VALUES (:id,:competitionId,'fixture',:action,'fixture',:report,:transferredAt)`,
+          {
+            id,
+            competitionId,
+            action,
+            report: JSON.stringify(report),
+            transferredAt
+          }
+        );
+      await audit('first', 'CUTOVER', { voteActivityIdentity: 'NATIVE_ID_V1' });
+      expect(await repository.hasExactLineage(competitionId, {})).toBe(true);
+      await audit('rollback', 'ROLLBACK', {});
+      expect(await repository.hasExactLineage(competitionId, {})).toBe(true);
+      await audit('second', 'CUTOVER', {
+        voteActivityIdentity: 'NATIVE_ID_V1'
+      });
+      expect(await repository.hasExactLineage(competitionId, {})).toBe(true);
+      await audit('older-cutover', 'CUTOVER', {});
+      expect(await repository.hasExactLineage(competitionId, {})).toBe(false);
+      expect(await repository.hasExactLineage('other-competition', {})).toBe(
+        false
+      );
     });
 
     it('rejects malformed or null legacy JSON at the storage boundary', async () => {

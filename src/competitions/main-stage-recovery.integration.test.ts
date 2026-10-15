@@ -43,6 +43,7 @@ import { CompetitionEventDispatcher } from './competition-event-dispatcher';
 import { competitionEventRepository } from './competition-event.repository';
 import { nativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
 import { nativeCompetitionRuntimeService } from './native-competition-runtime.service';
+import { mirrorNativeLegacyVoteActivity } from './legacy-competition-mirror';
 
 const day = 86_400_000;
 const start = Date.UTC(2026, 9, 1, 12);
@@ -567,8 +568,96 @@ describeWithSeed(
       for (let offset = 0; offset < legacy.length; offset += 2)
         pages.push(...(await activity(offset, 2)));
       expect(pages).toEqual(legacy);
+      clock.value += 100;
+      await vote(17);
+      const remigratedHistory = await history();
+      expect(remigratedHistory.slice(0, afterHistory.length)).toEqual(
+        afterHistory
+      );
+      expect(Number(remigratedHistory.at(-1)!.sequence)).toBeGreaterThan(
+        Number(afterHistory.at(-1)!.sequence)
+      );
+      const resumed = await activity();
+      const resumedId = `${id}:${remigratedHistory.at(-1)!.sequence}`;
+      expect(resumed.filter((log) => log.id !== resumedId)).toEqual(legacy);
+      expect(resumed.filter((log) => log.id === resumedId)).toEqual([
+        expect.objectContaining({
+          id: resumedId,
+          contents: { oldVote: 11, newVote: 17 }
+        })
+      ]);
       expect((await service.verifyNative(id)).failures).toEqual([]);
     }, 120_000);
+
+    it('rolls the entire vote transaction back on an Activity identity collision without overwriting the existing log', async () => {
+      await vote(17);
+      // This disposable fixture has one writer. A successful insert establishes
+      // the next sequence without resetting counters or cached schema metadata.
+      const nextSequence = Number((await history()).at(-1)!.sequence) + 1;
+      await sqlExecutor.execute(
+        `INSERT INTO ${tables.PROFILES_ACTIVITY_LOGS_TABLE}
+        (id,profile_id,target_id,additional_data_1,additional_data_2,type,created_at,contents)
+        VALUES (:activityId,:actor,:dropId,:actor,:waveId,'DROP_VOTE_EDIT',:createdAt,:contents)`,
+        {
+          activityId: `${id}:${nextSequence}`,
+          actor,
+          dropId,
+          waveId: wave.id,
+          createdAt: new Date(start),
+          contents: JSON.stringify({ oldVote: 999, newVote: 998 })
+        }
+      );
+      const snapshot = async () => {
+        const rows = [];
+        for (const table of [
+          tables.COMPETITION_VOTES_TABLE,
+          tables.COMPETITION_VOTE_HISTORY_TABLE,
+          tables.COMPETITION_ENTRY_RUNTIME_TABLE,
+          tables.COMPETITION_COMMANDS_TABLE,
+          tables.COMPETITION_OUTBOX_TABLE,
+          tables.COMPETITION_LEGACY_MIRROR_PERMITS_TABLE,
+          tables.DROP_VOTER_STATE_TABLE,
+          tables.DROP_RANK_TABLE,
+          tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+          tables.DROP_REAL_VOTE_IN_TIME_TABLE,
+          tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
+          tables.PROFILES_ACTIVITY_LOGS_TABLE,
+          tables.PROFILE_LATEST_LOG_TABLE
+        ])
+          rows.push(await sqlExecutor.execute(`SELECT * FROM ${table}`));
+        return rows;
+      };
+      const before = await snapshot();
+      const key = randomUUID();
+      await expect(vote(29, key)).rejects.toThrow('Duplicate entry');
+      expect(await snapshot()).toEqual(before);
+      expect(await acceptedVote()).toEqual([{ value: 17, credit_spent: 17 }]);
+      // The failed command receipt also rolled back; the same key can be retried.
+      await vote(29, key);
+      expect(await acceptedVote()).toEqual([{ value: 29, credit_spent: 29 }]);
+      expect(await history()).toHaveLength(2);
+    });
+
+    it('refuses an absent primary Activity target and requires a pinned transaction', async () => {
+      const params = {
+        competitionId: id,
+        entryId: 'missing-entry',
+        voterProfileId: actor,
+        previousVote: 7,
+        value: 29,
+        occurredAt: clock.value
+      };
+      await expect(
+        mirrorNativeLegacyVoteActivity(sqlExecutor, params, 1, {})
+      ).rejects.toThrow('requires a transaction');
+      await expect(
+        sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+          mirrorNativeLegacyVoteActivity(sqlExecutor, params, 1, { connection })
+        )
+      ).rejects.toThrow('requires exactly one Activity log');
+      expect(await history()).toEqual([]);
+      expect(await acceptedVote()).toEqual([{ value: 7, credit_spent: 7 }]);
+    });
 
     it('requires pending delivery recovery before reversal and rejects a stale reverse snapshot after another accepted vote', async () => {
       await vote(29);

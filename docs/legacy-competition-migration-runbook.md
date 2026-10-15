@@ -218,6 +218,9 @@ idempotency retries, compatibility double writes, an accepted vote between
 reverse batches, a stale completed reverse snapshot, pending effects,
 legacy voting immediately after rollback in the same second, another migration,
 Activity identity/timestamp/content/proxy retention and stable pagination.
+A conflicting Activity ID rolls back the complete vote transaction without
+overwriting its existing log; re-migration retains history and allocates a fresh
+sequence for the next accepted vote.
 Activity also remains readable while a legacy-owned re-migration resets shadow
 entries, using exact linked logs and the current legacy drop; that fallback never
 exposes missing native entries or sibling COMPETITION drops.
@@ -282,8 +285,8 @@ announcement receipt commit, before outbox acknowledgement:
 5. Run `verify` again and require empty invariant failures, NATIVE/ACTIVE
    ownership, healthy capture/runtime flags and zero pending effects. Attach
    the independently reviewed evidence URL. Only then record `review-repair
-   --live --operator <allowlisted-profile> --reason <incident-reason> --evidence
-   <https-evidence-url>`. This appends NATIVE_REPAIR_REVIEW and returns migration
+--live --operator <allowlisted-profile> --reason <incident-reason> --evidence
+<https-evidence-url>`. This appends NATIVE_REPAIR_REVIEW and returns migration
    state to NATIVE; native decisions/effects still prohibit rollback.
 
 `reviewRepair` alone fixes no data or delivery dependency. It rejects pending
@@ -308,16 +311,23 @@ when entry context exists and renders the unchanged Activity response contract;
 its native-competition sandbox and social read-only Activity scenarios remain
 applicable. No deployment is performed by the Phase 2 qualification task.
 
-The exact lineage guarantee starts when all writers and migration transitions
-carry this correction, before Main Stage's first cutover. Older native histories
-without linked logs remain readable with their existing native IDs/timestamps
-while their retained entries are present;
-older cutovers without the identity marker retain the original timestamp cutoff
-fallback. Old random compatibility-log IDs have no recorded shared event identity,
-and old transition seconds can be ambiguous. Do not infer a proxy or adjustment
-reason by matching vote values/timestamps, or claim exact recovery qualification
-for such ambiguous historical data without a separate data review. This change
-does not rewrite old records or manufacture missing provenance.
+The exact recovery reader is enabled only when **every** recorded CUTOVER for
+that primary certifies `voteActivityIdentity=NATIVE_ID_V1`, with at least one
+cutover. Deploy all writers before the migration Lambda and before Main Stage's
+first cutover. This ordering is a prerequisite for that certificate's validity.
+Rollback audits do not remove qualification; a mixed old/new cutover history does
+not automatically qualify. The reader uses exact native log IDs, never inferred
+ownership intervals, to deduplicate all retained legacy logs across recovery.
+
+For earlier or unmarked migrations, keep the established read paths: native
+ownership combines native history with logs up to the transfer timestamp;
+LEGACY_ADAPTER reads wave logs. This patch does not qualify exact recovery of
+those older histories. Old random compatibility IDs have no shared event identity,
+and transition seconds can be ambiguous. Do not infer provenance by matching vote
+values/timestamps, retroactively mark old cutovers, or enable the full recovery
+reader without a separate historical data review. No old records are rewritten
+and no missing provenance is manufactured. This limitation applies to previously
+migrated competitions; Main Stage's independent hold remains in effect.
 
 Offset pagination is deterministic for a fixed history; concurrent new votes can
 shift offsets, as with the existing API. A production-sized query/latency rehearsal,

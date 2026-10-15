@@ -26,6 +26,31 @@ export interface CompetitionVoteActivity {
 }
 
 export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleService {
+  public async hasExactLineage(
+    competitionId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const timerName = `${this.constructor.name}->hasExactLineage`;
+    try {
+      ctx.timer?.start(timerName);
+      const [row] = await this.db.execute<{
+        cutovers: number;
+        unqualified: number;
+      }>(
+        `SELECT COUNT(*) AS cutovers,
+          COALESCE(SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(report, '$.voteActivityIdentity')) = 'NATIVE_ID_V1'
+            THEN 0 ELSE 1 END), 0) AS unqualified
+        FROM ${COMPETITION_MIGRATION_AUDIT_TABLE}
+        WHERE competition_id = :competitionId AND action = 'CUTOVER'`,
+        { competitionId },
+        { wrappedConnection: ctx.connection }
+      );
+      return Number(row.cutovers) > 0 && Number(row.unqualified) === 0;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async listTransferred(
     competitionId: string,
     waveId: string,
@@ -34,31 +59,17 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
     limit: number,
     ctx: RequestContext
   ): Promise<CompetitionVoteActivity[]> {
-    // Native histories remain canonical throughout rollback and re-migration.
-    // Exclude their exact linked logs, including logs of hidden native entries.
-    // Exact-lineage cutovers need no timestamp heuristics: every native primary
-    // vote has its canonical log ID. Only older cutovers retain the original
-    // cutoff fallback for unlinked compatibility logs already covered by history.
-    // Legacy intervals and retained deleted-drop logs survive. During a legacy-
-    // owned re-migration, shadow entry resets must not hide accepted history:
-    // exact linked logs plus the live legacy drop provide its retained identity.
-    // Never use that fallback for missing native entries or sibling COMPETITION drops.
-    // Each source contributes its first offset+limit rows BEFORE global paging.
+    // A null cutoff is reserved for primaries whose every cutover certifies
+    // exact native log identities. Older cutovers retain their existing cutoff.
+    // Deduplicate by identity before paging, including hidden native entries.
+    // While legacy-owned, re-migration can reset shadow entries: an exact linked
+    // log and a live legacy drop retain that accepted history's identity.
+    // Each source contributes offset+limit rows before the final global page.
     const timerName = `${this.constructor.name}->listTransferred`;
     try {
       ctx.timer?.start(timerName);
       return await this.db.execute<CompetitionVoteActivity>(
-        `WITH transitions AS (
-        SELECT action, created_at, report FROM ${COMPETITION_MIGRATION_AUDIT_TABLE}
-        WHERE competition_id = :competitionId AND action IN ('CUTOVER', 'ROLLBACK')
-        UNION ALL
-        SELECT 'CUTOVER', :transferredAt, JSON_OBJECT()
-        WHERE :transferredAt IS NOT NULL AND NOT EXISTS (
-          SELECT 1 FROM ${COMPETITION_MIGRATION_AUDIT_TABLE}
-          WHERE competition_id = :competitionId AND action = 'CUTOVER'
-        )
-      )
-      SELECT activity.* FROM (
+        `SELECT activity.* FROM (
         (SELECT 1 AS source_order, history.sequence, COALESCE(entry.drop_id, native_log.target_id) AS drop_id, history.voter_profile_id,
           COALESCE(entry.submitter_id, native_log.additional_data_1) AS submitter_id, history.previous_value, history.value,
           history.occurred_at, NULL AS legacy_id, CAST(native_log.contents AS CHAR) AS legacy_contents,
@@ -96,16 +107,7 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
               AND linked.competition_id = :competitionId
               AND log.id = CONCAT(linked.competition_id, ':', linked.sequence)
           )
-          AND NOT EXISTS (
-            SELECT 1 FROM transitions cutover WHERE cutover.action = 'CUTOVER'
-              AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(cutover.report, '$.voteActivityIdentity')), '') <> 'NATIVE_ID_V1'
-              AND TIMESTAMPDIFF(MICROSECOND, '1970-01-01', log.created_at) / 1000 > cutover.created_at
-              AND NOT EXISTS (
-                SELECT 1 FROM transitions rollback WHERE rollback.action = 'ROLLBACK'
-                  AND rollback.created_at >= cutover.created_at
-                  AND TIMESTAMPDIFF(MICROSECOND, '1970-01-01', log.created_at) / 1000 > rollback.created_at
-              )
-          )
+          AND (:transferredAtUtc IS NULL OR log.created_at <= :transferredAtUtc)
         ORDER BY log.created_at DESC, log.id DESC LIMIT :candidateLimit)
       ) activity
       ORDER BY activity.occurred_at DESC, activity.source_order DESC,
@@ -114,7 +116,13 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
         {
           competitionId,
           waveId,
-          transferredAt,
+          transferredAtUtc:
+            transferredAt === null
+              ? null
+              : new Date(transferredAt)
+                  .toISOString()
+                  .slice(0, 23)
+                  .replace('T', ' '),
           logType: ProfileActivityLogType.DROP_VOTE_EDIT,
           candidateLimit: offset + limit,
           offset,
