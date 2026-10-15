@@ -156,14 +156,7 @@ export class MemeCollaborationsService {
       return [];
     }
     if (model.drop_id && model.collaborator_ids === undefined) return [];
-    if (
-      model.drop_id ||
-      ![DropType.PARTICIPATORY, DropType.COMPETITION].includes(
-        model.drop_type
-      ) ||
-      !model.metadata.some((item) => item.data_key === 'memeName') ||
-      !model.parts.some((part) => part.media.length)
-    )
+    if (model.drop_id || !artworkSubmission)
       throw new BadRequestException(
         'Collaborator invitations require a new artwork submission'
       );
