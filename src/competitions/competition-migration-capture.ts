@@ -106,6 +106,28 @@ function capturesCompetition(
   return `(${competitionColumns.map((column) => `not (OLD.${identifier(column)} <=> NEW.${identifier(column)})`).join(' or ')})`;
 }
 
+function matchesMigrationCapture(
+  actual: string,
+  table: string,
+  operation: string,
+  columns: readonly string[]
+): boolean {
+  const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+  const matches = (capturedColumns: readonly string[]) =>
+    normalize(actual) ===
+    normalize(migrationCaptureStatement(table, operation, capturedColumns));
+  if (matches(columns)) return true;
+  if (table !== WAVES_TABLE) return false;
+  // Shared reply settings stay wave-owned. Accept the exact v1 trigger body
+  // installed before their addition, while rejecting every other schema drift.
+  return matches(
+    columns.filter(
+      (column) =>
+        column !== 'chat_replies_open' && column !== 'chat_replies_collapsed'
+    )
+  );
+}
+
 /** DDL runs only during additive schema deployment. No competition is enrolled. */
 export async function installMigrationCapture(
   db: SqlExecutor = dbSupplier()
@@ -131,8 +153,12 @@ export async function installMigrationCapture(
         const statement = migrationCaptureStatement(table, operation, names);
         if (existing) {
           if (
-            existing.ACTION_STATEMENT.replace(/\s+/g, ' ').trim() !==
-            statement.replace(/\s+/g, ' ').trim()
+            !matchesMigrationCapture(
+              existing.ACTION_STATEMENT,
+              table,
+              operation,
+              names
+            )
           )
             throw new Error(
               `Migration capture schema drift: ${name}; deploy a versioned replacement`
@@ -219,7 +245,6 @@ export async function migrationCaptureHealthy(
     { tables: MIGRATION_SOURCE_TABLES },
     { wrappedConnection: ctx.connection }
   );
-  const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
   for (const table of MIGRATION_SOURCE_TABLES) {
     const columns = schema.filter((column) => column.TABLE_NAME === table);
     if (!columns.length) return false;
@@ -232,14 +257,12 @@ export async function migrationCaptureHealthy(
         row.EVENT_OBJECT_TABLE !== table ||
         row.EVENT_MANIPULATION !== operation ||
         row.ACTION_TIMING !== 'AFTER' ||
-        normalize(row.ACTION_STATEMENT) !==
-          normalize(
-            migrationCaptureStatement(
-              table,
-              operation,
-              columns.map((item) => item.COLUMN_NAME)
-            )
-          )
+        !matchesMigrationCapture(
+          row.ACTION_STATEMENT,
+          table,
+          operation,
+          columns.map((item) => item.COLUMN_NAME)
+        )
       )
         return false;
     }
