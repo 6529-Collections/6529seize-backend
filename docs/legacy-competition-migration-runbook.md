@@ -140,6 +140,14 @@ comparison or prevents an otherwise valid wave from transferring. This correctio
 requires deploying `competitionMigrationLoop`; no schema, API or frontend change
 is needed.
 
+Shared wave reply settings (`chat_replies_open` and `chat_replies_collapsed`)
+remain wave-owned. Capture installation and health checks accept the exact current
+trigger definition or the original v1 definition without those two columns.
+Other schema or ownership-guard drift still fails.
+Deploy `dbMigrationsLoop` with the `maintenance` scope, then `api`, then
+`competitionMigrationLoop`. No trigger replacement, full schema sync, data update
+or frontend deployment is required. Retry the same wave ID after deployment.
+
 Historical decisions share each batch's row budget with their winners. Catch-up
 rebuilds the captured decision keys, including moved and deleted keys, instead of
 replaying the full unchanged history after every source update. Remaining derived
