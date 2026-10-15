@@ -52,7 +52,9 @@ managed record remain compatible.
 
 Invitation and acceptance notifications use the existing identity-notification
 and push pipelines with cause `MEME_COLLABORATION`. New generated endpoints are
-`GET /drops/{drop_id}/collaborations` and
+`GET /drops/{drop_id}/collaborations`,
+`POST /drops/{drop_id}/collaborations` (submitter-only additions on active legacy
+or designated native Memes Main Stage artwork), and
 `POST /drops/{drop_id}/collaborations/{invitation_id}/response`; both use the
 existing wave visibility checks. Accepted identities participate in Main Stage
 profile artwork queries, without changing submission ownership or allowances.

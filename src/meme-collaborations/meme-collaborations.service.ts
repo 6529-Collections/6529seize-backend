@@ -1,7 +1,12 @@
+import { env } from '@/env';
+import { competitionMainStageRepository } from '@/competitions/competition-main-stage.repository';
 import { createHash, randomUUID } from 'node:crypto';
 import { AuthenticationContext } from '@/auth-context';
 import {
   DROPS_TABLE,
+  DROP_METADATA_TABLE,
+  DROPS_PARTS_TABLE,
+  DROP_MEDIA_TABLE,
   MEME_COLLABORATIONS_TABLE,
   MEME_COLLABORATION_INVITATIONS_TABLE,
   COMPETITIONS_TABLE,
@@ -134,7 +139,9 @@ export class MemeCollaborationsService {
         'Collaborator invitations can only be set when submitting a new artwork'
       );
     const artworkSubmission =
-      model.drop_type === DropType.PARTICIPATORY &&
+      [DropType.PARTICIPATORY, DropType.COMPETITION].includes(
+        model.drop_type
+      ) &&
       model.metadata.some((item) => item.data_key === 'memeName') &&
       model.parts.some((part) => part.media.length);
     if (
@@ -151,7 +158,9 @@ export class MemeCollaborationsService {
     if (model.drop_id && model.collaborator_ids === undefined) return [];
     if (
       model.drop_id ||
-      model.drop_type !== DropType.PARTICIPATORY ||
+      ![DropType.PARTICIPATORY, DropType.COMPETITION].includes(
+        model.drop_type
+      ) ||
       !model.metadata.some((item) => item.data_key === 'memeName') ||
       !model.parts.some((part) => part.media.length)
     )
@@ -171,7 +180,130 @@ export class MemeCollaborationsService {
       throw new BadRequestException(
         'Select up to 20 distinct collaborating profiles, excluding yourself'
       );
+    const mainStage = competitionId
+      ? await competitionMainStageRepository.isDesignated(competitionId, ctx)
+      : model.wave_id === env.getStringOrNull('MAIN_STAGE_WAVE_ID');
+    if (!mainStage) {
+      if (ids.length)
+        throw new BadRequestException(
+          'Invitations require a Memes Main Stage submission'
+        );
+      return [];
+    }
     return this.createInvitations(model, dropId, ids, ctx, competitionId);
+  }
+
+  async inviteExisting(
+    dropId: string,
+    ids: string[],
+    auth: AuthenticationContext,
+    ctx: RequestContext
+  ): Promise<number[]> {
+    if (
+      !auth.authenticatedProfileId ||
+      auth.isAuthenticatedAsProxy() ||
+      !auth.authenticatedWallet
+    )
+      throw new ForbiddenException(
+        'Invite directly using your own authenticated profile'
+      );
+    return this.db.executeNativeQueriesInTransaction(async (connection) => {
+      const tx = { ...ctx, connection };
+      // Also acquired by mint selection, including submissions predating managed contexts.
+      const [drop] = await this.db.query<{
+        author_id: string;
+        wave_id: string;
+        title: string | null;
+      }>(
+        'lockArtwork',
+        `select author_id,wave_id,title from ${DROPS_TABLE} where id=:dropId for update`,
+        { dropId },
+        tx
+      );
+      if (!drop) throw new NotFoundException('Submission no longer exists');
+      if (drop.author_id !== auth.authenticatedProfileId)
+        throw new ForbiddenException(
+          'Only the submitter can invite collaborators'
+        );
+      let context = await this.db.context(dropId, tx, true);
+      const eligible = await this.db.activeMainStageDrop(dropId, tx);
+      if (!eligible || context?.closed_at != null)
+        throw new BadRequestException(
+          'Invitations require an active Memes Main Stage submission'
+        );
+      const previous = context ? await this.db.invitations(dropId, tx) : [];
+      if (
+        !ids.length ||
+        previous.length + ids.length > 20 ||
+        new Set(ids).size !== ids.length ||
+        ids.includes(drop.author_id) ||
+        ids.some((id) => previous.some((item) => item.profile_id === id))
+      )
+        throw new BadRequestException(
+          'Choose new distinct collaborators, up to 20 total, excluding yourself'
+        );
+      if (!context) {
+        const model = await this.existingArtworkModel(dropId, drop, tx);
+        await this.createInvitations(
+          model,
+          dropId,
+          [],
+          tx,
+          eligible.competition_id ?? undefined
+        );
+        context = await this.db.context(dropId, tx, true);
+      }
+      if (!context) throw new NotFoundException('Collaboration not found');
+      return this.insertInvitations(
+        context.author_id,
+        context.wave_id,
+        dropId,
+        ids,
+        tx
+      );
+    });
+  }
+
+  private async existingArtworkModel(
+    dropId: string,
+    drop: { author_id: string; wave_id: string; title: string | null },
+    ctx: RequestContext
+  ) {
+    const metadata = await this.db.query<
+      CreateOrUpdateDropModel['metadata'][number]
+    >(
+      'artworkMetadata',
+      `select data_key,data_value from ${DROP_METADATA_TABLE} where drop_id=:dropId`,
+      { dropId },
+      ctx
+    );
+    const parts = await this.db.query<{ content: string | null }>(
+      'artworkParts',
+      `select content from ${DROPS_PARTS_TABLE} where drop_id=:dropId order by drop_part_id`,
+      { dropId },
+      ctx
+    );
+    const media = await this.db.query<{ url: string; mime_type: string }>(
+      'artworkMedia',
+      `select url,mime_type from ${DROP_MEDIA_TABLE} where drop_id=:dropId order by drop_part_id,id`,
+      { dropId },
+      ctx
+    );
+    if (!metadata.some((item) => item.data_key === 'memeName') || !media.length)
+      throw new BadRequestException(
+        'Invitations require an artwork submission'
+      );
+    const model = {
+      ...drop,
+      metadata,
+      title: drop.title,
+      parts: parts.map((part, index) => ({
+        ...part,
+        quoted_drop: null,
+        media: index === 0 ? media : []
+      }))
+    };
+    return model;
   }
 
   private async updateArtwork(
@@ -231,7 +363,10 @@ export class MemeCollaborationsService {
   }
 
   private async createInvitations(
-    model: CreateOrUpdateDropModel,
+    model: Pick<
+      CreateOrUpdateDropModel,
+      'author_id' | 'wave_id' | 'title' | 'parts' | 'metadata'
+    >,
     dropId: string,
     ids: string[],
     ctx: RequestContext,
@@ -296,6 +431,37 @@ export class MemeCollaborationsService {
       },
       ctx
     );
+    return this.insertInvitations(
+      model.author_id!,
+      model.wave_id,
+      dropId,
+      ids,
+      ctx
+    );
+  }
+
+  private async insertInvitations(
+    authorId: string,
+    waveId: string,
+    dropId: string,
+    ids: string[],
+    ctx: RequestContext
+  ): Promise<number[]> {
+    const profiles = await this.db.profiles(ids, ctx);
+    if (
+      profiles.length !== ids.length ||
+      profiles.some((profile) => !profile.handle)
+    )
+      throw new BadRequestException(
+        'All collaborating artists must have an available profile'
+      );
+    const [wave] = await this.db.query<{ visibility_group_id: string | null }>(
+      'invitationWave',
+      `select visibility_group_id from ${WAVES_TABLE} where id=:id`,
+      { id: waveId },
+      ctx
+    );
+    if (!wave) throw new NotFoundException('Wave not found');
     const notificationIds: number[] = [];
     // Serialize writes on the caller's single MySQL transaction connection.
     // Persist each invitation before inserting its dependent notification.
@@ -320,8 +486,8 @@ export class MemeCollaborationsService {
           {
             event_type: 'INVITED',
             drop_id: dropId,
-            wave_id: model.wave_id,
-            actor_id: model.author_id!,
+            wave_id: waveId,
+            actor_id: authorId,
             invitation_id: id
           },
           wave.visibility_group_id,
@@ -336,6 +502,12 @@ export class MemeCollaborationsService {
     const context = await this.db.context(dropId, ctx);
     const invitations = context ? await this.db.invitations(dropId, ctx) : [];
     return {
+      can_invite:
+        !!viewerId &&
+        !ctx.authenticationContext?.isAuthenticatedAsProxy() &&
+        context?.closed_at == null &&
+        (await this.db.activeMainStageDrop(dropId, ctx))?.author_id ===
+          viewerId,
       managed: !!context,
       closed: context?.closed_at != null,
       artwork_hash: context?.artwork_hash ?? '',
@@ -459,6 +631,12 @@ export class MemeCollaborationsService {
     dropId: string,
     ctx: RequestContext
   ): Promise<MemeCollaborationCredit | null> {
+    await this.db.query(
+      'lockMintArtwork',
+      `select id from ${DROPS_TABLE} where id=:dropId for update`,
+      { dropId },
+      ctx
+    );
     const context = await this.db.context(dropId, ctx, true);
     if (!context) return null;
     if (context.credit) return context.credit;
