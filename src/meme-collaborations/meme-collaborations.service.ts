@@ -165,14 +165,7 @@ export class MemeCollaborationsService {
         'Submit collaborator invitations directly from your own profile'
       );
     const ids = model.collaborator_ids ?? [];
-    if (
-      ids.length > 20 ||
-      new Set(ids).size !== ids.length ||
-      ids.includes(model.author_id!)
-    )
-      throw new BadRequestException(
-        'Select up to 20 distinct collaborating profiles, excluding yourself'
-      );
+    this.validateInitialInvitees(ids, model.author_id!);
     const mainStage = competitionId
       ? await competitionMainStageRepository.isDesignated(competitionId, ctx)
       : model.wave_id === env.getStringOrNull('MAIN_STAGE_WAVE_ID');
@@ -184,6 +177,17 @@ export class MemeCollaborationsService {
       return [];
     }
     return this.createInvitations(model, dropId, ids, ctx, competitionId);
+  }
+
+  private validateInitialInvitees(ids: string[], authorId: string): void {
+    if (
+      ids.length > 20 ||
+      new Set(ids).size !== ids.length ||
+      ids.includes(authorId)
+    )
+      throw new BadRequestException(
+        'Select up to 20 distinct collaborating profiles, excluding yourself'
+      );
   }
 
   async inviteExisting(

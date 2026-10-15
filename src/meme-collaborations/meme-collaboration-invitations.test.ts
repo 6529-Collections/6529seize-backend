@@ -224,3 +224,25 @@ it.each([undefined, 'native-main'])(
     ).toBe(true);
   }
 );
+
+it.each([
+  ['self', ['A']],
+  ['duplicates', ['C', 'C']],
+  ['over the lifetime limit', Array.from({ length: 21 }, (_, i) => `C${i}`)]
+])('rejects invalid initial invitees: %s', async (_label, ids) => {
+  const { db, service } = setup();
+  db.context.mockResolvedValue(null as never);
+  const model = {
+    drop_id: null,
+    wave_id: 'wave',
+    author_id: 'A',
+    drop_type: DropType.PARTICIPATORY,
+    metadata: [{ data_key: 'memeName', data_value: 'GM' }],
+    parts: [{ media: [{}] }],
+    collaborator_ids: ids
+  } as CreateOrUpdateDropModel;
+  await expect(service.onWrite(model, 'new', {})).rejects.toThrow(
+    'Select up to 20 distinct collaborating profiles, excluding yourself'
+  );
+  expect(db.query).not.toHaveBeenCalled();
+});
