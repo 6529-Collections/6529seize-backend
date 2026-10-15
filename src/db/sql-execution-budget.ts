@@ -23,6 +23,11 @@ export type SqlBudgetPhase =
   | 'ROLLBACK'
   | 'RESTORE'
   | 'RELEASE';
+/**
+ * NOT_SENT: the owned outer COMMIT was never transmitted, including failures in
+ * COMMIT-phase hooks before send. UNKNOWN: it may have been sent without an
+ * acknowledgment. ACKNOWLEDGED: COMMIT succeeded; cleanup cannot undo it.
+ */
 export type SqlCommitOutcome = 'NOT_SENT' | 'UNKNOWN' | 'ACKNOWLEDGED';
 export type SqlBudgetCode =
   | 'SQL_BUDGET_EXCEEDED'

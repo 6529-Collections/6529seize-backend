@@ -852,6 +852,14 @@ before lifecycle maintenance, which prioritizes status reconciliation and
 checkpoints bounded REST catch-up batches.
 `marketDepthStreamLoop` records live order lifecycle events, while REST event
 catch-up and per-order status checks recover supported missed observations.
+Stream appends opt into the shared SQL execution budget, with a five-second
+total deadline and one-second finalization reserve within the remaining run
+budget. The SQL owner finalizes the transaction or disposes of its connection
+before the stream retries or closes its database context. Pre-commit failures
+can retry after cleanup; an unacknowledged COMMIT leaves the batch unconfirmed
+and stops retries and final draining. Acknowledged commits remain confirmed
+through connection cleanup failures. REST appends retain their existing session
+and transaction behavior.
 Six `market_depth_*` tables retain immutable compressed archives, current orders,
 collection state, events, cursors and retry work. All amounts and quantities
 needed for normalization preserve exact integer strings.
