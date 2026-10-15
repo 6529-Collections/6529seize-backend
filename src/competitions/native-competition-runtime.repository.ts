@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   mirrorNativeLegacyVote,
+  mirrorNativeLegacyVoteActivity,
   mirrorNativeLegacyWinners,
   mirrorNativeLegacySchedule
 } from '@/competitions/legacy-competition-mirror';
@@ -300,6 +301,8 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       previousVote: number;
       value: number;
       occurredAt: number;
+      proxyId?: string | null;
+      reason?: string;
     },
     ctx: RequestContext
   ): Promise<void> {
@@ -348,6 +351,7 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       ctx
     );
     const sequence = await this.getLastInsertId(ctx.connection!);
+    await mirrorNativeLegacyVoteActivity(this.db, params, sequence, ctx);
     await this.enqueueEvent(
       {
         key: `vote:${sequence}`,

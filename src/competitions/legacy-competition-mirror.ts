@@ -7,7 +7,9 @@ import {
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-  COMPETITION_VOTES_TABLE
+  COMPETITION_VOTES_TABLE,
+  PROFILES_ACTIVITY_LOGS_TABLE,
+  PROFILE_LATEST_LOG_TABLE
 } from '@/constants';
 import { SqlExecutor } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
@@ -119,6 +121,65 @@ export async function mirrorNativeLegacyVote(
       options
     );
   });
+}
+
+/** The log identity is also the public native Activity identity. This exact link
+ * avoids matching distinct replacements by value or second-precision timestamps.
+ * Only the immutable legacy primary can write wave-scoped compatibility logs. */
+export async function mirrorNativeLegacyVoteActivity(
+  db: SqlExecutor,
+  params: {
+    competitionId: string;
+    entryId: string;
+    voterProfileId: string;
+    previousVote: number;
+    value: number;
+    occurredAt: number;
+    proxyId?: string | null;
+    reason?: string;
+  },
+  sequence: number,
+  ctx: RequestContext
+): Promise<void> {
+  const timerName = 'mirrorNativeLegacyVoteActivity';
+  ctx.timer?.start(timerName);
+  try {
+    const inserted = await db.execute(
+      `INSERT INTO ${PROFILES_ACTIVITY_LOGS_TABLE}
+       (id, profile_id, target_id, contents, type, proxy_id, created_at, additional_data_1, additional_data_2)
+       SELECT :activityId, :voterProfileId, e.drop_id, :contents, 'DROP_VOTE_EDIT', :proxyId,
+         DATE_ADD('1970-01-01', INTERVAL :occurredAt MICROSECOND), e.submitter_id, c.wave_id
+       FROM ${COMPETITIONS_TABLE} c JOIN ${COMPETITION_ENTRIES_TABLE} e
+         ON e.competition_id = c.id AND e.id = :entryId
+       WHERE c.id = :competitionId AND c.legacy_wave_id = c.wave_id AND c.storage_mode = 'NATIVE'`,
+      {
+        ...params,
+        occurredAt: params.occurredAt * 1000,
+        activityId: `${params.competitionId}:${sequence}`,
+        proxyId: params.proxyId ?? null,
+        contents: JSON.stringify({
+          oldVote: params.previousVote,
+          newVote: params.value,
+          ...(params.reason ? { reason: params.reason } : {})
+        })
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    if (db.getAffectedRows(inserted)) {
+      await db.execute(
+        `INSERT INTO ${PROFILE_LATEST_LOG_TABLE} (profile_id, latest_activity)
+         VALUES (:voterProfileId, DATE_ADD('1970-01-01', INTERVAL :occurredAt MICROSECOND))
+         ON DUPLICATE KEY UPDATE latest_activity = GREATEST(latest_activity, VALUES(latest_activity))`,
+        {
+          voterProfileId: params.voterProfileId,
+          occurredAt: params.occurredAt * 1000
+        },
+        { wrappedConnection: ctx.connection }
+      );
+    }
+  } finally {
+    ctx.timer?.stop(timerName);
+  }
 }
 
 /** Shared drop identity/content is retained. Only the old classification/cache

@@ -1,12 +1,22 @@
 import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
+  COMPETITION_MIGRATION_AUDIT_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE
 } from '@/constants';
 import { competitionEntryVisibleSql } from './competition-entry-visibility';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
+
+function afterTransitionSql(alias: 'cutover' | 'rollback'): string {
+  const logTime =
+    "TIMESTAMPDIFF(MICROSECOND, '1970-01-01', log.created_at) / 1000";
+  const boundary = `JSON_EXTRACT(${alias}.report, '$.voteActivityBoundary.ids')`;
+  return `(CASE WHEN ${boundary} IS NULL THEN ${logTime} > ${alias}.created_at
+    ELSE ${logTime} >= FLOOR(${alias}.created_at / 1000) * 1000
+      AND NOT JSON_CONTAINS(${boundary}, JSON_QUOTE(log.id)) END)`;
+}
 
 export interface CompetitionVoteActivity {
   readonly sequence: number | string;
@@ -25,30 +35,41 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
   public async listTransferred(
     competitionId: string,
     waveId: string,
-    transferredAt: number,
+    transferredAt: number | null,
     offset: number,
     limit: number,
     ctx: RequestContext
   ): Promise<CompetitionVoteActivity[]> {
-    // Keep the original log IDs, JSON and proxy attribution. Historical wave
-    // logs belong only to the transferred legacy primary, never its siblings.
-    // Apply pagination once, after combining both histories chronologically.
-    // Each source's first offset+limit rows contain the global first offset+limit:
-    // an excluded row already has that many rows ahead of it in its own source.
-    // Legacy DATETIME values are UTC; compare a UTC literal rather than the
-    // session-timezone-dependent FROM_UNIXTIME conversion.
+    // Native histories remain canonical throughout rollback and re-migration.
+    // Exclude their exact linked logs, including logs of hidden native entries.
+    // Older compatibility logs in native ownership intervals are already covered
+    // by native history. Legacy intervals and retained deleted-drop logs survive.
+    // Each source contributes its first offset+limit rows BEFORE global paging.
     const timerName = `${this.constructor.name}->listTransferred`;
     try {
       ctx.timer?.start(timerName);
       return await this.db.execute<CompetitionVoteActivity>(
-        `SELECT activity.* FROM (
+        `WITH transitions AS (
+        SELECT action, COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(report, '$.voteActivityBoundary.at')) AS UNSIGNED), created_at) AS created_at, report FROM ${COMPETITION_MIGRATION_AUDIT_TABLE}
+        WHERE competition_id = :competitionId AND action IN ('CUTOVER', 'ROLLBACK')
+        UNION ALL
+        SELECT 'CUTOVER', :transferredAt, JSON_OBJECT()
+        WHERE :transferredAt IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM ${COMPETITION_MIGRATION_AUDIT_TABLE}
+          WHERE competition_id = :competitionId AND action = 'CUTOVER'
+        )
+      )
+      SELECT activity.* FROM (
         (SELECT 1 AS source_order, history.sequence, entry.drop_id, history.voter_profile_id,
           entry.submitter_id, history.previous_value, history.value,
-          history.occurred_at, NULL AS legacy_id, NULL AS legacy_contents,
-          NULL AS proxy_id
+          history.occurred_at, NULL AS legacy_id, CAST(native_log.contents AS CHAR) AS legacy_contents,
+          native_log.proxy_id
         FROM ${COMPETITION_VOTE_HISTORY_TABLE} history
         JOIN ${COMPETITION_ENTRIES_TABLE} entry
           ON entry.competition_id = history.competition_id AND entry.id = history.entry_id
+        LEFT JOIN ${PROFILES_ACTIVITY_LOGS_TABLE} native_log
+          ON native_log.id = CONCAT(history.competition_id, ':', history.sequence)
+          AND native_log.additional_data_2 = :waveId AND native_log.type = :logType
         WHERE history.competition_id = :competitionId AND ${competitionEntryVisibleSql('entry')}
         ORDER BY history.occurred_at DESC, history.sequence DESC LIMIT :candidateLimit)
         UNION ALL
@@ -60,7 +81,21 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
           log.proxy_id
         FROM ${PROFILES_ACTIVITY_LOGS_TABLE} log
         WHERE log.additional_data_2 = :waveId AND log.type = :logType
-          AND log.created_at <= :transferredAtUtc
+          AND NOT EXISTS (
+            SELECT 1 FROM ${COMPETITION_VOTE_HISTORY_TABLE} linked
+            WHERE linked.sequence = CAST(SUBSTRING(log.id, LENGTH(:competitionId) + 2) AS UNSIGNED)
+              AND linked.competition_id = :competitionId
+              AND log.id = CONCAT(linked.competition_id, ':', linked.sequence)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM transitions cutover WHERE cutover.action = 'CUTOVER'
+              AND ${afterTransitionSql('cutover')}
+              AND NOT EXISTS (
+                SELECT 1 FROM transitions rollback WHERE rollback.action = 'ROLLBACK'
+                  AND rollback.created_at >= cutover.created_at
+                  AND ${afterTransitionSql('rollback')}
+              )
+          )
         ORDER BY log.created_at DESC, log.id DESC LIMIT :candidateLimit)
       ) activity
       ORDER BY activity.occurred_at DESC, activity.source_order DESC,
@@ -69,10 +104,7 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
         {
           competitionId,
           waveId,
-          transferredAtUtc: new Date(transferredAt)
-            .toISOString()
-            .slice(0, 23)
-            .replace('T', ' '),
+          transferredAt,
           logType: ProfileActivityLogType.DROP_VOTE_EDIT,
           candidateLimit: offset + limit,
           offset,

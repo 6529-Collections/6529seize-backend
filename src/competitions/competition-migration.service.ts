@@ -1,3 +1,4 @@
+import { voteActivityBoundary } from '@/competitions/competition-vote-activity-lineage';
 import { compareMigrationContent } from '@/competitions/competition-migration-content-parity';
 import { MigrationAcceptanceSchema } from './competition-migration-acceptance';
 import { CompetitionMigrationEnvironmentRepository } from './competition-migration-environment.repository';
@@ -1022,7 +1023,15 @@ export class CompetitionMigrationService {
         operator.actor,
         'CUTOVER',
         operator.reason,
-        { finalWatermark: status.migration?.source_watermark },
+        {
+          finalWatermark: status.migration?.source_watermark,
+          voteActivityBoundary: await voteActivityBoundary(
+            this.supplier(),
+            record.wave_id,
+            this.now(),
+            ctx
+          )
+        },
         ctx
       );
       return {
@@ -1184,7 +1193,13 @@ export class CompetitionMigrationService {
         {
           reverseReconciliation:
             'bounded-native-materialization-and-independent-full-comparison',
-          mismatches: 0
+          mismatches: 0,
+          voteActivityBoundary: await voteActivityBoundary(
+            this.supplier(),
+            record.wave_id,
+            this.now(),
+            ctx
+          )
         },
         ctx
       );

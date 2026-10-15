@@ -130,7 +130,7 @@ it('does not expose primary-wave logs through a separate native competition', as
   ).not.toHaveBeenCalled();
 });
 
-it('retains adapter reads before transfer', async () => {
+it('uses the same combined history after rollback to the legacy adapter', async () => {
   jest
     .mocked(competitionRepository.findCompetitionRecordById)
     .mockResolvedValue({
@@ -139,20 +139,14 @@ it('retains adapter reads before transfer', async () => {
       legacy_wave_id: 'wave',
       storage_mode: CompetitionStorageMode.LEGACY_ADAPTER
     } as CompetitionRecord);
-  jest.mocked(dropsService.findWaveLogs).mockResolvedValue([]);
+  jest
+    .mocked(competitionService.getCompetition)
+    .mockResolvedValue({} as PublicCompetition);
   expect(await read()).toEqual([]);
-  expect(dropsService.findWaveLogs).toHaveBeenCalledWith(
-    expect.objectContaining({
-      wave_id: 'wave',
-      offset: 20,
-      limit: 50,
-      log_types: ['DROP_VOTE_EDIT']
-    }),
-    {}
-  );
   expect(
     competitionVoteActivityRepository.listTransferred
-  ).not.toHaveBeenCalled();
+  ).toHaveBeenCalledWith('competition', 'wave', null, 20, 50, {});
+  expect(dropsService.findWaveLogs).not.toHaveBeenCalled();
 });
 
 it('masks unreadable competitions before querying any history', async () => {

@@ -1,5 +1,6 @@
 import {
   COMPETITION_ENTRIES_TABLE,
+  COMPETITION_MIGRATION_AUDIT_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE
 } from '@/constants';
@@ -224,6 +225,111 @@ describeWithSeed(
           }
         }
       );
+    });
+
+    it('uses exact native log identities for deduplication and enrichment without rounding native timestamps', async () => {
+      const logs = [
+        {
+          ...legacy(`${competitionId}:2`, transferredAt + 1000),
+          target_id: 'drop-entry'
+        },
+        {
+          ...legacy(`${competitionId}:4`, transferredAt + 2000),
+          target_id: 'drop-hidden'
+        }
+      ];
+      for (const row of logs)
+        await sqlExecutor.execute(
+          `INSERT INTO ${PROFILES_ACTIVITY_LOGS_TABLE}
+         (id,profile_id,target_id,additional_data_1,additional_data_2,proxy_id,type,created_at,contents)
+         VALUES (:id,:profile_id,:target_id,:additional_data_1,:additional_data_2,:proxy_id,:type,:created_at,:contents)`,
+          { ...row, contents: JSON.stringify(contents) }
+        );
+      await sqlExecutor.execute(
+        `UPDATE ${COMPETITION_VOTE_HISTORY_TABLE} SET occurred_at=:time WHERE sequence=2`,
+        { time: transferredAt + 1234 }
+      );
+      const rows = await list(0, 30);
+      expect(rows.filter((row) => Number(row.sequence) === 2)).toHaveLength(1);
+      expect(rows.find((row) => Number(row.sequence) === 2)).toMatchObject({
+        legacy_id: null,
+        occurred_at: transferredAt + 1234,
+        proxy_id: 'proxy'
+      });
+      expect(
+        JSON.parse(
+          rows.find((row) => Number(row.sequence) === 2)!.legacy_contents!
+        )
+      ).toEqual(contents);
+      expect(rows.some((row) => row.drop_id === 'drop-hidden')).toBe(false);
+    });
+
+    it('retains native API history without logs after rollback and includes same-second legacy activity exactly once', async () => {
+      const rollbackAt = transferredAt + 1100;
+      await sqlExecutor.execute(
+        `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
+        (id,competition_id,actor,action,reason,report,created_at)
+        VALUES ('rollback',:competitionId,'fixture','ROLLBACK','fixture',:report,:rollbackAt)`,
+        {
+          competitionId,
+          rollbackAt,
+          report: JSON.stringify({
+            voteActivityBoundary: { at: rollbackAt, ids: ['after-transfer'] }
+          })
+        }
+      );
+      await sqlExecutor.execute(
+        `INSERT INTO ${PROFILES_ACTIVITY_LOGS_TABLE}
+        (id,profile_id,target_id,additional_data_1,additional_data_2,proxy_id,type,created_at,contents)
+        VALUES (:id,:profile_id,:target_id,:additional_data_1,:additional_data_2,:proxy_id,:type,:created_at,:contents)`,
+        {
+          ...legacy('after-rollback', transferredAt + 1000),
+          contents: JSON.stringify(contents)
+        }
+      );
+      const rows = await repository.listTransferred(
+        competitionId,
+        waveId,
+        transferredAt,
+        0,
+        30,
+        {}
+      );
+      expect(rows.map((row) => row.legacy_id ?? Number(row.sequence))).toEqual([
+        3,
+        2,
+        'after-rollback',
+        'at-transfer',
+        5,
+        'legacy-z',
+        'legacy-a',
+        1,
+        'legacy-old'
+      ]);
+      // A subsequent cutover in that same second captures the existing log IDs.
+      await sqlExecutor.execute(
+        `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
+        (id,competition_id,actor,action,reason,report,created_at)
+        VALUES ('cutover',:competitionId,'fixture','CUTOVER','fixture',:report,:now)`,
+        {
+          competitionId,
+          now: transferredAt + 1200,
+          report: JSON.stringify({
+            voteActivityBoundary: {
+              at: transferredAt + 1200,
+              ids: ['after-rollback', 'after-transfer']
+            }
+          })
+        }
+      );
+      // Include the original cutover now that an actual CUTOVER audit exists.
+      await sqlExecutor.execute(
+        `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
+        (id,competition_id,actor,action,reason,report,created_at)
+        VALUES ('first-cutover',:competitionId,'fixture','CUTOVER','fixture','{}',:transferredAt)`,
+        { competitionId, transferredAt }
+      );
+      expect(await list(0, 30)).toEqual(rows);
     });
 
     it('rejects malformed or null legacy JSON at the storage boundary', async () => {

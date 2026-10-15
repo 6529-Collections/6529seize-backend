@@ -294,9 +294,11 @@ describeWithSeed(
         failures: []
       });
       const after = await listCompetitionVoteActivity(wave.id, id, 0, 50, {});
-      // Compare the wire representation: the legacy reader returns ISO strings,
-      // while native activity dates are serialized by the HTTP response.
-      expect(JSON.parse(JSON.stringify(after))).toEqual(before);
+      // Compare the complete wire representation under both owners, including
+      // serialized dates and absent optional proxy fields.
+      expect(JSON.parse(JSON.stringify(after))).toEqual(
+        JSON.parse(JSON.stringify(before))
+      );
     });
     it('copies completed historical aggregate and credit discrepancies without repairing them', async () => {
       await sqlExecutor.execute(

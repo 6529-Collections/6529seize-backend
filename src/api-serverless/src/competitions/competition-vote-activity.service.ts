@@ -1,11 +1,8 @@
 import { competitionService } from '@/competitions/competition.service';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionVoteActivityRepository } from '@/competitions/competition-vote-activity.repository';
-import { CompetitionStorageMode } from '@/entities/ICompetition';
-import { dropsService } from '@/api/drops/drops.api.service';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { ApiWaveLog } from '@/api/generated/models/ApiWaveLog';
-import { PageSortDirection } from '@/api/page-request';
 import { RequestContext } from '@/request.context';
 import { NotFoundException } from '@/exceptions';
 
@@ -28,28 +25,12 @@ export async function listCompetitionVoteActivity(
   );
   if (!record || record.wave_id !== waveId)
     throw new NotFoundException('Competition not found');
-  if (record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER) {
-    // Exactly one legacy adapter exists per wave. Native competition commands
-    // write their own history, never DROP_VOTE_EDIT wave logs.
-    return dropsService.findWaveLogs(
-      {
-        wave_id: waveId,
-        offset,
-        limit,
-        drop_id: null,
-        log_types: ['DROP_VOTE_EDIT'],
-        sort_direction: PageSortDirection.DESC
-      },
-      ctx
-    );
-  }
-  const transferredAt = competition.legacy_transferred_at;
   const rows =
-    record.legacy_wave_id === waveId && transferredAt != null
+    record.legacy_wave_id === waveId
       ? await competitionVoteActivityRepository.listTransferred(
           competitionId,
           waveId,
-          transferredAt,
+          competition.legacy_transferred_at ?? null,
           offset,
           limit,
           ctx
@@ -73,7 +54,7 @@ export async function listCompetitionVoteActivity(
     ctx
   );
   return rows.map((row) => ({
-    id: row.legacy_id ?? `${competitionId}:${Number(row.sequence)}`,
+    id: row.legacy_id ?? `${competitionId}:${row.sequence}`,
     action: 'DROP_VOTE_EDIT',
     wave_id: waveId,
     drop_id: row.drop_id,
@@ -83,7 +64,7 @@ export async function listCompetitionVoteActivity(
     created_at: new Date(Number(row.occurred_at)),
     // The retained contents column is NOT NULL JSON, validated by MySQL.
     // Preserve its complete original payload, as the legacy log API does.
-    contents: row.legacy_id
+    contents: row.legacy_contents
       ? JSON.parse(row.legacy_contents!)
       : {
           oldVote: Number(row.previous_value),
