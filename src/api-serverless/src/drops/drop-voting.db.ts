@@ -1634,7 +1634,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       union all
       select drop_id, wave_id, :fromTime as timestamp, vote
       from ${DROP_REAL_VOTE_IN_TIME_TABLE}
-      where id in (
+      where id = (
                      select max(id) as id
                      from ${DROP_REAL_VOTE_IN_TIME_TABLE}
                      where drop_id = :dropId
@@ -1713,7 +1713,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       union all
       select drv_2.drop_id as drop_id, drv_2.wave_id as wave_id, :fromTime as timestamp, drv_2.vote as vote
       from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv_2
-      where drv_2.id in (
+      where drv_2.id = (
                      select max(drv_2_i.id) as id
                      from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv_2_i
                      join ${DROPS_TABLE} d2 on d2.id = drv_2_i.drop_id

@@ -5,6 +5,28 @@ import { DropVotingDb } from '../api-serverless/src/drops/drop-voting.db';
 import { Time, Timer } from '../time';
 import { CompetitionExecutionRouter } from '@/competitions/competition-execution.router';
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function refreshDrop(waveId: string, dropId: string) {
+  return {
+    wave_id: waveId,
+    drop_id: dropId,
+    time_lock_ms: 1000,
+    next_decision_time: null,
+    winning_min_threshold: null,
+    winning_threshold_min_duration_ms: null
+  };
+}
+
+const flushAsyncWork = () =>
+  new Promise<void>((resolve) => setImmediate(resolve));
+
 describe('WaveLeaderboardCalculationService', () => {
   let service: WaveLeaderboardCalculationService;
   let dropVotingDb: DropVotingDb;
@@ -42,6 +64,140 @@ describe('WaveLeaderboardCalculationService', () => {
     expect(calculate).not.toHaveBeenCalled();
     expect(dropVotingDb.deleteStaleLeaderboardEntries).toHaveBeenCalled();
   });
+
+  describe('refreshLeaderboardEntriesForDropsInNeed', () => {
+    it('serializes each wave while letting another wave make progress', async () => {
+      const drops = [
+        refreshDrop('wave-a', 'a-1'),
+        refreshDrop('wave-b', 'b-1'),
+        refreshDrop('wave-a', 'a-2'),
+        refreshDrop('wave-b', 'b-2')
+      ];
+      const gates = new Map(drops.map((drop) => [drop.drop_id, deferred()]));
+      (
+        dropVotingDb.getDropsInNeedOfLeaderboardUpdate as jest.Mock
+      ).mockResolvedValue(drops);
+      const calculate = jest
+        .spyOn(service, 'calculateLeaderboardEntryForDrop')
+        .mockImplementation(({ dropId }) => gates.get(dropId)!.promise);
+      const run = service.refreshLeaderboardEntriesForDropsInNeed(
+        new Timer('test')
+      );
+      await flushAsyncWork();
+
+      const startedDrops = () =>
+        calculate.mock.calls.map(([params]) => params.dropId);
+      expect(startedDrops()).toEqual(['a-1', 'b-1']);
+      expect(dropVotingDb.deleteStaleLeaderboardEntries).not.toHaveBeenCalled();
+
+      gates.get('b-1')!.resolve();
+      await flushAsyncWork();
+      expect(startedDrops()).toEqual(['a-1', 'b-1', 'b-2']);
+
+      gates.get('a-1')!.resolve();
+      gates.get('b-2')!.resolve();
+      await flushAsyncWork();
+      expect(startedDrops()).toEqual(['a-1', 'b-1', 'b-2', 'a-2']);
+      expect(dropVotingDb.deleteStaleLeaderboardEntries).not.toHaveBeenCalled();
+
+      gates.get('a-2')!.resolve();
+      await run;
+      expect(dropVotingDb.deleteStaleLeaderboardEntries).toHaveBeenCalledTimes(
+        1
+      );
+    });
+
+    it('caps concurrent waves at four and eventually processes every drop', async () => {
+      const drops = Array.from({ length: 7 }, (_, index) =>
+        refreshDrop(`wave-${index}`, `drop-${index}`)
+      );
+      (
+        dropVotingDb.getDropsInNeedOfLeaderboardUpdate as jest.Mock
+      ).mockResolvedValue(drops);
+      const gate = deferred();
+      let active = 0;
+      let maximumActive = 0;
+      const calculate = jest
+        .spyOn(service, 'calculateLeaderboardEntryForDrop')
+        .mockImplementation(async () => {
+          active++;
+          maximumActive = Math.max(maximumActive, active);
+          await gate.promise;
+          active--;
+        });
+      const run = service.refreshLeaderboardEntriesForDropsInNeed(
+        new Timer('test')
+      );
+      await flushAsyncWork();
+      expect(calculate).toHaveBeenCalledTimes(4);
+      expect(active).toBe(4);
+
+      gate.resolve();
+      await run;
+      expect(maximumActive).toBe(4);
+      expect(active).toBe(0);
+      expect(calculate).toHaveBeenCalledTimes(drops.length);
+      expect(
+        new Set(calculate.mock.calls.map(([params]) => params.dropId))
+      ).toEqual(new Set(drops.map((drop) => drop.drop_id)));
+    });
+
+    it('continues the wave after an entry fails and cleans up after all waves', async () => {
+      const drops = [
+        refreshDrop('wave-a', 'failed-drop'),
+        refreshDrop('wave-b', 'other-wave-drop'),
+        refreshDrop('wave-a', 'next-drop')
+      ];
+      (
+        dropVotingDb.getDropsInNeedOfLeaderboardUpdate as jest.Mock
+      ).mockResolvedValue(drops);
+      const finished: string[] = [];
+      jest
+        .spyOn(service, 'calculateLeaderboardEntryForDrop')
+        .mockImplementation(async ({ dropId }) => {
+          if (dropId === 'failed-drop') throw new Error('Refresh failed');
+          finished.push(dropId);
+        });
+
+      await service.refreshLeaderboardEntriesForDropsInNeed(new Timer('test'));
+
+      expect(finished).toEqual(['other-wave-drop', 'next-drop']);
+      expect(dropVotingDb.deleteStaleLeaderboardEntries).toHaveBeenCalledTimes(
+        1
+      );
+    });
+
+    it('rechecks ownership in a separate transaction for each queued entry', async () => {
+      (
+        dropVotingDb.getDropsInNeedOfLeaderboardUpdate as jest.Mock
+      ).mockResolvedValue([
+        refreshDrop('wave-a', 'a-1'),
+        refreshDrop('wave-a', 'a-2')
+      ]);
+      (executionRouter.shouldUseLegacyWaveExecution as jest.Mock)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+      (
+        dropVotingDb.executeNativeQueriesInTransaction as jest.Mock
+      ).mockImplementation(async (callback) => callback({ connection: {} }));
+      (dropVotingDb.getDropVoteStatesInTimespan as jest.Mock).mockResolvedValue(
+        []
+      );
+
+      await service.refreshLeaderboardEntriesForDropsInNeed(new Timer('test'));
+
+      expect(
+        dropVotingDb.executeNativeQueriesInTransaction
+      ).toHaveBeenCalledTimes(2);
+      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledTimes(1);
+      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+        expect.objectContaining({ drop_id: 'a-1' }),
+        expect.objectContaining({ connection: expect.anything() })
+      );
+    });
+  });
+
   describe('calculateFinalVoteForDrop', () => {
     it('no vote states results to 0', () => {
       const actual = service.calculateFinalVoteForDrop({
