@@ -264,20 +264,31 @@ describeWithSeed(
       expect(rows.some((row) => row.drop_id === 'drop-hidden')).toBe(false);
     });
 
-    it('retains native API history without logs after rollback and includes same-second legacy activity exactly once', async () => {
-      const rollbackAt = transferredAt + 1100;
+    it('uses exact identities through rollback and re-migration even when legacy timestamps overlap native operation', async () => {
       await sqlExecutor.execute(
         `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
         (id,competition_id,actor,action,reason,report,created_at)
-        VALUES ('rollback',:competitionId,'fixture','ROLLBACK','fixture',:report,:rollbackAt)`,
+        VALUES ('first-cutover',:competitionId,'fixture','CUTOVER','fixture',:report,:transferredAt)`,
         {
           competitionId,
-          rollbackAt,
-          report: JSON.stringify({
-            voteActivityBoundary: { at: rollbackAt, ids: ['after-transfer'] }
-          })
+          transferredAt,
+          report: JSON.stringify({ voteActivityIdentity: 'NATIVE_ID_V1' })
         }
       );
+      const expected = await list(0, 30);
+      expect(
+        expected.map((row) => row.legacy_id ?? Number(row.sequence))
+      ).toContain('after-transfer');
+      await sqlExecutor.execute(
+        `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
+        (id,competition_id,actor,action,reason,report,created_at)
+        VALUES ('rollback',:competitionId,'fixture','ROLLBACK','fixture','{}',:now)`,
+        {
+          competitionId,
+          now: transferredAt + 1100
+        }
+      );
+      // A legacy writer's clock can round into the previous ownership interval.
       await sqlExecutor.execute(
         `INSERT INTO ${PROFILES_ACTIVITY_LOGS_TABLE}
         (id,profile_id,target_id,additional_data_1,additional_data_2,proxy_id,type,created_at,contents)
@@ -290,44 +301,25 @@ describeWithSeed(
       const rows = await repository.listTransferred(
         competitionId,
         waveId,
-        transferredAt,
+        null,
         0,
         30,
         {}
       );
-      expect(rows.map((row) => row.legacy_id ?? Number(row.sequence))).toEqual([
-        3,
-        2,
-        'after-rollback',
-        'at-transfer',
-        5,
-        'legacy-z',
-        'legacy-a',
-        1,
-        'legacy-old'
-      ]);
-      // A subsequent cutover in that same second captures the existing log IDs.
+      expect(rows).toHaveLength(expected.length + 1);
+      expect(
+        rows.filter((row) => row.legacy_id === 'after-rollback')
+      ).toHaveLength(1);
+      for (const row of expected) expect(rows).toContainEqual(row);
       await sqlExecutor.execute(
         `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
         (id,competition_id,actor,action,reason,report,created_at)
-        VALUES ('cutover',:competitionId,'fixture','CUTOVER','fixture',:report,:now)`,
+        VALUES ('recutover',:competitionId,'fixture','CUTOVER','fixture',:report,:now)`,
         {
           competitionId,
           now: transferredAt + 1200,
-          report: JSON.stringify({
-            voteActivityBoundary: {
-              at: transferredAt + 1200,
-              ids: ['after-rollback', 'after-transfer']
-            }
-          })
+          report: JSON.stringify({ voteActivityIdentity: 'NATIVE_ID_V1' })
         }
-      );
-      // Include the original cutover now that an actual CUTOVER audit exists.
-      await sqlExecutor.execute(
-        `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
-        (id,competition_id,actor,action,reason,report,created_at)
-        VALUES ('first-cutover',:competitionId,'fixture','CUTOVER','fixture','{}',:transferredAt)`,
-        { competitionId, transferredAt }
       );
       expect(await list(0, 30)).toEqual(rows);
     });

@@ -58,9 +58,11 @@ transaction, with the exact native Activity ID (`<competition-id>:<sequence>`).
 The combined reader emits that event once, retains its native timestamp, and
 uses the linked log's complete contents and proxy attribution. Legacy-only logs
 retain their original IDs and timestamps. Adjustment reasons are preserved.
-Ownership audits distinguish legacy voting intervals from older compatibility
-logs already covered by native history. New audits record boundary log IDs to
-handle legacy DATETIME second precision. Native siblings do not inherit primary
+New cutover audits record `voteActivityIdentity: NATIVE_ID_V1`: all native
+primary writers must carry the exact-ID logging correction before that cutover.
+These migrations need no timestamp-based deduplication, including after rollback
+or clock skew. Only older cutovers use ownership intervals to filter unlinked
+compatibility logs already covered by native history. Native siblings do not inherit primary
 wave activity; normal wave/parent visibility and entry visibility still apply.
 
 For a migration smoke check, compare the legacy `/waves/{wave_id}/logs` endpoint
@@ -306,9 +308,9 @@ applicable. No deployment is performed by the Phase 2 qualification task.
 The exact lineage guarantee starts when all writers and migration transitions
 carry this correction, before Main Stage's first cutover. Older native histories
 without linked logs remain readable with their existing native IDs/timestamps;
-older ownership audits retain the original timestamp cutoff fallback. Old random
-compatibility-log IDs have no recorded shared event identity, and old transition
-seconds have no recorded boundary ID set. Do not infer a proxy or adjustment
+older cutovers without the identity marker retain the original timestamp cutoff
+fallback. Old random compatibility-log IDs have no recorded shared event identity,
+and old transition seconds can be ambiguous. Do not infer a proxy or adjustment
 reason by matching vote values/timestamps, or claim exact recovery qualification
 for such ambiguous historical data without a separate data review. This change
 does not rewrite old records or manufacture missing provenance.

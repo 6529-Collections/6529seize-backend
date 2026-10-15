@@ -1,4 +1,3 @@
-import { voteActivityBoundary } from '@/competitions/competition-vote-activity-lineage';
 import { compareMigrationContent } from '@/competitions/competition-migration-content-parity';
 import { MigrationAcceptanceSchema } from './competition-migration-acceptance';
 import { CompetitionMigrationEnvironmentRepository } from './competition-migration-environment.repository';
@@ -1025,12 +1024,7 @@ export class CompetitionMigrationService {
         operator.reason,
         {
           finalWatermark: status.migration?.source_watermark,
-          voteActivityBoundary: await voteActivityBoundary(
-            this.supplier(),
-            record.wave_id,
-            this.now(),
-            ctx
-          )
+          voteActivityIdentity: 'NATIVE_ID_V1'
         },
         ctx
       );
@@ -1193,13 +1187,7 @@ export class CompetitionMigrationService {
         {
           reverseReconciliation:
             'bounded-native-materialization-and-independent-full-comparison',
-          mismatches: 0,
-          voteActivityBoundary: await voteActivityBoundary(
-            this.supplier(),
-            record.wave_id,
-            this.now(),
-            ctx
-          )
+          mismatches: 0
         },
         ctx
       );

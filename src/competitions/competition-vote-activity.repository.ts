@@ -9,15 +9,6 @@ import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
 
-function afterTransitionSql(alias: 'cutover' | 'rollback'): string {
-  const logTime =
-    "TIMESTAMPDIFF(MICROSECOND, '1970-01-01', log.created_at) / 1000";
-  const boundary = `JSON_EXTRACT(${alias}.report, '$.voteActivityBoundary.ids')`;
-  return `(CASE WHEN ${boundary} IS NULL THEN ${logTime} > ${alias}.created_at
-    ELSE ${logTime} >= FLOOR(${alias}.created_at / 1000) * 1000
-      AND NOT JSON_CONTAINS(${boundary}, JSON_QUOTE(log.id)) END)`;
-}
-
 export interface CompetitionVoteActivity {
   readonly sequence: number | string;
   readonly drop_id: string;
@@ -42,15 +33,17 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
   ): Promise<CompetitionVoteActivity[]> {
     // Native histories remain canonical throughout rollback and re-migration.
     // Exclude their exact linked logs, including logs of hidden native entries.
-    // Older compatibility logs in native ownership intervals are already covered
-    // by native history. Legacy intervals and retained deleted-drop logs survive.
+    // Exact-lineage cutovers need no timestamp heuristics: every native primary
+    // vote has its canonical log ID. Only older cutovers retain the original
+    // cutoff fallback for unlinked compatibility logs already covered by history.
+    // Legacy intervals and retained deleted-drop logs survive.
     // Each source contributes its first offset+limit rows BEFORE global paging.
     const timerName = `${this.constructor.name}->listTransferred`;
     try {
       ctx.timer?.start(timerName);
       return await this.db.execute<CompetitionVoteActivity>(
         `WITH transitions AS (
-        SELECT action, COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(report, '$.voteActivityBoundary.at')) AS UNSIGNED), created_at) AS created_at, report FROM ${COMPETITION_MIGRATION_AUDIT_TABLE}
+        SELECT action, created_at, report FROM ${COMPETITION_MIGRATION_AUDIT_TABLE}
         WHERE competition_id = :competitionId AND action IN ('CUTOVER', 'ROLLBACK')
         UNION ALL
         SELECT 'CUTOVER', :transferredAt, JSON_OBJECT()
@@ -89,11 +82,12 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
           )
           AND NOT EXISTS (
             SELECT 1 FROM transitions cutover WHERE cutover.action = 'CUTOVER'
-              AND ${afterTransitionSql('cutover')}
+              AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(cutover.report, '$.voteActivityIdentity')), '') <> 'NATIVE_ID_V1'
+              AND TIMESTAMPDIFF(MICROSECOND, '1970-01-01', log.created_at) / 1000 > cutover.created_at
               AND NOT EXISTS (
                 SELECT 1 FROM transitions rollback WHERE rollback.action = 'ROLLBACK'
                   AND rollback.created_at >= cutover.created_at
-                  AND ${afterTransitionSql('rollback')}
+                  AND TIMESTAMPDIFF(MICROSECOND, '1970-01-01', log.created_at) / 1000 > rollback.created_at
               )
           )
         ORDER BY log.created_at DESC, log.id DESC LIMIT :candidateLimit)
