@@ -42,7 +42,13 @@ export async function resizeImageBufferToHeight({
     const animated = sharp(buffer, { animated: true });
     const metadata = await animated.metadata();
     const frameHeight = metadata.pageHeight ?? metadata.height;
-    if (frameHeight !== undefined && frameHeight <= height) {
+    // Reuse the bytes only when they really are a GIF; anything else is
+    // converted so the stored object matches its .GIF key and content type.
+    if (
+      metadata.format === 'gif' &&
+      frameHeight !== undefined &&
+      frameHeight <= height
+    ) {
       return buffer;
     }
     return await animated

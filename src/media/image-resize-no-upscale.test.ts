@@ -34,6 +34,20 @@ describe('resizeImageBufferToHeight with real codecs', () => {
     }
   );
 
+  it('converts a source labelled GIF that is really another format', async () => {
+    const png = await solidImage(320, 208).png().toBuffer();
+    const result = await resizeImageBufferToHeight({
+      buffer: png,
+      height: 450,
+      toWebp: false
+    });
+    expect(result.equals(png)).toBe(false);
+    await expect(dimensions(result)).resolves.toMatchObject({
+      format: 'gif',
+      height: 208
+    });
+  });
+
   it('still shrinks a GIF taller than the target', async () => {
     const original = await solidImage(320, 208).gif().toBuffer();
     const result = await resizeImageBufferToHeight({

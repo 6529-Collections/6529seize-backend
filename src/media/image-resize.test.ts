@@ -104,7 +104,7 @@ describe('resizeImageBufferToHeight', () => {
     const resize = jest.fn();
     const metadata = jest
       .fn()
-      .mockResolvedValue({ height: 208 * 12, pageHeight: 208 });
+      .mockResolvedValue({ format: 'gif', height: 208 * 12, pageHeight: 208 });
     jest
       .mocked(Sharp)
       .mockReturnValue({ metadata, resize } as unknown as SharpInstance);
