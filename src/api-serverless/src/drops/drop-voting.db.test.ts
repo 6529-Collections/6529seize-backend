@@ -361,8 +361,8 @@ describeWithSeed('Leaderboard snapshot ordering', [], () => {
         vote_on_decision_time: 7,
         over_threshold_since_ms: null
       };
-      await snapshotDb.upsertWaveLeaderboardEntry(current, ctx);
-      await snapshotDb.upsertWaveLeaderboardEntry(finishingLast, ctx);
+      await snapshotDb.upsertWaveLeaderboardEntryIfNotOlder(current, ctx);
+      await snapshotDb.upsertWaveLeaderboardEntryIfNotOlder(finishingLast, ctx);
 
       expect(
         await sqlExecutor.execute(
@@ -375,6 +375,85 @@ describeWithSeed('Leaderboard snapshot ordering', [], () => {
       ).toEqual([shouldUpdate ? finishingLast : current]);
     }
   );
+  it.each(['drop', 'wave'] as const)(
+    'refreshes a snapshot after %s invalidation, including an earlier evaluation time',
+    async (scope) => {
+      const snapshotDb = new DropVotingDb(() => sqlExecutor);
+      const current = {
+        drop_id: 'invalidated-refresh-drop',
+        wave_id: 'invalidated-refresh-wave',
+        timestamp: 2000,
+        vote: 20,
+        vote_on_decision_time: 30,
+        over_threshold_since_ms: 1500
+      };
+      await snapshotDb.upsertWaveLeaderboardEntry(current, ctx);
+      if (scope === 'drop') {
+        await snapshotDb.clearWaveLeaderboardEntryOverThresholdSince(
+          current.drop_id,
+          ctx
+        );
+      } else {
+        await snapshotDb.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
+          current.wave_id,
+          ctx
+        );
+      }
+      expect(
+        await sqlExecutor.execute(
+          `select timestamp, over_threshold_since_ms
+           from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where drop_id = :dropId`,
+          { dropId: current.drop_id }
+        )
+      ).toEqual([{ timestamp: 0, over_threshold_since_ms: null }]);
+
+      const refreshed = {
+        ...current,
+        timestamp: 1000,
+        vote: 5,
+        vote_on_decision_time: 7,
+        over_threshold_since_ms: 900
+      };
+      await snapshotDb.upsertWaveLeaderboardEntryIfNotOlder(refreshed, ctx);
+      expect(
+        await sqlExecutor.execute(
+          `select drop_id, wave_id, timestamp, vote, vote_on_decision_time,
+                  over_threshold_since_ms
+           from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where drop_id = :dropId`,
+          { dropId: current.drop_id }
+        )
+      ).toEqual([refreshed]);
+    }
+  );
+
+  it('preserves authoritative historical corrections outside background refreshes', async () => {
+    const snapshotDb = new DropVotingDb(() => sqlExecutor);
+    const current = {
+      drop_id: 'historical-correction-drop',
+      wave_id: 'historical-correction-wave',
+      timestamp: 2000,
+      vote: 20,
+      vote_on_decision_time: 30,
+      over_threshold_since_ms: 1500
+    };
+    await snapshotDb.upsertWaveLeaderboardEntryIfNotOlder(current, ctx);
+    const correction = {
+      ...current,
+      timestamp: 1000,
+      vote: 5,
+      vote_on_decision_time: 7,
+      over_threshold_since_ms: null
+    };
+    await snapshotDb.upsertWaveLeaderboardEntry(correction, ctx);
+    expect(
+      await sqlExecutor.execute(
+        `select drop_id, wave_id, timestamp, vote, vote_on_decision_time,
+                over_threshold_since_ms
+         from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where drop_id = :dropId`,
+        { dropId: current.drop_id }
+      )
+    ).toEqual([correction]);
+  });
 });
 
 const realtimeWave = aWave(

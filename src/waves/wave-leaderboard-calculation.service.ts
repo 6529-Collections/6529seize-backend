@@ -74,6 +74,7 @@ export class WaveLeaderboardCalculationService {
         { length: Math.min(MAX_CONCURRENT_WAVE_REFRESHES, waves.length) },
         async () => {
           while (nextWaveIndex < waves.length) {
+            // The check and cursor increment run synchronously before yielding.
             const result = await this.refreshWaveLeaderboardEntries(
               waves[nextWaveIndex++],
               now,
@@ -222,7 +223,7 @@ export class WaveLeaderboardCalculationService {
           startTime,
           endTime
         });
-        await this.dropVotingDb.upsertWaveLeaderboardEntry(
+        await this.dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder(
           {
             drop_id: dropId,
             wave_id: waveId,

@@ -190,8 +190,12 @@ describe('WaveLeaderboardCalculationService', () => {
       expect(
         dropVotingDb.executeNativeQueriesInTransaction
       ).toHaveBeenCalledTimes(2);
-      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledTimes(1);
-      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+      expect(
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder
+      ).toHaveBeenCalledTimes(1);
+      expect(
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder
+      ).toHaveBeenCalledWith(
         expect.objectContaining({ drop_id: 'a-1' }),
         expect.objectContaining({ connection: expect.anything() })
       );
@@ -350,9 +354,9 @@ describe('WaveLeaderboardCalculationService', () => {
       (
         dropVotingDb.executeNativeQueriesInTransaction as jest.Mock
       ).mockImplementation(async (callback) => callback({}));
-      (dropVotingDb.upsertWaveLeaderboardEntry as jest.Mock).mockResolvedValue(
-        undefined
-      );
+      (
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder as jest.Mock
+      ).mockResolvedValue(undefined);
       (
         dropVotingDb.getWaveLeaderboardEntryThresholdStateForUpdate as jest.Mock
       ).mockResolvedValue(null);
@@ -375,7 +379,9 @@ describe('WaveLeaderboardCalculationService', () => {
         {}
       );
       expect(dropVotingDb.getDropVoteStatesInTimespan).not.toHaveBeenCalled();
-      expect(dropVotingDb.upsertWaveLeaderboardEntry).not.toHaveBeenCalled();
+      expect(
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder
+      ).not.toHaveBeenCalled();
     });
 
     it('starts weighted over-threshold time when weighted vote reaches threshold', async () => {
@@ -411,7 +417,9 @@ describe('WaveLeaderboardCalculationService', () => {
         },
         expect.anything()
       );
-      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+      expect(
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           vote: 100,
           over_threshold_since_ms: 500
@@ -453,7 +461,9 @@ describe('WaveLeaderboardCalculationService', () => {
         },
         expect.anything()
       );
-      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+      expect(
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           vote: 100,
           over_threshold_since_ms: null
@@ -501,7 +511,9 @@ describe('WaveLeaderboardCalculationService', () => {
         },
         expect.anything()
       );
-      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+      expect(
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           vote: 100,
           over_threshold_since_ms: 1_500
@@ -558,7 +570,9 @@ describe('WaveLeaderboardCalculationService', () => {
         },
         expect.anything()
       );
-      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+      expect(
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           vote: 100,
           over_threshold_since_ms: 0
@@ -598,7 +612,9 @@ describe('WaveLeaderboardCalculationService', () => {
         {}
       );
 
-      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+      expect(
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           vote: 100,
           over_threshold_since_ms: 500
@@ -638,7 +654,9 @@ describe('WaveLeaderboardCalculationService', () => {
         {}
       );
 
-      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+      expect(
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           vote: 40,
           over_threshold_since_ms: null
@@ -698,7 +716,9 @@ describe('WaveLeaderboardCalculationService', () => {
         },
         expect.anything()
       );
-      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+      expect(
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           vote: 100,
           over_threshold_since_ms: 1_600
@@ -750,7 +770,9 @@ describe('WaveLeaderboardCalculationService', () => {
         {}
       );
 
-      expect(dropVotingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledWith(
+      expect(
+        dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           vote: 200,
           over_threshold_since_ms: 2_625

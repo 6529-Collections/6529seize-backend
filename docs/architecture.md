@@ -1045,9 +1045,10 @@ Operational deployment, verification, and rollback are documented in the
 Both legacy leaderboard workers refresh entries sequentially within each wave,
 with at most four waves being refreshed concurrently per invocation. Every entry
 retains its own transaction and execution-owner lock, including the ownership
-recheck after discovery. Atomic upserts preserve a newer snapshot when an older
-queued refresh finishes last. Single-entry history reads use scalar maximum-ID
-lookups to avoid scanning unrelated history while holding that lock. Deploy
+recheck after discovery. Background refresh upserts preserve a newer snapshot when
+an older queued refresh finishes last; authoritative historical APPROVE corrections
+retain their existing write behavior. Single-entry history reads use scalar
+maximum-ID lookups to avoid scanning unrelated history while holding that lock. Deploy
 `waveLeaderboardSnapshotterLoop`, followed by `waveDecisionExecutionLoop`;
 no schema or API/frontend contract change is required.
 

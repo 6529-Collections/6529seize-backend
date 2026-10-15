@@ -36,7 +36,8 @@ const historySeed: Seed = {
       { id: 9, drop_id: 'inside-only', timestamp: 150, vote: -3 },
       { id: 10, drop_id: 'winner', timestamp: 90, vote: 5 }
     ],
-    ...Array.from({ length: 1000 }, (_, index) => ({
+    // Keep both history branches selective even with freshly seeded statistics.
+    ...Array.from({ length: 10000 }, (_, index) => ({
       id: 100 + index,
       drop_id: 'unrelated-history',
       timestamp: index,

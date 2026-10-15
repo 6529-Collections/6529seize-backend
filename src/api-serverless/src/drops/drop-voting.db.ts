@@ -1735,8 +1735,40 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     entry: WaveLeaderboardEntryEntity,
     ctx: RequestContext
   ) {
+    // Authoritative writers, including historical APPROVE corrections, may
+    // intentionally replace a snapshot with an earlier evaluation timestamp.
+    await this.persistWaveLeaderboardEntry(entry, false, ctx);
+  }
+
+  async upsertWaveLeaderboardEntryIfNotOlder(
+    entry: WaveLeaderboardEntryEntity,
+    ctx: RequestContext
+  ) {
+    const timerName = `${this.constructor.name}->upsertWaveLeaderboardEntryIfNotOlder`;
+    ctx.timer?.start(timerName);
+    try {
+      await this.persistWaveLeaderboardEntry(entry, true, ctx);
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  private async persistWaveLeaderboardEntry(
+    entry: WaveLeaderboardEntryEntity,
+    ignoreOlderSnapshot: boolean,
+    ctx: RequestContext
+  ) {
     // Queued refreshes in overlapping workers can finish out of timestamp order.
     // Assign timestamp last so every field compares with the stored timestamp.
+    const updateFields = ignoreOlderSnapshot
+      ? `vote = if(timestamp <= :timestamp, :vote, vote),
+         vote_on_decision_time = if(timestamp <= :timestamp, :vote_on_decision_time, vote_on_decision_time),
+         over_threshold_since_ms = if(timestamp <= :timestamp, :over_threshold_since_ms, over_threshold_since_ms),
+         timestamp = greatest(timestamp, :timestamp)`
+      : `vote = :vote,
+         vote_on_decision_time = :vote_on_decision_time,
+         timestamp = :timestamp,
+         over_threshold_since_ms = :over_threshold_since_ms`;
     await this.db.execute(
       `
           insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (
@@ -1756,10 +1788,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
             :over_threshold_since_ms
           )
           on duplicate key update
-            vote = if(timestamp <= :timestamp, :vote, vote),
-            vote_on_decision_time = if(timestamp <= :timestamp, :vote_on_decision_time, vote_on_decision_time),
-            over_threshold_since_ms = if(timestamp <= :timestamp, :over_threshold_since_ms, over_threshold_since_ms),
-            timestamp = greatest(timestamp, :timestamp)
+            ${updateFields}
       `,
       entry,
       { wrappedConnection: ctx.connection }
