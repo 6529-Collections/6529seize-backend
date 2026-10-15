@@ -53,7 +53,8 @@ export async function s3UploadObject({
   body,
   contentType,
   txId,
-  contentLength
+  contentLength,
+  cacheControl
 }: {
   bucket: string;
   key: string;
@@ -61,14 +62,18 @@ export async function s3UploadObject({
   contentType: string;
   txId: string;
   contentLength?: number;
+  /** Stored on the object and served by S3/CloudFront as `Cache-Control`. */
+  cacheControl?: string;
 }) {
   const s3 = getS3();
+  const cacheControlParams = cacheControl ? { CacheControl: cacheControl } : {};
   if (isReadableStream(body)) {
     const streamParams = {
       Bucket: bucket,
       Key: key,
       Body: body,
       ContentType: contentType,
+      ...cacheControlParams,
       Metadata: { [METADATA_KEY]: txId },
       ...(typeof contentLength === 'number'
         ? { ContentLength: contentLength }
@@ -87,6 +92,7 @@ export async function s3UploadObject({
     Key: key,
     Body: body,
     ContentType: contentType,
+    ...cacheControlParams,
     Metadata: { [METADATA_KEY]: txId },
     ...(typeof contentLength === 'number'
       ? { ContentLength: contentLength }

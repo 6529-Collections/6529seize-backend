@@ -1,12 +1,13 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
+import { IMMUTABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
 
 export const DROP_MEDIA_SANITIZER_QUEUE_NAME = 'drop-media-sanitizer';
 export const DROP_MEDIA_INGEST_DEFAULT_REGION = 'eu-west-1';
 export const DROP_MEDIA_INGEST_BUCKET_PREFIX = '6529-drop-media-ingest';
 export const DROP_MEDIA_SANITIZED_METADATA_KEY = 'privacy-sanitized';
 export const DROP_MEDIA_SANITIZED_METADATA_VALUE = 'true';
-export const DROP_MEDIA_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+export const DROP_MEDIA_CACHE_CONTROL = IMMUTABLE_MEDIA_CACHE_CONTROL;
 
 let ingestS3: S3Client | undefined;
 
