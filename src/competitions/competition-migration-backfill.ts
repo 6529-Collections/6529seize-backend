@@ -53,6 +53,8 @@ import { CompetitionStorageMode } from '@/entities/ICompetition';
 import { CompetitionMigrationChangeEntity } from '@/entities/ICompetitionMigration';
 import { parseMigrationChangeImage } from './competition-migration-journal';
 
+const VOTER_COPY_QUERY_LIMIT = 25;
+
 /** Bounded batches; the checkpoint is committed with the copied records. */
 export class CompetitionMigrationBackfill {
   constructor(private readonly db: SqlExecutor) {}
@@ -749,8 +751,17 @@ export class CompetitionMigrationBackfill {
       );
       // A caller may checkpoint 100 keys, but each joined credit statement and
       // bulk write stays at the measured 25-key size within the same atomic batch.
-      for (let index = 0; index < rows.length; index += 25)
-        await this.copyVoterPage(record, rows.slice(index, index + 25), ctx);
+      const pages = Array.from(
+        { length: Math.ceil(rows.length / VOTER_COPY_QUERY_LIMIT) },
+        (_, page) =>
+          rows.slice(
+            page * VOTER_COPY_QUERY_LIMIT,
+            (page + 1) * VOTER_COPY_QUERY_LIMIT
+          )
+      );
+      await readSequentially(pages, (keys) =>
+        this.copyVoterPage(record, keys, ctx)
+      );
       const last = rows[rows.length - 1];
       return rows.length === limit
         ? JSON.stringify([last.drop_id, last.voter_id])
