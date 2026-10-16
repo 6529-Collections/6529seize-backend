@@ -5,6 +5,7 @@ import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
 import { ApiDmUnreadConversationState } from '@/api/generated/models/ApiDmUnreadConversationState';
 
 export enum WsMessageType {
+  RESYNC_REQUIRED = 'RESYNC_REQUIRED',
   DROP_UPDATE = 'DROP_UPDATE',
   COMPETITION_UPDATE = 'COMPETITION_UPDATE',
   DROP_UPDATE_REF = 'DROP_UPDATE_REF',

@@ -17,7 +17,11 @@ import {
 import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
-import { describeWebSocketSendFailure } from './ws-send-diagnostics';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
+import {
+  webSocketDelivery,
+  WebSocketDeliveryResult
+} from '@/ws-delivery/ws-delivery';
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -45,7 +49,8 @@ abstract class ClientConnections {
   }: {
     connectionId: string;
     message: string;
-  }): Promise<void>;
+    recovery?: boolean;
+  }): Promise<WebSocketDeliveryResult>;
   abstract closeClient(
     connectionId: string,
     propagateFailure?: boolean
@@ -69,6 +74,7 @@ class WebsocketClientConnections extends ClientConnections {
     }
     try {
       socket.send(message);
+      return { status: 'sent' as const };
     } catch (err: any) {
       throw new SocketNotAvailableException();
     }
@@ -99,45 +105,44 @@ class WebsocketClientConnections extends ClientConnections {
 }
 
 class ApiGatewayClientConnections extends ClientConnections {
-  private readonly logger = Logger.get(ApiGatewayManagementApiClient.name);
-
   private readonly client: ApiGatewayManagementApiClient;
 
   constructor() {
     super();
     this.client = new ApiGatewayManagementApiClient({
-      endpoint: process.env.API_GATEWAY_WS_ENDPOINT
+      endpoint: process.env.API_GATEWAY_WS_ENDPOINT,
+      retryMode: 'standard',
+      maxAttempts: 3,
+      requestHandler: new NodeHttpHandler({
+        connectionTimeout: 2000,
+        requestTimeout: 5000,
+        throwOnRequestTimeout: true
+      })
     });
   }
 
   override async sendMessage({
     connectionId,
-    message
+    message,
+    recovery = false
   }: {
     connectionId: string;
     message: string;
+    recovery?: boolean;
   }) {
-    try {
-      await this.client.send(
-        new PostToConnectionCommand({
-          ConnectionId: connectionId,
-          Data: Buffer.from(message)
-        })
-      );
-    } catch (error: unknown) {
-      const failure = describeWebSocketSendFailure(message, error);
-      if (failure.unavailable) {
-        throw new SocketNotAvailableException();
-      } else {
-        try {
-          // Replace the existing error event; do not report again or turn a
-          // diagnostic failure into deletion of an otherwise live connection.
-          this.logger.error(failure.diagnostic);
-        } catch {
-          // Outbound delivery remains best effort when reporting is unavailable.
-        }
-      }
-    }
+    return webSocketDelivery.deliver({
+      connectionId,
+      message,
+      recovery,
+      close: () => this.closeClient(connectionId, true),
+      send: () =>
+        this.client.send(
+          new PostToConnectionCommand({
+            ConnectionId: connectionId,
+            Data: Buffer.from(message)
+          })
+        )
+    });
   }
 
   override async closeClient(
@@ -182,11 +187,13 @@ export class AppWebSockets {
   async send({
     connectionId,
     message,
-    skipStaleConnectionCheck = false
+    skipStaleConnectionCheck = false,
+    recovery = false
   }: {
     connectionId: string;
     message: string;
     skipStaleConnectionCheck?: boolean;
+    recovery?: boolean;
   }) {
     if (!skipStaleConnectionCheck) {
       const entity = await this.wsConnectionRepository.getByConnectionId(
@@ -199,13 +206,24 @@ export class AppWebSockets {
           `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
         );
         await this.deregister({ connectionId });
-        return;
+        return { status: 'gone' as const };
       }
     }
     try {
-      await ClientConnections.Get().sendMessage({ connectionId, message });
+      const result = await ClientConnections.Get().sendMessage({
+        connectionId,
+        message,
+        recovery
+      });
+      if (result.status === 'gone')
+        await this.wsConnectionRepository.deleteByConnectionId(
+          connectionId,
+          {}
+        );
+      return result;
     } catch (err) {
       await this.deregister({ connectionId });
+      return { status: 'gone' as const };
     }
   }
 

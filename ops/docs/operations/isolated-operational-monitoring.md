@@ -267,3 +267,5 @@ retention policies. Roll back the monitoring Lambda artifact or source producer
 SHA while keeping queues, secrets and fallback available. Account/region-wide
 monitoring failure requires the independently configured external provider; no
 component in the failed AWS account can guarantee notification by itself.
+
+For outbound WebSocket 429s, use the [WebSocket delivery recovery runbook](websocket-delivery.md) to distinguish isolated listener backpressure from fleet degradation and to respond to the aggregate alarms.
