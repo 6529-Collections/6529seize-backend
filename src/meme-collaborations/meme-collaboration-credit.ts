@@ -1,5 +1,9 @@
 import { MemeCollaborationCredit } from '@/entities/IMemeCollaboration';
 
+export function formatMemeArtistNames(names: readonly string[]): string {
+  return names.join(names.length === 2 ? ' & ' : ', ');
+}
+
 export function collaborationMetadataValues(
   credit: MemeCollaborationCredit
 ): ReadonlyMap<string, string> {

@@ -1,3 +1,4 @@
+import { formatMemeArtistNames } from './meme-collaboration-credit';
 import { env } from '@/env';
 import { competitionMainStageRepository } from '@/competitions/competition-main-stage.repository';
 import { createHash, randomUUID } from 'node:crypto';
@@ -112,15 +113,30 @@ export function buildCollaborationCredit(
       'All credited artists must have an available profile'
     );
   return {
-    artist: [artist, ...accepted.map((item) => item.profile.display)].join(
-      ', '
-    ),
+    artist: formatMemeArtistNames([
+      artist,
+      ...accepted.map((item) => item.artist_name || item.profile.display)
+    ]),
     artist_profiles: [
       authorHandle,
       ...accepted.map((item) => item.profile.handle)
     ].join(', '),
     collab: accepted.length > 0
   };
+}
+
+function responseArtistName(
+  action: string,
+  suppliedName: string | undefined,
+  profileHandle: string
+): string | null {
+  if (action !== 'ACCEPT') return null;
+  const name = (suppliedName ?? profileHandle).trim();
+  if (!name || name.length > 200)
+    throw new BadRequestException(
+      'Artist credit name must be 1–200 characters'
+    );
+  return name;
 }
 
 export class MemeCollaborationsService {
@@ -317,10 +333,10 @@ export class MemeCollaborationsService {
       );
       const presentedArtist =
         existing.credit?.artist ??
-        [
+        formatMemeArtistNames([
           existing.base_artist,
-          ...accepted.map((item) => item.profile.display)
-        ].join(', ');
+          ...accepted.map((item) => item.artist_name || item.profile.display)
+        ]);
       const incomingArtist = model.metadata
         .find((item) => item.data_key === 'artist')
         ?.data_value.trim();
@@ -514,7 +530,10 @@ export class MemeCollaborationsService {
       artwork: context?.artwork,
       collaborators: invitations
         .filter((item) => item.status === 'ACCEPTED')
-        .map((item) => item.profile),
+        .map((item) => ({
+          ...item.profile,
+          display: item.artist_name || item.profile.display
+        })),
       invitations: invitations
         .filter(
           (item) =>
@@ -523,6 +542,7 @@ export class MemeCollaborationsService {
         .map((item) => ({
           id: item.id,
           profile: item.profile,
+          artist_name: item.artist_name ?? null,
           status: item.status
         }))
     };
@@ -535,6 +555,7 @@ export class MemeCollaborationsService {
       action: 'ACCEPT' | 'DECLINE' | 'CANCEL';
       artwork_hash: string;
       terms_version: string;
+      artist_name?: string;
     },
     auth: AuthenticationContext,
     ctx: RequestContext
@@ -579,6 +600,11 @@ export class MemeCollaborationsService {
           409,
           'This invitation is closed. Accepted collaborations cannot be withdrawn.'
         );
+      const artistName = responseArtistName(
+        body.action,
+        body.artist_name,
+        invitation.profile.handle
+      );
       const [drop] = await this.db.query<{ id: string }>(
         'dropExists',
         `select id from ${DROPS_TABLE} where id=:dropId`,
@@ -588,11 +614,12 @@ export class MemeCollaborationsService {
       if (!drop) throw new NotFoundException('Submission no longer exists');
       await this.db.query(
         'respond',
-        `update ${MEME_COLLABORATION_INVITATIONS_TABLE} set status=:status,profile_handle=:profileHandle,responded_at=:now,responder_wallet=:wallet,acceptance_copy_version=:copyVersion where id=:id and status='PENDING'`,
+        `update ${MEME_COLLABORATION_INVITATIONS_TABLE} set status=:status,profile_handle=:profileHandle,artist_name=:artistName,responded_at=:now,responder_wallet=:wallet,acceptance_copy_version=:copyVersion where id=:id and status='PENDING'`,
         {
           id: invitationId,
           status: next,
           profileHandle: invitation.profile.handle,
+          artistName,
           now: Date.now(),
           wallet: auth.authenticatedWallet,
           copyVersion:

@@ -67,7 +67,12 @@ export async function respondToMemeCollaboration(
     Joi.object({
       action: Joi.string().valid('ACCEPT', 'DECLINE', 'CANCEL').required(),
       artwork_hash: Joi.string().length(64).required(),
-      terms_version: Joi.string().length(64).required()
+      terms_version: Joi.string().length(64).required(),
+      artist_name: Joi.when('action', {
+        is: 'ACCEPT',
+        then: Joi.string().trim().min(1).max(200),
+        otherwise: Joi.forbidden()
+      })
     })
   );
   const notificationIds = await memeCollaborationsService.respond(

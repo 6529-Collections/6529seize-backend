@@ -128,6 +128,41 @@ describeWithSeed(
     { table: MEME_COLLABORATION_INVITATIONS_TABLE, rows: invites }
   ],
   () => {
+    it('persists the accepted credit name independently and keeps it final', async () => {
+      const db = new MemeCollaborationsDb(() => sqlExecutor);
+      const service = new MemeCollaborationsService(db);
+      await service.respond(
+        'drop',
+        invites[0].id,
+        { ...body('ACCEPT'), artist_name: '  Artist B Name  ' },
+        auth('B'),
+        {}
+      );
+      await service.respond(
+        'drop',
+        invites[0].id,
+        { ...body('ACCEPT'), artist_name: 'Replacement' },
+        auth('B'),
+        {}
+      );
+      expect((await db.invitations('drop', {}))[0].artist_name).toBe(
+        'Artist B Name'
+      );
+      expect((await db.acceptedByDrops(['drop'], {})).drop[0].display).toBe(
+        'Artist B Name'
+      );
+      expect(
+        (await db.presentationByDrops(['drop'], {})).drop.credit.artist
+      ).toBe('Artist A & Artist B Name');
+      const credit = await db.executeNativeQueriesInTransaction((connection) =>
+        service.freezeForMint('drop', { connection })
+      );
+      expect(credit).toEqual({
+        artist: 'Artist A & Artist B Name',
+        artist_profiles: 'ArtistA, ArtistB',
+        collab: true
+      });
+    });
     const db = new MemeCollaborationsDb(() => sqlExecutor);
     const service = new MemeCollaborationsService(db);
     beforeEach(() => {
@@ -283,7 +318,7 @@ describeWithSeed(
         )
       ).toEqual(['B']);
       expect((await db.presentationByDrops(['drop'], {})).drop.credit).toEqual({
-        artist: 'Artist A, ArtistB',
+        artist: 'Artist A & ArtistB',
         artist_profiles: 'ArtistA, ArtistB',
         collab: true
       });
@@ -342,7 +377,7 @@ describeWithSeed(
               drop_id: 'drop',
               metadata: artworkModel.metadata.map((item) =>
                 item.data_key === 'artist'
-                  ? { ...item, data_value: 'Artist A, ArtistB' }
+                  ? { ...item, data_value: 'Artist A & ArtistB' }
                   : item
               )
             },

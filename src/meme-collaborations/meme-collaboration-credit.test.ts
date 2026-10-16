@@ -1,5 +1,9 @@
 import { withCollaborationCredit } from './meme-collaboration-credit';
-import { collaborationArtworkHash } from './meme-collaborations.service';
+import {
+  buildCollaborationCredit,
+  collaborationArtworkHash
+} from './meme-collaborations.service';
+import type { CollaborationInvitation } from './meme-collaborations.db';
 
 const credit = {
   artist: 'A, B',
@@ -7,6 +11,51 @@ const credit = {
   collab: true
 };
 describe('Managed mint collaboration credits', () => {
+  const invitation = (
+    id: string,
+    artistName: string | null,
+    status = 'ACCEPTED'
+  ) =>
+    ({
+      artist_name: artistName,
+      status,
+      profile: { id, handle: id, display: id, pfp: null }
+    }) as CollaborationInvitation;
+  it('uses confirmed credit names with an ampersand for two artists and comma-separated handles', () => {
+    expect(
+      buildCollaborationCredit('Artist A', 'userA', [
+        invitation('userB', 'Artist B')
+      ])
+    ).toEqual({
+      artist: 'Artist A & Artist B',
+      artist_profiles: 'userA, userB',
+      collab: true
+    });
+  });
+  it('uses commas for three artists and excludes pending invitations', () => {
+    expect(
+      buildCollaborationCredit('Artist A', 'userA', [
+        invitation('userB', 'Artist B'),
+        invitation('userC', 'Artist C'),
+        invitation('userD', 'Artist D', 'PENDING')
+      ])
+    ).toEqual({
+      artist: 'Artist A, Artist B, Artist C',
+      artist_profiles: 'userA, userB, userC',
+      collab: true
+    });
+  });
+  it('preserves solo credit and falls back for older accepted invitations without a saved name', () => {
+    expect(buildCollaborationCredit('Artist A', 'userA', [])).toEqual({
+      artist: 'Artist A',
+      artist_profiles: 'userA',
+      collab: false
+    });
+    expect(
+      buildCollaborationCredit('Artist A', 'userA', [invitation('userB', null)])
+        .artist
+    ).toBe('Artist A & userB');
+  });
   it('replaces declared credits with the accepted roster without losing other traits', () => {
     const attributes = withCollaborationCredit(
       [

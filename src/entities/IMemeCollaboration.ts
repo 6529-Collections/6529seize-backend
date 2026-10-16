@@ -63,6 +63,8 @@ export class MemeCollaborationInvitationEntity {
   profile_id!: string;
   @Column({ type: 'varchar', length: 100 })
   profile_handle!: string;
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  artist_name!: string | null;
   @Column({ type: 'varchar', length: 16 })
   status!: MemeCollaborationStatus;
   @Column({ type: 'bigint' })
