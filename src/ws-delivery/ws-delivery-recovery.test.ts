@@ -81,7 +81,7 @@ describe('scheduled WebSocket refresh recovery', () => {
   });
   it('bounds each invocation to ten concurrent sends and 100 markers', async () => {
     mockDue.mockResolvedValue(
-      Array.from({ length: 10 }, (_, index) => `connection-${index}`)
+      Array.from({ length: 100 }, (_, index) => `connection-${index}`)
     );
     let inFlight = 0;
     let peak = 0;

@@ -11,11 +11,16 @@ export async function recoverWebSocketDeliveries(): Promise<void> {
   const startedAt = Date.now();
   let recovered = 0;
   let gone = 0;
-  for (let batch = 0; batch < 10 && Date.now() - startedAt < 45_000; batch++) {
-    const due = await webSocketDeliveryStore.due(Date.now(), 10);
-    if (!due.length) break;
+  const due = await webSocketDeliveryStore.due(Date.now(), 100);
+  // One probe per listener per invocation. Newer coalesced work stays queued
+  // for the next run instead of repeatedly probing the same socket in a burst.
+  for (
+    let offset = 0;
+    offset < due.length && Date.now() - startedAt < 45_000;
+    offset += 10
+  ) {
     await Promise.all(
-      due.map(async (connectionId) => {
+      due.slice(offset, offset + 10).map(async (connectionId) => {
         const result = await appWebSockets.send({
           connectionId,
           message: JSON.stringify({
