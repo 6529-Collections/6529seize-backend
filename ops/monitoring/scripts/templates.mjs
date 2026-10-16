@@ -899,14 +899,14 @@ function addNftRefreshAlarms(resources) {
         'FailureRate',
         300,
         3,
-        'IF((s+f)>=20,IF(100*f/(s+f)>=5,1,IF(s>0,0)))',
+        'IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))',
         'At least 5% completed refresh failures with 20 eligible outcomes per five minutes, for 15 minutes. Unavailable pages are excluded. Recovery requires successful samples; quiet periods preserve the incident.'
       ],
       [
         'NewUnavailableSurge',
         900,
         1,
-        'IF(c>=20,IF((n>=5 AND 100*n/c>=10) OR p>=5,1,IF(s>0,0)))',
+        'IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))',
         'In 15 minutes, at least five newly unavailable pages and 10% of 20 completed refreshes, or five previously working pages becoming unavailable. Each link counts once per failure episode. Recovery requires successful samples.'
       ]
     ]) {

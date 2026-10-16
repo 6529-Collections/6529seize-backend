@@ -6634,7 +6634,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,IF(s>0,0)))",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
             "ReturnData": true
           }
         ],
@@ -6797,7 +6797,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF(c>=20,IF((n>=5 AND 100*n/c>=10) OR p>=5,1,IF(s>0,0)))",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
             "ReturnData": true
           }
         ],
@@ -6888,7 +6888,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,IF(s>0,0)))",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
             "ReturnData": true
           }
         ],
@@ -7051,7 +7051,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF(c>=20,IF((n>=5 AND 100*n/c>=10) OR p>=5,1,IF(s>0,0)))",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
             "ReturnData": true
           }
         ],
@@ -7142,7 +7142,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,IF(s>0,0)))",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
             "ReturnData": true
           }
         ],
@@ -7305,7 +7305,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF(c>=20,IF((n>=5 AND 100*n/c>=10) OR p>=5,1,IF(s>0,0)))",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
             "ReturnData": true
           }
         ],
@@ -7396,7 +7396,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,IF(s>0,0)))",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
             "ReturnData": true
           }
         ],
@@ -7559,7 +7559,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF(c>=20,IF((n>=5 AND 100*n/c>=10) OR p>=5,1,IF(s>0,0)))",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
             "ReturnData": true
           }
         ],
@@ -7650,7 +7650,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,IF(s>0,0)))",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
             "ReturnData": true
           }
         ],
@@ -7813,7 +7813,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF(c>=20,IF((n>=5 AND 100*n/c>=10) OR p>=5,1,IF(s>0,0)))",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
             "ReturnData": true
           }
         ],
@@ -7904,7 +7904,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,IF(s>0,0)))",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
             "ReturnData": true
           }
         ],
@@ -8067,7 +8067,7 @@
           },
           {
             "Id": "incident",
-            "Expression": "IF(c>=20,IF((n>=5 AND 100*n/c>=10) OR p>=5,1,IF(s>0,0)))",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
             "ReturnData": true
           }
         ],

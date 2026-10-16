@@ -545,8 +545,8 @@ test('NFT incidents use completed outcomes, sample gates, sustained failures and
         assert.equal(
           expression,
           kind === 'FailureRate'
-            ? 'IF((s+f)>=20,IF(100*f/(s+f)>=5,1,IF(s>0,0)))'
-            : 'IF(c>=20,IF((n>=5 AND 100*n/c>=10) OR p>=5,1,IF(s>0,0)))'
+            ? 'IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))'
+            : 'IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))'
         );
       }
     }

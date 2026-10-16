@@ -388,6 +388,20 @@ Initial provider policies:
   seconds in three of five minutes; `NftRefreshDeadLetters` alarms on one visible
   message. These independently cover a stalled worker.
 
+Before deployment, run the read-only acceptance check from this package:
+
+```sh
+AWS_CLI_PATH=/absolute/path/to/aws MONITORING_ENVIRONMENT=staging ../../bin/6529 run verify:nft-refresh-math
+```
+
+It evaluates generated expressions with `GetMetricData`/`TIME_SERIES` fixtures
+without publishing metrics or notifications. It covers healthy, failed,
+low-volume, quiet, persistent-unavailable, new-unavailable, previously-working,
+and recovery observations. The unavailable-surge expression filters recovery at
+its outer boundary: a missing nested `IF` branch can otherwise become zero in
+CloudWatch and manufacture recovery without success. Run the matching `prod`
+check before production acceptance as well.
+
 Thresholds are operational starting values; low-volume providers may not meet
 sample gates. Inspect dashboard counts and retained logs when tuning. Do not
 raise thresholds to conceal an unexplained regression. In particular, provider
