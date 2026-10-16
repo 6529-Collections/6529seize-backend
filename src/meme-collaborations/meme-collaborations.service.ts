@@ -333,10 +333,10 @@ export class MemeCollaborationsService {
       );
       const presentedArtist =
         existing.credit?.artist ??
-        [
+        formatMemeArtistNames([
           existing.base_artist,
-          ...accepted.map((item) => item.profile.display)
-        ].join(', ');
+          ...accepted.map((item) => item.artist_name || item.profile.display)
+        ]);
       const incomingArtist = model.metadata
         .find((item) => item.data_key === 'artist')
         ?.data_value.trim();
