@@ -407,7 +407,7 @@ describe('findDelegationTransactions registration scope', () => {
       }
     ]);
     expect(result.consolidations).toEqual([
-      { block: 13, type: 0, wallet1: COLD, wallet2: HOT_1 }
+      { block: 13, type: 0, wallet1: COLD, wallet2: HOT_1, timestamp: 123 }
     ]);
     expect(rpcMock.call).not.toHaveBeenCalled();
   });

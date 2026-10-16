@@ -1634,7 +1634,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       union all
       select drop_id, wave_id, :fromTime as timestamp, vote
       from ${DROP_REAL_VOTE_IN_TIME_TABLE}
-      where id in (
+      where id = (
                      select max(id) as id
                      from ${DROP_REAL_VOTE_IN_TIME_TABLE}
                      where drop_id = :dropId
@@ -1713,7 +1713,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       union all
       select drv_2.drop_id as drop_id, drv_2.wave_id as wave_id, :fromTime as timestamp, drv_2.vote as vote
       from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv_2
-      where drv_2.id in (
+      where drv_2.id = (
                      select max(drv_2_i.id) as id
                      from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv_2_i
                      join ${DROPS_TABLE} d2 on d2.id = drv_2_i.drop_id
@@ -1735,6 +1735,40 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     entry: WaveLeaderboardEntryEntity,
     ctx: RequestContext
   ) {
+    // Authoritative writers, including historical APPROVE corrections, may
+    // intentionally replace a snapshot with an earlier evaluation timestamp.
+    await this.persistWaveLeaderboardEntry(entry, false, ctx);
+  }
+
+  async upsertWaveLeaderboardEntryIfNotOlder(
+    entry: WaveLeaderboardEntryEntity,
+    ctx: RequestContext
+  ) {
+    const timerName = `${this.constructor.name}->upsertWaveLeaderboardEntryIfNotOlder`;
+    ctx.timer?.start(timerName);
+    try {
+      await this.persistWaveLeaderboardEntry(entry, true, ctx);
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  private async persistWaveLeaderboardEntry(
+    entry: WaveLeaderboardEntryEntity,
+    ignoreOlderSnapshot: boolean,
+    ctx: RequestContext
+  ) {
+    // Queued refreshes in overlapping workers can finish out of timestamp order.
+    // Assign timestamp last so every field compares with the stored timestamp.
+    const updateFields = ignoreOlderSnapshot
+      ? `vote = if(timestamp <= :timestamp, :vote, vote),
+         vote_on_decision_time = if(timestamp <= :timestamp, :vote_on_decision_time, vote_on_decision_time),
+         over_threshold_since_ms = if(timestamp <= :timestamp, :over_threshold_since_ms, over_threshold_since_ms),
+         timestamp = greatest(timestamp, :timestamp)`
+      : `vote = :vote,
+         vote_on_decision_time = :vote_on_decision_time,
+         timestamp = :timestamp,
+         over_threshold_since_ms = :over_threshold_since_ms`;
     await this.db.execute(
       `
           insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (
@@ -1754,10 +1788,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
             :over_threshold_since_ms
           )
           on duplicate key update
-            vote = :vote,
-            vote_on_decision_time = :vote_on_decision_time,
-            timestamp = :timestamp,
-            over_threshold_since_ms = :over_threshold_since_ms
+            ${updateFields}
       `,
       entry,
       { wrappedConnection: ctx.connection }

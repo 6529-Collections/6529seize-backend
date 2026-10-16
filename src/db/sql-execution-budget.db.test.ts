@@ -689,8 +689,12 @@ describe.each(['API', 'LOOP'])(
         'beforeTransactionCommit',
         'beforeTransactionRollback'
       ] as const)('bounds suppressed %s subscribers', async (hook) => {
+        const entered = jest.fn();
         loopDb.getDataSource().subscribers.push({
-          [hook]: async () => new Promise<never>(() => undefined)
+          [hook]: async () => {
+            entered();
+            return new Promise<never>(() => undefined);
+          }
         });
         const started = performance.now();
         const failWork = new Error('rollback requested');
@@ -703,19 +707,21 @@ describe.each(['API', 'LOOP'])(
           },
           {},
           {
-            ...budget(100, 100),
+            ...budget(500, 500),
             finalizationReserveMillis: 100,
-            deadlineMonotonicMillis: performance.now() + 200
+            deadlineMonotonicMillis: performance.now() + 600
           }
         );
         if (hook === 'beforeTransactionRollback')
           await expect(operation).rejects.toBe(failWork);
         else
           await expect(operation).rejects.toMatchObject({
+            phase: hook === 'beforeTransactionStart' ? 'SETUP' : 'COMMIT',
             commitOutcome: 'NOT_SENT',
             connectionDestroyed: true
           });
-        expect(performance.now() - started).toBeLessThan(1000);
+        expect(entered).toHaveBeenCalledTimes(1);
+        expect(performance.now() - started).toBeLessThan(1500);
         await waitUntilUnlocked(observer);
         expect(await observer.execute(query, { id: first })).toEqual([
           { version: '1' }

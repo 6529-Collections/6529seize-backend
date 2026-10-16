@@ -1,9 +1,11 @@
 import 'reflect-metadata';
 import { gzipSync } from 'node:zlib';
+import { performance } from 'node:perf_hooks';
 import {
   ConnectionWrapper,
   setSqlExecutor,
   SqlExecutor,
+  type SqlExecutionBudget,
   sqlExecutor,
   SqlTransactionOptions
 } from '@/sql-executor';
@@ -17,6 +19,7 @@ import {
   StaleMarketDepthSnapshotError
 } from './market-depth.db';
 import {
+  AppendMarketDepthEventsInput,
   MarketDepthEventInput,
   MAX_MARKET_DEPTH_ARCHIVES_TOTAL_BYTES,
   NormalizedMarketDepthOrder,
@@ -164,7 +167,149 @@ function event(overrides: Partial<MarketDepthEventInput> = {}) {
   } satisfies MarketDepthEventInput;
 }
 
+function eventPage(): AppendMarketDepthEventsInput {
+  return {
+    source: 'opensea-stream',
+    contract: CONTRACT,
+    collection_slug: 'project-a',
+    expected_cursor: null,
+    expected_watermark: null,
+    next_cursor: 'page-2',
+    provider_watermark: 'window-100',
+    provider_at: new Date('2026-09-10T00:00:00.000Z'),
+    observed_at: new Date('2026-09-10T00:00:01.000Z'),
+    events: [event()]
+  };
+}
+
+function eventBudget(statementMillis = 200): SqlExecutionBudget {
+  return {
+    deadlineMonotonicMillis: performance.now() + 3000,
+    maxStatementMillis: statementMillis,
+    finalizationReserveMillis: 1000,
+    lockWaitSeconds: 3
+  };
+}
+
 describeWithSeed('MarketDepthDb', [] as never[], () => {
+  it.each(['api', 'loop'] as const)(
+    'cancels a cursor-blocked event save and can retry safely through the %s adapter',
+    async (adapter) => {
+      const observer = sqlExecutor;
+      await withObservedDb(adapter, async (db) => {
+        const page = eventPage();
+        await db.appendEvents({
+          ...page,
+          next_cursor: null,
+          provider_watermark: null,
+          events: []
+        });
+        const locked = deferred();
+        const release = deferred();
+        const blocker = observer.executeNativeQueriesInTransaction(
+          async (connection) => {
+            await observer.execute(
+              "SELECT source FROM market_depth_cursors WHERE source=:source AND chain_id='1' AND contract=:contract AND collection_slug=:collection_slug FOR UPDATE",
+              { ...page },
+              { wrappedConnection: connection }
+            );
+            locked.resolve();
+            await release.promise;
+          }
+        );
+        try {
+          await locked.promise;
+          const started = performance.now();
+          await expect(
+            db.appendEvents(page, eventBudget())
+          ).rejects.toMatchObject({
+            phase: 'WORK',
+            commitOutcome: 'NOT_SENT',
+            connectionDestroyed: true
+          });
+          expect(performance.now() - started).toBeLessThan(2000);
+        } finally {
+          release.resolve();
+          await blocker;
+        }
+        expect(
+          await db.getCursor(page.source, page.contract, page.collection_slug)
+        ).toMatchObject({
+          provider_cursor: null,
+          provider_watermark: null
+        });
+        // Replays after disposal use a healthy connection and preserve global uniqueness.
+        await db.appendEvents(page, eventBudget(1000));
+        await db.appendEvents(
+          {
+            ...page,
+            expected_cursor: page.next_cursor,
+            expected_watermark: page.provider_watermark
+          },
+          eventBudget(1000)
+        );
+        const count = await observer.execute<{ count: number }>(
+          'SELECT COUNT(*) AS count FROM market_depth_events'
+        );
+        expect(Number(count[0].count)).toBe(1);
+      });
+    }
+  );
+
+  it.each(['api', 'loop'] as const)(
+    'rolls back inserted events and cursor progress when a later statement stalls through the %s adapter',
+    async (adapter) => {
+      const observer = sqlExecutor;
+      await withObservedDb(adapter, async (db, observed) => {
+        const page = eventPage();
+        await db.appendEvents({
+          ...page,
+          next_cursor: null,
+          provider_watermark: null,
+          events: []
+        });
+        const execute = jest.spyOn(observed, 'execute');
+        observed.afterQuery = async (sql) => {
+          if (!sql.startsWith('INSERT IGNORE INTO market_depth_events')) return;
+          // The bound transaction has inserted the events, but has not advanced its cursor.
+          const options = execute.mock.calls.find(([statement]) =>
+            statement.includes('INSERT IGNORE INTO market_depth_events')
+          )?.[2];
+          await observed.execute('SELECT SLEEP(2)', undefined, options);
+        };
+        try {
+          await expect(
+            db.appendEvents(page, eventBudget())
+          ).rejects.toMatchObject({
+            phase: 'WORK',
+            commitOutcome: 'NOT_SENT',
+            connectionDestroyed: true
+          });
+          expect(
+            execute.mock.calls.some(([sql]) =>
+              sql.startsWith('UPDATE market_depth_cursors')
+            )
+          ).toBe(false);
+          observed.afterQuery = undefined;
+          expect(
+            await db.getCursor(page.source, page.contract, page.collection_slug)
+          ).toMatchObject({
+            provider_cursor: null,
+            provider_watermark: null
+          });
+          const count = await observer.execute<{ count: number }>(
+            'SELECT COUNT(*) AS count FROM market_depth_events'
+          );
+          expect(Number(count[0].count)).toBe(0);
+          await db.appendEvents(page, eventBudget(1000));
+        } finally {
+          observed.afterQuery = undefined;
+          execute.mockRestore();
+        }
+      });
+    }
+  );
+
   it.each(['api', 'loop'] as const)(
     'publishes different empty collections concurrently through the %s adapter',
     async (adapter) => {

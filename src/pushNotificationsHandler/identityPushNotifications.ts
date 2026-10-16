@@ -53,6 +53,7 @@ import { wsListenersNotifier } from '../api-serverless/src/ws/ws-listeners-notif
 import { identityPushNotificationAccess } from '@/pushNotificationsHandler/identity-push-notification-access';
 import { isNotificationEnabledForDevice } from '@/pushNotificationsHandler/identity-push-notification-settings';
 import { buildSubscriptionCoveragePushNotificationData } from '@/pushNotificationsHandler/subscription-coverage-push-notification';
+import { getPushNotificationGrouping } from '@/pushNotificationsHandler/push-notification-grouping';
 import {
   appendWavePushNotificationContext,
   buildAllDropsPushNotificationTitle,
@@ -461,6 +462,7 @@ async function buildIdentityNotificationMessages(
   }
 
   const { title, body, data, imageUrl } = notificationData;
+  const grouping = getPushNotificationGrouping(notification);
 
   return (
     await Promise.all(
@@ -501,7 +503,8 @@ async function buildIdentityNotificationMessages(
                 target_profile_id: notification.identity_id,
                 target_profile_handle: targetProfileHandle
               },
-              imageUrl: imageUrl ?? undefined
+              imageUrl: imageUrl ?? undefined,
+              ...grouping
             },
             identityId: notification.identity_id,
             requiresCompetitionSupport:

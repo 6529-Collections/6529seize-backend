@@ -50,7 +50,9 @@ import { CompetitionMigrationService } from './competition-migration.service';
 import { LegacyCompetitionBaselineRepository } from './legacy-competition-baseline.repository';
 import {
   installMigrationCapture,
-  migrationCaptureHealthy
+  migrationCaptureHealthy,
+  migrationCaptureStatement,
+  migrationTriggerName
 } from './competition-migration-capture';
 import {
   executeMigrationCommand,
@@ -198,6 +200,66 @@ describeWithSeed(
       await installMigrationCapture(sqlExecutor);
     });
     afterEach(() => jest.restoreAllMocks());
+    it('keeps shared reply settings through catch-up and native cutover with existing capture triggers', async () => {
+      const schema = await sqlExecutor.execute<{ COLUMN_NAME: string }>(
+        'select COLUMN_NAME from information_schema.COLUMNS where TABLE_SCHEMA=database() and TABLE_NAME=:table order by ORDINAL_POSITION',
+        { table: WAVES_TABLE }
+      );
+      const originalColumns = schema
+        .map((column) => column.COLUMN_NAME)
+        .filter(
+          (column) =>
+            column !== 'chat_replies_open' &&
+            column !== 'chat_replies_collapsed'
+        );
+      for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
+        const name = migrationTriggerName(WAVES_TABLE, operation);
+        await sqlExecutor.execute(`drop trigger \`${name}\``);
+        await sqlExecutor.execute(
+          `create trigger \`${name}\` after ${operation} on ${WAVES_TABLE} for each row ${migrationCaptureStatement(WAVES_TABLE, operation, originalColumns)}`
+        );
+      }
+      await installMigrationCapture(sqlExecutor);
+      expect(await migrationCaptureHealthy(sqlExecutor, {})).toBe(true);
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      await sqlExecutor.execute(
+        `update ${WAVES_TABLE} set chat_replies_open=1,chat_replies_collapsed=1,updated_at=123 where id=:waveId`,
+        { waveId: wave.id }
+      );
+      const [change] = await sqlExecutor.execute<{
+        after_row: Record<string, unknown> | string;
+      }>(
+        `select after_row from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and source_table=:table`,
+        { id, table: WAVES_TABLE }
+      );
+      const image =
+        typeof change.after_row === 'string'
+          ? JSON.parse(change.after_row)
+          : change.after_row;
+      expect(image.updated_at).toBe(123);
+      expect(image).not.toHaveProperty('chat_replies_open');
+      expect(image).not.toHaveProperty('chat_replies_collapsed');
+      await service.catchUp(id, operator);
+      await finishBackfill(service);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      expect((await service.verifyNative(id)).failures).toEqual([]);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select chat_replies_open,chat_replies_collapsed from ${WAVES_TABLE} where id=:waveId`,
+          { waveId: wave.id }
+        )
+      ).toEqual({ chat_replies_open: true, chat_replies_collapsed: true });
+    });
     it('preserves historical vote activity and adjustment metadata through a real ownership transfer', async () => {
       jest
         .spyOn(appFeatures, 'isUnifiedCompetitionReadsEnabled')
