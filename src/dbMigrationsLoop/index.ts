@@ -96,7 +96,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
   if (scope === 'market-depth-publication-lock') {
-    await doInDbContext(async () => undefined, {
+    await doInDbContext(() => Promise.resolve(undefined), {
       logger,
       entities: [MarketDepthPublicationLockEntity],
       syncEntities: true,

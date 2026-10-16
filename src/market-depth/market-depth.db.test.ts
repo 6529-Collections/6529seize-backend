@@ -394,7 +394,13 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
             .filter(([message]) => message === '[SNAPSHOT PUBLICATION]')
             .map(([, data]) => data);
           expect(timing).toHaveLength(2);
-          expect(timing[1]).toMatchObject({
+          const firstTiming = timing.find(
+            (entry) => entry.snapshot_id === replacements[0].id
+          );
+          const secondTiming = timing.find(
+            (entry) => entry.snapshot_id === replacements[1].id
+          );
+          expect(secondTiming).toMatchObject({
             outcome: 'committed',
             phase: 'commit',
             lock_acquired: true,
@@ -405,12 +411,12 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
             insert_ms: expect.any(Number),
             total_ms: expect.any(Number)
           });
-          expect(timing[1].lock_wait_ms).toBeGreaterThanOrEqual(70);
-          expect(timing[0].lock_held_ms).toBeGreaterThanOrEqual(70);
-          expect(timing[1].insert_ms).toBeLessThanOrEqual(
-            timing[1].lock_held_ms
+          expect(secondTiming.lock_wait_ms).toBeGreaterThanOrEqual(70);
+          expect(firstTiming.lock_held_ms).toBeGreaterThanOrEqual(70);
+          expect(secondTiming.insert_ms).toBeLessThanOrEqual(
+            secondTiming.lock_held_ms
           );
-          expect(timing[1]).not.toHaveProperty('orders');
+          expect(secondTiming).not.toHaveProperty('orders');
         } finally {
           clearTimeout(timeout);
           release.resolve();
