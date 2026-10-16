@@ -35,6 +35,14 @@ export interface FetchOptions {
   diagnosticPurpose?: 'superrare_metadata';
 }
 
+export class NftLinkHttpTimeoutError extends Error {
+  constructor() {
+    super('NFT link HTTP request timed out');
+    Object.setPrototypeOf(this, NftLinkHttpTimeoutError.prototype);
+    this.name = 'NftLinkHttpTimeoutError';
+  }
+}
+
 const DEFAULT_USER_AGENT = '6529-link-resolver/0.7';
 const logger = Logger.get('NFT_LINK_HTTP');
 
@@ -113,6 +121,12 @@ export async function fetchTextWithTimeout(
     const text = await readTextWithLimit(res, url, getMaxBytes(opts));
     outcome = 'success';
     return text;
+  } catch (error) {
+    // Only the bounded refresher opts in. Preserve other HTTP callers' errors.
+    if (budget && cancellation === 'request_timeout')
+      throw new NftLinkHttpTimeoutError();
+    if (budget && cancellation === 'resolution_budget') budget.check();
+    throw error;
   } finally {
     clearTimeout(t);
     if (budget) controller.abort();
