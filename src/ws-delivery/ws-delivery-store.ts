@@ -98,6 +98,10 @@ if result == 'gone' then
   redis.call('ZREM', KEYS[8], id)
   return 0
 end
+if result == 'sent' then
+  redis.call('HSET', KEYS[1], 'failures', 0, 'firstFailureAt', 0)
+  redis.call('EXPIRE', KEYS[1], ttl)
+end
 if result == 'throttled' then
   local failures = redis.call('HINCRBY', KEYS[1], 'failures', 1)
   local first = tonumber(redis.call('HGET', KEYS[1], 'firstFailureAt') or '0')
@@ -117,7 +121,7 @@ end
 if result == 'sent' and recovery then
   local revision = tonumber(redis.call('HGET', KEYS[1], 'revision') or '0')
   if revision == tonumber(ARGV[7]) then
-    redis.call('HSET', KEYS[1], 'failures', 0, 'firstFailureAt', 0, 'nextAttempt', 0)
+    redis.call('HSET', KEYS[1], 'nextAttempt', 0)
     redis.call('ZREM', KEYS[2], id)
     redis.call('ZREM', KEYS[8], id)
   elseif redis.call('ZSCORE', KEYS[2], id) then
