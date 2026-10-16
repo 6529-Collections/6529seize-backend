@@ -1226,11 +1226,22 @@ rebuilds only captured decision keys; it does not replay unchanged decision hist
 when refreshing entries, ranks, awards and archives. Once all initial stages are
 complete, a journal window containing only vote, credit-spending, runtime-rank,
 leaderboard or retained vote-time-history changes replays its keys and refreshes
-only leaderboard ranks. The classifier checks every page since the last applied
+the live entry-rank and locked leaderboard projections. Historical winner ranks
+remain published ranks; partial native pages stay hidden behind legacy ownership.
+The classifier checks every page since the last applied
 watermark; other source changes retain the broader refresh. The applied watermark
 remains behind until the bounded refresh finishes, and full comparison remains
 mandatory. Routine snapshots therefore do not force another copy of unchanged
 voters, decision awards and winner archives.
+Full content comparison prefetches all relations in 100-drop pages, while WAVE
+TDH/XTDH budgets prefetch identity and spending data in 100-profile pages. The
+candidate reuses the ordinary public budget formula and the source oracle remains
+independent. Independent comparison and final cutover use the existing bounded
+SQL transaction runtime: five seconds overall, one second per statement and lock
+wait, and 500ms reserved for finalization. Cutover reads a repeatable snapshot
+after taking the ownership fence; other copy transactions retain READ COMMITTED.
+A pre-transfer timeout aborts without promoting the shadow copy. An unknown COMMIT
+acknowledgment requires checking ownership and the audit before any retry.
 Imported decision winners retain a nullable `legacy_drop_id`, preserving source
 history and prizes even when the drop was deleted before migration. Historical
 winner reads do not recreate an entry or its deleted content. Deploy the additive

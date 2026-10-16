@@ -276,6 +276,30 @@ function capabilities(waveId: string) {
     .sort((a, b) => a.localeCompare(b));
 }
 
+function identityCredit(
+  type: WaveCreditType,
+  identity: { tdh: Numeric; xtdh: Numeric } | null
+): number {
+  let amount: number;
+  switch (type) {
+    case WaveCreditType.TDH:
+      amount = Number(identity?.tdh ?? 0);
+      break;
+    case WaveCreditType.XTDH:
+      amount = Number(identity?.xtdh ?? 0);
+      break;
+    case WaveCreditType.TDH_PLUS_XTDH:
+      amount = Number(identity?.tdh ?? 0) + Number(identity?.xtdh ?? 0);
+      break;
+    default:
+      throw new Error('Unsupported legacy voting credit type');
+  }
+  const available = Math.max(0, Math.floor(amount));
+  if (!Number.isSafeInteger(available))
+    throw new Error('Unsupported legacy voting credit amount');
+  return available;
+}
+
 /** Independent oracle over authoritative legacy tables; never reads native rows. */
 export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleService {
   private async availableCredit(
@@ -321,18 +345,59 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
         { profileId },
         options
       );
-      if (wave.voting_credit_type === WaveCreditType.TDH)
-        amount = Number(identity?.tdh ?? 0);
-      else if (wave.voting_credit_type === WaveCreditType.XTDH)
-        amount = Number(identity?.xtdh ?? 0);
-      else if (wave.voting_credit_type === WaveCreditType.TDH_PLUS_XTDH)
-        amount = Number(identity?.tdh ?? 0) + Number(identity?.xtdh ?? 0);
-      else throw new Error('Unsupported legacy voting credit type');
+      return identityCredit(wave.voting_credit_type, identity);
     }
     const available = Math.max(0, Math.floor(amount));
     if (!Number.isSafeInteger(available))
       throw new Error('Unsupported legacy voting credit amount');
     return available;
+  }
+
+  private async availableCredits(
+    wave: WaveEntity,
+    nfts: CreditNft[],
+    profileIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<Map<string, number>> {
+    const timerName = `${this.constructor.name}->availableCredits`;
+    ctx.timer?.start(timerName);
+    try {
+      const amounts = new Map(profileIds.map((id) => [id, 0]));
+      if (
+        ![
+          WaveCreditType.TDH,
+          WaveCreditType.XTDH,
+          WaveCreditType.TDH_PLUS_XTDH
+        ].includes(wave.voting_credit_type)
+      ) {
+        for (const profileId of profileIds)
+          amounts.set(
+            profileId,
+            await this.availableCredit(wave, nfts, profileId, ctx)
+          );
+        return amounts;
+      }
+      for (let offset = 0; offset < profileIds.length; offset += 100) {
+        const identities = await this.db.execute<{
+          profile_id: string;
+          tdh: Numeric;
+          xtdh: Numeric;
+        }>(
+          `select profile_id,tdh,xtdh from ${IDENTITIES_TABLE} where profile_id in (:ids)`,
+          { ids: profileIds.slice(offset, offset + 100) },
+          { wrappedConnection: ctx.connection }
+        );
+        for (const identity of identities) {
+          amounts.set(
+            identity.profile_id,
+            identityCredit(wave.voting_credit_type, identity)
+          );
+        }
+      }
+      return amounts;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   private async creditBudgets(
@@ -350,12 +415,23 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
     const profileIds = Array.from(
       new Set(votes.map((vote) => vote.voter_id))
     ).sort((a, b) => a.localeCompare(b));
+    const availableByProfile = await this.availableCredits(
+      wave,
+      nfts,
+      profileIds,
+      ctx
+    );
+    const activeByProfile = new Map<string, Vote[]>();
+    for (const vote of votes) {
+      if (!activeDropIds.has(vote.drop_id)) continue;
+      const active = activeByProfile.get(vote.voter_id) ?? [];
+      active.push(vote);
+      activeByProfile.set(vote.voter_id, active);
+    }
     const results: CompetitionCreditParity[] = [];
     for (const profileId of profileIds) {
-      const available = await this.availableCredit(wave, nfts, profileId, ctx);
-      const activeVotes = votes.filter(
-        (vote) => vote.voter_id === profileId && activeDropIds.has(vote.drop_id)
-      );
+      const available = availableByProfile.get(profileId)!;
+      const activeVotes = activeByProfile.get(profileId) ?? [];
       const scoped =
         wave.voting_credit_scope === WaveCreditScope.WAVE
           ? [

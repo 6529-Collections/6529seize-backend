@@ -25,6 +25,38 @@ export type CompetitionCreditSpending = {
 
 /** Reads current encumbrances, not historical credit-spending deltas. */
 export class CompetitionCreditRepository extends LazyDbAccessCompatibleService {
+  public async getNamespaceSpendings(
+    competition: CompetitionCreditNamespace,
+    profileIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<Map<string, number>> {
+    const timerName = `${this.constructor.name}->getNamespaceSpendings`;
+    ctx.timer?.start(timerName);
+    try {
+      if (!profileIds.length) return new Map();
+      const sql =
+        competition.storage_mode === CompetitionStorageMode.NATIVE
+          ? `select v.voter_profile_id as profile_id,coalesce(sum(case when e.status='ACTIVE' then abs(v.value) else 0 end),0) as spent
+           from ${COMPETITION_VOTES_TABLE} v join ${COMPETITION_ENTRIES_TABLE} e on e.id=v.entry_id and e.competition_id=v.competition_id
+           where v.competition_id=:competitionId and v.voter_profile_id in (:profileIds) group by v.voter_profile_id`
+          : `select v.voter_id as profile_id,coalesce(sum(case when d.drop_type='PARTICIPATORY' then abs(v.votes) else 0 end),0) as spent
+           from ${DROP_VOTER_STATE_TABLE} v join ${DROPS_TABLE} d on d.id=v.drop_id and d.wave_id=v.wave_id
+           where v.wave_id=:waveId and v.voter_id in (:profileIds) group by v.voter_id`;
+      const rows = await this.db.execute<{ profile_id: string; spent: number }>(
+        sql,
+        {
+          competitionId: competition.id,
+          waveId: competition.wave_id,
+          profileIds
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      return new Map(rows.map((row) => [row.profile_id, Number(row.spent)]));
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async getSpending(
     competition: CompetitionCreditNamespace,
     profileId: string,

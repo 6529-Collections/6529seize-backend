@@ -62,6 +62,20 @@ rows needed by an in-progress migration or its recovery checkpoints. A missing
 next journal watermark stops catch-up and retains legacy ownership. Preserve
 the journal when investigating a stopped copy or planning rollback/re-migration.
 
+Full comparisons read content in pages of 100 drops and prefetch WAVE-scoped
+TDH/XTDH budgets in pages of 100 profiles. The candidate retains the public
+single-profile budget formula; the legacy oracle reads its own authoritative
+sources independently. All entries, content relations, voters and budgets are
+still checked; batching does not sample or skip parity categories.
+
+Independent comparison and final cutover use the existing bounded SQL transaction
+runtime with a five-second overall deadline, a one-second statement limit, a
+one-second lock wait and a 500ms finalization reserve. A slow comparison before
+ownership changes aborts rather than holding the write fence for minutes. Keep the
+migration stopped and investigate a timeout; do not raise the limit or bypass
+parity to force cutover. If COMMIT acknowledgment is unknown, read current
+ownership and the cutover audit before retrying or planning recovery.
+
 Comparison freshness is measured when the independent comparison finishes.
 After readiness passes, the Lambda calls live cutover once; that transaction
 performs the final comparison and invariants under the ownership lock before any
