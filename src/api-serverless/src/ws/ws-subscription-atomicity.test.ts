@@ -399,7 +399,10 @@ describe('WebSocket identity and notification subscription atomicity', () => {
         action = repository.deleteByConnectionId('socket', {});
       }
       await expect(action).rejects.toThrow('Socket identity is changing');
-      expect(db.operations).toHaveLength(6);
+      expect(
+        db.operations.filter(({ sql }) => sql.endsWith('for update'))
+      ).toHaveLength(3);
+      expect(delay).toHaveBeenCalledTimes(2);
       expect(db.operations.every(({ sql }) => sql.startsWith('select'))).toBe(
         true
       );

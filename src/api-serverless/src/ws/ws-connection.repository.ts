@@ -275,6 +275,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     );
     if (!existing.length) return false;
     if (attemptsLeft > 1) {
+      await delay(randomInt(5, 16));
       return this.lockConnection(connectionId, ctx, attemptsLeft - 1);
     }
     throw new CustomApiCompliantException(
@@ -284,6 +285,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   private async requireConnection(connectionId: string, ctx: RequestContext) {
+    // Only a successful FOR UPDATE scan returns true; a presence probe cannot
+    // satisfy the ownership requirement for any subsequent mutation.
     if (!(await this.lockConnection(connectionId, ctx))) {
       throw new SocketNotAvailableException();
     }
