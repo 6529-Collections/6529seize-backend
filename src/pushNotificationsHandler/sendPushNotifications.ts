@@ -33,6 +33,10 @@ export interface PushNotificationMessageInput {
   /** Preserve the existing badge when the registration platform cannot be identified. */
   omitBadge?: boolean;
   imageUrl?: string;
+  /** APNs `thread-id`; groups notifications on iOS without hiding any. */
+  threadId?: string;
+  /** APNs `apns-collapse-id`; only for pushes that supersede an earlier one. */
+  collapseId?: string;
 }
 
 export interface PushNotificationSendResult {
@@ -216,12 +220,16 @@ function buildMessage(
       }
     },
     apns: {
+      ...(input.collapseId
+        ? { headers: { 'apns-collapse-id': input.collapseId } }
+        : {}),
       payload: {
         aps: {
           ...(input.omitBadge
             ? {}
             : { badge: numbers.parseIntOrNull(input.badge) ?? 1 }),
-          sound: 'default'
+          sound: 'default',
+          ...(input.threadId ? { threadId: input.threadId } : {})
         }
       }
     }

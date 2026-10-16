@@ -641,6 +641,7 @@ successful rotation's `last_used_at`; repeated recovery does not reset it.
    Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for alert and recovery limits.
    The animation-preview implementation (requires `mediaResizerLoop` deployment) handles versioned GIF requests (`AUTOx450_gifv2`, and the other existing sizes with `_gifv2` appended) with animation-preserving processing instead of the legacy first-frame fallback. The suffix is removed before checking the existing size whitelist and resolving the original key, but retained in the S3 derivative key. AUTO sizes use a sequential native decode and one resize directly to bounded output dimensions; fixed crop sizes retain individually coalesced frames and a repeated-scan guard. The bounded RGBA strip is spooled before encoding; output resolution can shrink further to bound the complete animation. The deployment catalog sets this worker to 2048 MiB for CPU headroom while retaining its processing deadline and source/output safety limits. Frame timing, loop count, and transparency are retained. Admission limits cover source bytes, per-frame pixels, frame count, repeated decoder work, retained output, and processing time. An eligible original that already fits an AUTO dimension is copied unchanged. See [GIF animation previews](gif-animation-previews.md) for limits, rollout, and compatibility. Originals and legacy derivative keys are not overwritten.
+   Public media objects carry `Cache-Control` set when they are written, because the media CloudFront distribution also serves the desktop app's update feeds (`6529-core-app/`, `6529-staging-core-app/`), which must not be cached long. Keys that never receive different bytes use `public, max-age=31536000, immutable`: drop, wave and distribution uploads (random id per upload; multipart uploads set it at creation), sanitized drop media, profile pictures, rememe images (write-once), device video posters and NFT link previews. Per-token NFT originals and derivatives under `images/` and `videos/` are rewritten in place when a token's media source changes, so they use `public, max-age=86400`, as do on-demand resizer outputs. Single-PUT presigned uploads and MediaConvert renditions do not set it yet.
 
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
@@ -858,6 +859,14 @@ before lifecycle maintenance, which prioritizes status reconciliation and
 checkpoints bounded REST catch-up batches.
 `marketDepthStreamLoop` records live order lifecycle events, while REST event
 catch-up and per-order status checks recover supported missed observations.
+Stream appends opt into the shared SQL execution budget, with a five-second
+total deadline and one-second finalization reserve within the remaining run
+budget. The SQL owner finalizes the transaction or disposes of its connection
+before the stream retries or closes its database context. Pre-commit failures
+can retry after cleanup; an unacknowledged COMMIT leaves the batch unconfirmed
+and stops retries and final draining. Acknowledged commits remain confirmed
+through connection cleanup failures. REST appends retain their existing session
+and transaction behavior.
 Six `market_depth_*` tables retain immutable compressed archives, current orders,
 collection state, events, cursors and retry work. All amounts and quantities
 needed for normalization preserve exact integer strings.
@@ -1071,6 +1080,16 @@ self-comparisons are not parity evidence. The current `legacy-read-v3` source
 also compares independently derived available/spent/remaining credit.
 Operational deployment, verification, and rollback are documented in the
 [competition read boundary runbook](./competition-read-boundary-runbook.md).
+
+Both legacy leaderboard workers refresh entries sequentially within each wave,
+with at most four waves being refreshed concurrently per invocation. Every entry
+retains its own transaction and execution-owner lock, including the ownership
+recheck after discovery. Background refresh upserts preserve a newer snapshot when
+an older queued refresh finishes last; authoritative historical APPROVE corrections
+retain their existing write behavior. Single-entry history reads use scalar
+maximum-ID lookups to avoid scanning unrelated history while holding that lock. Deploy
+`waveLeaderboardSnapshotterLoop`, followed by `waveDecisionExecutionLoop`;
+no schema or API/frontend contract change is required.
 
 Implicit wave navigation has an additive unified-read boundary,
 `GET /v3/waves/{wave_id}/default-competition`. It selects across all visible

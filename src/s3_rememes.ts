@@ -11,6 +11,7 @@ import {
 } from './entities/IRememe';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { resizeImageBufferToHeight } from '@/media/image-resize';
+import { IMMUTABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { persistRememes } from './db';
 import { Logger } from './logging';
@@ -540,7 +541,9 @@ async function handleObjectUpload(
       Bucket: myBucket,
       Key: key,
       Body: blob,
-      ContentType: contentType
+      ContentType: contentType,
+      // Rememe keys are only ever created when missing, never rewritten.
+      CacheControl: IMMUTABLE_MEDIA_CACHE_CONTROL
     })
   );
 
