@@ -19,6 +19,12 @@ type DropVoteState =
   | DropRealVoteInTimeWithoutId
   | DropRealVoterVoteInTimeEntityWithoutId;
 
+type LeaderboardRefreshDrop = Awaited<
+  ReturnType<DropVotingDb['getDropsInNeedOfLeaderboardUpdate']>
+>[number];
+
+const MAX_CONCURRENT_WAVE_REFRESHES = 4;
+
 interface WeightedThresholdIntervalAnalysis {
   crossedThresholdAtMs: number | null;
   wasBelowThreshold: boolean;
@@ -53,37 +59,32 @@ export class WaveLeaderboardCalculationService {
       `Found ${dropsInNeedOfLeaderboardUpdate.length} drops in need of leaderboard update. Will update them`
     );
     const tracker = { success: 0, failed: 0 };
+    const dropsByWave = new Map<string, LeaderboardRefreshDrop[]>();
+    for (const drop of dropsInNeedOfLeaderboardUpdate) {
+      const waveDrops = dropsByWave.get(drop.wave_id) ?? [];
+      waveDrops.push(drop);
+      dropsByWave.set(drop.wave_id, waveDrops);
+    }
+    const waves = Array.from(dropsByWave.values());
+    let nextWaveIndex = 0;
+    // Drops in one wave share its exclusive execution-owner lock. Queue them
+    // here instead of occupying database connections waiting on each other.
     await Promise.all(
-      dropsInNeedOfLeaderboardUpdate.map(async (it) => {
-        try {
-          await this.calculateLeaderboardEntryForDrop(
-            {
-              dropId: it.drop_id,
-              waveId: it.wave_id,
-              winningMinThreshold: numbers.parseIntOrNull(
-                it.winning_min_threshold
-              ),
-              winningThresholdMinDurationMs:
-                numbers.parseIntOrNull(it.winning_threshold_min_duration_ms) ??
-                0,
-              startTime: now.minusMillis(it.time_lock_ms),
-              endTime: now,
-              nextDecisionTime: it.next_decision_time
-                ? Time.millis(it.next_decision_time)
-                : null
-            },
-            ctx
-          );
-          tracker.success++;
-        } catch (error) {
-          this.logger.error(
-            `Failed to update leaderboard entry for drop ${
-              it.drop_id
-            }. Error: ${JSON.stringify(error)}`
-          );
-          tracker.failed++;
+      Array.from(
+        { length: Math.min(MAX_CONCURRENT_WAVE_REFRESHES, waves.length) },
+        async () => {
+          while (nextWaveIndex < waves.length) {
+            // The check and cursor increment run synchronously before yielding.
+            const result = await this.refreshWaveLeaderboardEntries(
+              waves[nextWaveIndex++],
+              now,
+              ctx
+            );
+            tracker.success += result.success;
+            tracker.failed += result.failed;
+          }
         }
-      })
+      )
     );
     this.logger.info(
       `Updated ${
@@ -93,6 +94,44 @@ export class WaveLeaderboardCalculationService {
     this.logger.info(`Deleting stale leaderboard entries`);
     await this.dropVotingDb.deleteStaleLeaderboardEntries(ctx);
     this.logger.info(`Stale leaderboard entries deleted`);
+  }
+
+  private async refreshWaveLeaderboardEntries(
+    drops: readonly LeaderboardRefreshDrop[],
+    now: Time,
+    ctx: RequestContext
+  ): Promise<{ success: number; failed: number }> {
+    const tracker = { success: 0, failed: 0 };
+    for (const it of drops) {
+      try {
+        await this.calculateLeaderboardEntryForDrop(
+          {
+            dropId: it.drop_id,
+            waveId: it.wave_id,
+            winningMinThreshold: numbers.parseIntOrNull(
+              it.winning_min_threshold
+            ),
+            winningThresholdMinDurationMs:
+              numbers.parseIntOrNull(it.winning_threshold_min_duration_ms) ?? 0,
+            startTime: now.minusMillis(it.time_lock_ms),
+            endTime: now,
+            nextDecisionTime: it.next_decision_time
+              ? Time.millis(it.next_decision_time)
+              : null
+          },
+          ctx
+        );
+        tracker.success++;
+      } catch (error) {
+        this.logger.error(
+          `Failed to update leaderboard entry for drop ${
+            it.drop_id
+          }. Error: ${JSON.stringify(error)}`
+        );
+        tracker.failed++;
+      }
+    }
+    return tracker;
   }
 
   async calculateLeaderboardEntryForDrop(
@@ -184,7 +223,7 @@ export class WaveLeaderboardCalculationService {
           startTime,
           endTime
         });
-        await this.dropVotingDb.upsertWaveLeaderboardEntry(
+        await this.dropVotingDb.upsertWaveLeaderboardEntryIfNotOlder(
           {
             drop_id: dropId,
             wave_id: waveId,
