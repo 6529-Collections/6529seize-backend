@@ -36,7 +36,7 @@ Artwork submissions retain one author, voting result and minting claim. The API
 stores invitation status and the artwork/terms snapshot in `meme_collaborations`
 and `meme_collaboration_invitations`, created by entity synchronization. Only
 the invited identity can accept or decline; a proxy cannot consent. Acceptance
-is final. Pending identities are visible only to the submitter and their own
+is final. Invitee acceptance saves a nullable, submission-specific artist credit name (up to 200 characters) separately from the profile handle. Old clients without the field save their handle; older accepted records retain handle fallback. Pending identities are visible only to the submitter and their own
 invitee. Public drop V1/V2 mappings expose accepted collaborators and derive
 artist/profile/Collab metadata from those records.
 
@@ -2250,3 +2250,5 @@ The runtime grouping callers are `api` (`db-api.fetchConsolidationsForWallet`), 
 The required key must be present and valid for all three runtimes in both regions before rollout. In particular, an unconfigured API fails the whole `/api/settings` response, not just consolidation setup. This is the agreed fail-closed policy, not a nullable-settings fallback. Configuration presence has to be verified as a deployment prerequisite; source inspection is not proof that a live secret contains the value.
 
 Configure production as `2026-10-15T00:00:00Z` and staging with its intended earlier cutoff before deployment. Schema sync still precedes the delegation indexer, TDH loop and API. Both environments index the same mainnet contract: staging registrations are real registrations, and pre-production-cutoff links require renewed consent after the production cutoff.
+
+Initial collaboration Artist credits use ` & ` for exactly two credited artists and `, ` for larger rosters; SEIZE Artist Profile always uses comma-separated handles. Confirmed invitee credit names are used in live metadata and the frozen mint-selection credit. Existing frozen claims and admin Craft edits are not rewritten.

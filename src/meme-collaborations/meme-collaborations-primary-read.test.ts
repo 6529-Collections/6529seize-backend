@@ -56,3 +56,35 @@ it('restricts invitation eligibility to active legacy or designated native Main 
   expect(sql).toContain('winner.drop_id=d.id');
   expect(execute.mock.calls[0][2]).toEqual({ forcePool: DbPoolName.WRITE });
 });
+
+it('uses confirmed names in live credit formatting while preserving an already frozen credit', async () => {
+  const saved = {
+    artist: 'Legacy A, Legacy B',
+    artist_profiles: 'oldA, oldB',
+    collab: true
+  };
+  const context = {
+    drop_id: 'drop',
+    base_artist: 'Artist A',
+    current_author_handle: 'userA',
+    credit: null as typeof saved | null
+  };
+  const db = new MemeCollaborationsDb(
+    () =>
+      ({ execute: jest.fn(async () => [context]) }) as unknown as SqlExecutor
+  );
+  const profiles = {
+    drop: [{ id: 'B', handle: 'userB', display: 'Artist B Name', pfp: null }]
+  };
+  expect(
+    (await db.presentationByDrops(['drop'], {}, profiles)).drop.credit
+  ).toEqual({
+    artist: 'Artist A & Artist B Name',
+    artist_profiles: 'userA, userB',
+    collab: true
+  });
+  context.credit = saved;
+  expect(
+    (await db.presentationByDrops(['drop'], {}, profiles)).drop.credit
+  ).toEqual(saved);
+});

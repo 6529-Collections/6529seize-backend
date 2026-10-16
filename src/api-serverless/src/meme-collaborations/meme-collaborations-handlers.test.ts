@@ -165,3 +165,24 @@ it('rejects invitations before mutation when artwork cannot be viewed', async ()
   ).rejects.toThrow('not available');
   expect(inviteMock).not.toHaveBeenCalled();
 });
+
+it.each([
+  { action: 'ACCEPT', artist_name: '   ' },
+  { action: 'ACCEPT', artist_name: 'x'.repeat(201) },
+  { action: 'DECLINE', artist_name: 'Artist B' },
+  { action: 'CANCEL', artist_name: 'Artist B' }
+])('rejects invalid or inapplicable credit-name input: %j', async (fields) => {
+  jest
+    .mocked(dropsService.findDropByIdOrThrow)
+    .mockResolvedValue({ id: 'drop' } as Awaited<
+      ReturnType<typeof dropsService.findDropByIdOrThrow>
+    >);
+  jest.mocked(memeCollaborationsService.respond).mockClear();
+  await expect(
+    respondToMemeCollaboration({
+      ...request,
+      body: { ...request.body, ...fields }
+    } as RespondToMemeCollaborationRequest)
+  ).rejects.toThrow();
+  expect(memeCollaborationsService.respond).not.toHaveBeenCalled();
+});

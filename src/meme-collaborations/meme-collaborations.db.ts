@@ -1,4 +1,5 @@
 import { env } from '@/env';
+import { formatMemeArtistNames } from './meme-collaboration-credit';
 import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
 import {
   MEME_COLLABORATIONS_TABLE,
@@ -142,7 +143,7 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
     if (!dropIds.length) return {};
     const rows = await this.query<CollaboratorProfile & { drop_id: string }>(
       'acceptedByDrops',
-      `select i.drop_id, i.profile_id as id, coalesce(nullif(p.handle,''),i.profile_handle) as handle, coalesce(nullif(p.handle,''),i.profile_handle) as display, p.pfp_url as pfp from ${MEME_COLLABORATION_INVITATIONS_TABLE} i left join ${PROFILES_TABLE} p on p.external_id=i.profile_id where i.drop_id in (:dropIds) and i.status='ACCEPTED' order by i.created_at asc, i.id asc`,
+      `select i.drop_id, i.profile_id as id, coalesce(nullif(p.handle,''),i.profile_handle) as handle, coalesce(nullif(i.artist_name,''),nullif(p.handle,''),i.profile_handle) as display, p.pfp_url as pfp from ${MEME_COLLABORATION_INVITATIONS_TABLE} i left join ${PROFILES_TABLE} p on p.external_id=i.profile_id where i.drop_id in (:dropIds) and i.status='ACCEPTED' order by i.created_at asc, i.id asc`,
       { dropIds },
       ctx
     );
@@ -195,10 +196,10 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
       result[context.drop_id] = {
         submission_artist: context.base_artist,
         credit: savedCredit ?? {
-          artist: [
+          artist: formatMemeArtistNames([
             context.base_artist,
             ...collaborators.map((profile) => profile.display)
-          ].join(', '),
+          ]),
           artist_profiles: [
             context.current_author_handle,
             ...collaborators.map((profile) => profile.handle)
