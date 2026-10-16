@@ -64,6 +64,13 @@ import {
 } from '@/competitions/competition.types';
 import { compareLegacyFacade } from '@/competitions/legacy-competition-facade-parity';
 import { CompetitionLifecycle } from '@/entities/ICompetition';
+import { Logger } from '@/logging';
+import {
+  isRolledBackCopyAuditTimeout,
+  migrationCopyCheckpoint
+} from './competition-migration-audit-recovery';
+
+const logger = Logger.get('COMPETITION_MIGRATION');
 
 const SHADOW_TABLES = [
   COMPETITION_DECISION_WINNERS_TABLE,
@@ -190,7 +197,9 @@ export class CompetitionMigrationService {
     private readonly supplier: () => SqlExecutor = dbSupplier,
     private readonly now: () => number = Date.now,
     private readonly batchIntervalMs: number = 250,
-    private readonly environment: MigrationEnvironment = 'production'
+    private readonly environment: MigrationEnvironment = 'production',
+    private readonly waitBeforeAuditRetry: () => Promise<void> = () =>
+      new Promise((resolve) => setTimeout(resolve, 1000))
   ) {
     if (
       environment === 'local' &&
@@ -520,17 +529,55 @@ export class CompetitionMigrationService {
     }
   }
 
-  /** One bounded copy transaction. Returns current durable writer status, which
+  /** Each copy attempt has its own bounded transaction. Returns writer status, which
    * may include a later peer batch; it is not a receipt for this call's batch.
    * Production advanceMigration ignores this result and reads status anew before
    * its next action. Every mutation rechecks state/stop under ownership. */
   public async backfill(id: string, operator: MigrationOperator, limit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error('Batch limit must be 1..100');
+    const attempt: { checkpoint?: string } = {};
+    try {
+      await this.backfillBatch(id, operator, limit, attempt);
+    } catch (error) {
+      if (!isRolledBackCopyAuditTimeout(error) || !attempt.checkpoint)
+        throw error;
+      logger.warn('migration_copy_audit_timeout_recovery', {
+        competitionId: id,
+        retry: 1,
+        maxRetries: 1,
+        savedCheckpoint: attempt.checkpoint
+      });
+      // The failed transaction's physical connection was destroyed. Wait with
+      // no borrowed owner connection, then reacquire ownership (which also
+      // confirms server rollback drained) and check the entire checkpoint.
+      // A second failure propagates; comparison/cutover are never retried here.
+      await this.waitBeforeAuditRetry();
+      await this.backfillBatch(id, operator, limit, {}, attempt.checkpoint);
+    }
+    return this.copyStatus(id);
+  }
+  private async backfillBatch(
+    id: string,
+    operator: MigrationOperator,
+    limit: number,
+    attempt: { checkpoint?: string },
+    expectedCheckpoint?: string
+  ): Promise<void> {
     await this.transaction(
       id,
       async (repository, ctx, record, db) => {
         const migration = await repository.checkpoint(id, ctx);
+        if (
+          expectedCheckpoint &&
+          (record.storage_mode !== 'LEGACY_ADAPTER' ||
+            record.execution_mode !== 'ACTIVE' ||
+            !migration ||
+            migrationCopyCheckpoint(migration) !== expectedCheckpoint)
+        )
+          throw new Error(
+            'Migration audit retry requires the same legacy active checkpoint'
+          );
         if (migration?.exceptions.length)
           throw new Error(
             'Migration requires adapter review: ' +
@@ -540,6 +587,7 @@ export class CompetitionMigrationService {
         if (!migration || migration.state !== 'BACKFILLING')
           throw new Error('Competition is not BACKFILLING');
         if (!(await this.claimBatch(repository, id, migration, ctx))) return;
+        attempt.checkpoint = migrationCopyCheckpoint(migration);
         if (migration.reset_table_index !== null)
           return this.resetShadowBatch(
             id,
@@ -606,7 +654,6 @@ export class CompetitionMigrationService {
       true,
       new MigrationCopySqlExecutor(this.supplier())
     );
-    return this.copyStatus(id);
   }
   /** One bounded ordered journal page; then bounded derived refresh stages.
    * Never discard capture or acknowledge a watermark before its refresh commits.

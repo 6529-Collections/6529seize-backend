@@ -1248,10 +1248,18 @@ TDH/XTDH budgets prefetch identity and spending data in 100-profile pages. The
 candidate reuses the ordinary public budget formula and the source oracle remains
 independent. Independent comparison and final cutover use the existing bounded
 SQL transaction runtime: five seconds overall, one second per statement and lock
-wait, and 500ms reserved for finalization. Cutover reads a repeatable snapshot
-after taking the ownership fence; other copy transactions retain READ COMMITTED.
+wait, and 500ms reserved for finalization. Copy, replay and cutover read repeatable
+snapshots after taking ownership; other control transactions retain READ COMMITTED.
 A pre-transfer timeout aborts without promoting the shadow copy. An unknown COMMIT
 acknowledgment requires checking ownership and the audit before any retry.
+Copying has one narrowly scoped recovery for a timeout of the batch-audit insert:
+only the original typed WORK/NOT_SENT error with a destroyed physical connection
+and the exact audit-statement fingerprint qualifies. After a one-second delay
+outside ownership, a second complete transaction rechecks legacy active ownership,
+operator stops and every saved copy checkpoint field under its lock. Checkpoint
+or batch-claim timestamp drift, or a second failure, stops the operation. Each attempt retains the same
+five-second fence and one-second statements; no statement is retried in place,
+and replay, comparison, cutover and unknown commits use no such recovery.
 Imported decision winners retain a nullable `legacy_drop_id`, preserving source
 history and prizes even when the drop was deleted before migration. Historical
 winner reads do not recreate an entry or its deleted content. Deploy the additive
