@@ -53,6 +53,8 @@ import { CompetitionStorageMode } from '@/entities/ICompetition';
 import { CompetitionMigrationChangeEntity } from '@/entities/ICompetitionMigration';
 import { parseMigrationChangeImage } from './competition-migration-journal';
 
+const VOTER_COPY_QUERY_LIMIT = 25;
+
 /** Bounded batches; the checkpoint is committed with the copied records. */
 export class CompetitionMigrationBackfill {
   constructor(private readonly db: SqlExecutor) {}
@@ -747,12 +749,107 @@ export class CompetitionMigrationBackfill {
         { waveId: record.wave_id, drop, voter, limit },
         { wrappedConnection: ctx.connection }
       );
-      for (const row of rows)
-        await this.vote(record, row.drop_id, row.voter_id, ctx);
+      // A caller may checkpoint 100 keys, but each joined credit statement and
+      // bulk write stays at the measured 25-key size within the same atomic batch.
+      const pages = Array.from(
+        { length: Math.ceil(rows.length / VOTER_COPY_QUERY_LIMIT) },
+        (_, page) =>
+          rows.slice(
+            page * VOTER_COPY_QUERY_LIMIT,
+            (page + 1) * VOTER_COPY_QUERY_LIMIT
+          )
+      );
+      await readSequentially(pages, (keys) =>
+        this.copyVoterPage(record, keys, ctx)
+      );
       const last = rows[rows.length - 1];
       return rows.length === limit
         ? JSON.stringify([last.drop_id, last.voter_id])
         : 0;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+  /** Read each credit history once and keep MySQL's source-key collation. The
+   * raw key page, including orphan/ineligible parents, still owns the cursor. */
+  private async copyVoterPage(
+    record: CompetitionRoutingRecord,
+    keys: readonly { drop_id: string; voter_id: string }[],
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->copyVoterPage`;
+    ctx.timer?.start(timerName);
+    try {
+      if (!keys.length) return;
+      const params: Record<string, string> = { waveId: record.wave_id };
+      const predicate = keys
+        .map((key, index) => {
+          params[`drop${index}`] = key.drop_id;
+          params[`voter${index}`] = key.voter_id;
+          return `(s.drop_id=:drop${index} and s.voter_id=:voter${index})`;
+        })
+        .join(' or ');
+      const rows = await this.db.execute<{
+        drop_id: string;
+        voter_id: string;
+        votes: number;
+        eligible: number;
+        credit_spent: number;
+        created_at: number | null;
+      }>(
+        `select s.drop_id,s.voter_id,s.votes,d.id is not null as eligible,
+                coalesce(sum(c.credit_spent),0) as credit_spent,min(c.created_at) as created_at
+         from ${DROP_VOTER_STATE_TABLE} s
+         left join ${DROPS_TABLE} d on d.id=s.drop_id and d.drop_type in ('PARTICIPATORY','WINNER'${record.storage_mode === CompetitionStorageMode.NATIVE ? ",'COMPETITION'" : ''})
+         left join ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} c
+           on c.wave_id=s.wave_id and c.drop_id=s.drop_id and c.voter_id=s.voter_id and d.id is not null
+         where s.wave_id=:waveId and (${predicate})
+         group by s.drop_id,s.voter_id,s.votes,d.id`,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+      // The caller holds ownership and one repeatable-read source snapshot.
+      if (rows.length !== keys.length)
+        throw new Error('OWNED_EXCEPTION: incomplete voter copy page');
+      const votes = rows
+        .filter((row) => row.eligible)
+        .map((row) => ({
+          id: stableUuid(record.id, `vote:${row.drop_id}:${row.voter_id}`),
+          competition_id: record.id,
+          entry_id: legacyCompetitionEntryId(record.id, row.drop_id),
+          voter_profile_id: row.voter_id,
+          value: Number(row.votes),
+          credit_spent: Number(row.credit_spent),
+          created_at: Number(row.created_at ?? 0),
+          updated_at: Number(row.created_at ?? 0)
+        }));
+      if (votes.length) {
+        const columns = Object.keys(votes[0]);
+        await this.db.bulkUpsert(
+          COMPETITION_VOTES_TABLE,
+          votes,
+          columns,
+          columns,
+          ctx
+        );
+      }
+      const missing = rows.filter((row) => !row.eligible);
+      if (missing.length) {
+        const deleteParams: Record<string, string> = { id: record.id };
+        const deletes = missing.map((row, index) => {
+          deleteParams[`entry${index}`] = legacyCompetitionEntryId(
+            record.id,
+            row.drop_id
+          );
+          deleteParams[`voter${index}`] = row.voter_id;
+          return `(entry_id=:entry${index} and voter_profile_id=:voter${index})`;
+        });
+        await this.db.execute(
+          `delete from ${COMPETITION_VOTES_TABLE} where competition_id=:id and (${deletes.join(' or ')})`,
+          deleteParams,
+          { wrappedConnection: ctx.connection }
+        );
+      }
     } finally {
       ctx.timer?.stop(timerName);
     }

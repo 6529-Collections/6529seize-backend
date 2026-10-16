@@ -18,6 +18,7 @@ import {
   withWebSocketOperationDiagnostics,
   setWebSocketDiagnosticOperation
 } from '@/api/ws/ws-operation-diagnostics';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const connectionId = 'ws-atomicity-fixture';
 const expiry = 3_000_000_000;
@@ -32,7 +33,7 @@ function deferred() {
 
 class ObservedExecutor extends SqlExecutor {
   beforeQuery?: (sql: string, options?: DbQueryOptions) => Promise<void>;
-  afterQuery?: (sql: string) => Promise<void>;
+  afterQuery?: (sql: string, rows: unknown[]) => Promise<void>;
   transactionRequested?: () => void;
   forcedIsolation?: SqlTransactionOptions['isolationLevel'];
   constructor(private readonly delegate: SqlExecutor) {
@@ -47,7 +48,7 @@ class ObservedExecutor extends SqlExecutor {
     const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
     await this.beforeQuery?.(normalized, options);
     const result = await this.delegate.execute<T>(sql, params, options);
-    await this.afterQuery?.(normalized);
+    await this.afterQuery?.(normalized, result);
     return result;
   }
 
@@ -82,6 +83,26 @@ async function stored() {
      group by c.identity_id`,
     { connectionId }
   );
+}
+
+async function waitForSocketLockWaiters(
+  expected: number,
+  deadline = Date.now() + 5000
+): Promise<void> {
+  // SHOW PROCESSLIST exposes this test user's own sessions. The first owner
+  // stays locked until both peer reads have actually reached the server.
+  const sessions = await sqlExecutor.execute<{ Info: string | null }>(
+    'show full processlist'
+  );
+  const waiting = sessions.filter((session) => {
+    const sql = session.Info?.toLowerCase();
+    return sql?.includes(connectionId) && sql.includes('for update');
+  });
+  if (waiting.length >= expected) return;
+  if (Date.now() >= deadline)
+    throw new Error('Socket lock waiters not observed');
+  await delay(10);
+  return waitForSocketLockWaiters(expected, deadline);
 }
 
 describeWithSeed(
@@ -433,6 +454,53 @@ describeWithSeed(
           )
         )
       );
+      const rows = await stored();
+      expect(rows).toHaveLength(1);
+      expect(['first', 'second', 'third']).toContain(rows[0].identity_id);
+      expect(rows[0].grants).toBe(rows[0].identity_id);
+    });
+
+    it('reauthenticates every waiter when the locked composite key moves behind its scan', async () => {
+      const { observed, sockets } = fixture();
+      const locked = deferred();
+      const release = deferred();
+      let firstLock = true;
+      let emptyLockReads = 0;
+      observed.afterQuery = async (sql, rows) => {
+        if (!sql.startsWith('select connection_id, connection_id()')) return;
+        if (rows.length === 0) emptyLockReads++;
+        if (firstLock) {
+          firstLock = false;
+          locked.resolve();
+          await release.promise;
+        }
+      };
+      const first = sockets.authenticateConnection(
+        { connectionId, identityId: 'first', jwtExpiry: expiry },
+        {}
+      );
+      await locked.promise;
+      const completion = Promise.allSettled([
+        first,
+        ...['second', 'third'].map((identityId) =>
+          sockets.authenticateConnection(
+            { connectionId, identityId, jwtExpiry: expiry },
+            {}
+          )
+        )
+      ]);
+      try {
+        await waitForSocketLockWaiters(2);
+      } finally {
+        release.resolve();
+        await completion;
+      }
+      expect(emptyLockReads).toBeGreaterThan(0);
+      expect((await completion).map((result) => result.status)).toEqual([
+        'fulfilled',
+        'fulfilled',
+        'fulfilled'
+      ]);
       const rows = await stored();
       expect(rows).toHaveLength(1);
       expect(['first', 'second', 'third']).toContain(rows[0].identity_id);
