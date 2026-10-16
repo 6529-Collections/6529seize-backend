@@ -10,9 +10,6 @@ jest.mock('./ws-delivery-store', () => ({
     forget: mockForget
   }
 }));
-jest.mock('@/logging', () => ({
-  Logger: { get: () => ({ info: jest.fn() }) }
-}));
 
 import { recoverWebSocketDeliveries } from './ws-delivery-recovery';
 import { DeliverySnapshot } from './ws-delivery-store';
@@ -56,7 +53,11 @@ describe('scheduled WebSocket refresh recovery', () => {
     expect(JSON.parse(output.mock.calls[0][0])).toMatchObject({
       Degraded: 0,
       WorkerHealthy: 1,
-      Pending: 0
+      Pending: 0,
+      event: 'WS_DELIVERY_HEALTH',
+      health: 'healthy',
+      recovered: 1,
+      gone: 1
     });
   });
   it('reports a persistent one-listener outage even though the worker itself completes', async () => {

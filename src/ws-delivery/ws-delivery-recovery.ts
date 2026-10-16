@@ -1,10 +1,7 @@
 import { appWebSockets } from '@/api/ws/ws';
 import { WsMessageType } from '@/api/ws/ws-message';
-import { Logger } from '@/logging';
 import { webSocketDeliveryStore } from './ws-delivery-store';
 import { deliveryHealth } from './ws-delivery-policy';
-
-const logger = Logger.get('WEBSOCKET_RECOVERY');
 
 /** Retry only a content-free refresh marker. Never replay competition effects. */
 export async function recoverWebSocketDeliveries(): Promise<void> {
@@ -61,14 +58,12 @@ export async function recoverWebSocketDeliveries(): Promise<void> {
       Environment: environment,
       Degraded: health === 'healthy' ? 0 : 1,
       WorkerHealthy: 1,
-      Pending: snapshot.pending
+      Pending: snapshot.pending,
+      event: 'WS_DELIVERY_HEALTH',
+      health,
+      ...snapshot,
+      recovered,
+      gone
     })}\n`
   );
-  logger.info({
-    event: 'WS_DELIVERY_HEALTH',
-    health,
-    ...snapshot,
-    recovered,
-    gone
-  });
 }
