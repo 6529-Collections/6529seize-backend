@@ -806,6 +806,8 @@ function addWorkerQueueAlarms(r) {
     ['WaveScoreDirtyAge', 'wave-score-refresh-dirty.fifo', false],
     ['WaveScoreStartAge', 'wave-score-refresh-start.fifo', false],
     ['WaveScoreDirtyDeadLetters', 'wave-score-refresh-dirty-dlq.fifo', true],
+    ['NftRefreshAge', 'nft-link-refreshes', false],
+    ['NftRefreshDeadLetters', 'nft-link-refreshes-dlq', true],
     ['PushNotificationsAge', 'firebase-push-notifications', false],
     ['PushNotificationsDeadLetters', 'firebase-push-notifications-dlq', true]
   ]) {
@@ -833,6 +835,123 @@ function addWorkerQueueAlarms(r) {
       }
     };
   }
+}
+
+// Completed refreshes, not SQS deliveries or individual retry attempts.
+function addNftRefreshAlarms(resources) {
+  const widgets = [];
+  for (const provider of [
+    'SUPERRARE',
+    'OPENSEA',
+    'FOUNDATION',
+    'MANIFOLD',
+    'TRANSIENT',
+    'GAMMAIO'
+  ]) {
+    const providerIndex = widgets.length / 2;
+    for (const [column, names] of [
+      ['outcomes', ['Success', 'Failure', 'Unavailable']],
+      ['newly unavailable', ['NewUnavailable', 'PreviouslyWorkingUnavailable']]
+    ].entries()) {
+      const [label, metrics] = names;
+      widgets.push({
+        type: 'metric',
+        x: column * 12,
+        y: providerIndex * 6,
+        width: 12,
+        height: 6,
+        properties: {
+          title: `${provider} ${label} (per five minutes)`,
+          view: 'timeSeries',
+          region: '${AWS::Region}',
+          accountId: '${AWS::AccountId}',
+          period: 300,
+          stat: 'Sum',
+          metrics: metrics.map((name) => [
+            '6529/NftLinkRefresher',
+            name,
+            'Environment',
+            '${Environment}',
+            'Provider',
+            provider
+          ])
+        }
+      });
+    }
+    const metric = (Id, MetricName, period) => ({
+      Id,
+      ReturnData: false,
+      MetricStat: {
+        Metric: {
+          Namespace: '6529/NftLinkRefresher',
+          MetricName,
+          Dimensions: [
+            { Name: 'Environment', Value: ref('Environment') },
+            { Name: 'Provider', Value: provider }
+          ]
+        },
+        Period: period,
+        Stat: 'Sum'
+      }
+    });
+    for (const [kind, period, evaluation, expression, description] of [
+      [
+        'FailureRate',
+        300,
+        3,
+        'IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))',
+        'At least 5% completed refresh failures with 20 eligible outcomes per five minutes, for 15 minutes. Unavailable pages are excluded. Recovery requires successful samples; quiet periods preserve the incident.'
+      ],
+      [
+        'NewUnavailableSurge',
+        900,
+        1,
+        'IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))',
+        'In 15 minutes, at least five newly unavailable pages and 10% of 20 completed refreshes, or five previously working pages becoming unavailable. Each link counts once per failure episode. Recovery requires successful samples.'
+      ]
+    ]) {
+      resources[`NftRefresh${provider}${kind}`] = {
+        Type: 'AWS::CloudWatch::Alarm',
+        Properties: {
+          AlarmName: sub(
+            `seize-monitoring-\${Environment}-nft-refresh-${provider}-${kind}`
+          ),
+          AlarmDescription: description,
+          Metrics: [
+            metric('s', 'Success', period),
+            metric('f', 'Failure', period),
+            ...(kind === 'NewUnavailableSurge'
+              ? [
+                  metric('c', 'Completed', period),
+                  metric('n', 'NewUnavailable', period),
+                  metric('p', 'PreviouslyWorkingUnavailable', period)
+                ]
+              : []),
+            { Id: 'incident', Expression: expression, ReturnData: true }
+          ],
+          EvaluationPeriods: evaluation,
+          DatapointsToAlarm: evaluation,
+          Threshold: 1,
+          ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+          // Missing/ineligible samples must never manufacture a recovery.
+          TreatMissingData: 'ignore',
+          AlarmActions: when(
+            'HasAlarmTopic',
+            [ref('ExistingAlarmTopicArn')],
+            []
+          ),
+          OKActions: when('HasAlarmTopic', [ref('ExistingAlarmTopicArn')], [])
+        }
+      };
+    }
+  }
+  resources.NftRefreshDashboard = {
+    Type: 'AWS::CloudWatch::Dashboard',
+    Properties: {
+      DashboardName: sub('seize-monitoring-${Environment}-nft-refresh'),
+      DashboardBody: sub(JSON.stringify({ start: '-PT6H', widgets }))
+    }
+  };
 }
 
 function sourceTemplate(environment) {
@@ -1092,6 +1211,7 @@ function sourceTemplate(environment) {
     }
   }
   addWorkerQueueAlarms(r);
+  addNftRefreshAlarms(r);
   serializeLogSubscriptions(r);
   doc.Outputs = {
     LogRelayRoleArn: { Value: attr('LogRole') },
