@@ -251,6 +251,7 @@ export interface UserNotificationsResponse {
 }
 
 export interface MemeCollaborationNotificationData {
+  artwork_name?: string;
   event_type: 'INVITED' | 'ACCEPTED';
   drop_id: string;
   wave_id: string;
