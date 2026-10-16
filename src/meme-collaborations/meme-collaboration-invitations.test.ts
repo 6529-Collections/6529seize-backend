@@ -18,7 +18,8 @@ const context = {
   wave_id: 'wave',
   closed_at: null,
   artwork_hash: 'hash',
-  terms_version: 'terms'
+  terms_version: 'terms',
+  artwork: { name: 'Current title' }
 };
 function setup() {
   let stored: typeof context | null = context;
@@ -76,6 +77,16 @@ beforeEach(() =>
 it('appends invitations without rewriting accepted consent, artwork, votes or the claim', async () => {
   const { db, service } = setup();
   expect(await service.inviteExisting('drop', ['C'], auth(), {})).toEqual([42]);
+  expect(userNotifier.notifyOfMemeCollaboration).toHaveBeenCalledWith(
+    'C',
+    expect.objectContaining({
+      event_type: 'INVITED',
+      actor_id: 'A',
+      artwork_name: 'Current title'
+    }),
+    null,
+    expect.any(Object)
+  );
   expect(db.context).toHaveBeenCalledWith(
     'drop',
     expect.objectContaining({ connection: expect.any(Object) }),

@@ -32,6 +32,7 @@ import {
   WebSocketSendScheduler,
   hasWebSocketSendBudget
 } from '@/api/ws/ws-send-scheduler';
+import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
 
 import {
   ANON_USER_ID,
@@ -85,13 +86,16 @@ class WebsocketClientConnections extends ClientConnections {
     abortSignal?.throwIfAborted();
     const socket = this.sockets[connectionId];
     if (!socket) {
+      recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
       throw new SocketNotAvailableException();
     }
     try {
       socket.send(message);
+      recordWebSocketAcknowledgement(connectionId, message, 'accepted');
       return { status: 'sent' as const };
     } catch {
-      // Normalize local unavailable transport errors.
+      // Preserve the unavailable-socket result without exposing transport errors.
+      recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
       throw new SocketNotAvailableException();
     }
   }
@@ -157,6 +161,7 @@ class ApiGatewayClientConnections extends ClientConnections {
       close: () => this.closeClient(connectionId, true),
       send: async () => {
         let response: unknown;
+
         try {
           await this.scheduler.send(connectionId, async (deadlineSignal) => {
             response = await this.client.send(
@@ -171,8 +176,15 @@ class ApiGatewayClientConnections extends ClientConnections {
               }
             );
           });
+          recordWebSocketAcknowledgement(connectionId, message, 'accepted');
           return response;
         } catch (error) {
+          const failure = describeWebSocketSendFailure(message, error);
+          recordWebSocketAcknowledgement(
+            connectionId,
+            message,
+            failure.unavailable ? 'unavailable' : 'failed'
+          );
           terminalError = error;
           throw error;
         }

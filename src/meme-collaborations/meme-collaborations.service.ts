@@ -272,7 +272,8 @@ export class MemeCollaborationsService {
         context.wave_id,
         dropId,
         ids,
-        tx
+        tx,
+        context.artwork.name
       );
     });
   }
@@ -449,7 +450,8 @@ export class MemeCollaborationsService {
       model.wave_id,
       dropId,
       ids,
-      ctx
+      ctx,
+      artwork.name
     );
   }
 
@@ -458,7 +460,8 @@ export class MemeCollaborationsService {
     waveId: string,
     dropId: string,
     ids: string[],
-    ctx: RequestContext
+    ctx: RequestContext,
+    artworkName: string
   ): Promise<number[]> {
     const profiles = await this.db.profiles(ids, ctx);
     if (
@@ -498,6 +501,7 @@ export class MemeCollaborationsService {
           profileId,
           {
             event_type: 'INVITED',
+            artwork_name: artworkName,
             drop_id: dropId,
             wave_id: waveId,
             actor_id: authorId,
@@ -640,6 +644,7 @@ export class MemeCollaborationsService {
         context.author_id,
         {
           event_type: 'ACCEPTED',
+          artwork_name: context.artwork.name,
           drop_id: dropId,
           wave_id: context.wave_id,
           actor_id: actor,

@@ -66,7 +66,10 @@ export class UserNotificationMapper {
             drop_id: entity.related_drop_id!,
             wave_id: entity.wave_id!,
             actor_id: entity.additional_identity_id!,
-            invitation_id: String(entity.additional_data.invitation_id)
+            invitation_id: String(entity.additional_data.invitation_id),
+            ...(typeof entity.additional_data.artwork_name === 'string'
+              ? { artwork_name: entity.additional_data.artwork_name }
+              : {})
           }
         };
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
