@@ -17,7 +17,8 @@ const acquired: DeliveryClaim = {
   acquired: true,
   revision: 0,
   failures: 0,
-  firstFailureAt: 0
+  firstFailureAt: 0,
+  canReconnect: true
 };
 const error429 = {
   name: 'LimitExceededException',
@@ -29,7 +30,8 @@ describe('shared WebSocket delivery', () => {
     claim: jest.fn(),
     finish: jest.fn(),
     snapshot: jest.fn(),
-    forget: jest.fn()
+    forget: jest.fn(),
+    enableReconnect: jest.fn()
   };
   const delivery = new WebSocketDelivery(store);
   const send = jest.fn();
@@ -129,6 +131,24 @@ describe('shared WebSocket delivery', () => {
     ).resolves.toEqual({ status: 'gone' });
     expect(close).toHaveBeenCalledTimes(1);
     expect(send).not.toHaveBeenCalled();
+  });
+  it('never closes legacy listeners during recovery or a failed authentication acknowledgement', async () => {
+    store.claim.mockResolvedValue({
+      ...acquired,
+      canReconnect: false,
+      failures: 3,
+      firstFailureAt: Date.now() - 180_000
+    });
+    await expect(
+      delivery.deliver({ ...input, recovery: true })
+    ).resolves.toEqual({ status: 'sent' });
+    send.mockRejectedValue(error429);
+    await expect(
+      delivery.deliver({ ...input, message: '{"type":"AUTHENTICATED"}' })
+    ).resolves.toEqual({ status: 'resync_pending' });
+    expect(close).not.toHaveBeenCalled();
+    expect(store.forget).not.toHaveBeenCalled();
+    expect(mockError).not.toHaveBeenCalled();
   });
   it('keeps the subscription and tries recovery if closing a listener fails', async () => {
     store.claim.mockResolvedValue({

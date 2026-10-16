@@ -426,13 +426,15 @@ export class AppWebSockets {
     connectionId,
     jwtExpiry,
     durableUpdates = false,
-    ws
+    ws,
+    recoveryCapable = false
   }: {
     identityId: string;
     connectionId: string;
     jwtExpiry: number;
     durableUpdates?: boolean;
     ws?: WebSocket;
+    recoveryCapable?: boolean;
   }) {
     this.logger.info(
       `Registering socket for client ${identityId} (connectionId: ${connectionId})`
@@ -458,6 +460,7 @@ export class AppWebSockets {
       {}
     );
     await this.wsConnectionRepository.maybeCleanupStaleNotificationSubscriptions();
+    if (recoveryCapable) await webSocketDelivery.enableReconnect(connectionId);
   }
 
   async deregister({ connectionId }: { connectionId: string }) {

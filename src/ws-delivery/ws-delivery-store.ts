@@ -21,6 +21,7 @@ export interface DeliveryClaim {
   revision: number;
   failures: number;
   firstFailureAt: number;
+  canReconnect?: boolean;
 }
 
 // Every key shares a Redis Cluster slot. No payload, JWT or user identity is
@@ -81,7 +82,8 @@ metric('attempted')
 seen(KEYS[4])
 return {1, tonumber(redis.call('HGET', KEYS[1], 'revision') or '0'),
   tonumber(redis.call('HGET', KEYS[1], 'failures') or '0'),
-  tonumber(redis.call('HGET', KEYS[1], 'firstFailureAt') or '0')}
+  tonumber(redis.call('HGET', KEYS[1], 'firstFailureAt') or '0'),
+  redis.call('HGET', KEYS[1], 'canReconnect') == '1' and 1 or 0}
 `;
 
 const finishLua = `${commonLua}
@@ -137,6 +139,17 @@ return 0
 `;
 
 export class WebSocketDeliveryStore {
+  async enableReconnect(connectionId: string): Promise<void> {
+    await this.bounded(async () => {
+      const key = `${deliveryScope()}:connection:${connectionHash(connectionId)}`;
+      await getRedisClient()!
+        .multi()
+        .hSet(key, 'canReconnect', '1')
+        .expire(key, 3600)
+        .exec();
+    });
+  }
+
   async forget(connectionId: string): Promise<void> {
     await this.bounded(async () => {
       const base = deliveryScope();
@@ -207,7 +220,8 @@ export class WebSocketDeliveryStore {
       acquired: result[0] === 1,
       revision: result[1],
       failures: result[2],
-      firstFailureAt: result[3]
+      firstFailureAt: result[3],
+      canReconnect: result[4] === 1
     };
   }
 

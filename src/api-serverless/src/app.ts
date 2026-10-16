@@ -173,7 +173,8 @@ import {
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import {
   notificationIdentitiesSyncedMessage,
-  WsMessageType
+  WsMessageType,
+  WS_RECOVERY_CAPABILITY
 } from './ws/ws-message';
 import { registerOpenApiSpecRoutes } from './openapi-spec-routes';
 
@@ -1772,7 +1773,11 @@ function wireApp() {
           identityId,
           connectionId,
           jwtExpiry,
-          ws: socket
+          ws: socket,
+          ...(event.queryStringParameters?.recovery_capability ===
+          WS_RECOVERY_CAPABILITY
+            ? { recoveryCapable: true }
+            : {})
         });
 
         socket.send(JSON.stringify({ routeKey: '$connect', connected: true }));
