@@ -82,6 +82,7 @@ jobs:
             echo "Unexpected monitoring health endpoint" >&2
             exit 1
           fi
+          printf 'Monitoring health: %s/health\n' "$ingress_url"
           for attempt in {1..18}; do
             health="$(curl --fail --silent --show-error --max-time 15 "$ingress_url/health" || true)"
             if jq -e '.status == "ok"' <<< "$health" > /dev/null; then
