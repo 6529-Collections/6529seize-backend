@@ -164,7 +164,8 @@
         "logs:UntagResource"
       ],
       "Resource": [
-        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/webSocketDeliveryLoop"
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/webSocketDeliveryLoop",
+        "arn:aws:logs:us-east-1:987989283142:log-group:/aws/lambda/webSocketDeliveryLoop:*"
       ],
       "Condition": {
         "StringEquals": {
