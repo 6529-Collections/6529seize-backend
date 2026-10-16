@@ -4,7 +4,12 @@ import {
   WS_NOTIFICATION_SUBSCRIPTIONS_TABLE
 } from '@/constants';
 import { DbQueryOptions } from '@/db-query.options';
-import { ConnectionWrapper, SqlExecutor, sqlExecutor } from '@/sql-executor';
+import {
+  ConnectionWrapper,
+  SqlExecutor,
+  SqlTransactionOptions,
+  sqlExecutor
+} from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { AppWebSockets } from './ws';
 import { WsConnectionRepository } from './ws-connection.repository';
@@ -29,6 +34,7 @@ class ObservedExecutor extends SqlExecutor {
   beforeQuery?: (sql: string, options?: DbQueryOptions) => Promise<void>;
   afterQuery?: (sql: string) => Promise<void>;
   transactionRequested?: () => void;
+  forcedIsolation?: SqlTransactionOptions['isolationLevel'];
   constructor(private readonly delegate: SqlExecutor) {
     super();
   }
@@ -46,10 +52,14 @@ class ObservedExecutor extends SqlExecutor {
   }
 
   executeNativeQueriesInTransaction<T>(
-    executable: (connection: ConnectionWrapper<unknown>) => Promise<T>
+    executable: (connection: ConnectionWrapper<unknown>) => Promise<T>,
+    options?: SqlTransactionOptions
   ): Promise<T> {
     this.transactionRequested?.();
-    return this.delegate.executeNativeQueriesInTransaction(executable);
+    return this.delegate.executeNativeQueriesInTransaction(
+      executable,
+      this.forcedIsolation ? { isolationLevel: this.forcedIsolation } : options
+    );
   }
 }
 
@@ -224,7 +234,8 @@ describeWithSeed(
         expect(records).toHaveLength(2);
         expect(records[0]).toMatchObject({
           db_session_id: sessions[0],
-          isolation: 'REPEATABLE-READ',
+          isolation: 'READ-COMMITTED',
+          session_isolation: 'REPEATABLE-READ',
           phase: 'insert_subscriptions',
           attempt: 1,
           outcome: 'retry_pending',
@@ -249,6 +260,89 @@ describeWithSeed(
         info.mockRestore();
       }
     });
+
+    it.each([
+      { isolation: 'REPEATABLE READ' as const, attempts: 3 },
+      { isolation: undefined, attempts: 2 }
+    ])(
+      'replays the captured empty-grant gap cycle with isolation=$isolation',
+      async ({ isolation, attempts: expectedAttempts }) => {
+        const ids = ['zz-ws-gap-a', 'zz-ws-gap-b'];
+        await sqlExecutor.execute(
+          `insert into ${WS_CONNECTIONS_TABLE}
+           (connection_id, identity_id, jwt_expiry)
+           values (:first, 'anon', :expiry), (:second, 'anon', :expiry)`,
+          { first: ids[0], second: ids[1], expiry }
+        );
+        const { observed, sockets } = fixture();
+        observed.forcedIsolation = isolation;
+        let attempts = 0;
+        observed.transactionRequested = () => attempts++;
+        let arrivals = 0;
+        const ready = deferred();
+        const release = deferred();
+        observed.beforeQuery = async (sql) => {
+          if (
+            sql.startsWith('insert into ws_notification_subscriptions') &&
+            arrivals < 2
+          ) {
+            arrivals++;
+            if (arrivals === 2) ready.resolve();
+            await release.promise;
+          }
+        };
+        // Both sockets delete a missing grant range before either can insert.
+        // Under RR they hold compatible supremum gap locks, then deadlock on
+        // each other's insert intention. The repository must retry the victim.
+        const completion = Promise.allSettled(
+          ids.map((id) =>
+            sockets.authenticateConnection(
+              {
+                connectionId: id,
+                identityId: `identity-${id}`,
+                jwtExpiry: expiry
+              },
+              {}
+            )
+          )
+        );
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            ready.promise,
+            new Promise<never>((_resolve, reject) => {
+              timeout = setTimeout(
+                () =>
+                  reject(
+                    new Error('Both grant deletes must reach the barrier')
+                  ),
+                5000
+              );
+            })
+          ]);
+        } finally {
+          clearTimeout(timeout);
+          release.resolve();
+          await completion;
+        }
+        expect((await completion).map((result) => result.status)).toEqual([
+          'fulfilled',
+          'fulfilled'
+        ]);
+        expect(attempts).toBe(expectedAttempts);
+        const grants = await sqlExecutor.execute(
+          `select connection_id, identity_id from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
+           where connection_id in (:ids) order by connection_id`,
+          { ids }
+        );
+        expect(grants).toEqual(
+          ids.map((id) => ({
+            connection_id: id,
+            identity_id: `identity-${id}`
+          }))
+        );
+      }
+    );
 
     it('keeps an in-flight identity change invisible until commit, then serializes identity sync', async () => {
       const { observed, sockets } = fixture();

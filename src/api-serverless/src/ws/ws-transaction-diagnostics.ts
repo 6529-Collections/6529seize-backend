@@ -64,6 +64,14 @@ export function recordWebSocketSqlPhase(phase: Phase): void {
   if (current) current.phase = phase;
 }
 
+/** Record the explicit option only after its transaction has begun. */
+export function recordWebSocketTransactionIsolation(
+  isolation: 'READ-COMMITTED'
+): void {
+  const current = attempts.getStore();
+  if (current) current.isolation = isolation;
+}
+
 /** Read only metadata projected by the existing locking SELECT, never row values. */
 export function recordWebSocketDatabaseSession(row: unknown): void {
   const current = attempts.getStore();
@@ -76,7 +84,7 @@ export function recordWebSocketDatabaseSession(row: unknown): void {
     isolation === 'SERIALIZABLE' ||
     isolation === 'READ-UNCOMMITTED'
   )
-    current.isolation = isolation;
+    current.sessionIsolation = isolation;
 }
 
 export class WsTransactionDiagnostics {
@@ -88,6 +96,7 @@ export class WsTransactionDiagnostics {
   phase: Phase = 'acquisition';
   sessionId: number | null = null;
   isolation: string | null = null;
+  sessionIsolation: string | null = null;
 
   constructor(
     private readonly operation: WsDiagnosticOperation,
@@ -104,6 +113,7 @@ export class WsTransactionDiagnostics {
     this.phase = 'acquisition';
     this.sessionId = null;
     this.isolation = null;
+    this.sessionIsolation = null;
     return await attempts.run(this, action);
   }
 
@@ -145,6 +155,7 @@ export class WsTransactionDiagnostics {
       max_attempts: this.owner === 'repository' ? 3 : 1,
       db_session_id: this.sessionId,
       isolation: this.isolation,
+      session_isolation: this.sessionIsolation,
       subscription_count: this.subscriptionCount ?? null,
       attempt_ms: Math.round(performance.now() - this.attemptStarted),
       total_ms: Math.round(performance.now() - this.started),
