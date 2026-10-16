@@ -482,27 +482,27 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
         unsupported: number | string;
       }>(
         `select count(*) as count,coalesce(sum(not coalesce((
-           source_table in (:tables) or (
-             operation='DELETE' and after_row is null
+           change_row.source_table in (:tables) or (
+             change_row.operation='DELETE' and change_row.after_row is null
              and (
-               (source_table=:dropsTable and json_unquote(json_extract(before_row,'$.drop_type'))='PARTICIPATORY')
-               or (source_table in (:contentTables) and exists (
+               (change_row.source_table=:dropsTable and json_unquote(json_extract(change_row.before_row,'$.drop_type'))='PARTICIPATORY')
+               or (change_row.source_table in (:contentTables) and exists (
                  select 1 from ${COMPETITION_MIGRATION_CHANGES_TABLE} parent
                  where parent.competition_id=:id and parent.watermark>:appliedWatermark and parent.watermark<=:targetWatermark
                    and parent.source_table=:dropsTable and parent.operation='DELETE' and parent.after_row is null
                    and json_unquote(json_extract(parent.before_row,'$.drop_type'))='PARTICIPATORY'
-                   and json_unquote(json_extract(parent.before_row,'$.id'))=json_unquote(json_extract(${COMPETITION_MIGRATION_CHANGES_TABLE}.before_row,'$.drop_id'))
+                   and json_unquote(json_extract(parent.before_row,'$.id'))=json_unquote(json_extract(change_row.before_row,'$.drop_id'))
                ))
              )
-             and json_type(before_row)='OBJECT'
-             and json_type(json_extract(before_row,if(source_table=:dropsTable,'$.id','$.drop_id')))='STRING'
+             and json_type(change_row.before_row)='OBJECT'
+             and json_type(json_extract(change_row.before_row,if(change_row.source_table=:dropsTable,'$.id','$.drop_id')))='STRING'
              and not exists (
                select 1 from ${DROPS_TABLE} d join ${COMPETITIONS_TABLE} c on c.legacy_wave_id=d.wave_id
-               where c.id=:id and d.id=json_unquote(json_extract(before_row,if(source_table=:dropsTable,'$.id','$.drop_id')))
+               where c.id=:id and d.id=json_unquote(json_extract(change_row.before_row,if(change_row.source_table=:dropsTable,'$.id','$.drop_id')))
                  and d.drop_type in ('PARTICIPATORY','WINNER')
              )
            )
-         ),false)),0) as unsupported from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark>:appliedWatermark and watermark<=:targetWatermark`,
+         ),false)),0) as unsupported from ${COMPETITION_MIGRATION_CHANGES_TABLE} change_row where change_row.competition_id=:id and change_row.watermark>:appliedWatermark and change_row.watermark<=:targetWatermark`,
         {
           id,
           appliedWatermark,

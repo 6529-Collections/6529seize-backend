@@ -37,8 +37,9 @@ The refresh retains the
 completed voter, decision, award and archive stages instead of copying them again
 after every routine snapshot. The entire journal window since the last applied
 watermark must qualify. An active participating drop deletion and its content cleanup
-also qualify only when the complete window includes that parent deletion and no
-eligible parent survives in the source. Journal replay has already removed its
+also qualify when the complete window includes that parent deletion. No eligible
+parent may survive in the source. If the parent deletion is outside the window or
+an eligible parent survives, retain the conservative full refresh. Journal replay has already removed its
 live entry, votes and runtime; the rank sweep repairs every remaining entry.
 Surviving content edits, new entries, winner deletions, configuration, decisions
 and other captured changes retain the conservative full refresh. The target watermark is acknowledged only
@@ -96,7 +97,9 @@ replay use the same repeatable-read budget and roll back the entire batch,
 including its checkpoint, on timeout. An operator stop is checked again inside
 the ownership transaction, so an already queued batch cannot cross it. Keep the
 migration stopped and investigate a timeout; do not raise the limit or bypass
-parity to force cutover. If COMMIT acknowledgment is unknown, read current
+parity to force cutover. Before COMMIT, comparison and cutover timeouts roll back
+all transaction work and leave previously committed checkpoints unchanged.
+If COMMIT acknowledgment is unknown, read current
 ownership and the cutover audit before retrying or planning recovery.
 
 Comparison freshness is measured when the independent comparison finishes.

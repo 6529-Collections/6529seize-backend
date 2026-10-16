@@ -1,3 +1,4 @@
+import { readSequentially } from './competition-read-sequence';
 import { CompetitionMigrationContentRepository } from './competition-migration-content.repository';
 import { isMigrationContentTable } from '@/competitions/competition-migration-capture';
 import {
@@ -638,16 +639,21 @@ export class CompetitionMigrationBackfill {
         ctx
       );
       const sourceDrops = new Map(drops.map((drop) => [drop.id, drop]));
-      for (const entry of entries) {
-        const content = contents.get(entry.drop_id)!;
+      await readSequentially(entries, async (entry) => {
+        const content = contents.get(entry.drop_id);
+        const drop = sourceDrops.get(entry.drop_id);
+        if (!content || !drop)
+          throw new Error(
+            'OWNED_EXCEPTION: migration entry content page is incomplete'
+          );
         await this.saveEntryContent(
           entry,
           content,
           previous.get(entry.id) ?? null,
-          sourceDrops.get(entry.drop_id)!,
+          drop,
           ctx
         );
-      }
+      });
     } finally {
       ctx.timer?.stop(timerName);
     }

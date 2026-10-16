@@ -2029,6 +2029,10 @@ describeWithSeed(
         Date.now,
         0
       );
+      await sqlExecutor.execute(
+        `delete from ${DROPS_PARTS_TABLE} where drop_id=:secondDropId`,
+        { secondDropId }
+      );
       await service.enroll(id, operator, 'COMPLETED_INTERNAL');
       while ((await service.status(id)).migration?.stage !== 'ENTRIES')
         await service.backfill(id, operator);
@@ -2048,6 +2052,21 @@ describeWithSeed(
         CompetitionMigrationContentRepository.prototype,
         'nativePage'
       );
+      const checkpoint = (await service.status(id)).migration;
+      source.mockResolvedValueOnce(new Map());
+      await expect(service.backfill(id, operator, 25)).rejects.toThrow(
+        'migration entry content page is incomplete'
+      );
+      expect((await service.status(id)).migration).toEqual(checkpoint);
+      expect(
+        await sqlExecutor.execute(
+          `select id from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual([]);
+      source.mockClear();
+      ranks.mockClear();
+      native.mockClear();
       await service.backfill(id, operator, 25);
       expect(scalar).not.toHaveBeenCalled();
       expect(ranks).toHaveBeenCalledTimes(1);
@@ -2057,6 +2076,21 @@ describeWithSeed(
       ranks.mockRestore();
       source.mockRestore();
       native.mockRestore();
+      const emptyDrop = (await sqlExecutor.oneOrNull<DropEntity>(
+        `select * from ${DROPS_TABLE} where id=:secondDropId`,
+        { secondDropId }
+      ))!;
+      expect(
+        await new CompetitionEntryRepository(() => sqlExecutor).getContent(
+          legacyCompetitionEntryId(id, secondDropId),
+          {}
+        )
+      ).toEqual(
+        await new CompetitionEntryRepository(() => sqlExecutor).loadDropContent(
+          emptyDrop,
+          {}
+        )
+      );
       const record =
         (await new CompetitionRepository().findCompetitionRecordById(id, {}))!;
       const original = await sqlExecutor.execute(
@@ -2175,7 +2209,9 @@ describeWithSeed(
       'surviving content',
       'winner deletion',
       'missing parent key',
-      'journal gap'
+      'journal gap',
+      'parent outside window',
+      'recreated parent'
     ])('retains the full refresh for %s', async (scenario) => {
       const service = new CompetitionMigrationService(
         () => sqlExecutor,
@@ -2198,6 +2234,11 @@ describeWithSeed(
           `delete from ${DROPS_TABLE} where id=:dropId`,
           { dropId: drop.id }
         );
+      if (scenario === 'recreated parent')
+        await sqlExecutor.execute(
+          `insert into ${DROPS_TABLE} (id,wave_id,author_id,created_at,parts_count,drop_type,hide_link_preview) values (:dropId,:waveId,'fixture-author',10,1,'PARTICIPATORY',0)`,
+          { dropId: drop.id, waveId: wave.id }
+        );
       const status = (await service.status(id)).migration!;
       if (scenario === 'missing parent key')
         await sqlExecutor.execute(
@@ -2209,11 +2250,14 @@ describeWithSeed(
           `delete from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark=1`,
           { id }
         );
+      let targetWatermark = status.source_watermark;
+      if (scenario === 'parent outside window') targetWatermark = 1;
+      else if (scenario === 'recreated parent') targetWatermark--;
       expect(
         await new CompetitionMigrationRepository().canRefreshOnlyLeaderboard(
           id,
           0,
-          status.source_watermark,
+          targetWatermark,
           {}
         )
       ).toBe(false);
@@ -2276,20 +2320,28 @@ describeWithSeed(
       }
     );
 
-    it('honors an operator stop inside the locked batch transaction', async () => {
-      const service = new CompetitionMigrationService(
-        () => sqlExecutor,
-        Date.now,
-        0
-      );
-      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
-      await service.recordException(id, operator, 'TEST_STOP');
-      const before = (await service.status(id)).migration;
-      await expect(service.backfill(id, operator)).rejects.toThrow(
-        'Migration requires adapter review'
-      );
-      expect((await service.status(id)).migration).toEqual(before);
-    });
+    it.each(['BACKFILLING', 'SHADOWING'])(
+      'honors an operator stop inside the locked %s transaction, including no-op batches',
+      async (state) => {
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          Date.now,
+          0
+        );
+        await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+        if (state === 'SHADOWING') await finishBackfill(service);
+        await service.recordException(id, operator, 'TEST_STOP');
+        const before = (await service.status(id)).migration;
+        await expect(service.backfill(id, operator)).rejects.toThrow(
+          'Migration requires adapter review'
+        );
+        if (state === 'SHADOWING')
+          await expect(service.catchUp(id, operator)).rejects.toThrow(
+            'Migration requires adapter review'
+          );
+        expect((await service.status(id)).migration).toEqual(before);
+      }
+    );
 
     it('catches repeated leaderboard refreshes without recopying voter and historical stages', async () => {
       const now = Date.now();

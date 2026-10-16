@@ -514,14 +514,14 @@ export class CompetitionMigrationService {
       async (repository, ctx) => {
         const before = await repository.status(id, ctx);
         const migration = before.migration;
-        if (migration?.state === 'SHADOWING') return before;
-        if (!migration || migration.state !== 'BACKFILLING')
-          throw new Error('Competition is not BACKFILLING');
-        if (migration.exceptions.length)
+        if (migration?.exceptions.length)
           throw new Error(
             'Migration requires adapter review: ' +
               migration.exceptions.join(', ')
           );
+        if (migration?.state === 'SHADOWING') return before;
+        if (!migration || migration.state !== 'BACKFILLING')
+          throw new Error('Competition is not BACKFILLING');
         const limited = await this.rateLimit(repository, id, ctx);
         if (limited) return limited;
         if (migration.reset_table_index !== null)
@@ -603,15 +603,15 @@ export class CompetitionMigrationService {
       async (repository, ctx) => {
         const before = await repository.status(id, ctx),
           migration = before.migration;
-        if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
-          throw new Error('Complete the current backfill before catch-up');
-        if (migration.source_watermark === migration.applied_watermark)
-          return before;
-        if (migration.exceptions.length)
+        if (migration?.exceptions.length)
           throw new Error(
             'Migration requires adapter review: ' +
               migration.exceptions.join(', ')
           );
+        if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
+          throw new Error('Complete the current backfill before catch-up');
+        if (migration.source_watermark === migration.applied_watermark)
+          return before;
         const limited = await this.rateLimit(repository, id, ctx);
         if (limited) return limited;
         const changes =
