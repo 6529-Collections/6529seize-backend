@@ -818,11 +818,17 @@ prices.
 
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.
-Publication uses a `READ COMMITTED` transaction and locks the collection's state
-row before replacing its current orders. This preserves serialization within a
-collection without retaining delete range/gap locks across other collections'
-refreshes. Snapshot reads retain their existing transaction isolation so metadata
-and orders come from one consistent view.
+Publication uses a `READ COMMITTED` transaction and first acquires the same
+exclusive row in `market_depth_publication_locks` across all four collectors,
+then locks the collection state before replacing current orders. The shared
+transaction lock prevents reciprocal PRIMARY-index insertion deadlocks between
+different collections and releases on commit or rollback. Fetching, normalization
+and compression remain outside the lock. Each publication logs `lock_wait_ms`,
+`lock_held_ms` (through transaction finalization), `insert_ms` (order mapping,
+SQL construction and all insertion chunks), total time, row count and outcome;
+failed phases retain their measured timing without logging order payloads.
+Snapshot reads retain their existing transaction isolation so metadata and
+orders come from one consistent view.
 Existing price statistics run concurrently with an independent deadline; both
 tasks finish before the database context closes. Collection books are attempted
 before lifecycle maintenance, which prioritizes status reconciliation and
@@ -837,8 +843,9 @@ can retry after cleanup; an unacknowledged COMMIT leaves the batch unconfirmed
 and stops retries and final draining. Acknowledged commits remain confirmed
 through connection cleanup failures. REST appends retain their existing session
 and transaction behavior.
-Six `market_depth_*` tables retain immutable compressed archives, current orders,
-collection state, events, cursors and retry work. All amounts and quantities
+Seven `market_depth_*` tables coordinate publication and retain immutable
+compressed archives, current orders, collection state, events, cursors and retry
+work. All amounts and quantities
 needed for normalization preserve exact integer strings.
 
 The API exposes currency-specific quoted depth for an individual token and a

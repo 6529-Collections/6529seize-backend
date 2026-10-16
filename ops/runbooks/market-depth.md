@@ -86,6 +86,40 @@ and activity-partition query timings.
 This activity optimization requires only an `api` deployment; the existing
 schema, collectors and frontend remain compatible throughout the rollout.
 
+## Snapshot publication coordination and timing
+
+All four market-stats functions acquire the same transaction-scoped row in
+`market_depth_publication_locks` before saving a snapshot. Provider fetching,
+normalization and compression stay parallel; only database publication takes
+turns. Commit or rollback releases the lock automatically. Lock acquisition
+uses the database session's existing InnoDB lock-wait timeout; timeout errors
+abort the whole publication and preserve the previous complete book.
+
+`MARKET_DEPTH_DB` emits one `[SNAPSHOT PUBLICATION]` record per attempted
+transaction, including failed attempts:
+
+- `lock_wait_ms`: time acquiring the shared row, or time waiting before failure.
+- `lock_held_ms`: time from acquisition through transaction finalization,
+  including commit/rollback and adapter cleanup; null if never acquired.
+- `insert_ms`: time mapping, constructing SQL and inserting all current-order
+  batches; null if insertion was never attempted.
+- `total_ms`, `order_count`, `outcome`, `phase`, `lock_acquired`, public collection
+  identifiers and generated snapshot ID support comparison across collectors.
+
+Timings use a monotonic clock and milliseconds. `outcome=error` describes the
+failed call and does not assert rollback after an ambiguous COMMIT. These logs
+contain no provider payloads, order values or credentials. Compare wait and hold
+percentiles against collection size and snapshot freshness before changing the
+coordination strategy.
+
+For this coordination change, deploy `dbMigrationsLoop` with
+`db_schema_scope=market-depth-publication-lock` first, then `marketStatsLoop`
+(all four functions). The scoped sync registers only the new lock entity and
+skips unrelated migrations/maintenance. Old collectors remain compatible with
+the additive table but do not coordinate until updated; allow in-flight old
+invocations to settle before evaluating results. No API, stream or frontend
+rollout is needed. Rolling back application code leaves the lock table intact.
+
 ## Deployment and verification
 
 Use the repository deployment skill and current service catalog. Apply the

@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { gzipSync } from 'node:zlib';
 import { performance } from 'node:perf_hooks';
+import { Logger } from '@/logging';
 import {
   ConnectionWrapper,
   setSqlExecutor,
@@ -39,6 +40,7 @@ function deferred() {
 }
 
 class ObservedExecutor extends SqlExecutor {
+  beforeQuery?: (sql: string) => Promise<void>;
   afterQuery?: (sql: string) => Promise<void>;
 
   constructor(private readonly delegate: SqlExecutor) {
@@ -50,8 +52,10 @@ class ObservedExecutor extends SqlExecutor {
     params?: Record<string, unknown>,
     options?: DbQueryOptions
   ): Promise<T[]> {
+    const normalized = sql.replace(/\s+/g, ' ').trim();
+    await this.beforeQuery?.(normalized);
     const result = await this.delegate.execute<T>(sql, params, options);
-    await this.afterQuery?.(sql.replace(/\s+/g, ' ').trim());
+    await this.afterQuery?.(normalized);
     return result;
   }
 
@@ -311,61 +315,173 @@ describeWithSeed('MarketDepthDb', [] as never[], () => {
   );
 
   it.each(['api', 'loop'] as const)(
-    'publishes different empty collections concurrently through the %s adapter',
+    'serializes populated collections and measures waiting separately from saving through the %s adapter',
     async (adapter) => {
       await withObservedDb(adapter, async (db, observed) => {
-        const bothDeleted = deferred();
-        let deletes = 0;
-        let timedOut = false;
-        const timeout = setTimeout(() => {
-          timedOut = true;
-          bothDeleted.resolve();
-        }, 5000);
-        observed.afterQuery = async (sql) => {
-          if (!sql.startsWith('DELETE FROM market_depth_current_orders'))
-            return;
-          if (++deletes === 2) bothDeleted.resolve();
-          // Both DELETEs must complete before either inserts. Under REPEATABLE
-          // READ their shared empty index gap makes the inserts deadlock.
-          await bothDeleted.promise;
-        };
-        const first = snapshot('00000000-0000-4000-8000-000000000101');
+        const first = snapshot('00000000-0000-4000-8000-000000000101', {
+          orders: Array.from({ length: 503 }, (_, i) =>
+            order({ order_key: `a-${i}`, order_id: `a-${i}` })
+          )
+        });
         const second = snapshot('00000000-0000-4000-8000-000000000102', {
           contract: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
           collection_slug: 'project-b',
-          orders: [
-            order({
-              contract: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
-              collection_slug: 'project-b',
-              order_key: 'project-b-order',
-              order_id: 'project-b-order'
-            })
-          ]
+          orders: Array.from({ length: 1503 }, (_, i) =>
+            order({ order_key: `b-${i}`, order_id: `b-${i}` })
+          )
         });
+        await db.publishCompletedSnapshot(first);
+        await db.publishCompletedSnapshot(second);
+        const deleted = deferred();
+        const secondAttemptedLock = deferred();
+        const release = deferred();
+        let lockAttempts = 0;
+        let deletes = 0;
+        observed.beforeQuery = async (sql) => {
+          if (sql.startsWith('INSERT INTO market_depth_publication_locks')) {
+            if (++lockAttempts === 2) secondAttemptedLock.resolve();
+          }
+        };
+        observed.afterQuery = async (sql) => {
+          if (sql.startsWith('DELETE FROM market_depth_current_orders')) {
+            if (++deletes === 1) {
+              deleted.resolve();
+              await release.promise;
+            }
+          }
+        };
+        const info = jest.spyOn(Logger.get('MARKET_DEPTH_DB'), 'info');
+        const timeout = setTimeout(() => {
+          deleted.resolve();
+          secondAttemptedLock.resolve();
+          release.resolve();
+        }, 5000);
+        const replacements = [first, second].map((input, index) => ({
+          ...input,
+          id: `00000000-0000-4000-8000-00000000011${index}`,
+          started_at: new Date('2026-09-10T00:02:00.000Z'),
+          completed_at: new Date('2026-09-10T00:03:00.000Z')
+        }));
+        const firstSave = db.publishCompletedSnapshot(replacements[0]);
+        let secondSave: Promise<unknown> | undefined;
         try {
-          const results = await Promise.allSettled([
-            db.publishCompletedSnapshot(first),
-            db.publishCompletedSnapshot(second)
-          ]);
-          expect(timedOut).toBe(false);
-          expect(results.map((result) => result.status)).toEqual([
-            'fulfilled',
-            'fulfilled'
-          ]);
-          for (const input of [first, second]) {
-            const current = await db.getLatestCompletedSnapshot(
+          await deleted.promise;
+          secondSave = db.publishCompletedSnapshot(replacements[1]);
+          await secondAttemptedLock.promise;
+          // Readers retain the old complete book while another collection waits.
+          const current = await db.getLatestCompletedSnapshot(
+            second.source,
+            second.contract,
+            second.collection_slug
+          );
+          expect(current?.snapshot.id).toBe(second.id);
+          expect(current?.orders).toHaveLength(1503);
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          expect(deletes).toBe(1);
+          release.resolve();
+          await Promise.all([firstSave, secondSave]);
+          expect(deletes).toBe(2);
+          for (const input of replacements) {
+            const published = await db.getLatestCompletedSnapshot(
               input.source,
               input.contract,
               input.collection_slug
             );
-            expect(current?.snapshot.id).toBe(input.id);
-            expect(current?.orders.map((item) => item.order_key)).toEqual(
-              input.orders.map((item) => item.order_key)
-            );
+            expect(published?.snapshot.id).toBe(input.id);
+            expect(published?.orders).toHaveLength(input.orders.length);
           }
+          const timing = info.mock.calls
+            .filter(([message]) => message === '[SNAPSHOT PUBLICATION]')
+            .map(([, data]) => data);
+          expect(timing).toHaveLength(2);
+          expect(timing[1]).toMatchObject({
+            outcome: 'committed',
+            phase: 'commit',
+            lock_acquired: true,
+            snapshot_id: replacements[1].id,
+            order_count: 1503,
+            lock_wait_ms: expect.any(Number),
+            lock_held_ms: expect.any(Number),
+            insert_ms: expect.any(Number),
+            total_ms: expect.any(Number)
+          });
+          expect(timing[1].lock_wait_ms).toBeGreaterThanOrEqual(70);
+          expect(timing[0].lock_held_ms).toBeGreaterThanOrEqual(70);
+          expect(timing[1].insert_ms).toBeLessThanOrEqual(
+            timing[1].lock_held_ms
+          );
+          expect(timing[1]).not.toHaveProperty('orders');
         } finally {
           clearTimeout(timeout);
-          bothDeleted.resolve();
+          release.resolve();
+          await Promise.allSettled([firstSave, secondSave]);
+          info.mockRestore();
+        }
+      });
+    }
+  );
+
+  it.each(['api', 'loop'] as const)(
+    'releases the shared lock after a partially inserted replacement rolls back through the %s adapter',
+    async (adapter) => {
+      await withObservedDb(adapter, async (db, observed) => {
+        const first = snapshot('00000000-0000-4000-8000-000000000120');
+        await db.publishCompletedSnapshot(first);
+        let failInsert = true;
+        observed.afterQuery = async (sql) => {
+          if (
+            failInsert &&
+            sql.startsWith('INSERT INTO market_depth_current_orders')
+          ) {
+            failInsert = false;
+            throw new Error('synthetic failure after insertion');
+          }
+        };
+        const info = jest.spyOn(Logger.get('MARKET_DEPTH_DB'), 'info');
+        try {
+          await expect(
+            db.publishCompletedSnapshot({
+              ...first,
+              id: '00000000-0000-4000-8000-000000000121',
+              started_at: new Date('2026-09-10T00:02:00.000Z'),
+              completed_at: new Date('2026-09-10T00:03:00.000Z'),
+              orders: [order({ order_key: 'new', order_id: 'new' })]
+            })
+          ).rejects.toThrow('synthetic failure after insertion');
+          expect(info).toHaveBeenCalledWith(
+            '[SNAPSHOT PUBLICATION]',
+            expect.objectContaining({
+              outcome: 'error',
+              phase: 'insert_orders',
+              lock_acquired: true,
+              lock_wait_ms: expect.any(Number),
+              lock_held_ms: expect.any(Number),
+              insert_ms: expect.any(Number)
+            })
+          );
+          const current = await db.getLatestCompletedSnapshot(
+            first.source,
+            first.contract,
+            first.collection_slug
+          );
+          expect(current?.snapshot.id).toBe(first.id);
+          expect(current?.orders[0].order_key).toBe('order-key-1');
+          expect(
+            await db.getSnapshotArchive('00000000-0000-4000-8000-000000000121')
+          ).toBeNull();
+          await expect(
+            db.publishCompletedSnapshot(
+              snapshot('00000000-0000-4000-8000-000000000122', {
+                contract: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
+                collection_slug: 'project-b',
+                orders: [order({ order_key: 'b', order_id: 'b' })]
+              })
+            )
+          ).resolves.toMatchObject({
+            id: '00000000-0000-4000-8000-000000000122'
+          });
+        } finally {
+          info.mockRestore();
         }
       });
     }
