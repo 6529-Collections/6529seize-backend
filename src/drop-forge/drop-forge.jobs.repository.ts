@@ -1,0 +1,203 @@
+import { DROP_FORGE_JOBS_TABLE } from '@/constants';
+import { DropForgeJobEntity } from '@/entities/IDropForgeLaunch';
+import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
+import { RequestContext } from '@/request.context';
+import { sqlExecutor } from '@/sql-executor';
+import { NotFoundException } from '@/exceptions';
+import { DbPoolName } from '@/db-query.options';
+import { PreparationAuthRequired } from '@/drop-forge/drop-forge.preparation-auth';
+
+function storedJobResult(job: DropForgeJobEntity): object | null {
+  if (!job.result) return null;
+  return typeof job.result === 'string' ? JSON.parse(job.result) : job.result;
+}
+
+export class DropForgeJobsRepository {
+  async reportOne(
+    report: (
+      job: DropForgeJobEntity,
+      ctx: RequestContext
+    ) => Promise<{ drop_id: string; pending_push_notification_ids: number[] }>,
+    ctx: RequestContext
+  ): Promise<number[]> {
+    const timer = 'DropForgeJobsRepository->reportOne';
+    ctx.timer?.start(timer);
+    try {
+      return await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const job = await sqlExecutor.oneOrNull<DropForgeJobEntity>(
+            `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE status <> 'PENDING' AND drop_id IS NULL ORDER BY updated_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`,
+            {},
+            { wrappedConnection: connection }
+          );
+          if (!job) return [];
+          const result = await report(job, { ...ctx, connection });
+          await sqlExecutor.execute(
+            `UPDATE ${DROP_FORGE_JOBS_TABLE} SET drop_id = :drop_id WHERE id = :id`,
+            { id: job.id, drop_id: result.drop_id },
+            { wrappedConnection: connection }
+          );
+          return result.pending_push_notification_ids;
+        }
+      );
+    } finally {
+      ctx.timer?.stop(timer);
+    }
+  }
+  async find(id: string, ctx: RequestContext): Promise<DropForgeJobEntity> {
+    const timer = 'DropForgeJobsRepository->find';
+    ctx.timer?.start(timer);
+    try {
+      const row = await sqlExecutor.oneOrNull<DropForgeJobEntity>(
+        `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE id = :id`,
+        { id },
+        { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+      );
+      if (!row) throw new NotFoundException('Distribution job not found');
+      return row;
+    } finally {
+      ctx.timer?.stop(timer);
+    }
+  }
+  async latest(
+    contract: string,
+    claim: number,
+    plan: string | undefined,
+    ctx: RequestContext
+  ): Promise<DropForgeJobEntity | null> {
+    const timer = 'DropForgeJobsRepository->latest';
+    ctx.timer?.start(timer);
+    try {
+      return await sqlExecutor.oneOrNull<DropForgeJobEntity>(
+        `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND kind = 'PROCESS_ALL' ${plan ? 'AND plan_id = :plan' : ''} ORDER BY updated_at DESC, id DESC LIMIT 1`,
+        { contract: contract.toLowerCase(), claim, plan: plan ?? null },
+        { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+      );
+    } finally {
+      ctx.timer?.stop(timer);
+    }
+  }
+  async create(
+    job: DropForgeJobEntity,
+    ctx: RequestContext
+  ): Promise<DropForgeJobEntity> {
+    const timer = 'DropForgeJobsRepository->create';
+    ctx.timer?.start(timer);
+    try {
+      await sqlExecutor.execute(
+        `INSERT IGNORE INTO ${DROP_FORGE_JOBS_TABLE} (id,contract,claim_id,kind,plan_id,phase_id,phase_ids,step,status,updated_at,encrypted_auth) VALUES (:id,:contract,:claim_id,:kind,:plan_id,:phase_id,:phase_ids,0,'PENDING',:updated_at,:encrypted_auth)`,
+        {
+          ...job,
+          encrypted_auth: job.encrypted_auth ?? null,
+          phase_ids: job.phase_ids ? JSON.stringify(job.phase_ids) : null
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      const saved = await this.find(job.id, ctx);
+      if (
+        saved.contract !== job.contract ||
+        Number(saved.claim_id) !== job.claim_id ||
+        saved.kind !== job.kind ||
+        saved.plan_id !== job.plan_id ||
+        saved.phase_id !== job.phase_id ||
+        JSON.stringify(
+          typeof saved.phase_ids === 'string'
+            ? JSON.parse(saved.phase_ids)
+            : (saved.phase_ids ?? null)
+        ) !== JSON.stringify(job.phase_ids ?? null)
+      )
+        throw new LaunchSafetyError(
+          'Request ID already belongs to a different preparation job'
+        );
+      return saved;
+    } finally {
+      ctx.timer?.stop(timer);
+    }
+  }
+  async resumeAuthentication(
+    job: DropForgeJobEntity,
+    encryptedAuth: string,
+    ctx: RequestContext
+  ): Promise<DropForgeJobEntity> {
+    await sqlExecutor.execute(
+      `UPDATE ${DROP_FORGE_JOBS_TABLE} SET encrypted_auth = :encrypted_auth, status = 'PENDING', error = NULL, drop_id = NULL, updated_at = :updated_at WHERE id = :id AND status = 'AWAITING_AUTH'`,
+      { id: job.id, encrypted_auth: encryptedAuth, updated_at: Date.now() },
+      { wrappedConnection: ctx.connection }
+    );
+    return this.find(job.id, ctx);
+  }
+  async processOne(
+    process: (job: DropForgeJobEntity, ctx: RequestContext) => Promise<object>,
+    ctx: RequestContext
+  ): Promise<void> {
+    const timer = 'DropForgeJobsRepository->processOne';
+    ctx.timer?.start(timer);
+    try {
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const txCtx = { ...ctx, connection };
+          const job = await sqlExecutor.oneOrNull<DropForgeJobEntity>(
+            `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE status = 'PENDING' ORDER BY updated_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`,
+            {},
+            { wrappedConnection: connection }
+          );
+          if (!job) return;
+          await sqlExecutor.execute('SAVEPOINT drop_forge_job', undefined, {
+            wrappedConnection: connection
+          });
+          let status = 'COMPLETED';
+          let error: string | null = null;
+          let result: object | null = null;
+          try {
+            result = await process(job, {
+              ...txCtx,
+              dropForgeJobId: job.id
+            } as RequestContext);
+          } catch (error_) {
+            await sqlExecutor.execute(
+              'ROLLBACK TO SAVEPOINT drop_forge_job',
+              undefined,
+              { wrappedConnection: connection }
+            );
+            status =
+              error_ instanceof PreparationAuthRequired
+                ? 'AWAITING_AUTH'
+                : 'FAILED';
+            if (status === 'AWAITING_AUTH') result = storedJobResult(job);
+            error =
+              error_ instanceof LaunchSafetyError
+                ? error_.message
+                : 'Preparation failed or timed out; retry with a new request ID after checking EMMA and source data';
+          }
+          const continuing =
+            (result as { continue?: boolean } | null)?.continue === true;
+          if (continuing && status === 'COMPLETED') status = 'PENDING';
+          const encryptedAuth =
+            status === 'PENDING' &&
+            !(result as { inputs?: object } | null)?.inputs
+              ? (job.encrypted_auth ?? null)
+              : null;
+          await sqlExecutor.execute(
+            `UPDATE ${DROP_FORGE_JOBS_TABLE} SET step = :step, status = :status, error = :error, result = :result, encrypted_auth = :encrypted_auth, updated_at = :updated_at WHERE id = :id`,
+            {
+              id: job.id,
+              status,
+              encrypted_auth: encryptedAuth,
+              step:
+                continuing && status === 'PENDING'
+                  ? Number(job.step ?? 0) + 1
+                  : Number(job.step ?? 0),
+              error,
+              result: result ? JSON.stringify(result) : null,
+              updated_at: Date.now()
+            },
+            { wrappedConnection: connection }
+          );
+        }
+      );
+    } finally {
+      ctx.timer?.stop(timer);
+    }
+  }
+}
+export const dropForgeJobsRepository = new DropForgeJobsRepository();

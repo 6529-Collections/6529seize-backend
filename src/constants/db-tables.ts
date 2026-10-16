@@ -308,4 +308,9 @@ export const COMPETITION_LEGACY_MIRROR_PERMITS_TABLE =
 export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
   'competition_legacy_execution_effects';
 
+export const DROP_FORGE_LAUNCHES_TABLE = 'drop_forge_launches';
+export const DROP_FORGE_SIGNERS_TABLE = 'drop_forge_signers';
+export const DROP_FORGE_PREPARATIONS_TABLE = 'drop_forge_preparations';
+export const DROP_FORGE_JOBS_TABLE = 'drop_forge_jobs';
+export const DROP_FORGE_EVIDENCE_TABLE = 'drop_forge_evidence';
 export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';

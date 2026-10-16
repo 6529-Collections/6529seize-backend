@@ -1917,6 +1917,101 @@ Typical deployment order when schema or generated API contracts change:
 
 For a documentation-only change, no Lambda redeploy is required.
 
+## Drop Forge Automated Launch
+
+`dropForgeLaunchLoop` and `dropForgePreparationLoop` have independent one-minute
+EventBridge recovery schedules and default-disabled flags. The API returns a
+single PROCESS_ALL job for EMMA, immediately wakes preparation, and exposes
+read-only completed list pages. The operator's Authorization header is encrypted
+for its specific preparation job using a key derived from the existing JWT secret,
+then cleared when upstream inputs commit or the job fails. Expired or denied
+EMMA access pauses for authenticated resumption of the same job and checkpoints;
+no preconfigured EMMA token is required. Preparation snapshots upstream phase inputs,
+commits ordered phase checkpoints and finalizes. Craft Launch derives the fixed
+mint calendar and arms execution immediately; Craft Update Claim queues a
+metadata-only action without reopening completed allocations.
+The launch stays active through Research, eligible fifteen minutes after the
+final mint close (17:15 Europe/Athens the following day). Version 3 plans derive
+the top-up from fresh on-chain total toward `min(310, frozen Craft edition)`,
+verify the on-chain maximum, and reconcile manual Research evidence separately.
+Research uses the existing signer ledger, wave reports and completion flags;
+no new Lambda, trigger or API boundary is introduced. Pay Artist remains manual.
+
+```mermaid
+flowchart LR
+  EMMA[EMMA Process and Finalize] --> API[Operation APIs]
+  Craft[Craft Launch / Update Claim] --> API
+  Manual[Manual Launch wallet controls] --> API
+  API --> DB[Launch, signer, evidence, preparation and job tables]
+  API --> Prep[dropForgePreparationLoop]
+  API --> Worker[dropForgeLaunchLoop]
+  EventBridge --> Prep
+  EventBridge --> Worker
+  Prep --> DB
+  Worker --> DB
+  Worker --> KMS[AWS KMS secp256k1]
+  Worker --> Chain[Creator and lazy claim contracts]
+  Prep --> Wave[Durable wave reports]
+  Worker --> Wave
+  Wave --> Alerts[Configured dropforgers6529 profiles]
+```
+
+Manual controls acquire a durable lease before prompting the wallet. Confirmed
+transaction evidence carries the action category and credits exact remaining
+allocations. Compatible initialize/update configuration is observed on chain;
+ambiguous state blocks. Completion is mirrored into existing manual action flags.
+Metadata updates retain current mint configuration and cannot replay airdrops.
+
+The worker reserves an unsigned intent under a signer row lock, persists its
+signed bytes and hash in another commit, and only then broadcasts. Pending
+reports are rechecked at the final signature commit. Candidate selection filters
+by the next unfinished action's due time and report acknowledgement before its
+20-row limit, preventing future launches from starving due work. Fully missed launches stay available for manual reconciliation without occupying scheduled candidate slots. Pending
+receipts reconcile across pause/cancel, with configurable confirmations. Exceptional administrator recovery tracks
+same-nonce replacements and waits for finalized winning evidence; normal scheduling
+does not replace transactions automatically. Each subsequent action checks the latest
+confirmed canonical receipt, frozen source hash, claim configuration, creator-admin
+permission, nonce availability, and gas budgets. Confirmation is distinct from a
+scheduled mint window becoming active. Already-signed transactions cannot be
+revoked or guaranteed to mine before a deadline.
+
+Phase-scoped plans initialize and execute only Phase 0 allocations before its
+window, then update and airdrop each later phase inside its own closed transition
+gap. Gapless public subscriptions share the preceding Phase 2 transition, matching
+the existing launch UI; the public update waits until Phase 2 closes. Updates
+persist a minted-supply checkpoint so legitimate prior-phase mints do not block
+later airdrops. Legacy flattened plans fail closed while outstanding receipts
+remain reconcilable. Late confirmations credit completed work without reopening expired submission windows or stopping later groups.
+
+EMMA phase results, subscription assignments, distribution rows and Merkle
+proofs commit with replayable checkpoints under the preparation lock. The
+PROCESS_ALL job snapshots upstream inputs once and processes each stage in a
+separate invocation. Pending jobs block conflicting preparation/reset operations.
+Finalization shares that lock and chunks normalized-row inserts. A savepoint
+rolls back a failed stage before persisting the failure; invocation loss rolls
+back the stage for scheduler retry. Legacy synchronous endpoints retain their
+response shapes. Completed downloads are paginated reads of persisted results.
+
+Reporting drops and outbox acknowledgements share a DB transaction. Push
+transport runs after commit. `@dropforgers6529` resolves configured profile IDs
+through existing visibility and notification rules. Initial wave reporting is
+required before new launch signing; receipt reconciliation continues separately.
+See [configuration and recovery](drop-forge-auto-launch.md). The creator owner
+still grants/revokes on-chain admins, and Pay Artist remains outside automation.
+
+Drop Forge launch scheduling groups actions by phase, with independent completed-state and readiness checks. Unsigned action failures and missed windows remain visible without blocking later groups; a persisted signed nonce remains reserved until reconciled. The Launch API exposes groups, attempt errors and observed skips, and each outcome is committed to the operations-wave outbox.
+
+### Drop Forge exceptional transaction recovery
+
+The existing Launch API queues revision-checked administrator recovery requests.
+`dropForgeLaunchLoop` tracks same-nonce original, speed-up and cancellation attempts,
+signs with AWS KMS and waits for canonical finalized evidence. Winning ERC-1155
+mint events reconcile exact recipient allocations; receipt-block supply, action
+outcome, completion flags, signer reservation release and wave outbox commit
+atomically. A recovery-only flag permits this path while normal scheduling remains
+disabled. Signed bytes stay server-side. Reviewed fresh-nonce delivery requires
+proven prior nonce settlement; unknown evidence blocks further wallet use.
+
 ## Architecture Notes
 
 ### Private artwork documentation archive

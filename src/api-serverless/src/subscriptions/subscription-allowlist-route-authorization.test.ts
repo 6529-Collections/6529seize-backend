@@ -1,6 +1,9 @@
 const mockCacheStore = new Map<string, string>();
-const mockGetPublicSubscriptions = jest.fn();
-const mockValidateDistribution = jest.fn();
+const mockPrepareDistributionPhase = jest.fn();
+
+jest.mock('@/drop-forge/drop-forge.preparation', () => ({
+  prepareDistributionPhase: mockPrepareDistributionPhase
+}));
 
 // The allowlist handler logs every step; keep the test output readable.
 jest.mock('@/logging', () => ({
@@ -51,8 +54,8 @@ jest.mock('@/api/auth/auth', () => {
 
 jest.mock('@/api/subscriptions/api.subscriptions.allowlist', () => ({
   ...jest.requireActual('@/api/subscriptions/api.subscriptions.allowlist'),
-  validateDistribution: mockValidateDistribution,
-  getPublicSubscriptions: mockGetPublicSubscriptions,
+  validateDistribution: jest.fn(),
+  getPublicSubscriptions: jest.fn(),
   fetchPhaseName: jest.fn(),
   fetchPhaseResults: jest.fn(),
   resetAllowlist: jest.fn(),
@@ -104,7 +107,7 @@ const ADMIN_WALLET = '0x00000000000000000000000000000000000000aa';
 const NON_ADMIN_WALLET = '0x00000000000000000000000000000000000000bb';
 const CONTRACT = '0x33fd426905f149f8376e227d0c9d3340aad17af1';
 const ALLOWLIST_PATH = `/api/subscriptions/allowlists/${CONTRACT}/7/allowlist-1/public`;
-const ADMIN_ALLOWLIST = { airdrops: [], allowlists: [{ wallet: '0xabc' }] };
+const ADMIN_ALLOWLIST = { airdrops: [{ wallet: '0xabc', amount: 2 }] };
 
 function createTestApp() {
   const app = express();
@@ -149,16 +152,6 @@ async function getAllowlist(baseUrl: string, wallet?: string) {
   };
 }
 
-async function waitForCachedAllowlist() {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (mockCacheStore.size > 0) {
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('Timed out waiting for the allowlist cache entry');
-}
-
 describe('GET /subscriptions/allowlists/:contract/:token_id/:allowlist_id/:phase_id authorization', () => {
   const originalAdminWallets = process.env.DISTRIBUTION_ADMIN_WALLETS;
 
@@ -176,39 +169,49 @@ describe('GET /subscriptions/allowlists/:contract/:token_id/:allowlist_id/:phase
 
   beforeEach(() => {
     mockCacheStore.clear();
-    mockValidateDistribution.mockReset();
-    mockValidateDistribution.mockResolvedValue({ valid: true });
-    mockGetPublicSubscriptions.mockReset();
-    mockGetPublicSubscriptions.mockResolvedValue(ADMIN_ALLOWLIST);
+    mockPrepareDistributionPhase.mockReset();
+    mockPrepareDistributionPhase.mockResolvedValue({
+      phase: 'Public',
+      ...ADMIN_ALLOWLIST,
+      airdrops_unconsolidated: ADMIN_ALLOWLIST.airdrops,
+      allowlists: []
+    });
     jest.mocked(redisGet).mockClear();
   });
 
-  it('serves the allowlist to admins and caches it', async () => {
+  it('serves durable preparation results to admins without HTTP response caching', async () => {
     await withServer(async (baseUrl) => {
       const first = await getAllowlist(baseUrl, ADMIN_WALLET);
       expect(first).toMatchObject({
         status: 200,
-        cache: 'MISS',
+        cache: null,
         body: ADMIN_ALLOWLIST
       });
-      await waitForCachedAllowlist();
 
       const second = await getAllowlist(baseUrl, ADMIN_WALLET);
       expect(second).toMatchObject({
         status: 200,
-        cache: 'HIT',
+        cache: null,
         body: ADMIN_ALLOWLIST
       });
-      expect(mockGetPublicSubscriptions).toHaveBeenCalledTimes(1);
+      expect(mockPrepareDistributionPhase).toHaveBeenCalledTimes(2);
+      expect(mockPrepareDistributionPhase).toHaveBeenCalledWith(
+        CONTRACT,
+        7,
+        'allowlist-1',
+        'public',
+        '',
+        expect.objectContaining({ timer: expect.anything() })
+      );
+      expect(redisGet).not.toHaveBeenCalled();
     });
   });
 
-  it('rejects non-admins even when an admin response is already cached', async () => {
+  it('rejects non-admins after an authorized preparation request', async () => {
     await withServer(async (baseUrl) => {
       await getAllowlist(baseUrl, ADMIN_WALLET);
-      await waitForCachedAllowlist();
-      mockGetPublicSubscriptions.mockClear();
-      mockValidateDistribution.mockClear();
+
+      mockPrepareDistributionPhase.mockClear();
       jest.mocked(redisGet).mockClear();
 
       const response = await getAllowlist(baseUrl, NON_ADMIN_WALLET);
@@ -219,10 +222,9 @@ describe('GET /subscriptions/allowlists/:contract/:token_id/:allowlist_id/:phase
       expect(response.body).toEqual({
         error: 'Only Subscription Admins can download allowlists'
       });
-      // Authorization runs before the cache is consulted.
+      // Unauthorized callers reach neither preparation nor response caching.
       expect(redisGet).not.toHaveBeenCalled();
-      expect(mockValidateDistribution).not.toHaveBeenCalled();
-      expect(mockGetPublicSubscriptions).not.toHaveBeenCalled();
+      expect(mockPrepareDistributionPhase).not.toHaveBeenCalled();
     });
   });
 
@@ -245,7 +247,7 @@ describe('GET /subscriptions/allowlists/:contract/:token_id/:allowlist_id/:phase
       const admin = await getAllowlist(baseUrl, ADMIN_WALLET);
       expect(admin).toMatchObject({
         status: 200,
-        cache: 'HIT',
+        cache: null,
         body: ADMIN_ALLOWLIST
       });
     });
@@ -258,7 +260,7 @@ describe('GET /subscriptions/allowlists/:contract/:token_id/:allowlist_id/:phase
       expect(response.status).toBe(401);
       expect(response.body).toEqual({ error: 'Needs authentication' });
       expect(redisGet).not.toHaveBeenCalled();
-      expect(mockGetPublicSubscriptions).not.toHaveBeenCalled();
+      expect(mockPrepareDistributionPhase).not.toHaveBeenCalled();
     });
   });
 });
