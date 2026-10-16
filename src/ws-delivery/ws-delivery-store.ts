@@ -55,6 +55,8 @@ local function pending(at)
   redis.call('ZADD', KEYS[2], at, id)
   redis.call('ZADD', KEYS[8], 'NX', now, id)
   redis.call('EXPIRE', KEYS[1], ttl)
+  redis.call('EXPIRE', KEYS[2], ttl)
+  redis.call('EXPIRE', KEYS[8], ttl)
 end
 `;
 

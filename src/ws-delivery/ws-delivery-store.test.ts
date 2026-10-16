@@ -57,6 +57,11 @@ describe('shared WebSocket recovery in real Redis', () => {
   it('shares cooldown across independent Lambda instances and retains one refresh marker', async () => {
     await firstWorker.claim('connection-1', 'worker-a', false, now);
     await expect(finish('worker-a', 'throttled')).resolves.toBe(true);
+    for (const suffix of ['pending', 'pendingSince']) {
+      expect(
+        await mockClient.ttl(`${deliveryScope()}:${suffix}`)
+      ).toBeGreaterThan(3500);
+    }
     for (let i = 0; i < 18; i++) {
       const claim = await secondWorker.claim(
         'connection-1',
