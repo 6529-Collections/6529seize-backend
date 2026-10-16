@@ -91,6 +91,9 @@ describe('shared WebSocket recovery in real Redis', () => {
       oldestFailureAt: 0,
       healthyConnections: 1
     });
+    expect(
+      await firstWorker.snapshot(now + 60_000, 'connection-1')
+    ).toMatchObject({ healthyConnections: 0, recentlyHealthyConnections: 0 });
   });
   it('keeps a refresh queued when another producer races with a successful retry', async () => {
     await firstWorker.claim('connection-1', 'initial', false, now);

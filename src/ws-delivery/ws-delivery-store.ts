@@ -258,7 +258,10 @@ export class WebSocketDeliveryStore {
     });
   }
 
-  async snapshot(now: number): Promise<DeliverySnapshot> {
+  async snapshot(
+    now: number,
+    excludeConnectionId?: string
+  ): Promise<DeliverySnapshot> {
     return this.bounded(async () => {
       const client = getRedisClient()!;
       const base = deliveryScope();
@@ -270,7 +273,8 @@ export class WebSocketDeliveryStore {
         recentlyHealthyConnections,
         throttledConnections,
         pending,
-        oldest
+        oldest,
+        ownSuccess
       ] = await Promise.all([
         Promise.all(
           Array.from({ length: 5 }, (_, offset) =>
@@ -282,7 +286,10 @@ export class WebSocketDeliveryStore {
         client.zCount(`${base}:sent`, now - 120_000, '+inf'),
         client.zCount(`${base}:throttled`, now - WINDOW_MS, '+inf'),
         client.zCard(`${base}:pending`),
-        client.zRangeWithScores(`${base}:pendingSince`, 0, 0)
+        client.zRangeWithScores(`${base}:pendingSince`, 0, 0),
+        excludeConnectionId
+          ? client.zScore(`${base}:sent`, connectionHash(excludeConnectionId))
+          : Promise.resolve(null)
       ]);
       const sum = (key: string) =>
         buckets.reduce((total, bucket) => total + Number(bucket[key] ?? 0), 0);
@@ -292,8 +299,16 @@ export class WebSocketDeliveryStore {
         throttled: sum('throttled'),
         deferred: sum('deferred'),
         connections,
-        healthyConnections,
-        recentlyHealthyConnections,
+        healthyConnections: Math.max(
+          0,
+          healthyConnections -
+            Number(ownSuccess !== null && ownSuccess >= now - WINDOW_MS)
+        ),
+        recentlyHealthyConnections: Math.max(
+          0,
+          recentlyHealthyConnections -
+            Number(ownSuccess !== null && ownSuccess >= now - 120_000)
+        ),
         throttledConnections,
         pending,
         oldestFailureAt: oldest[0]?.score ?? 0

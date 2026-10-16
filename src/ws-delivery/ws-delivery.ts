@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { Logger } from '@/logging';
 import { describeWebSocketSendFailure } from '@/api/ws/ws-send-diagnostics';
 import {
@@ -159,7 +159,9 @@ export class WebSocketDelivery {
     claim: DeliveryClaim | null
   ): Promise<boolean> {
     if (!input.recovery || !claim || !input.close) return false;
-    const snapshot = await this.store.snapshot(Date.now()).catch(() => null);
+    const snapshot = await this.store
+      .snapshot(Date.now(), input.connectionId)
+      .catch(() => null);
     if (
       !snapshot ||
       !shouldReconnectListener(
@@ -224,7 +226,7 @@ export class WebSocketDelivery {
         recovery: input.recovery ?? false,
         revision: claim.revision,
         now: Date.now(),
-        jitter: Math.random()
+        jitter: randomInt(1_000_000) / 1_000_000
       });
     } catch {
       reportStoreFailure();

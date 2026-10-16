@@ -75,7 +75,8 @@ class WebsocketClientConnections extends ClientConnections {
     try {
       socket.send(message);
       return { status: 'sent' as const };
-    } catch (err: any) {
+    } catch {
+      // Normalize local transport exceptions to the same unavailable outcome.
       throw new SocketNotAvailableException();
     }
   }
@@ -221,7 +222,8 @@ export class AppWebSockets {
           {}
         );
       return result;
-    } catch (err) {
+    } catch {
+      // The local adapter throws for a missing/closed socket; remove its subscription.
       await this.deregister({ connectionId });
       return { status: 'gone' as const };
     }
