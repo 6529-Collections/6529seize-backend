@@ -18,6 +18,7 @@ import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
+import { describeWebSocketSendFailure } from './ws-send-diagnostics';
 import {
   webSocketDelivery,
   WebSocketDeliveryResult,
@@ -178,7 +179,12 @@ class ApiGatewayClientConnections extends ClientConnections {
       }
     });
     // Durable consumers retain non-throttle failures using their existing retry contract.
-    if (result.status === 'failed' && !recovery)
+    if (
+      result.status === 'failed' &&
+      !recovery &&
+      describeWebSocketSendFailure(message, terminalError).diagnostic
+        .error_category !== 'THROTTLED'
+    )
       throw terminalError ?? new Error('WebSocket delivery failed');
     return result;
   }
@@ -304,7 +310,7 @@ export class AppWebSockets {
       message: frame.message,
       skipStaleConnectionCheck: true
     });
-    if (result.status === 'resync_pending')
+    if (result.status === 'resync_pending' || result.status === 'failed')
       throw new WebSocketDeliveryDeferredError();
   }
 

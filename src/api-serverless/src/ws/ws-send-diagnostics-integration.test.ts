@@ -75,6 +75,7 @@ import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { AppWebSockets, appWebSockets } from '@/api/ws/ws';
 import { WsConnectionRepository } from '@/api/ws/ws-connection.repository';
 import { withLambdaRemainingTime } from '@/lambda-deadline';
+import { webSocketDeliveryStore } from '@/ws-delivery/ws-delivery-store';
 import {
   WebSocketSendScheduler,
   WebSocketSendLimitError
@@ -138,6 +139,58 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     expect(repository.getByConnectionId).toHaveBeenCalledWith('synthetic', {});
     expect(mockHandle).toHaveBeenCalledTimes(1);
     expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+  });
+
+  it('returns a failed legacy control acknowledgement without turning a 429 into an error alert', async () => {
+    mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
+    expect(
+      await sockets.deliver({
+        connectionId: 'synthetic',
+        message: '{"type":"AUTHENTICATED"}',
+        skipStaleConnectionCheck: true
+      })
+    ).toEqual({ status: 'failed' });
+    expect(mockHandle).toHaveBeenCalledTimes(3);
+    expect(mockError).not.toHaveBeenCalled();
+    expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it('retains a throttled durable frame when Redis recovery is unavailable without reporting each retry as an application error', async () => {
+    jest
+      .spyOn(webSocketDeliveryStore, 'claim')
+      .mockRejectedValueOnce(new Error('Redis unavailable'));
+    mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
+    const report = jest.fn();
+    const defer = jest.fn().mockResolvedValue(undefined);
+    const batch = {
+      Records: [
+        {
+          messageId: 'durable-no-store',
+          body: JSON.stringify({
+            version: 1,
+            id: 'durable-no-store',
+            connectionId: 'synthetic',
+            message: '{}',
+            identityId: 'profile',
+            jwtExpiry: 2000000000
+          })
+        }
+      ]
+    } as SQSEvent;
+    expect(
+      await processWebSocketBatch(
+        batch,
+        (frame) => sockets.deliverQueued(frame),
+        report,
+        defer
+      )
+    ).toEqual({ batchItemFailures: [{ itemIdentifier: 'durable-no-store' }] });
+    expect(mockHandle).toHaveBeenCalledTimes(3);
+    expect(report).not.toHaveBeenCalled();
+    expect(mockError).not.toHaveBeenCalled();
+    expect(defer).toHaveBeenCalledWith(batch.Records[0]);
+    expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
   });
 
   it('sends legacy frames immediately without enqueueing and still reports throttling', async () => {

@@ -60,7 +60,7 @@ describe('shared WebSocket recovery in real Redis', () => {
     for (const suffix of ['pending', 'pendingSince']) {
       expect(
         await mockClient.ttl(`${deliveryScope()}:${suffix}`)
-      ).toBeGreaterThan(3500);
+      ).toBeGreaterThan(7200);
     }
     for (let i = 0; i < 18; i++) {
       const claim = await secondWorker.claim(
@@ -109,7 +109,7 @@ describe('shared WebSocket recovery in real Redis', () => {
       await secondWorker.claim('connection-1', 'supported', false, now)
     ).toMatchObject({ canReconnect: true });
     const key = `${deliveryScope()}:connection:${connectionHash('connection-1')}`;
-    expect(await mockClient.ttl(key)).toBeGreaterThan(3500);
+    expect(await mockClient.ttl(key)).toBeGreaterThan(7200);
     await mockClient.expire(key, 0);
     expect(
       await secondWorker.claim('connection-1', 'expired', false, now)
@@ -163,9 +163,41 @@ describe('shared WebSocket recovery in real Redis', () => {
       true,
       now + 30_000
     );
+    for (const suffix of ['pending', 'pendingSince']) {
+      await mockClient.expire(`${deliveryScope()}:${suffix}`, 10);
+    }
     await finish('retry', 'failed', now + 30_000, true, claim.revision);
+    for (const suffix of ['pending', 'pendingSince']) {
+      expect(
+        await mockClient.ttl(`${deliveryScope()}:${suffix}`)
+      ).toBeGreaterThan(7200);
+    }
     expect(await firstWorker.due(now + 30_001)).toEqual([]);
     expect(await firstWorker.due(now + 90_000)).toEqual(['connection-1']);
+  });
+  it('records a throttled control acknowledgement without scheduling a refresh substitute', async () => {
+    const claim = await firstWorker.claim(
+      'connection-1',
+      'auth',
+      false,
+      now,
+      true
+    );
+    await firstWorker.finish({
+      connectionId: 'connection-1',
+      token: 'auth',
+      outcome: 'throttled',
+      recovery: false,
+      revision: claim.revision,
+      now,
+      jitter: 0.5,
+      coalesce: false
+    });
+    expect(await firstWorker.due(now + 60_000)).toEqual([]);
+    expect(await firstWorker.snapshot(now)).toMatchObject({
+      pending: 0,
+      throttled: 1
+    });
   });
   it('keeps normal foreground delivery concurrent until a connection throttles', async () => {
     await firstWorker.claim('connection-1', 'first', false, now);
