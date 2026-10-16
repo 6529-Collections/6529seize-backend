@@ -18,6 +18,12 @@ function setup() {
     closed_at: null,
     credit: null,
     artwork_hash: 'hash',
+    artwork: {
+      name: 'Test Cat',
+      description: 'Artwork under review',
+      image_url: 'https://example.com/artwork.png',
+      animation_url: null
+    },
     terms_version: 'terms',
     wave_id: 'wave'
   };
@@ -75,6 +81,19 @@ it('saves a trimmed credit name with consent and freezes it independently of the
     {}
   );
   expect(invitation.artist_name).toBe('Artist B');
+  expect(userNotifier.notifyOfMemeCollaboration).toHaveBeenCalledWith(
+    'A',
+    {
+      event_type: 'ACCEPTED',
+      artwork_name: 'Test Cat',
+      drop_id: 'drop',
+      wave_id: 'wave',
+      actor_id: 'B',
+      invitation_id: 'invite'
+    },
+    null,
+    expect.any(Object)
+  );
   expect(
     (await service.state('drop', 'B', {})).invitations[0].artist_name
   ).toBe('Artist B');
