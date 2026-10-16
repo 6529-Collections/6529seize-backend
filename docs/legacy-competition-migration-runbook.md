@@ -107,6 +107,18 @@ budget failure includes a migration-local statement number and SHA-256
 fingerprint, without SQL, parameters or source values. These diagnostics do not
 retry the statement or change its budget.
 
+The copy service may recover once from the known batch-audit INSERT timeout,
+only when the typed error proves WORK/NOT_SENT, the physical connection was
+destroyed, and its fingerprint matches that exact statement. It waits one second
+without ownership, then starts a new complete transaction with the unchanged
+five-second/one-second limits. Under ownership it requires the same legacy active
+owner, no stop, and an identical saved copy checkpoint and batch-claim timestamp; live capture counters may
+advance. A second timeout or checkpoint/owner/stop change propagates. This does
+not retry replay, parity comparisons, cutover, other statements or unknown commits.
+The recovery warning records the checkpoint hash and the single retry allowance;
+it is not evidence that the underlying timeout cause was repaired. After a
+terminal failure, retain the stop and investigate before an operator resume.
+
 Backfill, journal replay, independent comparison and final cutover use the bounded SQL transaction
 runtime with a five-second overall deadline, a one-second statement limit, a
 one-second lock wait and a 500ms finalization reserve. A slow comparison before

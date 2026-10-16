@@ -54,6 +54,7 @@ function safeCounter(value: number | string): number {
 function json<T>(value: T | string): T {
   return typeof value === 'string' ? (JSON.parse(value) as T) : value;
 }
+export const MIGRATION_AUDIT_INSERT_SQL = `insert into ${COMPETITION_MIGRATION_AUDIT_TABLE} (id,competition_id,actor,action,reason,report,created_at) values (:auditId,:id,:actor,:action,:reason,:report,:now)`;
 export type MigrationStatus = {
   readonly competitionId: string;
   readonly waveId: string;
@@ -442,7 +443,7 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
     ctx.timer?.start(timerName);
     try {
       await this.db.execute(
-        `insert into ${COMPETITION_MIGRATION_AUDIT_TABLE} (id,competition_id,actor,action,reason,report,created_at) values (:auditId,:id,:actor,:action,:reason,:report,:now)`,
+        MIGRATION_AUDIT_INSERT_SQL,
         {
           auditId: randomUUID(),
           id,
