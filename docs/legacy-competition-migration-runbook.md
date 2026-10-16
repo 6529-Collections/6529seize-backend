@@ -36,8 +36,12 @@ limits are validated at 1..100 rows, so rank updates contain at most 100 CASE ar
 The refresh retains the
 completed voter, decision, award and archive stages instead of copying them again
 after every routine snapshot. The entire journal window since the last applied
-watermark must qualify; configuration, content, decision or other captured changes
-retain the conservative full refresh. The target watermark is acknowledged only
+watermark must qualify. An active participating drop deletion and its content cleanup
+also qualify only when the complete window includes that parent deletion and no
+eligible parent survives in the source. Journal replay has already removed its
+live entry, votes and runtime; the rank sweep repairs every remaining entry.
+Surviving content edits, new entries, winner deletions, configuration, decisions
+and other captured changes retain the conservative full refresh. The target watermark is acknowledged only
 after the refresh commits. Independent comparison and the final ownership lock
 remain mandatory. Deploy only `competitionMigrationLoop` for this correction;
 existing legacy-owned checkpoints remain resumable without a schema change.
@@ -79,10 +83,18 @@ are necessary: an extra active native entry mapped to a CHAT drop must still
 appear and fail parity. The unchanged compatibility view and full-row hashes
 remain authoritative; no row limit is applied to this comparison.
 
-Independent comparison and final cutover use the existing bounded SQL transaction
+Entry copy reads global ranks once per page, then reads all eight content
+relations and the latest copied versions in batches. It preserves content-version
+hash checks and source observation timestamps. The ordinary native edit path
+retains its terminal-state guard.
+
+Backfill, journal replay, independent comparison and final cutover use the bounded SQL transaction
 runtime with a five-second overall deadline, a one-second statement limit, a
 one-second lock wait and a 500ms finalization reserve. A slow comparison before
-ownership changes aborts rather than holding the write fence for minutes. Keep the
+ownership changes aborts rather than holding the write fence for minutes. Copy and
+replay use the same repeatable-read budget and roll back the entire batch,
+including its checkpoint, on timeout. An operator stop is checked again inside
+the ownership transaction, so an already queued batch cannot cross it. Keep the
 migration stopped and investigate a timeout; do not raise the limit or bypass
 parity to force cutover. If COMMIT acknowledgment is unknown, read current
 ownership and the cutover audit before retrying or planning recovery.
