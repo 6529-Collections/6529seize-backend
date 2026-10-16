@@ -116,7 +116,7 @@
         "s3:PutEncryptionConfiguration"
       ],
       "Resource": [
-        "arn:aws:s3:::websocketdeliveryloop-staging-serverlessdeploy*"
+        "arn:aws:s3:::websocketdeliveryloop-sta*-serverlessdeploy*"
       ],
       "Condition": {
         "StringEquals": {
@@ -138,7 +138,7 @@
         "s3:PutObjectTagging"
       ],
       "Resource": [
-        "arn:aws:s3:::websocketdeliveryloop-staging-serverlessdeploy*/*"
+        "arn:aws:s3:::websocketdeliveryloop-sta*-serverlessdeploy*/*"
       ],
       "Condition": {
         "StringEquals": {
