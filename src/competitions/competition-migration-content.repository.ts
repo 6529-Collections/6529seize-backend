@@ -1,4 +1,5 @@
 import {
+  COMPETITION_ENTRIES_TABLE,
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROP_MEDIA_TABLE,
@@ -131,8 +132,10 @@ export class CompetitionMigrationContentRepository extends LazyDbAccessCompatibl
         content: CompetitionEntryContent | string;
       }>(
         `select entry_id,content from (
-         select entry_id,content,row_number() over(partition by entry_id order by version desc) as version_order
-         from ${COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} where competition_id=:competitionId and entry_id in (:entryIds)
+         select v.entry_id,v.content,row_number() over(partition by v.entry_id order by v.version desc) as version_order
+         from ${COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} v
+         join ${COMPETITION_ENTRIES_TABLE} e on e.id=v.entry_id and e.competition_id=v.competition_id
+         where v.competition_id=:competitionId and v.entry_id in (:entryIds) and e.status in ('ACTIVE','WINNER')
          ) versions where version_order=1`,
         { competitionId, entryIds },
         { wrappedConnection: ctx.connection }

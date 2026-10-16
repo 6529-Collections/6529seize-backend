@@ -1733,6 +1733,73 @@ describeWithSeed(
       }
     );
 
+    it('rejects a withdrawn source entry even when an extra active native entry balances the count', async () => {
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx = { connection };
+          const options = { wrappedConnection: connection };
+          const before = await compareMigrationContent(
+            sqlExecutor,
+            id,
+            wave.id,
+            ctx
+          );
+          expect(before[0].baselineHash).toBe(before[0].candidateHash);
+          const entryId = legacyCompetitionEntryId(id, drop.id);
+          const original = (await sqlExecutor.oneOrNull<
+            Record<string, unknown>
+          >(
+            `select * from ${COMPETITION_ENTRIES_TABLE} where id=:entryId`,
+            { entryId },
+            options
+          ))!;
+          await sqlExecutor.execute(
+            `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id=:entryId`,
+            { entryId },
+            options
+          );
+          await sqlExecutor.bulkInsert(
+            COMPETITION_ENTRIES_TABLE,
+            [
+              {
+                ...original,
+                id: 'extra-native-entry',
+                drop_id: 'extra-native-drop'
+              }
+            ],
+            Object.keys(original),
+            ctx
+          );
+          const active = await sqlExecutor.oneOrNull<{ count: number }>(
+            `select count(*) as count from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id and status in ('ACTIVE','WINNER')`,
+            { id },
+            options
+          );
+          expect(Number(active?.count)).toBe(1);
+          // Retained content for the withdrawn entry must not satisfy the source
+          // hash, even though the independent native count still equals one.
+          const pages = new CompetitionMigrationContentRepository(
+            () => sqlExecutor
+          );
+          expect((await pages.nativePage(id, [entryId], ctx)).size).toBe(0);
+          const after = await compareMigrationContent(
+            sqlExecutor,
+            id,
+            wave.id,
+            ctx
+          );
+          expect(after[0].baselineHash).not.toBe(after[0].candidateHash);
+        }
+      );
+    });
+
     it('compares complete content pages without mixing drops and reads the latest native version', async () => {
       const secondDropId = 'content-page-second';
       await seedSnapshotEntry(secondDropId, Date.now());
