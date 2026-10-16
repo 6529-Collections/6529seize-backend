@@ -67,6 +67,7 @@ class ConnectionDatabase extends SqlExecutor {
   order: string[] = [];
   operationFailure: Error | undefined;
   cleanupFailure: Error | undefined;
+  missedLockReads = 0;
 
   async execute<T>(
     sql: string,
@@ -79,6 +80,10 @@ class ConnectionDatabase extends SqlExecutor {
     if (normalized.startsWith('select connection_id, connection_id()')) {
       this.order.push('lock');
       if (this.operationFailure) throw this.operationFailure;
+      if (this.missedLockReads > 0) {
+        this.missedLockReads--;
+        return [];
+      }
       return (
         this.present ? [{ connection_id: 'synthetic-socket' }] : []
       ) as T[];
@@ -282,6 +287,68 @@ describe('missing stored WebSocket connection recovery', () => {
       sockets.appWebSockets.closeUnavailableConnection
     ).not.toHaveBeenCalled();
   });
+
+  it.each([
+    WsMessageType.AUTHENTICATE,
+    WsMessageType.SYNC_NOTIFICATION_IDENTITIES
+  ])(
+    '%s resets transport after ownership rescans are exhausted',
+    async (type) => {
+      const { db, invoke } = fixture(type);
+      db.present = true;
+      db.missedLockReads = 3;
+      expect(await invoke()).toMatchObject({ statusCode: 410 });
+      expect(db).toMatchObject({
+        rollbacks: 1,
+        commits: 1,
+        mutationWrites: 2
+      });
+      // The failed control transaction cannot ACK or mutate. Only after rollback
+      // and transport closure may a new, actually locked cleanup delete the row.
+      expect(db.order.indexOf('rollback')).toBeLessThan(
+        db.order.indexOf('DELETE')
+      );
+      expect(db.order.indexOf('DELETE')).toBeLessThan(
+        db.order.lastIndexOf('lock')
+      );
+      expect(db.order.lastIndexOf('lock')).toBeLessThan(
+        db.order.indexOf('delete')
+      );
+      expect(
+        mockTransport.mock.calls.map(([request]) => request.method)
+      ).toEqual(['DELETE']);
+      expect(
+        sockets.appWebSockets.closeUnavailableConnection
+      ).toHaveBeenCalledTimes(1);
+      expect(mockWarnings).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    WsMessageType.AUTHENTICATE,
+    WsMessageType.SYNC_NOTIFICATION_IDENTITIES
+  ])(
+    '%s still closes transport when cleanup remains contended',
+    async (type) => {
+      const { db, invoke } = fixture(type);
+      db.present = true;
+      db.missedLockReads = 10;
+      expect(await invoke()).toMatchObject({ statusCode: 500 });
+      expect(db).toMatchObject({
+        rollbacks: 2,
+        commits: 0,
+        mutationWrites: 0,
+        cleanupWrites: 0
+      });
+      expect(
+        mockTransport.mock.calls.map(([request]) => request.method)
+      ).toEqual(['DELETE']);
+      expect(db.order).not.toContain('delete');
+      expect(mockWarnings.mock.calls).toEqual([
+        [`[WS_CONTROL_FAILED] [ACTION ${type}] [STAGE cleanup]`]
+      ]);
+    }
+  );
 
   it('treats an already-gone SDK DELETE as successful stale cleanup', async () => {
     const { db, invoke } = fixture(WsMessageType.AUTHENTICATE);

@@ -278,10 +278,10 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       await delay(randomInt(5, 16));
       return this.lockConnection(connectionId, ctx, attemptsLeft - 1);
     }
-    throw new CustomApiCompliantException(
-      503,
-      'Socket identity is changing; retry the request.'
-    );
+    // Persistent key churn also makes this socket unavailable for safe control
+    // writes. Use the existing close/reconnect recovery, not a new 503 retry
+    // contract that WebSocket clients cannot observe as an HTTP response.
+    throw new SocketNotAvailableException();
   }
 
   private async requireConnection(connectionId: string, ctx: RequestContext) {
