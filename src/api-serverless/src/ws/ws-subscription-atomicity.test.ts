@@ -398,7 +398,7 @@ describe('WebSocket identity and notification subscription atomicity', () => {
       } else {
         action = repository.deleteByConnectionId('socket', {});
       }
-      await expect(action).rejects.toThrow('Socket identity is changing');
+      await expect(action).rejects.toThrow('Socket is not available');
       expect(
         db.operations.filter(({ sql }) => sql.endsWith('for update'))
       ).toHaveLength(3);
