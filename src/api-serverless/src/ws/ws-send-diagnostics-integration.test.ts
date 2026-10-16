@@ -881,8 +881,9 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
             message: '{"type":"AUTHENTICATED"}',
             skipStaleConnectionCheck: true
           });
-          if (status === 429) await expect(send).rejects.toBeDefined();
-          else await send;
+          await expect(send).resolves.toEqual({
+            status: status === 204 ? 'sent' : 'failed'
+          });
           return { statusCode: status === 204 ? 200 : 500 };
         }
       );
