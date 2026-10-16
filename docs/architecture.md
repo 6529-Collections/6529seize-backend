@@ -1237,6 +1237,12 @@ Trusted full comparisons collect all native reader results in 2,000-row pages
 to avoid repeating voter aggregations. Optional shadow sampling retains its
 500-row pages and existing row ceiling.
 
+Frozen drop-view parity reads the unchanged view by the complete union of source
+participation/winner keys and ACTIVE/WINNER native entry keys mapped to shared
+drops. Driving those primary-key reads avoids projecting unrelated chat history
+while retaining extra native entries mapped to CHAT drops as mismatches. All
+columns and rows of the eligible projection still participate in the hash.
+
 Full content comparison prefetches all relations in 100-drop pages, while WAVE
 TDH/XTDH budgets prefetch identity and spending data in 100-profile pages. The
 candidate reuses the ordinary public budget formula and the source oracle remains

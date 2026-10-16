@@ -3,6 +3,8 @@ import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
 import { CompetitionMigrationContentRepository } from '@/competitions/competition-migration-content.repository';
 import { CompetitionEntryRepository } from '@/competitions/competition-entry.repository';
 import { compareMigrationContent } from '@/competitions/competition-migration-content-parity';
+import { readLegacyDropFacadeForComparison } from '@/competitions/legacy-competition-facade-parity';
+import { competitionPayloadHash } from '@/competitions/competition-command-identity';
 import { DropEntity } from '@/entities/IDrop';
 import { withLegacyCompetitionProfileMerge } from './legacy-competition-profile-merge';
 import { appFeatures } from '@/app-features';
@@ -13,7 +15,9 @@ import { NativeCompetitionReader } from './native-competition.reader';
 import { listCompetitionVoteActivity } from '@/api/competitions/competition-vote-activity.service';
 import {
   LEGACY_GET_SOURCE_TABLES,
-  withLegacyCompetitionGetFacade
+  withLegacyCompetitionGetFacade,
+  withLegacyShadowGetFacade,
+  legacyGetView
 } from './legacy-competition-get-facade';
 import {
   COMPETITION_ENTRIES_TABLE,
@@ -1730,6 +1734,97 @@ describeWithSeed(
           }
         );
         expect((await service.status(id)).migration?.cutover_at).toBeNull();
+      }
+    );
+
+    it.each(['ACTIVE', 'WINNER', 'WITHDRAWN', 'DISQUALIFIED', null])(
+      'retains the complete unrestricted drop facade with native status %s',
+      async (status) => {
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          Date.now,
+          0
+        );
+        await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+        await finishBackfill(service);
+        const chatId = 'facade-chat-native';
+        const winnerId = 'facade-winner-without-native';
+        await sqlExecutor.execute(
+          `insert into ${DROPS_TABLE} (id,wave_id,author_id,created_at,parts_count,drop_type,hide_link_preview)
+           values (:chatId,:waveId,'fixture-author',20,1,'CHAT',0),
+                  (:winnerId,:waveId,'fixture-author',21,1,'WINNER',0),
+                  ('facade-plain-chat',:waveId,'fixture-author',22,1,'CHAT',0)`,
+          { chatId, winnerId, waveId: wave.id }
+        );
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const ctx = { connection };
+            const options = { wrappedConnection: connection };
+            const entryId = legacyCompetitionEntryId(id, drop.id);
+            const original = (await sqlExecutor.oneOrNull<
+              Record<string, unknown>
+            >(
+              `select * from ${COMPETITION_ENTRIES_TABLE} where id=:entryId`,
+              { entryId },
+              options
+            ))!;
+            if (status === null) {
+              await sqlExecutor.execute(
+                `delete from ${COMPETITION_ENTRIES_TABLE} where id=:entryId`,
+                { entryId },
+                options
+              );
+            } else {
+              await sqlExecutor.execute(
+                `update ${COMPETITION_ENTRIES_TABLE} set status=:status where id=:entryId`,
+                { entryId, status },
+                options
+              );
+              await sqlExecutor.bulkInsert(
+                COMPETITION_ENTRIES_TABLE,
+                [
+                  {
+                    ...original,
+                    id: legacyCompetitionEntryId(id, chatId),
+                    drop_id: chatId,
+                    status
+                  }
+                ],
+                Object.keys(original),
+                ctx
+              );
+            }
+            await withLegacyShadowGetFacade(sqlExecutor, id, ctx, async () => {
+              const unrestricted = await sqlExecutor.execute<
+                Record<string, unknown>
+              >(
+                `select * from ${legacyGetView(DROPS_TABLE)} where wave_id=:waveId and drop_type in ('PARTICIPATORY','WINNER')`,
+                { waveId: wave.id },
+                options
+              );
+              const bounded = await readLegacyDropFacadeForComparison(
+                sqlExecutor,
+                id,
+                wave.id,
+                ctx
+              );
+              const hashes = (rows: Record<string, unknown>[]) =>
+                rows
+                  .map(competitionPayloadHash)
+                  .sort((a, b) => a.localeCompare(b));
+              expect(hashes(bounded)).toEqual(hashes(unrestricted));
+              const ids = bounded.map((row) => row.id);
+              expect(ids).toContain(winnerId);
+              expect(ids).not.toContain('facade-plain-chat');
+              if (status === 'ACTIVE' || status === 'WINNER')
+                expect(ids).toContain(chatId);
+              else expect(ids).not.toContain(chatId);
+              if (status === 'WITHDRAWN' || status === 'DISQUALIFIED')
+                expect(ids).not.toContain(drop.id);
+              else expect(ids).toContain(drop.id);
+            });
+          }
+        );
       }
     );
 

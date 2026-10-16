@@ -72,6 +72,13 @@ single-profile budget formula; the legacy oracle reads its own authoritative
 sources independently. All entries, content relations, voters and budgets are
 still checked; batching does not sample or skip parity categories.
 
+The frozen drop-view comparison drives primary-key reads from the union of
+source participation/winner drops and ACTIVE/WINNER native entries mapped to
+shared drops. This avoids projecting the wave's full chat history. Both sets
+are necessary: an extra active native entry mapped to a CHAT drop must still
+appear and fail parity. The unchanged compatibility view and full-row hashes
+remain authoritative; no row limit is applied to this comparison.
+
 Independent comparison and final cutover use the existing bounded SQL transaction
 runtime with a five-second overall deadline, a one-second statement limit, a
 one-second lock wait and a 500ms finalization reserve. A slow comparison before
