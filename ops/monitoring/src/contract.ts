@@ -299,12 +299,29 @@ function recoverySentence(d: Diagnostic, amber: boolean): string {
   }
 }
 function alertDescription(alert: Alert, amber: boolean): string {
+  const websocket = websocketAlarmDescription(alert);
+  if (websocket) return websocket;
   const d = alert.diagnostic;
   if (!d) return DESCRIPTIONS[alert.code];
   let operation = d.operation ?? alert.service;
   if (operation === 'NFT_REFRESH') operation = 'NFT refresh';
   if (operation === 'WS_OUTBOUND_SEND') operation = 'WebSocket send';
   return `${operation} failed: ${failureCause(alert, d)}. ${recoverySentence(d, amber)}`;
+}
+
+function websocketAlarmDescription(alert: Alert): string | undefined {
+  if (alert.alarm?.namespace !== '6529/WebSocketDelivery') return undefined;
+  const metric = alert.alarm.metric;
+  if (
+    !['Degraded', 'WorkerHealthy', 'RecoveryUnavailable'].includes(metric ?? '')
+  )
+    return undefined;
+  if (alert.code === 'PLATFORM_RECOVERY')
+    return 'WebSocket delivery monitoring has recovered. Check the latest WS_DELIVERY_HEALTH summary to confirm pending refreshes are draining.';
+  if (alert.code !== 'PLATFORM_ALARM') return undefined;
+  if (metric === 'Degraded')
+    return 'WebSocket delivery is failing across listeners, is persistently unavailable, or has an old retry backlog. Inspect WS_DELIVERY_HEALTH in webSocketDeliveryLoop, check AWS send quotas and Redis, and reduce broadcast bursts. One blocked listener is handled automatically; do not disconnect the fleet.';
+  return 'WebSocket refresh recovery is unavailable. Inspect webSocketDeliveryLoop errors, its schedule and Redis availability. Restore recovery before treating missing live updates as delivered.';
 }
 interface AlertField {
   name: string;

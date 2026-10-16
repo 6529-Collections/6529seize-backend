@@ -17,6 +17,11 @@ import {
 import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
+import {
+  webSocketDelivery,
+  WebSocketDeliveryResult
+} from '@/ws-delivery/ws-delivery';
 import { describeWebSocketSendFailure } from './ws-send-diagnostics';
 import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
 
@@ -46,7 +51,8 @@ abstract class ClientConnections {
   }: {
     connectionId: string;
     message: string;
-  }): Promise<void>;
+    recovery?: boolean;
+  }): Promise<WebSocketDeliveryResult>;
   abstract closeClient(
     connectionId: string,
     propagateFailure?: boolean
@@ -72,6 +78,7 @@ class WebsocketClientConnections extends ClientConnections {
     try {
       socket.send(message);
       recordWebSocketAcknowledgement(connectionId, message, 'accepted');
+      return { status: 'sent' as const };
     } catch {
       // Preserve the unavailable-socket result without exposing transport errors.
       recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
@@ -104,51 +111,57 @@ class WebsocketClientConnections extends ClientConnections {
 }
 
 class ApiGatewayClientConnections extends ClientConnections {
-  private readonly logger = Logger.get(ApiGatewayManagementApiClient.name);
-
   private readonly client: ApiGatewayManagementApiClient;
 
   constructor() {
     super();
     this.client = new ApiGatewayManagementApiClient({
-      endpoint: process.env.API_GATEWAY_WS_ENDPOINT
+      endpoint: process.env.API_GATEWAY_WS_ENDPOINT,
+      retryMode: 'standard',
+      maxAttempts: 3,
+      requestHandler: new NodeHttpHandler({
+        connectionTimeout: 2000,
+        requestTimeout: 5000,
+        throwOnRequestTimeout: true
+      })
     });
   }
 
   override async sendMessage({
     connectionId,
-    message
+    message,
+    recovery = false
   }: {
     connectionId: string;
     message: string;
+    recovery?: boolean;
   }) {
-    try {
-      await this.client.send(
-        new PostToConnectionCommand({
-          ConnectionId: connectionId,
-          Data: Buffer.from(message)
-        })
-      );
-      recordWebSocketAcknowledgement(connectionId, message, 'accepted');
-    } catch (error: unknown) {
-      const failure = describeWebSocketSendFailure(message, error);
-      recordWebSocketAcknowledgement(
-        connectionId,
-        message,
-        failure.unavailable ? 'unavailable' : 'failed'
-      );
-      if (failure.unavailable) {
-        throw new SocketNotAvailableException();
-      } else {
+    return webSocketDelivery.deliver({
+      connectionId,
+      message,
+      recovery,
+      close: () => this.closeClient(connectionId, true),
+      send: async () => {
         try {
-          // Replace the existing error event; do not report again or turn a
-          // diagnostic failure into deletion of an otherwise live connection.
-          this.logger.error(failure.diagnostic);
-        } catch {
-          // Outbound delivery remains best effort when reporting is unavailable.
+          const response = await this.client.send(
+            new PostToConnectionCommand({
+              ConnectionId: connectionId,
+              Data: Buffer.from(message)
+            })
+          );
+          recordWebSocketAcknowledgement(connectionId, message, 'accepted');
+          return response;
+        } catch (error) {
+          const failure = describeWebSocketSendFailure(message, error);
+          recordWebSocketAcknowledgement(
+            connectionId,
+            message,
+            failure.unavailable ? 'unavailable' : 'failed'
+          );
+          throw error;
         }
       }
-    }
+    });
   }
 
   override async closeClient(
@@ -193,11 +206,13 @@ export class AppWebSockets {
   async send({
     connectionId,
     message,
-    skipStaleConnectionCheck = false
+    skipStaleConnectionCheck = false,
+    recovery = false
   }: {
     connectionId: string;
     message: string;
     skipStaleConnectionCheck?: boolean;
+    recovery?: boolean;
   }) {
     if (!skipStaleConnectionCheck) {
       const entity = await this.wsConnectionRepository.getByConnectionId(
@@ -210,13 +225,25 @@ export class AppWebSockets {
           `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
         );
         await this.deregister({ connectionId });
-        return;
+        return { status: 'gone' as const };
       }
     }
     try {
-      await ClientConnections.Get().sendMessage({ connectionId, message });
-    } catch (err) {
+      const result = await ClientConnections.Get().sendMessage({
+        connectionId,
+        message,
+        recovery
+      });
+      if (result.status === 'gone')
+        await this.wsConnectionRepository.deleteByConnectionId(
+          connectionId,
+          {}
+        );
+      return result;
+    } catch {
+      // The local adapter throws for a missing/closed socket; remove its subscription.
       await this.deregister({ connectionId });
+      return { status: 'gone' as const };
     }
   }
 
@@ -224,12 +251,14 @@ export class AppWebSockets {
     identityId,
     connectionId,
     jwtExpiry,
-    ws
+    ws,
+    recoveryCapable = false
   }: {
     identityId: string;
     connectionId: string;
     jwtExpiry: number;
     ws?: WebSocket;
+    recoveryCapable?: boolean;
   }) {
     this.logger.info(
       `Registering socket for client ${identityId} (connectionId: ${connectionId})`
@@ -254,6 +283,7 @@ export class AppWebSockets {
       {}
     );
     await this.wsConnectionRepository.maybeCleanupStaleNotificationSubscriptions();
+    if (recoveryCapable) await webSocketDelivery.enableReconnect(connectionId);
   }
 
   async deregister({ connectionId }: { connectionId: string }) {
