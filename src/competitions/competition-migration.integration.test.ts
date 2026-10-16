@@ -1656,6 +1656,223 @@ describeWithSeed(
       expect((await service.status(id)).migration?.state).toBe('SHADOWING');
     });
 
+    it('copies bounded voter pages with the exact scalar values and raw orphan cursors', async () => {
+      const variants = [
+        {
+          id: 'a-bulk-negative',
+          type: 'PARTICIPATORY',
+          voter: 'MIXED-VOTER',
+          votes: -5
+        },
+        { id: 'b-bulk-zero', type: 'WINNER', voter: 'bulk-zero', votes: 0 },
+        { id: 'c-bulk-chat', type: 'CHAT', voter: 'bulk-chat', votes: 9 },
+        { id: 'd-bulk-missing', type: null, voter: 'bulk-orphan', votes: 4 }
+      ];
+      for (const item of variants) {
+        if (item.type)
+          await sqlExecutor.execute(
+            `insert into ${DROPS_TABLE} (id,wave_id,author_id,created_at,parts_count,drop_type,hide_link_preview)
+             values (:dropId,:waveId,'fixture-author',10,1,:type,0)`,
+            { dropId: item.id, waveId: wave.id, type: item.type }
+          );
+        await sqlExecutor.execute(
+          `insert into ${DROP_VOTER_STATE_TABLE} (drop_id,wave_id,voter_id,votes) values (:dropId,:waveId,:voter,:votes)`,
+          {
+            dropId: item.id,
+            waveId: wave.id,
+            voter: item.voter,
+            votes: item.votes
+          }
+        );
+      }
+      // Credit keys compare under MySQL collation, while copied IDs retain the
+      // spelling of the voter-state row. Other waves/drops/voters never leak in.
+      await sqlExecutor.execute(
+        `insert into ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} (drop_id,wave_id,voter_id,credit_spent,created_at)
+         values ('a-bulk-negative',:waveId,'mixed-voter',2,30),
+                ('a-bulk-negative',:waveId,'mixed-voter',3,20),
+                ('a-bulk-negative','other-wave','mixed-voter',100,1),
+                ('a-bulk-negative',:waveId,'other-voter',200,2)`,
+        { waveId: wave.id }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      const record =
+        (await new CompetitionRepository().findCompetitionRecordById(id, {}))!;
+      const backfill = new CompetitionMigrationBackfill(sqlExecutor);
+      const allKeys = await sqlExecutor.execute<{
+        drop_id: string;
+        voter_id: string;
+      }>(
+        `select drop_id,voter_id from ${DROP_VOTER_STATE_TABLE} where wave_id=:waveId order by drop_id,voter_id`,
+        { waveId: wave.id }
+      );
+      for (const key of allKeys)
+        await backfill.vote(record, key.drop_id, key.voter_id, {});
+      const read = () =>
+        sqlExecutor.execute(
+          `select * from ${COMPETITION_VOTES_TABLE} where competition_id=:id order by entry_id,voter_profile_id`,
+          { id }
+        );
+      const scalar = await read();
+      await sqlExecutor.execute(
+        `delete from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+        { id }
+      );
+      // Stale ineligible rows must be removed when their raw source keys pass.
+      for (const item of variants.filter(
+        (item) => !item.type || item.type === 'CHAT'
+      )) {
+        await backfill.vote(record, drop.id, 'fixture-voter', {});
+        await sqlExecutor.execute(
+          `insert into ${COMPETITION_VOTES_TABLE} (id,competition_id,entry_id,voter_profile_id,value,credit_spent,created_at,updated_at)
+           values (:voteId,:id,:entryId,:voter,99,99,1,1)`,
+          {
+            voteId: item.id,
+            id,
+            entryId: legacyCompetitionEntryId(id, item.id),
+            voter: item.voter
+          }
+        );
+      }
+      while ((await service.status(id)).migration?.stage !== 'VOTERS')
+        await service.backfill(id, operator, 10);
+      const first = await service.backfill(id, operator, 3);
+      expect(first.migration?.stage_cursor).toBe(
+        JSON.stringify(['c-bulk-chat', 'bulk-chat'])
+      );
+      await service.backfill(id, operator, 3);
+      expect(await read()).toEqual(scalar);
+      expect(scalar).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            voter_profile_id: 'MIXED-VOTER',
+            value: -5,
+            credit_spent: 5,
+            created_at: 20,
+            updated_at: 20
+          }),
+          expect.objectContaining({
+            voter_profile_id: 'bulk-zero',
+            value: 0,
+            credit_spent: 0,
+            created_at: 0,
+            updated_at: 0
+          })
+        ])
+      );
+    });
+
+    it('rolls back a timed-out bulk voter copy and preserves its complete checkpoint', async () => {
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      while ((await service.status(id)).migration?.stage !== 'VOTERS')
+        await service.backfill(id, operator, 10);
+      const before = (await service.status(id)).migration;
+      const original = CompetitionMigrationBackfill.prototype.batch;
+      const slow = jest
+        .spyOn(CompetitionMigrationBackfill.prototype, 'batch')
+        .mockImplementationOnce(async function (
+          this: CompetitionMigrationBackfill,
+          ...args
+        ) {
+          const result = await original.apply(this, args);
+          await sqlExecutor.execute(
+            'SELECT SLEEP(2)',
+            {},
+            { wrappedConnection: args[6].connection }
+          );
+          return result;
+        });
+      await expect(service.backfill(id, operator, 25)).rejects.toBeInstanceOf(
+        SqlExecutionBudgetExceededError
+      );
+      slow.mockRestore();
+      const after = (await service.status(id)).migration;
+      for (const key of [
+        'state',
+        'stage',
+        'stage_offset',
+        'stage_cursor',
+        'completed_stages',
+        'reset_table_index',
+        'target_watermark',
+        'applied_watermark',
+        'cutover_at',
+        'next_batch_at'
+      ] as const)
+        expect(after?.[key]).toEqual(before?.[key]);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) count from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ count: 0 });
+      await service.backfill(id, operator, 25);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select value from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ value: 7 });
+    });
+
+    it('releases copy ownership before full reporting and retains a committed checkpoint if reporting fails', async () => {
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      const before = (await service.status(id)).migration;
+      const original = CompetitionMigrationRepository.prototype.status;
+      const report = jest
+        .spyOn(CompetitionMigrationRepository.prototype, 'status')
+        .mockImplementationOnce(async function (
+          this: CompetitionMigrationRepository,
+          ...args
+        ) {
+          // This uses a different physical connection. Reporting must not retain
+          // the migration owner's lock after committing the durable batch.
+          await sqlExecutor.executeNativeQueriesInTransaction(
+            async (connection) => {
+              await new CompetitionRepository().lockLegacyExecutionOwner(
+                wave.id,
+                { connection }
+              );
+            },
+            {
+              isolationLevel: 'REPEATABLE READ',
+              executionBudget: {
+                deadlineMonotonicMillis: performance.now() + 2_000,
+                maxStatementMillis: 500,
+                finalizationReserveMillis: 250,
+                lockWaitSeconds: 1
+              }
+            }
+          );
+          await original.apply(this, args);
+          throw new Error('report unavailable');
+        });
+      await expect(service.backfill(id, operator, 10)).rejects.toThrow(
+        'report unavailable'
+      );
+      report.mockRestore();
+      const after = await service.status(id);
+      expect(after.migration?.stage).not.toBe(before?.stage);
+      expect(after.storageMode).toBe('LEGACY_ADAPTER');
+      await finishBackfill(service);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+    });
+
     it('preserves scalar credit lookup semantics for differently cased stored voter IDs', async () => {
       const profileId = 'FIXTURE-VOTER';
       for (const table of [

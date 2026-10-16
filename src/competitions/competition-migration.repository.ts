@@ -138,42 +138,22 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
       ctx.timer?.stop(timerName);
     }
   }
-  public async status(
+  /** Copy workers need only durable checkpoints while holding ownership. Full
+   * operational/capture reporting runs after the copy transaction releases it. */
+  public async checkpoint(
     id: string,
     ctx: RequestContext
-  ): Promise<MigrationStatus> {
-    const timerName = `${this.constructor.name}->status`;
+  ): Promise<CompetitionMigrationEntity | null> {
+    const timerName = `${this.constructor.name}->checkpoint`;
     ctx.timer?.start(timerName);
     try {
-      const record = await new CompetitionRepository(
-        () => this.db
-      ).findCompetitionRecordById(id, ctx);
-      if (
-        !record?.legacy_wave_id ||
-        id !== legacyCompetitionId(record.legacy_wave_id)
-      )
-        throw new Error('Not a stable legacy competition ID');
       const raw = await this.db.oneOrNull<CompetitionMigrationEntity>(
         `select * from ${COMPETITION_MIGRATIONS_TABLE} where competition_id=:id`,
         { id },
         { wrappedConnection: ctx.connection }
       );
-      const effects = await this.db.oneOrNull<{ count: number }>(
-        `select count(*) as count from ${COMPETITION_EVENT_EFFECTS_TABLE} effect join ${COMPETITION_OUTBOX_TABLE} event on event.id=effect.event_id where event.competition_id=:id and effect.completed_at is not null`,
-        { id },
-        { wrappedConnection: ctx.connection }
-      );
-      if (!raw)
-        return {
-          competitionId: id,
-          waveId: record.wave_id,
-          storageMode: record.storage_mode,
-          executionMode: record.execution_mode,
-          migration: null,
-          readiness: null,
-          completedEffects: Number(effects?.count ?? 0)
-        };
-      const migration = {
+      if (!raw) return null;
+      return {
         ...raw,
         source_watermark: safeCounter(raw.source_watermark),
         applied_watermark: safeCounter(raw.applied_watermark),
@@ -211,6 +191,41 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
             ? null
             : safeCounter(raw.cutover_decision_count)
       };
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+  public async status(
+    id: string,
+    ctx: RequestContext
+  ): Promise<MigrationStatus> {
+    const timerName = `${this.constructor.name}->status`;
+    ctx.timer?.start(timerName);
+    try {
+      const record = await new CompetitionRepository(
+        () => this.db
+      ).findCompetitionRecordById(id, ctx);
+      if (
+        !record?.legacy_wave_id ||
+        id !== legacyCompetitionId(record.legacy_wave_id)
+      )
+        throw new Error('Not a stable legacy competition ID');
+      const migration = await this.checkpoint(id, ctx);
+      const effects = await this.db.oneOrNull<{ count: number }>(
+        `select count(*) as count from ${COMPETITION_EVENT_EFFECTS_TABLE} effect join ${COMPETITION_OUTBOX_TABLE} event on event.id=effect.event_id where event.competition_id=:id and effect.completed_at is not null`,
+        { id },
+        { wrappedConnection: ctx.connection }
+      );
+      if (!migration)
+        return {
+          competitionId: id,
+          waveId: record.wave_id,
+          storageMode: record.storage_mode,
+          executionMode: record.execution_mode,
+          migration: null,
+          readiness: null,
+          completedEffects: Number(effects?.count ?? 0)
+        };
       const pending = await this.db.oneOrNull<{ count: number }>(
         `select (select count(*) from ${COMPETITION_OUTBOX_TABLE} where competition_id=:id and delivered_at is null)+(select count(*) from ${COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE} where competition_id=:id and completed_at is null) as count`,
         { id },

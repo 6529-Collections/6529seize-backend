@@ -89,6 +89,21 @@ relations and the latest copied versions in batches. It preserves content-versio
 hash checks and source observation timestamps. The ordinary native edit path
 retains its terminal-state guard.
 
+Voter copy keeps the raw `(drop_id, voter_id)` keyset cursor, including keys
+whose parent is missing or ineligible. Each page aggregates both credit totals
+and first-credit timestamps in one source query, upserts eligible votes in one
+statement, and removes stale ineligible votes. Source-key comparisons retain
+MySQL collation and copied IDs retain the voter-state spelling. Zero/negative
+votes and missing credit history keep their scalar values.
+
+Copy and replay read durable migration checkpoints under ownership; their full
+operational/capture status is read from the writer only after the copy commits
+and releases ownership. A reporting failure therefore does not undo a committed
+copy. Re-read the current durable checkpoint before considering a resume. A
+budget failure includes a migration-local statement number and SHA-256
+fingerprint, without SQL, parameters or source values. These diagnostics do not
+retry the statement or change its budget.
+
 Backfill, journal replay, independent comparison and final cutover use the bounded SQL transaction
 runtime with a five-second overall deadline, a one-second statement limit, a
 one-second lock wait and a 500ms finalization reserve. A slow comparison before
