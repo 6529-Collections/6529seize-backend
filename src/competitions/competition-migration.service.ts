@@ -520,7 +520,10 @@ export class CompetitionMigrationService {
     }
   }
 
-  /** One bounded transaction per invocation. Reissue until SHADOWING. */
+  /** One bounded copy transaction. Returns current durable writer status, which
+   * may include a later peer batch; it is not a receipt for this call's batch.
+   * Production advanceMigration ignores this result and reads status anew before
+   * its next action. Every mutation rechecks state/stop under ownership. */
   public async backfill(id: string, operator: MigrationOperator, limit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error('Batch limit must be 1..100');
@@ -606,7 +609,9 @@ export class CompetitionMigrationService {
     return this.copyStatus(id);
   }
   /** One bounded ordered journal page; then bounded derived refresh stages.
-   * Never discard capture or acknowledge a watermark before its refresh commits. */
+   * Never discard capture or acknowledge a watermark before its refresh commits.
+   * Returns current durable writer status, possibly including a later peer batch;
+   * advanceMigration reads status anew and mutations recheck under ownership. */
   public async catchUp(id: string, operator: MigrationOperator, limit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error('Batch limit must be 1..100');

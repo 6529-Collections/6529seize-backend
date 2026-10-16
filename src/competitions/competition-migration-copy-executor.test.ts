@@ -51,4 +51,52 @@ describe('migration copy diagnostics', () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(failure).not.toHaveProperty('migrationStatementFingerprint');
   });
+  it.each(['oneOrNull', 'bulkUpsert'] as const)(
+    'diagnoses inherited %s failures through execute without leaking values',
+    async (operation) => {
+      const failure = new SqlExecutionBudgetExceededError(
+        'SQL_BUDGET_EXCEEDED',
+        'WORK',
+        'NOT_SENT'
+      );
+      const execute = jest.fn().mockRejectedValue(failure);
+      const db = new MigrationCopySqlExecutor({
+        execute
+      } as unknown as SqlExecutor);
+      const result =
+        operation === 'oneOrNull'
+          ? db.oneOrNull('select :privateValue', {
+              privateValue: 'secret-profile'
+            })
+          : db.bulkUpsert(
+              'competition_votes',
+              [{ id: 'secret-profile' }],
+              ['id'],
+              ['id']
+            );
+      await expect(result).rejects.toBe(failure);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(failure).toMatchObject({
+        migrationStatementNumber: 1,
+        migrationStatementFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
+      });
+      expect(JSON.stringify(failure)).not.toMatch(
+        /secret-profile|insert into|select :/
+      );
+    }
+  );
+
+  it('does not mask an immutable budget failure with a diagnostic assignment error', async () => {
+    const failure = Object.freeze(
+      new SqlExecutionBudgetExceededError(
+        'SQL_BUDGET_EXCEEDED',
+        'WORK',
+        'NOT_SENT'
+      )
+    );
+    const db = new MigrationCopySqlExecutor({
+      execute: jest.fn().mockRejectedValue(failure)
+    } as unknown as SqlExecutor);
+    await expect(db.execute('select 1')).rejects.toBe(failure);
+  });
 });

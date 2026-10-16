@@ -1873,6 +1873,84 @@ describeWithSeed(
       expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
     });
 
+    it('sub-pages a 100-voter checkpoint while preserving every vote and its raw cursor', async () => {
+      await sqlExecutor.bulkInsert(
+        DROP_VOTER_STATE_TABLE,
+        Array.from({ length: 100 }, (_, index) => ({
+          drop_id: drop.id,
+          wave_id: wave.id,
+          voter_id: `bulk-${String(index).padStart(3, '0')}`,
+          votes: index
+        })),
+        ['drop_id', 'wave_id', 'voter_id', 'votes']
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      while ((await service.status(id)).migration?.stage !== 'VOTERS')
+        await service.backfill(id, operator, 10);
+      const execute = jest.spyOn(sqlExecutor, 'execute');
+      const result = await service.backfill(id, operator, 100);
+      const creditQueries = execute.mock.calls.filter(([sql]) =>
+        sql.includes('group by s.drop_id,s.voter_id')
+      );
+      expect(creditQueries).toHaveLength(4);
+      for (const [, params] of creditQueries)
+        expect(
+          Object.keys(params ?? {}).filter((key) => /^drop[0-9]+$/.test(key))
+        ).toHaveLength(25);
+      execute.mockRestore();
+      expect(result.migration?.stage_cursor).toBe(
+        JSON.stringify([drop.id, 'bulk-099'])
+      );
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) count,sum(value) total from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ count: 100, total: 4950 });
+      await service.backfill(id, operator, 100);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) count,sum(value) total from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ count: 101, total: 4957 });
+    });
+
+    it('returns current durable status when a peer advances between copy commit and reporting', async () => {
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      const original = CompetitionMigrationRepository.prototype.status;
+      const report = jest
+        .spyOn(CompetitionMigrationRepository.prototype, 'status')
+        .mockImplementationOnce(async function (
+          this: CompetitionMigrationRepository,
+          ...args
+        ) {
+          // The first call committed CONFIGURATION. The peer can now commit
+          // OUTCOMES before the first caller establishes its reporting snapshot.
+          await service.backfill(id, operator, 10);
+          return original.apply(this, args);
+        });
+      const result = await service.backfill(id, operator, 10);
+      report.mockRestore();
+      expect(result.migration?.stage).toBe('ENTRIES');
+      expect(result.migration?.completed_stages).toEqual(
+        expect.arrayContaining(['CONFIGURATION', 'OUTCOMES'])
+      );
+      expect(result).toEqual(await service.status(id));
+      await finishBackfill(service);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+    });
+
     it('preserves scalar credit lookup semantics for differently cased stored voter IDs', async () => {
       const profileId = 'FIXTURE-VOTER';
       for (const table of [

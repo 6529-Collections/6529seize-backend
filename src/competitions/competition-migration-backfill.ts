@@ -747,7 +747,10 @@ export class CompetitionMigrationBackfill {
         { waveId: record.wave_id, drop, voter, limit },
         { wrappedConnection: ctx.connection }
       );
-      await this.copyVoterPage(record, rows, ctx);
+      // A caller may checkpoint 100 keys, but each joined credit statement and
+      // bulk write stays at the measured 25-key size within the same atomic batch.
+      for (let index = 0; index < rows.length; index += 25)
+        await this.copyVoterPage(record, rows.slice(index, index + 25), ctx);
       const last = rows[rows.length - 1];
       return rows.length === limit
         ? JSON.stringify([last.drop_id, last.voter_id])

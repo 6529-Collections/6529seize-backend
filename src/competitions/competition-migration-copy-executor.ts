@@ -8,7 +8,8 @@ import {
 } from '@/sql-executor';
 
 /** Migration-only failure context. Never attach SQL text, parameters or rows to
- * the error: bulk statements may contain private source values. */
+ * the error: bulk statements may contain private source values. Inherited
+ * oneOrNull/bulkUpsert helpers call this.execute, retaining this interception. */
 export class MigrationCopySqlExecutor extends SqlExecutor {
   private statementNumber = 0;
 
@@ -25,7 +26,10 @@ export class MigrationCopySqlExecutor extends SqlExecutor {
     try {
       return await this.delegate.execute<T>(sql, params, options);
     } catch (error) {
-      if (error instanceof SqlExecutionBudgetExceededError) {
+      if (
+        error instanceof SqlExecutionBudgetExceededError &&
+        Object.isExtensible(error)
+      ) {
         Object.assign(error, {
           migrationStatementNumber: statementNumber,
           migrationStatementFingerprint: createHash('sha256')
