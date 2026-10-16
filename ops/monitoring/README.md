@@ -346,3 +346,54 @@ grants are independent of runtime delivery. Follow the
 [dashboard runbook](../docs/operations/monitoring-health-dashboard.md) for metric
 semantics, required resource parameters, rollout and validation. Pipeline
 heartbeats do not establish application-job success.
+
+## NFT refresh outcomes
+
+`nftLinkRefresherLoop` emits `6529.nft.refresh.v1` EMF records after persistence,
+with `Completed`, `Success`, `Failure`, `Unavailable`, `NewUnavailable`, and
+`PreviouslyWorkingUnavailable` counts in `6529/NftLinkRefresher`. All six values
+(including zeros) share each record. Only `Environment` and the six catalogued
+NFT `Provider` values are metric dimensions. Per-link hashes and correlation IDs
+stay in source logs. The source-owned `seize-monitoring-{environment}-nft-refresh` dashboard shows
+outcomes and newly unavailable counts for each provider; it supplies the persistent-failure review
+surface without generating a notification for each link.
+
+Expected canonical-page 404s and recognized recoverable fetch failures do not
+send individual notifications. Retry attempts are warnings, counted only when
+an outcome is persisted. Unexpected failures, auth errors and unrecognized 404s
+still notify; DB/lock exceptions continue through the handler/platform path.
+Only the SQS worker opts into this policy. API callers, retry timings, backoff,
+cache preservation and preview/WS failure notifications keep their behavior.
+
+Initial provider policies:
+
+- `FailureRate`: at least 5% failed eligible outcomes, excluding unavailable
+  pages from numerator and denominator; at least 20 eligible outcomes per
+  five-minute period, breaching three consecutive periods (15 minutes).
+- `NewUnavailableSurge`: at least 20 completions in a 15-minute period and either
+  five newly unavailable links representing at least 10% of completions, or
+  five previously successful links starting a failure episode. A link counts
+  once until a successful refresh clears its existing `failed_since` field.
+  Links already in a failure episode do not become new incidents on deployment.
+- Both alarms emit a nonbreaching datapoint only with successful samples and
+  sufficient traffic. Missing/ineligible observations leave the prior state
+  (`TreatMissingData=ignore`); silence is not recovery. A recovery means the
+  aggregate threshold cleared, not that every missing page returned.
+- Existing Lambda Errors/OOM/Throttles remain. `NftRefreshAge` alarms at 1,800
+  seconds in three of five minutes; `NftRefreshDeadLetters` alarms on one visible
+  message. These independently cover a stalled worker.
+
+Thresholds are operational starting values; low-volume providers may not meet
+sample gates. Inspect dashboard counts and retained logs when tuning. Do not
+raise thresholds to conceal an unexplained regression. In particular, provider
+404 bursts and previously-working pages remain separate signals from persistent
+individual missing pages. Raw logs/EMF publication are best effort, and platform
+alarms remain independent of the application emitter.
+
+Roll out each environment in this order: generated source stack including the
+NFT dashboard (existing `deploy:source` runbook path), then `Deploy a service` for `nftLinkRefresherLoop`. Verify all source alarm
+expressions/dimensions and queue guards before the worker rollout. Verify EMF
+extraction, completed outcomes and preserved error coverage from natural traffic
+or a controlled staging check. No API, frontend or schema deployment is needed.
+Rollback the worker first to restore individual reporting; retained counters and
+additive source alarms can remain while investigation continues.

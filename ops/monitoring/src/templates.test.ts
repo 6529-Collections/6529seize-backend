@@ -502,3 +502,72 @@ test('archive logging and encrypted fallback preserve narrowly scoped delivery p
     );
   }
 });
+
+test('NFT incidents use completed outcomes, sample gates, sustained failures and observed-success recovery', () => {
+  for (const environment of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(
+        new URL(`../source-${environment}.json`, import.meta.url),
+        'utf8'
+      )
+    ).Resources;
+    for (const provider of [
+      'SUPERRARE',
+      'OPENSEA',
+      'FOUNDATION',
+      'MANIFOLD',
+      'TRANSIENT',
+      'GAMMAIO'
+    ]) {
+      for (const kind of ['FailureRate', 'NewUnavailableSurge']) {
+        const alarm = resources[`NftRefresh${provider}${kind}`].Properties;
+        assert.equal(alarm.TreatMissingData, 'ignore');
+        assert.equal(alarm.EvaluationPeriods, kind === 'FailureRate' ? 3 : 1);
+        assert.deepEqual(alarm.OKActions, alarm.AlarmActions);
+        const inputs = alarm.Metrics.filter(
+          (metric: { MetricStat?: unknown }) => metric.MetricStat
+        );
+        for (const input of inputs) {
+          assert.equal(
+            input.MetricStat.Period,
+            kind === 'FailureRate' ? 300 : 900
+          );
+          assert.equal(
+            input.MetricStat.Metric.Namespace,
+            '6529/NftLinkRefresher'
+          );
+          assert.deepEqual(input.MetricStat.Metric.Dimensions, [
+            { Name: 'Environment', Value: { Ref: 'Environment' } },
+            { Name: 'Provider', Value: provider }
+          ]);
+        }
+        const expression = alarm.Metrics.at(-1).Expression;
+        assert.equal(
+          expression,
+          kind === 'FailureRate'
+            ? 'IF((s+f)>=20,IF(100*f/(s+f)>=5,1,IF(s>0,0)))'
+            : 'IF(c>=20,IF((n>=5 AND 100*n/c>=10) OR p>=5,1,IF(s>0,0)))'
+        );
+      }
+    }
+    const body = JSON.parse(
+      resources.NftRefreshDashboard.Properties.DashboardBody['Fn::Sub']
+    );
+    assert.equal(body.widgets.length, 12);
+    for (const widget of body.widgets) {
+      assert.equal(widget.properties.region, '${AWS::Region}');
+      assert.equal(widget.properties.accountId, '${AWS::AccountId}');
+      for (const metric of widget.properties.metrics) {
+        assert.equal(metric.length, 6);
+        assert.equal(metric[0], '6529/NftLinkRefresher');
+        assert.equal(metric[4], 'Provider');
+      }
+    }
+    assert.equal(resources.NftRefreshAge.Properties.Threshold, 1800);
+    assert.equal(resources.NftRefreshDeadLetters.Properties.Threshold, 1);
+    assert.equal(
+      resources.nftLinkRefresherLoopErrors.Properties.EvaluationPeriods,
+      1
+    );
+  }
+});

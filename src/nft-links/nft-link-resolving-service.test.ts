@@ -18,6 +18,8 @@ import {
   RequiredNftPageNotFoundError
 } from './nft-link-page-retry';
 import { env } from '@/env';
+import { nftRefreshObserver } from '@/nftLinkRefresherLoop/refresh-outcome';
+import type { NftRefreshObserver } from '@/nft-links/nft-refresh-observer';
 import { HttpError } from './lib/http';
 
 jest.mock('@/logging', () => ({
@@ -45,7 +47,7 @@ const card: NormalizedNftCard = {
   links: { viewUrl: url }
 };
 
-function setup() {
+function setup(observer?: NftRefreshObserver) {
   const resolver = { resolve: jest.fn().mockResolvedValue(card) };
   const db = {
     lockForProcessing: jest.fn().mockResolvedValue({
@@ -73,7 +75,8 @@ function setup() {
     resolver as unknown as NftLinkResolver,
     notificationDb as unknown as NftLinksDb,
     notifier,
-    queue as unknown as SQS
+    queue as unknown as SQS,
+    observer
   );
   return { resolver, db, notifier, service, queue };
 }
@@ -88,6 +91,66 @@ describe('NFT link refresh retries and persistence', () => {
   afterEach(() => {
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  it('counts a refresh that succeeds after a retry exactly once and does not notify for retry attempts', async () => {
+    const observer = {
+      completed: jest.fn(),
+      isExpectedFailure: nftRefreshObserver.isExpectedFailure
+    };
+    const { resolver, service } = setup(observer);
+    resolver.resolve.mockRejectedValueOnce(
+      new HttpError(503, url, 'provider unavailable', url)
+    );
+    const run = service.attemptResolve(url, {});
+    await jest.advanceTimersByTimeAsync(10_000);
+    await run;
+    expect(observer.completed).toHaveBeenCalledTimes(1);
+    expect(observer.completed.mock.calls[0][2]).toEqual({ success: true });
+    expect((service as any).logger.errorWithDiagnostic).not.toHaveBeenCalled();
+  });
+
+  it('keeps expected missing pages quiet, preserves unexpected failures, and ignores skipped deliveries', async () => {
+    const observer = {
+      completed: jest.fn(),
+      isExpectedFailure: nftRefreshObserver.isExpectedFailure
+    };
+    const { resolver, service, db } = setup(observer);
+    const page = validateLinkUrl(
+      'https://transient.xyz/mint/synthetic-fixture'
+    );
+    resolver.resolve.mockRejectedValue(
+      new RequiredNftPageNotFoundError(nftPageRetryScope(page))
+    );
+    await service.attemptResolve(page.originalUrl, {});
+    expect(observer.completed).toHaveBeenCalledTimes(1);
+    expect((service as any).logger.errorWithDiagnostic).not.toHaveBeenCalled();
+    db.lockForProcessing.mockResolvedValue(null);
+    await service.attemptResolve(page.originalUrl, {});
+    expect(observer.completed).toHaveBeenCalledTimes(1);
+    db.lockForProcessing.mockResolvedValue({ is_locked_since: 123 });
+    resolver.resolve.mockRejectedValue(new Error('unexpected defect'));
+    const run = service.attemptResolve(url, {});
+    await jest.advanceTimersByTimeAsync(40_000);
+    await run;
+    expect(observer.completed).toHaveBeenCalledTimes(2);
+    expect((service as any).logger.errorWithDiagnostic).toHaveBeenCalledTimes(
+      1
+    );
+  });
+
+  it('does not record a completed outcome when persistence fails', async () => {
+    const observer = {
+      completed: jest.fn(),
+      isExpectedFailure: nftRefreshObserver.isExpectedFailure
+    };
+    const { resolver, service, db } = setup(observer);
+    resolver.resolve.mockRejectedValue(new Error('provider defect'));
+    db.updateWithFailure.mockRejectedValue(new Error('database unavailable'));
+    const run = service.attemptResolve(url, {}).catch((error) => error);
+    await jest.advanceTimersByTimeAsync(40_000);
+    expect(await run).toEqual(new Error('database unavailable'));
+    expect(observer.completed).not.toHaveBeenCalled();
   });
 
   it('records failure once instead of persisting an adapter result returned after the deadline', async () => {
