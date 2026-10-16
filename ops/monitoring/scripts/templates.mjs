@@ -1059,8 +1059,10 @@ function sourceTemplate(environment) {
           'waveScoreRefreshLoop',
           'subscriptionCoverageReconciliationLoop',
           'nftsLoop',
-          'releaseNotesGenerationLoop'
+          'releaseNotesGenerationLoop',
+          'transactionsProcessingLoop'
         ].includes(name) && metric === 'Throttles';
+      const breachingMinutes = name === 'transactionsProcessingLoop' ? 5 : 3;
       r[`${id}${metric}`] = {
         Type: 'AWS::CloudWatch::Alarm',
         Properties: {
@@ -1074,7 +1076,9 @@ function sourceTemplate(environment) {
           Period: 60,
           // These queue/scheduled workers can briefly contend for reserved concurrency.
           EvaluationPeriods: sustainedThrottling ? 5 : 1,
-          ...(sustainedThrottling ? { DatapointsToAlarm: 3 } : {}),
+          ...(sustainedThrottling
+            ? { DatapointsToAlarm: breachingMinutes }
+            : {}),
           Threshold: 1,
           ComparisonOperator: 'GreaterThanOrEqualToThreshold',
           TreatMissingData: 'notBreaching',

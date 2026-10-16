@@ -982,7 +982,10 @@ export class CreateOrUpdateDropUseCase {
       const maximumTimeAllowedForEdit = Time.millis(
         env.getIntOrNull('MAX_DROP_EDIT_TIME_MS') ?? 0
       );
-      if (dropLastTouched.diffFromNow().gt(maximumTimeAllowedForEdit)) {
+      if (
+        wave.description_drop_id !== dropBeforeUpdate.id &&
+        dropLastTouched.diffFromNow().gt(maximumTimeAllowedForEdit)
+      ) {
         throw new ForbiddenException(
           `Drop can't be edited after ${maximumTimeAllowedForEdit}`
         );

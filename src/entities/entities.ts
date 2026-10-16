@@ -314,3 +314,5 @@ export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalid
 export * from './ICompetitionMigration';
 
 export { TransferReconciliationEntity } from './ITransferReconciliation';
+
+export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';
