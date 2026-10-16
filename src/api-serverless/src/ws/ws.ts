@@ -72,7 +72,8 @@ class WebsocketClientConnections extends ClientConnections {
     try {
       socket.send(message);
       recordWebSocketAcknowledgement(connectionId, message, 'accepted');
-    } catch (err: any) {
+    } catch {
+      // Preserve the unavailable-socket result without exposing transport errors.
       recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
       throw new SocketNotAvailableException();
     }

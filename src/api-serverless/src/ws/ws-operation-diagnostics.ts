@@ -31,6 +31,17 @@ function socketHash(connectionId: string): string {
   return createHash('sha256').update(connectionId).digest('hex');
 }
 
+function routeOperation(routeKey: string): WsDiagnosticOperation | undefined {
+  if (routeKey === '$connect') return 'REGISTER';
+  if (routeKey === '$disconnect') return 'DISCONNECT';
+  return undefined;
+}
+
+function handlerOutcome(status: number | null): string {
+  if (status === null || status >= 500) return 'failed';
+  return status >= 400 ? 'rejected' : 'completed';
+}
+
 /** Fixed labels and numeric metadata only; logging must not alter socket behavior. */
 export function logWebSocketDiagnostic(
   failed: boolean,
@@ -76,8 +87,8 @@ export function recordWebSocketAcknowledgement(
   outcome: AcknowledgementOutcome
 ): void {
   const current = storage.getStore();
+  if (!current) return;
   if (
-    !current ||
     current.socket_hash !== socketHash(connectionId) ||
     message.length > 128 * 1024
   )
@@ -117,15 +128,10 @@ export async function withWebSocketOperationDiagnostics<
     socket_hash: socketHash(input.connectionId),
     lambda_request_id: safeRequestId(input.lambdaRequestId),
     gateway_request_id: safeRequestId(input.gatewayRequestId),
-    operation:
-      input.routeKey === '$connect'
-        ? 'REGISTER'
-        : input.routeKey === '$disconnect'
-          ? 'DISCONNECT'
-          : undefined,
+    operation: routeOperation(input.routeKey),
     acknowledgement: 'not_attempted'
   };
-  return loggerContext.run({ requestId: input.lambdaRequestId }, () =>
+  return await loggerContext.run({ requestId: input.lambdaRequestId }, () =>
     storage.run(current, async () => {
       const started = performance.now();
       let status: number | null = null;
@@ -144,12 +150,7 @@ export async function withWebSocketOperationDiagnostics<
               ...webSocketDiagnosticMetadata(input.connectionId),
               event: 'ws_operation',
               operation: current.operation ?? 'OTHER',
-              outcome:
-                status === null || status >= 500
-                  ? 'failed'
-                  : status >= 400
-                    ? 'rejected'
-                    : 'completed',
+              outcome: handlerOutcome(status),
               response_status: status,
               acknowledgement: current.acknowledgement,
               acknowledgement_type: current.acknowledgement_type ?? null,

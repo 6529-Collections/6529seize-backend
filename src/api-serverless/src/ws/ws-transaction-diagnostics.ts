@@ -104,7 +104,7 @@ export class WsTransactionDiagnostics {
     this.phase = 'acquisition';
     this.sessionId = null;
     this.isolation = null;
-    return attempts.run(this, action);
+    return await attempts.run(this, action);
   }
 
   completed(): void {
