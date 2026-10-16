@@ -28,6 +28,11 @@ changed keys and refreshes live entry ranks and leaderboard ranks in bounded
 batches. Entry ranks include participating entries and historical winners, with
 published winner ranks retained. The active-only leaderboard keeps its separately
 locked snapshot ordering. Both projections commit before the window is acknowledged.
+Until every page finishes, native ranks are an incomplete shadow projection;
+public readers continue to select legacy storage. Per-page commits do not advance
+the applied watermark. Only the final refresh page acknowledges the target, and
+comparison/cutover still reject any source change or incomplete refresh. Batch
+limits are validated at 1..100 rows, so rank updates contain at most 100 CASE arms.
 The refresh retains the
 completed voter, decision, award and archive stages instead of copying them again
 after every routine snapshot. The entire journal window since the last applied
@@ -40,7 +45,11 @@ existing legacy-owned checkpoints remain resumable without a schema change.
 For a legacy-owned copy, earlier deployed migrators understand the same stage,
 cursor, completed-stage and watermark fields. Their leaderboard refresh does not
 repair live entry ranks, so a binary rollback can leave entry parity mismatches;
-keep legacy ownership and investigate rather than accepting such a comparison.
+keep legacy ownership rather than accepting such a comparison. The release
+operator should retain the stop, capture status and comparison diagnostics, and
+check whether the deployed worker refreshes entry ranks. Resume the saved copy
+with the reviewed correction only after its release gates pass; do not re-enroll,
+clear parity failures or force cutover to work around a rollback mismatch.
 The older migrator (`0f79fcc82`) uses a conservative full refresh on later journal
 windows, which rebuilds entries but can reintroduce the convergence problem.
 Stop the current invocation at a saved checkpoint before changing the migrator

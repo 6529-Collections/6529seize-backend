@@ -1,5 +1,6 @@
 import { withLegacyCompetitionProfileMerge } from './legacy-competition-profile-merge';
 import { appFeatures } from '@/app-features';
+import { competitionService } from '@/competitions/competition.service';
 import { DropVotingDb } from '@/api/drops/drop-voting.db';
 import { migrationCommandConfiguration } from './legacy-competition-configuration';
 import { NativeCompetitionReader } from './native-competition.reader';
@@ -1410,6 +1411,50 @@ describeWithSeed(
       ).toEqual({ count: 3 });
     });
 
+    it('retains legacy ownership when one historical entry won multiple decisions', async () => {
+      await sqlExecutor.execute(
+        `update ${DROPS_TABLE} set drop_type='WINNER' where id=:dropId`,
+        { dropId: drop.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values (:waveId,100),(:waveId,200)`,
+        { waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (wave_id,decision_time,drop_id,ranking,final_vote,prizes) values (:waveId,100,:dropId,4,7,'[]'),(:waveId,200,:dropId,2,7,'[]')`,
+        { waveId: wave.id, dropId: drop.id }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      while ((await service.status(id)).migration?.stage !== 'ARCHIVE_VOTERS')
+        await service.backfill(id, operator, 1);
+      const record =
+        (await new CompetitionRepository().findCompetitionRecordById(id, {}))!;
+      const baseline = await new LegacyCompetitionBaselineRepository(
+        () => sqlExecutor
+      ).getSnapshot(record, Date.now(), {});
+      expect(baseline.entries).toEqual([
+        expect.objectContaining({ drop_id: drop.id, rank: 2 })
+      ]);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select \`rank\` from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id and drop_id=:dropId`,
+          { id, dropId: drop.id }
+        )
+      ).toEqual({ rank: 2 });
+      await expect(service.backfill(id, operator, 1)).rejects.toThrow(
+        'historical winner identity requires a reviewed mapping'
+      );
+      expect((await service.status(id)).storageMode).toBe('LEGACY_ADAPTER');
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: false
+      });
+    });
+
     it('catches recurring decisions without replaying unchanged history', async () => {
       await sqlExecutor.execute(
         `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values (:waveId,100),(:waveId,200),(:waveId,300)`,
@@ -1688,6 +1733,52 @@ describeWithSeed(
           'ARCHIVE_VOTERS'
         ])
       });
+      const scheduled = (await service.status(id)).migration!;
+      await service.backfill(id, operator, 1);
+      const partial = await service.status(id);
+      expect(partial).toMatchObject({
+        storageMode: 'LEGACY_ADAPTER',
+        executionMode: 'ACTIVE',
+        migration: {
+          state: 'BACKFILLING',
+          stage: 'LEADERBOARD',
+          applied_watermark: scheduled.applied_watermark,
+          target_watermark: scheduled.target_watermark
+        }
+      });
+      expect(partial.migration!.target_watermark).toBeGreaterThan(
+        partial.migration!.applied_watermark
+      );
+      // One of two one-row pages has committed. This incomplete native
+      // projection is quarantined while the public reader still uses legacy.
+      expect(
+        await sqlExecutor.execute(
+          `select \`rank\` from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id order by drop_id`,
+          { id }
+        )
+      ).toEqual([{ rank: 2 }, { rank: 2 }]);
+      jest
+        .spyOn(appFeatures, 'isUnifiedCompetitionReadsEnabled')
+        .mockReturnValue(true);
+      const publicPage = await competitionService.listEntries(
+        wave.id,
+        id,
+        { limit: 10, direction: 'ASC', sort: 'rank' },
+        {},
+        {}
+      );
+      expect(
+        publicPage.data.map(({ drop_id, rank }) => ({ drop_id, rank }))
+      ).toEqual([
+        { drop_id: secondDropId, rank: 1 },
+        { drop_id: drop.id, rank: 2 }
+      ]);
+      await expect(service.compare(id, operator, 1)).rejects.toThrow(
+        'Complete backfill before independent comparison'
+      );
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: false
+      });
       await finishBackfill(service);
       const rows = await sqlExecutor.execute<{ drop_id: string; rank: number }>(
         `select drop_id,\`rank\` from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id`,
@@ -1772,6 +1863,11 @@ describeWithSeed(
         { drop_id: secondDropId, rank: 2 }
       ]);
       expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      expect((await service.verifyNative(id)).failures).toEqual([]);
     });
 
     it.each([
