@@ -1,5 +1,10 @@
 import { CompetitionMigrationBackfill } from './competition-migration-backfill';
-import { CompetitionMigrationRepository } from './competition-migration.repository';
+import {
+  CompetitionMigrationRepository,
+  MIGRATION_AUDIT_INSERT_SQL
+} from './competition-migration.repository';
+import { migrationCopyCheckpoint } from './competition-migration-audit-recovery';
+import type { DbQueryOptions } from '@/db-query.options';
 import { performance } from 'node:perf_hooks';
 import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
 import { CompetitionMigrationContentRepository } from '@/competitions/competition-migration-content.repository';
@@ -45,6 +50,7 @@ import {
   COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   COMPETITION_MIGRATION_CHANGES_TABLE,
   COMPETITION_MIGRATIONS_TABLE,
+  COMPETITION_MIGRATION_AUDIT_TABLE,
   COMPETITIONS_TABLE,
   DROP_RANK_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
@@ -1824,6 +1830,128 @@ describeWithSeed(
         )
       ).toEqual({ value: 7 });
     });
+
+    it.each(['recover', 'repeat', 'stop', 'checkpoint', 'owner'] as const)(
+      'guards recovery after a real timed-out audit insert: %s',
+      async (scenario) => {
+        const wait = jest.fn(async () => {
+          // Match the real backoff. A destroyed client cannot commit, but MySQL
+          // may still be unwinding the interrupted DML before releasing locks.
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          const current = await service.status(id);
+          expect(migrationCopyCheckpoint(current.migration!)).toBe(
+            migrationCopyCheckpoint(before!)
+          );
+          expect(current.migration?.next_batch_at).toBe(before?.next_batch_at);
+          expect(
+            await sqlExecutor.oneOrNull(
+              `select count(*) count from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+              { id }
+            )
+          ).toEqual({ count: 0 });
+          // Before the retry, a separate connection can take ownership. This
+          // proves the interrupted DML drained, not just client destruction.
+          await sqlExecutor.executeNativeQueriesInTransaction(
+            async (connection) => {
+              await new CompetitionRepository().lockLegacyExecutionOwner(
+                wave.id,
+                { connection }
+              );
+            },
+            {
+              executionBudget: {
+                deadlineMonotonicMillis: performance.now() + 2000,
+                maxStatementMillis: 500,
+                finalizationReserveMillis: 250,
+                lockWaitSeconds: 1
+              }
+            }
+          );
+          if (scenario === 'stop')
+            await service.recordException(id, operator, 'AUDIT_RETRY_TEST');
+          if (scenario === 'checkpoint')
+            await sqlExecutor.execute(
+              `update ${COMPETITION_MIGRATIONS_TABLE} set stage_cursor='["peer","cursor"]' where competition_id=:id`,
+              { id }
+            );
+          if (scenario === 'owner')
+            await sqlExecutor.execute(
+              `update ${COMPETITIONS_TABLE} set storage_mode='NATIVE' where id=:id`,
+              { id }
+            );
+        });
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          Date.now,
+          0,
+          'production',
+          wait
+        );
+        await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+        while ((await service.status(id)).migration?.stage !== 'VOTERS')
+          await service.backfill(id, operator, 10);
+        const before = (await service.status(id)).migration;
+        const execute = sqlExecutor.execute.bind(sqlExecutor);
+        let auditAttempts = 0;
+        jest
+          .spyOn(sqlExecutor, 'execute')
+          .mockImplementation(
+            <T = unknown>(
+              sql: string,
+              params?: Record<string, unknown>,
+              queryOptions?: DbQueryOptions
+            ): Promise<T[]> => {
+              let actual = sql;
+              if (
+                sql === MIGRATION_AUDIT_INSERT_SQL &&
+                params?.action === 'BACKFILL_BATCH'
+              ) {
+                auditAttempts++;
+                if (auditAttempts === 1 || scenario === 'repeat')
+                  actual = sql.replace(':now)', ':now + SLEEP(2)*0)');
+              }
+              return execute<T>(actual, params, queryOptions);
+            }
+          );
+        const result = service.backfill(id, operator, 25);
+        if (scenario === 'recover') {
+          const after = await result;
+          expect(migrationCopyCheckpoint(after.migration!)).not.toBe(
+            migrationCopyCheckpoint(before!)
+          );
+          expect(
+            await sqlExecutor.oneOrNull(
+              `select value,credit_spent from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+              { id }
+            )
+          ).toEqual({ value: 7, credit_spent: 7 });
+        } else {
+          await expect(result).rejects.toThrow(
+            scenario === 'repeat'
+              ? 'SQL_BUDGET_EXCEEDED'
+              : scenario === 'stop'
+                ? 'AUDIT_RETRY_TEST'
+                : 'same legacy active checkpoint'
+          );
+          expect(
+            await sqlExecutor.oneOrNull(
+              `select count(*) count from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+              { id }
+            )
+          ).toEqual({ count: 0 });
+        }
+        expect(wait).toHaveBeenCalledTimes(1);
+        expect(auditAttempts).toBe(
+          scenario === 'recover' || scenario === 'repeat' ? 2 : 1
+        );
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) count from ${COMPETITION_MIGRATION_AUDIT_TABLE} where competition_id=:id and action='BACKFILL_BATCH' and JSON_UNQUOTE(JSON_EXTRACT(report,'$.stage'))='VOTERS'`,
+            { id }
+          )
+        ).toEqual({ count: scenario === 'recover' ? 1 : 0 });
+      }
+    );
 
     it('releases copy ownership before full reporting and retains a committed checkpoint if reporting fails', async () => {
       const service = new CompetitionMigrationService(
