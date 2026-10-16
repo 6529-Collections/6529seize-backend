@@ -8,6 +8,11 @@ import { ConnectionWrapper, SqlExecutor, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { AppWebSockets } from './ws';
 import { WsConnectionRepository } from './ws-connection.repository';
+import { Logger } from '@/logging';
+import {
+  withWebSocketOperationDiagnostics,
+  setWebSocketDiagnosticOperation
+} from '@/api/ws/ws-operation-diagnostics';
 
 const connectionId = 'ws-atomicity-fixture';
 const expiry = 3_000_000_000;
@@ -162,6 +167,87 @@ describeWithSeed(
       );
       expect(attempts).toBe(2);
       expect(await stored()).toEqual([{ identity_id: 'new', grants: 'new' }]);
+    });
+
+    it('captures the actual server session in the locking query and links a committed retry', async () => {
+      const { observed, sockets } = fixture();
+      const records: Record<string, unknown>[] = [];
+      const sessions: number[] = [];
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation((_message, detail) => {
+          if (detail?.event === 'ws_transaction') records.push(detail);
+        });
+      const info = jest
+        .spyOn(Logger.prototype, 'info')
+        .mockImplementation((_message, detail) => {
+          if (detail?.event === 'ws_transaction') records.push(detail);
+        });
+      let signaled = false;
+      observed.beforeQuery = async (sql, options) => {
+        if (sql.startsWith('select connection_id, connection_id()')) {
+          const session = await sqlExecutor.execute<{ id: number }>(
+            'select connection_id() as id',
+            undefined,
+            options
+          );
+          sessions.push(session[0].id);
+        }
+        if (
+          !signaled &&
+          sql.startsWith('insert into ws_notification_subscriptions')
+        ) {
+          signaled = true;
+          await sqlExecutor.execute(
+            "signal sqlstate '40001' set mysql_errno = 1213, message_text = 'synthetic deadlock'",
+            undefined,
+            options
+          );
+        }
+      };
+      try {
+        await withWebSocketOperationDiagnostics(
+          {
+            routeKey: '$default',
+            connectionId,
+            lambdaRequestId: 'diagnostic-fixture'
+          },
+          async () => {
+            setWebSocketDiagnosticOperation('AUTHENTICATE');
+            await sockets.authenticateConnection(
+              { connectionId, identityId: 'new', jwtExpiry: expiry },
+              {}
+            );
+            return { statusCode: 200 };
+          }
+        );
+        expect(records).toHaveLength(2);
+        expect(records[0]).toMatchObject({
+          db_session_id: sessions[0],
+          isolation: 'REPEATABLE-READ',
+          phase: 'insert_subscriptions',
+          attempt: 1,
+          outcome: 'retry_pending',
+          mysql_code: 'ER_LOCK_DEADLOCK'
+        });
+        expect(records[1]).toMatchObject({
+          db_session_id: sessions[1],
+          phase: 'commit',
+          attempt: 2,
+          outcome: 'committed',
+          recovered: true
+        });
+        expect(records[0].operation_id).toBe(records[1].operation_id);
+        expect(records[0].mutation_id).toBe(records[1].mutation_id);
+        expect(sessions).toHaveLength(2);
+        expect(sessions.every((id) => Number.isSafeInteger(id) && id > 0)).toBe(
+          true
+        );
+        expect(await stored()).toEqual([{ identity_id: 'new', grants: 'new' }]);
+      } finally {
+        warn.mockRestore();
+        info.mockRestore();
+      }
     });
 
     it('keeps an in-flight identity change invisible until commit, then serializes identity sync', async () => {
