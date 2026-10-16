@@ -146,3 +146,7 @@ References:
 - [CloudFormation service roles](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html)
 - [IAM policy simulation limitations](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_testing-policies.html)
 - [IAM policy quotas](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html)
+
+## WebSocket recovery worker
+
+`WebSocketDeliveryDeployment.json` is an additional narrowly scoped inline policy for the existing deployment role. An administrative identity installs it before deploying `webSocketDeliveryLoop`; the GitHub role cannot modify its own permissions. It permits only the new worker function/versions, its environment-specific CloudFormation stack, deployment-bucket prefix, schedule, log group and alarms. Existing managed policies and their ten attachments are unchanged. The deployment-bucket prefix allows CloudFormation's generated suffix; it does not grant application-data access. Validate the document with Access Analyzer and simulate new-worker operations and unrelated denials before installation. Deploy through the ordinary GitHub workflow afterward.

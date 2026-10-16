@@ -1,3 +1,21 @@
+jest.mock('@/ws-delivery/ws-delivery-store', () => {
+  const actual = jest.requireActual('@/ws-delivery/ws-delivery-store');
+  return {
+    ...actual,
+    webSocketDeliveryStore: {
+      claim: async () => ({
+        acquired: true,
+        revision: 0,
+        failures: 0,
+        firstFailureAt: 0
+      }),
+      snapshot: async () => ({ healthyConnections: 0 }),
+      finish: async () => true,
+      forget: async () => undefined
+    }
+  };
+});
+
 jest.mock('@/api/ws/ws-outbound-queue', () => ({
   ...jest.requireActual('@/api/ws/ws-outbound-queue'),
   enqueueWebSocketFrame: jest.fn()
@@ -108,6 +126,20 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     repository.canIdentityReadQueuedResource.mockReset();
   });
 
+  it('sends recovery markers inline after authorization without entering the durable frame queue', async () => {
+    mockHandle.mockResolvedValue(response(204));
+    expect(
+      await sockets.send({
+        connectionId: 'synthetic',
+        message: '{"type":"RESYNC_REQUIRED","data":{}}',
+        recovery: true
+      })
+    ).toEqual({ status: 'sent' });
+    expect(repository.getByConnectionId).toHaveBeenCalledWith('synthetic', {});
+    expect(mockHandle).toHaveBeenCalledTimes(1);
+    expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
+  });
+
   it('sends legacy frames immediately without enqueueing and still reports throttling', async () => {
     repository.getByConnectionId.mockResolvedValueOnce({
       identity_id: 'profile',
@@ -126,8 +158,9 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
     await expect(
       sockets.send({ connectionId: 'synthetic', message: '{}' })
-    ).rejects.toThrow();
-    expect(mockError).toHaveBeenCalled();
+    ).resolves.toEqual({ status: 'resync_pending' });
+    expect(mockError).not.toHaveBeenCalled();
+    expect(mockWarn).toHaveBeenCalled();
     expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
   });
 
@@ -522,7 +555,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
         batchItemFailures: [{ itemIdentifier: 'durable-frame' }]
       });
       expect(mockHandle).toHaveBeenCalledTimes(3);
-      expect(report).toHaveBeenCalledTimes(1);
+      expect(report).not.toHaveBeenCalled();
       expect(visibility).toHaveBeenCalledTimes(1);
       const command = visibility.mock
         .calls[0][0] as ChangeMessageVisibilityCommand;
@@ -717,7 +750,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
       delivery_failure: 'DEADLINE_EXCEEDED',
       sdk_attempts: null,
       frame_type: 'DROP_DELETE',
-      connection_hash: expect.stringMatching(/^[a-f0-9]{24}$/)
+      connection_hash: expect.stringMatching(/^[a-f0-9]{64}$/)
     });
     expect(JSON.stringify(mockError.mock.calls)).not.toContain(
       'private-connection'
@@ -780,7 +813,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
         connectionId: 'synthetic',
         message: '{"type":"USER_IS_TYPING"}'
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ status: 'sent' });
     expect(mockHandle).toHaveBeenCalledTimes(3);
     expect(mockAttempts).toEqual([
       'attempt=1; max=3',
@@ -791,28 +824,29 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
   });
 
-  it('exhausted 429 delivery rejects for durable retry, logs metadata and keeps the connection', async () => {
+  it('exhausted legacy 429 delivery schedules refresh repair without an error alert', async () => {
     mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
     await expect(
       sockets.deliver({
         connectionId: 'synthetic',
-        message: '{"type":"AUTHENTICATED"}',
+        message: '{"type":"COMPETITION_UPDATE"}',
         skipStaleConnectionCheck: true
       })
-    ).rejects.toBeDefined();
+    ).resolves.toEqual({ status: 'resync_pending' });
     expect(mockHandle).toHaveBeenCalledTimes(3);
-    expect(mockError).toHaveBeenCalledTimes(1);
-    expect(mockError.mock.calls[0][0]).toMatchObject({
+    expect(mockError).not.toHaveBeenCalled();
+    expect(mockWarn).toHaveBeenCalledTimes(1);
+    expect(mockWarn.mock.calls[0][0]).toMatchObject({
       code: 'WS_OUTBOUND_SEND_FAILED',
-      frame_type: 'AUTHENTICATED',
+      frame_type: 'COMPETITION_UPDATE',
       error_category: 'THROTTLED',
       http_status: 429,
       sdk_attempts: 3
     });
-    expect(mockError.mock.calls[0][0].sdk_retry_delay_ms).toEqual(
+    expect(mockWarn.mock.calls[0][0].sdk_retry_delay_ms).toEqual(
       expect.any(Number)
     );
-    expect(JSON.stringify(mockError.mock.calls[0][0])).not.toMatch(
+    expect(JSON.stringify(mockWarn.mock.calls[0][0])).not.toMatch(
       /synthetic|fixed|secret|connectionId/
     );
     expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
@@ -834,10 +868,9 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
       .mockResolvedValueOnce(response(204));
     await expect(
       sockets.deliver({ connectionId: 'synthetic', message: '{}' })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ status: 'gone' });
     expect(mockHandle.mock.calls.map(([request]) => request.method)).toEqual([
-      'POST',
-      'DELETE'
+      'POST'
     ]);
     expect(repository.deleteByConnectionId).toHaveBeenCalledWith(
       'synthetic',
@@ -846,9 +879,9 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     expect(mockError).not.toHaveBeenCalled();
   });
 
-  it('a throwing error logger still propagates the send failure for retry', async () => {
+  it('a throwing warning logger still preserves scheduled refresh repair', async () => {
     mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
-    mockError.mockImplementationOnce(() => {
+    mockWarn.mockImplementationOnce(() => {
       throw new Error('synthetic logger failure');
     });
     await expect(
@@ -856,9 +889,9 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
         connectionId: 'synthetic',
         message: '{"type":"USER_IS_TYPING"}'
       })
-    ).rejects.toBeDefined();
+    ).resolves.toEqual({ status: 'resync_pending' });
     expect(mockHandle).toHaveBeenCalledTimes(3);
-    expect(mockError).toHaveBeenCalledTimes(1);
+    expect(mockWarn).toHaveBeenCalledTimes(1);
     expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
   });
 

@@ -662,6 +662,18 @@
         "lambda-errors",
         "lambda-throttles"
       ]
+    },
+    {
+      "service": "webSocketDeliveryLoop",
+      "region": "eu-west-1",
+      "functions": [
+        "webSocketDeliveryLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
     }
   ],
   "supplementalSource": "ops/monitoring/platform-functions.json",
