@@ -68,3 +68,10 @@ jobs:
           MONITORING_CLOUDFORMATION_ROLE_ARN: ${{ vars.AWS_MONITORING_CFN_ROLE_ARN }}
           MONITORING_PARAMETERS: ${{ vars.MONITORING_PARAMETERS }}
         run: ../../bin/6529 run deploy
+      - name: Show the public monitoring health endpoint
+        env:
+          MONITORING_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          monitoring_endpoint="$(/usr/local/bin/aws cloudformation describe-stacks --stack-name "seize-monitoring-${MONITORING_ENVIRONMENT}" --query "Stacks[0].Outputs[?OutputKey=='IngressUrl'].OutputValue | [0]" --output text)"
+          [[ "$monitoring_endpoint" == https://*.execute-api."${AWS_REGION}".amazonaws.com ]]
+          printf 'Monitoring health: %s/health\n' "$monitoring_endpoint"

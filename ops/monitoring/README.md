@@ -411,8 +411,16 @@ raise thresholds to conceal an unexplained regression. In particular, provider
 individual missing pages. Raw logs/EMF publication are best effort, and platform
 alarms remain independent of the application emitter.
 
-Roll out each environment in this order: generated source stack including the
-NFT dashboard (existing `deploy:source` runbook path), then `Deploy a service` for `nftLinkRefresherLoop`. Verify all source alarm
+Roll out each environment in this order: refresh the monitoring receiver via
+`Deploy operational monitoring` when the target source catalog adds services
+since its last deployment; then deploy the generated source stack including the
+NFT dashboard (existing `deploy:source` runbook path); finally run `Deploy a
+service` for `nftLinkRefresherLoop`. Receiver inventory must precede new source
+subscriptions so new service envelopes are accepted. Build/generate from the
+merged target branch to preserve staging-only catalog and coverage changes.
+The monitoring workflow prints its public health endpoint; verify that health
+response and the existing pipeline heartbeat checks before advancing.
+Verify all source alarm
 expressions/dimensions and queue guards before the worker rollout. Verify EMF
 extraction and preserved error coverage from natural traffic or a controlled
 staging check. For every provider observed emitting post-rollout outcome records,
