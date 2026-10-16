@@ -818,12 +818,14 @@ prices.
 
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.
-Publication uses a `READ COMMITTED` transaction and first acquires the same
-exclusive row in `market_depth_publication_locks` across all four collectors,
-then locks the collection state before replacing current orders. The shared
+Publication uses a `READ COMMITTED` transaction, locks the collection state and
+inserts its archive, then acquires the same exclusive row in
+`market_depth_publication_locks` across all four collectors before replacing
+current orders. The shared
 transaction lock prevents reciprocal PRIMARY-index insertion deadlocks between
 different collections and releases on commit or rollback. Fetching, normalization
-and compression remain outside the lock. Each publication logs `lock_wait_ms`,
+and compression, partition locking and archive insertion remain outside the
+shared lock. Each publication logs `lock_wait_ms`,
 `lock_held_ms` (through transaction finalization), `insert_ms` (order mapping,
 SQL construction and all insertion chunks), total time, row count and outcome;
 failed phases retain their measured timing without logging order payloads.

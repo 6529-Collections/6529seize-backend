@@ -89,9 +89,10 @@ schema, collectors and frontend remain compatible throughout the rollout.
 ## Snapshot publication coordination and timing
 
 All four market-stats functions acquire the same transaction-scoped row in
-`market_depth_publication_locks` before saving a snapshot. Provider fetching,
-normalization and compression stay parallel; only database publication takes
-turns. Commit or rollback releases the lock automatically. Lock acquisition
+`market_depth_publication_locks` immediately before deleting/reinserting current
+orders. Provider fetching, normalization, compression and transactional archive
+insertion stay parallel; current-order replacement through commit takes turns.
+All publishers keep the partition → archive → shared lock → orders lock order. Commit or rollback releases the lock automatically. Lock acquisition
 uses the database session's existing InnoDB lock-wait timeout; timeout errors
 abort the whole publication and preserve the previous complete book.
 
@@ -103,6 +104,8 @@ transaction, including failed attempts:
   including commit/rollback and adapter cleanup; null if never acquired.
 - `insert_ms`: time mapping, constructing SQL and inserting all current-order
   batches; null if insertion was never attempted.
+- `lock_wait_timeout_s`: the actual session InnoDB lock-wait limit, read without
+  changing session settings.
 - `total_ms`, `order_count`, `outcome`, `phase`, `lock_acquired`, public collection
   identifiers and generated snapshot ID support comparison across collectors.
 

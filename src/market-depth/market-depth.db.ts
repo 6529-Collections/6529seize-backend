@@ -321,6 +321,7 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
     const startedAt = performance.now();
     let lockRequestedAt: number | null = null;
     let lockAcquiredAt: number | null = null;
+    let lockWaitTimeoutSeconds: number | null = null;
     let insertMs: number | null = null;
     let phase = 'transaction';
     let outcome = 'error';
@@ -328,18 +329,6 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
     const publish = async (
       connection: DbConnection
     ): Promise<MarketDepthSnapshotMetadata> => {
-      // Acquire before any partition or order writes. The exclusive row lock
-      // lives in this transaction and is released by COMMIT/ROLLBACK, including
-      // the first invocation that creates the row. Never use a per-collection key.
-      phase = 'lock';
-      lockRequestedAt = performance.now();
-      await this.query(
-        `INSERT INTO ${MARKET_DEPTH_PUBLICATION_LOCKS_TABLE} (id)
-         VALUES (:id) ON DUPLICATE KEY UPDATE id=id`,
-        { id: PUBLICATION_LOCK_ID },
-        connection
-      );
-      lockAcquiredAt = performance.now();
       phase = 'partition';
       await this.query(
         `INSERT INTO ${MARKET_DEPTH_COLLECTION_STATE_TABLE}
@@ -435,6 +424,29 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
         connection
       );
 
+      // Acquire before any current-order writes. All publishers use the same
+      // partition -> archive -> global lock -> current orders sequence. The lock
+      // lives in this transaction and is released by COMMIT/ROLLBACK, including
+      // the first invocation that creates the row. Archive writes stay parallel;
+      // never use a per-collection key for the shared PRIMARY-index contention.
+      phase = 'lock_settings';
+      const lockSession = (
+        await this.query<{ seconds: number }>(
+          'SELECT @@SESSION.innodb_lock_wait_timeout AS seconds',
+          {},
+          connection
+        )
+      )[0];
+      lockWaitTimeoutSeconds = Number(lockSession.seconds);
+      phase = 'lock';
+      lockRequestedAt = performance.now();
+      await this.query(
+        `INSERT INTO ${MARKET_DEPTH_PUBLICATION_LOCKS_TABLE} (id)
+         VALUES (:id) ON DUPLICATE KEY UPDATE id=id`,
+        { id: PUBLICATION_LOCK_ID },
+        connection
+      );
+      lockAcquiredAt = performance.now();
       phase = 'delete_orders';
       await this.query(
         `DELETE FROM ${MARKET_DEPTH_CURRENT_ORDERS_TABLE}
@@ -528,6 +540,7 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
         outcome,
         phase,
         lock_acquired: lockAcquiredAt !== null,
+        lock_wait_timeout_s: lockWaitTimeoutSeconds,
         lock_wait_ms:
           lockRequestedAt === null
             ? null
