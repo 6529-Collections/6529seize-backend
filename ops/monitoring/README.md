@@ -65,6 +65,14 @@ Recovery follows the same rolling window without a separate cooldown.
 Invocation-error and OOM alarms remain immediate, as do other services' throttle
 alarms. Direct SNS alarm actions are retained.
 
+Transaction processing requires at least one throttle in each of five one-minute
+periods before alerting. Airdrop validation and redemption run sequentially with
+one reserved execution, so a short batch can overlap several scheduled runs and
+their retries before catching up successfully. The five-of-five rule tolerates
+the observed three-minute burst; five breaching minutes in the evaluation window
+still alert. Missing data is non-breaching. Invocation-error and OOM alarms, the
+one-minute schedule, concurrency limit and notification actions are unchanged.
+
 Three audited production low-CPU autoscaling controls are recorded without
 operator notifications when the collector positively matches their exact source
 identity, dimensions, metric, statistic, period and threshold. The policy pins
