@@ -51,12 +51,19 @@ This verification correction requires only `competitionMigrationLoop`. No schema
 API or frontend deployment is needed. Reinvoking an already transferred completed
 wave rechecks source fidelity without rewriting its data.
 
-The Activity feed of a transferred primary combines its retained historical
-`DROP_VOTE_EDIT` wave logs (up to transfer time) with new native vote history.
-Original log IDs, timestamps, vote values, system-adjustment reasons and proxy
-attribution are retained. These historical logs are scoped to the original
-primary; other competitions in the same wave cannot read them. The API fix also
-restores activity on already migrated waves without rerunning migration.
+The primary competition's Activity feed combines retained legacy activity with
+native vote history under either owner, including after a supported rollback and
+later migration. Native primary votes also write a wave log in the same
+transaction, with the exact native Activity ID (`<competition-id>:<sequence>`).
+The combined reader emits that event once, retains its native timestamp, and
+uses the linked log's complete contents and proxy attribution. Legacy-only logs
+retain their original IDs and timestamps. Adjustment reasons are preserved.
+New cutover audits record `voteActivityIdentity: NATIVE_ID_V1`: all native
+primary writers must carry the exact-ID logging correction before that cutover.
+These migrations need no timestamp-based deduplication, including after rollback
+or clock skew. Only older cutovers use ownership intervals to filter unlinked
+compatibility logs already covered by native history. Native siblings do not inherit primary
+wave activity; normal wave/parent visibility and entry visibility still apply.
 
 For a migration smoke check, compare the legacy `/waves/{wave_id}/logs` endpoint
 filtered to `log_types=DROP_VOTE_EDIT` with the primary competition's
@@ -170,3 +177,160 @@ relaxing validation for newly created competitions.
 The compatibility view preserves absent weighted leaderboard snapshots until
 the native worker produces one. Deploy/invoke `dbMigrationsLoop` with `full` scope
 before the migration Lambda to install this projection correction.
+
+## Recovery qualification
+
+**Main Stage remains on hold.** This section qualifies synthetic local recovery;
+it does not authorize migration, staging, production, or production writes.
+Independent verification in the original chat remains outstanding. This local
+evidence is not a production-data rehearsal.
+
+### Prerequisites and evidence
+
+Use Node 22, `TZ=UTC`, Docker, both root and API dependencies installed through
+the repository's `6529` wrapper, and an isolated Testcontainers MySQL database.
+Do not copy a production `.env` or use a shared database for fault injection.
+From the repository root:
+
+```sh
+./bin/6529 ci
+(cd src/api-serverless && ../../bin/6529 ci)
+TZ=UTC ./bin/6529 run test -- --runInBand \
+  src/competitions/main-stage-recovery.integration.test.ts \
+  src/competitions/competition-vote-activity.repository.test.ts \
+  src/api-serverless/src/competitions/competition-vote-activity.service.test.ts \
+  src/competitions/competition-migration.integration.test.ts \
+  src/competitions/competition-migration-execution.integration.test.ts
+```
+
+The Main Stage-shaped fixture uses a **different, disposable wave ID**. It has
+RANK, MAIN_STAGE, TDH whole-wave credit, negative votes, unsigned voting,
+signed submissions, three active submissions per participant, 24-hour weighting,
+and rolling 2/2/3-day decision gaps. The tests use real migration, API voting,
+legacy voting, TDH reconciliation, reverse reconciliation, native execution,
+outbox, effect receipts, claim service and repositories. Sockets, pushes,
+announcements and the calendar response are local recording/failing sinks.
+The claim service creates real rows in the disposable DB without media.
+No AWS, production database, live claim publication or mint is exercised.
+
+The recovery cases cover replacement votes (positive, negative and zero),
+idempotency retries, compatibility double writes, an accepted vote between
+reverse batches, a stale completed reverse snapshot, pending effects,
+legacy voting immediately after rollback in the same second, another migration,
+Activity identity/timestamp/content/proxy retention and stable pagination.
+A conflicting Activity ID rolls back the complete vote transaction without
+overwriting its existing log; re-migration retains history and allocates a fresh
+sequence for the next accepted vote.
+Activity also remains readable while a legacy-owned re-migration resets shadow
+entries, using exact linked logs and the current legacy drop; that fallback never
+exposes missing native entries or sibling COMPETITION drops.
+A TDH reduction retains `-29 -> -3`, spending of `3` and its adjustment reason.
+Repository/service tests also retain deleted historical references while hiding
+native withdrawn/deleted entries, siblings and unreadable/private competitions.
+
+### Supported rollback boundary
+
+A return to LEGACY_ADAPTER requires no native decisions since cutover, no pending
+native/legacy effects, no completed native publication effects, and no
+native-created primary COMPETITION drops. Drain normal pending deliveries first.
+Reverse reconciliation runs bounded batches under the normal ownership lock;
+native writes can continue between batches. Only a final independent comparison
+under that lock may switch ownership. If a later accepted write invalidates the
+prepared snapshot, retain native ownership and repeat reverse reconciliation.
+
+Use the developer CLI's `status`, `verify`, `reverse-reconcile` and `rollback`
+actions against the explicitly selected environment and immutable primary UUID.
+The CLI requires `COMPETITION_MIGRATION_ENVIRONMENT` to match `--environment`,
+`NODE_ENV=local`, explicitly supplied reviewed DB settings and an operator in
+`COMPETITION_MIGRATION_OPERATORS` for live actions. Local rehearsals additionally
+require a loopback DB host. It never loads production secrets or synchronizes schema.
+`reverse-reconcile` requires `--live --operator <allowlisted-profile> --reason
+<incident-reason> --batch 1..100`; repeat until `reverse_ready` is true. Inspect
+`rollback` without `--live` first, then execute the authorized rollback with the
+same operator and reason only if its failures are empty. This document grants no
+such authorization for Main Stage.
+
+Never rewrite native COMPETITION drops to PARTICIPATORY, remove accepted votes,
+history, decisions, winners or claims, flip ownership by SQL, or clear migration
+checkpoints, outbox rows or effect receipts to make a guard pass. A reverse
+refusal is a recovery boundary, not permission to weaken it.
+
+### Demonstrated forward repair: failed publication delivery
+
+For a post-cutover native submission/decision, keep native ownership. The tested
+incident is a publication sink failure **after** the local claim transaction and
+announcement receipt commit, before outbox acknowledgement:
+
+1. Record the incident, immutable competition ID, deployed revisions, delivery
+   error code and affected event IDs. Capture accepted entry/content identities,
+   current and archived votes, history sequences, decisions/winners, claim
+   provenance and publication receipts. Run `status` and `verify`; a guarded
+   rollback reports `repairRequired` and retains NATIVE ownership.
+2. Restore the failed delivery dependency or deploy a focused correction to its
+   consumer. Preserve receipts and idempotency keys. In the qualification test,
+   restore the local push sink; the claim consumer, decision data and receipts
+   are unchanged. For a native-submission reverse refusal without decisions,
+   record the owned exception with `record-exception`, then follow the same
+   verification/review steps while retaining that submission.
+3. Let the normal `waveDecisionExecutionLoop` run again after outbox backoff.
+   Its real `CompetitionEventDispatcher.dispatchPending` retries existing
+   events. Do not reset `next_attempt_at`, delivery leases, attempts or receipts.
+   The CLI's `retry-effects` action retries **legacy** execution effects only;
+   it does not drain the native outbox.
+4. Wait for pending effects to reach zero. Compare the captured accepted data
+   and inspect claim associations and durable effects. The test re-delivers the
+   claim-routing request twice to the real local `MintingClaimsService`:
+   one claim row/provenance association and one announcement/notification effect
+   remain. Reprocessing native execution creates no second decision or winner.
+5. Run `verify` again and require empty invariant failures, NATIVE/ACTIVE
+   ownership, healthy capture/runtime flags and zero pending effects. Attach
+   the independently reviewed evidence URL. Only then record `review-repair
+--live --operator <allowlisted-profile> --reason <incident-reason> --evidence
+<https-evidence-url>`. This appends NATIVE_REPAIR_REVIEW and returns migration
+   state to NATIVE; native decisions/effects still prohibit rollback.
+
+`reviewRepair` alone fixes no data or delivery dependency. It rejects pending
+effects and invalid native invariants. The test calls it prematurely and asserts
+that rejection. This procedure demonstrates delivery recovery and the supported
+native-submission boundary; it is not a generic procedure for corrupted accepted
+votes, content, winner choices or externally published mint data. Those require
+incident-specific diagnosis and a separately reviewed forward correction.
+
+### Rollout and remaining limits
+
+For this correction on an already compatible environment, deploy affected native
+vote/credit writers sequentially before permitting another migration:
+`waveLeaderboardSnapshotterLoop`, `tdhLoop`, `overRatesRevocationLoop`,
+`delegationsLoop`, `helpBotReplyLoop`,
+`waveDecisionExecutionLoop`, then `api`, then `competitionMigrationLoop`.
+These are the deployed entry points for the changed native runtime, TDH/REP
+revocation and voting paths; the migration Lambda marks exact-identity cutovers.
+Verify versions/health after each. No entity, schema sync,
+OpenAPI or frontend build is required. The frontend already calls native voting
+when entry context exists and renders the unchanged Activity response contract;
+its native-competition sandbox and social read-only Activity scenarios remain
+applicable. No deployment is performed by the Phase 2 qualification task.
+
+The exact recovery reader is enabled only when **every** recorded CUTOVER for
+that primary certifies `voteActivityIdentity=NATIVE_ID_V1`, with at least one
+cutover. Deploy all writers before the migration Lambda and before Main Stage's
+first cutover. This ordering is a prerequisite for that certificate's validity.
+Rollback audits do not remove qualification; a mixed old/new cutover history does
+not automatically qualify. The reader uses exact native log IDs, never inferred
+ownership intervals, to deduplicate all retained legacy logs across recovery.
+
+For earlier or unmarked migrations, keep the established read paths: native
+ownership combines native history with logs up to the transfer timestamp;
+LEGACY_ADAPTER reads wave logs. This patch does not qualify exact recovery of
+those older histories. Old random compatibility IDs have no shared event identity,
+and transition seconds can be ambiguous. Do not infer provenance by matching vote
+values/timestamps, retroactively mark old cutovers, or enable the full recovery
+reader without a separate historical data review. No old records are rewritten
+and no missing provenance is manufactured. This limitation applies to previously
+migrated competitions; Main Stage's independent hold remains in effect.
+
+Offset pagination is deterministic for a fixed history; concurrent new votes can
+shift offsets, as with the existing API. A production-sized query/latency rehearsal,
+production Main Stage data parity, real queue redelivery, media/claim publication,
+Arweave and on-chain minting remain outside this synthetic evidence. Keep the
+independent Main Stage hold until that verification is complete.

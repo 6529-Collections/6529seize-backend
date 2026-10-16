@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   mirrorNativeLegacyVote,
+  mirrorNativeLegacyVoteActivity,
   mirrorNativeLegacyWinners,
   mirrorNativeLegacySchedule
 } from '@/competitions/legacy-competition-mirror';
@@ -300,16 +301,23 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       previousVote: number;
       value: number;
       occurredAt: number;
+      proxyId?: string | null;
+      reason?: string;
     },
     ctx: RequestContext
   ): Promise<void> {
     this.requireTransaction(ctx);
     if (params.previousVote === params.value) return;
     await mirrorNativeLegacyVote(this.db, params, ctx);
-    const [entry] = await this.query<{ wave_id: string; drop_id: string }>(
+    const [entry] = await this.query<{
+      wave_id: string;
+      drop_id: string;
+      legacy_primary: number | null;
+    }>(
       'recordVoteChange',
-      `select wave_id, drop_id from ${COMPETITION_ENTRIES_TABLE}
-      where competition_id = :competitionId and id = :entryId and status = 'ACTIVE'`,
+      `select e.wave_id, e.drop_id, c.legacy_wave_id = c.wave_id as legacy_primary
+      from ${COMPETITION_ENTRIES_TABLE} e join ${COMPETITIONS_TABLE} c on c.id = e.competition_id
+      where e.competition_id = :competitionId and e.id = :entryId and e.status = 'ACTIVE'`,
       params,
       ctx
     );
@@ -348,6 +356,9 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       ctx
     );
     const sequence = await this.getLastInsertId(ctx.connection!);
+    if (Number(entry.legacy_primary) === 1) {
+      await mirrorNativeLegacyVoteActivity(this.db, params, sequence, ctx);
+    }
     await this.enqueueEvent(
       {
         key: `vote:${sequence}`,

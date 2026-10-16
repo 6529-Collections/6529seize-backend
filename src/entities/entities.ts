@@ -315,3 +315,5 @@ export * from './ICompetitionMigration';
 export * from './IDropForgeLaunch';
 export * from './IDropForgeEvidence';
 export { TransferReconciliationEntity } from './ITransferReconciliation';
+
+export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';

@@ -148,7 +148,7 @@ export class NativeCompetitionRuntimeService {
       };
       await this.repository.replaceVoteForReconciliation(mutation, ctx);
       await this.repository.recordVoteChange(
-        { ...mutation, previousVote },
+        { ...mutation, previousVote, reason: 'CREDIT_OVERSPENT' },
         ctx
       );
     }

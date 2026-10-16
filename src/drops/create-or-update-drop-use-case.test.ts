@@ -893,6 +893,117 @@ describe('CreateOrUpdateDropUseCase', () => {
     }
   );
 
+  it.each([
+    { label: 'old unedited description', pinned: true, updatedAt: null },
+    { label: 'old edited description', pinned: true, updatedAt: 1 },
+    {
+      label: 'old chat',
+      pinned: false,
+      updatedAt: null,
+      error: "can't be edited after"
+    },
+    {
+      label: 'old edited chat',
+      pinned: false,
+      updatedAt: 1,
+      error: "can't be edited after"
+    },
+    { label: 'recently edited chat', pinned: false, updatedAt: 'recent' },
+    {
+      label: 'another author description',
+      pinned: true,
+      updatedAt: null,
+      authorId: 'other-author',
+      error: 'Only author'
+    },
+    {
+      label: 'description moved to another wave',
+      pinned: true,
+      updatedAt: null,
+      waveId: 'other-wave',
+      error: "Can't change wave"
+    },
+    {
+      label: 'description changed to another type',
+      pinned: true,
+      updatedAt: null,
+      dropType: DropType.PARTICIPATORY,
+      error: "Can't change type"
+    }
+  ])(
+    'enforces edit rules for $label',
+    async ({ pinned, updatedAt, authorId, waveId, dropType, error }) => {
+      const model = createChatDropModel({ drop_id: 'drop-1' });
+      const storedDrop = {
+        id: 'drop-1',
+        wave_id: waveId ?? 'wave-1',
+        author_id: authorId ?? 'author-profile',
+        drop_type: dropType ?? DropType.CHAT,
+        created_at: 1,
+        updated_at: updatedAt === 'recent' ? Date.now() : updatedAt,
+        serial_no: 7
+      };
+      const deleteDropUseCase = {
+        execute: jest.fn().mockResolvedValue(undefined)
+      };
+      const useCase = createUseCaseWithMocks({
+        dropsDb: { findDropById: jest.fn().mockResolvedValue(storedDrop) },
+        wavesApiDb: {
+          findById: jest.fn().mockResolvedValue({
+            ...createSlowModeWave(),
+            type: WaveType.CHAT,
+            description_drop_id: pinned ? 'drop-1' : 'different-drop'
+          })
+        },
+        deleteDropUseCase,
+        artCurationTokenWatchService: {
+          registerDrop: jest.fn().mockResolvedValue(undefined)
+        }
+      });
+      jest.spyOn(useCase as any, 'validateReferences').mockResolvedValue({
+        validatedModel: model,
+        groupIdsUserIsEligibleFor: []
+      });
+      jest
+        .spyOn(useCase as any, 'verifyChatLinksAreAllowed')
+        .mockReturnValue(undefined);
+      const insert = jest
+        .spyOn(useCase as any, 'insertAllDropComponents')
+        .mockResolvedValue([]);
+      jest.spyOn(env, 'getIntOrNull').mockReturnValue(300_000);
+
+      // API updates pass false even for the description; exemption uses the stored wave.
+      const result = (useCase as any).createOrUpdateDrop(model, false, {
+        connection: {},
+        prePublication: { trustedSystem: true }
+      });
+      if (error) {
+        await expect(result).rejects.toThrow(error);
+        expect(deleteDropUseCase.execute).not.toHaveBeenCalled();
+        expect(insert).not.toHaveBeenCalled();
+      } else {
+        await expect(result).resolves.toEqual(
+          expect.objectContaining({ drop_id: 'drop-1' })
+        );
+        expect(deleteDropUseCase.execute).toHaveBeenCalledWith(
+          expect.objectContaining({
+            drop_id: 'drop-1',
+            deletion_purpose: 'UPDATE'
+          }),
+          expect.any(Object)
+        );
+        expect(insert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            createdAt: 1,
+            serialNo: 7,
+            updatedAt: expect.any(Number)
+          }),
+          expect.any(Object)
+        );
+      }
+    }
+  );
+
   it('does not increment inserted-drop metrics when editing a drop', async () => {
     const editModel = createChatDropModel({
       drop_id: 'drop-1',
