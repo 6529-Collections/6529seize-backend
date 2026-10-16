@@ -6106,6 +6106,75 @@
         }
       }
     },
+    "NftRefreshAge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-NftRefreshAge"
+        },
+        "AlarmDescription": "Worker queue age is at least 30 minutes in three of five minutes; inspect backlog and worker health.",
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateAgeOfOldestMessage",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": "nft-link-refreshes"
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 5,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1800,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshDeadLetters": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-NftRefreshDeadLetters"
+        },
+        "AlarmDescription": "Worker queue has a visible dead-letter message; inspect before redriving.",
+        "Namespace": "AWS/SQS",
+        "MetricName": "ApproximateNumberOfMessagesVisible",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": "nft-link-refreshes-dlq"
+          }
+        ],
+        "Statistic": "Maximum",
+        "Period": 60,
+        "EvaluationPeriods": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "notBreaching",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
     "PushNotificationsAge": {
       "Type": "AWS::CloudWatch::Alarm",
       "Properties": {
@@ -6172,6 +6241,1541 @@
             ],
             []
           ]
+        }
+      }
+    },
+    "NftRefreshSUPERRAREFailureRate": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-SUPERRARE-FailureRate"
+        },
+        "AlarmDescription": "At least 5% completed refresh failures with 20 eligible outcomes per five minutes, for 15 minutes. Unavailable pages are excluded. Recovery requires successful samples; quiet periods preserve the incident.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "SUPERRARE"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "SUPERRARE"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshSUPERRARENewUnavailableSurge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-SUPERRARE-NewUnavailableSurge"
+        },
+        "AlarmDescription": "In 15 minutes, at least five newly unavailable pages and 10% of 20 completed refreshes, or five previously working pages becoming unavailable. Each link counts once per failure episode. Recovery requires successful samples.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "SUPERRARE"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "SUPERRARE"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "c",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Completed",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "SUPERRARE"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "n",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "NewUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "SUPERRARE"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "p",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "PreviouslyWorkingUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "SUPERRARE"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshOPENSEAFailureRate": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-OPENSEA-FailureRate"
+        },
+        "AlarmDescription": "At least 5% completed refresh failures with 20 eligible outcomes per five minutes, for 15 minutes. Unavailable pages are excluded. Recovery requires successful samples; quiet periods preserve the incident.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "OPENSEA"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "OPENSEA"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshOPENSEANewUnavailableSurge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-OPENSEA-NewUnavailableSurge"
+        },
+        "AlarmDescription": "In 15 minutes, at least five newly unavailable pages and 10% of 20 completed refreshes, or five previously working pages becoming unavailable. Each link counts once per failure episode. Recovery requires successful samples.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "OPENSEA"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "OPENSEA"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "c",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Completed",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "OPENSEA"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "n",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "NewUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "OPENSEA"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "p",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "PreviouslyWorkingUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "OPENSEA"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshFOUNDATIONFailureRate": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-FOUNDATION-FailureRate"
+        },
+        "AlarmDescription": "At least 5% completed refresh failures with 20 eligible outcomes per five minutes, for 15 minutes. Unavailable pages are excluded. Recovery requires successful samples; quiet periods preserve the incident.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "FOUNDATION"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "FOUNDATION"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshFOUNDATIONNewUnavailableSurge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-FOUNDATION-NewUnavailableSurge"
+        },
+        "AlarmDescription": "In 15 minutes, at least five newly unavailable pages and 10% of 20 completed refreshes, or five previously working pages becoming unavailable. Each link counts once per failure episode. Recovery requires successful samples.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "FOUNDATION"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "FOUNDATION"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "c",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Completed",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "FOUNDATION"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "n",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "NewUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "FOUNDATION"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "p",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "PreviouslyWorkingUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "FOUNDATION"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshMANIFOLDFailureRate": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-MANIFOLD-FailureRate"
+        },
+        "AlarmDescription": "At least 5% completed refresh failures with 20 eligible outcomes per five minutes, for 15 minutes. Unavailable pages are excluded. Recovery requires successful samples; quiet periods preserve the incident.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "MANIFOLD"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "MANIFOLD"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshMANIFOLDNewUnavailableSurge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-MANIFOLD-NewUnavailableSurge"
+        },
+        "AlarmDescription": "In 15 minutes, at least five newly unavailable pages and 10% of 20 completed refreshes, or five previously working pages becoming unavailable. Each link counts once per failure episode. Recovery requires successful samples.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "MANIFOLD"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "MANIFOLD"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "c",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Completed",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "MANIFOLD"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "n",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "NewUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "MANIFOLD"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "p",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "PreviouslyWorkingUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "MANIFOLD"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshTRANSIENTFailureRate": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-TRANSIENT-FailureRate"
+        },
+        "AlarmDescription": "At least 5% completed refresh failures with 20 eligible outcomes per five minutes, for 15 minutes. Unavailable pages are excluded. Recovery requires successful samples; quiet periods preserve the incident.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "TRANSIENT"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "TRANSIENT"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshTRANSIENTNewUnavailableSurge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-TRANSIENT-NewUnavailableSurge"
+        },
+        "AlarmDescription": "In 15 minutes, at least five newly unavailable pages and 10% of 20 completed refreshes, or five previously working pages becoming unavailable. Each link counts once per failure episode. Recovery requires successful samples.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "TRANSIENT"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "TRANSIENT"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "c",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Completed",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "TRANSIENT"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "n",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "NewUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "TRANSIENT"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "p",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "PreviouslyWorkingUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "TRANSIENT"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshGAMMAIOFailureRate": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-GAMMAIO-FailureRate"
+        },
+        "AlarmDescription": "At least 5% completed refresh failures with 20 eligible outcomes per five minutes, for 15 minutes. Unavailable pages are excluded. Recovery requires successful samples; quiet periods preserve the incident.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "GAMMAIO"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "GAMMAIO"
+                  }
+                ]
+              },
+              "Period": 300,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 3,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshGAMMAIONewUnavailableSurge": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh-GAMMAIO-NewUnavailableSurge"
+        },
+        "AlarmDescription": "In 15 minutes, at least five newly unavailable pages and 10% of 20 completed refreshes, or five previously working pages becoming unavailable. Each link counts once per failure episode. Recovery requires successful samples.",
+        "Metrics": [
+          {
+            "Id": "s",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Success",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "GAMMAIO"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "f",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Failure",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "GAMMAIO"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "c",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "Completed",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "GAMMAIO"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "n",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "NewUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "GAMMAIO"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "p",
+            "ReturnData": false,
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "6529/NftLinkRefresher",
+                "MetricName": "PreviouslyWorkingUnavailable",
+                "Dimensions": [
+                  {
+                    "Name": "Environment",
+                    "Value": {
+                      "Ref": "Environment"
+                    }
+                  },
+                  {
+                    "Name": "Provider",
+                    "Value": "GAMMAIO"
+                  }
+                ]
+              },
+              "Period": 900,
+              "Stat": "Sum"
+            }
+          },
+          {
+            "Id": "incident",
+            "Expression": "IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))",
+            "ReturnData": true
+          }
+        ],
+        "EvaluationPeriods": 1,
+        "DatapointsToAlarm": 1,
+        "Threshold": 1,
+        "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+        "TreatMissingData": "ignore",
+        "AlarmActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        },
+        "OKActions": {
+          "Fn::If": [
+            "HasAlarmTopic",
+            [
+              {
+                "Ref": "ExistingAlarmTopicArn"
+              }
+            ],
+            []
+          ]
+        }
+      }
+    },
+    "NftRefreshDashboard": {
+      "Type": "AWS::CloudWatch::Dashboard",
+      "Properties": {
+        "DashboardName": {
+          "Fn::Sub": "seize-monitoring-${Environment}-nft-refresh"
+        },
+        "DashboardBody": {
+          "Fn::Sub": "{\"start\":\"-PT6H\",\"widgets\":[{\"type\":\"metric\",\"x\":0,\"y\":0,\"width\":12,\"height\":6,\"properties\":{\"title\":\"SUPERRARE outcomes (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"Success\",\"Environment\",\"${Environment}\",\"Provider\",\"SUPERRARE\"],[\"6529/NftLinkRefresher\",\"Failure\",\"Environment\",\"${Environment}\",\"Provider\",\"SUPERRARE\"],[\"6529/NftLinkRefresher\",\"Unavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"SUPERRARE\"]]}},{\"type\":\"metric\",\"x\":12,\"y\":0,\"width\":12,\"height\":6,\"properties\":{\"title\":\"SUPERRARE newly unavailable (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"NewUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"SUPERRARE\"],[\"6529/NftLinkRefresher\",\"PreviouslyWorkingUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"SUPERRARE\"]]}},{\"type\":\"metric\",\"x\":0,\"y\":6,\"width\":12,\"height\":6,\"properties\":{\"title\":\"OPENSEA outcomes (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"Success\",\"Environment\",\"${Environment}\",\"Provider\",\"OPENSEA\"],[\"6529/NftLinkRefresher\",\"Failure\",\"Environment\",\"${Environment}\",\"Provider\",\"OPENSEA\"],[\"6529/NftLinkRefresher\",\"Unavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"OPENSEA\"]]}},{\"type\":\"metric\",\"x\":12,\"y\":6,\"width\":12,\"height\":6,\"properties\":{\"title\":\"OPENSEA newly unavailable (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"NewUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"OPENSEA\"],[\"6529/NftLinkRefresher\",\"PreviouslyWorkingUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"OPENSEA\"]]}},{\"type\":\"metric\",\"x\":0,\"y\":12,\"width\":12,\"height\":6,\"properties\":{\"title\":\"FOUNDATION outcomes (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"Success\",\"Environment\",\"${Environment}\",\"Provider\",\"FOUNDATION\"],[\"6529/NftLinkRefresher\",\"Failure\",\"Environment\",\"${Environment}\",\"Provider\",\"FOUNDATION\"],[\"6529/NftLinkRefresher\",\"Unavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"FOUNDATION\"]]}},{\"type\":\"metric\",\"x\":12,\"y\":12,\"width\":12,\"height\":6,\"properties\":{\"title\":\"FOUNDATION newly unavailable (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"NewUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"FOUNDATION\"],[\"6529/NftLinkRefresher\",\"PreviouslyWorkingUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"FOUNDATION\"]]}},{\"type\":\"metric\",\"x\":0,\"y\":18,\"width\":12,\"height\":6,\"properties\":{\"title\":\"MANIFOLD outcomes (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"Success\",\"Environment\",\"${Environment}\",\"Provider\",\"MANIFOLD\"],[\"6529/NftLinkRefresher\",\"Failure\",\"Environment\",\"${Environment}\",\"Provider\",\"MANIFOLD\"],[\"6529/NftLinkRefresher\",\"Unavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"MANIFOLD\"]]}},{\"type\":\"metric\",\"x\":12,\"y\":18,\"width\":12,\"height\":6,\"properties\":{\"title\":\"MANIFOLD newly unavailable (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"NewUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"MANIFOLD\"],[\"6529/NftLinkRefresher\",\"PreviouslyWorkingUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"MANIFOLD\"]]}},{\"type\":\"metric\",\"x\":0,\"y\":24,\"width\":12,\"height\":6,\"properties\":{\"title\":\"TRANSIENT outcomes (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"Success\",\"Environment\",\"${Environment}\",\"Provider\",\"TRANSIENT\"],[\"6529/NftLinkRefresher\",\"Failure\",\"Environment\",\"${Environment}\",\"Provider\",\"TRANSIENT\"],[\"6529/NftLinkRefresher\",\"Unavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"TRANSIENT\"]]}},{\"type\":\"metric\",\"x\":12,\"y\":24,\"width\":12,\"height\":6,\"properties\":{\"title\":\"TRANSIENT newly unavailable (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"NewUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"TRANSIENT\"],[\"6529/NftLinkRefresher\",\"PreviouslyWorkingUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"TRANSIENT\"]]}},{\"type\":\"metric\",\"x\":0,\"y\":30,\"width\":12,\"height\":6,\"properties\":{\"title\":\"GAMMAIO outcomes (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"Success\",\"Environment\",\"${Environment}\",\"Provider\",\"GAMMAIO\"],[\"6529/NftLinkRefresher\",\"Failure\",\"Environment\",\"${Environment}\",\"Provider\",\"GAMMAIO\"],[\"6529/NftLinkRefresher\",\"Unavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"GAMMAIO\"]]}},{\"type\":\"metric\",\"x\":12,\"y\":30,\"width\":12,\"height\":6,\"properties\":{\"title\":\"GAMMAIO newly unavailable (per five minutes)\",\"view\":\"timeSeries\",\"region\":\"${AWS::Region}\",\"accountId\":\"${AWS::AccountId}\",\"period\":300,\"stat\":\"Sum\",\"metrics\":[[\"6529/NftLinkRefresher\",\"NewUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"GAMMAIO\"],[\"6529/NftLinkRefresher\",\"PreviouslyWorkingUnavailable\",\"Environment\",\"${Environment}\",\"Provider\",\"GAMMAIO\"]]}}]}"
         }
       }
     }
