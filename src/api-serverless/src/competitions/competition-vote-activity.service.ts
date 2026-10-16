@@ -53,12 +53,13 @@ export async function listCompetitionVoteActivity(
     );
   }
   const transferredAt = competition.legacy_transferred_at;
+  const activityCutoff = exactLineage ? null : (transferredAt ?? null);
   const rows =
     exactLineage || (record.legacy_wave_id === waveId && transferredAt != null)
       ? await competitionVoteActivityRepository.listTransferred(
           competitionId,
           waveId,
-          exactLineage ? null : (transferredAt ?? null),
+          activityCutoff,
           offset,
           limit,
           ctx
