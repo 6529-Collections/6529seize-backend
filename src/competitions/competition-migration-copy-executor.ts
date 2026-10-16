@@ -29,13 +29,13 @@ export class MigrationCopySqlExecutor extends SqlExecutor {
     } catch (error) {
       // The loop's QueryRunner wraps the physical timeout. The transaction
       // budget still rejects with the original driver error, so annotate that
-      // same object rather than the SQL-bearing TypeORM wrapper.
+      // same object rather than the SQL-bearing TypeORM wrapper. Propagating it
+      // also preserves the typed diagnostic contract for direct query callers.
       const budgetError =
         error instanceof QueryFailedError ? error.driverError : error;
-      if (
-        budgetError instanceof SqlExecutionBudgetExceededError &&
-        Object.isExtensible(budgetError)
-      ) {
+      if (!(budgetError instanceof SqlExecutionBudgetExceededError))
+        throw error;
+      if (Object.isExtensible(budgetError)) {
         Object.assign(budgetError, {
           migrationStatementNumber: statementNumber,
           migrationStatementFingerprint: createHash('sha256')
@@ -43,7 +43,7 @@ export class MigrationCopySqlExecutor extends SqlExecutor {
             .digest('hex')
         });
       }
-      throw error;
+      throw budgetError;
     }
   }
 
