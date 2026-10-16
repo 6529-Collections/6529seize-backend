@@ -224,6 +224,8 @@ export const e2eeEventPublisher: E2eeEventPublisher = new WsE2eeEventPublisher(
   e2eeDb,
   (profileIds) =>
     wsConnectionRepository.findPrimaryConnectionIdsByIdentityIds(profileIds),
-  (connectionId, message) => appWebSockets.send({ connectionId, message }),
+  async (connectionId, message) => {
+    await appWebSockets.send({ connectionId, message });
+  },
   enqueueE2eeWake
 );

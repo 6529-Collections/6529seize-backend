@@ -15,7 +15,8 @@ import {
 import { Logger } from '../../logging';
 import {
   notificationIdentitiesSyncedMessage,
-  WsMessageType
+  WsMessageType,
+  WS_RECOVERY_CAPABILITY
 } from './ws/ws-message';
 import { ids } from '../../ids';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
@@ -235,7 +236,11 @@ async function wsHandler(
           jwtExpiry,
           durableUpdates: supportsDurableUpdates(
             event.queryStringParameters?.[DELIVERY_CAPABILITY_QUERY]
-          )
+          ),
+          ...(event.queryStringParameters?.recovery_capability ===
+          WS_RECOVERY_CAPABILITY
+            ? { recoveryCapable: true }
+            : {})
         });
         return { statusCode: 200, body: 'Connected' };
       } catch (e) {

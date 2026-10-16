@@ -392,11 +392,11 @@ export class WsListenersNotifier {
     return rows.filter((row) => allowed.has(row.connectionId));
   }
 
-  private sendLegacyNotification(input: {
+  private async sendLegacyNotification(input: {
     connectionId: string;
     message: string;
   }): Promise<void> {
-    return this.appWebSockets.send({
+    await this.appWebSockets.send({
       ...input,
       ...(this.usesOutbox ? { legacyOnly: true } : {})
     });
@@ -950,7 +950,7 @@ export class WsListenersNotifier {
       );
       if (!onlineClients.length) return;
       const connectionIds = onlineClients.map((it) => it.connectionId);
-      let pendingSends: Promise<void>[] = [];
+      let pendingSends: Promise<unknown>[] = [];
       const sendFailures: unknown[] = [];
       const flushPendingSends = async (): Promise<void> => {
         const results = await Promise.allSettled(pendingSends);

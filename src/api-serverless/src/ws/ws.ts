@@ -17,17 +17,22 @@ import {
 import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { describeWebSocketSendFailure } from './ws-send-diagnostics';
-import { createHash } from 'node:crypto';
+import {
+  webSocketDelivery,
+  WebSocketDeliveryResult,
+  WebSocketDeliveryDeferredError
+} from '@/ws-delivery/ws-delivery';
 import {
   enqueueWebSocketFrame,
   QueuedWebSocketFrame
 } from '@/api/ws/ws-outbound-queue';
 import {
   WebSocketSendScheduler,
-  WebSocketSendLimitError,
   hasWebSocketSendBudget
 } from '@/api/ws/ws-send-scheduler';
+
 import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
 
 import {
@@ -58,7 +63,8 @@ abstract class ClientConnections {
     connectionId: string;
     message: string;
     abortSignal?: AbortSignal;
-  }): Promise<void>;
+    recovery?: boolean;
+  }): Promise<WebSocketDeliveryResult>;
   abstract closeClient(
     connectionId: string,
     propagateFailure?: boolean
@@ -87,6 +93,7 @@ class WebsocketClientConnections extends ClientConnections {
     try {
       socket.send(message);
       recordWebSocketAcknowledgement(connectionId, message, 'accepted');
+      return { status: 'sent' as const };
     } catch {
       // Preserve the unavailable-socket result without exposing transport errors.
       recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
@@ -119,8 +126,6 @@ class WebsocketClientConnections extends ClientConnections {
 }
 
 class ApiGatewayClientConnections extends ClientConnections {
-  private readonly logger = Logger.get(ApiGatewayManagementApiClient.name);
-
   private readonly client: ApiGatewayManagementApiClient;
   private readonly scheduler = new WebSocketSendScheduler();
 
@@ -129,69 +134,74 @@ class ApiGatewayClientConnections extends ClientConnections {
     this.client = new ApiGatewayManagementApiClient({
       endpoint: process.env.API_GATEWAY_WS_ENDPOINT,
       retryMode: 'standard',
-      maxAttempts: 3
+      maxAttempts: 3,
+      requestHandler: new NodeHttpHandler({
+        connectionTimeout: 2000,
+        requestTimeout: 5000
+      })
     });
   }
 
   override async sendMessage({
     connectionId,
     message,
-    abortSignal
+    abortSignal,
+    recovery
   }: {
     connectionId: string;
     message: string;
     abortSignal?: AbortSignal;
-  }) {
-    try {
-      await this.scheduler.send(connectionId, (deadlineSignal) =>
-        this.client
-          .send(
-            new PostToConnectionCommand({
-              ConnectionId: connectionId,
-              Data: Buffer.from(message)
-            }),
-            {
-              abortSignal: abortSignal
-                ? AbortSignal.any([deadlineSignal, abortSignal])
-                : deadlineSignal
-            }
-          )
-          .then(() => undefined)
-      );
-      recordWebSocketAcknowledgement(connectionId, message, 'accepted');
-    } catch (error: unknown) {
-      const failure = describeWebSocketSendFailure(message, error);
-      recordWebSocketAcknowledgement(
-        connectionId,
-        message,
-        failure.unavailable ? 'unavailable' : 'failed'
-      );
-      if (failure.unavailable) {
-        throw new SocketNotAvailableException();
-      } else {
+    recovery?: boolean;
+  }): Promise<WebSocketDeliveryResult> {
+    let terminalError: unknown;
+    const result = await webSocketDelivery.deliver({
+      connectionId,
+      message,
+      recovery,
+      signal: abortSignal,
+      close: () => this.closeClient(connectionId, true),
+      send: async () => {
+        let response: unknown;
+
         try {
-          // Replace the existing error event; do not report again or turn a
-          // diagnostic failure into deletion of an otherwise live connection.
-          this.logger.error({
-            ...failure.diagnostic,
-            delivery_failure:
-              error instanceof WebSocketSendLimitError ? error.reason : 'SDK',
-            // Random Gateway connection IDs are correlated for one UTC day only.
-            connection_hash: createHash('sha256')
-              .update(new Date().toISOString().slice(0, 10))
-              .update('\0')
-              .update(connectionId)
-              .digest('hex')
-              .slice(0, 24),
-            frame_bytes: Buffer.byteLength(message, 'utf8')
+          await this.scheduler.send(connectionId, async (deadlineSignal) => {
+            response = await this.client.send(
+              new PostToConnectionCommand({
+                ConnectionId: connectionId,
+                Data: Buffer.from(message)
+              }),
+              {
+                abortSignal: abortSignal
+                  ? AbortSignal.any([deadlineSignal, abortSignal])
+                  : deadlineSignal
+              }
+            );
           });
-        } catch {
-          // Reporting must not prevent the queue from retrying delivery.
+
+          recordWebSocketAcknowledgement(connectionId, message, 'accepted');
+          return response;
+        } catch (error) {
+          const failure = describeWebSocketSendFailure(message, error);
+          recordWebSocketAcknowledgement(
+            connectionId,
+            message,
+            failure.unavailable ? 'unavailable' : 'failed'
+          );
+          terminalError = error;
+
+          throw error;
         }
-        // The SQS consumer must return this record as failed, not acknowledge it.
-        throw error;
       }
-    }
+    });
+    // Durable consumers retain non-throttle failures using their existing retry contract.
+    if (
+      result.status === 'failed' &&
+      !recovery &&
+      describeWebSocketSendFailure(message, terminalError).diagnostic
+        .error_category !== 'THROTTLED'
+    )
+      throw terminalError ?? new Error('WebSocket delivery failed');
+    return result;
   }
 
   override async closeClient(
@@ -242,11 +252,12 @@ export class AppWebSockets {
     outboxId?: string;
     legacyOnly?: boolean;
     deliveryCapability?: typeof DURABLE_UPDATES_CAPABILITY;
-  }): Promise<void> {
+    recovery?: boolean;
+  }): Promise<WebSocketDeliveryResult> {
     input.abortSignal?.throwIfAborted();
     // Authentication acknowledgements must follow the control operation inline,
     // including credential rejection when no authenticated row exists yet.
-    if (isDevEnv() || input.skipStaleConnectionCheck)
+    if (isDevEnv() || input.skipStaleConnectionCheck || input.recovery)
       return this.deliver(input);
     const entity = await this.wsConnectionRepository.getByConnectionId(
       input.connectionId,
@@ -256,13 +267,14 @@ export class AppWebSockets {
     const expiry = getActiveJwtExpiry(entity?.jwt_expiry);
     if (!entity || expiry === null) {
       await this.deregister({ connectionId: input.connectionId });
-      return;
+      return { status: 'gone' };
     }
-    if (input.legacyOnly && entity.durable_updates === true) return;
+    if (input.legacyOnly && entity.durable_updates === true)
+      return { status: 'sent' };
     // New outbox jobs must never switch to direct delivery after capability loss.
     if (input.deliveryCapability && entity.durable_updates !== true) {
       this.logger.warn({ code: 'WS_OUTBOUND_SESSION_CHANGED' });
-      return;
+      return { status: 'gone' };
     }
     if (entity.durable_updates !== true && !input.outboxId)
       return this.deliver({ ...input, skipStaleConnectionCheck: true });
@@ -280,6 +292,7 @@ export class AppWebSockets {
         input.abortSignal,
         input.outboxId
       );
+      return { status: 'resync_pending' };
     } catch {
       // Do not expose queue bodies/provider errors, or claim failed persistence
       // was accepted. The caller must see the failure as well as the error log.
@@ -307,11 +320,13 @@ export class AppWebSockets {
       return;
     }
     if (!(await this.canDeliverQueuedPayload(frame))) return;
-    await this.deliver({
+    const result = await this.deliver({
       connectionId: frame.connectionId,
       message: frame.message,
       skipStaleConnectionCheck: true
     });
+    if (result.status === 'resync_pending' || result.status === 'failed')
+      throw new WebSocketDeliveryDeferredError();
   }
 
   /** Recheck notification subscriptions and resource access before delayed delivery. */
@@ -378,13 +393,15 @@ export class AppWebSockets {
     connectionId,
     message,
     skipStaleConnectionCheck = false,
-    abortSignal
+    abortSignal,
+    recovery
   }: {
     connectionId: string;
     message: string;
     skipStaleConnectionCheck?: boolean;
     abortSignal?: AbortSignal;
-  }) {
+    recovery?: boolean;
+  }): Promise<WebSocketDeliveryResult> {
     // An expired invocation goes directly to the sender's reported deadline
     // failure; do not spend the remaining budget looking up unsendable work.
     if (!skipStaleConnectionCheck && hasWebSocketSendBudget()) {
@@ -398,19 +415,27 @@ export class AppWebSockets {
           `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
         );
         await this.deregister({ connectionId });
-        return;
+        return { status: 'gone' };
       }
     }
     abortSignal?.throwIfAborted();
     try {
-      await ClientConnections.Get().sendMessage({
+      const result = await ClientConnections.Get().sendMessage({
         connectionId,
         message,
-        abortSignal
+        abortSignal,
+        recovery
       });
+      if (result.status === 'gone')
+        await this.wsConnectionRepository.deleteByConnectionId(
+          connectionId,
+          {}
+        );
+      return result;
     } catch (err) {
       if (err instanceof SocketNotAvailableException) {
         await this.deregister({ connectionId });
+        return { status: 'gone' };
       } else {
         throw err;
       }
@@ -422,13 +447,15 @@ export class AppWebSockets {
     connectionId,
     jwtExpiry,
     durableUpdates = false,
-    ws
+    ws,
+    recoveryCapable = false
   }: {
     identityId: string;
     connectionId: string;
     jwtExpiry: number;
     durableUpdates?: boolean;
     ws?: WebSocket;
+    recoveryCapable?: boolean;
   }) {
     this.logger.info(
       `Registering socket for client ${identityId} (connectionId: ${connectionId})`
@@ -454,6 +481,7 @@ export class AppWebSockets {
       {}
     );
     await this.wsConnectionRepository.maybeCleanupStaleNotificationSubscriptions();
+    if (recoveryCapable) await webSocketDelivery.enableReconnect(connectionId);
   }
 
   async deregister({ connectionId }: { connectionId: string }) {

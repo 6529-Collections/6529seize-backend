@@ -68,10 +68,28 @@ jobs:
           MONITORING_CLOUDFORMATION_ROLE_ARN: ${{ vars.AWS_MONITORING_CFN_ROLE_ARN }}
           MONITORING_PARAMETERS: ${{ vars.MONITORING_PARAMETERS }}
         run: ../../bin/6529 run deploy
-      - name: Show the public monitoring health endpoint
+      - name: Verify monitoring health
+        shell: bash
         env:
           MONITORING_ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          monitoring_endpoint="$(/usr/local/bin/aws cloudformation describe-stacks --stack-name "seize-monitoring-${MONITORING_ENVIRONMENT}" --query "Stacks[0].Outputs[?OutputKey=='IngressUrl'].OutputValue | [0]" --output text)"
-          [[ "$monitoring_endpoint" == https://*.execute-api."${AWS_REGION}".amazonaws.com ]]
-          printf 'Monitoring health: %s/health\n' "$monitoring_endpoint"
+          set -euo pipefail
+          ingress_url="$(aws cloudformation describe-stacks \
+            --stack-name "seize-monitoring-$MONITORING_ENVIRONMENT" \
+            --query 'Stacks[0].Outputs[?OutputKey==`IngressUrl`].OutputValue | [0]' \
+            --output text)"
+          if [[ ! "$ingress_url" =~ ^https://[a-z0-9]+\.execute-api\."$AWS_REGION"\.amazonaws\.com$ ]]; then
+            echo "Unexpected monitoring health endpoint" >&2
+            exit 1
+          fi
+          printf 'Monitoring health: %s/health\n' "$ingress_url"
+          for attempt in {1..18}; do
+            health="$(curl --fail --silent --show-error --max-time 15 "$ingress_url/health" || true)"
+            if jq -e '.status == "ok"' <<< "$health" > /dev/null; then
+              echo "Monitoring health is ok"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Monitoring did not report healthy queue receipts and webhook connectivity" >&2
+          exit 1

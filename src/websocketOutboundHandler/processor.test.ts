@@ -6,6 +6,7 @@ import { randomInt } from 'node:crypto';
 import type { SQSEvent } from 'aws-lambda';
 import { processWebSocketBatch } from './processor';
 import { retryDelaySeconds } from './retry';
+import { WebSocketDeliveryDeferredError } from '@/ws-delivery/ws-delivery';
 
 const event = (...ids: string[]): SQSEvent =>
   ({
@@ -23,6 +24,25 @@ const event = (...ids: string[]): SQSEvent =>
   }) as SQSEvent;
 
 describe('durable outbound consumer', () => {
+  it('retains cooldown deferrals and later FIFO records without an error alert', async () => {
+    const report = jest.fn();
+    const defer = jest.fn().mockResolvedValue(undefined);
+    const batch = event('a', 'b');
+    const result = await processWebSocketBatch(
+      batch,
+      async () => {
+        throw new WebSocketDeliveryDeferredError();
+      },
+      report,
+      defer
+    );
+    expect(result.batchItemFailures).toEqual([
+      { itemIdentifier: 'a' },
+      { itemIdentifier: 'b' }
+    ]);
+    expect(defer).toHaveBeenCalledWith(batch.Records[0]);
+    expect(report).not.toHaveBeenCalled();
+  });
   it('retains a throttled frame and later FIFO records; acknowledges only successful sends', async () => {
     const deliver = jest
       .fn()

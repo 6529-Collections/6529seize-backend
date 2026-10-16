@@ -131,7 +131,7 @@ export class WebSocketSendScheduler {
 /** Lazily create recipient payloads and await every send, including after errors. */
 export async function forEachWebSocketRecipient<T>(
   recipients: Iterable<T>,
-  send: (recipient: T) => Promise<void>
+  send: (recipient: T) => Promise<unknown>
 ): Promise<void> {
   const iterator = recipients[Symbol.iterator]();
   const failures: { error: unknown }[] = [];

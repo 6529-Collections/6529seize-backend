@@ -1,3 +1,4 @@
+import { WebSocketDeliveryDeferredError } from '@/ws-delivery/ws-delivery';
 import { OUTBOX_WAKEUP } from '@/websocket-outbox/wakeup';
 import type { SQSBatchResponse, SQSEvent, SQSRecord } from 'aws-lambda';
 import {
@@ -19,9 +20,9 @@ export async function processWebSocketBatch(
       if (JSON.parse(body)?.type === OUTBOX_WAKEUP && drainOutbox)
         await drainOutbox();
       else await deliver(parseQueuedWebSocketFrame(body));
-    } catch {
+    } catch (error) {
       try {
-        reportFailure();
+        if (!(error instanceof WebSocketDeliveryDeferredError)) reportFailure();
       } catch {
         /* Keep retrying even if reporting fails. */
       }
