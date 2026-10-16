@@ -97,6 +97,50 @@ const drop = {
   hide_link_preview: false
 };
 
+async function seedSnapshotEntry(secondDropId: string, now: number, vote = 6) {
+  for (const sql of [
+    `insert into ${DROPS_TABLE} (id,wave_id,author_id,created_at,parts_count,drop_type,hide_link_preview) values (:secondDropId,:waveId,'fixture-author',20,1,'PARTICIPATORY',0)`,
+    `insert into ${DROPS_PARTS_TABLE} (drop_id,drop_part_id,content) values (:secondDropId,1,'Second snapshot entry')`,
+    `insert into ${DROP_RANK_TABLE} (drop_id,wave_id,vote,last_increased) values (:secondDropId,:waveId,:vote,20)`,
+    `insert into ${DROP_VOTER_STATE_TABLE} (drop_id,wave_id,voter_id,votes) values (:secondDropId,:waveId,'fixture-voter',:vote)`,
+    `insert into ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} (voter_id,drop_id,wave_id,credit_spent,created_at) values ('fixture-voter',:secondDropId,:waveId,:vote,20)`,
+    `insert into ${DROP_REAL_VOTE_IN_TIME_TABLE} (wave_id,drop_id,timestamp,vote) values (:waveId,:secondDropId,20,:vote)`,
+    `insert into ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} (wave_id,drop_id,voter_id,timestamp,vote) values (:waveId,:secondDropId,'fixture-voter',20,:vote)`,
+    `insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,timestamp,vote,vote_on_decision_time) values (:secondDropId,:waveId,:now,:vote,:vote)`
+  ]) {
+    await sqlExecutor.execute(sql, {
+      secondDropId,
+      waveId: wave.id,
+      now,
+      vote
+    });
+  }
+}
+
+async function moveLiveEntryVote(
+  dropId: string,
+  vote: number,
+  creditDelta: number
+) {
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    for (const sql of [
+      `update ${DROP_VOTER_STATE_TABLE} set votes=:vote where drop_id=:dropId`,
+      `insert into ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} (voter_id,drop_id,wave_id,credit_spent,created_at) values ('fixture-voter',:dropId,:waveId,:creditDelta,30)`,
+      `update ${DROP_RANK_TABLE} set vote=:vote,last_increased=30 where drop_id=:dropId`,
+      `insert into ${DROP_REAL_VOTE_IN_TIME_TABLE} (wave_id,drop_id,timestamp,vote) values (:waveId,:dropId,30,:vote)`,
+      `insert into ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} (wave_id,drop_id,voter_id,timestamp,vote) values (:waveId,:dropId,'fixture-voter',30,:vote)`
+    ]) {
+      await sqlExecutor.execute(
+        sql,
+        { dropId, waveId: wave.id, vote, creditDelta },
+        {
+          wrappedConnection: connection
+        }
+      );
+    }
+  });
+}
+
 async function finishBackfill(service: CompetitionMigrationService) {
   for (let batch = 0; batch < 100; batch++) {
     const status = await service.status(id);
@@ -1536,18 +1580,7 @@ describeWithSeed(
     it('catches repeated leaderboard refreshes without recopying voter and historical stages', async () => {
       const now = Date.now();
       const secondDropId = 'snapshot-only-second-drop';
-      for (const sql of [
-        `insert into ${DROPS_TABLE} (id,wave_id,author_id,created_at,parts_count,drop_type,hide_link_preview) values (:secondDropId,:waveId,'fixture-author',20,1,'PARTICIPATORY',0)`,
-        `insert into ${DROPS_PARTS_TABLE} (drop_id,drop_part_id,content) values (:secondDropId,1,'Second snapshot entry')`,
-        `insert into ${DROP_RANK_TABLE} (drop_id,wave_id,vote,last_increased) values (:secondDropId,:waveId,6,20)`,
-        `insert into ${DROP_VOTER_STATE_TABLE} (drop_id,wave_id,voter_id,votes) values (:secondDropId,:waveId,'fixture-voter',6)`,
-        `insert into ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} (voter_id,drop_id,wave_id,credit_spent,created_at) values ('fixture-voter',:secondDropId,:waveId,6,20)`,
-        `insert into ${DROP_REAL_VOTE_IN_TIME_TABLE} (wave_id,drop_id,timestamp,vote) values (:waveId,:secondDropId,20,6)`,
-        `insert into ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} (wave_id,drop_id,voter_id,timestamp,vote) values (:waveId,:secondDropId,'fixture-voter',20,6)`,
-        `insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,timestamp,vote,vote_on_decision_time) values (:secondDropId,:waveId,:now,6,6)`
-      ]) {
-        await sqlExecutor.execute(sql, { secondDropId, waveId: wave.id, now });
-      }
+      await seedSnapshotEntry(secondDropId, now);
       await sqlExecutor.execute(
         `update ${WAVES_TABLE} set participation_period_end=null,voting_period_end=null,next_decision_time=:next,time_lock_ms=86400000 where id=:waveId`,
         { waveId: wave.id, next: now + 86400000 }
@@ -1619,6 +1652,126 @@ describeWithSeed(
         failures: []
       });
       expect((await service.verifyNative(id)).failures).toEqual([]);
+    });
+
+    it('refreshes live entry ranks when votes move behind an unchanged locked leaderboard', async () => {
+      const now = Date.now();
+      const secondDropId = 'live-entry-rank-second-drop';
+      await seedSnapshotEntry(secondDropId, now);
+      await sqlExecutor.execute(
+        `update ${WAVES_TABLE} set participation_period_end=null,voting_period_end=null,next_decision_time=:next,time_lock_ms=86400000 where id=:waveId`,
+        { waveId: wave.id, next: now + 86400000 }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,timestamp,vote,vote_on_decision_time) values (:dropId,:waveId,:now,7,7)`,
+        { dropId: drop.id, waveId: wave.id, now }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'ACTIVE_LOW_VOLUME');
+      await finishBackfill(service);
+      await moveLiveEntryVote(secondDropId, 8, 2);
+      for (let page = 0; page < 5; page++) {
+        await service.catchUp(id, operator, 1);
+      }
+      expect((await service.status(id)).migration).toMatchObject({
+        stage: 'LEADERBOARD',
+        stage_offset: 0,
+        stage_cursor: null,
+        completed_stages: expect.arrayContaining([
+          'ENTRIES',
+          'VOTERS',
+          'HISTORY',
+          'ARCHIVE_VOTERS'
+        ])
+      });
+      await finishBackfill(service);
+      const rows = await sqlExecutor.execute<{ drop_id: string; rank: number }>(
+        `select drop_id,\`rank\` from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id`,
+        { id }
+      );
+      expect(
+        Object.fromEntries(rows.map((row) => [row.drop_id, row.rank]))
+      ).toEqual({
+        [drop.id]: 2,
+        [secondDropId]: 1
+      });
+      expect(
+        await sqlExecutor.execute(
+          `select drop_id,rating,\`rank\` from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id order by \`rank\``,
+          { id }
+        )
+      ).toEqual([
+        { drop_id: drop.id, rating: 7, rank: 1 },
+        { drop_id: secondDropId, rating: 6, rank: 2 }
+      ]);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      expect((await service.verifyNative(id)).failures).toEqual([]);
+    });
+
+    it('refreshes winner-only pages and keeps live ranks global and numeric', async () => {
+      const now = Date.now();
+      const secondDropId = 'rank-second-entry';
+      const thirdDropId = 'rank-third-entry';
+      await sqlExecutor.execute(
+        `update ${IDENTITIES_TABLE} set tdh=1000 where profile_id='fixture-voter'`
+      );
+      await seedSnapshotEntry(secondDropId, now);
+      await seedSnapshotEntry(thirdDropId, now, 100);
+      await sqlExecutor.execute(
+        `update ${WAVES_TABLE} set participation_period_end=null,voting_period_end=null,next_decision_time=:next,time_lock_ms=86400000 where id=:waveId`,
+        { waveId: wave.id, next: now + 86400000 }
+      );
+      await sqlExecutor.execute(
+        `update ${DROPS_TABLE} set drop_type='WINNER' where id=:dropId`,
+        { dropId: drop.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values (:waveId,100)`,
+        { waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (wave_id,decision_time,drop_id,ranking,final_vote,prizes) values (:waveId,100,:dropId,4,7,'[]')`,
+        { waveId: wave.id, dropId: drop.id }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'ACTIVE_LOW_VOLUME');
+      await finishBackfill(service);
+      await moveLiveEntryVote(secondDropId, -12, 6);
+      for (let page = 0; page < 5; page++)
+        await service.catchUp(id, operator, 1);
+      await finishBackfill(service);
+      expect(
+        await sqlExecutor.execute(
+          `select drop_id,\`rank\` from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id order by drop_id`,
+          { id }
+        )
+      ).toEqual([
+        { drop_id: drop.id, rank: 4 },
+        { drop_id: secondDropId, rank: 3 },
+        { drop_id: thirdDropId, rank: 1 }
+      ]);
+      expect(
+        await sqlExecutor.execute(
+          `select drop_id,\`rank\` from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id order by \`rank\``,
+          { id }
+        )
+      ).toEqual([
+        { drop_id: thirdDropId, rank: 1 },
+        { drop_id: secondDropId, rank: 2 }
+      ]);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
     });
 
     it.each([
