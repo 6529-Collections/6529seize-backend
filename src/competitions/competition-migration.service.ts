@@ -1022,7 +1022,10 @@ export class CompetitionMigrationService {
         operator.actor,
         'CUTOVER',
         operator.reason,
-        { finalWatermark: status.migration?.source_watermark },
+        {
+          finalWatermark: status.migration?.source_watermark,
+          voteActivityIdentity: 'NATIVE_ID_V1'
+        },
         ctx
       );
       return {

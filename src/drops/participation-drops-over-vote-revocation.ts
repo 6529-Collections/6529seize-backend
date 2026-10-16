@@ -182,23 +182,6 @@ async function reduceVotesForDrops(
           voteChange: value - drop.votes,
           ctx
         });
-        await profileActivityLogsDb.insert(
-          {
-            profile_id,
-            type: ProfileActivityLogType.DROP_VOTE_EDIT,
-            target_id: drop.drop_id,
-            contents: JSON.stringify({
-              oldVote: drop.votes,
-              newVote: value,
-              reason: 'CREDIT_OVERSPENT'
-            }),
-            additional_data_1: drop.author_id,
-            additional_data_2: wave_id,
-            proxy_id: null
-          },
-          ctx.connection!,
-          ctx.timer
-        );
       }
       await nativeCompetitionRuntimeService.refreshCompetition(
         nativeOwner.id,
