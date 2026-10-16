@@ -29,6 +29,10 @@ import {
   recoverUnavailableWebSocket,
   WebSocketControlOperation
 } from '@/api/ws/ws-control-failure';
+import {
+  setWebSocketDiagnosticOperation,
+  withWebSocketOperationDiagnostics
+} from '@/api/ws/ws-operation-diagnostics';
 
 import {
   DELIVERY_CAPABILITY_QUERY,
@@ -74,7 +78,15 @@ export const handler = sentryContext.wrapLambdaHandler(
     );
 
     if (event.requestContext && event.requestContext.routeKey) {
-      return operationalResponse(await wsHandler(event));
+      return withWebSocketOperationDiagnostics(
+        {
+          routeKey: event.requestContext.routeKey,
+          connectionId: event.requestContext.connectionId ?? '',
+          lambdaRequestId: context.awsRequestId,
+          gatewayRequestId: event.requestContext.requestId
+        },
+        async () => operationalResponse(await wsHandler(event))
+      );
     } else {
       return normalizeSetCookieResponse(
         event,
@@ -242,6 +254,7 @@ async function wsHandler(
       let controlOperation: WebSocketControlOperation | undefined;
       try {
         const message = JSON.parse(event.body || '{}');
+        setWebSocketDiagnosticOperation(message.type);
         const logSafeMessage = redactWebSocketMessageForLog(message);
         wsHandlerLogger.info(
           `WS $default. Identity: ${identityId}. Message: ${JSON.stringify(

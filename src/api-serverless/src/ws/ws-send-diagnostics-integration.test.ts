@@ -5,6 +5,7 @@ jest.mock('@/api/ws/ws-outbound-queue', () => ({
 const mockHandle = jest.fn();
 const mockError = jest.fn();
 const mockWarn = jest.fn();
+const mockInfo = jest.fn();
 const mockAttempts: string[] = [];
 
 jest.mock('@/logging', () => ({
@@ -12,7 +13,7 @@ jest.mock('@/logging', () => ({
     get: () => ({
       error: mockError,
       warn: mockWarn,
-      info: jest.fn(),
+      info: mockInfo,
       debug: jest.fn()
     })
   }
@@ -61,6 +62,10 @@ import {
   WebSocketSendScheduler,
   WebSocketSendLimitError
 } from './ws-send-scheduler';
+import {
+  setWebSocketDiagnosticOperation,
+  withWebSocketOperationDiagnostics
+} from '@/api/ws/ws-operation-diagnostics';
 
 const response = (statusCode: number, errorType?: string) => ({
   response: new HttpResponse({
@@ -100,6 +105,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     mockHandle.mockReset();
     mockError.mockClear();
     mockWarn.mockClear();
+    mockInfo.mockClear();
     mockAttempts.length = 0;
     (enqueueWebSocketFrame as jest.Mock).mockReset();
     repository.deleteByConnectionId.mockClear();
@@ -769,6 +775,42 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
       delivery_failure: 'DEADLINE_EXCEEDED'
     });
   });
+
+  it.each([204, 429])(
+    'records the actual acknowledgement transport result for HTTP %s',
+    async (status) => {
+      mockHandle.mockResolvedValue(
+        response(status, status === 429 ? 'LimitExceededException' : undefined)
+      );
+      await withWebSocketOperationDiagnostics(
+        {
+          routeKey: '$default',
+          connectionId: 'synthetic',
+          lambdaRequestId: 'synthetic-invocation'
+        },
+        async () => {
+          setWebSocketDiagnosticOperation('AUTHENTICATE');
+          const send = sockets.send({
+            connectionId: 'synthetic',
+            message: '{"type":"AUTHENTICATED"}',
+            skipStaleConnectionCheck: true
+          });
+          if (status === 429) await expect(send).rejects.toBeDefined();
+          else await send;
+          return { statusCode: status === 204 ? 200 : 500 };
+        }
+      );
+      const operation = [...mockInfo.mock.calls, ...mockWarn.mock.calls]
+        .map((entry) => entry[1])
+        .find((entry) => entry?.event === 'ws_operation');
+      expect(operation).toMatchObject({
+        response_status: status === 204 ? 200 : 500,
+        acknowledgement_type: 'AUTHENTICATED',
+        acknowledgement: status === 204 ? 'accepted' : 'failed'
+      });
+      expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    }
+  );
 
   it('already retries two 429 responses and succeeds on SDK attempt three', async () => {
     mockHandle

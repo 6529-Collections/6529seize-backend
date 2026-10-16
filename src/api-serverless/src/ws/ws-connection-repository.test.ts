@@ -207,13 +207,15 @@ describe('WsConnectionRepository', () => {
       'order by identity_id for update'
     );
     expect(execute.mock.calls[0][2]).toEqual({
-      wrappedConnection: transactionConnection
+      wrappedConnection: transactionConnection,
+      bindInvocationContext: true
     });
     expect(execute.mock.calls[1][0]).toContain(
       `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
     );
     expect(execute.mock.calls[1][2]).toEqual({
-      wrappedConnection: transactionConnection
+      wrappedConnection: transactionConnection,
+      bindInvocationContext: true
     });
     expect(execute.mock.calls[2][0]).toContain(
       `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
@@ -229,7 +231,8 @@ describe('WsConnectionRepository', () => {
       jwtExpiry1: 456
     });
     expect(execute.mock.calls[2][2]).toEqual({
-      wrappedConnection: transactionConnection
+      wrappedConnection: transactionConnection,
+      bindInvocationContext: true
     });
   });
 

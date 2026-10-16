@@ -54,7 +54,7 @@ class SubscriptionDatabase extends SqlExecutor {
     const state = transaction?.state ?? this.state;
     const error = this.fail?.(normalized);
     if (error) throw error;
-    if (normalized.startsWith('select connection_id from ws_connections')) {
+    if (normalized.startsWith('select connection_id, connection_id()')) {
       return (state.identity ? [{ connection_id: 'socket' }] : []) as T[];
     }
     if (normalized.startsWith('update ws_connections')) {

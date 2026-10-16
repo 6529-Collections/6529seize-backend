@@ -28,6 +28,7 @@ import {
   WebSocketSendLimitError,
   hasWebSocketSendBudget
 } from '@/api/ws/ws-send-scheduler';
+import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
 
 import {
   ANON_USER_ID,
@@ -80,11 +81,15 @@ class WebsocketClientConnections extends ClientConnections {
     abortSignal?.throwIfAborted();
     const socket = this.sockets[connectionId];
     if (!socket) {
+      recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
       throw new SocketNotAvailableException();
     }
     try {
       socket.send(message);
-    } catch (err: any) {
+      recordWebSocketAcknowledgement(connectionId, message, 'accepted');
+    } catch {
+      // Preserve the unavailable-socket result without exposing transport errors.
+      recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
       throw new SocketNotAvailableException();
     }
   }
@@ -153,8 +158,14 @@ class ApiGatewayClientConnections extends ClientConnections {
           )
           .then(() => undefined)
       );
+      recordWebSocketAcknowledgement(connectionId, message, 'accepted');
     } catch (error: unknown) {
       const failure = describeWebSocketSendFailure(message, error);
+      recordWebSocketAcknowledgement(
+        connectionId,
+        message,
+        failure.unavailable ? 'unavailable' : 'failed'
+      );
       if (failure.unavailable) {
         throw new SocketNotAvailableException();
       } else {

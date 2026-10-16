@@ -18,9 +18,11 @@ jest.mock('@/sentry.context', () => ({
 }));
 jest.mock('@/logging', () => ({
   Logger: {
-    get: () => ({
+    get: (name: string) => ({
       info: jest.fn(),
-      warn: (...args: unknown[]) => mockWarnings(...args),
+      warn: (...args: unknown[]) => {
+        if (name !== 'WS_DIAGNOSTICS') mockWarnings(...args);
+      },
       debug: jest.fn(),
       error: (...args: unknown[]) => mockErrors(...args)
     })
@@ -74,7 +76,7 @@ class ConnectionDatabase extends SqlExecutor {
     if (!options?.wrappedConnection)
       throw new Error('Query escaped transaction');
     const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
-    if (normalized.startsWith('select connection_id from ws_connections')) {
+    if (normalized.startsWith('select connection_id, connection_id()')) {
       this.order.push('lock');
       if (this.operationFailure) throw this.operationFailure;
       return (
