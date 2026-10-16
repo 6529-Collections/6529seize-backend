@@ -28,9 +28,18 @@ export async function listCompetitionVoteActivity(
   );
   if (!record || record.wave_id !== waveId)
     throw new NotFoundException('Competition not found');
-  if (record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER) {
-    // Exactly one legacy adapter exists per wave. Native competition commands
-    // write their own history, never DROP_VOTE_EDIT wave logs.
+  const exactLineage =
+    record.legacy_wave_id === waveId &&
+    (await competitionVoteActivityRepository.hasExactLineage(
+      competitionId,
+      ctx
+    ));
+  // Earlier cutovers can contain unlinked compatibility logs. Keep their
+  // established reader until their historical provenance is independently proven.
+  if (
+    record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER &&
+    !exactLineage
+  ) {
     return dropsService.findWaveLogs(
       {
         wave_id: waveId,
@@ -44,12 +53,13 @@ export async function listCompetitionVoteActivity(
     );
   }
   const transferredAt = competition.legacy_transferred_at;
+  const activityCutoff = exactLineage ? null : (transferredAt ?? null);
   const rows =
-    record.legacy_wave_id === waveId && transferredAt != null
+    exactLineage || (record.legacy_wave_id === waveId && transferredAt != null)
       ? await competitionVoteActivityRepository.listTransferred(
           competitionId,
           waveId,
-          transferredAt,
+          activityCutoff,
           offset,
           limit,
           ctx
@@ -73,7 +83,7 @@ export async function listCompetitionVoteActivity(
     ctx
   );
   return rows.map((row) => ({
-    id: row.legacy_id ?? `${competitionId}:${Number(row.sequence)}`,
+    id: row.legacy_id ?? `${competitionId}:${row.sequence}`,
     action: 'DROP_VOTE_EDIT',
     wave_id: waveId,
     drop_id: row.drop_id,
@@ -83,8 +93,8 @@ export async function listCompetitionVoteActivity(
     created_at: new Date(Number(row.occurred_at)),
     // The retained contents column is NOT NULL JSON, validated by MySQL.
     // Preserve its complete original payload, as the legacy log API does.
-    contents: row.legacy_id
-      ? JSON.parse(row.legacy_contents!)
+    contents: row.legacy_contents
+      ? JSON.parse(row.legacy_contents)
       : {
           oldVote: Number(row.previous_value),
           newVote: Number(row.value)
