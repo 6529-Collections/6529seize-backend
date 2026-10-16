@@ -83,6 +83,11 @@ class ConnectionDatabase extends SqlExecutor {
         this.present ? [{ connection_id: 'synthetic-socket' }] : []
       ) as T[];
     }
+    if (normalized.startsWith('select connection_id from ws_connections')) {
+      return (
+        this.present ? [{ connection_id: 'synthetic-socket' }] : []
+      ) as T[];
+    }
     if (normalized.startsWith('delete from')) {
       this.order.push('delete');
       if (!this.present) {

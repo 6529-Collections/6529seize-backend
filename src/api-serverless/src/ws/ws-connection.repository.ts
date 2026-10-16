@@ -38,6 +38,7 @@ type NotificationSubscription = { identityId: string; jwtExpiry: number };
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   private static readonly NOTIFICATION_CLEANUP_SAMPLE_DENOMINATOR = 100;
+  private static readonly CONNECTION_LOCK_ATTEMPTS = 3;
 
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -241,7 +242,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
 
   private async lockConnection(
     connectionId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    attemptsLeft = WsConnectionRepository.CONNECTION_LOCK_ATTEMPTS
   ): Promise<boolean> {
     recordWebSocketSqlPhase('lock_connection');
     const connections = await this.db.execute<{
@@ -257,8 +259,28 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       { connectionId },
       { wrappedConnection: ctx.connection, bindInvocationContext: true }
     );
-    recordWebSocketDatabaseSession(connections[0]);
-    return connections.length > 0;
+    if (connections.length) {
+      recordWebSocketDatabaseSession(connections[0]);
+      return true;
+    }
+    // identity_id is part of the primary key. A waiting READ COMMITTED scan
+    // can miss a row moved behind its cursor by another authentication. A
+    // writer-bound presence check distinguishes that from an actual deletion;
+    // presence alone never authorizes a mutation or orphan-grant cleanup.
+    const existing = await this.db.execute<{ connection_id: string }>(
+      `select connection_id from ${WS_CONNECTIONS_TABLE}
+       where connection_id = :connectionId limit 1`,
+      { connectionId },
+      { wrappedConnection: ctx.connection, bindInvocationContext: true }
+    );
+    if (!existing.length) return false;
+    if (attemptsLeft > 1) {
+      return this.lockConnection(connectionId, ctx, attemptsLeft - 1);
+    }
+    throw new CustomApiCompliantException(
+      503,
+      'Socket identity is changing; retry the request.'
+    );
   }
 
   private async requireConnection(connectionId: string, ctx: RequestContext) {
