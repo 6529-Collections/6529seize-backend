@@ -62,6 +62,10 @@ rows needed by an in-progress migration or its recovery checkpoints. A missing
 next journal watermark stops catch-up and retains legacy ownership. Preserve
 the journal when investigating a stopped copy or planning rollback/re-migration.
 
+Trusted full comparisons collect all native reader results in 2,000-row pages
+to avoid repeating voter aggregations. Optional shadow sampling retains its
+500-row pages and existing row ceiling.
+
 Full comparisons read content in pages of 100 drops and prefetch WAVE-scoped
 TDH/XTDH budgets in pages of 100 profiles. The candidate retains the public
 single-profile budget formula; the legacy oracle reads its own authoritative

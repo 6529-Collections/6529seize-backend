@@ -124,6 +124,8 @@ export class CompetitionMigrationContentRepository extends LazyDbAccessCompatibl
       if (!entryIds.length) return new Map();
       if (entryIds.length > 100)
         throw new Error('Content comparison page exceeds 100 entries');
+      // The physical primary key is (entry_id, version), so equal-version
+      // ties are impossible. This is the same latest-version order as getContent.
       const rows = await this.db.execute<{
         entry_id: string;
         content: CompetitionEntryContent | string;

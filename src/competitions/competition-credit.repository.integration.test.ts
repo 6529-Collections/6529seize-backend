@@ -233,10 +233,14 @@ describeWithSeed(
               const ctx = { connection };
               const batched = await competitionCreditService.getWaveBudgets(
                 selected,
-                [profileId, 'missing-profile'],
+                [profileId, profileId.toUpperCase(), 'missing-profile'],
                 ctx
               );
-              for (const voter of [profileId, 'missing-profile'])
+              for (const voter of [
+                profileId,
+                profileId.toUpperCase(),
+                'missing-profile'
+              ])
                 expect(batched.get(voter)).toEqual(
                   await competitionCreditService.getBudget(
                     selected,

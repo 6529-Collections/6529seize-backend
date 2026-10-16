@@ -194,14 +194,15 @@ describe('CompetitionCreditService', () => {
   ])(
     'keeps batched %s wave budgets identical to single-profile budgets',
     async (credit_type) => {
-      const profiles = ['positive', 'negative', 'missing'];
+      const profiles = ['positive', 'POSITIVE', 'negative', 'missing'];
       const byId = new Map([
         ['positive', anIdentity({ tdh: 100.9, xtdh: 12.9 })],
         ['negative', anIdentity({ tdh: -10, xtdh: -2 })]
       ]);
       const spent = new Map([
         ['positive', 50],
-        ['missing', 7]
+        ['missing', 7],
+        ['negative', 0]
       ]);
       identities.getIdentitiesByIds.mockResolvedValue(
         Array.from(byId, ([profile_id, identity]) => ({
@@ -211,10 +212,10 @@ describe('CompetitionCreditService', () => {
       );
       repository.getNamespaceSpendings.mockResolvedValue(spent);
       identities.getIdentityByProfileId.mockImplementation(
-        async (id) => byId.get(id) ?? null
+        async (id) => byId.get(id.toLowerCase()) ?? null
       );
       repository.getSpending.mockImplementation(async (_competition, id) => ({
-        namespace_spent: spent.get(id) ?? 0,
+        namespace_spent: spent.get(id.toLowerCase()) ?? 0,
         entry_spent: 0,
         current_vote: 0
       }));
@@ -224,7 +225,19 @@ describe('CompetitionCreditService', () => {
       };
       const ctx = { connection: { connection: {} } };
       const batched = await service.getWaveBudgets(selected, profiles, ctx);
-      expect(repository.getSpending).not.toHaveBeenCalled();
+      expect(repository.getSpending).toHaveBeenCalledTimes(2);
+      expect(repository.getSpending).toHaveBeenCalledWith(
+        selected,
+        'POSITIVE',
+        undefined,
+        ctx
+      );
+      expect(repository.getSpending).toHaveBeenCalledWith(
+        selected,
+        'missing',
+        undefined,
+        ctx
+      );
       for (const profileId of profiles)
         expect(batched.get(profileId)).toEqual(
           await service.getBudget(selected, profileId, undefined, ctx)
@@ -246,8 +259,15 @@ describe('CompetitionCreditService', () => {
       { length: 205 },
       (_, index) => `profile-${index}`
     );
-    identities.getIdentitiesByIds.mockResolvedValue([]);
-    repository.getNamespaceSpendings.mockResolvedValue(new Map());
+    identities.getIdentitiesByIds.mockImplementation(async (ids: string[]) =>
+      ids.map((profile_id) => ({
+        ...anIdentity({ tdh: 0, xtdh: 0 }),
+        profile_id
+      }))
+    );
+    repository.getNamespaceSpendings.mockImplementation(
+      async (_competition, ids: string[]) => new Map(ids.map((id) => [id, 0]))
+    );
     expect((await service.getWaveBudgets(competition, [], {})).size).toBe(0);
     expect(identities.getIdentitiesByIds).not.toHaveBeenCalled();
     const budgets = await service.getWaveBudgets(competition, profiles, {});

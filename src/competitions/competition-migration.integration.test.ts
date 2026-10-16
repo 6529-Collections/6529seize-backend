@@ -1635,6 +1635,51 @@ describeWithSeed(
       expect((await service.status(id)).migration?.state).toBe('SHADOWING');
     });
 
+    it('preserves scalar credit lookup semantics for differently cased stored voter IDs', async () => {
+      const profileId = 'FIXTURE-VOTER';
+      for (const table of [
+        DROP_VOTER_STATE_TABLE,
+        DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+        DROP_REAL_VOTER_VOTE_IN_TIME_TABLE
+      ])
+        await sqlExecutor.execute(
+          `update ${table} set voter_id=:profileId where wave_id=:waveId`,
+          { profileId, waveId: wave.id }
+        );
+      const scalar = await sqlExecutor.oneOrNull<{ tdh: number }>(
+        `select tdh from ${IDENTITIES_TABLE} where profile_id=:profileId`,
+        { profileId }
+      );
+      const expected = Math.max(0, Math.floor(Number(scalar?.tdh ?? 0)));
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      const record =
+        (await new CompetitionRepository().findCompetitionRecordById(id, {}))!;
+      const baseline = await new LegacyCompetitionBaselineRepository(
+        () => sqlExecutor
+      ).getSnapshot(record, Date.now(), {});
+      expect(baseline.credit_budgets).toEqual([
+        {
+          profile_id: profileId,
+          drop_id: null,
+          available: expected,
+          spent: 7,
+          remaining: Math.max(0, expected - 7)
+        }
+      ]);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      expect((await service.verifyNative(id)).failures).toEqual([]);
+    });
+
     it.each(['comparison', 'cutover'])(
       'releases the ownership fence after a slow %s statement without transferring storage',
       async (operation) => {
@@ -1771,6 +1816,15 @@ describeWithSeed(
             ctx
           );
           expect(comparison[0].baselineHash).toBe(comparison[0].candidateHash);
+          const primaryKey = await sqlExecutor.execute<{ COLUMN_NAME: string }>(
+            `select COLUMN_NAME from information_schema.KEY_COLUMN_USAGE where TABLE_SCHEMA=database() and TABLE_NAME=:table and CONSTRAINT_NAME='PRIMARY' order by ORDINAL_POSITION`,
+            { table: COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE },
+            { wrappedConnection: connection }
+          );
+          expect(primaryKey.map((column) => column.COLUMN_NAME)).toEqual([
+            'entry_id',
+            'version'
+          ]);
           const original = (await content.getContent(entryId, ctx))!;
           await content.saveContent(
             entry,

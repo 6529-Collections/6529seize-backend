@@ -1,3 +1,5 @@
+import { readSequentially } from '@/competitions/competition-read-sequence';
+import { collections } from '@/collections';
 import { LEGACY_INDEFINITE_PAUSE_END } from './legacy-competition-settings.repository';
 import { legacyCompetitionEntryId } from '@/competitions/competition-id';
 import {
@@ -362,7 +364,7 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
     const timerName = `${this.constructor.name}->availableCredits`;
     ctx.timer?.start(timerName);
     try {
-      const amounts = new Map(profileIds.map((id) => [id, 0]));
+      const amounts = new Map<string, number>();
       if (
         ![
           WaveCreditType.TDH,
@@ -370,30 +372,41 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
           WaveCreditType.TDH_PLUS_XTDH
         ].includes(wave.voting_credit_type)
       ) {
-        for (const profileId of profileIds)
+        await readSequentially(profileIds, async (profileId) => {
           amounts.set(
             profileId,
             await this.availableCredit(wave, nfts, profileId, ctx)
           );
+        });
         return amounts;
       }
-      for (let offset = 0; offset < profileIds.length; offset += 100) {
-        const identities = await this.db.execute<{
-          profile_id: string;
-          tdh: Numeric;
-          xtdh: Numeric;
-        }>(
-          `select profile_id,tdh,xtdh from ${IDENTITIES_TABLE} where profile_id in (:ids)`,
-          { ids: profileIds.slice(offset, offset + 100) },
-          { wrappedConnection: ctx.connection }
-        );
-        for (const identity of identities) {
-          amounts.set(
-            identity.profile_id,
-            identityCredit(wave.voting_credit_type, identity)
+      await readSequentially(
+        collections.chunkArray([...profileIds], 100),
+        async (ids) => {
+          const identities = await this.db.execute<{
+            profile_id: string;
+            tdh: Numeric;
+            xtdh: Numeric;
+          }>(
+            `select profile_id,tdh,xtdh from ${IDENTITIES_TABLE} where profile_id in (:ids)`,
+            { ids },
+            { wrappedConnection: ctx.connection }
           );
+          for (const identity of identities) {
+            amounts.set(
+              identity.profile_id,
+              identityCredit(wave.voting_credit_type, identity)
+            );
+          }
         }
-      }
+      );
+      // Preserve the scalar source lookup for missing/collation-matched IDs.
+      await readSequentially(
+        profileIds.filter((id) => !amounts.has(id)),
+        async (id) => {
+          amounts.set(id, await this.availableCredit(wave, nfts, id, ctx));
+        }
+      );
       return amounts;
     } finally {
       ctx.timer?.stop(timerName);

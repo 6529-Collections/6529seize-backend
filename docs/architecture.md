@@ -1233,6 +1233,10 @@ watermark; other source changes retain the broader refresh. The applied watermar
 remains behind until the bounded refresh finishes, and full comparison remains
 mandatory. Routine snapshots therefore do not force another copy of unchanged
 voters, decision awards and winner archives.
+Trusted full comparisons collect all native reader results in 2,000-row pages
+to avoid repeating voter aggregations. Optional shadow sampling retains its
+500-row pages and existing row ceiling.
+
 Full content comparison prefetches all relations in 100-drop pages, while WAVE
 TDH/XTDH budgets prefetch identity and spending data in 100-profile pages. The
 candidate reuses the ordinary public budget formula and the source oracle remains

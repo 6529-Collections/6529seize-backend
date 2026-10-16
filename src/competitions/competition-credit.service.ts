@@ -1,3 +1,5 @@
+import { readSequentially } from '@/competitions/competition-read-sequence';
+import { collections } from '@/collections';
 import {
   CompetitionCreditRepository,
   CompetitionCreditSpending,
@@ -152,57 +154,68 @@ export class CompetitionCreditService {
       WaveCreditType.TDH_PLUS_XTDH
     ].includes(competition.voting.credit_type as WaveCreditType);
     if (!simpleCredit) {
-      for (const profileId of profiles)
+      await readSequentially(profiles, async (profileId) => {
         budgets.set(
           profileId,
           await this.getBudget(competition, profileId, undefined, ctx)
         );
+      });
       return budgets;
     }
-    for (let offset = 0; offset < profiles.length; offset += 100) {
-      const page = profiles.slice(offset, offset + 100);
-      const identities = new Map(
-        (await this.identities.getIdentitiesByIds(page, ctx.connection)).map(
-          (identity) => [identity.profile_id, identity]
-        )
-      );
-      const spendings = await this.repository.getNamespaceSpendings(
-        competition,
-        page,
-        ctx
-      );
-      // Keep validation, flooring, range checks and budget construction in the
-      // same public implementation used by ordinary one-profile reads.
-      const prefetched = new CompetitionCreditService(
-        {
-          getSpending: async (_competition, profileId) => ({
-            namespace_spent: spendings.get(profileId) ?? 0,
-            entry_spent: 0,
-            current_vote: 0
-          }),
-          getNamespaceSpendings: this.repository.getNamespaceSpendings.bind(
-            this.repository
+    await readSequentially(
+      collections.chunkArray(profiles, 100),
+      async (page) => {
+        const identities = new Map(
+          (await this.identities.getIdentitiesByIds(page, ctx.connection)).map(
+            (identity) => [identity.profile_id, identity]
           )
-        },
-        {
-          getIdentityByProfileId: async (profileId) =>
-            identities.get(profileId) ?? null,
-          getIdentitiesByIds: this.identities.getIdentitiesByIds.bind(
-            this.identities
-          ),
-          getSingleNftVotingCreditsByProfileId:
-            this.identities.getSingleNftVotingCreditsByProfileId.bind(
-              this.identities
-            )
-        },
-        this.ratings
-      );
-      for (const profileId of page)
-        budgets.set(
-          profileId,
-          await prefetched.getBudget(competition, profileId, undefined, ctx)
         );
-    }
+        const spendings = await this.repository.getNamespaceSpendings(
+          competition,
+          page,
+          ctx
+        );
+        // Keep validation, flooring, range checks and budget construction in the
+        // same public implementation used by ordinary one-profile reads.
+        const prefetched = new CompetitionCreditService(
+          {
+            getSpending: (_competition, profileId) =>
+              Promise.resolve({
+                namespace_spent: spendings.get(profileId) ?? 0,
+                entry_spent: 0,
+                current_vote: 0
+              }),
+            getNamespaceSpendings: this.repository.getNamespaceSpendings.bind(
+              this.repository
+            )
+          },
+          {
+            getIdentityByProfileId: (profileId) =>
+              Promise.resolve(identities.get(profileId) ?? null),
+            getIdentitiesByIds: this.identities.getIdentitiesByIds.bind(
+              this.identities
+            ),
+            getSingleNftVotingCreditsByProfileId:
+              this.identities.getSingleNftVotingCreditsByProfileId.bind(
+                this.identities
+              )
+          },
+          this.ratings
+        );
+        await readSequentially(page, async (profileId) => {
+          // A missing exact key may be a collation match, not absent data.
+          // Fall back to the original SQL lookup rather than assuming zero.
+          const source =
+            identities.has(profileId) && spendings.has(profileId)
+              ? prefetched
+              : this;
+          budgets.set(
+            profileId,
+            await source.getBudget(competition, profileId, undefined, ctx)
+          );
+        });
+      }
+    );
     return budgets;
   }
 
