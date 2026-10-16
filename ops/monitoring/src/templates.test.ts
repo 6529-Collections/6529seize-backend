@@ -126,7 +126,8 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
           'waveScoreRefreshLoopThrottles',
           'subscriptionCoverageReconciliationLoopThrottles',
           'nftsLoopThrottles',
-          'releaseNotesGenerationLoopThrottles'
+          'releaseNotesGenerationLoopThrottles',
+          'transactionsProcessingLoopThrottles'
         ].includes(id) &&
         resource.Type === 'AWS::CloudWatch::Alarm' &&
         resource.Properties.Namespace === 'AWS/Lambda'
@@ -135,6 +136,56 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
         assert.equal(resource.Properties.DatapointsToAlarm, undefined, id);
       }
     }
+  }
+});
+
+test('transaction processing tolerates brief airdrop contention and alerts after five breaching minutes while failures stay immediate', () => {
+  for (const env of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
+    ).Resources;
+    const throttles = resources.transactionsProcessingLoopThrottles.Properties;
+    const errors = resources.transactionsProcessingLoopErrors.Properties;
+    assert.deepEqual(throttles, {
+      AlarmName: {
+        'Fn::Sub':
+          'seize-monitoring-${Environment}-transactionsProcessingLoop-Throttles'
+      },
+      Namespace: 'AWS/Lambda',
+      MetricName: 'Throttles',
+      Dimensions: [
+        { Name: 'FunctionName', Value: 'transactionsProcessingLoop' }
+      ],
+      Statistic: 'Sum',
+      Period: 60,
+      EvaluationPeriods: 5,
+      DatapointsToAlarm: 5,
+      Threshold: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+      TreatMissingData: 'notBreaching',
+      AlarmActions: {
+        'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+      }
+    });
+    // Replay the observed three-minute burst, plus shorter and sustained cases.
+    for (const { counts, expected } of [
+      { counts: [0, 0, 5, 5, 7], expected: false },
+      { counts: [0, 0, 0, 0, 100], expected: false },
+      { counts: [0, 1, 1, 1, 1], expected: false },
+      { counts: [1, 1, 0, 1, 1], expected: false },
+      { counts: [1, 1, 1, 1, 1], expected: true }
+    ]) {
+      const breachingMinutes: number = counts.filter(
+        (count) => count >= throttles.Threshold
+      ).length;
+      assert.equal(breachingMinutes >= throttles.DatapointsToAlarm, expected);
+    }
+    assert.equal(errors.MetricName, 'Errors');
+    assert.equal(errors.Period, 60);
+    assert.equal(errors.EvaluationPeriods, 1);
+    assert.equal(errors.DatapointsToAlarm, undefined);
+    assert.equal(errors.Threshold, 1);
+    assert.deepEqual(errors.AlarmActions, throttles.AlarmActions);
   }
 });
 
