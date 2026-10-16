@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { QueryFailedError } from 'typeorm';
 import { DbQueryOptions } from '@/db-query.options';
 import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
 import {
@@ -26,11 +27,16 @@ export class MigrationCopySqlExecutor extends SqlExecutor {
     try {
       return await this.delegate.execute<T>(sql, params, options);
     } catch (error) {
+      // The loop's QueryRunner wraps the physical timeout. The transaction
+      // budget still rejects with the original driver error, so annotate that
+      // same object rather than the SQL-bearing TypeORM wrapper.
+      const budgetError =
+        error instanceof QueryFailedError ? error.driverError : error;
       if (
-        error instanceof SqlExecutionBudgetExceededError &&
-        Object.isExtensible(error)
+        budgetError instanceof SqlExecutionBudgetExceededError &&
+        Object.isExtensible(budgetError)
       ) {
-        Object.assign(error, {
+        Object.assign(budgetError, {
           migrationStatementNumber: statementNumber,
           migrationStatementFingerprint: createHash('sha256')
             .update(sql)
