@@ -1,5 +1,11 @@
+import { readSequentially } from './competition-read-sequence';
+import { CompetitionMigrationContentRepository } from './competition-migration-content.repository';
 import { isMigrationContentTable } from '@/competitions/competition-migration-capture';
-import { CompetitionEntryRepository } from './competition-entry.repository';
+import {
+  CompetitionEntryRepository,
+  CompetitionEntryContent
+} from './competition-entry.repository';
+import { CompetitionEntry } from './competition.types';
 import { DropEntity, DropType } from '@/entities/IDrop';
 import { competitionPayloadHash } from './competition-command-identity';
 import {
@@ -423,7 +429,11 @@ export class CompetitionMigrationBackfill {
           return await this.outcomes(record, reader, offset, now, ctx);
         case 'ENTRIES': {
           const source = await this.entryKeys(record, offset, limit, ctx);
-          for (const row of source) await this.entry(record, row.id, ctx);
+          await this.entryPage(
+            record,
+            source.map((row) => row.id),
+            ctx
+          );
           return source.length === limit
             ? Number(source[source.length - 1].serial_no)
             : 0;
@@ -589,6 +599,65 @@ export class CompetitionMigrationBackfill {
       ctx.timer?.stop(timerName);
     }
   }
+  private async entryPage(
+    record: CompetitionRoutingRecord,
+    dropIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->entryPage`;
+    ctx.timer?.start(timerName);
+    try {
+      if (record.storage_mode !== CompetitionStorageMode.LEGACY_ADAPTER)
+        throw new Error('Migration entry pages require legacy ownership');
+      if (!dropIds.length) return;
+      const entries = await new CompetitionRepository(
+        () => this.db
+      ).findLegacyEntriesByDropIds(record, dropIds, ctx);
+      const drops = await this.db.execute<DropEntity>(
+        `select * from ${DROPS_TABLE} where id in (:dropIds) and wave_id=:waveId and drop_type in ('PARTICIPATORY','WINNER')`,
+        { dropIds, waveId: record.wave_id },
+        { wrappedConnection: ctx.connection }
+      );
+      if (entries.length !== dropIds.length || drops.length !== dropIds.length)
+        throw new Error(
+          'Migration entry source disappeared while ownership was locked'
+        );
+      await this.upsert(
+        COMPETITION_ENTRIES_TABLE,
+        entries.map((entry) => ({
+          ...entry,
+          withdrawn_at: null,
+          disqualified_at: null
+        })),
+        ctx
+      );
+      const pages = new CompetitionMigrationContentRepository(() => this.db);
+      const contents = await pages.sourcePage(drops, ctx);
+      const previous = await pages.nativePage(
+        record.id,
+        entries.map((entry) => entry.id),
+        ctx
+      );
+      const sourceDrops = new Map(drops.map((drop) => [drop.id, drop]));
+      await readSequentially(entries, async (entry) => {
+        const content = contents.get(entry.drop_id);
+        const drop = sourceDrops.get(entry.drop_id);
+        if (!content || !drop)
+          throw new Error(
+            'OWNED_EXCEPTION: migration entry content page is incomplete'
+          );
+        await this.saveEntryContent(
+          entry,
+          content,
+          previous.get(entry.id) ?? null,
+          drop,
+          ctx
+        );
+      });
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
   public async entry(
     record: CompetitionRoutingRecord,
     dropId: string,
@@ -635,25 +704,31 @@ export class CompetitionMigrationBackfill {
         const contents = new CompetitionEntryRepository(() => this.db),
           content = await contents.loadDropContent(drop, ctx),
           previous = await contents.getContent(entry.id, ctx);
-        if (
-          competitionPayloadHash(previous) !== competitionPayloadHash(content)
-        )
-          await contents.saveContent(
-            entry,
-            content,
-            entry.submitter_id,
-            undefined,
-            {
-              ...ctx,
-              competitionContentObservedAt: Number(
-                drop.updated_at ?? drop.created_at
-              )
-            }
-          );
+        await this.saveEntryContent(entry, content, previous, drop, ctx);
       }
     } finally {
       ctx.timer?.stop(timerName);
     }
+  }
+  private async saveEntryContent(
+    entry: CompetitionEntry,
+    content: CompetitionEntryContent,
+    previous: CompetitionEntryContent | null,
+    drop: DropEntity,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (competitionPayloadHash(previous) === competitionPayloadHash(content))
+      return;
+    await new CompetitionEntryRepository(() => this.db).saveContent(
+      entry,
+      content,
+      entry.submitter_id,
+      undefined,
+      {
+        ...ctx,
+        competitionContentObservedAt: Number(drop.updated_at ?? drop.created_at)
+      }
+    );
   }
   private async voters(
     record: CompetitionRoutingRecord,

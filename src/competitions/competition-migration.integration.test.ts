@@ -1,3 +1,5 @@
+import { CompetitionMigrationBackfill } from './competition-migration-backfill';
+import { CompetitionMigrationRepository } from './competition-migration.repository';
 import { performance } from 'node:perf_hooks';
 import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
 import { CompetitionMigrationContentRepository } from '@/competitions/competition-migration-content.repository';
@@ -114,6 +116,21 @@ const drop = {
   signature: null,
   hide_link_preview: false
 };
+
+async function seedRichEntryContent(dropId: string) {
+  for (const sql of [
+    `update ${DROPS_TABLE} set title=:dropId,hide_link_preview=1,reply_to_drop_id='quoted',reply_to_part_id=2,parts_count=2 where id=:dropId`,
+    `insert into ${DROPS_PARTS_TABLE} (drop_id,drop_part_id,content,quoted_drop_id,quoted_drop_part_id) values (:dropId,2,:dropId,'quoted',1)`,
+    `insert into ${DROP_MEDIA_TABLE} (drop_id,drop_part_id,url,mime_type,media_upload_id) values (:dropId,2,:dropId,'image/png','upload')`,
+    `insert into ${DROP_ATTACHMENTS_TABLE} (drop_id,drop_part_id,attachment_id) values (:dropId,2,:dropId)`,
+    `insert into ${DROP_METADATA_TABLE} (drop_id,data_key,data_value) values (:dropId,'z',:dropId),(:dropId,'a','second')`,
+    `insert into ${DROP_REFERENCED_NFTS_TABLE} (drop_id,contract,token,name) values (:dropId,'contract','1',:dropId)`,
+    `insert into ${DROPS_MENTIONS_TABLE} (drop_id,mentioned_profile_id,handle_in_content) values (:dropId,'fixture-author',:dropId)`,
+    `insert into ${DROP_MENTIONED_WAVES_TABLE} (drop_id,wave_id,wave_name_in_content) values (:dropId,:waveId,:dropId)`,
+    `insert into ${DROP_MENTIONED_GROUPS_TABLE} (drop_id,mentioned_group) values (:dropId,'all')`
+  ])
+    await sqlExecutor.execute(sql, { dropId, waveId: wave.id });
+}
 
 async function seedSnapshotEntry(secondDropId: string, now: number, vote = 6) {
   for (const sql of [
@@ -1898,20 +1915,8 @@ describeWithSeed(
     it('compares complete content pages without mixing drops and reads the latest native version', async () => {
       const secondDropId = 'content-page-second';
       await seedSnapshotEntry(secondDropId, Date.now());
-      for (const dropId of [drop.id, secondDropId]) {
-        for (const sql of [
-          `update ${DROPS_TABLE} set title=:dropId,hide_link_preview=1,reply_to_drop_id='quoted',reply_to_part_id=2,parts_count=2 where id=:dropId`,
-          `insert into ${DROPS_PARTS_TABLE} (drop_id,drop_part_id,content,quoted_drop_id,quoted_drop_part_id) values (:dropId,2,:dropId,'quoted',1)`,
-          `insert into ${DROP_MEDIA_TABLE} (drop_id,drop_part_id,url,mime_type,media_upload_id) values (:dropId,2,:dropId,'image/png','upload')`,
-          `insert into ${DROP_ATTACHMENTS_TABLE} (drop_id,drop_part_id,attachment_id) values (:dropId,2,:dropId)`,
-          `insert into ${DROP_METADATA_TABLE} (drop_id,data_key,data_value) values (:dropId,'z',:dropId),(:dropId,'a','second')`,
-          `insert into ${DROP_REFERENCED_NFTS_TABLE} (drop_id,contract,token,name) values (:dropId,'contract','1',:dropId)`,
-          `insert into ${DROPS_MENTIONS_TABLE} (drop_id,mentioned_profile_id,handle_in_content) values (:dropId,'fixture-author',:dropId)`,
-          `insert into ${DROP_MENTIONED_WAVES_TABLE} (drop_id,wave_id,wave_name_in_content) values (:dropId,:waveId,:dropId)`,
-          `insert into ${DROP_MENTIONED_GROUPS_TABLE} (drop_id,mentioned_group) values (:dropId,'all')`
-        ])
-          await sqlExecutor.execute(sql, { dropId, waveId: wave.id });
-      }
+      for (const dropId of [drop.id, secondDropId])
+        await seedRichEntryContent(dropId);
       const content = new CompetitionEntryRepository(() => sqlExecutor);
       const pages = new CompetitionMigrationContentRepository(
         () => sqlExecutor
@@ -2015,6 +2020,328 @@ describeWithSeed(
         }
       );
     });
+
+    it('batches complete entry content and global ranks without creating duplicate versions', async () => {
+      const secondDropId = 'batched-second-entry';
+      await seedSnapshotEntry(secondDropId, Date.now());
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await sqlExecutor.execute(
+        `delete from ${DROPS_PARTS_TABLE} where drop_id=:secondDropId`,
+        { secondDropId }
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      while ((await service.status(id)).migration?.stage !== 'ENTRIES')
+        await service.backfill(id, operator);
+      const scalar = jest.spyOn(
+        CompetitionEntryRepository.prototype,
+        'loadDropContent'
+      );
+      const ranks = jest.spyOn(
+        CompetitionRepository.prototype,
+        'findLegacyEntriesByDropIds'
+      );
+      const source = jest.spyOn(
+        CompetitionMigrationContentRepository.prototype,
+        'sourcePage'
+      );
+      const native = jest.spyOn(
+        CompetitionMigrationContentRepository.prototype,
+        'nativePage'
+      );
+      const checkpoint = (await service.status(id)).migration;
+      source.mockResolvedValueOnce(new Map());
+      await expect(service.backfill(id, operator, 25)).rejects.toThrow(
+        'migration entry content page is incomplete'
+      );
+      expect((await service.status(id)).migration).toEqual(checkpoint);
+      expect(
+        await sqlExecutor.execute(
+          `select id from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual([]);
+      source.mockClear();
+      ranks.mockClear();
+      native.mockClear();
+      await service.backfill(id, operator, 25);
+      expect(scalar).not.toHaveBeenCalled();
+      expect(ranks).toHaveBeenCalledTimes(1);
+      expect(source).toHaveBeenCalledTimes(1);
+      expect(native).toHaveBeenCalledTimes(1);
+      scalar.mockRestore();
+      ranks.mockRestore();
+      source.mockRestore();
+      native.mockRestore();
+      const emptyDrop = (await sqlExecutor.oneOrNull<DropEntity>(
+        `select * from ${DROPS_TABLE} where id=:secondDropId`,
+        { secondDropId }
+      ))!;
+      expect(
+        await new CompetitionEntryRepository(() => sqlExecutor).getContent(
+          legacyCompetitionEntryId(id, secondDropId),
+          {}
+        )
+      ).toEqual(
+        await new CompetitionEntryRepository(() => sqlExecutor).loadDropContent(
+          emptyDrop,
+          {}
+        )
+      );
+      const record =
+        (await new CompetitionRepository().findCompetitionRecordById(id, {}))!;
+      const original = await sqlExecutor.execute(
+        `select entry_id,version,content,created_at from ${COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} order by entry_id,version`
+      );
+      for (let pass = 0; pass < 2; pass++) {
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            expect(
+              await new CompetitionMigrationBackfill(sqlExecutor).batch(
+                record,
+                'ENTRIES',
+                0,
+                25,
+                Date.now(),
+                null,
+                { connection }
+              )
+            ).toBe(0);
+          }
+        );
+      }
+      expect(
+        await sqlExecutor.execute(
+          `select entry_id,version,content,created_at from ${COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} order by entry_id,version`
+        )
+      ).toEqual(original);
+      await finishBackfill(service);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+    });
+
+    it('replays active parent deletion and all content cleanup with only a rank sweep', async () => {
+      const secondDropId = 'surviving-deletion-entry';
+      await seedSnapshotEntry(secondDropId, Date.now());
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await seedRichEntryContent(drop.id);
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          for (const table of [
+            DROPS_PARTS_TABLE,
+            DROP_MEDIA_TABLE,
+            DROP_ATTACHMENTS_TABLE,
+            DROP_METADATA_TABLE,
+            DROP_REFERENCED_NFTS_TABLE,
+            DROPS_MENTIONS_TABLE,
+            DROP_MENTIONED_WAVES_TABLE,
+            DROP_MENTIONED_GROUPS_TABLE
+          ]) {
+            await sqlExecutor.execute(
+              `delete from ${table} where drop_id=:dropId`,
+              { dropId: drop.id },
+              { wrappedConnection: connection }
+            );
+          }
+          await sqlExecutor.execute(
+            `delete from ${DROPS_TABLE} where id=:dropId`,
+            { dropId: drop.id },
+            { wrappedConnection: connection }
+          );
+          for (const table of [
+            DROP_VOTER_STATE_TABLE,
+            DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+            DROP_RANK_TABLE,
+            DROP_REAL_VOTE_IN_TIME_TABLE,
+            DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
+            WAVE_LEADERBOARD_ENTRIES_TABLE
+          ]) {
+            await sqlExecutor.execute(
+              `delete from ${table} where drop_id=:dropId`,
+              { dropId: drop.id },
+              { wrappedConnection: connection }
+            );
+          }
+        }
+      );
+      // One-row journal pages prove classification includes the earlier deletion.
+      while ((await service.status(id)).migration?.state === 'SHADOWING')
+        await service.catchUp(id, operator, 1);
+      const checkpoint = (await service.status(id)).migration!;
+      expect(checkpoint.stage).toBe('LEADERBOARD');
+      expect(checkpoint.applied_watermark).toBe(0);
+      expect(checkpoint.target_watermark).toBe(checkpoint.source_watermark);
+      for (const table of [
+        COMPETITION_ENTRIES_TABLE,
+        COMPETITION_VOTES_TABLE,
+        COMPETITION_ENTRY_RUNTIME_TABLE,
+        COMPETITION_LEADERBOARD_ENTRIES_TABLE
+      ]) {
+        expect(
+          await sqlExecutor.execute(
+            `select * from ${table} where competition_id=:id and ${table === COMPETITION_ENTRIES_TABLE ? 'id' : 'entry_id'}=:entryId`,
+            { id, entryId: legacyCompetitionEntryId(id, drop.id) }
+          )
+        ).toEqual([]);
+      }
+      // A new service resumes the saved sweep; no voter/archive recopy is needed.
+      await finishBackfill(
+        new CompetitionMigrationService(() => sqlExecutor, Date.now, 0)
+      );
+      expect((await service.status(id)).operations?.journalLag).toBe(0);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      expect((await service.verifyNative(id)).failures).toEqual([]);
+    });
+
+    it.each([
+      'surviving content',
+      'winner deletion',
+      'missing parent key',
+      'journal gap',
+      'parent outside window',
+      'recreated parent'
+    ])('retains the full refresh for %s', async (scenario) => {
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      if (scenario === 'winner deletion')
+        await sqlExecutor.execute(
+          `update ${DROPS_TABLE} set drop_type='WINNER' where id=:dropId`,
+          { dropId: drop.id }
+        );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      await sqlExecutor.execute(
+        `delete from ${DROPS_PARTS_TABLE} where drop_id=:dropId`,
+        { dropId: drop.id }
+      );
+      if (scenario !== 'surviving content')
+        await sqlExecutor.execute(
+          `delete from ${DROPS_TABLE} where id=:dropId`,
+          { dropId: drop.id }
+        );
+      if (scenario === 'recreated parent')
+        await sqlExecutor.execute(
+          `insert into ${DROPS_TABLE} (id,wave_id,author_id,created_at,parts_count,drop_type,hide_link_preview) values (:dropId,:waveId,'fixture-author',10,1,'PARTICIPATORY',0)`,
+          { dropId: drop.id, waveId: wave.id }
+        );
+      const status = (await service.status(id)).migration!;
+      if (scenario === 'missing parent key')
+        await sqlExecutor.execute(
+          `update ${COMPETITION_MIGRATION_CHANGES_TABLE} set before_row=json_remove(before_row,'$.id') where competition_id=:id and source_table=:table`,
+          { id, table: DROPS_TABLE }
+        );
+      if (scenario === 'journal gap')
+        await sqlExecutor.execute(
+          `delete from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark=1`,
+          { id }
+        );
+      let targetWatermark = status.source_watermark;
+      if (scenario === 'parent outside window') targetWatermark = 1;
+      else if (scenario === 'recreated parent') targetWatermark--;
+      expect(
+        await new CompetitionMigrationRepository().canRefreshOnlyLeaderboard(
+          id,
+          0,
+          targetWatermark,
+          {}
+        )
+      ).toBe(false);
+    });
+
+    it.each(['backfill', 'catch-up'])(
+      'releases a slow %s batch fence and preserves its checkpoint',
+      async (operation) => {
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          Date.now,
+          0
+        );
+        await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+        if (operation === 'catch-up') {
+          await finishBackfill(service);
+          await moveLiveEntryVote(drop.id, 8, 1);
+        }
+        const checkpoint = (await service.status(id)).migration!;
+        const method = operation === 'backfill' ? 'batch' : 'applyChange';
+        const slow = jest
+          .spyOn(CompetitionMigrationBackfill.prototype, method)
+          .mockImplementationOnce(async (...args: unknown[]) => {
+            const ctx = args[args.length - 1] as {
+              connection: NonNullable<
+                Parameters<
+                  CompetitionMigrationBackfill['applyChange']
+                >[2]['connection']
+              >;
+            };
+            await sqlExecutor.execute(
+              'SELECT SLEEP(2)',
+              {},
+              { wrappedConnection: ctx.connection }
+            );
+            return 0 as never;
+          });
+        const started = performance.now();
+        await expect(
+          operation === 'backfill'
+            ? service.backfill(id, operator)
+            : service.catchUp(id, operator)
+        ).rejects.toBeInstanceOf(SqlExecutionBudgetExceededError);
+        expect(performance.now() - started).toBeLessThan(5000);
+        slow.mockRestore();
+        expect((await service.status(id)).migration).toEqual(checkpoint);
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            expect(
+              await new CompetitionRepository().lockLegacyExecutionOwner(
+                wave.id,
+                { connection }
+              )
+            ).toMatchObject({
+              storage_mode: 'LEGACY_ADAPTER',
+              execution_mode: 'ACTIVE'
+            });
+          }
+        );
+      }
+    );
+
+    it.each(['BACKFILLING', 'SHADOWING'])(
+      'honors an operator stop inside the locked %s transaction, including no-op batches',
+      async (state) => {
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          Date.now,
+          0
+        );
+        await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+        if (state === 'SHADOWING') await finishBackfill(service);
+        await service.recordException(id, operator, 'TEST_STOP');
+        const before = (await service.status(id)).migration;
+        await expect(service.backfill(id, operator)).rejects.toThrow(
+          'Migration requires adapter review'
+        );
+        if (state === 'SHADOWING')
+          await expect(service.catchUp(id, operator)).rejects.toThrow(
+            'Migration requires adapter review'
+          );
+        expect((await service.status(id)).migration).toEqual(before);
+      }
+    );
 
     it('catches repeated leaderboard refreshes without recopying voter and historical stages', async () => {
       const now = Date.now();

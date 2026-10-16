@@ -35,7 +35,10 @@ import {
   MigrationEnvironment,
   MigrationReadiness
 } from '@/competitions/competition-migration-policy';
-import { migrationCaptureHealthy } from '@/competitions/competition-migration-capture';
+import {
+  MIGRATION_CONTENT_TABLES,
+  migrationCaptureHealthy
+} from '@/competitions/competition-migration-capture';
 import { CompetitionMigrationEnvironmentRepository } from './competition-migration-environment.repository';
 import { competitionPayloadHash } from './competition-command-identity';
 
@@ -469,15 +472,43 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
     try {
       // Check every page since the last acknowledged refresh. These keys are
       // replayed directly; retained time histories need no separate copy.
+      // Parent deletion replay removes the live entry, votes and runtime. Content
+      // cleanup requires its active parent deletion in the same journal window
+      // and no surviving source parent. Winner deletions remain conservative.
+      // Edits, creation, decision/history changes and surviving parents still
+      // require the conservative refresh. COALESCE fails closed on missing keys.
       const row = await this.db.oneOrNull<{
         count: number | string;
         unsupported: number | string;
       }>(
-        `select count(*) as count,coalesce(sum(source_table not in (:tables)),0) as unsupported from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark>:appliedWatermark and watermark<=:targetWatermark`,
+        `select count(*) as count,coalesce(sum(not coalesce((
+           change_row.source_table in (:tables) or (
+             change_row.operation='DELETE' and change_row.after_row is null
+             and (
+               (change_row.source_table=:dropsTable and json_unquote(json_extract(change_row.before_row,'$.drop_type'))='PARTICIPATORY')
+               or (change_row.source_table in (:contentTables) and exists (
+                 select 1 from ${COMPETITION_MIGRATION_CHANGES_TABLE} parent
+                 where parent.competition_id=:id and parent.watermark>:appliedWatermark and parent.watermark<=:targetWatermark
+                   and parent.source_table=:dropsTable and parent.operation='DELETE' and parent.after_row is null
+                   and json_unquote(json_extract(parent.before_row,'$.drop_type'))='PARTICIPATORY'
+                   and json_unquote(json_extract(parent.before_row,'$.id'))=json_unquote(json_extract(change_row.before_row,'$.drop_id'))
+               ))
+             )
+             and json_type(change_row.before_row)='OBJECT'
+             and json_type(json_extract(change_row.before_row,if(change_row.source_table=:dropsTable,'$.id','$.drop_id')))='STRING'
+             and not exists (
+               select 1 from ${DROPS_TABLE} d join ${COMPETITIONS_TABLE} c on c.legacy_wave_id=d.wave_id
+               where c.id=:id and d.id=json_unquote(json_extract(change_row.before_row,if(change_row.source_table=:dropsTable,'$.id','$.drop_id')))
+                 and d.drop_type in ('PARTICIPATORY','WINNER')
+             )
+           )
+         ),false)),0) as unsupported from ${COMPETITION_MIGRATION_CHANGES_TABLE} change_row where change_row.competition_id=:id and change_row.watermark>:appliedWatermark and change_row.watermark<=:targetWatermark`,
         {
           id,
           appliedWatermark,
           targetWatermark,
+          dropsTable: DROPS_TABLE,
+          contentTables: MIGRATION_CONTENT_TABLES,
           tables: [
             DROP_RANK_TABLE,
             DROP_VOTER_STATE_TABLE,
