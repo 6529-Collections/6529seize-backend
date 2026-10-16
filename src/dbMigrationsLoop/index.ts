@@ -22,6 +22,7 @@ import { getDataSource } from '@/db';
 import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 import { installMigrationCapture } from '@/competitions/competition-migration-capture';
 import { dbSupplier } from '@/sql-executor';
+import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
 
 const DBMigrate = require('db-migrate');
 
@@ -82,7 +83,8 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'maintenance' &&
       scope !== 'wallet-transfer-analysis' &&
       scope !== 'claims-media-upload' &&
-      scope !== 'nft-link-page-retry')
+      scope !== 'nft-link-page-retry' &&
+      scope !== 'market-depth-publication-lock')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -93,6 +95,16 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'market-depth-publication-lock') {
+    await doInDbContext(() => Promise.resolve(undefined), {
+      logger,
+      entities: [MarketDepthPublicationLockEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    logger.info('[FINISHED MARKET DEPTH PUBLICATION LOCK SCHEMA]');
+    return { schema_scope: scope };
+  }
   if (scope === 'nft-link-page-retry') {
     await doInDbContext(
       async () => {

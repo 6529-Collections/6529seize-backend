@@ -15,6 +15,7 @@ import {
   WalletTransferPairDailyEntity,
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
+import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
 import { handler } from './index';
 import { getDataSource } from '@/db';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
@@ -141,7 +142,11 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         WalletTransferWalletDailyEntity
       ]
     },
-    { scope: 'claims-media-upload', entities: [MintingClaimEntity] }
+    { scope: 'claims-media-upload', entities: [MintingClaimEntity] },
+    {
+      scope: 'market-depth-publication-lock',
+      entities: [MarketDepthPublicationLockEntity]
+    }
   ])(
     'synchronizes only the $scope entities and skips all unrelated work',
     async ({ scope, entities }) => {
@@ -278,6 +283,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     'wallet-transfer-analysis',
     'claims-media-upload',
     'nft-link-page-retry',
+    'market-depth-publication-lock',
     'membership-refresh',
     'membership-evaluator-index',
     'membership-runtime-control'
@@ -288,7 +294,11 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     expect(doInDbContext).not.toHaveBeenCalled();
   });
 
-  it.each(['wallet-transfer-analysis', 'claims-media-upload'])(
+  it.each([
+    'wallet-transfer-analysis',
+    'claims-media-upload',
+    'market-depth-publication-lock'
+  ])(
     'propagates %s schema synchronization failure without starting maintenance',
     async (scope) => {
       const failure = new Error('Synthetic schema failure');

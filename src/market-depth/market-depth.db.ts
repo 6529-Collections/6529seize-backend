@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { DbPoolName } from '@/db-query.options';
 import { Logger } from '@/logging';
 import {
   MARKET_DEPTH_COLLECTION_STATE_TABLE,
+  MARKET_DEPTH_PUBLICATION_LOCKS_TABLE,
   MARKET_DEPTH_CURRENT_ORDERS_TABLE,
   MARKET_DEPTH_CURSORS_TABLE,
   MARKET_DEPTH_EVENTS_TABLE,
@@ -40,6 +42,8 @@ import {
 
 type DbConnection = ConnectionWrapper<unknown>;
 const logger = Logger.get('MARKET_DEPTH_DB');
+// Deliberately global: different collections can contend on shared PRIMARY pages.
+const PUBLICATION_LOCK_ID = 'b78ed622-53d7-4d24-bcb8-4ff57edac806';
 
 type SnapshotRow = Omit<MarketDepthSnapshotMetadata, 'chain' | 'chain_id'> & {
   chain: string;
@@ -314,9 +318,18 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
     ).length;
     const bidCount = input.orders.length - askCount;
 
+    const startedAt = performance.now();
+    let lockRequestedAt: number | null = null;
+    let lockAcquiredAt: number | null = null;
+    let lockWaitTimeoutSeconds: number | null = null;
+    let insertMs: number | null = null;
+    let phase = 'transaction';
+    let outcome = 'error';
+
     const publish = async (
       connection: DbConnection
     ): Promise<MarketDepthSnapshotMetadata> => {
+      phase = 'partition';
       await this.query(
         `INSERT INTO ${MARKET_DEPTH_COLLECTION_STATE_TABLE}
           (source, chain_id, contract, collection_slug, collection_id, latest_snapshot_id,
@@ -372,6 +385,7 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
         }
       }
 
+      phase = 'snapshot';
       await this.query(
         `INSERT INTO ${MARKET_DEPTH_SNAPSHOTS_TABLE}
           (id, chain, chain_id, source, contract, collection_slug, collection_id,
@@ -410,6 +424,30 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
         connection
       );
 
+      // Acquire before any current-order writes. All publishers use the same
+      // partition -> archive -> global lock -> current orders sequence. The lock
+      // lives in this transaction and is released by COMMIT/ROLLBACK, including
+      // the first invocation that creates the row. Archive writes stay parallel;
+      // never use a per-collection key for the shared PRIMARY-index contention.
+      phase = 'lock_settings';
+      const lockSession = (
+        await this.query<{ seconds: number }>(
+          'SELECT @@SESSION.innodb_lock_wait_timeout AS seconds',
+          {},
+          connection
+        )
+      )[0];
+      lockWaitTimeoutSeconds = Number(lockSession.seconds);
+      phase = 'lock';
+      lockRequestedAt = performance.now();
+      await this.query(
+        `INSERT INTO ${MARKET_DEPTH_PUBLICATION_LOCKS_TABLE} (id)
+         VALUES (:id) ON DUPLICATE KEY UPDATE id=id`,
+        { id: PUBLICATION_LOCK_ID },
+        connection
+      );
+      lockAcquiredAt = performance.now();
+      phase = 'delete_orders';
       await this.query(
         `DELETE FROM ${MARKET_DEPTH_CURRENT_ORDERS_TABLE}
          WHERE source=:source AND chain_id=:chainId AND contract=:contract
@@ -422,15 +460,22 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
         },
         connection
       );
-      await this.db.bulkInsert(
-        MARKET_DEPTH_CURRENT_ORDERS_TABLE,
-        input.orders.map((order) =>
-          orderForDb(input.id, source, contract, collectionSlug, order)
-        ),
-        ORDER_COLUMNS,
-        undefined,
-        { connection }
-      );
+      phase = 'insert_orders';
+      const insertStartedAt = performance.now();
+      try {
+        await this.db.bulkInsert(
+          MARKET_DEPTH_CURRENT_ORDERS_TABLE,
+          input.orders.map((order) =>
+            orderForDb(input.id, source, contract, collectionSlug, order)
+          ),
+          ORDER_COLUMNS,
+          undefined,
+          { connection }
+        );
+      } finally {
+        insertMs = performance.now() - insertStartedAt;
+      }
+      phase = 'state';
       await this.query(
         `UPDATE ${MARKET_DEPTH_COLLECTION_STATE_TABLE}
          SET collection_id=:collectionId, latest_snapshot_id=:snapshotId,
@@ -450,7 +495,9 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
         },
         connection
       );
+      phase = 'reconciliations';
       await this.insertReconciliations(input.reconciliations ?? [], connection);
+      phase = 'commit';
 
       return {
         id: input.id,
@@ -473,12 +520,39 @@ export class MarketDepthDb extends LazyDbAccessCompatibleService {
         event_count: input.event_count
       };
     };
-    // The collection state lock serializes this partition. READ COMMITTED
-    // avoids DELETE range/gap locks blocking other collections' replacement
-    // inserts in the shared orders table; publication still commits atomically.
-    return this.executeNativeQueriesInTransaction(publish, {
-      isolationLevel: 'READ COMMITTED'
-    });
+    try {
+      const result = await this.executeNativeQueriesInTransaction(publish, {
+        isolationLevel: 'READ COMMITTED'
+      });
+      outcome = 'committed';
+      return result;
+    } finally {
+      // Include transaction finalization: logging inside publish would omit
+      // COMMIT/ROLLBACK while the shared lock is still held. An error outcome
+      // does not claim that an unacknowledged COMMIT was rolled back.
+      const finishedAt = performance.now();
+      logger.info('[SNAPSHOT PUBLICATION]', {
+        source,
+        contract,
+        collection_slug: collectionSlug,
+        snapshot_id: input.id,
+        order_count: input.orders.length,
+        outcome,
+        phase,
+        lock_acquired: lockAcquiredAt !== null,
+        lock_wait_timeout_s: lockWaitTimeoutSeconds,
+        lock_wait_ms:
+          lockRequestedAt === null
+            ? null
+            : Math.round((lockAcquiredAt ?? finishedAt) - lockRequestedAt),
+        lock_held_ms:
+          lockAcquiredAt === null
+            ? null
+            : Math.round(finishedAt - lockAcquiredAt),
+        insert_ms: insertMs === null ? null : Math.round(insertMs),
+        total_ms: Math.round(finishedAt - startedAt)
+      });
+    }
   }
 
   async getLatestCompletedSnapshot(
