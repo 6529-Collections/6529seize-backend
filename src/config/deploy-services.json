@@ -1078,6 +1078,23 @@
         "artworkDocumentationStorage",
         "dbMigrationsLoop"
       ]
+    },
+    {
+      "name": "webSocketDeliveryLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "webSocketDeliveryLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
     }
   ]
 }

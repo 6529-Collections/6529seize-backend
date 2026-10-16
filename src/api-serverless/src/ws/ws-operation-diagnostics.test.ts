@@ -8,6 +8,7 @@ import {
 import {
   recordWebSocketDatabaseSession,
   recordWebSocketSqlPhase,
+  recordWebSocketTransactionIsolation,
   WsTransactionDiagnostics
 } from './ws-transaction-diagnostics';
 
@@ -56,6 +57,7 @@ describe('WebSocket operation and transaction diagnostics', () => {
             1
           );
           await trace.runAttempt(1, async () => {
+            recordWebSocketTransactionIsolation('READ-COMMITTED');
             recordWebSocketDatabaseSession({
               diagnostic_session_id: 101,
               diagnostic_isolation: 'REPEATABLE-READ',
@@ -65,6 +67,7 @@ describe('WebSocket operation and transaction diagnostics', () => {
           });
           trace.failed(deadlock, true);
           await trace.runAttempt(2, async () => {
+            recordWebSocketTransactionIsolation('READ-COMMITTED');
             recordWebSocketDatabaseSession({
               diagnostic_session_id: 202,
               diagnostic_isolation: 'REPEATABLE-READ'
@@ -86,6 +89,8 @@ describe('WebSocket operation and transaction diagnostics', () => {
       attempt: 1,
       phase: 'insert_subscriptions',
       db_session_id: 101,
+      isolation: 'READ-COMMITTED',
+      session_isolation: 'REPEATABLE-READ',
       mysql_code: 'ER_LOCK_DEADLOCK',
       mysql_errno: 1213,
       mysql_sqlstate: '40001',
@@ -126,14 +131,20 @@ describe('WebSocket operation and transaction diagnostics', () => {
       input.connectionId,
       'caller'
     );
-    await trace.runAttempt(1, async () =>
-      recordWebSocketSqlPhase('insert_subscriptions')
-    );
+    await trace.runAttempt(1, async () => {
+      recordWebSocketSqlPhase('insert_subscriptions');
+      recordWebSocketDatabaseSession({
+        diagnostic_session_id: 303,
+        diagnostic_isolation: 'REPEATABLE-READ'
+      });
+    });
     trace.completed();
     trace.failed(deadlock, false);
     expect(records[0]).toMatchObject({
       outcome: 'statements_completed',
-      transaction_owner: 'caller'
+      transaction_owner: 'caller',
+      isolation: null,
+      session_isolation: 'REPEATABLE-READ'
     });
     expect(records[1]).toMatchObject({
       outcome: 'failed',
