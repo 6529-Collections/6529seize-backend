@@ -21,6 +21,8 @@ Degraded is raised over a rolling five-minute window when at least five distinct
 
 ## Rollout and rollback
 
+The monitoring deployment workflow verifies its public `/health` endpoint after the stack update. This checks fresh queue receipts and webhook connectivity without creating synthetic alerts.
+
 Deploy monitoring rendering/allowlists, provision the new worker's narrowly scoped deployment permissions, deploy `webSocketDeliveryLoop`, and register its source log subscription before deploying senders. Deploy every sending service listed in the release PR, then the frontend. No schema migration or REST API contract change is required. The new frame is additive; older browser bundles retain existing best-effort behavior until refreshed. Updated browsers repair missed state after connection recovery.
 
 Redis keys use the endpoint-scoped `ws-delivery:v1` namespace and expire after one hour without activity. Roll back sender code through ordinary deployments while leaving the worker and pending state in place until it drains. Never delete subscription state or widen permissions to hide a rate-limit error.
