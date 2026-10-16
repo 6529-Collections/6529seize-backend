@@ -167,6 +167,8 @@ describe('UploadMediaService', () => {
       ),
       ContentType: 'image/jpeg'
     });
+    // The sanitizer sets public caching when it publishes the cleaned copy.
+    expect(ingestS3.send.mock.calls[0][0].input.CacheControl).toBeUndefined();
     expect(uploadsDb.createUpload).toHaveBeenCalledWith(
       expect.objectContaining({
         profile_id: 'author-123',
@@ -257,10 +259,65 @@ describe('UploadMediaService', () => {
     expect(publicS3.send.mock.calls[0][0].input).toMatchObject({
       Bucket: 'test-bucket',
       Key: result.key,
-      ContentType: 'video/mp4'
+      ContentType: 'video/mp4',
+      CacheControl: 'public, max-age=31536000, immutable'
     });
     expect(ingestS3.send).not.toHaveBeenCalled();
     expect(uploadsDb.createUpload).not.toHaveBeenCalled();
+  });
+
+  it('stores long-lived caching on public multipart uploads with unique keys', async () => {
+    const publicS3 = {
+      send: jest.fn().mockResolvedValue({ UploadId: 'upload-123' })
+    };
+    const service = new UploadMediaService(
+      () => publicS3 as any,
+      () => ({ send: jest.fn() }) as any,
+      { createUpload: jest.fn() } as any,
+      jest.fn()
+    );
+
+    const distribution =
+      await service.getDistributionPhotoMultipartUploadKeyAndUploadId({
+        content_type: 'image/jpeg',
+        file_name: 'photo.jpg',
+        contract: '0xABCD',
+        card_id: 42
+      });
+    const wave = await service.getWaveMediaMultipartUploadKeyAndUploadId({
+      content_type: 'video/mp4',
+      file_name: 'clip.mp4',
+      author_id: 'author-123'
+    });
+
+    expect(publicS3.send.mock.calls.map(([command]) => command.input)).toEqual([
+      expect.objectContaining({
+        Bucket: 'test-bucket',
+        Key: distribution.key,
+        CacheControl: 'public, max-age=31536000, immutable'
+      }),
+      expect.objectContaining({
+        Bucket: 'test-bucket',
+        Key: wave.key,
+        CacheControl: 'public, max-age=31536000, immutable'
+      })
+    ]);
+  });
+
+  it('keeps presigned single uploads free of signed headers the client does not send', async () => {
+    const service = new UploadMediaService(() => ({ send: jest.fn() }) as any);
+
+    await service.createSignedDistributionPhotoUploadUrl({
+      content_type: 'image/jpeg',
+      file_name: 'photo.jpg',
+      contract: '0xABCD',
+      card_id: 42
+    });
+
+    // A signed Cache-Control header would reject uploads from current clients.
+    expect(getSignedUrlMock.mock.calls[0][1].input).not.toHaveProperty(
+      'CacheControl'
+    );
   });
 
   it('signs image upload parts against the ingest object when a tracked upload exists', async () => {

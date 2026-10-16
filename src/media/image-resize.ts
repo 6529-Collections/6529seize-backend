@@ -17,12 +17,20 @@ export async function resizeImageBufferToHeight({
     throw new Error(`Invalid resize height: ${height}`);
   }
 
+  // Derivatives never enlarge: an upscaled, re-encoded copy only adds bytes.
   if (toWebp) {
-    return await sharp(buffer).resize({ height }).webp().toBuffer();
+    return await sharp(buffer)
+      .resize({ height, withoutEnlargement: true })
+      .webp()
+      .toBuffer();
   }
 
   try {
     const gif = await imagescript.GIF.decode(buffer);
+    if (gif.height <= height) {
+      // The original GIF already fits; re-encoding it would not shrink it.
+      return buffer;
+    }
     const scaleFactor = gif.height / height;
     gif.resize(gif.width / scaleFactor, height);
     return gif.encode();
@@ -31,8 +39,20 @@ export async function resizeImageBufferToHeight({
       `[GIF RESIZE FALLBACK] ImageScript failed; retrying with Sharp [height=${height}]`,
       error
     );
-    return await sharp(buffer, { animated: true })
-      .resize({ height })
+    const animated = sharp(buffer, { animated: true });
+    const metadata = await animated.metadata();
+    const frameHeight = metadata.pageHeight ?? metadata.height;
+    // Reuse the bytes only when they really are a GIF; anything else is
+    // converted so the stored object matches its .GIF key and content type.
+    if (
+      metadata.format === 'gif' &&
+      frameHeight !== undefined &&
+      frameHeight <= height
+    ) {
+      return buffer;
+    }
+    return await animated
+      .resize({ height, withoutEnlargement: true })
       .gif()
       .toBuffer();
   }

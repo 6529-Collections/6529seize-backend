@@ -1,5 +1,11 @@
 import 'reflect-metadata';
-import { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
+import {
+  ConnectionWrapper,
+  SqlExecutor,
+  type SqlExecutionBudget,
+  type SqlTransactionOptions
+} from '@/sql-executor';
+import { performance } from 'node:perf_hooks';
 import {
   MarketDepthCursorConflictError,
   MarketDepthDb
@@ -43,17 +49,40 @@ function setup({
     if (sql.includes('=:lockWaitTimeout') && restoreError) throw restoreError;
     return [];
   });
+  const transaction = jest.fn(
+    async (
+      callback: (connection: ConnectionWrapper<unknown>) => Promise<void>,
+      _options?: SqlTransactionOptions
+    ) => callback({ connection: {} })
+  );
   const executor = {
     execute,
     bulkInsert: jest.fn().mockResolvedValue(undefined),
-    executeNativeQueriesInTransaction: async (
-      callback: (connection: ConnectionWrapper<unknown>) => Promise<void>
-    ) => callback({ connection: {} })
+    executeNativeQueriesInTransaction: transaction
   } as unknown as SqlExecutor;
-  return { execute, db: new MarketDepthDb(() => executor) };
+  return { execute, transaction, db: new MarketDepthDb(() => executor) };
 }
 
 describe('market-depth event session cleanup', () => {
+  it('delegates all session ownership to the supplied SQL execution budget', async () => {
+    const { db, execute, transaction } = setup({ missingSession: true });
+    const executionBudget: SqlExecutionBudget = {
+      deadlineMonotonicMillis: performance.now() + 5000,
+      maxStatementMillis: 4000,
+      finalizationReserveMillis: 1000,
+      lockWaitSeconds: 3
+    };
+    await db.appendEvents(input, executionBudget);
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), {
+      executionBudget
+    });
+    expect(
+      execute.mock.calls.some(([sql]) =>
+        /^(SELECT @@SESSION|SET SESSION)/.test(sql)
+      )
+    ).toBe(false);
+  });
+
   it('restores the original timeout after successful writes', async () => {
     const { db, execute } = setup();
     await db.appendEvents(input);
