@@ -32,6 +32,7 @@ import {
   WebSocketSendScheduler,
   hasWebSocketSendBudget
 } from '@/api/ws/ws-send-scheduler';
+
 import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
 
 import {
@@ -176,6 +177,7 @@ class ApiGatewayClientConnections extends ClientConnections {
               }
             );
           });
+
           recordWebSocketAcknowledgement(connectionId, message, 'accepted');
           return response;
         } catch (error) {
@@ -186,6 +188,7 @@ class ApiGatewayClientConnections extends ClientConnections {
             failure.unavailable ? 'unavailable' : 'failed'
           );
           terminalError = error;
+
           throw error;
         }
       }

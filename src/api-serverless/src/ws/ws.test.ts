@@ -205,6 +205,35 @@ describe('AppWebSockets.send', () => {
     }
   );
 
+  it('rejects an expired stored JWT before sending a recovery marker', async () => {
+    const repository = {
+      getByConnectionId: jest.fn().mockResolvedValue({
+        jwt_expiry: Math.floor(Date.now() / 1000) - 60
+      })
+    };
+    const sockets = new AppWebSockets(
+      repository as unknown as WsConnectionRepository
+    );
+    const close = jest
+      .spyOn(sockets, 'deregister')
+      .mockResolvedValue(undefined);
+    const deliver = jest.spyOn(webSocketDelivery, 'deliver');
+    try {
+      await expect(
+        sockets.send({
+          connectionId: 'expired-recovery',
+          message: '{"type":"RESYNC_REQUIRED","data":{}}',
+          recovery: true
+        })
+      ).resolves.toEqual({ status: 'gone' });
+      expect(close).toHaveBeenCalledWith({ connectionId: 'expired-recovery' });
+      expect(deliver).not.toHaveBeenCalled();
+    } finally {
+      close.mockRestore();
+      deliver.mockRestore();
+    }
+  });
+
   it('can send protocol failure frames without the stale expiry lookup', async () => {
     process.env.NODE_ENV = 'local';
     const connectionId = 'connection-auth-failure';

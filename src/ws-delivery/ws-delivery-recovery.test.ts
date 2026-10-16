@@ -94,6 +94,10 @@ describe('scheduled WebSocket refresh recovery', () => {
     });
     await recoverWebSocketDeliveries();
     expect(mockSend).toHaveBeenCalledTimes(100);
+    expect(
+      new Set(mockSend.mock.calls.map(([input]) => input.connectionId)).size
+    ).toBe(100);
+    expect(mockDue).toHaveBeenCalledTimes(1);
     expect(peak).toBe(10);
   });
 });
