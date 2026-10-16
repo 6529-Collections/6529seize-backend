@@ -21,6 +21,18 @@ const cases = [
   ['low volume failure', 'FailureRate', { s: 0, f: 19 }, null],
   ['quiet', 'FailureRate', { s: 0, f: 0 }, null],
   [
+    'low volume success preserves failure incident',
+    'FailureRate',
+    { s: 10, f: 0 },
+    null
+  ],
+  [
+    'low volume success preserves unavailable incident',
+    'NewUnavailableSurge',
+    { s: 10, c: 10, n: 0, p: 0 },
+    null
+  ],
+  [
     'persistent unavailable',
     'NewUnavailableSurge',
     { s: 0, c: 30, n: 0, p: 0 },

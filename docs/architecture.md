@@ -750,8 +750,8 @@ completed outcomes and either five new failures comprising 10% of completions,
 or five previously working links newly failing. A link contributes to the new
 count only when its persisted failure episode starts; repeated 404s contribute
 to unavailable counts only. Success resets the existing failure episode.
-Recovery requires successful observations and sufficient samples; missing or
-ineligible traffic preserves state. These are initial operational thresholds,
+Both alarms require successful observations and at least 20 outcomes for
+recovery as well as detection; missing or sub-gate traffic preserves state. These are initial operational thresholds,
 not a product freshness SLO or proof that every affected link recovered.
 
 Existing platform/OOM alarms remain. The NFT queue additionally alarms on a

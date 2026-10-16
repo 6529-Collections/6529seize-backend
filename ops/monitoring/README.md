@@ -380,8 +380,10 @@ Initial provider policies:
   five previously successful links starting a failure episode. A link counts
   once until a successful refresh clears its existing `failed_since` field.
   Links already in a failure episode do not become new incidents on deployment.
-- Both alarms emit a nonbreaching datapoint only with successful samples and
-  sufficient traffic. Missing/ineligible observations leave the prior state
+- Both alarms require at least 20 outcomes for recovery as well as detection:
+  eligible success/failure outcomes for `FailureRate`, or all completions for
+  `NewUnavailableSurge`. Each also requires successful samples for recovery.
+  A successful window below its 20-outcome gate preserves the prior incident. Missing/ineligible observations leave the prior state
   (`TreatMissingData=ignore`); silence is not recovery. A recovery means the
   aggregate threshold cleared, not that every missing page returned.
 - Existing Lambda Errors/OOM/Throttles remain. `NftRefreshAge` alarms at 1,800
@@ -396,8 +398,8 @@ AWS_CLI_PATH=/absolute/path/to/aws MONITORING_ENVIRONMENT=staging ../../bin/6529
 
 It evaluates generated expressions with `GetMetricData`/`TIME_SERIES` fixtures
 without publishing metrics or notifications. It covers healthy, failed,
-low-volume, quiet, persistent-unavailable, new-unavailable, previously-working,
-and recovery observations. The unavailable-surge expression filters recovery at
+low-volume failures and successes, quiet, persistent-unavailable,
+new-unavailable, previously-working, and recovery observations. The unavailable-surge expression filters recovery at
 its outer boundary: a missing nested `IF` branch can otherwise become zero in
 CloudWatch and manufacture recovery without success. Run the matching `prod`
 check before production acceptance as well.
