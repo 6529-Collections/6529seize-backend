@@ -24,7 +24,11 @@ metadata are retained; large content comparisons use pagination.
 
 After the initial copy, a catch-up window containing only votes, credit spending,
 runtime ranks, leaderboard snapshots and retained vote-time histories replays its
-changed keys and refreshes leaderboard ranks in bounded batches. It retains the
+changed keys and refreshes live entry ranks and leaderboard ranks in bounded
+batches. Entry ranks include participating entries and historical winners, with
+published winner ranks retained. The active-only leaderboard keeps its separately
+locked snapshot ordering. Both projections commit before the window is acknowledged.
+The refresh retains the
 completed voter, decision, award and archive stages instead of copying them again
 after every routine snapshot. The entire journal window since the last applied
 watermark must qualify; configuration, content, decision or other captured changes
@@ -33,14 +37,15 @@ after the refresh commits. Independent comparison and the final ownership lock
 remain mandatory. Deploy only `competitionMigrationLoop` for this correction;
 existing legacy-owned checkpoints remain resumable without a schema change.
 
-For a legacy-owned copy, the previous deployed migrator (`0f79fcc82`) understands
-the same stage, cursor, completed-stage and watermark fields. Its backfill logic
-is unchanged: it can finish an already scheduled leaderboard refresh before
-acknowledging its target. Subsequent catch-up windows use the older conservative
-full refresh again, so restoring that binary can reintroduce the convergence
-problem. Stop the current invocation at a saved checkpoint before changing the
-migrator version. Reverting the binary does not reverse competition ownership;
-an already native competition still requires the guarded recovery procedure.
+For a legacy-owned copy, earlier deployed migrators understand the same stage,
+cursor, completed-stage and watermark fields. Their leaderboard refresh does not
+repair live entry ranks, so a binary rollback can leave entry parity mismatches;
+keep legacy ownership and investigate rather than accepting such a comparison.
+The older migrator (`0f79fcc82`) uses a conservative full refresh on later journal
+windows, which rebuilds entries but can reintroduce the convergence problem.
+Stop the current invocation at a saved checkpoint before changing the migrator
+version. Reverting the binary does not reverse competition ownership; an already
+native competition still requires the guarded recovery procedure.
 
 Capture rows in `competition_migration_changes` are durable migration evidence;
 this implementation has no automatic journal-pruning job. Do not manually trim
