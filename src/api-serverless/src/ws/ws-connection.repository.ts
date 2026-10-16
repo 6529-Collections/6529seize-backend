@@ -32,6 +32,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   recordWebSocketDatabaseSession,
   recordWebSocketSqlPhase,
+  recordWebSocketTransactionIsolation,
   WsTransactionDiagnostics
 } from '@/api/ws/ws-transaction-diagnostics';
 import { WsDiagnosticOperation } from '@/api/ws/ws-operation-diagnostics';
@@ -211,10 +212,17 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     for (let attempt = 1; ; attempt++) {
       try {
         await diagnostics.runAttempt(attempt, () =>
-          this.db.executeNativeQueriesInTransaction(async (connection) => {
-            await mutation({ ...ctx, connection });
-            recordWebSocketSqlPhase('commit');
-          })
+          // A connection row serializes mutations for that socket. READ COMMITTED
+          // avoids locking a shared subscription gap when different sockets have
+          // no existing grants to delete before their inserts.
+          this.db.executeNativeQueriesInTransaction(
+            async (connection) => {
+              recordWebSocketTransactionIsolation('READ-COMMITTED');
+              await mutation({ ...ctx, connection });
+              recordWebSocketSqlPhase('commit');
+            },
+            { isolationLevel: 'READ COMMITTED' }
+          )
         );
         diagnostics.completed();
         return;

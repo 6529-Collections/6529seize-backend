@@ -202,6 +202,10 @@ describe('WsConnectionRepository', () => {
     );
 
     expect(executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
+    expect(executeNativeQueriesInTransaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { isolationLevel: 'READ COMMITTED' }
+    );
     expect(execute).toHaveBeenCalledTimes(3);
     expect(execute.mock.calls[0][0]).toContain(
       'order by identity_id for update'
