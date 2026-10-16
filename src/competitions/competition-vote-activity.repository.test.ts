@@ -1,5 +1,6 @@
 import {
   COMPETITION_ENTRIES_TABLE,
+  COMPETITION_MIGRATION_AUDIT_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE
 } from '@/constants';
@@ -223,6 +224,142 @@ describeWithSeed(
             );
           }
         }
+      );
+    });
+
+    it('uses exact native log identities for deduplication and enrichment without rounding native timestamps', async () => {
+      const logs = [
+        {
+          ...legacy(`${competitionId}:2`, transferredAt + 1000),
+          target_id: 'drop-entry'
+        },
+        {
+          ...legacy(`${competitionId}:4`, transferredAt + 2000),
+          target_id: 'drop-hidden'
+        }
+      ];
+      for (const row of logs)
+        await sqlExecutor.execute(
+          `INSERT INTO ${PROFILES_ACTIVITY_LOGS_TABLE}
+         (id,profile_id,target_id,additional_data_1,additional_data_2,proxy_id,type,created_at,contents)
+         VALUES (:id,:profile_id,:target_id,:additional_data_1,:additional_data_2,:proxy_id,:type,:created_at,:contents)`,
+          { ...row, contents: JSON.stringify(contents) }
+        );
+      await sqlExecutor.execute(
+        `UPDATE ${COMPETITION_VOTE_HISTORY_TABLE} SET occurred_at=:time WHERE sequence=2`,
+        { time: transferredAt + 1234 }
+      );
+      const rows = await list(0, 30);
+      expect(rows.filter((row) => Number(row.sequence) === 2)).toHaveLength(1);
+      expect(rows.find((row) => Number(row.sequence) === 2)).toMatchObject({
+        legacy_id: null,
+        occurred_at: transferredAt + 1234,
+        proxy_id: 'proxy'
+      });
+      expect(
+        JSON.parse(
+          rows.find((row) => Number(row.sequence) === 2)!.legacy_contents!
+        )
+      ).toEqual(contents);
+      expect(rows.some((row) => row.drop_id === 'drop-hidden')).toBe(false);
+    });
+
+    it('uses exact identities through rollback and re-migration even when legacy timestamps overlap native operation', async () => {
+      await sqlExecutor.execute(
+        `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
+        (id,competition_id,actor,action,reason,report,created_at)
+        VALUES ('first-cutover',:competitionId,'fixture','CUTOVER','fixture',:report,:transferredAt)`,
+        {
+          competitionId,
+          transferredAt,
+          report: JSON.stringify({ voteActivityIdentity: 'NATIVE_ID_V1' })
+        }
+      );
+      const expected = await repository.listTransferred(
+        competitionId,
+        waveId,
+        null,
+        0,
+        30,
+        {}
+      );
+      expect(
+        expected.map((row) => row.legacy_id ?? Number(row.sequence))
+      ).toContain('after-transfer');
+      await sqlExecutor.execute(
+        `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
+        (id,competition_id,actor,action,reason,report,created_at)
+        VALUES ('rollback',:competitionId,'fixture','ROLLBACK','fixture','{}',:now)`,
+        {
+          competitionId,
+          now: transferredAt + 1100
+        }
+      );
+      // A legacy writer's clock can round into the previous ownership interval.
+      await sqlExecutor.execute(
+        `INSERT INTO ${PROFILES_ACTIVITY_LOGS_TABLE}
+        (id,profile_id,target_id,additional_data_1,additional_data_2,proxy_id,type,created_at,contents)
+        VALUES (:id,:profile_id,:target_id,:additional_data_1,:additional_data_2,:proxy_id,:type,:created_at,:contents)`,
+        {
+          ...legacy('after-rollback', transferredAt + 1000),
+          contents: JSON.stringify(contents)
+        }
+      );
+      const rows = await repository.listTransferred(
+        competitionId,
+        waveId,
+        null,
+        0,
+        30,
+        {}
+      );
+      expect(rows).toHaveLength(expected.length + 1);
+      expect(
+        rows.filter((row) => row.legacy_id === 'after-rollback')
+      ).toHaveLength(1);
+      for (const row of expected) expect(rows).toContainEqual(row);
+      await sqlExecutor.execute(
+        `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
+        (id,competition_id,actor,action,reason,report,created_at)
+        VALUES ('recutover',:competitionId,'fixture','CUTOVER','fixture',:report,:now)`,
+        {
+          competitionId,
+          now: transferredAt + 1200,
+          report: JSON.stringify({ voteActivityIdentity: 'NATIVE_ID_V1' })
+        }
+      );
+      expect(
+        await repository.listTransferred(competitionId, waveId, null, 0, 30, {})
+      ).toEqual(rows);
+    });
+
+    it('requires every cutover to certify exact lineage, including across rollback and re-migration', async () => {
+      expect(await repository.hasExactLineage(competitionId, {})).toBe(false);
+      const audit = async (id: string, action: string, report: object) =>
+        sqlExecutor.execute(
+          `INSERT INTO ${COMPETITION_MIGRATION_AUDIT_TABLE}
+          (id,competition_id,actor,action,reason,report,created_at)
+          VALUES (:id,:competitionId,'fixture',:action,'fixture',:report,:transferredAt)`,
+          {
+            id,
+            competitionId,
+            action,
+            report: JSON.stringify(report),
+            transferredAt
+          }
+        );
+      await audit('first', 'CUTOVER', { voteActivityIdentity: 'NATIVE_ID_V1' });
+      expect(await repository.hasExactLineage(competitionId, {})).toBe(true);
+      await audit('rollback', 'ROLLBACK', {});
+      expect(await repository.hasExactLineage(competitionId, {})).toBe(true);
+      await audit('second', 'CUTOVER', {
+        voteActivityIdentity: 'NATIVE_ID_V1'
+      });
+      expect(await repository.hasExactLineage(competitionId, {})).toBe(true);
+      await audit('older-cutover', 'CUTOVER', {});
+      expect(await repository.hasExactLineage(competitionId, {})).toBe(false);
+      expect(await repository.hasExactLineage('other-competition', {})).toBe(
+        false
       );
     });
 
