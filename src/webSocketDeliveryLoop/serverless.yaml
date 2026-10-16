@@ -34,6 +34,7 @@ resources:
   Resources:
     WebSocketDeliveryLoopOOMFilter:
       Type: AWS::Logs::MetricFilter
+      DependsOn: WebSocketDeliveryLoopLogGroup
       Properties:
         LogGroupName: /aws/lambda/webSocketDeliveryLoop
         FilterPattern: "Runtime.OutOfMemory"
