@@ -100,6 +100,21 @@ describe('shared WebSocket recovery in real Redis', () => {
       await firstWorker.snapshot(now + 60_000, 'connection-1')
     ).toMatchObject({ healthyConnections: 0, recentlyHealthyConnections: 0 });
   });
+  it('shares an explicit reconnect capability and fails closed when it expires', async () => {
+    expect(
+      await firstWorker.claim('connection-1', 'legacy', false, now)
+    ).toMatchObject({ canReconnect: false });
+    await firstWorker.enableReconnect('connection-1');
+    expect(
+      await secondWorker.claim('connection-1', 'supported', false, now)
+    ).toMatchObject({ canReconnect: true });
+    const key = `${deliveryScope()}:connection:${connectionHash('connection-1')}`;
+    expect(await mockClient.ttl(key)).toBeGreaterThan(3500);
+    await mockClient.expire(key, 0);
+    expect(
+      await secondWorker.claim('connection-1', 'expired', false, now)
+    ).toMatchObject({ canReconnect: false });
+  });
   it('keeps a refresh queued when another producer races with a successful retry', async () => {
     await firstWorker.claim('connection-1', 'initial', false, now);
     await finish('initial', 'throttled');

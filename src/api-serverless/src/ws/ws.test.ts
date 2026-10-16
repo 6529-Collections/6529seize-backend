@@ -28,6 +28,7 @@ import {
   authenticateWebSocketToken
 } from '@/api/ws/ws';
 import WebSocket from 'ws';
+import { webSocketDelivery } from '@/ws-delivery/ws-delivery';
 
 const identityFetcherMock = identityFetcher as jest.Mocked<
   typeof identityFetcher
@@ -171,6 +172,38 @@ describe('AppWebSockets.send', () => {
   afterEach(() => {
     process.env.NODE_ENV = originalNodeEnv;
   });
+
+  it.each([undefined, false, true])(
+    'registers reconnect safety only for capable clients (%s)',
+    async (recoveryCapable) => {
+      process.env.NODE_ENV = 'test';
+      const enable = jest
+        .spyOn(webSocketDelivery, 'enableReconnect')
+        .mockResolvedValue(undefined);
+      const repository = {
+        save: jest.fn().mockResolvedValue(undefined),
+        maybeCleanupStaleNotificationSubscriptions: jest
+          .fn()
+          .mockResolvedValue(undefined)
+      };
+      try {
+        await new AppWebSockets(
+          repository as unknown as WsConnectionRepository
+        ).register({
+          identityId: 'identity',
+          connectionId: 'capable-connection',
+          jwtExpiry: 1234,
+          recoveryCapable
+        });
+        expect(repository.save).toHaveBeenCalledTimes(1);
+        if (recoveryCapable)
+          expect(enable).toHaveBeenCalledWith('capable-connection');
+        else expect(enable).not.toHaveBeenCalled();
+      } finally {
+        enable.mockRestore();
+      }
+    }
+  );
 
   it('can send protocol failure frames without the stale expiry lookup', async () => {
     process.env.NODE_ENV = 'local';

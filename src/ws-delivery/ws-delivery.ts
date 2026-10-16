@@ -125,9 +125,18 @@ export class WebSocketDelivery {
   constructor(
     private readonly store: Pick<
       WebSocketDeliveryStore,
-      'claim' | 'finish' | 'snapshot' | 'forget'
+      'claim' | 'finish' | 'snapshot' | 'forget' | 'enableReconnect'
     > = webSocketDeliveryStore
   ) {}
+
+  /** Older bundles suppress normal-close reconnects; opt in only at connection creation. */
+  async enableReconnect(connectionId: string): Promise<void> {
+    try {
+      await this.store.enableReconnect(connectionId);
+    } catch {
+      reportStoreFailure();
+    }
+  }
 
   async deliver(input: DeliveryInput): Promise<WebSocketDeliveryResult> {
     const token = randomUUID();
@@ -158,7 +167,7 @@ export class WebSocketDelivery {
     token: string,
     claim: DeliveryClaim | null
   ): Promise<boolean> {
-    if (!input.recovery || !claim || !input.close) return false;
+    if (!input.recovery || !claim?.canReconnect || !input.close) return false;
     const snapshot = await this.store
       .snapshot(Date.now(), input.connectionId)
       .catch(() => null);
@@ -281,7 +290,10 @@ export class WebSocketDelivery {
         /* Delivery remains best effort if logging fails. */
       }
     }
-    if (await this.closeUnacknowledgedAuthentication(input))
+    if (
+      claim?.canReconnect &&
+      (await this.closeUnacknowledgedAuthentication(input))
+    )
       return { status: 'gone' };
     return { status: firstFailure === null ? 'failed' : 'resync_pending' };
   }
