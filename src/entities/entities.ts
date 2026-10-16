@@ -323,3 +323,5 @@ export {
 } from './IMemeCollaboration';
 
 export { TransferReconciliationEntity } from './ITransferReconciliation';
+
+export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';
