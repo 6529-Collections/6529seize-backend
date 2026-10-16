@@ -24,7 +24,16 @@ metadata are retained; large content comparisons use pagination.
 
 After the initial copy, a catch-up window containing only votes, credit spending,
 runtime ranks, leaderboard snapshots and retained vote-time histories replays its
-changed keys and refreshes leaderboard ranks in bounded batches. It retains the
+changed keys and refreshes live entry ranks and leaderboard ranks in bounded
+batches. Entry ranks include participating entries and historical winners, with
+published winner ranks retained. The active-only leaderboard keeps its separately
+locked snapshot ordering. Both projections commit before the window is acknowledged.
+Until every page finishes, native ranks are an incomplete shadow projection;
+public readers continue to select legacy storage. Per-page commits do not advance
+the applied watermark. Only the final refresh page acknowledges the target, and
+comparison/cutover still reject any source change or incomplete refresh. Batch
+limits are validated at 1..100 rows, so rank updates contain at most 100 CASE arms.
+The refresh retains the
 completed voter, decision, award and archive stages instead of copying them again
 after every routine snapshot. The entire journal window since the last applied
 watermark must qualify; configuration, content, decision or other captured changes
@@ -33,20 +42,50 @@ after the refresh commits. Independent comparison and the final ownership lock
 remain mandatory. Deploy only `competitionMigrationLoop` for this correction;
 existing legacy-owned checkpoints remain resumable without a schema change.
 
-For a legacy-owned copy, the previous deployed migrator (`0f79fcc82`) understands
-the same stage, cursor, completed-stage and watermark fields. Its backfill logic
-is unchanged: it can finish an already scheduled leaderboard refresh before
-acknowledging its target. Subsequent catch-up windows use the older conservative
-full refresh again, so restoring that binary can reintroduce the convergence
-problem. Stop the current invocation at a saved checkpoint before changing the
-migrator version. Reverting the binary does not reverse competition ownership;
-an already native competition still requires the guarded recovery procedure.
+For a legacy-owned copy, earlier deployed migrators understand the same stage,
+cursor, completed-stage and watermark fields. Their leaderboard refresh does not
+repair live entry ranks, so a binary rollback can leave entry parity mismatches;
+keep legacy ownership rather than accepting such a comparison. The release
+operator should retain the stop, capture status and comparison diagnostics, and
+check whether the deployed worker refreshes entry ranks. Resume the saved copy
+with the reviewed correction only after its release gates pass; do not re-enroll,
+clear parity failures or force cutover to work around a rollback mismatch.
+The older migrator (`0f79fcc82`) uses a conservative full refresh on later journal
+windows, which rebuilds entries but can reintroduce the convergence problem.
+Stop the current invocation at a saved checkpoint before changing the migrator
+version. Reverting the binary does not reverse competition ownership; an already
+native competition still requires the guarded recovery procedure.
 
 Capture rows in `competition_migration_changes` are durable migration evidence;
 this implementation has no automatic journal-pruning job. Do not manually trim
 rows needed by an in-progress migration or its recovery checkpoints. A missing
 next journal watermark stops catch-up and retains legacy ownership. Preserve
 the journal when investigating a stopped copy or planning rollback/re-migration.
+
+Trusted full comparisons collect all native reader results in 2,000-row pages
+to avoid repeating voter aggregations. Optional shadow sampling retains its
+500-row pages and existing row ceiling.
+
+Full comparisons read content in pages of 100 drops and prefetch WAVE-scoped
+TDH/XTDH budgets in pages of 100 profiles. The candidate retains the public
+single-profile budget formula; the legacy oracle reads its own authoritative
+sources independently. All entries, content relations, voters and budgets are
+still checked; batching does not sample or skip parity categories.
+
+The frozen drop-view comparison drives primary-key reads from the union of
+source participation/winner drops and ACTIVE/WINNER native entries mapped to
+shared drops. This avoids projecting the wave's full chat history. Both sets
+are necessary: an extra active native entry mapped to a CHAT drop must still
+appear and fail parity. The unchanged compatibility view and full-row hashes
+remain authoritative; no row limit is applied to this comparison.
+
+Independent comparison and final cutover use the existing bounded SQL transaction
+runtime with a five-second overall deadline, a one-second statement limit, a
+one-second lock wait and a 500ms finalization reserve. A slow comparison before
+ownership changes aborts rather than holding the write fence for minutes. Keep the
+migration stopped and investigate a timeout; do not raise the limit or bypass
+parity to force cutover. If COMMIT acknowledgment is unknown, read current
+ownership and the cutover audit before retrying or planning recovery.
 
 Comparison freshness is measured when the independent comparison finishes.
 After readiness passes, the Lambda calls live cutover once; that transaction

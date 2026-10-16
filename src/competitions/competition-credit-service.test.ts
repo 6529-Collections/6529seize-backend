@@ -35,9 +35,13 @@ const entry = {
 };
 
 describe('CompetitionCreditService', () => {
-  const repository = { getSpending: jest.fn() };
+  const repository = {
+    getSpending: jest.fn(),
+    getNamespaceSpendings: jest.fn()
+  };
   const identities = {
     getIdentityByProfileId: jest.fn(),
+    getIdentitiesByIds: jest.fn(),
     getSingleNftVotingCreditsByProfileId: jest.fn()
   };
   const ratings = { getRepRating: jest.fn() };
@@ -181,6 +185,124 @@ describe('CompetitionCreditService', () => {
       min_vote: null,
       max_vote: null
     });
+  });
+
+  it.each([
+    WaveCreditType.TDH,
+    WaveCreditType.XTDH,
+    WaveCreditType.TDH_PLUS_XTDH
+  ])(
+    'keeps batched %s wave budgets identical to single-profile budgets',
+    async (credit_type) => {
+      const profiles = ['positive', 'POSITIVE', 'negative', 'missing'];
+      const byId = new Map([
+        ['positive', anIdentity({ tdh: 100.9, xtdh: 12.9 })],
+        ['negative', anIdentity({ tdh: -10, xtdh: -2 })]
+      ]);
+      const spent = new Map([
+        ['positive', 50],
+        ['missing', 7],
+        ['negative', 0]
+      ]);
+      identities.getIdentitiesByIds.mockResolvedValue(
+        Array.from(byId, ([profile_id, identity]) => ({
+          ...identity,
+          profile_id
+        }))
+      );
+      repository.getNamespaceSpendings.mockResolvedValue(spent);
+      identities.getIdentityByProfileId.mockImplementation(
+        async (id) => byId.get(id.toLowerCase()) ?? null
+      );
+      repository.getSpending.mockImplementation(async (_competition, id) => ({
+        namespace_spent: spent.get(id.toLowerCase()) ?? 0,
+        entry_spent: 0,
+        current_vote: 0
+      }));
+      const selected = {
+        ...competition,
+        voting: { ...competition.voting, credit_type }
+      };
+      const ctx = { connection: { connection: {} } };
+      const batched = await service.getWaveBudgets(selected, profiles, ctx);
+      expect(repository.getSpending).toHaveBeenCalledTimes(2);
+      expect(repository.getSpending).toHaveBeenCalledWith(
+        selected,
+        'POSITIVE',
+        undefined,
+        ctx
+      );
+      expect(repository.getSpending).toHaveBeenCalledWith(
+        selected,
+        'missing',
+        undefined,
+        ctx
+      );
+      for (const profileId of profiles)
+        expect(batched.get(profileId)).toEqual(
+          await service.getBudget(selected, profileId, undefined, ctx)
+        );
+      expect(identities.getIdentitiesByIds).toHaveBeenCalledWith(
+        profiles,
+        ctx.connection
+      );
+      expect(repository.getNamespaceSpendings).toHaveBeenCalledWith(
+        selected,
+        profiles,
+        ctx
+      );
+    }
+  );
+
+  it('bounds wave budget prefetches to 100 profiles and skips empty pages', async () => {
+    const profiles = Array.from(
+      { length: 205 },
+      (_, index) => `profile-${index}`
+    );
+    identities.getIdentitiesByIds.mockImplementation(async (ids: string[]) =>
+      ids.map((profile_id) => ({
+        ...anIdentity({ tdh: 0, xtdh: 0 }),
+        profile_id
+      }))
+    );
+    repository.getNamespaceSpendings.mockImplementation(
+      async (_competition, ids: string[]) => new Map(ids.map((id) => [id, 0]))
+    );
+    expect((await service.getWaveBudgets(competition, [], {})).size).toBe(0);
+    expect(identities.getIdentitiesByIds).not.toHaveBeenCalled();
+    const budgets = await service.getWaveBudgets(competition, profiles, {});
+    expect(budgets.size).toBe(205);
+    expect(
+      identities.getIdentitiesByIds.mock.calls.map(([page]) => page.length)
+    ).toEqual([100, 100, 5]);
+    expect(repository.getNamespaceSpendings).toHaveBeenCalledTimes(3);
+    expect(repository.getSpending).not.toHaveBeenCalled();
+    expect(budgets.get('profile-204')).toMatchObject({
+      available: 0,
+      spent: 0,
+      remaining: 0
+    });
+  });
+
+  it('retains the ordinary REP budget source and rejects DROP bulk scope', async () => {
+    const rep = {
+      ...competition,
+      voting: { ...competition.voting, credit_type: WaveCreditType.REP }
+    };
+    expect(
+      (await service.getWaveBudgets(rep, ['profile'], {})).get('profile')
+    ).toEqual(await service.getBudget(rep, 'profile', undefined, {}));
+    expect(identities.getIdentitiesByIds).not.toHaveBeenCalled();
+    await expect(
+      service.getWaveBudgets(
+        {
+          ...competition,
+          voting: { ...competition.voting, credit_scope: WaveCreditScope.DROP }
+        },
+        ['profile'],
+        {}
+      )
+    ).rejects.toThrow('WAVE credit scope');
   });
 
   it('enforces the entry cap and negative-vote policy together', async () => {
