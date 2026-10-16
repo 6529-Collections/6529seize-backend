@@ -37,6 +37,7 @@ import {
 import { CompetitionMigrationBackfill } from '@/competitions/competition-migration-backfill';
 import {
   MIGRATION_STAGES,
+  MigrationStage,
   MigrationAcceptance,
   MigrationEnvironment,
   MigrationCohort,
@@ -585,6 +586,23 @@ export class CompetitionMigrationService {
         expected = Number(change.watermark);
       }
       const drained = expected === migration.source_watermark;
+      const leaderboardOnly =
+        drained &&
+        MIGRATION_STAGES.every((stage) =>
+          migration.completed_stages.includes(stage)
+        ) &&
+        (await repository.canRefreshOnlyLeaderboard(
+          id,
+          migration.applied_watermark,
+          expected,
+          ctx
+        ));
+      const refreshStage: MigrationStage = leaderboardOnly
+        ? 'LEADERBOARD'
+        : 'ENTRIES';
+      const completedStages: MigrationStage[] = leaderboardOnly
+        ? MIGRATION_STAGES.filter((stage) => stage !== 'LEADERBOARD')
+        : ['CONFIGURATION', 'OUTCOMES', 'DECISIONS'];
       await repository.update(
         id,
         {
@@ -592,13 +610,13 @@ export class CompetitionMigrationService {
           state: drained ? 'BACKFILLING' : 'SHADOWING',
           ...(drained
             ? {
-                stage: 'ENTRIES',
+                stage: refreshStage,
                 stage_offset: 0,
                 stage_cursor: null,
-                // Captured decision keys are rebuilt by applyChange. Replaying
-                // the entire history here can never catch an active wave whose
-                // history takes longer to copy than its decision interval.
-                completed_stages: ['CONFIGURATION', 'OUTCOMES', 'DECISIONS']
+                // Vote/runtime keys have already been replayed. Only ranks
+                // need a full refresh for a vote-only journal window. Other
+                // source changes retain the conservative refresh sequence.
+                completed_stages: completedStages
               }
             : {}),
           consecutive_full_windows: 0,
@@ -620,6 +638,7 @@ export class CompetitionMigrationService {
           throughWatermark: expected,
           changes: changes.length,
           refreshPending: true,
+          refreshStage: drained ? refreshStage : null,
           limit
         },
         ctx

@@ -1278,9 +1278,14 @@ Missing weighted snapshots stay absent in the compatibility projection until a
 native snapshot update, preserving both migration parity and subsequent reads.
 Decision batches budget both decision rows and their winners. Ordered catch-up
 rebuilds only captured decision keys; it does not replay unchanged decision history
-when refreshing entries, ranks, awards and archives. The applied watermark remains
-behind until these derived stages finish, and full comparison remains mandatory.
-This lets a large active history converge while recurring decisions continue.
+when refreshing entries, ranks, awards and archives. Once all initial stages are
+complete, a journal window containing only vote, credit-spending, runtime-rank,
+leaderboard or retained vote-time-history changes replays its keys and refreshes
+only leaderboard ranks. The classifier checks every page since the last applied
+watermark; other source changes retain the broader refresh. The applied watermark
+remains behind until the bounded refresh finishes, and full comparison remains
+mandatory. Routine snapshots therefore do not force another copy of unchanged
+voters, decision awards and winner archives.
 Imported decision winners retain a nullable `legacy_drop_id`, preserving source
 history and prizes even when the drop was deleted before migration. Historical
 winner reads do not recreate an entry or its deleted content. Deploy the additive
