@@ -112,7 +112,7 @@ only when the typed error proves WORK/NOT_SENT, the physical connection was
 destroyed, and its fingerprint matches that exact statement. It waits one second
 without ownership, then starts a new complete transaction with the unchanged
 five-second/one-second limits. Under ownership it requires the same legacy active
-owner, no stop, and an identical saved copy checkpoint; live capture counters may
+owner, no stop, and an identical saved copy checkpoint and batch-claim timestamp; live capture counters may
 advance. A second timeout or checkpoint/owner/stop change propagates. This does
 not retry replay, parity comparisons, cutover, other statements or unknown commits.
 The recovery warning records the checkpoint hash and the single retry allowance;

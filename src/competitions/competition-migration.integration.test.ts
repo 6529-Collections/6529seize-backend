@@ -1831,7 +1831,14 @@ describeWithSeed(
       ).toEqual({ value: 7 });
     });
 
-    it.each(['recover', 'repeat', 'stop', 'checkpoint', 'owner'] as const)(
+    it.each([
+      'recover',
+      'repeat',
+      'stop',
+      'checkpoint',
+      'owner',
+      'claim'
+    ] as const)(
       'guards recovery after a real timed-out audit insert: %s',
       async (scenario) => {
         const wait = jest.fn(async () => {
@@ -1857,6 +1864,12 @@ describeWithSeed(
                 wave.id,
                 { connection }
               );
+              if (scenario === 'claim')
+                await sqlExecutor.execute(
+                  `update ${COMPETITION_MIGRATIONS_TABLE} set next_batch_at=:claim where competition_id=:id`,
+                  { id, claim: Date.now() + 60000 },
+                  { wrappedConnection: connection }
+                );
             },
             {
               executionBudget: {

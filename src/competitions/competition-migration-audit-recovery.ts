@@ -33,6 +33,7 @@ export function migrationCopyCheckpoint(
     stage: migration.stage,
     offset: migration.stage_offset,
     cursor: migration.stage_cursor,
+    claim: migration.next_batch_at,
     completed: migration.completed_stages,
     reset: migration.reset_table_index,
     target: migration.target_watermark,

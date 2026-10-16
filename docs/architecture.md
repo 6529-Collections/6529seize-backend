@@ -1257,7 +1257,7 @@ only the original typed WORK/NOT_SENT error with a destroyed physical connection
 and the exact audit-statement fingerprint qualifies. After a one-second delay
 outside ownership, a second complete transaction rechecks legacy active ownership,
 operator stops and every saved copy checkpoint field under its lock. Checkpoint
-drift or a second failure stops the operation. Each attempt retains the same
+or batch-claim timestamp drift, or a second failure, stops the operation. Each attempt retains the same
 five-second fence and one-second statements; no statement is retried in place,
 and replay, comparison, cutover and unknown commits use no such recovery.
 Imported decision winners retain a nullable `legacy_drop_id`, preserving source

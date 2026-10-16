@@ -25,6 +25,9 @@ function auditTimeout() {
 
 describe('copy audit timeout recovery eligibility', () => {
   it('recognizes only the known audit insert with a destroyed uncommitted connection', () => {
+    expect(
+      createHash('sha256').update(MIGRATION_AUDIT_INSERT_SQL).digest('hex')
+    ).toBe('e190a66e663c6315a9cf84d564b645275b88f3af63424555630690c28356ec9d');
     expect(isRolledBackCopyAuditTimeout(auditTimeout())).toBe(true);
   });
   it.each([
@@ -57,6 +60,7 @@ describe('saved copy checkpoint guard', () => {
     stage: 'VOTERS',
     stage_offset: 0,
     stage_cursor: '["drop","voter"]',
+    next_batch_at: 50,
     completed_stages: ['CONFIGURATION', 'ENTRIES'],
     reset_table_index: null,
     target_watermark: 10,
@@ -80,6 +84,7 @@ describe('saved copy checkpoint guard', () => {
     { stage: 'VOTES' },
     { stage_offset: 1 },
     { stage_cursor: '["later-drop","voter"]' },
+    { next_batch_at: 100 },
     { completed_stages: ['CONFIGURATION'] },
     { reset_table_index: 1 },
     { target_watermark: 11 },
