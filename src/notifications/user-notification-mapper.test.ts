@@ -52,6 +52,25 @@ describe('UserNotificationMapper', () => {
     }
   );
 
+  it('preserves a saved artwork name and tolerates legacy missing names', () => {
+    for (const artwork_name of ['Test Cat', undefined, 123]) {
+      const mapped = mapper.mapNotifications([
+        notificationEntity({
+          cause: IdentityNotificationCause.MEME_COLLABORATION,
+          additional_data: {
+            event_type: 'INVITED',
+            invitation_id: 'invite',
+            artwork_name
+          }
+        })
+      ])[0];
+      expect(mapped.data).toMatchObject({ actor_id: 'sender-1' });
+      if (typeof artwork_name === 'string')
+        expect(mapped.data).toHaveProperty('artwork_name', artwork_name);
+      else expect(mapped.data).not.toHaveProperty('artwork_name');
+    }
+  });
+
   it('preserves wave id for all-drops and priority-alert notifications', () => {
     expect(
       mapper.mapNotifications([
