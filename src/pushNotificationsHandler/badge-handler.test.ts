@@ -1,3 +1,6 @@
+jest.mock('@/websocket-outbox/notification-handoff', () => ({
+  retainQueuedNotificationInvalidations: jest.fn().mockResolvedValue(undefined)
+}));
 import { Logger } from '@/logging';
 import type { Context, SQSEvent, SQSRecord } from 'aws-lambda';
 import { handler } from './index';

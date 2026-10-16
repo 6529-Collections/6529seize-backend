@@ -1,4 +1,8 @@
 import {
+  recordWebSocketEvent,
+  recordWebSocketEvents
+} from '@/websocket-outbox/outbox.db';
+import {
   withLegacyPrimaryMutation,
   readLegacyMutationSource
 } from '@/competitions/legacy-competition-mutation';
@@ -181,6 +185,15 @@ export class DeleteDropUseCase {
       WaveScoreDirtyRefreshReason.DROP_DELETED,
       ctx
     );
+    await recordWebSocketEvents(
+      drops.map((drop) => ({
+        type: 'drop-delete',
+        dropId: drop.id,
+        waveId: drop.wave_id,
+        serialNo: drop.serial_no
+      })),
+      ctx
+    );
     if (!wave.is_direct_message) return [];
     const readerIds = await this.findCurrentDmReaderIds(wave, ctx);
     return this.wavesApiDb.incrementDmUnreadStateVersionsForWaveReaders(
@@ -341,6 +354,16 @@ export class DeleteDropUseCase {
               { timer, connection }
             );
         }
+        if (isPermanentDelete)
+          await recordWebSocketEvent(
+            {
+              type: 'drop-delete',
+              dropId,
+              waveId: drop.wave_id,
+              serialNo: drop.serial_no
+            },
+            { connection, timer }
+          );
         return {
           id: dropId,
           serial_no: drop.serial_no,

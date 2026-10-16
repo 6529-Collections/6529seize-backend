@@ -91,6 +91,48 @@ describeWithSeed(
     }
   ],
   () => {
+    it('persists capability per connection and keeps it through reauthentication on the real database', async () => {
+      const { repository } = fixture();
+      const capable = 'capable-connection';
+      await repository.save(
+        {
+          connection_id: capable,
+          identity_id: 'old',
+          jwt_expiry: expiry,
+          wave_id: null,
+          durable_updates: true
+        },
+        [{ identityId: 'old', jwtExpiry: expiry }],
+        {}
+      );
+      expect(
+        (await repository.getByConnectionId(connectionId, {}))?.durable_updates
+      ).toBe(false);
+      expect(
+        (await repository.getByConnectionId(capable, {}))?.durable_updates
+      ).toBe(true);
+      await repository.updateIdentityForConnection(
+        { connectionId: capable, identityId: 'new', jwtExpiry: expiry + 1 },
+        [{ identityId: 'new', jwtExpiry: expiry + 1 }],
+        {}
+      );
+      expect(
+        (await repository.getByConnectionId(capable, {}))?.durable_updates
+      ).toBe(true);
+      expect(
+        await repository.filterConnectionIdsByDeliveryMode(
+          [connectionId, capable],
+          false
+        )
+      ).toEqual([connectionId]);
+      expect(
+        await repository.filterConnectionIdsByDeliveryMode(
+          [connectionId, capable],
+          true
+        )
+      ).toEqual([capable]);
+    });
+
     it('rolls the actual identity update and deleted grants back after an insert failure', async () => {
       const { observed, sockets } = fixture();
       const failure = new Error('synthetic grant insertion failure');

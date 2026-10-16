@@ -118,6 +118,7 @@ function createRepo({
 
 describe('IdentityNotificationsDb', () => {
   const originalNotifierActivated = process.env.USER_NOTIFIER_ACTIVATED;
+  const originalNodeEnvironment = process.env.NODE_ENV;
 
   beforeEach(() => {
     process.env.USER_NOTIFIER_ACTIVATED = 'true';
@@ -127,6 +128,7 @@ describe('IdentityNotificationsDb', () => {
 
   afterEach(() => {
     process.env.USER_NOTIFIER_ACTIVATED = originalNotifierActivated;
+    process.env.NODE_ENV = originalNodeEnvironment;
     jest.restoreAllMocks();
   });
 
@@ -215,16 +217,67 @@ describe('IdentityNotificationsDb', () => {
     );
   });
 
+  it('captures one bulk invalidation per unmuted profile and propagates capture failure', async () => {
+    process.env.NODE_ENV = 'test';
+    const notifications = [
+      notification(),
+      notification(),
+      notification({ identity_id: 'recipient-2' })
+    ];
+    const { db, repo } = createRepo({ filteredNotifications: notifications });
+    db.execute
+      .mockResolvedValueOnce([{ id: 301 }])
+      .mockResolvedValueOnce([{ id: 301 }, { id: 302 }, { id: 303 }]);
+    db.bulkInsert.mockImplementation(async (table) => {
+      if (table === 'websocket_outbox') throw new Error('capture unavailable');
+    });
+    await expect(
+      repo.insertManyNotifications(notifications, connection)
+    ).rejects.toThrow('capture unavailable');
+    expect(db.bulkInsert).toHaveBeenCalledWith(
+      'websocket_outbox',
+      ['recipient-1', 'recipient-2'].map((profileId) =>
+        expect.objectContaining({
+          event: JSON.stringify({
+            type: 'identity',
+            profileId,
+            deliveryCapability: 'durable_updates_v1'
+          })
+        })
+      ),
+      expect.any(Array),
+      { connection },
+      { connection }
+    );
+    expect(db.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+  });
+
   it('preserves in-app notifications without recording pushes when push delivery is disabled', async () => {
+    process.env.NODE_ENV = 'test';
     jest.mocked(isActivated).mockReturnValue(false);
     const { db, repo } = createRepo({
       filteredNotifications: [notification()]
     });
     await repo.insertNotification(notification(), connection);
-    expect(db.execute).toHaveBeenCalledTimes(1);
     expect(db.execute.mock.calls[0][0]).toContain(
       'insert into identity_notifications'
     );
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('insert into websocket_outbox'),
+      expect.objectContaining({
+        event: JSON.stringify({
+          type: 'identity',
+          profileId: 'recipient-1',
+          deliveryCapability: 'durable_updates_v1'
+        })
+      }),
+      { wrappedConnection: connection }
+    );
+    expect(
+      db.execute.mock.calls.some(([sql]) =>
+        sql.includes('insert into push_notification_outbox_entries')
+      )
+    ).toBe(false);
     expect(sendIdentityPushNotification).not.toHaveBeenCalled();
   });
 

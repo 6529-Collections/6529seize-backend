@@ -1,3 +1,8 @@
+import {
+  recordWebSocketEvent,
+  recordWebSocketEvents,
+  withWebSocketMutation
+} from '@/websocket-outbox/outbox.db';
 import { DbPoolName } from '@/db-query.options';
 import { optionalWaveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { isActivated } from '@/api/push-notifications/push-notifications.service';
@@ -189,6 +194,14 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       insertedIds.push(...chunkIds);
     }
 
+    const profileIds = Array.from(
+      new Set(unmutedNotifications.map((n) => n.identity_id))
+    );
+    await recordWebSocketEvents(
+      profileIds.map((profileId) => ({ type: 'identity', profileId })),
+      { connection },
+      this.db
+    );
     return insertedIds;
   }
 
@@ -286,18 +299,34 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     row: SerializableNotificationInsertRow,
     connection?: ConnectionWrapper<any>
   ): Promise<number | null> {
-    const result = await this.db.execute(
-      `
+    return withWebSocketMutation(
+      this.db,
+      { connection },
+      async ({ connection }) => {
+        const mutationResult = await (async () => {
+          const result = await this.db.execute(
+            `
         insert into ${IDENTITY_NOTIFICATIONS_TABLE} (
           ${IDENTITY_NOTIFICATION_INSERT_COLUMNS.map((column) => `\`${column}\``).join(', ')}
         ) values (
           ${IDENTITY_NOTIFICATION_INSERT_COLUMNS.map((column) => `:${column}`).join(', ')}
         )
       `,
-      row,
-      connection ? { wrappedConnection: connection } : undefined
+            row,
+            connection ? { wrappedConnection: connection } : undefined
+          );
+          return this.extractInsertId(result);
+        })();
+        if (typeof row.identity_id !== 'string')
+          throw new Error('Invalid notification identity');
+        await recordWebSocketEvent(
+          { type: 'identity', profileId: row.identity_id },
+          { connection },
+          this.db
+        );
+        return mutationResult;
+      }
     );
-    return this.extractInsertId(result);
   }
 
   private async findInsertedNotificationIds(
@@ -357,40 +386,66 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     }: { id: number; identity_id: string; readAt: number | null },
     connection?: ConnectionWrapper<any>
   ) {
-    await this.db.execute(
-      `
+    return withWebSocketMutation(
+      this.db,
+      { connection },
+      async ({ connection }) => {
+        const mutationResult = await (async () => {
+          await this.db.execute(
+            `
         update ${IDENTITY_NOTIFICATIONS_TABLE}
         set read_at = :read_at
         where 
           id = :id 
           and identity_id = :identity_id
       `,
-      {
-        id,
-        identity_id,
-        read_at: readAt
-      },
-      connection ? { wrappedConnection: connection } : undefined
+            {
+              id,
+              identity_id,
+              read_at: readAt
+            },
+            connection ? { wrappedConnection: connection } : undefined
+          );
+        })();
+        await recordWebSocketEvent(
+          { type: 'identity', profileId: identity_id },
+          { connection },
+          this.db
+        );
+        return mutationResult;
+      }
     );
   }
 
   async markAllNotificationsAsRead(identity_id: string, ctx: RequestContext) {
-    ctx.timer?.start(`${this.constructor.name}->markAllNotificationsAsRead`);
-    await this.db.execute(
-      `
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        ctx.timer?.start(
+          `${this.constructor.name}->markAllNotificationsAsRead`
+        );
+        await this.db.execute(
+          `
         update ${IDENTITY_NOTIFICATIONS_TABLE}
         set read_at = :read_at
         where 
           identity_id = :identity_id
           and read_at is null
       `,
-      {
-        identity_id,
-        read_at: Time.currentMillis()
-      },
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop(`${this.constructor.name}->markAllNotificationsAsRead`);
+          {
+            identity_id,
+            read_at: Time.currentMillis()
+          },
+          { wrappedConnection: ctx.connection }
+        );
+        ctx.timer?.stop(`${this.constructor.name}->markAllNotificationsAsRead`);
+      })();
+      await recordWebSocketEvent(
+        { type: 'identity', profileId: identity_id },
+        ctx,
+        this.db
+      );
+      return mutationResult;
+    });
   }
 
   async markWaveNotificationsAsRead(
@@ -398,9 +453,13 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     identityId: string,
     ctx: RequestContext
   ) {
-    ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
-    await this.db.execute(
-      `
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        ctx.timer?.start(
+          `${this.constructor.name}->markWaveNotificationsAsRead`
+        );
+        await this.db.execute(
+          `
         update ${IDENTITY_NOTIFICATIONS_TABLE}
         set read_at = :read_at
         where 
@@ -408,14 +467,24 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
           and identity_id = :identity_id 
           and read_at is null
       `,
-      {
-        wave_id: waveId,
-        identity_id: identityId,
-        read_at: Time.currentMillis()
-      },
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
+          {
+            wave_id: waveId,
+            identity_id: identityId,
+            read_at: Time.currentMillis()
+          },
+          { wrappedConnection: ctx.connection }
+        );
+        ctx.timer?.stop(
+          `${this.constructor.name}->markWaveNotificationsAsRead`
+        );
+      })();
+      await recordWebSocketEvent(
+        { type: 'identity', profileId: identityId },
+        ctx,
+        this.db
+      );
+      return mutationResult;
+    });
   }
 
   async findNotifications(

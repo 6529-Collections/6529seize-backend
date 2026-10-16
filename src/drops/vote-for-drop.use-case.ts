@@ -1,3 +1,4 @@
+import { recordWebSocketEvent } from '@/websocket-outbox/outbox.db';
 import { Time, Timer } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { VoteForDropModel } from './vote-for-drop.model';
@@ -316,6 +317,10 @@ export class VoteForDropUseCase {
         ctx.connection
       );
     }
+    await recordWebSocketEvent(
+      { type: 'drop', dropId: drop_id, updateType: 'DROP_RATING_UPDATE' },
+      ctx
+    );
     return true;
   }
 }
