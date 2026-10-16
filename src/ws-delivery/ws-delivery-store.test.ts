@@ -112,6 +112,19 @@ describe('shared WebSocket recovery in real Redis', () => {
     await secondWorker.claim('connection-1', 'concurrent', false, now + 30_001);
     await finish('retry', 'sent', now + 30_002, true, claim.revision);
     expect(await firstWorker.due(now + 60_000)).toEqual(['connection-1']);
+    expect(
+      await firstWorker.claim('connection-1', 'next', true, now + 60_000)
+    ).toMatchObject({ acquired: true, failures: 0, firstFailureAt: 0 });
+  });
+  it('resets the failure streak after a successful in-flight foreground send without losing repair work', async () => {
+    await firstWorker.claim('connection-1', 'healthy', false, now);
+    await secondWorker.claim('connection-1', 'throttled', false, now);
+    await finish('throttled', 'throttled', now + 1);
+    await finish('healthy', 'sent', now + 2);
+    expect(await firstWorker.due(now + 30_001)).toEqual(['connection-1']);
+    expect(
+      await firstWorker.claim('connection-1', 'retry', true, now + 30_001)
+    ).toMatchObject({ acquired: true, failures: 0, firstFailureAt: 0 });
   });
   it('does not let a late completion delete a newer lease or pending work', async () => {
     await firstWorker.claim('connection-1', 'initial', false, now);
