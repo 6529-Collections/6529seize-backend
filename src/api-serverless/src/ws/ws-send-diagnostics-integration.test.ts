@@ -1,6 +1,7 @@
 const mockHandle = jest.fn();
 const mockError = jest.fn();
 const mockWarn = jest.fn();
+const mockInfo = jest.fn();
 const mockAttempts: string[] = [];
 
 jest.mock('@/logging', () => ({
@@ -8,7 +9,7 @@ jest.mock('@/logging', () => ({
     get: () => ({
       error: mockError,
       warn: mockWarn,
-      info: jest.fn(),
+      info: mockInfo,
       debug: jest.fn()
     })
   }
@@ -62,6 +63,10 @@ jest.mock('@/ws-delivery/ws-delivery-store', () => {
 import { HttpResponse } from '@smithy/protocol-http';
 import { AppWebSockets } from '@/api/ws/ws';
 import { WsConnectionRepository } from '@/api/ws/ws-connection.repository';
+import {
+  setWebSocketDiagnosticOperation,
+  withWebSocketOperationDiagnostics
+} from '@/api/ws/ws-operation-diagnostics';
 
 const response = (statusCode: number, errorType?: string) => ({
   response: new HttpResponse({
@@ -96,9 +101,44 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     mockHandle.mockReset();
     mockError.mockClear();
     mockWarn.mockClear();
+    mockInfo.mockClear();
     mockAttempts.length = 0;
     repository.deleteByConnectionId.mockClear();
   });
+
+  it.each([204, 429])(
+    'records the actual acknowledgement transport result for HTTP %s even when send resolves',
+    async (status) => {
+      mockHandle.mockResolvedValue(
+        response(status, status === 429 ? 'LimitExceededException' : undefined)
+      );
+      await withWebSocketOperationDiagnostics(
+        {
+          routeKey: '$default',
+          connectionId: 'synthetic',
+          lambdaRequestId: 'synthetic-invocation'
+        },
+        async () => {
+          setWebSocketDiagnosticOperation('AUTHENTICATE');
+          await sockets.send({
+            connectionId: 'synthetic',
+            message: '{"type":"AUTHENTICATED"}',
+            skipStaleConnectionCheck: true
+          });
+          return { statusCode: 200 };
+        }
+      );
+      const operation = [...mockInfo.mock.calls, ...mockWarn.mock.calls]
+        .map((entry) => entry[1])
+        .find((entry) => entry?.event === 'ws_operation');
+      expect(operation).toMatchObject({
+        response_status: 200,
+        acknowledgement_type: 'AUTHENTICATED',
+        acknowledgement: status === 204 ? 'accepted' : 'failed'
+      });
+      expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    }
+  );
 
   it('already retries two 429 responses and succeeds on SDK attempt three', async () => {
     mockHandle

@@ -22,6 +22,8 @@ import {
   webSocketDelivery,
   WebSocketDeliveryResult
 } from '@/ws-delivery/ws-delivery';
+import { describeWebSocketSendFailure } from './ws-send-diagnostics';
+import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -70,13 +72,16 @@ class WebsocketClientConnections extends ClientConnections {
   }) {
     const socket = this.sockets[connectionId];
     if (!socket) {
+      recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
       throw new SocketNotAvailableException();
     }
     try {
       socket.send(message);
+      recordWebSocketAcknowledgement(connectionId, message, 'accepted');
       return { status: 'sent' as const };
     } catch {
-      // Normalize local transport exceptions to the same unavailable outcome.
+      // Preserve the unavailable-socket result without exposing transport errors.
+      recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
       throw new SocketNotAvailableException();
     }
   }
@@ -136,13 +141,26 @@ class ApiGatewayClientConnections extends ClientConnections {
       message,
       recovery,
       close: () => this.closeClient(connectionId, true),
-      send: () =>
-        this.client.send(
-          new PostToConnectionCommand({
-            ConnectionId: connectionId,
-            Data: Buffer.from(message)
-          })
-        )
+      send: async () => {
+        try {
+          const response = await this.client.send(
+            new PostToConnectionCommand({
+              ConnectionId: connectionId,
+              Data: Buffer.from(message)
+            })
+          );
+          recordWebSocketAcknowledgement(connectionId, message, 'accepted');
+          return response;
+        } catch (error) {
+          const failure = describeWebSocketSendFailure(message, error);
+          recordWebSocketAcknowledgement(
+            connectionId,
+            message,
+            failure.unavailable ? 'unavailable' : 'failed'
+          );
+          throw error;
+        }
+      }
     });
   }
 
