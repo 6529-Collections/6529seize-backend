@@ -33,6 +33,21 @@ after the refresh commits. Independent comparison and the final ownership lock
 remain mandatory. Deploy only `competitionMigrationLoop` for this correction;
 existing legacy-owned checkpoints remain resumable without a schema change.
 
+For a legacy-owned copy, the previous deployed migrator (`0f79fcc82`) understands
+the same stage, cursor, completed-stage and watermark fields. Its backfill logic
+is unchanged: it can finish an already scheduled leaderboard refresh before
+acknowledging its target. Subsequent catch-up windows use the older conservative
+full refresh again, so restoring that binary can reintroduce the convergence
+problem. Stop the current invocation at a saved checkpoint before changing the
+migrator version. Reverting the binary does not reverse competition ownership;
+an already native competition still requires the guarded recovery procedure.
+
+Capture rows in `competition_migration_changes` are durable migration evidence;
+this implementation has no automatic journal-pruning job. Do not manually trim
+rows needed by an in-progress migration or its recovery checkpoints. A missing
+next journal watermark stops catch-up and retains legacy ownership. Preserve
+the journal when investigating a stopped copy or planning rollback/re-migration.
+
 Comparison freshness is measured when the independent comparison finishes.
 After readiness passes, the Lambda calls live cutover once; that transaction
 performs the final comparison and invariants under the ownership lock before any
