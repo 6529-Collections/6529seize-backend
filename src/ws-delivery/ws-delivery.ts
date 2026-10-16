@@ -27,11 +27,15 @@ interface DeliveryInput {
 const logger = Logger.get('WEBSOCKET_DELIVERY');
 let lastStoreFailureAt = 0;
 
-function authenticationFrame(message: string): boolean {
+function controlAcknowledgement(message: string): boolean {
   if (message.length > 2048) return false;
   const type = describeWebSocketSendFailure(message, undefined).diagnostic
     .frame_type;
-  return type === 'AUTHENTICATED' || type === 'AUTHENTICATION_FAILED';
+  return (
+    type === 'AUTHENTICATED' ||
+    type === 'AUTHENTICATION_FAILED' ||
+    type === 'NOTIFICATION_IDENTITIES_SYNCED'
+  );
 }
 
 function reportStoreFailure(): void {
@@ -210,7 +214,7 @@ export class WebSocketDelivery {
         token,
         input.recovery ?? false,
         Date.now(),
-        authenticationFrame(input.message)
+        controlAcknowledgement(input.message)
       );
     } catch {
       // The transport can still deliver during a Redis outage. The worker and
@@ -235,7 +239,8 @@ export class WebSocketDelivery {
         recovery: input.recovery ?? false,
         revision: claim.revision,
         now: Date.now(),
-        jitter: randomInt(1_000_000) / 1_000_000
+        jitter: randomInt(1_000_000) / 1_000_000,
+        coalesce: !controlAcknowledgement(input.message)
       });
     } catch {
       reportStoreFailure();
@@ -277,6 +282,7 @@ export class WebSocketDelivery {
     claim: DeliveryClaim | null,
     diagnostic: ReturnType<typeof describeWebSocketSendFailure>['diagnostic']
   ): Promise<WebSocketDeliveryResult> {
+    const control = controlAcknowledgement(input.message);
     const firstFailure = await this.finish(input, token, claim, 'throttled');
     metric('Throttled', diagnostic.sdk_attempts ?? 0);
     if (firstFailure) {
@@ -284,25 +290,27 @@ export class WebSocketDelivery {
         logger.warn({
           ...diagnostic,
           connection_hash: connectionHash(input.connectionId),
-          recovery: 'resync_pending'
+          recovery: control
+            ? 'control_acknowledgement_failed'
+            : 'resync_pending'
         });
       } catch {
         /* Delivery remains best effort if logging fails. */
       }
     }
-    if (
-      claim?.canReconnect &&
-      (await this.closeUnacknowledgedAuthentication(input))
-    )
-      return { status: 'gone' };
+    if (control) {
+      if (claim?.canReconnect && (await this.closeUnacknowledgedControl(input)))
+        return { status: 'gone' };
+      return { status: 'failed' };
+    }
     return { status: firstFailure === null ? 'failed' : 'resync_pending' };
   }
 
-  private async closeUnacknowledgedAuthentication(
+  private async closeUnacknowledgedControl(
     input: DeliveryInput
   ): Promise<boolean> {
-    if (!authenticationFrame(input.message) || !input.close) return false;
-    // An authentication acknowledgement cannot be replaced by a cache refresh.
+    if (!input.close) return false;
+    // Control acknowledgements cannot be replaced by cache refreshes.
     try {
       await input.close();
     } catch {

@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { getRedisClient } from '@/redis';
 
 const WINDOW_MS = 5 * 60_000;
+// Keep connection capabilities beyond AWS's two-hour lifetime, including handshake margin.
+const STATE_TTL_SECONDS = 2 * 60 * 60 + 5 * 60;
 
 export interface DeliverySnapshot {
   attempted: number;
@@ -40,7 +42,7 @@ export function connectionHash(connectionId: string): string {
 const commonLua = `
 local now = tonumber(ARGV[1])
 local id = ARGV[2]
-local ttl = 3600
+local ttl = ${STATE_TTL_SECONDS}
 local function metric(name)
   redis.call('HINCRBY', KEYS[3], name, 1)
   redis.call('EXPIRE', KEYS[3], ttl)
@@ -111,7 +113,11 @@ if result == 'throttled' then
   local delay = math.min(300000, 30000 * math.pow(2, math.min(failures - 1, 4)))
   local nextAt = now + math.floor(delay * (0.75 + tonumber(ARGV[8]) * 0.5))
   redis.call('HSET', KEYS[1], 'firstFailureAt', first, 'nextAttempt', nextAt)
-  pending(nextAt)
+  if ARGV[9] ~= '0' then
+    pending(nextAt)
+  elseif redis.call('ZSCORE', KEYS[2], id) then
+    redis.call('ZADD', KEYS[2], nextAt, id)
+  end
   local failed = redis.call('ZCOUNT', KEYS[6], now - 60000, '+inf')
   local attempted = redis.call('ZCOUNT', KEYS[4], now - 60000, '+inf')
   if failed >= 5 and failed / math.max(1, attempted) >= 0.2 then
@@ -134,6 +140,8 @@ end
 if result == 'failed' and redis.call('ZSCORE', KEYS[2], id) then
   redis.call('HSET', KEYS[1], 'nextAttempt', now + 60000)
   redis.call('ZADD', KEYS[2], now + 60000, id)
+  redis.call('EXPIRE', KEYS[2], ttl)
+  redis.call('EXPIRE', KEYS[8], ttl)
 end
 return 0
 `;
@@ -145,7 +153,7 @@ export class WebSocketDeliveryStore {
       await getRedisClient()!
         .multi()
         .hSet(key, 'canReconnect', '1')
-        .expire(key, 3600)
+        .expire(key, STATE_TTL_SECONDS)
         .exec();
     });
   }
@@ -233,6 +241,7 @@ export class WebSocketDeliveryStore {
     revision: number;
     now: number;
     jitter: number;
+    coalesce?: boolean;
   }): Promise<boolean> {
     const result = await this.bounded(() =>
       getRedisClient()!.eval(finishLua, {
@@ -245,7 +254,8 @@ export class WebSocketDeliveryStore {
           input.outcome,
           input.recovery ? '1' : '0',
           String(input.revision),
-          String(input.jitter)
+          String(input.jitter),
+          input.coalesce === false ? '0' : '1'
         ]
       })
     );

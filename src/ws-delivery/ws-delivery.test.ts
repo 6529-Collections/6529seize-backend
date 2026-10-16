@@ -132,24 +132,34 @@ describe('shared WebSocket delivery', () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(send).not.toHaveBeenCalled();
   });
-  it('never closes legacy listeners during recovery or a failed authentication acknowledgement', async () => {
-    store.claim.mockResolvedValue({
-      ...acquired,
-      canReconnect: false,
-      failures: 3,
-      firstFailureAt: Date.now() - 180_000
-    });
-    await expect(
-      delivery.deliver({ ...input, recovery: true })
-    ).resolves.toEqual({ status: 'sent' });
-    send.mockRejectedValue(error429);
-    await expect(
-      delivery.deliver({ ...input, message: '{"type":"AUTHENTICATED"}' })
-    ).resolves.toEqual({ status: 'resync_pending' });
-    expect(close).not.toHaveBeenCalled();
-    expect(store.forget).not.toHaveBeenCalled();
-    expect(mockError).not.toHaveBeenCalled();
-  });
+  it.each([
+    'AUTHENTICATED',
+    'AUTHENTICATION_FAILED',
+    'NOTIFICATION_IDENTITIES_SYNCED'
+  ])(
+    'returns explicit failed control delivery for legacy %s without closing or scheduling a refresh',
+    async (type) => {
+      store.claim.mockResolvedValue({
+        ...acquired,
+        canReconnect: false,
+        failures: 3,
+        firstFailureAt: Date.now() - 180_000
+      });
+      await expect(
+        delivery.deliver({ ...input, recovery: true })
+      ).resolves.toEqual({ status: 'sent' });
+      send.mockRejectedValue(error429);
+      await expect(
+        delivery.deliver({ ...input, message: JSON.stringify({ type }) })
+      ).resolves.toEqual({ status: 'failed' });
+      expect(store.finish).toHaveBeenLastCalledWith(
+        expect.objectContaining({ coalesce: false })
+      );
+      expect(close).not.toHaveBeenCalled();
+      expect(store.forget).not.toHaveBeenCalled();
+      expect(mockError).not.toHaveBeenCalled();
+    }
+  );
   it('keeps the subscription and tries recovery if closing a listener fails', async () => {
     store.claim.mockResolvedValue({
       ...acquired,
