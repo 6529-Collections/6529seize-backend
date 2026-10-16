@@ -757,6 +757,38 @@ or media deletion is needed, and rollback treats the private marker as ordinary
 error text. None of these controls guarantees preview output for oversized
 assets or identical fallback behavior across frontend views.
 
+### NFT link refresh outcome monitoring
+
+The SQS refresher opts into one metadata-only Embedded Metric Format record
+(`6529.nft.refresh.v1`, namespace `6529/NftLinkRefresher`) after each successful
+persistence. Retry attempts and lock/eligibility skips do not count as completed
+refreshes. Dimensions are the fixed environment and provider; canonical-link
+hashes are source-log evidence only. The API's synchronous resolver keeps its
+existing notification policy, and refresh timing/cache semantics are unchanged.
+
+Recognized required-page 404s, bounded HTTP timeouts, retryable HTTP statuses
+and known network faults retain warning logs and outcome counters. Intermediate
+retries do not notify. Unknown errors, access denial, noncanonical 404s,
+persistence failures, preview/notification failures, and Lambda platform errors
+retain operational notification paths. Cancellation caused by the refresher's
+HTTP timeout is explicitly typed; arbitrary abort messages are not classified.
+
+The source monitoring stack owns provider-level CloudWatch incidents: 5% failed
+eligible outcomes with at least 20 samples in each of three consecutive
+five-minute periods; and a 15-minute newly-unavailable surge with at least 20
+completed outcomes and either five new failures comprising 10% of completions,
+or five previously working links newly failing. A link contributes to the new
+count only when its persisted failure episode starts; repeated 404s contribute
+to unavailable counts only. Success resets the existing failure episode.
+Both alarms require successful observations and at least 20 outcomes for
+recovery as well as detection; missing or sub-gate traffic preserves state. These are initial operational thresholds,
+not a product freshness SLO or proof that every affected link recovered.
+
+Existing platform/OOM alarms remain. The NFT queue additionally alarms on a
+30-minute oldest-message age in three of five minutes and on any visible dead
+letter. The source stack owns the dedicated NFT outcome dashboard and must deploy before the worker.
+See [monitoring policy and rollout](../ops/monitoring/README.md#nft-refresh-outcomes).
+
 ### NFT link refresh bounds
 
 The `nft-link-refreshes` SQS event source caps concurrent invocations at the

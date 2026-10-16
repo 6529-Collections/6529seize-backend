@@ -17,12 +17,15 @@ import {
   withNftLinkResolutionBudget
 } from '@/nft-links/resolution-budget';
 
+import { nftRefreshObserver } from '@/nftLinkRefresherLoop/refresh-outcome';
+
 const logger = Logger.get('NFT_LINK_REFRESHER');
 const nftLinkResolvingService = new NftLinkResolvingService(
   nftLinkResolver,
   nftLinksDb,
   new NftLinkRefreshNotifier(undefined, undefined, wakeWebSocketOutbox),
-  sqs
+  sqs,
+  nftRefreshObserver
 );
 
 const sqsHandler: SQSHandler = async (event, context) =>
