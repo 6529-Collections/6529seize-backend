@@ -3,7 +3,7 @@ import { DROPS_TABLE, COMPETITION_ENTRIES_TABLE } from '@/constants';
 import { DropEntity } from '@/entities/IDrop';
 import { SqlExecutor } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
-import { CompetitionEntryRepository } from './competition-entry.repository';
+import { CompetitionMigrationContentRepository } from '@/competitions/competition-migration-content.repository';
 import { competitionPayloadHash } from './competition-command-identity';
 import { legacyCompetitionEntryId } from './competition-id';
 
@@ -15,7 +15,7 @@ export async function compareMigrationContent(
   waveId: string,
   ctx: RequestContext
 ) {
-  const repository = new CompetitionEntryRepository(() => db);
+  const repository = new CompetitionMigrationContentRepository(() => db);
   const baseline = createHash('sha256');
   const candidate = createHash('sha256');
   let cursor = '';
@@ -26,18 +26,24 @@ export async function compareMigrationContent(
       { waveId, cursor },
       { wrappedConnection: ctx.connection }
     );
+    const sourceContent = await repository.sourcePage(drops, ctx);
+    const nativeContent = await repository.nativePage(
+      id,
+      drops.map((drop) => legacyCompetitionEntryId(id, drop.id)),
+      ctx
+    );
     for (const drop of drops) {
       const entryId = legacyCompetitionEntryId(id, drop.id);
       baseline.update(
         competitionPayloadHash({
           entryId,
-          content: await repository.loadDropContent(drop, ctx)
+          content: sourceContent.get(drop.id)!
         })
       );
       candidate.update(
         competitionPayloadHash({
           entryId,
-          content: await repository.getContent(entryId, ctx)
+          content: nativeContent.get(entryId) ?? null
         })
       );
     }

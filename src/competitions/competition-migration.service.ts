@@ -29,7 +29,7 @@ import {
   WAVES_TABLE
 } from '@/constants';
 import { RequestContext } from '@/request.context';
-import { dbSupplier, SqlExecutor } from '@/sql-executor';
+import { dbSupplier, SqlExecutor, SqlTransactionOptions } from '@/sql-executor';
 import {
   CompetitionMigrationRepository,
   MigrationStatus
@@ -202,13 +202,37 @@ export class CompetitionMigrationService {
         'Local migration policy requires explicitly configured loopback read/write databases'
       );
   }
-  private async transaction<T>(
+  private comparisonTransactionOptions(): SqlTransactionOptions {
+    return {
+      isolationLevel: 'REPEATABLE READ',
+      executionBudget: {
+        deadlineMonotonicMillis: performance.now() + 5_000,
+        maxStatementMillis: 1_000,
+        finalizationReserveMillis: 500,
+        lockWaitSeconds: 1
+      }
+    };
+  }
+
+  private boundedTransaction<T>(
     id: string,
     action: (
       repository: CompetitionMigrationRepository,
       ctx: RequestContext,
       record: CompetitionRecord
     ) => Promise<T>
+  ): Promise<T> {
+    return this.transaction(id, action, true);
+  }
+
+  private async transaction<T>(
+    id: string,
+    action: (
+      repository: CompetitionMigrationRepository,
+      ctx: RequestContext,
+      record: CompetitionRecord
+    ) => Promise<T>,
+    boundedComparison = false
   ): Promise<T> {
     const db = this.supplier();
     return db.executeNativeQueriesInTransaction(
@@ -221,7 +245,9 @@ export class CompetitionMigrationService {
         const record = await repository.lock(id, ctx);
         return action(repository, ctx, record);
       },
-      { isolationLevel: 'READ COMMITTED' }
+      boundedComparison
+        ? this.comparisonTransactionOptions()
+        : { isolationLevel: 'READ COMMITTED' }
     );
   }
   private async rateLimit(
@@ -654,93 +680,90 @@ export class CompetitionMigrationService {
     if (!Number.isSafeInteger(windowMs) || windowMs < 1)
       throw new Error('An approved positive comparison window is required');
     const db = this.supplier();
-    return db.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const ctx = { connection };
-        const repository = new CompetitionMigrationRepository(
-          () => db,
-          this.environment
+    return db.executeNativeQueriesInTransaction(async (connection) => {
+      const ctx = { connection };
+      const repository = new CompetitionMigrationRepository(
+        () => db,
+        this.environment
+      );
+      const record = await repository.lock(id, ctx);
+      const status = await repository.status(id, ctx);
+      const migration = status.migration;
+      if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
+        throw new Error('Complete backfill before independent comparison');
+      if (record.storage_mode !== 'LEGACY_ADAPTER')
+        throw new Error(
+          'Native-backed projection cannot be its own migration baseline'
         );
-        const record = await repository.lock(id, ctx);
-        const status = await repository.status(id, ctx);
-        const migration = status.migration;
-        if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
-          throw new Error('Complete backfill before independent comparison');
-        if (record.storage_mode !== 'LEGACY_ADAPTER')
-          throw new Error(
-            'Native-backed projection cannot be its own migration baseline'
-          );
-        const now = this.now();
-        const baseline = await new LegacyCompetitionBaselineRepository(
-          () => db
-        ).getSnapshot(record, now, ctx, Number.POSITIVE_INFINITY);
-        const candidate = await loadLegacyParityCandidate(
-          new NativeCompetitionReader(
-            new CompetitionRepository(() => db),
-            ctx,
-            true
-          ),
-          record,
-          now,
+      const now = this.now();
+      const baseline = await new LegacyCompetitionBaselineRepository(
+        () => db
+      ).getSnapshot(record, now, ctx, Number.POSITIVE_INFINITY);
+      const candidate = await loadLegacyParityCandidate(
+        new NativeCompetitionReader(
+          new CompetitionRepository(() => db),
           ctx,
-          Number.POSITIVE_INFINITY
-        );
-        const categories = [
-          ...PARITY_FIELDS.map((field) => ({
-            category: field,
-            baselineHash: competitionPayloadHash(baseline[field] ?? null),
-            candidateHash: competitionPayloadHash(candidate[field] ?? null)
-          })),
-          ...(await compareLegacyFacade(db, id, record.wave_id, ctx)),
-          ...(await compareMigrationContent(db, id, record.wave_id, ctx))
-        ];
-        const mismatches = categories.filter(
-          (category) => category.baselineHash !== category.candidateHash
-        ).length;
-        const sourceFailures = sourceConsistencyFailures(baseline);
-        const complete =
-          migration.completed_stages.length === MIGRATION_STAGES.length &&
-          migration.source_watermark === migration.applied_watermark &&
-          sourceFailures.length === 0;
-        const progress = comparisonWindowProgress(
-          migration,
-          now,
-          windowMs,
-          complete,
-          mismatches
-        );
-        await repository.update(
-          id,
-          {
-            state: 'SHADOWING',
-            ...progress,
-            last_comparison_at: this.now(),
-            last_comparison_watermark: migration.source_watermark
-          },
-          ctx
-        );
-        const report = {
-          source: 'direct-legacy-sql-vs-native-tables-v1',
-          independent: true,
-          complete,
-          sourceFailures,
-          watermark: migration.source_watermark,
-          mismatches,
-          consecutiveFullWindows: progress.consecutive_full_windows,
-          categories
-        };
-        await repository.audit(
-          id,
-          operator.actor,
-          'INDEPENDENT_COMPARISON',
-          operator.reason,
-          report,
-          ctx
-        );
-        return report;
-      },
-      { isolationLevel: 'REPEATABLE READ' }
-    );
+          true
+        ),
+        record,
+        now,
+        ctx,
+        Number.POSITIVE_INFINITY
+      );
+      const categories = [
+        ...PARITY_FIELDS.map((field) => ({
+          category: field,
+          baselineHash: competitionPayloadHash(baseline[field] ?? null),
+          candidateHash: competitionPayloadHash(candidate[field] ?? null)
+        })),
+        ...(await compareLegacyFacade(db, id, record.wave_id, ctx)),
+        ...(await compareMigrationContent(db, id, record.wave_id, ctx))
+      ];
+      const mismatches = categories.filter(
+        (category) => category.baselineHash !== category.candidateHash
+      ).length;
+      const sourceFailures = sourceConsistencyFailures(baseline);
+      const complete =
+        migration.completed_stages.length === MIGRATION_STAGES.length &&
+        migration.source_watermark === migration.applied_watermark &&
+        sourceFailures.length === 0;
+      const progress = comparisonWindowProgress(
+        migration,
+        now,
+        windowMs,
+        complete,
+        mismatches
+      );
+      await repository.update(
+        id,
+        {
+          state: 'SHADOWING',
+          ...progress,
+          last_comparison_at: this.now(),
+          last_comparison_watermark: migration.source_watermark
+        },
+        ctx
+      );
+      const report = {
+        source: 'direct-legacy-sql-vs-native-tables-v1',
+        independent: true,
+        complete,
+        sourceFailures,
+        watermark: migration.source_watermark,
+        mismatches,
+        consecutiveFullWindows: progress.consecutive_full_windows,
+        categories
+      };
+      await repository.audit(
+        id,
+        operator.actor,
+        'INDEPENDENT_COMPARISON',
+        operator.reason,
+        report,
+        ctx
+      );
+      return report;
+    }, this.comparisonTransactionOptions());
   }
   private async nativeInvariantFailures(
     id: string,
@@ -977,7 +1000,7 @@ export class CompetitionMigrationService {
     operator: MigrationOperator,
     dryRun: boolean
   ) {
-    return this.transaction(id, async (repository, ctx, record) => {
+    return this.boundedTransaction(id, async (repository, ctx, record) => {
       const status = await repository.status(id, ctx);
       const failures = this.readinessFailures(status);
       if (!failures.length)

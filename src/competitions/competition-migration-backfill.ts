@@ -1,6 +1,6 @@
 import { isMigrationContentTable } from '@/competitions/competition-migration-capture';
 import { CompetitionEntryRepository } from './competition-entry.repository';
-import { DropEntity } from '@/entities/IDrop';
+import { DropEntity, DropType } from '@/entities/IDrop';
 import { competitionPayloadHash } from './competition-command-identity';
 import {
   COMPETITIONS_TABLE,
@@ -785,6 +785,34 @@ export class CompetitionMigrationBackfill {
       ctx.timer?.stop(timerName);
     }
   }
+  private async refreshEntryRanks(
+    record: CompetitionRoutingRecord,
+    rows: readonly { drop_id: string; entry_rank: number }[],
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->refreshEntryRanks`;
+    ctx.timer?.start(timerName);
+    try {
+      if (!rows.length) return;
+      const entries = rows.map((row) =>
+        legacyCompetitionEntryId(record.id, row.drop_id)
+      );
+      const params: Record<string, unknown> = { id: record.id, entries };
+      const cases = rows.map((row, index) => {
+        params[`entry${index}`] = entries[index];
+        params[`rank${index}`] = Number(row.entry_rank);
+        return `when :entry${index} then :rank${index}`;
+      });
+      await this.db.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set \`rank\`=case id ${cases.join(' ')} else \`rank\` end where competition_id=:id and id in (:entries)`,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   private async leaderboard(
     record: CompetitionRoutingRecord,
     offset: number,
@@ -796,38 +824,52 @@ export class CompetitionMigrationBackfill {
     try {
       const rows = await this.db.execute<{
         drop_id: string;
+        drop_type: DropType;
         serial_no: number;
         submitted_at: number;
         rating: number;
         real_time_rating: number;
         competition_rank: number;
+        entry_rank: number;
         ordering_time: number;
         decision_rating: number;
       }>(
-        `with source as (select d.id as drop_id,d.serial_no,d.created_at as submitted_at,
+        `with source as (select d.id as drop_id,d.drop_type,d.serial_no,d.created_at as submitted_at,
        cast(if(w.time_lock_ms>0,coalesce(l.vote,0),coalesce(r.vote,0)) as signed) as rating,cast(coalesce(r.vote,0) as signed) as real_time_rating,
        if(w.time_lock_ms>0,coalesce(l.timestamp,d.created_at),coalesce(r.last_increased,d.created_at)) as tie_time,
+       coalesce(r.last_increased,d.created_at) as live_tie_time,
        coalesce(l.timestamp,d.created_at) as ordering_time,coalesce(l.vote_on_decision_time,coalesce(r.vote,0)) as decision_rating
-       from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id=d.wave_id left join ${DROP_RANK_TABLE} r on r.drop_id=d.id left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} l on l.wave_id=d.wave_id and l.drop_id=d.id where d.wave_id=:waveId and d.drop_type='PARTICIPATORY'),
-       ranked as (select source.*,rank() over(order by rating desc,tie_time asc) as competition_rank from source)
-       select * from ranked where serial_no>:offset order by serial_no limit :limit`,
+       from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id=d.wave_id left join ${DROP_RANK_TABLE} r on r.drop_id=d.id left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} l on l.wave_id=d.wave_id and l.drop_id=d.id where d.wave_id=:waveId and d.drop_type in ('PARTICIPATORY','WINNER')),
+       live_ranked as (select source.*,rank() over(order by real_time_rating desc,live_tie_time asc) as live_rank from source),
+       leaderboard_ranked as (select drop_id,rank() over(order by rating desc,tie_time asc) as competition_rank from source where drop_type='PARTICIPATORY'),
+       latest_winners as (select drop_id,ranking,row_number() over(partition by drop_id order by decision_time desc,ranking asc) as winner_order from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id=:waveId)
+       select live_ranked.*,leaderboard_ranked.competition_rank,coalesce(latest_winners.ranking,live_ranked.live_rank) as entry_rank
+       from live_ranked left join leaderboard_ranked on leaderboard_ranked.drop_id=live_ranked.drop_id
+       left join latest_winners on latest_winners.drop_id=live_ranked.drop_id and latest_winners.winner_order=1
+       where serial_no>:offset order by serial_no limit :limit`,
         { waveId: record.wave_id, offset, limit },
         { wrappedConnection: ctx.connection }
       );
+      // Entry lists use live ranks across all legacy entries; the leaderboard
+      // uses active entries and may expose a separately locked snapshot.
+      // Refresh both projections before acknowledging this journal window.
+      await this.refreshEntryRanks(record, rows, ctx);
       await this.upsert(
         COMPETITION_LEADERBOARD_ENTRIES_TABLE,
-        rows.map((row) => ({
-          competition_id: record.id,
-          entry_id: legacyCompetitionEntryId(record.id, row.drop_id),
-          drop_id: row.drop_id,
-          rating: Number(row.rating),
-          real_time_rating: Number(row.real_time_rating),
-          rank: Number(row.competition_rank),
-          submitted_at: Number(row.submitted_at),
-          updated_at: Number(row.submitted_at),
-          ordering_time: Number(row.ordering_time),
-          decision_rating: Number(row.decision_rating)
-        })),
+        rows
+          .filter((row) => row.drop_type === DropType.PARTICIPATORY)
+          .map((row) => ({
+            competition_id: record.id,
+            entry_id: legacyCompetitionEntryId(record.id, row.drop_id),
+            drop_id: row.drop_id,
+            rating: Number(row.rating),
+            real_time_rating: Number(row.real_time_rating),
+            rank: Number(row.competition_rank),
+            submitted_at: Number(row.submitted_at),
+            updated_at: Number(row.submitted_at),
+            ordering_time: Number(row.ordering_time),
+            decision_rating: Number(row.decision_rating)
+          })),
         ctx
       );
       return rows.length === limit

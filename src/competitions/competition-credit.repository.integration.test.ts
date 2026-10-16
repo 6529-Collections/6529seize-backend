@@ -208,6 +208,53 @@ describeWithSeed(
       });
     });
 
+    it.each([
+      WaveCreditType.TDH,
+      WaveCreditType.XTDH,
+      WaveCreditType.TDH_PLUS_XTDH
+    ])(
+      'matches single-profile %s budgets across native siblings and the legacy primary',
+      async (credit_type) => {
+        for (const namespace of [
+          native,
+          { ...native, id: 'parallel-native' },
+          {
+            ...native,
+            id: 'legacy',
+            storage_mode: CompetitionStorageMode.LEGACY_ADAPTER
+          }
+        ]) {
+          const selected = {
+            ...namespace,
+            voting: { ...namespace.voting, credit_type }
+          };
+          await sqlExecutor.executeNativeQueriesInTransaction(
+            async (connection) => {
+              const ctx = { connection };
+              const batched = await competitionCreditService.getWaveBudgets(
+                selected,
+                [profileId, profileId.toUpperCase(), 'missing-profile'],
+                ctx
+              );
+              for (const voter of [
+                profileId,
+                profileId.toUpperCase(),
+                'missing-profile'
+              ])
+                expect(batched.get(voter)).toEqual(
+                  await competitionCreditService.getBudget(
+                    selected,
+                    voter,
+                    undefined,
+                    ctx
+                  )
+                );
+            }
+          );
+        }
+      }
+    );
+
     it('uses per-entry DROP spending and preserves credits on every other entry', async () => {
       const dropScoped = {
         ...native,
