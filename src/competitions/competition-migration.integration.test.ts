@@ -1532,5 +1532,151 @@ describeWithSeed(
       await service.catchUp(id, operator);
       expect((await service.status(id)).migration?.state).toBe('SHADOWING');
     });
+
+    it('catches repeated leaderboard refreshes without recopying voter and historical stages', async () => {
+      const now = Date.now();
+      await sqlExecutor.execute(
+        `update ${WAVES_TABLE} set participation_period_end=null,voting_period_end=null,next_decision_time=:next,time_lock_ms=86400000 where id=:waveId`,
+        { waveId: wave.id, next: now + 86400000 }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,timestamp,vote,vote_on_decision_time) values (:dropId,:waveId,:now,7,7)`,
+        { dropId: drop.id, waveId: wave.id, now }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'ACTIVE_LOW_VOLUME');
+      await finishBackfill(service);
+      for (let refresh = 1; refresh <= 3; refresh++) {
+        await sqlExecutor.execute(
+          `update ${WAVE_LEADERBOARD_ENTRIES_TABLE} set timestamp=:timestamp where drop_id=:dropId`,
+          { dropId: drop.id, timestamp: now + refresh }
+        );
+        await service.catchUp(id, operator, 1);
+        const migration = (await service.status(id)).migration;
+        expect(migration?.stage).toBe('LEADERBOARD');
+        expect(migration?.completed_stages).toEqual(
+          expect.arrayContaining([
+            'ENTRIES',
+            'VOTERS',
+            'HISTORY',
+            'ARCHIVE_VOTERS'
+          ])
+        );
+        await finishBackfill(service);
+      }
+      expect((await service.status(id)).operations?.journalLag).toBe(0);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      expect((await service.verifyNative(id)).failures).toEqual([]);
+    });
+
+    it('retains the full refresh when an earlier journal page changes configuration', async () => {
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,timestamp,vote,vote_on_decision_time) values (:dropId,:waveId,10,7,7)`,
+        { dropId: drop.id, waveId: wave.id }
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      await sqlExecutor.execute(
+        `update ${WAVES_TABLE} set name='Reviewed changed configuration' where id=:waveId`,
+        { waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `update ${WAVE_LEADERBOARD_ENTRIES_TABLE} set timestamp=11 where drop_id=:dropId`,
+        { dropId: drop.id }
+      );
+      await service.catchUp(id, operator, 1);
+      expect((await service.status(id)).migration?.state).toBe('SHADOWING');
+      await service.catchUp(id, operator, 1);
+      expect((await service.status(id)).migration?.stage).toBe('ENTRIES');
+      await finishBackfill(service);
+      expect((await service.status(id)).operations?.journalLag).toBe(0);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+    });
+
+    it('keeps votes arriving during leaderboard refresh unacknowledged until their own refresh commits', async () => {
+      await sqlExecutor.execute(
+        `insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,timestamp,vote,vote_on_decision_time) values (:dropId,:waveId,10,7,7)`,
+        { dropId: drop.id, waveId: wave.id }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      await sqlExecutor.execute(
+        `update ${WAVE_LEADERBOARD_ENTRIES_TABLE} set timestamp=11 where drop_id=:dropId`,
+        { dropId: drop.id }
+      );
+      await service.catchUp(id, operator, 1);
+      expect((await service.status(id)).migration).toMatchObject({
+        stage: 'LEADERBOARD',
+        target_watermark: 1,
+        applied_watermark: 0
+      });
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const params = { dropId: drop.id, waveId: wave.id };
+          const options = { wrappedConnection: connection };
+          for (const sql of [
+            `update ${DROP_VOTER_STATE_TABLE} set votes=9 where drop_id=:dropId`,
+            `insert into ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} (voter_id,drop_id,wave_id,credit_spent,created_at) values ('fixture-voter',:dropId,:waveId,2,20)`,
+            `update ${DROP_RANK_TABLE} set vote=9,last_increased=20 where drop_id=:dropId`,
+            `insert into ${DROP_REAL_VOTE_IN_TIME_TABLE} (wave_id,drop_id,timestamp,vote) values (:waveId,:dropId,20,9)`,
+            `insert into ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} (wave_id,drop_id,voter_id,timestamp,vote) values (:waveId,:dropId,'fixture-voter',20,9)`,
+            `update ${WAVE_LEADERBOARD_ENTRIES_TABLE} set timestamp=20,vote=9,vote_on_decision_time=9 where drop_id=:dropId`
+          ]) {
+            await sqlExecutor.execute(sql, params, options);
+          }
+        }
+      );
+      await service.backfill(id, operator, 1);
+      expect((await service.status(id)).migration?.applied_watermark).toBe(0);
+      await finishBackfill(service);
+      expect((await service.status(id)).migration).toMatchObject({
+        source_watermark: 7,
+        target_watermark: 1,
+        applied_watermark: 1
+      });
+      expect((await service.readiness(id)).failures).toContain('CATCH_UP_LAG');
+      expect((await service.status(id)).storageMode).toBe('LEGACY_ADAPTER');
+      for (let page = 0; page < 6; page++) {
+        await service.catchUp(id, operator, 1);
+      }
+      expect((await service.status(id)).migration).toMatchObject({
+        state: 'BACKFILLING',
+        stage: 'LEADERBOARD',
+        target_watermark: 7,
+        applied_watermark: 1
+      });
+      await finishBackfill(service);
+      expect((await service.status(id)).operations?.journalLag).toBe(0);
+      expect(
+        await sqlExecutor.execute(
+          `select value,credit_spent from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual([{ value: 9, credit_spent: 9 }]);
+      expect((await service.compare(id, operator, 1)).mismatches).toBe(0);
+      expect(await service.cutover(id, operator, false)).toMatchObject({
+        changed: true,
+        failures: []
+      });
+      expect((await service.verifyNative(id)).failures).toEqual([]);
+    });
   }
 );

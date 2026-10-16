@@ -9,7 +9,13 @@ import {
   COMPETITION_DECISIONS_TABLE,
   COMPETITION_EVENT_EFFECTS_TABLE,
   COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE,
-  DROPS_TABLE
+  DROPS_TABLE,
+  DROP_RANK_TABLE,
+  DROP_VOTER_STATE_TABLE,
+  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+  DROP_REAL_VOTE_IN_TIME_TABLE,
+  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
+  WAVE_LEADERBOARD_ENTRIES_TABLE
 } from '@/constants';
 import { CompetitionMigrationEntity } from '@/entities/ICompetitionMigration';
 import {
@@ -448,6 +454,46 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
         { wrappedConnection: ctx.connection }
       );
       return Number(result?.count ?? 0);
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+  public async canRefreshOnlyLeaderboard(
+    id: string,
+    appliedWatermark: number,
+    targetWatermark: number,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const timerName = `${this.constructor.name}->canRefreshOnlyLeaderboard`;
+    ctx.timer?.start(timerName);
+    try {
+      // Check every page since the last acknowledged refresh. These keys are
+      // replayed directly; retained time histories need no separate copy.
+      const row = await this.db.oneOrNull<{
+        count: number | string;
+        unsupported: number | string;
+      }>(
+        `select count(*) as count,coalesce(sum(source_table not in (:tables)),0) as unsupported from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark>:appliedWatermark and watermark<=:targetWatermark`,
+        {
+          id,
+          appliedWatermark,
+          targetWatermark,
+          tables: [
+            DROP_RANK_TABLE,
+            DROP_VOTER_STATE_TABLE,
+            DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+            DROP_REAL_VOTE_IN_TIME_TABLE,
+            DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
+            WAVE_LEADERBOARD_ENTRIES_TABLE
+          ]
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      return (
+        targetWatermark > appliedWatermark &&
+        Number(row?.count) === targetWatermark - appliedWatermark &&
+        Number(row?.unsupported) === 0
+      );
     } finally {
       ctx.timer?.stop(timerName);
     }
