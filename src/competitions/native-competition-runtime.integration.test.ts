@@ -761,7 +761,7 @@ describeWithSeed(
       const collaboration = await memeCollaborationsDb.context('rank-drop', {});
       expect(collaboration?.closed_at).not.toBeNull();
       expect(collaboration?.credit).toEqual({
-        artist: 'Artist, artistB',
+        artist: 'Artist & artistB',
         artist_profiles: 'artist, artistB',
         collab: true
       });

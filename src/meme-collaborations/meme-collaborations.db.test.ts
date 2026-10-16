@@ -129,7 +129,7 @@ describeWithSeed(
   ],
   () => {
     it('persists the accepted credit name independently and keeps it final', async () => {
-      const db = new MemeCollaborationsDb();
+      const db = new MemeCollaborationsDb(() => sqlExecutor);
       const service = new MemeCollaborationsService(db);
       await service.respond(
         'drop',
