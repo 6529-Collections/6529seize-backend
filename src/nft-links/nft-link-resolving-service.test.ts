@@ -83,6 +83,10 @@ function setup(observer?: NftRefreshObserver) {
 
 describe('NFT link refresh retries and persistence', () => {
   beforeEach(() => {
+    jest.replaceProperty(process, 'env', {
+      ...process.env,
+      OPS_ENVIRONMENT: 'prod'
+    });
     jest.useFakeTimers();
     jest
       .spyOn(nftLinkMediaPreviewService, 'onResolvedCard')

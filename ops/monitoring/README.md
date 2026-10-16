@@ -362,6 +362,11 @@ Expected canonical-page 404s and recognized recoverable fetch failures do not
 send individual notifications. Retry attempts are warnings, counted only when
 an outcome is persisted. Unexpected failures, auth errors and unrecognized 404s
 still notify; DB/lock exceptions continue through the handler/platform path.
+The worker deployment explicitly sets `OPS_ENVIRONMENT`. Missing or invalid
+markers emit a configuration error once per warm worker, publish no metrics,
+and retain final-failure notifications. Unclassified upstream HTTP failures
+remain `unexpected_failure` outcomes and count in provider failure health; only
+page-scoped Transient/Manifold 404 evidence qualifies as unavailable.
 Only the SQS worker opts into this policy. API callers, retry timings, backoff,
 cache preservation and preview/WS failure notifications keep their behavior.
 
@@ -393,7 +398,13 @@ alarms remain independent of the application emitter.
 Roll out each environment in this order: generated source stack including the
 NFT dashboard (existing `deploy:source` runbook path), then `Deploy a service` for `nftLinkRefresherLoop`. Verify all source alarm
 expressions/dimensions and queue guards before the worker rollout. Verify EMF
-extraction, completed outcomes and preserved error coverage from natural traffic
-or a controlled staging check. No API, frontend or schema deployment is needed.
+extraction and preserved error coverage from natural traffic or a controlled
+staging check. For every provider observed emitting post-rollout outcome records,
+require a non-zero CloudWatch `Completed` Sum under the exact environment/provider
+dimensions. Compare source-log counters with extracted metric sums; source stdout
+alone does not establish extraction. Idle providers stay unverified rather than
+healthy. Missing/mismatched metric extraction blocks acceptance and requires
+restoring the previous worker before proceeding. Dashboard counts use five-minute
+periods; select 15 minutes when reconciling a `NewUnavailableSurge` alarm. No API, frontend or schema deployment is needed.
 Rollback the worker first to restore individual reporting; retained counters and
 additive source alarms can remain while investigation continues.

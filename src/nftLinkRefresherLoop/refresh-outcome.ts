@@ -49,8 +49,7 @@ export function expectedFetchFailure(error: unknown): boolean {
   );
 }
 
-function category(error: unknown): string | undefined {
-  if (error === undefined) return undefined;
+function category(error: unknown): string {
   if (
     error instanceof NftLinkHttpTimeoutError ||
     error instanceof NftLinkResolutionDeadlineError
@@ -65,15 +64,30 @@ function category(error: unknown): string | undefined {
   return 'UNKNOWN';
 }
 
+let reportedInvalidEnvironment = false;
+function refreshEnvironment(): 'prod' | 'staging' | undefined {
+  const value = process.env.OPS_ENVIRONMENT;
+  return value === 'prod' || value === 'staging' ? value : undefined;
+}
+
 export const nftRefreshObserver: NftRefreshObserver = {
   isExpectedFailure: (error, canonical) =>
-    missingPage(error, canonical) || expectedFetchFailure(error),
+    refreshEnvironment() !== undefined &&
+    (missingPage(error, canonical) || expectedFetchFailure(error)),
   completed(canonical, entity, result) {
+    const environment = refreshEnvironment();
+    if (!environment) {
+      if (!reportedInvalidEnvironment) {
+        reportedInvalidEnvironment = true;
+        logger.error('NFT refresh outcome environment is missing or invalid');
+      }
+      return;
+    }
     const error = result.success ? undefined : result.error;
     const unavailable = missingPage(error, canonical);
     const success = result.success;
     const firstUnavailable = unavailable && entity.failed_since == null;
-    let outcome = 'internal_failure';
+    let outcome = 'unexpected_failure';
     if (success) outcome = 'success';
     else if (unavailable) outcome = 'unavailable';
     else if (expectedFetchFailure(error)) outcome = 'transient_failure';
@@ -101,19 +115,14 @@ export const nftRefreshObserver: NftRefreshObserver = {
               }
             ]
           },
-          Environment:
-            process.env.OPS_ENVIRONMENT === 'staging' ||
-            process.env.SENTRY_ENVIRONMENT === 'staging' ||
-            process.env.SENTRY_ENVIRONMENT?.endsWith('_staging')
-              ? 'staging'
-              : 'prod',
+          Environment: environment,
           Provider: canonical.platform,
           linkHash: createHash('sha256')
             .update(canonical.canonicalId)
             .digest('hex'),
           correlationId: loggerContext.get()?.requestId,
           outcome,
-          category: success ? undefined : (category(error) ?? 'UNKNOWN'),
+          category: success ? undefined : category(error),
           ...values
         }) + '\n'
       );

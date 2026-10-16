@@ -20,6 +20,12 @@ const entity = (
   failed_since: number | null,
   last_successfully_updated: number | null = null
 ) => ({ failed_since, last_successfully_updated }) as NftLinkEntity;
+beforeEach(() =>
+  jest.replaceProperty(process, 'env', {
+    ...process.env,
+    OPS_ENVIRONMENT: 'prod'
+  })
+);
 afterEach(() => jest.restoreAllMocks());
 
 it('counts newly unavailable links once per failure episode and preserves previously-working evidence', () => {
@@ -88,20 +94,20 @@ it('recognizes typed timeouts and network faults without matching arbitrary mess
   });
 });
 
-it.each(['staging', 'nftLinkRefresherLoop_staging'])(
+it.each(['staging', 'prod'])(
   'emits the correct environment for %s',
   (environment) => {
-    const previous = process.env.SENTRY_ENVIRONMENT;
-    process.env.SENTRY_ENVIRONMENT = environment;
+    const previous = process.env.OPS_ENVIRONMENT;
+    process.env.OPS_ENVIRONMENT = environment;
     try {
       const write = jest.spyOn(process.stdout, 'write').mockReturnValue(true);
       nftRefreshObserver.completed(canonical, entity(null), { success: true });
       expect(JSON.parse(String(write.mock.calls[0][0])).Environment).toBe(
-        'staging'
+        environment
       );
     } finally {
-      if (previous === undefined) delete process.env.SENTRY_ENVIRONMENT;
-      else process.env.SENTRY_ENVIRONMENT = previous;
+      if (previous === undefined) delete process.env.OPS_ENVIRONMENT;
+      else process.env.OPS_ENVIRONMENT = previous;
     }
   }
 );
@@ -124,6 +130,48 @@ it('counts an untyped rejection as failure even when its value is undefined', ()
   expect(JSON.parse(String(write.mock.calls[0][0]))).toMatchObject({
     Failure: 1,
     Success: 0,
-    outcome: 'internal_failure'
+    outcome: 'unexpected_failure'
+  });
+});
+
+it.each([undefined, 'unknown'])(
+  'does not publish cross-environment metrics or suppress errors with marker %s',
+  (environment) => {
+    if (environment === undefined) delete process.env.OPS_ENVIRONMENT;
+    else process.env.OPS_ENVIRONMENT = environment;
+    process.env.SENTRY_ENVIRONMENT = 'production';
+    const write = jest.spyOn(process.stdout, 'write').mockReturnValue(true);
+    nftRefreshObserver.completed(canonical, entity(null), {
+      success: false,
+      error: missing()
+    });
+    expect(write).not.toHaveBeenCalled();
+    expect(nftRefreshObserver.isExpectedFailure(missing(), canonical)).toBe(
+      false
+    );
+  }
+);
+
+it.each([
+  'https://superrare.com/artwork/eth/0x1111111111111111111111111111111111111111/1',
+  'https://opensea.io/assets/ethereum/0x1111111111111111111111111111111111111111/1',
+  'https://foundation.app/mint/eth/0x1111111111111111111111111111111111111111/1'
+])('keeps unclassified upstream 404s in failure health for %s', (url) => {
+  const link = validateLinkUrl(url);
+  const error = new HttpError(
+    404,
+    link.viewUrl,
+    'synthetic noncanonical failure',
+    link.viewUrl
+  );
+  const write = jest.spyOn(process.stdout, 'write').mockReturnValue(true);
+  nftRefreshObserver.completed(link, entity(null), { success: false, error });
+  expect(nftRefreshObserver.isExpectedFailure(error, link)).toBe(false);
+  expect(JSON.parse(String(write.mock.calls[0][0]))).toMatchObject({
+    Failure: 1,
+    Unavailable: 0,
+    NewUnavailable: 0,
+    outcome: 'unexpected_failure',
+    category: 'HTTP_ERROR'
   });
 });
