@@ -1,6 +1,10 @@
 import {
   COMPETITION_ENTRIES_TABLE,
+  COMPETITIONS_TABLE,
+  DROPS_TABLE,
+  DELETED_DROPS_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
+  COMPETITION_MIGRATION_AUDIT_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE
 } from '@/constants';
 import { competitionEntryVisibleSql } from './competition-entry-visibility';
@@ -22,34 +26,71 @@ export interface CompetitionVoteActivity {
 }
 
 export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleService {
+  public async hasExactLineage(
+    competitionId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const timerName = `${this.constructor.name}->hasExactLineage`;
+    try {
+      ctx.timer?.start(timerName);
+      const [row] = await this.db.execute<{
+        cutovers: number;
+        unqualified: number;
+      }>(
+        `SELECT COUNT(*) AS cutovers,
+          COALESCE(SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(report, '$.voteActivityIdentity')) = 'NATIVE_ID_V1'
+            THEN 0 ELSE 1 END), 0) AS unqualified
+        FROM ${COMPETITION_MIGRATION_AUDIT_TABLE}
+        WHERE competition_id = :competitionId AND action = 'CUTOVER'`,
+        { competitionId },
+        { wrappedConnection: ctx.connection }
+      );
+      return Number(row.cutovers) > 0 && Number(row.unqualified) === 0;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async listTransferred(
     competitionId: string,
     waveId: string,
-    transferredAt: number,
+    transferredAt: number | null,
     offset: number,
     limit: number,
     ctx: RequestContext
   ): Promise<CompetitionVoteActivity[]> {
-    // Keep the original log IDs, JSON and proxy attribution. Historical wave
-    // logs belong only to the transferred legacy primary, never its siblings.
-    // Apply pagination once, after combining both histories chronologically.
-    // Each source's first offset+limit rows contain the global first offset+limit:
-    // an excluded row already has that many rows ahead of it in its own source.
-    // Legacy DATETIME values are UTC; compare a UTC literal rather than the
-    // session-timezone-dependent FROM_UNIXTIME conversion.
+    // A null cutoff is reserved for primaries whose every cutover certifies
+    // exact native log identities. Older cutovers retain their existing cutoff.
+    // Deduplicate by identity before paging, including hidden native entries.
+    // While legacy-owned, re-migration can reset shadow entries: an exact linked
+    // log and a live legacy drop retain that accepted history's identity.
+    // Each source contributes offset+limit rows before the final global page.
     const timerName = `${this.constructor.name}->listTransferred`;
     try {
       ctx.timer?.start(timerName);
       return await this.db.execute<CompetitionVoteActivity>(
         `SELECT activity.* FROM (
-        (SELECT 1 AS source_order, history.sequence, entry.drop_id, history.voter_profile_id,
-          entry.submitter_id, history.previous_value, history.value,
-          history.occurred_at, NULL AS legacy_id, NULL AS legacy_contents,
-          NULL AS proxy_id
+        (SELECT 1 AS source_order, history.sequence, COALESCE(entry.drop_id, native_log.target_id) AS drop_id, history.voter_profile_id,
+          COALESCE(entry.submitter_id, native_log.additional_data_1) AS submitter_id, history.previous_value, history.value,
+          history.occurred_at, NULL AS legacy_id, CAST(native_log.contents AS CHAR) AS legacy_contents,
+          native_log.proxy_id
         FROM ${COMPETITION_VOTE_HISTORY_TABLE} history
-        JOIN ${COMPETITION_ENTRIES_TABLE} entry
+        LEFT JOIN ${COMPETITION_ENTRIES_TABLE} entry
           ON entry.competition_id = history.competition_id AND entry.id = history.entry_id
-        WHERE history.competition_id = :competitionId AND ${competitionEntryVisibleSql('entry')}
+        LEFT JOIN ${PROFILES_ACTIVITY_LOGS_TABLE} native_log
+          ON native_log.id = CONCAT(history.competition_id, ':', history.sequence)
+          AND native_log.additional_data_2 = :waveId AND native_log.type = :logType
+        WHERE history.competition_id = :competitionId AND (
+          ${competitionEntryVisibleSql('entry')}
+          OR (entry.id IS NULL AND native_log.id IS NOT NULL AND EXISTS (
+            SELECT 1 FROM ${COMPETITIONS_TABLE} owner JOIN ${DROPS_TABLE} source_drop
+              ON source_drop.wave_id = owner.wave_id AND source_drop.id = native_log.target_id
+            WHERE owner.id = :competitionId AND owner.legacy_wave_id = :waveId
+              AND owner.storage_mode = 'LEGACY_ADAPTER'
+              AND source_drop.drop_type IN ('PARTICIPATORY', 'WINNER')
+              AND NOT EXISTS (SELECT 1 FROM ${DELETED_DROPS_TABLE} deleted WHERE deleted.id = source_drop.id)
+          ))
+        )
         ORDER BY history.occurred_at DESC, history.sequence DESC LIMIT :candidateLimit)
         UNION ALL
         (SELECT 0 AS source_order, 0 AS sequence, log.target_id AS drop_id,
@@ -60,7 +101,13 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
           log.proxy_id
         FROM ${PROFILES_ACTIVITY_LOGS_TABLE} log
         WHERE log.additional_data_2 = :waveId AND log.type = :logType
-          AND log.created_at <= :transferredAtUtc
+          AND NOT EXISTS (
+            SELECT 1 FROM ${COMPETITION_VOTE_HISTORY_TABLE} linked
+            WHERE linked.sequence = CAST(SUBSTRING(log.id, LENGTH(:competitionId) + 2) AS UNSIGNED)
+              AND linked.competition_id = :competitionId
+              AND log.id = CONCAT(linked.competition_id, ':', linked.sequence)
+          )
+          AND (:transferredAtUtc IS NULL OR log.created_at <= :transferredAtUtc)
         ORDER BY log.created_at DESC, log.id DESC LIMIT :candidateLimit)
       ) activity
       ORDER BY activity.occurred_at DESC, activity.source_order DESC,
@@ -69,10 +116,13 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
         {
           competitionId,
           waveId,
-          transferredAtUtc: new Date(transferredAt)
-            .toISOString()
-            .slice(0, 23)
-            .replace('T', ' '),
+          transferredAtUtc:
+            transferredAt === null
+              ? null
+              : new Date(transferredAt)
+                  .toISOString()
+                  .slice(0, 23)
+                  .replace('T', ' '),
           logType: ProfileActivityLogType.DROP_VOTE_EDIT,
           candidateLimit: offset + limit,
           offset,

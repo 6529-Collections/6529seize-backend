@@ -149,7 +149,10 @@ export class CompetitionVotingService {
             voterProfileId: actor,
             previousVote: budget.current_vote ?? 0,
             value: request.value,
-            occurredAt: now
+            occurredAt: now,
+            proxyId: tx.authenticationContext?.isAuthenticatedAsProxy()
+              ? tx.authenticationContext.authenticatedProfileId
+              : null
           },
           tx
         );
