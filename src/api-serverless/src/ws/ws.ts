@@ -18,6 +18,7 @@ import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
 import { describeWebSocketSendFailure } from './ws-send-diagnostics';
+import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -65,11 +66,14 @@ class WebsocketClientConnections extends ClientConnections {
   }) {
     const socket = this.sockets[connectionId];
     if (!socket) {
+      recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
       throw new SocketNotAvailableException();
     }
     try {
       socket.send(message);
+      recordWebSocketAcknowledgement(connectionId, message, 'accepted');
     } catch (err: any) {
+      recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
       throw new SocketNotAvailableException();
     }
   }
@@ -124,8 +128,14 @@ class ApiGatewayClientConnections extends ClientConnections {
           Data: Buffer.from(message)
         })
       );
+      recordWebSocketAcknowledgement(connectionId, message, 'accepted');
     } catch (error: unknown) {
       const failure = describeWebSocketSendFailure(message, error);
+      recordWebSocketAcknowledgement(
+        connectionId,
+        message,
+        failure.unavailable ? 'unavailable' : 'failed'
+      );
       if (failure.unavailable) {
         throw new SocketNotAvailableException();
       } else {
