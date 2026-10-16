@@ -202,7 +202,7 @@ export class CompetitionMigrationService {
         'Local migration policy requires explicitly configured loopback read/write databases'
       );
   }
-  private comparisonTransactionOptions(): SqlTransactionOptions {
+  private migrationTransactionOptions(): SqlTransactionOptions {
     return {
       isolationLevel: 'REPEATABLE READ',
       executionBudget: {
@@ -232,7 +232,7 @@ export class CompetitionMigrationService {
       ctx: RequestContext,
       record: CompetitionRecord
     ) => Promise<T>,
-    boundedComparison = false
+    bounded = false
   ): Promise<T> {
     const db = this.supplier();
     return db.executeNativeQueriesInTransaction(
@@ -245,8 +245,8 @@ export class CompetitionMigrationService {
         const record = await repository.lock(id, ctx);
         return action(repository, ctx, record);
       },
-      boundedComparison
-        ? this.comparisonTransactionOptions()
+      bounded
+        ? this.migrationTransactionOptions()
         : { isolationLevel: 'READ COMMITTED' }
     );
   }
@@ -509,168 +509,190 @@ export class CompetitionMigrationService {
   public async backfill(id: string, operator: MigrationOperator, limit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error('Batch limit must be 1..100');
-    return this.transaction(id, async (repository, ctx) => {
-      const before = await repository.status(id, ctx);
-      const migration = before.migration;
-      if (migration?.state === 'SHADOWING') return before;
-      if (!migration || migration.state !== 'BACKFILLING')
-        throw new Error('Competition is not BACKFILLING');
-      const limited = await this.rateLimit(repository, id, ctx);
-      if (limited) return limited;
-      if (migration.reset_table_index !== null)
-        return this.resetShadowBatch(
-          id,
-          operator,
-          repository,
-          migration.reset_table_index,
+    return this.transaction(
+      id,
+      async (repository, ctx) => {
+        const before = await repository.status(id, ctx);
+        const migration = before.migration;
+        if (migration?.exceptions.length)
+          throw new Error(
+            'Migration requires adapter review: ' +
+              migration.exceptions.join(', ')
+          );
+        if (migration?.state === 'SHADOWING') return before;
+        if (!migration || migration.state !== 'BACKFILLING')
+          throw new Error('Competition is not BACKFILLING');
+        const limited = await this.rateLimit(repository, id, ctx);
+        if (limited) return limited;
+        if (migration.reset_table_index !== null)
+          return this.resetShadowBatch(
+            id,
+            operator,
+            repository,
+            migration.reset_table_index,
+            limit,
+            ctx
+          );
+        const record = await repository.lock(id, ctx);
+        const started = performance.now();
+        const nextOffset = await new CompetitionMigrationBackfill(
+          this.supplier()
+        ).batch(
+          record,
+          migration.stage,
+          migration.stage_offset,
           limit,
+          this.now(),
+          migration.stage_cursor,
           ctx
         );
-      const record = await repository.lock(id, ctx);
-      const started = performance.now();
-      const nextOffset = await new CompetitionMigrationBackfill(
-        this.supplier()
-      ).batch(
-        record,
-        migration.stage,
-        migration.stage_offset,
-        limit,
-        this.now(),
-        migration.stage_cursor,
-        ctx
-      );
-      const stageIndex = MIGRATION_STAGES.indexOf(migration.stage);
-      const completed =
-        nextOffset === 0
-          ? Array.from(
-              new Set([...migration.completed_stages, migration.stage])
-            )
-          : migration.completed_stages;
-      const nextStage = MIGRATION_STAGES.slice(stageIndex + 1).find(
-        (stage) => !completed.includes(stage)
-      );
-      const finished = nextOffset === 0 && nextStage === undefined;
-      await repository.update(
-        id,
-        {
-          stage:
-            nextOffset === 0 ? (nextStage ?? migration.stage) : migration.stage,
-          stage_offset: typeof nextOffset === 'number' ? nextOffset : 0,
-          stage_cursor: typeof nextOffset === 'string' ? nextOffset : null,
-          completed_stages: completed,
-          state: finished ? 'SHADOWING' : 'BACKFILLING',
-          ...(finished ? { applied_watermark: migration.target_watermark } : {})
-        },
-        ctx
-      );
-      await repository.audit(
-        id,
-        operator.actor,
-        'BACKFILL_BATCH',
-        operator.reason,
-        {
-          stage: migration.stage,
-          offset: migration.stage_offset,
-          nextOffset,
-          limit,
-          durationMs: Math.ceil(performance.now() - started)
-        },
-        ctx
-      );
-      return repository.status(id, ctx);
-    });
+        const stageIndex = MIGRATION_STAGES.indexOf(migration.stage);
+        const completed =
+          nextOffset === 0
+            ? Array.from(
+                new Set([...migration.completed_stages, migration.stage])
+              )
+            : migration.completed_stages;
+        const nextStage = MIGRATION_STAGES.slice(stageIndex + 1).find(
+          (stage) => !completed.includes(stage)
+        );
+        const finished = nextOffset === 0 && nextStage === undefined;
+        await repository.update(
+          id,
+          {
+            stage:
+              nextOffset === 0
+                ? (nextStage ?? migration.stage)
+                : migration.stage,
+            stage_offset: typeof nextOffset === 'number' ? nextOffset : 0,
+            stage_cursor: typeof nextOffset === 'string' ? nextOffset : null,
+            completed_stages: completed,
+            state: finished ? 'SHADOWING' : 'BACKFILLING',
+            ...(finished
+              ? { applied_watermark: migration.target_watermark }
+              : {})
+          },
+          ctx
+        );
+        await repository.audit(
+          id,
+          operator.actor,
+          'BACKFILL_BATCH',
+          operator.reason,
+          {
+            stage: migration.stage,
+            offset: migration.stage_offset,
+            nextOffset,
+            limit,
+            durationMs: Math.ceil(performance.now() - started)
+          },
+          ctx
+        );
+        return repository.status(id, ctx);
+      },
+      true
+    );
   }
   /** One bounded ordered journal page; then bounded derived refresh stages.
    * Never discard capture or acknowledge a watermark before its refresh commits. */
   public async catchUp(id: string, operator: MigrationOperator, limit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error('Batch limit must be 1..100');
-    return this.transaction(id, async (repository, ctx) => {
-      const before = await repository.status(id, ctx),
-        migration = before.migration;
-      if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
-        throw new Error('Complete the current backfill before catch-up');
-      if (migration.source_watermark === migration.applied_watermark)
-        return before;
-      const limited = await this.rateLimit(repository, id, ctx);
-      if (limited) return limited;
-      const changes =
-        await this.supplier().execute<CompetitionMigrationChangeEntity>(
-          `select * from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark>:watermark order by watermark,sequence limit :limit`,
-          { id, watermark: migration.target_watermark, limit },
-          { wrappedConnection: ctx.connection }
-        );
-      if (!changes.length)
-        throw new Error('Capture journal gap; ownership remains legacy');
-      let expected = migration.target_watermark;
-      const record = await repository.lock(id, ctx),
-        backfill = new CompetitionMigrationBackfill(this.supplier());
-      for (const change of changes) {
-        if (Number(change.watermark) !== expected + 1)
+    return this.transaction(
+      id,
+      async (repository, ctx) => {
+        const before = await repository.status(id, ctx),
+          migration = before.migration;
+        if (migration?.exceptions.length)
+          throw new Error(
+            'Migration requires adapter review: ' +
+              migration.exceptions.join(', ')
+          );
+        if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
+          throw new Error('Complete the current backfill before catch-up');
+        if (migration.source_watermark === migration.applied_watermark)
+          return before;
+        const limited = await this.rateLimit(repository, id, ctx);
+        if (limited) return limited;
+        const changes =
+          await this.supplier().execute<CompetitionMigrationChangeEntity>(
+            `select * from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark>:watermark order by watermark,sequence limit :limit`,
+            { id, watermark: migration.target_watermark, limit },
+            { wrappedConnection: ctx.connection }
+          );
+        if (!changes.length)
           throw new Error('Capture journal gap; ownership remains legacy');
-        await backfill.applyChange(record, change, ctx);
-        expected = Number(change.watermark);
-      }
-      const drained = expected === migration.source_watermark;
-      const leaderboardOnly =
-        drained &&
-        MIGRATION_STAGES.every((stage) =>
-          migration.completed_stages.includes(stage)
-        ) &&
-        (await repository.canRefreshOnlyLeaderboard(
+        let expected = migration.target_watermark;
+        const record = await repository.lock(id, ctx),
+          backfill = new CompetitionMigrationBackfill(this.supplier());
+        for (const change of changes) {
+          if (Number(change.watermark) !== expected + 1)
+            throw new Error('Capture journal gap; ownership remains legacy');
+          await backfill.applyChange(record, change, ctx);
+          expected = Number(change.watermark);
+        }
+        const drained = expected === migration.source_watermark;
+        const leaderboardOnly =
+          drained &&
+          MIGRATION_STAGES.every((stage) =>
+            migration.completed_stages.includes(stage)
+          ) &&
+          (await repository.canRefreshOnlyLeaderboard(
+            id,
+            migration.applied_watermark,
+            expected,
+            ctx
+          ));
+        const refreshStage: MigrationStage = leaderboardOnly
+          ? 'LEADERBOARD'
+          : 'ENTRIES';
+        const completedStages: MigrationStage[] = leaderboardOnly
+          ? MIGRATION_STAGES.filter((stage) => stage !== 'LEADERBOARD')
+          : ['CONFIGURATION', 'OUTCOMES', 'DECISIONS'];
+        await repository.update(
           id,
-          migration.applied_watermark,
-          expected,
+          {
+            target_watermark: expected,
+            state: drained ? 'BACKFILLING' : 'SHADOWING',
+            ...(drained
+              ? {
+                  stage: refreshStage,
+                  stage_offset: 0,
+                  stage_cursor: null,
+                  // Vote/runtime keys have already been replayed. Only ranks
+                  // need a full refresh for a vote-only journal window. Other
+                  // source changes retain the conservative refresh sequence.
+                  completed_stages: completedStages
+                }
+              : {}),
+            consecutive_full_windows: 0,
+            window_started_at: null,
+            window_samples: 0,
+            last_window_end: null,
+            last_comparison_at: null,
+            last_comparison_watermark: null
+          },
           ctx
-        ));
-      const refreshStage: MigrationStage = leaderboardOnly
-        ? 'LEADERBOARD'
-        : 'ENTRIES';
-      const completedStages: MigrationStage[] = leaderboardOnly
-        ? MIGRATION_STAGES.filter((stage) => stage !== 'LEADERBOARD')
-        : ['CONFIGURATION', 'OUTCOMES', 'DECISIONS'];
-      await repository.update(
-        id,
-        {
-          target_watermark: expected,
-          state: drained ? 'BACKFILLING' : 'SHADOWING',
-          ...(drained
-            ? {
-                stage: refreshStage,
-                stage_offset: 0,
-                stage_cursor: null,
-                // Vote/runtime keys have already been replayed. Only ranks
-                // need a full refresh for a vote-only journal window. Other
-                // source changes retain the conservative refresh sequence.
-                completed_stages: completedStages
-              }
-            : {}),
-          consecutive_full_windows: 0,
-          window_started_at: null,
-          window_samples: 0,
-          last_window_end: null,
-          last_comparison_at: null,
-          last_comparison_watermark: null
-        },
-        ctx
-      );
-      await repository.audit(
-        id,
-        operator.actor,
-        'CATCH_UP_JOURNAL_BATCH',
-        operator.reason,
-        {
-          fromWatermark: migration.target_watermark,
-          throughWatermark: expected,
-          changes: changes.length,
-          refreshPending: true,
-          refreshStage: drained ? refreshStage : null,
-          limit
-        },
-        ctx
-      );
-      return repository.status(id, ctx);
-    });
+        );
+        await repository.audit(
+          id,
+          operator.actor,
+          'CATCH_UP_JOURNAL_BATCH',
+          operator.reason,
+          {
+            fromWatermark: migration.target_watermark,
+            throughWatermark: expected,
+            changes: changes.length,
+            refreshPending: true,
+            refreshStage: drained ? refreshStage : null,
+            limit
+          },
+          ctx
+        );
+        return repository.status(id, ctx);
+      },
+      true
+    );
   }
   public async compare(
     id: string,
@@ -763,7 +785,7 @@ export class CompetitionMigrationService {
         ctx
       );
       return report;
-    }, this.comparisonTransactionOptions());
+    }, this.migrationTransactionOptions());
   }
   private async nativeInvariantFailures(
     id: string,
