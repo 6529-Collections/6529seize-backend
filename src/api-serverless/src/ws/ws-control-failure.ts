@@ -29,7 +29,8 @@ function reportFailure(
   }
 }
 
-/** A missing stored connection is lost transport state, not rejected credentials. */
+/** Missing state or an exhausted ownership fence requires transport reset,
+ * not credential rejection or an assumption that a client retries HTTP 5xx. */
 export async function recoverUnavailableWebSocket(
   error: unknown,
   operation: WebSocketControlOperation | undefined,
