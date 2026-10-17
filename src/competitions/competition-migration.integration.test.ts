@@ -3258,6 +3258,224 @@ describeWithSeed(
       }
     );
 
+    it('removes a copied active leaderboard row when a legacy decision makes it a winner', async () => {
+      const now = Date.now();
+      const survivor = 'winner-cleanup-survivor';
+      await seedSnapshotEntry(survivor, now, 6);
+      await sqlExecutor.execute(
+        `update ${WAVES_TABLE} set time_lock_ms=86400000 where id=:waveId`,
+        { waveId: wave.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,timestamp,vote,vote_on_decision_time) values (:dropId,:waveId,:now,7,7)`,
+        { dropId: drop.id, waveId: wave.id, now }
+      );
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) count from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ count: 2 });
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          for (const sql of [
+            `update ${DROPS_TABLE} set drop_type='WINNER' where id=:dropId`,
+            `delete from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where wave_id=:waveId and drop_id=:dropId`,
+            `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values (:waveId,900)`,
+            `insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (wave_id,decision_time,drop_id,ranking,final_vote,prizes) values (:waveId,900,:dropId,1,7,'[]')`
+          ])
+            await sqlExecutor.execute(
+              sql,
+              { waveId: wave.id, dropId: drop.id },
+              { wrappedConnection: connection }
+            );
+        }
+      );
+      for (let batch = 0; batch < 100; batch++) {
+        const migration = (await service.status(id)).migration!;
+        if (
+          migration.state === 'SHADOWING' &&
+          migration.applied_watermark === migration.source_watermark
+        )
+          break;
+        if (migration.state === 'SHADOWING')
+          await service.catchUp(id, operator, 100);
+        else await service.backfill(id, operator, 100);
+      }
+      expect(
+        await sqlExecutor.execute(
+          `select drop_id from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual([{ drop_id: survivor }]);
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select status,won_at from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id and drop_id=:dropId`,
+          { id, dropId: drop.id }
+        )
+      ).toEqual({ status: 'WINNER', won_at: 900 });
+      expect(
+        await sqlExecutor.oneOrNull(
+          `select count(*) count from ${COMPETITION_DECISION_WINNERS_TABLE} where competition_id=:id`,
+          { id }
+        )
+      ).toEqual({ count: 1 });
+      const comparison = await service.compare(id, operator, 1);
+      expect(comparison.mismatches).toBe(0);
+      expect(comparison.sourceFailures).toEqual([]);
+      expect(comparison.categories).toHaveLength(22);
+    });
+
+    it.each([false, true])(
+      'bounds winner cleanup at 25 keys and keeps its claim atomic when failure is %s',
+      async (fail) => {
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          Date.now,
+          0
+        );
+        await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+        await finishBackfill(service);
+        const templateEntry = (await sqlExecutor.oneOrNull<
+          Record<string, unknown>
+        >(
+          `select * from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id`,
+          { id }
+        ))!;
+        const templateLeaderboard = (await sqlExecutor.oneOrNull<
+          Record<string, unknown>
+        >(
+          `select * from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id`,
+          { id }
+        ))!;
+        const sourceWinners = Array.from({ length: 30 }, (_, index) => ({
+          ...drop,
+          id: 'bounded-cleanup-winner-' + index,
+          created_at: 20 + index,
+          drop_type: 'WINNER'
+        }));
+        await sqlExecutor.bulkInsert(
+          DROPS_TABLE,
+          sourceWinners,
+          Object.keys(sourceWinners[0])
+        );
+        const entries = sourceWinners.map((row) => ({
+          ...templateEntry,
+          id: legacyCompetitionEntryId(id, row.id),
+          drop_id: row.id,
+          status: 'WINNER'
+        }));
+        const rows = sourceWinners.map((row, index) => ({
+          ...templateLeaderboard,
+          entry_id: entries[index].id,
+          drop_id: row.id
+        }));
+        await sqlExecutor.bulkInsert(
+          COMPETITION_ENTRIES_TABLE,
+          entries,
+          Object.keys(entries[0])
+        );
+        await sqlExecutor.bulkInsert(
+          COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+          rows,
+          Object.keys(rows[0])
+        );
+        const unrelated = {
+          ...rows[0],
+          competition_id: 'unrelated-cleanup-owner'
+        };
+        await sqlExecutor.bulkInsert(
+          COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+          [unrelated],
+          Object.keys(unrelated)
+        );
+        const before = (await service.status(id)).migration!;
+        const original = sqlExecutor.execute.bind(sqlExecutor);
+        const cleanupSizes: number[] = [];
+        const injected = new Error(
+          'fixture failure after first winner cleanup'
+        );
+        const execute = jest
+          .spyOn(sqlExecutor, 'execute')
+          .mockImplementation(async (sql, params, options) => {
+            if (
+              sql.startsWith(
+                `delete from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id and entry_id in (:entries)`
+              )
+            ) {
+              expect(params?.id).toBe(id);
+              cleanupSizes.push((params?.entries as string[]).length);
+              if (fail && cleanupSizes.length === 2) throw injected;
+            }
+            return original(sql, params, options);
+          });
+        const run = sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const ctx = { connection };
+            const repository = new CompetitionMigrationRepository();
+            const record = await repository.lock(id, ctx);
+            await repository.update(
+              id,
+              { next_batch_at: (before.next_batch_at ?? 0) + 1234 },
+              ctx
+            );
+            await new CompetitionMigrationBackfill(sqlExecutor).batch(
+              record,
+              'LEADERBOARD',
+              0,
+              100,
+              Date.now(),
+              null,
+              ctx
+            );
+          },
+          {
+            executionBudget: {
+              deadlineMonotonicMillis: performance.now() + 5000,
+              maxStatementMillis: 1000,
+              finalizationReserveMillis: 500,
+              lockWaitSeconds: 1
+            }
+          }
+        );
+        if (fail) await expect(run).rejects.toBe(injected);
+        else await run;
+        execute.mockRestore();
+        expect(cleanupSizes).toEqual([25, 5]);
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) count from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id`,
+            { id }
+          )
+        ).toEqual({ count: fail ? 31 : 1 });
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) count from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id='unrelated-cleanup-owner'`
+          )
+        ).toEqual({ count: 1 });
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) count from ${COMPETITION_ENTRIES_TABLE} where competition_id=:id and status='WINNER'`,
+            { id }
+          )
+        ).toEqual({ count: 30 });
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) count from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+            { id }
+          )
+        ).toEqual({ count: 1 });
+        if (fail) expect((await service.status(id)).migration).toEqual(before);
+      }
+    );
+
     it('catches repeated leaderboard refreshes without recopying voter and historical stages', async () => {
       const now = Date.now();
       const secondDropId = 'snapshot-only-second-drop';

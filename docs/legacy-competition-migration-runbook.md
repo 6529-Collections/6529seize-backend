@@ -28,6 +28,12 @@ changed keys and refreshes live entry ranks and leaderboard ranks in bounded
 batches. Entry ranks include participating entries and historical winners, with
 published winner ranks retained. The active-only leaderboard keeps its separately
 locked snapshot ordering. Both projections commit before the window is acknowledged.
+When a legacy decision turns a copied active entry into a winner, the same
+rank sweep removes its cached leaderboard row in groups of at most 25 mapped
+entry IDs, scoped to that competition. Its entry, decision, prizes, votes and
+history remain intact. Cleanup, rank updates and the saved checkpoint share
+one owned transaction; a failed cleanup rolls them all back. This also repairs
+a stale copied winner projection when resuming an interrupted refresh.
 Until every page finishes, native ranks are an incomplete shadow projection;
 public readers continue to select legacy storage. Per-page commits do not advance
 the applied watermark. Only the final refresh page acknowledges the target, and
