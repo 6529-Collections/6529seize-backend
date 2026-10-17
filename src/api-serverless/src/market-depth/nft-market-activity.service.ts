@@ -17,9 +17,14 @@ import {
 import { resolveEns } from '@/db-api';
 import { DbPoolName } from '@/db-query.options';
 import { BadRequestException } from '@/exceptions';
+import { marketDepthEventRetentionCutoff } from '@/market-depth/market-depth-retention';
 import { MarketDepthEventInput } from '@/market-depth/market-depth.types';
 import { RequestContext } from '@/request.context';
-import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import {
+  dbSupplier,
+  LazyDbAccessCompatibleService,
+  SqlExecutor
+} from '@/sql-executor';
 import { MARKET_CONTRACTS, marketDepthApiDb } from './market-depth-api.db';
 import {
   decodeMarketCursor,
@@ -94,6 +99,7 @@ interface ActivitySelection {
   filter: string;
   limit: number;
   cursor: ActivityCursor | null;
+  historyCutoff: Date;
 }
 
 function classifyTransaction(row: ApiTransaction): string {
@@ -219,6 +225,13 @@ function transactionTypePredicate(filter: string): string | null {
 }
 
 export class NftMarketActivityService extends LazyDbAccessCompatibleService {
+  constructor(
+    supplyDb: () => SqlExecutor,
+    private readonly now: () => Date = () => new Date()
+  ) {
+    super(supplyDb);
+  }
+
   private async transactionEvents(
     selection: ActivitySelection,
     ctx: RequestContext
@@ -268,10 +281,13 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
     const kinds = selectedMarketKinds(selection.filter);
     if (kinds?.length === 0) return [];
     const date = 'e.occurred_at';
+    // Older order-book events are purged; the few kept for live orders would
+    // otherwise appear before the reported market history start.
     const conditions = [
       "e.chain_id='1'",
       'e.contract IN (:contracts)',
-      'LOWER(e.kind) NOT IN (:chainKinds)'
+      'LOWER(e.kind) NOT IN (:chainKinds)',
+      `${date} >= :historyCutoff`
     ];
     if (selection.walletRequested)
       conditions.push('(e.maker IN (:wallets) OR e.taker IN (:wallets))');
@@ -331,6 +347,7 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
       rowLimit: selection.limit + 1,
       beforeAt: selection.cursor ? new Date(selection.cursor.at) : null,
       beforeId: selection.cursor?.id ?? null,
+      historyCutoff: selection.historyCutoff,
       zero: NULL_ADDRESS,
       dead: NULL_ADDRESS_DEAD,
       manifold: MANIFOLD
@@ -339,6 +356,7 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
 
   private async historyStartedAt(
     contracts: readonly string[],
+    historyCutoff: Date,
     ctx: RequestContext
   ): Promise<Date | null> {
     // Match the (chain_id, contract, observed_at) index. MIN over several
@@ -356,11 +374,15 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
         )
       )
     ).finally(() => ctx.timer?.stop(timer));
-    return firstEvents.reduce<Date | null>((earliest, event) => {
+    const earliest = firstEvents.reduce<Date | null>((earliest, event) => {
       if (!event) return earliest;
       const at = new Date(event.started_at);
       return earliest === null || at < earliest ? at : earliest;
     }, null);
+    // History older than the retention window is no longer complete.
+    return earliest !== null && earliest < historyCutoff
+      ? historyCutoff
+      : earliest;
   }
 
   async getActivity(
@@ -430,7 +452,8 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
       slugs,
       filter,
       limit: query.page_size ?? 50,
-      cursor
+      cursor,
+      historyCutoff: marketDepthEventRetentionCutoff(this.now())
     };
     if (query.wallet && wallets.length === 0)
       return {
@@ -442,7 +465,7 @@ export class NftMarketActivityService extends LazyDbAccessCompatibleService {
     const [transactions, market, history] = await Promise.all([
       this.transactionEvents(selection, ctx),
       this.marketEvents(selection, ctx),
-      this.historyStartedAt(contracts, ctx)
+      this.historyStartedAt(contracts, selection.historyCutoff, ctx)
     ]);
     const merged = [...transactions, ...market].sort(compareActivity);
     const data = merged.slice(0, selection.limit);
