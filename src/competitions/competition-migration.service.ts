@@ -1,4 +1,8 @@
 import { MigrationCopySqlExecutor } from '@/competitions/competition-migration-copy-executor';
+import {
+  assertSqlWorkBudget,
+  SqlExecutionBudgetExceededError
+} from '@/db/sql-execution-budget';
 import { compareMigrationContent } from '@/competitions/competition-migration-content-parity';
 import { MigrationAcceptanceSchema } from './competition-migration-acceptance';
 import { CompetitionMigrationEnvironmentRepository } from './competition-migration-environment.repository';
@@ -239,10 +243,131 @@ export class CompetitionMigrationService {
     action: (
       repository: CompetitionMigrationRepository,
       ctx: RequestContext,
-      record: CompetitionRecord
+      record: CompetitionRecord,
+      db: SqlExecutor
     ) => Promise<T>
   ): Promise<T> {
-    return this.transaction(id, action, true);
+    return this.transaction(
+      id,
+      action,
+      true,
+      new MigrationCopySqlExecutor(this.supplier())
+    );
+  }
+
+  private async parityPhase<T>(
+    id: string,
+    phase: string,
+    work: () => T | Promise<T>,
+    checkWork?: () => void
+  ): Promise<T> {
+    const started = performance.now();
+    logger.info('migration_parity_phase', {
+      competitionId: id,
+      phase,
+      state: 'START'
+    });
+    try {
+      checkWork?.();
+      const result = await work();
+      checkWork?.();
+      logger.info('migration_parity_phase', {
+        competitionId: id,
+        phase,
+        state: 'COMPLETE',
+        elapsedMs: Math.round(performance.now() - started)
+      });
+      return result;
+    } catch (error) {
+      if (
+        error instanceof SqlExecutionBudgetExceededError &&
+        Object.isExtensible(error)
+      )
+        Object.assign(error, { migrationComparisonPhase: phase });
+      logger.warn('migration_parity_phase', {
+        competitionId: id,
+        phase,
+        state: 'FAILED',
+        elapsedMs: Math.round(performance.now() - started)
+      });
+      throw error;
+    }
+  }
+
+  private parityBudgetCheck(ctx: RequestContext): () => void {
+    const handle: unknown = ctx.connection?.connection;
+    if (handle === null || typeof handle !== 'object')
+      throw new Error('Bounded parity requires its transaction connection');
+    return () => assertSqlWorkBudget(handle);
+  }
+
+  private async parityComparison(
+    id: string,
+    record: CompetitionRecord,
+    ctx: RequestContext,
+    db: SqlExecutor,
+    checkWork?: () => void
+  ) {
+    const now = this.now();
+    const baseline = await this.parityPhase(
+      id,
+      'baseline',
+      () =>
+        new LegacyCompetitionBaselineRepository(() => db).getSnapshot(
+          record,
+          now,
+          ctx,
+          Number.POSITIVE_INFINITY
+        ),
+      checkWork
+    );
+    const candidate = await this.parityPhase(
+      id,
+      'candidate',
+      () =>
+        loadLegacyParityCandidate(
+          new NativeCompetitionReader(
+            new CompetitionRepository(() => db),
+            ctx,
+            record.storage_mode === 'LEGACY_ADAPTER'
+          ),
+          record,
+          now,
+          ctx,
+          Number.POSITIVE_INFINITY
+        ),
+      checkWork
+    );
+    const snapshot = await this.parityPhase(
+      id,
+      'snapshot_hashes',
+      () =>
+        PARITY_FIELDS.map((field) => ({
+          category: field,
+          baselineHash: competitionPayloadHash(baseline[field] ?? null),
+          candidateHash: competitionPayloadHash(candidate[field] ?? null)
+        })),
+      checkWork
+    );
+    const facade = await this.parityPhase(
+      id,
+      'frozen_facade',
+      () => compareLegacyFacade(db, id, record.wave_id, ctx, checkWork),
+      checkWork
+    );
+    const content = await this.parityPhase(
+      id,
+      'entry_content',
+      () => compareMigrationContent(db, id, record.wave_id, ctx, checkWork),
+      checkWork
+    );
+    const relations = [...facade, ...content];
+    return {
+      baseline,
+      snapshot,
+      relations,
+      categories: [...snapshot, ...relations]
+    };
   }
 
   private async transaction<T>(
@@ -836,7 +961,7 @@ export class CompetitionMigrationService {
   ) {
     if (!Number.isSafeInteger(windowMs) || windowMs < 1)
       throw new Error('An approved positive comparison window is required');
-    const db = this.supplier();
+    const db = new MigrationCopySqlExecutor(this.supplier());
     return db.executeNativeQueriesInTransaction(async (connection) => {
       const ctx = { connection };
       const repository = new CompetitionMigrationRepository(
@@ -844,8 +969,14 @@ export class CompetitionMigrationService {
         this.environment
       );
       const record = await repository.lock(id, ctx);
-      const status = await repository.status(id, ctx);
-      const migration = status.migration;
+      // status().migration uses this same normalized durable checkpoint. Its
+      // operational/capture report is not part of comparison-window accounting.
+      const migration = await repository.checkpoint(id, ctx);
+      if (migration?.exceptions.length)
+        throw new Error(
+          'Migration requires adapter review: ' +
+            migration.exceptions.join(', ')
+        );
       if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
         throw new Error('Complete backfill before independent comparison');
       if (record.storage_mode !== 'LEGACY_ADAPTER')
@@ -853,29 +984,14 @@ export class CompetitionMigrationService {
           'Native-backed projection cannot be its own migration baseline'
         );
       const now = this.now();
-      const baseline = await new LegacyCompetitionBaselineRepository(
-        () => db
-      ).getSnapshot(record, now, ctx, Number.POSITIVE_INFINITY);
-      const candidate = await loadLegacyParityCandidate(
-        new NativeCompetitionReader(
-          new CompetitionRepository(() => db),
-          ctx,
-          true
-        ),
+      const checkWork = this.parityBudgetCheck(ctx);
+      const { baseline, categories } = await this.parityComparison(
+        id,
         record,
-        now,
         ctx,
-        Number.POSITIVE_INFINITY
+        db,
+        checkWork
       );
-      const categories = [
-        ...PARITY_FIELDS.map((field) => ({
-          category: field,
-          baselineHash: competitionPayloadHash(baseline[field] ?? null),
-          candidateHash: competitionPayloadHash(candidate[field] ?? null)
-        })),
-        ...(await compareLegacyFacade(db, id, record.wave_id, ctx)),
-        ...(await compareMigrationContent(db, id, record.wave_id, ctx))
-      ];
       const mismatches = categories.filter(
         (category) => category.baselineHash !== category.candidateHash
       ).length;
@@ -926,12 +1042,13 @@ export class CompetitionMigrationService {
     id: string,
     status: MigrationStatus,
     record: CompetitionRecord,
-    ctx: RequestContext
+    ctx: RequestContext,
+    db: SqlExecutor
   ): Promise<string[]> {
     const failures: string[] = [];
     // Use retained source scheduling at the transfer time. A later native
     // completion (including an overdue decision) is still a live import.
-    const source = await this.supplier().oneOrNull<{ completed: number }>(
+    const source = await db.oneOrNull<{ completed: number }>(
       `select ((participation_period_end is not null or voting_period_end is not null)
         and (participation_period_end is null or participation_period_end<=:cutoverAt)
         and (voting_period_end is null or voting_period_end<=:cutoverAt)
@@ -946,15 +1063,15 @@ export class CompetitionMigrationService {
       record.lifecycle === CompetitionLifecycle.ENDED &&
       Number(source?.completed ?? 0) === 1;
     if (preservesCompletedSource && status.storageMode === 'NATIVE')
-      failures.push(...(await this.reverseMismatches(id, record, ctx)));
-    const mismatch = await this.supplier().oneOrNull<{ count: number }>(
+      failures.push(...(await this.reverseMismatches(id, record, ctx, db)));
+    const mismatch = await db.oneOrNull<{ count: number }>(
       `select count(*) as count from ${COMPETITION_ENTRIES_TABLE} e left join ${COMPETITION_ENTRY_RUNTIME_TABLE} r on r.entry_id=e.id and r.competition_id=e.competition_id where e.competition_id=:id and e.status='ACTIVE' and (r.entry_id is null or (:requireConsistentAggregate=1 and coalesce(r.real_time_rating,0)<>(select coalesce(sum(value),0) from ${COMPETITION_VOTES_TABLE} where competition_id=e.competition_id and entry_id=e.id)))`,
       { id, requireConsistentAggregate: preservesCompletedSource ? 0 : 1 },
       { wrappedConnection: ctx.connection }
     );
     if (Number(mismatch?.count ?? 0))
       failures.push('NATIVE_AGGREGATE_INVARIANT');
-    const orphan = await this.supplier().oneOrNull<{ count: number }>(
+    const orphan = await db.oneOrNull<{ count: number }>(
       `select count(*) as count from ${COMPETITION_VOTES_TABLE} v left join ${COMPETITION_ENTRIES_TABLE} e on e.id=v.entry_id and e.competition_id=v.competition_id where v.competition_id=:id and e.id is null`,
       { id },
       { wrappedConnection: ctx.connection }
@@ -963,13 +1080,14 @@ export class CompetitionMigrationService {
     return failures;
   }
   public async verifyNative(id: string) {
-    return this.transaction(id, async (repository, ctx, record) => {
+    return this.transaction(id, async (repository, ctx, record, db) => {
       const status = await repository.status(id, ctx);
       const failures = await this.nativeInvariantFailures(
         id,
         status,
         record,
-        ctx
+        ctx,
+        db
       );
       if (status.storageMode !== 'NATIVE' || status.executionMode !== 'ACTIVE')
         failures.push('NATIVE_OWNER');
@@ -993,7 +1111,7 @@ export class CompetitionMigrationService {
   ) {
     if (!/^https:\/\/[^\s]+$/.test(evidence) || evidence.length > 2000)
       throw new Error('A reviewed repair evidence URL is required');
-    return this.transaction(id, async (repository, ctx, record) => {
+    return this.transaction(id, async (repository, ctx, record, db) => {
       const status = await repository.status(id, ctx);
       if (
         status.migration?.state !== 'ROLLBACK_REQUIRED' ||
@@ -1008,7 +1126,8 @@ export class CompetitionMigrationService {
         id,
         status,
         record,
-        ctx
+        ctx,
+        db
       );
       if (invariantFailures.length)
         throw new Error(
@@ -1157,14 +1276,27 @@ export class CompetitionMigrationService {
     operator: MigrationOperator,
     dryRun: boolean
   ) {
-    return this.boundedTransaction(id, async (repository, ctx, record) => {
-      const status = await repository.status(id, ctx);
+    return this.boundedTransaction(id, async (repository, ctx, record, db) => {
+      const checkWork = this.parityBudgetCheck(ctx);
+      const status = await this.parityPhase(
+        id,
+        'readiness',
+        () => repository.status(id, ctx),
+        checkWork
+      );
       const failures = this.readinessFailures(status);
       if (!failures.length)
-        failures.push(...(await this.reverseMismatches(id, record, ctx)));
+        failures.push(
+          ...(await this.reverseMismatches(id, record, ctx, db, checkWork))
+        );
       if (!failures.length)
         failures.push(
-          ...(await this.nativeInvariantFailures(id, status, record, ctx))
+          ...(await this.parityPhase(
+            id,
+            'native_invariants',
+            () => this.nativeInvariantFailures(id, status, record, ctx, db),
+            checkWork
+          ))
         );
       if (failures.length || dryRun)
         return {
@@ -1174,13 +1306,13 @@ export class CompetitionMigrationService {
         };
       const config = migrationCommandConfiguration(
         await new NativeCompetitionReader(
-          new CompetitionRepository(this.supplier),
+          new CompetitionRepository(() => db),
           ctx,
           true
         ).getCompetition(record, this.now())
       );
       const version = Number(record.config_version) + 1;
-      await this.supplier().execute(
+      await db.execute(
         `insert into ${COMPETITION_CONFIG_VERSIONS_TABLE} (competition_id,version,config,created_by,created_at) values (:id,:version,:config,:actor,:now)`,
         {
           id,
@@ -1192,7 +1324,7 @@ export class CompetitionMigrationService {
         { wrappedConnection: ctx.connection }
       );
       await repository.update(id, { state: 'CUTTING_OVER' }, ctx);
-      const changed = await this.supplier().execute(
+      const changed = await db.execute(
         `update ${COMPETITIONS_TABLE} set storage_mode='NATIVE', execution_mode='ACTIVE',config_version=:version where id=:id and storage_mode='LEGACY_ADAPTER' and execution_mode='ACTIVE'`,
         { id, version },
         { wrappedConnection: ctx.connection }
@@ -1206,7 +1338,7 @@ export class CompetitionMigrationService {
           cutover_at: this.now(),
           cutover_decision_count: Number(
             (
-              await this.supplier().oneOrNull<{ count: number }>(
+              await db.oneOrNull<{ count: number }>(
                 `select count(*) as count from ${COMPETITION_DECISIONS_TABLE} where competition_id=:id`,
                 { id },
                 { wrappedConnection: ctx.connection }
@@ -1283,39 +1415,20 @@ export class CompetitionMigrationService {
   private async reverseMismatches(
     id: string,
     record: CompetitionRecord,
-    ctx: RequestContext
+    ctx: RequestContext,
+    db: SqlExecutor,
+    checkWork?: () => void
   ): Promise<string[]> {
-    const db = this.supplier(),
-      now = this.now();
-    const baseline = await new LegacyCompetitionBaselineRepository(
-      () => db
-    ).getSnapshot(record, now, ctx, Number.POSITIVE_INFINITY);
-    const candidate = await loadLegacyParityCandidate(
-      new NativeCompetitionReader(
-        new CompetitionRepository(() => db),
-        ctx,
-        record.storage_mode === 'LEGACY_ADAPTER'
-      ),
-      record,
-      now,
-      ctx,
-      Number.POSITIVE_INFINITY
-    );
-    const failures = PARITY_FIELDS.filter(
-      (field) =>
-        competitionPayloadHash(baseline[field] ?? null) !==
-        competitionPayloadHash(candidate[field] ?? null)
-    );
-    const relations = [
-      ...(await compareLegacyFacade(db, id, record.wave_id, ctx)),
-      ...(await compareMigrationContent(db, id, record.wave_id, ctx))
-    ];
-    return [
-      ...failures,
-      ...sourceConsistencyFailures(baseline),
-      ...relations
+    const { baseline, snapshot, relations, categories } =
+      await this.parityComparison(id, record, ctx, db, checkWork);
+    const mismatches = (rows: typeof categories) =>
+      rows
         .filter((item) => item.baselineHash !== item.candidateHash)
-        .map((item) => item.category)
+        .map((item) => item.category);
+    return [
+      ...mismatches(snapshot),
+      ...sourceConsistencyFailures(baseline),
+      ...mismatches(relations)
     ];
   }
   public async rollback(
@@ -1323,7 +1436,7 @@ export class CompetitionMigrationService {
     operator: MigrationOperator,
     dryRun: boolean
   ) {
-    return this.transaction(id, async (repository, ctx, record) => {
+    return this.transaction(id, async (repository, ctx, record, db) => {
       const status = await repository.status(id, ctx);
       if (status.migration?.state !== 'NATIVE' || !status.readiness)
         throw new Error('Competition is not NATIVE');
@@ -1349,7 +1462,7 @@ export class CompetitionMigrationService {
           repairRequired: false,
           failures: ['REVERSE_RECONCILIATION_INCOMPLETE']
         };
-      const failures = await this.reverseMismatches(id, record, ctx);
+      const failures = await this.reverseMismatches(id, record, ctx, db);
       if (failures.length) {
         if (!dryRun) {
           await repository.update(

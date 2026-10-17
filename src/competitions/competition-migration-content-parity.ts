@@ -6,6 +6,7 @@ import { RequestContext } from '@/request.context';
 import { CompetitionMigrationContentRepository } from '@/competitions/competition-migration-content.repository';
 import { competitionPayloadHash } from './competition-command-identity';
 import { legacyCompetitionEntryId } from './competition-id';
+import { createParityHasher } from './competition-parity-hash';
 
 /** Baseline reconstructs source content; candidate reads its native version.
  * Persist hashes only: media, identity nominations and signatures stay private. */
@@ -13,14 +14,17 @@ export async function compareMigrationContent(
   db: SqlExecutor,
   id: string,
   waveId: string,
-  ctx: RequestContext
+  ctx: RequestContext,
+  checkWork?: () => void
 ) {
   const repository = new CompetitionMigrationContentRepository(() => db);
   const baseline = createHash('sha256');
   const candidate = createHash('sha256');
+  const hashContent = createParityHasher();
   let cursor = '';
   let count = 0;
   while (true) {
+    checkWork?.();
     const drops = await db.execute<DropEntity>(
       `select * from ${DROPS_TABLE} where wave_id=:waveId and drop_type in ('PARTICIPATORY','WINNER') and id>:cursor order by id limit 100`,
       { waveId, cursor },
@@ -33,20 +37,23 @@ export async function compareMigrationContent(
       ctx
     );
     for (const drop of drops) {
+      checkWork?.();
       const entryId = legacyCompetitionEntryId(id, drop.id);
       baseline.update(
-        competitionPayloadHash({
+        hashContent({
           entryId,
           content: sourceContent.get(drop.id)!
         })
       );
       candidate.update(
-        competitionPayloadHash({
+        hashContent({
           entryId,
           content: nativeContent.get(entryId) ?? null
         })
       );
     }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    checkWork?.();
     count += drops.length;
     if (drops.length < 100) break;
     cursor = drops[drops.length - 1].id;
