@@ -66,11 +66,18 @@ import { compareLegacyFacade } from '@/competitions/legacy-competition-facade-pa
 import { CompetitionLifecycle } from '@/entities/ICompetition';
 import { Logger } from '@/logging';
 import {
-  isRolledBackCopyAuditTimeout,
+  isInitialCheckpointReadTimeout,
+  isRolledBackCopyTimeout,
   migrationCopyCheckpoint
-} from './competition-migration-audit-recovery';
+} from './competition-migration-copy-recovery';
 
 const logger = Logger.get('COMPETITION_MIGRATION');
+
+type CopyAttempt = {
+  checkpoint?: string;
+  readingInitialCheckpoint?: boolean;
+  legacyActiveOwner?: boolean;
+};
 
 const SHADOW_TABLES = [
   COMPETITION_DECISION_WINNERS_TABLE,
@@ -198,7 +205,7 @@ export class CompetitionMigrationService {
     private readonly now: () => number = Date.now,
     private readonly batchIntervalMs: number = 250,
     private readonly environment: MigrationEnvironment = 'production',
-    private readonly waitBeforeAuditRetry: () => Promise<void> = () =>
+    private readonly waitBeforeCopyRetry: () => Promise<void> = () =>
       new Promise((resolve) => setTimeout(resolve, 1000))
   ) {
     if (
@@ -536,48 +543,97 @@ export class CompetitionMigrationService {
   public async backfill(id: string, operator: MigrationOperator, limit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error('Batch limit must be 1..100');
-    const attempt: { checkpoint?: string } = {};
+    await this.withCopyRecovery(id, (attempt, expected, retrying) =>
+      this.backfillBatch(id, operator, limit, attempt, expected, retrying)
+    );
+    return this.copyStatus(id);
+  }
+
+  private async withCopyRecovery(
+    id: string,
+    operation: (
+      attempt: CopyAttempt,
+      expected?: string,
+      retrying?: boolean
+    ) => Promise<void>
+  ): Promise<void> {
+    const attempt: CopyAttempt = {};
     try {
-      await this.backfillBatch(id, operator, limit, attempt);
+      await operation(attempt);
     } catch (error) {
-      if (!isRolledBackCopyAuditTimeout(error) || !attempt.checkpoint)
+      if (
+        !isRolledBackCopyTimeout(error) ||
+        (!attempt.checkpoint &&
+          !(
+            attempt.readingInitialCheckpoint &&
+            attempt.legacyActiveOwner &&
+            isInitialCheckpointReadTimeout(error)
+          ))
+      )
         throw error;
-      logger.warn('migration_copy_audit_timeout_recovery', {
+      logger.warn('migration_copy_timeout_recovery', {
         competitionId: id,
         retry: 1,
         maxRetries: 1,
-        savedCheckpoint: attempt.checkpoint
+        savedCheckpoint: attempt.checkpoint ?? null,
+        initialCheckpointRead: !attempt.checkpoint,
+        statementNumber: error.migrationStatementNumber,
+        statementFingerprint: error.migrationStatementFingerprint
       });
-      // The failed transaction's physical connection was destroyed. Wait with
-      // no borrowed owner connection, then reacquire ownership (which also
-      // confirms server rollback drained) and check the entire checkpoint.
-      // A second failure propagates; comparison/cutover are never retried here.
-      await this.waitBeforeAuditRetry();
-      await this.backfillBatch(id, operator, limit, {}, attempt.checkpoint);
+      // No owner connection is borrowed during backoff. Reacquiring ownership
+      // confirms server rollback drained. A second failure remains terminal.
+      await this.waitBeforeCopyRetry();
+      await operation({}, attempt.checkpoint, true);
     }
-    return this.copyStatus(id);
+  }
+
+  private async copyCheckpoint(
+    repository: CompetitionMigrationRepository,
+    ctx: RequestContext,
+    record: CompetitionRecord,
+    attempt: CopyAttempt,
+    expectedCheckpoint?: string,
+    retrying = false
+  ): Promise<CompetitionMigrationEntity | null> {
+    attempt.legacyActiveOwner =
+      record.storage_mode === 'LEGACY_ADAPTER' &&
+      record.execution_mode === 'ACTIVE';
+    if (retrying && !attempt.legacyActiveOwner)
+      throw new Error(
+        'Migration copy retry requires the same legacy active checkpoint'
+      );
+    attempt.readingInitialCheckpoint = true;
+    const migration = await repository.checkpoint(record.id, ctx);
+    attempt.readingInitialCheckpoint = false;
+    if (
+      expectedCheckpoint &&
+      (!migration || migrationCopyCheckpoint(migration) !== expectedCheckpoint)
+    )
+      throw new Error(
+        'Migration copy retry requires the same legacy active checkpoint'
+      );
+    if (migration) attempt.checkpoint = migrationCopyCheckpoint(migration);
+    return migration;
   }
   private async backfillBatch(
     id: string,
     operator: MigrationOperator,
     limit: number,
-    attempt: { checkpoint?: string },
-    expectedCheckpoint?: string
+    attempt: CopyAttempt,
+    expectedCheckpoint?: string,
+    retrying = false
   ): Promise<void> {
     await this.transaction(
       id,
       async (repository, ctx, record, db) => {
-        const migration = await repository.checkpoint(id, ctx);
-        if (
-          expectedCheckpoint &&
-          (record.storage_mode !== 'LEGACY_ADAPTER' ||
-            record.execution_mode !== 'ACTIVE' ||
-            !migration ||
-            migrationCopyCheckpoint(migration) !== expectedCheckpoint)
-        )
-          throw new Error(
-            'Migration audit retry requires the same legacy active checkpoint'
-          );
+        const migration = await this.copyCheckpoint(
+          repository,
+          ctx,
+          record,
+          attempt,
+          expectedCheckpoint,
+          retrying
+        );
         if (migration?.exceptions.length)
           throw new Error(
             'Migration requires adapter review: ' +
@@ -587,7 +643,6 @@ export class CompetitionMigrationService {
         if (!migration || migration.state !== 'BACKFILLING')
           throw new Error('Competition is not BACKFILLING');
         if (!(await this.claimBatch(repository, id, migration, ctx))) return;
-        attempt.checkpoint = migrationCopyCheckpoint(migration);
         if (migration.reset_table_index !== null)
           return this.resetShadowBatch(
             id,
@@ -662,10 +717,31 @@ export class CompetitionMigrationService {
   public async catchUp(id: string, operator: MigrationOperator, limit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error('Batch limit must be 1..100');
+    await this.withCopyRecovery(id, (attempt, expected, retrying) =>
+      this.catchUpBatch(id, operator, limit, attempt, expected, retrying)
+    );
+    return this.copyStatus(id);
+  }
+
+  private async catchUpBatch(
+    id: string,
+    operator: MigrationOperator,
+    limit: number,
+    attempt: CopyAttempt,
+    expectedCheckpoint?: string,
+    retrying = false
+  ): Promise<void> {
     await this.transaction(
       id,
       async (repository, ctx, record, db) => {
-        const migration = await repository.checkpoint(id, ctx);
+        const migration = await this.copyCheckpoint(
+          repository,
+          ctx,
+          record,
+          attempt,
+          expectedCheckpoint,
+          retrying
+        );
         if (migration?.exceptions.length)
           throw new Error(
             'Migration requires adapter review: ' +
@@ -752,7 +828,6 @@ export class CompetitionMigrationService {
       true,
       new MigrationCopySqlExecutor(this.supplier())
     );
-    return this.copyStatus(id);
   }
   public async compare(
     id: string,

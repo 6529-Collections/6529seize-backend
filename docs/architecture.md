@@ -1252,14 +1252,19 @@ wait, and 500ms reserved for finalization. Copy, replay and cutover read repeata
 snapshots after taking ownership; other control transactions retain READ COMMITTED.
 A pre-transfer timeout aborts without promoting the shadow copy. An unknown COMMIT
 acknowledgment requires checking ownership and the audit before any retry.
-Copying has one narrowly scoped recovery for a timeout of the batch-audit insert:
-only the original typed WORK/NOT_SENT error with a destroyed physical connection
-and the exact audit-statement fingerprint qualifies. After a one-second delay
-outside ownership, a second complete transaction rechecks legacy active ownership,
-operator stops and every saved copy checkpoint field under its lock. Checkpoint
-or batch-claim timestamp drift, or a second failure, stops the operation. Each attempt retains the same
-five-second fence and one-second statements; no statement is retried in place,
-and replay, comparison, cutover and unknown commits use no such recovery.
+Backfill and journal replay allow one complete transaction retry only for an
+original typed WORK/NOT_SENT timeout with a destroyed physical connection and
+migration statement diagnostics. After a one-second delay outside ownership,
+the new transaction rechecks legacy active ownership, operator stops and every
+saved copy field, including the batch-claim timestamp. Capture counters may
+advance; checkpoint or claim drift and a second failure remain terminal. A
+failure of the initial checkpoint lookup is eligible only as the exact known
+second statement, after confirming legacy active ownership and before any claim
+or data write. Its retry reads fresh durable state and preserves any peer
+progress. Every attempt retains the five-second fence, one-second statements
+and lock waits, and 500ms finalization reserve. No statement is retried in place;
+comparison, cutover, reporting failures and unknown/acknowledged commits use no
+such recovery. Deploy only `competitionMigrationLoop` for this change.
 Imported decision winners retain a nullable `legacy_drop_id`, preserving source
 history and prizes even when the drop was deleted before migration. Historical
 winner reads do not recreate an entry or its deleted content. Deploy the additive

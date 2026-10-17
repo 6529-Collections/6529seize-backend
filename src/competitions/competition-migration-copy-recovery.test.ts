@@ -1,11 +1,15 @@
 import { createHash } from 'node:crypto';
 import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
 import type { CompetitionMigrationEntity } from '@/entities/ICompetitionMigration';
-import { MIGRATION_AUDIT_INSERT_SQL } from './competition-migration.repository';
 import {
-  isRolledBackCopyAuditTimeout,
+  MIGRATION_AUDIT_INSERT_SQL,
+  MIGRATION_CHECKPOINT_SELECT_SQL
+} from './competition-migration.repository';
+import {
+  isInitialCheckpointReadTimeout,
+  isRolledBackCopyTimeout,
   migrationCopyCheckpoint
-} from './competition-migration-audit-recovery';
+} from './competition-migration-copy-recovery';
 
 function auditTimeout() {
   return Object.assign(
@@ -16,6 +20,7 @@ function auditTimeout() {
     ),
     {
       connectionDestroyed: true,
+      migrationStatementNumber: 8,
       migrationStatementFingerprint: createHash('sha256')
         .update(MIGRATION_AUDIT_INSERT_SQL)
         .digest('hex')
@@ -23,12 +28,12 @@ function auditTimeout() {
   );
 }
 
-describe('copy audit timeout recovery eligibility', () => {
-  it('recognizes only the known audit insert with a destroyed uncommitted connection', () => {
+describe('whole copy timeout recovery eligibility', () => {
+  it('recognizes a diagnosed statement on a destroyed uncommitted connection', () => {
     expect(
       createHash('sha256').update(MIGRATION_AUDIT_INSERT_SQL).digest('hex')
     ).toBe('e190a66e663c6315a9cf84d564b645275b88f3af63424555630690c28356ec9d');
-    expect(isRolledBackCopyAuditTimeout(auditTimeout())).toBe(true);
+    expect(isRolledBackCopyTimeout(auditTimeout())).toBe(true);
   });
   it.each([
     { code: 'SQL_STATEMENT_FAILED' },
@@ -37,11 +42,13 @@ describe('copy audit timeout recovery eligibility', () => {
     { commitOutcome: 'ACKNOWLEDGED' },
     { connectionDestroyed: false },
     { migrationStatementFingerprint: 'different-statement' },
-    { migrationStatementFingerprint: undefined }
+    { migrationStatementFingerprint: undefined },
+    { migrationStatementNumber: 0 },
+    { migrationStatementNumber: undefined }
   ])('rejects an unsafe or unrelated failure: %j', (change) => {
-    expect(
-      isRolledBackCopyAuditTimeout(Object.assign(auditTimeout(), change))
-    ).toBe(false);
+    expect(isRolledBackCopyTimeout(Object.assign(auditTimeout(), change))).toBe(
+      false
+    );
   });
   it('does not trust serialized, wrapped or arbitrary errors', () => {
     for (const error of [
@@ -50,7 +57,39 @@ describe('copy audit timeout recovery eligibility', () => {
       new Error('timeout'),
       null
     ])
-      expect(isRolledBackCopyAuditTimeout(error)).toBe(false);
+      expect(isRolledBackCopyTimeout(error)).toBe(false);
+  });
+});
+
+describe('initial checkpoint read recovery', () => {
+  it('pins the observed read and permits it only as statement two', () => {
+    const fingerprint = createHash('sha256')
+      .update(MIGRATION_CHECKPOINT_SELECT_SQL)
+      .digest('hex');
+    expect(fingerprint).toBe(
+      'bf5170846326fa70999caa0157ba639cb43bbf0b57e445cd7c6151a6a77c8497'
+    );
+    const error = Object.assign(auditTimeout(), {
+      migrationStatementNumber: 2,
+      migrationStatementFingerprint: fingerprint
+    });
+    expect(isInitialCheckpointReadTimeout(error)).toBe(true);
+    expect(
+      isInitialCheckpointReadTimeout(
+        Object.assign(error, { migrationStatementNumber: 3 })
+      )
+    ).toBe(false);
+    expect(isInitialCheckpointReadTimeout(auditTimeout())).toBe(false);
+  });
+  it('accepts other diagnosed statements only with the caller checkpoint guard', () => {
+    expect(
+      isRolledBackCopyTimeout(
+        Object.assign(auditTimeout(), {
+          migrationStatementFingerprint:
+            'b49bb6d3b8f95c376bdd7ef9c63ff2d1b2dc95f6595ab5eb72c477fc286ea01a'
+        })
+      )
+    ).toBe(true);
   });
 });
 

@@ -107,17 +107,31 @@ budget failure includes a migration-local statement number and SHA-256
 fingerprint, without SQL, parameters or source values. These diagnostics do not
 retry the statement or change its budget.
 
-The copy service may recover once from the known batch-audit INSERT timeout,
-only when the typed error proves WORK/NOT_SENT, the physical connection was
-destroyed, and its fingerprint matches that exact statement. It waits one second
-without ownership, then starts a new complete transaction with the unchanged
-five-second/one-second limits. Under ownership it requires the same legacy active
-owner, no stop, and an identical saved copy checkpoint and batch-claim timestamp; live capture counters may
-advance. A second timeout or checkpoint/owner/stop change propagates. This does
-not retry replay, parity comparisons, cutover, other statements or unknown commits.
-The recovery warning records the checkpoint hash and the single retry allowance;
-it is not evidence that the underlying timeout cause was repaired. After a
-terminal failure, retain the stop and investigate before an operator resume.
+Backfill and journal replay may retry one whole transaction when the original
+typed error proves WORK/NOT_SENT, physical connection destruction and a diagnosed
+migration statement. The failed attempt rolls back its data, audit, claim and
+checkpoint together. The service waits one second without an owner connection,
+then starts a fresh transaction with unchanged five-second/one-second limits.
+Under ownership it requires legacy active ownership, no stop, and the identical
+saved copy checkpoint and batch-claim timestamp; live capture counters may advance.
+A second failure or checkpoint/owner/stop change propagates without queuing a
+continuation. This recovery never retries comparison, cutover, reporting or
+unknown/acknowledged commits.
+
+Before a first checkpoint is available, only the exact known checkpoint SELECT
+as statement two is eligible, and only after legacy active ownership was checked.
+The preceding application statement only locks ownership; no claim or batch write
+has started. The retry takes ownership again, checks stops and reads fresh durable
+state. A peer's committed progress is retained rather than rewound. Any other
+failure without a saved checkpoint remains terminal.
+
+Recovery logs contain only a checkpoint hash, statement number/fingerprint and
+the one-retry allowance, without SQL, parameters or source values. They do not
+prove that the underlying latency cause was repaired. After a terminal failure,
+retain the stop and investigate before an operator resume. No infrastructure,
+statement limits, publication rules, journal sequence checks or independent parity
+categories are changed. Deploy only `competitionMigrationLoop`; API, frontend and
+schema deployment are unnecessary.
 
 Backfill, journal replay, independent comparison and final cutover use the bounded SQL transaction
 runtime with a five-second overall deadline, a one-second statement limit, a
@@ -126,7 +140,7 @@ ownership changes aborts rather than holding the write fence for minutes. Copy a
 replay use the same repeatable-read budget and roll back the entire batch,
 including its checkpoint, on timeout. An operator stop is checked again inside
 the ownership transaction, so an already queued batch cannot cross it. Keep the
-migration stopped and investigate a timeout; do not raise the limit or bypass
+migration stopped and investigate a terminal timeout; do not raise the limit or bypass
 parity to force cutover. Before COMMIT, comparison and cutover timeouts roll back
 all transaction work and leave previously committed checkpoints unchanged.
 If COMMIT acknowledgment is unknown, read current

@@ -54,6 +54,7 @@ function safeCounter(value: number | string): number {
 function json<T>(value: T | string): T {
   return typeof value === 'string' ? (JSON.parse(value) as T) : value;
 }
+export const MIGRATION_CHECKPOINT_SELECT_SQL = `select * from ${COMPETITION_MIGRATIONS_TABLE} where competition_id=:id`;
 export const MIGRATION_AUDIT_INSERT_SQL = `insert into ${COMPETITION_MIGRATION_AUDIT_TABLE} (id,competition_id,actor,action,reason,report,created_at) values (:auditId,:id,:actor,:action,:reason,:report,:now)`;
 export type MigrationStatus = {
   readonly competitionId: string;
@@ -149,7 +150,7 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
     ctx.timer?.start(timerName);
     try {
       const raw = await this.db.oneOrNull<CompetitionMigrationEntity>(
-        `select * from ${COMPETITION_MIGRATIONS_TABLE} where competition_id=:id`,
+        MIGRATION_CHECKPOINT_SELECT_SQL,
         { id },
         { wrappedConnection: ctx.connection }
       );
