@@ -4,6 +4,7 @@ import { contentModerationDb } from './content-moderation.db';
 import {
   contentModerationAiService,
   CONTENT_MODERATION_POLICY_VERSION,
+  getContentModerationBedrockModelId,
   PRE_PUBLICATION_EVALUATOR_VERSION
 } from './content-moderation-ai.service';
 import {
@@ -27,17 +28,11 @@ import {
   reportReviewOutcome
 } from './moderation-review.types';
 import { assertModerationDeveloper } from './moderation-developer-access';
-import {
-  getConfiguredBedrockAnthropicModelId,
-  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
-} from '@/bedrock.config';
+import { getAbusivenessBedrockModelId } from '@/abusiveness/bedrock-ai.prompter';
 
 export const PUBLIC_TEXT_POLICY_VERSION = 'public-fields-2026-09-1';
 export function publicTextModel(): string {
-  return getConfiguredBedrockAnthropicModelId(
-    'ABUSIVENESS_BEDROCK_MODEL_ID',
-    DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
-  );
+  return getAbusivenessBedrockModelId();
 }
 export function activePermit(item: ModerationItem): boolean {
   return (
@@ -525,10 +520,7 @@ export class ModerationReviewService {
         model: publicTextModel()
       };
     }
-    const model = getConfiguredBedrockAnthropicModelId(
-      'CONTENT_MODERATION_BEDROCK_MODEL_ID',
-      DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
-    );
+    const model = getContentModerationBedrockModelId();
     if (item.operation === 'REPORT') {
       const assessment = await contentModerationAiService.assessReportedContent(
         {
