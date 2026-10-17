@@ -649,6 +649,27 @@ async function generateNotificationData(
         targetProfile,
         wavePresentationResolver
       );
+    case IdentityNotificationCause.MEME_COLLABORATION: {
+      const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
+      const data = extractAdditionalData<{
+        event_type: string;
+        drop_id: string;
+        wave_id: string;
+      }>(notification);
+      return {
+        title: 'The Memes collaboration',
+        body:
+          data.event_type === 'INVITED'
+            ? 'You have been invited to collaborate on an artwork. Review the invitation to accept or decline.'
+            : 'Your collaborator accepted the artwork invitation.',
+        data: {
+          redirect: 'waves',
+          wave_id: data.wave_id,
+          drop_id: dropSerialNo
+        },
+        imageUrl: null
+      };
+    }
     case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       return buildCompetitionLifecyclePushNotification(
         extractAdditionalData<CompetitionLifecycleNotificationData>(

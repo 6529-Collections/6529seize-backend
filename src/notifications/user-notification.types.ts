@@ -228,6 +228,7 @@ export interface SubscriptionCoverageNotification extends UserNotificationBase {
 }
 
 export type UserNotification =
+  | MemeCollaborationNotification
   | CompetitionLifecycleNotification
   | IdentitySubscriptionNotification
   | IdentityMentionNotification
@@ -247,4 +248,17 @@ export type UserNotification =
 export interface UserNotificationsResponse {
   readonly notifications: UserNotification[];
   readonly total_unread: number;
+}
+
+export interface MemeCollaborationNotificationData {
+  artwork_name?: string;
+  event_type: 'INVITED' | 'ACCEPTED';
+  drop_id: string;
+  wave_id: string;
+  actor_id: string;
+  invitation_id: string;
+}
+export interface MemeCollaborationNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.MEME_COLLABORATION;
+  data: MemeCollaborationNotificationData;
 }

@@ -1,3 +1,5 @@
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import { withCollaborationCredit } from '@/meme-collaborations/meme-collaboration-credit';
 import { upsertAutomaticAirdropsForPhase } from '@/api/distributions/api.distributions.service';
 import {
   competitionEventRepository,
@@ -208,6 +210,19 @@ export class MintingClaimsService {
       metadatas,
       seasonId
     );
+    const collaboration = await memeCollaborationsDb.context(dropId, ctx);
+    if (collaboration && !collaboration.credit)
+      throw new Error(
+        'Managed collaboration has no mint-selection credit snapshot'
+      );
+    if (collaboration?.credit) {
+      row.attributes = withCollaborationCredit(
+        row.attributes,
+        collaboration.credit
+      );
+      if (collaboration.credit.collab)
+        Object.assign(row, collaboration.artwork);
+    }
     const enriched = await this.enrichRowWithComputedDetails(row);
     await this.mintingClaimsDb.createMintingClaim([enriched], ctx);
     await this.saveMemeCardMappingIfMainStageWinner(dropId, nextClaimId, ctx);

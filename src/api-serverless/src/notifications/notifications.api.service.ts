@@ -496,6 +496,11 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.MEME_COLLABORATION: {
+          if (notification.data.actor_id)
+            profileIds.push(notification.data.actor_id);
+          break;
+        }
         case IdentityNotificationCause.COMPETITION_LIFECYCLE:
         case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
           break;
@@ -545,6 +550,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.DROP_BOOSTED:
       case IdentityNotificationCause.DROP_QUOTED:
       case IdentityNotificationCause.DROP_REPLIED:
+      case IdentityNotificationCause.MEME_COLLABORATION:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
       case IdentityNotificationCause.ALL_DROPS:
@@ -563,6 +569,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
       case IdentityNotificationCause.IDENTITY_NIC:
+      case IdentityNotificationCause.MEME_COLLABORATION:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
@@ -814,13 +821,17 @@ export class NotificationsApiService {
           additional_context: {}
         };
       }
+      case IdentityNotificationCause.MEME_COLLABORATION:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
         return {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: null,
+          related_identity:
+            notification.cause === IdentityNotificationCause.MEME_COLLABORATION
+              ? (profiles[notification.data.actor_id] ?? null)
+              : null,
           related_drops: [],
           additional_context: { ...notification.data }
         };
@@ -1113,13 +1124,17 @@ export class NotificationsApiService {
           additional_context: {}
         };
       }
+      case IdentityNotificationCause.MEME_COLLABORATION:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
         return {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: null,
+          related_identity:
+            notification.cause === IdentityNotificationCause.MEME_COLLABORATION
+              ? (profiles[notification.data.actor_id] ?? null)
+              : null,
           related_drops: [],
           additional_context: { ...notification.data }
         };

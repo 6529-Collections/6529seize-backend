@@ -19,6 +19,11 @@ import {
   METRIC_ROLLUP_HOUR_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import {
+  MEME_COLLABORATIONS_TABLE,
+  MEME_COLLABORATION_INVITATIONS_TABLE
+} from '@/constants';
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { NativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
@@ -729,6 +734,42 @@ describeWithSeed(
           `select count(*) as n from ${COMPETITION_DECISION_WINNERS_TABLE}`
         )
       ).toEqual([{ n: 1 }]);
+    });
+
+    it('freezes collaboration credits when the designated native Main Stage chooses its next mint', async () => {
+      await sqlExecutor.execute(
+        `insert into ${COMPETITION_CAPABILITIES_TABLE} (capability, competition_id, wave_id, assigned_at) values ('MAIN_STAGE', :rankId, 'shared-hub', 0)`,
+        { rankId }
+      );
+      await sqlExecutor.execute(
+        `insert into ${MEME_COLLABORATIONS_TABLE} (drop_id,author_id,author_handle,wave_id,artwork_hash,artwork,base_artist,terms,terms_version) values ('rank-drop','artist','artist','shared-hub',:hash,:artwork,'Artist',null,:hash)`,
+        {
+          hash: 'a'.repeat(64),
+          artwork: JSON.stringify({
+            name: 'Artwork',
+            description: 'Description',
+            image_url: 'https://example.com/art.png',
+            animation_url: null
+          })
+        }
+      );
+      await sqlExecutor.execute(
+        `insert into ${MEME_COLLABORATION_INVITATIONS_TABLE} (id,drop_id,profile_id,profile_handle,status,created_at) values ('accepted','rank-drop','B','artistB','ACCEPTED',1),('pending','rank-drop','C','artistC','PENDING',2)`
+      );
+      await vote(rankId, rankEntry, 80, 100);
+      await service.processCompetition(rankId, 1001);
+      const collaboration = await memeCollaborationsDb.context('rank-drop', {});
+      expect(collaboration?.closed_at).not.toBeNull();
+      expect(collaboration?.credit).toEqual({
+        artist: 'Artist & artistB',
+        artist_profiles: 'artist, artistB',
+        collab: true
+      });
+      expect(
+        (await memeCollaborationsDb.invitations('rank-drop', {})).map(
+          (invitation) => invitation.status
+        )
+      ).toEqual(['ACCEPTED', 'CLOSED']);
     });
 
     it('gates claims, badges, metrics and active TDH by explicit capability within the same wave', async () => {

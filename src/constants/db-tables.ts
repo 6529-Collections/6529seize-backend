@@ -308,4 +308,7 @@ export const COMPETITION_LEGACY_MIRROR_PERMITS_TABLE =
 export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
   'competition_legacy_execution_effects';
 
+export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
+export const MEME_COLLABORATION_INVITATIONS_TABLE =
+  'meme_collaboration_invitations';
 export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';

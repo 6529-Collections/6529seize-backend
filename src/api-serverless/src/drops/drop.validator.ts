@@ -303,6 +303,11 @@ const baseDropFieldsValidators = {
 export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
   {
     ...baseDropFieldsValidators,
+    collaborator_ids: Joi.array()
+      .items(Joi.string().max(100))
+      .max(20)
+      .unique()
+      .optional(),
     mentioned_groups: Joi.array()
       .optional()
       .items(Joi.string().valid(...Object.values(ApiDropGroupMention)))

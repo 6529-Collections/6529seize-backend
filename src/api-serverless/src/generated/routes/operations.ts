@@ -147,6 +147,9 @@ import { ApiMarketTradeOrder } from '@/api/generated/models/ApiMarketTradeOrder'
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
+import { ApiMemeCollaborationInviteRequest } from '@/api/generated/models/ApiMemeCollaborationInviteRequest';
+import { ApiMemeCollaborationResponseRequest } from '@/api/generated/models/ApiMemeCollaborationResponseRequest';
+import { ApiMemeCollaborationState } from '@/api/generated/models/ApiMemeCollaborationState';
 import { ApiModerationAccess } from '@/api/generated/models/ApiModerationAccess';
 import { ApiModerationActionRequest } from '@/api/generated/models/ApiModerationActionRequest';
 import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCheckDetail';
@@ -1403,6 +1406,55 @@ export type CreateProposalFrameRequest = Request<
   ApiResponse<CreateProposalFrameResponse>,
   ApiProposalFrameRequest,
   CreateProposalFrameQuery,
+  Record<string, never>
+>;
+
+export interface GetMemeCollaborationStatePathParams {
+  "drop_id": string;
+}
+
+export type GetMemeCollaborationStateQuery = Record<string, never>;
+
+export type GetMemeCollaborationStateResponse = ApiMemeCollaborationState;
+
+export type GetMemeCollaborationStateRequest = Request<
+  GetMemeCollaborationStatePathParams,
+  ApiResponse<GetMemeCollaborationStateResponse>,
+  never,
+  GetMemeCollaborationStateQuery,
+  Record<string, never>
+>;
+
+export interface InviteMemeCollaboratorsPathParams {
+  "drop_id": string;
+}
+
+export type InviteMemeCollaboratorsQuery = Record<string, never>;
+
+export type InviteMemeCollaboratorsResponse = ApiMemeCollaborationState;
+
+export type InviteMemeCollaboratorsRequest = Request<
+  InviteMemeCollaboratorsPathParams,
+  ApiResponse<InviteMemeCollaboratorsResponse>,
+  ApiMemeCollaborationInviteRequest,
+  InviteMemeCollaboratorsQuery,
+  Record<string, never>
+>;
+
+export interface RespondToMemeCollaborationPathParams {
+  "drop_id": string;
+  "invitation_id": string;
+}
+
+export type RespondToMemeCollaborationQuery = Record<string, never>;
+
+export type RespondToMemeCollaborationResponse = ApiMemeCollaborationState;
+
+export type RespondToMemeCollaborationRequest = Request<
+  RespondToMemeCollaborationPathParams,
+  ApiResponse<RespondToMemeCollaborationResponse>,
+  ApiMemeCollaborationResponseRequest,
+  RespondToMemeCollaborationQuery,
   Record<string, never>
 >;
 
