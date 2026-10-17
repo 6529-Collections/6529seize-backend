@@ -5,34 +5,12 @@ import {
   legacyGetView,
   withLegacyShadowGetFacade
 } from '@/competitions/legacy-competition-get-facade';
-import { LEGACY_GET_BOOLEAN_FIELDS } from '@/competitions/legacy-competition-get-facade';
 import {
   WAVES_TABLE,
   DROPS_TABLE,
   COMPETITION_ENTRIES_TABLE
 } from '@/constants';
-import { competitionPayloadHash } from '@/competitions/competition-command-identity';
-
-function normalize(value: unknown): unknown {
-  if (typeof value === 'string' && /^[{[]/.test(value)) {
-    try {
-      return normalize(JSON.parse(value));
-    } catch {
-      return value;
-    }
-  }
-  if (Array.isArray(value)) return value.map(normalize);
-  if (value !== null && typeof value === 'object')
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [
-        key,
-        LEGACY_GET_BOOLEAN_FIELDS.has(key) && item !== null
-          ? Boolean(Number(item))
-          : normalize(item)
-      ])
-    );
-  return value;
-}
+import { hashParityRowsInBudget } from './competition-parity-hash';
 
 /** The view can expose a participation/winner drop only from a source drop of
  * those types or an ACTIVE/WINNER native entry. Keep both sets, including a
@@ -66,11 +44,13 @@ export async function compareLegacyFacade(
   db: SqlExecutor,
   id: string,
   waveId: string,
-  ctx: RequestContext
+  ctx: RequestContext,
+  checkWork?: () => void
 ) {
   return withLegacyShadowGetFacade(db, id, ctx, async () => {
     const categories = [];
     for (const table of LEGACY_GET_SOURCE_TABLES) {
+      checkWork?.();
       const filter =
         table === WAVES_TABLE
           ? 'id=:waveId'
@@ -86,15 +66,12 @@ export async function compareLegacyFacade(
                 { waveId },
                 { wrappedConnection: ctx.connection }
               );
-        return data
-          .map(normalize)
-          .map(competitionPayloadHash)
-          .sort((a, b) => a.localeCompare(b));
+        return hashParityRowsInBudget(data, checkWork);
       };
       categories.push({
         category: `frozen_relation:${table}`,
-        baselineHash: competitionPayloadHash(await rows(table)),
-        candidateHash: competitionPayloadHash(await rows(legacyGetView(table)))
+        baselineHash: await rows(table),
+        candidateHash: await rows(legacyGetView(table))
       });
     }
     return categories;

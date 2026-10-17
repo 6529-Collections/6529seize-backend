@@ -93,6 +93,26 @@ are necessary: an extra active native entry mapped to a CHAT drop must still
 appear and fail parity. The unchanged compatibility view and full-row hashes
 remain authoritative; no row limit is applied to this comparison.
 
+Comparison hashing keeps the original canonical bytes, legacy JSON/boolean
+normalization, every column and duplicate row. It caches only bounded column
+encoding plans and streams the sorted row-hash array. Large hash pages yield
+to the transaction deadline and check that their owned SQL scope remains live;
+no partial category is accepted after a budget expires. The independent source
+snapshot selects only the columns its existing folds consume; the separate
+frozen facade still compares complete rows. Command/signature hashing is unchanged.
+
+Comparison and cutover log phase names and elapsed times. Their bounded SQL
+executor also retains a failed statement number and SHA256 fingerprint, without
+SQL, parameters or row content. These diagnostics add no retry. Independent
+comparison reads the durable checkpoint under ownership without rebuilding an
+unused operational report; final cutover still checks complete fresh readiness,
+all independent parity categories and native invariants under the same fence.
+The worker is provisioned at 2,048 MB so hashing is not restricted to a sub-vCPU
+allocation ([AWS memory/CPU allocation](https://docs.aws.amazon.com/lambda/latest/dg/configuration-memory.html)).
+Deploy this worker resource setting through the normal service workflow and
+verify the actual memory setting with its version/hash. This does not increase
+the five-second ownership fence or one-second SQL/lock limits.
+
 Entry copy reads global ranks once per page, then reads all eight content
 relations and the latest copied versions in batches. It preserves content-version
 hash checks and source observation timestamps. The ordinary native edit path
