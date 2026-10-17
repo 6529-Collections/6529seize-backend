@@ -2949,6 +2949,52 @@ describeWithSeed(
       expect((await service.verifyNative(id)).failures).toEqual([]);
     });
 
+    it.each([0, 25, 26])(
+      'bounds cleanup classification with %s exceptional rows in a large journal',
+      async (cleanupCount) => {
+        const directCount = 5000;
+        const digits =
+          '(select 0 n union all select 1 union all select 2 union all select 3 union all select 4 union all select 5 union all select 6 union all select 7 union all select 8 union all select 9)';
+        const numbers = `(select a.n+b.n*10+c.n*100+d.n*1000+1 n from ${digits} a cross join ${digits} b cross join ${digits} c cross join ${digits} d) numbers`;
+        await sqlExecutor.execute(
+          `insert into ${COMPETITION_MIGRATION_CHANGES_TABLE} (competition_id,watermark,source_table,operation,before_row,after_row,occurred_at) select :id,n,:table,'UPDATE',json_object('payload',repeat('x',1024)),json_object('payload',repeat('y',1024)),1 from ${numbers} where n<=:count`,
+          { id, table: DROP_VOTER_STATE_TABLE, count: directCount }
+        );
+        if (cleanupCount)
+          await sqlExecutor.execute(
+            `insert into ${COMPETITION_MIGRATION_CHANGES_TABLE} (competition_id,watermark,source_table,operation,before_row,after_row,occurred_at) select :id,:offset+n,if(n=1,:parentTable,:contentTable),'DELETE',if(n=1,json_object('id','absent-cleanup-parent','drop_type','PARTICIPATORY'),json_object('drop_id','absent-cleanup-parent')),null,1 from ${numbers} where n<=:count`,
+            {
+              id,
+              offset: directCount,
+              parentTable: DROPS_TABLE,
+              contentTable: DROPS_PARTS_TABLE,
+              count: cleanupCount
+            }
+          );
+        const execute = jest.spyOn(sqlExecutor, 'execute');
+        const supported = await sqlExecutor.executeNativeQueriesInTransaction(
+          (connection) =>
+            new CompetitionMigrationRepository().canRefreshOnlyLeaderboard(
+              id,
+              0,
+              directCount + cleanupCount,
+              { connection }
+            )
+        );
+        expect(supported).toBe(cleanupCount <= 25);
+        const jsonReads = execute.mock.calls.filter(([sql]) =>
+          sql.includes('json_extract')
+        );
+        expect(jsonReads).toHaveLength(cleanupCount === 25 ? 1 : 0);
+        if (cleanupCount === 25) {
+          const [sql, params] = jsonReads[0];
+          expect(sql).toContain('parent.sequence in (:sequences)');
+          expect(sql).toContain('change_row.sequence in (:sequences)');
+          expect(params?.sequences).toHaveLength(25);
+        }
+      }
+    );
+
     it.each([
       'surviving content',
       'winner deletion',
@@ -3007,7 +3053,7 @@ describeWithSeed(
       ).toBe(false);
     });
 
-    it.each(['backfill', 'catch-up'])(
+    it.each(['backfill', 'catch-up', 'refresh classification'])(
       'releases a slow %s batch fence and preserves its checkpoint',
       async (operation) => {
         const service = new CompetitionMigrationService(
@@ -3016,29 +3062,38 @@ describeWithSeed(
           0
         );
         await service.enroll(id, operator, 'COMPLETED_INTERNAL');
-        if (operation === 'catch-up') {
+        if (operation !== 'backfill') {
           await finishBackfill(service);
           await moveLiveEntryVote(drop.id, 8, 1);
         }
         const checkpoint = (await service.status(id)).migration!;
         const method = operation === 'backfill' ? 'batch' : 'applyChange';
-        const slow = jest
-          .spyOn(CompetitionMigrationBackfill.prototype, method)
-          .mockImplementation(async (...args: unknown[]) => {
-            const ctx = args[args.length - 1] as {
-              connection: NonNullable<
-                Parameters<
-                  CompetitionMigrationBackfill['applyChange']
-                >[2]['connection']
-              >;
-            };
-            await sqlExecutor.execute(
-              'SELECT SLEEP(2)',
-              {},
-              { wrappedConnection: ctx.connection }
-            );
-            return 0 as never;
-          });
+        const slowWork = async (...args: unknown[]) => {
+          const ctx = args[args.length - 1] as {
+            connection: NonNullable<
+              Parameters<
+                CompetitionMigrationBackfill['applyChange']
+              >[2]['connection']
+            >;
+          };
+          await sqlExecutor.execute(
+            'SELECT SLEEP(2)',
+            {},
+            { wrappedConnection: ctx.connection }
+          );
+          return 0 as never;
+        };
+        const slow =
+          operation === 'refresh classification'
+            ? jest
+                .spyOn(
+                  CompetitionMigrationRepository.prototype,
+                  'canRefreshOnlyLeaderboard'
+                )
+                .mockImplementation(slowWork)
+            : jest
+                .spyOn(CompetitionMigrationBackfill.prototype, method)
+                .mockImplementation(slowWork);
         const started = performance.now();
         await expect(
           operation === 'backfill'
