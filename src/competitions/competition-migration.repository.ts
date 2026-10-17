@@ -56,6 +56,15 @@ function json<T>(value: T | string): T {
 }
 export const MIGRATION_CHECKPOINT_SELECT_SQL = `select * from ${COMPETITION_MIGRATIONS_TABLE} where competition_id=:id`;
 export const MIGRATION_AUDIT_INSERT_SQL = `insert into ${COMPETITION_MIGRATION_AUDIT_TABLE} (id,competition_id,actor,action,reason,report,created_at) values (:auditId,:id,:actor,:action,:reason,:report,:now)`;
+const CLEANUP_CLASSIFICATION_LIMIT = 25;
+const DIRECTLY_REPLAYED_TABLES = [
+  DROP_RANK_TABLE,
+  DROP_VOTER_STATE_TABLE,
+  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+  DROP_REAL_VOTE_IN_TIME_TABLE,
+  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
+  WAVE_LEADERBOARD_ENTRIES_TABLE
+];
 export type MigrationStatus = {
   readonly competitionId: string;
   readonly waveId: string;
@@ -487,25 +496,67 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
     const timerName = `${this.constructor.name}->canRefreshOnlyLeaderboard`;
     ctx.timer?.start(timerName);
     try {
-      // Check every page since the last acknowledged refresh. These keys are
-      // replayed directly; retained time histories need no separate copy.
-      // Parent deletion replay removes the live entry, votes and runtime. Content
-      // cleanup requires its active parent deletion in the same journal window
-      // and no surviving source parent. Winner deletions remain conservative.
-      // Edits, creation, decision/history changes and surviving parents still
-      // require the conservative refresh. COALESCE fails closed on missing keys.
-      const row = await this.db.oneOrNull<{
-        count: number | string;
-        unsupported: number | string;
-      }>(
-        `select count(*) as count,coalesce(sum(not coalesce((
-           change_row.source_table in (:tables) or (
+      if (targetWatermark <= appliedWatermark) return false;
+      // Count the complete immutable window using the covering watermark index.
+      // Do not evaluate JSON/correlated lookups for every directly replayed row.
+      const count = await this.db.oneOrNull<{ count: number | string }>(
+        `select count(*) as count from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark>:appliedWatermark and watermark<=:targetWatermark`,
+        { id, appliedWatermark, targetWatermark },
+        { wrappedConnection: ctx.connection }
+      );
+      if (Number(count?.count) !== targetWatermark - appliedWatermark)
+        return false;
+      const candidates = await this.db.execute<{ sequence: number | string }>(
+        `select sequence from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark>:appliedWatermark and watermark<=:targetWatermark and source_table not in (:tables) order by watermark,sequence limit :limit`,
+        {
+          id,
+          appliedWatermark,
+          targetWatermark,
+          tables: DIRECTLY_REPLAYED_TABLES,
+          limit: CLEANUP_CLASSIFICATION_LIMIT + 1
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      // A conservative full refresh remains correct for arbitrarily large
+      // cleanup sets. Never grow JSON/subquery work with the captured window.
+      if (candidates.length > CLEANUP_CLASSIFICATION_LIMIT) return false;
+      if (!candidates.length) return true;
+      return await this.hasSupportedCleanupCandidates(
+        id,
+        appliedWatermark,
+        targetWatermark,
+        candidates.map((candidate) => candidate.sequence),
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  private async hasSupportedCleanupCandidates(
+    id: string,
+    appliedWatermark: number,
+    targetWatermark: number,
+    sequences: readonly (number | string)[],
+    ctx: RequestContext
+  ): Promise<boolean> {
+    // Every non-directly-replayed row is in this bounded candidate set, so
+    // every possible parent deletion is present too. Retain SQL collation and
+    // all parent/key/type checks. Surviving parents and winner deletions fail
+    // closed, as do edits, creation, decisions and unsupported source changes.
+    const row = await this.db.oneOrNull<{
+      count: number | string;
+      unsupported: number | string;
+    }>(
+      `select count(*) as count,coalesce(sum(not coalesce((
+           (
              change_row.operation='DELETE' and change_row.after_row is null
              and (
                (change_row.source_table=:dropsTable and json_unquote(json_extract(change_row.before_row,'$.drop_type'))='PARTICIPATORY')
                or (change_row.source_table in (:contentTables) and exists (
                  select 1 from ${COMPETITION_MIGRATION_CHANGES_TABLE} parent
                  where parent.competition_id=:id and parent.watermark>:appliedWatermark and parent.watermark<=:targetWatermark
+                   and parent.sequence in (:sequences)
                    and parent.source_table=:dropsTable and parent.operation='DELETE' and parent.after_row is null
                    and json_unquote(json_extract(parent.before_row,'$.drop_type'))='PARTICIPATORY'
                    and json_unquote(json_extract(parent.before_row,'$.id'))=json_unquote(json_extract(change_row.before_row,'$.drop_id'))
@@ -519,31 +570,19 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
                  and d.drop_type in ('PARTICIPATORY','WINNER')
              )
            )
-         ),false)),0) as unsupported from ${COMPETITION_MIGRATION_CHANGES_TABLE} change_row where change_row.competition_id=:id and change_row.watermark>:appliedWatermark and change_row.watermark<=:targetWatermark`,
-        {
-          id,
-          appliedWatermark,
-          targetWatermark,
-          dropsTable: DROPS_TABLE,
-          contentTables: MIGRATION_CONTENT_TABLES,
-          tables: [
-            DROP_RANK_TABLE,
-            DROP_VOTER_STATE_TABLE,
-            DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-            DROP_REAL_VOTE_IN_TIME_TABLE,
-            DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
-            WAVE_LEADERBOARD_ENTRIES_TABLE
-          ]
-        },
-        { wrappedConnection: ctx.connection }
-      );
-      return (
-        targetWatermark > appliedWatermark &&
-        Number(row?.count) === targetWatermark - appliedWatermark &&
-        Number(row?.unsupported) === 0
-      );
-    } finally {
-      ctx.timer?.stop(timerName);
-    }
+         ),false)),0) as unsupported from ${COMPETITION_MIGRATION_CHANGES_TABLE} change_row where change_row.competition_id=:id and change_row.watermark>:appliedWatermark and change_row.watermark<=:targetWatermark and change_row.sequence in (:sequences)`,
+      {
+        id,
+        appliedWatermark,
+        targetWatermark,
+        dropsTable: DROPS_TABLE,
+        contentTables: MIGRATION_CONTENT_TABLES,
+        sequences
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    return (
+      Number(row?.count) === sequences.length && Number(row?.unsupported) === 0
+    );
   }
 }
