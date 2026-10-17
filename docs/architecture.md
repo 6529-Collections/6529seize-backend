@@ -1283,6 +1283,10 @@ The immutable command snapshot retains legacy upper-threshold metadata alongside
 its normal native draft fields. Actual data mismatches retain legacy ownership;
 repair-required native ownership is never blindly reversed. Final comparison,
 effect drain and owner transfer occur under the same transaction lock.
+The manual migration worker uses 2,048 MB to give CPU-heavy complete comparisons
+at least a full vCPU allocation. Its five-second ownership fence, one-second
+statement/lock limits, reserved concurrency and disabled asynchronous retries
+remain unchanged; this resource setting does not alter API or decision workers.
 
 Migrated primaries inherit shared wave presentation metadata while
 `presentation_config` is null. Native appearance arrays override that inheritance,

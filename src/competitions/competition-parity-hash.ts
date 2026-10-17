@@ -28,10 +28,13 @@ export function createParityHasher(normalizeLegacy = false) {
   >();
   function columns(record: Record<string, unknown>) {
     const keys = Object.keys(record);
+    // SQL rows keep column order. Cache that shape to avoid sorting every row;
+    // another insertion order gets its own equivalent plan, bounded by 128.
     const shape = JSON.stringify(keys);
     let plan = plans.get(shape);
     if (!plan) {
-      plan = keys.sort(compareStrings).map((key) => ({
+      keys.sort(compareStrings);
+      plan = keys.map((key) => ({
         key,
         prefix: JSON.stringify(key) + ':',
         boolean: normalizeLegacy && LEGACY_GET_BOOLEAN_FIELDS.has(key)
@@ -91,13 +94,13 @@ export function hashParityRows(
 
 function hashOrderedRows(hashes: string[], checkWork?: () => void): string {
   checkWork?.();
-  const ordered = hashes.sort(compareStrings);
+  hashes.sort(compareStrings);
   checkWork?.();
   const result = crypto.createHash('sha256').update('[');
-  for (let offset = 0; offset < ordered.length; offset += 1000) {
+  for (let offset = 0; offset < hashes.length; offset += 1000) {
     checkWork?.();
     if (offset) result.update(',');
-    result.update('"' + ordered.slice(offset, offset + 1000).join('","') + '"');
+    result.update('"' + hashes.slice(offset, offset + 1000).join('","') + '"');
   }
   checkWork?.();
   return result.update(']').digest('hex');

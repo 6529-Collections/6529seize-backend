@@ -107,6 +107,11 @@ SQL, parameters or row content. These diagnostics add no retry. Independent
 comparison reads the durable checkpoint under ownership without rebuilding an
 unused operational report; final cutover still checks complete fresh readiness,
 all independent parity categories and native invariants under the same fence.
+The worker is provisioned at 2,048 MB so hashing is not restricted to a sub-vCPU
+allocation ([AWS memory/CPU allocation](https://docs.aws.amazon.com/lambda/latest/dg/configuration-memory.html)).
+Deploy this worker resource setting through the normal service workflow and
+verify the actual memory setting with its version/hash. This does not increase
+the five-second ownership fence or one-second SQL/lock limits.
 
 Entry copy reads global ranks once per page, then reads all eight content
 relations and the latest copied versions in batches. It preserves content-version

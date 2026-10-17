@@ -41,7 +41,10 @@ import { computeCompetitionPhase } from '@/competitions/competition-phase';
 import { LEGACY_PARITY_ROW_LIMIT } from '@/competitions/legacy-parity-snapshot';
 import { CompetitionRowLimitError } from '@/competitions/competition-page';
 
-// Closed set of source queries: callers cannot supply SQL fragments.
+// Closed source queries. Rating/LockedRating/Vote/Spend below enumerate every
+// field consumed by the folds; keep projections aligned with those types.
+// The integration oracle also reruns these reads as SELECT * and compares the
+// complete snapshot, while separate frozen-facade parity keeps full columns.
 const LEGACY_SOURCE_QUERIES = {
   drops: `select id, author_id, created_at, drop_type from ${DROPS_TABLE} where wave_id = :waveId and drop_type in ('PARTICIPATORY', 'WINNER') limit :limit`,
   ratings: `select drop_id,vote,last_increased from ${DROP_RANK_TABLE} where wave_id = :waveId  limit :limit`,

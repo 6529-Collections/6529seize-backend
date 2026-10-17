@@ -361,7 +361,13 @@ export class CompetitionMigrationService {
       () => compareMigrationContent(db, id, record.wave_id, ctx, checkWork),
       checkWork
     );
-    return { baseline, categories: [...snapshot, ...facade, ...content] };
+    const relations = [...facade, ...content];
+    return {
+      baseline,
+      snapshot,
+      relations,
+      categories: [...snapshot, ...relations]
+    };
   }
 
   private async transaction<T>(
@@ -963,6 +969,8 @@ export class CompetitionMigrationService {
         this.environment
       );
       const record = await repository.lock(id, ctx);
+      // status().migration uses this same normalized durable checkpoint. Its
+      // operational/capture report is not part of comparison-window accounting.
       const migration = await repository.checkpoint(id, ctx);
       if (migration?.exceptions.length)
         throw new Error(
@@ -1035,7 +1043,7 @@ export class CompetitionMigrationService {
     status: MigrationStatus,
     record: CompetitionRecord,
     ctx: RequestContext,
-    db = this.supplier()
+    db: SqlExecutor
   ): Promise<string[]> {
     const failures: string[] = [];
     // Use retained source scheduling at the transfer time. A later native
@@ -1055,9 +1063,7 @@ export class CompetitionMigrationService {
       record.lifecycle === CompetitionLifecycle.ENDED &&
       Number(source?.completed ?? 0) === 1;
     if (preservesCompletedSource && status.storageMode === 'NATIVE')
-      failures.push(
-        ...(await this.reverseMismatches(id, record, ctx, undefined, db))
-      );
+      failures.push(...(await this.reverseMismatches(id, record, ctx, db)));
     const mismatch = await db.oneOrNull<{ count: number }>(
       `select count(*) as count from ${COMPETITION_ENTRIES_TABLE} e left join ${COMPETITION_ENTRY_RUNTIME_TABLE} r on r.entry_id=e.id and r.competition_id=e.competition_id where e.competition_id=:id and e.status='ACTIVE' and (r.entry_id is null or (:requireConsistentAggregate=1 and coalesce(r.real_time_rating,0)<>(select coalesce(sum(value),0) from ${COMPETITION_VOTES_TABLE} where competition_id=e.competition_id and entry_id=e.id)))`,
       { id, requireConsistentAggregate: preservesCompletedSource ? 0 : 1 },
@@ -1074,13 +1080,14 @@ export class CompetitionMigrationService {
     return failures;
   }
   public async verifyNative(id: string) {
-    return this.transaction(id, async (repository, ctx, record) => {
+    return this.transaction(id, async (repository, ctx, record, db) => {
       const status = await repository.status(id, ctx);
       const failures = await this.nativeInvariantFailures(
         id,
         status,
         record,
-        ctx
+        ctx,
+        db
       );
       if (status.storageMode !== 'NATIVE' || status.executionMode !== 'ACTIVE')
         failures.push('NATIVE_OWNER');
@@ -1104,7 +1111,7 @@ export class CompetitionMigrationService {
   ) {
     if (!/^https:\/\/[^\s]+$/.test(evidence) || evidence.length > 2000)
       throw new Error('A reviewed repair evidence URL is required');
-    return this.transaction(id, async (repository, ctx, record) => {
+    return this.transaction(id, async (repository, ctx, record, db) => {
       const status = await repository.status(id, ctx);
       if (
         status.migration?.state !== 'ROLLBACK_REQUIRED' ||
@@ -1119,7 +1126,8 @@ export class CompetitionMigrationService {
         id,
         status,
         record,
-        ctx
+        ctx,
+        db
       );
       if (invariantFailures.length)
         throw new Error(
@@ -1279,7 +1287,7 @@ export class CompetitionMigrationService {
       const failures = this.readinessFailures(status);
       if (!failures.length)
         failures.push(
-          ...(await this.reverseMismatches(id, record, ctx, checkWork, db))
+          ...(await this.reverseMismatches(id, record, ctx, db, checkWork))
         );
       if (!failures.length)
         failures.push(
@@ -1408,24 +1416,19 @@ export class CompetitionMigrationService {
     id: string,
     record: CompetitionRecord,
     ctx: RequestContext,
-    checkWork?: () => void,
-    db = this.supplier()
+    db: SqlExecutor,
+    checkWork?: () => void
   ): Promise<string[]> {
-    const { baseline, categories } = await this.parityComparison(
-      id,
-      record,
-      ctx,
-      db,
-      checkWork
-    );
+    const { baseline, snapshot, relations, categories } =
+      await this.parityComparison(id, record, ctx, db, checkWork);
     const mismatches = (rows: typeof categories) =>
       rows
         .filter((item) => item.baselineHash !== item.candidateHash)
         .map((item) => item.category);
     return [
-      ...mismatches(categories.slice(0, PARITY_FIELDS.length)),
+      ...mismatches(snapshot),
       ...sourceConsistencyFailures(baseline),
-      ...mismatches(categories.slice(PARITY_FIELDS.length))
+      ...mismatches(relations)
     ];
   }
   public async rollback(
@@ -1433,7 +1436,7 @@ export class CompetitionMigrationService {
     operator: MigrationOperator,
     dryRun: boolean
   ) {
-    return this.transaction(id, async (repository, ctx, record) => {
+    return this.transaction(id, async (repository, ctx, record, db) => {
       const status = await repository.status(id, ctx);
       if (status.migration?.state !== 'NATIVE' || !status.readiness)
         throw new Error('Competition is not NATIVE');
@@ -1459,7 +1462,7 @@ export class CompetitionMigrationService {
           repairRequired: false,
           failures: ['REVERSE_RECONCILIATION_INCOMPLETE']
         };
-      const failures = await this.reverseMismatches(id, record, ctx);
+      const failures = await this.reverseMismatches(id, record, ctx, db);
       if (failures.length) {
         if (!dryRun) {
           await repository.update(

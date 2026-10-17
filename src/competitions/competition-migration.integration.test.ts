@@ -65,7 +65,12 @@ import {
   PROFILES_ACTIVITY_LOGS_TABLE,
   WAVES_TABLE
 } from '@/constants';
-import { sqlExecutor } from '@/sql-executor';
+import {
+  sqlExecutor,
+  SqlExecutor,
+  ConnectionWrapper,
+  SqlTransactionOptions
+} from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
@@ -2443,6 +2448,108 @@ describeWithSeed(
         failures: []
       });
       expect((await service.verifyNative(id)).failures).toEqual([]);
+    });
+
+    it.each([0, 30])(
+      'keeps explicit source projections byte-identical to SELECT * with lock %i',
+      async (lock) => {
+        const now = Date.now();
+        await seedSnapshotEntry('projection-negative', now, -4);
+        await seedSnapshotEntry('projection-zero', now, 0);
+        await moveLiveEntryVote(drop.id, 0, -7);
+        await sqlExecutor.execute(
+          `update ${WAVES_TABLE} set time_lock_ms=:lock where id=:waveId`,
+          { lock, waveId: wave.id }
+        );
+        await sqlExecutor.execute(
+          `update ${WAVE_LEADERBOARD_ENTRIES_TABLE} set vote_on_decision_time=123 where wave_id=:waveId`,
+          { waveId: wave.id }
+        );
+        const observed = new Set<string>();
+        const wide = new (class extends SqlExecutor {
+          public execute<T = unknown>(
+            sql: string,
+            params?: Record<string, unknown>,
+            options?: DbQueryOptions
+          ): Promise<T[]> {
+            for (const table of [
+              DROP_RANK_TABLE,
+              WAVE_LEADERBOARD_ENTRIES_TABLE,
+              DROP_VOTER_STATE_TABLE,
+              DROPS_VOTES_CREDIT_SPENDINGS_TABLE
+            ]) {
+              if (sql.includes(` from ${table} where wave_id = :waveId`)) {
+                observed.add(table);
+                sql = sql.replace(/^select .*? from /, 'select * from ');
+                break;
+              }
+            }
+            return sqlExecutor.execute<T>(sql, params, options);
+          }
+          public executeNativeQueriesInTransaction<T>(
+            action: (connection: ConnectionWrapper<unknown>) => Promise<T>,
+            options?: SqlTransactionOptions
+          ): Promise<T> {
+            return sqlExecutor.executeNativeQueriesInTransaction(
+              action,
+              options
+            );
+          }
+        })();
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const ctx = { connection };
+            const record =
+              (await new CompetitionRepository().findCompetitionRecordById(
+                id,
+                ctx
+              ))!;
+            const snapshot = await new LegacyCompetitionBaselineRepository(
+              () => sqlExecutor
+            ).getSnapshot(record, now, ctx, Infinity);
+            const oracle = await new LegacyCompetitionBaselineRepository(
+              () => wide
+            ).getSnapshot(record, now, ctx, Infinity);
+            expect(observed.size).toBe(4);
+            expect(snapshot).toEqual(oracle);
+            expect(competitionPayloadHash(snapshot)).toBe(
+              competitionPayloadHash(oracle)
+            );
+          },
+          { isolationLevel: 'REPEATABLE READ' }
+        );
+      }
+    );
+
+    it('keeps READY comparison accounting identical to the status checkpoint', async () => {
+      const service = new CompetitionMigrationService(
+        () => sqlExecutor,
+        Date.now,
+        0
+      );
+      await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+      await finishBackfill(service);
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const ctx = { connection };
+          const repository = new CompetitionMigrationRepository();
+          await repository.update(id, { state: 'READY' }, ctx);
+          expect(await repository.checkpoint(id, ctx)).toEqual(
+            (await repository.status(id, ctx)).migration
+          );
+        }
+      );
+      const before = (await service.status(id)).migration!;
+      const comparison = await service.compare(id, operator, 1);
+      expect(comparison).toMatchObject({
+        complete: true,
+        mismatches: 0,
+        watermark: before.source_watermark
+      });
+      expect((await service.status(id)).migration).toMatchObject({
+        state: 'SHADOWING',
+        last_comparison_watermark: before.source_watermark
+      });
     });
 
     it.each(['comparison', 'cutover'])(
