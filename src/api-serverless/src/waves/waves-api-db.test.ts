@@ -25,6 +25,20 @@ import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
 import { ApiWaveVisibilityTier } from '../generated/models/ApiWaveVisibilityTier';
 import { ApiWavesPinFilter } from '../generated/models/ApiWavesPinFilter';
 import { WaveOverviewCandidate } from './wave-overview-candidate-cache';
+import {
+  withLegacyCompetitionGetFacade,
+  withoutLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
+
+function itInReadScopes(name: string, action: () => Promise<void>) {
+  it.each([false, true])(`${name} (GET facade: %s)`, async (useFacade) => {
+    await (
+      useFacade
+        ? withLegacyCompetitionGetFacade
+        : withoutLegacyCompetitionGetFacade
+    )(action);
+  });
+}
 
 const repo = new WavesApiDb(() => sqlExecutor);
 const ctx: RequestContext = { timer: undefined };
@@ -990,56 +1004,66 @@ describeWithSeed(
       ]);
     });
 
-    it('counts unread drops only in followed, unmuted subwaves', async () => {
-      const contexts =
-        await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
-          {
-            identityId: author.profile_id!,
-            parentWaveIds: [parentWave.id],
-            eligibleGroups: []
-          },
-          ctx
-        );
+    itInReadScopes(
+      'counts unread drops only in followed, unmuted subwaves',
+      async () => {
+        const contexts =
+          await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
+            {
+              identityId: author.profile_id!,
+              parentWaveIds: [parentWave.id],
+              eligibleGroups: []
+            },
+            ctx
+          );
 
-      // alpha (followed, unmuted) contributes its one unread drop from another
-      // unmuted author; beta (followed, muted) and the unfollowed subwave
-      // contribute nothing.
-      expect(contexts[parentWave.id]).toEqual({
-        followed_subwaves_count: 2,
-        latest_followed_subwave_activity_timestamp: 900,
-        subwave_unread_drops: 1,
-        hidden_followed_subwave_unread_drops: 1,
-        first_hidden_followed_subwave_unread_drop_serial_no: expect.any(Number)
-      });
-    });
+        // alpha (followed, unmuted) contributes its one unread drop from another
+        // unmuted author; beta (followed, muted) and the unfollowed subwave
+        // contribute nothing.
+        expect(contexts[parentWave.id]).toEqual({
+          followed_subwaves_count: 2,
+          latest_followed_subwave_activity_timestamp: 900,
+          subwave_unread_drops: 1,
+          hidden_followed_subwave_unread_drops: 1,
+          first_hidden_followed_subwave_unread_drop_serial_no:
+            expect.any(Number)
+        });
+      }
+    );
 
-    it('does not count unread drops in unfollowed subwaves', async () => {
-      const contexts =
-        await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
-          {
-            identityId: author.profile_id!,
-            parentWaveIds: [unfollowedOnlyParentWave.id],
-            eligibleGroups: []
-          },
-          ctx
-        );
+    itInReadScopes(
+      'does not count unread drops in unfollowed subwaves',
+      async () => {
+        const contexts =
+          await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
+            {
+              identityId: author.profile_id!,
+              parentWaveIds: [unfollowedOnlyParentWave.id],
+              eligibleGroups: []
+            },
+            ctx
+          );
 
-      expect(contexts[unfollowedOnlyParentWave.id]).toBeUndefined();
-    });
+        expect(contexts[unfollowedOnlyParentWave.id]).toBeUndefined();
+      }
+    );
 
-    it('does not surface followed child aggregates for hidden parents', async () => {
-      const contexts =
-        await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
-          {
-            identityId: author.profile_id!,
-            parentWaveIds: [hiddenParentWave.id],
-            eligibleGroups: []
-          },
-          ctx
-        );
+    itInReadScopes(
+      'does not surface followed child aggregates for hidden parents',
+      async () => {
+        const contexts =
+          await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
+            {
+              identityId: author.profile_id!,
+              parentWaveIds: [hiddenParentWave.id],
+              eligibleGroups: []
+            },
+            ctx
+          );
 
-      expect(contexts[hiddenParentWave.id]).toBeUndefined();
-    });
+        expect(contexts[hiddenParentWave.id]).toBeUndefined();
+      }
+    );
   }
 );
 
@@ -1163,25 +1187,28 @@ describeWithSeed(
       ]);
     });
 
-    it('does not surface hidden child unread counts for a muted parent', async () => {
-      const contexts =
-        await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
-          {
-            identityId: author.profile_id!,
-            parentWaveIds: [mutedContainerParentWave.id],
-            eligibleGroups: []
-          },
-          ctx
-        );
+    itInReadScopes(
+      'does not surface hidden child unread counts for a muted parent',
+      async () => {
+        const contexts =
+          await repo.findFollowedSubwaveOverviewContextsByParentWaveId(
+            {
+              identityId: author.profile_id!,
+              parentWaveIds: [mutedContainerParentWave.id],
+              eligibleGroups: []
+            },
+            ctx
+          );
 
-      expect(contexts[mutedContainerParentWave.id]).toEqual({
-        followed_subwaves_count: 1,
-        latest_followed_subwave_activity_timestamp: null,
-        subwave_unread_drops: 0,
-        hidden_followed_subwave_unread_drops: 0,
-        first_hidden_followed_subwave_unread_drop_serial_no: null
-      });
-    });
+        expect(contexts[mutedContainerParentWave.id]).toEqual({
+          followed_subwaves_count: 1,
+          latest_followed_subwave_activity_timestamp: null,
+          subwave_unread_drops: 0,
+          hidden_followed_subwave_unread_drops: 0,
+          first_hidden_followed_subwave_unread_drop_serial_no: null
+        });
+      }
+    );
   }
 );
 
@@ -1790,303 +1817,334 @@ describeWithSeed(
     }
   ],
   () => {
-    it('returns unread counts and first unread serials from one summary read', async () => {
-      await expect(
-        repo.findIdentityUnreadDropsSummaryByWaveId(
+    itInReadScopes(
+      'returns unread counts and first unread serials from one summary read',
+      async () => {
+        await expect(
+          repo.findIdentityUnreadDropsSummaryByWaveId(
+            {
+              identityId: unreadReader.profile_id!,
+              waveIds: [
+                unreadSummaryWave.id,
+                noUnreadSummaryWave.id,
+                mutedUnreadSummaryWave.id,
+                noReaderMetricUnreadSummaryWave.id
+              ]
+            },
+            ctx
+          )
+        ).resolves.toEqual({
+          [unreadSummaryWave.id]: {
+            unread_drops_count: 2,
+            first_unread_drop_serial_no: 22
+          },
+          [noUnreadSummaryWave.id]: {
+            unread_drops_count: 0,
+            first_unread_drop_serial_no: null
+          },
+          [mutedUnreadSummaryWave.id]: {
+            unread_drops_count: 0,
+            first_unread_drop_serial_no: null
+          },
+          [noReaderMetricUnreadSummaryWave.id]: {
+            unread_drops_count: 0,
+            first_unread_drop_serial_no: null
+          }
+        });
+      }
+    );
+
+    itInReadScopes(
+      'does not infer unread history for a non-DM wave without reader metrics',
+      async () => {
+        await expect(
+          repo.findIdentityUnreadDropsSummaryByWaveId(
+            {
+              identityId: unreadReader.profile_id!,
+              waveIds: [noReaderMetricUnreadSummaryWave.id]
+            },
+            ctx
+          )
+        ).resolves.toEqual({
+          [noReaderMetricUnreadSummaryWave.id]: {
+            unread_drops_count: 0,
+            first_unread_drop_serial_no: null
+          }
+        });
+      }
+    );
+
+    itInReadScopes(
+      'counts only drops after an explicitly seeded reader metric',
+      async () => {
+        await repo.insertMissingWaveReaderMetrics(
           {
-            identityId: unreadReader.profile_id!,
-            waveIds: [
-              unreadSummaryWave.id,
-              noUnreadSummaryWave.id,
-              mutedUnreadSummaryWave.id,
-              noReaderMetricUnreadSummaryWave.id
-            ]
+            waveId: seededReaderMetricUnreadSummaryWave.id,
+            readerIds: [unreadReader.profile_id!],
+            latestReadTimestamp: 1399
           },
           ctx
-        )
-      ).resolves.toEqual({
-        [unreadSummaryWave.id]: {
-          unread_drops_count: 2,
-          first_unread_drop_serial_no: 22
-        },
-        [noUnreadSummaryWave.id]: {
-          unread_drops_count: 0,
-          first_unread_drop_serial_no: null
-        },
-        [mutedUnreadSummaryWave.id]: {
-          unread_drops_count: 0,
-          first_unread_drop_serial_no: null
-        },
-        [noReaderMetricUnreadSummaryWave.id]: {
-          unread_drops_count: 0,
-          first_unread_drop_serial_no: null
-        }
-      });
-    });
+        );
 
-    it('does not infer unread history for a non-DM wave without reader metrics', async () => {
-      await expect(
-        repo.findIdentityUnreadDropsSummaryByWaveId(
-          {
-            identityId: unreadReader.profile_id!,
-            waveIds: [noReaderMetricUnreadSummaryWave.id]
-          },
+        await expect(
+          repo.findIdentityUnreadDropsSummaryByWaveId(
+            {
+              identityId: unreadReader.profile_id!,
+              waveIds: [seededReaderMetricUnreadSummaryWave.id]
+            },
+            ctx
+          )
+        ).resolves.toEqual({
+          [seededReaderMetricUnreadSummaryWave.id]: {
+            unread_drops_count: 1,
+            first_unread_drop_serial_no: 29
+          }
+        });
+      }
+    );
+
+    itInReadScopes(
+      'uses serial ordering for per-conversation DM state even when timestamps are identical',
+      async () => {
+        const states = await repo.findDmUnreadConversationStates(
+          { identityId: unreadReader.profile_id! },
           ctx
-        )
-      ).resolves.toEqual({
-        [noReaderMetricUnreadSummaryWave.id]: {
-          unread_drops_count: 0,
-          first_unread_drop_serial_no: null
-        }
-      });
-    });
+        );
 
-    it('counts only drops after an explicitly seeded reader metric', async () => {
-      await repo.insertMissingWaveReaderMetrics(
-        {
-          waveId: seededReaderMetricUnreadSummaryWave.id,
-          readerIds: [unreadReader.profile_id!],
-          latestReadTimestamp: 1399
-        },
-        ctx
-      );
-
-      await expect(
-        repo.findIdentityUnreadDropsSummaryByWaveId(
+        expect(
+          states.sort((left, right) =>
+            left.wave_id.localeCompare(right.wave_id)
+          )
+        ).toEqual([
           {
-            identityId: unreadReader.profile_id!,
-            waveIds: [seededReaderMetricUnreadSummaryWave.id]
-          },
-          ctx
-        )
-      ).resolves.toEqual({
-        [seededReaderMetricUnreadSummaryWave.id]: {
-          unread_drops_count: 1,
-          first_unread_drop_serial_no: 29
-        }
-      });
-    });
-
-    it('uses serial ordering for per-conversation DM state even when timestamps are identical', async () => {
-      const states = await repo.findDmUnreadConversationStates(
-        { identityId: unreadReader.profile_id! },
-        ctx
-      );
-
-      expect(
-        states.sort((left, right) => left.wave_id.localeCompare(right.wave_id))
-      ).toEqual([
-        {
-          profile_id: unreadReader.profile_id!,
-          wave_id: dmUnreadSummaryWave.id,
-          unread_count: 1,
-          first_unread_drop_serial_no: 36,
-          latest_drop_serial_no: 37,
-          latest_read_serial_no: 35,
-          version: 5
-        },
-        {
-          profile_id: unreadReader.profile_id!,
-          wave_id: secondDmUnreadSummaryWave.id,
-          unread_count: 1,
-          first_unread_drop_serial_no: 38,
-          latest_drop_serial_no: 38,
-          latest_read_serial_no: 0,
-          version: 2
-        }
-      ]);
-    });
-
-    it('reads authoritative DM state for multiple recipients in one query', async () => {
-      await repo.recordDirectMessageUnreadDrop(
-        {
-          waveId: dmUnreadSummaryWave.id,
-          recipientIds: [
-            unreadReader.profile_id!,
-            mutedUnreadReader.profile_id!
-          ],
-          dropSerialNo: 35,
-          dropCreatedAt: 1999
-        },
-        ctx
-      );
-
-      const states = await repo.findDmUnreadConversationStatesForIdentities(
-        {
-          identityIds: [
-            unreadReader.profile_id!,
-            mutedUnreadReader.profile_id!
-          ],
-          waveIds: [dmUnreadSummaryWave.id]
-        },
-        ctx
-      );
-
-      expect(states).toHaveLength(2);
-      const compareIds = (left: string, right: string) =>
-        left.localeCompare(right);
-      expect(states.map((state) => state.profile_id).sort(compareIds)).toEqual(
-        [unreadReader.profile_id!, mutedUnreadReader.profile_id!].sort(
-          compareIds
-        )
-      );
-      expect(states).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
             profile_id: unreadReader.profile_id!,
-            wave_id: dmUnreadSummaryWave.id
-          }),
-          expect.objectContaining({
-            profile_id: mutedUnreadReader.profile_id!,
-            wave_id: dmUnreadSummaryWave.id
-          })
-        ])
-      );
-    });
-
-    it('advances DM reads monotonically through the requested serial', async () => {
-      await repo.markDirectMessageReadThroughSerial(
-        {
-          waveId: dmUnreadSummaryWave.id,
-          readerId: unreadReader.profile_id!,
-          readThroughSerialNo: 36
-        },
-        ctx
-      );
-      await repo.markDirectMessageReadThroughSerial(
-        {
-          waveId: dmUnreadSummaryWave.id,
-          readerId: unreadReader.profile_id!,
-          readThroughSerialNo: 35
-        },
-        ctx
-      );
-
-      await expect(
-        repo.findDmUnreadConversationStates(
+            wave_id: dmUnreadSummaryWave.id,
+            unread_count: 1,
+            first_unread_drop_serial_no: 36,
+            latest_drop_serial_no: 37,
+            latest_read_serial_no: 35,
+            version: 5
+          },
           {
-            identityId: unreadReader.profile_id!,
+            profile_id: unreadReader.profile_id!,
+            wave_id: secondDmUnreadSummaryWave.id,
+            unread_count: 1,
+            first_unread_drop_serial_no: 38,
+            latest_drop_serial_no: 38,
+            latest_read_serial_no: 0,
+            version: 2
+          }
+        ]);
+      }
+    );
+
+    itInReadScopes(
+      'reads authoritative DM state for multiple recipients in one query',
+      async () => {
+        await repo.recordDirectMessageUnreadDrop(
+          {
+            waveId: dmUnreadSummaryWave.id,
+            recipientIds: [
+              unreadReader.profile_id!,
+              mutedUnreadReader.profile_id!
+            ],
+            dropSerialNo: 35,
+            dropCreatedAt: 1999
+          },
+          ctx
+        );
+
+        const states = await repo.findDmUnreadConversationStatesForIdentities(
+          {
+            identityIds: [
+              unreadReader.profile_id!,
+              mutedUnreadReader.profile_id!
+            ],
             waveIds: [dmUnreadSummaryWave.id]
           },
           ctx
-        )
-      ).resolves.toEqual([
-        expect.objectContaining({
-          unread_count: 0,
-          first_unread_drop_serial_no: null,
-          latest_read_serial_no: 36,
-          version: 6
-        })
-      ]);
-    });
+        );
 
-    it('does not move a legacy timestamp read backward when serial state is initialized', async () => {
-      await sqlExecutor.execute(
-        `update ${WAVE_READER_METRICS_TABLE}
+        expect(states).toHaveLength(2);
+        const compareIds = (left: string, right: string) =>
+          left.localeCompare(right);
+        expect(
+          states.map((state) => state.profile_id).sort(compareIds)
+        ).toEqual(
+          [unreadReader.profile_id!, mutedUnreadReader.profile_id!].sort(
+            compareIds
+          )
+        );
+        expect(states).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              profile_id: unreadReader.profile_id!,
+              wave_id: dmUnreadSummaryWave.id
+            }),
+            expect.objectContaining({
+              profile_id: mutedUnreadReader.profile_id!,
+              wave_id: dmUnreadSummaryWave.id
+            })
+          ])
+        );
+      }
+    );
+
+    itInReadScopes(
+      'advances DM reads monotonically through the requested serial',
+      async () => {
+        await repo.markDirectMessageReadThroughSerial(
+          {
+            waveId: dmUnreadSummaryWave.id,
+            readerId: unreadReader.profile_id!,
+            readThroughSerialNo: 36
+          },
+          ctx
+        );
+        await repo.markDirectMessageReadThroughSerial(
+          {
+            waveId: dmUnreadSummaryWave.id,
+            readerId: unreadReader.profile_id!,
+            readThroughSerialNo: 35
+          },
+          ctx
+        );
+
+        await expect(
+          repo.findDmUnreadConversationStates(
+            {
+              identityId: unreadReader.profile_id!,
+              waveIds: [dmUnreadSummaryWave.id]
+            },
+            ctx
+          )
+        ).resolves.toEqual([
+          expect.objectContaining({
+            unread_count: 0,
+            first_unread_drop_serial_no: null,
+            latest_read_serial_no: 36,
+            version: 6
+          })
+        ]);
+      }
+    );
+
+    itInReadScopes(
+      'does not move a legacy timestamp read backward when serial state is initialized',
+      async () => {
+        await sqlExecutor.execute(
+          `update ${WAVE_READER_METRICS_TABLE}
          set latest_read_serial_no = null
          where wave_id = :waveId and reader_id = :readerId`,
-        {
-          waveId: dmUnreadSummaryWave.id,
-          readerId: unreadReader.profile_id!
-        }
-      );
-
-      await repo.markDirectMessageReadThroughSerial(
-        {
-          waveId: dmUnreadSummaryWave.id,
-          readerId: unreadReader.profile_id!,
-          readThroughSerialNo: 35
-        },
-        ctx
-      );
-
-      await expect(
-        repo.findDmUnreadConversationStates(
           {
-            identityId: unreadReader.profile_id!,
-            waveIds: [dmUnreadSummaryWave.id]
+            waveId: dmUnreadSummaryWave.id,
+            readerId: unreadReader.profile_id!
+          }
+        );
+
+        await repo.markDirectMessageReadThroughSerial(
+          {
+            waveId: dmUnreadSummaryWave.id,
+            readerId: unreadReader.profile_id!,
+            readThroughSerialNo: 35
           },
           ctx
-        )
-      ).resolves.toEqual([
-        expect.objectContaining({
-          unread_count: 0,
-          latest_read_serial_no: 36,
-          version: 5
-        })
-      ]);
-    });
+        );
 
-    it('versions mute changes and restores the same authoritative unread state', async () => {
-      await repo.setWaveMuted(
-        {
-          waveId: dmUnreadSummaryWave.id,
-          readerId: unreadReader.profile_id!,
-          muted: true
-        },
-        ctx
-      );
-      await expect(
-        repo.findDmUnreadConversationStates(
+        await expect(
+          repo.findDmUnreadConversationStates(
+            {
+              identityId: unreadReader.profile_id!,
+              waveIds: [dmUnreadSummaryWave.id]
+            },
+            ctx
+          )
+        ).resolves.toEqual([
+          expect.objectContaining({
+            unread_count: 0,
+            latest_read_serial_no: 36,
+            version: 5
+          })
+        ]);
+      }
+    );
+
+    itInReadScopes(
+      'versions mute changes and restores the same authoritative unread state',
+      async () => {
+        await repo.setWaveMuted(
           {
-            identityId: unreadReader.profile_id!,
-            waveIds: [dmUnreadSummaryWave.id]
+            waveId: dmUnreadSummaryWave.id,
+            readerId: unreadReader.profile_id!,
+            muted: true
           },
           ctx
-        )
-      ).resolves.toEqual([
-        expect.objectContaining({ unread_count: 0, version: 6 })
-      ]);
+        );
+        await expect(
+          repo.findDmUnreadConversationStates(
+            {
+              identityId: unreadReader.profile_id!,
+              waveIds: [dmUnreadSummaryWave.id]
+            },
+            ctx
+          )
+        ).resolves.toEqual([
+          expect.objectContaining({ unread_count: 0, version: 6 })
+        ]);
 
-      await repo.setWaveMuted(
-        {
-          waveId: dmUnreadSummaryWave.id,
-          readerId: unreadReader.profile_id!,
-          muted: false
-        },
-        ctx
-      );
-      await expect(
-        repo.findDmUnreadConversationStates(
+        await repo.setWaveMuted(
           {
-            identityId: unreadReader.profile_id!,
-            waveIds: [dmUnreadSummaryWave.id]
+            waveId: dmUnreadSummaryWave.id,
+            readerId: unreadReader.profile_id!,
+            muted: false
           },
           ctx
-        )
-      ).resolves.toEqual([
-        expect.objectContaining({ unread_count: 1, version: 7 })
-      ]);
-    });
+        );
+        await expect(
+          repo.findDmUnreadConversationStates(
+            {
+              identityId: unreadReader.profile_id!,
+              waveIds: [dmUnreadSummaryWave.id]
+            },
+            ctx
+          )
+        ).resolves.toEqual([
+          expect.objectContaining({ unread_count: 1, version: 7 })
+        ]);
+      }
+    );
 
-    it('can move the same DM authority backward for mark-unread', async () => {
-      await repo.setDirectMessageUnreadFromSerial(
-        {
-          waveId: dmUnreadSummaryWave.id,
-          readerId: unreadReader.profile_id!,
-          firstUnreadSerialNo: 36,
-          latestReadTimestamp: 1999
-        },
-        ctx
-      );
-
-      await expect(
-        repo.findDmUnreadConversationStates(
+    itInReadScopes(
+      'can move the same DM authority backward for mark-unread',
+      async () => {
+        await repo.setDirectMessageUnreadFromSerial(
           {
-            identityId: unreadReader.profile_id!,
-            waveIds: [dmUnreadSummaryWave.id]
+            waveId: dmUnreadSummaryWave.id,
+            readerId: unreadReader.profile_id!,
+            firstUnreadSerialNo: 36,
+            latestReadTimestamp: 1999
           },
           ctx
-        )
-      ).resolves.toEqual([
-        expect.objectContaining({
-          unread_count: 1,
-          first_unread_drop_serial_no: 36,
-          latest_read_serial_no: 35,
-          version: 6
-        })
-      ]);
-    });
+        );
+
+        await expect(
+          repo.findDmUnreadConversationStates(
+            {
+              identityId: unreadReader.profile_id!,
+              waveIds: [dmUnreadSummaryWave.id]
+            },
+            ctx
+          )
+        ).resolves.toEqual([
+          expect.objectContaining({
+            unread_count: 1,
+            first_unread_drop_serial_no: 36,
+            latest_read_serial_no: 35,
+            version: 6
+          })
+        ]);
+      }
+    );
   }
 );
 
@@ -2362,7 +2420,7 @@ describeWithSeed(
     }
   ],
   () => {
-    it('does not count collapsed replies as unread', async () => {
+    itInReadScopes('does not count collapsed replies as unread', async () => {
       await expect(
         repo.findIdentityUnreadDropsSummaryByWaveId(
           {

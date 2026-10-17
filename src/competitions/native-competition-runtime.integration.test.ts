@@ -33,6 +33,10 @@ import { competitionMainStageRepository } from './competition-main-stage.reposit
 import { identitiesDb } from '@/identities/identities.db';
 import { metricsRecorder } from '@/metrics/MetricsRecorder';
 import { memeCardDropMappingsDb } from '@/minting-claims/meme-card-drop-mappings.db';
+import {
+  withLegacyCompetitionGetFacade,
+  withoutLegacyCompetitionGetFacade
+} from './legacy-competition-get-facade';
 
 const rankId = '10000000-0000-4000-8000-000000000001';
 const approveId = '10000000-0000-4000-8000-000000000002';
@@ -731,193 +735,310 @@ describeWithSeed(
       ).toEqual([{ n: 1 }]);
     });
 
-    it('gates claims, badges, metrics and active TDH by explicit capability within the same wave', async () => {
+    it.each([false, true])(
+      'gates claims, badges, metrics and active TDH by explicit capability within the same wave (GET facade: %s)',
+      async (useFacade) => {
+        const readBadges = useFacade
+          ? withLegacyCompetitionGetFacade
+          : withoutLegacyCompetitionGetFacade;
+        await sqlExecutor.execute(
+          `insert into ${COMPETITION_CAPABILITIES_TABLE} (capability, competition_id, wave_id, assigned_at) values ('MAIN_STAGE', :rankId, 'shared-hub', 0)`,
+          { rankId }
+        );
+        await vote(rankId, rankEntry, 80, 100);
+        await vote(approveId, approveEntry, 90, 100);
+        expect(
+          await competitionMainStageRepository.totalActiveVotes(null, {})
+        ).toBe(80);
+        expect(
+          await readBadges(() =>
+            identitiesDb.getActiveMainStageDropIds(['artist'], {})
+          )
+        ).toEqual({ artist: ['rank-drop', 'rank-drop-2'] });
+        await repository.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const ctx = { connection };
+            await metricsRecorder.recordNativeCompetitionSubmission(
+              { competitionId: rankId },
+              ctx
+            );
+            await metricsRecorder.recordNativeCompetitionSubmission(
+              { competitionId: approveId },
+              ctx
+            );
+            await metricsRecorder.recordNativeCompetitionVote(
+              { competitionId: rankId, voterId: 'voter', voteChange: 80 },
+              ctx
+            );
+            await metricsRecorder.recordNativeCompetitionVote(
+              { competitionId: approveId, voterId: 'voter', voteChange: 90 },
+              ctx
+            );
+          }
+        );
+        expect(
+          await sqlExecutor.execute(
+            `select metric, event_count, value_sum from ${METRIC_ROLLUP_HOUR_TABLE} order by metric`
+          )
+        ).toEqual([
+          { metric: 'MAIN_STAGE_SUBMISSION', event_count: 1, value_sum: 1 },
+          { metric: 'MAIN_STAGE_VOTE', event_count: 1, value_sum: 80 }
+        ]);
+        await service.processCompetition(rankId, 1001);
+        await service.processCompetition(approveId, 1001);
+        expect(
+          await competitionMainStageRepository.totalActiveVotes(null, {})
+        ).toBe(0);
+        expect(
+          await readBadges(() =>
+            identitiesDb.getMainStageWinnerDropIds(['artist'], {})
+          )
+        ).toEqual({ artist: ['rank-drop'] });
+        const newsletter = new NewsletterDb(() => sqlExecutor);
+        const newsletterWindow = { start: 0, end: 2000, scheduled: false };
+        expect(
+          (await newsletter.winners(newsletterWindow, {})).map((winner) => [
+            winner.competition_id,
+            winner.entry_id
+          ])
+        ).toEqual([[rankId, rankEntry]]);
+        const decisions = await sqlExecutor.execute<{
+          id: string;
+          competition_id: string;
+        }>(`select id, competition_id from ${COMPETITION_DECISIONS_TABLE}`);
+        const decisionId = decisions.find(
+          (row) => row.competition_id === rankId
+        )!.id;
+        const wrongDecisionId = decisions.find(
+          (row) => row.competition_id === approveId
+        )!.id;
+        expect(
+          await competitionEventRepository.getPrivilegedWinners(
+            approveId,
+            wrongDecisionId,
+            {}
+          )
+        ).toEqual([]);
+        await repository.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const ctx = { connection };
+            const context = {
+              competition_id: rankId,
+              competition_entry_id: rankEntry,
+              decision_id: decisionId
+            };
+            await competitionEventRepository.assertNativeClaim(
+              context,
+              'rank-drop',
+              ctx
+            );
+            await competitionEventRepository.recordNativeClaim(
+              context,
+              'rank-drop',
+              ctx
+            );
+            await competitionEventRepository.recordNativeClaim(
+              context,
+              'rank-drop',
+              ctx
+            );
+            await memeCardDropMappingsDb.setMemeCardIdForDrop(
+              'rank-drop',
+              800,
+              'unrelated-legacy-wave',
+              ctx
+            );
+            expect(
+              await memeCardDropMappingsDb.isMainStageWinnerDrop(
+                'approve-drop',
+                'unrelated-legacy-wave',
+                ctx
+              )
+            ).toBe(false);
+          }
+        );
+        expect(
+          await memeCardDropMappingsDb.findByMemeCardId(
+            800,
+            'unrelated-legacy-wave',
+            {}
+          )
+        ).toEqual({ drop_id: 'rank-drop', meme_card_id: 800 });
+        expect(
+          await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
+            rankId,
+            [rankEntry, secondRankEntry],
+            {}
+          )
+        ).toEqual({ [rankEntry]: 800 });
+        expect(
+          await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
+            approveId,
+            [rankEntry, approveEntry],
+            {}
+          )
+        ).toEqual({});
+        await expect(
+          repository.executeNativeQueriesInTransaction((connection) =>
+            competitionEventRepository.assertNativeClaim(
+              {
+                competition_id: approveId,
+                competition_entry_id: approveEntry,
+                decision_id: wrongDecisionId
+              },
+              'approve-drop',
+              { connection }
+            )
+          )
+        ).rejects.toThrow('explicitly designated');
+        await sqlExecutor.execute(
+          `update ${WAVES_TABLE} set parent_wave_id = 'parent-hub' where id = 'shared-hub'`
+        );
+        await sqlExecutor.execute(
+          `update ${WAVES_TABLE} set visibility_group_id = 'private' where id = 'parent-hub'`
+        );
+        expect(
+          await competitionEventRepository.getPrivilegedWinners(
+            rankId,
+            decisionId,
+            {}
+          )
+        ).toEqual([]);
+        expect(
+          await memeCardDropMappingsDb.findByMemeCardId(800, null, {})
+        ).toBeNull();
+        expect(
+          await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
+            rankId,
+            [rankEntry],
+            {}
+          )
+        ).toEqual({});
+        expect(
+          await readBadges(() =>
+            identitiesDb.getMainStageWinnerDropIds(['artist'], {})
+          )
+        ).toEqual({});
+        expect(await newsletter.winners(newsletterWindow, {})).toEqual([]);
+        await sqlExecutor.execute(
+          `update ${WAVES_TABLE} set visibility_group_id = null where id = 'parent-hub'`
+        );
+        await sqlExecutor.execute(
+          `delete from ${COMPETITION_CAPABILITIES_TABLE} where competition_id = :rankId`,
+          { rankId }
+        );
+        expect(
+          await readBadges(() =>
+            identitiesDb.getMainStageWinnerDropIds(['artist'], {})
+          )
+        ).toEqual({});
+        expect(
+          await memeCardDropMappingsDb.findByMemeCardId(
+            800,
+            'unrelated-legacy-wave',
+            {}
+          )
+        ).toBeNull();
+      }
+    );
+
+    it('attributes native badges to the submitter and excludes inactive or hidden submissions', async () => {
       await sqlExecutor.execute(
         `insert into ${COMPETITION_CAPABILITIES_TABLE} (capability, competition_id, wave_id, assigned_at) values ('MAIN_STAGE', :rankId, 'shared-hub', 0)`,
         { rankId }
       );
-      await vote(rankId, rankEntry, 80, 100);
-      await vote(approveId, approveEntry, 90, 100);
-      expect(
-        await competitionMainStageRepository.totalActiveVotes(null, {})
-      ).toBe(80);
-      expect(
-        await identitiesDb.getActiveMainStageDropIds(['artist'], {})
-      ).toEqual({ artist: ['rank-drop', 'rank-drop-2'] });
-      await repository.executeNativeQueriesInTransaction(async (connection) => {
-        const ctx = { connection };
-        await metricsRecorder.recordNativeCompetitionSubmission(
-          { competitionId: rankId },
-          ctx
-        );
-        await metricsRecorder.recordNativeCompetitionSubmission(
-          { competitionId: approveId },
-          ctx
-        );
-        await metricsRecorder.recordNativeCompetitionVote(
-          { competitionId: rankId, voterId: 'voter', voteChange: 80 },
-          ctx
-        );
-        await metricsRecorder.recordNativeCompetitionVote(
-          { competitionId: approveId, voterId: 'voter', voteChange: 90 },
-          ctx
-        );
-      });
-      expect(
-        await sqlExecutor.execute(
-          `select metric, event_count, value_sum from ${METRIC_ROLLUP_HOUR_TABLE} order by metric`
-        )
-      ).toEqual([
-        { metric: 'MAIN_STAGE_SUBMISSION', event_count: 1, value_sum: 1 },
-        { metric: 'MAIN_STAGE_VOTE', event_count: 1, value_sum: 80 }
-      ]);
-      await service.processCompetition(rankId, 1001);
-      await service.processCompetition(approveId, 1001);
-      expect(
-        await competitionMainStageRepository.totalActiveVotes(null, {})
-      ).toBe(0);
-      expect(
-        await identitiesDb.getMainStageWinnerDropIds(['artist'], {})
-      ).toEqual({ artist: ['rank-drop'] });
-      const newsletter = new NewsletterDb(() => sqlExecutor);
-      const newsletterWindow = { start: 0, end: 2000, scheduled: false };
-      expect(
-        (await newsletter.winners(newsletterWindow, {})).map((winner) => [
-          winner.competition_id,
-          winner.entry_id
-        ])
-      ).toEqual([[rankId, rankEntry]]);
-      const decisions = await sqlExecutor.execute<{
-        id: string;
-        competition_id: string;
-      }>(`select id, competition_id from ${COMPETITION_DECISIONS_TABLE}`);
-      const decisionId = decisions.find(
-        (row) => row.competition_id === rankId
-      )!.id;
-      const wrongDecisionId = decisions.find(
-        (row) => row.competition_id === approveId
-      )!.id;
-      expect(
-        await competitionEventRepository.getPrivilegedWinners(
-          approveId,
-          wrongDecisionId,
-          {}
-        )
-      ).toEqual([]);
-      await repository.executeNativeQueriesInTransaction(async (connection) => {
-        const ctx = { connection };
-        const context = {
-          competition_id: rankId,
-          competition_entry_id: rankEntry,
-          decision_id: decisionId
-        };
-        await competitionEventRepository.assertNativeClaim(
-          context,
-          'rank-drop',
-          ctx
-        );
-        await competitionEventRepository.recordNativeClaim(
-          context,
-          'rank-drop',
-          ctx
-        );
-        await competitionEventRepository.recordNativeClaim(
-          context,
-          'rank-drop',
-          ctx
-        );
-        await memeCardDropMappingsDb.setMemeCardIdForDrop(
-          'rank-drop',
-          800,
-          'unrelated-legacy-wave',
-          ctx
-        );
+      await sqlExecutor.execute(
+        `update ${DROPS_TABLE} set author_id = 'different-author'`
+      );
+      for (const read of [
+        withoutLegacyCompetitionGetFacade,
+        withLegacyCompetitionGetFacade
+      ]) {
         expect(
-          await memeCardDropMappingsDb.isMainStageWinnerDrop(
-            'approve-drop',
-            'unrelated-legacy-wave',
-            ctx
+          await read(() =>
+            identitiesDb.getActiveMainStageDropIds(['artist'], {})
           )
-        ).toBe(false);
-      });
-      expect(
-        await memeCardDropMappingsDb.findByMemeCardId(
-          800,
-          'unrelated-legacy-wave',
-          {}
-        )
-      ).toEqual({ drop_id: 'rank-drop', meme_card_id: 800 });
-      expect(
-        await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
-          rankId,
-          [rankEntry, secondRankEntry],
-          {}
-        )
-      ).toEqual({ [rankEntry]: 800 });
-      expect(
-        await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
-          approveId,
-          [rankEntry, approveEntry],
-          {}
-        )
-      ).toEqual({});
-      await expect(
-        repository.executeNativeQueriesInTransaction((connection) =>
-          competitionEventRepository.assertNativeClaim(
-            {
-              competition_id: approveId,
-              competition_entry_id: approveEntry,
-              decision_id: wrongDecisionId
-            },
-            'approve-drop',
-            { connection }
+        ).toEqual({ artist: ['rank-drop', 'rank-drop-2'] });
+        expect(
+          await read(() =>
+            identitiesDb.getActiveMainStageDropIds(['different-author'], {})
           )
-        )
-      ).rejects.toThrow('explicitly designated');
+        ).toEqual({});
+      }
       await sqlExecutor.execute(
-        `update ${WAVES_TABLE} set parent_wave_id = 'parent-hub' where id = 'shared-hub'`
-      );
-      await sqlExecutor.execute(
-        `update ${WAVES_TABLE} set visibility_group_id = 'private' where id = 'parent-hub'`
+        `update ${COMPETITION_ENTRIES_TABLE} set status = 'WITHDRAWN' where id = :rankEntry`,
+        { rankEntry }
       );
       expect(
-        await competitionEventRepository.getPrivilegedWinners(
-          rankId,
-          decisionId,
-          {}
+        await withLegacyCompetitionGetFacade(() =>
+          identitiesDb.getActiveMainStageDropIds(['artist'], {})
         )
-      ).toEqual([]);
-      expect(
-        await memeCardDropMappingsDb.findByMemeCardId(800, null, {})
-      ).toBeNull();
-      expect(
-        await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
-          rankId,
-          [rankEntry],
-          {}
-        )
-      ).toEqual({});
-      expect(
-        await identitiesDb.getMainStageWinnerDropIds(['artist'], {})
-      ).toEqual({});
-      expect(await newsletter.winners(newsletterWindow, {})).toEqual([]);
+      ).toEqual({ artist: ['rank-drop-2'] });
       await sqlExecutor.execute(
-        `update ${WAVES_TABLE} set visibility_group_id = null where id = 'parent-hub'`
-      );
-      await sqlExecutor.execute(
-        `delete from ${COMPETITION_CAPABILITIES_TABLE} where competition_id = :rankId`,
+        `update ${COMPETITIONS_TABLE} set lifecycle = 'ENDED' where id = :rankId`,
         { rankId }
       );
       expect(
-        await identitiesDb.getMainStageWinnerDropIds(['artist'], {})
-      ).toEqual({});
-      expect(
-        await memeCardDropMappingsDb.findByMemeCardId(
-          800,
-          'unrelated-legacy-wave',
-          {}
+        await withLegacyCompetitionGetFacade(() =>
+          identitiesDb.getActiveMainStageDropIds(['artist'], {})
         )
-      ).toBeNull();
+      ).toEqual({});
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set lifecycle = 'PUBLISHED' where id = :rankId`,
+        { rankId }
+      );
+      await sqlExecutor.execute(
+        `update ${WAVES_TABLE} set visibility_group_id = 'private' where id = 'shared-hub'`
+      );
+      expect(
+        await withLegacyCompetitionGetFacade(() =>
+          identitiesDb.getActiveMainStageDropIds(['artist'], {})
+        )
+      ).toEqual({});
+    });
+
+    it('preserves derived legacy badge types after native ownership without changing non-GET reads', async () => {
+      const previousMainStageWave = process.env.MAIN_STAGE_WAVE_ID;
+      process.env.MAIN_STAGE_WAVE_ID = 'shared-hub';
+      try {
+        await sqlExecutor.execute(
+          `update ${COMPETITIONS_TABLE} set legacy_wave_id = wave_id where id = :rankId`,
+          { rankId }
+        );
+        await sqlExecutor.execute(
+          `update ${COMPETITION_ENTRIES_TABLE} set status = 'WINNER' where id = :rankEntry`,
+          { rankEntry }
+        );
+        expect(
+          await identitiesDb.getActiveMainStageDropIds(['artist'], {})
+        ).toEqual({});
+        expect(
+          await identitiesDb.getMainStageWinnerDropIds(['artist'], {})
+        ).toEqual({});
+        expect(
+          await withLegacyCompetitionGetFacade(() =>
+            identitiesDb.getActiveMainStageDropIds(['artist'], {})
+          )
+        ).toEqual({ artist: ['rank-drop-2'] });
+        expect(
+          await withLegacyCompetitionGetFacade(() =>
+            identitiesDb.getMainStageWinnerDropIds(['artist'], {})
+          )
+        ).toEqual({ artist: ['rank-drop'] });
+        await sqlExecutor.execute(
+          `update ${COMPETITION_ENTRIES_TABLE} set status = 'WITHDRAWN' where id = :secondRankEntry`,
+          { secondRankEntry }
+        );
+        expect(
+          await withLegacyCompetitionGetFacade(() =>
+            identitiesDb.getActiveMainStageDropIds(['artist'], {})
+          )
+        ).toEqual({});
+      } finally {
+        if (previousMainStageWave === undefined)
+          delete process.env.MAIN_STAGE_WAVE_ID;
+        else process.env.MAIN_STAGE_WAVE_ID = previousMainStageWave;
+      }
     });
 
     it('commits durable effect receipts once and rolls failed effects back', async () => {
