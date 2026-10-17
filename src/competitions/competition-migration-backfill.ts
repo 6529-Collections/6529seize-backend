@@ -1,4 +1,5 @@
 import { readSequentially } from './competition-read-sequence';
+import { collections } from '@/collections';
 import { CompetitionMigrationContentRepository } from './competition-migration-content.repository';
 import { isMigrationContentTable } from '@/competitions/competition-migration-capture';
 import {
@@ -54,6 +55,7 @@ import { CompetitionMigrationChangeEntity } from '@/entities/ICompetitionMigrati
 import { parseMigrationChangeImage } from './competition-migration-journal';
 
 const VOTER_COPY_QUERY_LIMIT = 25;
+const LEADERBOARD_CLEANUP_QUERY_LIMIT = 25;
 
 /** Bounded batches; the checkpoint is committed with the copied records. */
 export class CompetitionMigrationBackfill {
@@ -1026,6 +1028,25 @@ export class CompetitionMigrationBackfill {
       // uses active entries and may expose a separately locked snapshot.
       // Refresh both projections before acknowledging this journal window.
       await this.refreshEntryRanks(record, rows, ctx);
+      // A legacy decision can turn a previously copied active entry into a
+      // winner. Upserting only current active rows would leave its old cached
+      // leaderboard row behind. Remove that projection, retaining the entry,
+      // winner, votes and history in this same checkpoint transaction.
+      await readSequentially(
+        collections.chunkArray(
+          rows
+            .filter((row) => row.drop_type === DropType.WINNER)
+            .map((row) => legacyCompetitionEntryId(record.id, row.drop_id)),
+          LEADERBOARD_CLEANUP_QUERY_LIMIT
+        ),
+        async (entries) => {
+          await this.db.execute(
+            `delete from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id and entry_id in (:entries)`,
+            { id: record.id, entries },
+            { wrappedConnection: ctx.connection }
+          );
+        }
+      );
       await this.upsert(
         COMPETITION_LEADERBOARD_ENTRIES_TABLE,
         rows
