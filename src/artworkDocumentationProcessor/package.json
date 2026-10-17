@@ -17,7 +17,7 @@
     "@contentauth/c2pa-node": "file:../../vendor/c2pa-node/c2pa-node-0.9.5-6529.1.tgz",
     "esbuild": "^0.28.1",
     "mp4box": "2.3.0",
-    "sharp": "0.35.4"
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.110"
