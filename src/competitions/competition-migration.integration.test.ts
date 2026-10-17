@@ -3134,10 +3134,19 @@ describeWithSeed(
         await expect(service.backfill(id, operator)).rejects.toThrow(
           'Migration requires adapter review'
         );
-        if (state === 'SHADOWING')
+        if (state === 'SHADOWING') {
           await expect(service.catchUp(id, operator)).rejects.toThrow(
             'Migration requires adapter review'
           );
+          const baseline = jest.spyOn(
+            LegacyCompetitionBaselineRepository.prototype,
+            'getSnapshot'
+          );
+          await expect(service.compare(id, operator, 1)).rejects.toThrow(
+            'Migration requires adapter review'
+          );
+          expect(baseline).not.toHaveBeenCalled();
+        }
         expect((await service.status(id)).migration).toEqual(before);
       }
     );

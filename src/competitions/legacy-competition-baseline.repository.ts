@@ -44,10 +44,10 @@ import { CompetitionRowLimitError } from '@/competitions/competition-page';
 // Closed set of source queries: callers cannot supply SQL fragments.
 const LEGACY_SOURCE_QUERIES = {
   drops: `select id, author_id, created_at, drop_type from ${DROPS_TABLE} where wave_id = :waveId and drop_type in ('PARTICIPATORY', 'WINNER') limit :limit`,
-  ratings: `select * from ${DROP_RANK_TABLE} where wave_id = :waveId  limit :limit`,
-  locked: `select * from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where wave_id = :waveId  limit :limit`,
-  votes: `select * from ${DROP_VOTER_STATE_TABLE} where wave_id = :waveId  limit :limit`,
-  spent: `select * from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where wave_id = :waveId  limit :limit`,
+  ratings: `select drop_id,vote,last_increased from ${DROP_RANK_TABLE} where wave_id = :waveId  limit :limit`,
+  locked: `select drop_id,vote,timestamp from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where wave_id = :waveId  limit :limit`,
+  votes: `select drop_id,voter_id,votes from ${DROP_VOTER_STATE_TABLE} where wave_id = :waveId  limit :limit`,
+  spent: `select drop_id,voter_id,credit_spent from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where wave_id = :waveId  limit :limit`,
   decisions: `select decision_time from ${WAVES_DECISIONS_TABLE} where wave_id = :waveId order by decision_time asc limit :limit`,
   winners: `select drop_id, decision_time, ranking, final_vote from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id = :waveId order by decision_time asc, ranking asc, drop_id asc limit :limit`,
   outcomes: `select * from ${WAVE_OUTCOMES_TABLE} where wave_id = :waveId order by wave_outcome_position asc limit :limit`,
