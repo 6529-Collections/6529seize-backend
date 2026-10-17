@@ -47,6 +47,15 @@ after the refresh commits. Independent comparison and the final ownership lock
 remain mandatory. Deploy only `competitionMigrationLoop` for this correction;
 existing legacy-owned checkpoints remain resumable without a schema change.
 
+The final replay batch classifies the complete window with an index-only row
+count and a payload-free selection of at most 26 non-directly-replayed keys.
+Only sets of at most 25 keys receive JSON and parent-deletion checks, including
+every possible parent in that same bounded set. Larger sets retain the full
+refresh. This bounds the expensive cleanup classification without changing its
+ownership, checkpoint or publication rules. The one-second statement and
+five-second transaction limits still apply; a terminal timeout requires an owned
+stop and investigation rather than repeated invocations.
+
 For a legacy-owned copy, earlier deployed migrators understand the same stage,
 cursor, completed-stage and watermark fields. Their leaderboard refresh does not
 repair live entry ranks, so a binary rollback can leave entry parity mismatches;
