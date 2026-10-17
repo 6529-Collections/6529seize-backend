@@ -1,9 +1,10 @@
 import { CompetitionMigrationBackfill } from './competition-migration-backfill';
 import {
   CompetitionMigrationRepository,
-  MIGRATION_AUDIT_INSERT_SQL
+  MIGRATION_AUDIT_INSERT_SQL,
+  MIGRATION_CHECKPOINT_SELECT_SQL
 } from './competition-migration.repository';
-import { migrationCopyCheckpoint } from './competition-migration-audit-recovery';
+import { migrationCopyCheckpoint } from './competition-migration-copy-recovery';
 import type { DbQueryOptions } from '@/db-query.options';
 import { performance } from 'node:perf_hooks';
 import { SqlExecutionBudgetExceededError } from '@/db/sql-execution-budget';
@@ -32,6 +33,8 @@ import {
   COMPETITION_LEADERBOARD_ENTRIES_TABLE,
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
   COMPETITION_VOTES_TABLE,
+  COMPETITION_WINNER_VOTES_TABLE,
+  WINNER_DROP_VOTER_VOTES_TABLE,
   COMPETITION_DECISIONS_TABLE,
   COMPETITION_DECISION_WINNERS_TABLE,
   WAVES_DECISIONS_TABLE,
@@ -1773,6 +1776,311 @@ describeWithSeed(
       );
     });
 
+    it.each([
+      ['backfill', 'checkpoint'],
+      ['backfill', 'claim'],
+      ['backfill', 'data'],
+      ['backfill', 'update'],
+      ['backfill', 'audit'],
+      ['catch-up', 'checkpoint'],
+      ['catch-up', 'claim'],
+      ['catch-up', 'data'],
+      ['catch-up', 'update'],
+      ['catch-up', 'audit'],
+      ['archive', 'data']
+    ] as const)(
+      'recovers one physically rolled-back %s timeout at %s',
+      async (operation, point) => {
+        let attempts = 0;
+        const wait = jest.fn(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await sqlExecutor.executeNativeQueriesInTransaction(
+            async (connection) => {
+              await new CompetitionRepository().lockLegacyExecutionOwner(
+                wave.id,
+                { connection }
+              );
+            },
+            {
+              isolationLevel: 'REPEATABLE READ',
+              executionBudget: {
+                deadlineMonotonicMillis: performance.now() + 2000,
+                maxStatementMillis: 500,
+                finalizationReserveMillis: 250,
+                lockWaitSeconds: 1
+              }
+            }
+          );
+          expect(
+            migrationCopyCheckpoint((await service.status(id)).migration!)
+          ).toBe(migrationCopyCheckpoint(before));
+          expect(
+            await sqlExecutor.execute(
+              `select * from ${operation === 'archive' ? COMPETITION_WINNER_VOTES_TABLE : COMPETITION_VOTES_TABLE} where competition_id=:id`,
+              { id }
+            )
+          ).toEqual(beforeVotes);
+        });
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          Date.now,
+          0,
+          'production',
+          wait
+        );
+        if (operation === 'archive') {
+          await sqlExecutor.execute(
+            `insert into ${WAVES_DECISIONS_TABLE} (wave_id,decision_time) values (:waveId,100)`,
+            { waveId: wave.id }
+          );
+          await sqlExecutor.execute(
+            `insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (wave_id,decision_time,drop_id,ranking,final_vote,prizes) values (:waveId,100,:dropId,1,7,'[]')`,
+            { waveId: wave.id, dropId: drop.id }
+          );
+          await sqlExecutor.execute(
+            `insert into ${WINNER_DROP_VOTER_VOTES_TABLE} (wave_id,drop_id,voter_id,votes) values (:waveId,:dropId,'fixture-voter',7)`,
+            { waveId: wave.id, dropId: drop.id }
+          );
+        }
+        await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+        if (operation === 'catch-up') {
+          await finishBackfill(service);
+          await moveLiveEntryVote(drop.id, 8, 1);
+        } else {
+          while (
+            (await service.status(id)).migration?.stage !==
+            (operation === 'archive' ? 'ARCHIVE_VOTERS' : 'VOTERS')
+          )
+            await service.backfill(id, operator, 10);
+        }
+        const before = (await service.status(id)).migration!;
+        const beforeVotes = await sqlExecutor.execute(
+          `select * from ${operation === 'archive' ? COMPETITION_WINNER_VOTES_TABLE : COMPETITION_VOTES_TABLE} where competition_id=:id`,
+          { id }
+        );
+        const auditBefore = await sqlExecutor.oneOrNull<{ count: number }>(
+          `select count(*) count from ${COMPETITION_MIGRATION_AUDIT_TABLE} where competition_id=:id`,
+          { id }
+        );
+        const execute = sqlExecutor.execute.bind(sqlExecutor);
+        const spy = jest
+          .spyOn(sqlExecutor, 'execute')
+          .mockImplementation(
+            async <T = unknown>(
+              sql: string,
+              params?: Record<string, unknown>,
+              options?: DbQueryOptions
+            ): Promise<T[]> => {
+              const matches =
+                point === 'checkpoint'
+                  ? sql === MIGRATION_CHECKPOINT_SELECT_SQL
+                  : point === 'claim'
+                    ? sql.startsWith(
+                        `update ${COMPETITION_MIGRATIONS_TABLE} set`
+                      ) && params?.next_batch_at !== undefined
+                    : point === 'update'
+                      ? sql.startsWith(
+                          `update ${COMPETITION_MIGRATIONS_TABLE} set`
+                        ) &&
+                        (params?.stage !== undefined ||
+                          params?.target_watermark !== undefined)
+                      : point === 'audit'
+                        ? sql === MIGRATION_AUDIT_INSERT_SQL
+                        : new RegExp(
+                            `^\\s*insert\\s+into\\s+${operation === 'archive' ? COMPETITION_WINNER_VOTES_TABLE : COMPETITION_VOTES_TABLE}\\b`,
+                            'i'
+                          ).test(sql);
+              if (matches) {
+                attempts++;
+                if (attempts === 1) {
+                  if (point === 'checkpoint')
+                    return execute<T>(
+                      sql.replace(
+                        'select *',
+                        'select *, SLEEP(2) as fault_only'
+                      ),
+                      params,
+                      options
+                    );
+                  await execute<T>(sql, params, options);
+                  await execute('SELECT SLEEP(2)', {}, options);
+                }
+              }
+              return execute<T>(sql, params, options);
+            }
+          );
+        if (operation === 'catch-up') await service.catchUp(id, operator, 25);
+        else await service.backfill(id, operator, 25);
+        spy.mockRestore();
+        expect(wait).toHaveBeenCalledTimes(1);
+        expect(attempts).toBeGreaterThanOrEqual(2);
+        expect(
+          migrationCopyCheckpoint((await service.status(id)).migration!)
+        ).not.toBe(migrationCopyCheckpoint(before));
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) count from ${COMPETITION_MIGRATION_AUDIT_TABLE} where competition_id=:id`,
+            { id }
+          )
+        ).toEqual({ count: Number(auditBefore!.count) + 1 });
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select value from ${operation === 'archive' ? COMPETITION_WINNER_VOTES_TABLE : COMPETITION_VOTES_TABLE} where competition_id=:id`,
+            { id }
+          )
+        ).toEqual({ value: operation === 'catch-up' ? 8 : 7 });
+      }
+    );
+
+    it.each(['stop', 'owner', 'claim'] as const)(
+      'rejects %s drift before replaying a rolled-back catch-up',
+      async (scenario) => {
+        const wait = jest.fn(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          if (scenario === 'stop')
+            await service.recordException(id, operator, 'COPY_RETRY_TEST');
+          if (scenario === 'owner')
+            await sqlExecutor.execute(
+              `update ${COMPETITIONS_TABLE} set storage_mode='NATIVE' where id=:id`,
+              { id }
+            );
+          if (scenario === 'claim')
+            await sqlExecutor.executeNativeQueriesInTransaction(
+              async (connection) => {
+                await new CompetitionRepository().lockLegacyExecutionOwner(
+                  wave.id,
+                  { connection }
+                );
+                await new CompetitionMigrationRepository().update(
+                  id,
+                  { next_batch_at: Date.now() + 60000 },
+                  { connection }
+                );
+              }
+            );
+        });
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          Date.now,
+          0,
+          'production',
+          wait
+        );
+        await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+        await finishBackfill(service);
+        await moveLiveEntryVote(drop.id, 8, 1);
+        const before = (await service.status(id)).migration!;
+        const execute = sqlExecutor.execute.bind(sqlExecutor);
+        let attempts = 0;
+        const spy = jest
+          .spyOn(sqlExecutor, 'execute')
+          .mockImplementation(
+            async <T = unknown>(
+              sql: string,
+              params?: Record<string, unknown>,
+              options?: DbQueryOptions
+            ): Promise<T[]> => {
+              if (/^\s*insert\s+into\s+competition_votes\b/i.test(sql)) {
+                attempts++;
+                await execute(sql, params, options);
+                await execute('SELECT SLEEP(2)', {}, options);
+              }
+              return execute<T>(sql, params, options);
+            }
+          );
+        await expect(service.catchUp(id, operator, 25)).rejects.toThrow(
+          scenario === 'stop'
+            ? 'COPY_RETRY_TEST'
+            : 'same legacy active checkpoint'
+        );
+        spy.mockRestore();
+        expect(attempts).toBe(1);
+        expect(wait).toHaveBeenCalledTimes(1);
+        const after = (await service.status(id)).migration!;
+        expect(after.target_watermark).toBe(before.target_watermark);
+        expect(after.applied_watermark).toBe(before.applied_watermark);
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select value from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+            { id }
+          )
+        ).toEqual({ value: 7 });
+      }
+    );
+
+    it.each(['stop', 'owner', 'repeat', 'peer'] as const)(
+      'honors %s changes after a physical initial checkpoint-read timeout',
+      async (scenario) => {
+        const wait = jest.fn(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          if (scenario === 'stop')
+            await service.recordException(id, operator, 'COPY_RETRY_TEST');
+          else if (scenario === 'owner')
+            await sqlExecutor.execute(
+              `update ${COMPETITIONS_TABLE} set storage_mode='NATIVE' where id=:id`,
+              { id }
+            );
+          if (scenario === 'peer') await service.backfill(id, operator, 25);
+        });
+        const service = new CompetitionMigrationService(
+          () => sqlExecutor,
+          Date.now,
+          0,
+          'production',
+          wait
+        );
+        await service.enroll(id, operator, 'COMPLETED_INTERNAL');
+        const before = (await service.status(id)).migration!;
+        const execute = sqlExecutor.execute.bind(sqlExecutor);
+        let attempts = 0;
+        const spy = jest
+          .spyOn(sqlExecutor, 'execute')
+          .mockImplementation(
+            <T = unknown>(
+              sql: string,
+              params?: Record<string, unknown>,
+              options?: DbQueryOptions
+            ): Promise<T[]> => {
+              if (
+                sql === MIGRATION_CHECKPOINT_SELECT_SQL &&
+                (attempts++ === 0 || scenario === 'repeat')
+              )
+                return execute<T>(
+                  sql.replace('select *', 'select *, SLEEP(2) as fault_only'),
+                  params,
+                  options
+                );
+              return execute<T>(sql, params, options);
+            }
+          );
+        if (scenario === 'peer') await service.backfill(id, operator, 25);
+        else
+          await expect(service.backfill(id, operator, 25)).rejects.toThrow(
+            scenario === 'stop'
+              ? 'COPY_RETRY_TEST'
+              : scenario === 'repeat'
+                ? 'SQL_BUDGET_EXCEEDED'
+                : 'same legacy active checkpoint'
+          );
+        spy.mockRestore();
+        expect(wait).toHaveBeenCalledTimes(1);
+        if (scenario === 'peer') {
+          expect(
+            (await service.status(id)).migration?.completed_stages
+          ).toEqual(expect.arrayContaining(['CONFIGURATION', 'OUTCOMES']));
+          expect(
+            await sqlExecutor.oneOrNull(
+              `select count(*) count from ${COMPETITION_MIGRATION_AUDIT_TABLE} where competition_id=:id and action='BACKFILL_BATCH'`,
+              { id }
+            )
+          ).toEqual({ count: 2 });
+        } else
+          expect(
+            migrationCopyCheckpoint((await service.status(id)).migration!)
+          ).toBe(migrationCopyCheckpoint(before));
+      }
+    );
+
     it('rolls back a timed-out bulk voter copy and preserves its complete checkpoint', async () => {
       const service = new CompetitionMigrationService(
         () => sqlExecutor,
@@ -1786,7 +2094,7 @@ describeWithSeed(
       const original = CompetitionMigrationBackfill.prototype.batch;
       const slow = jest
         .spyOn(CompetitionMigrationBackfill.prototype, 'batch')
-        .mockImplementationOnce(async function (
+        .mockImplementation(async function (
           this: CompetitionMigrationBackfill,
           ...args
         ) {
@@ -2716,7 +3024,7 @@ describeWithSeed(
         const method = operation === 'backfill' ? 'batch' : 'applyChange';
         const slow = jest
           .spyOn(CompetitionMigrationBackfill.prototype, method)
-          .mockImplementationOnce(async (...args: unknown[]) => {
+          .mockImplementation(async (...args: unknown[]) => {
             const ctx = args[args.length - 1] as {
               connection: NonNullable<
                 Parameters<
