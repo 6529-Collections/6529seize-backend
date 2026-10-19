@@ -1008,13 +1008,17 @@ The push worker's SQS event source is capped at 18 concurrent batches, below the
 
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
 
-WebSocket registration and re-authentication persist the identity, JWT expiry and notification grants atomically. Existing connection mutations lock the connection row before subscription rows; identity resync and deletion use the same order, and missing connections cannot gain grants. Only a transaction's owner retries confirmed deadlocks, with at most three whole attempts and bounded jitter; caller-owned transactions and ambiguous failures propagate. Socket acknowledgements follow persistence, and socket/provider operations remain outside the retried transaction. New connections, re-authentication, and identity resyncs each retain a one-percent chance of running bounded cleanup of expired and orphaned subscriptions after persistence. The repository identity update method remains the sole write path for `ws_connections.identity_id`.
+WebSocket registration and re-authentication persist the identity, JWT expiry and notification grants atomically. Existing connection mutations lock the connection row before subscription rows; identity resync and deletion use the same order, and missing connections cannot gain grants. Repository-owned mutations use transaction-scoped `READ COMMITTED` to avoid shared subscription-gap locks when different sockets replace empty grants. Pooled session defaults, caller-owned isolation and sampled cleanup keep their existing policies. Only a transaction's owner retries confirmed deadlocks, with at most three whole attempts and bounded jitter; caller-owned transactions and ambiguous failures propagate. Socket acknowledgements follow persistence, and socket/provider operations remain outside the retried transaction. New connections, re-authentication, and identity resyncs each retain a one-percent chance of running bounded cleanup of expired and orphaned subscriptions after persistence. The repository identity update method remains the sole write path for `ws_connections.identity_id`.
 
 If authentication or notification identity sync finds that the stored connection has disappeared, the API requests transport closure and then removes orphan subscription state before returning 410. This condition does not reject the credential and sends no authentication or subscription acknowledgement. Unexpected operation, close or cleanup failures remain 5xx, with fixed action/stage warning labels alongside the existing response error envelope. The mounted web application's health check can reconnect a disconnected socket using its current token; reconnect timing depends on client lifecycle and browser scheduling. The local WebSocket adapter follows the same closure path. This defensive recovery does not establish the cause of any historical connection loss.
 
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
 
-Terminal WebSocket send failures replace the existing error message with an allowlisted outbound frame type, fixed error category, final HTTP status and numeric SDK attempt/retry-delay metadata. Frame content, connection IDs and exception text are not copied into this diagnostic; missing or malformed metadata remains unknown. The existing operational error fingerprint and single error-event path are retained. SDK retry policy and best-effort send behavior remain unchanged, Gone connections still take the cleanup path, and a diagnostic failure cannot turn a live connection into a cleanup candidate. This metadata describes a failed send, not confirmed client delivery or a rate-limit repair.
+Outbound WebSocket delivery uses one policy in `src/ws-delivery/`, shared by the API, background senders and the worker-specific NFT-link notifier. Final 429s retain a hashed connection identifier and bounded SDK metadata in warnings and low-cardinality EMF metrics; they do not emit per-send operational errors. Shared Redis cooldowns use exponential backoff with jitter and a short endpoint pause for broad throttling. Normal healthy sends remain concurrent. Atomic leases apply only to recovery probes. Each connection has one content-free pending refresh marker; user content and credentials are never queued. A revision prevents an in-flight recovery from acknowledging newer missed updates.
+
+The scheduled `webSocketDeliveryLoop` drains due markers every minute, rechecks stored JWT expiry, and sends `RESYNC_REQUIRED`. It never replays competition outbox events, notifications or winner effects. Updated clients invalidate active HTTP queries after a staggered delay, including after reconnect and app/tab resume. Only an isolated persistently blocked listener that advertised `recovery_capability=resync_v1` may be closed, after observing healthy peers; confirmed transport closure precedes subscription deletion. Widespread failures inhibit that close policy. Existing 410 cleanup and error reporting for non-429 provider failures remain intact. Authentication and notification-identity acknowledgements have priority; legacy failures return an explicit failed outcome and never enqueue a substitute refresh marker.
+
+Rolling fleet counters distinguish widespread throttling, a persistent outage even with a single listener, and an old retry backlog. The recovery worker emits the `6529/WebSocketDelivery` Degraded, WorkerHealthy and Pending metrics. CloudWatch alarms report sustained degradation, worker failure/missing heartbeat and repeated recovery-store failures, with explicit operational guidance in the isolated monitor. Application metrics retain SDK retries, 429s and cooldown suppressions because API Gateway metrics may omit 429s. Redis operations are bounded; unavailable recovery state fails open for direct sends, returns an explicit failed result when retry persistence is unknown, and retains independent monitoring. Retry state is versioned, endpoint-scoped and expires after two hours and five minutes without activity; deploying the worker before producers and the additive frontend consumer preserves a compatible rollout.
 
 ## API Boundary
 
@@ -1222,11 +1226,45 @@ rebuilds only captured decision keys; it does not replay unchanged decision hist
 when refreshing entries, ranks, awards and archives. Once all initial stages are
 complete, a journal window containing only vote, credit-spending, runtime-rank,
 leaderboard or retained vote-time-history changes replays its keys and refreshes
-only leaderboard ranks. The classifier checks every page since the last applied
+the live entry-rank and locked leaderboard projections. Historical winner ranks
+remain published ranks; partial native pages stay hidden behind legacy ownership.
+The classifier checks every page since the last applied
 watermark; other source changes retain the broader refresh. The applied watermark
 remains behind until the bounded refresh finishes, and full comparison remains
 mandatory. Routine snapshots therefore do not force another copy of unchanged
 voters, decision awards and winner archives.
+Trusted full comparisons collect all native reader results in 2,000-row pages
+to avoid repeating voter aggregations. Optional shadow sampling retains its
+500-row pages and existing row ceiling.
+
+Frozen drop-view parity reads the unchanged view by the complete union of source
+participation/winner keys and ACTIVE/WINNER native entry keys mapped to shared
+drops. Driving those primary-key reads avoids projecting unrelated chat history
+while retaining extra native entries mapped to CHAT drops as mismatches. All
+columns and rows of the eligible projection still participate in the hash.
+
+Full content comparison prefetches all relations in 100-drop pages, while WAVE
+TDH/XTDH budgets prefetch identity and spending data in 100-profile pages. The
+candidate reuses the ordinary public budget formula and the source oracle remains
+independent. Independent comparison and final cutover use the existing bounded
+SQL transaction runtime: five seconds overall, one second per statement and lock
+wait, and 500ms reserved for finalization. Copy, replay and cutover read repeatable
+snapshots after taking ownership; other control transactions retain READ COMMITTED.
+A pre-transfer timeout aborts without promoting the shadow copy. An unknown COMMIT
+acknowledgment requires checking ownership and the audit before any retry.
+Backfill and journal replay allow one complete transaction retry only for an
+original typed WORK/NOT_SENT timeout with a destroyed physical connection and
+migration statement diagnostics. After a one-second delay outside ownership,
+the new transaction rechecks legacy active ownership, operator stops and every
+saved copy field, including the batch-claim timestamp. Capture counters may
+advance; checkpoint or claim drift and a second failure remain terminal. A
+failure of the initial checkpoint lookup is eligible only as the exact known
+second statement, after confirming legacy active ownership and before any claim
+or data write. Its retry reads fresh durable state and preserves any peer
+progress. Every attempt retains the five-second fence, one-second statements
+and lock waits, and 500ms finalization reserve. No statement is retried in place;
+comparison, cutover, reporting failures and unknown/acknowledged commits use no
+such recovery. Deploy only `competitionMigrationLoop` for this change.
 Imported decision winners retain a nullable `legacy_drop_id`, preserving source
 history and prizes even when the drop was deleted before migration. Historical
 winner reads do not recreate an entry or its deleted content. Deploy the additive
@@ -1245,6 +1283,10 @@ The immutable command snapshot retains legacy upper-threshold metadata alongside
 its normal native draft fields. Actual data mismatches retain legacy ownership;
 repair-required native ownership is never blindly reversed. Final comparison,
 effect drain and owner transfer occur under the same transaction lock.
+The manual migration worker uses 2,048 MB to give CPU-heavy complete comparisons
+at least a full vCPU allocation. Its five-second ownership fence, one-second
+statement/lock limits, reserved concurrency and disabled asynchronous retries
+remain unchanged; this resource setting does not alter API or decision workers.
 
 Migrated primaries inherit shared wave presentation metadata while
 `presentation_config` is null. Native appearance arrays override that inheritance,

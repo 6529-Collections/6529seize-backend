@@ -87,6 +87,7 @@ import {
 import { compareCacheStrings } from './wave-cache-key';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { DbPoolName } from '@/db-query.options';
+import { withoutLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 
 const logger = Logger.get('WAVES_API_DB');
 
@@ -1873,8 +1874,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           eligibleGroups,
           cacheable: ctx.connection === undefined,
           getValue: async () => {
-            const activityRows =
-              await this.db.execute<FollowedSubwaveActivityRow>(
+            // Activity and unread aggregates use only unchanged wave/drop fields.
+            const activityRows = await withoutLegacyCompetitionGetFacade(() =>
+              this.db.execute<FollowedSubwaveActivityRow>(
                 `
                   ${this.getFollowedSubwaveActivitySelect({
                     groupIds: eligibleGroups,
@@ -1891,7 +1893,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   drop_created_action: ActivityEventAction.DROP_CREATED
                 },
                 { wrappedConnection: ctx.connection }
-              );
+              )
+            );
 
             return activityRows.reduce(
               (acc, row) => {
@@ -1930,8 +1933,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           // The follow join uses the unique (subscriber_id, target_id,
           // target_type, target_action) index, so it also prunes drop scans
           // for unfollowed subwaves.
-          return this.db.execute<FollowedSubwaveUnreadRow>(
-            `
+          return withoutLegacyCompetitionGetFacade(() =>
+            this.db.execute<FollowedSubwaveUnreadRow>(
+              `
               select
                 child.parent_wave_id,
                 count(d.id) as followed_subwave_unread_drops,
@@ -1979,14 +1983,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 )}
               group by child.parent_wave_id
             `,
-            {
-              identityId,
-              parentWaveIds,
-              eligibleGroups,
-              waveTargetType: ActivityEventTargetType.WAVE,
-              dropCreatedAction: ActivityEventAction.DROP_CREATED
-            },
-            { wrappedConnection: ctx.connection }
+              {
+                identityId,
+                parentWaveIds,
+                eligibleGroups,
+                waveTargetType: ActivityEventTargetType.WAVE,
+                dropCreatedAction: ActivityEventAction.DROP_CREATED
+              },
+              { wrappedConnection: ctx.connection }
+            )
           );
         }
       });
@@ -4337,12 +4342,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         getValue: async () => {
           // Reader metrics are the unread baseline source of truth. Without
           // a reader row we do not infer unread drops from old wave history.
-          const dbresult = await this.db.execute<WaveUnreadSummaryRow>(
-            `
+          // All consumed drop/wave fields pass through the compatibility views.
+          const dbresult = await withoutLegacyCompetitionGetFacade(() =>
+            this.db.execute<WaveUnreadSummaryRow>(
+              `
                 SELECT d.wave_id AS wave_id,
                        COUNT(d.id) AS unread_drops_count,
                        MIN(d.serial_no) AS first_unread_drop_serial_no
-                FROM ${DROPS_TABLE} d USE INDEX (idx_drop_wave_created_at)
+                FROM ${DROPS_TABLE} d
                 JOIN ${WAVE_READER_METRICS_TABLE} r
                   ON r.wave_id = d.wave_id
                   AND r.reader_id = :identityId
@@ -4364,8 +4371,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   AND (d.reply_to_drop_id IS NULL OR w.chat_replies_collapsed = false)
                 GROUP BY d.wave_id
               `,
-            { identityId: param.identityId, waveIds: uncachedWaveIds },
-            { wrappedConnection: ctx.connection }
+              { identityId: param.identityId, waveIds: uncachedWaveIds },
+              { wrappedConnection: ctx.connection }
+            )
           );
 
           const uncachedSummariesByWaveId = uncachedWaveIds.reduce(
@@ -4509,8 +4517,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             'eligibleGroups'
           )}`
         : '';
-      const rows = await this.db.execute<DmUnreadConversationStateRow>(
-        `with dm_reader_state as (
+      // Reader state, visibility and drop ordering use only base-table fields.
+      const rows = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.execute<DmUnreadConversationStateRow>(
+          `with dm_reader_state as (
            select r.wave_id,
                   r.reader_id,
                   r.muted,
@@ -4584,15 +4594,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   state.muted,
                   state.latest_read_serial_no,
                   state.unread_state_version`,
-        {
-          identityIds,
-          eligibleGroups: param.eligibleGroups ?? [],
-          waveIds: waveIds ?? []
-        },
-        {
-          wrappedConnection: ctx.connection,
-          forcePool
-        }
+          {
+            identityIds,
+            eligibleGroups: param.eligibleGroups ?? [],
+            waveIds: waveIds ?? []
+          },
+          {
+            wrappedConnection: ctx.connection,
+            forcePool
+          }
+        )
       );
       return rows.map((row) => ({
         profile_id: row.reader_id,

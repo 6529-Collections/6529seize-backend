@@ -3,7 +3,7 @@
 The API logs bounded `ws_operation` and `ws_transaction` diagnostics for socket
 registration, authentication, notification identity sync, disconnection, and
 sampled stale-subscription cleanup. These diagnostics preserve the existing
-transaction boundaries, lock order, isolation policy, three-attempt deadlock
+transaction boundaries, lock order, three-attempt deadlock
 retry, cleanup sampling, and outbound delivery behavior. They do not change the
 generic operational alert classification or suppress existing error events.
 
@@ -54,12 +54,15 @@ statement was rolled back.
 
 The existing `SELECT ... FOR UPDATE` projects `CONNECTION_ID()` and
 `@@session.transaction_isolation`. This adds no query round trip, session
-assignment, or additional table scan. `db_session_id` and `isolation` therefore
-describe the session that executed the locking query inside that attempt, not
-the MySQL driver's connection-handshake ID. When using a proxy, validate that ID
-against the writer's report. They are null for registration, cleanup, acquisition
-failures, and locking queries that fail or return no rows. Success records use
-INFO; keep `LOG_LEVEL_WS_DIAGNOSTICS=INFO` when overriding global log levels for
+assignment, or additional table scan. `db_session_id` describes the session
+executing that locking query, not the driver's connection-handshake ID. When
+using a proxy, validate that ID against the writer's report. `session_isolation`
+is the observed session default, which does **not** reflect a next-transaction
+`SET TRANSACTION` override. `isolation` records the repository's explicit
+`READ-COMMITTED` option only after BEGIN succeeds; it stays null for caller-owned
+transactions, cleanup, or acquisition failures. Session metadata stays null for
+registration, cleanup, and locking queries that fail or return no rows. Success
+records use INFO; keep `LOG_LEVEL_WS_DIAGNOSTICS=INFO` when overriding log levels for
 an investigation. Unknown values are null or `OTHER`, never inferred from error
 messages. No success should be inferred from a missing terminal record.
 
@@ -97,7 +100,25 @@ Database-wide metrics also include unrelated tables, so use the lock reports to
 attribute them. See [Aurora's deadlock investigation guidance](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/AuroraMySQL.BestPractices.FeatureRecommendations.html#AuroraMySQL.BestPractices.Deadlocks)
 and [proxy session behavior](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-proxy-pinning.html).
 
-## Choose and verify the fix
+## Captured gap-lock cycle and fix
+
+A production writer report captured two AUTHENTICATE transactions for different
+sockets inserting `ws_notification_subscriptions` rows. Both held an exclusive
+lock on the same PRIMARY-index supremum gap and waited for the other's insert
+intention lock. The victim's server session matched the application diagnostic,
+and its second whole attempt committed. Neither transaction was cleanup.
+
+The empty per-socket subscription DELETE under REPEATABLE READ locks that shared
+gap before INSERT. A controlled two-socket replay reproduces the deadlock under
+REPEATABLE READ. Repository-owned registration, authentication, identity sync,
+and disconnect transactions now explicitly use READ COMMITTED through the
+existing next-transaction isolation option. The same replay commits both first
+attempts. Connection-row FOR UPDATE locks continue serializing mutations of the
+same socket, and identity/grant replacement remains atomic. The option does not
+change pooled session defaults, caller-owned transactions, or sampled cleanup.
+Other deadlock causes can still occur; keep the existing whole-transaction retry.
+
+## Investigate further lock cycles
 
 Reproduce the captured statements in an isolated database with matching schema,
 indexes, and isolation. Exercise authentication, notification sync, disconnect,

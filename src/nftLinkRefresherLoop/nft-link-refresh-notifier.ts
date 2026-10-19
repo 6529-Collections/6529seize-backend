@@ -8,6 +8,7 @@ import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { nftLinkUpdatedMessage } from '@/api/ws/ws-message';
 import { nftLinkRefreshNotifierDb } from '@/nftLinkRefresherLoop/nft-link-refresh-notifier.db';
 import { Logger } from '@/logging';
+import { webSocketDelivery } from '@/ws-delivery/ws-delivery';
 import {
   getNftLinkResolutionBudget,
   nftLinkResolutionStage
@@ -112,7 +113,13 @@ export class NftLinkRefreshNotifier {
         const recipient = recipients[next++];
         if (Number(recipient.jwt_expiry) <= Date.now() / 1000) continue;
         try {
-          await this.send(recipient.connection_id, message, signal);
+          const result = await webSocketDelivery.deliver({
+            connectionId: recipient.connection_id,
+            message,
+            signal,
+            send: () => this.send(recipient.connection_id, message, signal)
+          });
+          if (result.status === 'failed') failed++;
         } catch {
           // Gone/slow connections must not prevent delivery to other clients.
           failed++;

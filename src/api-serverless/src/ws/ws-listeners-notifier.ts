@@ -869,7 +869,7 @@ export class WsListenersNotifier {
           ctx
         );
       const connectionIds = onlineClients.map((it) => it.connectionId);
-      let pendingSends: Promise<void>[] = [];
+      let pendingSends: Promise<unknown>[] = [];
       const sendFailures: unknown[] = [];
       const flushPendingSends = async (): Promise<void> => {
         const results = await Promise.allSettled(pendingSends);

@@ -39,6 +39,7 @@ class SubscriptionDatabase extends SqlExecutor {
   fail: ((sql: string) => Error | null) | undefined;
   afterWrite: (() => Promise<void>) | undefined;
   onTransactionRequested: (() => void) | undefined;
+  missedLockReads = 0;
   private queue = Promise.resolve();
 
   async execute<T>(
@@ -55,6 +56,13 @@ class SubscriptionDatabase extends SqlExecutor {
     const error = this.fail?.(normalized);
     if (error) throw error;
     if (normalized.startsWith('select connection_id, connection_id()')) {
+      if (this.missedLockReads > 0) {
+        this.missedLockReads--;
+        return [];
+      }
+      return (state.identity ? [{ connection_id: 'socket' }] : []) as T[];
+    }
+    if (normalized.startsWith('select connection_id from ws_connections')) {
       return (state.identity ? [{ connection_id: 'socket' }] : []) as T[];
     }
     if (normalized.startsWith('update ws_connections')) {
@@ -363,9 +371,45 @@ describe('WebSocket identity and notification subscription atomicity', () => {
             );
       await expect(action).rejects.toThrow('Socket is not available');
       expect(db.state).toEqual({ identity: null, subscriptions: [] });
-      expect(db.operations).toHaveLength(1);
+      expect(db.operations).toHaveLength(2);
       expect(db.operations[0].sql).toContain('order by identity_id for update');
       expect(db.commits).toBe(0);
+    }
+  );
+
+  it.each(['auth', 'sync', 'disconnect'])(
+    'fails closed after bounded moved-key rescans during %s',
+    async (operation) => {
+      const { db, sockets, repository } = fixture();
+      const original = structuredClone(db.state);
+      db.missedLockReads = 10;
+      let action: Promise<unknown>;
+      if (operation === 'auth') {
+        action = sockets.authenticateConnection(
+          { connectionId: 'socket', identityId: 'new', jwtExpiry: 200 },
+          {}
+        );
+      } else if (operation === 'sync') {
+        action = sockets.syncNotificationIdentities(
+          'socket',
+          [{ identityId: 'new', jwtExpiry: 200 }],
+          {}
+        );
+      } else {
+        action = repository.deleteByConnectionId('socket', {});
+      }
+      await expect(action).rejects.toThrow('Socket is not available');
+      expect(
+        db.operations.filter(({ sql }) => sql.endsWith('for update'))
+      ).toHaveLength(3);
+      expect(delay).toHaveBeenCalledTimes(2);
+      expect(db.operations.every(({ sql }) => sql.startsWith('select'))).toBe(
+        true
+      );
+      expect(db.state).toEqual(original);
+      expect(db.commits).toBe(0);
+      expect(db.rollbacks).toBe(1);
+      expect(db.attempts).toBe(1);
     }
   );
 

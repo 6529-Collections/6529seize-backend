@@ -29,6 +29,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
   recordWebSocketDatabaseSession,
   recordWebSocketSqlPhase,
+  recordWebSocketTransactionIsolation,
   WsTransactionDiagnostics
 } from '@/api/ws/ws-transaction-diagnostics';
 import { WsDiagnosticOperation } from '@/api/ws/ws-operation-diagnostics';
@@ -37,6 +38,7 @@ type NotificationSubscription = { identityId: string; jwtExpiry: number };
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   private static readonly NOTIFICATION_CLEANUP_SAMPLE_DENOMINATOR = 100;
+  private static readonly CONNECTION_LOCK_ATTEMPTS = 3;
 
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -208,10 +210,17 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     for (let attempt = 1; ; attempt++) {
       try {
         await diagnostics.runAttempt(attempt, () =>
-          this.db.executeNativeQueriesInTransaction(async (connection) => {
-            await mutation({ ...ctx, connection });
-            recordWebSocketSqlPhase('commit');
-          })
+          // A connection row serializes mutations for that socket. READ COMMITTED
+          // avoids locking a shared subscription gap when different sockets have
+          // no existing grants to delete before their inserts.
+          this.db.executeNativeQueriesInTransaction(
+            async (connection) => {
+              recordWebSocketTransactionIsolation('READ-COMMITTED');
+              await mutation({ ...ctx, connection });
+              recordWebSocketSqlPhase('commit');
+            },
+            { isolationLevel: 'READ COMMITTED' }
+          )
         );
         diagnostics.completed();
         return;
@@ -233,7 +242,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
 
   private async lockConnection(
     connectionId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    attemptsLeft = WsConnectionRepository.CONNECTION_LOCK_ATTEMPTS
   ): Promise<boolean> {
     recordWebSocketSqlPhase('lock_connection');
     const connections = await this.db.execute<{
@@ -249,11 +259,34 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       { connectionId },
       { wrappedConnection: ctx.connection, bindInvocationContext: true }
     );
-    recordWebSocketDatabaseSession(connections[0]);
-    return connections.length > 0;
+    if (connections.length) {
+      recordWebSocketDatabaseSession(connections[0]);
+      return true;
+    }
+    // identity_id is part of the primary key. A waiting READ COMMITTED scan
+    // can miss a row moved behind its cursor by another authentication. A
+    // writer-bound presence check distinguishes that from an actual deletion;
+    // presence alone never authorizes a mutation or orphan-grant cleanup.
+    const existing = await this.db.execute<{ connection_id: string }>(
+      `select connection_id from ${WS_CONNECTIONS_TABLE}
+       where connection_id = :connectionId limit 1`,
+      { connectionId },
+      { wrappedConnection: ctx.connection, bindInvocationContext: true }
+    );
+    if (!existing.length) return false;
+    if (attemptsLeft > 1) {
+      await delay(randomInt(5, 16));
+      return this.lockConnection(connectionId, ctx, attemptsLeft - 1);
+    }
+    // Persistent key churn also makes this socket unavailable for safe control
+    // writes. Use the existing close/reconnect recovery, not a new 503 retry
+    // contract that WebSocket clients cannot observe as an HTTP response.
+    throw new SocketNotAvailableException();
   }
 
   private async requireConnection(connectionId: string, ctx: RequestContext) {
+    // Only a successful FOR UPDATE scan returns true; a presence probe cannot
+    // satisfy the ownership requirement for any subsequent mutation.
     if (!(await this.lockConnection(connectionId, ctx))) {
       throw new SocketNotAvailableException();
     }

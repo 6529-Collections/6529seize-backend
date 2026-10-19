@@ -1,3 +1,4 @@
+import { assembleLegacyDropContent } from '@/competitions/competition-entry-content-source';
 import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
@@ -377,45 +378,16 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
       params,
       ctx
     );
-    return {
-      wave_id: drop.wave_id,
-      title: drop.title,
-      hide_link_preview: Boolean(drop.hide_link_preview),
-      reply_to: drop.reply_to_drop_id
-        ? {
-            drop_id: drop.reply_to_drop_id,
-            drop_part_id: Number(drop.reply_to_part_id)
-          }
-        : null,
+    return assembleLegacyDropContent(drop, {
+      parts,
+      media,
+      attachments,
       metadata,
       referenced_nfts,
       mentioned_users,
       mentioned_waves,
-      mentioned_groups: groups.map((row) => row.mentioned_group),
-      parts: parts.map((part) => ({
-        content: part.content,
-        quoted_drop: part.quoted_drop_id
-          ? {
-              drop_id: part.quoted_drop_id,
-              drop_part_id: Number(part.quoted_drop_part_id)
-            }
-          : null,
-        media: media
-          .filter(
-            (item) => Number(item.drop_part_id) === Number(part.drop_part_id)
-          )
-          .map((item) => ({
-            url: item.url,
-            mime_type: item.mime_type,
-            media_upload_id: item.media_upload_id
-          })),
-        attachments: attachments
-          .filter(
-            (item) => Number(item.drop_part_id) === Number(part.drop_part_id)
-          )
-          .map((item) => ({ attachment_id: item.attachment_id }))
-      }))
-    };
+      groups
+    });
   }
 }
 

@@ -1,3 +1,5 @@
+import { readSequentially } from '@/competitions/competition-read-sequence';
+import { collections } from '@/collections';
 import {
   CompetitionCreditRepository,
   CompetitionCreditSpending,
@@ -124,14 +126,98 @@ export class CompetitionCreditService {
   public constructor(
     private readonly repository: Pick<
       CompetitionCreditRepository,
-      'getSpending'
+      'getSpending' | 'getNamespaceSpendings'
     >,
     private readonly identities: Pick<
       IdentitiesDb,
-      'getIdentityByProfileId' | 'getSingleNftVotingCreditsByProfileId'
+      | 'getIdentityByProfileId'
+      | 'getIdentitiesByIds'
+      | 'getSingleNftVotingCreditsByProfileId'
     >,
     private readonly ratings: Pick<RatingsDb, 'getRepRating'>
   ) {}
+
+  /** Migration-wide WAVE reads keep the public single-profile budget formula,
+   * prefetching bounded source pages on the caller's snapshot connection. */
+  public async getWaveBudgets(
+    competition: BudgetCompetition,
+    profileIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<Map<string, CompetitionCreditBudget>> {
+    if (competition.voting.credit_scope !== WaveCreditScope.WAVE)
+      throw new Error('Batched wave budgets require WAVE credit scope');
+    const budgets = new Map<string, CompetitionCreditBudget>();
+    const profiles = Array.from(new Set(profileIds));
+    const simpleCredit = [
+      WaveCreditType.TDH,
+      WaveCreditType.XTDH,
+      WaveCreditType.TDH_PLUS_XTDH
+    ].includes(competition.voting.credit_type as WaveCreditType);
+    if (!simpleCredit) {
+      await readSequentially(profiles, async (profileId) => {
+        budgets.set(
+          profileId,
+          await this.getBudget(competition, profileId, undefined, ctx)
+        );
+      });
+      return budgets;
+    }
+    await readSequentially(
+      collections.chunkArray(profiles, 100),
+      async (page) => {
+        const identities = new Map(
+          (await this.identities.getIdentitiesByIds(page, ctx.connection)).map(
+            (identity) => [identity.profile_id, identity]
+          )
+        );
+        const spendings = await this.repository.getNamespaceSpendings(
+          competition,
+          page,
+          ctx
+        );
+        // Keep validation, flooring, range checks and budget construction in the
+        // same public implementation used by ordinary one-profile reads.
+        const prefetched = new CompetitionCreditService(
+          {
+            getSpending: (_competition, profileId) =>
+              Promise.resolve({
+                namespace_spent: spendings.get(profileId) ?? 0,
+                entry_spent: 0,
+                current_vote: 0
+              }),
+            getNamespaceSpendings: this.repository.getNamespaceSpendings.bind(
+              this.repository
+            )
+          },
+          {
+            getIdentityByProfileId: (profileId) =>
+              Promise.resolve(identities.get(profileId) ?? null),
+            getIdentitiesByIds: this.identities.getIdentitiesByIds.bind(
+              this.identities
+            ),
+            getSingleNftVotingCreditsByProfileId:
+              this.identities.getSingleNftVotingCreditsByProfileId.bind(
+                this.identities
+              )
+          },
+          this.ratings
+        );
+        await readSequentially(page, async (profileId) => {
+          // A missing exact key may be a collation match, not absent data.
+          // Fall back to the original SQL lookup rather than assuming zero.
+          const source =
+            identities.has(profileId) && spendings.has(profileId)
+              ? prefetched
+              : this;
+          budgets.set(
+            profileId,
+            await source.getBudget(competition, profileId, undefined, ctx)
+          );
+        });
+      }
+    );
+    return budgets;
+  }
 
   public async getBudget(
     competition: BudgetCompetition,

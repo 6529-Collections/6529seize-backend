@@ -33,14 +33,29 @@ export async function loadCompetitionCreditParity(
   ctx: RequestContext
 ): Promise<CompetitionCreditParity[]> {
   const results: CompetitionCreditParity[] = [];
+  if (
+    competition.voting.credit_scope === WaveCreditScope.WAVE &&
+    voters.length > rowLimit
+  )
+    throw new CompetitionRowLimitError();
+  const waveBudgets =
+    competition.voting.credit_scope === WaveCreditScope.WAVE
+      ? await competitionCreditService.getWaveBudgets(
+          competition,
+          voters.map((voter) => voter.profile_id),
+          ctx
+        )
+      : null;
   const add = async (profileId: string, entry?: CompetitionEntry) => {
     if (results.length >= rowLimit) throw new CompetitionRowLimitError();
-    const budget = await competitionCreditService.getBudget(
-      competition,
-      profileId,
-      entry,
-      ctx
-    );
+    const budget =
+      waveBudgets?.get(profileId) ??
+      (await competitionCreditService.getBudget(
+        competition,
+        profileId,
+        entry,
+        ctx
+      ));
     if (budget.spent === null || budget.remaining === null)
       throw new Error('Parity requires a scoped credit budget');
     results.push({
