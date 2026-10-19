@@ -187,11 +187,6 @@ export class CompetitionVotingService {
             );
           }
         }
-        await nativeCompetitionRuntimeService.refreshCompetition(
-          competitionId,
-          now,
-          tx
-        );
         return competitionCreditService.getBudget(
           competition,
           actor,
