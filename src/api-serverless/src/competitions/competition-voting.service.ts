@@ -10,6 +10,7 @@ import {
   CompetitionCreditBudget
 } from '@/competitions/competition-credit.service';
 import { competitionInteractionRepository } from '@/competitions/competition-interaction.repository';
+import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionService } from '@/competitions/competition.service';
 import { Competition } from '@/competitions/competition.types';
@@ -24,6 +25,7 @@ import {
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
+import { userNotifier } from '@/notifications/user.notifier';
 import { sqlExecutor } from '@/sql-executor';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import {
@@ -80,7 +82,7 @@ export class CompetitionVotingService {
           request.config_version,
           tx
         );
-        await visibleCompetitionWave(waveId, tx);
+        const { wave } = await visibleCompetitionWave(waveId, tx);
         await assertCompetitionGroup(
           competition.voting.group_id,
           ProfileProxyActionType.RATE_WAVE_DROP,
@@ -168,6 +170,22 @@ export class CompetitionVotingService {
             },
             tx
           );
+          if (entry.submitter_id !== actor) {
+            const totals = await competitionDropVotesDb.totals(entry, null, tx);
+            await userNotifier.notifyOfDropVote(
+              {
+                voter_id: actor,
+                drop_id: entry.drop_id,
+                drop_author_id: entry.submitter_id,
+                vote: request.value,
+                vote_change: request.value - (budget.current_vote ?? 0),
+                total_vote: totals.total,
+                wave_id: waveId
+              },
+              wave.visibility_group_id,
+              tx.connection
+            );
+          }
         }
         await nativeCompetitionRuntimeService.refreshCompetition(
           competitionId,
