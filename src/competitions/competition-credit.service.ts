@@ -137,7 +137,7 @@ export class CompetitionCreditService {
     private readonly ratings: Pick<RatingsDb, 'getRepRating'>
   ) {}
 
-  /** Migration-wide WAVE reads keep the public single-profile budget formula,
+  /** Batched WAVE reads keep the public single-profile budget formula,
    * prefetching bounded source pages on the caller's snapshot connection. */
   public async getWaveBudgets(
     competition: BudgetCompetition,
