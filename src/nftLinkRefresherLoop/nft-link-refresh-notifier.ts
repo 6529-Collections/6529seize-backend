@@ -1,3 +1,4 @@
+import { forEachConcurrent } from '@/for-each-concurrent';
 import { appWebSockets } from '@/api/ws/ws';
 import { setMaxListeners } from 'node:events';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
@@ -95,15 +96,19 @@ export class NftLinkRefreshNotifier {
     );
     if (signal.aborted) return;
     const message = JSON.stringify(nftLinkUpdatedMessage(data));
-    let next = 0;
+    let attempted = 0;
     let failed = 0;
-    const worker = async () => {
-      while (!signal.aborted && next < recipients.length) {
-        const recipient = recipients[next++];
-        if (Number(recipient.jwt_expiry) <= Date.now() / 1000) continue;
+    await forEachConcurrent(
+      recipients,
+      async (recipient) => {
+        attempted++;
+        if (Number(recipient.jwt_expiry) <= Date.now() / 1000) return;
         try {
-          const connectionId = recipient.connection_id;
-          const result = await this.send(connectionId, message, signal); // NOSONAR: each bounded worker must settle this send before taking another recipient.
+          const result = await this.send(
+            recipient.connection_id,
+            message,
+            signal
+          );
           if (
             result &&
             typeof result === 'object' &&
@@ -115,18 +120,13 @@ export class NftLinkRefreshNotifier {
           // Failed persistence must not prevent enqueueing for other recipients.
           failed++;
         }
-      }
-    };
-    await Promise.all(
-      Array.from(
-        { length: Math.min(MAX_CONCURRENT_SENDS, recipients.length) },
-        worker
-      )
+      },
+      { concurrency: MAX_CONCURRENT_SENDS, signal }
     );
     const report = {
       event: 'notification_finished',
       recipients: recipients.length,
-      attempted: next,
+      attempted,
       failed
     };
     if (failed) logger.error(report);

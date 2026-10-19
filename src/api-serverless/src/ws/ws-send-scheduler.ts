@@ -1,3 +1,4 @@
+import { forEachConcurrent } from '@/for-each-concurrent';
 import { getLambdaRemainingTime } from '@/lambda-deadline';
 
 export const WS_SEND_CONCURRENCY = 16;
@@ -133,17 +134,7 @@ export async function forEachWebSocketRecipient<T>(
   recipients: Iterable<T>,
   send: (recipient: T) => Promise<void>
 ): Promise<void> {
-  const iterator = recipients[Symbol.iterator]();
-  const failures: { error: unknown }[] = [];
-  const worker = async () => {
-    for (let next = iterator.next(); !next.done; next = iterator.next()) {
-      try {
-        await send(next.value); // NOSONAR: each of 16 workers must settle its send before taking another recipient.
-      } catch (error) {
-        if (!failures.length) failures.push({ error });
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: WS_SEND_CONCURRENCY }, worker));
-  if (failures.length) throw failures[0]!.error;
+  await forEachConcurrent(recipients, send, {
+    concurrency: WS_SEND_CONCURRENCY
+  });
 }

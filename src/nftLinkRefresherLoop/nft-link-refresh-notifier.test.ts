@@ -84,6 +84,40 @@ describe('NFT link refresh notifications', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  it('fills released slots up to ten sends while slower sends remain in flight', async () => {
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let peak = 0;
+    const send = jest.fn(() => {
+      active++;
+      peak = Math.max(peak, active);
+      return new Promise<void>((resolve) => {
+        releases.push(() => {
+          active--;
+          resolve();
+        });
+      });
+    });
+    const notifier = new NftLinkRefreshNotifier(
+      async () => Array.from({ length: 12 }, (_, i) => recipient(i)),
+      send
+    );
+    const operation = notifier.notifyAboutNftLinkUpdate(data);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledTimes(10);
+    releases[0]();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledTimes(11);
+    releases[1]();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledTimes(12);
+    releases.slice(2).forEach((release) => release());
+    await operation;
+    expect(peak).toBe(10);
+    expect(active).toBe(0);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
   it('honors the earlier resolution deadline and sends nothing after a late recipient read', async () => {
     let resolveRecipients:
       | ((value: ReturnType<typeof recipient>[]) => void)
