@@ -305,7 +305,7 @@ export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
     ...baseDropFieldsValidators,
     collaborator_ids: Joi.array()
       .items(Joi.string().max(100))
-      .max(20)
+      .max(5)
       .unique()
       .optional(),
     mentioned_groups: Joi.array()

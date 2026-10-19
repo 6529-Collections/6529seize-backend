@@ -252,7 +252,7 @@ export interface UserNotificationsResponse {
 
 export interface MemeCollaborationNotificationData {
   artwork_name?: string;
-  event_type: 'INVITED' | 'ACCEPTED';
+  event_type: 'INVITED' | 'ACCEPTED' | 'CANCELLED';
   drop_id: string;
   wave_id: string;
   actor_id: string;

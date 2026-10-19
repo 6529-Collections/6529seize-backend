@@ -1,3 +1,7 @@
+import {
+  currentCollaborationInvitations,
+  validateCollaborationInvitees
+} from './meme-collaboration-invitation-policy';
 import { formatMemeArtistNames } from './meme-collaboration-credit';
 import { env } from '@/env';
 import { competitionMainStageRepository } from '@/competitions/competition-main-stage.repository';
@@ -181,7 +185,7 @@ export class MemeCollaborationsService {
         'Submit collaborator invitations directly from your own profile'
       );
     const ids = model.collaborator_ids ?? [];
-    this.validateInitialInvitees(ids, model.author_id!);
+    validateCollaborationInvitees(ids, model.author_id!);
     const mainStage = competitionId
       ? await competitionMainStageRepository.isDesignated(competitionId, ctx)
       : model.wave_id === env.getStringOrNull('MAIN_STAGE_WAVE_ID');
@@ -193,17 +197,6 @@ export class MemeCollaborationsService {
       return [];
     }
     return this.createInvitations(model, dropId, ids, ctx, competitionId);
-  }
-
-  private validateInitialInvitees(ids: string[], authorId: string): void {
-    if (
-      ids.length > 20 ||
-      new Set(ids).size !== ids.length ||
-      ids.includes(authorId)
-    )
-      throw new BadRequestException(
-        'Select up to 20 distinct collaborating profiles, excluding yourself'
-      );
   }
 
   async inviteExisting(
@@ -245,16 +238,9 @@ export class MemeCollaborationsService {
           'Invitations require an active Memes Main Stage submission'
         );
       const previous = context ? await this.db.invitations(dropId, tx) : [];
-      if (
-        !ids.length ||
-        previous.length + ids.length > 20 ||
-        new Set(ids).size !== ids.length ||
-        ids.includes(drop.author_id) ||
-        ids.some((id) => previous.some((item) => item.profile_id === id))
-      )
-        throw new BadRequestException(
-          'Choose new distinct collaborators, up to 20 total, excluding yourself'
-        );
+      if (!ids.length)
+        throw new BadRequestException('Choose at least one collaborator');
+      validateCollaborationInvitees(ids, drop.author_id, previous);
       if (!context) {
         const model = await this.existingArtworkModel(dropId, drop, tx);
         await this.createInvitations(
@@ -273,7 +259,11 @@ export class MemeCollaborationsService {
         dropId,
         ids,
         tx,
-        context.artwork.name
+        context.artwork.name,
+        previous.reduce(
+          (latest, item) => Math.max(latest, Number(item.created_at) || 0),
+          0
+        )
       );
     });
   }
@@ -461,7 +451,8 @@ export class MemeCollaborationsService {
     dropId: string,
     ids: string[],
     ctx: RequestContext,
-    artworkName: string
+    artworkName: string,
+    previousCreatedAt = 0
   ): Promise<number[]> {
     if (!ids.length) return [];
     const profiles = await this.db.profiles(ids, ctx);
@@ -486,7 +477,7 @@ export class MemeCollaborationsService {
       id: randomUUID(),
       profileId,
       profileHandle: handles.get(profileId)!,
-      now: Date.now()
+      now: Math.max(Date.now(), previousCreatedAt + 1)
     }));
     const params: Record<string, unknown> = { dropId };
     const values = invitations.map((invitation, index) => {
@@ -522,7 +513,9 @@ export class MemeCollaborationsService {
 
   async state(dropId: string, viewerId: string | null, ctx: RequestContext) {
     const context = await this.db.context(dropId, ctx);
-    const invitations = context ? await this.db.invitations(dropId, ctx) : [];
+    const invitations = currentCollaborationInvitations(
+      context ? await this.db.invitations(dropId, ctx) : []
+    );
     return {
       can_invite:
         !!viewerId &&
@@ -636,7 +629,7 @@ export class MemeCollaborationsService {
         },
         tx
       );
-      if (body.action !== 'ACCEPT') return [];
+      if (body.action === 'DECLINE') return [];
       const [wave] = await this.db.query<{
         visibility_group_id: string | null;
       }>(
@@ -646,9 +639,9 @@ export class MemeCollaborationsService {
         tx
       );
       return userNotifier.notifyOfMemeCollaboration(
-        context.author_id,
+        body.action === 'CANCEL' ? invitation.profile_id : context.author_id,
         {
-          event_type: 'ACCEPTED',
+          event_type: body.action === 'CANCEL' ? 'CANCELLED' : 'ACCEPTED',
           artwork_name: context.artwork.name,
           drop_id: dropId,
           wave_id: context.wave_id,

@@ -83,7 +83,7 @@ export async function respondToMemeCollaboration(
     ctx
   );
   try {
-    if (notificationIds.length) {
+    if (body.action === 'ACCEPT') {
       const drop = await dropsService.findDropByIdOrThrow(
         { dropId: req.params.drop_id },
         ctx
@@ -104,6 +104,13 @@ export async function respondToMemeCollaboration(
     auth.getActingAsId(),
     ctx
   );
+  await wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+    visibleDrop.author.id,
+    auth.getActingAsId()!,
+    ...state.invitations
+      .filter((item) => item.id === req.params.invitation_id)
+      .map((item) => item.profile.id)
+  ]);
   return {
     ...state,
     invitations: state.invitations.map((item) => ({
@@ -137,7 +144,7 @@ export async function inviteMemeCollaborators(
         .items(Joi.string().required())
         .unique()
         .min(1)
-        .max(20)
+        .max(5)
         .required()
     })
   );
@@ -153,6 +160,10 @@ export async function inviteMemeCollaborators(
     auth.getActingAsId(),
     ctx
   );
+  await wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+    drop.author.id,
+    ...body.collaborator_ids
+  ]);
   return {
     ...state,
     invitations: state.invitations.map((item) => ({

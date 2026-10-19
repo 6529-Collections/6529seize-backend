@@ -203,6 +203,12 @@ export class DropCreationApiService {
     });
     void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
     await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
+    if (createDropRequest.collaborator_ids?.length) {
+      await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+        authorId,
+        ...createDropRequest.collaborator_ids
+      ]);
+    }
     await this.notifyDmUnreadStateChanged({
       waveId: createModel.wave_id,
       recipientIds: dmUnreadRecipientIds,

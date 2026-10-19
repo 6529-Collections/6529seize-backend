@@ -143,3 +143,41 @@ it.each(['', '   ', 'x'.repeat(201)])(
     expect(invitation.status).toBe('PENDING');
   }
 );
+
+it('notifies the recipient once when the author cancels, preserving title and actor', async () => {
+  const { service, auth, body, invitation } = setup();
+  const author = {
+    ...auth,
+    authenticatedProfileId: 'A'
+  } as AuthenticationContext;
+  await service.respond(
+    'drop',
+    'invite',
+    { ...body, action: 'CANCEL' },
+    author,
+    {}
+  );
+  await service.respond(
+    'drop',
+    'invite',
+    { ...body, action: 'CANCEL' },
+    author,
+    {}
+  );
+  expect(invitation.status).toBe('CANCELLED');
+  expect(userNotifier.notifyOfMemeCollaboration).toHaveBeenCalledTimes(1);
+  expect(userNotifier.notifyOfMemeCollaboration).toHaveBeenCalledWith(
+    'B',
+    expect.objectContaining({
+      event_type: 'CANCELLED',
+      actor_id: 'A',
+      artwork_name: 'Test Cat',
+      invitation_id: 'invite'
+    }),
+    null,
+    expect.any(Object)
+  );
+  await expect(
+    service.respond('drop', 'invite', body, auth, {})
+  ).rejects.toThrow('closed');
+});
