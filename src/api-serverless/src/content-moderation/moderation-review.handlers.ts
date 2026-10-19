@@ -30,6 +30,8 @@ import {
 import { ApiModerationAccess } from '@/api/generated/models/ApiModerationAccess';
 import { ApiModerationCheckPage } from '@/api/generated/models/ApiModerationCheckPage';
 import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCheckDetail';
+import { GetModerationReviewCasesRequest } from '@/api/generated/routes/operations';
+import { ApiModerationReviewCasePage } from '@/api/generated/models/ApiModerationReviewCasePage';
 import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts';
 import { broadcastDropModerationChange } from './moderation-broadcast';
 
@@ -42,6 +44,7 @@ async function context<P, R, B, Q>(req: Request<P, R, B, Q>) {
   };
 }
 const filters = Joi.object<ModerationFilter>({
+  case_id: Joi.string().pattern(/^[a-f0-9]{64}$/),
   subject_type: Joi.string().valid(...MODERATION_SUBJECTS),
   outcome: Joi.string().valid('ALLOW', 'REJECT', 'ERROR', 'PENDING'),
   policy_family: Joi.string().valid('PUBLIC_FIELDS', 'WAVE_CONTENT'),
@@ -90,6 +93,23 @@ export async function handleGetModerationChecks(
     items: page.items.map(itemSummary),
     next_cursor: page.next_cursor
   } as unknown as ApiModerationCheckPage;
+}
+export async function handleGetModerationReviewCases(
+  req: GetModerationReviewCasesRequest
+): Promise<ApiModerationReviewCasePage> {
+  const ctx = await context(req);
+  await assertModerationDeveloper(ctx);
+  const filter = getValidatedByJoiOrThrow(
+    req.query,
+    Joi.object<{ limit: number; before?: string }>({
+      limit: Joi.number().integer().min(1).max(100).default(50),
+      before: Joi.string().max(85)
+    }).unknown(false)
+  );
+  return (await moderationReviewDb.listReviewCases(
+    filter,
+    ctx
+  )) as unknown as ApiModerationReviewCasePage;
 }
 export async function handleGetModerationCounts(
   req: GetModerationCountsRequest

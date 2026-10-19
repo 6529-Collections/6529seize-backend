@@ -1011,14 +1011,18 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     {
       limit,
       before,
-      view = 'OPEN'
+      view = 'OPEN',
+      case_id
     }: {
       limit: number;
       before?: string | null;
       view?: ModerationReportsView;
+      case_id?: string;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<ModerationQueueItemRow[]> {
+    if (case_id !== undefined && !/^[a-f0-9]{64}$/.test(case_id))
+      throw new BadRequestException('Invalid review case');
     const cursor = before ? this.decodeModerationQueueCursor(before) : null;
     const isResolved = view === 'RESOLVED';
     const recommendationRankSql = isResolved
@@ -1056,6 +1060,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         left join ${CONTENT_MODERATION_PROFILE_STATES_TABLE} ps
           on ps.profile_id = r.author_profile_id
         where ${reportStatusSql}
+          ${case_id ? "and sha2(concat('DROP:',r.drop_id),256)=:caseId" : ''}
           and (
             :beforeRank is null
             or ${recommendationRankSql} > :beforeRank
@@ -1077,6 +1082,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       `,
       {
         limit,
+        ...(case_id ? { caseId: case_id } : {}),
         beforeRank: cursor?.recommendationRank ?? null,
         beforeCreatedAt: cursor?.createdAt ?? null,
         beforeReportId: cursor?.reportId ?? null

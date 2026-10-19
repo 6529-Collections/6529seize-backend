@@ -101,6 +101,20 @@ describe('moderation generated routes and private handlers', () => {
     expect(get).not.toHaveBeenCalled();
     expect(counts).toHaveBeenCalledTimes(1);
   });
+  it('exposes private paged cases before the generic check route', async () => {
+    const cases = jest
+      .spyOn(moderationReviewDb, 'listReviewCases')
+      .mockResolvedValue({ items: [], next_cursor: null });
+    await withServer(async (base) => {
+      const response = await fetch(`${base}/cases?limit=20`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect(await response.json()).toEqual({ items: [], next_cursor: null });
+      expect((await fetch(`${base}/cases?limit=0`)).status).toBe(400);
+    });
+    expect(cases).toHaveBeenCalledTimes(1);
+    expect(cases.mock.calls[0][0]).toEqual({ limit: 20 });
+  });
   it.each(['broader-moderator', 'proxy'])(
     'denies %s before every privileged handler reads private data',
     async (identity) => {
@@ -116,6 +130,7 @@ describe('moderation generated routes and private handlers', () => {
       );
       const reads = [
         jest.spyOn(moderationReviewDb, 'list'),
+        jest.spyOn(moderationReviewDb, 'listReviewCases'),
         jest.spyOn(moderationReviewDb, 'counts'),
         jest.spyOn(moderationReviewDb, 'get'),
         jest.spyOn(moderationReviewDb, 'reportForReview')
@@ -126,6 +141,7 @@ describe('moderation generated routes and private handlers', () => {
         for (const suffix of [
           '',
           '/counts',
+          '/cases',
           '/private-id',
           '/report/private-id',
           '/profile/private-id',

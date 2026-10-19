@@ -2341,3 +2341,8 @@ The runtime grouping callers are `api` (`db-api.fetchConsolidationsForWallet`), 
 The required key must be present and valid for all three runtimes in both regions before rollout. In particular, an unconfigured API fails the whole `/api/settings` response, not just consolidation setup. This is the agreed fail-closed policy, not a nullable-settings fallback. Configuration presence has to be verified as a deployment prerequisite; source inspection is not proof that a live secret contains the value.
 
 Configure production as `2026-10-15T00:00:00Z` and staging with its intended earlier cutoff before deployment. Schema sync still precedes the delegation indexer, TDH loop and API. Both environments index the same mainnet contract: staging registrations are real registrations, and pre-production-cutoff links require renewed consent after the production cutoff.
+
+WatchTower manual-review attention is derived from a subject-based union of
+open reports and pending moderation checks. The API groups this union before
+pagination and shares the case definition across queue and count surfaces; it
+adds no persisted case table, queue, service or background reconciliation.
