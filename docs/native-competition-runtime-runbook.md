@@ -100,6 +100,29 @@ observations.
 
 ## Execution and content invariants
 
+Maintenance keeps the existing competition row lock and transaction. WAVE
+budgets use bounded source pages; voters within their available credit need no
+individual vote reconciliation. REP and NFT credit sources retain their existing
+budget formulas and DROP scope still checks each entry. Leaderboard upserts and
+runtime threshold updates batch 100 entries at a time on the same connection.
+All batches, stale-entry cleanup and the outbox event commit or roll back together.
+
+Successful scheduled passes emit `native_competition_execution_completed` with
+`competition_id`, `operation` (`leaderboard` or `decisions`) and `duration_ms`.
+This elapsed duration includes lock acquisition and commit, so it is an upper
+bound on lock hold time, not a separate lock-duration measurement. Use it instead
+of relying on large detailed timer reports that may be truncated. Ordinary
+refreshes and decision catch-up can have different costs; credit reductions and
+winner processing still run under the lock.
+
+The batching rollout needs no schema, API contract, frontend or flag change.
+Deploy `waveLeaderboardSnapshotterLoop`, `waveDecisionExecutionLoop`, `tdhLoop`,
+`delegationsLoop`, `overRatesRevocationLoop`, `helpBotReplyLoop`, then `api`,
+verifying each service before continuing. The other callers use the same native
+maintenance during entry changes or credit revocations. The help-bot service
+deployment also verifies its existing daily-activity-credit function. Old and
+new versions share the same transactional data contract during rollout.
+
 - Competition row locks serialize entry/vote/lifecycle/execution changes.
   Drop locks additionally prevent concurrent association, editing and deletion
   from bypassing one active nonterminal entry per drop.

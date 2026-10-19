@@ -16,6 +16,7 @@ import {
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
+import { WaveCreditScope } from '@/entities/IWave';
 import { computeCompetitionPhase } from './competition-phase';
 import {
   NativeCompetitionRuntimeRepository,
@@ -101,7 +102,10 @@ export class NativeCompetitionRuntimeService {
 
   public constructor(
     private readonly repository: NativeCompetitionRuntimeRepository,
-    private readonly credits: Pick<CompetitionCreditService, 'getBudget'>,
+    private readonly credits: Pick<
+      CompetitionCreditService,
+      'getBudget' | 'getWaveBudgets'
+    >,
     private readonly executionRouter: CompetitionExecutionRouter,
     private readonly features: Pick<
       AppFeatures,
@@ -160,13 +164,27 @@ export class NativeCompetitionRuntimeService {
     ctx: RequestContext
   ): Promise<void> {
     const voters = await this.repository.listActiveVoters(competition.id, ctx);
+    const waveBudgets =
+      competition.voting.credit_scope === WaveCreditScope.WAVE
+        ? await this.credits.getWaveBudgets(competition, voters, ctx)
+        : null;
     for (const voterProfileId of voters) {
-      const budget = await this.credits.getBudget(
-        competition,
-        voterProfileId,
-        undefined,
-        ctx
-      );
+      const budget =
+        waveBudgets?.get(voterProfileId) ??
+        (await this.credits.getBudget(
+          competition,
+          voterProfileId,
+          undefined,
+          ctx
+        ));
+      // WAVE spending is the sum of absolute active votes. If it fits, no
+      // individual vote needs reducing. DROP budgets must still check each entry.
+      if (
+        waveBudgets &&
+        budget.spent !== null &&
+        budget.spent <= budget.available
+      )
+        continue;
       await this.reconcileVoterCredit(
         {
           competitionId: competition.id,
@@ -211,8 +229,10 @@ export class NativeCompetitionRuntimeService {
     timer: Timer,
     now = Date.now()
   ): Promise<void> {
-    await this.forEachNativeCompetition(timer, (competitionId, ctx) =>
-      this.refreshCompetition(competitionId, now, ctx)
+    await this.forEachNativeCompetition(
+      timer,
+      'leaderboard',
+      (competitionId, ctx) => this.refreshCompetition(competitionId, now, ctx)
     );
   }
 
@@ -220,13 +240,16 @@ export class NativeCompetitionRuntimeService {
     now = Date.now(),
     timer
   }: { now?: number; timer?: Timer } = {}): Promise<void> {
-    await this.forEachNativeCompetition(timer, (competitionId, ctx) =>
-      this.processCompetition(competitionId, now, ctx)
+    await this.forEachNativeCompetition(
+      timer,
+      'decisions',
+      (competitionId, ctx) => this.processCompetition(competitionId, now, ctx)
     );
   }
 
   private async forEachNativeCompetition(
     timer: Timer | undefined,
+    operation: 'leaderboard' | 'decisions',
     execute: (id: string, ctx: RequestContext) => Promise<void>
   ): Promise<void> {
     if (!this.features.isNativeCompetitionExecutionEnabled()) return;
@@ -238,7 +261,13 @@ export class NativeCompetitionRuntimeService {
       if (!ids.length) break;
       for (const id of ids) {
         try {
+          const startedAt = Date.now();
           await execute(id, { timer });
+          this.logger.info('native_competition_execution_completed', {
+            competition_id: id,
+            operation,
+            duration_ms: Date.now() - startedAt
+          });
         } catch {
           // Do not log signed payloads, user content or DB error values.
           this.logger.error('native_competition_execution_failed', {

@@ -15,6 +15,7 @@ import {
   COMPETITION_PAUSES_TABLE,
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_LIFECYCLE_EVENTS_TABLE,
+  COMPETITION_LEADERBOARD_ENTRIES_TABLE,
   DROPS_TABLE,
   METRIC_ROLLUP_HOUR_TABLE,
   WAVES_TABLE
@@ -26,7 +27,11 @@ import { NativeCompetitionRuntimeService } from './native-competition-runtime.se
 import { competitionRepository } from './competition.repository';
 import { CompetitionExecutionRouter } from './competition-execution.router';
 import { appFeatures } from '@/app-features';
-import { CompetitionCreditService } from './competition-credit.service';
+import {
+  CompetitionCreditBudget,
+  CompetitionCreditService
+} from './competition-credit.service';
+import { competitionCreditRepository } from './competition-credit.repository';
 import { RequestContext } from '@/request.context';
 import { competitionEventRepository } from './competition-event.repository';
 import { competitionMainStageRepository } from './competition-main-stage.repository';
@@ -182,9 +187,12 @@ describeWithSeed(
     const getBudget = jest.fn() as jest.MockedFunction<
       CompetitionCreditService['getBudget']
     >;
+    const getWaveBudgets = jest.fn() as jest.MockedFunction<
+      CompetitionCreditService['getWaveBudgets']
+    >;
     const service = new NativeCompetitionRuntimeService(
       repository,
-      { getBudget },
+      { getBudget, getWaveBudgets },
       new CompetitionExecutionRouter(competitionRepository, appFeatures),
       appFeatures
     );
@@ -206,6 +214,25 @@ describeWithSeed(
         min_vote: null,
         max_vote: null
       }));
+      getWaveBudgets.mockReset();
+      getWaveBudgets.mockImplementation(async (resource, profiles, ctx) => {
+        const budgets = new Map<string, CompetitionCreditBudget>();
+        for (const profile of profiles) {
+          const budget = await getBudget(resource, profile, undefined, ctx);
+          const spending = await competitionCreditRepository.getSpending(
+            resource,
+            profile,
+            undefined,
+            ctx
+          );
+          budgets.set(profile, {
+            ...budget,
+            spent: spending.namespace_spent,
+            remaining: budget.available - spending.namespace_spent
+          });
+        }
+        return budgets;
+      });
     });
     afterEach(() => {
       if (originalFeature === undefined)
@@ -258,6 +285,204 @@ describeWithSeed(
         );
       });
     }
+
+    async function largeLeaderboard() {
+      await sqlExecutor.bulkInsert(
+        COMPETITION_ENTRIES_TABLE,
+        Array.from({ length: 473 }, (_, index) => ({
+          ...entries[0],
+          id: `batch-entry-${index}`,
+          drop_id: `batch-drop-${index}`,
+          submitted_at: index + 3
+        })),
+        Object.keys(entries[0])
+      );
+      const active = await repository.listActiveEntries(rankId, {});
+      await sqlExecutor.bulkInsert(
+        COMPETITION_ENTRY_RUNTIME_TABLE,
+        active.map((entry, index) => ({
+          competition_id: rankId,
+          entry_id: entry.id,
+          real_time_rating: index - 200,
+          last_increased_at: 90,
+          over_threshold_since: 5,
+          updated_at: 10
+        })),
+        [
+          'competition_id',
+          'entry_id',
+          'real_time_rating',
+          'last_increased_at',
+          'over_threshold_since',
+          'updated_at'
+        ]
+      );
+      return (await repository.listActiveEntries(rankId, {})).map(
+        (entry, index) => ({
+          entry,
+          rating: index - 250,
+          rank: index + 1,
+          overThresholdSince: index % 2 === 0 ? null : 20,
+          orderingTime: index % 2 === 0 ? undefined : 30,
+          decisionRating: index % 2 === 0 ? undefined : index + 50
+        })
+      );
+    }
+
+    it('batches WAVE budgets and only reconciles voters over their shared credit', async () => {
+      await vote(rankId, rankEntry, -60, 10, 'overspent');
+      await vote(rankId, secondRankEntry, 60, 10, 'overspent');
+      await vote(rankId, rankEntry, 100, 20, 'within-budget');
+      const votes = jest.spyOn(repository, 'getVoterActiveVotes');
+      try {
+        await service.refreshCompetition(rankId, 500);
+        expect(getWaveBudgets).toHaveBeenCalledTimes(1);
+        expect(getWaveBudgets).toHaveBeenCalledWith(
+          expect.objectContaining({ id: rankId }),
+          ['overspent', 'within-budget'],
+          expect.objectContaining({ connection: expect.anything() })
+        );
+        expect(votes.mock.calls.map((call) => call[1])).toEqual(['overspent']);
+        expect(
+          await repository.getVoterActiveVotes(rankId, 'overspent', {})
+        ).toEqual([
+          { entryId: rankEntry, value: -50 },
+          { entryId: secondRankEntry, value: 50 }
+        ]);
+        expect(
+          await repository.getVoterActiveVotes(rankId, 'within-budget', {})
+        ).toEqual([{ entryId: rankEntry, value: 100 }]);
+      } finally {
+        votes.mockRestore();
+      }
+    });
+
+    it('still reconciles independent DROP budgets without a shared-spending shortcut', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set voting_config = json_set(voting_config, '$.credit_scope', 'DROP') where id = :rankId`,
+        { rankId }
+      );
+      await vote(rankId, rankEntry, -120, 10);
+      await vote(rankId, secondRankEntry, 80, 10);
+      await service.refreshCompetition(rankId, 500);
+      expect(getWaveBudgets).not.toHaveBeenCalled();
+      expect(await repository.getVoterActiveVotes(rankId, 'voter', {})).toEqual(
+        [
+          { entryId: secondRankEntry, value: 80 },
+          { entryId: rankEntry, value: -100 }
+        ]
+      );
+    });
+
+    it('persists 475 leaderboard entries in bounded batches without replacing vote runtime fields', async () => {
+      const rows = await largeLeaderboard();
+      const batchRepository = new NativeCompetitionRuntimeRepository(
+        () => sqlExecutor
+      );
+      const upsert = jest.spyOn(sqlExecutor, 'bulkUpsert');
+      try {
+        await batchRepository.executeNativeQueriesInTransaction(
+          async (connection) => {
+            const ctx = { connection };
+            await batchRepository.lockCompetition(rankId, ctx);
+            await batchRepository.saveLeaderboard(rankId, rows, 500, ctx);
+            // Exercise duplicate-key updates as well as initial insertion.
+            await batchRepository.saveLeaderboard(
+              rankId,
+              rows.map((row) => ({ ...row, rating: row.rating + 1 })),
+              600,
+              ctx
+            );
+          }
+        );
+        expect(upsert).toHaveBeenCalledTimes(10);
+        expect(upsert.mock.calls.map((call) => call[1].length)).toEqual([
+          100, 100, 100, 100, 75, 100, 100, 100, 100, 75
+        ]);
+        const saved = await sqlExecutor.execute(
+          `select * from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id = :rankId order by \`rank\``,
+          { rankId }
+        );
+        expect(saved).toEqual(
+          rows.map((row) => ({
+            competition_id: rankId,
+            entry_id: row.entry.id,
+            drop_id: row.entry.drop_id,
+            rating: row.rating + 1,
+            real_time_rating: row.entry.real_time_rating,
+            rank: row.rank,
+            submitted_at: row.entry.submitted_at,
+            updated_at: 600,
+            ordering_time: row.orderingTime ?? 600,
+            decision_rating: row.decisionRating ?? row.rating + 1
+          }))
+        );
+        const runtime = await sqlExecutor.execute<{
+          entry_id: string;
+          over_threshold_since: number | null;
+          updated_at: number;
+          last_increased_at: number;
+          real_time_rating: number;
+        }>(
+          `select * from ${COMPETITION_ENTRY_RUNTIME_TABLE} where competition_id = :rankId`,
+          { rankId }
+        );
+        for (const row of rows) {
+          expect(
+            runtime.find((item) => item.entry_id === row.entry.id)
+          ).toMatchObject({
+            real_time_rating: row.entry.real_time_rating,
+            over_threshold_since: row.overThresholdSince,
+            last_increased_at: 90,
+            updated_at: 10
+          });
+        }
+      } finally {
+        upsert.mockRestore();
+      }
+    });
+
+    it('rolls back earlier leaderboard and threshold batches when a later batch fails', async () => {
+      const rows = await largeLeaderboard();
+      const batchRepository = new NativeCompetitionRuntimeRepository(
+        () => sqlExecutor
+      );
+      const execute = sqlExecutor.execute.bind(sqlExecutor);
+      let thresholdWrites = 0;
+      const failure = jest
+        .spyOn(sqlExecutor, 'execute')
+        .mockImplementation(async (...args) => {
+          if (
+            args[0].includes('set over_threshold_since = case') &&
+            ++thresholdWrites === 2
+          )
+            throw new Error('Injected later batch failure');
+          return execute(...args);
+        });
+      try {
+        await expect(
+          batchRepository.executeNativeQueriesInTransaction(
+            async (connection) => {
+              const ctx = { connection };
+              await batchRepository.lockCompetition(rankId, ctx);
+              await batchRepository.saveLeaderboard(rankId, rows, 500, ctx);
+            }
+          )
+        ).rejects.toThrow('Injected later batch failure');
+      } finally {
+        failure.mockRestore();
+      }
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}`
+        )
+      ).toEqual([{ n: 0 }]);
+      expect(
+        await sqlExecutor.execute(
+          `select distinct over_threshold_since, updated_at from ${COMPETITION_ENTRY_RUNTIME_TABLE}`
+        )
+      ).toEqual([{ over_threshold_since: 5, updated_at: 10 }]);
+    });
 
     it.each([1, -1])(
       'rolls back a cross-voter aggregate outside the safe integer range with sign %s',
