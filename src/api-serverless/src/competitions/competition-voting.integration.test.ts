@@ -5,7 +5,7 @@ import { userGroupsService } from '@/api/community-members/user-groups.service';
 import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompetitionVoteRequest';
 import * as tables from '@/constants';
 import { IdentityNotificationEntity } from '@/entities/IIdentityNotification';
-import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
+import { competitionCreditService } from '@/competitions/competition-credit.service';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
@@ -260,11 +260,18 @@ describeWithSeed(
     });
 
     it('rolls back the notification and push alongside a failed vote command', async () => {
+      const getBudget = competitionCreditService.getBudget.bind(
+        competitionCreditService
+      );
       jest
-        .spyOn(nativeCompetitionRuntimeService, 'refreshCompetition')
-        .mockRejectedValueOnce(new Error('Refresh failed'));
+        .spyOn(competitionCreditService, 'getBudget')
+        .mockImplementationOnce(getBudget)
+        .mockImplementationOnce(getBudget)
+        .mockRejectedValueOnce(new Error('Final budget read failed'));
       const request = { idempotency_key: randomUUID() };
-      await expect(vote(10, request)).rejects.toThrow('Refresh failed');
+      await expect(vote(10, request)).rejects.toThrow(
+        'Final budget read failed'
+      );
       expect(await notifications()).toEqual([]);
       expect(
         await sqlExecutor.execute(
@@ -286,6 +293,47 @@ describeWithSeed(
         current_vote: 10
       });
       expect(await notifications()).toHaveLength(1);
+    });
+
+    it('serializes concurrent allocations against the current voter budget', async () => {
+      const secondEntry = randomUUID();
+      await sqlExecutor.execute(
+        `insert into ${tables.DROPS_TABLE}
+         (id,wave_id,author_id,created_at,parts_count,drop_type)
+         values ('second-submission',:waveId,:author,2,1,'COMPETITION')`,
+        { waveId: wave.id, author }
+      );
+      await sqlExecutor.execute(
+        `insert into ${tables.COMPETITION_ENTRIES_TABLE}
+         (id,competition_id,wave_id,drop_id,submitter_id,status,config_version,submitted_at)
+         values (:secondEntry,:competitionId,:waveId,'second-submission',:author,'ACTIVE',1,2)`,
+        { secondEntry, competitionId, waveId: wave.id, author }
+      );
+      const results = await Promise.allSettled([
+        vote(70),
+        service.vote(
+          wave.id,
+          competitionId,
+          secondEntry,
+          { idempotency_key: randomUUID(), config_version: 1, value: 70 },
+          context()
+        )
+      ]);
+      expect(
+        results.filter((result) => result.status === 'fulfilled')
+      ).toHaveLength(1);
+      expect(results.find((result) => result.status === 'rejected')).toEqual({
+        status: 'rejected',
+        reason: expect.objectContaining({
+          message: 'Vote exceeds available credit or entry voting limits'
+        })
+      });
+      expect(
+        await sqlExecutor.execute(
+          `select sum(credit_spent) as spent from ${tables.COMPETITION_VOTES_TABLE} where voter_profile_id=:voter`,
+          { voter }
+        )
+      ).toEqual([{ spent: 70 }]);
     });
   }
 );

@@ -87,6 +87,22 @@ export async function voteForMigratedLegacyEntry(
     ).includes(group)
   )
     throw new ForbiddenException('Voter is not eligible to vote in this wave');
+  const initial = await competitionCreditService.getBudget(
+    competition,
+    model.voter_id,
+    entry,
+    ctx
+  );
+  await nativeCompetitionRuntimeService.reconcileVoterCredit(
+    {
+      competitionId: record.id,
+      voterProfileId: model.voter_id,
+      availableCredit: initial.available,
+      creditScope: competition.voting.credit_scope,
+      occurredAt: now
+    },
+    ctx
+  );
   const budget = await competitionCreditService.getBudget(
     competition,
     model.voter_id,
@@ -142,6 +158,5 @@ export async function voteForMigratedLegacyEntry(
       ctx.connection
     );
   }
-  await nativeCompetitionRuntimeService.refreshCompetition(record.id, now, ctx);
   return true;
 }
