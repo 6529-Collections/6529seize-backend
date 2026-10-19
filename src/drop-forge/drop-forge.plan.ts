@@ -193,16 +193,18 @@ function buildPhaseActions(
       throw new LaunchSafetyError(
         `Phase ${phases[phase].name} needs at least ${minimumLead} seconds for its update/initialization and ${batches} airdrop batches`
       );
-    actions.push({
-      id: phase === 0 ? 'initialize' : `phase-${phase}`,
-      kind: phase === 0 ? 'INITIALIZE' : 'UPDATE',
-      phase,
-      due,
-      deadline,
-      recipients: [],
-      state: 'PENDING'
-    });
-    actions.push(...airdropActions(groups, phase, due, deadline));
+    actions.push(
+      {
+        id: phase === 0 ? 'initialize' : `phase-${phase}`,
+        kind: phase === 0 ? 'INITIALIZE' : 'UPDATE',
+        phase,
+        due,
+        deadline,
+        recipients: [],
+        state: 'PENDING'
+      },
+      ...airdropActions(groups, phase, due, deadline)
+    );
   }
   return actions;
 }
