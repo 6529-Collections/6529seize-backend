@@ -90,6 +90,32 @@ describe('handler websocket auth', () => {
     });
   });
 
+  it.each([undefined, 'unknown', 'resync_v1'])(
+    'enables recovery reconnects only for an explicit supported capability (%s)',
+    async (capability) => {
+      const response = await handler(
+        {
+          httpMethod: 'GET',
+          requestContext: {
+            routeKey: '$connect',
+            connectionId: 'connection-1'
+          },
+          queryStringParameters: { recovery_capability: capability }
+        } as unknown as APIGatewayEvent,
+        {} as Context,
+        jest.fn()
+      );
+      expect(response).toMatchObject({ statusCode: 200 });
+      expect(appWebSocketsMock.register).toHaveBeenCalledWith({
+        identityId: 'stale-identity',
+        connectionId: 'connection-1',
+        jwtExpiry: 100,
+        durableUpdates: false,
+        ...(capability === 'resync_v1' ? { recoveryCapable: true } : {})
+      });
+    }
+  );
+
   it.each([
     [undefined, false],
     ['', false],
@@ -120,6 +146,28 @@ describe('handler websocket auth', () => {
       });
     }
   );
+
+  it('negotiates durable delivery and recovery independently on one connection', async () => {
+    await handler(
+      {
+        httpMethod: 'GET',
+        requestContext: { routeKey: '$connect', connectionId: 'both' },
+        queryStringParameters: {
+          delivery_capability: 'durable_updates_v1',
+          recovery_capability: 'resync_v1'
+        }
+      } as unknown as APIGatewayEvent,
+      {} as Context,
+      jest.fn()
+    );
+    expect(appWebSocketsMock.register).toHaveBeenCalledWith({
+      connectionId: 'both',
+      identityId: 'stale-identity',
+      jwtExpiry: 100,
+      durableUpdates: true,
+      recoveryCapable: true
+    });
+  });
 
   it.each([
     WsMessageType.AUTHENTICATE,

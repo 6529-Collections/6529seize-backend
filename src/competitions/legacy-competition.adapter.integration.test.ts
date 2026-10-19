@@ -1,5 +1,5 @@
 import { LegacyCompetitionBaselineRepository } from '@/competitions/legacy-competition-baseline.repository';
-import { competitionCreditService } from '@/competitions/competition-credit.service';
+import { CompetitionCreditService } from '@/competitions/competition-credit.service';
 import {
   LEGACY_PARITY_ROW_LIMIT,
   loadLegacyParityCandidate
@@ -284,15 +284,17 @@ describeWithSeed(
                 }
               ]
         );
-        const original = competitionCreditService.getBudget.bind(
-          competitionCreditService
-        );
+        // Both scalar and batch-local candidate services must be fault-injected;
+        // the independent oracle must still read its own uncorrupted source.
+        const original = CompetitionCreditService.prototype.getBudget;
         jest
-          .spyOn(competitionCreditService, 'getBudget')
-          .mockImplementation(async (...args) => ({
-            ...(await original(...args)),
-            remaining: 999
-          }));
+          .spyOn(CompetitionCreditService.prototype, 'getBudget')
+          .mockImplementation(async function (
+            this: CompetitionCreditService,
+            ...args
+          ) {
+            return { ...(await original.apply(this, args)), remaining: 999 };
+          });
         const corrupted = await loadLegacyParityCandidate(
           reader,
           record,

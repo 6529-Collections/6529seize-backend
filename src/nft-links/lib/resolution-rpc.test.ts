@@ -9,6 +9,7 @@ import {
 import { fetchTextWithTimeout } from '@/nft-links/lib/http';
 import {
   getNftLinkResolutionBudget,
+  NftLinkResolutionDeadlineError,
   withNftLinkResolutionBudget
 } from '@/nft-links/resolution-budget';
 
@@ -82,7 +83,7 @@ describe('NFT link network cancellation', () => {
     await withNftLinkResolutionBudget(100, async () => {
       await expect(
         fetchTextWithTimeout(url + '/body', { timeoutMs: 5000 })
-      ).rejects.toMatchObject({ name: 'AbortError' });
+      ).rejects.toBeInstanceOf(NftLinkResolutionDeadlineError);
     });
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(sockets.size).toBe(0);

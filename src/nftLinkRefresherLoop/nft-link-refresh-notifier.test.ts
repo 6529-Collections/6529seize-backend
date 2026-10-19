@@ -34,7 +34,9 @@ describe('NFT link refresh notifications', () => {
     const recipients = jest
       .spyOn(nftLinkRefreshNotifierDb, 'findActiveRecipients')
       .mockResolvedValue([recipient(1)]);
-    const send = jest.spyOn(appWebSockets, 'send').mockResolvedValue(undefined);
+    const send = jest
+      .spyOn(appWebSockets, 'send')
+      .mockResolvedValue({ status: 'sent' });
     const wake = jest.fn().mockResolvedValue(undefined);
     try {
       await new NftLinkRefreshNotifier(

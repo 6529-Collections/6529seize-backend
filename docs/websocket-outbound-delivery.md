@@ -242,3 +242,18 @@ reconnected capability registration, pre-capability backlog, and bounded burst
 drain. Local synthetic failures do not establish
 production load capacity. A controlled staging rollout still needs to verify the
 new table, scheduled recovery and alarms; no deployment is implied by this PR.
+
+### Direct-send recovery compatibility
+
+Main's Redis-backed `webSocketDeliveryLoop` recovery remains active for direct
+legacy delivery and explicit `RESYNC_REQUIRED` probes. Recovery probes bypass
+SQS even for durable connections, so the refresh worker observes actual
+transport results. Clients advertise `recovery_capability=resync_v1` separately
+from `delivery_capability=durable_updates_v1`; neither capability implies the
+other. JWT authentication remains message-based.
+
+The durable FIFO consumer uses strict bounded transport instead of the direct
+refresh policy. A cooldown or pending refresh must never acknowledge a queued
+content frame. Exhausted Gateway failures still reject for SQS retry and retain
+error diagnostics; 410 cleanup remains unchanged. Accepted historical frames
+remain on this strict path regardless of the connection's capability marker.

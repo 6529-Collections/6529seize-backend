@@ -9,7 +9,13 @@ import {
   COMPETITION_DECISIONS_TABLE,
   COMPETITION_EVENT_EFFECTS_TABLE,
   COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE,
-  DROPS_TABLE
+  DROPS_TABLE,
+  DROP_RANK_TABLE,
+  DROP_VOTER_STATE_TABLE,
+  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+  DROP_REAL_VOTE_IN_TIME_TABLE,
+  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
+  WAVE_LEADERBOARD_ENTRIES_TABLE
 } from '@/constants';
 import { CompetitionMigrationEntity } from '@/entities/ICompetitionMigration';
 import {
@@ -29,7 +35,10 @@ import {
   MigrationEnvironment,
   MigrationReadiness
 } from '@/competitions/competition-migration-policy';
-import { migrationCaptureHealthy } from '@/competitions/competition-migration-capture';
+import {
+  MIGRATION_CONTENT_TABLES,
+  migrationCaptureHealthy
+} from '@/competitions/competition-migration-capture';
 import { CompetitionMigrationEnvironmentRepository } from './competition-migration-environment.repository';
 import { competitionPayloadHash } from './competition-command-identity';
 
@@ -45,6 +54,17 @@ function safeCounter(value: number | string): number {
 function json<T>(value: T | string): T {
   return typeof value === 'string' ? (JSON.parse(value) as T) : value;
 }
+export const MIGRATION_CHECKPOINT_SELECT_SQL = `select * from ${COMPETITION_MIGRATIONS_TABLE} where competition_id=:id`;
+export const MIGRATION_AUDIT_INSERT_SQL = `insert into ${COMPETITION_MIGRATION_AUDIT_TABLE} (id,competition_id,actor,action,reason,report,created_at) values (:auditId,:id,:actor,:action,:reason,:report,:now)`;
+const CLEANUP_CLASSIFICATION_LIMIT = 25;
+const DIRECTLY_REPLAYED_TABLES = [
+  DROP_RANK_TABLE,
+  DROP_VOTER_STATE_TABLE,
+  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+  DROP_REAL_VOTE_IN_TIME_TABLE,
+  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
+  WAVE_LEADERBOARD_ENTRIES_TABLE
+];
 export type MigrationStatus = {
   readonly competitionId: string;
   readonly waveId: string;
@@ -129,42 +149,22 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
       ctx.timer?.stop(timerName);
     }
   }
-  public async status(
+  /** Copy workers need only durable checkpoints while holding ownership. Full
+   * operational/capture reporting runs after the copy transaction releases it. */
+  public async checkpoint(
     id: string,
     ctx: RequestContext
-  ): Promise<MigrationStatus> {
-    const timerName = `${this.constructor.name}->status`;
+  ): Promise<CompetitionMigrationEntity | null> {
+    const timerName = `${this.constructor.name}->checkpoint`;
     ctx.timer?.start(timerName);
     try {
-      const record = await new CompetitionRepository(
-        () => this.db
-      ).findCompetitionRecordById(id, ctx);
-      if (
-        !record?.legacy_wave_id ||
-        id !== legacyCompetitionId(record.legacy_wave_id)
-      )
-        throw new Error('Not a stable legacy competition ID');
       const raw = await this.db.oneOrNull<CompetitionMigrationEntity>(
-        `select * from ${COMPETITION_MIGRATIONS_TABLE} where competition_id=:id`,
+        MIGRATION_CHECKPOINT_SELECT_SQL,
         { id },
         { wrappedConnection: ctx.connection }
       );
-      const effects = await this.db.oneOrNull<{ count: number }>(
-        `select count(*) as count from ${COMPETITION_EVENT_EFFECTS_TABLE} effect join ${COMPETITION_OUTBOX_TABLE} event on event.id=effect.event_id where event.competition_id=:id and effect.completed_at is not null`,
-        { id },
-        { wrappedConnection: ctx.connection }
-      );
-      if (!raw)
-        return {
-          competitionId: id,
-          waveId: record.wave_id,
-          storageMode: record.storage_mode,
-          executionMode: record.execution_mode,
-          migration: null,
-          readiness: null,
-          completedEffects: Number(effects?.count ?? 0)
-        };
-      const migration = {
+      if (!raw) return null;
+      return {
         ...raw,
         source_watermark: safeCounter(raw.source_watermark),
         applied_watermark: safeCounter(raw.applied_watermark),
@@ -202,6 +202,41 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
             ? null
             : safeCounter(raw.cutover_decision_count)
       };
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+  public async status(
+    id: string,
+    ctx: RequestContext
+  ): Promise<MigrationStatus> {
+    const timerName = `${this.constructor.name}->status`;
+    ctx.timer?.start(timerName);
+    try {
+      const record = await new CompetitionRepository(
+        () => this.db
+      ).findCompetitionRecordById(id, ctx);
+      if (
+        !record?.legacy_wave_id ||
+        id !== legacyCompetitionId(record.legacy_wave_id)
+      )
+        throw new Error('Not a stable legacy competition ID');
+      const migration = await this.checkpoint(id, ctx);
+      const effects = await this.db.oneOrNull<{ count: number }>(
+        `select count(*) as count from ${COMPETITION_EVENT_EFFECTS_TABLE} effect join ${COMPETITION_OUTBOX_TABLE} event on event.id=effect.event_id where event.competition_id=:id and effect.completed_at is not null`,
+        { id },
+        { wrappedConnection: ctx.connection }
+      );
+      if (!migration)
+        return {
+          competitionId: id,
+          waveId: record.wave_id,
+          storageMode: record.storage_mode,
+          executionMode: record.execution_mode,
+          migration: null,
+          readiness: null,
+          completedEffects: Number(effects?.count ?? 0)
+        };
       const pending = await this.db.oneOrNull<{ count: number }>(
         `select (select count(*) from ${COMPETITION_OUTBOX_TABLE} where competition_id=:id and delivered_at is null)+(select count(*) from ${COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE} where competition_id=:id and completed_at is null) as count`,
         { id },
@@ -418,7 +453,7 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
     ctx.timer?.start(timerName);
     try {
       await this.db.execute(
-        `insert into ${COMPETITION_MIGRATION_AUDIT_TABLE} (id,competition_id,actor,action,reason,report,created_at) values (:auditId,:id,:actor,:action,:reason,:report,:now)`,
+        MIGRATION_AUDIT_INSERT_SQL,
         {
           auditId: randomUUID(),
           id,
@@ -451,5 +486,103 @@ export class CompetitionMigrationRepository extends LazyDbAccessCompatibleServic
     } finally {
       ctx.timer?.stop(timerName);
     }
+  }
+  public async canRefreshOnlyLeaderboard(
+    id: string,
+    appliedWatermark: number,
+    targetWatermark: number,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const timerName = `${this.constructor.name}->canRefreshOnlyLeaderboard`;
+    ctx.timer?.start(timerName);
+    try {
+      if (targetWatermark <= appliedWatermark) return false;
+      // Count the complete immutable window using the covering watermark index.
+      // Do not evaluate JSON/correlated lookups for every directly replayed row.
+      const count = await this.db.oneOrNull<{ count: number | string }>(
+        `select count(*) as count from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark>:appliedWatermark and watermark<=:targetWatermark`,
+        { id, appliedWatermark, targetWatermark },
+        { wrappedConnection: ctx.connection }
+      );
+      if (Number(count?.count) !== targetWatermark - appliedWatermark)
+        return false;
+      const candidates = await this.db.execute<{ sequence: number | string }>(
+        `select sequence from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark>:appliedWatermark and watermark<=:targetWatermark and source_table not in (:tables) order by watermark,sequence limit :limit`,
+        {
+          id,
+          appliedWatermark,
+          targetWatermark,
+          tables: DIRECTLY_REPLAYED_TABLES,
+          limit: CLEANUP_CLASSIFICATION_LIMIT + 1
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      // A conservative full refresh remains correct for arbitrarily large
+      // cleanup sets. Never grow JSON/subquery work with the captured window.
+      if (candidates.length > CLEANUP_CLASSIFICATION_LIMIT) return false;
+      if (!candidates.length) return true;
+      return await this.hasSupportedCleanupCandidates(
+        id,
+        appliedWatermark,
+        targetWatermark,
+        candidates.map((candidate) => candidate.sequence),
+        ctx
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
+  private async hasSupportedCleanupCandidates(
+    id: string,
+    appliedWatermark: number,
+    targetWatermark: number,
+    sequences: readonly (number | string)[],
+    ctx: RequestContext
+  ): Promise<boolean> {
+    // Every non-directly-replayed row is in this bounded candidate set, so
+    // every possible parent deletion is present too. Retain SQL collation and
+    // all parent/key/type checks. Surviving parents and winner deletions fail
+    // closed, as do edits, creation, decisions and unsupported source changes.
+    const row = await this.db.oneOrNull<{
+      count: number | string;
+      unsupported: number | string;
+    }>(
+      `select count(*) as count,coalesce(sum(not coalesce((
+           (
+             change_row.operation='DELETE' and change_row.after_row is null
+             and (
+               (change_row.source_table=:dropsTable and json_unquote(json_extract(change_row.before_row,'$.drop_type'))='PARTICIPATORY')
+               or (change_row.source_table in (:contentTables) and exists (
+                 select 1 from ${COMPETITION_MIGRATION_CHANGES_TABLE} parent
+                 where parent.competition_id=:id and parent.watermark>:appliedWatermark and parent.watermark<=:targetWatermark
+                   and parent.sequence in (:sequences)
+                   and parent.source_table=:dropsTable and parent.operation='DELETE' and parent.after_row is null
+                   and json_unquote(json_extract(parent.before_row,'$.drop_type'))='PARTICIPATORY'
+                   and json_unquote(json_extract(parent.before_row,'$.id'))=json_unquote(json_extract(change_row.before_row,'$.drop_id'))
+               ))
+             )
+             and json_type(change_row.before_row)='OBJECT'
+             and json_type(json_extract(change_row.before_row,if(change_row.source_table=:dropsTable,'$.id','$.drop_id')))='STRING'
+             and not exists (
+               select 1 from ${DROPS_TABLE} d join ${COMPETITIONS_TABLE} c on c.legacy_wave_id=d.wave_id
+               where c.id=:id and d.id=json_unquote(json_extract(change_row.before_row,if(change_row.source_table=:dropsTable,'$.id','$.drop_id')))
+                 and d.drop_type in ('PARTICIPATORY','WINNER')
+             )
+           )
+         ),false)),0) as unsupported from ${COMPETITION_MIGRATION_CHANGES_TABLE} change_row where change_row.competition_id=:id and change_row.watermark>:appliedWatermark and change_row.watermark<=:targetWatermark and change_row.sequence in (:sequences)`,
+      {
+        id,
+        appliedWatermark,
+        targetWatermark,
+        dropsTable: DROPS_TABLE,
+        contentTables: MIGRATION_CONTENT_TABLES,
+        sequences
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    return (
+      Number(row?.count) === sequences.length && Number(row?.unsupported) === 0
+    );
   }
 }

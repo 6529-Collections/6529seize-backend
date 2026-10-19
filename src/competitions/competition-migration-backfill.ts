@@ -1,6 +1,13 @@
+import { readSequentially } from './competition-read-sequence';
+import { collections } from '@/collections';
+import { CompetitionMigrationContentRepository } from './competition-migration-content.repository';
 import { isMigrationContentTable } from '@/competitions/competition-migration-capture';
-import { CompetitionEntryRepository } from './competition-entry.repository';
-import { DropEntity } from '@/entities/IDrop';
+import {
+  CompetitionEntryRepository,
+  CompetitionEntryContent
+} from './competition-entry.repository';
+import { CompetitionEntry } from './competition.types';
+import { DropEntity, DropType } from '@/entities/IDrop';
 import { competitionPayloadHash } from './competition-command-identity';
 import {
   COMPETITIONS_TABLE,
@@ -46,6 +53,9 @@ import {
 import { CompetitionStorageMode } from '@/entities/ICompetition';
 import { CompetitionMigrationChangeEntity } from '@/entities/ICompetitionMigration';
 import { parseMigrationChangeImage } from './competition-migration-journal';
+
+const VOTER_COPY_QUERY_LIMIT = 25;
+const LEADERBOARD_CLEANUP_QUERY_LIMIT = 25;
 
 /** Bounded batches; the checkpoint is committed with the copied records. */
 export class CompetitionMigrationBackfill {
@@ -423,7 +433,11 @@ export class CompetitionMigrationBackfill {
           return await this.outcomes(record, reader, offset, now, ctx);
         case 'ENTRIES': {
           const source = await this.entryKeys(record, offset, limit, ctx);
-          for (const row of source) await this.entry(record, row.id, ctx);
+          await this.entryPage(
+            record,
+            source.map((row) => row.id),
+            ctx
+          );
           return source.length === limit
             ? Number(source[source.length - 1].serial_no)
             : 0;
@@ -589,6 +603,65 @@ export class CompetitionMigrationBackfill {
       ctx.timer?.stop(timerName);
     }
   }
+  private async entryPage(
+    record: CompetitionRoutingRecord,
+    dropIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->entryPage`;
+    ctx.timer?.start(timerName);
+    try {
+      if (record.storage_mode !== CompetitionStorageMode.LEGACY_ADAPTER)
+        throw new Error('Migration entry pages require legacy ownership');
+      if (!dropIds.length) return;
+      const entries = await new CompetitionRepository(
+        () => this.db
+      ).findLegacyEntriesByDropIds(record, dropIds, ctx);
+      const drops = await this.db.execute<DropEntity>(
+        `select * from ${DROPS_TABLE} where id in (:dropIds) and wave_id=:waveId and drop_type in ('PARTICIPATORY','WINNER')`,
+        { dropIds, waveId: record.wave_id },
+        { wrappedConnection: ctx.connection }
+      );
+      if (entries.length !== dropIds.length || drops.length !== dropIds.length)
+        throw new Error(
+          'Migration entry source disappeared while ownership was locked'
+        );
+      await this.upsert(
+        COMPETITION_ENTRIES_TABLE,
+        entries.map((entry) => ({
+          ...entry,
+          withdrawn_at: null,
+          disqualified_at: null
+        })),
+        ctx
+      );
+      const pages = new CompetitionMigrationContentRepository(() => this.db);
+      const contents = await pages.sourcePage(drops, ctx);
+      const previous = await pages.nativePage(
+        record.id,
+        entries.map((entry) => entry.id),
+        ctx
+      );
+      const sourceDrops = new Map(drops.map((drop) => [drop.id, drop]));
+      await readSequentially(entries, async (entry) => {
+        const content = contents.get(entry.drop_id);
+        const drop = sourceDrops.get(entry.drop_id);
+        if (!content || !drop)
+          throw new Error(
+            'OWNED_EXCEPTION: migration entry content page is incomplete'
+          );
+        await this.saveEntryContent(
+          entry,
+          content,
+          previous.get(entry.id) ?? null,
+          drop,
+          ctx
+        );
+      });
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
   public async entry(
     record: CompetitionRoutingRecord,
     dropId: string,
@@ -635,25 +708,31 @@ export class CompetitionMigrationBackfill {
         const contents = new CompetitionEntryRepository(() => this.db),
           content = await contents.loadDropContent(drop, ctx),
           previous = await contents.getContent(entry.id, ctx);
-        if (
-          competitionPayloadHash(previous) !== competitionPayloadHash(content)
-        )
-          await contents.saveContent(
-            entry,
-            content,
-            entry.submitter_id,
-            undefined,
-            {
-              ...ctx,
-              competitionContentObservedAt: Number(
-                drop.updated_at ?? drop.created_at
-              )
-            }
-          );
+        await this.saveEntryContent(entry, content, previous, drop, ctx);
       }
     } finally {
       ctx.timer?.stop(timerName);
     }
+  }
+  private async saveEntryContent(
+    entry: CompetitionEntry,
+    content: CompetitionEntryContent,
+    previous: CompetitionEntryContent | null,
+    drop: DropEntity,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (competitionPayloadHash(previous) === competitionPayloadHash(content))
+      return;
+    await new CompetitionEntryRepository(() => this.db).saveContent(
+      entry,
+      content,
+      entry.submitter_id,
+      undefined,
+      {
+        ...ctx,
+        competitionContentObservedAt: Number(drop.updated_at ?? drop.created_at)
+      }
+    );
   }
   private async voters(
     record: CompetitionRoutingRecord,
@@ -672,12 +751,107 @@ export class CompetitionMigrationBackfill {
         { waveId: record.wave_id, drop, voter, limit },
         { wrappedConnection: ctx.connection }
       );
-      for (const row of rows)
-        await this.vote(record, row.drop_id, row.voter_id, ctx);
+      // A caller may checkpoint 100 keys, but each joined credit statement and
+      // bulk write stays at the measured 25-key size within the same atomic batch.
+      const pages = Array.from(
+        { length: Math.ceil(rows.length / VOTER_COPY_QUERY_LIMIT) },
+        (_, page) =>
+          rows.slice(
+            page * VOTER_COPY_QUERY_LIMIT,
+            (page + 1) * VOTER_COPY_QUERY_LIMIT
+          )
+      );
+      await readSequentially(pages, (keys) =>
+        this.copyVoterPage(record, keys, ctx)
+      );
       const last = rows[rows.length - 1];
       return rows.length === limit
         ? JSON.stringify([last.drop_id, last.voter_id])
         : 0;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+  /** Read each credit history once and keep MySQL's source-key collation. The
+   * raw key page, including orphan/ineligible parents, still owns the cursor. */
+  private async copyVoterPage(
+    record: CompetitionRoutingRecord,
+    keys: readonly { drop_id: string; voter_id: string }[],
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->copyVoterPage`;
+    ctx.timer?.start(timerName);
+    try {
+      if (!keys.length) return;
+      const params: Record<string, string> = { waveId: record.wave_id };
+      const predicate = keys
+        .map((key, index) => {
+          params[`drop${index}`] = key.drop_id;
+          params[`voter${index}`] = key.voter_id;
+          return `(s.drop_id=:drop${index} and s.voter_id=:voter${index})`;
+        })
+        .join(' or ');
+      const rows = await this.db.execute<{
+        drop_id: string;
+        voter_id: string;
+        votes: number;
+        eligible: number;
+        credit_spent: number;
+        created_at: number | null;
+      }>(
+        `select s.drop_id,s.voter_id,s.votes,d.id is not null as eligible,
+                coalesce(sum(c.credit_spent),0) as credit_spent,min(c.created_at) as created_at
+         from ${DROP_VOTER_STATE_TABLE} s
+         left join ${DROPS_TABLE} d on d.id=s.drop_id and d.drop_type in ('PARTICIPATORY','WINNER'${record.storage_mode === CompetitionStorageMode.NATIVE ? ",'COMPETITION'" : ''})
+         left join ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} c
+           on c.wave_id=s.wave_id and c.drop_id=s.drop_id and c.voter_id=s.voter_id and d.id is not null
+         where s.wave_id=:waveId and (${predicate})
+         group by s.drop_id,s.voter_id,s.votes,d.id`,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+      // The caller holds ownership and one repeatable-read source snapshot.
+      if (rows.length !== keys.length)
+        throw new Error('OWNED_EXCEPTION: incomplete voter copy page');
+      const votes = rows
+        .filter((row) => row.eligible)
+        .map((row) => ({
+          id: stableUuid(record.id, `vote:${row.drop_id}:${row.voter_id}`),
+          competition_id: record.id,
+          entry_id: legacyCompetitionEntryId(record.id, row.drop_id),
+          voter_profile_id: row.voter_id,
+          value: Number(row.votes),
+          credit_spent: Number(row.credit_spent),
+          created_at: Number(row.created_at ?? 0),
+          updated_at: Number(row.created_at ?? 0)
+        }));
+      if (votes.length) {
+        const columns = Object.keys(votes[0]);
+        await this.db.bulkUpsert(
+          COMPETITION_VOTES_TABLE,
+          votes,
+          columns,
+          columns,
+          ctx
+        );
+      }
+      const missing = rows.filter((row) => !row.eligible);
+      if (missing.length) {
+        const deleteParams: Record<string, string> = { id: record.id };
+        const deletes = missing.map((row, index) => {
+          deleteParams[`entry${index}`] = legacyCompetitionEntryId(
+            record.id,
+            row.drop_id
+          );
+          deleteParams[`voter${index}`] = row.voter_id;
+          return `(entry_id=:entry${index} and voter_profile_id=:voter${index})`;
+        });
+        await this.db.execute(
+          `delete from ${COMPETITION_VOTES_TABLE} where competition_id=:id and (${deletes.join(' or ')})`,
+          deleteParams,
+          { wrappedConnection: ctx.connection }
+        );
+      }
     } finally {
       ctx.timer?.stop(timerName);
     }
@@ -785,6 +959,34 @@ export class CompetitionMigrationBackfill {
       ctx.timer?.stop(timerName);
     }
   }
+  private async refreshEntryRanks(
+    record: CompetitionRoutingRecord,
+    rows: readonly { drop_id: string; entry_rank: number }[],
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->refreshEntryRanks`;
+    ctx.timer?.start(timerName);
+    try {
+      if (!rows.length) return;
+      const entries = rows.map((row) =>
+        legacyCompetitionEntryId(record.id, row.drop_id)
+      );
+      const params: Record<string, unknown> = { id: record.id, entries };
+      const cases = rows.map((row, index) => {
+        params[`entry${index}`] = entries[index];
+        params[`rank${index}`] = Number(row.entry_rank);
+        return `when :entry${index} then :rank${index}`;
+      });
+      await this.db.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set \`rank\`=case id ${cases.join(' ')} else \`rank\` end where competition_id=:id and id in (:entries)`,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   private async leaderboard(
     record: CompetitionRoutingRecord,
     offset: number,
@@ -796,38 +998,71 @@ export class CompetitionMigrationBackfill {
     try {
       const rows = await this.db.execute<{
         drop_id: string;
+        drop_type: DropType;
         serial_no: number;
         submitted_at: number;
         rating: number;
         real_time_rating: number;
         competition_rank: number;
+        entry_rank: number;
         ordering_time: number;
         decision_rating: number;
       }>(
-        `with source as (select d.id as drop_id,d.serial_no,d.created_at as submitted_at,
+        `with source as (select d.id as drop_id,d.drop_type,d.serial_no,d.created_at as submitted_at,
        cast(if(w.time_lock_ms>0,coalesce(l.vote,0),coalesce(r.vote,0)) as signed) as rating,cast(coalesce(r.vote,0) as signed) as real_time_rating,
        if(w.time_lock_ms>0,coalesce(l.timestamp,d.created_at),coalesce(r.last_increased,d.created_at)) as tie_time,
+       coalesce(r.last_increased,d.created_at) as live_tie_time,
        coalesce(l.timestamp,d.created_at) as ordering_time,coalesce(l.vote_on_decision_time,coalesce(r.vote,0)) as decision_rating
-       from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id=d.wave_id left join ${DROP_RANK_TABLE} r on r.drop_id=d.id left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} l on l.wave_id=d.wave_id and l.drop_id=d.id where d.wave_id=:waveId and d.drop_type='PARTICIPATORY'),
-       ranked as (select source.*,rank() over(order by rating desc,tie_time asc) as competition_rank from source)
-       select * from ranked where serial_no>:offset order by serial_no limit :limit`,
+       from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id=d.wave_id left join ${DROP_RANK_TABLE} r on r.drop_id=d.id left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} l on l.wave_id=d.wave_id and l.drop_id=d.id where d.wave_id=:waveId and d.drop_type in ('PARTICIPATORY','WINNER')),
+       live_ranked as (select source.*,rank() over(order by real_time_rating desc,live_tie_time asc) as live_rank from source),
+       leaderboard_ranked as (select drop_id,rank() over(order by rating desc,tie_time asc) as competition_rank from source where drop_type='PARTICIPATORY'),
+       latest_winners as (select drop_id,ranking,row_number() over(partition by drop_id order by decision_time desc,ranking asc) as winner_order from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id=:waveId)
+       select live_ranked.*,leaderboard_ranked.competition_rank,coalesce(latest_winners.ranking,live_ranked.live_rank) as entry_rank
+       from live_ranked left join leaderboard_ranked on leaderboard_ranked.drop_id=live_ranked.drop_id
+       left join latest_winners on latest_winners.drop_id=live_ranked.drop_id and latest_winners.winner_order=1
+       where serial_no>:offset order by serial_no limit :limit`,
         { waveId: record.wave_id, offset, limit },
         { wrappedConnection: ctx.connection }
       );
+      // Entry lists use live ranks across all legacy entries; the leaderboard
+      // uses active entries and may expose a separately locked snapshot.
+      // Refresh both projections before acknowledging this journal window.
+      await this.refreshEntryRanks(record, rows, ctx);
+      // A legacy decision can turn a previously copied active entry into a
+      // winner. Upserting only current active rows would leave its old cached
+      // leaderboard row behind. Remove that projection, retaining the entry,
+      // winner, votes and history in this same checkpoint transaction.
+      await readSequentially(
+        collections.chunkArray(
+          rows
+            .filter((row) => row.drop_type === DropType.WINNER)
+            .map((row) => legacyCompetitionEntryId(record.id, row.drop_id)),
+          LEADERBOARD_CLEANUP_QUERY_LIMIT
+        ),
+        async (entries) => {
+          await this.db.execute(
+            `delete from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id and entry_id in (:entries)`,
+            { id: record.id, entries },
+            { wrappedConnection: ctx.connection }
+          );
+        }
+      );
       await this.upsert(
         COMPETITION_LEADERBOARD_ENTRIES_TABLE,
-        rows.map((row) => ({
-          competition_id: record.id,
-          entry_id: legacyCompetitionEntryId(record.id, row.drop_id),
-          drop_id: row.drop_id,
-          rating: Number(row.rating),
-          real_time_rating: Number(row.real_time_rating),
-          rank: Number(row.competition_rank),
-          submitted_at: Number(row.submitted_at),
-          updated_at: Number(row.submitted_at),
-          ordering_time: Number(row.ordering_time),
-          decision_rating: Number(row.decision_rating)
-        })),
+        rows
+          .filter((row) => row.drop_type === DropType.PARTICIPATORY)
+          .map((row) => ({
+            competition_id: record.id,
+            entry_id: legacyCompetitionEntryId(record.id, row.drop_id),
+            drop_id: row.drop_id,
+            rating: Number(row.rating),
+            real_time_rating: Number(row.real_time_rating),
+            rank: Number(row.competition_rank),
+            submitted_at: Number(row.submitted_at),
+            updated_at: Number(row.submitted_at),
+            ordering_time: Number(row.ordering_time),
+            decision_rating: Number(row.decision_rating)
+          })),
         ctx
       );
       return rows.length === limit

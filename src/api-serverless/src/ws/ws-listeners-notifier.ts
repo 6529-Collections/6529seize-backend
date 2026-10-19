@@ -330,11 +330,11 @@ export class WsListenersNotifier {
     return rows.filter((row) => allowed.has(row.connectionId));
   }
 
-  private sendLegacyNotification(input: {
+  private async sendLegacyNotification(input: {
     connectionId: string;
     message: string;
   }): Promise<void> {
-    return this.appWebSockets.send({
+    await this.appWebSockets.send({
       ...input,
       ...(this.usesOutbox ? { legacyOnly: true } : {})
     });
@@ -777,17 +777,20 @@ export class WsListenersNotifier {
       };
       const now = Time.currentMillis();
       stage = 'delivery';
-      await forEachWebSocketRecipient(connectionIds, (connectionId: string) =>
-        this.appWebSockets.send({
-          connectionId,
-          message: JSON.stringify(
-            userIsTypingMessage({
-              wave_id: waveId,
-              timestamp: now,
-              profile: profile
-            })
-          )
-        })
+      await forEachWebSocketRecipient(
+        connectionIds,
+        async (connectionId: string) => {
+          await this.appWebSockets.send({
+            connectionId,
+            message: JSON.stringify(
+              userIsTypingMessage({
+                wave_id: waveId,
+                timestamp: now,
+                profile: profile
+              })
+            )
+          });
+        }
       );
     } catch (error) {
       if (!isExpectedClientError(error)) {
@@ -888,7 +891,7 @@ export class WsListenersNotifier {
       );
       if (!onlineClients.length) return;
       const connectionIds = onlineClients.map((it) => it.connectionId);
-      let pendingSends: Promise<void>[] = [];
+      let pendingSends: Promise<unknown>[] = [];
       const sendFailures: unknown[] = [];
       const flushPendingSends = async (): Promise<void> => {
         const results = await Promise.allSettled(pendingSends);

@@ -1,3 +1,5 @@
+import { readSequentially } from '@/competitions/competition-read-sequence';
+import { collections } from '@/collections';
 import { LEGACY_INDEFINITE_PAUSE_END } from './legacy-competition-settings.repository';
 import { legacyCompetitionEntryId } from '@/competitions/competition-id';
 import {
@@ -39,13 +41,16 @@ import { computeCompetitionPhase } from '@/competitions/competition-phase';
 import { LEGACY_PARITY_ROW_LIMIT } from '@/competitions/legacy-parity-snapshot';
 import { CompetitionRowLimitError } from '@/competitions/competition-page';
 
-// Closed set of source queries: callers cannot supply SQL fragments.
+// Closed source queries. Rating/LockedRating/Vote/Spend below enumerate every
+// field consumed by the folds; keep projections aligned with those types.
+// The integration oracle also reruns these reads as SELECT * and compares the
+// complete snapshot, while separate frozen-facade parity keeps full columns.
 const LEGACY_SOURCE_QUERIES = {
   drops: `select id, author_id, created_at, drop_type from ${DROPS_TABLE} where wave_id = :waveId and drop_type in ('PARTICIPATORY', 'WINNER') limit :limit`,
-  ratings: `select * from ${DROP_RANK_TABLE} where wave_id = :waveId  limit :limit`,
-  locked: `select * from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where wave_id = :waveId  limit :limit`,
-  votes: `select * from ${DROP_VOTER_STATE_TABLE} where wave_id = :waveId  limit :limit`,
-  spent: `select * from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where wave_id = :waveId  limit :limit`,
+  ratings: `select drop_id,vote,last_increased from ${DROP_RANK_TABLE} where wave_id = :waveId  limit :limit`,
+  locked: `select drop_id,vote,timestamp from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where wave_id = :waveId  limit :limit`,
+  votes: `select drop_id,voter_id,votes from ${DROP_VOTER_STATE_TABLE} where wave_id = :waveId  limit :limit`,
+  spent: `select drop_id,voter_id,credit_spent from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where wave_id = :waveId  limit :limit`,
   decisions: `select decision_time from ${WAVES_DECISIONS_TABLE} where wave_id = :waveId order by decision_time asc limit :limit`,
   winners: `select drop_id, decision_time, ranking, final_vote from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id = :waveId order by decision_time asc, ranking asc, drop_id asc limit :limit`,
   outcomes: `select * from ${WAVE_OUTCOMES_TABLE} where wave_id = :waveId order by wave_outcome_position asc limit :limit`,
@@ -276,6 +281,30 @@ function capabilities(waveId: string) {
     .sort((a, b) => a.localeCompare(b));
 }
 
+function identityCredit(
+  type: WaveCreditType,
+  identity: { tdh: Numeric; xtdh: Numeric } | null
+): number {
+  let amount: number;
+  switch (type) {
+    case WaveCreditType.TDH:
+      amount = Number(identity?.tdh ?? 0);
+      break;
+    case WaveCreditType.XTDH:
+      amount = Number(identity?.xtdh ?? 0);
+      break;
+    case WaveCreditType.TDH_PLUS_XTDH:
+      amount = Number(identity?.tdh ?? 0) + Number(identity?.xtdh ?? 0);
+      break;
+    default:
+      throw new Error('Unsupported legacy voting credit type');
+  }
+  const available = Math.max(0, Math.floor(amount));
+  if (!Number.isSafeInteger(available))
+    throw new Error('Unsupported legacy voting credit amount');
+  return available;
+}
+
 /** Independent oracle over authoritative legacy tables; never reads native rows. */
 export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleService {
   private async availableCredit(
@@ -321,18 +350,70 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
         { profileId },
         options
       );
-      if (wave.voting_credit_type === WaveCreditType.TDH)
-        amount = Number(identity?.tdh ?? 0);
-      else if (wave.voting_credit_type === WaveCreditType.XTDH)
-        amount = Number(identity?.xtdh ?? 0);
-      else if (wave.voting_credit_type === WaveCreditType.TDH_PLUS_XTDH)
-        amount = Number(identity?.tdh ?? 0) + Number(identity?.xtdh ?? 0);
-      else throw new Error('Unsupported legacy voting credit type');
+      return identityCredit(wave.voting_credit_type, identity);
     }
     const available = Math.max(0, Math.floor(amount));
     if (!Number.isSafeInteger(available))
       throw new Error('Unsupported legacy voting credit amount');
     return available;
+  }
+
+  private async availableCredits(
+    wave: WaveEntity,
+    nfts: CreditNft[],
+    profileIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<Map<string, number>> {
+    const timerName = `${this.constructor.name}->availableCredits`;
+    ctx.timer?.start(timerName);
+    try {
+      const amounts = new Map<string, number>();
+      if (
+        ![
+          WaveCreditType.TDH,
+          WaveCreditType.XTDH,
+          WaveCreditType.TDH_PLUS_XTDH
+        ].includes(wave.voting_credit_type)
+      ) {
+        await readSequentially(profileIds, async (profileId) => {
+          amounts.set(
+            profileId,
+            await this.availableCredit(wave, nfts, profileId, ctx)
+          );
+        });
+        return amounts;
+      }
+      await readSequentially(
+        collections.chunkArray([...profileIds], 100),
+        async (ids) => {
+          const identities = await this.db.execute<{
+            profile_id: string;
+            tdh: Numeric;
+            xtdh: Numeric;
+          }>(
+            `select profile_id,tdh,xtdh from ${IDENTITIES_TABLE} where profile_id in (:ids)`,
+            { ids },
+            { wrappedConnection: ctx.connection }
+          );
+          for (const identity of identities) {
+            amounts.set(
+              identity.profile_id,
+              identityCredit(wave.voting_credit_type, identity)
+            );
+          }
+        }
+      );
+      // Preserve the scalar source lookup for missing/collation-matched IDs.
+      await readSequentially(
+        profileIds.filter((id) => !amounts.has(id)),
+        async (id) => {
+          amounts.set(id, await this.availableCredit(wave, nfts, id, ctx));
+        }
+      );
+      return amounts;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   private async creditBudgets(
@@ -350,12 +431,23 @@ export class LegacyCompetitionBaselineRepository extends LazyDbAccessCompatibleS
     const profileIds = Array.from(
       new Set(votes.map((vote) => vote.voter_id))
     ).sort((a, b) => a.localeCompare(b));
+    const availableByProfile = await this.availableCredits(
+      wave,
+      nfts,
+      profileIds,
+      ctx
+    );
+    const activeByProfile = new Map<string, Vote[]>();
+    for (const vote of votes) {
+      if (!activeDropIds.has(vote.drop_id)) continue;
+      const active = activeByProfile.get(vote.voter_id) ?? [];
+      active.push(vote);
+      activeByProfile.set(vote.voter_id, active);
+    }
     const results: CompetitionCreditParity[] = [];
     for (const profileId of profileIds) {
-      const available = await this.availableCredit(wave, nfts, profileId, ctx);
-      const activeVotes = votes.filter(
-        (vote) => vote.voter_id === profileId && activeDropIds.has(vote.drop_id)
-      );
+      const available = availableByProfile.get(profileId)!;
+      const activeVotes = activeByProfile.get(profileId) ?? [];
       const scoped =
         wave.voting_credit_scope === WaveCreditScope.WAVE
           ? [

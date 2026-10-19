@@ -25,6 +25,8 @@ export async function enqueueWebSocketFrame(
     queueName: WS_OUTBOUND_QUEUE,
     abortSignal,
     // Unlike diagnostic hashes, this must remain stable across UTC days.
+    // partition.ts hashes resource-prefixed DB ordering keys; this raw connection
+    // hash is the separate SQS ordering contract. Do not unify them in isolation.
     messageGroupId: createHash('sha256')
       .update(frame.connectionId)
       .digest('hex'),

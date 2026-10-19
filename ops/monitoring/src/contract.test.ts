@@ -15,6 +15,38 @@ export const fixture = {
 const embed = (alert: Parameters<typeof renderAlert>[0]) =>
   (renderAlert(alert) as { embeds: Array<{ title: string; color: number }> })
     .embeds[0]!;
+
+test('WebSocket fleet alarms give fixed operator guidance and recovery', () => {
+  const alert = parseAlert({
+    ...fixture,
+    service: 'platform',
+    severity: 'critical',
+    code: 'PLATFORM_ALARM',
+    alarm: {
+      namespace: '6529/WebSocketDelivery',
+      metric: 'Degraded',
+      name: 'webSocketDeliveryLoop-prod-WebSocket-delivery-degraded'
+    }
+  });
+  const rendered = JSON.stringify(renderAlert(alert));
+  assert.match(rendered, /WS_DELIVERY_HEALTH/);
+  assert.match(rendered, /check AWS send quotas and Redis/i);
+  assert.match(rendered, /do not disconnect the fleet/);
+  assert.match(
+    JSON.stringify(
+      renderAlert({ ...alert, code: 'PLATFORM_RECOVERY', severity: 'recovery' })
+    ),
+    /has recovered/
+  );
+  const unrelated = {
+    ...alert,
+    alarm: { ...alert.alarm!, namespace: 'Other/Namespace' }
+  };
+  assert.doesNotMatch(
+    JSON.stringify(renderAlert(unrelated)),
+    /WS_DELIVERY_HEALTH/
+  );
+});
 test('the contract reconstructs only bounded metadata and suppresses Discord mentions', () => {
   const alert = parseAlert({
     ...fixture,

@@ -5,6 +5,7 @@ jest.mock('@/api/ws/ws-outbound-queue', () => ({
 const mockHandle = jest.fn();
 const mockError = jest.fn();
 const mockWarn = jest.fn();
+const mockInfo = jest.fn();
 const mockAttempts: string[] = [];
 
 jest.mock('@/logging', () => ({
@@ -12,7 +13,7 @@ jest.mock('@/logging', () => ({
     get: () => ({
       error: mockError,
       warn: mockWarn,
-      info: jest.fn(),
+      info: mockInfo,
       debug: jest.fn()
     })
   }
@@ -51,11 +52,33 @@ import { processWebSocketBatch } from '@/websocketOutboundHandler/processor';
 import { deferWebSocketRetry } from '@/websocketOutboundHandler/retry';
 import { SQSClient, ChangeMessageVisibilityCommand } from '@aws-sdk/client-sqs';
 import { enqueueWebSocketFrame } from './ws-outbound-queue';
+jest.mock('@/ws-delivery/ws-delivery-store', () => {
+  const actual = jest.requireActual('@/ws-delivery/ws-delivery-store');
+  return {
+    ...actual,
+    webSocketDeliveryStore: {
+      claim: async () => ({
+        acquired: true,
+        revision: 0,
+        failures: 0,
+        firstFailureAt: 0
+      }),
+      finish: async () => true,
+      forget: async () => undefined,
+      enableReconnect: async () => undefined
+    }
+  };
+});
+
 import { HttpResponse } from '@smithy/protocol-http';
 import { NftLinkRefreshNotifier } from '@/nftLinkRefresherLoop/nft-link-refresh-notifier';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { AppWebSockets, appWebSockets, ANON_USER_ID } from '@/api/ws/ws';
 import { WsConnectionRepository } from '@/api/ws/ws-connection.repository';
+import {
+  setWebSocketDiagnosticOperation,
+  withWebSocketOperationDiagnostics
+} from './ws-operation-diagnostics';
 import { withLambdaRemainingTime } from '@/lambda-deadline';
 import {
   WebSocketSendScheduler,
@@ -101,6 +124,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     mockHandle.mockReset();
     mockError.mockClear();
     mockWarn.mockClear();
+    mockInfo.mockClear();
     mockAttempts.length = 0;
     (enqueueWebSocketFrame as jest.Mock).mockReset();
     repository.deleteByConnectionId.mockClear();
@@ -128,9 +152,23 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     mockHandle.mockResolvedValue(response(429, 'LimitExceededException'));
     await expect(
       sockets.send({ connectionId: 'synthetic', message: '{}' })
-    ).rejects.toThrow();
-    expect(mockError).toHaveBeenCalled();
+    ).resolves.toEqual({ status: 'resync_pending' });
+    expect(mockError).not.toHaveBeenCalled();
+    expect(mockWarn).toHaveBeenCalled();
     expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it('sends recovery probes directly for a capable client without enqueueing', async () => {
+    mockHandle.mockResolvedValue(response(204));
+    await expect(
+      sockets.send({
+        connectionId: 'synthetic',
+        message: '{"type":"RESYNC_REQUIRED","data":{}}',
+        recovery: true
+      })
+    ).resolves.toEqual({ status: 'sent' });
+    expect(mockHandle).toHaveBeenCalledTimes(1);
+    expect(enqueueWebSocketFrame).not.toHaveBeenCalled();
   });
 
   it('does not duplicate a capable-client update through legacy fan-out', async () => {
@@ -1010,6 +1048,40 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
     });
   });
 
+  it.each([204, 429])(
+    'records the actual acknowledgement transport result for HTTP %s even when send resolves',
+    async (status) => {
+      mockHandle.mockResolvedValue(
+        response(status, status === 429 ? 'LimitExceededException' : undefined)
+      );
+      await withWebSocketOperationDiagnostics(
+        {
+          routeKey: '$default',
+          connectionId: 'synthetic',
+          lambdaRequestId: 'synthetic-invocation'
+        },
+        async () => {
+          setWebSocketDiagnosticOperation('AUTHENTICATE');
+          await sockets.send({
+            connectionId: 'synthetic',
+            message: '{"type":"AUTHENTICATED"}',
+            skipStaleConnectionCheck: true
+          });
+          return { statusCode: 200 };
+        }
+      );
+      const operation = [...mockInfo.mock.calls, ...mockWarn.mock.calls]
+        .map((entry) => entry[1])
+        .find((entry) => entry?.event === 'ws_operation');
+      expect(operation).toMatchObject({
+        response_status: 200,
+        acknowledgement_type: 'AUTHENTICATED',
+        acknowledgement: status === 204 ? 'accepted' : 'failed'
+      });
+      expect(repository.deleteByConnectionId).not.toHaveBeenCalled();
+    }
+  );
+
   it('already retries two 429 responses and succeeds on SDK attempt three', async () => {
     mockHandle
       .mockResolvedValueOnce(response(429, 'LimitExceededException'))
@@ -1020,7 +1092,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
         connectionId: 'synthetic',
         message: '{"type":"USER_IS_TYPING"}'
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ status: 'sent' });
     expect(mockHandle).toHaveBeenCalledTimes(3);
     expect(mockAttempts).toEqual([
       'attempt=1; max=3',
@@ -1074,7 +1146,7 @@ describe('WebSocket terminal diagnostics with real SDK middleware and synthetic 
       .mockResolvedValueOnce(response(204));
     await expect(
       sockets.deliver({ connectionId: 'synthetic', message: '{}' })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ status: 'gone' });
     expect(mockHandle.mock.calls.map(([request]) => request.method)).toEqual([
       'POST',
       'DELETE'

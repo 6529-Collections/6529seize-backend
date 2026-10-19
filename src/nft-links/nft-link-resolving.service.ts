@@ -36,6 +36,7 @@ import {
   RequiredNftPageNotFoundError
 } from './nft-link-page-retry';
 import { HttpError } from './lib/http';
+import type { NftRefreshObserver } from '@/nft-links/nft-refresh-observer';
 import type { OperationalDiagnostic } from '@/operational-errors';
 
 function nftResource(canonical: CanonicalLink): string | undefined {
@@ -110,7 +111,8 @@ export class NftLinkResolvingService {
       WsListenersNotifier,
       'notifyAboutNftLinkUpdate'
     >,
-    private readonly sqs: SQS
+    private readonly sqs: SQS,
+    private readonly refreshObserver?: NftRefreshObserver
   ) {}
 
   public async getLinkData(
@@ -288,6 +290,7 @@ export class NftLinkResolvingService {
         await nftLinkResolutionStage('persist_success', () =>
           this.nftLinksDb.updateWithSuccess(card, lockStamp, ctx)
         );
+        this.refreshObserver?.completed(canonical, entity, { success: true });
         return card;
       } catch (error) {
         if (error instanceof NftLinkResolutionLockLostError) throw error;
@@ -301,7 +304,10 @@ export class NftLinkResolvingService {
             ? budget.waitToRetry(retryDelay.toMillis())
             : retryDelay.sleep()
         );
-        this.logger.errorWithDiagnostic(
+        const reportRetry = this.refreshObserver
+          ? this.logger.warn.bind(this.logger)
+          : this.logger.errorWithDiagnostic.bind(this.logger);
+        reportRetry(
           {
             ...refreshDiagnostic(canonical, lastError),
             recovery: { state: 'pending', attempt, maxAttempts }
@@ -340,6 +346,17 @@ export class NftLinkResolvingService {
     );
     // A required-page 404 records a demand-driven eligibility time, not a
     // scheduled retry. Other failures have exhausted this worker's attempts.
+    this.refreshObserver?.completed(canonical, entity, {
+      success: false,
+      error: lastError
+    });
+    if (this.refreshObserver?.isExpectedFailure(lastError, canonical)) {
+      this.logger.warn({
+        event: 'nft_refresh_failed',
+        ...refreshDiagnostic(canonical, lastError)
+      });
+      return null;
+    }
     this.logger.errorWithDiagnostic(
       {
         ...refreshDiagnostic(canonical, lastError),

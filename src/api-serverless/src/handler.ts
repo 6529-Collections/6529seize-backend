@@ -15,7 +15,8 @@ import {
 import { Logger } from '../../logging';
 import {
   notificationIdentitiesSyncedMessage,
-  WsMessageType
+  WsMessageType,
+  WS_RECOVERY_CAPABILITY
 } from './ws/ws-message';
 import { ids } from '../../ids';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
@@ -29,6 +30,10 @@ import {
   recoverUnavailableWebSocket,
   WebSocketControlOperation
 } from '@/api/ws/ws-control-failure';
+import {
+  setWebSocketDiagnosticOperation,
+  withWebSocketOperationDiagnostics
+} from '@/api/ws/ws-operation-diagnostics';
 
 import {
   DELIVERY_CAPABILITY_QUERY,
@@ -74,7 +79,15 @@ export const handler = sentryContext.wrapLambdaHandler(
     );
 
     if (event.requestContext && event.requestContext.routeKey) {
-      return operationalResponse(await wsHandler(event));
+      return withWebSocketOperationDiagnostics(
+        {
+          routeKey: event.requestContext.routeKey,
+          connectionId: event.requestContext.connectionId ?? '',
+          lambdaRequestId: context.awsRequestId,
+          gatewayRequestId: event.requestContext.requestId
+        },
+        async () => operationalResponse(await wsHandler(event))
+      );
     } else {
       return normalizeSetCookieResponse(
         event,
@@ -223,7 +236,11 @@ async function wsHandler(
           jwtExpiry,
           durableUpdates: supportsDurableUpdates(
             event.queryStringParameters?.[DELIVERY_CAPABILITY_QUERY]
-          )
+          ),
+          ...(event.queryStringParameters?.recovery_capability ===
+          WS_RECOVERY_CAPABILITY
+            ? { recoveryCapable: true }
+            : {})
         });
         return { statusCode: 200, body: 'Connected' };
       } catch (e) {
@@ -242,6 +259,7 @@ async function wsHandler(
       let controlOperation: WebSocketControlOperation | undefined;
       try {
         const message = JSON.parse(event.body || '{}');
+        setWebSocketDiagnosticOperation(message.type);
         const logSafeMessage = redactWebSocketMessageForLog(message);
         wsHandlerLogger.info(
           `WS $default. Identity: ${identityId}. Message: ${JSON.stringify(

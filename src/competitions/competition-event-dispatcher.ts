@@ -116,6 +116,8 @@ export class CompetitionEventDispatcher {
       context.visibility_group_id,
       ctx
     );
+    // The shared transport owns delayed refresh repair. A throttled listener
+    // must never replay this event's durable notifications or winner effects.
     if (event.event_type === 'COMPETITION_ENTRY_CREATED') {
       const ids = event.data.pending_push_notification_ids;
       if (Array.isArray(ids)) {

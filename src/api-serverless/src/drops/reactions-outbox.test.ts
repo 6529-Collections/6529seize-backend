@@ -41,7 +41,7 @@ it.each([
     expect(execute.mock.calls[0]![0]).toContain('drop_reactions');
     expect(execute.mock.calls[1]![0]).toContain('websocket_outbox');
     for (const call of execute.mock.calls)
-      expect(call[2]).toEqual({ wrappedConnection: connection });
+      expect(call[2]?.wrappedConnection).toBe(connection);
   }
 );
 
@@ -148,6 +148,6 @@ it.each([false, true])(
     expect(transaction).toHaveBeenCalledTimes(existing ? 0 : 1);
     expect(execute).toHaveBeenCalledTimes(2);
     for (const call of execute.mock.calls)
-      expect(call[2]).toEqual({ wrappedConnection: connection });
+      expect(call[2]?.wrappedConnection).toBe(connection);
   }
 );

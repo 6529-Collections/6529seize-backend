@@ -810,18 +810,35 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
   ): Promise<CompetitionEntry | null> {
     const dropId = await this.findLegacyDropIdByEntry(record, entryId, ctx);
     if (!dropId) return null;
-    const row = await this.db.oneOrNull<{
-      id: string;
-      wave_id: string;
-      author_id: string;
-      created_at: number | string;
-      drop_type: DropType;
-      config_version: number | string;
-      competition_rank: number | string | null;
-      decision_time: number | string | null;
-      ranking: number | string | null;
-    }>(
-      `with entry_source as (
+    return (
+      (await this.findLegacyEntriesByDropIds(record, [dropId], ctx))[0] ?? null
+    );
+  }
+
+  /** Filter only after computing global live ranks and latest winner overrides. */
+  public async findLegacyEntriesByDropIds(
+    record: CompetitionRoutingRecord,
+    dropIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<CompetitionEntry[]> {
+    const timerName = `${this.constructor.name}->findLegacyEntriesByDropIds`;
+    ctx.timer?.start(timerName);
+    try {
+      if (!dropIds.length) return [];
+      if (dropIds.length > 100)
+        throw new Error('Legacy entry page exceeds 100 drops');
+      const rows = await this.db.execute<{
+        id: string;
+        wave_id: string;
+        author_id: string;
+        created_at: number | string;
+        drop_type: DropType;
+        config_version: number | string;
+        competition_rank: number | string | null;
+        decision_time: number | string | null;
+        ranking: number | string | null;
+      }>(
+        `with entry_source as (
          select d.id, d.wave_id, d.author_id, d.created_at, d.drop_type,
                 coalesce((
                   select max(ccv.version)
@@ -855,18 +872,21 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
        )
        select id, wave_id, author_id, created_at, drop_type, config_version,
               competition_rank, decision_time, ranking
-       from ranked where id = :dropId`,
-      {
-        waveId: record.wave_id,
-        competitionId: record.id,
-        dropId,
-        dropTypes: [DropType.PARTICIPATORY, DropType.WINNER]
-      },
-      dbOptions(ctx)
-    );
-    return row
-      ? this.mapLegacyEntry(record, { ...row, rank: row.competition_rank })
-      : null;
+       from ranked where id in (:dropIds)`,
+        {
+          waveId: record.wave_id,
+          competitionId: record.id,
+          dropIds,
+          dropTypes: [DropType.PARTICIPATORY, DropType.WINNER]
+        },
+        dbOptions(ctx)
+      );
+      return rows.map((row) =>
+        this.mapLegacyEntry(record, { ...row, rank: row.competition_rank })
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   public async findLegacyTransferTime(

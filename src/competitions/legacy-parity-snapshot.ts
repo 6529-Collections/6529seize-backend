@@ -10,6 +10,7 @@ import {
 
 // A sample must be complete or skipped, never silently truncated into a match.
 export const LEGACY_PARITY_ROW_LIMIT = 10_000;
+const FULL_COMPARISON_PAGE_SIZE = 2_000;
 
 export function parityConfiguration(competition: Competition) {
   return {
@@ -36,8 +37,22 @@ export async function loadLegacyParityCandidate(
   ctx: RequestContext,
   rowLimit = LEGACY_PARITY_ROW_LIMIT
 ): Promise<CompetitionSnapshot> {
+  // Full migration already retains the complete result. Larger bounded reader
+  // pages avoid repeatedly aggregating the same competition's voters. Optional
+  // shadow samples keep their normal page size and strict row ceiling.
   const collect: typeof collectCompetitionPages = (read, direction) =>
-    collectCompetitionPages(read, direction, rowLimit);
+    collectCompetitionPages(
+      (page) =>
+        read({
+          ...page,
+          limit:
+            rowLimit === Number.POSITIVE_INFINITY
+              ? FULL_COMPARISON_PAGE_SIZE
+              : page.limit
+        }),
+      direction,
+      rowLimit
+    );
   const competition = await reader.getCompetition(record, now);
   const entries = await collect((page) => reader.listEntries(record, page));
   const voters = await collect((page) => reader.listVoters(record, page));
