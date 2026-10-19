@@ -17,13 +17,13 @@ export function moderationCaseIdSql(prefix = ''): string {
 // manual work until they finish or enter the existing failure-recovery flow. Grouping happens before paging.
 export function moderationCaseWorkSql(): string {
   return `select ${moderationCaseIdSql()} case_id, subject_type,
-      id check_id, cast(null as char(64)) report_id, created_at
+      id check_id, null report_id, created_at
     from ${CONTENT_MODERATION_ITEMS_TABLE}
     where review_status='NEEDS_REVIEW' and outcome<>'PENDING'
       and coalesce(json_extract(scope,'$.administrative'),false)=false
     union all
     select sha2(concat('DROP:',drop_id),256) case_id, 'DROP' subject_type,
-      cast(null as char(64)) check_id, id report_id, created_at
+      null check_id, id report_id, created_at
     from ${CONTENT_MODERATION_REPORTS_TABLE} where status='OPEN'`;
 }
 

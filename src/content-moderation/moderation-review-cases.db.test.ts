@@ -25,6 +25,7 @@ describe('manual review case repository', () => {
     expect(pageSql).toContain('group by case_id');
     for (const sql of [countSql, pageSql]) {
       expect(sql).toContain("review_status='NEEDS_REVIEW'");
+      expect(sql).toContain("outcome<>'PENDING'");
       expect(sql).toContain("where status='OPEN'");
       expect(sql).toContain('coalesce(published_subject_id, subject_id)');
     }
