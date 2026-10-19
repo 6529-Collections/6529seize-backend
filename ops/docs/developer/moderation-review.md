@@ -84,6 +84,20 @@ states. Re-evaluation always examines the preserved original snapshot, records a
 new result using current policy/model configuration and does not revoke explicit
 human decisions. The initial deterministic signal is preserved for later checks.
 
+Reported posts that no longer exist expose a deleted state separately from
+moderation visibility. An explicit `RESOLVE_DELETED_REPORT` action resolves all
+of the deleted post's open reports as `RESOLVED_DELETED`, preserving the saved
+snapshot, moderator reason, actor and resolution time. Existing role, version
+and idempotency guards apply; live posts cannot use this action. Mark reviewed
+remains a check-history action and does not close an open report. Resolved
+reports stop contributing to the navigation indicator and remain available in
+the resolved history.
+
+The report-create transaction locks and rechecks the live drop before inserting
+the allegation. A stale snapshot cannot create a report after deletion, and
+deletion cannot overtake an in-flight report insert. Deleted-post resolution
+therefore cannot be followed by an open report inserted from that snapshot.
+
 ## Capture, privacy and retention
 
 `content_moderation_items` stores the review scope, latest assessment, explicit

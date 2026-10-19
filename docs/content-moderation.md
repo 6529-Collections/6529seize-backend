@@ -231,6 +231,26 @@ globally and resolves open reports as removed. Profile suspension is presented
 as a separate action because it controls future publishing rather than the
 reported post.
 
+Deleted posts remain reviewable through their saved evidence. The report queue
+returns `drop_deleted`, and check detail returns `current_state.deleted=true`,
+`published=false`, `drop_status=null`, and the post's `open_report_count` when
+the original published post no longer exists. These existence fields are
+separate from content visibility decisions.
+
+For a deleted post with open reports, `RESOLVE_DELETED_REPORT` on the existing
+check action endpoint closes all open reports for that post, including reports
+of earlier revisions, as `RESOLVED_DELETED`. The developer must supply a reason,
+expected check version, and idempotency key. Report resolution, linked review
+state, and the audit record commit atomically. This action changes no post or
+author visibility and preserves evidence under the existing retention policy.
+Resolved-deleted reports appear in the resolved queue and its count. Marking a
+check reviewed, unhiding a post, and deleting a post do not resolve reports.
+
+Report creation rechecks and locks the live post inside the report transaction.
+Deletion waits until that report commits; a request holding a pre-deletion
+snapshot is rejected if the post is already gone. This prevents a late report
+from reopening work after deleted-post resolution.
+
 There is no continuous hold-before-publish queue. Moderators address reported
 content occasionally, with urgent high-confidence AI quarantine providing a
 temporary safety measure until then.
