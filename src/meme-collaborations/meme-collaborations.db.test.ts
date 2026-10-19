@@ -174,6 +174,9 @@ describeWithSeed(
       jest
         .spyOn(userNotifier, 'notifyOfMemeCollaboration')
         .mockResolvedValue([42]);
+      jest
+        .spyOn(userNotifier, 'notifyOfMemeCollaborations')
+        .mockResolvedValue([43]);
     });
     afterEach(() => jest.restoreAllMocks());
 
@@ -202,6 +205,51 @@ describeWithSeed(
       await expect(
         service.inviteExisting('drop', ['C'], auth('A'), {})
       ).rejects.toThrow('active Memes Main Stage');
+    });
+
+    it('persists multiple invitations with matching bulk notices in the same transaction', async () => {
+      await sqlExecutor.execute(
+        `delete from ${MEME_COLLABORATION_INVITATIONS_TABLE} where drop_id='drop'`
+      );
+      jest
+        .mocked(userNotifier.notifyOfMemeCollaborations)
+        .mockResolvedValue([43, 44]);
+      expect(
+        await service.inviteExisting('drop', ['B', 'E'], auth('A'), {})
+      ).toEqual([43, 44]);
+      const saved = await db.invitations('drop', {});
+      expect(saved).toHaveLength(2);
+      expect(
+        saved.map((row) => row.profile_id).sort((a, b) => a.localeCompare(b))
+      ).toEqual(['B', 'E']);
+      expect(userNotifier.notifyOfMemeCollaborations).toHaveBeenCalledWith(
+        expect.arrayContaining(
+          saved.map((row) =>
+            expect.objectContaining({
+              recipientId: row.profile_id,
+              data: expect.objectContaining({
+                invitation_id: row.id,
+                event_type: 'INVITED'
+              })
+            })
+          )
+        ),
+        null,
+        expect.objectContaining({ connection: expect.any(Object) })
+      );
+    });
+
+    it('rolls back the entire invitation batch if notification insertion fails', async () => {
+      await sqlExecutor.execute(
+        `delete from ${MEME_COLLABORATION_INVITATIONS_TABLE} where drop_id='drop'`
+      );
+      jest
+        .mocked(userNotifier.notifyOfMemeCollaborations)
+        .mockRejectedValue(new Error('Notification insert failed'));
+      await expect(
+        service.inviteExisting('drop', ['B', 'E'], auth('A'), {})
+      ).rejects.toThrow('Notification insert failed');
+      expect(await db.invitations('drop', {})).toEqual([]);
     });
 
     it('keeps pending profiles private to the author and their own invitee', async () => {

@@ -34,21 +34,34 @@ export class UserNotifier {
     visibilityGroupId: string | null,
     ctx: RequestContext
   ): Promise<number[]> {
+    return this.notifyOfMemeCollaborations(
+      [{ recipientId, data }],
+      visibilityGroupId,
+      ctx
+    );
+  }
+
+  public async notifyOfMemeCollaborations(
+    notifications: readonly {
+      recipientId: string;
+      data: MemeCollaborationNotificationData;
+    }[],
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<number[]> {
     return this.identityNotificationsDb.insertManyNotifications(
-      [
-        {
-          identity_id: recipientId,
-          additional_identity_id: data.actor_id,
-          related_drop_id: data.drop_id,
-          related_drop_part_no: 1,
-          related_drop_2_id: null,
-          related_drop_2_part_no: null,
-          cause: IdentityNotificationCause.MEME_COLLABORATION,
-          additional_data: { ...data },
-          wave_id: data.wave_id,
-          visibility_group_id: visibilityGroupId
-        }
-      ],
+      notifications.map(({ recipientId, data }) => ({
+        identity_id: recipientId,
+        additional_identity_id: data.actor_id,
+        related_drop_id: data.drop_id,
+        related_drop_part_no: 1,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        cause: IdentityNotificationCause.MEME_COLLABORATION,
+        additional_data: { ...data },
+        wave_id: data.wave_id,
+        visibility_group_id: visibilityGroupId
+      })),
       ctx.connection
     );
   }
