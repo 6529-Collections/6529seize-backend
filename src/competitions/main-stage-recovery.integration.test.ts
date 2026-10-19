@@ -44,6 +44,8 @@ import { competitionEventRepository } from './competition-event.repository';
 import { nativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
 import { nativeCompetitionRuntimeService } from './native-competition-runtime.service';
 import { mirrorNativeLegacyVoteActivity } from './legacy-competition-mirror';
+import { competitionCreditService } from './competition-credit.service';
+import { Timer } from '@/time';
 
 const day = 86_400_000;
 const start = Date.UTC(2026, 9, 1, 12);
@@ -372,6 +374,109 @@ describeWithSeed(
         `SELECT value,credit_spent FROM ${tables.COMPETITION_VOTES_TABLE} WHERE competition_id=:id AND entry_id=:entryId`,
         { id, entryId }
       );
+
+    it.each(['native', 'legacy'] as const)(
+      'saves a %s vote without competition-wide work and lets the worker refresh standings',
+      async (endpoint) => {
+        const budgets = jest.spyOn(competitionCreditService, 'getBudget');
+        const voters = jest.spyOn(
+          nativeCompetitionRuntimeRepository,
+          'listActiveVoters'
+        );
+        const standings = jest.spyOn(
+          nativeCompetitionRuntimeRepository,
+          'saveLeaderboard'
+        );
+        const before = await sqlExecutor.execute(
+          `select * from ${tables.COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id`,
+          { id }
+        );
+        if (endpoint === 'native') {
+          await expect(vote(29)).resolves.toMatchObject({
+            current_vote: 29,
+            spent: 29,
+            remaining: 71
+          });
+        } else {
+          await expect(legacyVote(29)).resolves.toBe(true);
+        }
+        expect(await acceptedVote()).toEqual([{ value: 29, credit_spent: 29 }]);
+        expect(
+          budgets.mock.calls.every(
+            (call) => call[1] === actor && call[3].connection
+          )
+        ).toBe(true);
+        expect(voters).not.toHaveBeenCalled();
+        expect(standings).not.toHaveBeenCalled();
+        expect(
+          await sqlExecutor.execute(
+            `select * from ${tables.COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id`,
+            { id }
+          )
+        ).toEqual(before);
+        expect(
+          await sqlExecutor.execute(
+            `select real_time_rating from ${tables.COMPETITION_ENTRY_RUNTIME_TABLE} where competition_id=:id and entry_id=:entryId`,
+            { id, entryId }
+          )
+        ).toEqual([{ real_time_rating: 29 }]);
+        await nativeCompetitionRuntimeService.refreshNativeLeaderboards(
+          new Timer('vote-background-refresh'),
+          clock.value
+        );
+        expect(voters).toHaveBeenCalledWith(id, expect.anything());
+        expect(standings).toHaveBeenCalled();
+        expect(
+          await sqlExecutor.execute(
+            `select real_time_rating,updated_at from ${tables.COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id and entry_id=:entryId`,
+            { id, entryId }
+          )
+        ).toEqual([{ real_time_rating: 29, updated_at: clock.value }]);
+      }
+    );
+
+    it.each(['native', 'legacy'] as const)(
+      'reconciles reduced credit for the %s voter before validating the replacement',
+      async (endpoint) => {
+        await sqlExecutor.execute(
+          `update ${tables.IDENTITIES_TABLE} set tdh=3 where profile_id=:actor`,
+          { actor }
+        );
+        if (endpoint === 'native') {
+          await expect(vote(-2)).resolves.toMatchObject({
+            current_vote: -2,
+            spent: 2,
+            remaining: 1
+          });
+        } else {
+          await expect(legacyVote(-2)).resolves.toBe(true);
+        }
+        expect(await acceptedVote()).toEqual([{ value: -2, credit_spent: 2 }]);
+        expect(await activity()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              contents: { oldVote: 7, newVote: 3, reason: 'CREDIT_OVERSPENT' }
+            }),
+            expect.objectContaining({ contents: { oldVote: 3, newVote: -2 } })
+          ])
+        );
+      }
+    );
+
+    it.each(['native', 'legacy'] as const)(
+      'rejects an unaffordable %s vote and rolls back its credit reconciliation',
+      async (endpoint) => {
+        await sqlExecutor.execute(
+          `update ${tables.IDENTITIES_TABLE} set tdh=3 where profile_id=:actor`,
+          { actor }
+        );
+        await expect(
+          endpoint === 'native' ? vote(4) : legacyVote(4)
+        ).rejects.toThrow();
+        expect(await acceptedVote()).toEqual([{ value: 7, credit_spent: 7 }]);
+        expect(await history()).toEqual([]);
+      }
+    );
     async function durableNativeData() {
       const snapshots = [];
       for (const [table, order] of [
@@ -517,10 +622,19 @@ describeWithSeed(
       });
       const stored = await history();
       const local = sinks();
+      // Standings now catch up in the worker before a rollback snapshot is taken.
+      await nativeCompetitionRuntimeService.refreshNativeLeaderboards(
+        new Timer('recovery-standings'),
+        clock.value
+      );
       await local.dispatcher.dispatchPending({}, clock.value);
       await reverse(async () => {
         clock.value += 10;
         await vote(-5);
+        await nativeCompetitionRuntimeService.refreshNativeLeaderboards(
+          new Timer('recovery-concurrent-standings'),
+          clock.value
+        );
         await local.dispatcher.dispatchPending({}, clock.value);
       });
       expect(await service.rollback(id, operator, false)).toEqual({
@@ -673,6 +787,10 @@ describeWithSeed(
         )
       ).rejects.toThrow('Drain pending');
       const local = sinks();
+      await nativeCompetitionRuntimeService.refreshNativeLeaderboards(
+        new Timer('recovery-standings'),
+        clock.value
+      );
       await local.dispatcher.dispatchPending({}, clock.value);
       await service.reviewRepair(
         id,
@@ -689,6 +807,11 @@ describeWithSeed(
         0
       );
       expect((await service.status(id)).storageMode).toBe('NATIVE');
+      await nativeCompetitionRuntimeService.refreshNativeLeaderboards(
+        new Timer('recovery-latest-standings'),
+        clock.value
+      );
+      await local.dispatcher.dispatchPending({}, clock.value);
       await reverse();
       expect((await service.rollback(id, operator, false)).changed).toBe(true);
       expect(await acceptedVote()).toEqual([{ value: -17, credit_spent: 17 }]);

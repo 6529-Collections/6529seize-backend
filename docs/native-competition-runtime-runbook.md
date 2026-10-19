@@ -109,6 +109,18 @@ observations.
   remaining values. Winning or deleting an entry releases spend while
   preserving vote history. Native negative credit reductions truncate toward
   zero, avoiding legacy negative-floor overspend.
+- Native vote commands and migrated legacy rating requests reconcile the
+  acting voter's credit before validating the requested replacement, under the
+  existing competition lock. Vote state, current aggregate, history, metrics,
+  notifications and durable vote events commit together. Saves do not reconcile
+  other voters or refresh the full leaderboard. The existing snapshotter and
+  decision workers perform competition-wide reconciliation and standings
+  refreshes; a confirmed vote's rank/time-weighted score can update on the next
+  worker pass. Verify both workers are active and healthy before deploying this
+  API-only change; no schema, worker, frontend or flag rollout is needed.
+  Before a guarded ownership reversal, let the worker refresh standings and
+  drain pending events before taking the reverse snapshot. Existing parity
+  checks continue to reject stale standings or a snapshot invalidated by a vote.
 - Pause decisions leaves otherwise eligible entries/votes available. Rank
   occurrences inside an inclusive pause are skipped without shifting future
   occurrences. Approve evaluates accepted votes on resume, including a hold
