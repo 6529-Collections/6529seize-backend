@@ -87,6 +87,24 @@ export async function voteForMigratedLegacyEntry(
     ).includes(group)
   )
     throw new ForbiddenException('Voter is not eligible to vote in this wave');
+  // Derive current credit first; reconciliation can change spending and votes,
+  // so validation must use a fresh budget afterward.
+  const initial = await competitionCreditService.getBudget(
+    competition,
+    model.voter_id,
+    entry,
+    ctx
+  );
+  await nativeCompetitionRuntimeService.reconcileVoterCredit(
+    {
+      competitionId: record.id,
+      voterProfileId: model.voter_id,
+      availableCredit: initial.available,
+      creditScope: competition.voting.credit_scope,
+      occurredAt: now
+    },
+    ctx
+  );
   const budget = await competitionCreditService.getBudget(
     competition,
     model.voter_id,
@@ -142,6 +160,5 @@ export async function voteForMigratedLegacyEntry(
       ctx.connection
     );
   }
-  await nativeCompetitionRuntimeService.refreshCompetition(record.id, now, ctx);
   return true;
 }
