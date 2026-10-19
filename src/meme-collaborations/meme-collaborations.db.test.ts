@@ -176,7 +176,9 @@ describeWithSeed(
         .mockResolvedValue([42]);
       jest
         .spyOn(userNotifier, 'notifyOfMemeCollaborations')
-        .mockResolvedValue([43]);
+        .mockImplementation(async (notifications) =>
+          notifications.map((_notification, index) => 43 + index)
+        );
     });
     afterEach(() => jest.restoreAllMocks());
 
@@ -540,7 +542,7 @@ describeWithSeed(
             { connection }
           )
         )
-      ).toEqual([42, 42]);
+      ).toEqual([43, 44]);
       const createdInvitations = (await service.state('collab-drop', 'A', {}))
         .invitations;
       expect(createdInvitations).toHaveLength(2);

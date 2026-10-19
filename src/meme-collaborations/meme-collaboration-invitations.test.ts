@@ -72,7 +72,11 @@ function setup() {
 }
 afterEach(() => jest.restoreAllMocks());
 beforeEach(() =>
-  jest.spyOn(userNotifier, 'notifyOfMemeCollaborations').mockResolvedValue([42])
+  jest
+    .spyOn(userNotifier, 'notifyOfMemeCollaborations')
+    .mockImplementation(async (notifications) =>
+      notifications.map((_notification, index) => 42 + index)
+    )
 );
 it('appends invitations without rewriting accepted consent, artwork, votes or the claim', async () => {
   const { db, service } = setup();
@@ -207,9 +211,14 @@ it.each([undefined, 'native-other'])(
   }
 );
 
-it.each([undefined, 'native-main'])(
-  'creates invitations on legacy or designated native Main Stage: %s',
-  async (competitionId) => {
+it.each([
+  { competitionId: undefined, ids: ['C'] },
+  { competitionId: undefined, ids: ['C', 'D'] },
+  { competitionId: 'native-main', ids: ['C'] },
+  { competitionId: 'native-main', ids: ['C', 'D'] }
+])(
+  'creates invitations on legacy or designated native Main Stage: %j',
+  async ({ competitionId, ids }) => {
     jest.spyOn(env, 'getStringOrNull').mockReturnValue('wave');
     jest
       .spyOn(competitionMainStageRepository, 'isDesignated')
@@ -229,11 +238,11 @@ it.each([undefined, 'native-main'])(
           media: [{ url: 'https://media/art.png', mime_type: 'image/png' }]
         }
       ],
-      collaborator_ids: ['C']
+      collaborator_ids: ids
     } as CreateOrUpdateDropModel;
     await expect(
       service.onWrite(model, 'new', {}, competitionId)
-    ).resolves.toEqual([42]);
+    ).resolves.toEqual(ids.map((_id, index) => 42 + index));
     expect(
       db.query.mock.calls.some((call) => call[0] === 'createContext')
     ).toBe(true);
