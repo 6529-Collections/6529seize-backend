@@ -3203,6 +3203,68 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .then((res) => res.map((it) => this.parseWaveEntity(it)));
   }
 
+  public async findJoinedRootWaveIds(
+    {
+      identityId,
+      eligibleGroups,
+      waveIds
+    }: {
+      readonly identityId: string;
+      readonly eligibleGroups: string[];
+      readonly waveIds?: string[];
+    },
+    ctx: RequestContext
+  ): Promise<string[]> {
+    if (waveIds?.length === 0) return [];
+    const timerKey = `${this.constructor.name}->findJoinedRootWaveIds`;
+    ctx.timer?.start(timerKey);
+    try {
+      // Membership and activity use base wave data, not competition projections.
+      const rows = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.execute<{ id: string }>(
+          `with ${this.getFollowedSubwaveActivityCte({
+            groupIds: eligibleGroups,
+            identityParamName: 'identityId',
+            eligibleGroupsParamName: 'eligibleGroups'
+          })}
+          select w.id
+          from ${WAVES_TABLE} w
+          left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
+          left join ${WAVE_READER_METRICS_TABLE} wrm
+            on wrm.wave_id = w.id and wrm.reader_id = :identityId
+          left join followed_subwave_activity fsa on fsa.parent_wave_id = w.id
+          where w.parent_wave_id is null and w.is_direct_message = false
+            and ${this.getWaveVisibilityFilter('w', eligibleGroups, 'eligibleGroups')}
+            ${waveIds ? 'and w.id in (:waveIds)' : ''}
+            and (
+              exists (
+                select 1 from ${IDENTITY_SUBSCRIPTIONS_TABLE} f
+                where f.subscriber_id = :identityId and f.target_id = w.id
+                  and f.target_type = :wave_target_type
+                  and f.target_action = :drop_created_action
+              ) or fsa.parent_wave_id is not null
+            )
+          order by greatest(
+            case when coalesce(wrm.muted, false) then 0
+              else coalesce(wm.latest_drop_timestamp, 0) end,
+            coalesce(fsa.latest_followed_subwave_activity_timestamp, 0)
+          ) desc, w.id desc`,
+          {
+            identityId,
+            eligibleGroups,
+            waveIds,
+            wave_target_type: ActivityEventTargetType.WAVE,
+            drop_created_action: ActivityEventAction.DROP_CREATED
+          },
+          ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        )
+      );
+      return rows.map((row) => row.id);
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
   async findRecentlyDroppedToWaves(param: {
     authenticated_user_id: string | null;
     only_waves_followed_by_authenticated_user: boolean;

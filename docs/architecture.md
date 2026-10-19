@@ -88,6 +88,31 @@ migration. Deploy the API before frontend clients that use active-vote discovery
 The additive competition foundation does not change this endpoint's legacy
 voting source of truth.
 
+## Joined wave snapshot pagination
+
+`GET /v2/waves/joined` is an authenticated, non-proxy read in `seizeAPI`.
+It freezes the ordered IDs of joined, readable non-DM root waves, including
+parents of followed subwaves, in a profile-bound Redis snapshot for 15 minutes.
+Continuation cursors carry the snapshot ID, scan position and fixed page size.
+Each page rechecks current membership and wave/group visibility, advances past
+removed entries, and returns current overview data in the original ID order.
+Missing metric rows do not remove a membership. New memberships appear on a new
+snapshot. Snapshot creation verifies cache persistence; unavailable storage
+returns 503, and an expired/unavailable continuation returns 410 for a coherent
+client restart. Existing `/v2/waves` page-number contracts remain unchanged.
+Snapshots have a 50,000-root capacity guard (about 2 MB of UUIDs per value);
+larger lists return 503 without publishing a partial list or cursor. The normal
+API rate-limiting middleware runs before the root router (`app.ts`), including
+this route; the fixed TTL bounds refresh storage lifetime. Each page scans at
+most 500 candidate IDs. A heavily pruned page can be empty with a non-null
+continuation, keeping later memberships reachable without an excessive query loop.
+Only positions strictly before the end of a snapshot are valid continuations.
+
+The frontend opts into this endpoint only for Joined, retains loaded rows on
+failure, and replaces all loaded pages together on refresh/expiry. It offers
+Retry and Load more controls alongside automatic scrolling. This adds no table,
+migration, queue or loop. Deploy `api` before the frontend in each environment.
+
 ## Wave eligibility
 
 The maintained direct eligibility implementation serves profile-to-groups reads;
