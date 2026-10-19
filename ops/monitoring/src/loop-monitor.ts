@@ -1,7 +1,7 @@
 import { UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, setting, read, put, enqueue } from './aws.js';
 import { Alert, Environment, EVENT_TYPE, hash, record } from './contract.js';
-import { LOOP_POLICIES } from './loop-policies.generated.js';
+import LOOP_POLICIES from './loop-policies.generated.json' with { type: 'json' };
 import {
   assessLoop,
   LoopAssessment,
@@ -67,16 +67,51 @@ async function latest(
 
 function saveIncident(
   key: string,
-  values: Record<string, unknown>
+  values: Record<string, unknown>,
+  abortSignal?: AbortSignal
 ): Promise<void> {
   // Active conditions and pending sends must survive the ordinary receipt TTL.
-  return put(key, {
-    ...values,
-    expiresAt:
-      values.open === true
-        ? undefined
-        : Math.floor(Date.now() / 1000) + 45 * 86400
-  });
+  return put(
+    key,
+    {
+      ...values,
+      expiresAt:
+        values.open === true
+          ? undefined
+          : Math.floor(Date.now() / 1000) + 45 * 86400
+    },
+    abortSignal
+  );
+}
+
+function continuedObservation(
+  observation: LoopObservation,
+  previous: Record<string, unknown>
+): Record<string, unknown> {
+  const continuing = previous.pending === true && observation.pending;
+  const baselineAt =
+    continuing && typeof previous.baselineAt === 'number'
+      ? previous.baselineAt
+      : observation.observedAt;
+  const priorProgress =
+    continuing && typeof previous.progressAt === 'number'
+      ? previous.progressAt
+      : 0;
+  const oldestAdvanced =
+    continuing &&
+    typeof previous.oldestPendingAt === 'number' &&
+    observation.oldestPendingAt !== undefined &&
+    observation.oldestPendingAt > previous.oldestPendingAt;
+  return {
+    ...observation,
+    baselineAt,
+    progressAt:
+      Math.max(
+        priorProgress,
+        observation.progressAt ?? 0,
+        oldestAdvanced ? observation.observedAt : 0
+      ) || undefined
+  };
 }
 
 export async function receiveLoopObservation(
@@ -99,39 +134,29 @@ export async function receiveLoopObservation(
       saved.observedAt >= observation.observedAt
     )
       return;
-    const previous = record(saved?.payload);
-    const continuing = previous.pending === true && observation.pending;
-    const baselineAt =
-      continuing && typeof previous.baselineAt === 'number'
-        ? previous.baselineAt
-        : observation.observedAt;
-    const priorProgress =
-      continuing && typeof previous.progressAt === 'number'
-        ? previous.progressAt
-        : 0;
-    const oldestAdvanced =
-      continuing &&
-      typeof previous.oldestPendingAt === 'number' &&
-      observation.oldestPendingAt !== undefined &&
-      observation.oldestPendingAt > previous.oldestPendingAt;
     const accepted = await latest(
       key,
       observation.observedAt,
-      {
-        ...observation,
-        baselineAt,
-        progressAt:
-          Math.max(
-            priorProgress,
-            observation.progressAt ?? 0,
-            oldestAdvanced ? observation.observedAt : 0
-          ) || undefined
-      },
+      continuedObservation(observation, record(saved?.payload)),
       typeof saved?.observedAt === 'number' ? saved.observedAt : null
     );
     if (accepted) return;
   }
   throw new Error('LOOP_OBSERVATION_CONFLICT');
+}
+
+function pruneResolvedAlarms(alarms: Record<string, unknown>): void {
+  const inactive = Object.keys(alarms)
+    .filter((key) => record(alarms[key]).active !== true)
+    .sort(
+      (a, b) => Number(record(alarms[a]).at) - Number(record(alarms[b]).at)
+    );
+  // Retain recent OK tombstones to reject late ALARM transitions, reclaiming only
+  // resolved entries on renames. Active alarms are never evicted to make room.
+  while (Object.keys(alarms).length > 8 && inactive.length)
+    delete alarms[inactive.shift()!];
+  if (Object.keys(alarms).length > 8)
+    throw new Error('LOOP_ALARM_INVENTORY_OVERFLOW');
 }
 
 export async function receiveLoopThrottle(
@@ -153,12 +178,9 @@ export async function receiveLoopThrottle(
     )
       return;
     alarms[alarmKey] = { active, at };
-    if (Object.keys(alarms).length > 8)
-      throw new Error('LOOP_ALARM_INVENTORY_OVERFLOW');
-    const revision = Math.max(
-      Date.now() / 1000,
-      Number(saved?.observedAt ?? 0) + 0.000001
-    );
+    pruneResolvedAlarms(alarms);
+    // This is a collector revision, independent of the source transition timestamp.
+    const revision = Math.max(Date.now(), Number(saved?.observedAt ?? 0) + 1);
     const accepted = await latest(
       key,
       revision,
@@ -202,13 +224,17 @@ function loopAlert(
 export async function monitorLoop(
   policy: LoopPolicy,
   env: Environment,
-  now: number
+  now: number,
+  abortSignal?: AbortSignal
 ): Promise<void> {
+  abortSignal?.throwIfAborted();
   const key = `loop:incident:${policy.service}`;
   const [saved, throttle, ...rows] = await Promise.all([
-    read(key),
-    read(`loop:throttle:${policy.service}`),
-    ...policy.operations.map((op) => read(observationKey(policy.service, op)))
+    read(key, abortSignal),
+    read(`loop:throttle:${policy.service}`, abortSignal),
+    ...policy.operations.map((op) =>
+      read(observationKey(policy.service, op), abortSignal)
+    )
   ]);
   // Persist the next notification before enqueue. A timeout/retry reuses its exact event ID.
   // This handler's existing reserved concurrency is one: it is the sole incident writer.
@@ -216,10 +242,12 @@ export async function monitorLoop(
   if (previous.pendingAlert) {
     await enqueue(
       { kind: 'alert', alert: previous.pendingAlert as Alert },
-      true
+      true,
+      0,
+      abortSignal
     );
     delete previous.pendingAlert;
-    await saveIncident(key, previous);
+    await saveIncident(key, previous, abortSignal);
   }
   const observations: LoopObservation[] = rows.flatMap((row) => {
     if (!row?.payload) return [];
@@ -259,22 +287,32 @@ export async function monitorLoop(
     scope: assessment.scope,
     pendingAlert: loopAlert(env, policy.service, assessment, now, recovery)
   };
-  await saveIncident(key, next);
-  await enqueue({ kind: 'alert', alert: next.pendingAlert }, true);
+  await saveIncident(key, next, abortSignal);
+  await enqueue(
+    { kind: 'alert', alert: next.pendingAlert },
+    true,
+    0,
+    abortSignal
+  );
   const { pendingAlert: _pending, ...settled } = next;
-  await saveIncident(key, settled);
+  await saveIncident(key, settled, abortSignal);
 }
 
 export async function monitorLoops(
   env: Environment,
   now: number
 ): Promise<void> {
-  // Bound concurrent reads and preserve the probe's existing timeout and schedule.
-  const policies = policiesFor(env);
-  for (let index = 0; index < policies.length; index += 5)
-    await Promise.all(
-      policies
-        .slice(index, index + 5)
-        .map((policy) => monitorLoop(policy, env, now))
-    );
+  // Five workers drain the catalog without waiting for the slowest item in each batch.
+  // A catalog-wide deadline bounds this new monitoring work within Probe's
+  // unchanged 90-second timeout. Failure skips the external check-in and alerts
+  // through the existing monitor failure/deadman path; pending sends stay durable.
+  const abortSignal = AbortSignal.timeout(20000);
+  const pending = [...policiesFor(env)];
+  const worker = async (): Promise<void> => {
+    const policy = pending.shift();
+    if (!policy) return;
+    await monitorLoop(policy, env, now, abortSignal);
+    return worker();
+  };
+  await Promise.all(Array.from({ length: 5 }, worker));
 }

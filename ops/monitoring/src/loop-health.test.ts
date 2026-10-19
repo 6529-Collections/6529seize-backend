@@ -223,3 +223,86 @@ test('notifications identify delay/recovery mechanism and distinguish contention
     /Business catch-up has not been verified/
   );
 });
+
+test('per-operation delay, freshness and stall overrides do not leak to other operations', () => {
+  const multi = {
+    ...policy,
+    operations: ['indexing', 'publication'],
+    operationBudgets: {
+      publication: { delaySeconds: 60, stallSeconds: 300, freshSeconds: 30 }
+    }
+  };
+  const publication = { ...observation, operation: 'publication' };
+  assert.equal(
+    assessLoop(multi, [observation, publication], false, now).reason,
+    'delayed'
+  );
+  assert.equal(
+    assessLoop(
+      multi,
+      [observation, { ...publication, observedAt: now - 60 }],
+      false,
+      now
+    ).reason,
+    'telemetry_stale'
+  );
+  const result = assessLoop(
+    multi,
+    [observation, { ...publication, progressAt: now - 301 }],
+    false,
+    now
+  );
+  assert.equal(result.reason, 'stalled');
+  assert.equal(result.operation, 'publication');
+  assert.equal(
+    assessLoop(
+      { ...multi, operations: ['indexing'] },
+      [observation],
+      false,
+      now
+    ).level,
+    'healthy'
+  );
+});
+
+test('long native scans use their runtime allowance while overdue decisions still threaten deadlines', () => {
+  const multi = {
+    ...policy,
+    operations: ['native_execution', 'decisions'],
+    operationBudgets: { decisions: { delaySeconds: 120, freshSeconds: 120 } }
+  };
+  const native = {
+    ...observation,
+    operation: 'native_execution',
+    observedAt: now - 600,
+    progressAt: now - 600,
+    oldestPendingAt: now - 600
+  };
+  const decision = {
+    ...observation,
+    operation: 'decisions',
+    pending: false,
+    oldestPendingAt: undefined,
+    nextDueAt: now + 600,
+    deadlineAt: now + 900
+  };
+  assert.equal(
+    assessLoop(multi, [native, decision], true, now).level,
+    'healthy'
+  );
+  const late = {
+    ...decision,
+    pending: true,
+    oldestPendingAt: now - 400,
+    progressAt: now - 1500,
+    deadlineAt: now - 100
+  };
+  assert.equal(assessLoop(multi, [native, late], true, now).reason, 'deadline');
+});
+
+test('empty policy inventories return a safe contention-only assessment', () => {
+  assert.equal(
+    assessLoop({ ...policy, operations: [] }, [], false, now).reason,
+    'contention_cleared'
+  );
+});

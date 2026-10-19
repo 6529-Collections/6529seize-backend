@@ -10,7 +10,7 @@
   "scripts": {
     "preinstall": "node ../../scripts/require-6529-command.cjs",
     "build": "node ../../scripts/require-6529-command.cjs && node scripts/build.mjs",
-    "test": "node ../../scripts/require-6529-command.cjs && tsx --test src/*.test.ts",
+    "test": "node ../../scripts/require-6529-command.cjs && tsx --test src/*.test.ts scripts/*.test.mjs",
     "typecheck": "node ../../scripts/require-6529-command.cjs && tsc --noEmit",
     "generate": "node ../../scripts/require-6529-command.cjs && node scripts/templates.mjs && node scripts/dashboard.mjs",
     "generate:check": "node ../../scripts/require-6529-command.cjs && node scripts/templates.mjs --check && node scripts/dashboard.mjs --check",
@@ -27,8 +27,7 @@
     "@aws-sdk/client-secrets-manager": "^3.980.0",
     "@aws-sdk/client-sns": "^3.980.0",
     "@aws-sdk/client-sqs": "^3.980.0",
-    "@aws-sdk/lib-dynamodb": "^3.980.0",
-    "yaml": "^2.9.1"
+    "@aws-sdk/lib-dynamodb": "^3.980.0"
   },
   "overrides": {
     "tsx": {
@@ -40,6 +39,7 @@
     "@types/node": "^22.19.11",
     "esbuild": "^0.28.1",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "yaml": "^2.9.1"
   }
 }

@@ -1,7 +1,7 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { ddb, sqs } from './aws.js';
+import { admit, ddb, sqs } from './aws.js';
 import {
   monitorLoop,
   policiesFor,
@@ -97,6 +97,7 @@ test('incident lifecycle is silent for overlap, escalates once, and retries a du
   const data = new Map<string, Record<string, unknown>>();
   const sent: string[] = [];
   let failQueue = false;
+  let ambiguousQueue = false;
   const dbMock = mock.method(
     ddb,
     'send',
@@ -126,6 +127,10 @@ test('incident lifecycle is silent for overlap, escalates once, and retries a du
     async (command: { input: { MessageBody?: string } }) => {
       if (failQueue) throw new Error('queue unavailable');
       sent.push(command.input.MessageBody!);
+      if (ambiguousQueue) {
+        ambiguousQueue = false;
+        throw new Error('acceptance unknown');
+      }
       return {};
     }
   );
@@ -240,6 +245,24 @@ test('incident lifecycle is silent for overlap, escalates once, and retries a du
     const total = sent.length;
     await monitorLoop(policy, 'staging', now + 1302);
     assert.equal(sent.length, total);
+    // Queue acceptance followed by a lost response must retry the saved identity.
+    await receiveLoopObservation(
+      { ...observation, observedAt: now + 1303, oldestPendingAt: now - 900 },
+      'staging'
+    );
+    ambiguousQueue = true;
+    await assert.rejects(
+      monitorLoop(policy, 'staging', now + 1303),
+      /acceptance unknown/
+    );
+    await monitorLoop(policy, 'staging', now + 1304);
+    assert.equal(sent.length, total + 2);
+    assert.equal(
+      JSON.parse(sent[total]!).alert.eventId,
+      JSON.parse(sent[total + 1]!).alert.eventId
+    );
+    await monitorLoop(policy, 'staging', now + 1305);
+    assert.equal(sent.length, total + 2);
   } finally {
     dbMock.mock.restore();
     queueMock.mock.restore();
@@ -302,5 +325,217 @@ test('enrolled raw throttles are recorded without immediate notifications; reque
     dbMock.mock.restore();
     queueMock.mock.restore();
     process.env = original;
+  }
+});
+
+function fakeState() {
+  const data = new Map<string, Record<string, unknown>>();
+  const dbMock = mock.method(
+    ddb,
+    'send',
+    async (command: GetCommand | PutCommand | UpdateCommand) => {
+      if (command instanceof GetCommand)
+        return { Item: data.get(String(command.input.Key?.pk)) };
+      if (command instanceof PutCommand) {
+        data.set(String(command.input.Item?.pk), { ...command.input.Item });
+        return {};
+      }
+      const key = String(command.input.Key?.pk);
+      const values = command.input.ExpressionAttributeValues!;
+      const previous = data.get(key)?.observedAt;
+      if (
+        previous !== undefined &&
+        (Number(previous) >= Number(values[':at']) ||
+          previous !== values[':expected'])
+      )
+        throw Object.assign(new Error('race'), {
+          name: 'ConditionalCheckFailedException'
+        });
+      data.set(key, { observedAt: values[':at'], payload: values[':payload'] });
+      return {};
+    }
+  );
+  return { data, dbMock };
+}
+
+test('simultaneous observations converge, and equal or older replays are successful no-ops', async () => {
+  const original = process.env.RECEIPTS_TABLE;
+  process.env.RECEIPTS_TABLE = 'test';
+  const { data, dbMock } = fakeState();
+  const observation = {
+    _type: LOOP_EVENT_TYPE,
+    service: 'delegationsLoop',
+    operation: 'indexing',
+    observedAt: 100,
+    pending: true,
+    recovery: 'automatic'
+  };
+  try {
+    await Promise.all([
+      receiveLoopObservation(observation, 'staging'),
+      receiveLoopObservation(observation, 'staging')
+    ]);
+    await Promise.all(
+      [101, 102, 103].map((observedAt) =>
+        receiveLoopObservation({ ...observation, observedAt }, 'staging')
+      )
+    );
+    await receiveLoopObservation(observation, 'staging');
+    const saved = data.get('loop:observation:delegationsLoop:indexing');
+    assert.equal(saved?.observedAt, 103);
+    assert.equal((saved?.payload as { baselineAt: number }).baselineAt, 100);
+  } finally {
+    dbMock.mock.restore();
+    if (original === undefined) delete process.env.RECEIPTS_TABLE;
+    else process.env.RECEIPTS_TABLE = original;
+  }
+});
+
+test('alarm renames reclaim resolved identities without clearing a different active alarm', async () => {
+  const original = process.env.RECEIPTS_TABLE;
+  process.env.RECEIPTS_TABLE = 'test';
+  const { data, dbMock } = fakeState();
+  try {
+    await receiveLoopThrottle('delegationsLoop', true, 100, 'persistent');
+    for (let index = 0; index < 12; index++) {
+      await receiveLoopThrottle(
+        'delegationsLoop',
+        true,
+        101 + index * 2,
+        `renamed-${index}`
+      );
+      await receiveLoopThrottle(
+        'delegationsLoop',
+        false,
+        102 + index * 2,
+        `renamed-${index}`
+      );
+    }
+    const state = data.get('loop:throttle:delegationsLoop')?.payload as {
+      active: boolean;
+      alarms: Record<string, unknown>;
+    };
+    assert.equal(state.active, true);
+    assert.equal(Object.keys(state.alarms).length, 8);
+    await receiveLoopThrottle('delegationsLoop', false, 200, 'persistent');
+    assert.equal(
+      (
+        data.get('loop:throttle:delegationsLoop')?.payload as {
+          active: boolean;
+        }
+      ).active,
+      false
+    );
+  } finally {
+    dbMock.mock.restore();
+    if (original === undefined) delete process.env.RECEIPTS_TABLE;
+    else process.env.RECEIPTS_TABLE = original;
+  }
+});
+
+test('an exhausted monitoring I/O budget aborts before new business-health reads', async () => {
+  const dbMock = mock.method(ddb, 'send', async () => ({}));
+  try {
+    await assert.rejects(
+      monitorLoop(
+        policiesFor('staging')[0]!,
+        'staging',
+        100,
+        AbortSignal.abort()
+      ),
+      { name: 'AbortError' }
+    );
+    assert.equal(dbMock.mock.callCount(), 0);
+  } finally {
+    dbMock.mock.restore();
+  }
+});
+
+test('health admission has its own quota key and cannot consume the error-alert budget', async () => {
+  const original = process.env;
+  process.env = {
+    ...original,
+    RECEIPTS_TABLE: 'test',
+    ENVIRONMENT: 'staging',
+    SOURCE_ACCOUNTS: '123'
+  };
+  const dbMock = mock.method(ddb, 'send', async () => ({}));
+  const observation = {
+    _type: LOOP_EVENT_TYPE,
+    service: 'delegationsLoop',
+    operation: 'indexing',
+    observedAt: 100,
+    pending: true,
+    recovery: 'automatic'
+  };
+  const event = {
+    account: '123',
+    source: '6529.ops',
+    'detail-type': LOOP_EVENT_TYPE,
+    detail: observation
+  } as unknown as EventBridgeEvent<string, unknown>;
+  try {
+    await collect(event);
+    const keys = dbMock.mock.calls.map((call) =>
+      String((call.arguments[0] as UpdateCommand).input.Key?.pk)
+    );
+    assert.equal(
+      keys.filter((key) =>
+        key.startsWith('loop-quota:staging:delegationsLoop:')
+      ).length,
+      1
+    );
+    assert.equal(keys.filter((key) => key.startsWith('quota:')).length, 0);
+    await admit({ environment: 'staging', service: 'delegationsLoop' });
+    assert.match(
+      String(
+        (dbMock.mock.calls.at(-1)!.arguments[0] as UpdateCommand).input.Key?.pk
+      ),
+      /^quota:staging:delegationsLoop:/
+    );
+    const count = dbMock.mock.callCount();
+    await assert.rejects(
+      collect({ ...event, detail: { ...observation, operation: 'forged' } }),
+      /UNAPPROVED_LOOP_OPERATION/
+    );
+    assert.equal(dbMock.mock.callCount(), count);
+  } finally {
+    dbMock.mock.restore();
+    process.env = original;
+  }
+});
+
+test('monitoring passes the shared budget to in-flight SDK reads and propagates cancellation', async () => {
+  const original = process.env.RECEIPTS_TABLE;
+  process.env.RECEIPTS_TABLE = 'test';
+  const controller = new AbortController();
+  const dbMock = mock.method(
+    ddb,
+    'send',
+    async (_command: GetCommand, options: { abortSignal: AbortSignal }) => {
+      assert.equal(options.abortSignal, controller.signal);
+      return new Promise((_resolve, reject) =>
+        controller.signal.addEventListener(
+          'abort',
+          () => reject(controller.signal.reason),
+          { once: true }
+        )
+      );
+    }
+  );
+  try {
+    const pending = monitorLoop(
+      policiesFor('staging')[0]!,
+      'staging',
+      100,
+      controller.signal
+    );
+    controller.abort();
+    await assert.rejects(pending, { name: 'AbortError' });
+    assert.equal(dbMock.mock.callCount(), 3);
+  } finally {
+    dbMock.mock.restore();
+    if (original === undefined) delete process.env.RECEIPTS_TABLE;
+    else process.env.RECEIPTS_TABLE = original;
   }
 });

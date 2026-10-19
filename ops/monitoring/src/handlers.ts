@@ -197,10 +197,13 @@ export async function collect(
     )
       throw new Error('UNAPPROVED_LOOP_OPERATION');
     if (
-      !(await admit({
-        environment: environment(),
-        service: observation.service
-      }))
+      !(await admit(
+        {
+          environment: environment(),
+          service: observation.service
+        },
+        'loop-health'
+      ))
     ) {
       await archive(observation, 'SOURCE_ADMISSION_BUDGET');
       metric('AdmissionOverflow', 1);

@@ -431,7 +431,7 @@ additive source alarms can remain while investigation continues.
 `scripts/loop-policies.mjs` derives the worker inventory from the deploy catalog
 and existing Serverless function events. It includes schedules, SQS consumers,
 and scheduled rules targeting their queues. Request-serving Lambdas are excluded.
-`src/loop-policies.generated.ts` is generated for each environment. The shortest
+`src/loop-policies.generated.json` is generated for each environment. The shortest
 known rate interval is used for multi-mode workers; cron cadence is left unknown
 rather than guessed. A rate interval **at most 300 seconds** and reserved
 concurrency **exactly one** marks expected overlap. That hint never proves
@@ -442,9 +442,11 @@ pending status and recovery state. The existing source subscription uses optiona
 quoted terms to forward either envelope in TEXT or JSON logging, following the
 [AWS filter syntax](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html).
 AWS log metadata binds the service. The relay reconstructs the allowlist; the
-normal collector validates catalog membership and shares the existing per-service
-admission budget. Producers cannot choose notification severity or the protected
-lane. No messages, wallets, decision IDs, SQL, user content or exception text are
+normal collector validates catalog membership and applies a separate
+health-only admission budget (120/service/minute, separate from error alerts).
+The log relay does not charge admission; the receiver charges once per delivered
+event. Noisy health observations cannot consume the error budget. Producers cannot
+choose notification severity or the protected lane. No messages, wallets, decision IDs, SQL, user content or exception text are
 forwarded. Emission failure cannot fail business work.
 
 The existing monitoring Probe evaluates observations once per minute without
@@ -471,11 +473,14 @@ Default stall budget is `max(function timeout + 300 seconds, three intervals)`;
 freshness is `max(timeout + 120 seconds, two intervals)`. Unknown intervals use
 60 seconds for these initial operational budgets. These are monitoring policies,
 not changes to execution configuration or contractual product SLAs.
-Decision execution uses a 120-second delay/freshness budget and a 300-second
+The decisions operation uses a 120-second delay/freshness budget and a 300-second
 execution-lateness budget, warning red when 60 seconds or less remain. The last
 verified survey includes the next future decision, so a hung worker cannot hide
-a newly due obligation behind its earlier idle status. Publication separately allows
-600 seconds of delay and 3,900 seconds without progress, accommodating its existing
+a newly due obligation behind its earlier idle status. Native scans use the normal
+stall/freshness allowances (1,200/1,020 seconds for the existing 900-second Lambda),
+so a long scan alone cannot trigger the decision lateness alarm. A known due
+decision still threatens its deadline even while the native scan runs.
+Publication separately allows 600 seconds of delay and 3,900 seconds without progress, accommodating its existing
 up-to-one-hour backoff. These initial tolerances are explicit in the generator and
 should be calibrated against observed workload and product deadlines before a
 production rollout. They can be changed without changing execution settings.
@@ -483,7 +488,10 @@ production rollout. They can be changed without changing execution settings.
 Observations are monotonic with optimistic conditional writes. Late/repeated
 observations and alarm transitions cannot overwrite newer state. Multiple raw
 alarms for one worker are tracked individually and ORed; one clearing alarm
-cannot hide another active alarm. A collector-owned
+cannot hide another active alarm. The collector retains up to eight recent alarm
+identities, reclaiming oldest resolved entries on rename and never evicting an
+active alarm. More than eight simultaneous active identities fails closed through
+the collector failure guard. A collector-owned
 baseline measures time since outstanding work was first observed; it is not a
 fabricated business-progress timestamp. A verified advance of the oldest pending
 item counts as progress; repeated polls, invocation starts and successful returns
@@ -492,8 +500,11 @@ moving operation cannot hide a blocked one.
 
 Probe is the sole incident writer under its existing concurrency of one. It saves
 an exact pending notification before enqueue, so ambiguous enqueue acceptance
-replays the same event ID and existing delivery receipts deduplicate it. Changes
-in severity, cause, operation or recovery state update the incident. A recovery
+replays the same event ID and existing delivery receipts deduplicate it. Five
+concurrent monitoring workers drain the catalog with a shared 20-second I/O budget
+inside Probe's unchanged 90-second timeout. An exhausted budget fails the probe
+and withholds the external check-in; it cannot report monitoring as healthy.
+Changes in severity, cause, operation or recovery state update the incident. A recovery
 requires an open incident and fresh evidence that its reported impact cleared.
 Active alarms, outstanding obligations and open incidents do not expire under
 the receipt TTL; expiry must never manufacture recovery. Resolved state uses the

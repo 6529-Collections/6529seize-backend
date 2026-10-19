@@ -16,18 +16,20 @@ export function intervalSeconds(expression) {
 }
 
 function resourceReference(value) {
-  const reference = typeof value === 'string' ? value : value?.['Fn::GetAtt'];
-  return Array.isArray(reference)
-    ? reference[0]
-    : typeof reference === 'string'
-      ? reference.split('.')[0]
-      : undefined;
+  if (typeof value === 'string') {
+    const substitution = /\$\{([A-Za-z0-9]+)\.Arn\}/.exec(value);
+    return substitution?.[1] ?? value.split('.')[0];
+  }
+  const reference = value?.['Fn::GetAtt'] ?? value?.['Fn::Sub'];
+  if (Array.isArray(reference)) return resourceReference(reference[0]);
+  if (typeof reference === 'string') return resourceReference(reference);
+  return undefined;
 }
 
 function queueSchedules(config, events) {
-  const queues = events
-    .map((event) => resourceReference(event.sqs?.arn))
-    .filter(Boolean);
+  const queues = new Set(
+    events.map((event) => resourceReference(event.sqs?.arn)).filter(Boolean)
+  );
   return Object.values(config.resources?.Resources ?? {}).flatMap(
     (resource) => {
       if (
@@ -37,7 +39,7 @@ function queueSchedules(config, events) {
         return [];
       const properties = resource.Properties;
       return properties.Targets?.some((target) =>
-        queues.includes(resourceReference(target.Arn))
+        queues.has(resourceReference(target.Arn))
       )
         ? [properties.ScheduleExpression].filter(Boolean)
         : [];
@@ -45,78 +47,88 @@ function queueSchedules(config, events) {
   );
 }
 
-export async function loopPolicies(catalog, environment) {
-  const policies = [];
-  for (const service of catalog.services) {
-    if (
-      !service.allowed_environments.includes(environment) ||
-      service.deploy_adapter !== 'serverless'
+function scheduleIntervals(event) {
+  const schedule = event.schedule;
+  if (schedule?.enabled === false) return [];
+  const rate = typeof schedule === 'string' ? schedule : schedule?.rate;
+  return (Array.isArray(rate) ? rate : [rate])
+    .map(intervalSeconds)
+    .filter(Number.isFinite);
+}
+
+function operationsFor(name) {
+  if (name === 'delegationsLoop')
+    return {
+      operations: ['indexing', 'recalculation'],
+      optionalOperations: ['recalculation']
+    };
+  if (name === 'waveDecisionExecutionLoop')
+    return {
+      operations: ['decisions', 'native_execution', 'publication'],
+      operationBudgets: {
+        decisions: { delaySeconds: 120, freshSeconds: 120 },
+        publication: { delaySeconds: 600, stallSeconds: 3900 }
+      }
+    };
+  return { operations: ['processing'] };
+}
+
+function functionPolicy(config, fn) {
+  const events = fn.events ?? [];
+  const intervals = [
+    ...events.flatMap(scheduleIntervals),
+    ...queueSchedules(config, events)
+      .map(intervalSeconds)
+      .filter(Number.isFinite)
+  ];
+  const interval = intervals.length ? Math.min(...intervals) : undefined;
+  const concurrency =
+    fn.reservedConcurrency ?? config.provider?.reservedConcurrency;
+  const timeout = fn.timeout ?? config.provider?.timeout ?? 6;
+  return {
+    service: fn.name,
+    ...(interval ? { intervalSeconds: interval } : {}),
+    ...(typeof concurrency === 'number'
+      ? { reservedConcurrency: concurrency }
+      : {}),
+    expectedOverlap:
+      interval !== undefined && interval <= 300 && concurrency === 1,
+    delaySeconds: Math.max(600, (interval ?? 60) * 2),
+    stallSeconds: Math.max(timeout + 300, (interval ?? 60) * 3),
+    freshSeconds: Math.max(timeout + 120, (interval ?? 60) * 2),
+    ...operationsFor(fn.name)
+  };
+}
+
+export function policiesFromConfig(service, config) {
+  return Object.values(config.functions ?? {})
+    .filter(
+      (fn) =>
+        service.verification_targets.includes(fn.name) &&
+        (fn.events ?? []).some(
+          (event) =>
+            event.sqs || (event.schedule && event.schedule.enabled !== false)
+        )
     )
-      continue;
-    const file = new URL(`src/${service.name}/serverless.yaml`, root);
-    const doc = parseDocument(await readFile(file, 'utf8'), {
-      customTags: tags
-    });
-    if (doc.errors.length)
-      throw new Error(`Invalid loop configuration: ${service.name}`);
-    const config = doc.toJS();
-    for (const fn of Object.values(config.functions ?? {})) {
-      if (!service.verification_targets.includes(fn.name)) continue;
-      const events = fn.events ?? [];
-      const scheduled = events.some(
-        (event) => event.schedule && event.schedule.enabled !== false
-      );
-      const queued = events.some((event) => event.sqs);
-      if (!scheduled && !queued) continue;
-      const intervals = events.flatMap((event) => {
-        const schedule = event.schedule;
-        if (schedule?.enabled === false) return [];
-        const rate = typeof schedule === 'string' ? schedule : schedule?.rate;
-        return (Array.isArray(rate) ? rate : [rate])
-          .map(intervalSeconds)
-          .filter(Number.isFinite);
+    .map((fn) => functionPolicy(config, fn));
+}
+
+export async function loopPolicies(catalog, environment) {
+  const services = catalog.services.filter(
+    (service) =>
+      service.allowed_environments.includes(environment) &&
+      service.deploy_adapter === 'serverless'
+  );
+  const policies = await Promise.all(
+    services.map(async (service) => {
+      const file = new URL(`src/${service.name}/serverless.yaml`, root);
+      const doc = parseDocument(await readFile(file, 'utf8'), {
+        customTags: tags
       });
-      intervals.push(
-        ...queueSchedules(config, events)
-          .map(intervalSeconds)
-          .filter(Number.isFinite)
-      );
-      const interval = intervals.length ? Math.min(...intervals) : undefined;
-      const concurrency =
-        fn.reservedConcurrency ?? config.provider?.reservedConcurrency;
-      const timeout = fn.timeout ?? config.provider?.timeout ?? 6;
-      const decision = fn.name === 'waveDecisionExecutionLoop';
-      policies.push({
-        service: fn.name,
-        ...(interval ? { intervalSeconds: interval } : {}),
-        ...(typeof concurrency === 'number'
-          ? { reservedConcurrency: concurrency }
-          : {}),
-        expectedOverlap:
-          interval !== undefined && interval <= 300 && concurrency === 1,
-        delaySeconds: decision ? 120 : Math.max(600, (interval ?? 60) * 2),
-        stallSeconds: decision
-          ? 300
-          : Math.max(timeout + 300, (interval ?? 60) * 3),
-        freshSeconds: decision ? 120 : Math.max(timeout + 120, (interval ?? 60) * 2),
-        ...(fn.name === 'delegationsLoop'
-          ? { optionalOperations: ['recalculation'] }
-          : {}),
-        ...(decision
-          ? {
-              operationBudgets: {
-                publication: { delaySeconds: 600, stallSeconds: 3900 }
-              }
-            }
-          : {}),
-        operations:
-          fn.name === 'delegationsLoop'
-            ? ['indexing', 'recalculation']
-            : decision
-              ? ['decisions', 'native_execution', 'publication']
-              : ['processing']
-      });
-    }
-  }
-  return policies.sort((a, b) => a.service.localeCompare(b.service));
+      if (doc.errors.length)
+        throw new Error(`Invalid loop configuration: ${service.name}`);
+      return policiesFromConfig(service, doc.toJS());
+    })
+  );
+  return policies.flat().sort((a, b) => a.service.localeCompare(b.service));
 }

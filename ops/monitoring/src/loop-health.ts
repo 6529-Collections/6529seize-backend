@@ -16,7 +16,7 @@ export interface LoopPolicy {
   optionalOperations?: string[];
   operationBudgets?: Record<
     string,
-    { delaySeconds: number; stallSeconds: number }
+    Partial<Pick<LoopPolicy, 'delaySeconds' | 'stallSeconds' | 'freshSeconds'>>
   >;
 }
 export interface LoopObservation {
@@ -260,7 +260,15 @@ export function assessLoop(
     };
   });
   const rank = { healthy: 0, amber: 1, red: 2 };
-  return assessments.reduce((worst, current) =>
-    rank[current.level] > rank[worst.level] ? current : worst
+  const idle: LoopAssessment = {
+    level: 'healthy',
+    reason: 'contention_cleared',
+    operation: 'processing',
+    scope: 'contention'
+  };
+  return assessments.reduce(
+    (worst, current) =>
+      rank[current.level] > rank[worst.level] ? current : worst,
+    assessments[0] ?? idle
   );
 }
