@@ -1,9 +1,7 @@
 import { compareMigrationContent } from './competition-migration-content-parity';
-import {
-  CompetitionEntryRepository,
-  CompetitionEntryContent
-} from './competition-entry.repository';
+import { CompetitionEntryContent } from './competition-entry.repository';
 import { SqlExecutor } from '@/sql-executor';
+import { CompetitionMigrationContentRepository } from '@/competitions/competition-migration-content.repository';
 import { DropEntity } from '@/entities/IDrop';
 import { legacyCompetitionEntryId } from './competition-id';
 
@@ -33,11 +31,16 @@ function fixture(count: number) {
   const oneOrNull = jest.fn(async () => ({ count }));
   const db = { execute, oneOrNull } as unknown as SqlExecutor;
   jest
-    .spyOn(CompetitionEntryRepository.prototype, 'loadDropContent')
-    .mockResolvedValue(content);
+    .spyOn(CompetitionMigrationContentRepository.prototype, 'sourcePage')
+    .mockImplementation(
+      async (page) => new Map(page.map((drop) => [drop.id, content]))
+    );
   const candidate = jest
-    .spyOn(CompetitionEntryRepository.prototype, 'getContent')
-    .mockResolvedValue(content);
+    .spyOn(CompetitionMigrationContentRepository.prototype, 'nativePage')
+    .mockImplementation(
+      async (_id, entryIds) =>
+        new Map(entryIds.map((entryId) => [entryId, content]))
+    );
   return { db, execute, oneOrNull, candidate, drops };
 }
 
@@ -49,18 +52,27 @@ describe('complete paginated migration content comparison', () => {
     const result = await compareMigrationContent(db, id, waveId, {});
     expect(result[0].baselineHash).toBe(result[0].candidateHash);
     expect(execute).toHaveBeenCalledTimes(12);
-    expect(candidate).toHaveBeenCalledTimes(1105);
+    expect(candidate).toHaveBeenCalledTimes(12);
   });
   it('detects changed content on a later page and extra native entries', async () => {
     const { db, candidate, drops, oneOrNull } = fixture(1001);
-    candidate.mockImplementation(async (entryId) =>
-      entryId === legacyCompetitionEntryId(id, drops[1000].id)
-        ? { ...content, title: 'changed' }
-        : content
+    candidate.mockImplementation(
+      async (_id, entryIds) =>
+        new Map(
+          entryIds.map((entryId) => [
+            entryId,
+            entryId === legacyCompetitionEntryId(id, drops[1000].id)
+              ? { ...content, title: 'changed' }
+              : content
+          ])
+        )
     );
     const mismatch = await compareMigrationContent(db, id, waveId, {});
     expect(mismatch[0].baselineHash).not.toBe(mismatch[0].candidateHash);
-    candidate.mockResolvedValue(content);
+    candidate.mockImplementation(
+      async (_id, entryIds) =>
+        new Map(entryIds.map((entryId) => [entryId, content]))
+    );
     oneOrNull.mockResolvedValue({ count: 1002 });
     const extra = await compareMigrationContent(db, id, waveId, {});
     expect(extra[0].baselineHash).not.toBe(extra[0].candidateHash);

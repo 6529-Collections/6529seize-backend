@@ -36,6 +36,11 @@ import { DropType } from '../entities/IDrop';
 import { appFeatures } from '../app-features';
 import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
 import {
+  isLegacyCompetitionGetFacadeScope,
+  legacyGetView,
+  withoutLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
+import {
   groupWaveVotingCreditNftsByContract,
   normalizeWaveVotingCreditNfts,
   waveVotingCreditNftKey
@@ -1336,12 +1341,18 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!profileIds.length) {
       return {};
     }
-    const results = await this.db.execute<{
-      profile_id: string;
-      drop_id: string;
-    }>(
-      `
-      select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
+    // Only drop_type needs the compatibility projection. Native access checks
+    // use unchanged wave fields and must not materialize the wave config view.
+    const dropsTable = isLegacyCompetitionGetFacadeScope()
+      ? legacyGetView(DROPS_TABLE)
+      : DROPS_TABLE;
+    const results = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{
+        profile_id: string;
+        drop_id: string;
+      }>(
+        `
+      select author_id as profile_id, id as drop_id from ${dropsTable} where author_id in (:profileIds) and wave_id = :mainStageWaveId
       and drop_type = '${DropType.PARTICIPATORY}'
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('ACTIVE')}) native_entry
       where submitter_id in (:profileIds)
@@ -1352,11 +1363,12 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       and ((collaborator_drop.wave_id=:mainStageWaveId and collaborator_drop.drop_type='${DropType.PARTICIPATORY}')
         or invitation.drop_id in (select drop_id from (${nativeMainStageEntriesSource('ACTIVE')}) collaboration_entry))
       `,
-      {
-        profileIds,
-        mainStageWaveId
-      },
-      { wrappedConnection: ctx.connection }
+        {
+          profileIds,
+          mainStageWaveId
+        },
+        { wrappedConnection: ctx.connection }
+      )
     );
     return results.reduce(
       (acc, it) => {
@@ -1378,12 +1390,18 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!profileIds.length) {
       return {};
     }
-    const results = await this.db.execute<{
-      profile_id: string;
-      drop_id: string;
-    }>(
-      `
-      select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
+    // Only drop_type needs the compatibility projection. Native access checks
+    // use unchanged wave fields and must not materialize the wave config view.
+    const dropsTable = isLegacyCompetitionGetFacadeScope()
+      ? legacyGetView(DROPS_TABLE)
+      : DROPS_TABLE;
+    const results = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{
+        profile_id: string;
+        drop_id: string;
+      }>(
+        `
+      select author_id as profile_id, id as drop_id from ${dropsTable} where author_id in (:profileIds) and wave_id = :mainStageWaveId
       and drop_type = '${DropType.WINNER}'
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('WINNER')}) native_entry
       where submitter_id in (:profileIds)
@@ -1394,11 +1412,12 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       and ((collaborator_drop.wave_id=:mainStageWaveId and collaborator_drop.drop_type='${DropType.WINNER}')
         or invitation.drop_id in (select drop_id from (${nativeMainStageEntriesSource('WINNER')}) collaboration_entry))
       `,
-      {
-        profileIds,
-        mainStageWaveId
-      },
-      { wrappedConnection: ctx.connection }
+        {
+          profileIds,
+          mainStageWaveId
+        },
+        { wrappedConnection: ctx.connection }
+      )
     );
     return results.reduce(
       (acc, it) => {

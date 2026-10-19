@@ -1,3 +1,8 @@
+import { MigrationCopySqlExecutor } from '@/competitions/competition-migration-copy-executor';
+import {
+  assertSqlWorkBudget,
+  SqlExecutionBudgetExceededError
+} from '@/db/sql-execution-budget';
 import { compareMigrationContent } from '@/competitions/competition-migration-content-parity';
 import { MigrationAcceptanceSchema } from './competition-migration-acceptance';
 import { CompetitionMigrationEnvironmentRepository } from './competition-migration-environment.repository';
@@ -6,7 +11,10 @@ import { appFeatures } from '@/app-features';
 import { migrationCommandConfiguration } from './legacy-competition-configuration';
 import { LegacyCompetitionAdapter } from './legacy-competition.adapter';
 import { WavesApiDb } from '@/api/waves/waves.api.db';
-import { CompetitionMigrationChangeEntity } from '@/entities/ICompetitionMigration';
+import {
+  CompetitionMigrationChangeEntity,
+  CompetitionMigrationEntity
+} from '@/entities/ICompetitionMigration';
 import { reconcileLegacyBatch } from './competition-migration-reverse';
 import { LEGACY_GET_SOURCE_TABLES } from './legacy-competition-get-facade';
 import { performance } from 'node:perf_hooks';
@@ -29,7 +37,7 @@ import {
   WAVES_TABLE
 } from '@/constants';
 import { RequestContext } from '@/request.context';
-import { dbSupplier, SqlExecutor } from '@/sql-executor';
+import { dbSupplier, SqlExecutor, SqlTransactionOptions } from '@/sql-executor';
 import {
   CompetitionMigrationRepository,
   MigrationStatus
@@ -60,6 +68,20 @@ import {
 } from '@/competitions/competition.types';
 import { compareLegacyFacade } from '@/competitions/legacy-competition-facade-parity';
 import { CompetitionLifecycle } from '@/entities/ICompetition';
+import { Logger } from '@/logging';
+import {
+  isInitialCheckpointReadTimeout,
+  isRolledBackCopyTimeout,
+  migrationCopyCheckpoint
+} from './competition-migration-copy-recovery';
+
+const logger = Logger.get('COMPETITION_MIGRATION');
+
+type CopyAttempt = {
+  checkpoint?: string;
+  readingInitialCheckpoint?: boolean;
+  legacyActiveOwner?: boolean;
+};
 
 const SHADOW_TABLES = [
   COMPETITION_DECISION_WINNERS_TABLE,
@@ -186,7 +208,9 @@ export class CompetitionMigrationService {
     private readonly supplier: () => SqlExecutor = dbSupplier,
     private readonly now: () => number = Date.now,
     private readonly batchIntervalMs: number = 250,
-    private readonly environment: MigrationEnvironment = 'production'
+    private readonly environment: MigrationEnvironment = 'production',
+    private readonly waitBeforeCopyRetry: () => Promise<void> = () =>
+      new Promise((resolve) => setTimeout(resolve, 1000))
   ) {
     if (
       environment === 'local' &&
@@ -202,15 +226,161 @@ export class CompetitionMigrationService {
         'Local migration policy requires explicitly configured loopback read/write databases'
       );
   }
+  private migrationTransactionOptions(): SqlTransactionOptions {
+    return {
+      isolationLevel: 'REPEATABLE READ',
+      executionBudget: {
+        deadlineMonotonicMillis: performance.now() + 5_000,
+        maxStatementMillis: 1_000,
+        finalizationReserveMillis: 500,
+        lockWaitSeconds: 1
+      }
+    };
+  }
+
+  private boundedTransaction<T>(
+    id: string,
+    action: (
+      repository: CompetitionMigrationRepository,
+      ctx: RequestContext,
+      record: CompetitionRecord,
+      db: SqlExecutor
+    ) => Promise<T>
+  ): Promise<T> {
+    return this.transaction(
+      id,
+      action,
+      true,
+      new MigrationCopySqlExecutor(this.supplier())
+    );
+  }
+
+  private async parityPhase<T>(
+    id: string,
+    phase: string,
+    work: () => T | Promise<T>,
+    checkWork?: () => void
+  ): Promise<T> {
+    const started = performance.now();
+    logger.info('migration_parity_phase', {
+      competitionId: id,
+      phase,
+      state: 'START'
+    });
+    try {
+      checkWork?.();
+      const result = await work();
+      checkWork?.();
+      logger.info('migration_parity_phase', {
+        competitionId: id,
+        phase,
+        state: 'COMPLETE',
+        elapsedMs: Math.round(performance.now() - started)
+      });
+      return result;
+    } catch (error) {
+      if (
+        error instanceof SqlExecutionBudgetExceededError &&
+        Object.isExtensible(error)
+      )
+        Object.assign(error, { migrationComparisonPhase: phase });
+      logger.warn('migration_parity_phase', {
+        competitionId: id,
+        phase,
+        state: 'FAILED',
+        elapsedMs: Math.round(performance.now() - started)
+      });
+      throw error;
+    }
+  }
+
+  private parityBudgetCheck(ctx: RequestContext): () => void {
+    const handle: unknown = ctx.connection?.connection;
+    if (handle === null || typeof handle !== 'object')
+      throw new Error('Bounded parity requires its transaction connection');
+    return () => assertSqlWorkBudget(handle);
+  }
+
+  private async parityComparison(
+    id: string,
+    record: CompetitionRecord,
+    ctx: RequestContext,
+    db: SqlExecutor,
+    checkWork?: () => void
+  ) {
+    const now = this.now();
+    const baseline = await this.parityPhase(
+      id,
+      'baseline',
+      () =>
+        new LegacyCompetitionBaselineRepository(() => db).getSnapshot(
+          record,
+          now,
+          ctx,
+          Number.POSITIVE_INFINITY
+        ),
+      checkWork
+    );
+    const candidate = await this.parityPhase(
+      id,
+      'candidate',
+      () =>
+        loadLegacyParityCandidate(
+          new NativeCompetitionReader(
+            new CompetitionRepository(() => db),
+            ctx,
+            record.storage_mode === 'LEGACY_ADAPTER'
+          ),
+          record,
+          now,
+          ctx,
+          Number.POSITIVE_INFINITY
+        ),
+      checkWork
+    );
+    const snapshot = await this.parityPhase(
+      id,
+      'snapshot_hashes',
+      () =>
+        PARITY_FIELDS.map((field) => ({
+          category: field,
+          baselineHash: competitionPayloadHash(baseline[field] ?? null),
+          candidateHash: competitionPayloadHash(candidate[field] ?? null)
+        })),
+      checkWork
+    );
+    const facade = await this.parityPhase(
+      id,
+      'frozen_facade',
+      () => compareLegacyFacade(db, id, record.wave_id, ctx, checkWork),
+      checkWork
+    );
+    const content = await this.parityPhase(
+      id,
+      'entry_content',
+      () => compareMigrationContent(db, id, record.wave_id, ctx, checkWork),
+      checkWork
+    );
+    const relations = [...facade, ...content];
+    return {
+      baseline,
+      snapshot,
+      relations,
+      categories: [...snapshot, ...relations]
+    };
+  }
+
   private async transaction<T>(
     id: string,
     action: (
       repository: CompetitionMigrationRepository,
       ctx: RequestContext,
-      record: CompetitionRecord
-    ) => Promise<T>
+      record: CompetitionRecord,
+      db: SqlExecutor
+    ) => Promise<T>,
+    bounded = false,
+    db = this.supplier()
   ): Promise<T> {
-    const db = this.supplier();
     return db.executeNativeQueriesInTransaction(
       async (connection) => {
         const ctx = { connection };
@@ -219,28 +389,40 @@ export class CompetitionMigrationService {
           this.environment
         );
         const record = await repository.lock(id, ctx);
-        return action(repository, ctx, record);
+        return action(repository, ctx, record, db);
       },
-      { isolationLevel: 'READ COMMITTED' }
+      bounded
+        ? this.migrationTransactionOptions()
+        : { isolationLevel: 'READ COMMITTED' }
     );
   }
-  private async rateLimit(
+  private async claimBatch(
     repository: CompetitionMigrationRepository,
     id: string,
+    migration: CompetitionMigrationEntity,
     ctx: RequestContext
-  ) {
-    const status = await repository.status(id, ctx);
-    if (
-      status.migration?.next_batch_at &&
-      status.migration.next_batch_at > this.now()
-    )
-      return status;
+  ): Promise<boolean> {
+    if (migration.next_batch_at && migration.next_batch_at > this.now())
+      return false;
     await repository.update(
       id,
       { next_batch_at: this.now() + this.batchIntervalMs },
       ctx
     );
-    return null;
+    return true;
+  }
+
+  /** Writer reporting remains fresh without retaining the ownership fence. */
+  private async copyStatus(id: string): Promise<MigrationStatus> {
+    const db = this.supplier();
+    return db.executeNativeQueriesInTransaction(
+      (connection) =>
+        new CompetitionMigrationRepository(() => db, this.environment).status(
+          id,
+          { connection }
+        ),
+      { isolationLevel: 'REPEATABLE READ' }
+    );
   }
   public status(id: string) {
     return new CompetitionMigrationRepository(
@@ -446,6 +628,7 @@ export class CompetitionMigrationService {
     repository: CompetitionMigrationRepository,
     tableIndex: number,
     limit: number,
+    db: SqlExecutor,
     ctx: RequestContext
   ) {
     const timerName = `${this.constructor.name}->resetShadowBatch`;
@@ -453,12 +636,12 @@ export class CompetitionMigrationService {
     try {
       const table = SHADOW_TABLES[tableIndex];
       if (!table) throw new Error('Invalid shadow reset checkpoint');
-      const deleted = await this.supplier().execute(
+      const deleted = await db.execute(
         `delete from ${table} where competition_id=:id limit :limit`,
         { id, limit },
         { wrappedConnection: ctx.connection }
       );
-      const complete = this.supplier().getAffectedRows(deleted) < limit;
+      const complete = db.getAffectedRows(deleted) < limit;
       const next = complete ? tableIndex + 1 : tableIndex;
       await repository.update(
         id,
@@ -473,178 +656,303 @@ export class CompetitionMigrationService {
         { table, limit, nextTable: next },
         ctx
       );
-      return repository.status(id, ctx);
     } finally {
       ctx.timer?.stop(timerName);
     }
   }
 
-  /** One bounded transaction per invocation. Reissue until SHADOWING. */
+  /** Each copy attempt has its own bounded transaction. Returns writer status, which
+   * may include a later peer batch; it is not a receipt for this call's batch.
+   * Production advanceMigration ignores this result and reads status anew before
+   * its next action. Every mutation rechecks state/stop under ownership. */
   public async backfill(id: string, operator: MigrationOperator, limit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error('Batch limit must be 1..100');
-    return this.transaction(id, async (repository, ctx) => {
-      const before = await repository.status(id, ctx);
-      const migration = before.migration;
-      if (migration?.state === 'SHADOWING') return before;
-      if (!migration || migration.state !== 'BACKFILLING')
-        throw new Error('Competition is not BACKFILLING');
-      const limited = await this.rateLimit(repository, id, ctx);
-      if (limited) return limited;
-      if (migration.reset_table_index !== null)
-        return this.resetShadowBatch(
-          id,
-          operator,
+    await this.withCopyRecovery(id, (attempt, expected, retrying) =>
+      this.backfillBatch(id, operator, limit, attempt, expected, retrying)
+    );
+    return this.copyStatus(id);
+  }
+
+  private async withCopyRecovery(
+    id: string,
+    operation: (
+      attempt: CopyAttempt,
+      expected?: string,
+      retrying?: boolean
+    ) => Promise<void>
+  ): Promise<void> {
+    const attempt: CopyAttempt = {};
+    try {
+      await operation(attempt);
+    } catch (error) {
+      if (
+        !isRolledBackCopyTimeout(error) ||
+        (!attempt.checkpoint &&
+          !(
+            attempt.readingInitialCheckpoint &&
+            attempt.legacyActiveOwner &&
+            isInitialCheckpointReadTimeout(error)
+          ))
+      )
+        throw error;
+      logger.warn('migration_copy_timeout_recovery', {
+        competitionId: id,
+        retry: 1,
+        maxRetries: 1,
+        savedCheckpoint: attempt.checkpoint ?? null,
+        initialCheckpointRead: !attempt.checkpoint,
+        statementNumber: error.migrationStatementNumber,
+        statementFingerprint: error.migrationStatementFingerprint
+      });
+      // No owner connection is borrowed during backoff. Reacquiring ownership
+      // confirms server rollback drained. A second failure remains terminal.
+      await this.waitBeforeCopyRetry();
+      await operation({}, attempt.checkpoint, true);
+    }
+  }
+
+  private async copyCheckpoint(
+    repository: CompetitionMigrationRepository,
+    ctx: RequestContext,
+    record: CompetitionRecord,
+    attempt: CopyAttempt,
+    expectedCheckpoint?: string,
+    retrying = false
+  ): Promise<CompetitionMigrationEntity | null> {
+    attempt.legacyActiveOwner =
+      record.storage_mode === 'LEGACY_ADAPTER' &&
+      record.execution_mode === 'ACTIVE';
+    if (retrying && !attempt.legacyActiveOwner)
+      throw new Error(
+        'Migration copy retry requires the same legacy active checkpoint'
+      );
+    attempt.readingInitialCheckpoint = true;
+    const migration = await repository.checkpoint(record.id, ctx);
+    attempt.readingInitialCheckpoint = false;
+    if (
+      expectedCheckpoint &&
+      (!migration || migrationCopyCheckpoint(migration) !== expectedCheckpoint)
+    )
+      throw new Error(
+        'Migration copy retry requires the same legacy active checkpoint'
+      );
+    if (migration) attempt.checkpoint = migrationCopyCheckpoint(migration);
+    return migration;
+  }
+  private async backfillBatch(
+    id: string,
+    operator: MigrationOperator,
+    limit: number,
+    attempt: CopyAttempt,
+    expectedCheckpoint?: string,
+    retrying = false
+  ): Promise<void> {
+    await this.transaction(
+      id,
+      async (repository, ctx, record, db) => {
+        const migration = await this.copyCheckpoint(
           repository,
-          migration.reset_table_index,
+          ctx,
+          record,
+          attempt,
+          expectedCheckpoint,
+          retrying
+        );
+        if (migration?.exceptions.length)
+          throw new Error(
+            'Migration requires adapter review: ' +
+              migration.exceptions.join(', ')
+          );
+        if (migration?.state === 'SHADOWING') return;
+        if (!migration || migration.state !== 'BACKFILLING')
+          throw new Error('Competition is not BACKFILLING');
+        if (!(await this.claimBatch(repository, id, migration, ctx))) return;
+        if (migration.reset_table_index !== null)
+          return this.resetShadowBatch(
+            id,
+            operator,
+            repository,
+            migration.reset_table_index,
+            limit,
+            db,
+            ctx
+          );
+        const started = performance.now();
+        const nextOffset = await new CompetitionMigrationBackfill(db).batch(
+          record,
+          migration.stage,
+          migration.stage_offset,
           limit,
+          this.now(),
+          migration.stage_cursor,
           ctx
         );
-      const record = await repository.lock(id, ctx);
-      const started = performance.now();
-      const nextOffset = await new CompetitionMigrationBackfill(
-        this.supplier()
-      ).batch(
-        record,
-        migration.stage,
-        migration.stage_offset,
-        limit,
-        this.now(),
-        migration.stage_cursor,
-        ctx
-      );
-      const stageIndex = MIGRATION_STAGES.indexOf(migration.stage);
-      const completed =
-        nextOffset === 0
-          ? Array.from(
-              new Set([...migration.completed_stages, migration.stage])
-            )
-          : migration.completed_stages;
-      const nextStage = MIGRATION_STAGES.slice(stageIndex + 1).find(
-        (stage) => !completed.includes(stage)
-      );
-      const finished = nextOffset === 0 && nextStage === undefined;
-      await repository.update(
-        id,
-        {
-          stage:
-            nextOffset === 0 ? (nextStage ?? migration.stage) : migration.stage,
-          stage_offset: typeof nextOffset === 'number' ? nextOffset : 0,
-          stage_cursor: typeof nextOffset === 'string' ? nextOffset : null,
-          completed_stages: completed,
-          state: finished ? 'SHADOWING' : 'BACKFILLING',
-          ...(finished ? { applied_watermark: migration.target_watermark } : {})
-        },
-        ctx
-      );
-      await repository.audit(
-        id,
-        operator.actor,
-        'BACKFILL_BATCH',
-        operator.reason,
-        {
-          stage: migration.stage,
-          offset: migration.stage_offset,
-          nextOffset,
-          limit,
-          durationMs: Math.ceil(performance.now() - started)
-        },
-        ctx
-      );
-      return repository.status(id, ctx);
-    });
+        const stageIndex = MIGRATION_STAGES.indexOf(migration.stage);
+        const completed =
+          nextOffset === 0
+            ? Array.from(
+                new Set([...migration.completed_stages, migration.stage])
+              )
+            : migration.completed_stages;
+        const nextStage = MIGRATION_STAGES.slice(stageIndex + 1).find(
+          (stage) => !completed.includes(stage)
+        );
+        const finished = nextOffset === 0 && nextStage === undefined;
+        await repository.update(
+          id,
+          {
+            stage:
+              nextOffset === 0
+                ? (nextStage ?? migration.stage)
+                : migration.stage,
+            stage_offset: typeof nextOffset === 'number' ? nextOffset : 0,
+            stage_cursor: typeof nextOffset === 'string' ? nextOffset : null,
+            completed_stages: completed,
+            state: finished ? 'SHADOWING' : 'BACKFILLING',
+            ...(finished
+              ? { applied_watermark: migration.target_watermark }
+              : {})
+          },
+          ctx
+        );
+        await repository.audit(
+          id,
+          operator.actor,
+          'BACKFILL_BATCH',
+          operator.reason,
+          {
+            stage: migration.stage,
+            offset: migration.stage_offset,
+            nextOffset,
+            limit,
+            durationMs: Math.ceil(performance.now() - started)
+          },
+          ctx
+        );
+      },
+      true,
+      new MigrationCopySqlExecutor(this.supplier())
+    );
   }
   /** One bounded ordered journal page; then bounded derived refresh stages.
-   * Never discard capture or acknowledge a watermark before its refresh commits. */
+   * Never discard capture or acknowledge a watermark before its refresh commits.
+   * Returns current durable writer status, possibly including a later peer batch;
+   * advanceMigration reads status anew and mutations recheck under ownership. */
   public async catchUp(id: string, operator: MigrationOperator, limit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
       throw new Error('Batch limit must be 1..100');
-    return this.transaction(id, async (repository, ctx) => {
-      const before = await repository.status(id, ctx),
-        migration = before.migration;
-      if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
-        throw new Error('Complete the current backfill before catch-up');
-      if (migration.source_watermark === migration.applied_watermark)
-        return before;
-      const limited = await this.rateLimit(repository, id, ctx);
-      if (limited) return limited;
-      const changes =
-        await this.supplier().execute<CompetitionMigrationChangeEntity>(
+    await this.withCopyRecovery(id, (attempt, expected, retrying) =>
+      this.catchUpBatch(id, operator, limit, attempt, expected, retrying)
+    );
+    return this.copyStatus(id);
+  }
+
+  private async catchUpBatch(
+    id: string,
+    operator: MigrationOperator,
+    limit: number,
+    attempt: CopyAttempt,
+    expectedCheckpoint?: string,
+    retrying = false
+  ): Promise<void> {
+    await this.transaction(
+      id,
+      async (repository, ctx, record, db) => {
+        const migration = await this.copyCheckpoint(
+          repository,
+          ctx,
+          record,
+          attempt,
+          expectedCheckpoint,
+          retrying
+        );
+        if (migration?.exceptions.length)
+          throw new Error(
+            'Migration requires adapter review: ' +
+              migration.exceptions.join(', ')
+          );
+        if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
+          throw new Error('Complete the current backfill before catch-up');
+        if (migration.source_watermark === migration.applied_watermark) return;
+        if (!(await this.claimBatch(repository, id, migration, ctx))) return;
+        const changes = await db.execute<CompetitionMigrationChangeEntity>(
           `select * from ${COMPETITION_MIGRATION_CHANGES_TABLE} where competition_id=:id and watermark>:watermark order by watermark,sequence limit :limit`,
           { id, watermark: migration.target_watermark, limit },
           { wrappedConnection: ctx.connection }
         );
-      if (!changes.length)
-        throw new Error('Capture journal gap; ownership remains legacy');
-      let expected = migration.target_watermark;
-      const record = await repository.lock(id, ctx),
-        backfill = new CompetitionMigrationBackfill(this.supplier());
-      for (const change of changes) {
-        if (Number(change.watermark) !== expected + 1)
+        if (!changes.length)
           throw new Error('Capture journal gap; ownership remains legacy');
-        await backfill.applyChange(record, change, ctx);
-        expected = Number(change.watermark);
-      }
-      const drained = expected === migration.source_watermark;
-      const leaderboardOnly =
-        drained &&
-        MIGRATION_STAGES.every((stage) =>
-          migration.completed_stages.includes(stage)
-        ) &&
-        (await repository.canRefreshOnlyLeaderboard(
+        let expected = migration.target_watermark;
+        const backfill = new CompetitionMigrationBackfill(db);
+        for (const change of changes) {
+          if (Number(change.watermark) !== expected + 1)
+            throw new Error('Capture journal gap; ownership remains legacy');
+          await backfill.applyChange(record, change, ctx);
+          expected = Number(change.watermark);
+        }
+        const drained = expected === migration.source_watermark;
+        const leaderboardOnly =
+          drained &&
+          MIGRATION_STAGES.every((stage) =>
+            migration.completed_stages.includes(stage)
+          ) &&
+          (await repository.canRefreshOnlyLeaderboard(
+            id,
+            migration.applied_watermark,
+            expected,
+            ctx
+          ));
+        const refreshStage: MigrationStage = leaderboardOnly
+          ? 'LEADERBOARD'
+          : 'ENTRIES';
+        const completedStages: MigrationStage[] = leaderboardOnly
+          ? MIGRATION_STAGES.filter((stage) => stage !== 'LEADERBOARD')
+          : ['CONFIGURATION', 'OUTCOMES', 'DECISIONS'];
+        await repository.update(
           id,
-          migration.applied_watermark,
-          expected,
+          {
+            target_watermark: expected,
+            state: drained ? 'BACKFILLING' : 'SHADOWING',
+            ...(drained
+              ? {
+                  stage: refreshStage,
+                  stage_offset: 0,
+                  stage_cursor: null,
+                  // Vote/runtime keys have already been replayed. Only ranks
+                  // need a full refresh for a vote-only journal window. Other
+                  // source changes retain the conservative refresh sequence.
+                  completed_stages: completedStages
+                }
+              : {}),
+            consecutive_full_windows: 0,
+            window_started_at: null,
+            window_samples: 0,
+            last_window_end: null,
+            last_comparison_at: null,
+            last_comparison_watermark: null
+          },
           ctx
-        ));
-      const refreshStage: MigrationStage = leaderboardOnly
-        ? 'LEADERBOARD'
-        : 'ENTRIES';
-      const completedStages: MigrationStage[] = leaderboardOnly
-        ? MIGRATION_STAGES.filter((stage) => stage !== 'LEADERBOARD')
-        : ['CONFIGURATION', 'OUTCOMES', 'DECISIONS'];
-      await repository.update(
-        id,
-        {
-          target_watermark: expected,
-          state: drained ? 'BACKFILLING' : 'SHADOWING',
-          ...(drained
-            ? {
-                stage: refreshStage,
-                stage_offset: 0,
-                stage_cursor: null,
-                // Vote/runtime keys have already been replayed. Only ranks
-                // need a full refresh for a vote-only journal window. Other
-                // source changes retain the conservative refresh sequence.
-                completed_stages: completedStages
-              }
-            : {}),
-          consecutive_full_windows: 0,
-          window_started_at: null,
-          window_samples: 0,
-          last_window_end: null,
-          last_comparison_at: null,
-          last_comparison_watermark: null
-        },
-        ctx
-      );
-      await repository.audit(
-        id,
-        operator.actor,
-        'CATCH_UP_JOURNAL_BATCH',
-        operator.reason,
-        {
-          fromWatermark: migration.target_watermark,
-          throughWatermark: expected,
-          changes: changes.length,
-          refreshPending: true,
-          refreshStage: drained ? refreshStage : null,
-          limit
-        },
-        ctx
-      );
-      return repository.status(id, ctx);
-    });
+        );
+        await repository.audit(
+          id,
+          operator.actor,
+          'CATCH_UP_JOURNAL_BATCH',
+          operator.reason,
+          {
+            fromWatermark: migration.target_watermark,
+            throughWatermark: expected,
+            changes: changes.length,
+            refreshPending: true,
+            refreshStage: drained ? refreshStage : null,
+            limit
+          },
+          ctx
+        );
+      },
+      true,
+      new MigrationCopySqlExecutor(this.supplier())
+    );
   }
   public async compare(
     id: string,
@@ -653,105 +961,94 @@ export class CompetitionMigrationService {
   ) {
     if (!Number.isSafeInteger(windowMs) || windowMs < 1)
       throw new Error('An approved positive comparison window is required');
-    const db = this.supplier();
-    return db.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const ctx = { connection };
-        const repository = new CompetitionMigrationRepository(
-          () => db,
-          this.environment
+    const db = new MigrationCopySqlExecutor(this.supplier());
+    return db.executeNativeQueriesInTransaction(async (connection) => {
+      const ctx = { connection };
+      const repository = new CompetitionMigrationRepository(
+        () => db,
+        this.environment
+      );
+      const record = await repository.lock(id, ctx);
+      // status().migration uses this same normalized durable checkpoint. Its
+      // operational/capture report is not part of comparison-window accounting.
+      const migration = await repository.checkpoint(id, ctx);
+      if (migration?.exceptions.length)
+        throw new Error(
+          'Migration requires adapter review: ' +
+            migration.exceptions.join(', ')
         );
-        const record = await repository.lock(id, ctx);
-        const status = await repository.status(id, ctx);
-        const migration = status.migration;
-        if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
-          throw new Error('Complete backfill before independent comparison');
-        if (record.storage_mode !== 'LEGACY_ADAPTER')
-          throw new Error(
-            'Native-backed projection cannot be its own migration baseline'
-          );
-        const now = this.now();
-        const baseline = await new LegacyCompetitionBaselineRepository(
-          () => db
-        ).getSnapshot(record, now, ctx, Number.POSITIVE_INFINITY);
-        const candidate = await loadLegacyParityCandidate(
-          new NativeCompetitionReader(
-            new CompetitionRepository(() => db),
-            ctx,
-            true
-          ),
-          record,
-          now,
-          ctx,
-          Number.POSITIVE_INFINITY
+      if (!migration || !['SHADOWING', 'READY'].includes(migration.state))
+        throw new Error('Complete backfill before independent comparison');
+      if (record.storage_mode !== 'LEGACY_ADAPTER')
+        throw new Error(
+          'Native-backed projection cannot be its own migration baseline'
         );
-        const categories = [
-          ...PARITY_FIELDS.map((field) => ({
-            category: field,
-            baselineHash: competitionPayloadHash(baseline[field] ?? null),
-            candidateHash: competitionPayloadHash(candidate[field] ?? null)
-          })),
-          ...(await compareLegacyFacade(db, id, record.wave_id, ctx)),
-          ...(await compareMigrationContent(db, id, record.wave_id, ctx))
-        ];
-        const mismatches = categories.filter(
-          (category) => category.baselineHash !== category.candidateHash
-        ).length;
-        const sourceFailures = sourceConsistencyFailures(baseline);
-        const complete =
-          migration.completed_stages.length === MIGRATION_STAGES.length &&
-          migration.source_watermark === migration.applied_watermark &&
-          sourceFailures.length === 0;
-        const progress = comparisonWindowProgress(
-          migration,
-          now,
-          windowMs,
-          complete,
-          mismatches
-        );
-        await repository.update(
-          id,
-          {
-            state: 'SHADOWING',
-            ...progress,
-            last_comparison_at: this.now(),
-            last_comparison_watermark: migration.source_watermark
-          },
-          ctx
-        );
-        const report = {
-          source: 'direct-legacy-sql-vs-native-tables-v1',
-          independent: true,
-          complete,
-          sourceFailures,
-          watermark: migration.source_watermark,
-          mismatches,
-          consecutiveFullWindows: progress.consecutive_full_windows,
-          categories
-        };
-        await repository.audit(
-          id,
-          operator.actor,
-          'INDEPENDENT_COMPARISON',
-          operator.reason,
-          report,
-          ctx
-        );
-        return report;
-      },
-      { isolationLevel: 'REPEATABLE READ' }
-    );
+      const now = this.now();
+      const checkWork = this.parityBudgetCheck(ctx);
+      const { baseline, categories } = await this.parityComparison(
+        id,
+        record,
+        ctx,
+        db,
+        checkWork
+      );
+      const mismatches = categories.filter(
+        (category) => category.baselineHash !== category.candidateHash
+      ).length;
+      const sourceFailures = sourceConsistencyFailures(baseline);
+      const complete =
+        migration.completed_stages.length === MIGRATION_STAGES.length &&
+        migration.source_watermark === migration.applied_watermark &&
+        sourceFailures.length === 0;
+      const progress = comparisonWindowProgress(
+        migration,
+        now,
+        windowMs,
+        complete,
+        mismatches
+      );
+      await repository.update(
+        id,
+        {
+          state: 'SHADOWING',
+          ...progress,
+          last_comparison_at: this.now(),
+          last_comparison_watermark: migration.source_watermark
+        },
+        ctx
+      );
+      const report = {
+        source: 'direct-legacy-sql-vs-native-tables-v1',
+        independent: true,
+        complete,
+        sourceFailures,
+        watermark: migration.source_watermark,
+        mismatches,
+        consecutiveFullWindows: progress.consecutive_full_windows,
+        categories
+      };
+      await repository.audit(
+        id,
+        operator.actor,
+        'INDEPENDENT_COMPARISON',
+        operator.reason,
+        report,
+        ctx
+      );
+      return report;
+    }, this.migrationTransactionOptions());
   }
   private async nativeInvariantFailures(
     id: string,
     status: MigrationStatus,
     record: CompetitionRecord,
-    ctx: RequestContext
+    ctx: RequestContext,
+    db: SqlExecutor
   ): Promise<string[]> {
     const failures: string[] = [];
     // Use retained source scheduling at the transfer time. A later native
     // completion (including an overdue decision) is still a live import.
-    const source = await this.supplier().oneOrNull<{ completed: number }>(
+    const source = await db.oneOrNull<{ completed: number }>(
       `select ((participation_period_end is not null or voting_period_end is not null)
         and (participation_period_end is null or participation_period_end<=:cutoverAt)
         and (voting_period_end is null or voting_period_end<=:cutoverAt)
@@ -766,15 +1063,15 @@ export class CompetitionMigrationService {
       record.lifecycle === CompetitionLifecycle.ENDED &&
       Number(source?.completed ?? 0) === 1;
     if (preservesCompletedSource && status.storageMode === 'NATIVE')
-      failures.push(...(await this.reverseMismatches(id, record, ctx)));
-    const mismatch = await this.supplier().oneOrNull<{ count: number }>(
+      failures.push(...(await this.reverseMismatches(id, record, ctx, db)));
+    const mismatch = await db.oneOrNull<{ count: number }>(
       `select count(*) as count from ${COMPETITION_ENTRIES_TABLE} e left join ${COMPETITION_ENTRY_RUNTIME_TABLE} r on r.entry_id=e.id and r.competition_id=e.competition_id where e.competition_id=:id and e.status='ACTIVE' and (r.entry_id is null or (:requireConsistentAggregate=1 and coalesce(r.real_time_rating,0)<>(select coalesce(sum(value),0) from ${COMPETITION_VOTES_TABLE} where competition_id=e.competition_id and entry_id=e.id)))`,
       { id, requireConsistentAggregate: preservesCompletedSource ? 0 : 1 },
       { wrappedConnection: ctx.connection }
     );
     if (Number(mismatch?.count ?? 0))
       failures.push('NATIVE_AGGREGATE_INVARIANT');
-    const orphan = await this.supplier().oneOrNull<{ count: number }>(
+    const orphan = await db.oneOrNull<{ count: number }>(
       `select count(*) as count from ${COMPETITION_VOTES_TABLE} v left join ${COMPETITION_ENTRIES_TABLE} e on e.id=v.entry_id and e.competition_id=v.competition_id where v.competition_id=:id and e.id is null`,
       { id },
       { wrappedConnection: ctx.connection }
@@ -783,13 +1080,14 @@ export class CompetitionMigrationService {
     return failures;
   }
   public async verifyNative(id: string) {
-    return this.transaction(id, async (repository, ctx, record) => {
+    return this.transaction(id, async (repository, ctx, record, db) => {
       const status = await repository.status(id, ctx);
       const failures = await this.nativeInvariantFailures(
         id,
         status,
         record,
-        ctx
+        ctx,
+        db
       );
       if (status.storageMode !== 'NATIVE' || status.executionMode !== 'ACTIVE')
         failures.push('NATIVE_OWNER');
@@ -813,7 +1111,7 @@ export class CompetitionMigrationService {
   ) {
     if (!/^https:\/\/[^\s]+$/.test(evidence) || evidence.length > 2000)
       throw new Error('A reviewed repair evidence URL is required');
-    return this.transaction(id, async (repository, ctx, record) => {
+    return this.transaction(id, async (repository, ctx, record, db) => {
       const status = await repository.status(id, ctx);
       if (
         status.migration?.state !== 'ROLLBACK_REQUIRED' ||
@@ -828,7 +1126,8 @@ export class CompetitionMigrationService {
         id,
         status,
         record,
-        ctx
+        ctx,
+        db
       );
       if (invariantFailures.length)
         throw new Error(
@@ -977,14 +1276,27 @@ export class CompetitionMigrationService {
     operator: MigrationOperator,
     dryRun: boolean
   ) {
-    return this.transaction(id, async (repository, ctx, record) => {
-      const status = await repository.status(id, ctx);
+    return this.boundedTransaction(id, async (repository, ctx, record, db) => {
+      const checkWork = this.parityBudgetCheck(ctx);
+      const status = await this.parityPhase(
+        id,
+        'readiness',
+        () => repository.status(id, ctx),
+        checkWork
+      );
       const failures = this.readinessFailures(status);
       if (!failures.length)
-        failures.push(...(await this.reverseMismatches(id, record, ctx)));
+        failures.push(
+          ...(await this.reverseMismatches(id, record, ctx, db, checkWork))
+        );
       if (!failures.length)
         failures.push(
-          ...(await this.nativeInvariantFailures(id, status, record, ctx))
+          ...(await this.parityPhase(
+            id,
+            'native_invariants',
+            () => this.nativeInvariantFailures(id, status, record, ctx, db),
+            checkWork
+          ))
         );
       if (failures.length || dryRun)
         return {
@@ -994,13 +1306,13 @@ export class CompetitionMigrationService {
         };
       const config = migrationCommandConfiguration(
         await new NativeCompetitionReader(
-          new CompetitionRepository(this.supplier),
+          new CompetitionRepository(() => db),
           ctx,
           true
         ).getCompetition(record, this.now())
       );
       const version = Number(record.config_version) + 1;
-      await this.supplier().execute(
+      await db.execute(
         `insert into ${COMPETITION_CONFIG_VERSIONS_TABLE} (competition_id,version,config,created_by,created_at) values (:id,:version,:config,:actor,:now)`,
         {
           id,
@@ -1012,7 +1324,7 @@ export class CompetitionMigrationService {
         { wrappedConnection: ctx.connection }
       );
       await repository.update(id, { state: 'CUTTING_OVER' }, ctx);
-      const changed = await this.supplier().execute(
+      const changed = await db.execute(
         `update ${COMPETITIONS_TABLE} set storage_mode='NATIVE', execution_mode='ACTIVE',config_version=:version where id=:id and storage_mode='LEGACY_ADAPTER' and execution_mode='ACTIVE'`,
         { id, version },
         { wrappedConnection: ctx.connection }
@@ -1026,7 +1338,7 @@ export class CompetitionMigrationService {
           cutover_at: this.now(),
           cutover_decision_count: Number(
             (
-              await this.supplier().oneOrNull<{ count: number }>(
+              await db.oneOrNull<{ count: number }>(
                 `select count(*) as count from ${COMPETITION_DECISIONS_TABLE} where competition_id=:id`,
                 { id },
                 { wrappedConnection: ctx.connection }
@@ -1067,8 +1379,8 @@ export class CompetitionMigrationService {
         throw new Error('Native ownership required');
       assertMigrationRollbackSafe(status.readiness, status.completedEffects);
       if (status.migration.reverse_ready) return status;
-      const limited = await this.rateLimit(repository, id, ctx);
-      if (limited) return limited;
+      if (!(await this.claimBatch(repository, id, status.migration, ctx)))
+        return status;
       const next = await reconcileLegacyBatch(
         this.supplier(),
         id,
@@ -1103,39 +1415,20 @@ export class CompetitionMigrationService {
   private async reverseMismatches(
     id: string,
     record: CompetitionRecord,
-    ctx: RequestContext
+    ctx: RequestContext,
+    db: SqlExecutor,
+    checkWork?: () => void
   ): Promise<string[]> {
-    const db = this.supplier(),
-      now = this.now();
-    const baseline = await new LegacyCompetitionBaselineRepository(
-      () => db
-    ).getSnapshot(record, now, ctx, Number.POSITIVE_INFINITY);
-    const candidate = await loadLegacyParityCandidate(
-      new NativeCompetitionReader(
-        new CompetitionRepository(() => db),
-        ctx,
-        record.storage_mode === 'LEGACY_ADAPTER'
-      ),
-      record,
-      now,
-      ctx,
-      Number.POSITIVE_INFINITY
-    );
-    const failures = PARITY_FIELDS.filter(
-      (field) =>
-        competitionPayloadHash(baseline[field] ?? null) !==
-        competitionPayloadHash(candidate[field] ?? null)
-    );
-    const relations = [
-      ...(await compareLegacyFacade(db, id, record.wave_id, ctx)),
-      ...(await compareMigrationContent(db, id, record.wave_id, ctx))
-    ];
-    return [
-      ...failures,
-      ...sourceConsistencyFailures(baseline),
-      ...relations
+    const { baseline, snapshot, relations, categories } =
+      await this.parityComparison(id, record, ctx, db, checkWork);
+    const mismatches = (rows: typeof categories) =>
+      rows
         .filter((item) => item.baselineHash !== item.candidateHash)
-        .map((item) => item.category)
+        .map((item) => item.category);
+    return [
+      ...mismatches(snapshot),
+      ...sourceConsistencyFailures(baseline),
+      ...mismatches(relations)
     ];
   }
   public async rollback(
@@ -1143,7 +1436,7 @@ export class CompetitionMigrationService {
     operator: MigrationOperator,
     dryRun: boolean
   ) {
-    return this.transaction(id, async (repository, ctx, record) => {
+    return this.transaction(id, async (repository, ctx, record, db) => {
       const status = await repository.status(id, ctx);
       if (status.migration?.state !== 'NATIVE' || !status.readiness)
         throw new Error('Competition is not NATIVE');
@@ -1169,7 +1462,7 @@ export class CompetitionMigrationService {
           repairRequired: false,
           failures: ['REVERSE_RECONCILIATION_INCOMPLETE']
         };
-      const failures = await this.reverseMismatches(id, record, ctx);
+      const failures = await this.reverseMismatches(id, record, ctx, db);
       if (failures.length) {
         if (!dryRun) {
           await repository.update(

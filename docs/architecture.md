@@ -1256,11 +1256,45 @@ rebuilds only captured decision keys; it does not replay unchanged decision hist
 when refreshing entries, ranks, awards and archives. Once all initial stages are
 complete, a journal window containing only vote, credit-spending, runtime-rank,
 leaderboard or retained vote-time-history changes replays its keys and refreshes
-only leaderboard ranks. The classifier checks every page since the last applied
+the live entry-rank and locked leaderboard projections. Historical winner ranks
+remain published ranks; partial native pages stay hidden behind legacy ownership.
+The classifier checks every page since the last applied
 watermark; other source changes retain the broader refresh. The applied watermark
 remains behind until the bounded refresh finishes, and full comparison remains
 mandatory. Routine snapshots therefore do not force another copy of unchanged
 voters, decision awards and winner archives.
+Trusted full comparisons collect all native reader results in 2,000-row pages
+to avoid repeating voter aggregations. Optional shadow sampling retains its
+500-row pages and existing row ceiling.
+
+Frozen drop-view parity reads the unchanged view by the complete union of source
+participation/winner keys and ACTIVE/WINNER native entry keys mapped to shared
+drops. Driving those primary-key reads avoids projecting unrelated chat history
+while retaining extra native entries mapped to CHAT drops as mismatches. All
+columns and rows of the eligible projection still participate in the hash.
+
+Full content comparison prefetches all relations in 100-drop pages, while WAVE
+TDH/XTDH budgets prefetch identity and spending data in 100-profile pages. The
+candidate reuses the ordinary public budget formula and the source oracle remains
+independent. Independent comparison and final cutover use the existing bounded
+SQL transaction runtime: five seconds overall, one second per statement and lock
+wait, and 500ms reserved for finalization. Copy, replay and cutover read repeatable
+snapshots after taking ownership; other control transactions retain READ COMMITTED.
+A pre-transfer timeout aborts without promoting the shadow copy. An unknown COMMIT
+acknowledgment requires checking ownership and the audit before any retry.
+Backfill and journal replay allow one complete transaction retry only for an
+original typed WORK/NOT_SENT timeout with a destroyed physical connection and
+migration statement diagnostics. After a one-second delay outside ownership,
+the new transaction rechecks legacy active ownership, operator stops and every
+saved copy field, including the batch-claim timestamp. Capture counters may
+advance; checkpoint or claim drift and a second failure remain terminal. A
+failure of the initial checkpoint lookup is eligible only as the exact known
+second statement, after confirming legacy active ownership and before any claim
+or data write. Its retry reads fresh durable state and preserves any peer
+progress. Every attempt retains the five-second fence, one-second statements
+and lock waits, and 500ms finalization reserve. No statement is retried in place;
+comparison, cutover, reporting failures and unknown/acknowledged commits use no
+such recovery. Deploy only `competitionMigrationLoop` for this change.
 Imported decision winners retain a nullable `legacy_drop_id`, preserving source
 history and prizes even when the drop was deleted before migration. Historical
 winner reads do not recreate an entry or its deleted content. Deploy the additive
@@ -1279,6 +1313,10 @@ The immutable command snapshot retains legacy upper-threshold metadata alongside
 its normal native draft fields. Actual data mismatches retain legacy ownership;
 repair-required native ownership is never blindly reversed. Final comparison,
 effect drain and owner transfer occur under the same transaction lock.
+The manual migration worker uses 2,048 MB to give CPU-heavy complete comparisons
+at least a full vCPU allocation. Its five-second ownership fence, one-second
+statement/lock limits, reserved concurrency and disabled asynchronous retries
+remain unchanged; this resource setting does not alter API or decision workers.
 
 Migrated primaries inherit shared wave presentation metadata while
 `presentation_config` is null. Native appearance arrays override that inheritance,
