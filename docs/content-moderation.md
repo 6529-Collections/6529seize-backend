@@ -246,6 +246,11 @@ author visibility and preserves evidence under the existing retention policy.
 Resolved-deleted reports appear in the resolved queue and its count. Marking a
 check reviewed, unhiding a post, and deleting a post do not resolve reports.
 
+Report creation rechecks and locks the live post inside the report transaction.
+Deletion waits until that report commits; a request holding a pre-deletion
+snapshot is rejected if the post is already gone. This prevents a late report
+from reopening work after deleted-post resolution.
+
 There is no continuous hold-before-publish queue. Moderators address reported
 content occasionally, with urgent high-confidence AI quarantine providing a
 temporary safety measure until then.

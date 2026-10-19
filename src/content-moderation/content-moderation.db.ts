@@ -872,6 +872,10 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     return this.withTransaction(ctx.connection, async (connection) => {
       const transactionContext: RequestContext = { ...ctx, connection };
       await this.assertReportAllowed(input, connection);
+      // Recheck the earlier snapshot under a live-post lock: deletion must wait
+      // for this report to commit, and an already-deleted post cannot receive
+      // a late report after its existing reports have been resolved.
+      await this.assertDropExists(input.dropId, connection, true);
       const report = await this.createReport(input, transactionContext);
       if (input.blockAuthor) {
         await this.blockProfile(

@@ -9,6 +9,7 @@ import {
 } from '@/constants';
 import { resetTestDatabase } from '@/tests/_setup/testDatabase';
 import { dbSupplier, sqlExecutor } from '@/sql-executor';
+import { ContentReportReason } from '@/entities/IContentModeration';
 import { ContentModerationDb } from './content-moderation.db';
 import { ModerationReviewDb } from './moderation-review.db';
 import { ModerationReviewService } from './moderation-review.service';
@@ -194,6 +195,34 @@ describe('Deleted-post report resolution', () => {
     );
     expect((await content.getModerationCounts()).resolved_report_count).toBe(0);
   });
+
+  it('does not reopen resolved work through a report request holding a pre-deletion snapshot', async () => {
+    const saved = await report();
+    await resolve(saved.itemId);
+    // Eligibility is independent of the live-post guard exercised here.
+    jest
+      .spyOn(content as any, 'assertReportAllowed')
+      .mockResolvedValue(undefined);
+    await expect(
+      content.createReportWithViewerActions(
+        {
+          dropId: 'deleted-post',
+          reporterProfileId: 'late-reporter',
+          authorProfileId: 'author',
+          reason: ContentReportReason.SPAM,
+          notes: null,
+          contentSnapshot: saved.evidence,
+          hideDrop: false,
+          blockAuthor: false
+        },
+        {}
+      )
+    ).rejects.toThrow('Drop deleted-post not found');
+    expect(await content.hasOpenReports()).toBe(false);
+    expect((await reviews.get(saved.itemId)).review_status).toBe('REVIEWED');
+    expect((await content.getModerationCounts()).resolved_report_count).toBe(1);
+  });
+
   it('does not revive expired retained evidence on the selected or an older resolved revision', async () => {
     const old = await report('Older resolved revision');
     const selected = await report('Selected expired revision');

@@ -12,6 +12,7 @@ import {
   CONTENT_MODERATION_AUDIT_LOG_TABLE,
   CONTENT_MODERATION_DROP_STATES_TABLE,
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
+  DROPS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE
 } from '@/constants';
 import { ActivityEventTargetType } from '@/entities/IActivityEvent';
@@ -443,7 +444,7 @@ describe('ContentModerationDb', () => {
   });
 
   it('commits report and requested viewer actions in one transaction', async () => {
-    const { db } = createDb();
+    const { db, executor } = createDb();
     const connection = {} as any;
     const report = reportRow();
     const transactionSpy = jest
@@ -456,6 +457,7 @@ describe('ContentModerationDb', () => {
       .spyOn(db, 'createReport')
       .mockResolvedValue(report);
     jest.spyOn(db as any, 'assertReportAllowed').mockResolvedValue(undefined);
+    executor.oneOrNull.mockResolvedValueOnce({ id: 'drop-1' });
     const blockProfileSpy = jest
       .spyOn(db, 'blockProfile')
       .mockResolvedValue(undefined);
@@ -479,6 +481,15 @@ describe('ContentModerationDb', () => {
 
     const transactionContext = expect.objectContaining({ connection });
     expect(transactionSpy).toHaveBeenCalledTimes(1);
+    expect(executor.oneOrNull).toHaveBeenCalledWith(
+      expect.stringContaining(`from ${DROPS_TABLE}`),
+      { dropId: 'drop-1' },
+      { wrappedConnection: connection }
+    );
+    expect(executor.oneOrNull.mock.calls[0]?.[0]).toContain('for update');
+    expect(executor.oneOrNull.mock.invocationCallOrder[0]).toBeLessThan(
+      createReportSpy.mock.invocationCallOrder[0]!
+    );
     expect(createReportSpy).toHaveBeenCalledWith(
       expect.any(Object),
       transactionContext
@@ -493,6 +504,34 @@ describe('ContentModerationDb', () => {
       'drop-1',
       transactionContext
     );
+  });
+
+  it('rejects a saved report snapshot after its original post was deleted', async () => {
+    const { db, executor } = createDb();
+    jest.spyOn(db as any, 'assertReportAllowed').mockResolvedValue(undefined);
+    const createReportSpy = jest.spyOn(db, 'createReport');
+    const blockProfileSpy = jest.spyOn(db, 'blockProfile');
+    const hideDropSpy = jest.spyOn(db, 'hideDrop');
+
+    await expect(
+      db.createReportWithViewerActions(
+        {
+          dropId: 'deleted-post',
+          reporterProfileId: 'reporter-1',
+          authorProfileId: 'author-1',
+          reason: ContentReportReason.OTHER,
+          notes: null,
+          contentSnapshot: { parts: [{ content: 'Previously live post' }] },
+          hideDrop: true,
+          blockAuthor: true
+        },
+        {}
+      )
+    ).rejects.toThrow('Drop deleted-post not found');
+    expect(executor.oneOrNull.mock.calls[0]?.[0]).toContain('for update');
+    expect(createReportSpy).not.toHaveBeenCalled();
+    expect(blockProfileSpy).not.toHaveBeenCalled();
+    expect(hideDropSpy).not.toHaveBeenCalled();
   });
 
   it('rejects a second non-withdrawn report from the same profile for a drop', async () => {

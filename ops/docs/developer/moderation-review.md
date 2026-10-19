@@ -93,6 +93,11 @@ remains a check-history action and does not close an open report. Resolved
 reports stop contributing to the navigation indicator and remain available in
 the resolved history.
 
+The report-create transaction locks and rechecks the live drop before inserting
+the allegation. A stale snapshot cannot create a report after deletion, and
+deletion cannot overtake an in-flight report insert. Deleted-post resolution
+therefore cannot be followed by an open report inserted from that snapshot.
+
 ## Capture, privacy and retention
 
 `content_moderation_items` stores the review scope, latest assessment, explicit
