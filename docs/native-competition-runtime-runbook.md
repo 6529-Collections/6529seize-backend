@@ -100,6 +100,42 @@ observations.
 
 ## Execution and content invariants
 
+Maintenance keeps the existing competition row lock and transaction. WAVE
+budgets use bounded source pages; voters within their available credit need no
+individual vote reconciliation. REP and NFT credit sources retain their existing
+budget formulas and DROP scope still checks each entry. Leaderboard upserts and
+runtime threshold updates batch 100 entries at a time on the same connection.
+All batches, stale-entry cleanup and the outbox event commit or roll back together.
+A failed pass leaves all of these unchanged. The next scheduled pass recomputes
+current state; existing decision IDs and semantic outbox keys retain retry safety.
+
+Successful scheduled passes emit `native_competition_execution_completed` with
+`competition_id`, `operation` (`leaderboard` or `decisions`) and `duration_ms`.
+This elapsed duration includes lock acquisition and commit, so it is an upper
+bound on lock hold time, not a separate lock-duration measurement. Use it instead
+of relying on large detailed timer reports that may be truncated. Ordinary
+refreshes and decision catch-up can have different costs; credit reductions and
+winner processing still run under the lock.
+Acquisition wait can inflate this duration under contention. Compare baselines
+and choose alert thresholds separately for leaderboard refreshes and decision
+passes, accounting for decision catch-up. Failed passes log the same operation
+and elapsed duration with `native_competition_execution_failed`.
+
+The batching rollout needs no schema, API contract, frontend or flag change.
+Deploy `waveLeaderboardSnapshotterLoop`, `waveDecisionExecutionLoop`, `tdhLoop`,
+`delegationsLoop`, `overRatesRevocationLoop`, `helpBotReplyLoop`, then `api`,
+verifying each service before continuing. The other callers use the same native
+maintenance during entry changes or credit revocations. The help-bot service
+deployment also verifies its existing daily-activity-credit function. Old and
+new versions share the same transactional data contract during rollout.
+Keep existing execution flags at their current values during this rollout.
+If a service fails verification, stop dispatching later services and deploy a
+reviewed revert for the affected updated units in reverse rollout order through
+the ordinary workflow. Mixed versions remain compatible; no flag toggle, schema
+rollback or data rewrite is needed for this batching-only change. Verify source
+versions, fresh successful passes and durations against the prior per-operation
+baseline after rollback.
+
 - Competition row locks serialize entry/vote/lifecycle/execution changes.
   Drop locks additionally prevent concurrent association, editing and deletion
   from bypassing one active nonterminal entry per drop.

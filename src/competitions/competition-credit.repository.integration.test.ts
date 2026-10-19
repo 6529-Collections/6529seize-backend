@@ -7,7 +7,8 @@ import {
   DROPS_TABLE,
   DROP_VOTER_STATE_TABLE,
   RATINGS_TABLE,
-  TDH_NFT_TABLE
+  TDH_NFT_TABLE,
+  IDENTITIES_TABLE
 } from '@/constants';
 import {
   CompetitionEntryStatus,
@@ -17,6 +18,8 @@ import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
+import { identitiesDb } from '@/identities/identities.db';
+import { competitionCreditRepository } from './competition-credit.repository';
 
 const profileId = 'budget-voter';
 const waveId = 'shared-wave';
@@ -206,6 +209,81 @@ describeWithSeed(
         current_vote: 10,
         max_vote: 85
       });
+    });
+
+    it('reads 710 active voter budgets in bounded source pages', async () => {
+      const profileIds = Array.from(
+        { length: 710 },
+        (_, index) => `batch-voter-${index}`
+      );
+      const identities = profileIds.map((profileId, index) =>
+        anIdentity(
+          { tdh: 100 },
+          {
+            profile_id: profileId,
+            consolidation_key: `batch-key-${index}`,
+            primary_address: `0x${index.toString(16).padStart(40, '0')}`,
+            handle: `batch-voter-${index}`
+          }
+        )
+      );
+      await sqlExecutor.bulkInsert(
+        IDENTITIES_TABLE,
+        identities,
+        Object.keys(identities[0])
+      );
+      await sqlExecutor.bulkInsert(
+        COMPETITION_VOTES_TABLE,
+        identities.map((identity, index) => ({
+          id: randomUUID(),
+          competition_id: nativeId,
+          entry_id: entry.id,
+          voter_profile_id: identity.profile_id,
+          value: index % 2 === 0 ? -120 : 80,
+          credit_spent: index % 2 === 0 ? 120 : 80,
+          created_at: 1,
+          updated_at: 1
+        })),
+        [
+          'id',
+          'competition_id',
+          'entry_id',
+          'voter_profile_id',
+          'value',
+          'credit_spent',
+          'created_at',
+          'updated_at'
+        ]
+      );
+      const identityPages = jest.spyOn(identitiesDb, 'getIdentitiesByIds');
+      const spendingPages = jest.spyOn(
+        competitionCreditRepository,
+        'getNamespaceSpendings'
+      );
+      const single = jest.spyOn(competitionCreditRepository, 'getSpending');
+      try {
+        const budgets = await sqlExecutor.executeNativeQueriesInTransaction(
+          (connection) =>
+            competitionCreditService.getWaveBudgets(native, profileIds, {
+              connection
+            })
+        );
+        expect(identityPages).toHaveBeenCalledTimes(8);
+        expect(spendingPages).toHaveBeenCalledTimes(8);
+        expect(single).not.toHaveBeenCalled();
+        expect(budgets.size).toBe(710);
+        profileIds.forEach((profileId, index) => {
+          expect(budgets.get(profileId)).toMatchObject({
+            available: 100,
+            spent: index % 2 === 0 ? 120 : 80,
+            remaining: index % 2 === 0 ? 0 : 20
+          });
+        });
+      } finally {
+        identityPages.mockRestore();
+        spendingPages.mockRestore();
+        single.mockRestore();
+      }
     });
 
     it.each([

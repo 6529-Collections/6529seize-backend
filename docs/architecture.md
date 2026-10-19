@@ -1270,6 +1270,14 @@ with `waveLeaderboardSnapshotterLoop` and `waveDecisionExecutionLoop`; standings
 can lag a confirmed vote until the next worker refresh. These existing workers
 must be healthy before deploying the API change. No schema, API contract,
 schedule or frontend deployment change is required.
+
+Native maintenance retains the competition transaction lock. WAVE credit checks
+batch identity and spending reads and only load individual votes for over-budget
+voters; DROP credit checks still reconcile each entry. Leaderboard upserts and
+runtime threshold updates use bounded batches of 100 entries on the same
+connection, retaining atomic scores, thresholds, cleanup and event publication.
+Each successful worker competition pass logs its operation and elapsed time,
+including lock acquisition and commit, independently of the detailed timer report.
 Native vote history, immutable decision voter snapshots and award
 rows remain separate from legacy tables. Per-entry aggregate votes must fit the
 safe-integer API range; an overflowing mutation rolls back its transaction.
