@@ -17,6 +17,7 @@ import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
 import { WaveCreditScope } from '@/entities/IWave';
+import { readSequentially } from '@/competitions/competition-read-sequence';
 import { computeCompetitionPhase } from './competition-phase';
 import {
   NativeCompetitionRuntimeRepository,
@@ -168,7 +169,7 @@ export class NativeCompetitionRuntimeService {
       competition.voting.credit_scope === WaveCreditScope.WAVE
         ? await this.credits.getWaveBudgets(competition, voters, ctx)
         : null;
-    for (const voterProfileId of voters) {
+    await readSequentially(voters, async (voterProfileId) => {
       const budget =
         waveBudgets?.get(voterProfileId) ??
         (await this.credits.getBudget(
@@ -184,7 +185,7 @@ export class NativeCompetitionRuntimeService {
         budget.spent !== null &&
         budget.spent <= budget.available
       )
-        continue;
+        return;
       await this.reconcileVoterCredit(
         {
           competitionId: competition.id,
@@ -195,7 +196,7 @@ export class NativeCompetitionRuntimeService {
         },
         ctx
       );
-    }
+    });
   }
 
   /** The API may refresh its just-written leaderboard in the existing transaction.
@@ -260,8 +261,8 @@ export class NativeCompetitionRuntimeService {
       });
       if (!ids.length) break;
       for (const id of ids) {
+        const startedAt = Date.now();
         try {
-          const startedAt = Date.now();
           await execute(id, { timer });
           this.logger.info('native_competition_execution_completed', {
             competition_id: id,
@@ -271,7 +272,9 @@ export class NativeCompetitionRuntimeService {
         } catch {
           // Do not log signed payloads, user content or DB error values.
           this.logger.error('native_competition_execution_failed', {
-            competition_id: id
+            competition_id: id,
+            operation,
+            duration_ms: Date.now() - startedAt
           });
         }
       }

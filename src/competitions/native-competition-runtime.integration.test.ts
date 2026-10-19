@@ -18,7 +18,8 @@ import {
   COMPETITION_LEADERBOARD_ENTRIES_TABLE,
   DROPS_TABLE,
   METRIC_ROLLUP_HOUR_TABLE,
-  WAVES_TABLE
+  WAVES_TABLE,
+  IDENTITIES_TABLE
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -29,9 +30,11 @@ import { CompetitionExecutionRouter } from './competition-execution.router';
 import { appFeatures } from '@/app-features';
 import {
   CompetitionCreditBudget,
+  competitionCreditService,
   CompetitionCreditService
 } from './competition-credit.service';
 import { competitionCreditRepository } from './competition-credit.repository';
+import { anIdentity } from '@/tests/fixtures/identity.fixture';
 import { RequestContext } from '@/request.context';
 import { competitionEventRepository } from './competition-event.repository';
 import { competitionMainStageRepository } from './competition-main-stage.repository';
@@ -357,6 +360,70 @@ describeWithSeed(
       }
     });
 
+    it('uses real batched credits to reconcile overspending and missing identities while preserving an exactly funded voter', async () => {
+      const identities = ['overspent', 'within-budget'].map((profile, index) =>
+        anIdentity(
+          { tdh: 100 },
+          {
+            profile_id: profile,
+            consolidation_key: profile,
+            primary_address: `0x${(index + 1).toString(16).padStart(40, '0')}`,
+            handle: profile
+          }
+        )
+      );
+      await sqlExecutor.bulkInsert(
+        IDENTITIES_TABLE,
+        identities,
+        Object.keys(identities[0])
+      );
+      await vote(rankId, rankEntry, -60, 10, 'overspent');
+      await vote(rankId, secondRankEntry, 60, 10, 'overspent');
+      await vote(approveId, approveEntry, 90, 10, 'overspent');
+      await vote(rankId, rankEntry, 100, 20, 'within-budget');
+      await vote(rankId, rankEntry, 25, 30, 'missing-credit');
+      const realRepository = new NativeCompetitionRuntimeRepository(
+        () => sqlExecutor
+      );
+      const realService = new NativeCompetitionRuntimeService(
+        realRepository,
+        competitionCreditService,
+        new CompetitionExecutionRouter(competitionRepository, appFeatures),
+        appFeatures
+      );
+      const reads = jest.spyOn(realRepository, 'getVoterActiveVotes');
+      try {
+        await realService.refreshCompetition(rankId, 500);
+        expect(reads.mock.calls.map((call) => call[1])).toEqual([
+          'missing-credit',
+          'overspent'
+        ]);
+      } finally {
+        reads.mockRestore();
+      }
+      expect(
+        await realRepository.getVoterActiveVotes(rankId, 'overspent', {})
+      ).toEqual([
+        { entryId: rankEntry, value: -50 },
+        { entryId: secondRankEntry, value: 50 }
+      ]);
+      expect(
+        await realRepository.getVoterActiveVotes(rankId, 'within-budget', {})
+      ).toEqual([{ entryId: rankEntry, value: 100 }]);
+      expect(
+        await realRepository.getVoterActiveVotes(rankId, 'missing-credit', {})
+      ).toEqual([{ entryId: rankEntry, value: 0 }]);
+      expect(
+        await realRepository.getVoterActiveVotes(approveId, 'overspent', {})
+      ).toEqual([{ entryId: approveEntry, value: 90 }]);
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_VOTE_HISTORY_TABLE} where occurred_at = 500 and competition_id = :rankId`,
+          { rankId }
+        )
+      ).toEqual([{ n: 3 }]);
+    });
+
     it('still reconciles independent DROP budgets without a shared-spending shortcut', async () => {
       await sqlExecutor.execute(
         `update ${COMPETITIONS_TABLE} set voting_config = json_set(voting_config, '$.credit_scope', 'DROP') where id = :rankId`,
@@ -442,10 +509,16 @@ describeWithSeed(
       }
     });
 
-    it('rolls back earlier leaderboard and threshold batches when a later batch fails', async () => {
-      const rows = await largeLeaderboard();
+    it('rolls back earlier leaderboard batches, thresholds and outbox events when a later batch fails', async () => {
+      await largeLeaderboard();
       const batchRepository = new NativeCompetitionRuntimeRepository(
         () => sqlExecutor
+      );
+      const batchService = new NativeCompetitionRuntimeService(
+        batchRepository,
+        competitionCreditService,
+        new CompetitionExecutionRouter(competitionRepository, appFeatures),
+        appFeatures
       );
       const execute = sqlExecutor.execute.bind(sqlExecutor);
       let thresholdWrites = 0;
@@ -461,13 +534,7 @@ describeWithSeed(
         });
       try {
         await expect(
-          batchRepository.executeNativeQueriesInTransaction(
-            async (connection) => {
-              const ctx = { connection };
-              await batchRepository.lockCompetition(rankId, ctx);
-              await batchRepository.saveLeaderboard(rankId, rows, 500, ctx);
-            }
-          )
+          batchService.refreshCompetition(rankId, 500)
         ).rejects.toThrow('Injected later batch failure');
       } finally {
         failure.mockRestore();
@@ -482,6 +549,11 @@ describeWithSeed(
           `select distinct over_threshold_since, updated_at from ${COMPETITION_ENTRY_RUNTIME_TABLE}`
         )
       ).toEqual([{ over_threshold_since: 5, updated_at: 10 }]);
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_OUTBOX_TABLE}`
+        )
+      ).toEqual([{ n: 0 }]);
     });
 
     it.each([1, -1])(

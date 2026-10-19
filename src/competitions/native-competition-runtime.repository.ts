@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { collections } from '@/collections';
+import { readSequentially } from '@/competitions/competition-read-sequence';
 import {
   mirrorNativeLegacyVote,
   mirrorNativeLegacyVoteActivity,
@@ -389,61 +390,64 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     ctx: RequestContext
   ): Promise<void> {
     this.requireTransaction(ctx);
-    for (const page of collections.chunkArray([...entries], 100)) {
-      await this.db.bulkUpsert(
-        COMPETITION_LEADERBOARD_ENTRIES_TABLE,
-        page.map((row) => ({
-          competition_id: competitionId,
-          entry_id: row.entry.id,
-          drop_id: row.entry.drop_id,
-          rating: row.rating,
-          real_time_rating: row.entry.real_time_rating,
-          rank: row.rank,
-          submitted_at: row.entry.submitted_at,
-          updated_at: now,
-          ordering_time: row.orderingTime ?? now,
-          decision_rating: row.decisionRating ?? row.rating
-        })),
-        [
-          'competition_id',
-          'entry_id',
-          'drop_id',
-          'rating',
-          'real_time_rating',
-          'rank',
-          'submitted_at',
-          'updated_at',
-          'ordering_time',
-          'decision_rating'
-        ],
-        [
-          'rating',
-          'real_time_rating',
-          'rank',
-          'updated_at',
-          'ordering_time',
-          'decision_rating'
-        ],
-        ctx
-      );
-      const params: Record<string, unknown> = {
-        competitionId,
-        entryIds: page.map((row) => row.entry.id)
-      };
-      const cases = page.map((row, index) => {
-        params[`entry${index}`] = row.entry.id;
-        params[`threshold${index}`] = row.overThresholdSince;
-        return `when :entry${index} then :threshold${index}`;
-      });
-      await this.query(
-        'saveLeaderboard',
-        `update ${COMPETITION_ENTRY_RUNTIME_TABLE}
-        set over_threshold_since = case entry_id ${cases.join(' ')} end
+    await readSequentially(
+      collections.chunkArray([...entries], 100),
+      async (page) => {
+        await this.db.bulkUpsert(
+          COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+          page.map((row) => ({
+            competition_id: competitionId,
+            entry_id: row.entry.id,
+            drop_id: row.entry.drop_id,
+            rating: row.rating,
+            real_time_rating: row.entry.real_time_rating,
+            rank: row.rank,
+            submitted_at: row.entry.submitted_at,
+            updated_at: now,
+            ordering_time: row.orderingTime ?? now,
+            decision_rating: row.decisionRating ?? row.rating
+          })),
+          [
+            'competition_id',
+            'entry_id',
+            'drop_id',
+            'rating',
+            'real_time_rating',
+            'rank',
+            'submitted_at',
+            'updated_at',
+            'ordering_time',
+            'decision_rating'
+          ],
+          [
+            'rating',
+            'real_time_rating',
+            'rank',
+            'updated_at',
+            'ordering_time',
+            'decision_rating'
+          ],
+          ctx
+        );
+        const params: Record<string, unknown> = {
+          competitionId,
+          entryIds: page.map((row) => row.entry.id)
+        };
+        const cases = page.map((row, index) => {
+          params[`entry${index}`] = row.entry.id;
+          params[`threshold${index}`] = row.overThresholdSince;
+          return `when :entry${index} then :threshold${index}`;
+        });
+        await this.query(
+          'saveLeaderboard',
+          `update ${COMPETITION_ENTRY_RUNTIME_TABLE}
+        set over_threshold_since = case entry_id ${cases.join(' ')} else over_threshold_since end
         where competition_id = :competitionId and entry_id in (:entryIds)`,
-        params,
-        ctx
-      );
-    }
+          params,
+          ctx
+        );
+      }
+    );
     await this.query(
       'saveLeaderboard',
       `delete lb from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb
