@@ -463,6 +463,7 @@ export class MemeCollaborationsService {
     ctx: RequestContext,
     artworkName: string
   ): Promise<number[]> {
+    if (!ids.length) return [];
     const profiles = await this.db.profiles(ids, ctx);
     if (
       profiles.length !== ids.length ||
@@ -478,41 +479,45 @@ export class MemeCollaborationsService {
       ctx
     );
     if (!wave) throw new NotFoundException('Wave not found');
-    const notificationIds: number[] = [];
-    // Serialize writes on the caller's single MySQL transaction connection.
-    // Persist each invitation before inserting its dependent notification.
-    for (const profileId of ids) {
-      const id = randomUUID();
-      await this.db.query(
-        'invite',
-        `insert into ${MEME_COLLABORATION_INVITATIONS_TABLE} (id,drop_id,profile_id,profile_handle,status,created_at,responded_at,responder_wallet,acceptance_copy_version) values (:id,:dropId,:profileId,:profileHandle,'PENDING',:now,null,null,null)`,
-        {
-          id,
-          dropId,
-          profileId,
-          profileHandle: profiles.find((profile) => profile.id === profileId)!
-            .handle,
-          now: Date.now()
-        },
-        ctx
-      );
-      notificationIds.push(
-        ...(await userNotifier.notifyOfMemeCollaboration(
-          profileId,
-          {
-            event_type: 'INVITED',
-            artwork_name: artworkName,
-            drop_id: dropId,
-            wave_id: waveId,
-            actor_id: authorId,
-            invitation_id: id
-          },
-          wave.visibility_group_id,
-          ctx
-        ))
-      );
-    }
-    return notificationIds;
+    const handles = new Map(
+      profiles.map((profile) => [profile.id, profile.handle])
+    );
+    const invitations = ids.map((profileId) => ({
+      id: randomUUID(),
+      profileId,
+      profileHandle: handles.get(profileId)!,
+      now: Date.now()
+    }));
+    const params: Record<string, unknown> = { dropId };
+    const values = invitations.map((invitation, index) => {
+      params[`id${index}`] = invitation.id;
+      params[`profileId${index}`] = invitation.profileId;
+      params[`profileHandle${index}`] = invitation.profileHandle;
+      params[`now${index}`] = invitation.now;
+      return `(:id${index},:dropId,:profileId${index},:profileHandle${index},'PENDING',:now${index},null,null,null)`;
+    });
+    // Persist the full roster before its dependent notifications on the same transaction.
+    await this.db.query(
+      'invite',
+      `insert into ${MEME_COLLABORATION_INVITATIONS_TABLE} (id,drop_id,profile_id,profile_handle,status,created_at,responded_at,responder_wallet,acceptance_copy_version) values ${values.join(',')}`,
+      params,
+      ctx
+    );
+    return userNotifier.notifyOfMemeCollaborations(
+      invitations.map((invitation) => ({
+        recipientId: invitation.profileId,
+        data: {
+          event_type: 'INVITED',
+          artwork_name: artworkName,
+          drop_id: dropId,
+          wave_id: waveId,
+          actor_id: authorId,
+          invitation_id: invitation.id
+        }
+      })),
+      wave.visibility_group_id,
+      ctx
+    );
   }
 
   async state(dropId: string, viewerId: string | null, ctx: RequestContext) {

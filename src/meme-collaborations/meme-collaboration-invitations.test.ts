@@ -72,18 +72,22 @@ function setup() {
 }
 afterEach(() => jest.restoreAllMocks());
 beforeEach(() =>
-  jest.spyOn(userNotifier, 'notifyOfMemeCollaboration').mockResolvedValue([42])
+  jest.spyOn(userNotifier, 'notifyOfMemeCollaborations').mockResolvedValue([42])
 );
 it('appends invitations without rewriting accepted consent, artwork, votes or the claim', async () => {
   const { db, service } = setup();
   expect(await service.inviteExisting('drop', ['C'], auth(), {})).toEqual([42]);
-  expect(userNotifier.notifyOfMemeCollaboration).toHaveBeenCalledWith(
-    'C',
-    expect.objectContaining({
-      event_type: 'INVITED',
-      actor_id: 'A',
-      artwork_name: 'Current title'
-    }),
+  expect(userNotifier.notifyOfMemeCollaborations).toHaveBeenCalledWith(
+    [
+      expect.objectContaining({
+        recipientId: 'C',
+        data: expect.objectContaining({
+          event_type: 'INVITED',
+          actor_id: 'A',
+          artwork_name: 'Current title'
+        })
+      })
+    ],
     null,
     expect.any(Object)
   );
@@ -256,4 +260,73 @@ it.each([
     'Select up to 20 distinct collaborating profiles, excluding yourself'
   );
   expect(db.query).not.toHaveBeenCalled();
+});
+
+it('inserts a multi-artist roster once and binds each bulk notification to its saved invitation', async () => {
+  const { db, service } = setup();
+  jest
+    .mocked(userNotifier.notifyOfMemeCollaborations)
+    .mockResolvedValue([42, 43]);
+  expect(await service.inviteExisting('drop', ['C', 'D'], auth(), {})).toEqual([
+    42, 43
+  ]);
+  expect(db.query).toHaveBeenCalledTimes(3);
+  const notifications = jest.mocked(userNotifier.notifyOfMemeCollaborations)
+    .mock.calls[0]![0];
+  expect(notifications.map((item) => item.recipientId)).toEqual(['C', 'D']);
+  expect(notifications[0]!.data.invitation_id).not.toBe(
+    notifications[1]!.data.invitation_id
+  );
+  expect(db.query).toHaveBeenLastCalledWith(
+    'invite',
+    expect.stringContaining('values (:id0,'),
+    expect.objectContaining({
+      dropId: 'drop',
+      id0: notifications[0]!.data.invitation_id,
+      id1: notifications[1]!.data.invitation_id,
+      profileId0: 'C',
+      profileId1: 'D',
+      profileHandle0: 'C',
+      profileHandle1: 'D'
+    }),
+    expect.objectContaining({ connection: expect.any(Object) })
+  );
+  expect(userNotifier.notifyOfMemeCollaborations).toHaveBeenCalledTimes(1);
+});
+
+it('waits for the invitation batch before writing notifications and propagates insert failure', async () => {
+  const { db, service } = setup();
+  const originalQuery = db.query.getMockImplementation()!;
+  let startInsert!: () => void;
+  let failInsert!: (reason: Error) => void;
+  const started = new Promise<void>((resolve) => {
+    startInsert = resolve;
+  });
+  const insertion = new Promise<never>((_resolve, reject) => {
+    failInsert = reject;
+  });
+  db.query.mockImplementation(async (operation) => {
+    if (operation === 'invite') {
+      startInsert();
+      return insertion;
+    }
+    return originalQuery(operation);
+  });
+  const pending = service.inviteExisting('drop', ['C', 'D'], auth(), {});
+  const failure = expect(pending).rejects.toThrow('Insert failed');
+  await started;
+  expect(userNotifier.notifyOfMemeCollaborations).not.toHaveBeenCalled();
+  failInsert(new Error('Insert failed'));
+  await failure;
+  expect(userNotifier.notifyOfMemeCollaborations).not.toHaveBeenCalled();
+});
+
+it('propagates bulk notification failures to the enclosing invitation transaction', async () => {
+  const { service } = setup();
+  jest
+    .mocked(userNotifier.notifyOfMemeCollaborations)
+    .mockRejectedValue(new Error('Notification insert failed'));
+  await expect(
+    service.inviteExisting('drop', ['C', 'D'], auth(), {})
+  ).rejects.toThrow('Notification insert failed');
 });
