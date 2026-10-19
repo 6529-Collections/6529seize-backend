@@ -263,6 +263,8 @@ describeWithSeed(
       const getBudget = competitionCreditService.getBudget.bind(
         competitionCreditService
       );
+      // Read current credit, then reconciled spending; fail the final response
+      // read after the vote, notification and push have been written.
       jest
         .spyOn(competitionCreditService, 'getBudget')
         .mockImplementationOnce(getBudget)
