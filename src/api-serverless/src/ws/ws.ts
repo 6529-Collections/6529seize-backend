@@ -100,7 +100,9 @@ class WebsocketClientConnections extends ClientConnections {
       socket.send(message);
       recordWebSocketAcknowledgement(connectionId, message, 'accepted');
       return { status: 'sent' as const };
-    } catch (err: any) {
+    } catch {
+      // Local ws send failures mean this transport is unavailable. Convert to
+      // the shared cleanup exception without exposing socket or payload details.
       throw new SocketNotAvailableException();
     }
   }
