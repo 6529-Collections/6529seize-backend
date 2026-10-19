@@ -411,6 +411,23 @@ export async function deleteAirdropDistributions(
   );
 }
 
+async function insertDistributionBatches(
+  distributions: DistributionInsert[],
+  wrappedConnection: RequestContext['connection'],
+  offset = 0
+): Promise<void> {
+  if (offset >= distributions.length) return;
+  await insertDistributions(
+    distributions.slice(offset, offset + 500),
+    wrappedConnection
+  );
+  return insertDistributionBatches(
+    distributions,
+    wrappedConnection,
+    offset + 500
+  );
+}
+
 export async function insertDistributions(
   distributions: DistributionInsert[],
   wrappedConnection?: any
@@ -422,12 +439,7 @@ export async function insertDistributions(
   if (distributions.length > 500) {
     // Keep batches sequential on the shared transaction connection and bound
     // each statement's parameters rather than queueing concurrent SQL writes.
-    for (let offset = 0; offset < distributions.length; offset += 500)
-      await insertDistributions(
-        distributions.slice(offset, offset + 500),
-        wrappedConnection
-      );
-    return;
+    return insertDistributionBatches(distributions, wrappedConnection);
   }
 
   const params: Record<string, any> = {};

@@ -104,7 +104,7 @@ export async function requestMetadataUpdate(
   const now = await new EthereumLaunchChain(config).now();
   await dropForgeRepository.change(
     id,
-    async (record) => {
+    (record) => {
       if (
         !record.data.managed ||
         record.state === 'CANCELLED' ||
@@ -265,24 +265,8 @@ export async function coordinateManual(
                 'Manual transaction outcome is uncertain; register its hash before resuming'
               );
           }
-          if (operation === 'SUBMIT' && hash) {
-            record.data.manual_transactions ??= [];
-            const existing = record.data.manual_transactions.find(
-              (it) => it.hash.toLowerCase() === hash.toLowerCase()
-            );
-            if (existing?.state === 'PENDING' && !existing.action && actionHint)
-              existing.action = actionHint;
-            if (
-              !record.data.manual_transactions.some(
-                (it) => it.hash.toLowerCase() === hash.toLowerCase()
-              )
-            )
-              record.data.manual_transactions.push({
-                hash,
-                state: 'PENDING',
-                action: held?.action ?? actionHint
-              });
-          }
+          if (operation === 'SUBMIT' && hash)
+            registerManualTransaction(record, hash, actionHint);
           if (held) {
             record.state =
               held.previous_state === 'COMPLETED'
@@ -302,4 +286,28 @@ export async function coordinateManual(
   );
   if (operation !== 'BEGIN') await wakeDropForge();
   return leaseId;
+}
+
+function registerManualTransaction(
+  record: LaunchRecord,
+  hash: string,
+  actionHint: string | undefined
+): void {
+  const held = record.data.manual_lease;
+  record.data.manual_transactions ??= [];
+  const existing = record.data.manual_transactions.find(
+    (it) => it.hash.toLowerCase() === hash.toLowerCase()
+  );
+  if (existing?.state === 'PENDING' && !existing.action && actionHint)
+    existing.action = actionHint;
+  if (
+    !record.data.manual_transactions.some(
+      (it) => it.hash.toLowerCase() === hash.toLowerCase()
+    )
+  )
+    record.data.manual_transactions.push({
+      hash,
+      state: 'PENDING',
+      action: held?.action ?? actionHint
+    });
 }

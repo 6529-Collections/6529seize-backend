@@ -35,14 +35,13 @@ export interface LaunchSource {
 export const hashLaunchSource = (source: LaunchSource) =>
   createHash('sha256').update(JSON.stringify(source)).digest('hex');
 
-export function buildLaunchPlan(
-  config: DropForgeConfig,
+function validateLaunchInput(
   claim: number,
   input: LaunchPlanInput,
   source: LaunchSource,
   now: number,
-  immediate = false
-): LaunchData {
+  immediate: boolean
+): void {
   if (!source.metadata || source.edition < 1 || !source.rows.length)
     throw new LaunchSafetyError(
       'Published metadata, edition and prepared distribution are required'
@@ -63,49 +62,63 @@ export function buildLaunchPlan(
     throw new LaunchSafetyError(
       'Initialization must be at least five minutes ahead; one to twenty phases are required'
     );
+}
+
+function buildPhase(
+  input: LaunchPlanInput,
+  source: LaunchSource,
+  names: Set<string>,
+  phase: LaunchPlanInput['phases'][number],
+  index: number
+): LaunchPhase {
+  if (names.has(phase.name) || automaticPhases.has(phase.name))
+    throw new LaunchSafetyError('Phase names must be unique minting phases');
+  names.add(phase.name);
+  if (phase.is_public && index !== input.phases.length - 1)
+    throw new LaunchSafetyError('Only the final minting phase can be public');
+  const earliest =
+    index === 0 ? input.initialize_at + 1 : input.phases[index - 1].end;
+  if (
+    !Number.isSafeInteger(phase.start) ||
+    !Number.isSafeInteger(phase.end) ||
+    phase.start < earliest ||
+    phase.end <= phase.start ||
+    phase.end > 0xffffffffffff
+  )
+    throw new LaunchSafetyError(
+      'Phases need ordered, non-overlapping windows after initialization'
+    );
+  if (
+    !/^\d+$/.test(phase.price_wei) ||
+    BigInt(phase.price_wei) >= BigInt('0x1' + '0'.repeat(64))
+  )
+    throw new LaunchSafetyError('Invalid mint price');
+  const entries = source.rows
+    .filter(
+      (row) => row.phase === phase.name && Number(row.count_allowlist) > 0
+    )
+    .map((row) => ({
+      address: getAddress(row.wallet),
+      amount: Number(row.count_allowlist)
+    }));
+  if (phase.is_public && entries.length)
+    throw new LaunchSafetyError('Public phase cannot contain an allowlist');
+  const root = phase.is_public
+    ? ZeroHash
+    : computeAllowlistMerkle(entries).merkleRoot;
+  if (!root)
+    throw new LaunchSafetyError('An allowlist phase cannot have an empty root');
+  return { ...phase, price_wei: BigInt(phase.price_wei).toString(), root };
+}
+
+function buildPhases(
+  input: LaunchPlanInput,
+  source: LaunchSource
+): LaunchPhase[] {
   const names = new Set<string>();
-  const phases: LaunchPhase[] = input.phases.map((phase, index) => {
-    if (names.has(phase.name) || automaticPhases.has(phase.name))
-      throw new LaunchSafetyError('Phase names must be unique minting phases');
-    names.add(phase.name);
-    if (phase.is_public && index !== input.phases.length - 1)
-      throw new LaunchSafetyError('Only the final minting phase can be public');
-    const earliest =
-      index === 0 ? input.initialize_at + 1 : input.phases[index - 1].end;
-    if (
-      !Number.isSafeInteger(phase.start) ||
-      !Number.isSafeInteger(phase.end) ||
-      phase.start < earliest ||
-      phase.end <= phase.start ||
-      phase.end > 0xffffffffffff
-    )
-      throw new LaunchSafetyError(
-        'Phases need ordered, non-overlapping windows after initialization'
-      );
-    if (
-      !/^\d+$/.test(phase.price_wei) ||
-      BigInt(phase.price_wei) >= BigInt('0x1' + '0'.repeat(64))
-    )
-      throw new LaunchSafetyError('Invalid mint price');
-    const entries = source.rows
-      .filter(
-        (row) => row.phase === phase.name && Number(row.count_allowlist) > 0
-      )
-      .map((row) => ({
-        address: getAddress(row.wallet),
-        amount: Number(row.count_allowlist)
-      }));
-    if (phase.is_public && entries.length)
-      throw new LaunchSafetyError('Public phase cannot contain an allowlist');
-    const root = phase.is_public
-      ? ZeroHash
-      : computeAllowlistMerkle(entries).merkleRoot;
-    if (!root)
-      throw new LaunchSafetyError(
-        'An allowlist phase cannot have an empty root'
-      );
-    return { ...phase, price_wei: BigInt(phase.price_wei).toString(), root };
-  });
+  const phases = input.phases.map((phase, index) =>
+    buildPhase(input, source, names, phase, index)
+  );
   const unmapped = source.rows.some(
     (row) =>
       !automaticPhases.has(row.phase) &&
@@ -116,39 +129,42 @@ export function buildLaunchPlan(
     throw new LaunchSafetyError(
       'Every prepared allowlist phase must be configured'
     );
-  const categories = DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES.filter(
-    (name) =>
-      name === 'Airdrop' ||
-      (name === 'Airdrop - Artist' && input.include_artist_airdrops) ||
-      (name === 'Airdrop - Team' && input.include_team_airdrops)
-  );
-  // Public subscriptions belong to the preceding allowlist transition when
-  // public minting starts immediately after that window (the existing UI flow).
-  const recipients = phases.map((phase, index) => {
-    const selectedNames = [phase.name];
+  return phases;
+}
 
-    const next = input.phases[index + 1];
-    if (next?.is_public && next.start === phase.end)
-      selectedNames.push(next.name);
-    const previous = phases[index - 1];
-    if (input.phases[index].is_public && previous?.end === phase.start)
-      return [];
-    return deriveAirdropRecipients(source.rows, selectedNames);
-  });
-  const categoryRecipients = categories.map((category) => ({
-    label: category,
-    recipients: deriveAirdropRecipients(source.rows, [category])
-  }));
-  const allRecipients = [
-    ...recipients.flat(),
-    ...categoryRecipients.flatMap((it) => it.recipients)
-  ];
-  if (allRecipients.reduce((sum, row) => sum + row.amount, 0) > source.edition)
-    throw new LaunchSafetyError('Airdrops exceed edition size');
-  if (allRecipients.length > 20000)
-    throw new LaunchSafetyError(
-      'Airdrop plan exceeds the 20000 recipient safety limit'
-    );
+function airdropActions(
+  groups: Array<{ label: string; recipients: LaunchAction['recipients'] }>,
+  phase: number,
+  due: number,
+  deadline: number
+): LaunchAction[] {
+  const actions: LaunchAction[] = [];
+  for (const [groupIndex, group] of Array.from(groups.entries())) {
+    for (let offset = 0; offset < group.recipients.length; offset += 100)
+      actions.push({
+        id: `phase-${phase}-group-${groupIndex}-airdrop-${offset / 100}`,
+        label: group.label,
+        kind: 'AIRDROP',
+        phase,
+        due,
+        deadline,
+        recipients: group.recipients.slice(offset, offset + 100),
+        state: 'PENDING'
+      });
+  }
+  return actions;
+}
+
+function buildPhaseActions(
+  config: DropForgeConfig,
+  input: LaunchPlanInput,
+  phases: LaunchPhase[],
+  recipients: LaunchAction['recipients'][],
+  categoryRecipients: Array<{
+    label: string;
+    recipients: LaunchAction['recipients'];
+  }>
+): LaunchAction[] {
   const actions: LaunchAction[] = [];
   for (let phase = 0; phase < phases.length; phase++) {
     const due = phase === 0 ? input.initialize_at : phases[phase - 1].end + 1;
@@ -186,20 +202,61 @@ export function buildLaunchPlan(
       recipients: [],
       state: 'PENDING'
     });
-    for (const [groupIndex, group] of Array.from(groups.entries())) {
-      for (let offset = 0; offset < group.recipients.length; offset += 100)
-        actions.push({
-          id: `phase-${phase}-group-${groupIndex}-airdrop-${offset / 100}`,
-          label: group.label,
-          kind: 'AIRDROP',
-          phase,
-          due,
-          deadline,
-          recipients: group.recipients.slice(offset, offset + 100),
-          state: 'PENDING'
-        });
-    }
+    actions.push(...airdropActions(groups, phase, due, deadline));
   }
+  return actions;
+}
+
+export function buildLaunchPlan(
+  config: DropForgeConfig,
+  claim: number,
+  input: LaunchPlanInput,
+  source: LaunchSource,
+  now: number,
+  immediate = false
+): LaunchData {
+  validateLaunchInput(claim, input, source, now, immediate);
+  const phases = buildPhases(input, source);
+  const categories = DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES.filter(
+    (name) =>
+      name === 'Airdrop' ||
+      (name === 'Airdrop - Artist' && input.include_artist_airdrops) ||
+      (name === 'Airdrop - Team' && input.include_team_airdrops)
+  );
+  // Public subscriptions belong to the preceding allowlist transition when
+  // public minting starts immediately after that window (the existing UI flow).
+  const recipients = phases.map((phase, index) => {
+    const selectedNames = [phase.name];
+
+    const next = input.phases[index + 1];
+    if (next?.is_public && next.start === phase.end)
+      selectedNames.push(next.name);
+    const previous = phases[index - 1];
+    if (input.phases[index].is_public && previous?.end === phase.start)
+      return [];
+    return deriveAirdropRecipients(source.rows, selectedNames);
+  });
+  const categoryRecipients = categories.map((category) => ({
+    label: category,
+    recipients: deriveAirdropRecipients(source.rows, [category])
+  }));
+  const allRecipients = [
+    ...recipients.flat(),
+    ...categoryRecipients.flatMap((it) => it.recipients)
+  ];
+  if (allRecipients.reduce((sum, row) => sum + row.amount, 0) > source.edition)
+    throw new LaunchSafetyError('Airdrops exceed edition size');
+  if (allRecipients.length > 20000)
+    throw new LaunchSafetyError(
+      'Airdrop plan exceeds the 20000 recipient safety limit'
+    );
+  const actions = buildPhaseActions(
+    config,
+    input,
+    phases,
+    recipients,
+    categoryRecipients
+  );
   const finalPhase = phases.length - 1;
   const researchDue = phases[finalPhase].end + RESEARCH_DELAY_SECONDS;
   actions.push({

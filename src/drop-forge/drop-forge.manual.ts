@@ -1,4 +1,9 @@
-import { claimAbi, LaunchChain } from '@/drop-forge/drop-forge.chain';
+import { TransactionDescription } from 'ethers';
+import {
+  claimAbi,
+  LaunchChain,
+  ChainReceipt
+} from '@/drop-forge/drop-forge.chain';
 import {
   LaunchRecord,
   LaunchSafetyError,
@@ -37,13 +42,16 @@ function manualAllocationAvailable(action: LaunchAction): boolean {
       action.recovery.outcome !== 'EXECUTED')
   );
 }
-export async function reconcileManual(
+
+type ManualProof = NonNullable<
+  LaunchRecord['data']['manual_transactions']
+>[number];
+
+async function assertRecoveryCanonical(
   record: LaunchRecord,
   chain: LaunchChain,
-  config: DropForgeConfig,
-  publishedMetadata: string = record.data.metadata
-): Promise<boolean> {
-  if (record.data.manual_lease) return false;
+  config: DropForgeConfig
+): Promise<void> {
   for (const action of record.data.actions.filter(manualAllocationAvailable)) {
     if (!action.recovery?.outcome) continue;
     const winner = await chain.receipt(action.recovery.winner_hash!);
@@ -56,21 +64,226 @@ export async function reconcileManual(
         'Recovery nonce settlement is no longer canonical; manual credits are prohibited'
       );
   }
+}
+
+async function assertLatestManualCanonical(
+  record: LaunchRecord,
+  chain: LaunchChain,
+  config: DropForgeConfig
+): Promise<void> {
   const latest = [...(record.data.manual_transactions ?? [])]
     .filter((it) => it.state === 'CONFIRMED' || it.state === 'FAILED')
     .sort((a, b) => (b.block_number ?? 0) - (a.block_number ?? 0))[0];
-  if (latest) {
-    const receipt = await chain.receipt(latest.hash);
-    if (
-      !receipt ||
-      receipt.status !== (latest.state === 'FAILED' ? 0 : 1) ||
-      receipt.blockHash !== latest.block_hash ||
-      receipt.confirmations < config.confirmations
-    )
+  if (!latest) return;
+  const receipt = await chain.receipt(latest.hash);
+  if (
+    receipt?.status !== (latest.state === 'FAILED' ? 0 : 1) ||
+    receipt.blockHash !== latest.block_hash ||
+    receipt.confirmations < config.confirmations
+  )
+    throw new LaunchSafetyError(
+      'A confirmed manual transaction is no longer canonical'
+    );
+}
+
+function manualAllocations(
+  decoded: TransactionDescription,
+  message: string
+): Map<string, number> {
+  const allocations = new Map<string, number>();
+  const amounts = decoded.args[3] as bigint[];
+  (decoded.args[2] as string[]).forEach((address, index) => {
+    const amount = Number(amounts[index]);
+    if (!Number.isSafeInteger(amount) || amount <= 0)
+      throw new LaunchSafetyError(message);
+    const key = address.toLowerCase();
+    allocations.set(key, (allocations.get(key) ?? 0) + amount);
+  });
+  return allocations;
+}
+
+function availableAirdrops(record: LaunchRecord): LaunchAction[] {
+  return record.data.actions.filter(
+    (it) =>
+      it.kind === 'AIRDROP' &&
+      !isResearchAirdrop(it) &&
+      manualAllocationAvailable(it)
+  );
+}
+
+function assertUnambiguousAllocations(
+  actions: LaunchAction[],
+  allocations: Map<string, number>
+): void {
+  for (const address of Array.from(allocations.keys())) {
+    const categories = actions
+      .filter((it) =>
+        (it.remaining_recipients ?? it.recipients).some(
+          (row) => row.address.toLowerCase() === address
+        )
+      )
+      .map((it) => `${it.phase}:${it.label ?? ''}`);
+    if (new Set(categories).size > 1)
       throw new LaunchSafetyError(
-        'A confirmed manual transaction is no longer canonical'
+        'Manual airdrop category is ambiguous; declare its category before reconciliation'
       );
   }
+}
+
+function assertAvailableAllocations(
+  actions: LaunchAction[],
+  allocations: Map<string, number>
+): void {
+  const available = new Map<string, number>();
+  for (const action of actions) {
+    for (const row of action.remaining_recipients ?? action.recipients) {
+      const address = row.address.toLowerCase();
+      available.set(address, (available.get(address) ?? 0) + row.amount);
+    }
+  }
+  if (
+    Array.from(allocations).some(
+      ([address, amount]) => amount > (available.get(address) ?? 0)
+    )
+  )
+    throw new LaunchSafetyError(
+      'Manual airdrop exceeds remaining planned allocations; review before resuming'
+    );
+}
+
+function creditAction(
+  record: LaunchRecord,
+  action: LaunchAction,
+  allocations: Map<string, number>,
+  proof: ManualProof,
+  receipt: ChainReceipt
+): void {
+  const creditedBefore = action.credited_tokens ?? 0;
+  const remaining = (action.remaining_recipients ?? action.recipients)
+    .map((row) => {
+      const address = row.address.toLowerCase();
+      const available = allocations.get(address) ?? 0;
+      const credit = Math.min(row.amount, available);
+      allocations.set(address, available - credit);
+      action.credited_tokens = (action.credited_tokens ?? 0) + credit;
+      return { ...row, amount: row.amount - credit };
+    })
+    .filter((row) => row.amount > 0);
+  action.remaining_recipients = remaining;
+  if (remaining.length || (action.credited_tokens ?? 0) <= creditedBefore)
+    return;
+  if (action.recovery?.outcome) {
+    action.recovery_history = [
+      ...(action.recovery_history ?? []),
+      action.recovery
+    ];
+    delete action.recovery;
+    delete action.signed_tx;
+  }
+  action.state = 'CONFIRMED';
+  action.hash = proof.hash;
+  action.block_number = receipt.blockNumber;
+  action.block_hash = receipt.blockHash;
+  action.observed = true;
+  reportActionSkip(record, action);
+}
+
+function creditPlannedAirdrops(
+  record: LaunchRecord,
+  decoded: TransactionDescription,
+  proof: ManualProof,
+  receipt: ChainReceipt
+): void {
+  const allocations = manualAllocations(
+    decoded,
+    'Invalid manual airdrop amount'
+  );
+  const available = availableAirdrops(record);
+  if (!proof.action) assertUnambiguousAllocations(available, allocations);
+  const selected = available.filter((it) =>
+    matchesManualAction(it.label, it.phase, proof.action)
+  );
+  assertAvailableAllocations(selected, allocations);
+  for (const action of selected)
+    creditAction(record, action, allocations, proof, receipt);
+  if (Array.from(allocations.values()).some((it) => it !== 0))
+    throw new LaunchSafetyError(
+      'Manual airdrop exceeds remaining planned allocations; review before resuming'
+    );
+}
+
+function applyManualTransaction(
+  record: LaunchRecord,
+  decoded: TransactionDescription,
+  proof: ManualProof,
+  receipt: ChainReceipt,
+  publishedMetadata: string
+): void {
+  if (decoded.name === 'airdrop') {
+    if (proof.action === 'RESEARCH_AIRDROP')
+      creditManualResearch(
+        record.data,
+        manualAllocations(decoded, 'Invalid manual research airdrop amount'),
+        proof.hash
+      );
+    else if (
+      record.data.actions.some(
+        (it) => it.kind === 'AIRDROP' && it.state !== 'CONFIRMED'
+      )
+    )
+      creditPlannedAirdrops(record, decoded, proof, receipt);
+  }
+  if (
+    decoded.name === 'updateClaim' &&
+    decoded.args[2].location !== record.data.metadata
+  ) {
+    if (decoded.args[2].location !== publishedMetadata)
+      throw new LaunchSafetyError(
+        'Manual metadata update does not match the published Craft version'
+      );
+    record.data.metadata = publishedMetadata;
+  }
+  recordManualProof(record, decoded, proof, receipt);
+}
+
+function recordManualProof(
+  record: LaunchRecord,
+  decoded: TransactionDescription,
+  proof: ManualProof,
+  receipt: ChainReceipt
+): void {
+  // Initialize/update are observed from current chain configuration before the
+  // next intent; receipts alone cannot adopt a different phase or metadata.
+  proof.method = decoded.name;
+  if (decoded.name !== 'airdrop') {
+    const params = decoded.args[2];
+    proof.metadata = String(params.location);
+    const phase = record.data.phases.findIndex(
+      (it) =>
+        it.start === Number(params.startDate) &&
+        it.end === Number(params.endDate) &&
+        it.root === params.merkleRoot
+    );
+    if (phase >= 0) proof.phase = phase;
+  }
+  proof.state = 'CONFIRMED';
+  proof.block_number = receipt.blockNumber;
+  proof.block_hash = receipt.blockHash;
+  addLaunchEvent(
+    record,
+    `Claim #${record.data.claim_id}: Manual ${decoded.name} confirmed: ${proof.hash}`
+  );
+}
+
+export async function reconcileManual(
+  record: LaunchRecord,
+  chain: LaunchChain,
+  config: DropForgeConfig,
+  publishedMetadata: string = record.data.metadata
+): Promise<boolean> {
+  if (record.data.manual_lease) return false;
+  await assertRecoveryCanonical(record, chain, config);
+  await assertLatestManualCanonical(record, chain, config);
   for (const proof of record.data.manual_transactions ?? []) {
     if (proof.state !== 'PENDING') continue;
     if (!chain.inspectTransaction)
@@ -91,153 +304,7 @@ export async function reconcileManual(
       throw new LaunchSafetyError(`Manual transaction reverted: ${proof.hash}`);
     }
     const decoded = claimAbi.parseTransaction({ data: evidence.calldata })!;
-    if (decoded.name === 'airdrop' && proof.action === 'RESEARCH_AIRDROP') {
-      const allocations = new Map<string, number>();
-      const amounts = decoded.args[3] as bigint[];
-      (decoded.args[2] as string[]).forEach((address, index) => {
-        const amount = Number(amounts[index]);
-        if (!Number.isSafeInteger(amount) || amount <= 0)
-          throw new LaunchSafetyError('Invalid manual research airdrop amount');
-        const key = address.toLowerCase();
-        allocations.set(key, (allocations.get(key) ?? 0) + amount);
-      });
-      creditManualResearch(record.data, allocations, proof.hash);
-    } else if (
-      decoded.name === 'airdrop' &&
-      record.data.actions.some(
-        (it) => it.kind === 'AIRDROP' && it.state !== 'CONFIRMED'
-      )
-    ) {
-      const addresses = decoded.args[2] as string[];
-      const amounts = decoded.args[3] as bigint[];
-      const allocations = new Map<string, number>();
-      addresses.forEach((address, index) => {
-        const amount = Number(amounts[index]);
-        if (!Number.isSafeInteger(amount) || amount <= 0)
-          throw new LaunchSafetyError('Invalid manual airdrop amount');
-        allocations.set(
-          address.toLowerCase(),
-          (allocations.get(address.toLowerCase()) ?? 0) + amount
-        );
-      });
-      if (
-        !proof.action &&
-        Array.from(allocations.keys()).some(
-          (address) =>
-            new Set(
-              record.data.actions
-                .filter(
-                  (it) =>
-                    it.kind === 'AIRDROP' &&
-                    !isResearchAirdrop(it) &&
-                    manualAllocationAvailable(it) &&
-                    (it.remaining_recipients ?? it.recipients).some(
-                      (row) => row.address.toLowerCase() === address
-                    )
-                )
-                .map((it) => `${it.phase}:${it.label ?? ''}`)
-            ).size > 1
-        )
-      ) {
-        throw new LaunchSafetyError(
-          'Manual airdrop category is ambiguous; declare its category before reconciliation'
-        );
-      }
-      const available = new Map<string, number>();
-      for (const action of record.data.actions.filter(
-        (it) =>
-          it.kind === 'AIRDROP' &&
-          !isResearchAirdrop(it) &&
-          manualAllocationAvailable(it) &&
-          matchesManualAction(it.label, it.phase, proof.action)
-      ))
-        for (const row of action.remaining_recipients ?? action.recipients)
-          available.set(
-            row.address.toLowerCase(),
-            (available.get(row.address.toLowerCase()) ?? 0) + row.amount
-          );
-      if (
-        Array.from(allocations).some(
-          ([address, amount]) => amount > (available.get(address) ?? 0)
-        )
-      )
-        throw new LaunchSafetyError(
-          'Manual airdrop exceeds remaining planned allocations; review before resuming'
-        );
-      for (const action of record.data.actions.filter(
-        (it) =>
-          it.kind === 'AIRDROP' &&
-          !isResearchAirdrop(it) &&
-          manualAllocationAvailable(it) &&
-          matchesManualAction(it.label, it.phase, proof.action)
-      )) {
-        const creditedBefore = action.credited_tokens ?? 0;
-        const remaining = (action.remaining_recipients ?? action.recipients)
-          .map((row) => {
-            const available = allocations.get(row.address.toLowerCase()) ?? 0;
-            const credit = Math.min(row.amount, available);
-            allocations.set(row.address.toLowerCase(), available - credit);
-            action.credited_tokens = (action.credited_tokens ?? 0) + credit;
-            return { ...row, amount: row.amount - credit };
-          })
-          .filter((row) => row.amount > 0);
-        action.remaining_recipients = remaining;
-        if (
-          !remaining.length &&
-          (action.credited_tokens ?? 0) > creditedBefore
-        ) {
-          if (action.recovery?.outcome) {
-            action.recovery_history = [
-              ...(action.recovery_history ?? []),
-              action.recovery
-            ];
-            delete action.recovery;
-            delete action.signed_tx;
-          }
-          action.state = 'CONFIRMED';
-          action.hash = proof.hash;
-          action.block_number = receipt.blockNumber;
-          action.block_hash = receipt.blockHash;
-          action.observed = true;
-          reportActionSkip(record, action);
-        }
-      }
-      if (Array.from(allocations.values()).some((it) => it !== 0))
-        throw new LaunchSafetyError(
-          'Manual airdrop exceeds remaining planned allocations; review before resuming'
-        );
-    }
-    if (
-      decoded.name === 'updateClaim' &&
-      decoded.args[2].location !== record.data.metadata
-    ) {
-      if (decoded.args[2].location !== publishedMetadata)
-        throw new LaunchSafetyError(
-          'Manual metadata update does not match the published Craft version'
-        );
-      record.data.metadata = publishedMetadata;
-    }
-    // Initialize/update are observed from current chain configuration before the
-    // next intent; receipts alone cannot adopt a different phase or metadata.
-    proof.method = decoded.name;
-    if (decoded.name !== 'airdrop') {
-      const params = decoded.args[2];
-      proof.metadata = String(params.location);
-      const phase = record.data.phases.findIndex(
-        (it) =>
-          it.start === Number(params.startDate) &&
-          it.end === Number(params.endDate) &&
-          it.root === params.merkleRoot
-      );
-      if (phase >= 0) proof.phase = phase;
-    }
-    proof.state = 'CONFIRMED';
-    proof.block_number = receipt.blockNumber;
-    proof.block_hash = receipt.blockHash;
-    addLaunchEvent(
-      record,
-      `Claim #${record.data.claim_id}: Manual ${decoded.name} confirmed: ${proof.hash}`
-    );
+    applyManualTransaction(record, decoded, proof, receipt, publishedMetadata);
   }
   return true;
 }

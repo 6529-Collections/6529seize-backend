@@ -36,11 +36,10 @@ export interface ProcessResult {
 export function decodeProcessResult(
   job: DropForgeJobEntity
 ): ProcessResult | null {
-  return job.result
-    ? ((typeof job.result === 'string'
-        ? JSON.parse(job.result)
-        : job.result) as ProcessResult)
-    : null;
+  if (!job.result) return null;
+  const result =
+    typeof job.result === 'string' ? JSON.parse(job.result) : job.result;
+  return result as ProcessResult;
 }
 export function phaseIds(job: DropForgeJobEntity): string[] {
   return typeof job.phase_ids === 'string'
@@ -202,8 +201,7 @@ export async function assertProcessComplete(
     ctx
   );
   if (
-    !job ||
-    job.status !== 'COMPLETED' ||
+    job?.status !== 'COMPLETED' ||
     decodeProcessResult(job)?.distribution_hash !==
       (await distributionHash(contract, claim, ctx))
   )

@@ -58,15 +58,34 @@ function allocationMap(
   }
   return result;
 }
-export function verifyRecoveryMints(
+function accumulateMintLog(
+  claimId: number,
+  actual: Map<string, bigint>,
+  parsed: NonNullable<ReturnType<typeof mintEvents.parseLog>>
+): void {
+  const ids: bigint[] =
+    parsed.name === 'TransferSingle'
+      ? [parsed.args.id]
+      : Array.from(parsed.args[3]);
+  const amounts: bigint[] =
+    parsed.name === 'TransferSingle'
+      ? [parsed.args.value]
+      : Array.from(parsed.args[4]);
+  for (let i = 0; i < ids.length; i++) {
+    if (ids[i] !== BigInt(claimId)) continue;
+    const key = String(parsed.args.to).toLowerCase();
+    actual.set(key, (actual.get(key) ?? BigInt(0)) + amounts[i]);
+  }
+}
+
+function recoveryMintAllocations(
   data: Pick<LaunchData, 'contract' | 'claim_id'>,
-  action: Pick<LaunchAction, 'recipients' | 'remaining_recipients'>,
   logs: ReadonlyArray<{
     address: string;
     topics: ReadonlyArray<string>;
     data: string;
   }>
-): void {
+): Map<string, bigint> {
   const actual = new Map<string, bigint>();
   for (const log of logs) {
     if (log.address.toLowerCase() !== data.contract.toLowerCase()) continue;
@@ -78,20 +97,21 @@ export function verifyRecoveryMints(
     }
     if (!parsed || parsed.args.from.toLowerCase() !== ZeroAddress.toLowerCase())
       continue;
-    const ids: bigint[] =
-      parsed.name === 'TransferSingle'
-        ? [parsed.args.id]
-        : Array.from(parsed.args[3]);
-    const amounts: bigint[] =
-      parsed.name === 'TransferSingle'
-        ? [parsed.args.value]
-        : Array.from(parsed.args[4]);
-    for (let i = 0; i < ids.length; i++) {
-      if (ids[i] !== BigInt(data.claim_id)) continue;
-      const key = String(parsed.args.to).toLowerCase();
-      actual.set(key, (actual.get(key) ?? BigInt(0)) + amounts[i]);
-    }
+    accumulateMintLog(data.claim_id, actual, parsed);
   }
+  return actual;
+}
+
+export function verifyRecoveryMints(
+  data: Pick<LaunchData, 'contract' | 'claim_id'>,
+  action: Pick<LaunchAction, 'recipients' | 'remaining_recipients'>,
+  logs: ReadonlyArray<{
+    address: string;
+    topics: ReadonlyArray<string>;
+    data: string;
+  }>
+): void {
+  const actual = recoveryMintAllocations(data, logs);
   const expected = allocationMap(
     action.remaining_recipients ?? action.recipients
   );

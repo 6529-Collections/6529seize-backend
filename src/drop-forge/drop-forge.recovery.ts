@@ -17,7 +17,10 @@ import {
 } from '@/drop-forge/drop-forge.types';
 import { mirrorCompletion } from '@/drop-forge/drop-forge.completion';
 import { sourceMatchesLaunch } from '@/drop-forge/drop-forge.plan';
-import { validateRecoveryTransaction } from '@/drop-forge/drop-forge.recovery-chain';
+import {
+  RecoveryEvidence,
+  validateRecoveryTransaction
+} from '@/drop-forge/drop-forge.recovery-chain';
 import { RequestContext } from '@/request.context';
 
 type Reservation = { launch_id: string | null; action_id: string | null };
@@ -283,10 +286,7 @@ export class DropForgeRecovery {
         'Terminal launch requires manual delivery; automatic restart is prohibited'
       );
     if (operation === 'DELIVER_REMAINING') {
-      if (
-        action.kind !== 'AIRDROP' ||
-        now < record.data.phases[record.data.phases.length - 1].end
-      )
+      if (action.kind !== 'AIRDROP' || now < record.data.phases.at(-1)!.end)
         throw new LaunchSafetyError(
           'Late delivery is only available for outstanding airdrops after all minting closes'
         );
@@ -346,7 +346,7 @@ export class DropForgeRecovery {
     } catch (error) {
       await this.repository.change(
         launch,
-        async (record) => {
+        (record) => {
           setLaunchState(
             record,
             'BLOCKED',
@@ -447,7 +447,7 @@ export class DropForgeRecovery {
           return;
         await this.repository.change(
           id,
-          async (record) => {
+          (record) => {
             setLaunchState(
               record,
               'BLOCKED',
@@ -459,6 +459,45 @@ export class DropForgeRecovery {
       }
     }
   }
+  private async applyRecoveryEvidence(
+    record: LaunchRecord,
+    action: LaunchAction,
+    pending: Reservation,
+    ctx: RequestContext,
+    attempt: RecoveryAttempt,
+    evidence: RecoveryEvidence
+  ): Promise<void> {
+    const recovery = action.recovery!;
+    recovery.outcome = recoveryOutcome(attempt, evidence);
+    recovery.winner_hash = attempt.hash;
+    recovery.supply = evidence.total;
+    recovery.block_number = evidence.receipt.blockNumber;
+    recovery.block_hash = evidence.receipt.blockHash;
+    action.hash = attempt.hash;
+    action.block_number = evidence.receipt.blockNumber;
+    action.block_hash = evidence.receipt.blockHash;
+    action.state = recoveredActionState(recovery.outcome);
+    if (action.kind === 'METADATA' && action.state === 'CONFIRMED')
+      record.data.metadata = action.target_metadata!;
+    pending.launch_id = null;
+    pending.action_id = null;
+    await mirrorCompletion(record, ctx);
+    setLaunchState(
+      record,
+      recovery.resume_scheduled ? 'RUNNING' : 'PAUSED',
+      'Recovery finalized; later scheduled groups retain independent readiness checks, outstanding work is not replayed'
+    );
+    if (action.state !== 'CONFIRMED')
+      action.attempt_error =
+        'Recovery finalized without delivery; outstanding allocations require operator recovery';
+    addLaunchEvent(
+      record,
+      `Claim #${record.data.claim_id}: Recovery ${recovery.outcome} for ${action.id}; winning transaction ${attempt.hash}; ${evidence.total} total minted.`,
+      recovery.outcome !== 'EXECUTED'
+    );
+    await this.repository.save(record, ctx);
+  }
+
   private async settle(
     record: LaunchRecord,
     action: LaunchAction,
@@ -485,46 +524,31 @@ export class DropForgeRecovery {
         throw new LaunchSafetyError(
           'Winning receipt has an unknown execution status'
         );
-      recovery.outcome =
-        evidence.receipt.status === 0
-          ? 'REVERTED'
-          : attempt.operation === 'CANCEL'
-            ? 'CANCELLED'
-            : 'EXECUTED';
-      recovery.winner_hash = attempt.hash;
-      recovery.supply = evidence.total;
-      recovery.block_number = evidence.receipt.blockNumber;
-      recovery.block_hash = evidence.receipt.blockHash;
-      action.hash = attempt.hash;
-      action.block_number = evidence.receipt.blockNumber;
-      action.block_hash = evidence.receipt.blockHash;
-      action.state =
-        recovery.outcome === 'EXECUTED'
-          ? 'CONFIRMED'
-          : recovery.outcome === 'CANCELLED'
-            ? 'CANCELLED'
-            : 'FAILED';
-      if (action.kind === 'METADATA' && action.state === 'CONFIRMED')
-        record.data.metadata = action.target_metadata!;
-      pending.launch_id = null;
-      pending.action_id = null;
-      await mirrorCompletion(record, ctx);
-      setLaunchState(
+      await this.applyRecoveryEvidence(
         record,
-        recovery.resume_scheduled ? 'RUNNING' : 'PAUSED',
-        'Recovery finalized; later scheduled groups retain independent readiness checks, outstanding work is not replayed'
+        action,
+        pending,
+        ctx,
+        attempt,
+        evidence
       );
-      if (action.state !== 'CONFIRMED')
-        action.attempt_error =
-          'Recovery finalized without delivery; outstanding allocations require operator recovery';
-      addLaunchEvent(
-        record,
-        `Claim #${record.data.claim_id}: Recovery ${recovery.outcome} for ${action.id}; winning transaction ${attempt.hash}; ${evidence.total} total minted.`,
-        recovery.outcome !== 'EXECUTED'
-      );
-      await this.repository.save(record, ctx);
       return true;
     }
     return false;
   }
+}
+
+function recoveryOutcome(
+  attempt: RecoveryAttempt,
+  evidence: RecoveryEvidence
+): NonNullable<RecoveryLedger['outcome']> {
+  if (evidence.receipt.status === 0) return 'REVERTED';
+  return attempt.operation === 'CANCEL' ? 'CANCELLED' : 'EXECUTED';
+}
+
+function recoveredActionState(
+  outcome: NonNullable<RecoveryLedger['outcome']>
+): LaunchAction['state'] {
+  if (outcome === 'EXECUTED') return 'CONFIRMED';
+  return outcome === 'CANCELLED' ? 'CANCELLED' : 'FAILED';
 }

@@ -339,7 +339,7 @@ export class EthereumLaunchChain implements LaunchChain {
   ): Promise<void> {
     if (
       action.kind !== 'AIRDROP' ||
-      (await this.now()) < data.phases[data.phases.length - 1].end
+      (await this.now()) < data.phases.at(-1)!.end
     )
       throw new LaunchSafetyError(
         'Outstanding allocations can be delivered only after all minting closes'
@@ -362,6 +362,33 @@ export class EthereumLaunchChain implements LaunchChain {
         'Claim supply changed before recovery delivery'
       );
   }
+  private expectedAirdropSupply(
+    action: LaunchAction,
+    phaseActions: LaunchAction[]
+  ): number {
+    const update = phaseActions.find((it) => it.kind === 'UPDATE');
+    const baseline =
+      action.phase === 0
+        ? 0
+        : (update?.airdrop_baseline ?? update?.expected_supply);
+    if (baseline === undefined || (update && update.state !== 'CONFIRMED'))
+      throw new LaunchSafetyError(
+        'Phase supply checkpoint is missing or unconfirmed'
+      );
+    return (
+      baseline +
+      phaseActions
+        .filter((it) => it.kind === 'AIRDROP' && it.state === 'CONFIRMED')
+        .reduce(
+          (sum, it) =>
+            sum + it.recipients.reduce((n, row) => n + row.amount, 0),
+          0
+        ) +
+      phaseActions
+        .filter((it) => it.kind === 'AIRDROP' && it.state !== 'CONFIRMED')
+        .reduce((sum, it) => sum + (it.credited_tokens ?? 0), 0)
+    );
+  }
   private async verifySupply(
     data: LaunchData,
     action: LaunchAction,
@@ -373,28 +400,10 @@ export class EthereumLaunchChain implements LaunchChain {
       return;
     }
     const phaseActions = data.actions.filter((it) => it.phase === action.phase);
-    const airdropAmount = (it: LaunchAction) =>
-      it.recipients.reduce((sum, row) => sum + row.amount, 0);
     let expected = action.expected_supply;
     if (action.kind === 'METADATA') return;
     if (action.kind === 'AIRDROP') {
-      const update = phaseActions.find((it) => it.kind === 'UPDATE');
-      const baseline =
-        action.phase === 0
-          ? 0
-          : (update?.airdrop_baseline ?? update?.expected_supply);
-      if (baseline === undefined || (update && update.state !== 'CONFIRMED'))
-        throw new LaunchSafetyError(
-          'Phase supply checkpoint is missing or unconfirmed'
-        );
-      expected =
-        baseline +
-        phaseActions
-          .filter((it) => it.kind === 'AIRDROP' && it.state === 'CONFIRMED')
-          .reduce((sum, it) => sum + airdropAmount(it), 0) +
-        phaseActions
-          .filter((it) => it.kind === 'AIRDROP' && it.state !== 'CONFIRMED')
-          .reduce((sum, it) => sum + (it.credited_tokens ?? 0), 0);
+      expected = this.expectedAirdropSupply(action, phaseActions);
     }
     if (expected !== undefined && total !== expected)
       throw new LaunchSafetyError(
@@ -510,7 +519,7 @@ export class EthereumLaunchChain implements LaunchChain {
       const mined = await rpcWithDeadline(
         this.provider.getTransactionReceipt(hash)
       );
-      if (!mined || mined.blockHash !== receipt.blockHash)
+      if (mined?.blockHash !== receipt.blockHash)
         throw new LaunchSafetyError(
           'Manual airdrop receipt changed during verification'
         );
@@ -557,24 +566,11 @@ export class EthereumLaunchChain implements LaunchChain {
       ? { total: configured.total }
       : null;
   }
-  async completed(
+  private completedPhase(
     data: LaunchData,
-    action: LaunchAction
-  ): Promise<{ total: number; metadata?: string } | null> {
-    this.assertBinding(data);
-    if (isResearchAirdrop(action)) return this.researchCompleted(data, action);
-    if (!['INITIALIZE', 'UPDATE', 'METADATA'].includes(action.kind))
-      return null;
-    const head = await rpcWithDeadline(this.provider.getBlockNumber());
-    const claim = await this.readClaim(
-      data,
-      Math.max(0, head - this.config.confirmations + 1)
-    );
-    if (!claim) return null;
-    if (Number(claim.tokenId) !== data.claim_id)
-      throw new LaunchSafetyError(
-        'Initialized claim token does not match the prepared claim'
-      );
+    action: LaunchAction,
+    claim: Result
+  ): number | null {
     const observedPhase = data.phases.findIndex(
       (phase) =>
         Number(claim.startDate) === phase.start &&
@@ -602,6 +598,28 @@ export class EthereumLaunchChain implements LaunchChain {
         );
       return null;
     }
+    return phaseIndex;
+  }
+  async completed(
+    data: LaunchData,
+    action: LaunchAction
+  ): Promise<{ total: number; metadata?: string } | null> {
+    this.assertBinding(data);
+    if (isResearchAirdrop(action)) return this.researchCompleted(data, action);
+    if (!['INITIALIZE', 'UPDATE', 'METADATA'].includes(action.kind))
+      return null;
+    const head = await rpcWithDeadline(this.provider.getBlockNumber());
+    const claim = await this.readClaim(
+      data,
+      Math.max(0, head - this.config.confirmations + 1)
+    );
+    if (!claim) return null;
+    if (Number(claim.tokenId) !== data.claim_id)
+      throw new LaunchSafetyError(
+        'Initialized claim token does not match the prepared claim'
+      );
+    const phaseIndex = this.completedPhase(data, action, claim);
+    if (phaseIndex === null) return null;
     const params = [
       Number(claim.totalMax),
       Number(claim.walletMax),

@@ -71,53 +71,12 @@ export class DropForgeWorker {
         )) {
           const record = await this.repository.lockLaunch(candidate.id, ctx);
           if (!runnable(record) || !this.scheduledEnabled) {
-            if (
-              record.data.manual_transactions?.some(
-                (it) => it.state === 'PENDING'
-              )
-            ) {
-              try {
-                await reconcileManual(
-                  record,
-                  this.chain,
-                  this.config,
-                  (
-                    await this.repository.source(
-                      record.data.contract,
-                      record.data.claim_id,
-                      ctx
-                    )
-                  ).metadata
-                );
-                await mirrorCompletion(record, ctx);
-              } catch (error) {
-                setLaunchState(
-                  record,
-                  'BLOCKED',
-                  error instanceof LaunchSafetyError
-                    ? error.message
-                    : 'Manual transaction reconciliation failed'
-                );
-              }
-              await this.repository.save(record, ctx);
-            }
+            await this.reconcileInactive(record, ctx);
             continue;
           }
           if (record.data.events.some((event) => !event.drop_id)) continue;
-          try {
-            const reserved = await this.reserve(record, pending, ctx);
-            if (reserved) return reserved;
-          } catch (error) {
-            if (pending.launch_id === record.id) throw error;
-            setLaunchState(
-              record,
-              'BLOCKED',
-              error instanceof LaunchSafetyError
-                ? error.message
-                : 'RPC or preparation check failed; review before resuming'
-            );
-            await this.repository.save(record, ctx);
-          }
+          const reserved = await this.reserveCandidate(record, pending, ctx);
+          if (reserved) return reserved;
         }
         return null;
       },
@@ -138,6 +97,60 @@ export class DropForgeWorker {
       await this.sign(walletId, work);
     }
     await this.reconcile(walletId, work.record.id);
+  }
+
+  private async reserveCandidate(
+    record: LaunchRecord,
+    pending: PendingSigner,
+    ctx: RequestContext
+  ): Promise<Work | null> {
+    try {
+      const reserved = await this.reserve(record, pending, ctx);
+      return reserved;
+    } catch (error) {
+      if (pending.launch_id === record.id) throw error;
+      setLaunchState(
+        record,
+        'BLOCKED',
+        error instanceof LaunchSafetyError
+          ? error.message
+          : 'RPC or preparation check failed; review before resuming'
+      );
+      await this.repository.save(record, ctx);
+    }
+    return null;
+  }
+
+  private async reconcileInactive(
+    record: LaunchRecord,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (record.data.manual_transactions?.some((it) => it.state === 'PENDING')) {
+      try {
+        await reconcileManual(
+          record,
+          this.chain,
+          this.config,
+          (
+            await this.repository.source(
+              record.data.contract,
+              record.data.claim_id,
+              ctx
+            )
+          ).metadata
+        );
+        await mirrorCompletion(record, ctx);
+      } catch (error) {
+        setLaunchState(
+          record,
+          'BLOCKED',
+          error instanceof LaunchSafetyError
+            ? error.message
+            : 'Manual transaction reconciliation failed'
+        );
+      }
+      await this.repository.save(record, ctx);
+    }
   }
 
   private async pendingWork(
@@ -263,25 +276,7 @@ export class DropForgeWorker {
     }
     const now = await this.chain.now();
     for (const action of dueActions(record, now)) {
-      let work: Work | null = null;
-      try {
-        if ((action.retry_at ?? 0) > now) continue;
-        if (await this.observe(record, action)) continue;
-        if (this.deferAction(record, action, now)) continue;
-        work = await this.prepareAction(record, action, pending, ctx);
-      } catch (error) {
-        if (now < action.deadline - 120 || !action.window_reported) {
-          reportActionFailure(
-            record,
-            action,
-            now,
-            error instanceof LaunchSafetyError
-              ? error.message
-              : 'RPC or readiness check failed'
-          );
-          if (now >= action.deadline - 120) action.window_reported = true;
-        }
-      }
+      const work = await this.tryAction(record, action, pending, ctx, now);
       if (work) {
         await this.repository.save(record, ctx);
         return work;
@@ -290,6 +285,35 @@ export class DropForgeWorker {
     await mirrorCompletion(record, ctx);
     await this.repository.save(record, ctx);
     return null;
+  }
+
+  private async tryAction(
+    record: LaunchRecord,
+    action: LaunchAction,
+    pending: PendingSigner,
+    ctx: RequestContext,
+    now: number
+  ): Promise<Work | null> {
+    let work: Work | null = null;
+    try {
+      if ((action.retry_at ?? 0) > now) return null;
+      if (await this.observe(record, action)) return null;
+      if (this.deferAction(record, action, now)) return null;
+      work = await this.prepareAction(record, action, pending, ctx);
+    } catch (error) {
+      if (now < action.deadline - 120 || !action.window_reported) {
+        reportActionFailure(
+          record,
+          action,
+          now,
+          error instanceof LaunchSafetyError
+            ? error.message
+            : 'RPC or readiness check failed'
+        );
+        if (now >= action.deadline - 120) action.window_reported = true;
+      }
+    }
+    return work;
   }
 
   private async observe(

@@ -114,7 +114,7 @@ export class DropForgeRepository {
   }
   async change<T>(
     id: string,
-    fn: (launch: LaunchRecord, ctx: RequestContext) => Promise<T>,
+    fn: (launch: LaunchRecord, ctx: RequestContext) => T | Promise<T>,
     parentCtx: RequestContext
   ): Promise<T> {
     if (!parentCtx.connection)
