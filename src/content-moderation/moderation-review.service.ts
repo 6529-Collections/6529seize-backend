@@ -100,12 +100,16 @@ function availableActions(
   item: ModerationItem,
   matches: boolean,
   expired: boolean,
-  suppressed: boolean
+  suppressed: boolean,
+  deleted: boolean,
+  openReportCount: number
 ): ModerationAction[] {
   if (item.id.startsWith('routine:')) return [];
   if (item.scope.administrative)
     return ['SUSPEND', 'REINSTATE', 'MARK_REVIEWED'];
   const actions: ModerationAction[] = ['MARK_REVIEWED'];
+  if (deleted && item.operation === 'REPORT' && openReportCount > 0)
+    actions.push('RESOLVE_DELETED_REPORT');
   if (item.override) actions.push('REVOKE_OVERRIDE');
   if (expired) {
     if (canRestoreSuppressedField(item, matches, suppressed))
@@ -118,7 +122,7 @@ function availableActions(
     (matches && !item.published_subject_id)
   )
     actions.push('ALLOW', 'BLOCK');
-  if (item.published_subject_id && matches)
+  if (item.published_subject_id && matches && !deleted)
     actions.push(...publishedActions(item, suppressed));
   if (item.author_profile_id) actions.push('SUSPEND', 'REINSTATE');
   return actions;
@@ -276,6 +280,12 @@ export class ModerationReviewService {
       : current === (item.scope.current_revision ?? null);
     const expired = evidenceExpired(item);
     const isPublished = !!item.published_subject_id;
+    const deleted =
+      isPublished && item.subject_type === 'DROP' && current === null;
+    const openReportCount =
+      isPublished && item.subject_type === 'DROP'
+        ? await this.db.openReportCount(item.published_subject_id!, ctx)
+        : 0;
     const suppressed = await this.effectiveSuppression(
       item,
       publishedRevision,
@@ -293,8 +303,10 @@ export class ModerationReviewService {
       current_revision_matches: matches,
       current_state: {
         profile_status: profileStatus,
-        drop_status: await this.currentDropStatus(item, ctx),
-        published: isPublished,
+        drop_status: deleted ? null : await this.currentDropStatus(item, ctx),
+        published: isPublished && !deleted,
+        deleted,
+        open_report_count: openReportCount,
         suppressed,
         revision: current
       },
@@ -304,7 +316,14 @@ export class ModerationReviewService {
         ...evaluation,
         result: expired ? null : evaluation.result
       })),
-      allowed_actions: availableActions(item, matches, expired, suppressed),
+      allowed_actions: availableActions(
+        item,
+        matches,
+        expired,
+        suppressed,
+        deleted,
+        openReportCount
+      ),
       action_effect: actionEffect(item)
     };
   }
@@ -446,6 +465,14 @@ export class ModerationReviewService {
     actor: string,
     ctx: RequestContext
   ) {
+    if (action === 'RESOLVE_DELETED_REPORT' && item.published_subject_id) {
+      await this.db.resolveDeletedReports(
+        item.published_subject_id,
+        actor,
+        reason,
+        ctx
+      );
+    }
     if (action === 'SUSPEND' || action === 'REINSTATE') {
       if (item.author_profile_id === actor)
         throw new BadRequestException(

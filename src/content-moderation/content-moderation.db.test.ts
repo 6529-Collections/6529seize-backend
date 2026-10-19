@@ -45,6 +45,7 @@ function reportRow() {
   return {
     id: REPORT_ID,
     drop_id: 'drop-1',
+    drop_deleted: 0,
     reporter_profile_id: 'reporter-1',
     author_profile_id: 'author-1',
     author_handle: 'author-handle',
@@ -210,6 +211,19 @@ describe('ContentModerationDb', () => {
       undefined
     );
   });
+  it.each([0, 1])(
+    'exposes deleted-post state %s as a JSON boolean in report queues',
+    async (deleted) => {
+      const { db, executor } = createDb();
+      executor.execute.mockImplementation(async (sql: string) =>
+        sql.includes('count(*) as report_count')
+          ? [{ drop_id: 'drop-1', report_count: 1 }]
+          : [{ ...reportRow(), drop_deleted: deleted }]
+      );
+      const rows = await db.getModerationQueue({ limit: 10 });
+      expect(rows[0]?.drop_deleted).toBe(deleted === 1);
+    }
+  );
 
   it('does not query report counts for an empty moderation queue page', async () => {
     const { db, executor } = createDb();

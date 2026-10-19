@@ -315,6 +315,43 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
       );
     });
   }
+  async openReportCount(dropId: string, ctx: RequestContext): Promise<number> {
+    return this.timed('openReportCount', ctx, async () => {
+      const row = await this.db.oneOrNull<{ count: number }>(
+        `select count(*) as count from ${CONTENT_MODERATION_REPORTS_TABLE} where drop_id=:dropId and status='OPEN'`,
+        { dropId },
+        this.options(ctx)
+      );
+      return Number(row?.count ?? 0);
+    });
+  }
+  async resolveDeletedReports(
+    dropId: string,
+    actor: string,
+    reason: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    return this.timed('resolveDeletedReports', ctx, async () => {
+      const now = Date.now();
+      const result = await this.db.execute(
+        `update ${CONTENT_MODERATION_REPORTS_TABLE} r set
+          r.status='RESOLVED_DELETED', r.resolved_by_profile_id=:actor,
+          r.resolution_reason=:reason, r.resolved_at=:now
+        where r.drop_id=:dropId and r.status='OPEN'
+          and not exists(select 1 from ${DROPS_TABLE} d where d.id=:dropId)`,
+        { dropId, actor, reason, now },
+        this.options(ctx)
+      );
+      if (this.db.getAffectedRows(result) === 0) moderationConflict();
+      await this.db.execute(
+        `update ${ITEMS} i set i.review_status='REVIEWED', i.evidence_expires_at=:expiry
+        where i.subject_type='DROP' and i.operation='REPORT' and i.published_subject_id=:dropId
+          and not exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id and r.status='OPEN')`,
+        { dropId, expiry: now + 90 * 86400000 },
+        this.options(ctx)
+      );
+    });
+  }
   private options(ctx: RequestContext) {
     return {
       wrappedConnection: ctx.connection,

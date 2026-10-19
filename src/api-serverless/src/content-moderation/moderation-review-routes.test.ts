@@ -254,4 +254,46 @@ describe('moderation generated routes and private handlers', () => {
       ).toBeNull();
     }
   });
+  it('accepts a versioned deleted-report resolution through the authenticated action route', async () => {
+    const saved = {
+      check: { subject_type: 'DROP', published_subject_id: 'deleted-post' },
+      current_state: {
+        deleted: true,
+        published: false,
+        drop_status: null,
+        open_report_count: 0
+      }
+    } as Awaited<ReturnType<typeof moderationReviewService.action>>;
+    const save = jest
+      .spyOn(moderationReviewService, 'action')
+      .mockResolvedValue(saved);
+    const body = { ...action, action: 'RESOLVE_DELETED_REPORT' };
+    await withServer(async (base) => {
+      const response = await fetch(`${base}/check-id/actions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect(await response.json()).toEqual(saved);
+    });
+    expect(save).toHaveBeenCalledWith('check-id', body, expect.anything());
+  });
+  it('serializes deleted state independently of content visibility', () => {
+    const state = {
+      deleted: true,
+      published: false,
+      drop_status: null,
+      open_report_count: 0
+    };
+    const serialized = ObjectSerializer.serialize(
+      state,
+      'ApiModerationCurrentState',
+      ''
+    );
+    expect(
+      ObjectSerializer.deserialize(serialized, 'ApiModerationCurrentState', '')
+    ).toMatchObject(state);
+  });
 });

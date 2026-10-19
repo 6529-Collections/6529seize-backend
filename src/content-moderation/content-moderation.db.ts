@@ -79,6 +79,7 @@ export interface ModerationReportRow {
 }
 
 type ModerationQueueReportRow = ModerationReportRow & {
+  readonly drop_deleted: number;
   readonly author_handle: string | null;
   readonly author_pfp: string | null;
   readonly reporter_handle: string | null;
@@ -89,6 +90,7 @@ type ModerationQueueReportRow = ModerationReportRow & {
 };
 
 export type ModerationQueueItemRow = ModerationReportRow & {
+  readonly drop_deleted: boolean;
   readonly author_handle: string | null;
   readonly author_pfp: string | null;
   readonly reporter_handle: string | null;
@@ -1028,12 +1030,13 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       ? 'coalesce(r.resolved_at, r.created_at)'
       : 'r.created_at';
     const reportStatusSql = isResolved
-      ? `r.status in ('${ContentReportStatus.RESOLVED_ALLOWED}', '${ContentReportStatus.RESOLVED_REMOVED}')`
+      ? `r.status in ('${ContentReportStatus.RESOLVED_ALLOWED}', '${ContentReportStatus.RESOLVED_REMOVED}', '${ContentReportStatus.RESOLVED_DELETED}')`
       : `r.status = '${ContentReportStatus.OPEN}'`;
     const rows = await this.db.execute<ModerationQueueReportRow>(
       `
         select
           r.*,
+          not exists(select 1 from ${DROPS_TABLE} d where d.id = r.drop_id) as drop_deleted,
           p.handle as author_handle,
           p.pfp_url as author_pfp,
           reporter.handle as reporter_handle,
@@ -1106,6 +1109,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       } = parsed;
       return {
         ...report,
+        drop_deleted: Boolean(report.drop_deleted),
         report_count: reportCounts.get(report.drop_id) ?? 0,
         cursor: this.encodeModerationQueueCursor({
           recommendationRank,
@@ -1551,7 +1555,8 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
             sum(case when status = '${ContentReportStatus.OPEN}' then 1 else 0 end) as open_report_count,
             sum(case when status in (
               '${ContentReportStatus.RESOLVED_ALLOWED}',
-              '${ContentReportStatus.RESOLVED_REMOVED}'
+              '${ContentReportStatus.RESOLVED_REMOVED}',
+              '${ContentReportStatus.RESOLVED_DELETED}'
             ) then 1 else 0 end) as resolved_report_count
           from ${CONTENT_MODERATION_REPORTS_TABLE}
         `,
