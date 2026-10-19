@@ -34,6 +34,9 @@ it('persists a snapshot and binds continuation to its profile and page size', as
   await expect(store.read('alice', { ...cursor, offset: 4 })).rejects.toThrow(
     'Invalid joined wave cursor'
   );
+  await expect(store.read('alice', { ...cursor, offset: 3 })).rejects.toThrow(
+    'Invalid joined wave cursor'
+  );
 });
 
 it('rejects expired snapshots without silently starting a different list', async () => {
@@ -62,6 +65,30 @@ it('serves a complete first page without requiring snapshot storage', async () =
   expect(snapshot.waveIds).toEqual(['one', 'two']);
   expect(redisSetJson).not.toHaveBeenCalled();
   expect(redisGet).not.toHaveBeenCalled();
+});
+
+it('rejects oversized snapshots without truncating the joined list', async () => {
+  await expect(
+    store.create('alice', Array<string>(50001).fill('wave'), 20)
+  ).rejects.toMatchObject({ code: 'JOINED_WAVE_SNAPSHOT_UNAVAILABLE' });
+  expect(redisSetJson).not.toHaveBeenCalled();
+});
+
+it('reports throwing storage commands as temporary unavailability', async () => {
+  jest
+    .mocked(redisSetJson)
+    .mockRejectedValueOnce(new Error('Redis unavailable'));
+  await expect(store.create('alice', ['one', 'two'], 1)).rejects.toMatchObject({
+    code: 'JOINED_WAVE_SNAPSHOT_UNAVAILABLE'
+  });
+  const snapshot = await store.create('alice', ['one', 'two'], 1);
+  jest.mocked(redisGet).mockRejectedValueOnce(new Error('Invalid cached JSON'));
+  await expect(
+    store.read(
+      'alice',
+      decodeJoinedWaveCursor(encodeJoinedWaveCursor(snapshot, 1))
+    )
+  ).rejects.toMatchObject({ code: 'JOINED_WAVE_SNAPSHOT_UNAVAILABLE' });
 });
 
 it.each([

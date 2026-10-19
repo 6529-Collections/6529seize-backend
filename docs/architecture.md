@@ -70,6 +70,10 @@ Missing metric rows do not remove a membership. New memberships appear on a new
 snapshot. Snapshot creation verifies cache persistence; unavailable storage
 returns 503, and an expired/unavailable continuation returns 410 for a coherent
 client restart. Existing `/v2/waves` page-number contracts remain unchanged.
+Snapshots have a 50,000-root capacity guard (about 2 MB of UUIDs per value);
+larger lists return 503 without publishing a partial list or cursor. The normal
+API request rate limit and fixed TTL also bound refresh storage lifetime.
+Only positions strictly before the end of a snapshot are valid continuations.
 
 The frontend opts into this endpoint only for Joined, retains loaded rows on
 failure, and replaces all loaded pages together on refresh/expiry. It offers

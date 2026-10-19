@@ -117,6 +117,25 @@ it('fills pages after unfollows and access loss and advances over removed IDs', 
   );
 });
 
+it('preserves snapshot order when candidate chunks return reordered strict subsets', async () => {
+  findIds.mockImplementation(async ({ waveIds }: { waveIds?: string[] }) =>
+    [...(waveIds ?? ids)].reverse().filter((id) => joined.has(id))
+  );
+  const first = await service.findPage({ page_size: 20 }, context());
+  const expectedSnapshot = [...saved.waveIds];
+  expectedSnapshot.slice(20).forEach((id, index) => {
+    if (index % 3 === 0) joined.delete(id);
+  });
+  const actual = first.data.map((wave) => wave.id);
+  let cursor = first.next_cursor;
+  while (cursor) {
+    const page = await service.findPage({ page_size: 20, cursor }, context());
+    actual.push(...page.data.map((wave) => wave.id));
+    cursor = page.next_cursor;
+  }
+  expect(actual).toEqual(expectedSnapshot.filter((id) => joined.has(id)));
+});
+
 it('does not add new memberships to an existing snapshot and includes them after refresh', async () => {
   const first = await service.findPage({ page_size: 100 }, context());
   expect(first.next_cursor).toBeNull();

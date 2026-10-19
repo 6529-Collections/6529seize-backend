@@ -108,6 +108,12 @@ describeWithSeed(
     it('checks only the candidate IDs and stops returning roots after an unfollow', async () => {
       const waveIds = ['joined-public', 'unjoined-public', 'joined-dm'];
       expect(
+        await repo.findJoinedRootWaveIds(
+          { ...params, waveIds: ['joined-public'] },
+          {}
+        )
+      ).toEqual(['joined-public']);
+      expect(
         await repo.findJoinedRootWaveIds({ ...params, waveIds }, {})
       ).toEqual(['joined-public']);
       await sqlExecutor.execute(
