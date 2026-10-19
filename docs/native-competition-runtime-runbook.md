@@ -165,6 +165,16 @@ provider payloads and signatures.
 
 Only winner notifications are emitted for native competition lifecycle events;
 entry, vote, publication and other lifecycle events do not create these alerts.
+Individual vote changes separately use the existing `DROP_VOTED` notification,
+just like legacy voting. The submission author receives the voter's new vote,
+the signed change from their previous vote, and the submission's current total.
+Vote increases, reductions, removals, and negative votes follow the same rule.
+Self-votes, unchanged replacement votes, and retried commands do not create
+additional notifications. The notification and its durable push-outbox record
+commit with the vote, using the wave's visibility group and the existing
+notification preferences, mute, and moderation filters. This applies to all
+native competitions, including migrated Main Stage submissions.
+
 Existing notification clients keep their original causes and unread counts.
 Native clients opt into `COMPETITION_LIFECYCLE` using
 `include_competitions=true` on `GET /v2/notifications`. V1 and default V2
@@ -172,6 +182,11 @@ requests exclude those rows, including from the unread count. Push registration
 separately records the same explicit capability per device; older devices do
 not receive native competition pushes or count them in their badge. Registering
 without the capability clears it, including after an app downgrade.
+
+The paragraphs about individual vote notifications above are backend-owned
+help knowledge. This backend-only fix does not publish a frontend help-index
+update; the live help bot corpus needs a separate update to describe native
+competition vote notifications explicitly.
 
 ## Verification gates
 
