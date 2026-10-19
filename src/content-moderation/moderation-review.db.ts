@@ -344,7 +344,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
       );
       if (this.db.getAffectedRows(result) === 0) moderationConflict();
       await this.db.execute(
-        `update ${ITEMS} i set i.review_status='REVIEWED', i.evidence_expires_at=:expiry
+        `update ${ITEMS} i set i.review_status='REVIEWED', i.evidence_expires_at=coalesce(i.evidence_expires_at,:expiry)
         where i.subject_type='DROP' and i.operation='REPORT' and i.published_subject_id=:dropId
           and not exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id and r.status='OPEN')`,
         { dropId, expiry: now + 90 * 86400000 },
@@ -483,7 +483,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
       );
       await this.db.execute(
         `update ${ITEMS} i join ${EVALUATIONS} e on e.item_id=i.id set i.outcome=e.outcome, i.\`trigger\`=e.\`trigger\`, i.updated_at=:now, i.policy_version=e.policy_version,
-        i.review_status=if(i.override is not null or exists(select 1 from ${AUDIT} a where a.item_id=i.id and a.actor_profile_id is not null and a.action not in ('CONTENT_SAVED','REEVALUATE') and a.created_at>=e.started_at),i.review_status,if(e.outcome='ALLOW' and i.operation<>'REPORT' and e.fallback is null,'REVIEWED','NEEDS_REVIEW')),
+        i.review_status=if(i.operation='REPORT' and exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id) and not exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id and r.status='OPEN'),'REVIEWED',if(i.override is not null or exists(select 1 from ${AUDIT} a where a.item_id=i.id and a.actor_profile_id is not null and a.action not in ('CONTENT_SAVED','REEVALUATE') and a.created_at>=e.started_at),i.review_status,if(e.outcome='ALLOW' and i.operation<>'REPORT' and e.fallback is null,'REVIEWED','NEEDS_REVIEW'))),
         i.evidence_expires_at=if(e.outcome='ALLOW' and i.operation<>'REPORT' and i.override is null,:expiry,if(i.review_status='NEEDS_REVIEW',null,i.evidence_expires_at)), i.version=i.version+1
         where e.id=:id and not exists (select 1 from ${EVALUATIONS} newer where newer.item_id=i.id and (newer.started_at>e.started_at or (newer.started_at=e.started_at and newer.id>e.id)) and newer.completed_at is not null)`,
         { id, now: Date.now(), expiry: Date.now() + 30 * 86400000 },
@@ -746,7 +746,10 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
           reset: action === 'ALLOW' || action === 'REVOKE_OVERRIDE',
           suppressed: nextSuppression(item, action),
           now: Date.now(),
-          evidenceExpiry: Date.now() + 90 * 86400000
+          evidenceExpiry:
+            action === 'RESOLVE_DELETED_REPORT'
+              ? (item.evidence_expires_at ?? Date.now() + 90 * 86400000)
+              : Date.now() + 90 * 86400000
         },
         this.options(ctx)
       );
@@ -1046,7 +1049,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
         );
       });
       await this.db.execute(
-        `update ${ITEMS} i set i.review_status='REVIEWED',i.evidence_expires_at=(select coalesce(max(r.resolved_at),:now)+:retention from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id)
+        `update ${ITEMS} i set i.review_status='REVIEWED',i.evidence_expires_at=if(i.evidence_expires_at<=:now,i.evidence_expires_at,(select coalesce(max(r.resolved_at),:now)+:retention from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id))
       where i.operation='REPORT' and exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id)
         and not exists(select 1 from ${CONTENT_MODERATION_REPORTS_TABLE} r where r.item_id=i.id and r.status='OPEN')`,
         { now: Date.now(), retention: 90 * 86400000 },

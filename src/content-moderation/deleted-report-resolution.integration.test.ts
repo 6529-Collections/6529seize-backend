@@ -3,6 +3,7 @@ import { AuthenticationContext } from '@/auth-context';
 import { userGroupsService } from '@/api/community-members/user-groups.service';
 import {
   CONTENT_MODERATION_AUDIT_LOG_TABLE,
+  CONTENT_MODERATION_ITEMS_TABLE,
   CONTENT_MODERATION_REPORTS_TABLE,
   DROPS_TABLE
 } from '@/constants';
@@ -34,7 +35,7 @@ describe('Deleted-post report resolution', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  async function report(text = 'Reported post') {
+  async function report(text = 'Reported post', pending = false) {
     const evidence = {
       drop_id: 'deleted-post',
       wave_id: 'wave',
@@ -59,10 +60,11 @@ describe('Deleted-post report resolution', () => {
       },
       'CONTENT_REPORTED'
     );
-    await reviews.finish(started.evaluationId, {
-      outcome: 'ALLOW',
-      result: { recommendation: 'NO_VIOLATION_DETECTED' }
-    });
+    if (!pending)
+      await reviews.finish(started.evaluationId, {
+        outcome: 'ALLOW',
+        result: { recommendation: 'NO_VIOLATION_DETECTED' }
+      });
     await reviews.attachPublication(started.item.id, 'deleted-post', revision);
     const reportId = randomUUID();
     await sqlExecutor.execute(
@@ -76,7 +78,12 @@ describe('Deleted-post report resolution', () => {
         createdAt: Date.now()
       }
     );
-    return { reportId, itemId: started.item.id, evidence };
+    return {
+      reportId,
+      itemId: started.item.id,
+      evaluationId: started.evaluationId,
+      evidence
+    };
   }
   async function livePost() {
     await sqlExecutor.execute(
@@ -186,5 +193,43 @@ describe('Deleted-post report resolution', () => {
       'NEEDS_REVIEW'
     );
     expect((await content.getModerationCounts()).resolved_report_count).toBe(0);
+  });
+  it('does not revive expired retained evidence on the selected or an older resolved revision', async () => {
+    const old = await report('Older resolved revision');
+    const selected = await report('Selected expired revision');
+    await report('Fresh open revision');
+    const expiredAt = Date.now() - 86400000;
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_REPORTS_TABLE} set status='RESOLVED_ALLOWED',resolved_at=:expiredAt where id=:id`,
+      { expiredAt: Date.now() - 91 * 86400000, id: old.reportId }
+    );
+    await sqlExecutor.execute(
+      `update ${CONTENT_MODERATION_ITEMS_TABLE} set evidence_expires_at=:expiredAt where id in (:ids)`,
+      { expiredAt, ids: [old.itemId, selected.itemId] }
+    );
+    await resolve(selected.itemId);
+    await reviews.retain();
+    for (const id of [old.itemId, selected.itemId]) {
+      const detail = await service.detail(id, ctx());
+      expect(detail.check.evidence_expires_at).toBe(expiredAt);
+      expect(detail.evidence_expired).toBe(true);
+      expect(detail.evidence).toBeNull();
+      expect(detail.evaluations.every((e) => e.result === null)).toBe(true);
+    }
+    expect(await content.hasOpenReports()).toBe(false);
+  });
+  it('keeps sibling reports reviewed when their pending classifier finishes after resolution', async () => {
+    const selected = await report();
+    const sibling = await report('A pending earlier revision', true);
+    await resolve(selected.itemId);
+    const resolved = await reviews.get(sibling.itemId);
+    await reviews.finish(sibling.evaluationId, {
+      outcome: 'REJECT',
+      result: { recommendation: 'NEEDS_HUMAN_REVIEW' }
+    });
+    const finished = await reviews.get(sibling.itemId);
+    expect(finished.review_status).toBe('REVIEWED');
+    expect(finished.evidence_expires_at).toBe(resolved.evidence_expires_at);
+    expect(await content.hasOpenReports()).toBe(false);
   });
 });
