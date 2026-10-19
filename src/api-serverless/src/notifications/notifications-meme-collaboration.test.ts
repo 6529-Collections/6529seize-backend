@@ -44,7 +44,7 @@ it.each(['v1', 'v2'])(
       version === 'v1'
         ? service.getNotifications(params, auth)
         : service.getNotificationsV2(params, auth, {});
-    for (const event_type of ['INVITED', 'ACCEPTED']) {
+    for (const event_type of ['INVITED', 'ACCEPTED', 'CANCELLED']) {
       reader.getNotificationsForIdentity.mockResolvedValue({
         notifications: [
           {

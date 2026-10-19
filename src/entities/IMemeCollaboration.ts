@@ -50,9 +50,7 @@ export class MemeCollaborationEntity {
 }
 
 @Entity(MEME_COLLABORATION_INVITATIONS_TABLE)
-@Index('meme_collaboration_drop_profile_uq', ['drop_id', 'profile_id'], {
-  unique: true
-})
+@Index('meme_collaboration_drop_profile', ['drop_id', 'profile_id'])
 @Index('meme_collaboration_profile_status', ['profile_id', 'status', 'drop_id'])
 export class MemeCollaborationInvitationEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 })

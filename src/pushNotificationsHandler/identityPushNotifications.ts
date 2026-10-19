@@ -1,3 +1,5 @@
+import { buildMemeCollaborationPushNotification } from './meme-collaboration-push-notification';
+import type { MemeCollaborationNotificationData } from '@/notifications/user-notification.types';
 import { handleMissingNotifications } from './missing-notifications';
 import { buildCompetitionLifecyclePushNotification } from './competition-lifecycle-push-notification';
 import type { CompetitionLifecycleNotificationData } from '@/notifications/user-notification.types';
@@ -651,24 +653,10 @@ async function generateNotificationData(
       );
     case IdentityNotificationCause.MEME_COLLABORATION: {
       const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-      const data = extractAdditionalData<{
-        event_type: string;
-        drop_id: string;
-        wave_id: string;
-      }>(notification);
-      return {
-        title: 'The Memes collaboration',
-        body:
-          data.event_type === 'INVITED'
-            ? 'You have been invited to collaborate on an artwork. Review the invitation to accept or decline.'
-            : 'Your collaborator accepted the artwork invitation.',
-        data: {
-          redirect: 'waves',
-          wave_id: data.wave_id,
-          drop_id: dropSerialNo
-        },
-        imageUrl: null
-      };
+      const data =
+        extractAdditionalData<MemeCollaborationNotificationData>(notification);
+      const actor = await getAdditionalEntity().catch(() => null);
+      return buildMemeCollaborationPushNotification(data, dropSerialNo, actor);
     }
     case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       return buildCompetitionLifecyclePushNotification(

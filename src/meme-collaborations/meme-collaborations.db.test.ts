@@ -128,6 +128,42 @@ describeWithSeed(
     { table: MEME_COLLABORATION_INVITATIONS_TABLE, rows: invites }
   ],
   () => {
+    it('retains cancelled attempts, reinvites with a fresh ID, and rejects old consent', async () => {
+      const db = new MemeCollaborationsDb(() => sqlExecutor);
+      const service = new MemeCollaborationsService(db);
+      await service.respond(
+        'drop',
+        invites[0].id,
+        body('CANCEL'),
+        auth('A'),
+        {}
+      );
+      await service.inviteExisting('drop', ['B'], auth('A'), {});
+      const history = (await db.invitations('drop', {})).filter(
+        (item) => item.profile_id === 'B'
+      );
+      expect(history.map((item) => item.status)).toEqual([
+        'CANCELLED',
+        'PENDING'
+      ]);
+      const current = (await service.state('drop', 'B', {})).invitations;
+      expect(current).toHaveLength(1);
+      expect(current[0].id).not.toBe(invites[0].id);
+      await expect(
+        service.respond('drop', invites[0].id, body('ACCEPT'), auth('B'), {})
+      ).rejects.toThrow('closed');
+      await service.respond(
+        'drop',
+        current[0].id,
+        body('DECLINE'),
+        auth('B'),
+        {}
+      );
+      await expect(
+        service.inviteExisting('drop', ['B'], auth('A'), {})
+      ).rejects.toThrow('declined');
+    });
+
     it('persists the accepted credit name independently and keeps it final', async () => {
       const db = new MemeCollaborationsDb(() => sqlExecutor);
       const service = new MemeCollaborationsService(db);

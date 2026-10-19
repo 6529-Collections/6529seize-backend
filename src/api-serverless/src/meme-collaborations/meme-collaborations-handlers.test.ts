@@ -30,7 +30,12 @@ jest.mock('@/meme-collaborations/meme-collaborations.service', () => ({
   }
 }));
 jest.mock('@/api/ws/ws-listeners-notifier', () => ({
-  wsListenersNotifier: { notifyAboutDropUpdate: jest.fn() }
+  wsListenersNotifier: {
+    notifyAboutDropUpdate: jest.fn(),
+    notifyAboutIdentityNotificationsChanged: jest
+      .fn()
+      .mockResolvedValue(undefined)
+  }
 }));
 jest.mock('@/api/push-notifications/push-notifications.service', () => ({
   sendIdentityPushNotifications: jest.fn()
@@ -83,7 +88,7 @@ describe('Collaboration API visibility', () => {
 it('returns committed acceptance despite a websocket failure and disables shared caching', async () => {
   jest
     .mocked(dropsService.findDropByIdOrThrow)
-    .mockResolvedValue({ id: 'drop' } as Awaited<
+    .mockResolvedValue({ id: 'drop', author: { id: 'A' } } as Awaited<
       ReturnType<typeof dropsService.findDropByIdOrThrow>
     >);
   jest.mocked(memeCollaborationsService.respond).mockResolvedValue([12]);
@@ -120,7 +125,7 @@ it('returns committed acceptance despite a websocket failure and disables shared
 it('appends invited IDs through the dedicated endpoint and returns viewer-scoped state', async () => {
   jest
     .mocked(dropsService.findDropByIdOrThrow)
-    .mockResolvedValue({ id: 'drop' } as Awaited<
+    .mockResolvedValue({ id: 'drop', author: { id: 'A' } } as Awaited<
       ReturnType<typeof dropsService.findDropByIdOrThrow>
     >);
   jest.mocked(memeCollaborationsService.inviteExisting).mockResolvedValue([44]);
@@ -174,7 +179,7 @@ it.each([
 ])('rejects invalid or inapplicable credit-name input: %j', async (fields) => {
   jest
     .mocked(dropsService.findDropByIdOrThrow)
-    .mockResolvedValue({ id: 'drop' } as Awaited<
+    .mockResolvedValue({ id: 'drop', author: { id: 'A' } } as Awaited<
       ReturnType<typeof dropsService.findDropByIdOrThrow>
     >);
   jest.mocked(memeCollaborationsService.respond).mockClear();
@@ -186,3 +191,48 @@ it.each([
   ).rejects.toThrow();
   expect(memeCollaborationsService.respond).not.toHaveBeenCalled();
 });
+
+it.each(['ACCEPT', 'DECLINE', 'CANCEL'] as const)(
+  'refreshes collaboration state for %s even when notifications are disabled',
+  async (action) => {
+    jest
+      .mocked(dropsService.findDropByIdOrThrow)
+      .mockResolvedValue({ id: 'drop', author: { id: 'A' } } as Awaited<
+        ReturnType<typeof dropsService.findDropByIdOrThrow>
+      >);
+    jest.mocked(memeCollaborationsService.respond).mockResolvedValue([]);
+    jest.mocked(memeCollaborationsService.state).mockResolvedValue({
+      can_invite: false,
+      artwork: undefined,
+      managed: true,
+      closed: false,
+      artwork_hash: 'hash',
+      terms_version: 'terms',
+      acceptance_copy: 'Final',
+      terms: null,
+      collaborators: [],
+      invitations: [
+        {
+          id: 'invitation',
+          artist_name: null,
+          status: action === 'ACCEPT' ? 'ACCEPTED' : 'CANCELLED',
+          profile: { id: 'B', handle: 'b', display: 'b', pfp: null }
+        }
+      ]
+    });
+    jest
+      .mocked(wsListenersNotifier.notifyAboutDropUpdate)
+      .mockResolvedValue(undefined);
+    jest.clearAllMocks();
+    await respondToMemeCollaboration({
+      ...request,
+      body: { ...request.body, action }
+    } as RespondToMemeCollaborationRequest);
+    expect(
+      wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+    ).toHaveBeenCalledWith(expect.arrayContaining(['A', 'B']));
+    expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledTimes(
+      action === 'ACCEPT' ? 1 : 0
+    );
+  }
+);

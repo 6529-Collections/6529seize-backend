@@ -50,7 +50,7 @@ it with the collaboration snapshot. Admin edits do not change invitation status
 or accepted-submission profile attribution. Existing submissions without a
 managed record remain compatible.
 
-Invitation and acceptance notifications use the existing identity-notification
+Invitation, acceptance and author-cancellation notifications use the existing identity-notification
 and push pipelines with cause `MEME_COLLABORATION`. New generated endpoints are
 `GET /drops/{drop_id}/collaborations`,
 `POST /drops/{drop_id}/collaborations` (submitter-only additions on active legacy
@@ -2331,3 +2331,5 @@ The required key must be present and valid for all three runtimes in both region
 Configure production as `2026-10-15T00:00:00Z` and staging with its intended earlier cutoff before deployment. Schema sync still precedes the delegation indexer, TDH loop and API. Both environments index the same mainnet contract: staging registrations are real registrations, and pre-production-cutoff links require renewed consent after the production cutoff.
 
 Initial collaboration Artist credits use ` & ` for exactly two credited artists and `, ` for larger rosters; SEIZE Artist Profile always uses comma-separated handles. Confirmed invitee credit names are used in live metadata and the frozen mint-selection credit. Existing frozen claims and admin Craft edits are not rewritten.
+
+Collaboration retries retain each cancelled invitation under a distinct ID. The drop/profile index is non-unique; entity synchronization must remove the former unique index before API reinvites are enabled. Author and recipient state exposes the latest attempt only; historical invitation IDs cannot authorize a new attempt. Declined invitations cannot be resent. The five-collaborator cap counts pending and accepted attempts under the collaboration lock, preserving existing accepted rosters. API mutations send existing profile-scoped notification invalidations after commit, independently of push preferences. Acceptance also broadcasts accepted public attribution even when no notification row is created. No private invitation roster is added to public websocket payloads.

@@ -130,7 +130,7 @@ it.each([{ ids: ['B'] }, { ids: ['A'] }, { ids: ['C', 'C'] }, { ids: [] }])(
     const { db, service } = setup();
     await expect(
       service.inviteExisting('drop', ids, auth(), {})
-    ).rejects.toThrow('distinct collaborators');
+    ).rejects.toThrow(/distinct collaborators|already has|at least one/);
     expect(db.query.mock.calls.some((call) => call[0] === 'invite')).toBe(
       false
     );
@@ -146,7 +146,7 @@ it('enforces the combined roster limit', async () => {
   );
   await expect(
     service.inviteExisting('drop', ['C'], auth(), {})
-  ).rejects.toThrow('20 total');
+  ).rejects.toThrow('up to 5');
 });
 it('rejects closed submissions even when native entry status still looks active', async () => {
   const { db, service } = setup();
@@ -252,7 +252,7 @@ it.each([
 it.each([
   ['self', ['A']],
   ['duplicates', ['C', 'C']],
-  ['over the lifetime limit', Array.from({ length: 21 }, (_, i) => `C${i}`)]
+  ['over the active limit', Array.from({ length: 6 }, (_, i) => `C${i}`)]
 ])('rejects invalid initial invitees: %s', async (_label, ids) => {
   const { db, service } = setup();
   db.context.mockResolvedValue(null as never);
@@ -266,7 +266,7 @@ it.each([
     collaborator_ids: ids
   } as CreateOrUpdateDropModel;
   await expect(service.onWrite(model, 'new', {})).rejects.toThrow(
-    'Select up to 20 distinct collaborating profiles, excluding yourself'
+    /distinct collaborators|up to 5/
   );
   expect(db.query).not.toHaveBeenCalled();
 });
@@ -338,4 +338,64 @@ it('propagates bulk notification failures to the enclosing invitation transactio
   await expect(
     service.inviteExisting('drop', ['C', 'D'], auth(), {})
   ).rejects.toThrow('Notification insert failed');
+});
+
+it('allows cancelled recipients again, creates a new invitation ID and preserves cancelled history', async () => {
+  const { db, service } = setup();
+  db.invitations.mockResolvedValue([
+    {
+      id: 'old',
+      profile_id: 'C',
+      status: 'CANCELLED',
+      created_at: Date.now() + 1000
+    }
+  ] as never);
+  await service.inviteExisting('drop', ['C'], auth(), {});
+  const notice = jest.mocked(userNotifier.notifyOfMemeCollaborations).mock
+    .calls[0][0][0];
+  expect(notice.data.invitation_id).not.toBe('old');
+  expect(db.query).toHaveBeenCalledWith(
+    'invite',
+    expect.stringContaining('insert into'),
+    expect.objectContaining({
+      id0: notice.data.invitation_id,
+      profileId0: 'C'
+    }),
+    expect.any(Object)
+  );
+  expect(db.query.mock.calls.some((call) => call[0] === 'respond')).toBe(false);
+});
+it('never resends a declined invitation and does not notify again', async () => {
+  const { db, service } = setup();
+  db.invitations.mockResolvedValue([{ profile_id: 'C', status: 'DECLINED' }]);
+  await expect(
+    service.inviteExisting('drop', ['C'], auth(), {})
+  ).rejects.toThrow('declined');
+  expect(userNotifier.notifyOfMemeCollaborations).not.toHaveBeenCalled();
+});
+it('counts only pending and accepted slots, allowing five after older cancellations and declines', async () => {
+  const { db, service } = setup();
+  db.invitations.mockResolvedValue(
+    Array.from({ length: 20 }, (_, i) => ({
+      profile_id: `old${i}`,
+      status: i % 2 ? 'CANCELLED' : 'DECLINED'
+    }))
+  );
+  await expect(
+    service.inviteExisting('drop', ['B', 'C', 'D', 'E', 'F'], auth(), {})
+  ).resolves.toHaveLength(5);
+});
+it('returns one current invitation per profile without disclosing private history to other viewers', async () => {
+  const { db, service } = setup();
+  db.invitations.mockResolvedValue([
+    { id: 'old', profile_id: 'C', status: 'CANCELLED', profile: { id: 'C' } },
+    { id: 'new', profile_id: 'C', status: 'PENDING', profile: { id: 'C' } }
+  ] as never);
+  expect(
+    (await service.state('drop', 'C', {})).invitations.map((item) => item.id)
+  ).toEqual(['new']);
+  expect(
+    (await service.state('drop', 'A', {})).invitations.map((item) => item.id)
+  ).toEqual(['new']);
+  expect((await service.state('drop', 'stranger', {})).invitations).toEqual([]);
 });
