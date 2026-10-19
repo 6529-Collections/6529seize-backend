@@ -130,6 +130,7 @@ import { ApiGlobalRepCategoryWaveContributorsPage } from '@/api/generated/models
 import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
+import { ApiJoinedWavesPage } from '@/api/generated/models/ApiJoinedWavesPage';
 import { ApiMarketBatchCapabilities } from '@/api/generated/models/ApiMarketBatchCapabilities';
 import { ApiMarketBatchPreflight } from '@/api/generated/models/ApiMarketBatchPreflight';
 import { ApiMarketBatchPreflightRequest } from '@/api/generated/models/ApiMarketBatchPreflightRequest';
@@ -3103,6 +3104,23 @@ export type GetActiveWaveVotesRequest = Request<
   ApiResponse<GetActiveWaveVotesResponse>,
   never,
   GetActiveWaveVotesQuery,
+  Record<string, never>
+>;
+
+export type GetJoinedWavesPathParams = Record<string, never>;
+
+export interface GetJoinedWavesQuery {
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetJoinedWavesResponse = ApiJoinedWavesPage;
+
+export type GetJoinedWavesRequest = Request<
+  GetJoinedWavesPathParams,
+  ApiResponse<GetJoinedWavesResponse>,
+  never,
+  GetJoinedWavesQuery,
   Record<string, never>
 >;
 
