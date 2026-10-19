@@ -16,6 +16,7 @@ import {
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
+import { reportLoopHealth } from '@/loop-health';
 import { computeCompetitionPhase } from './competition-phase';
 import {
   NativeCompetitionRuntimeRepository,
@@ -220,16 +221,24 @@ export class NativeCompetitionRuntimeService {
     now = Date.now(),
     timer
   }: { now?: number; timer?: Timer } = {}): Promise<void> {
-    await this.forEachNativeCompetition(timer, (competitionId, ctx) =>
-      this.processCompetition(competitionId, now, ctx)
+    const failed = await this.forEachNativeCompetition(
+      timer,
+      (competitionId, ctx) => this.processCompetition(competitionId, now, ctx)
     );
+    reportLoopHealth({
+      operation: 'native_execution',
+      pending: failed > 0,
+      recovery: 'automatic',
+      ...(failed ? {} : { progressAt: Math.floor(Date.now() / 1000) })
+    });
   }
 
   private async forEachNativeCompetition(
     timer: Timer | undefined,
     execute: (id: string, ctx: RequestContext) => Promise<void>
-  ): Promise<void> {
-    if (!this.features.isNativeCompetitionExecutionEnabled()) return;
+  ): Promise<number> {
+    if (!this.features.isNativeCompetitionExecutionEnabled()) return 0;
+    let failed = 0;
     let afterId = '';
     for (;;) {
       const ids = await this.repository.discoverCompetitions(afterId, 100, {
@@ -240,6 +249,7 @@ export class NativeCompetitionRuntimeService {
         try {
           await execute(id, { timer });
         } catch {
+          failed++;
           // Do not log signed payloads, user content or DB error values.
           this.logger.error('native_competition_execution_failed', {
             competition_id: id
@@ -248,6 +258,7 @@ export class NativeCompetitionRuntimeService {
       }
       afterId = ids[ids.length - 1];
     }
+    return failed;
   }
 
   public async processCompetition(

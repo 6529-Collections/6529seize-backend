@@ -70,6 +70,17 @@ import {
   ProbeTarget
 } from './probes.js';
 export { probeUrl } from './probes.js';
+import {
+  LOOP_EVENT_TYPE,
+  parseLoopObservation,
+  LoopObservation
+} from './loop-health.js';
+import {
+  monitorLoops,
+  policiesFor,
+  receiveLoopObservation,
+  receiveLoopThrottle
+} from './loop-monitor.js';
 
 const environment = (): Environment => {
   const value = setting('ENVIRONMENT');
@@ -175,6 +186,29 @@ export async function collect(
 ): Promise<void> {
   if (!list('SOURCE_ACCOUNTS').includes(event.account))
     throw new Error('UNAPPROVED_SOURCE');
+  if (event.source === '6529.ops' && event['detail-type'] === LOOP_EVENT_TYPE) {
+    const observation = parseLoopObservation(event.detail);
+    if (
+      !policiesFor(environment()).some(
+        (policy) =>
+          policy.service === observation.service &&
+          policy.operations.includes(observation.operation)
+      )
+    )
+      throw new Error('UNAPPROVED_LOOP_OPERATION');
+    if (
+      !(await admit({
+        environment: environment(),
+        service: observation.service
+      }))
+    ) {
+      await archive(observation, 'SOURCE_ADMISSION_BUDGET');
+      metric('AdmissionOverflow', 1);
+      return;
+    }
+    await receiveLoopObservation(observation, environment());
+    return;
+  }
   if (event.source === '6529.ops' && event['detail-type'] === EVENT_TYPE) {
     const alert = parseAlert(event.detail);
     if (
@@ -223,6 +257,21 @@ export async function collectAlarm(
     'platform';
   const alarmIdentity =
     typeof detail.alarmName === 'string' ? detail.alarmName : event.id;
+  const metadata = cloudWatchAlarmMetadata(detail);
+  if (
+    metadata?.namespace === 'AWS/Lambda' &&
+    metadata.metric === 'Throttles' &&
+    Object.keys(dimensions).length === 1 &&
+    policiesFor(environment()).some((policy) => policy.service === service)
+  ) {
+    await receiveLoopThrottle(
+      service,
+      state === 'ALARM',
+      Date.parse(event.time) / 1000,
+      `${event.account}:${event.region}:${alarmIdentity}`
+    );
+    return;
+  }
   const alert: Alert = {
     _type: EVENT_TYPE,
     eventId: `alarm:${event.id}`,
@@ -246,7 +295,7 @@ export async function collectAlarm(
 }
 
 export async function logs(event: CloudWatchLogsEvent): Promise<void> {
-  const alerts = logAlerts(
+  const alerts = logEnvelopes(
     event.awslogs.data,
     setting('SOURCE_ACCOUNT'),
     list('ALLOWED_LOG_GROUPS'),
@@ -259,7 +308,7 @@ export async function logs(event: CloudWatchLogsEvent): Promise<void> {
   });
   const entries = alerts.map((alert) => ({
     Source: '6529.ops',
-    DetailType: EVENT_TYPE,
+    DetailType: alert._type,
     EventBusName: bus,
     Detail: JSON.stringify(alert)
   }));
@@ -277,6 +326,17 @@ export function logAlerts(
   logGroups: string[],
   env: Environment
 ): Alert[] {
+  return logEnvelopes(encoded, account, logGroups, env).filter(
+    (event): event is Alert => event._type === EVENT_TYPE
+  );
+}
+
+export function logEnvelopes(
+  encoded: string,
+  account: string,
+  logGroups: string[],
+  env: Environment
+): (Alert | LoopObservation)[] {
   const payload = record(
     JSON.parse(
       gunzipSync(Buffer.from(encoded, 'base64'), {
@@ -293,17 +353,26 @@ export function logAlerts(
     throw new Error('UNAPPROVED_LOG_SOURCE');
   const service = payload.logGroup.replace(/^\/aws\/lambda\//, '');
   const rows = Array.isArray(payload.logEvents) ? payload.logEvents : [];
-  const alerts: Alert[] = [];
+  const alerts: (Alert | LoopObservation)[] = [];
   for (const raw of rows) {
     const row = record(raw);
     let alert: Alert;
     try {
       const decoded = record(JSON.parse(String(row.message)));
       // A canonical envelope wins over any unknown application-supplied message field.
-      const envelope = decoded._type === EVENT_TYPE ? decoded : decoded.message;
-      alert = parseAlert(
+      const envelope = [EVENT_TYPE, LOOP_EVENT_TYPE].includes(
+        String(decoded._type)
+      )
+        ? decoded
+        : decoded.message;
+      const input = record(
         typeof envelope === 'string' ? JSON.parse(envelope) : envelope
       );
+      if (input._type === LOOP_EVENT_TYPE) {
+        alerts.push(parseLoopObservation({ ...input, service }));
+        continue;
+      }
+      alert = parseAlert(input);
     } catch {
       continue;
     }
@@ -536,6 +605,7 @@ export async function probe(): Promise<void> {
     const targets = parseProbeTargets(process.env.PROBE_TARGETS ?? '[]');
     for (const target of targets) await probeTarget(target, now, observations);
     await webhookHealth(now);
+    await monitorLoops(environment(), now);
     await externalCheckIn(metricData.every((metric) => metric.Value < 180));
   } finally {
     await publishProbeObservations(observations);

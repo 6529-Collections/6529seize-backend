@@ -2110,7 +2110,8 @@ AWS-wide failures. Moderation evidence is excluded from this operational contrac
 Source log subscription filters retain their permission dependency and form one
 chain in ordinal logical-ID order. CloudFormation therefore updates them serially,
 avoiding a parallel burst against CloudWatch Logs subscription API limits while
-preserving filter identities, destinations and patterns. This increases source
+preserving filter identities and destinations; optional quoted terms accept both
+error and loop-health envelopes. This increases source
 stack update time; it does not rate-limit unrelated callers in the account/region.
 Selected serialized-worker throttle alarms, including release-note generation,
 require three breaching minutes out of five while invocation errors and OOM
@@ -2122,6 +2123,23 @@ detect sustained 30-minute backlog in either refresh queue and any visible
 dirty-refresh dead letter. Queue age is a transport guard, not proof of business
 completion. Protected alarm notifications include bounded infrastructure labels
 and numeric thresholds without forwarding free-form CloudWatch reasons.
+Background-worker throttle transitions now feed a shared impact evaluator instead
+of directly notifying through SNS. Its inventory is generated from existing
+schedules/SQS mappings; rate intervals at most five minutes with one reserved
+execution are marked as expected-overlap context. The existing source LogRelay
+also reconstructs finite `6529.ops.loop-health.v1` business observations. The
+normal collector binds service identity, shares its admission budget and stores
+monotonic observations in the existing receipt table. The existing one-minute
+Probe independently evaluates backlog, committed progress, telemetry freshness,
+recovery availability and decision deadline margins. It persists notification
+intent before enqueue and sends incident changes through the protected lane.
+Routine verified overlap has no incident or recovery. Missing business evidence
+produces explicit unconfirmed contention; invocation success is never a business
+recovery signal. Delegation checkpoint/stage observations and decision/outbox
+surveys are the initial adapters. Other scheduled/queued workers retain their
+independent error and queue protections while awaiting business adapters. No
+application schedules, timeouts, concurrency, memory or public API contracts
+change. See [processing-health policies and rollout](../ops/monitoring/README.md#background-processing-health).
 Three exact audited low-CPU scale-in controls instead produce sanitized,
 deterministically keyed S3 audit objects when trusted source identity, metric
 configuration, observed low-direction reason grammar and numeric evidence match.

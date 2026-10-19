@@ -461,7 +461,9 @@ export async function normalDeliverySlot(): Promise<void> {
   }
 }
 
-export async function admit(alert: Alert): Promise<boolean> {
+export async function admit(
+  alert: Pick<Alert, 'environment' | 'service'>
+): Promise<boolean> {
   const minute = Math.floor(Date.now() / 60000);
   try {
     await ddb.send(
