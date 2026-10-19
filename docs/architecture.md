@@ -1235,6 +1235,23 @@ engine. Both workers finish legacy wave processing before starting the native
 scan, so Main Stage decisions and leaderboard refreshes cannot be delayed by a
 large native backlog consuming the invocation. A failure in either engine is
 reported only after the other independent tasks have been attempted.
+Native vote saves, including migrated legacy rating requests, reconcile only
+the acting voter's current credit and validate the replacement vote inside the
+existing competition transaction. Vote state, aggregate runtime totals, history,
+metrics, notifications and durable vote events commit together. The save does
+not scan other voters or rebuild standings. Competition-wide credit
+reconciliation, time-weighted leaderboard snapshots and leaderboard events remain
+with `waveLeaderboardSnapshotterLoop` and `waveDecisionExecutionLoop`; standings
+can lag a confirmed vote until the next worker refresh. These existing workers
+must be healthy before deploying the API change. No schema, API contract,
+schedule or frontend deployment change is required.
+Native maintenance retains the competition transaction lock. WAVE credit checks
+batch identity and spending reads and only load individual votes for over-budget
+voters; DROP credit checks still reconcile each entry. Leaderboard upserts and
+runtime threshold updates use bounded batches of 100 entries on the same
+connection, retaining atomic scores, thresholds, cleanup and event publication.
+Each successful worker competition pass logs its operation and elapsed time,
+including lock acquisition and commit, independently of the detailed timer report.
 Native vote history, immutable decision voter snapshots and award
 rows remain separate from legacy tables. Per-entry aggregate votes must fit the
 safe-integer API range; an overflowing mutation rolls back its transaction.
