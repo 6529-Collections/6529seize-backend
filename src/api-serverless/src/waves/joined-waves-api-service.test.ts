@@ -167,3 +167,28 @@ it('rejects proxy access and page-size changes', async () => {
     service.findPage({ page_size: 30, cursor: first.next_cursor! }, context())
   ).rejects.toThrow('Page size cannot change');
 });
+
+it('bounds scans of heavily pruned snapshots and keeps later memberships reachable', async () => {
+  ids = Array.from({ length: 1300 }, (_, index) => `wave-${index}`);
+  joined = new Set(ids);
+  readable = new Set(ids);
+  let page = await service.findPage({ page_size: 20 }, context());
+  joined = new Set([ids[1200]]);
+  findIds.mockClear();
+  page = await service.findPage(
+    { page_size: 20, cursor: page.next_cursor! },
+    context()
+  );
+  expect(page.data).toEqual([]);
+  expect(decodeJoinedWaveCursor(page.next_cursor!).offset).toBe(520);
+  expect(findIds).toHaveBeenCalledTimes(10);
+  const actual: string[] = [];
+  while (page.next_cursor) {
+    page = await service.findPage(
+      { page_size: 20, cursor: page.next_cursor },
+      context()
+    );
+    actual.push(...page.data.map((wave) => wave.id));
+  }
+  expect(actual).toEqual([ids[1200]]);
+});

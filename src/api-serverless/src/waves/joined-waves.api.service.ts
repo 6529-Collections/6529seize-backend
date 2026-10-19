@@ -93,13 +93,12 @@ export class JoinedWavesApiService {
   ): Promise<{ waves: WaveEntity[]; offset: number }> {
     const waves: WaveEntity[] = [];
     let offset = start;
-    while (
-      offset < snapshot.waveIds.length &&
-      waves.length < snapshot.pageSize
-    ) {
+    // Pruned snapshots must not turn one page into hundreds of DB round-trips.
+    const scanEnd = Math.min(snapshot.waveIds.length, start + 500);
+    while (offset < scanEnd && waves.length < snapshot.pageSize) {
       const waveIds = snapshot.waveIds.slice(
         offset,
-        offset + Math.max(50, snapshot.pageSize)
+        Math.min(scanEnd, offset + Math.max(50, snapshot.pageSize))
       );
       const joinedIds = await this.wavesDb.findJoinedRootWaveIds(
         { identityId: profileId, eligibleGroups, waveIds },

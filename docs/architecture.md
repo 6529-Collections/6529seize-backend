@@ -72,7 +72,10 @@ returns 503, and an expired/unavailable continuation returns 410 for a coherent
 client restart. Existing `/v2/waves` page-number contracts remain unchanged.
 Snapshots have a 50,000-root capacity guard (about 2 MB of UUIDs per value);
 larger lists return 503 without publishing a partial list or cursor. The normal
-API request rate limit and fixed TTL also bound refresh storage lifetime.
+API rate-limiting middleware runs before the root router (`app.ts`), including
+this route; the fixed TTL bounds refresh storage lifetime. Each page scans at
+most 500 candidate IDs. A heavily pruned page can be empty with a non-null
+continuation, keeping later memberships reachable without an excessive query loop.
 Only positions strictly before the end of a snapshot are valid continuations.
 
 The frontend opts into this endpoint only for Joined, retains loaded rows on
