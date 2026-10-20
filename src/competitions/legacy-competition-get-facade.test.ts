@@ -102,8 +102,10 @@ describe('native-only permanent compatibility definitions', () => {
     for (const table of LEGACY_GET_SOURCE_TABLES) {
       const sql = legacyCompetitionGetViewDefinition(table);
       expect(sql).not.toMatch(
-        /information_schema|competition_migrations|competition_legacy_mirror_permits|union all/i
+        /information_schema|competition_migrations|competition_legacy_mirror_permits/i
       );
+      // Native competition and shared-hub policy projections may compose with
+      // UNION ALL; forbid the actual retired sources rather than SQL syntax.
       if (table !== 'waves' && table !== 'drops') {
         for (const source of LEGACY_GET_SOURCE_TABLES.filter(
           (source) => source !== 'waves' && source !== 'drops'
