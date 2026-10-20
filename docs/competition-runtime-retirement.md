@@ -100,10 +100,14 @@ retirement. Deploy that preparation before switching any reader.
    preservation during overlap. Report only field names and counts for
    failed parity; keep hub identities and setting values out of workflow logs.
    Then invoke the explicit `competition-runtime-retirement` scope. It requires all
-   live original primaries to be native and the old execution-effect queue empty,
-   rechecks history and hub-configuration parity, preserves weighted snapshot publication, disables only
+   live original primaries to be native and the old execution-effect queue empty.
+   During the initial or partial switch it rechecks history and hub-configuration
+   parity, preserves weighted snapshot publication, disables only
    the frozen old capture triggers and installs explicit native-only views.
    Ordinary full/scheduled schema work never performs this transfer or retirement.
+   An already-retired retry maintains native views and old-capture disablement;
+   it never reruns source-history transfer or compares live hub policies against
+   obsolete physical settings.
    Ordinary full sync can maintain an already native facade but cannot perform
    its initial switch. Completion requires every compatibility view to use native
    dependencies; a partial installation is retried before deploying native-only
@@ -159,8 +163,15 @@ columns, then verifies public projections, voting/history/activity and idempoten
 decisions. This destructive fixture is restricted to automatically discarded Jest
 databases; it is never an operator cleanup command.
 
-Preparation is additive and compatible with old readers. After native-only writes
-begin, returning to an old reader/mirror build requires an explicit compatibility
+Preparation is additive and compatible with old readers. If hub preparation or
+the initial retirement fails, stop dependent deployments and keep the compatible
+prepared API and temporary hub captures active while fixing the development
+branch. Preparation can be retried only before retirement; after native cutover,
+retry the guarded retirement or finalization without reimporting old settings.
+Finalization validates native views, current policies and the entire recognized
+capture registry before dropping any capture; it is idempotent when none remain.
+Always satisfy the API health and old-invocation drain preconditions before its
+first dispatch. After native-only writes begin, returning to an old reader/mirror build requires an explicit compatibility
 review; old physical tables no longer receive current writes. Roll back through a
 compatible reviewed source while preserving native ownership, score history,
 command/signature receipts and accepted effects. Do not replay starts, transitions,
