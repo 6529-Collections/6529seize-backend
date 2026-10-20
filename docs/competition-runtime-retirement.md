@@ -16,6 +16,13 @@ notifications, MAIN_STAGE/CURATION/QUORUM, signatures and proxy attribution rema
 New hubs always create CHAT waves. Existing RANK/APPROVE physical types remain
 updatable and their wire classifications come from the compatibility views.
 
+Shared hubs retain their accepted participation and voting settings in typed
+`hub_participation_config` and `hub_voting_config` on the existing wave domain.
+Current creation, editing and GETs use that configuration, including independent
+nullable scopes, credit settings, periods, terms and required content. Existing
+wave archive rows retain the corresponding configuration snapshots. Original
+competition projections continue to use their immutable native competition.
+
 AGGREGATE and VOTER history observations retain their independent source IDs,
 times and values, including historical inconsistencies. No timestamp pairing or
 current-vote reconstruction is permitted. Rolling writers attach the accepted
@@ -84,10 +91,17 @@ retirement. Deploy that preparation before switching any reader.
    are excluded from native voting, ranking, decisions, claims and listings.
 5. Merge final retirement into current `1a-staging`. Deploy `dbMigrationsLoop`
    with `db_schema_scope=competition-runtime-schema`: synchronize the retained
-   registry/additive final columns without replacing views prematurely. Then
-   invoke the explicit `competition-runtime-retirement` scope. It requires all
+   registry/additive final columns without replacing views prematurely. Invoke
+   `wave-hub-configuration-preparation` next. It installs narrowly named
+   temporary captures for wave/archive and credit-NFT writes, transfers accepted hub
+   configuration in bounded batches and requires exact parity. Captures keep
+   prepared API writes current during the remaining rolling deployment and retain
+   explicit native configuration writes, including the old API readers' optional-field
+   preservation during overlap. Report only field names and counts for
+   failed parity; keep hub identities and setting values out of workflow logs.
+   Then invoke the explicit `competition-runtime-retirement` scope. It requires all
    live original primaries to be native and the old execution-effect queue empty,
-   rechecks history parity, preserves weighted snapshot publication, disables only
+   rechecks history and hub-configuration parity, preserves weighted snapshot publication, disables only
    the frozen old capture triggers and installs explicit native-only views.
    Ordinary full/scheduled schema work never performs this transfer or retirement.
    Ordinary full sync can maintain an already native facade but cannot perform
@@ -110,7 +124,15 @@ retirement. Deploy that preparation before switching any reader.
    dependencies and permitted environments against `src/config/deploy-services.json`
    and the final call graph. The prepared API's native-authoritative mutation path
    is essential throughout this rolling overlap.
-7. Only after backend build/artifact/version/health verification, merge frontend
+7. After the final API's build, artifact, exact version and health checks pass,
+   wait for every replaced prepared API invocation to drain using the previous
+   configured timeout and observed execution evidence. Invoke
+   `wave-hub-configuration-finalize` to disable the temporary hub captures.
+   Require complete native views and valid current native hub configuration;
+   retries must never reimport obsolete settings after the native switch. The
+   completed application operates with these captures disabled and the obsolete
+   physical columns absent in disposable acceptance tests.
+8. Only after backend build/artifact/version/health verification, merge frontend
    into current staging. Wait for `Web Deploy - STAGING` success and verify current
    original-primary plus native sibling flows, special capabilities, creation,
    voting/My Votes, leaderboards/winners and administration. This retirement's

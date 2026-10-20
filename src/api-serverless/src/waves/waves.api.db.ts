@@ -92,12 +92,22 @@ import { compareCacheStrings } from './wave-cache-key';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 import { DbPoolName } from '@/db-query.options';
+import { serializeWaveHubConfiguration } from '@/waves/wave-hub-configuration';
 import {
   withoutLegacyCompetitionGetFacade,
   legacyGetView
 } from '@/competitions/legacy-competition-get-facade';
 
 const logger = Logger.get('WAVES_API_DB');
+
+type WaveHubConfiguration = Pick<
+  WaveEntity,
+  'hub_participation_config' | 'hub_voting_config'
+>;
+
+type RawWaveHubConfiguration = {
+  [Field in keyof WaveHubConfiguration]: WaveHubConfiguration[Field] | string;
+};
 
 type RawWaveEntity = Omit<
   WaveEntity,
@@ -987,6 +997,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   private parseWaveEntity(entity: RawWaveEntity): WaveEntity {
     return {
       ...entity,
+      participation_signature_required: Boolean(
+        entity.participation_signature_required
+      ),
+      voting_signature_required: Boolean(entity.voting_signature_required),
+      forbid_negative_votes: Boolean(entity.forbid_negative_votes),
       participation_required_media: JSON.parse(
         entity.participation_required_media
       ),
@@ -1198,7 +1213,45 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  public async insertWave(wave: InsertWaveEntity, ctx: RequestContext) {
+  public async findWaveHubConfigurationForUpdate(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<WaveHubConfiguration> {
+    if (!ctx.connection)
+      throw new Error(
+        'findWaveHubConfigurationForUpdate requires a connection'
+      );
+    const timerKey = `${this.constructor.name}->findWaveHubConfigurationForUpdate`;
+    ctx.timer?.start(timerKey);
+    try {
+      const configuration = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.oneOrNull<RawWaveHubConfiguration>(
+          `select hub_participation_config,hub_voting_config from ${WAVES_TABLE} where id=:waveId for update`,
+          { waveId },
+          { wrappedConnection: ctx.connection }
+        )
+      );
+      if (!configuration) throw new Error(`Wave ${waveId} no longer exists`);
+      return {
+        hub_participation_config:
+          typeof configuration.hub_participation_config === 'string'
+            ? JSON.parse(configuration.hub_participation_config)
+            : configuration.hub_participation_config,
+        hub_voting_config:
+          typeof configuration.hub_voting_config === 'string'
+            ? JSON.parse(configuration.hub_voting_config)
+            : configuration.hub_voting_config
+      };
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
+  public async insertWave(
+    wave: InsertWaveEntity,
+    ctx: RequestContext,
+    options?: { preserveHubConfigurationFrom: WaveHubConfiguration }
+  ) {
     const connection = ctx.connection;
     if (!connection) {
       throw new Error('insertWave requires a connection');
@@ -1222,12 +1275,30 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       'chat_replies_open',
       'chat_replies_collapsed',
       'admin_drop_deletion_enabled',
-      'is_direct_message'
+      'is_direct_message',
+      'hub_participation_config',
+      'hub_voting_config'
     ];
+    const preserved = options?.preserveHubConfigurationFrom;
+    const parameters = {
+      ...wave,
+      ...(preserved
+        ? {
+            hub_participation_config:
+              preserved.hub_participation_config == null
+                ? null
+                : JSON.stringify(preserved.hub_participation_config),
+            hub_voting_config:
+              preserved.hub_voting_config == null
+                ? null
+                : JSON.stringify(preserved.hub_voting_config)
+          }
+        : serializeWaveHubConfiguration(wave))
+    };
     if (wave.serial_no !== null) columns.push('serial_no');
     await this.db.execute(
       `insert into ${WAVES_TABLE} (${columns.join(',')}) values (${columns.map((column) => `:${column}`).join(',')})`,
-      wave,
+      parameters,
       { wrappedConnection: connection }
     );
     const serial = wave.serial_no ?? (await this.getLastInsertId(connection));
@@ -1239,7 +1310,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `insert into ${WAVES_ARCHIVE_TABLE} (${archiveColumns.join(',')}) values (${archiveColumns.map((column) => `:${column}`).join(',')})`,
       {
-        ...wave,
+        ...parameters,
         serial_no: serial,
         archival_entry_created_at: Time.currentMillis()
       },
@@ -2600,28 +2671,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     forcePool?: DbPoolName
   ): Promise<WaveEntity | null> {
     return this.db
-      .oneOrNull<WaveEntity>(
+      .oneOrNull<RawWaveEntity>(
         `
         select * from ${legacyGetView(WAVES_TABLE)} where id = :wave_id`,
         { wave_id },
         { wrappedConnection: connection, forcePool }
       )
-      .then((it) =>
-        it
-          ? {
-              ...it,
-              participation_required_media: JSON.parse(
-                it.participation_required_media as any
-              ),
-              participation_required_metadata: JSON.parse(
-                it.participation_required_metadata as any
-              ),
-              decisions_strategy: it.decisions_strategy
-                ? JSON.parse(it.decisions_strategy as any)
-                : null
-            }
-          : null
-      );
+      .then((it) => (it ? this.parseWaveEntity(it) : null));
   }
 
   async deleteWave(waveId: string, ctx: RequestContext) {

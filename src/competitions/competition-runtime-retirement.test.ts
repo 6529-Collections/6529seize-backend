@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { SqlExecutor } from '@/sql-executor';
+import { isCompetitionRuntimeRetired } from './competition-runtime-retirement-state';
+import { assertWaveHubConfigurationParity } from '@/waves/wave-hub-configuration-preparation';
 import { transferCompetitionRetirementHistory } from './competition-retirement-history';
 import {
   LEGACY_GET_SOURCE_TABLES,
@@ -14,6 +16,12 @@ import {
 jest.mock('./competition-retirement-history', () => ({
   transferCompetitionRetirementHistory: jest.fn()
 }));
+jest.mock('./competition-runtime-retirement-state', () => ({
+  isCompetitionRuntimeRetired: jest.fn()
+}));
+jest.mock('@/waves/wave-hub-configuration-preparation', () => ({
+  assertWaveHubConfigurationParity: jest.fn()
+}));
 jest.mock('./competition-schema', () => ({
   withCompetitionSchemaConnection: jest.fn(
     async (
@@ -24,7 +32,13 @@ jest.mock('./competition-schema', () => ({
 }));
 
 describe('explicit competition runtime retirement safety', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.mocked(isCompetitionRuntimeRetired).mockResolvedValue(false);
+    jest
+      .mocked(assertWaveHubConfigurationParity)
+      .mockResolvedValue({ waves: 0, archives: 0 });
+  });
 
   it('fails before copying or changing views when a live primary is missing native ownership', async () => {
     const execute = jest.fn().mockResolvedValue([{ id: 'untransferred-wave' }]);
@@ -50,21 +64,23 @@ describe('explicit competition runtime retirement safety', () => {
   });
 
   it('rejects noncanonical retained chat values before changing their permanent GET projection', async () => {
-    const execute = jest
-      .fn()
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ id: 'historic-chat-settings' }]);
+    const execute = jest.fn().mockResolvedValue([]);
+    jest
+      .mocked(assertWaveHubConfigurationParity)
+      .mockRejectedValueOnce(
+        new Error(
+          'Native shared-hub configuration parity failed: [{"table":"waves","is_direct_message":0,"field":"voting_credit_type","count":1}]'
+        )
+      );
     await expect(
       retireLegacyCompetitionRuntime({ execute } as unknown as SqlExecutor)
-    ).rejects.toThrow(
-      'Retained chat configuration requires native compatibility preservation'
-    );
+    ).rejects.toThrow('Native shared-hub configuration parity failed');
     expect(transferCompetitionRetirementHistory).not.toHaveBeenCalled();
-    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
   it('does not reimport retained sources after every native view has switched', async () => {
+    jest.mocked(isCompetitionRuntimeRetired).mockResolvedValue(true);
     const execute = jest.fn(async (sql: string) =>
       sql.includes('information_schema.VIEWS')
         ? LEGACY_GET_SOURCE_TABLES.map((table) => ({
@@ -83,6 +99,10 @@ describe('explicit competition runtime retirement safety', () => {
     expect(result.already_retired).toBe(true);
     expect(result.history).toEqual([]);
     expect(transferCompetitionRetirementHistory).not.toHaveBeenCalled();
+    expect(assertWaveHubConfigurationParity).not.toHaveBeenCalled();
+    expect(execute.mock.calls.some(([sql]) => sql.includes('w.type'))).toBe(
+      false
+    );
     expect(
       execute.mock.calls.filter(([sql]) => sql.startsWith('create or replace'))
     ).toHaveLength(LEGACY_GET_SOURCE_TABLES.length);

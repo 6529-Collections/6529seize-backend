@@ -9,12 +9,9 @@ import { transferRetainedCompetitionDistributions } from './competition-retireme
 import { transferRetainedCompetitionLeaderboardPublication } from './competition-retirement-leaderboard';
 import { withCompetitionSchemaConnection } from './competition-schema';
 import { isCompetitionRuntimeRetired } from './competition-runtime-retirement-state';
-import {
-  installLegacyCompetitionGetFacade,
-  RETIRED_WAVE_COMPETITION_COLUMNS,
-  CHAT_WAVE_COMPATIBILITY_DEFAULTS
-} from './legacy-competition-get-facade';
+import { installLegacyCompetitionGetFacade } from './legacy-competition-get-facade';
 import type { SqlExecutor } from '@/sql-executor';
+import { assertWaveHubConfigurationParity } from '@/waves/wave-hub-configuration-preparation';
 
 // The old trigger installer is retired. Only exact names from its frozen v1
 // namespace can be disabled here; unrelated application triggers are preserved.
@@ -80,6 +77,17 @@ export async function disableRetiredCompetitionCapture(
 /** Explicit one-time transition, never invoked by ordinary API/workers or sync.
  * Existing rows and schema remain intact for the separate physical retirement. */
 export async function retireLegacyCompetitionRuntime(db: SqlExecutor) {
+  if (await isCompetitionRuntimeRetired(db)) {
+    const disabledTriggers = await disableRetiredCompetitionCapture(db);
+    await installLegacyCompetitionGetFacade(db);
+    return {
+      already_retired: true,
+      history: [],
+      distribution_history: [],
+      leaderboard_publication: [],
+      disabled_triggers: disabledTriggers
+    };
+  }
   const unmigrated = await db.execute<{ id: string }>(
     `select w.id from ${WAVES_TABLE} w left join ${COMPETITIONS_TABLE} c on c.wave_id=w.id and c.legacy_wave_id=w.id where w.type in ('RANK','APPROVE') and (c.id is null or c.storage_mode<>'NATIVE') limit 1`,
     {}
@@ -94,33 +102,9 @@ export async function retireLegacyCompetitionRuntime(db: SqlExecutor) {
     throw new Error(
       'Drain pending legacy execution effects before retiring runtime'
     );
-  // Existing CHAT data must already match the native shared-hub domain. Abort
-  // on historical drift rather than silently replace accepted public values or
-  // introduce a permanent mirror of discarded competition configuration.
-  const chatDrift = await db.execute<{ id: string }>(
-    `select w.id from ${WAVES_TABLE} w left join ${COMPETITIONS_TABLE} c
-     on c.wave_id=w.id and c.legacy_wave_id=w.id and c.storage_mode='NATIVE'
-     where w.type='CHAT' and c.id is null and (${RETIRED_WAVE_COMPETITION_COLUMNS.map(
-       (column) =>
-         `not(w.\`${column}\` <=> ${CHAT_WAVE_COMPATIBILITY_DEFAULTS[column] ?? 'null'})`
-     ).join(' or ')}) limit 1`,
-    {}
-  );
-  if (chatDrift.length)
-    throw new Error(
-      'Retained chat configuration requires native compatibility preservation before retiring'
-    );
-  if (await isCompetitionRuntimeRetired(db)) {
-    const disabledTriggers = await disableRetiredCompetitionCapture(db);
-    await installLegacyCompetitionGetFacade(db);
-    return {
-      already_retired: true,
-      history: [],
-      distribution_history: [],
-      leaderboard_publication: [],
-      disabled_triggers: disabledTriggers
-    };
-  }
+  // Accepted CHAT policies have a live native shared-hub home before any view
+  // changes. This comparison fails with field/count-only diagnostics.
+  await assertWaveHubConfigurationParity(db);
   const history = await transferCompetitionRetirementHistory(db);
   const distributionHistory =
     await transferRetainedCompetitionDistributions(db);
