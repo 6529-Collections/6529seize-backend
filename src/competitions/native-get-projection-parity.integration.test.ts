@@ -39,6 +39,7 @@ import { competitionRepository } from './competition.repository';
 import { DropVotingDb } from '@/api/drops/drop-voting.db';
 import { DropsDb, LeaderboardSort } from '@/drops/drops.db';
 import { PageSortDirection } from '@/api/page-request';
+import { waveHubConfigurationFromWave } from '@/waves/wave-hub-configuration';
 
 const primaryWave = aWave(
   {
@@ -144,6 +145,17 @@ async function insert(table: string, rows: Record<string, unknown>[]) {
   );
 }
 function sorted(rows: unknown[]): unknown[] {
+  // These additive live native policy fields did not exist in the frozen
+  // schema. Every original projection column remains compared exactly.
+  const originalRows = rows.map((row) =>
+    Object.fromEntries(
+      Object.entries(row as Record<string, unknown>).filter(
+        ([column]) =>
+          column !== 'hub_participation_config' &&
+          column !== 'hub_voting_config'
+      )
+    )
+  );
   const canonical = (row: unknown) =>
     JSON.stringify(
       Object.fromEntries(
@@ -152,7 +164,7 @@ function sorted(rows: unknown[]): unknown[] {
         )
       )
     );
-  return [...rows].sort((left, right) =>
+  return originalRows.sort((left, right) =>
     canonical(left).localeCompare(canonical(right))
   );
 }
@@ -1027,6 +1039,190 @@ describeWithSeed(
       expect(await voting.getWeightedDropRates(orphans, {})).toEqual(
         originalRates!
       );
+    });
+
+    it('retains the frozen original null-string semantics while preserving literal strings from shared CHAT policies', async () => {
+      await sqlExecutor.execute(
+        `UPDATE ${tables.COMPETITIONS_TABLE} SET participation_config=JSON_SET(participation_config,'$.terms','null'),
+         voting_config=JSON_SET(voting_config,'$.credit_type','REP','$.credit_category','null') WHERE id=:id`,
+        { id }
+      );
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET hub_participation_config=JSON_OBJECT('terms','divergent hub terms'),
+         hub_voting_config=JSON_OBJECT('credit_category','divergent hub category') WHERE id=:waveId`,
+        { waveId: primaryWave.id }
+      );
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET participation_terms='null',voting_credit_category='null',
+         hub_participation_config=JSON_SET(hub_participation_config,'$.terms','null'),
+         hub_voting_config=JSON_SET(hub_voting_config,'$.credit_category','null') WHERE id=:waveId`,
+        { waveId: chatWave.id }
+      );
+      const read = (view: string) =>
+        sqlExecutor.execute(
+          `SELECT id,participation_terms,voting_credit_category FROM ${view}
+         WHERE id IN (:waveIds) ORDER BY id`,
+          { waveIds: [primaryWave.id, chatWave.id] }
+        );
+      const original = await read(frozenNativeGetView(tables.WAVES_TABLE));
+      expect(original).toEqual([
+        {
+          id: chatWave.id,
+          participation_terms: 'null',
+          voting_credit_category: 'null'
+        },
+        {
+          id: primaryWave.id,
+          participation_terms: null,
+          voting_credit_category: null
+        }
+      ]);
+      expect(await read(legacyGetView(tables.WAVES_TABLE))).toEqual(original);
+      await sqlExecutor.execute(
+        `UPDATE ${tables.COMPETITIONS_TABLE} SET participation_config=JSON_SET(participation_config,'$.terms',CAST('null' AS JSON)),
+         voting_config=JSON_SET(voting_config,'$.credit_category',CAST('null' AS JSON)) WHERE id=:id`,
+        { id }
+      );
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET participation_terms=NULL,voting_credit_category=NULL,
+         hub_participation_config=JSON_SET(hub_participation_config,'$.terms',CAST('null' AS JSON)),
+         hub_voting_config=JSON_SET(hub_voting_config,'$.credit_category',CAST('null' AS JSON)) WHERE id=:waveId`,
+        { waveId: chatWave.id }
+      );
+      expect(await read(legacyGetView(tables.WAVES_TABLE))).toEqual(
+        await read(frozenNativeGetView(tables.WAVES_TABLE))
+      );
+    });
+
+    it('projects overlapping original-primary and CHAT credit NFTs once per wave in frozen order without exposing sibling or obsolete source NFTs', async () => {
+      const shared = {
+        contract: '0x00000000000000000000000000000000000000a1',
+        token_id: 7
+      };
+      const chatOnly = {
+        contract: '0x00000000000000000000000000000000000000a0',
+        token_id: 3
+      };
+      const hidden = {
+        contract: '0x00000000000000000000000000000000000000ff',
+        token_id: 99
+      };
+      for (const { wave, nfts } of [
+        { wave: primaryWave, nfts: [shared, hidden] },
+        { wave: chatWave, nfts: [shared, chatOnly] }
+      ])
+        await sqlExecutor.execute(
+          `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=CAST(:policy AS JSON) WHERE id=:waveId`,
+          {
+            waveId: wave.id,
+            policy: JSON.stringify({
+              ...waveHubConfigurationFromWave(wave).voting,
+              credit_nfts: nfts
+            })
+          }
+        );
+      await sqlExecutor.execute(
+        `UPDATE ${tables.COMPETITIONS_TABLE} SET voting_config=JSON_SET(voting_config,'$.credit_nfts',CAST(:nfts AS JSON)) WHERE id=:sibling`,
+        { sibling, nfts: JSON.stringify([shared, hidden]) }
+      );
+      await insert(tables.WAVE_VOTING_CREDIT_NFTS_TABLE, [
+        { wave_id: primaryWave.id, ...hidden },
+        { wave_id: chatWave.id, ...shared },
+        { wave_id: chatWave.id, ...chatOnly }
+      ]);
+      const read = (view: string) =>
+        sqlExecutor.execute(
+          `SELECT * FROM ${view} ORDER BY wave_id,contract,token_id`
+        );
+      const expected = await read(
+        frozenNativeGetView(tables.WAVE_VOTING_CREDIT_NFTS_TABLE)
+      );
+      expect(expected).toEqual([
+        { wave_id: chatWave.id, ...chatOnly },
+        { wave_id: chatWave.id, ...shared },
+        {
+          wave_id: primaryWave.id,
+          contract: '0x0000000000000000000000000000000000000002',
+          token_id: 19
+        },
+        { wave_id: primaryWave.id, ...shared }
+      ]);
+      const nativeView = legacyGetView(tables.WAVE_VOTING_CREDIT_NFTS_TABLE);
+      expect(await read(nativeView)).toEqual(expected);
+      await insert(tables.WAVE_VOTING_CREDIT_NFTS_TABLE, [
+        { wave_id: chatWave.id, ...hidden }
+      ]);
+      expect(
+        await read(frozenNativeGetView(tables.WAVE_VOTING_CREDIT_NFTS_TABLE))
+      ).toHaveLength(expected.length + 1);
+      expect(await read(nativeView)).toEqual(expected);
+    });
+
+    it('reads only native CHAT NFTs after cutover when physical and JSON sets are disjoint, cleared or absent', async () => {
+      const nativeNfts = JSON.stringify([
+        {
+          contract: '0x00000000000000000000000000000000000000c1',
+          token_id: 11
+        }
+      ]);
+      const setNativeNfts = (nfts: string) =>
+        sqlExecutor.execute(
+          `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=JSON_SET(hub_voting_config,'$.credit_nfts',CAST(:nfts AS JSON)) WHERE id=:waveId`,
+          { nfts, waveId: chatWave.id }
+        );
+      await setNativeNfts(nativeNfts);
+      await insert(tables.WAVE_VOTING_CREDIT_NFTS_TABLE, [
+        {
+          wave_id: chatWave.id,
+          contract: '0x00000000000000000000000000000000000000d1',
+          token_id: 22
+        }
+      ]);
+      const read = (view: string) =>
+        sqlExecutor.execute(
+          `SELECT * FROM ${view} WHERE wave_id=:waveId ORDER BY contract,token_id`,
+          { waveId: chatWave.id }
+        );
+      const frozenView = frozenNativeGetView(
+        tables.WAVE_VOTING_CREDIT_NFTS_TABLE
+      );
+      const nativeView = legacyGetView(tables.WAVE_VOTING_CREDIT_NFTS_TABLE);
+      expect(await read(frozenView)).toEqual([
+        {
+          wave_id: chatWave.id,
+          contract: '0x00000000000000000000000000000000000000d1',
+          token_id: 22
+        }
+      ]);
+      expect(await read(nativeView)).toEqual([
+        {
+          wave_id: chatWave.id,
+          contract: '0x00000000000000000000000000000000000000c1',
+          token_id: 11
+        }
+      ]);
+      await setNativeNfts('[]');
+      expect(await read(nativeView)).toEqual([]);
+      expect(await read(frozenView)).toEqual([
+        {
+          wave_id: chatWave.id,
+          contract: '0x00000000000000000000000000000000000000d1',
+          token_id: 22
+        }
+      ]);
+      await setNativeNfts(nativeNfts);
+      await sqlExecutor.execute(
+        `DELETE FROM ${tables.WAVE_VOTING_CREDIT_NFTS_TABLE} WHERE wave_id=:waveId`,
+        { waveId: chatWave.id }
+      );
+      expect(await read(nativeView)).toEqual([
+        {
+          wave_id: chatWave.id,
+          contract: '0x00000000000000000000000000000000000000c1',
+          token_id: 11
+        }
+      ]);
+      expect(await read(frozenView)).toEqual([]);
     });
 
     it('keeps observable case/accent filtering and ordering on native outcome text and NFT addresses', async () => {

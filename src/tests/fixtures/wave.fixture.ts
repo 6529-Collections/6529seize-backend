@@ -8,6 +8,7 @@ import { Time } from '../../time';
 import { randomUUID } from 'node:crypto';
 import { Seed } from '../_setup/seed';
 import { WAVES_TABLE } from '@/constants';
+import { serializeWaveHubConfiguration } from '@/waves/wave-hub-configuration';
 
 type BaseWave = Omit<WaveEntity, 'serial_no' | 'id' | 'name'>;
 const aBaseWave: BaseWave = {
@@ -70,10 +71,25 @@ export function aWave(
     id: randomUUID(),
     name: randomUUID()
   };
+  const properties = { ...aBaseWave, ...waveProps };
+  const configuration =
+    properties.type === WaveType.CHAT
+      ? (serializeWaveHubConfiguration(properties) as unknown as Pick<
+          WaveEntity,
+          'hub_participation_config' | 'hub_voting_config'
+        >)
+      : {};
   return {
     ...aBaseWave,
     ...key,
     ...waveProps,
+    ...configuration,
+    ...(waveProps.hub_participation_config !== undefined
+      ? { hub_participation_config: waveProps.hub_participation_config }
+      : {}),
+    ...(waveProps.hub_voting_config !== undefined
+      ? { hub_voting_config: waveProps.hub_voting_config }
+      : {}),
     participation_required_media: JSON.stringify(
       waveProps.participation_required_media ??
         aBaseWave.participation_required_media
