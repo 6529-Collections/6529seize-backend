@@ -1109,7 +1109,9 @@ Competition storage and execution ownership are explicit per competition.
 Legacy-primary mappings keep existing decision and leaderboard workers active;
 native execution additionally requires its global kill switch and is disabled
 by default. `dbMigrationsLoop` creates the additive competition/read-model
-tables and backfills stable legacy mappings before API or worker deployments.
+tables before API or worker deployments. Legacy wave writes maintain stable
+per-wave mappings; migration and scheduled maintenance invocations do not scan
+legacy waves or backfill mappings.
 The independent unified-read, native-write, native-execution, native-hub, and
 sampled-shadow flags default off. Shadow observations persist only canonical
 hashes and identifiers, never vote/signature/private payloads. Sampled legacy

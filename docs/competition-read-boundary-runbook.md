@@ -31,17 +31,19 @@ execution feature is also enabled.
 
 Deploy in this order:
 
-1. `dbMigrationsLoop`, which creates the additive tables and idempotently
-   establishes the immutable legacy mappings.
+1. `dbMigrationsLoop`, which creates the additive tables. Legacy wave writes
+   maintain their immutable primary mappings; the migration Lambda does not
+   backfill mappings or refresh configured capability assignments.
 2. Workers that consult competition routing, while native execution remains
    disabled.
 3. The API, while unified reads and shadow comparison remain disabled.
 4. A sampled shadow-read rollout only after the schema and API are healthy.
 
-Verify that the migration Lambda completes, repeated backfill reports no new
-mappings, every non-chat wave has exactly one `legacy_wave_id` mapping, and chat
-waves have none. Confirm existing wave, drop, vote, leaderboard, decision, and
-outcome health before increasing a shadow sample.
+Verify that the migration Lambda completes and that existing non-chat waves
+have exactly one `legacy_wave_id` mapping and chat waves have none. A missing
+mapping requires investigation; rerunning the migration Lambda will not create
+it. Confirm existing wave, drop, vote, leaderboard, decision, and outcome health
+before increasing a shadow sample.
 
 Parity observations contain only route identifiers, comparison categories, and
 canonical hashes. Query mismatches by `category`, `competition_id`, and

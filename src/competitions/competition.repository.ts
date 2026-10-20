@@ -591,44 +591,6 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     return inserted;
   }
 
-  public async backfillLegacyMappings(
-    ctx: RequestContext,
-    batchSize = 250
-  ): Promise<number> {
-    let inserted = 0;
-    while (true) {
-      const rows = await this.db.execute<LegacyWaveRecord>(
-        `select w.* from ${WAVES_TABLE} w
-         left join ${COMPETITIONS_TABLE} c on c.legacy_wave_id = w.id
-         where w.type in (:types) and c.id is null
-         order by w.serial_no asc limit :batchSize`,
-        {
-          types: [WaveType.RANK, WaveType.APPROVE],
-          batchSize
-        },
-        dbOptions(ctx)
-      );
-      if (!rows.length) break;
-      const applyBatch = async (batchCtx: RequestContext): Promise<number> => {
-        let batchInserted = 0;
-        for (const row of rows) {
-          if (await this.ensureLegacyMappingForWave(row, batchCtx)) {
-            batchInserted++;
-          }
-        }
-        return batchInserted;
-      };
-      inserted += ctx.connection
-        ? await applyBatch(ctx)
-        : await this.executeNativeQueriesInTransaction((connection) =>
-            applyBatch({ ...ctx, connection })
-          );
-      if (rows.length < batchSize) break;
-    }
-    await this.ensureConfiguredLegacyCapabilities(ctx);
-    return inserted;
-  }
-
   public parseCompetitionRecord(record: CompetitionRecord): CompetitionRecord {
     return {
       ...record,
@@ -1607,22 +1569,6 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
         },
         dbOptions(ctx)
       );
-    }
-  }
-
-  private async ensureConfiguredLegacyCapabilities(
-    ctx: RequestContext
-  ): Promise<void> {
-    for (const mapping of LEGACY_CAPABILITY_ENV) {
-      const waveId = env.getStringOrNull(mapping.envName);
-      if (!waveId) continue;
-      const record = await this.db.oneOrNull<CompetitionRoutingRecord>(
-        `select id, wave_id, legacy_wave_id, storage_mode, execution_mode
-         from ${COMPETITIONS_TABLE} where legacy_wave_id = :waveId`,
-        { waveId },
-        dbOptions(ctx)
-      );
-      if (record) await this.ensureLegacyCapabilities(waveId, record.id, ctx);
     }
   }
 
