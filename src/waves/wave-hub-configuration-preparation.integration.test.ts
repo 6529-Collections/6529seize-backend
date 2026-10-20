@@ -479,6 +479,32 @@ describeWithSeed(
       await sqlExecutor.execute(
         'DROP TRIGGER temporary_wave_hub_configuration_unrecognized'
       );
+      const captureName = 'temporary_wave_hub_configuration_wave_update';
+      const original = await sqlExecutor.oneOrNull<{ body: string }>(
+        `SELECT ACTION_STATEMENT AS body FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=database() AND TRIGGER_NAME=:name`,
+        { name: captureName }
+      );
+      expect(original).not.toBeNull();
+      await sqlExecutor.execute(`DROP TRIGGER ${captureName}`);
+      await sqlExecutor.execute(
+        `CREATE TRIGGER ${captureName} BEFORE UPDATE ON ${tables.WAVES_TABLE} FOR EACH ROW SET NEW.name=NEW.name`
+      );
+      try {
+        await expect(
+          finalizeWaveHubConfigurationCapture(sqlExecutor)
+        ).rejects.toThrow('Unrecognized temporary');
+        const [{ remaining }] = await sqlExecutor.execute<{
+          remaining: number;
+        }>(
+          "SELECT count(*) AS remaining FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=database() AND TRIGGER_NAME LIKE 'temporary_wave_hub_configuration_%'"
+        );
+        expect(Number(remaining)).toBe(10);
+      } finally {
+        await sqlExecutor.execute(`DROP TRIGGER ${captureName}`);
+        await sqlExecutor.execute(
+          `CREATE TRIGGER ${captureName} BEFORE UPDATE ON ${tables.WAVES_TABLE} FOR EACH ROW ${original!.body}`
+        );
+      }
       expect(await finalizeWaveHubConfigurationCapture(sqlExecutor)).toEqual({
         disabled_triggers: 10
       });
