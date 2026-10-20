@@ -15,6 +15,15 @@ import {
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import {
+  isCompetitionRuntimeRetired,
+  assertCompetitionHistoryPreparationAllowed
+} from '@/competitions/competition-runtime-retirement-state';
+jest.mock('@/competitions/competition-runtime-retirement-state', () => ({
+  isCompetitionRuntimeRetired: jest.fn().mockResolvedValue(false),
+  assertCompetitionHistoryPreparationAllowed: jest.fn()
+}));
+import * as compatibilityFacade from '@/competitions/legacy-competition-get-facade';
 import { handler } from './index';
 import { getDataSource } from '@/db';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
@@ -164,6 +173,26 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(moderationRetentionSchemaDb.missingColumns).not.toHaveBeenCalled();
     }
   );
+
+  it('never performs the initial view cutover during ordinary full schema work', async () => {
+    const install = jest.spyOn(
+      compatibilityFacade,
+      'installLegacyCompetitionGetFacade'
+    );
+    await invoke({ schema_scope: 'full' });
+    expect(isCompetitionRuntimeRetired).toHaveBeenCalledTimes(1);
+    expect(install).not.toHaveBeenCalled();
+    install.mockRestore();
+  });
+
+  it('rejects retained source preparation after native cutover', async () => {
+    jest
+      .mocked(assertCompetitionHistoryPreparationAllowed)
+      .mockRejectedValueOnce(new Error('retired source guard'));
+    await expect(
+      invoke({ schema_scope: 'competition-history-preparation' })
+    ).rejects.toThrow('retired source guard');
+  });
 
   it.each([undefined, {}, { schema_scope: 'full' }])(
     'preserves full manual migration behavior for %j',

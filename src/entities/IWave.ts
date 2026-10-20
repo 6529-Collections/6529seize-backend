@@ -60,6 +60,8 @@ export interface WaveBaseType {
   readonly forbid_negative_votes: boolean;
 }
 
+/** Retired competition columns stay registered through the additive retirement
+ * release. Defaults let runtime inserts omit them without schema data loss. */
 export class WaveBase implements WaveBaseType {
   @Column({ type: 'varchar', length: 250, nullable: false })
   readonly name!: string;
@@ -88,7 +90,7 @@ export class WaveBase implements WaveBaseType {
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly voting_group_id!: string | null;
 
-  @Column({ type: 'varchar', length: 100, nullable: false })
+  @Column({ type: 'varchar', length: 100, nullable: false, default: 'TDH' })
   readonly voting_credit_type!: WaveCreditType;
 
   @Column({
@@ -105,7 +107,7 @@ export class WaveBase implements WaveBaseType {
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly voting_credit_creditor!: string | null;
 
-  @Column({ type: 'boolean', nullable: false })
+  @Column({ type: 'boolean', nullable: false, default: false })
   readonly voting_signature_required!: boolean;
 
   @Column({ type: 'bigint', nullable: true })
@@ -145,10 +147,10 @@ export class WaveBase implements WaveBaseType {
   @Column({ type: 'bigint', nullable: true })
   readonly participation_max_applications_per_participant!: number | null;
 
-  @Column({ type: 'json', nullable: false })
+  @Column({ type: 'json', nullable: false, default: () => '(json_array())' })
   readonly participation_required_metadata!: WaveRequiredMetadataItem[];
 
-  @Column({ type: 'json', nullable: false })
+  @Column({ type: 'json', nullable: false, default: () => '(json_array())' })
   readonly participation_required_media!: ParticipationRequiredMedia[];
 
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })
@@ -169,7 +171,7 @@ export class WaveBase implements WaveBaseType {
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly participation_signature_required!: boolean;
 
-  @Column({ type: 'varchar', length: 100, nullable: false })
+  @Column({ type: 'varchar', length: 100, nullable: false, default: 'CHAT' })
   readonly type!: WaveType;
 
   @Column({ type: 'bigint', nullable: true })

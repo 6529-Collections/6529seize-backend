@@ -453,7 +453,7 @@ describe('CreateOrUpdateDropUseCase', () => {
   });
 
   it.each([DropType.CHAT, DropType.PARTICIPATORY])(
-    'only initializes legacy voting state for competition content (%s)',
+    'inserts shared content without initializing retired voting storage (%s)',
     async (dropType) => {
       const dropsDb = {
         insertDrop: jest.fn(),
@@ -515,9 +515,8 @@ describe('CreateOrUpdateDropUseCase', () => {
         expect.any(Object),
         expect.any(Object)
       );
-      const calls = dropType === DropType.CHAT ? 0 : 1;
-      expect(votingDb.upsertWaveLeaderboardEntry).toHaveBeenCalledTimes(calls);
-      expect(votingDb.saveDropRealVoteInTime).toHaveBeenCalledTimes(calls);
+      expect(votingDb.upsertWaveLeaderboardEntry).not.toHaveBeenCalled();
+      expect(votingDb.saveDropRealVoteInTime).not.toHaveBeenCalled();
     }
   );
 

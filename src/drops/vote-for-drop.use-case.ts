@@ -1,47 +1,31 @@
-import { Time, Timer } from '../time';
-import { ConnectionWrapper } from '../sql-executor';
-import { VoteForDropModel } from './vote-for-drop.model';
-import {
-  dropVotingDb,
-  DropVotingDb
-} from '../api-serverless/src/drops/drop-voting.db';
-import { identitiesDb, IdentitiesDb } from '../identities/identities.db';
-import {
-  wavesApiDb,
-  WavesApiDb
-} from '../api-serverless/src/waves/waves.api.db';
-import { dropsDb, DropsDb } from './drops.db';
-import { ratingsDb, RatingsDb } from '../rates/ratings.db';
+import { Timer } from '@/time';
+import { ConnectionWrapper } from '@/sql-executor';
+import { VoteForDropModel } from '@/drops/vote-for-drop.model';
+import { dropVotingDb, DropVotingDb } from '@/api/drops/drop-voting.db';
+import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
+import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
+import { dropsDb, DropsDb } from '@/drops/drops.db';
+import { ratingsDb, RatingsDb } from '@/rates/ratings.db';
 import {
   userGroupsService,
   UserGroupsService
-} from '../api-serverless/src/community-members/user-groups.service';
-import { userNotifier, UserNotifier } from '../notifications/user.notifier';
-import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
-import { WaveCreditScope, WaveCreditType, WaveType } from '../entities/IWave';
-import {
-  BadRequestException,
-  CustomApiCompliantException,
-  ForbiddenException
-} from '../exceptions';
-import { DropType } from '../entities/IDrop';
-import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
-import { metricsRecorder, MetricsRecorder } from '../metrics/MetricsRecorder';
-import { isApproveWaveClosed } from '@/waves/wave-approve.helpers';
-import { sumWaveVotingCreditNftValues } from '@/waves/wave-voting-credit-nfts';
+} from '@/api/community-members/user-groups.service';
+import { userNotifier, UserNotifier } from '@/notifications/user.notifier';
+import { metricsRecorder, MetricsRecorder } from '@/metrics/MetricsRecorder';
+import { ForbiddenException } from '@/exceptions';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { voteForMigratedLegacyEntry } from '@/competitions/legacy-competition-vote.service';
 
 export class VoteForDropUseCase {
   constructor(
     private readonly votingDb: DropVotingDb,
-    private readonly identitiesDb: IdentitiesDb,
-    private readonly wavesDb: WavesApiDb,
-    private readonly dropsDb: DropsDb,
-    private readonly ratingsDb: RatingsDb,
-    private readonly userGroupsService: UserGroupsService,
-    private readonly userNotifier: UserNotifier,
-    private readonly metricsRecorder: MetricsRecorder
+    _identitiesDb: IdentitiesDb,
+    _wavesDb: WavesApiDb,
+    _dropsDb: DropsDb,
+    _ratingsDb: RatingsDb,
+    _userGroupsService: UserGroupsService,
+    _userNotifier: UserNotifier,
+    _metricsRecorder: MetricsRecorder
   ) {}
 
   public async execute(
@@ -62,261 +46,16 @@ export class VoteForDropUseCase {
         { isolationLevel: 'READ COMMITTED' }
       );
     }
-    const owner = await competitionRepository.lockLegacyExecutionOwner(
-      wave_id,
+    const owner = await competitionRepository.lockOriginalPrimary(wave_id, ctx);
+    if (!owner || owner.storage_mode !== 'NATIVE')
+      throw new ForbiddenException(
+        'This drop does not belong to a competition'
+      );
+    return voteForMigratedLegacyEntry(
+      owner,
+      { voter_id, drop_id, wave_id, votes, proxy_id },
       ctx
     );
-    if (owner?.storage_mode === 'NATIVE')
-      return voteForMigratedLegacyEntry(
-        owner,
-        { voter_id, drop_id, wave_id, votes, proxy_id },
-        ctx
-      );
-    await this.votingDb.lockDropsCurrentRealVote(drop_id, ctx);
-    const now = Time.now();
-    const wave = await this.wavesDb.findById(wave_id, ctx.connection);
-    if (
-      wave &&
-      wave.next_decision_time !== null &&
-      wave.next_decision_time < Time.currentMillis()
-    ) {
-      throw new ForbiddenException(
-        `Wave has unresolved decisions and votes can't be edited at the moment. Try again later`
-      );
-    }
-    const isRepWave = wave?.voting_credit_type === WaveCreditType.REP;
-    let voterTotalCreditPromise: Promise<number>;
-    if (isRepWave) {
-      voterTotalCreditPromise = this.ratingsDb.getRepRating(
-        {
-          target_profile_id: voter_id,
-          category: wave?.voting_credit_category ?? null,
-          rater_profile_id: wave?.voting_credit_creditor ?? null
-        },
-        ctx
-      );
-    } else if (wave?.voting_credit_type === WaveCreditType.CARD_SET_TDH) {
-      voterTotalCreditPromise = this.wavesDb
-        .findWaveVotingCreditNftsByWaveIds([wave.id], ctx.connection)
-        .then(async (creditNftsByWaveId) => {
-          const creditNfts = creditNftsByWaveId[wave.id] ?? [];
-          if (!creditNfts.length) {
-            throw new CustomApiCompliantException(
-              500,
-              `Wave ${wave.id} is misconfigured: CARD_SET_TDH requires voting credit nfts`
-            );
-          }
-          const creditByKey =
-            await this.identitiesDb.getSingleNftVotingCreditsByProfileId(
-              voter_id,
-              creditNfts,
-              ctx
-            );
-          return sumWaveVotingCreditNftValues(creditNfts, creditByKey);
-        });
-    } else {
-      voterTotalCreditPromise = this.identitiesDb
-        .getIdentityByProfileId(voter_id, ctx.connection)
-        .then((identity) => {
-          const tdh = identity?.tdh ?? 0;
-          const xtdh = identity?.xtdh ?? 0;
-          if (wave?.voting_credit_type === WaveCreditType.TDH) return tdh;
-          if (wave?.voting_credit_type === WaveCreditType.XTDH) return xtdh;
-          if (wave?.voting_credit_type === WaveCreditType.TDH_PLUS_XTDH) {
-            return tdh + xtdh;
-          }
-          return 0;
-        });
-    }
-    const [
-      drop,
-      groupsVoterIsEligibleFor,
-      currentVote,
-      creditSpentBeforeThisVote,
-      voterTotalCredit
-    ] = await Promise.all([
-      this.dropsDb.findDropById(drop_id, ctx.connection),
-      this.userGroupsService.getGroupsUserIsEligibleFor(voter_id, ctx.timer),
-      this.votingDb.getDropVoterStateForDrop(
-        { voterId: voter_id, drop_id: drop_id },
-        ctx
-      ),
-      wave?.voting_credit_scope === WaveCreditScope.DROP
-        ? Promise.resolve(0)
-        : this.votingDb.getVotingCreditLockedInWaveForVoter(
-            {
-              waveId: wave_id,
-              voterId: voter_id
-            },
-            ctx
-          ),
-      voterTotalCreditPromise
-    ]);
-
-    if (!drop || drop.wave_id !== wave?.id) {
-      throw new BadRequestException('Drop not found');
-    }
-    if (!wave) {
-      throw new BadRequestException('Wave not found');
-    }
-    if (
-      wave.voting_period_start !== null &&
-      wave.voting_period_start > Time.currentMillis()
-    ) {
-      throw new BadRequestException(
-        `Voting period for this drop hasn't started`
-      );
-    }
-    if (
-      wave.voting_period_end !== null &&
-      wave.voting_period_end < Time.currentMillis()
-    ) {
-      throw new BadRequestException(`Voting period for this drop has ended`);
-    }
-    if (drop.drop_type !== DropType.PARTICIPATORY) {
-      throw new BadRequestException(`You can't vote on this drop`);
-    }
-    if (
-      wave.voting_group_id !== null &&
-      !groupsVoterIsEligibleFor.includes(wave.voting_group_id)
-    ) {
-      throw new ForbiddenException(
-        'Voter is not eligible to vote in this wave'
-      );
-    }
-    if (wave.type === WaveType.CHAT) {
-      throw new ForbiddenException('Voting is not allowed in chat waves');
-    }
-    let noOfDecisionsDone = 0;
-    if (wave.type === WaveType.APPROVE && wave.max_winners != null) {
-      noOfDecisionsDone = await this.wavesDb
-        .countWaveDecisionsByWaveIds([wave.id], ctx)
-        .then((it) => it[wave.id] ?? 0);
-    }
-    if (
-      isApproveWaveClosed({
-        waveType: wave.type,
-        maxWinners: wave.max_winners ?? null,
-        decisionsDone: noOfDecisionsDone
-      })
-    ) {
-      throw new BadRequestException(`Voting is closed in this wave`);
-    }
-    const change = votes - currentVote;
-    const newVote = currentVote + change;
-    const diff = Math.abs(newVote) - Math.abs(currentVote);
-
-    if (wave.forbid_negative_votes && newVote < 0) {
-      throw new BadRequestException(
-        `Negative votes are not allowed in this wave`
-      );
-    }
-    if (
-      wave.max_votes_per_identity_to_drop !== null &&
-      Math.abs(newVote) > wave.max_votes_per_identity_to_drop
-    ) {
-      throw new BadRequestException(
-        `max_votes_per_identity_to_drop exceeded for this drop`
-      );
-    }
-    const creditSpentAfterThisVote =
-      wave.voting_credit_scope === WaveCreditScope.DROP
-        ? Math.abs(newVote)
-        : diff + creditSpentBeforeThisVote;
-    if (creditSpentAfterThisVote > voterTotalCredit) {
-      throw new BadRequestException('Not enough credit to vote');
-    }
-    if (change === 0) {
-      return false;
-    }
-    await Promise.all([
-      this.votingDb.upsertState(
-        {
-          voter_id: voter_id,
-          drop_id: drop_id,
-          wave_id: wave.id,
-          votes: newVote
-        },
-        ctx
-      ),
-      this.votingDb.upsertAggregateDropRank(
-        {
-          drop_id,
-          wave_id,
-          change
-        },
-        ctx
-      ),
-      this.metricsRecorder.recordVote(
-        { wave_id, vote_change: change, voter_id },
-        ctx
-      ),
-      this.metricsRecorder.recordActiveIdentity(
-        { identityId: drop.author_id },
-        ctx
-      )
-    ]);
-    await Promise.all([
-      this.votingDb.snapShotDropsRealVoteInTimeBasedOnRank(
-        drop_id,
-        now.toMillis(),
-        ctx
-      ),
-      this.votingDb.snapshotDropVotersRealVoteInTimeBasedOnVoterState(
-        {
-          voterId: voter_id,
-          dropId: drop_id,
-          now: now.toMillis()
-        },
-        ctx
-      ),
-      this.votingDb.insertCreditSpending(
-        {
-          voter_id,
-          drop_id,
-          credit_spent: diff,
-          created_at: now.toMillis(),
-          wave_id: wave_id
-        },
-        ctx
-      ),
-      profileActivityLogsDb.insert(
-        {
-          profile_id: voter_id,
-          type: ProfileActivityLogType.DROP_VOTE_EDIT,
-          target_id: drop_id,
-          contents: JSON.stringify({
-            oldVote: currentVote,
-            newVote: votes
-          }),
-          additional_data_1: drop.author_id,
-          additional_data_2: drop.wave_id,
-          proxy_id: proxy_id
-        },
-        ctx.connection,
-        ctx.timer
-      )
-    ]);
-    if (drop.author_id !== voter_id) {
-      const totalDropRating = await this.votingDb.getAggregateDropRankVote(
-        drop_id,
-        ctx
-      );
-      await this.userNotifier.notifyOfDropVote(
-        {
-          voter_id,
-          drop_id: drop_id,
-          drop_author_id: drop.author_id,
-          vote: votes,
-          vote_change: change,
-          total_vote: totalDropRating,
-          wave_id: wave_id
-        },
-        wave.visibility_group_id,
-        ctx.connection
-      );
-    }
-    return true;
   }
 }
 

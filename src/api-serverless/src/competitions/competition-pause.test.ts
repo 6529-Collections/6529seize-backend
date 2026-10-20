@@ -1,17 +1,20 @@
+jest.mock('./competition-command-configuration', () => ({
+  loadNativeCommandConfiguration: jest.fn().mockResolvedValue({})
+}));
+jest.mock('@/competitions/native-competition-runtime.service', () => ({
+  nativeCompetitionRuntimeService: { enqueueDueTransitions: jest.fn() }
+}));
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionLifecycleService } from './competition-lifecycle.service';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
-import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import {
   administerCompetitionWave,
   lockNativeCompetition
 } from './competition-command-access';
 
-jest.mock('./competition-command-configuration', () => ({
-  loadNativeCommandConfiguration: jest.fn().mockResolvedValue({})
-}));
 jest.mock('@/api/identities/identity.fetcher', () => ({ identityFetcher: {} }));
 jest.mock('@/api/waves/wave.api.service', () => ({
   waveApiService: { validateNativeCompetitionConfiguration: jest.fn() }
@@ -27,14 +30,6 @@ jest.mock('@/competitions/competition.repository', () => ({
 }));
 jest.mock('@/competitions/native-competition-runtime.repository', () => ({
   nativeCompetitionRuntimeRepository: { enqueueEvent: jest.fn() }
-}));
-jest.mock('@/competitions/native-competition.reader', () => ({
-  NativeCompetitionReader: jest.fn().mockImplementation(() => ({
-    getCompetition: jest.fn().mockResolvedValue({ id: 'competition' })
-  }))
-}));
-jest.mock('@/competitions/native-competition-runtime.service', () => ({
-  nativeCompetitionRuntimeService: { enqueueDueTransitions: jest.fn() }
 }));
 jest.mock('./competition-command-access', () => ({
   requireNativeWrites: jest.fn(),
@@ -89,6 +84,7 @@ beforeEach(() => {
     .mocked(administerCompetitionWave)
     .mockResolvedValue({ wave: { id: 'wave' } } as never);
   jest.mocked(lockNativeCompetition).mockResolvedValue({
+    competition: { id: 'competition' },
     record: {
       id: 'competition',
       wave_id: 'wave',

@@ -249,3 +249,40 @@ it.each(['rating', 'real_time_rating', 'submitted_at', 'trend'])(
     );
   }
 );
+
+it('preserves curation price ordering and bounds in the competition scope', async () => {
+  await handleListCompetitionLeaderboardV3({
+    params: { wave_id: 'wave-a', competition_id: competitionId },
+    query: {
+      sort: 'price',
+      direction: 'ASC',
+      price_currency: 'ETH',
+      min_price: '0',
+      max_price: '3'
+    }
+  } as never);
+  expect(competitionService.listLeaderboard).toHaveBeenLastCalledWith(
+    'wave-a',
+    competitionId,
+    expect.objectContaining({
+      sort: 'price',
+      direction: 'ASC',
+      price_currency: 'ETH',
+      min_price: 0,
+      max_price: 3
+    }),
+    expect.anything()
+  );
+});
+
+it.each([{ min_price: -1 }, { max_price: -1 }, { price_currency: ' ' }])(
+  'rejects invalid native price filters %j',
+  async (query) => {
+    await expect(
+      handleListCompetitionLeaderboardV3({
+        params: { wave_id: 'wave-a', competition_id: competitionId },
+        query
+      } as never)
+    ).rejects.toBeInstanceOf(BadRequestException);
+  }
+);

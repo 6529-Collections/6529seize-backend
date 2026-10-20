@@ -1,17 +1,11 @@
-import { legacyGetView } from './legacy-competition-get-facade';
 import { randomUUID } from 'node:crypto';
+import { collections } from '@/collections';
+import { readSequentially } from '@/competitions/competition-read-sequence';
+import { recordNativePrimaryVoteActivity } from '@/competitions/competition-vote-activity.writer';
 import {
   nativeScoreSequence,
   NATIVE_SCORE_SEQUENCE_BASE
 } from '@/competitions/competition-score-history';
-import { collections } from '@/collections';
-import { readSequentially } from '@/competitions/competition-read-sequence';
-import {
-  mirrorNativeLegacyVote,
-  mirrorNativeLegacyVoteActivity,
-  mirrorNativeLegacyWinners,
-  mirrorNativeLegacySchedule
-} from '@/competitions/legacy-competition-mirror';
 import {
   COMPETITIONS_TABLE,
   COMPETITION_ENTRIES_TABLE,
@@ -21,14 +15,12 @@ import {
   COMPETITION_DECISION_WINNERS_TABLE,
   COMPETITION_PAUSES_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
-  COMPETITION_SCORE_HISTORY_TABLE,
   COMPETITION_ENTRY_RUNTIME_TABLE,
   COMPETITION_WINNER_VOTES_TABLE,
   COMPETITION_OUTCOME_AWARDS_TABLE,
   COMPETITION_OUTBOX_TABLE,
   COMPETITION_LIFECYCLE_EVENTS_TABLE,
-  DROP_REAL_VOTE_IN_TIME_TABLE,
-  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE
+  COMPETITION_SCORE_HISTORY_TABLE
 } from '@/constants';
 import { CompetitionDecisionStatus } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
@@ -200,76 +192,38 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     competitionId: string,
     ctx: RequestContext
   ): Promise<NativeHistoryRow[]> {
-    const resets = `with score_resets as (
-      select json_unquote(json_extract(event,'$.competition_entry_id')) as entry_id,event,
-        row_number() over (partition by json_unquote(json_extract(event,'$.competition_entry_id'))
-          order by cast(json_unquote(json_extract(event,'$.data.content_revision')) as unsigned) desc,created_at desc,id desc) as reset_order
-      from ${COMPETITION_OUTBOX_TABLE} where competition_id=:competitionId
-        and json_unquote(json_extract(event,'$.event_type'))='COMPETITION_ENTRY_UPDATED'
-        and json_contains_path(event,'all','$.data.vote_history_sequence','$.data.aggregate_history_sequence','$.data.voter_history_sequence')
-    )`;
-    const legacy = await this.query<{ wave_id: string }>(
-      'retainedLegacyHistory',
-      `select wave_id from ${COMPETITIONS_TABLE} where id=:competitionId and legacy_wave_id=wave_id and storage_mode='NATIVE'`,
-      { competitionId },
-      ctx
-    );
-    if (legacy.length) {
-      // Aggregate and voter histories have independent source identities. They
-      // must never be joined by timestamp or invented from current totals.
-      const read = async (table: string, kind: 'AGGREGATE' | 'VOTER') =>
-        this.query<NativeHistoryRow>(
-          'retainedLegacyHistory',
-          `${resets} select e.id as entry_id,${kind === 'VOTER' ? 'h.voter_id' : "''"} as voter_profile_id,
-          ${kind === 'VOTER' ? 'h.vote' : '0'} as value,${kind === 'AGGREGATE' ? 'h.vote' : '0'} as aggregate_value,
-          h.timestamp as occurred_at,h.id as sequence,'${kind}' as kind,
-          if(score.mutation_sequence is null,h.id,:base+score.mutation_sequence) as order_sequence
-          from ${legacyGetView(table)} h join ${COMPETITION_ENTRIES_TABLE} e on e.drop_id=h.drop_id and e.competition_id=:competitionId
-          left join ${COMPETITION_SCORE_HISTORY_TABLE} score on score.competition_id=:competitionId and score.kind=:kind and score.sequence=h.id
-          left join score_resets revision_reset on revision_reset.entry_id=e.id and revision_reset.reset_order=1
-          where h.wave_id=:waveId and e.status='ACTIVE' and (revision_reset.entry_id is null
-            or (score.mutation_sequence is not null and score.mutation_sequence>
-              cast(json_unquote(json_extract(revision_reset.event,'$.data.vote_history_sequence')) as unsigned))
-            or (score.mutation_sequence is null and h.id>
-              cast(json_unquote(json_extract(revision_reset.event,'$.data.${kind === 'AGGREGATE' ? 'aggregate_history_sequence' : 'voter_history_sequence'}')) as unsigned)))
-          order by h.timestamp,order_sequence`,
-          {
-            competitionId,
-            waveId: legacy[0].wave_id,
-            kind,
-            base: NATIVE_SCORE_SEQUENCE_BASE
-          },
-          ctx
-        );
-      const history = [
-        ...(await read(DROP_REAL_VOTE_IN_TIME_TABLE, 'AGGREGATE')),
-        ...(await read(DROP_REAL_VOTER_VOTE_IN_TIME_TABLE, 'VOTER'))
-      ];
-      return history
-        .map((row) => ({
-          ...row,
-          value: Number(row.value),
-          aggregate_value: safeAggregateRating(row.aggregate_value),
-          occurred_at: Number(row.occurred_at),
-          sequence: Number(row.sequence),
-          order_sequence: Number(row.order_sequence)
-        }))
-        .sort(
-          (a, b) =>
-            a.occurred_at - b.occurred_at ||
-            a.order_sequence - b.order_sequence ||
-            (a.kind ?? '').localeCompare(b.kind ?? '')
-        );
-    }
     const rows = await this.query<NativeHistoryRow>(
       'listHistory',
-      `${resets} select h.* from ${COMPETITION_VOTE_HISTORY_TABLE} h
+      `with score_resets as (
+        select json_unquote(json_extract(event,'$.competition_entry_id')) as entry_id,event,
+          row_number() over (
+            partition by json_unquote(json_extract(event,'$.competition_entry_id'))
+            order by cast(json_unquote(json_extract(event,'$.data.content_revision')) as unsigned) desc,
+              created_at desc,id desc
+          ) as reset_order
+        from ${COMPETITION_OUTBOX_TABLE}
+        where competition_id=:competitionId
+          and json_unquote(json_extract(event,'$.event_type'))='COMPETITION_ENTRY_UPDATED'
+          and json_contains_path(event,'all','$.data.vote_history_sequence',
+            '$.data.aggregate_history_sequence','$.data.voter_history_sequence')
+      )
+      select h.entry_id, h.voter_profile_id,
+      if(h.kind='VOTER',h.value,0) as value,
+      if(h.kind='AGGREGATE',h.value,0) as aggregate_value,
+      h.occurred_at,h.sequence,h.kind,
+      if(h.mutation_sequence is null,h.sequence,:base+h.mutation_sequence) as order_sequence
+      from ${COMPETITION_SCORE_HISTORY_TABLE} h
       join ${COMPETITION_ENTRIES_TABLE} e on e.id = h.entry_id and e.competition_id = h.competition_id
-      left join score_resets revision_reset on revision_reset.entry_id=e.id and revision_reset.reset_order=1
+      left join score_resets revision_reset on revision_reset.entry_id=h.entry_id and revision_reset.reset_order=1
       where h.competition_id = :competitionId and e.status = 'ACTIVE'
-      and (revision_reset.entry_id is null or h.sequence>cast(json_unquote(json_extract(revision_reset.event,'$.data.vote_history_sequence')) as unsigned))
-      order by h.occurred_at asc, h.sequence asc`,
-      { competitionId },
+        and (revision_reset.entry_id is null
+          or (h.mutation_sequence is not null and h.mutation_sequence>
+            cast(json_unquote(json_extract(revision_reset.event,'$.data.vote_history_sequence')) as unsigned))
+          or (h.mutation_sequence is null and h.sequence>
+            cast(json_unquote(json_extract(revision_reset.event,if(h.kind='AGGREGATE',
+              '$.data.aggregate_history_sequence','$.data.voter_history_sequence'))) as unsigned)))
+      order by h.occurred_at asc, order_sequence asc, h.kind asc`,
+      { competitionId, base: NATIVE_SCORE_SEQUENCE_BASE },
       ctx
     );
     return rows.map((row) => ({
@@ -277,7 +231,8 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       value: Number(row.value),
       aggregate_value: safeAggregateRating(row.aggregate_value),
       occurred_at: Number(row.occurred_at),
-      sequence: Number(row.sequence)
+      sequence: Number(row.sequence),
+      order_sequence: Number(row.order_sequence)
     }));
   }
 
@@ -386,14 +341,14 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     await this.query(
       'recordVoteChange',
       `insert into ${COMPETITION_VOTE_HISTORY_TABLE}
-      (competition_id, entry_id, voter_profile_id, value, previous_value, aggregate_value, credit_delta, occurred_at, drop_id, submitter_id, proxy_id, contents)
-      values (:competitionId, :entryId, :voterProfileId, :value, :previousVote, :aggregateValue, :creditDelta, :occurredAt, :dropId, :submitterId, :proxyId, :contents)`,
+      (competition_id, entry_id, voter_profile_id, value, previous_value, aggregate_value, credit_delta, occurred_at, proxy_id, contents, drop_id, submitter_id)
+      values (:competitionId, :entryId, :voterProfileId, :value, :previousVote, :aggregateValue, :creditDelta, :occurredAt, :proxyId, :contents, :dropId, :submitterId)`,
       {
         ...params,
         aggregateValue,
+        proxyId: params.proxyId ?? null,
         dropId: entry.drop_id,
         submitterId: entry.submitter_id,
-        proxyId: params.proxyId ?? null,
         contents: JSON.stringify({
           oldVote: params.previousVote,
           newVote: params.value,
@@ -404,26 +359,23 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       ctx
     );
     const sequence = await this.getLastInsertId(ctx.connection!);
-    await mirrorNativeLegacyVote(this.db, params, ctx, sequence);
-    if (Number(entry.legacy_primary) !== 1) {
-      await this.query(
-        'recordVoteScoreHistory',
-        `insert into ${COMPETITION_SCORE_HISTORY_TABLE}
-        (competition_id,kind,sequence,entry_id,drop_id,voter_profile_id,value,occurred_at,mutation_sequence)
-        values (:competitionId,'AGGREGATE',:scoreSequence,:entryId,:dropId,'',:aggregateValue,:occurredAt,:sequence),
-        (:competitionId,'VOTER',:scoreSequence,:entryId,:dropId,:voterProfileId,:value,:occurredAt,:sequence)`,
-        {
-          ...params,
-          sequence,
-          dropId: entry.drop_id,
-          aggregateValue,
-          scoreSequence: nativeScoreSequence(sequence)
-        },
-        ctx
-      );
-    }
+    await this.query(
+      'recordVoteScoreHistory',
+      `insert into ${COMPETITION_SCORE_HISTORY_TABLE}
+      (competition_id,kind,sequence,entry_id,drop_id,voter_profile_id,value,occurred_at,mutation_sequence)
+      values (:competitionId,'AGGREGATE',:scoreSequence,:entryId,:dropId,'',:aggregateValue,:occurredAt,:sequence),
+      (:competitionId,'VOTER',:scoreSequence,:entryId,:dropId,:voterProfileId,:value,:occurredAt,:sequence)`,
+      {
+        ...params,
+        dropId: entry.drop_id,
+        aggregateValue,
+        scoreSequence: nativeScoreSequence(sequence),
+        sequence
+      },
+      ctx
+    );
     if (Number(entry.legacy_primary) === 1) {
-      await mirrorNativeLegacyVoteActivity(this.db, params, sequence, ctx);
+      await recordNativePrimaryVoteActivity(this.db, params, sequence, ctx);
     }
     await this.enqueueEvent(
       {
@@ -723,12 +675,6 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
         },
         ctx
       );
-    await mirrorNativeLegacyWinners(
-      this.db,
-      competitionId,
-      params.winners.map((winner) => winner.drop_id),
-      ctx
-    );
     return decisionId;
   }
 
@@ -795,12 +741,6 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       lifecycle = if(:ended, 'ENDED', lifecycle), ended_at = if(:ended, :now, ended_at)
       where id = :competitionId and lifecycle = 'PUBLISHED'`,
       { competitionId, nextDecisionTime, now, ended },
-      ctx
-    );
-    await mirrorNativeLegacySchedule(
-      this.db,
-      competitionId,
-      nextDecisionTime,
       ctx
     );
   }

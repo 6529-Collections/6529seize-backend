@@ -512,10 +512,18 @@ describeWithSeed(
         ids: ['drop-1', 'drop-2', 'drop-4', 'drop-5'],
         hasMore: false
       });
+      const retainedCompetitionTables = new Set<string>([
+        tables.DROP_VOTER_STATE_TABLE,
+        tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+        tables.DROP_RANK_TABLE,
+        tables.DROP_REAL_VOTE_IN_TIME_TABLE,
+        tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
+        tables.WAVE_LEADERBOARD_ENTRIES_TABLE
+      ]);
       for (const [table] of fixtures)
         expect(
           await sqlExecutor.oneOrNull(`select count(*) as count from ${table}`)
-        ).toEqual({ count: 0 });
+        ).toEqual({ count: retainedCompetitionTables.has(table) ? 1 : 0 });
       for (const table of [
         tables.IDENTITY_NOTIFICATIONS_TABLE,
         tables.ACTIVITY_EVENTS_TABLE

@@ -19,7 +19,7 @@ import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 import { getDataSource } from '@/db';
 import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
-import { installMigrationCapture } from '@/competitions/competition-migration-capture';
+import { retireLegacyCompetitionRuntime } from '@/competitions/competition-runtime-retirement';
 import { dbSupplier } from '@/sql-executor';
 import { transferCompetitionRetirementHistory } from '@/competitions/competition-retirement-history';
 import {
@@ -91,6 +91,8 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'claims-media-upload' &&
       scope !== 'nft-link-page-retry' &&
       scope !== 'market-depth-publication-lock' &&
+      scope !== 'competition-runtime-schema' &&
+      scope !== 'competition-runtime-retirement' &&
       scope !== 'competition-history-preparation')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
@@ -102,6 +104,16 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'competition-runtime-schema') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: Object.values(Entities),
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
+  }
+
   if (scope === 'competition-history-preparation') {
     const result = await doInDbContext(
       async () => {
@@ -116,6 +128,19 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
             )
         };
       },
+      {
+        logger,
+        entities: Object.values(Entities),
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    return { schema_scope: scope, ...result };
+  }
+
+  if (scope === 'competition-runtime-retirement') {
+    const result = await doInDbContext(
+      () => retireLegacyCompetitionRuntime(dbSupplier()),
       {
         logger,
         entities: Object.values(Entities),
@@ -185,11 +210,9 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       if (
         !scheduledInvocation &&
         scope === 'full' &&
-        !(await isCompetitionRuntimeRetired(dbSupplier()))
+        (await isCompetitionRuntimeRetired(dbSupplier()))
       ) {
         await installLegacyCompetitionGetFacade(dbSupplier());
-        if (process.env.COMPETITION_MIGRATION_CAPTURE_ENABLED === 'true')
-          await installMigrationCapture(dbSupplier());
       }
       if (
         !scheduledInvocation &&

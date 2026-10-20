@@ -1,6 +1,6 @@
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
-import { migrationCommandConfiguration } from '@/competitions/legacy-competition-configuration';
+import { nativeCommandConfiguration } from '@/competitions/competition-command-configuration';
 import {
   CompetitionRecord,
   competitionRepository
@@ -50,5 +50,5 @@ export async function loadNativeCommandConfiguration(
     competitionRepository,
     ctx
   ).getCompetition(record, Date.now());
-  return commandContract(migrationCommandConfiguration(competition));
+  return commandContract(nativeCommandConfiguration(competition));
 }

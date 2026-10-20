@@ -1,3 +1,5 @@
+import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
+import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -25,7 +27,6 @@ import { numbers } from './numbers';
 import { collections } from './collections';
 import { profilesDb } from './profiles/profiles.db';
 import { dropsDb, IdentityNominationDrop } from './drops/drops.db';
-import { dropVotingDb } from '@/api/drops/drop-voting.db';
 import { deleteDrop } from './drops/delete-drop.use-case';
 import {
   WaveEntity,
@@ -56,6 +57,7 @@ type DropTally = {
 type DropTalliesById = Record<string, DropTally>;
 
 type IdentitySubmissionCleanupWave = Pick<WaveEntity, 'id'> & {
+  readonly competition_id: string;
   readonly submission_type: WaveSubmissionType.IDENTITY;
   readonly identity_submission_strategy: WaveIdentitySubmissionStrategy;
   readonly identity_submission_duplicates: WaveIdentitySubmissionDuplicates;
@@ -451,52 +453,40 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
         continue;
       }
 
-      const affectedWaveIds =
-        await dropsDb.findIdentityNominationWaveIdsByProfileIds(
+      const competitionIds =
+        await competitionEntryRepository.findNominationCompetitionIds(
           [targetProfileId, ...sourceProfileIds],
           { connection }
         );
-      logger.info({
-        event: 'identity_consolidation_nomination_sync_affected_waves_resolved',
-        target_profile_id: targetProfileId,
-        source_profile_ids: sourceProfileIds,
-        consolidated_profile_ids: consolidatedProfileIds,
-        affected_wave_ids: collections.distinct(affectedWaveIds)
-      });
-      for (const waveId of collections.distinct(affectedWaveIds)) {
-        const wave = await wavesApiDb.findWaveById(waveId, connection);
-        if (
-          !wave ||
-          wave.submission_type !== WaveSubmissionType.IDENTITY ||
-          wave.identity_submission_duplicates === null ||
-          wave.identity_submission_strategy === null
-        ) {
-          logger.info({
-            event:
-              'identity_consolidation_nomination_cleanup_skipped_wave_not_identity_submission',
-            wave_id: waveId,
-            target_profile_id: targetProfileId,
-            consolidated_profile_ids: consolidatedProfileIds
-          });
-          continue;
-        }
-        for (const sourceProfileId of sourceProfileIds) {
-          await dropsDb.updateIdentityNominationProfileId(
-            {
-              waveId,
-              sourceProfileId,
-              targetProfileId
-            },
+      for (const competitionId of competitionIds) {
+        const competition =
+          await nativeCompetitionRuntimeRepository.lockCompetition(
+            competitionId,
             { connection }
           );
-          logger.info({
-            event: 'identity_consolidation_nomination_profile_rewritten',
-            wave_id: waveId,
-            source_profile_id: sourceProfileId,
-            target_profile_id: targetProfileId,
-            consolidated_profile_ids: consolidatedProfileIds,
-            note: 'only non-winning participatory nominations in identity-submission waves are rewritten'
-          });
+        if (
+          !competition ||
+          competition.participation.submission_type !== 'IDENTITY' ||
+          !competition.participation.identity_submission_strategy ||
+          !competition.participation.identity_submission_duplicates
+        )
+          continue;
+        const wave: IdentitySubmissionCleanupWave = {
+          id: competition.wave_id,
+          competition_id: competitionId,
+          submission_type: WaveSubmissionType.IDENTITY,
+          identity_submission_strategy: competition.participation
+            .identity_submission_strategy as WaveIdentitySubmissionStrategy,
+          identity_submission_duplicates: competition.participation
+            .identity_submission_duplicates as WaveIdentitySubmissionDuplicates
+        };
+        for (const sourceProfileId of sourceProfileIds) {
+          await competitionEntryRepository.rewriteNominationProfile(
+            competitionId,
+            sourceProfileId,
+            targetProfileId,
+            { connection }
+          );
         }
         affectedWaveIdsForUnreadCache.push(
           ...(await this.cleanupConsolidatedIdentityNominations(
@@ -527,7 +517,8 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       await this.getIdentityNominationsForConsolidatedProfilesInWave(
         {
           consolidatedProfileIds,
-          waveId: wave.id
+          waveId: wave.id,
+          competitionId: wave.competition_id
         },
         connection
       );
@@ -697,22 +688,20 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
   private async getIdentityNominationsForConsolidatedProfilesInWave(
     {
       consolidatedProfileIds,
-      waveId
+      waveId,
+      competitionId
     }: {
       consolidatedProfileIds: string[];
       waveId: string;
+      competitionId: string;
     },
     connection: ConnectionWrapper<any>
   ): Promise<IdentityNominationDrop[]> {
     const nominationsByProfile = await Promise.all(
       consolidatedProfileIds.map((profileId) =>
-        dropsDb.findIdentityNominationDropsForWave(
-          {
-            waveId,
-            profileId
-          },
-          { connection }
-        )
+        competitionEntryRepository.listNominations(competitionId, profileId, {
+          connection
+        })
       )
     );
 
@@ -804,8 +793,8 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       return null;
     }
 
-    const talliesByDropId = await dropVotingDb.getTallyForDrops(
-      { dropIds: nominations.map((it) => it.drop_id) },
+    const talliesByDropId = await competitionEntryRepository.nominationTallies(
+      nominations.map((it) => it.drop_id),
       { connection }
     );
 

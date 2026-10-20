@@ -1,13 +1,14 @@
-import { withNativeLegacyMirror } from './legacy-competition-mirror';
-import { LEGACY_INDEFINITE_PAUSE_END } from './legacy-competition-settings.repository';
 import { legacyCompetitionPauseId } from './competition-id';
-import { WAVES_DECISION_PAUSES_TABLE } from '@/constants';
 import { randomUUID } from 'node:crypto';
 import { stableUuid } from './competition-id';
 import {
   COMPETITION_COMMANDS_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
   COMPETITION_ENTRIES_TABLE,
+  COMPETITION_ENTRY_RUNTIME_TABLE,
+  COMPETITION_VOTES_TABLE,
+  COMPETITION_VOTE_HISTORY_TABLE,
+  COMPETITION_SCORE_HISTORY_TABLE,
   COMPETITION_LIFECYCLE_EVENTS_TABLE,
   COMPETITION_OUTCOMES_TABLE,
   COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
@@ -170,6 +171,21 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
     });
   }
 
+  public async clearApprovalThresholds(
+    competitionId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.timed('clearApprovalThresholds', ctx, () =>
+      this.db
+        .execute(
+          `update ${COMPETITION_ENTRY_RUNTIME_TABLE} set over_threshold_since=null where competition_id=:competitionId`,
+          { competitionId },
+          options(ctx)
+        )
+        .then(() => undefined)
+    );
+  }
+
   public async saveCompetition(
     record: CompetitionEntity,
     actorId: string,
@@ -253,6 +269,22 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
         `SELECT id FROM ${COMPETITION_ENTRIES_TABLE} WHERE competition_id = :competitionId LIMIT 1`,
         { competitionId },
         options(ctx)
+      );
+      return row !== null || this.hasVotes(competitionId, ctx);
+    });
+  }
+
+  public async hasVotes(
+    competitionId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    return this.timed('hasVotes', ctx, async () => {
+      const row = await this.db.oneOrNull<{ found: number }>(
+        `select 1 as found where exists(select 1 from ${COMPETITION_VOTES_TABLE} where competition_id=:competitionId)
+          or exists(select 1 from ${COMPETITION_VOTE_HISTORY_TABLE} where competition_id=:competitionId)
+          or exists(select 1 from ${COMPETITION_SCORE_HISTORY_TABLE} where competition_id=:competitionId and kind='VOTER')`,
+        { competitionId },
+        { wrappedConnection: ctx.connection }
       );
       return row !== null;
     });
@@ -401,39 +433,13 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
       );
       if (overlapping)
         competitionConflict('A decision pause already covers this interval');
-      const primary = await this.db.oneOrNull<{
-        legacy_wave_id: string | null;
-      }>(
-        `select legacy_wave_id from ${COMPETITIONS_TABLE} where id=:competitionId`,
+      const source = await this.db.oneOrNull<{ next_id: number }>(
+        `select coalesce(max(legacy_source_id),0)+1 as next_id from ${COMPETITION_PAUSES_TABLE} where competition_id=:competitionId`,
         { competitionId },
         options(ctx)
       );
-      let id: string = randomUUID(),
-        legacyId: number | null = null;
-      if (primary?.legacy_wave_id) {
-        if (!ctx.connection)
-          throw new Error('Migrated pause requires a pinned transaction');
-        endsAt = endsAt ?? LEGACY_INDEFINITE_PAUSE_END;
-        await withNativeLegacyMirror(this.db, competitionId, ctx, async () => {
-          await this.db.execute(
-            `insert into ${WAVES_DECISION_PAUSES_TABLE} (wave_id,start_time,end_time,reason) values (:waveId,:startsAt,:endsAt,:reason)`,
-            { waveId: primary.legacy_wave_id, startsAt, endsAt, reason },
-            options(ctx)
-          );
-          legacyId = Number(
-            (
-              await this.db.oneOrNull<{ id: number }>(
-                'select last_insert_id() as id',
-                {},
-                options(ctx)
-              )
-            )?.id
-          );
-        });
-        if (!legacyId || !Number.isSafeInteger(legacyId))
-          throw new Error('Invalid mirrored pause source ID');
-        id = legacyCompetitionPauseId(competitionId, legacyId);
-      }
+      const legacyId = Number(source?.next_id ?? 1);
+      const id = legacyCompetitionPauseId(competitionId, legacyId);
       await this.db.execute(
         `INSERT INTO ${COMPETITION_PAUSES_TABLE} (id,competition_id,start_time,end_time,reason,legacy_source_id) VALUES (:id,:competitionId,:startsAt,:endsAt,:reason,:legacyId)`,
         { id, legacyId, competitionId, startsAt, endsAt, reason },
@@ -457,14 +463,6 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
         options(ctx)
       );
       if (!pause) competitionConflict('There is no active decision pause');
-      if (pause.legacy_source_id != null)
-        await withNativeLegacyMirror(this.db, competitionId, ctx, () =>
-          this.db.execute(
-            `update ${WAVES_DECISION_PAUSES_TABLE} set end_time=:now where id=:legacyId`,
-            { now, legacyId: pause.legacy_source_id },
-            options(ctx)
-          )
-        );
       await this.db.execute(
         `UPDATE ${COMPETITION_PAUSES_TABLE} SET end_time = :now WHERE id = :id`,
         { id: pause.id, now },
