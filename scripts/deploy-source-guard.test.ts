@@ -316,7 +316,9 @@ describe('generated deployment source guard', () => {
         'claims-media-upload',
         'nft-link-page-retry',
         'market-depth-publication-lock',
-        'competition-history-preparation'
+        'competition-history-preparation',
+        'competition-runtime-schema',
+        'competition-runtime-retirement'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(

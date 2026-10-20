@@ -32,7 +32,6 @@ import { NativeCompetitionRuntimeRepository } from './native-competition-runtime
 import { NativeCompetitionRuntimeService } from './native-competition-runtime.service';
 import { competitionRepository } from './competition.repository';
 import { CompetitionExecutionRouter } from './competition-execution.router';
-import { appFeatures } from '@/app-features';
 import {
   CompetitionCreditBudget,
   competitionCreditService,
@@ -201,13 +200,10 @@ describeWithSeed(
     const service = new NativeCompetitionRuntimeService(
       repository,
       { getBudget, getWaveBudgets },
-      new CompetitionExecutionRouter(competitionRepository, appFeatures),
-      appFeatures
+      new CompetitionExecutionRouter()
     );
-    const originalFeature = process.env.FEATURE_NATIVE_COMPETITION_EXECUTION;
 
     beforeEach(() => {
-      process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = 'true';
       getBudget.mockReset();
       getBudget.mockImplementation(async (resource, profileId) => ({
         competition_id: resource.id,
@@ -241,11 +237,6 @@ describeWithSeed(
         }
         return budgets;
       });
-    });
-    afterEach(() => {
-      if (originalFeature === undefined)
-        delete process.env.FEATURE_NATIVE_COMPETITION_EXECUTION;
-      else process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = originalFeature;
     });
 
     async function vote(
@@ -393,8 +384,7 @@ describeWithSeed(
       const realService = new NativeCompetitionRuntimeService(
         realRepository,
         competitionCreditService,
-        new CompetitionExecutionRouter(competitionRepository, appFeatures),
-        appFeatures
+        new CompetitionExecutionRouter()
       );
       const reads = jest.spyOn(realRepository, 'getVoterActiveVotes');
       try {
@@ -571,8 +561,7 @@ describeWithSeed(
       const batchService = new NativeCompetitionRuntimeService(
         batchRepository,
         competitionCreditService,
-        new CompetitionExecutionRouter(competitionRepository, appFeatures),
-        appFeatures
+        new CompetitionExecutionRouter()
       );
       const execute = sqlExecutor.execute.bind(sqlExecutor);
       let thresholdWrites = 0;
@@ -977,7 +966,7 @@ describeWithSeed(
       ).toEqual([{ n: 5 }]);
     });
 
-    it('leaves cancelled, shadow and feature-disabled competitions untouched', async () => {
+    it('leaves cancelled, shadow, disabled and draft competitions untouched', async () => {
       await vote(rankId, rankEntry, 20, 100);
       await sqlExecutor.execute(
         `update ${COMPETITIONS_TABLE} set lifecycle = 'CANCELLED' where id = :rankId`,
@@ -990,10 +979,14 @@ describeWithSeed(
       );
       await service.processCompetition(rankId, 1001);
       await sqlExecutor.execute(
-        `update ${COMPETITIONS_TABLE} set execution_mode = 'ACTIVE' where id = :rankId`,
+        `update ${COMPETITIONS_TABLE} set execution_mode = 'DISABLED' where id = :rankId`,
         { rankId }
       );
-      process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = 'false';
+      await service.processCompetition(rankId, 1001);
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set execution_mode='ACTIVE',lifecycle='DRAFT' where id=:rankId`,
+        { rankId }
+      );
       await service.processCompetition(rankId, 1001);
       expect(
         await sqlExecutor.execute(

@@ -63,3 +63,6 @@ export function computeCompetitionPhase(
   }
   return CompetitionComputedPhase.COMPLETED;
 }
+
+/** Finite wire representation for an indefinite pause in permanent old APIs. */
+export const INDEFINITE_COMPETITION_PAUSE_END = 253402300799000;

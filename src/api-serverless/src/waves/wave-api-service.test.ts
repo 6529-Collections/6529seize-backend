@@ -598,7 +598,7 @@ describe('WaveApiService updateWave immutability', () => {
     expect(waveMappers.createWaveToNewWaveEntity).toHaveBeenCalled();
   });
 
-  it('clears approve threshold state when threshold config changes', async () => {
+  it('keeps shared settings updates independent of retired approval storage', async () => {
     const waveBeforeUpdate = aWave(
       {
         type: WaveType.APPROVE,
@@ -613,7 +613,7 @@ describe('WaveApiService updateWave immutability', () => {
         serial_no: 1
       }
     );
-    const { service, dropVotingService, connection, ctx } = createService({
+    const { service, dropVotingService, ctx } = createService({
       waveBeforeUpdate
     });
 
@@ -636,7 +636,7 @@ describe('WaveApiService updateWave immutability', () => {
 
     expect(
       dropVotingService.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId
-    ).toHaveBeenCalledWith('wave-1', expect.objectContaining({ connection }));
+    ).not.toHaveBeenCalled();
   });
 
   it.each([null, 'different-group'])(
@@ -1529,7 +1529,7 @@ describe('WaveApiService wave pause authorization', () => {
         };
         let ownerLocked = false;
         const ownerLock = jest
-          .spyOn(competitionRepository, 'lockLegacyExecutionOwner')
+          .spyOn(competitionRepository, 'lockOriginalPrimary')
           .mockImplementation(async (_waveId, lockCtx) => {
             expect(lockCtx.connection).toBe(connection);
             ownerLocked = true;
@@ -1608,6 +1608,7 @@ describe('WaveApiService wave pause authorization', () => {
               expect(wavesApiDb.deletePause).not.toHaveBeenCalled();
             } else {
               expect(wavesApiDb.deletePause).toHaveBeenCalledWith(
+                'wave-1',
                 7,
                 connection
               );

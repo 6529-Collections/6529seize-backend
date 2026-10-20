@@ -358,9 +358,9 @@ export class ProfilesService {
     command: { toBeMerged: string[]; target: string },
     connectionHolder: ConnectionWrapper<any>
   ) {
-    const { withLegacyCompetitionProfileMerge } =
-      await import('@/competitions/legacy-competition-profile-merge');
-    return withLegacyCompetitionProfileMerge(
+    const { withCompetitionProfileMerge } =
+      await import('@/competitions/competition-profile-merge');
+    return withCompetitionProfileMerge(
       dbSupplier(),
       command.toBeMerged,
       command.target,
@@ -424,7 +424,6 @@ export class ProfilesService {
           target,
           connectionHolder
         );
-        await this.mergeVotingStuff(sourceIdentity, target, connectionHolder);
         await this.mergePollVotingStuff(
           sourceIdentity,
           target,
@@ -588,17 +587,6 @@ export class ProfilesService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.identitiesDb.migrateBoosterIdsInBoosts(
-      { previous_id: sourceIdentity, new_id: target },
-      { connection: connectionHolder }
-    );
-  }
-
-  private async mergeVotingStuff(
-    sourceIdentity: string,
-    target: string,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    await this.dropVotingDb.mergeOnProfileIdChange(
       { previous_id: sourceIdentity, new_id: target },
       { connection: connectionHolder }
     );

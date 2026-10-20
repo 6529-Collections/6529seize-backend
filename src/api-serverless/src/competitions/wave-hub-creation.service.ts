@@ -1,5 +1,4 @@
 import { ApiCreateNewWave } from '@/api/generated/models/ApiCreateNewWave';
-import { appFeatures } from '@/app-features';
 import { ApiCreateWaveHubRequest } from '@/api/generated/models/ApiCreateWaveHubRequest';
 import { ApiWaveCreditType } from '@/api/generated/models/ApiWaveCreditType';
 import { ApiWaveCreditScope } from '@/api/generated/models/ApiWaveCreditScope';
@@ -8,7 +7,7 @@ import { waveApiService } from '@/api/waves/wave.api.service';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 import { competitionService } from '@/competitions/competition.service';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
-import { ForbiddenException, NotFoundException } from '@/exceptions';
+import { ForbiddenException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { competitionActor } from './competition-command-access';
@@ -17,8 +16,6 @@ export class WaveHubCreationService {
   private readonly logger = Logger.get(this.constructor.name);
 
   public async create(request: ApiCreateWaveHubRequest, ctx: RequestContext) {
-    if (!appFeatures.isNativeCompetitionHubCreationEnabled())
-      throw new NotFoundException('Hub creation is not enabled');
     const actor = competitionActor(ctx);
     if (
       !ctx.authenticationContext?.hasRightsTo(
@@ -66,7 +63,8 @@ export class WaveHubCreationService {
         max_votes_per_identity_to_drop: null,
         time_lock_ms: null,
         decisions_strategy: null,
-        admin_drop_deletion_enabled: false
+        admin_drop_deletion_enabled:
+          request.admin_drop_deletion_enabled ?? false
       },
       outcomes: []
     };

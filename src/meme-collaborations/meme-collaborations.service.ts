@@ -3,7 +3,6 @@ import {
   validateCollaborationInvitees
 } from './meme-collaboration-invitation-policy';
 import { formatMemeArtistNames } from './meme-collaboration-credit';
-import { env } from '@/env';
 import { competitionMainStageRepository } from '@/competitions/competition-main-stage.repository';
 import { createHash, randomUUID } from 'node:crypto';
 import { AuthenticationContext } from '@/auth-context';
@@ -186,10 +185,10 @@ export class MemeCollaborationsService {
       );
     const ids = model.collaborator_ids ?? [];
     validateCollaborationInvitees(ids, model.author_id!);
-    const mainStage = competitionId
-      ? await competitionMainStageRepository.isDesignated(competitionId, ctx)
-      : model.wave_id === env.getStringOrNull('MAIN_STAGE_WAVE_ID');
-    if (!mainStage) {
+    if (
+      !competitionId ||
+      !(await competitionMainStageRepository.isDesignated(competitionId, ctx))
+    ) {
       if (ids.length)
         throw new BadRequestException(
           'Invitations require a Memes Main Stage submission'
@@ -248,7 +247,7 @@ export class MemeCollaborationsService {
           dropId,
           [],
           tx,
-          eligible.competition_id ?? undefined
+          eligible.competition_id
         );
         context = await this.db.context(dropId, tx, true);
       }
@@ -374,7 +373,7 @@ export class MemeCollaborationsService {
     dropId: string,
     ids: string[],
     ctx: RequestContext,
-    competitionId?: string
+    competitionId: string
   ): Promise<number[]> {
     const artworkHash = collaborationArtworkHash(model);
     const artwork = collaborationArtworkDetails(model);
@@ -387,32 +386,28 @@ export class MemeCollaborationsService {
         'All collaborating artists must have an available profile'
       );
     const [wave] = await this.db.query<{
-      participation_terms: string | null;
       visibility_group_id: string | null;
     }>(
       'wave',
-      `select participation_terms, visibility_group_id from ${WAVES_TABLE} where id=:id`,
+      `select visibility_group_id from ${WAVES_TABLE} where id=:id`,
       { id: model.wave_id },
       ctx
     );
     if (!wave) throw new NotFoundException('Wave not found');
-    let terms = wave.participation_terms;
-    if (competitionId) {
-      const [competition] = await this.db.query<{
-        participation_config: string | { terms?: string | null };
-      }>(
-        'competitionTerms',
-        `select participation_config from ${COMPETITIONS_TABLE} where id=:id`,
-        { id: competitionId },
-        ctx
-      );
-      if (!competition) throw new NotFoundException('Competition not found');
-      const config =
-        typeof competition.participation_config === 'string'
-          ? JSON.parse(competition.participation_config)
-          : competition.participation_config;
-      terms = config.terms ?? null;
-    }
+    const [competition] = await this.db.query<{
+      participation_config: string | { terms?: string | null };
+    }>(
+      'competitionTerms',
+      `select participation_config from ${COMPETITIONS_TABLE} where id=:id and wave_id=:waveId`,
+      { id: competitionId, waveId: model.wave_id },
+      ctx
+    );
+    if (!competition) throw new NotFoundException('Competition not found');
+    const config =
+      typeof competition.participation_config === 'string'
+        ? JSON.parse(competition.participation_config)
+        : competition.participation_config;
+    const terms = config.terms ?? null;
     const termsVersion = hash(`${COLLABORATION_COPY_VERSION}:${terms ?? ''}`);
     await this.db.query(
       'createContext',
