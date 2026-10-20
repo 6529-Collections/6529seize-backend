@@ -6,6 +6,8 @@ import {
   COMPETITIONS_TABLE,
   COMPETITION_PAUSES_TABLE,
   COMPETITION_VOTES_TABLE,
+  COMPETITION_SCORE_HISTORY_TABLE,
+  COMPETITION_ENTRIES_TABLE,
   COMPETITION_OUTCOMES_TABLE,
   COMPETITION_LEGACY_MIRROR_PERMITS_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
@@ -34,6 +36,8 @@ import {
 import { legacyWaveUpdate } from '@/api/competitions/legacy-competition-settings.service';
 import { waveApiService } from '@/api/waves/wave.api.service';
 import { competitionLifecycleService } from '@/api/competitions/competition-lifecycle.service';
+import { competitionCreditRepository } from './competition-credit.repository';
+import { CompetitionStorageMode } from '@/entities/ICompetition';
 import { withLegacyCompetitionProfileMerge } from './legacy-competition-profile-merge';
 
 const first = Date.now() + 86_400_000;
@@ -246,6 +250,79 @@ describeWithSeed(
       expect(Number(physical?.next_decision_time)).toBe(first);
     });
 
+    it.each(['native', 'retained source'] as const)(
+      'rejects historical credit edits through the old wave API with %s voter history',
+      async (source) => {
+        if (source === 'native')
+          await sqlExecutor.execute(
+            `insert into ${COMPETITION_SCORE_HISTORY_TABLE} (competition_id,kind,sequence,entry_id,drop_id,voter_profile_id,value,occurred_at)
+             values (:id,'VOTER',1,null,'deleted-history-drop','historical-voter',7,1000)`,
+            { id }
+          );
+        else
+          await sqlExecutor.execute(
+            `insert into ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} (drop_id,wave_id,voter_id,timestamp,vote)
+             values ('deleted-history-drop',:waveId,'historical-voter',1000,7)`,
+            { waveId: wave.id }
+          );
+        const projected = await waveApiService.findWaveByIdOrThrow(
+          wave.id,
+          [],
+          ctx
+        );
+        const request = legacyWaveUpdate(projected);
+        const before = await competitionRepository.findCompetitionRecordById(
+          id,
+          ctx
+        );
+        await expect(
+          waveApiService.updateWave(
+            wave.id,
+            {
+              ...request,
+              voting: {
+                ...request.voting,
+                forbid_negative_votes: !request.voting.forbid_negative_votes
+              }
+            },
+            ctx
+          )
+        ).rejects.toThrow(
+          'Voting credit rules are immutable after the first vote'
+        );
+        const after = await competitionRepository.findCompetitionRecordById(
+          id,
+          ctx
+        );
+        expect(after!.config_version).toBe(before!.config_version);
+        expect(after!.voting_config).toEqual(before!.voting_config);
+        const renamed = await waveApiService.updateWave(
+          wave.id,
+          { ...request, name: 'Allowed title after voting' },
+          ctx
+        );
+        expect(renamed.name).toBe('Allowed title after voting');
+      }
+    );
+
+    it('allows a voting-credit edit before the first vote through the old wave API', async () => {
+      const projected = await waveApiService.findWaveByIdOrThrow(
+        wave.id,
+        [],
+        ctx
+      );
+      const request = legacyWaveUpdate(projected);
+      const updated = await waveApiService.updateWave(
+        wave.id,
+        {
+          ...request,
+          voting: { ...request.voting, forbid_negative_votes: true }
+        },
+        ctx
+      );
+      expect(updated.voting.forbid_negative_votes).toBe(true);
+    });
+
     it('changes only the selected pause and retains native pauses missing from the old mirror', async () => {
       const start = Date.now() + 1000;
       await sqlExecutor.execute(
@@ -285,30 +362,72 @@ describeWithSeed(
       ).toEqual([]);
     });
 
-    it('consolidates current native credit without rebuilding it from stale physical votes', async () => {
-      const entryId = randomUUID();
-      await sqlExecutor.execute(
-        `insert into ${COMPETITION_VOTES_TABLE} (id,competition_id,entry_id,voter_profile_id,value,credit_spent,created_at,updated_at) values (:voteId,:id,:entryId,'source',7,7,1,1),(:targetId,:id,:entryId,'target',2,2,1,1)`,
-        { id, entryId, voteId: randomUUID(), targetId: randomUUID() }
-      );
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (connection) => {
-          await withLegacyCompetitionProfileMerge(
-            sqlExecutor,
-            ['source'],
-            'target',
-            async () => undefined,
-            { connection }
-          );
-        }
-      );
-      expect(
+    it.each([
+      { source: 7, target: 2, expected: 9 },
+      { source: 10, target: -4, expected: 6 }
+    ])(
+      'consolidates current native credit without stale physical votes ($source + $target)',
+      async ({ source, target, expected }) => {
+        const entryId = randomUUID();
         await sqlExecutor.execute(
-          `select voter_profile_id,value,credit_spent from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
-          { id }
-        )
-      ).toEqual([{ voter_profile_id: 'target', value: 9, credit_spent: 9 }]);
-    });
+          `insert into ${COMPETITION_ENTRIES_TABLE} (id,competition_id,wave_id,drop_id,submitter_id,status,config_version,submitted_at)
+         values (:entryId,:id,:waveId,'merge-credit-drop','source','ACTIVE',1,1)`,
+          { entryId, id, waveId: wave.id }
+        );
+        await sqlExecutor.execute(
+          `insert into ${COMPETITION_VOTES_TABLE} (id,competition_id,entry_id,voter_profile_id,value,credit_spent,created_at,updated_at) values (:voteId,:id,:entryId,'source',:source,:sourceSpent,1,1),(:targetId,:id,:entryId,'target',:target,:targetSpent,1,1)`,
+          {
+            id,
+            entryId,
+            source,
+            target,
+            sourceSpent: Math.abs(source),
+            targetSpent: Math.abs(target),
+            voteId: randomUUID(),
+            targetId: randomUUID()
+          }
+        );
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            await withLegacyCompetitionProfileMerge(
+              sqlExecutor,
+              ['source'],
+              'target',
+              async () => undefined,
+              { connection }
+            );
+          }
+        );
+        expect(
+          await sqlExecutor.execute(
+            `select voter_profile_id,value,credit_spent from ${COMPETITION_VOTES_TABLE} where competition_id=:id`,
+            { id }
+          )
+        ).toEqual([
+          {
+            voter_profile_id: 'target',
+            value: expected,
+            credit_spent: Math.abs(expected)
+          }
+        ]);
+        expect(
+          await competitionCreditRepository.getSpending(
+            {
+              id,
+              wave_id: wave.id,
+              storage_mode: CompetitionStorageMode.NATIVE
+            },
+            'target',
+            { id: entryId, drop_id: 'merge-credit-drop' },
+            {}
+          )
+        ).toEqual({
+          namespace_spent: Math.abs(expected),
+          entry_spent: Math.abs(expected),
+          current_vote: expected
+        });
+      }
+    );
 
     it.each(['raw voter', 'shared author'] as const)(
       'locks source-only %s history before the first transfer copy',

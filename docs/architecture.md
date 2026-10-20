@@ -1257,7 +1257,10 @@ while writing exact source IDs into native history. Bounded explicit history
 preparation preserves raw observations and parentless distribution children in
 the existing native domain; ordinary schema maintenance never transfers history.
 Original settings, pauses and identity consolidation use native authority during
-the rolling overlap. Native credit revocation discovers each competition's
+the rolling overlap. Original Settings applies its rule policy under the owner
+lock before saving: credit rules freeze after native or not-yet-copied voter
+history, while permitted title and presentation edits remain available. Native
+credit revocation discovers each competition's
 current voter namespace, including siblings, and reads its native budget under
 its owner lock; only legacy owners use physical allocation selection. Curation
 watch processing locks competition owners before watches and selects ACTIVE

@@ -10,6 +10,7 @@ import {
 import { ApiUpdateWaveRequest } from '@/api/generated/models/ApiUpdateWaveRequest';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { configurationToRecord } from '@/api/competitions/competition-configuration';
+import { validateOriginalPrimaryRuleUpdate } from '@/api/competitions/original-primary-rule-update';
 import { CompetitionEntity } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
 import { competitionCommandRepository } from './competition-command.repository';
@@ -93,6 +94,7 @@ export async function reconcileAcceptedLegacySettings(
     competitionRepository,
     ctx
   ).getCompetition(record, now);
+  await validateOriginalPrimaryRuleUpdate(previous, config, competition, ctx);
   await nativeCompetitionRuntimeService.enqueueDueTransitions(
     competition,
     now,

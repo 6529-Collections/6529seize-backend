@@ -14,6 +14,7 @@ import {
 } from '@/constants';
 import { SqlExecutor } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
+import { NATIVE_SCORE_SEQUENCE_BASE } from './competition-score-history';
 
 /** The native owner can materialize old read models, but an old worker cannot.
  * This permit is transactional, scoped to one physical connection and one UUID,
@@ -108,7 +109,7 @@ export async function mirrorNativeLegacyVote(
       values,
       options
     );
-    await db.execute(
+    const aggregateInsert = await db.execute(
       `insert into ${DROP_REAL_VOTE_IN_TIME_TABLE} (drop_id,wave_id,timestamp,vote) values (:dropId,:waveId,:occurredAt,:aggregate)`,
       values,
       options
@@ -117,10 +118,10 @@ export async function mirrorNativeLegacyVote(
       `insert into ${COMPETITION_SCORE_HISTORY_TABLE}
        (competition_id,kind,sequence,entry_id,drop_id,voter_profile_id,value,occurred_at,mutation_sequence)
        values (:competitionId,'AGGREGATE',:sequence,:entryId,:dropId,'',:aggregate,:occurredAt,:mutationSequence)`,
-      { ...values, sequence: await lastMirrorSequence(db, ctx) },
+      { ...values, sequence: mirrorInsertSequence(aggregateInsert) },
       options
     );
-    await db.execute(
+    const voterInsert = await db.execute(
       `insert into ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} (drop_id,wave_id,voter_id,timestamp,vote) values (:dropId,:waveId,:voterProfileId,:occurredAt,:value)`,
       values,
       options
@@ -129,7 +130,7 @@ export async function mirrorNativeLegacyVote(
       `insert into ${COMPETITION_SCORE_HISTORY_TABLE}
        (competition_id,kind,sequence,entry_id,drop_id,voter_profile_id,value,occurred_at,mutation_sequence)
        values (:competitionId,'VOTER',:sequence,:entryId,:dropId,:voterProfileId,:value,:occurredAt,:mutationSequence)`,
-      { ...values, sequence: await lastMirrorSequence(db, ctx) },
+      { ...values, sequence: mirrorInsertSequence(voterInsert) },
       options
     );
     await db.execute(
@@ -263,17 +264,25 @@ export async function mirrorNativeLegacySchedule(
     );
 }
 
-async function lastMirrorSequence(
-  db: SqlExecutor,
-  ctx: RequestContext
-): Promise<number> {
-  const row = await db.oneOrNull<{ id: number | string }>(
-    'select last_insert_id() as id',
-    {},
-    { wrappedConnection: ctx.connection }
-  );
-  const sequence = Number(row?.id);
-  if (!Number.isSafeInteger(sequence) || sequence < 1)
+/** Bind each observation to its own INSERT result, independently of mutable
+ * connection-level LAST_INSERT_ID state. Invalid IDs abort the caller transaction. */
+function mirrorInsertSequence(inserted: unknown): number {
+  // SqlExecutor normalizes mysql OkPacket values to an array whose third
+  // element is insertId. Accept the packet form used by injected executors too.
+  let sourceId: unknown = Number.NaN;
+  if (Array.isArray(inserted)) sourceId = inserted[2];
+  else if (
+    inserted !== null &&
+    typeof inserted === 'object' &&
+    'insertId' in inserted
+  )
+    sourceId = inserted.insertId;
+  const sequence = Number(sourceId);
+  if (
+    !Number.isSafeInteger(sequence) ||
+    sequence < 1 ||
+    sequence >= NATIVE_SCORE_SEQUENCE_BASE
+  )
     throw new Error('Retained score history requires a safe source sequence');
   return sequence;
 }

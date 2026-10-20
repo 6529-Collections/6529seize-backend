@@ -329,6 +329,76 @@ describeWithSeed(
       ]);
     });
 
+    it('rolls back the live mirror and vote when an observation sequence conflicts', async () => {
+      const [source] = await sqlExecutor.execute<{ next_id: number }>(
+        `SELECT AUTO_INCREMENT as next_id FROM information_schema.TABLES
+         WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:table`,
+        { table: DROP_REAL_VOTE_IN_TIME_TABLE }
+      );
+      await sqlExecutor.execute(
+        `INSERT INTO ${COMPETITION_SCORE_HISTORY_TABLE}
+         (competition_id,kind,sequence,entry_id,drop_id,voter_profile_id,value,occurred_at)
+         VALUES (:id,'AGGREGATE',:sequence,:entryId,:dropId,'',999,2000)`,
+        { id, sequence: source.next_id, entryId, dropId }
+      );
+      const beforeAggregate = await sqlExecutor.execute(
+        `SELECT * FROM ${DROP_REAL_VOTE_IN_TIME_TABLE} ORDER BY id`
+      );
+      const beforeVoter = await sqlExecutor.execute(
+        `SELECT * FROM ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} ORDER BY id`
+      );
+      await expect(
+        runtime.executeNativeQueriesInTransaction(async (connection) => {
+          const ctx = { connection };
+          await runtime.lockCompetition(id, ctx);
+          await sqlExecutor.execute(
+            `UPDATE ${COMPETITION_VOTES_TABLE} SET value=11,credit_spent=11 WHERE competition_id=:id`,
+            { id },
+            { wrappedConnection: connection }
+          );
+          await runtime.recordVoteChange(
+            {
+              competitionId: id,
+              entryId,
+              voterProfileId: 'voter',
+              previousVote: 7,
+              value: 11,
+              occurredAt: 2000
+            },
+            ctx
+          );
+        })
+      ).rejects.toThrow('Duplicate entry');
+      expect(
+        await sqlExecutor.execute(
+          `SELECT * FROM ${DROP_REAL_VOTE_IN_TIME_TABLE} ORDER BY id`
+        )
+      ).toEqual(beforeAggregate);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT * FROM ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} ORDER BY id`
+        )
+      ).toEqual(beforeVoter);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT value,credit_spent FROM ${COMPETITION_VOTES_TABLE} WHERE competition_id=:id`,
+          { id }
+        )
+      ).toEqual([{ value: 7, credit_spent: 7 }]);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT sequence FROM ${COMPETITION_VOTE_HISTORY_TABLE} WHERE competition_id=:id`,
+          { id }
+        )
+      ).toEqual([{ sequence: 1 }]);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT sequence,value FROM ${COMPETITION_SCORE_HISTORY_TABLE} WHERE competition_id=:id`,
+          { id }
+        )
+      ).toEqual([{ sequence: source.next_id, value: 999 }]);
+    });
+
     it('follows the final historical views and resets mixed final and preparatory votes by actual mutation order', async () => {
       await transferCompetitionRetirementHistory(
         sqlExecutor,
@@ -489,6 +559,64 @@ describeWithSeed(
         { semantic_key: `${id}:phase:1:4000`, delivered_at: null },
         { semantic_key: `${id}:phase:2:7000`, delivered_at: null }
       ]);
+    });
+
+    it('keeps an existing pending start event pending when both schedule starts are null', async () => {
+      await sqlExecutor.execute(
+        `UPDATE ${COMPETITIONS_TABLE} SET published_at=0,
+         participation_config=JSON_SET(participation_config,'$.starts_at',NULL),
+         voting_config=JSON_SET(voting_config,'$.starts_at',NULL) WHERE id=:id`,
+        { id }
+      );
+      await runtime.executeNativeQueriesInTransaction(async (connection) => {
+        const ctx = { connection };
+        await runtime.lockCompetition(id, ctx);
+        await runtime.enqueueEvent(
+          {
+            key: 'started',
+            event_type: 'COMPETITION_STARTED',
+            competition_id: id,
+            wave_id: wave.id,
+            occurred_at: 0,
+            data: {}
+          },
+          ctx
+        );
+      });
+      const before = await sqlExecutor.execute(
+        `SELECT * FROM ${COMPETITION_OUTBOX_TABLE} WHERE semantic_key=:key`,
+        { key: `${id}:started` }
+      );
+      expect(before).toHaveLength(1);
+      await transferCompetitionRetirementHistory(sqlExecutor, id);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT * FROM ${COMPETITION_OUTBOX_TABLE} WHERE semantic_key=:key`,
+          { key: `${id}:started` }
+        )
+      ).toEqual(before);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT delivered_at FROM ${COMPETITION_OUTBOX_TABLE} WHERE semantic_key=:key`,
+          { key: `${id}:started` }
+        )
+      ).toEqual([{ delivered_at: null }]);
+    });
+
+    it('does not acknowledge a start published after cutover when both schedule starts are null', async () => {
+      await sqlExecutor.execute(
+        `UPDATE ${COMPETITIONS_TABLE} SET published_at=5000,
+         participation_config=JSON_SET(participation_config,'$.starts_at',NULL),
+         voting_config=JSON_SET(voting_config,'$.starts_at',NULL) WHERE id=:id`,
+        { id }
+      );
+      await transferCompetitionRetirementHistory(sqlExecutor, id);
+      expect(
+        await sqlExecutor.execute(
+          `SELECT semantic_key FROM ${COMPETITION_OUTBOX_TABLE} WHERE semantic_key=:key`,
+          { key: `${id}:started` }
+        )
+      ).toEqual([]);
     });
 
     it('retains signed revision and vote history on membership deletion without leaving a live entry', async () => {
