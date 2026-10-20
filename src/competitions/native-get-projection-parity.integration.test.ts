@@ -1158,6 +1158,73 @@ describeWithSeed(
       expect(await read(nativeView)).toEqual(expected);
     });
 
+    it('reads only native CHAT NFTs after cutover when physical and JSON sets are disjoint, cleared or absent', async () => {
+      const nativeNfts = JSON.stringify([
+        {
+          contract: '0x00000000000000000000000000000000000000c1',
+          token_id: 11
+        }
+      ]);
+      const setNativeNfts = (nfts: string) =>
+        sqlExecutor.execute(
+          `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=JSON_SET(hub_voting_config,'$.credit_nfts',CAST(:nfts AS JSON)) WHERE id=:waveId`,
+          { nfts, waveId: chatWave.id }
+        );
+      await setNativeNfts(nativeNfts);
+      await insert(tables.WAVE_VOTING_CREDIT_NFTS_TABLE, [
+        {
+          wave_id: chatWave.id,
+          contract: '0x00000000000000000000000000000000000000d1',
+          token_id: 22
+        }
+      ]);
+      const read = (view: string) =>
+        sqlExecutor.execute(
+          `SELECT * FROM ${view} WHERE wave_id=:waveId ORDER BY contract,token_id`,
+          { waveId: chatWave.id }
+        );
+      const frozenView = frozenNativeGetView(
+        tables.WAVE_VOTING_CREDIT_NFTS_TABLE
+      );
+      const nativeView = legacyGetView(tables.WAVE_VOTING_CREDIT_NFTS_TABLE);
+      expect(await read(frozenView)).toEqual([
+        {
+          wave_id: chatWave.id,
+          contract: '0x00000000000000000000000000000000000000d1',
+          token_id: 22
+        }
+      ]);
+      expect(await read(nativeView)).toEqual([
+        {
+          wave_id: chatWave.id,
+          contract: '0x00000000000000000000000000000000000000c1',
+          token_id: 11
+        }
+      ]);
+      await setNativeNfts('[]');
+      expect(await read(nativeView)).toEqual([]);
+      expect(await read(frozenView)).toEqual([
+        {
+          wave_id: chatWave.id,
+          contract: '0x00000000000000000000000000000000000000d1',
+          token_id: 22
+        }
+      ]);
+      await setNativeNfts(nativeNfts);
+      await sqlExecutor.execute(
+        `DELETE FROM ${tables.WAVE_VOTING_CREDIT_NFTS_TABLE} WHERE wave_id=:waveId`,
+        { waveId: chatWave.id }
+      );
+      expect(await read(nativeView)).toEqual([
+        {
+          wave_id: chatWave.id,
+          contract: '0x00000000000000000000000000000000000000c1',
+          token_id: 11
+        }
+      ]);
+      expect(await read(frozenView)).toEqual([]);
+    });
+
     it('keeps observable case/accent filtering and ordering on native outcome text and NFT addresses', async () => {
       const textQuery = (view: string) =>
         sqlExecutor.execute(
