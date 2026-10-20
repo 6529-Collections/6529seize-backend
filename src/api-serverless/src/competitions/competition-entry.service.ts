@@ -59,7 +59,6 @@ import {
   assertCompetitionOpen,
   competitionActor,
   lockNativeCompetition,
-  requireNativeWrites,
   visibleCompetitionWave
 } from './competition-command-access';
 import { verifyCompetitionSignature } from './competition-signature';
@@ -131,7 +130,6 @@ export class CompetitionEntryService {
     request: EntryRequest,
     ctx: RequestContext
   ): Promise<CompetitionEntry> {
-    requireNativeWrites();
     const actor = competitionActor(ctx);
     await visibleCompetitionWave(waveId, ctx);
     if (!request.drop || 'drop_id' in request || 'drop_content_hash' in request)

@@ -92,3 +92,46 @@ describe('frozen GET query routing', () => {
     ).toThrow(error);
   });
 });
+
+// This guard checks generated SQL itself rather than a mock table inventory:
+// compatibility installation must work after physical retirement as well.
+describe('native-only permanent compatibility definitions', () => {
+  it('never discovers columns or falls back to retired physical sources', async () => {
+    const { LEGACY_GET_SOURCE_TABLES, legacyCompetitionGetViewDefinition } =
+      await import('./legacy-competition-get-facade');
+    for (const table of LEGACY_GET_SOURCE_TABLES) {
+      const sql = legacyCompetitionGetViewDefinition(table);
+      expect(sql).not.toMatch(
+        /information_schema|competition_migrations|competition_legacy_mirror_permits|union all/i
+      );
+      if (table !== 'waves' && table !== 'drops') {
+        for (const source of LEGACY_GET_SOURCE_TABLES.filter(
+          (source) => source !== 'waves' && source !== 'drops'
+        )) {
+          expect(sql).not.toMatch(
+            new RegExp(`(?:from|join) ${source}\\b`, 'i')
+          );
+        }
+      }
+    }
+  });
+
+  it('uses immutable original-primary ownership, independent of default selection', async () => {
+    const { legacyCompetitionGetViewDefinition } =
+      await import('./legacy-competition-get-facade');
+    for (const table of [
+      'waves',
+      'drops',
+      'drop_voter_states',
+      'wave_decisions'
+    ]) {
+      const sql = legacyCompetitionGetViewDefinition(table);
+      expect(sql).toContain('c.legacy_wave_id=c.wave_id');
+      expect(sql).not.toContain('default_competition');
+    }
+    const wave = legacyCompetitionGetViewDefinition('waves');
+    expect(wave).not.toMatch(
+      /w\.`(?:voting_|participation_|winning_|type|next_decision_time|time_lock_ms)/
+    );
+  });
+});

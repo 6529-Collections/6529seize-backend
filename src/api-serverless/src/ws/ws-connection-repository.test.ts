@@ -10,6 +10,7 @@ import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { WsConnectionRepository } from './ws-connection.repository';
+import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 
 describe('WsConnectionRepository', () => {
   afterEach(() => {
@@ -334,18 +335,22 @@ describe('WsConnectionRepository', () => {
     });
     expect(oneOrNull).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining(`from ${WAVES_TABLE}`),
+      expect.stringContaining(`from ${legacyGetView(WAVES_TABLE)}`),
       { waveId: 'wave-1' }
     );
     expect(oneOrNull).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining(`from ${WAVE_VOTING_CREDIT_NFTS_TABLE}`),
+      expect.stringContaining(
+        `from ${legacyGetView(WAVE_VOTING_CREDIT_NFTS_TABLE)}`
+      ),
       { waveId: 'wave-1' }
     );
     const [sql, params] = execute.mock.calls[0];
-    expect(sql).toContain(`from ${DROP_VOTER_STATE_TABLE}`);
+    expect(sql).toContain(`from ${legacyGetView(DROP_VOTER_STATE_TABLE)}`);
     expect(sql).toContain(`from ${IDENTITIES_TABLE}`);
-    expect(sql).toContain(`join ${WAVE_VOTING_CREDIT_NFTS_TABLE} wvcn`);
+    expect(sql).toContain(
+      `join ${legacyGetView(WAVE_VOTING_CREDIT_NFTS_TABLE)} wvcn`
+    );
     expect(sql).toContain(`left join ${TDH_NFT_TABLE} tn`);
     expect(params).toEqual(
       expect.objectContaining({

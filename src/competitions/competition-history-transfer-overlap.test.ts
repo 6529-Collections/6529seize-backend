@@ -4,12 +4,10 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
 import { WaveType } from '@/entities/IWave';
-import { dropVotingDb } from '@/api/drops/drop-voting.db';
 import {
   legacyCompetitionEntryId,
   legacyCompetitionId
 } from './competition-id';
-import { withLegacyCompetitionProfileMerge } from './legacy-competition-profile-merge';
 import { transferCompetitionRetirementHistory } from './competition-retirement-history';
 import { NativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
 import { CompetitionVoteActivityRepository } from './competition-vote-activity.repository';
@@ -23,7 +21,7 @@ const dropId = 'transfer-overlap-drop';
 const entryId = legacyCompetitionEntryId(id, dropId);
 const runtime = new NativeCompetitionRuntimeRepository(() => sqlExecutor);
 const activity = new CompetitionVoteActivityRepository(() => sqlExecutor);
-const expectedSourceRowsAfterVote = 2;
+const expectedSourceRowsAfterVote = 1;
 
 describeWithSeed(
   'accepted competition history transfer during rolling writes',
@@ -137,56 +135,6 @@ describeWithSeed(
         );
       });
 
-    it('normalizes a raw-only voter through the real prepared profile merge before its first transfer without reconstructing identity', async () => {
-      await sqlExecutor.execute(
-        `DELETE FROM ${tables.COMPETITION_ENTRIES_TABLE} WHERE id=:entryId`,
-        { entryId }
-      );
-      expect(
-        await sqlExecutor.execute(
-          `SELECT * FROM ${tables.COMPETITION_SCORE_HISTORY_TABLE}`
-        )
-      ).toEqual([]);
-      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-        withLegacyCompetitionProfileMerge(
-          sqlExecutor,
-          ['source'],
-          'target',
-          () =>
-            dropVotingDb.mergeOnProfileIdChange(
-              { previous_id: 'source', new_id: 'target' },
-              { connection }
-            ),
-          { connection }
-        )
-      );
-      expect(
-        await sqlExecutor.execute(
-          `SELECT id,voter_id,vote,timestamp FROM ${tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE}`
-        )
-      ).toEqual([{ id: 2, voter_id: 'target', vote: 9, timestamp: 1000 }]);
-      await transferCompetitionRetirementHistory(sqlExecutor, id);
-      expect(
-        await sqlExecutor.execute(
-          `SELECT sequence,voter_profile_id,value,occurred_at,entry_id FROM ${tables.COMPETITION_SCORE_HISTORY_TABLE} WHERE competition_id=:id AND kind='VOTER'`,
-          { id }
-        )
-      ).toEqual([
-        {
-          sequence: 2,
-          voter_profile_id: 'target',
-          value: 9,
-          occurred_at: 1000,
-          entry_id: null
-        }
-      ]);
-      expect(
-        await sqlExecutor.execute(
-          `SELECT * FROM ${tables.COMPETITION_ENTRIES_TABLE}`
-        )
-      ).toEqual([]);
-    });
-
     it('accepts an atomic live vote after the last aggregate copy page and before the single-statement source/target count', async () => {
       let wrote = false;
       const report = await transferCompetitionRetirementHistory(
@@ -261,14 +209,7 @@ describeWithSeed(
         ['zz-retained', id]
       ]);
       expect(logs[1].created_at).toBeNull();
-      const events = await activity.listTransferred(
-        id,
-        wave.id,
-        3000,
-        0,
-        10,
-        {}
-      );
+      const events = await activity.list(id, 0, 10, {});
       expect(events).toHaveLength(2);
       expect(events[0]).toMatchObject({
         sequence: 1,

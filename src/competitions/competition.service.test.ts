@@ -9,7 +9,6 @@ import {
 import { WaveType } from '@/entities/IWave';
 import { NotFoundException } from '@/exceptions';
 import { aWave } from '@/tests/fixtures/wave.fixture';
-import { appFeatures } from '@/app-features';
 import { assertCompetitionOpen } from '@/api/competitions/competition-command-access';
 import type { DefaultCompetitionRecord } from '@/competitions/default-competition';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
@@ -116,24 +115,15 @@ describe('CompetitionService', () => {
     getGroupsUserIsEligibleFor: jest.fn(),
     getGroupsUserIsEligibleForByIds: jest.fn()
   };
-  const features = {
-    isUnifiedCompetitionReadsEnabled: jest.fn(),
-    isNativeCompetitionWritesEnabled: jest.fn(),
-    isNativeCompetitionExecutionEnabled: jest.fn()
-  };
   const service = new CompetitionService(
     repository as never,
     wavesDb as never,
     groupsService as never,
-    features as never,
     new CompetitionCursorCodec()
   );
 
   beforeEach(() => {
     jest.clearAllMocks();
-    features.isUnifiedCompetitionReadsEnabled.mockReturnValue(true);
-    features.isNativeCompetitionWritesEnabled.mockReturnValue(false);
-    features.isNativeCompetitionExecutionEnabled.mockReturnValue(true);
     repository.listNativePauses.mockResolvedValue({
       data: [],
       has_more: false,
@@ -274,7 +264,7 @@ describe('CompetitionService', () => {
     });
   });
 
-  it('keeps native submit and vote permissions false while writes are disabled', async () => {
+  it('keeps submit and vote permissions false when native execution is disabled', async () => {
     const authenticationContext = {
       isUserFullyAuthenticated: () => true,
       isAuthenticatedAsProxy: () => false,
@@ -303,7 +293,6 @@ describe('CompetitionService', () => {
     };
     repository.findCompetitionRecordById.mockResolvedValue(scoped);
     repository.listCompetitionRecordsForWave.mockResolvedValue([scoped]);
-    features.isNativeCompetitionWritesEnabled.mockReturnValue(true);
     groupsService.getGroupsUserIsEligibleForByIds.mockResolvedValue([
       'entry-group'
     ]);
@@ -365,9 +354,6 @@ describe('CompetitionService', () => {
     'keeps commands and permissions aligned for $name',
     async ({ pauseEnd, now, accepted }) => {
       const clock = jest.spyOn(Date, 'now').mockReturnValue(now);
-      const execution = jest
-        .spyOn(appFeatures, 'isNativeCompetitionExecutionEnabled')
-        .mockReturnValue(true);
       const record = {
         ...first,
         execution_mode: CompetitionExecutionMode.ACTIVE,
@@ -395,7 +381,6 @@ describe('CompetitionService', () => {
         has_more: false,
         next_cursor: null
       });
-      features.isNativeCompetitionWritesEnabled.mockReturnValue(true);
       const authenticationContext = {
         isUserFullyAuthenticated: () => true,
         isAuthenticatedAsProxy: () => false,
@@ -429,7 +414,6 @@ describe('CompetitionService', () => {
         }
       } finally {
         clock.mockRestore();
-        execution.mockRestore();
       }
     }
   );
@@ -509,11 +493,11 @@ describe('CompetitionService', () => {
     expect(repository.listNativeOutcomes).toHaveBeenCalledTimes(2);
   });
 
-  it('exposes no v3 data while the unified-read kill switch is off', async () => {
-    features.isUnifiedCompetitionReadsEnabled.mockReturnValue(false);
-    await expect(service.getHub(wave.id, {})).rejects.toBeInstanceOf(
-      NotFoundException
-    );
-    expect(wavesDb.findWaveById).not.toHaveBeenCalled();
+  it('exposes native hub capabilities without rollout configuration', async () => {
+    await expect(service.getHub(wave.id, {})).resolves.toMatchObject({
+      id: wave.id,
+      capabilities: { competitions: true }
+    });
+    expect(wavesDb.findWaveById).toHaveBeenCalled();
   });
 });

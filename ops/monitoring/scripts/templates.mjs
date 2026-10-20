@@ -5,6 +5,21 @@ const base = new URL('../', import.meta.url);
 const catalog = JSON.parse(
   await readFile(new URL('../../src/config/deploy-services.json', base), 'utf8')
 );
+const retained = JSON.parse(
+  await readFile(new URL('retained-producers.json', base), 'utf8')
+);
+const observedServices = [...catalog.services];
+for (const producer of retained.services) {
+  // Preserve the catalog's established order and existing generated resources.
+  const next = observedServices.findIndex(
+    (service) => service.name > producer.name
+  );
+  observedServices.splice(
+    next < 0 ? observedServices.length : next,
+    0,
+    producer
+  );
+}
 const ref = (name) => ({ Ref: name });
 const supplemental = JSON.parse(
   await readFile(new URL('platform-functions.json', base), 'utf8')
@@ -351,7 +366,7 @@ function processingLane(r, lane, common, collectorEnv, permissions) {
 }
 
 function monitoringTemplate(environment) {
-  const functions = catalog.services
+  const functions = observedServices
     .filter((s) => s.allowed_environments.includes(environment))
     .flatMap((s) => s.verification_targets);
   const doc = document(
@@ -955,7 +970,7 @@ function addNftRefreshAlarms(resources) {
 }
 
 function sourceTemplate(environment) {
-  const services = catalog.services.filter((service) =>
+  const services = observedServices.filter((service) =>
     service.allowed_environments.includes(environment)
   );
   const functions = services.flatMap((service) => service.verification_targets);
@@ -1244,6 +1259,7 @@ for (const environment of ['prod', 'staging']) {
   outputs[`coverage-${environment}.json`] = {
     environment,
     source: 'src/config/deploy-services.json',
+    retainedSource: 'ops/monitoring/retained-producers.json',
     services: source.coverage,
     supplementalSource: 'ops/monitoring/platform-functions.json',
     platformOnly: source.platformOnly
