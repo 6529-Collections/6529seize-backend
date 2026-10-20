@@ -9,6 +9,7 @@ import {
 } from '../entities/IUserGroup';
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  COMPETITIONS_TABLE,
   EXTERNAL_INDEXED_OWNERSHIP_721_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
@@ -30,6 +31,7 @@ import { IdentityEntity } from '../entities/IIdentity';
 import { collections } from '../collections';
 import { Time } from '../time';
 import { DbPoolName } from '../db-query.options';
+import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 
 const mysql = require('mysql');
 
@@ -952,15 +954,23 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     }>(
       `
         select distinct id from (
-          select w.visibility_group_id as id from ${WAVES_TABLE} w
+          select w.visibility_group_id as id from ${legacyGetView(WAVES_TABLE)} w
           union all
-          select w.admin_group_id as id from ${WAVES_TABLE} w
+          select w.admin_group_id as id from ${legacyGetView(WAVES_TABLE)} w
           union all
-          select w.chat_group_id as id from ${WAVES_TABLE} w
+          select w.chat_group_id as id from ${legacyGetView(WAVES_TABLE)} w
           union all
-          select w.participation_group_id as id from ${WAVES_TABLE} w
+          select w.participation_group_id as id from ${legacyGetView(WAVES_TABLE)} w
           union all
-          select w.voting_group_id as id from ${WAVES_TABLE} w
+          select w.voting_group_id as id from ${legacyGetView(WAVES_TABLE)} w
+          union all
+          select json_unquote(json_extract(c.participation_config,'$.group_id')) as id
+          from ${COMPETITIONS_TABLE} c where c.storage_mode='NATIVE'
+            and json_type(json_extract(c.participation_config,'$.group_id'))='STRING'
+          union all
+          select json_unquote(json_extract(c.voting_config,'$.group_id')) as id
+          from ${COMPETITIONS_TABLE} c where c.storage_mode='NATIVE'
+            and json_type(json_extract(c.voting_config,'$.group_id'))='STRING'
           union all
           select wcg.community_group_id as id from ${WAVE_CURATIONS_TABLE} wcg
         ) x where id is not null

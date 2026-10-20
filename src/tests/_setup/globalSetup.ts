@@ -3,6 +3,9 @@ import 'tsconfig-paths/register';
 import * as dbMigrationsLoop from '../../dbMigrationsLoop';
 import { DataSource } from 'typeorm';
 import * as Entities from '@/entities/entities';
+import { doInDbContext } from '@/secrets';
+import { sqlExecutor } from '@/sql-executor';
+import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 import {
   getTestDatabaseNamePrefix,
   getTestWorkerCount,
@@ -86,6 +89,14 @@ module.exports = async (globalConfig?: unknown) => {
         undefined as any,
         undefined as any,
         undefined as any
+      );
+      // Fresh disposable databases model the already-retired runtime. Production
+      // full sync must never perform the initial compatibility-view cutover.
+      await doInDbContext(
+        () => installLegacyCompetitionGetFacade(sqlExecutor),
+        {
+          skipRedis: true
+        }
       );
     }
   } catch (error) {

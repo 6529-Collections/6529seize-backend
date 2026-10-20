@@ -47,17 +47,15 @@ Only `api` needs redeployment for this retirement.
 It lists RANK/APPROVE waves using TDH, TDH_PLUS_XTDH or CARD_SET_TDH. Shared
 read-context group eligibility and wave/parent visibility apply before count and
 pagination; DMs and children of DM parents are excluded, even when readable.
-Legacy voting windows, next decision state and
-APPROVE winner limits determine whether voting is active. Results sort by the
+The immutable original-primary compatibility projection supplies voting windows,
+next decision state and APPROVE winner limits from native competition data. Results sort by the
 nearest voting end or next decision, with open-ended votes last. This endpoint
 does not assert that the current viewer can vote, and does not filter by joined,
 pinned or recommendation status.
 
-The endpoint retains its wave-shaped original-primary contract. Compatibility
-projections read native configuration and decisions for native original owners;
-only genuine legacy owners retain their preparation fallback. The same projection
-names remain valid across the final native-only switch. Siblings do not enter
-this wave-shaped discovery contract.
+The permanent endpoint reads explicit native-backed wave/decision compatibility
+views without a new cache or worker. New sibling competitions remain outside
+this old wave-shaped contract; v3 resources provide competition-scoped discovery.
 
 ## Joined wave snapshot pagination
 
@@ -1089,296 +1087,110 @@ opaque handles. They deliberately have no expiry so a delayed retry retains its
 original cutoff; authentication and author/wave binding remain required on every
 request.
 
-Waves have an additive competition read boundary under `/v3/waves`. A wave is
-the chat/visibility hub and owns zero, one, or many competition resources. The
-competition service resolves each resource through either the immutable legacy
-adapter or the native competition repositories; it never infers an
-"active/current competition." Existing unversioned and v2 wave/drop GETs remain
-permanent façades over the immutable original primary. After a guarded migration,
-12 SQL views derive its frozen competition fields from native records and retained
-history; the request-scoped SQL read boundary excludes native v3 APIs and writes. A native
-hub therefore remains a contract-valid `CHAT` wave to those clients, and adding
-another competition cannot change a legacy Rank/Approve projection.
+Waves are chat, visibility and administration hubs containing zero or more native
+competitions under `/v3/waves`. Competition configuration and entry state own
+submissions, eligibility, voting, weighted scores, decisions and winners. Current
+navigation/settings/entries/voting/My Votes/leaderboards/winners/admin use the
+competition resources for every competition. Creating a hub always creates a
+CHAT wave; competition creation is a separate native command. Historical physical
+RANK/APPROVE wave types remain schema-compatible and do not block hub updates.
 
-The migrated primary's vote Activity feed combines retained pre-transfer wave logs
-with native vote history in one chronologically paginated query. It preserves original
-log JSON and proxy attribution; separate native competitions never inherit those
-wave logs. This read repair requires only an API deployment, without schema changes
-or remigrating transferred waves.
+Shared CHAT participation and voting settings are live typed policies in
+`waves.hub_participation_config` and `waves.hub_voting_config`. They preserve
+independent nullable roles, credit settings, periods, signatures, required
+content, terms and retained credit-NFT tuples. Current hub creation, editing and
+reading own these policies; `waves_archive` holds their corresponding snapshots.
+Original competition configuration continues to own original competition GETs.
+Explicit bounded preparation verifies retained policy parity. Temporary capture
+keeps prepared-version writes atomic during rollout; finalization disables its
+complete registry after the native API is healthy and old invocations drain.
 
-Competition storage and execution ownership are explicit per competition.
-Legacy-primary mappings keep existing decision and leaderboard workers active;
-native execution additionally requires its global kill switch and is disabled
-by default. `dbMigrationsLoop` creates the additive competition/read-model
-tables before API or worker deployments. Legacy wave writes maintain stable
-per-wave mappings; migration and scheduled maintenance invocations do not scan
-legacy waves or backfill mappings.
-The independent unified-read, native-write, native-execution, native-hub, and
-sampled-shadow flags default off. Shadow observations persist only canonical
-hashes and identifiers, never vote/signature/private payloads. Sampled legacy
-reads compare an independent legacy-table baseline with the unified adapter's
-paged domain reads in one repeatable-read snapshot. Samples are bounded and
-best effort; failures preserve the API response. Historical adapter
-self-comparisons are not parity evidence. The current `legacy-read-v3` source
-also compares independently derived available/spent/remaining credit.
-Operational deployment, verification, and rollback are documented in the
-[competition read boundary runbook](./competition-read-boundary-runbook.md).
+Permanent unversioned/v2 wave/drop GETs use explicit native-backed compatibility
+views. Their ownership is the immutable `legacy_wave_id=wave_id` original primary,
+independent of default-competition selection. Sibling competitions do not appear
+as old competitions; their shared content retains CHAT classifications in those
+contracts. Views explicitly list public columns and never discover columns from
+or union retired physical competition tables. Wave metadata remains shared:
+primaries inherit it while `presentation_config` is null; native arrays override
+it, including an explicit empty array. Weighted snapshot publication is distinct
+from live standings and has its own native `published_at` marker.
+Published historical snapshots without an entry remain in the existing native
+leaderboard relation for permanent GET compatibility, including nullable hold
+thresholds. They create no membership and cannot participate in native listings,
+voting, ranking, decisions or claims.
 
-Both legacy leaderboard workers refresh entries sequentially within each wave,
-with at most four waves being refreshed concurrently per invocation. Every entry
-retains its own transaction and execution-owner lock, including the ownership
-recheck after discovery. Background refresh upserts preserve a newer snapshot when
-an older queued refresh finishes last; authoritative historical APPROVE corrections
-retain their existing write behavior. Single-entry history reads use scalar
-maximum-ID lookups to avoid scanning unrelated history while holding that lock. Deploy
-`waveLeaderboardSnapshotterLoop`, followed by `waveDecisionExecutionLoop`;
-no schema or API/frontend contract change is required.
+Independent AGGREGATE and VOTER observations live in `competition_score_history`.
+Retained source IDs/timestamps/values and inconsistent observations stay intact,
+including observations without a current entry. A native mutation sequence orders
+accepted votes across rolling versions without pairing streams by timestamp.
+Weighted scoring consumes these native observations. Entry content revisions
+retain complete score history and use existing native update events to delimit
+the scoring revision. Current allocations, immutable decision voter snapshots,
+and awards retain their existing separate native tables.
 
-Implicit wave navigation has an additive unified-read boundary,
-`GET /v3/waves/{wave_id}/default-competition`. It selects across all visible
-competitions using active/upcoming/completed priority, authoritative legacy/native
-timing and deterministic ID ties, returning server evaluation and refresh times.
-The UI default is separate from the immutable legacy primary and execution
-ownership. A wave-leading legacy decision index supports bounded per-wave
-aggregation. Schema/index rollout precedes API and dependent frontend rollout;
-no execution worker changes. See [normalization and deployment order](./default-competition-navigation.md).
+Vote Activity combines competition-scoped shared profile logs and native vote
+history. Exact `<competition-id>:<sequence>` identities deduplicate before
+pagination; equal values/timestamps never imply a duplicate. IDs, timestamps,
+proxy attribution, reason JSON and independent shared profile history survive.
+The public profile API omits the internal competition scope column. Native
+outbox receipts preserve historical starts/transitions; a configuration update
+first enqueues due transitions for its prior version before replacing it.
 
-Legacy Settings commands use the same versioned competition update and pause/resume
-API as native competitions. The legacy adapter joins the existing wave update
-transaction and retains wave permissions, validation and storage. It preserves
-chat, visibility, administration, the pinned description and unrelated metadata.
-Legacy title and presentation changes update the shared wave properties. Public
-legacy configuration versions include the wave update timestamp, detecting edits
-through the original wave API without widening the stored competition version.
-Idempotent commands lock the competition and wave and advance both versions.
-The timestamp is an optimistic-concurrency token, while the stored integer
-version remains an internal revision counter. A fresh edit uses the last returned
-token; any intervening shared wave edit requires a reload because Settings
-preserves and rewrites those shared fields. Legacy voting credit rules cannot
-change after the first recorded legacy vote; original wave validation continues
-to govern access, scheduling and Approve threshold updates.
+`waveLeaderboardSnapshotterLoop` and `waveDecisionExecutionLoop` remain existing
+Lambda units and execute only native work. Per-competition execution mode,
+lifecycle, locks, command idempotency receipts, signature nonces, outbox leases,
+per-effect receipts and delivery receipts remain authoritative. Draft/DISABLED
+competitions cannot vote or execute. MAIN_STAGE/CURATION/QUORUM capabilities,
+claim mapping, curation transfers, nomination cleanup, REP/TDH revocation,
+profile consolidation, winner notifications and newsletter readers use native
+configuration/entries/snapshots. Capability restrictions remain independent of
+storage history or sharing a special wave. Mixed chat handlers retain chat
+posting/reactions/visibility/notifications.
+Curation token watches register only explicit eligible CURATION entry content.
+Pre-entry creation carries its verified competition permit; existing drops use
+locked active membership. A shared hub or default selection grants no watch
+behavior, and unresolved orphan drops remain inert. Independent transfers sharing
+a timestamp retain distinct effects and rank-one winners under a nonunique rank
+index; decision/entry identity remains unique.
 
-Pause reasons add a nullable `reason` column to `wave_decision_pauses`. Indefinite
-legacy pauses use a finite year-9999 end timestamp understood by existing decision
-workers; v3 reads normalize it to null. Resume shortens the active interval and
-retains the reason and history. No legacy execution worker deployment is required.
-The competition vote-activity endpoint checks wave/competition visibility before
-reading legacy wave logs or native history scoped by competition and visible entry.
-There is exactly one immutable legacy primary per wave. Legacy vote commands
-write wave logs, while every native competition writes its separate history, so
-additional native competitions in the same wave do not mix into legacy activity.
-An additive native-history index supports ordered activity pagination.
-For zero-downtime rollout, deploy and run `dbMigrationsLoop` entity synchronization
-first, then `api`, then the dependent frontend. Existing clients and workers can
-continue reading and writing the additive schema during rollout.
+Native command receipts include the effective actor and commit with domain writes,
+nonce consumption and events. Publication and current eligibility are rechecked
+under the competition lock. Shared-chat competition context selects scoped
+credits/votes and never falls back to an old executor. Dedicated native content
+remains immutable; imported submissions retain their allowed pre-winner edits,
+content revisions and atomic vote resets. Deletion hides entries through existing
+visibility/tombstone rules and does not replay accepted effects. Wave deletion
+still rejects competition history and chat purge preserves submissions.
 
-Native command APIs now implement hub creation, versioned draft/publication,
-entry submission, voting, credits, history and
-terminal lifecycle actions. Effective-actor idempotency receipts, signature
-nonces and domain writes commit atomically under competition locks. Each native
-competition keeps participation and voting access groups editable by wave
-administrators after entries exist. Access-only updates retain decision progress,
-outcome definitions and existing votes; the remaining execution rules stay locked.
-Each native
-entry creates one dedicated, immutable drop; existing chat messages or competition
-drops cannot be attached or reused. Native submissions use the internal
-`COMPETITION` drop type in the existing varchar column, keeping them outside legacy
-wave voting and winner-selection queries. Frozen unversioned/v2 GETs expose native-only submissions as CHAT; scoped native
-competition context supplies their submission/winner rendering and voting. Only
-the original migrated primary may project legacy participatory/winner semantics.
-Shared-chat voting resolves `/v3/waves/{wave_id}/drops/{drop_id}/competition-context`
-through wave, drop, moderation and competition visibility checks before selecting
-native entry credit/vote APIs. The context includes native current/projected
-totals, viewer vote, rank and top voters for the existing chat-card presentation.
-Drop voter and vote-log reads dispatch native submissions to competition vote and
-history tables after the same visibility checks. Only a successful null context selects legacy
-voting; unavailable or orphaned native entries never fall back to wave voting.
-Dedicated native content and presentation edits are rejected in every entry state.
-Original legacy submissions retain their approved pre-winner edit behavior after
-migration, with native content revisions and vote resets in the same transaction.
-Accepted snapshots still enforce current moderation and visibility. Entry deletion
-uses the existing drop deletion flow and transactionally removes
-the entry, its content snapshots, current votes and leaderboard state, releasing
-active credit. Public entry, vote, winner and award reads exclude removed entries
-and historical deletion tombstones. Frozen decision records remain internal.
-Chat purge preserves competition submissions; wave deletion rejects native history.
+Original Settings applies the native rule policy under the owner lock before
+saving. Credit rules freeze after any native voter history; permitted title and
+presentation edits remain available through both command routes.
 
-The existing leaderboard and decision Lambdas add an explicitly routed native
-engine. Both workers finish legacy wave processing before starting the native
-scan, so Main Stage decisions and leaderboard refreshes cannot be delayed by a
-large native backlog consuming the invocation. A failure in either engine is
-reported only after the other independent tasks have been attempted.
-Native vote saves, including migrated legacy rating requests, reconcile only
-the acting voter's current credit and validate the replacement vote inside the
-existing competition transaction. Vote state, aggregate runtime totals, history,
-metrics, notifications and durable vote events commit together. The save does
-not scan other voters or rebuild standings. Competition-wide credit
-reconciliation, time-weighted leaderboard snapshots and leaderboard events remain
-with `waveLeaderboardSnapshotterLoop` and `waveDecisionExecutionLoop`; standings
-can lag a confirmed vote until the next worker refresh. These existing workers
-must be healthy before deploying the API change. No schema, API contract,
-schedule or frontend deployment change is required.
-Native maintenance retains the competition transaction lock. WAVE credit checks
-batch identity and spending reads and only load individual votes for over-budget
-voters; DROP credit checks still reconcile each entry. Leaderboard upserts and
-runtime threshold updates use bounded batches of 100 entries on the same
-connection, retaining atomic scores, thresholds, cleanup and event publication.
-Each successful worker competition pass logs its operation and elapsed time,
-including lock acquisition and commit, independently of the detailed timer report.
-Native vote history, immutable decision voter snapshots and award
-rows remain separate from legacy tables. Per-entry aggregate votes must fit the
-safe-integer API range; an overflowing mutation rolls back its transaction.
-Time-weighted scores and threshold crossings use exact integer integrals before
-conversion to persisted ratings. The decision worker leases a durable
-competition outbox and emits scoped WebSocket updates and winner notifications.
-Entry removal and competition status changes do not
-generate notifications; feed reads and unread counts exclude historical status
-notices. Per-effect SQL receipts and competition/decision/entry claim
-provenance protect retries. Entry creation commits ordinary shared-CHAT push
-notification IDs into its private outbox payload. The API attempts immediate
-handoff; the decision worker retries the same IDs after transport or partial
-SQS failure, and existing device delivery receipts suppress redelivery. Public
-WebSocket invalidations omit this private payload. `claimsBuilder` and
-`pushNotificationsHandler` understand the additive messages before producers are enabled. Explicit
-capabilities gate Main Stage claims, announcements, mappings and participation
-metrics; sharing a special wave never confers them. Operations assignment has
-an operator allowlist and durable actor/reason audit. Privileged public effects
-revalidate current public wave/parent access.
+The original native creation/write/read/execution/shadow rollout flags and
+migration/reverse/reconciliation commands are retired. The migration Lambda has
+an inert transition artifact and zero reserved concurrency. Its physical
+Lambda, IAM, alarms and retained schema belong to a later explicit retirement.
+The isolated monitor's `retained-producers.json` keeps its existing log subscription,
+relay permissions, producer allowlists and alarms independently of the ordinary
+deploy catalog; the generated infrastructure remains unchanged.
+`dbMigrationsLoop` retains all old entities/columns to prevent TypeORM from
+silently deleting schema during this application-only release. Ordinary sync
+never runs a data transfer or physical retirement. Explicit preparation/final
+scopes transfer and verify history and disable the obsolete capture triggers.
+The complete native view set is the cutover boundary: repeated retirement never
+reimports retained physical data after native-only writes begin, and preparation
+is rejected after cutover. Ordinary full sync cannot make the initial view switch.
+The staged compatible writer/reader rollout, service order, parity checks and
+rollback boundaries are in the [runtime retirement runbook](./competition-runtime-retirement.md).
 
-The [native runtime runbook](./native-competition-runtime-runbook.md) specifies
-schema → message consumers → workers → API → frontend rollout and the native
-kill switches. No new Lambda or queue is introduced; all new features remain
-disabled by default.
-
-Runtime-retirement preparation adds independent native AGGREGATE and VOTER
-score observations, retained vote-event attribution, shared Activity scope and
-weighted snapshot publication markers. Existing writers retain physical mirrors
-while writing exact source IDs into native history. Bounded explicit history
-preparation preserves raw observations and parentless distribution children in
-the existing native domain; ordinary schema maintenance never transfers history.
-Original settings, pauses and identity consolidation use native authority during
-the rolling overlap. Original Settings applies its rule policy under the owner
-lock before saving: credit rules freeze after native or not-yet-copied voter
-history, while permitted title and presentation edits remain available. Native
-credit revocation discovers each competition's
-current voter namespace, including siblings, and reads its native budget under
-its owner lock; only legacy owners use physical allocation selection. Curation
-watch processing locks competition owners before watches and selects ACTIVE
-entries with the explicit CURATION capability, independently of retained drop
-categories. Trusted content permits identify the competition before entry insert;
-shared chat and orphan watch rows cannot acquire membership or resolve a native
-decision. Native decision receipts/outboxes and primary winner/history mirrors
-remain active during preparation. Deploy and drain `artCurationNftWatchLoop`,
-`tdhLoop`, `overRatesRevocationLoop`, `helpBotReplyLoop` and API preparation before
-any final writer stops mirroring. Historical GET readers initially use passthrough history
-views so the final view switch also reaches in-flight prepared API invocations.
-The migration Lambda is inert with reserved concurrency zero. Its resources and
-all legacy schema entities remain registered. No Lambda or queue is added. See
-the [preparation runbook](./legacy-competition-migration-runbook.md) for deployment
-order and the explicit copy/parity gate. The following migration details describe
-the retained historical implementation and are not instructions to invoke it.
-
-Legacy migration was explicitly invoked one wave UUID at a time. Additive migration
-entities hold durable stage/keyset checkpoints, source/applied watermarks and
-comparison reports. Transactional triggers journal accepted competition/content
-changes under the owner lock; APIs, maintenance/identity merges and actual worker
-decision transactions share that row. Legacy decisions commit stable claim/push
-publication receipts, so pending publication blocks transfer. Native workers
-retain independent aggregate/voter histories and skip already emitted lifecycle
-boundaries. No legacy history is dropped.
-
-Migration comparisons load complete source and candidate histories, including
-relations beyond 10,000 rows. The optional shadow sampler keeps its separate
-10,000-row ceiling and execution budget; migration and reverse reconciliation
-do not apply that sampling limit. Ownership transfer still requires full equality.
-Historical positive time locks below the new-competition minimum remain intact.
-Missing weighted snapshots stay absent in the compatibility projection until a
-native snapshot update, preserving both migration parity and subsequent reads.
-Decision batches budget both decision rows and their winners. Ordered catch-up
-rebuilds only captured decision keys; it does not replay unchanged decision history
-when refreshing entries, ranks, awards and archives. Once all initial stages are
-complete, a journal window containing only vote, credit-spending, runtime-rank,
-leaderboard or retained vote-time-history changes replays its keys and refreshes
-the live entry-rank and locked leaderboard projections. Historical winner ranks
-remain published ranks; partial native pages stay hidden behind legacy ownership.
-The classifier checks every page since the last applied
-watermark; other source changes retain the broader refresh. The applied watermark
-remains behind until the bounded refresh finishes, and full comparison remains
-mandatory. Routine snapshots therefore do not force another copy of unchanged
-voters, decision awards and winner archives.
-Trusted full comparisons collect all native reader results in 2,000-row pages
-to avoid repeating voter aggregations. Optional shadow sampling retains its
-500-row pages and existing row ceiling.
-
-Frozen drop-view parity reads the unchanged view by the complete union of source
-participation/winner keys and ACTIVE/WINNER native entry keys mapped to shared
-drops. Driving those primary-key reads avoids projecting unrelated chat history
-while retaining extra native entries mapped to CHAT drops as mismatches. All
-columns and rows of the eligible projection still participate in the hash.
-
-Full content comparison prefetches all relations in 100-drop pages, while WAVE
-TDH/XTDH budgets prefetch identity and spending data in 100-profile pages. The
-candidate reuses the ordinary public budget formula and the source oracle remains
-independent. Independent comparison and final cutover use the existing bounded
-SQL transaction runtime: five seconds overall, one second per statement and lock
-wait, and 500ms reserved for finalization. Copy, replay and cutover read repeatable
-snapshots after taking ownership; other control transactions retain READ COMMITTED.
-A pre-transfer timeout aborts without promoting the shadow copy. An unknown COMMIT
-acknowledgment requires checking ownership and the audit before any retry.
-Backfill and journal replay allow one complete transaction retry only for an
-original typed WORK/NOT_SENT timeout with a destroyed physical connection and
-migration statement diagnostics. After a one-second delay outside ownership,
-the new transaction rechecks legacy active ownership, operator stops and every
-saved copy field, including the batch-claim timestamp. Capture counters may
-advance; checkpoint or claim drift and a second failure remain terminal. A
-failure of the initial checkpoint lookup is eligible only as the exact known
-second statement, after confirming legacy active ownership and before any claim
-or data write. Its retry reads fresh durable state and preserves any peer
-progress. Every attempt retains the five-second fence, one-second statements
-and lock waits, and 500ms finalization reserve. No statement is retried in place;
-comparison, cutover, reporting failures and unknown/acknowledged commits use no
-such recovery. Deploy only `competitionMigrationLoop` for this change.
-Imported decision winners retain a nullable `legacy_drop_id`, preserving source
-history and prizes even when the drop was deleted before migration. Historical
-winner reads do not recreate an entry or its deleted content. Deploy the additive
-column and compatibility view through `dbMigrationsLoop` first, then `api`, then
-`competitionMigrationLoop`. Older workers remain compatible with the nullable column.
-
-`competitionMigrationLoop` accepts `{"wave_id":"<uuid>"}` from an IAM-authorized
-AWS Console/SDK invocation. It derives staging (`eu-west-1`) or production
-(`us-east-1`) from its pinned deployment, loads the regional backend secret without
-schema synchronization or Redis, and runs bounded copying, concurrent-write catch-up,
-full independent comparison, atomic transfer and native verification. Application
-operators, reasons, shared acceptance records, completed-pilot ordering and seven
-timed comparison windows are not required. Signed voting, special capabilities,
-upper-threshold metadata and paginated large content comparisons are preserved.
-The immutable command snapshot retains legacy upper-threshold metadata alongside
-its normal native draft fields. Actual data mismatches retain legacy ownership;
-repair-required native ownership is never blindly reversed. Final comparison,
-effect drain and owner transfer occur under the same transaction lock.
-The manual migration worker uses 2,048 MB to give CPU-heavy complete comparisons
-at least a full vCPU allocation. Its five-second ownership fence, one-second
-statement/lock limits, reserved concurrency and disabled asynchronous retries
-remain unchanged; this resource setting does not alter API or decision workers.
-
-Migrated primaries inherit shared wave presentation metadata while
-`presentation_config` is null. Native appearance arrays override that inheritance,
-including an explicit empty array. Independent configuration comparison includes
-the full inherited metadata, and command snapshots, configuration export and
-cloning retain the supported competition appearance keys. This also restores
-appearance for already migrated primaries without rewriting their data.
-
-There is no EventBridge schedule: deployment invokes nothing. Clean time-budget
-pauses queue the same function/qualifier with a generated bounded continuation
-(up to 24 hours overall); a repeated wave ID resumes durable checkpoints or verifies
-an already migrated primary without copying it again. One reserved execution and
-transactional fences protect redelivery. Data failures do not queue continuation.
-Function-error retries are disabled. A narrow self-invocation role policy and
-regional error/dropped-event alarms cover the handoff. The independent monitoring
-inventory includes structured errors and Errors/Throttles alarms. Deploy the
-migration service after compatible schema/workers/API. The simplification alone
-requires redeploying `api` (legacy configuration snapshot adapter), then this Lambda; no schema, public API or frontend behavior
-change is introduced. See the [migration runbook](./legacy-competition-migration-runbook.md).
+Default navigation evaluates only published native configuration with deterministic
+active/upcoming/completed ordering, inclusive end boundaries and server refresh
+times. It never repoints the old public primary mapping. CURATION retains price
+ordering/bounds and capability-specific presentation on competition-scoped APIs.
+The immutable Phase 0 GET fixtures and route/OpenAPI census remain enforced.
+Disposable MySQL acceptance physically removes old tables/wave columns and checks
+compatibility projections, native votes/history/activity and repeatable decisions.
+No staging table/column deletion, orphan cleanup or media/CDN cleanup occurs.
 
 Important API responsibilities:
 

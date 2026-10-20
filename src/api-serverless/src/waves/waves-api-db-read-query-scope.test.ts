@@ -1,8 +1,10 @@
 import {
   isLegacyCompetitionGetFacadeScope,
   legacyCompetitionGetSql,
+  legacyGetView,
   withLegacyCompetitionGetFacade
 } from '@/competitions/legacy-competition-get-facade';
+import { DROPS_TABLE, WAVES_TABLE } from '@/constants';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { IdentitiesDb } from '@/identities/identities.db';
 import { SqlExecutor } from '@/sql-executor';
@@ -41,7 +43,7 @@ describe('hot GET query sources', () => {
     expect(queries[0]).not.toContain('legacy_get_');
   });
 
-  it('keeps unread aggregates on base sources and retains snapshot writer and transaction options', async () => {
+  it('keeps unread drop aggregates on base sources with explicit wave views and retains snapshot writer and transaction options', async () => {
     const queries: string[] = [];
     const options: (DbQueryOptions | undefined)[] = [];
     const execute = jest.fn(
@@ -76,9 +78,20 @@ describe('hot GET query sources', () => {
     });
     expect(queries).toHaveLength(4);
     for (const sql of queries) {
-      expect(sql).not.toContain('legacy_get_');
+      expect(new Set(sql.match(/\blegacy_get_\w+/g))).toEqual(
+        new Set([legacyGetView(WAVES_TABLE)])
+      );
+      expect(sql).not.toContain(legacyGetView(DROPS_TABLE));
       expect(sql).not.toContain('USE INDEX');
     }
+    const normalizedQueries = queries.map((sql) =>
+      sql.replace(/\s+/g, ' ').toLowerCase()
+    );
+    expect(normalizedQueries[0]).toContain(`from ${DROPS_TABLE} legacy_drop`);
+    expect(normalizedQueries[0]).toContain(`from ${DROPS_TABLE} latest_drop`);
+    expect(normalizedQueries[0]).toContain(`left join ${DROPS_TABLE} d`);
+    expect(normalizedQueries[1]).toContain(`from ${DROPS_TABLE} d`);
+    expect(normalizedQueries[3]).toContain(`join ${DROPS_TABLE} d`);
     expect(options[0]).toEqual({
       wrappedConnection: connection,
       forcePool: DbPoolName.WRITE

@@ -1,4 +1,3 @@
-import { competitionHistoryRepository } from './competition-history.repository';
 import {
   CompetitionEntryStatus,
   CompetitionStorageMode,
@@ -27,13 +26,13 @@ import {
 } from '@/competitions/competition.repository';
 import { computeCompetitionPhase } from '@/competitions/competition-phase';
 import { collectCompetitionPages } from '@/competitions/competition-page';
+import { competitionHistoryRepository } from '@/competitions/competition-history.repository';
 import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 
 export class NativeCompetitionReader implements CompetitionReader {
   public constructor(
     private readonly repository: CompetitionRepository,
-    private readonly ctx: RequestContext,
-    private readonly migrationShadow = false
+    private readonly ctx: RequestContext
   ) {}
 
   public async getCompetition(
@@ -44,11 +43,7 @@ export class NativeCompetitionReader implements CompetitionReader {
       routingRecord.id,
       this.ctx
     );
-    if (
-      !raw ||
-      (raw.storage_mode !== CompetitionStorageMode.NATIVE &&
-        !this.migrationShadow)
-    ) {
+    if (!raw || raw.storage_mode !== CompetitionStorageMode.NATIVE) {
       throw new Error(`Native competition ${routingRecord.id} not found`);
     }
     const record = this.repository.parseCompetitionRecord({
@@ -69,10 +64,6 @@ export class NativeCompetitionReader implements CompetitionReader {
             ({ data_key, data_value }) => ({ data_key, data_value })
           )
         : competition.presentation;
-    const transferredAt =
-      record.legacy_wave_id && !this.migrationShadow
-        ? await this.repository.findLegacyTransferTime(record.id, this.ctx)
-        : null;
     const configurationActivatedAt =
       await competitionHistoryRepository.findConfigurationActivationTime(
         record.id,
@@ -86,7 +77,6 @@ export class NativeCompetitionReader implements CompetitionReader {
     return {
       ...competition,
       presentation,
-      legacy_transferred_at: transferredAt,
       configuration_activated_at: configurationActivatedAt,
       ...(needsDecisionPauses
         ? {

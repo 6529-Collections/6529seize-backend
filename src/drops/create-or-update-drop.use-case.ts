@@ -1,5 +1,3 @@
-import { CompetitionEntryStatus } from '@/entities/ICompetition';
-import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
 import type { CompetitionRoutingRecord } from '@/competitions/competition.types';
 import {
   COMPETITION_VOTES_TABLE,
@@ -8,12 +6,13 @@ import {
   COMPETITION_ENTRY_RUNTIME_TABLE
 } from '@/constants';
 import { legacyCompetitionEntryId } from '@/competitions/competition-id';
+import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import {
   withLegacyPrimaryMutation,
   readLegacyMutationSource
 } from '@/competitions/legacy-competition-mutation';
 import { dbSupplier } from '@/sql-executor';
-import { appFeatures } from '@/app-features';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { getPublishedDropMediaMimeType } from '@/drops/drop-media-upload.config';
 import {
@@ -343,7 +342,7 @@ export class CreateOrUpdateDropUseCase {
 
   public constructor(
     private readonly dropsDb: DropsDb,
-    private readonly dropVotingDb: DropVotingDb,
+    _dropVotingDb: DropVotingDb,
     private readonly userGroupsService: UserGroupsService,
     private readonly wavesApiDb: WavesApiDb,
     private readonly userNotifier: UserNotifier,
@@ -417,23 +416,6 @@ export class CreateOrUpdateDropUseCase {
     };
   }
 
-  private assertLegacySubmissionAvailable(
-    model: CreateOrUpdateDropModel,
-    nativeOwner: CompetitionRoutingRecord | null,
-    nativeEntryContent: NativeEntryContentPermit | undefined
-  ): void {
-    if (
-      nativeOwner &&
-      !nativeEntryContent &&
-      model.drop_type === DropType.PARTICIPATORY &&
-      (!appFeatures.isNativeCompetitionWritesEnabled() ||
-        !appFeatures.isNativeCompetitionExecutionEnabled())
-    )
-      throw new ForbiddenException(
-        'Competition submissions are temporarily unavailable'
-      );
-  }
-
   private async isOrdinaryChatMutation(
     model: CreateOrUpdateDropModel,
     connection: ConnectionWrapper<any>
@@ -492,11 +474,6 @@ export class CreateOrUpdateDropUseCase {
       model.wave_id,
       { timer, connection },
       async (nativeOwner) => {
-        this.assertLegacySubmissionAvailable(
-          model,
-          nativeOwner,
-          nativeEntryContent
-        );
         let resolvedModel = sanitizeDropStructuredFields(model);
         timer?.start(`${CreateOrUpdateDropUseCase.name}->execute`);
         let authorId = resolvedModel.author_id;
@@ -2313,10 +2290,6 @@ export class CreateOrUpdateDropUseCase {
     const dropId = this.getRequiredDropId(model);
     const authorId = this.getRequiredAuthorId(model);
     const parts = model.parts;
-    // These legacy vote tables have migration capture triggers. Chat content
-    // must not initialize them, including when its wave has a competition.
-    const skipLegacyVotingState =
-      isNativeEntryContent || model.drop_type === DropType.CHAT;
     const dropNftLinks = this.buildDropNftLinks(model);
     const resolvedMentionedUsers = await this.resolveMentionedUsers(
       model,
@@ -2441,21 +2414,6 @@ export class CreateOrUpdateDropUseCase {
         connection,
         timer
       ),
-      // Dedicated native entries initialize their own runtime. A migrated
-      // primary's legacy voting tables must remain frozen for these drops.
-      skipLegacyVotingState
-        ? undefined
-        : this.dropVotingDb.upsertWaveLeaderboardEntry(
-            {
-              drop_id: dropId,
-              wave_id: wave.id,
-              vote: 0,
-              vote_on_decision_time: 0,
-              over_threshold_since_ms: null,
-              timestamp: createdAt
-            },
-            { connection, timer }
-          ),
       this.dropsDb.insertDropMedia(
         parts
           .map(
@@ -2504,18 +2462,7 @@ export class CreateOrUpdateDropUseCase {
           createdAt: Time.currentMillis()
         },
         { connection, timer }
-      ),
-      skipLegacyVotingState
-        ? undefined
-        : this.dropVotingDb.saveDropRealVoteInTime(
-            {
-              drop_id: dropId,
-              wave_id: wave.id,
-              timestamp: createdAt,
-              vote: 0
-            },
-            { timer, connection }
-          )
+      )
     ]);
     await this.dropMediaUploadsDb.attachUploadsToDrop({
       mediaUploadIds: parts
