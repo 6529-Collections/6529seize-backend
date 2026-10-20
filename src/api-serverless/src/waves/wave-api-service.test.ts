@@ -1164,18 +1164,20 @@ describe('WaveApiService subwave creation authorization', () => {
     async (type) => {
       const { service, wavesApiDb, userGroupsService, createOrUpdateDrop } =
         createService({ parentWave: null, eligibleGroups: [] });
+      const timer = { start: jest.fn(), stop: jest.fn() };
       const result = service.createWave(
         { ...request, wave: { type } } as ApiCreateNewWave,
         false,
         {
           authenticationContext:
             AuthenticationContext.fromProfileId('creator-profile'),
-          timer: { start: jest.fn(), stop: jest.fn() }
+          timer
         } as any
       );
 
       await expect(result).rejects.toBeInstanceOf(BadRequestException);
       await expect(result).rejects.toThrow('Only CHAT waves can be created');
+      expect(timer.start).not.toHaveBeenCalled();
       expect(wavesApiDb.findWaveById).not.toHaveBeenCalled();
       expect(wavesApiDb.findWaveByIdForUpdate).not.toHaveBeenCalled();
       expect(
