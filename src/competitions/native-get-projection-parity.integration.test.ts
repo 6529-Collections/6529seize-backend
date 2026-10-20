@@ -39,6 +39,7 @@ import { competitionRepository } from './competition.repository';
 import { DropVotingDb } from '@/api/drops/drop-voting.db';
 import { DropsDb, LeaderboardSort } from '@/drops/drops.db';
 import { PageSortDirection } from '@/api/page-request';
+import { waveHubConfigurationFromWave } from '@/waves/wave-hub-configuration';
 
 const primaryWave = aWave(
   {
@@ -1091,6 +1092,70 @@ describeWithSeed(
       expect(await read(legacyGetView(tables.WAVES_TABLE))).toEqual(
         await read(frozenNativeGetView(tables.WAVES_TABLE))
       );
+    });
+
+    it('projects overlapping original-primary and CHAT credit NFTs once per wave in frozen order without exposing sibling or obsolete source NFTs', async () => {
+      const shared = {
+        contract: '0x00000000000000000000000000000000000000a1',
+        token_id: 7
+      };
+      const chatOnly = {
+        contract: '0x00000000000000000000000000000000000000a0',
+        token_id: 3
+      };
+      const hidden = {
+        contract: '0x00000000000000000000000000000000000000ff',
+        token_id: 99
+      };
+      for (const { wave, nfts } of [
+        { wave: primaryWave, nfts: [shared, hidden] },
+        { wave: chatWave, nfts: [shared, chatOnly] }
+      ])
+        await sqlExecutor.execute(
+          `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=CAST(:policy AS JSON) WHERE id=:waveId`,
+          {
+            waveId: wave.id,
+            policy: JSON.stringify({
+              ...waveHubConfigurationFromWave(wave).voting,
+              credit_nfts: nfts
+            })
+          }
+        );
+      await sqlExecutor.execute(
+        `UPDATE ${tables.COMPETITIONS_TABLE} SET voting_config=JSON_SET(voting_config,'$.credit_nfts',CAST(:nfts AS JSON)) WHERE id=:sibling`,
+        { sibling, nfts: JSON.stringify([shared, hidden]) }
+      );
+      await insert(tables.WAVE_VOTING_CREDIT_NFTS_TABLE, [
+        { wave_id: primaryWave.id, ...hidden },
+        { wave_id: chatWave.id, ...shared },
+        { wave_id: chatWave.id, ...chatOnly }
+      ]);
+      const read = (view: string) =>
+        sqlExecutor.execute(
+          `SELECT * FROM ${view} ORDER BY wave_id,contract,token_id`
+        );
+      const expected = await read(
+        frozenNativeGetView(tables.WAVE_VOTING_CREDIT_NFTS_TABLE)
+      );
+      expect(expected).toEqual([
+        { wave_id: chatWave.id, ...chatOnly },
+        { wave_id: chatWave.id, ...shared },
+        {
+          wave_id: primaryWave.id,
+          contract: '0x0000000000000000000000000000000000000002',
+          token_id: 19
+        },
+        { wave_id: primaryWave.id, ...shared }
+      ]);
+      const nativeView = legacyGetView(tables.WAVE_VOTING_CREDIT_NFTS_TABLE);
+      expect(await read(nativeView)).toEqual(expected);
+      await insert(tables.WAVE_VOTING_CREDIT_NFTS_TABLE, [
+        { wave_id: chatWave.id, ...hidden }
+      ]);
+      expect(
+        await read(frozenNativeGetView(tables.WAVE_VOTING_CREDIT_NFTS_TABLE))
+      ).toHaveLength(expected.length + 1);
+      expect(await read(nativeView)).toEqual(expected);
     });
 
     it('keeps observable case/accent filtering and ordering on native outcome text and NFT addresses', async () => {
