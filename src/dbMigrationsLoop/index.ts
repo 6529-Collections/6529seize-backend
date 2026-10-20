@@ -29,6 +29,10 @@ import {
 import { transferRetainedCompetitionDistributions } from '@/competitions/competition-retirement-distributions';
 import { transferRetainedCompetitionLeaderboardPublication } from '@/competitions/competition-retirement-leaderboard';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import {
+  prepareWaveHubConfiguration,
+  finalizeWaveHubConfigurationCapture
+} from '@/waves/wave-hub-configuration-preparation';
 
 const DBMigrate = require('db-migrate');
 
@@ -93,6 +97,8 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'market-depth-publication-lock' &&
       scope !== 'competition-runtime-schema' &&
       scope !== 'competition-runtime-retirement' &&
+      scope !== 'wave-hub-configuration-preparation' &&
+      scope !== 'wave-hub-configuration-finalize' &&
       scope !== 'competition-history-preparation')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
@@ -104,6 +110,24 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (
+    scope === 'wave-hub-configuration-preparation' ||
+    scope === 'wave-hub-configuration-finalize'
+  ) {
+    const result = await doInDbContext(
+      async () =>
+        scope === 'wave-hub-configuration-preparation'
+          ? await prepareWaveHubConfiguration(dbSupplier())
+          : await finalizeWaveHubConfigurationCapture(dbSupplier()),
+      {
+        logger,
+        entities: Object.values(Entities),
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    return { schema_scope: scope, ...result };
+  }
   if (scope === 'competition-runtime-schema') {
     await doInDbContext(() => Promise.resolve(), {
       logger,

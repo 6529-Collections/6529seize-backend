@@ -24,6 +24,14 @@ jest.mock('@/competitions/competition-runtime-retirement-state', () => ({
   assertCompetitionHistoryPreparationAllowed: jest.fn()
 }));
 import * as compatibilityFacade from '@/competitions/legacy-competition-get-facade';
+import {
+  prepareWaveHubConfiguration,
+  finalizeWaveHubConfigurationCapture
+} from '@/waves/wave-hub-configuration-preparation';
+jest.mock('@/waves/wave-hub-configuration-preparation', () => ({
+  prepareWaveHubConfiguration: jest.fn(),
+  finalizeWaveHubConfigurationCapture: jest.fn()
+}));
 import { handler } from './index';
 import { getDataSource } from '@/db';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
@@ -88,6 +96,14 @@ const scheduledEvent = {
 describe('dbMigrationsLoop explicit schema scope', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(prepareWaveHubConfiguration).mockResolvedValue({
+      waves: 0,
+      archives: 0,
+      capture_triggers: 0
+    });
+    jest
+      .mocked(finalizeWaveHubConfigurationCapture)
+      .mockResolvedValue({ disabled_triggers: 10 });
     jest
       .mocked(moderationRetentionSchemaDb.missingColumns)
       .mockResolvedValue([]);
@@ -194,6 +210,59 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     ).rejects.toThrow('retired source guard');
   });
 
+  it.each([
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize'
+  ])(
+    'runs only the explicit %s operation without schema sync or maintenance',
+    async (scope) => {
+      const finalize = scope === 'wave-hub-configuration-finalize';
+      const prepared = { waves: 2, archives: 3, capture_triggers: 10 };
+      const result = finalize ? { disabled_triggers: 10 } : prepared;
+      if (!finalize)
+        jest
+          .mocked(prepareWaveHubConfiguration)
+          .mockResolvedValueOnce(prepared);
+      await expect(invoke({ schema_scope: scope })).resolves.toEqual({
+        schema_scope: scope,
+        ...result
+      });
+      expect(prepareWaveHubConfiguration).toHaveBeenCalledTimes(
+        finalize ? 0 : 1
+      );
+      expect(finalizeWaveHubConfigurationCapture).toHaveBeenCalledTimes(
+        finalize ? 1 : 0
+      );
+      expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+        logger: expect.anything(),
+        entities: Object.values(Entities),
+        syncEntities: false,
+        skipRedis: true
+      });
+      expect(migrations.getInstance).not.toHaveBeenCalled();
+      expect(
+        contentModerationDb.deleteExpiredPrePublicationChecks
+      ).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize'
+  ])('propagates %s failure without starting unrelated work', async (scope) => {
+    const failure = new Error('Hub policy parity did not pass');
+    const operation =
+      scope === 'wave-hub-configuration-preparation'
+        ? prepareWaveHubConfiguration
+        : finalizeWaveHubConfigurationCapture;
+    jest.mocked(operation).mockRejectedValueOnce(failure);
+    await expect(invoke({ schema_scope: scope })).rejects.toBe(failure);
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(
+      contentModerationDb.deleteExpiredPrePublicationChecks
+    ).not.toHaveBeenCalled();
+  });
+
   it.each([undefined, {}, { schema_scope: 'full' }])(
     'preserves full manual migration behavior for %j',
     async (event) => {
@@ -293,6 +362,8 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     'claims-media-upload',
     'nft-link-page-retry',
     'market-depth-publication-lock',
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize',
     'membership-refresh',
     'membership-evaluator-index',
     'membership-runtime-control'

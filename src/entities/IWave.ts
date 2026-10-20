@@ -12,8 +12,14 @@ import {
   WAVES_DECISION_PAUSES_TABLE,
   WAVES_TABLE
 } from '@/constants';
+import type {
+  NativeWaveHubParticipationConfig,
+  NativeWaveHubVotingConfig
+} from '@/waves/wave-hub-configuration';
 
 export interface WaveBaseType {
+  readonly hub_participation_config?: NativeWaveHubParticipationConfig | null;
+  readonly hub_voting_config?: NativeWaveHubVotingConfig | null;
   readonly name: string;
   readonly parent_wave_id: string | null;
   readonly picture: string | null;
@@ -63,6 +69,12 @@ export interface WaveBaseType {
 /** Retired competition columns stay registered through the additive retirement
  * release. Defaults let runtime inserts omit them without schema data loss. */
 export class WaveBase implements WaveBaseType {
+  @Column({ type: 'json', nullable: true })
+  readonly hub_participation_config?: NativeWaveHubParticipationConfig | null;
+
+  @Column({ type: 'json', nullable: true })
+  readonly hub_voting_config?: NativeWaveHubVotingConfig | null;
+
   @Column({ type: 'varchar', length: 250, nullable: false })
   readonly name!: string;
 

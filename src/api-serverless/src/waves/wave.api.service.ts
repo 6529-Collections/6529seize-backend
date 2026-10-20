@@ -2237,6 +2237,15 @@ export class WaveApiService {
               groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
               ctx: ctxWithConnection
             });
+            // The public original-primary projection contains competition
+            // rules. Its separately owned shared hub policy must survive this
+            // shared-row replacement without copying those rules into it.
+            const preservedHubConfiguration = nativeOwner
+              ? await this.wavesApiDb.findWaveHubConfigurationForUpdate(
+                  waveId,
+                  ctxWithConnection
+                )
+              : undefined;
             await this.wavesApiDb.deleteWave(waveId, ctxWithConnection);
             const waveUpdateTime = Time.currentMillis();
             const updatedEntity =
@@ -2258,7 +2267,13 @@ export class WaveApiService {
                 existingWaveSettings: waveBeforeUpdate
               });
 
-            await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
+            await this.wavesApiDb.insertWave(
+              updatedEntity,
+              ctxWithConnection,
+              preservedHubConfiguration
+                ? { preserveHubConfigurationFrom: preservedHubConfiguration }
+                : undefined
+            );
             if (nativeOwner)
               await reconcileAcceptedLegacySettings(
                 nativeOwner,
