@@ -563,7 +563,12 @@ export class CreateOrUpdateDropUseCase {
             resolvedModel,
             result.drop_id,
             entryCtx,
-            contentPermit?.competitionId
+            contentPermit?.competitionId ??
+              (!resolvedModel.drop_id &&
+              !isDescriptionDrop &&
+              resolvedModel.drop_type === DropType.PARTICIPATORY
+                ? nativeOwner?.id
+                : undefined)
           );
         result.pending_push_notification_ids.push(
           ...collaborationNotificationIds

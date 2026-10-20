@@ -40,7 +40,7 @@ is final. Invitee acceptance saves a nullable, submission-specific artist credit
 invitee. Public drop V1/V2 mappings expose accepted collaborators and derive
 artist/profile/Collab metadata from those records.
 
-Legacy Main Stage and native MAIN_STAGE decision transactions lock the same
+Native MAIN_STAGE decision transactions lock the same
 collaboration row used by acceptance, save the accepted artist roster, and close
 pending invitations. Claims Builder consumes that saved roster for initial
 claim credits; pending invitations do not delay minting. Admins can edit all final claim credits, traits
@@ -53,12 +53,19 @@ managed record remain compatible.
 Invitation, acceptance and author-cancellation notifications use the existing identity-notification
 and push pipelines with cause `MEME_COLLABORATION`. New generated endpoints are
 `GET /drops/{drop_id}/collaborations`,
-`POST /drops/{drop_id}/collaborations` (submitter-only additions on active legacy
-or designated native Memes Main Stage artwork), and
+`POST /drops/{drop_id}/collaborations` (submitter-only additions on actual ACTIVE
+native MAIN_STAGE entries), and
 `POST /drops/{drop_id}/collaborations/{invitation_id}/response`; both use the
 existing wave visibility checks. Accepted identities participate in Main Stage
 profile artwork queries, without changing submission ownership or allowances.
 No new Lambda, queue, environment variable, or on-chain contract is introduced.
+
+Invitation eligibility uses the exact native entry and MAIN_STAGE capability,
+including designated siblings in other public hubs. Shared drop classification
+and hub configuration grant no membership. New submission hooks receive only a
+verified native content permit target or the locked original-primary target of
+a new participatory command. New contexts snapshot terms from that competition
+bound to the submission wave; saved consent and frozen credits remain unchanged.
 
 ## Oracle TDH API and retired Prenode registry
 
