@@ -482,8 +482,8 @@ jobs:
           sleep 10
 
           payload="$(jq -cn --arg scope "$DB_SCHEMA_SCOPE" '{schema_scope: $scope}')"
-          aws lambda invoke --function-name "$INPUT_SERVICE" \
-            --cli-binary-format raw-in-base64-out --payload "$payload" response.json > meta.json
+          AWS_MAX_ATTEMPTS=1 aws lambda invoke --function-name "$INPUT_SERVICE" \
+            --cli-read-timeout 960 --cli-binary-format raw-in-base64-out --payload "$payload" response.json > meta.json
 
           printf "\nresponse.json:\n"
           cat response.json
