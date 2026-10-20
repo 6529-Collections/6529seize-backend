@@ -397,6 +397,30 @@ describeWithSeed(
       ).rejects.toThrow(
         'Voting credit rules are immutable after the first vote'
       );
+      const apiWave = await waveApiService.findWaveByIdOrThrow(
+        wave.id,
+        [],
+        ctx
+      );
+      const legacyRequest = legacyWaveUpdate(apiWave);
+      await expect(
+        waveApiService.updateWave(
+          wave.id,
+          {
+            ...legacyRequest,
+            voting: {
+              ...legacyRequest.voting,
+              forbid_negative_votes: !legacyRequest.voting.forbid_negative_votes
+            }
+          },
+          ctx
+        )
+      ).rejects.toThrow(
+        'Voting credit rules are immutable after the first vote'
+      );
+      expect((await selected()).config_version).toBe(
+        competition.config_version
+      );
       const updated = await service.update(
         wave.id,
         competition.id,

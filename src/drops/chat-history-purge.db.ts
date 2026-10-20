@@ -41,7 +41,9 @@ export type ChatHistoryPurgeScope = {
 
 // Keep this inventory aligned with DeleteDropUseCase. Shared assets (uploads,
 // attachments, NFT metadata) and reply/quote references survive; drop-owned
-// associations do not. Special ordering/watch semantics are handled below.
+// associations do not. Competition allocations, independent observations and
+// published orphan snapshots survive even when no entry membership exists.
+// Special ordering/watch semantics are handled below.
 const DROP_OWNED_TABLES = [
   DROPS_PARTS_TABLE,
   DROPS_MENTIONS_TABLE,

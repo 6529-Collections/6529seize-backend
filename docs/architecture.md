@@ -1152,6 +1152,10 @@ content revisions and atomic vote resets. Deletion hides entries through existin
 visibility/tombstone rules and does not replay accepted effects. Wave deletion
 still rejects competition history and chat purge preserves submissions.
 
+Original Settings applies the native rule policy under the owner lock before
+saving. Credit rules freeze after any native voter history; permitted title and
+presentation edits remain available through both command routes.
+
 The original native creation/write/read/execution/shadow rollout flags and
 migration/reverse/reconciliation commands are retired. The migration Lambda has
 an inert transition artifact and zero reserved concurrency. Its physical
