@@ -5,7 +5,6 @@ jest.mock('@/notifications/push-notification-cancellations.db', () => ({
   }
 }));
 import { doInDbContext } from '@/secrets';
-import { competitionRepository } from '@/competitions/competition.repository';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import * as Entities from '@/entities/entities';
@@ -47,11 +46,6 @@ jest.mock('@/secrets', () => ({
 }));
 jest.mock('@/app-features', () => ({
   appFeatures: { isDbMigrateDisabled: () => false }
-}));
-jest.mock('@/competitions/competition.repository', () => ({
-  competitionRepository: {
-    backfillLegacyMappings: jest.fn().mockResolvedValue(0)
-  }
 }));
 jest.mock('@/content-moderation/content-moderation.db', () => ({
   contentModerationDb: {
@@ -114,7 +108,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     expect(applyNftLinkPageRetrySchema).toHaveBeenCalledTimes(1);
     expect(applyClaimsMediaUploadSchema).not.toHaveBeenCalled();
     expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
     expect(
       contentModerationDb.deleteExpiredPrePublicationChecks
     ).not.toHaveBeenCalled();
@@ -130,7 +123,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       invoke({ schema_scope: 'nft-link-page-retry' })
     ).rejects.toThrow('synthetic drift');
     expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -166,9 +158,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(applyNftLinkPageRetrySchema).not.toHaveBeenCalled();
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(
-        competitionRepository.backfillLegacyMappings
-      ).not.toHaveBeenCalled();
-      expect(
         contentModerationDb.deleteExpiredPrePublicationChecks
       ).not.toHaveBeenCalled();
       expect(moderationReviewDb.retain).not.toHaveBeenCalled();
@@ -191,9 +180,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         env: 'main'
       });
       expect(migrations.up).toHaveBeenCalledTimes(1);
-      expect(
-        competitionRepository.backfillLegacyMappings
-      ).toHaveBeenCalledTimes(1);
       expect(
         contentModerationDb.deleteExpiredPrePublicationChecks
       ).toHaveBeenCalledTimes(1);
@@ -221,9 +207,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       ).toHaveBeenCalledTimes(1);
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(
-        competitionRepository.backfillLegacyMappings
-      ).toHaveBeenCalledTimes(1);
-      expect(
         contentModerationDb.deleteExpiredPrePublicationChecks
       ).toHaveBeenCalledTimes(1);
       expect(moderationReviewDb.retain).toHaveBeenCalledTimes(1);
@@ -241,9 +224,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         'content_moderation_audit_log.item_id'
       ]);
     await expect(invoke(scheduledEvent)).resolves.toBeUndefined();
-    expect(competitionRepository.backfillLegacyMappings).toHaveBeenCalledTimes(
-      1
-    );
     expect(
       contentModerationDb.deleteExpiredPrePublicationChecks
     ).toHaveBeenCalledTimes(1);
@@ -305,9 +285,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       jest.mocked(doInDbContext).mockRejectedValueOnce(failure);
       await expect(invoke({ schema_scope: scope })).rejects.toBe(failure);
       expect(migrations.getInstance).not.toHaveBeenCalled();
-      expect(
-        competitionRepository.backfillLegacyMappings
-      ).not.toHaveBeenCalled();
     }
   );
 });
