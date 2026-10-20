@@ -144,6 +144,17 @@ async function insert(table: string, rows: Record<string, unknown>[]) {
   );
 }
 function sorted(rows: unknown[]): unknown[] {
+  // These additive live native policy fields did not exist in the frozen
+  // schema. Every original projection column remains compared exactly.
+  const originalRows = rows.map((row) =>
+    Object.fromEntries(
+      Object.entries(row as Record<string, unknown>).filter(
+        ([column]) =>
+          column !== 'hub_participation_config' &&
+          column !== 'hub_voting_config'
+      )
+    )
+  );
   const canonical = (row: unknown) =>
     JSON.stringify(
       Object.fromEntries(
@@ -152,7 +163,7 @@ function sorted(rows: unknown[]): unknown[] {
         )
       )
     );
-  return [...rows].sort((left, right) =>
+  return originalRows.sort((left, right) =>
     canonical(left).localeCompare(canonical(right))
   );
 }
@@ -1026,6 +1037,59 @@ describeWithSeed(
       );
       expect(await voting.getWeightedDropRates(orphans, {})).toEqual(
         originalRates!
+      );
+    });
+
+    it('retains the frozen original null-string semantics while preserving literal strings from shared CHAT policies', async () => {
+      await sqlExecutor.execute(
+        `UPDATE ${tables.COMPETITIONS_TABLE} SET participation_config=JSON_SET(participation_config,'$.terms','null'),
+         voting_config=JSON_SET(voting_config,'$.credit_type','REP','$.credit_category','null') WHERE id=:id`,
+        { id }
+      );
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET hub_participation_config=JSON_OBJECT('terms','divergent hub terms'),
+         hub_voting_config=JSON_OBJECT('credit_category','divergent hub category') WHERE id=:waveId`,
+        { waveId: primaryWave.id }
+      );
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET participation_terms='null',voting_credit_category='null',
+         hub_participation_config=JSON_SET(hub_participation_config,'$.terms','null'),
+         hub_voting_config=JSON_SET(hub_voting_config,'$.credit_category','null') WHERE id=:waveId`,
+        { waveId: chatWave.id }
+      );
+      const read = (view: string) =>
+        sqlExecutor.execute(
+          `SELECT id,participation_terms,voting_credit_category FROM ${view}
+         WHERE id IN (:waveIds) ORDER BY id`,
+          { waveIds: [primaryWave.id, chatWave.id] }
+        );
+      const original = await read(frozenNativeGetView(tables.WAVES_TABLE));
+      expect(original).toEqual([
+        {
+          id: chatWave.id,
+          participation_terms: 'null',
+          voting_credit_category: 'null'
+        },
+        {
+          id: primaryWave.id,
+          participation_terms: null,
+          voting_credit_category: null
+        }
+      ]);
+      expect(await read(legacyGetView(tables.WAVES_TABLE))).toEqual(original);
+      await sqlExecutor.execute(
+        `UPDATE ${tables.COMPETITIONS_TABLE} SET participation_config=JSON_SET(participation_config,'$.terms',CAST('null' AS JSON)),
+         voting_config=JSON_SET(voting_config,'$.credit_category',CAST('null' AS JSON)) WHERE id=:id`,
+        { id }
+      );
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET participation_terms=NULL,voting_credit_category=NULL,
+         hub_participation_config=JSON_SET(hub_participation_config,'$.terms',CAST('null' AS JSON)),
+         hub_voting_config=JSON_SET(hub_voting_config,'$.credit_category',CAST('null' AS JSON)) WHERE id=:waveId`,
+        { waveId: chatWave.id }
+      );
+      expect(await read(legacyGetView(tables.WAVES_TABLE))).toEqual(
+        await read(frozenNativeGetView(tables.WAVES_TABLE))
       );
     });
 

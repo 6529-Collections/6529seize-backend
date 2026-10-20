@@ -1095,6 +1095,16 @@ competition resources for every competition. Creating a hub always creates a
 CHAT wave; competition creation is a separate native command. Historical physical
 RANK/APPROVE wave types remain schema-compatible and do not block hub updates.
 
+Shared CHAT participation and voting settings are live typed policies in
+`waves.hub_participation_config` and `waves.hub_voting_config`. They preserve
+independent nullable roles, credit settings, periods, signatures, required
+content, terms and retained credit-NFT tuples. Current hub creation, editing and
+reading own these policies; `waves_archive` holds their corresponding snapshots.
+Original competition configuration continues to own original competition GETs.
+Explicit bounded preparation verifies retained policy parity. Temporary capture
+keeps prepared-version writes atomic during rollout; finalization disables its
+complete registry after the native API is healthy and old invocations drain.
+
 Permanent unversioned/v2 wave/drop GETs use explicit native-backed compatibility
 views. Their ownership is the immutable `legacy_wave_id=wave_id` original primary,
 independent of default-competition selection. Sibling competitions do not appear
