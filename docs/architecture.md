@@ -40,7 +40,7 @@ is final. Invitee acceptance saves a nullable, submission-specific artist credit
 invitee. Public drop V1/V2 mappings expose accepted collaborators and derive
 artist/profile/Collab metadata from those records.
 
-Legacy Main Stage and native MAIN_STAGE decision transactions lock the same
+Native MAIN_STAGE decision transactions lock the same
 collaboration row used by acceptance, save the accepted artist roster, and close
 pending invitations. Claims Builder consumes that saved roster for initial
 claim credits; pending invitations do not delay minting. Admins can edit all final claim credits, traits
@@ -53,12 +53,19 @@ managed record remain compatible.
 Invitation, acceptance and author-cancellation notifications use the existing identity-notification
 and push pipelines with cause `MEME_COLLABORATION`. New generated endpoints are
 `GET /drops/{drop_id}/collaborations`,
-`POST /drops/{drop_id}/collaborations` (submitter-only additions on active legacy
-or designated native Memes Main Stage artwork), and
+`POST /drops/{drop_id}/collaborations` (submitter-only additions on actual ACTIVE
+native MAIN_STAGE entries), and
 `POST /drops/{drop_id}/collaborations/{invitation_id}/response`; both use the
 existing wave visibility checks. Accepted identities participate in Main Stage
 profile artwork queries, without changing submission ownership or allowances.
 No new Lambda, queue, environment variable, or on-chain contract is introduced.
+
+Invitation eligibility uses the exact native entry and MAIN_STAGE capability,
+including designated siblings in other public hubs. Shared drop classification
+and hub configuration grant no membership. New submission hooks receive only a
+verified native content permit target or the locked original-primary target of
+a new participatory command. New contexts snapshot terms from that competition
+bound to the submission wave; saved consent and frozen credits remain unchanged.
 
 ## Oracle TDH API and retired Prenode registry
 
@@ -1149,6 +1156,16 @@ navigation/settings/entries/voting/My Votes/leaderboards/winners/admin use the
 competition resources for every competition. Creating a hub always creates a
 CHAT wave; competition creation is a separate native command. Historical physical
 RANK/APPROVE wave types remain schema-compatible and do not block hub updates.
+
+Shared CHAT participation and voting settings are live typed policies in
+`waves.hub_participation_config` and `waves.hub_voting_config`. They preserve
+independent nullable roles, credit settings, periods, signatures, required
+content, terms and retained credit-NFT tuples. Current hub creation, editing and
+reading own these policies; `waves_archive` holds their corresponding snapshots.
+Original competition configuration continues to own original competition GETs.
+Explicit bounded preparation verifies retained policy parity. Temporary capture
+keeps prepared-version writes atomic during rollout; finalization disables its
+complete registry after the native API is healthy and old invocations drain.
 
 Permanent unversioned/v2 wave/drop GETs use explicit native-backed compatibility
 views. Their ownership is the immutable `legacy_wave_id=wave_id` original primary,

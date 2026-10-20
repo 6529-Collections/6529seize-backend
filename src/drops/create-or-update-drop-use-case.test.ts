@@ -48,6 +48,10 @@ import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mut
 import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
 import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
 import { waveScoreService } from '@/api/waves/wave-score.service';
+import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
+import { nativeEntryContentPermit } from '@/competitions/competition-entry-content';
+import { CompetitionRecord } from '@/competitions/competition.repository';
+import { ConnectionWrapper } from '@/sql-executor';
 
 type ModerationServiceMock = jest.Mocked<
   Pick<PrePublicationModerationService, 'evaluate' | 'assertPostingAllowed'>
@@ -289,6 +293,23 @@ describe('CreateOrUpdateDropUseCase', () => {
     };
   }
 
+  function stubDropPersistence(useCase: CreateOrUpdateDropUseCase) {
+    return jest
+      .spyOn(
+        useCase as unknown as {
+          createOrUpdateDrop: () => ReturnType<
+            CreateOrUpdateDropUseCase['execute']
+          >;
+        },
+        'createOrUpdateDrop'
+      )
+      .mockResolvedValue({
+        drop_id: 'written',
+        pending_push_notification_ids: [],
+        dm_unread_recipient_ids: []
+      });
+  }
+
   it.each([undefined, 'drop-1'])(
     'writes ordinary chat without waiting for the competition owner (drop %s)',
     async (dropId) => {
@@ -360,6 +381,113 @@ describe('CreateOrUpdateDropUseCase', () => {
       );
     }
   );
+
+  it.each([
+    {
+      label: 'new original PARTI',
+      type: DropType.PARTICIPATORY,
+      dropId: null,
+      description: false,
+      target: 'original-competition'
+    },
+    {
+      label: 'CHAT',
+      type: DropType.CHAT,
+      dropId: null,
+      description: false,
+      target: undefined
+    },
+    {
+      label: 'existing PARTI edit',
+      type: DropType.PARTICIPATORY,
+      dropId: 'existing',
+      description: false,
+      target: undefined
+    },
+    {
+      label: 'description',
+      type: DropType.PARTICIPATORY,
+      dropId: null,
+      description: true,
+      target: undefined
+    }
+  ])(
+    'passes the locked original collaboration target only for a new submission: $label',
+    async ({ type, dropId, description, target }) => {
+      const useCase = createUseCaseWithMocks();
+      const model = createChatDropModel({ drop_type: type, drop_id: dropId });
+      const connection = {} as ConnectionWrapper<unknown>;
+      if (type !== DropType.CHAT)
+        jest
+          .mocked(withLegacyPrimaryMutation)
+          .mockImplementationOnce((_wave, _ctx, action) =>
+            action({ id: 'original-competition' } as CompetitionRecord)
+          );
+      jest
+        .mocked(competitionEntryDropHooks.prepareUpdate)
+        .mockResolvedValue({ entries: [], reset_votes: true });
+      stubDropPersistence(useCase);
+      const stop = new Error('Stop after collaboration boundary');
+      const onWrite = jest
+        .spyOn(memeCollaborationsService, 'onWrite')
+        .mockRejectedValue(stop);
+      await expect(
+        useCase.execute(model, description, {
+          connection,
+          prePublication: { trustedSystem: true }
+        })
+      ).rejects.toBe(stop);
+      expect(onWrite).toHaveBeenCalledWith(
+        expect.objectContaining({ drop_type: type, drop_id: dropId }),
+        'written',
+        expect.objectContaining({ connection }),
+        target
+      );
+    }
+  );
+
+  it('passes the verified exact native sibling target without inferring the original owner', async () => {
+    const useCase = createUseCaseWithMocks();
+    const model = createChatDropModel({ drop_type: DropType.PARTICIPATORY });
+    const connection = {} as ConnectionWrapper<unknown>;
+    const permit = nativeEntryContentPermit({
+      competitionId: 'explicit-sibling',
+      waveId: model.wave_id,
+      authorId: model.author_id,
+      dropId: null,
+      connection
+    });
+    const ownerLock = jest.mocked(withLegacyPrimaryMutation);
+    ownerLock.mockClear();
+    stubDropPersistence(useCase);
+    const stop = new Error('Stop after collaboration boundary');
+    const onWrite = jest
+      .spyOn(memeCollaborationsService, 'onWrite')
+      .mockRejectedValue(stop);
+    await expect(
+      useCase.execute(model, false, {
+        connection,
+        nativeEntryContent: permit,
+        prePublication: { trustedSystem: true }
+      })
+    ).rejects.toBe(stop);
+    expect(onWrite).toHaveBeenCalledWith(
+      expect.any(Object),
+      'written',
+      expect.objectContaining({ connection }),
+      'explicit-sibling'
+    );
+    expect(ownerLock).not.toHaveBeenCalled();
+    onWrite.mockClear();
+    await expect(
+      useCase.execute(model, false, {
+        connection,
+        nativeEntryContent: { ...permit },
+        prePublication: { trustedSystem: true }
+      })
+    ).rejects.toThrow('Invalid native entry content permission');
+    expect(onWrite).not.toHaveBeenCalled();
+  });
 
   it.each([null, 'drop-1'])(
     'creates/edits chat in a competition wave without acquiring its owner (drop %s)',

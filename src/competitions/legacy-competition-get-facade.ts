@@ -31,6 +31,10 @@ import {
   WINNER_DROP_VOTER_VOTES_TABLE
 } from '@/constants/db-tables';
 import type { SqlExecutor } from '@/sql-executor';
+import {
+  WAVE_HUB_PARTICIPATION_FIELDS,
+  WAVE_HUB_VOTING_FIELDS
+} from '@/waves/wave-hub-configuration';
 
 const scope = new AsyncLocalStorage<boolean>();
 export const LEGACY_GET_BOOLEAN_FIELDS = new Set([
@@ -199,10 +203,14 @@ export function legacyCompetitionGetSql(sql: string): string {
 
 function json(
   path: string,
-  kind: 'text' | 'number' | 'boolean' | 'json' = 'text'
+  kind: 'text' | 'number' | 'boolean' | 'json' = 'text',
+  alias = 'c'
 ): string {
-  const raw = `json_extract(c.${path.split('.')[0]}, '$.${path.split('.').slice(1).join('.')}')`;
-  const nullable = `nullif(json_unquote(${raw}), 'null')`;
+  const raw = `json_extract(${alias}.${path.split('.')[0]}, '$.${path.split('.').slice(1).join('.')}')`;
+  const nullable =
+    alias === 'w'
+      ? `case when json_type(${raw})='NULL' then null else json_unquote(${raw}) end`
+      : `nullif(json_unquote(${raw}), 'null')`;
   if (kind === 'boolean')
     return `case ${nullable} when 'true' then 1 when 'false' then 0 else cast(${nullable} as signed) end`;
   return kind === 'number'
@@ -317,13 +325,16 @@ function nativeSelects(table: string): {
       };
     case WAVE_VOTING_CREDIT_NFTS_TABLE:
       return {
-        from: `${owners} join json_table(c.voting_config,'$.credit_nfts[*]' columns(contract varchar(50) path '$.contract',token_id bigint path '$.token_id')) n where ${nativePrimary}`,
+        from: `(select c.wave_id,n.contract,n.token_id from ${owners} join json_table(c.voting_config,'$.credit_nfts[*]' columns(contract varchar(50) path '$.contract',token_id bigint path '$.token_id')) n where ${nativePrimary}
+          union all select w.id as wave_id,n.contract,n.token_id from ${WAVES_TABLE} w
+          join json_table(w.hub_voting_config,'$.credit_nfts[*]' columns(contract varchar(50) path '$.contract',token_id bigint path '$.token_id')) n
+          where not exists(select 1 from ${owners} where c.legacy_wave_id=w.id and ${nativePrimary})) hub_nfts`,
         fields: {
-          wave_id: 'c.wave_id',
+          wave_id: 'hub_nfts.wave_id',
           // JSON_TABLE inherits the session collation; the frozen source used Unicode CI.
           contract:
-            'convert(n.contract using utf8mb4) collate utf8mb4_unicode_ci',
-          token_id: 'n.token_id'
+            'convert(hub_nfts.contract using utf8mb4) collate utf8mb4_unicode_ci',
+          token_id: 'hub_nfts.token_id'
         }
       };
     case DROP_RANK_TABLE:
@@ -482,12 +493,45 @@ export const CHAT_WAVE_COMPATIBILITY_DEFAULTS: Readonly<
   winning_threshold_min_duration_ms: '0'
 };
 
+const hubNumberFields = new Set([
+  'participation_max_applications_per_participant',
+  'participation_period_start',
+  'participation_period_end',
+  'voting_period_start',
+  'voting_period_end',
+  'max_votes_per_identity_to_drop',
+  'time_lock_ms'
+]);
+
+export function nativeWaveHubField(column: string): string | undefined {
+  const participation = WAVE_HUB_PARTICIPATION_FIELDS as Readonly<
+    Record<string, string>
+  >;
+  const voting = WAVE_HUB_VOTING_FIELDS as Readonly<Record<string, string>>;
+  const policy = participation[column]
+    ? 'hub_participation_config'
+    : voting[column]
+      ? 'hub_voting_config'
+      : undefined;
+  if (!policy) return undefined;
+  const field = participation[column] ?? voting[column];
+  const kind = LEGACY_GET_BOOLEAN_FIELDS.has(column)
+    ? 'boolean'
+    : hubNumberFields.has(column)
+      ? 'number'
+      : column === 'participation_required_metadata' ||
+          column === 'participation_required_media'
+        ? 'json'
+        : 'text';
+  return `case when w.${policy} is null then ${CHAT_WAVE_COMPATIBILITY_DEFAULTS[column] ?? 'null'} else ${json(`${policy}.${field}`, kind, 'w')} end`;
+}
+
 export function legacyCompetitionGetViewDefinition(table: string): string {
   if (table === WAVES_TABLE) {
     const shared = sharedWaveColumns.map((column) => `w.\`${column}\``);
     const configuration = Object.entries(waveFields).map(
       ([column, field]) =>
-        `case when ${nativePrimary} then ${field} else ${CHAT_WAVE_COMPATIBILITY_DEFAULTS[column] ?? 'null'} end as \`${column}\``
+        `case when ${nativePrimary} then ${field} else ${nativeWaveHubField(column) ?? CHAT_WAVE_COMPATIBILITY_DEFAULTS[column] ?? 'null'} end as \`${column}\``
     );
     return `select ${[...shared, ...configuration].join(',')} from ${WAVES_TABLE} w left join ${owners} on c.legacy_wave_id=w.id and ${nativePrimary}`;
   }

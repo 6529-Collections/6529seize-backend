@@ -166,10 +166,13 @@ function validateDispatch(
 function invokeMigrationScope(
   scope: string,
   metadata: unknown = { StatusCode: 200 },
-  response: unknown = scope !== 'full' ? { schema_scope: scope } : null
+  response: unknown = scope !== 'full' ? { schema_scope: scope } : null,
+  invocationExitCode = 0
 ) {
   const directory = mkdtempSync(path.join(tmpdir(), '6529-schema-scope-'));
   const argumentsPath = path.join(directory, 'arguments.txt');
+  const attemptsPath = path.join(directory, 'attempts.txt');
+  const remainingAttemptsPath = path.join(directory, 'remaining-attempts.txt');
   const invokeStep = steps.find(
     (step) => step.name === 'Run lambda and validate result'
   )!;
@@ -177,14 +180,19 @@ function invokeMigrationScope(
 sleep() { :; }
 aws() {
   printf '%s\\n' "$@" > "$MOCK_SCHEMA_INVOCATION_PATH"
+  printf '%s\\n' "$AWS_MAX_ATTEMPTS" >> "$MOCK_SCHEMA_ATTEMPTS_PATH"
   printf '%s' "$MOCK_SCHEMA_RESPONSE" > response.json
   printf '%s' "$MOCK_SCHEMA_METADATA"
+  return "$MOCK_SCHEMA_EXIT_CODE"
 }
 `;
   try {
     const result = spawnSync(
       'bash',
-      ['-c', `${fakeCommands}\n${guard.run}\n${invokeStep.run}`],
+      [
+        '-c',
+        `${fakeCommands}\n${guard.run}\n${invokeStep.run}\nprintf '%s' "$AWS_MAX_ATTEMPTS" > "$MOCK_SCHEMA_REMAINING_ATTEMPTS_PATH"`
+      ],
       {
         cwd: directory,
         encoding: 'utf8',
@@ -198,13 +206,23 @@ aws() {
           GITHUB_SHA: sourceSha,
           GITHUB_REF: 'refs/heads/main',
           MOCK_SCHEMA_INVOCATION_PATH: argumentsPath,
+          AWS_MAX_ATTEMPTS: '7',
+          MOCK_SCHEMA_ATTEMPTS_PATH: attemptsPath,
+          MOCK_SCHEMA_REMAINING_ATTEMPTS_PATH: remainingAttemptsPath,
+          MOCK_SCHEMA_EXIT_CODE: String(invocationExitCode),
           MOCK_SCHEMA_RESPONSE: JSON.stringify(response),
           MOCK_SCHEMA_METADATA: JSON.stringify(metadata)
         }
       }
     );
     const args = readFileSync(argumentsPath, 'utf8').trimEnd().split(/\r?\n/);
-    return { ...result, args };
+    const attempts = readFileSync(attemptsPath, 'utf8')
+      .trimEnd()
+      .split(/\r?\n/);
+    const remainingAttempts = existsSync(remainingAttemptsPath)
+      ? readFileSync(remainingAttemptsPath, 'utf8')
+      : null;
+    return { ...result, args, attempts, remainingAttempts };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -300,7 +318,9 @@ describe('generated deployment source guard', () => {
         'market-depth-publication-lock',
         'competition-history-preparation',
         'competition-runtime-schema',
-        'competition-runtime-retirement'
+        'competition-runtime-retirement',
+        'wave-hub-configuration-preparation',
+        'wave-hub-configuration-finalize'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
@@ -330,6 +350,24 @@ describe('generated deployment source guard', () => {
       ).toBe(1);
     }
   );
+
+  it.each([
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize'
+  ])('limits %s to explicit schema service dispatches', (scope) => {
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'dbMigrationsLoop',
+        DB_SCHEMA_SCOPE: scope
+      }).status
+    ).toBe(0);
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'api',
+        DB_SCHEMA_SCOPE: scope
+      }).status
+    ).toBe(1);
+  });
 
   it('restricts NFT retry scope to dbMigrationsLoop before credentials', () => {
     expect(
@@ -398,12 +436,34 @@ describe('generated deployment source guard', () => {
       'invoke',
       '--function-name',
       'dbMigrationsLoop',
+      '--cli-read-timeout',
+      '960',
       '--cli-binary-format',
       'raw-in-base64-out',
       '--payload',
       JSON.stringify({ schema_scope: scope }),
       'response.json'
     ]);
+  });
+
+  it('waits beyond the Lambda timeout without retrying or changing other AWS commands', () => {
+    const result = invokeMigrationScope('maintenance');
+    expect(result.status).toBe(0);
+    expect(result.attempts).toEqual(['1']);
+    expect(result.remainingAttempts).toBe('7');
+    expect(job.env.AWS_MAX_ATTEMPTS).toBeUndefined();
+  });
+
+  it('propagates a lost invocation response without another attempt', () => {
+    const result = invokeMigrationScope(
+      'maintenance',
+      { StatusCode: 200 },
+      { schema_scope: 'maintenance' },
+      255
+    );
+    expect(result.status).toBe(255);
+    expect(result.attempts).toEqual(['1']);
+    expect(result.remainingAttempts).toBeNull();
   });
 
   it.each(['Handled', 'Unhandled', 'Unexpected', '', false, 0])(

@@ -95,6 +95,11 @@ Select `maintenance` explicitly for this rollout to avoid unrelated schema work.
 
 ### Operational failures
 
+The synchronous `dbMigrationsLoop` invocation waits up to 960 seconds for its
+900-second Lambda and disables AWS CLI retries for that invocation. If its response
+is lost, inspect the Lambda invocation logs and completion before retrying the
+workflow; a failed CLI response does not prove the migration stopped.
+
 Inspect the failing job and logs. Fix attributable failures on the development
 branch, merge the fix into the authorized target, and repeat only the required
 deployments. Keep dependent frontend changes waiting for successful backend
