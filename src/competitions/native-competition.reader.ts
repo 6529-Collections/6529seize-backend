@@ -1,3 +1,4 @@
+import { competitionHistoryRepository } from './competition-history.repository';
 import {
   CompetitionEntryStatus,
   CompetitionStorageMode,
@@ -72,6 +73,12 @@ export class NativeCompetitionReader implements CompetitionReader {
       record.legacy_wave_id && !this.migrationShadow
         ? await this.repository.findLegacyTransferTime(record.id, this.ctx)
         : null;
+    const configurationActivatedAt =
+      await competitionHistoryRepository.findConfigurationActivationTime(
+        record.id,
+        Number(record.config_version),
+        this.ctx
+      );
     const needsDecisionPauses =
       competition.type === CompetitionType.RANK &&
       competition.decisions.next_decision_time !== null &&
@@ -80,6 +87,7 @@ export class NativeCompetitionReader implements CompetitionReader {
       ...competition,
       presentation,
       legacy_transferred_at: transferredAt,
+      configuration_activated_at: configurationActivatedAt,
       ...(needsDecisionPauses
         ? {
             decision_pauses: await collectCompetitionPages((page) =>

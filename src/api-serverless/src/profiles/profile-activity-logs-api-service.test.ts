@@ -42,6 +42,45 @@ describe('ProfileActivityLogsApiService wave read context', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
+  it('omits the internal competition scope without changing retained public activity fields', async () => {
+    const { service, profileActivityLogsDb } = createService();
+    const createdAt = new Date(1000);
+    profileActivityLogsDb.searchLogs.mockResolvedValue([
+      {
+        id: 'retained-activity',
+        profile_id: 'voter',
+        target_id: 'drop',
+        proxy_id: 'proxy',
+        competition_id: 'internal-native-owner',
+        type: ProfileActivityLogType.DROP_VOTE_EDIT,
+        contents: JSON.stringify({ oldVote: -7, newVote: 13, retained: true }),
+        additional_data_1: 'author',
+        additional_data_2: 'wave',
+        created_at: createdAt
+      }
+    ] as never);
+    const result = await service.getProfileActivityLogsFiltered(
+      {
+        profileId: 'voter',
+        logType: [ProfileActivityLogType.DROP_VOTE_EDIT],
+        includeProfileIdToIncoming: false,
+        pageRequest: { page: 1, page_size: 10 },
+        order: 'desc',
+        group_id: null
+      },
+      { authenticationContext: AuthenticationContext.notAuthenticated() }
+    );
+    expect(result.data[0]).toMatchObject({
+      id: 'retained-activity',
+      profile_id: 'voter',
+      target_id: 'drop',
+      proxy_id: 'proxy',
+      created_at: createdAt,
+      contents: { oldVote: -7, newVote: 13, retained: true }
+    });
+    expect(result.data[0]).not.toHaveProperty('competition_id');
+  });
+
   async function searchWith(authenticationContext: AuthenticationContext) {
     const { service, profileActivityLogsDb, userGroupsService } =
       createService();

@@ -287,13 +287,21 @@ export class DropVotingService {
     );
   }
 
-  public async deleteVotes(dropId: string, ctx: RequestContext) {
+  public async deleteVotes(
+    dropId: string,
+    ctx: RequestContext,
+    preserveHistory = false
+  ) {
     await Promise.all([
       this.votingDb.deleteForDrop(dropId, ctx),
       this.votingDb.deleteCreditSpendings(dropId, ctx),
       this.votingDb.deleteDropRanks(dropId, ctx),
-      this.votingDb.deleteDropRealVoteInTimes(dropId, ctx),
-      this.votingDb.deleteDropRealVoterVoteInTimes(dropId, ctx),
+      ...(preserveHistory
+        ? []
+        : [
+            this.votingDb.deleteDropRealVoteInTimes(dropId, ctx),
+            this.votingDb.deleteDropRealVoterVoteInTimes(dropId, ctx)
+          ]),
       this.votingDb.deleteDropsLeaderboardEntry(dropId, ctx)
     ]);
   }

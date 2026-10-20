@@ -2,6 +2,8 @@ import { withMigrationSchemaConnection } from './competition-migration-schema';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   COMPETITIONS_TABLE,
+  DROP_REAL_VOTE_IN_TIME_TABLE,
+  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_VOTES_TABLE,
   COMPETITION_PAUSES_TABLE,
@@ -51,6 +53,8 @@ const owners = `${COMPETITIONS_TABLE} c`;
 const entries = `${COMPETITION_ENTRIES_TABLE} e join ${owners} on c.id=e.competition_id and ${nativePrimary}`;
 
 export const LEGACY_GET_SOURCE_TABLES = [
+  DROP_REAL_VOTE_IN_TIME_TABLE,
+  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   WAVES_TABLE,
   DROPS_TABLE,
   DROP_RANK_TABLE,
@@ -422,7 +426,15 @@ export async function installLegacyCompetitionGetFacade(
         throw new Error('Compatibility source schema is missing');
       const columns = rows.map((row) => row.COLUMN_NAME);
       let select: string;
-      if (table === WAVES_TABLE) {
+      if (
+        table === DROP_REAL_VOTE_IN_TIME_TABLE ||
+        table === DROP_REAL_VOTER_VOTE_IN_TIME_TABLE
+      ) {
+        // Preparation keeps old observations authoritative until the explicit
+        // parity-checked retirement replaces this same view with native history.
+        // Deploying the rewriter first closes the rolling API read overlap.
+        select = `select ${columns.map((column) => `s.\`${column}\``).join(',')} from ${table} s`;
+      } else if (table === WAVES_TABLE) {
         select = `select ${columns.map((column) => `${waveFields[column] ? `case when ${nativePrimary} then ${waveFields[column]} else w.\`${column}\` end` : `w.\`${column}\``} as \`${column}\``).join(',')} from ${WAVES_TABLE} w left join ${owners} on c.legacy_wave_id=w.id`;
       } else if (table === DROPS_TABLE) {
         select = `select ${columns.map((column) => `${column === 'drop_type' ? "case when e.status='WINNER' then 'WINNER' when e.status='ACTIVE' then 'PARTICIPATORY' when e.status in ('WITHDRAWN','DISQUALIFIED') then 'CHAT' when d.drop_type='COMPETITION' then 'CHAT' else d.drop_type end" : `d.\`${column}\``} as \`${column}\``).join(',')} from ${DROPS_TABLE} d left join ${COMPETITIONS_TABLE} c on c.legacy_wave_id=d.wave_id and ${nativePrimary} left join ${COMPETITION_ENTRIES_TABLE} e on e.competition_id=c.id and e.drop_id=d.id`;

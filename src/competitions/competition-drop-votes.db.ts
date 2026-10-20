@@ -3,6 +3,7 @@ import {
   COMPETITION_WINNER_VOTES_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
   COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+  COMPETITION_ENTRIES_TABLE,
   COMPETITION_ENTRY_RUNTIME_TABLE,
   COMPETITION_DECISION_WINNERS_TABLE
 } from '@/constants';
@@ -61,7 +62,13 @@ export class CompetitionDropVotesDb extends LazyDbAccessCompatibleService {
     }>(
       winner
         ? `select final_rating as rating, \`rank\`, null as over_threshold_since from ${COMPETITION_DECISION_WINNERS_TABLE} where competition_id=:competitionId and entry_id=:entryId and decision_id=:decisionId`
-        : `select lb.rating, lb.\`rank\`, rt.over_threshold_since from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb left join ${COMPETITION_ENTRY_RUNTIME_TABLE} rt on rt.competition_id=lb.competition_id and rt.entry_id=lb.entry_id where lb.competition_id=:competitionId and lb.entry_id=:entryId`,
+        : `select lb.rating, lb.\`rank\`, rt.over_threshold_since
+           from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb
+           join ${COMPETITION_ENTRIES_TABLE} e
+             on e.competition_id=lb.competition_id and e.id=lb.entry_id
+           left join ${COMPETITION_ENTRY_RUNTIME_TABLE} rt
+             on rt.competition_id=lb.competition_id and rt.entry_id=lb.entry_id
+           where lb.competition_id=:competitionId and lb.entry_id=:entryId`,
       this.params(entry),
       { wrappedConnection: ctx.connection }
     );

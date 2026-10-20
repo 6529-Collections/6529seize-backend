@@ -168,6 +168,54 @@ describe('DeleteDropUseCase', () => {
     }
   );
 
+  it.each(['UPDATE', 'SYSTEM_DELETE'] as const)(
+    'passes retained-history cleanup for a native original owner (%s)',
+    async (purpose) => {
+      const connection = {} as any;
+      const { useCase, dropVotingService } = createUseCase({
+        drop: {
+          id: 'drop-1',
+          wave_id: 'wave-1',
+          author_id: 'author-1',
+          drop_type: DropType.PARTICIPATORY,
+          serial_no: 1,
+          created_at: 1
+        },
+        wave: { description_drop_id: 'pin', is_direct_message: false }
+      });
+      jest
+        .mocked(withLegacyPrimaryMutation)
+        .mockImplementationOnce((_wave, _ctx, action) =>
+          action({ id: 'native-original' } as never)
+        );
+      jest
+        .spyOn(useCase as any, 'assertDeleterIsAllowedToDeleteDrop')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(waveScoreService, 'markWaveScoresDirtyBestEffort')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(
+          waveDropMetricsRefreshService,
+          'markWaveDropMetricsDirtyBestEffort'
+        )
+        .mockResolvedValue(undefined);
+      await useCase.execute(
+        {
+          drop_id: 'drop-1',
+          deleter_id: 'author-1',
+          deletion_purpose: purpose
+        },
+        { connection }
+      );
+      expect(dropVotingService.deleteVotes).toHaveBeenCalledWith(
+        'drop-1',
+        { timer: undefined, connection },
+        true
+      );
+    }
+  );
+
   it('allows backend deletes without a user deleter and records the original drop author', async () => {
     const connection = {} as any;
     const drop = {

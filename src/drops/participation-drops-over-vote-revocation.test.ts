@@ -1,3 +1,13 @@
+jest.mock('@/competitions/native-competition-runtime.repository', () => ({
+  nativeCompetitionRuntimeRepository: {
+    discoverCompetitions: jest.fn().mockResolvedValue([])
+  }
+}));
+jest.mock('@/competitions/competition-execution.router', () => ({
+  competitionExecutionRouter: {
+    shouldUseLegacyWaveExecution: jest.fn().mockResolvedValue(true)
+  }
+}));
 jest.mock('@/competitions/legacy-competition-mutation', () => ({
   withLegacyPrimaryMutation: jest.fn(
     (_wave: string, _ctx: unknown, action: (owner: null) => unknown) =>

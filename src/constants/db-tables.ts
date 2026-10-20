@@ -283,6 +283,7 @@ export const PUSH_NOTIFICATION_CANCELLATIONS_TABLE =
 export const WEBSOCKET_OUTBOX_TABLE = 'websocket_outbox';
 
 export const COMPETITION_VOTE_HISTORY_TABLE = 'competition_vote_history';
+export const COMPETITION_SCORE_HISTORY_TABLE = 'competition_score_history';
 export const COMPETITION_ENTRY_RUNTIME_TABLE = 'competition_entry_runtime';
 export const COMPETITION_WINNER_VOTES_TABLE = 'competition_winner_votes';
 export const COMPETITION_OUTCOME_AWARDS_TABLE = 'competition_outcome_awards';

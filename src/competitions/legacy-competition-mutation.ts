@@ -1,12 +1,23 @@
 import { dbSupplier } from '@/sql-executor';
 import { appFeatures } from '@/app-features';
 import { ForbiddenException } from '@/exceptions';
+import { withNativeLegacyMirror } from './legacy-competition-mirror';
+import {
+  COMPETITION_ENTRY_RUNTIME_TABLE,
+  COMPETITION_PAUSES_TABLE,
+  WAVES_DECISION_PAUSES_TABLE
+} from '@/constants';
+import { ApiUpdateWaveRequest } from '@/api/generated/models/ApiUpdateWaveRequest';
+import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
+import { configurationToRecord } from '@/api/competitions/competition-configuration';
+import { validateOriginalPrimaryRuleUpdate } from '@/api/competitions/original-primary-rule-update';
+import { CompetitionEntity } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
+import { competitionCommandRepository } from './competition-command.repository';
 import {
   CompetitionRecord,
   competitionRepository
 } from './competition.repository';
-import { withNativeLegacyMirror } from './legacy-competition-mirror';
 import {
   withLegacyCompetitionGetFacade,
   withoutLegacyCompetitionGetFacade
@@ -34,110 +45,120 @@ export function readLegacyMutationSource<T>(action: () => T): T {
   return withoutLegacyCompetitionGetFacade(action);
 }
 
-/** Old configuration commands retain their existing relation validation. Their
- * accepted result becomes a new native configuration version in the same tx. */
+/** Accepted old settings are translated into the native configuration version.
+ * No wave-owned competition rows are written or re-read for reconciliation. */
 export async function reconcileAcceptedLegacySettings(
   record: CompetitionRecord,
   actor: string,
+  request: ApiUpdateWaveRequest,
+  nextDecisionTime: number | null,
   ctx: RequestContext
 ): Promise<void> {
   if (!appFeatures.isNativeCompetitionWritesEnabled())
     throw new ForbiddenException(
       'Competition changes are temporarily unavailable'
     );
-  const { CompetitionMigrationBackfill } =
-    await import('./competition-migration-backfill');
+  const { loadNativeCommandConfiguration } =
+    await import('@/api/competitions/competition-command-configuration');
+  const previous = await loadNativeCommandConfiguration(record, ctx);
+  const {
+    admin_group: _admin,
+    admin_drop_deletion_enabled: _delete,
+    ...rules
+  } = request.wave;
+  const config: ApiCompetitionDraftInput = {
+    ...previous,
+    title: request.name,
+    participation: {
+      ...request.participation,
+      submission_strategy: request.participation.submission_strategy ?? null
+    },
+    voting: request.voting,
+    rules: { ...previous.rules, ...rules, type: previous.rules.type }
+  };
+  const approvalRulesChanged =
+    config.rules.type === 'APPROVE' &&
+    (config.rules.winning_threshold !== previous.rules.winning_threshold ||
+      config.rules.winning_threshold_min_duration_ms !==
+        previous.rules.winning_threshold_min_duration_ms);
+  const oldEntity = competitionRepository.parseCompetitionRecord(
+    record
+  ) as unknown as CompetitionEntity;
+  const updated = configurationToRecord(config, oldEntity);
   const { NativeCompetitionReader } =
     await import('./native-competition.reader');
-  const { migrationCommandConfiguration } =
-    await import('./legacy-competition-configuration');
-  const {
-    COMPETITION_CONFIG_VERSIONS_TABLE,
-    COMPETITIONS_TABLE,
-    COMPETITION_OUTCOMES_TABLE,
-    COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE
-  } = await import('@/constants');
-  const db = dbSupplier(),
-    options = { wrappedConnection: ctx.connection },
-    backfill = new CompetitionMigrationBackfill(db),
-    now = Date.now();
-  await readLegacyMutationSource(async () => {
-    for (const table of [
-      COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-      COMPETITION_OUTCOMES_TABLE
-    ]) {
-      await db.execute(
-        `delete from ${table} where competition_id=:id`,
-        { id: record.id },
-        options
-      );
-    }
-    await backfill.batch(record, 'CONFIGURATION', 0, 100, now, null, ctx);
-    await backfill.batch(record, 'OUTCOMES', 0, 100, now, null, ctx);
-  });
-  const c = await new NativeCompetitionReader(
+  const { nativeCompetitionRuntimeService } =
+    await import('./native-competition-runtime.service');
+  const now = Date.now();
+  const competition = await new NativeCompetitionReader(
     competitionRepository,
     ctx
   ).getCompetition(record, now);
-  const config = migrationCommandConfiguration(c),
-    version = Number(record.config_version) + 1;
-  await db.execute(
-    `update ${COMPETITIONS_TABLE} set config_version=:version where id=:id`,
-    { id: record.id, version },
-    options
+  await validateOriginalPrimaryRuleUpdate(previous, config, competition, ctx);
+  await nativeCompetitionRuntimeService.enqueueDueTransitions(
+    competition,
+    now,
+    ctx
   );
-  await db.execute(
-    `insert into ${COMPETITION_CONFIG_VERSIONS_TABLE} (competition_id,version,config,created_by,created_at) values (:id,:version,:config,:actor,:now)`,
-    { id: record.id, version, config: JSON.stringify(config), actor, now },
-    options
+  await competitionCommandRepository.saveCompetition(
+    {
+      ...updated,
+      presentation_config: oldEntity.presentation_config,
+      decision_config: {
+        ...updated.decision_config,
+        next_decision_time: nextDecisionTime
+      },
+      config_version: Number(record.config_version) + 1,
+      updated_at: now
+    },
+    actor,
+    config,
+    ctx
   );
+  if (approvalRulesChanged)
+    await dbSupplier().execute(
+      `update ${COMPETITION_ENTRY_RUNTIME_TABLE} set over_threshold_since = null where competition_id = :competitionId`,
+      { competitionId: record.id },
+      { wrappedConnection: ctx.connection }
+    );
 }
 
-export async function reconcileAcceptedLegacyPauses(
+/** Apply only the accepted pause command. Native pauses added by the next
+ * release must survive even when their physical compatibility row is stale. */
+export async function applyAcceptedLegacyPause(
   record: CompetitionRecord,
+  command: {
+    id: number | null;
+    startTime?: number;
+    endTime?: number;
+    reason?: string;
+  },
   ctx: RequestContext
 ): Promise<void> {
   if (!appFeatures.isNativeCompetitionWritesEnabled())
     throw new ForbiddenException(
       'Competition changes are temporarily unavailable'
     );
-  const { COMPETITION_PAUSES_TABLE, WAVES_DECISION_PAUSES_TABLE } =
-    await import('@/constants');
-  const { legacyCompetitionPauseId } = await import('./competition-id');
   const db = dbSupplier(),
     options = { wrappedConnection: ctx.connection };
-  const rows = await readLegacyMutationSource(() =>
-    db.execute<{
-      id: number;
-      start_time: number;
-      end_time: number;
-      reason: string | null;
-    }>(
-      `select * from ${WAVES_DECISION_PAUSES_TABLE} where wave_id=:waveId order by id limit 1001`,
-      { waveId: record.wave_id },
-      options
-    )
-  );
-  if (rows.length > 1000)
-    throw new Error(
-      'OWNED_EXCEPTION: pause command requires a bounded adapter'
-    );
-  await db.execute(
-    `delete from ${COMPETITION_PAUSES_TABLE} where competition_id=:id`,
-    { id: record.id },
-    options
-  );
-  for (const row of rows)
+  if (command.id !== null) {
     await db.execute(
-      `insert into ${COMPETITION_PAUSES_TABLE} (id,competition_id,start_time,end_time,reason,legacy_source_id) values (:id,:competitionId,:start,:end,:reason,:sourceId)`,
-      {
-        id: legacyCompetitionPauseId(record.id, row.id),
-        competitionId: record.id,
-        start: Number(row.start_time),
-        end: Number(row.end_time),
-        reason: row.reason,
-        sourceId: row.id
-      },
+      `delete from ${COMPETITION_PAUSES_TABLE} where competition_id=:competitionId and legacy_source_id=:id`,
+      { competitionId: record.id, id: command.id },
       options
+    );
+    await db.execute(
+      `delete from ${WAVES_DECISION_PAUSES_TABLE} where wave_id=:waveId and id=:id`,
+      { waveId: record.wave_id, id: command.id },
+      options
+    );
+  }
+  if (command.startTime !== undefined && command.endTime !== undefined)
+    await competitionCommandRepository.pause(
+      record.id,
+      command.startTime,
+      command.endTime,
+      command.reason ?? null,
+      ctx
     );
 }

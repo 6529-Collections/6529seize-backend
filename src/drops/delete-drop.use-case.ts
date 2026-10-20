@@ -242,7 +242,7 @@ export class DeleteDropUseCase {
     return withDropOwnershipMutation(
       ownershipDrop.wave_id,
       { timer, connection },
-      async () => {
+      async (nativeOwner) => {
         const dropId = model.drop_id;
         const nativeEntries = isPermanentDelete
           ? await this.entryHooks.lockForDelete(dropId, { timer, connection })
@@ -273,6 +273,16 @@ export class DeleteDropUseCase {
             resolvedDeleterId,
             { timer, connection }
           );
+        let voteCleanup: Promise<void> | undefined;
+        if (isPermanentDelete || ownershipDrop.drop_type !== DropType.CHAT) {
+          voteCleanup = nativeOwner
+            ? this.dropVotingService.deleteVotes(
+                dropId,
+                { timer, connection },
+                true
+              )
+            : this.dropVotingService.deleteVotes(dropId, { timer, connection });
+        }
         await Promise.all([
           memeCollaborationsService.closeDeleted(dropId, { timer, connection }),
           this.dropsDb.deleteDropParts(dropId, { timer, connection }),
@@ -298,9 +308,7 @@ export class DeleteDropUseCase {
             connection
           }),
           this.dropPollsDb.deleteByDropId(dropId, { timer, connection }),
-          !isPermanentDelete && ownershipDrop.drop_type === DropType.CHAT
-            ? undefined
-            : this.dropVotingService.deleteVotes(dropId, { timer, connection }),
+          voteCleanup,
           this.curationsDb.deleteDropCurationsByDropId(dropId, {
             timer,
             connection

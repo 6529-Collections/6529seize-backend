@@ -38,6 +38,9 @@ import {
   configurationToRecord
 } from './competition-configuration';
 import { legacyCompetitionSettingsService } from './legacy-competition-settings.service';
+import { loadNativeCommandConfiguration } from './competition-command-configuration';
+import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 
 export type CompetitionLifecycleAction =
@@ -115,15 +118,10 @@ export class CompetitionLifecycleService {
     record: CompetitionRecord,
     ctx: RequestContext
   ): Promise<ApiCompetitionDraftInput> {
-    const config =
-      await competitionCommandRepository.getConfiguration<ApiCompetitionDraftInput>(
-        record.id,
-        Number(record.config_version),
-        ctx
-      );
+    const config = await loadNativeCommandConfiguration(record, ctx);
     if (
       record.legacy_wave_id !== record.wave_id ||
-      record.presentation_config != null
+      entity(record).presentation_config != null
     )
       return config;
     const metadata = await waveMetadataDb.listByWaveId(record.wave_id, ctx);
@@ -243,11 +241,15 @@ export class CompetitionLifecycleService {
           competitionConflict(
             'Clone a terminal competition to change its rules'
           );
-        const previous =
-          await competitionCommandRepository.getConfiguration<ApiCompetitionDraftInput>(
-            competitionId,
-            Number(record.config_version),
-            tx
+        const previous = await loadNativeCommandConfiguration(record, tx);
+        const originalPrimary = record.legacy_wave_id === record.wave_id;
+        if (
+          originalPrimary &&
+          competitionPayloadHash(previous.outcomes) !==
+            competitionPayloadHash(config.outcomes)
+        )
+          competitionConflict(
+            'Original competition outcome definitions are immutable'
           );
         const rulesChanged =
           competitionPayloadHash(immutableRules(previous)) !==
@@ -274,19 +276,41 @@ export class CompetitionLifecycleService {
         const updated = configurationToRecord(config, entity(record));
         const next = {
           ...updated,
+          presentation_config:
+            originalPrimary &&
+            competitionPayloadHash(config.presentation) ===
+              competitionPayloadHash(previous.presentation)
+              ? entity(record).presentation_config
+              : updated.presentation_config,
           config_version: Number(record.config_version) + 1,
           updated_at: now,
           decision_config: rulesChanged
-            ? updated.decision_config
+            ? {
+                ...updated.decision_config,
+                next_decision_time:
+                  originalPrimary &&
+                  competitionPayloadHash(config.rules.decisions_strategy) ===
+                    competitionPayloadHash(previous.rules.decisions_strategy)
+                    ? entity(record).decision_config.next_decision_time
+                    : updated.decision_config.next_decision_time
+              }
             : entity(record).decision_config
         };
+        await nativeCompetitionRuntimeService.enqueueDueTransitions(
+          await new NativeCompetitionReader(
+            competitionRepository,
+            tx
+          ).getCompetition(record, now),
+          now,
+          tx
+        );
         await competitionCommandRepository.saveCompetition(
           next,
           actor,
           config,
           tx
         );
-        if (rulesChanged)
+        if (rulesChanged && !originalPrimary)
           await competitionCommandRepository.replaceOutcomeDefinitions(
             competitionId,
             config.outcomes,
@@ -397,6 +421,14 @@ export class CompetitionLifecycleService {
           config_version: Number(record.config_version) + 1,
           updated_at: now
         };
+        await nativeCompetitionRuntimeService.enqueueDueTransitions(
+          await new NativeCompetitionReader(
+            competitionRepository,
+            tx
+          ).getCompetition(record, now),
+          now,
+          tx
+        );
         await competitionCommandRepository.saveCompetition(
           next,
           actor,
