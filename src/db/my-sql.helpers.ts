@@ -48,15 +48,15 @@ const TinyIntToBooleanCaster: TypeCast = function castField(field, next) {
   return next();
 };
 
-export const CustomTypeCaster: TypeCast = (field, next) => {
-  if (
-    isLegacyCompetitionGetFacadeScope() &&
-    LEGACY_GET_BOOLEAN_FIELDS.has(field.name)
-  ) {
+export const CustomTypeCaster: TypeCast = (field, next) =>
+  TinyIntToBooleanCaster(field, () => BigIntToNumberCaster(field, next));
+
+const LegacyCompetitionGetTypeCaster: TypeCast = (field, next) => {
+  if (LEGACY_GET_BOOLEAN_FIELDS.has(field.name)) {
     const value = field.string();
     return value === null ? null : value === '1' || value === 'true';
   }
-  return TinyIntToBooleanCaster(field, () => BigIntToNumberCaster(field, next));
+  return CustomTypeCaster(field, next);
 };
 
 type PrivateQueryFamily =
@@ -334,7 +334,15 @@ export async function execSQLWithParams<T>(
         // mysql sockets can outlive a Lambda invocation. Bind both logging and
         // operational contexts at registration, not the socket's callback context.
         connection.query(
-          { sql, values: params },
+          {
+            sql,
+            values: params,
+            // Field parsing runs on pooled sockets before onResult. Capture
+            // this query's conversion mode instead of reading the socket scope.
+            typeCast: isLegacyCompetitionGetFacadeScope()
+              ? LegacyCompetitionGetTypeCaster
+              : CustomTypeCaster
+          },
           options?.bindInvocationContext
             ? AsyncResource.bind(onResult)
             : onResult
