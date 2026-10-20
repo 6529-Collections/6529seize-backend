@@ -107,6 +107,27 @@ it('restores transferred primary history with original IDs, adjustment reasons a
   expect(dropsService.findWaveLogs).not.toHaveBeenCalled();
 });
 
+it('preserves the original null shared timestamp without inventing an epoch date', async () => {
+  jest
+    .mocked(competitionVoteActivityRepository.listTransferred)
+    .mockResolvedValue([
+      {
+        sequence: 0,
+        legacy_id: 'unknown-time',
+        legacy_created_at: null,
+        drop_id: 'drop',
+        voter_profile_id: 'voter',
+        submitter_id: null,
+        previous_value: 0,
+        value: 0,
+        occurred_at: null
+      }
+    ]);
+  expect(await read()).toMatchObject([
+    { id: 'unknown-time', created_at: null }
+  ]);
+});
+
 it('does not expose primary-wave logs through a separate native competition', async () => {
   jest
     .mocked(competitionRepository.findCompetitionRecordById)

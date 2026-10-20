@@ -189,7 +189,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
       const params = Object.fromEntries(
         Object.entries(record).map(([key, value]) => [
           key,
-          jsonColumns.has(key) ? JSON.stringify(value) : value
+          jsonColumns.has(key) && value !== null ? JSON.stringify(value) : value
         ])
       );
       await this.db.execute(

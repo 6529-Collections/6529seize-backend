@@ -1,4 +1,51 @@
-# Migrate one legacy wave
+# Competition runtime retirement preparation
+
+The migration Lambda is now inert and has reserved concurrency zero. Do not
+invoke the retained migration CLI or a historical copy/reverse command. Its
+physical Lambda, IAM, alarms and old schema remain for separate retirement work.
+The migration details below are historical reference only.
+
+Deploy this reviewed preparatory revision before the final native-only runtime:
+
+1. Merge it into current staging through an ordinary merge. Deploy
+   `dbMigrationsLoop` with `db_schema_scope=full` to add the native history,
+   attribution, distribution-context and snapshot-publication fields. Existing
+   readers, mirrors and passthrough compatibility views remain available.
+2. Deploy `competitionMigrationLoop`, verify the inert artifact and reserved
+   concurrency zero, and confirm old invocations have drained using observed
+   invocation evidence plus the configured timeout. Preserve its resources.
+3. Deploy `waveLeaderboardSnapshotterLoop`, `artCurationNftWatchLoop`, `tdhLoop`,
+   `overRatesRevocationLoop`, `helpBotReplyLoop`, `waveDecisionExecutionLoop`,
+   then `api`, waiting for each successful version/artifact/health check and
+   draining replaced writer invocations. These writers preserve exact independent
+   source-history IDs while retaining the old mirrors. Settings, pause and
+   profile-consolidation paths already use native authority throughout overlap.
+   Credit revocation discovers all native competitions, including siblings, from
+   native configuration/current voters before examining legacy candidates. Native
+   owners are never reconciled from physical allocation totals or stale profile IDs.
+   Curation locks competition owners before watches and resolves explicit CURATION
+   entries through native decisions; preparation still mirrors primary winners.
+   Register native watches only through the trusted competition content permit or
+   an existing explicit entry, never by selecting the hub's default competition.
+   Shared orphan watches remain unresolved under a native owner. Drain replaced
+   curation and credit writer invocations before the final view/trigger switch.
+4. Invoke `dbMigrationsLoop` with
+   `db_schema_scope=competition-history-preparation`. The explicit transfer uses
+   bounded keysets of at most 1,000 observations per owned transaction and releases
+   ownership between batches. It preserves contradictory raw observations,
+   shared Activity identity and parentless distribution children. Exact values,
+   nulls, counts and native mutation links must match. A mismatch stops the phase;
+   never reconstruct or delete observations to satisfy parity.
+
+Submission edits retain histories with explicit stream/native reset watermarks;
+deletion retains accepted vote-event identity without restoring deleted content.
+Prepared historical GETs initially read passthrough views. The final native view
+switch replaces those same names, protecting rolling readers after final workers
+stop mirroring. Final retirement and consumer conversion follow in a separate
+reviewed revision. This preparation performs no physical table/column deletion
+and authorizes no production deployment.
+
+## Historical migration reference
 
 Invoke `competitionMigrationLoop` in the AWS Lambda console with one JSON field:
 

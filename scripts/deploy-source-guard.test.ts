@@ -297,7 +297,8 @@ describe('generated deployment source guard', () => {
         'wallet-transfer-analysis',
         'claims-media-upload',
         'nft-link-page-retry',
-        'market-depth-publication-lock'
+        'market-depth-publication-lock',
+        'competition-history-preparation'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(

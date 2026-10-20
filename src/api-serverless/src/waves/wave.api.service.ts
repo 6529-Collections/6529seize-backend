@@ -1,7 +1,7 @@
 import {
   withLegacyPrimaryMutation,
   reconcileAcceptedLegacySettings,
-  reconcileAcceptedLegacyPauses
+  applyAcceptedLegacyPause
 } from '@/competitions/legacy-competition-mutation';
 import { competitionHistoryRepository } from '@/competitions/competition-history.repository';
 import { waveGroupIds } from '@/waves/wave-group-ids';
@@ -867,8 +867,6 @@ export class WaveApiService {
     ctx: RequestContext,
     reason?: string
   ): Promise<ApiWave> {
-    const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
-    await this.assertProposedPauseValidForAddOrUpdate(wave, model, ctx);
     await this.withWaveSettingsTransaction(
       async (connection) =>
         withLegacyPrimaryMutation(
@@ -883,23 +881,30 @@ export class WaveApiService {
               ...ctx,
               connection
             });
-            if (model.id) {
-              await this.wavesApiDb.deletePause(model.id, connection);
-            }
-            await this.wavesApiDb.insertPause(
-              {
-                startTime: model.start_time,
-                endTime: model.end_time,
-                waveId,
-                ...(reason === undefined ? {} : { reason })
-              },
-              connection
-            );
-            if (nativeOwner)
-              await reconcileAcceptedLegacyPauses(nativeOwner, {
-                ...ctx,
+            if (nativeOwner) {
+              await applyAcceptedLegacyPause(
+                nativeOwner,
+                {
+                  id: model.id ?? null,
+                  startTime: model.start_time,
+                  endTime: model.end_time,
+                  ...(reason === undefined ? {} : { reason })
+                },
+                { ...ctx, connection }
+              );
+            } else {
+              if (model.id)
+                await this.wavesApiDb.deletePause(model.id, connection);
+              await this.wavesApiDb.insertPause(
+                {
+                  startTime: model.start_time,
+                  endTime: model.end_time,
+                  waveId,
+                  ...(reason === undefined ? {} : { reason })
+                },
                 connection
-              });
+              );
+            }
           }
         ),
       ctx
@@ -919,8 +924,6 @@ export class WaveApiService {
     pauseId: number,
     ctx: RequestContext
   ): Promise<ApiWave> {
-    const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
-    await this.assertProposedPauseValidForDeletion(wave, pauseId, ctx);
     await this.withWaveSettingsTransaction(
       async (connection) =>
         withLegacyPrimaryMutation(
@@ -935,12 +938,13 @@ export class WaveApiService {
               ...ctx,
               connection
             });
-            await this.wavesApiDb.deletePause(pauseId, connection);
             if (nativeOwner)
-              await reconcileAcceptedLegacyPauses(nativeOwner, {
-                ...ctx,
-                connection
-              });
+              await applyAcceptedLegacyPause(
+                nativeOwner,
+                { id: pauseId },
+                { ...ctx, connection }
+              );
+            else await this.wavesApiDb.deletePause(pauseId, connection);
           }
         ),
       ctx
@@ -2383,6 +2387,8 @@ export class WaveApiService {
               await reconcileAcceptedLegacySettings(
                 nativeOwner,
                 authenticatedProfileId,
+                request,
+                updatedEntity.next_decision_time,
                 ctxWithConnection
               );
 

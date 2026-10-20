@@ -53,7 +53,7 @@ import {
 } from './legacy-competition-execution-effects';
 import { withLegacyCompetitionGetFacade } from './legacy-competition-get-facade';
 import {
-  reconcileAcceptedLegacyPauses,
+  applyAcceptedLegacyPause,
   withLegacyPrimaryMutation
 } from './legacy-competition-mutation';
 import { competitionCommandRepository } from './competition-command.repository';
@@ -492,12 +492,25 @@ describeWithSeed(
       await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
         withLegacyPrimaryMutation(active.id, { connection }, async (owner) => {
           if (!owner) throw new Error('Expected native primary');
-          await sqlExecutor.execute(
-            `update ${WAVES_DECISION_PAUSES_TABLE} set reason='Updated review' where wave_id=:waveId`,
+          const pause = await sqlExecutor.oneOrNull<{
+            id: number;
+            start_time: number;
+            end_time: number;
+          }>(
+            `select id,start_time,end_time from ${WAVES_DECISION_PAUSES_TABLE} where wave_id=:waveId`,
             { waveId: active.id },
             { wrappedConnection: connection }
           );
-          await reconcileAcceptedLegacyPauses(owner, { connection });
+          await applyAcceptedLegacyPause(
+            owner,
+            {
+              id: pause!.id,
+              startTime: Number(pause!.start_time),
+              endTime: Number(pause!.end_time),
+              reason: 'Updated review'
+            },
+            { connection }
+          );
         })
       );
       expect((await pauses()).data[0].reason).toBe('Updated review');

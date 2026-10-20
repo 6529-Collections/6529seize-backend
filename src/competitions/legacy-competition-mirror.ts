@@ -8,6 +8,7 @@ import {
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
   COMPETITION_VOTES_TABLE,
+  COMPETITION_SCORE_HISTORY_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
   PROFILE_LATEST_LOG_TABLE
 } from '@/constants';
@@ -74,7 +75,8 @@ export async function mirrorNativeLegacyVote(
     value: number;
     occurredAt: number;
   },
-  ctx: RequestContext
+  ctx: RequestContext,
+  mutationSequence: number
 ): Promise<void> {
   const options = { wrappedConnection: ctx.connection };
   const row = await db.oneOrNull<{
@@ -90,6 +92,7 @@ export async function mirrorNativeLegacyVote(
   await withNativeLegacyMirror(db, params.competitionId, ctx, async () => {
     const values = {
       ...params,
+      mutationSequence,
       waveId: row.wave_id,
       dropId: row.drop_id,
       aggregate: Number(row.aggregate_value),
@@ -111,8 +114,22 @@ export async function mirrorNativeLegacyVote(
       options
     );
     await db.execute(
+      `insert into ${COMPETITION_SCORE_HISTORY_TABLE}
+       (competition_id,kind,sequence,entry_id,drop_id,voter_profile_id,value,occurred_at,mutation_sequence)
+       values (:competitionId,'AGGREGATE',:sequence,:entryId,:dropId,'',:aggregate,:occurredAt,:mutationSequence)`,
+      { ...values, sequence: await lastMirrorSequence(db, ctx) },
+      options
+    );
+    await db.execute(
       `insert into ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} (drop_id,wave_id,voter_id,timestamp,vote) values (:dropId,:waveId,:voterProfileId,:occurredAt,:value)`,
       values,
+      options
+    );
+    await db.execute(
+      `insert into ${COMPETITION_SCORE_HISTORY_TABLE}
+       (competition_id,kind,sequence,entry_id,drop_id,voter_profile_id,value,occurred_at,mutation_sequence)
+       values (:competitionId,'VOTER',:sequence,:entryId,:dropId,:voterProfileId,:value,:occurredAt,:mutationSequence)`,
+      { ...values, sequence: await lastMirrorSequence(db, ctx) },
       options
     );
     await db.execute(
@@ -149,9 +166,9 @@ export async function mirrorNativeLegacyVoteActivity(
   try {
     const inserted = await db.execute(
       `INSERT INTO ${PROFILES_ACTIVITY_LOGS_TABLE}
-       (id, profile_id, target_id, contents, type, proxy_id, created_at, additional_data_1, additional_data_2)
+       (id, profile_id, target_id, contents, type, proxy_id, created_at, additional_data_1, additional_data_2, competition_id)
        SELECT :activityId, :voterProfileId, e.drop_id, :contents, 'DROP_VOTE_EDIT', :proxyId,
-         DATE_ADD('1970-01-01', INTERVAL :occurredAt MICROSECOND), e.submitter_id, c.wave_id
+         DATE_ADD('1970-01-01', INTERVAL :occurredAt MICROSECOND), e.submitter_id, c.wave_id, c.id
        FROM ${COMPETITIONS_TABLE} c JOIN ${COMPETITION_ENTRIES_TABLE} e
          ON e.competition_id = c.id AND e.id = :entryId
        WHERE c.id = :competitionId AND c.legacy_wave_id = c.wave_id AND c.storage_mode = 'NATIVE'`,
@@ -244,4 +261,19 @@ export async function mirrorNativeLegacySchedule(
         options
       )
     );
+}
+
+async function lastMirrorSequence(
+  db: SqlExecutor,
+  ctx: RequestContext
+): Promise<number> {
+  const row = await db.oneOrNull<{ id: number | string }>(
+    'select last_insert_id() as id',
+    {},
+    { wrappedConnection: ctx.connection }
+  );
+  const sequence = Number(row?.id);
+  if (!Number.isSafeInteger(sequence) || sequence < 1)
+    throw new Error('Retained score history requires a safe source sequence');
+  return sequence;
 }

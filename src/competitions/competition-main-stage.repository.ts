@@ -66,6 +66,9 @@ export class CompetitionMainStageRepository extends LazyDbAccessCompatibleServic
         select abs(v.votes) as value from ${DROP_VOTER_STATE_TABLE} v
         left join ${WAVES_DECISION_WINNER_DROPS_TABLE} winner on winner.drop_id = v.drop_id
         where v.wave_id = :legacyWaveId and winner.drop_id is null
+          and not exists(select 1 from ${COMPETITIONS_TABLE} original
+            where original.storage_mode='NATIVE' and original.legacy_wave_id=v.wave_id
+              and original.wave_id=v.wave_id)
         union all
         select abs(v.value) as value from ${COMPETITION_VOTES_TABLE} v
         join (${nativeMainStageEntriesSource('ACTIVE')}) entry

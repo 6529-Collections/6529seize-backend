@@ -361,7 +361,9 @@ describeWithSeed(
         `insert into ${PROFILES_ACTIVITY_LOGS_TABLE}
           (id,profile_id,target_id,additional_data_1,additional_data_2,type,contents,created_at)
          values ('historical-vote-log','fixture-voter',:dropId,'fixture-author',:waveId,
-          'DROP_VOTE_EDIT',:contents,'2025-08-09 12:14:22')`,
+          'DROP_VOTE_EDIT',:contents,'2025-08-09 12:14:22'),
+          ('historical-vote-log-null','fixture-voter',:dropId,'fixture-author',:waveId,
+          'DROP_VOTE_EDIT',:contents,NULL)`,
         {
           dropId: drop.id,
           waveId: wave.id,
@@ -373,7 +375,20 @@ describeWithSeed(
         }
       );
       const before = await listCompetitionVoteActivity(wave.id, id, 0, 50, {});
-      expect(before).toHaveLength(1);
+      expect(before).toHaveLength(2);
+      expect(before[1]).toMatchObject({
+        id: 'historical-vote-log-null',
+        created_at: null
+      });
+      const [source] = await sqlExecutor.execute<{ created_at: string }>(
+        `select created_at from ${PROFILES_ACTIVITY_LOGS_TABLE} where id='historical-vote-log'`
+      );
+      expect(JSON.parse(JSON.stringify(before[0].created_at))).toBe(
+        source.created_at
+      );
+      expect(source.created_at).toBe(
+        new Date('2025-08-09T12:14:22').toISOString()
+      );
       const service = new CompetitionMigrationService(
         () => sqlExecutor,
         Date.now,
@@ -3330,7 +3345,17 @@ describeWithSeed(
       const comparison = await service.compare(id, operator, 1);
       expect(comparison.mismatches).toBe(0);
       expect(comparison.sourceFailures).toEqual([]);
-      expect(comparison.categories).toHaveLength(22);
+      expect(comparison.categories).toHaveLength(24);
+      expect(comparison.categories).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            category: `frozen_relation:${DROP_REAL_VOTE_IN_TIME_TABLE}`
+          }),
+          expect.objectContaining({
+            category: `frozen_relation:${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE}`
+          })
+        ])
+      );
     });
 
     it.each([false, true])(
