@@ -117,6 +117,11 @@ retirement. Deploy that preparation before switching any reader.
    Phase 3 acceptance additionally requires GREEN relevant staging E2E. Unrelated
    E2E failures are reported separately and do not authorize unrelated fixes.
 
+The isolated monitor retains the migrator in
+`ops/monitoring/retained-producers.json`, independently of ordinary deploy choices.
+Generator verification must keep its existing monitoring infrastructure unchanged;
+no monitoring deployment or resource deletion is part of this retirement.
+
 The final service catalog excludes the retired migrator. Its inert source and
 physical configuration remain recoverable until the separate infrastructure
 chunk. Never invoke an old migration/reverse command or restore rollout flags as

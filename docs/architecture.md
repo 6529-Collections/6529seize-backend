@@ -1156,6 +1156,9 @@ The original native creation/write/read/execution/shadow rollout flags and
 migration/reverse/reconciliation commands are retired. The migration Lambda has
 an inert transition artifact and zero reserved concurrency. Its physical
 Lambda, IAM, alarms and retained schema belong to a later explicit retirement.
+The isolated monitor's `retained-producers.json` keeps its existing log subscription,
+relay permissions, producer allowlists and alarms independently of the ordinary
+deploy catalog; the generated infrastructure remains unchanged.
 `dbMigrationsLoop` retains all old entities/columns to prevent TypeORM from
 silently deleting schema during this application-only release. Ordinary sync
 never runs a data transfer or physical retirement. Explicit preparation/final
