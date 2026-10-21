@@ -2051,7 +2051,9 @@ recovery signal. Initial adapters cover delegation checkpoint/stage observations
 native decision/outbox surveys, and independent dirty/full Wave Score refreshes.
 Score refresh health reads persisted dirty request versions on the writer before
 and after work, including handled failures; attempted-wave counts do not prove
-progress. Full scans report committed work and confirmed continuation handoffs,
+progress. Dirty age follows the original request creation and persisted score
+calculation timestamps; new writes and failed-attempt updates cannot manufacture
+refresh progress. Full scans report committed work and confirmed continuation handoffs,
 carrying their original request time in a message attribute that preserves FIFO
 body deduplication. Dirty catch-up cannot clear a pending full scan. Waiting full
 messages retain their independent SQS age guard, and diagnostic failures leave
