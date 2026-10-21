@@ -1,7 +1,10 @@
 import {
   ART_CURATION_TOKEN_WATCH_DROPS_TABLE,
   ART_CURATION_TOKEN_WATCHES_TABLE,
-  DROPS_TABLE
+  DROPS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
+  COMPETITIONS_TABLE,
+  COMPETITION_CAPABILITIES_TABLE
 } from '@/constants';
 import {
   ArtCurationTokenWatchEntity,
@@ -454,8 +457,10 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
           select wd.drop_id
           from ${ART_CURATION_TOKEN_WATCH_DROPS_TABLE} wd
           join ${DROPS_TABLE} d on d.id = wd.drop_id
+          join ${COMPETITION_ENTRIES_TABLE} e on e.drop_id=d.id and e.status='ACTIVE'
+          join ${COMPETITIONS_TABLE} c on c.id=e.competition_id and c.storage_mode='NATIVE'
+          join ${COMPETITION_CAPABILITIES_TABLE} cap on cap.competition_id=c.id and cap.capability='CURATION'
           where wd.watch_id = :watchId
-            and d.drop_type = :dropType
         `,
           {
             watchId,

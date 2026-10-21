@@ -7,7 +7,8 @@ import {
   DROPS_TABLE,
   DROP_VOTER_STATE_TABLE,
   RATINGS_TABLE,
-  TDH_NFT_TABLE
+  TDH_NFT_TABLE,
+  IDENTITIES_TABLE
 } from '@/constants';
 import {
   CompetitionEntryStatus,
@@ -17,10 +18,13 @@ import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
+import { identitiesDb } from '@/identities/identities.db';
+import { competitionCreditRepository } from './competition-credit.repository';
 
 const profileId = 'budget-voter';
 const waveId = 'shared-wave';
 const nativeId = 'budget-native';
+const originalPrimaryId = 'budget-original-primary';
 const entry = {
   id: 'entry-a',
   drop_id: 'drop-a',
@@ -86,10 +90,39 @@ const nativeEntries = [
   }
 ];
 const nativeValues = [-20, 30, 45, 50, 60, 70];
+const originalPrimaryEntries = [
+  {
+    id: 'original-entry-a',
+    drop_id: 'legacy-a',
+    competition_id: originalPrimaryId,
+    status: CompetitionEntryStatus.ACTIVE
+  },
+  {
+    id: 'original-entry-b',
+    drop_id: 'legacy-b',
+    competition_id: originalPrimaryId,
+    status: CompetitionEntryStatus.ACTIVE
+  },
+  {
+    id: 'original-entry-winner',
+    drop_id: 'legacy-winner',
+    competition_id: originalPrimaryId,
+    status: CompetitionEntryStatus.WINNER
+  }
+];
+const currentEntries = [
+  ...nativeEntries.map((item) => ({
+    ...item,
+    drop_id: item.id === entry.id ? entry.drop_id : `drop-${item.id}`
+  })),
+  ...originalPrimaryEntries
+];
+const currentValues = [...nativeValues, 10, -15, 100];
+// Retained shared rows deliberately disagree with native membership and votes.
 const legacyDrops = [
-  { id: 'legacy-a', drop_type: 'PARTICIPATORY' },
-  { id: 'legacy-b', drop_type: 'PARTICIPATORY' },
-  { id: 'legacy-winner', drop_type: 'WINNER' }
+  { id: 'legacy-a', drop_type: 'WINNER' },
+  { id: 'legacy-b', drop_type: 'CHAT' },
+  { id: 'legacy-winner', drop_type: 'PARTICIPATORY' }
 ];
 
 describeWithSeed(
@@ -98,32 +131,29 @@ describeWithSeed(
     withIdentities([identity]),
     {
       table: COMPETITIONS_TABLE,
-      rows: [
-        {
-          id: nativeId,
-          wave_id: waveId,
-          legacy_wave_id: null,
-          storage_mode: 'NATIVE',
-          execution_mode: 'ACTIVE',
-          type: 'RANK',
-          lifecycle: 'PUBLISHED',
-          title: 'Budget fixture',
-          participation_config: {},
-          voting_config: native.voting,
-          decision_config: {},
-          winner_config: {},
-          outcome_config: [],
-          created_at: 1,
-          updated_at: 1
-        }
-      ]
+      rows: [nativeId, 'parallel-native', originalPrimaryId].map((id) => ({
+        id,
+        wave_id: waveId,
+        legacy_wave_id: id === originalPrimaryId ? waveId : null,
+        storage_mode: 'NATIVE',
+        execution_mode: 'ACTIVE',
+        type: 'RANK',
+        lifecycle: 'PUBLISHED',
+        title: 'Budget fixture',
+        participation_config: {},
+        voting_config: native.voting,
+        decision_config: {},
+        winner_config: {},
+        outcome_config: [],
+        created_at: 1,
+        updated_at: 1
+      }))
     },
     {
       table: COMPETITION_ENTRIES_TABLE,
-      rows: nativeEntries.map((item) => ({
+      rows: currentEntries.map((item) => ({
         ...item,
         wave_id: waveId,
-        drop_id: item.id === entry.id ? entry.drop_id : `drop-${item.id}`,
         submitter_id: 'submitter',
         config_version: 1,
         submitted_at: 1
@@ -131,13 +161,13 @@ describeWithSeed(
     },
     {
       table: COMPETITION_VOTES_TABLE,
-      rows: nativeEntries.map((item, index) => ({
+      rows: currentEntries.map((item, index) => ({
         id: `vote-${index}`,
         competition_id: item.competition_id,
         entry_id: item.id,
         voter_profile_id: profileId,
-        value: nativeValues[index],
-        credit_spent: Math.abs(nativeValues[index]),
+        value: currentValues[index],
+        credit_spent: Math.abs(currentValues[index]),
         created_at: 1,
         updated_at: 1
       }))
@@ -164,12 +194,12 @@ describeWithSeed(
         voter_id: profileId,
         drop_id: item.id,
         wave_id: waveId,
-        votes: [10, -15, 100][index]
+        votes: [91, -92, 1_000][index]
       }))
     }
   ],
   () => {
-    it('separates two native competitions and the legacy primary in one shared wave', async () => {
+    it('isolates two native siblings and their native original primary from stale physical votes', async () => {
       expect(
         await competitionCreditService.getBudget(native, profileId, entry, {})
       ).toMatchObject({
@@ -192,11 +222,10 @@ describeWithSeed(
         await competitionCreditService.getBudget(
           {
             ...native,
-            id: 'legacy',
-            storage_mode: CompetitionStorageMode.LEGACY_ADAPTER
+            id: originalPrimaryId
           },
           profileId,
-          { id: 'legacy-entry-a', drop_id: 'legacy-a' },
+          originalPrimaryEntries[0],
           {}
         )
       ).toMatchObject({
@@ -207,6 +236,127 @@ describeWithSeed(
         max_vote: 85
       });
     });
+
+    it('reads 710 active voter budgets in bounded source pages', async () => {
+      const profileIds = Array.from(
+        { length: 710 },
+        (_, index) => `batch-voter-${index}`
+      );
+      const identities = profileIds.map((profileId, index) =>
+        anIdentity(
+          { tdh: 100 },
+          {
+            profile_id: profileId,
+            consolidation_key: `batch-key-${index}`,
+            primary_address: `0x${index.toString(16).padStart(40, '0')}`,
+            handle: `batch-voter-${index}`
+          }
+        )
+      );
+      await sqlExecutor.bulkInsert(
+        IDENTITIES_TABLE,
+        identities,
+        Object.keys(identities[0])
+      );
+      await sqlExecutor.bulkInsert(
+        COMPETITION_VOTES_TABLE,
+        identities.map((identity, index) => ({
+          id: randomUUID(),
+          competition_id: nativeId,
+          entry_id: entry.id,
+          voter_profile_id: identity.profile_id,
+          value: index % 2 === 0 ? -120 : 80,
+          credit_spent: index % 2 === 0 ? 120 : 80,
+          created_at: 1,
+          updated_at: 1
+        })),
+        [
+          'id',
+          'competition_id',
+          'entry_id',
+          'voter_profile_id',
+          'value',
+          'credit_spent',
+          'created_at',
+          'updated_at'
+        ]
+      );
+      const identityPages = jest.spyOn(identitiesDb, 'getIdentitiesByIds');
+      const spendingPages = jest.spyOn(
+        competitionCreditRepository,
+        'getNamespaceSpendings'
+      );
+      const single = jest.spyOn(competitionCreditRepository, 'getSpending');
+      try {
+        const budgets = await sqlExecutor.executeNativeQueriesInTransaction(
+          (connection) =>
+            competitionCreditService.getWaveBudgets(native, profileIds, {
+              connection
+            })
+        );
+        expect(identityPages).toHaveBeenCalledTimes(8);
+        expect(spendingPages).toHaveBeenCalledTimes(8);
+        expect(single).not.toHaveBeenCalled();
+        expect(budgets.size).toBe(710);
+        profileIds.forEach((profileId, index) => {
+          expect(budgets.get(profileId)).toMatchObject({
+            available: 100,
+            spent: index % 2 === 0 ? 120 : 80,
+            remaining: index % 2 === 0 ? 0 : 20
+          });
+        });
+      } finally {
+        identityPages.mockRestore();
+        spendingPages.mockRestore();
+        single.mockRestore();
+      }
+    });
+
+    it.each([
+      WaveCreditType.TDH,
+      WaveCreditType.XTDH,
+      WaveCreditType.TDH_PLUS_XTDH
+    ])(
+      'matches single-profile %s budgets across native siblings and the native original primary',
+      async (credit_type) => {
+        for (const namespace of [
+          native,
+          { ...native, id: 'parallel-native' },
+          {
+            ...native,
+            id: originalPrimaryId
+          }
+        ]) {
+          const selected = {
+            ...namespace,
+            voting: { ...namespace.voting, credit_type }
+          };
+          await sqlExecutor.executeNativeQueriesInTransaction(
+            async (connection) => {
+              const ctx = { connection };
+              const batched = await competitionCreditService.getWaveBudgets(
+                selected,
+                [profileId, profileId.toUpperCase(), 'missing-profile'],
+                ctx
+              );
+              for (const voter of [
+                profileId,
+                profileId.toUpperCase(),
+                'missing-profile'
+              ])
+                expect(batched.get(voter)).toEqual(
+                  await competitionCreditService.getBudget(
+                    selected,
+                    voter,
+                    undefined,
+                    ctx
+                  )
+                );
+            }
+          );
+        }
+      }
+    );
 
     it('uses per-entry DROP spending and preserves credits on every other entry', async () => {
       const dropScoped = {

@@ -19,7 +19,7 @@ import type {
   MigrationCohort,
   MigrationStage,
   MigrationState
-} from '@/competitions/competition-migration-policy';
+} from '@/entities/retired-competition-schema.types';
 
 /** Reviewed rollout evidence is shared by waves in the same environment.
  * Append reviews so replacing/expiring an approval never erases its history. */

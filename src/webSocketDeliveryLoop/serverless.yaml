@@ -1,0 +1,132 @@
+service: webSocketDeliveryLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 90
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  webSocketDeliveryLoop:
+    handler: index.handler
+    name: webSocketDeliveryLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule:
+          rate: rate(1 minute)
+          name: webSocketDeliveryLoop-${opt:stage, self:provider.stage}-recovery
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'webSocketDeliveryLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    WebSocketDeliveryLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: WebSocketDeliveryLoopLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/webSocketDeliveryLoop
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "webSocketDeliveryLoop_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    WebSocketDeliveryLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: WebSocketDeliveryLoopOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-webSocketDeliveryLoop-OOM"
+        AlarmDescription: !Sub "Lambda webSocketDeliveryLoop OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "webSocketDeliveryLoop_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    WebSocketDeliveryDegradedAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-WebSocket-delivery-degraded"
+        AlarmDescription: "WebSocket delivery is broadly throttled or persistently unavailable. Inspect WS_DELIVERY_HEALTH in webSocketDeliveryLoop; check AWS send quotas and Redis/retry backlog. Do not disconnect the fleet."
+        Namespace: "6529/WebSocketDelivery"
+        MetricName: Degraded
+        Dimensions:
+          - Name: Environment
+            Value: ${opt:stage, self:provider.stage}
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 2
+        DatapointsToAlarm: 2
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: missing
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    WebSocketRecoveryWorkerAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-WebSocket-recovery-worker-unhealthy"
+        AlarmDescription: "WebSocket recovery worker is not completing. Inspect webSocketDeliveryLoop errors, Redis availability and its schedule. Pending refreshes may not be delivered."
+        Namespace: "6529/WebSocketDelivery"
+        MetricName: WorkerHealthy
+        Dimensions:
+          - Name: Environment
+            Value: ${opt:stage, self:provider.stage}
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 2
+        DatapointsToAlarm: 2
+        Threshold: 1
+        ComparisonOperator: LessThanThreshold
+        TreatMissingData: breaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    WebSocketRecoveryStoreAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-WebSocket-recovery-store-unavailable"
+        AlarmDescription: "WebSocket recovery state is unavailable across repeated sends. Check Redis connectivity and webSocketDeliveryLoop."
+        Namespace: "6529/WebSocketDelivery"
+        MetricName: RecoveryUnavailable
+        Dimensions:
+          - Name: Environment
+            Value: ${opt:stage, self:provider.stage}
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 2
+        DatapointsToAlarm: 2
+        Threshold: 10
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

@@ -217,6 +217,13 @@ changes, and displayed/final quantities are capped without rewriting manual
 requests or historical finalized allocations. These facts continue to be served
 through the frontend's generated `/help-index.json`.
 
+Backend TDH ranking authoring facts are maintained in
+[`docs/tdh-ranking.md`](../docs/tdh-ranking.md#help-knowledge-authoring-facts):
+ordinal ranks use the existing score criteria followed by a canonical-address
+tie-break, and empty singleton candidates are excluded while funded zero-score
+wallets and consolidation members remain included. These facts still require a
+frontend corpus update; the document does not add a second live knowledge source.
+
 ### 4.5 Backend-owned public data query mode
 
 Some questions should be answered from public indexed data, not from the
@@ -344,9 +351,12 @@ possessive multi-wallet target, regardless of which appears first. Wallet-limit
 questions are routed to consolidation use cases when they combine a wallet or
 address subject with either strong limit language or quantity language plus a
 counting, setup, or consolidation relationship. The answer distinguishes
-registration capacity from the effective metrics group: more than three
-addresses can have consolidation records, but only the last three count for
-consolidation purposes. Removal and unlinking wording with explicit
+registration capacity from the effective metrics group: any number of
+addresses can have consolidation records, but at most four count as one
+consolidation, every pair must be linked both ways, and a fourth address counts
+only when its links were registered from the selected backend’s activation cutoff. Production launch is configured for 2026-10-15 00:00 UTC; staging can use an earlier cutoff. Counts above
+`CONSOLIDATIONS_LIMIT` (four) use the over-limit routing; four-wallet setup
+questions route like other setup questions. Removal and unlinking wording with explicit
 multi-wallet or consolidation context routes to consolidation revoke guidance,
 while replacement and swapping wording with that context routes to update
 guidance. Bare singular requests such as removing or replacing "a wallet"
@@ -738,7 +748,6 @@ These requests use only `about.6529-apps` and its authored `brief_answer` and va
 footer. Missing or incomplete app knowledge fails closed; product facts remain in
 the frontend corpus. This route runs before Desktop scope inheritance and never
 needs a generated answer or a public-data query.
-
 
 ### Progressive Desktop reconciliation
 

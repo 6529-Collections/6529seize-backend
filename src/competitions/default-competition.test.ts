@@ -8,18 +8,8 @@ import {
   CompetitionStorageMode as Storage,
   CompetitionType as Type
 } from '@/entities/ICompetition';
-import { aWave } from '@/tests/fixtures/wave.fixture';
 import * as fc from 'fast-check';
-import { WaveType } from '@/entities/IWave';
 
-const wave = aWave({
-  type: WaveType.RANK,
-  participation_period_start: 100,
-  voting_period_start: 200,
-  participation_period_end: 200,
-  voting_period_end: 300,
-  next_decision_time: null
-});
 function record(
   id: string,
   overrides: Partial<DefaultCompetitionRecord> = {}
@@ -43,7 +33,7 @@ function record(
 function select(records: DefaultCompetitionRecord[], now = 250) {
   return selectDefaultCompetition(
     records.flatMap((item) => {
-      const input = normalizeDefaultCompetition(item, wave, now);
+      const input = normalizeDefaultCompetition(item, now);
       return input ? [input] : [];
     }),
     now
@@ -115,7 +105,7 @@ describe('default competition policy', () => {
       ).competition_id
     ).toBe('old');
     expect(
-      normalizeDefaultCompetition(upcoming('future', 1000), wave, 500)?.phase
+      normalizeDefaultCompetition(upcoming('future', 1000), 500)?.phase
     ).toBe('upcoming');
   });
   it('prefers soonest upcoming over completed history', () => {
@@ -182,23 +172,17 @@ describe('default timing normalization', () => {
       ).toBeNull();
     }
   );
-  it('ignores an archived lifecycle copied onto a still-running legacy mapping', () => {
+
+  it('excludes retired adapters and orphan records from native default selection', () => {
     expect(
-      normalizeDefaultCompetition(
-        record('legacy', {
-          storage_mode: Storage.LEGACY_ADAPTER,
-          lifecycle: Lifecycle.ARCHIVED
-        }),
-        wave,
-        250
-      )?.phase
-    ).toBe('active');
+      select([record('orphan', { storage_mode: Storage.LEGACY_ADAPTER })])
+        .competition_id
+    ).toBeNull();
   });
-  it('treats null starts as unbounded, never as creation time', () => {
+  it('treats null starts as unbounded and null ends as open', () => {
     expect(
       normalizeDefaultCompetition(
         record('open', { participation_starts_at: null }),
-        wave,
         50
       )?.phase
     ).toBe('active');
@@ -208,111 +192,41 @@ describe('default timing normalization', () => {
         record('unbounded', { participation_starts_at: null })
       ]).competition_id
     ).toBe('unbounded');
+    expect(
+      normalizeDefaultCompetition(record('open', { voting_ends_at: null }), 500)
+        ?.phase
+    ).toBe('active');
   });
-  it.each([Storage.NATIVE, Storage.LEGACY_ADAPTER])(
-    'keeps a null end open (%s)',
-    (storage_mode) => {
-      const openWave = { ...wave, voting_period_end: null };
-      expect(
-        normalizeDefaultCompetition(
-          record('open', { storage_mode, voting_ends_at: null }),
-          openWave,
-          500
-        )?.phase
-      ).toBe('active');
-    }
-  );
-  it.each([Type.RANK, Type.APPROVE])(
-    'reads current legacy dates, ignoring stale mapping lifecycle (%s)',
-    (type) => {
-      expect(
-        normalizeDefaultCompetition(
-          record('legacy', {
-            storage_mode: Storage.LEGACY_ADAPTER,
-            type,
-            lifecycle: Lifecycle.ENDED,
-            ended_at: 1
-          }),
-          { ...wave, next_decision_time: 400 },
-          500
-        )?.phase
-      ).toBe('active');
-    }
-  );
-  it('keeps native Approve deciding after vote close until runtime completion', () => {
+  it('keeps Approve deciding after vote close until runtime completion', () => {
     expect(
       normalizeDefaultCompetition(
         record('approve', { type: Type.APPROVE }),
-        wave,
         500
       )?.phase
     ).toBe('active');
     expect(
-      normalizeDefaultCompetition(ended('approve', 450), wave, 500)
+      normalizeDefaultCompetition(ended('approve', 450), 500)
     ).toMatchObject({ phase: 'completed', end: 450 });
   });
-  it('keeps legacy Approve deciding until its winner quota is exhausted', () => {
-    const approve = {
-      ...wave,
-      type: 'APPROVE' as typeof wave.type,
-      max_winners: 2
-    };
-    const legacy = record('legacy', {
-      storage_mode: Storage.LEGACY_ADAPTER,
-      type: Type.APPROVE
-    });
-    expect(
-      normalizeDefaultCompetition(legacy, approve, 500, 400, 1)?.phase
-    ).toBe('active');
-    expect(
-      normalizeDefaultCompetition(legacy, approve, 500, 450, 2)
-    ).toMatchObject({ phase: 'completed', end: 450 });
-    expect(
-      normalizeDefaultCompetition(
-        legacy,
-        { ...approve, max_winners: null },
-        500,
-        450,
-        200
-      )?.phase
-    ).toBe('active');
-  });
-
-  it('uses half-open legacy and inclusive native end boundaries', () => {
-    const native = record('native');
-    const legacy = record('legacy', { storage_mode: Storage.LEGACY_ADAPTER });
-    expect(normalizeDefaultCompetition(native, wave, 300)?.phase).toBe(
+  it('uses inclusive native end boundaries', () => {
+    expect(normalizeDefaultCompetition(record('native'), 300)?.phase).toBe(
       'active'
     );
-    expect(normalizeDefaultCompetition(native, wave, 301)?.phase).toBe(
+    expect(normalizeDefaultCompetition(record('native'), 301)?.phase).toBe(
       'completed'
     );
-    expect(normalizeDefaultCompetition(legacy, wave, 300)?.phase).toBe(
-      'completed'
-    );
-    expect(select([native], 250).next_refresh_at).toBe(301);
+    expect(select([record('native')], 250).next_refresh_at).toBe(301);
   });
-  it('uses later legacy decisions as historical end and excludes archived unfinished history', () => {
-    expect(
-      normalizeDefaultCompetition(
-        record('legacy', { storage_mode: Storage.LEGACY_ADAPTER }),
-        wave,
-        500,
-        450
-      )
-    ).toMatchObject({ phase: 'completed', end: 450 });
+  it('excludes unfinished archived competitions and honors runtime completion over open/pending periods', () => {
     expect(
       normalizeDefaultCompetition(
         record('archived', {
           lifecycle: Lifecycle.ARCHIVED,
           type: Type.APPROVE
         }),
-        wave,
         500
       )
     ).toBeNull();
-  });
-  it('refreshes at the upcoming start and honors runtime terminal lifecycle over open periods or pending decisions', () => {
     expect(select([upcoming('next', 500)], 250).next_refresh_at).toBe(500);
     expect(
       normalizeDefaultCompetition(
@@ -322,7 +236,6 @@ describe('default timing normalization', () => {
           voting_ends_at: null,
           decision_config: { next_decision_time: 999 }
         }),
-        wave,
         250
       )?.phase
     ).toBe('completed');

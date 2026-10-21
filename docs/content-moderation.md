@@ -232,6 +232,26 @@ globally and resolves open reports as removed. Profile suspension is presented
 as a separate action because it controls future publishing rather than the
 reported post.
 
+Deleted posts remain reviewable through their saved evidence. The report queue
+returns `drop_deleted`, and check detail returns `current_state.deleted=true`,
+`published=false`, `drop_status=null`, and the post's `open_report_count` when
+the original published post no longer exists. These existence fields are
+separate from content visibility decisions.
+
+For a deleted post with open reports, `RESOLVE_DELETED_REPORT` on the existing
+check action endpoint closes all open reports for that post, including reports
+of earlier revisions, as `RESOLVED_DELETED`. The developer must supply a reason,
+expected check version, and idempotency key. Report resolution, linked review
+state, and the audit record commit atomically. This action changes no post or
+author visibility and preserves evidence under the existing retention policy.
+Resolved-deleted reports appear in the resolved queue and its count. Marking a
+check reviewed, unhiding a post, and deleting a post do not resolve reports.
+
+Report creation rechecks and locks the live post inside the report transaction.
+Deletion waits until that report commits; a request holding a pre-deletion
+snapshot is rejected if the post is already gone. This prevents a late report
+from reopening work after deleted-post resolution.
+
 There is no continuous hold-before-publish queue. Moderators address reported
 content occasionally, with urgent high-confidence AI quarantine providing a
 temporary safety measure until then.
@@ -353,3 +373,32 @@ after the backend API is available.
 - [Backend PR report](../pr-reports/1937.md)
 - [Frontend content moderation guide](https://github.com/6529-Collections/6529seize-frontend/blob/main/ops/docs/content-moderation.md)
 - [Frontend PR](https://github.com/6529-Collections/6529seize-frontend/pull/3791)
+
+## Manual review cases
+
+WatchTower's Needs review queue groups open reports and checks marked
+NEEDS_REVIEW into one case per subject, before cursor pagination. Evaluations
+still in PENDING are excluded until they finish or enter failure recovery. Reports and
+check revisions concerning the same published post share one case. Rejected
+new-post submissions without a published post ID retain separate cases per
+saved check, so unrelated drafts by the same author are not collapsed. Other
+public fields group by subject type and subject identity across revisions.
+Case IDs are opaque hashes; REP category text never appears in URLs.
+
+Check-list previews use retained text or the saved post title and textual parts,
+in saved order, capped at 160 characters. Titleless multipart posts therefore
+remain recognizable after deletion. Missing, flagged-expired or deadline-expired
+evidence produces no preview; malformed and nontext parts are ignored.
+
+`GET /content-moderation/checks/cases` provides the private paged queue. The
+`case_id` filter on the existing checks endpoint exposes related check revisions
+without changing revision-scoped review actions. Cases remain outstanding while
+any open report or check needs manual review. Mark reviewed does not close open
+reports. Resolved reports and reviewed checks do not create cases.
+
+`needs_review_count` on moderator access and `needs_review` on check counts
+use the same case definition. The frontend uses the moderator-access count for
+the sidebar indicator, Needs review badge and top summary. The report-specific
+counts and `has_open_reports` retain their existing meanings. Current servers
+always return the additive `needs_review_count`; deploy the API before the
+dependent frontend. No schema changes or data migration are needed.

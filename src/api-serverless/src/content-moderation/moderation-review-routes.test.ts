@@ -101,6 +101,20 @@ describe('moderation generated routes and private handlers', () => {
     expect(get).not.toHaveBeenCalled();
     expect(counts).toHaveBeenCalledTimes(1);
   });
+  it('exposes private paged cases before the generic check route', async () => {
+    const cases = jest
+      .spyOn(moderationReviewDb, 'listReviewCases')
+      .mockResolvedValue({ items: [], next_cursor: null });
+    await withServer(async (base) => {
+      const response = await fetch(`${base}/cases?limit=20`);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect(await response.json()).toEqual({ items: [], next_cursor: null });
+      expect((await fetch(`${base}/cases?limit=0`)).status).toBe(400);
+    });
+    expect(cases).toHaveBeenCalledTimes(1);
+    expect(cases.mock.calls[0][0]).toEqual({ limit: 20 });
+  });
   it.each(['broader-moderator', 'proxy'])(
     'denies %s before every privileged handler reads private data',
     async (identity) => {
@@ -116,6 +130,7 @@ describe('moderation generated routes and private handlers', () => {
       );
       const reads = [
         jest.spyOn(moderationReviewDb, 'list'),
+        jest.spyOn(moderationReviewDb, 'listReviewCases'),
         jest.spyOn(moderationReviewDb, 'counts'),
         jest.spyOn(moderationReviewDb, 'get'),
         jest.spyOn(moderationReviewDb, 'reportForReview')
@@ -126,6 +141,7 @@ describe('moderation generated routes and private handlers', () => {
         for (const suffix of [
           '',
           '/counts',
+          '/cases',
           '/private-id',
           '/report/private-id',
           '/profile/private-id',
@@ -253,5 +269,47 @@ describe('moderation generated routes and private handlers', () => {
         ObjectSerializer.deserialize(serialized, type, '')[field]
       ).toBeNull();
     }
+  });
+  it('accepts a versioned deleted-report resolution through the authenticated action route', async () => {
+    const saved = {
+      check: { subject_type: 'DROP', published_subject_id: 'deleted-post' },
+      current_state: {
+        deleted: true,
+        published: false,
+        drop_status: null,
+        open_report_count: 0
+      }
+    } as Awaited<ReturnType<typeof moderationReviewService.action>>;
+    const save = jest
+      .spyOn(moderationReviewService, 'action')
+      .mockResolvedValue(saved);
+    const body = { ...action, action: 'RESOLVE_DELETED_REPORT' };
+    await withServer(async (base) => {
+      const response = await fetch(`${base}/check-id/actions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
+      expect(await response.json()).toEqual(saved);
+    });
+    expect(save).toHaveBeenCalledWith('check-id', body, expect.anything());
+  });
+  it('serializes deleted state independently of content visibility', () => {
+    const state = {
+      deleted: true,
+      published: false,
+      drop_status: null,
+      open_report_count: 0
+    };
+    const serialized = ObjectSerializer.serialize(
+      state,
+      'ApiModerationCurrentState',
+      ''
+    );
+    expect(
+      ObjectSerializer.deserialize(serialized, 'ApiModerationCurrentState', '')
+    ).toMatchObject(state);
   });
 });
