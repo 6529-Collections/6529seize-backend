@@ -309,27 +309,29 @@ function parityFields(source: Source) {
   return checks;
 }
 
+type DiagnosticCount = number | string;
+
 async function describeStrategyShapes(
   db: SqlExecutor,
   source: Source,
   mismatch: string
 ) {
   const rows = await db.execute<{
-    is_direct_message: number | string | null;
+    is_direct_message: DiagnosticCount | null;
     source_json_type: string;
     first_decision_time_type: string | null;
     subsequent_decisions_type: string | null;
     is_rolling_type: string | null;
-    property_count: number | string | null;
-    encoded_null_rows: number | string;
-    row_count: number | string;
+    property_count: DiagnosticCount | null;
+    encoded_null_rows: DiagnosticCount;
+    row_count: DiagnosticCount;
   }>(
     `select s.is_direct_message,json_type(s.decisions_strategy) as source_json_type,
       json_type(json_extract(s.decisions_strategy,'$.first_decision_time')) as first_decision_time_type,
       json_type(json_extract(s.decisions_strategy,'$.subsequent_decisions')) as subsequent_decisions_type,
       json_type(json_extract(s.decisions_strategy,'$.is_rolling')) as is_rolling_type,
       json_length(s.decisions_strategy) as property_count,
-      sum(json_type(s.decisions_strategy)='STRING' and json_unquote(s.decisions_strategy)='null') as encoded_null_rows,
+      sum(case when json_type(s.decisions_strategy)='STRING' and json_unquote(s.decisions_strategy)='null' then 1 else 0 end) as encoded_null_rows,
       count(*) as row_count from ${source.table} s
       where ${eligible('s')} and ${mismatch}
       group by s.is_direct_message,source_json_type,first_decision_time_type,
