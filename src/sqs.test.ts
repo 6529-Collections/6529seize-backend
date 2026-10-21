@@ -132,4 +132,31 @@ describe('SQS', () => {
     expect(SendMessageCommand).toHaveBeenCalledTimes(2);
     expect(sendMock).toHaveBeenCalledTimes(3);
   });
+
+  it('forwards health metadata as attributes while preserving the body used for FIFO deduplication', async () => {
+    sendMock
+      .mockResolvedValueOnce({
+        QueueUrl: 'https://sqs.us-east-1.amazonaws.com/123/refresh.fifo'
+      })
+      .mockResolvedValueOnce({ MessageId: 'mid-123' });
+    const message = {
+      mode: 'FULL',
+      maxBatches: 10,
+      startAfterWaveId: 'cursor'
+    };
+    const messageAttributes = {
+      LoopHealthStartedAt: { DataType: 'Number', StringValue: '2000000' }
+    };
+    await new SQS().sendToQueueName({
+      queueName: 'refresh.fifo',
+      message,
+      messageAttributes
+    });
+    expect(SendMessageCommand).toHaveBeenCalledWith({
+      QueueUrl: 'https://sqs.us-east-1.amazonaws.com/123/refresh.fifo',
+      MessageBody: JSON.stringify(message),
+      MessageGroupId: 'default',
+      MessageAttributes: messageAttributes
+    });
+  });
 });
