@@ -472,7 +472,8 @@ V1 provider:
   loaded from process environment at startup, so deployments must restart the
   affected Lambda runtime to pick up changes.
 - Requests to Claude 4.6 and later send `output_config.effort: "low"` with
-  adaptive thinking and no sampling parameters. Answer token caps are sized
+  explicit adaptive thinking (`thinking: {"type": "adaptive"}`; Sonnet 4.6 and
+  Opus 4.6-4.8 do not think when it is omitted) and no sampling parameters. Answer token caps are sized
   for the Sonnet 5.5 tokenizer, which uses about 30% more tokens than Sonnet
   4.5 for the same text. Setting the model override back to a Claude 4.5 or
   older ID sends the previous temperature/top_k request instead, because those

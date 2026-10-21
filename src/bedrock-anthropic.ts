@@ -72,10 +72,12 @@ export function buildBedrockAnthropicBody(
   if (isPre46ClaudeModel(request.modelId)) {
     return JSON.stringify({ ...base, ...request.legacySampling });
   }
-  // Claude 4.6+ rejects non-default sampling parameters. Thinking stays
-  // adaptive (the default); effort bounds how much the model thinks.
+  // Claude 4.6+ rejects non-default sampling parameters. Adaptive thinking is
+  // sent explicitly because Sonnet 4.6 and Opus 4.6-4.8 run without thinking
+  // when it is omitted; effort bounds how much the model thinks.
   return JSON.stringify({
     ...base,
+    thinking: { type: 'adaptive' },
     output_config: {
       effort: request.effort,
       ...(request.jsonSchema
