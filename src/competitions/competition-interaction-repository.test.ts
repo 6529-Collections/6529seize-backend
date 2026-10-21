@@ -182,16 +182,13 @@ describeWithSeed(
         3
       );
     });
-    it('preserves raw submitted winner votes as personal history while final weighted votes remain archived', async () => {
-      expect(await repository.myVotes(record, 'voter', 0, 10, {})).toEqual([
-        {
-          entry_id: legacyCompetitionEntryId(record.id, 'first'),
-          drop_id: 'first',
-          value: 80,
-          credit_spent: 80,
-          entry_status: 'WINNER'
-        }
-      ]);
+    it('excludes winners from active personal votes while preserving their recorded votes', async () => {
+      expect(await repository.myVotes(record, 'voter', 0, 10, {})).toEqual([]);
+      const retained = await sqlExecutor.execute<{ value: number }>(
+        `select value from ${COMPETITION_VOTES_TABLE} where id='vote'`,
+        {}
+      );
+      expect(Number(retained[0].value)).toBe(80);
     });
   }
 );

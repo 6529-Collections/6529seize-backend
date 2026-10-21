@@ -294,6 +294,22 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     };
   }
 
+  public async findNativeEntriesByIds(
+    competitionId: string,
+    entryIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<CompetitionEntry[]> {
+    if (!entryIds.length) return [];
+    const rows = await this.db.execute<NativeEntryRecord>(
+      `select ce.* from ${COMPETITION_ENTRIES_TABLE} ce
+       where ce.competition_id=:competitionId and ce.id in (:entryIds)
+         and ${competitionEntryVisibleSql('ce')}`,
+      { competitionId, entryIds },
+      dbOptions(ctx)
+    );
+    return rows.map((row) => this.mapNativeEntry(row));
+  }
+
   public async listNativeEntries(
     competitionId: string,
     request: CompetitionPageRequest,
@@ -306,7 +322,9 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
       ? 'and ce.submitter_id = :submitterId'
       : '';
     let order: string;
-    if (request.sort === 'rating') {
+    if (request.sort === 'won_at') {
+      order = `coalesce(ce.won_at, ce.submitted_at) ${directionSql(request.direction)}, ce.\`rank\` asc, ce.id ${directionSql(request.direction)}`;
+    } else if (request.sort === 'rating') {
       order = `coalesce(leaderboard.rating, 0) ${directionSql(request.direction)},
                leaderboard.\`rank\` is null asc, leaderboard.\`rank\` asc,
                ce.id asc`;

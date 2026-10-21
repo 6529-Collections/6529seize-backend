@@ -71,7 +71,7 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
       'myVotes',
       `SELECT v.entry_id,e.drop_id,v.value,v.credit_spent,e.status AS entry_status FROM ${COMPETITION_VOTES_TABLE} v
        JOIN ${COMPETITION_ENTRIES_TABLE} e ON e.id=v.entry_id AND e.competition_id=v.competition_id
-       WHERE v.competition_id=:competitionId AND v.voter_profile_id=:profileId AND v.value<>0
+       WHERE v.competition_id=:competitionId AND v.voter_profile_id=:profileId AND v.value<>0 AND e.status='ACTIVE'
          AND ${competitionEntryVisibleSql('e')}
        ORDER BY e.submitted_at DESC,e.id DESC LIMIT :offset,:limit`,
       { competitionId: record.id, profileId, offset, limit },
@@ -85,10 +85,11 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
   }
 
   public async awards(
-    record: CompetitionRoutingRecord,
+    record: Pick<CompetitionRoutingRecord, 'id'>,
     offset: number,
     limit: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    entryIds?: readonly string[]
   ): Promise<NativeDecisionAward[]> {
     const rows = await this.query<{
       id: string;
@@ -104,8 +105,9 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
        left join ${COMPETITION_DECISIONS_TABLE} decision on decision.id=award.decision_id and decision.competition_id=award.competition_id
        left join ${COMPETITION_DECISION_WINNERS_TABLE} winner on winner.decision_id=award.decision_id and winner.competition_id=award.competition_id and winner.entry_id=award.entry_id
        WHERE award.competition_id=:competitionId AND ${competitionEntryVisibleSql('e')}
-       ORDER BY coalesce(decision.scheduled_at,award.created_at),winner.\`rank\`,e.drop_id,award.outcome_position,award.id LIMIT :offset,:limit`,
-      { competitionId: record.id, offset, limit },
+       ${entryIds ? 'AND award.entry_id in (:entryIds) AND award.decision_id=e.decision_id' : ''}
+       ORDER BY coalesce(decision.scheduled_at,award.created_at),winner.\`rank\`,e.drop_id,award.outcome_position,award.id ${entryIds ? '' : 'LIMIT :offset,:limit'}`,
+      { competitionId: record.id, offset, limit, entryIds },
       ctx
     );
     return rows.map(
