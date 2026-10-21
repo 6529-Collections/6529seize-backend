@@ -1,9 +1,22 @@
+import { TextEncoder } from 'node:util';
 import {
+  bedrockAiPrompter,
   buildAbusivenessBedrockInvokeModelInput,
   DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID,
   getAbusivenessBedrockModelId
 } from './bedrock-ai.prompter';
 import { DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID } from '@/bedrock.config';
+
+const mockSend = jest.fn();
+jest.mock('@/bedrock', () => ({
+  getBedrockClient: () => ({ send: mockSend })
+}));
+
+function mockReply(body: Record<string, unknown>) {
+  mockSend.mockResolvedValueOnce({
+    body: new TextEncoder().encode(JSON.stringify(body))
+  });
+}
 
 describe('bedrock abusiveness prompter', () => {
   const originalModelId = process.env.ABUSIVENESS_BEDROCK_MODEL_ID;
@@ -75,5 +88,30 @@ describe('bedrock abusiveness prompter', () => {
     });
     expect(body).not.toHaveProperty('output_config');
     expect(body).not.toHaveProperty('top_p');
+  });
+
+  it('returns the classifier JSON from the text block', async () => {
+    mockReply({
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig' },
+        { type: 'text', text: '{"value":"Allowed"}' }
+      ],
+      stop_reason: 'end_turn'
+    });
+
+    await expect(
+      bedrockAiPrompter.promptAndGetReply('is this okay?')
+    ).resolves.toBe('{"value":"Allowed"}');
+  });
+
+  it('rejects a truncated classifier reply instead of classifying it', async () => {
+    mockReply({
+      content: [{ type: 'text', text: '{"value":"Allowed","reason":"' }],
+      stop_reason: 'max_tokens'
+    });
+
+    await expect(
+      bedrockAiPrompter.promptAndGetReply('is this okay?')
+    ).rejects.toThrow('Abusiveness classifier response was truncated');
   });
 });
