@@ -504,6 +504,8 @@ const hubNumberFields = new Set([
 ]);
 
 export function nativeWaveHubField(column: string): string | undefined {
+  if (column === 'decisions_strategy')
+    return json('hub_voting_config.decision_strategy', 'json', 'w');
   const participation = WAVE_HUB_PARTICIPATION_FIELDS as Readonly<
     Record<string, string>
   >;
