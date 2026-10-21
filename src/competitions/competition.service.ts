@@ -69,7 +69,10 @@ export type CompetitionPermissions = {
 
 export type PublicCompetition = Omit<
   Competition,
-  'storage_mode' | 'execution_mode' | 'decision_pauses'
+  | 'storage_mode'
+  | 'execution_mode'
+  | 'decision_pauses'
+  | 'configuration_activated_at'
 > & {
   readonly permissions: CompetitionPermissions;
 };
@@ -649,6 +652,7 @@ export class CompetitionService {
       storage_mode: _storage,
       execution_mode: _execution,
       decision_pauses: _decisionPauses,
+      configuration_activated_at: _configurationActivatedAt,
       ...publicData
     } = competition;
     const authenticationContext = ctx.authenticationContext;

@@ -6,6 +6,7 @@ import {
 import { Competition, CompetitionPause } from './competition.types';
 import {
   CompetitionLifecycle,
+  CompetitionCapability,
   CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
@@ -69,7 +70,7 @@ function aggregatePoints(
     .map((row) => ({
       timestamp: row.occurred_at,
       vote: row.aggregate_value,
-      sequence: row.sequence
+      sequence: row.order_sequence ?? row.sequence
     }));
 }
 
@@ -92,7 +93,7 @@ function voterPoints(
     points.push({
       timestamp: row.occurred_at,
       vote: row.value,
-      sequence: row.sequence
+      sequence: row.order_sequence ?? row.sequence
     });
   }
   return result;
@@ -226,6 +227,60 @@ export class NativeCompetitionRuntimeService {
     await this.refreshLeaderboard(competition, state, now, ctx);
   }
 
+  /** A confirmed NFT transfer resolves CURATION entries through native winner
+   * snapshots. The transfer key makes retries harmless; different transfers in
+   * the same millisecond may append to the same historical decision identity. */
+  public async resolveCurationEntries(
+    competitionId: string,
+    dropIds: readonly string[],
+    decisionTime: number,
+    transferKey: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const competition = await this.repository.lockCompetition(
+      competitionId,
+      ctx
+    );
+    if (
+      !competition ||
+      !competition.capabilities.includes(CompetitionCapability.CURATION)
+    )
+      return false;
+    if (
+      competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
+      !this.executionRouter.isNativeExecutionAllowed(competition)
+    )
+      return false;
+    const state = await this.loadState(competitionId, ctx);
+    const selected = this.scores(competition, state, decisionTime).filter(
+      (score) => dropIds.includes(score.entry.drop_id)
+    );
+    if (!selected.length) return true;
+    await this.repository.saveDecision(
+      {
+        competition,
+        scheduledAt: decisionTime,
+        now: Date.now(),
+        winners: selected.map((score) => this.winner(score, 1)),
+        awards: new Map(),
+        voterPoints: voterPoints(state.history),
+        finalVote: (points) =>
+          flooredWeightedNativeVote(
+            points,
+            decisionTime,
+            competition.decisions.time_lock_ms ?? 0
+          ),
+        skipped: false,
+        decisionKey: transferKey
+      },
+      ctx
+    );
+    const won = new Set(selected.map((score) => score.entry.id));
+    state.entries = state.entries.filter((entry) => !won.has(entry.id));
+    await this.refreshLeaderboard(competition, state, Date.now(), ctx);
+    return true;
+  }
+
   public async refreshNativeLeaderboards(
     timer: Timer,
     now = Date.now()
@@ -321,6 +376,20 @@ export class NativeCompetitionRuntimeService {
     return { entries, history, pauses };
   }
 
+  /** Preserve due observations of a configuration before its version changes. */
+  public async enqueueDueTransitions(
+    competition: Competition,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (
+      competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
+      !this.executionRouter.isNativeExecutionAllowed(competition)
+    )
+      return;
+    await this.emitScheduledTransitions(competition, now, ctx);
+  }
+
   private async emitScheduledTransitions(
     competition: Competition,
     now: number,
@@ -333,6 +402,8 @@ export class NativeCompetitionRuntimeService {
     ].map((time) => Math.max(time ?? publishedAt, publishedAt));
     const startedAt = Math.min(...starts);
     const transferredAt = competition.legacy_transferred_at ?? -1;
+    const configurationActivatedAt =
+      competition.configuration_activated_at ?? publishedAt;
     if (startedAt <= now && startedAt > transferredAt)
       await this.repository.enqueueEvent(
         {
@@ -355,6 +426,7 @@ export class NativeCompetitionRuntimeService {
           (time): time is number =>
             time !== null &&
             time >= publishedAt &&
+            time >= configurationActivatedAt &&
             time <= now &&
             time > transferredAt
         )

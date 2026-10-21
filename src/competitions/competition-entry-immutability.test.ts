@@ -49,10 +49,10 @@ it('preserves ordinary chat editing when there is no competition entry', async (
     .mockResolvedValue([]);
   await expect(
     competitionEntryDropHooks.prepareUpdate(model, async () => {}, ctx)
-  ).resolves.toEqual({ entries: [] });
+  ).resolves.toEqual({ entries: [], reset_votes: true });
   await expect(
     competitionEntryDropHooks.preparePresentationUpdate(drop, [], ctx)
-  ).resolves.toEqual({ entries: [] });
+  ).resolves.toEqual({ entries: [], reset_votes: false });
 });
 
 it.each(Object.values(CompetitionEntryStatus))(

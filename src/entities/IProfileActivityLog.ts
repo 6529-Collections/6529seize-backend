@@ -8,6 +8,7 @@ import { PROFILES_ACTIVITY_LOGS_TABLE } from '@/constants';
 @Index('idx_pal_profile_type_created_at', ['profile_id', 'type', 'created_at'])
 @Index('idx_pal_proxy_type_created_at', ['proxy_id', 'type', 'created_at'])
 @Index('idx_pal_target_type_created_at', ['target_id', 'type', 'created_at'])
+@Index('idx_pal_competition_created_at', ['competition_id', 'created_at', 'id'])
 export class ProfileActivityLog {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   readonly id!: string;
@@ -22,6 +23,9 @@ export class ProfileActivityLog {
 
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly proxy_id!: string | null;
+
+  @Column({ type: 'varchar', length: 36, nullable: true, default: null })
+  readonly competition_id?: string | null;
 
   @Column({ type: 'json' })
   readonly contents!: string;

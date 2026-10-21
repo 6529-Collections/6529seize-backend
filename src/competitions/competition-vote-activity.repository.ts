@@ -8,6 +8,7 @@ import {
   PROFILES_ACTIVITY_LOGS_TABLE
 } from '@/constants';
 import { competitionEntryVisibleSql } from './competition-entry-visibility';
+import { pageCompetitionVoteActivity } from './competition-vote-activity-time';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
@@ -19,8 +20,9 @@ export interface CompetitionVoteActivity {
   readonly submitter_id: string | null;
   readonly previous_value: number | string;
   readonly value: number | string;
-  readonly occurred_at: number | string;
+  readonly occurred_at: number | string | null;
   readonly legacy_id?: string | null;
+  readonly legacy_created_at?: Date | string | null;
   readonly legacy_contents?: string | null;
   readonly proxy_id?: string | null;
 }
@@ -68,11 +70,11 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
     const timerName = `${this.constructor.name}->listTransferred`;
     try {
       ctx.timer?.start(timerName);
-      return await this.db.execute<CompetitionVoteActivity>(
+      const candidates = await this.db.execute<CompetitionVoteActivity>(
         `SELECT activity.* FROM (
         (SELECT 1 AS source_order, history.sequence, COALESCE(entry.drop_id, native_log.target_id) AS drop_id, history.voter_profile_id,
           COALESCE(entry.submitter_id, native_log.additional_data_1) AS submitter_id, history.previous_value, history.value,
-          history.occurred_at, NULL AS legacy_id, CAST(native_log.contents AS CHAR) AS legacy_contents,
+          history.occurred_at, NULL AS legacy_id, NULL AS legacy_created_at, CAST(native_log.contents AS CHAR) AS legacy_contents,
           native_log.proxy_id
         FROM ${COMPETITION_VOTE_HISTORY_TABLE} history
         LEFT JOIN ${COMPETITION_ENTRIES_TABLE} entry
@@ -96,8 +98,8 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
         (SELECT 0 AS source_order, 0 AS sequence, log.target_id AS drop_id,
           log.profile_id AS voter_profile_id, log.additional_data_1 AS submitter_id,
           0 AS previous_value, 0 AS value,
-          TIMESTAMPDIFF(MICROSECOND, '1970-01-01', log.created_at) / 1000 AS occurred_at,
-          log.id AS legacy_id, CAST(log.contents AS CHAR) AS legacy_contents,
+          0 AS occurred_at,
+          log.id AS legacy_id, log.created_at AS legacy_created_at, CAST(log.contents AS CHAR) AS legacy_contents,
           log.proxy_id
         FROM ${PROFILES_ACTIVITY_LOGS_TABLE} log
         WHERE log.additional_data_2 = :waveId AND log.type = :logType
@@ -107,29 +109,21 @@ export class CompetitionVoteActivityRepository extends LazyDbAccessCompatibleSer
               AND linked.competition_id = :competitionId
               AND log.id = CONCAT(linked.competition_id, ':', linked.sequence)
           )
-          AND (:transferredAtUtc IS NULL OR log.created_at <= :transferredAtUtc)
+          AND (:transferredAtDate IS NULL OR log.created_at IS NULL OR log.created_at <= :transferredAtDate)
         ORDER BY log.created_at DESC, log.id DESC LIMIT :candidateLimit)
       ) activity
-      ORDER BY activity.occurred_at DESC, activity.source_order DESC,
-        activity.sequence DESC, activity.legacy_id DESC
-      LIMIT :offset, :limit`,
+      ORDER BY activity.source_order DESC, activity.sequence DESC, activity.legacy_id DESC`,
         {
           competitionId,
           waveId,
-          transferredAtUtc:
-            transferredAt === null
-              ? null
-              : new Date(transferredAt)
-                  .toISOString()
-                  .slice(0, 23)
-                  .replace('T', ' '),
+          transferredAtDate:
+            transferredAt === null ? null : new Date(transferredAt),
           logType: ProfileActivityLogType.DROP_VOTE_EDIT,
-          candidateLimit: offset + limit,
-          offset,
-          limit
+          candidateLimit: offset + limit
         },
         { wrappedConnection: ctx.connection }
       );
+      return pageCompetitionVoteActivity(candidates, offset, limit);
     } finally {
       ctx.timer?.stop(timerName);
     }

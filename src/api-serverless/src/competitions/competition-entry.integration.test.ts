@@ -926,13 +926,18 @@ describeWithSeed(
           `select value from ${tables.COMPETITION_VOTES_TABLE}`
         )
       ).toEqual([]);
-      expect(await repository.getContent(entry.id, {})).toBeNull();
+      expect(await repository.getContent(entry.id, {})).toMatchObject({
+        parts: [{ content: 'Original content' }]
+      });
+      await expect(
+        service.getContent(wave.id, competitionId, entry.id, ctx)
+      ).rejects.toThrow('not found');
       expect(
         await competitionRepository.findNativeEntry(competitionId, entry.id, {})
       ).toBeNull();
     });
 
-    it('rejects unsigned edits and removes the entry and snapshot on deletion', async () => {
+    it('rejects unsigned edits and retains signed revisions privately after deletion', async () => {
       const entry = await service.create(
         wave.id,
         competitionId,
@@ -978,7 +983,7 @@ describeWithSeed(
         await sqlExecutor.execute(
           `select version from ${tables.COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} order by version`
         )
-      ).toEqual([]);
+      ).toEqual([{ version: 1 }]);
       await expect(
         service.getContent(wave.id, competitionId, entry.id, ctx)
       ).rejects.toThrow('not found');

@@ -9,7 +9,15 @@ import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { Logger } from '../logging';
 import { dropVotingDb } from '../api-serverless/src/drops/drop-voting.db';
 import { appFeatures } from '../app-features';
-import { WaveCreditScope } from '../entities/IWave';
+import { WaveCreditScope, WaveCreditType } from '../entities/IWave';
+import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
+import { competitionCreditService } from '@/competitions/competition-credit.service';
+import { competitionRepository } from '@/competitions/competition.repository';
+import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
+import { competitionExecutionRouter } from '@/competitions/competition-execution.router';
+import { Competition } from '@/competitions/competition.types';
+import { wavesApiDb } from '@/api/waves/waves.api.db';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -29,6 +37,16 @@ export async function revokeRepBasedDropOverVotes(
     timer: new Timer('revokeRepBasedDropOverVotes'),
     connection
   };
+  await revokeNativeOvervotes(
+    (competition) =>
+      competition.voting.credit_type === WaveCreditType.REP &&
+      (competition.voting.credit_category === null ||
+        competition.voting.credit_category === param.credit_category) &&
+      (competition.voting.credit_creditor === null ||
+        competition.voting.credit_creditor === param.rep_giver_id),
+    param.rep_recipient_id,
+    ctx
+  );
   const hasVoted = await dropsDb.hasProfileVotedInAnyOpenRepBasedWave(
     param.rep_recipient_id,
     ctx
@@ -84,6 +102,11 @@ export async function revokeTdhBasedDropWavesOverVotes(
   logger.info(`Revoking TDH-based waves overvotes`);
   const timer = new Timer('revokeTdhBasedWavesOverVotes');
   const ctx: RequestContext = { timer, connection };
+  await revokeNativeOvervotes(
+    (competition) => competition.voting.credit_type !== WaveCreditType.REP,
+    null,
+    ctx
+  );
   const overratedWaves =
     await dropsDb.findTdhBasedSubmissionDropOvervotersWithOvervoteAmounts(ctx);
 
@@ -132,6 +155,16 @@ async function reduceVotesForDrops(
   ctx: RequestContext
 ) {
   return withLegacyPrimaryMutation(wave_id, ctx, async (nativeOwner) => {
+    // Native namespaces were reconciled from their own current votes above.
+    // Stale physical discovery must never select their budget or notifications.
+    if (
+      nativeOwner ||
+      !(await competitionExecutionRouter.shouldUseLegacyWaveExecution(
+        wave_id,
+        ctx
+      ))
+    )
+      return;
     const dropsForWaves = await dropsDb.findDropVotesForWaves(
       {
         profile_id,
@@ -140,56 +173,6 @@ async function reduceVotesForDrops(
       },
       ctx
     );
-    if (nativeOwner) {
-      const { nativeCompetitionRuntimeService } =
-        await import('@/competitions/native-competition-runtime.service');
-      const { nativeCompetitionRuntimeRepository } =
-        await import('@/competitions/native-competition-runtime.repository');
-      const { legacyCompetitionEntryId } =
-        await import('@/competitions/competition-id');
-      const now = Time.currentMillis();
-      await nativeCompetitionRuntimeService.reconcileVoterCredit(
-        {
-          competitionId: nativeOwner.id,
-          voterProfileId: profile_id,
-          availableCredit: credit_limit,
-          creditScope: credit_scope,
-          occurredAt: now
-        },
-        ctx
-      );
-      const current = new Map(
-        (
-          await nativeCompetitionRuntimeRepository.getVoterActiveVotes(
-            nativeOwner.id,
-            profile_id,
-            ctx
-          )
-        ).map((vote) => [vote.entryId, vote.value])
-      );
-      for (const drop of dropsForWaves) {
-        const value =
-          current.get(legacyCompetitionEntryId(nativeOwner.id, drop.drop_id)) ??
-          0;
-        if (value === drop.votes) continue;
-        await notifyOfDropVoteRevocation({
-          profile_id,
-          drop_id: drop.drop_id,
-          wave_id,
-          author_id: drop.author_id,
-          visibility_group_id: drop.visibility_group_id,
-          voteAfterRevocation: value,
-          voteChange: value - drop.votes,
-          ctx
-        });
-      }
-      await nativeCompetitionRuntimeService.refreshCompetition(
-        nativeOwner.id,
-        now,
-        ctx
-      );
-      return;
-    }
     const reductionCoefficient = credit_limit / total_given_votes;
     let votes_still_given = total_given_votes;
     for (const drop of dropsForWaves) {
@@ -347,5 +330,110 @@ async function notifyOfDropVoteRevocation({
     },
     visibility_group_id,
     ctx.connection
+  );
+}
+
+async function revokeNativeOvervotes(
+  accepts: (competition: Competition) => boolean,
+  profileId: string | null,
+  ctx: RequestContext
+): Promise<void> {
+  let afterId = '';
+  for (;;) {
+    const ids = await nativeCompetitionRuntimeRepository.discoverCompetitions(
+      afterId,
+      100,
+      ctx
+    );
+    if (!ids.length) return;
+    for (const id of ids) {
+      const competition =
+        await nativeCompetitionRuntimeRepository.lockCompetition(id, ctx);
+      if (
+        !competition ||
+        !accepts(competition) ||
+        competition.execution_mode !== 'ACTIVE' ||
+        competition.lifecycle !== 'PUBLISHED'
+      )
+        continue;
+      const voters = profileId
+        ? [profileId]
+        : await nativeCompetitionRuntimeRepository.listActiveVoters(id, ctx);
+      for (const voter of voters)
+        await reconcileNativeVoter(competition, voter, ctx);
+    }
+    afterId = ids[ids.length - 1];
+  }
+}
+
+async function reconcileNativeVoter(
+  competition: Competition,
+  profileId: string,
+  ctx: RequestContext
+): Promise<void> {
+  const before = await nativeCompetitionRuntimeRepository.getVoterActiveVotes(
+    competition.id,
+    profileId,
+    ctx
+  );
+  if (!before.length) return;
+  const budget = await competitionCreditService.getBudget(
+    competition,
+    profileId,
+    undefined,
+    ctx
+  );
+  await nativeCompetitionRuntimeService.reconcileVoterCredit(
+    {
+      competitionId: competition.id,
+      voterProfileId: profileId,
+      availableCredit: budget.available,
+      creditScope: competition.voting.credit_scope,
+      occurredAt: Date.now()
+    },
+    ctx
+  );
+  const after = new Map(
+    (
+      await nativeCompetitionRuntimeRepository.getVoterActiveVotes(
+        competition.id,
+        profileId,
+        ctx
+      )
+    ).map((vote) => [vote.entryId, vote.value])
+  );
+  for (const vote of before) {
+    const value = after.get(vote.entryId) ?? 0;
+    if (value === vote.value) continue;
+    const entry = await competitionRepository.findNativeEntry(
+      competition.id,
+      vote.entryId,
+      ctx
+    );
+    if (!entry || entry.submitter_id === profileId) continue;
+    const wave = await wavesApiDb.findById(competition.wave_id, ctx.connection);
+    if (!wave) continue;
+    const total = await competitionDropVotesDb.totals(entry, null, ctx);
+    await userNotifier.notifyOfDropVote(
+      {
+        voter_id: profileId,
+        drop_id: entry.drop_id,
+        wave_id: competition.wave_id,
+        drop_author_id: entry.submitter_id,
+        vote: value,
+        vote_change: value - vote.value,
+        total_vote: total.total
+      },
+      wave.visibility_group_id,
+      ctx.connection
+    );
+  }
+  await nativeCompetitionRuntimeService.refreshCompetition(
+    competition.id,
+    Date.now(),
+    ctx
+  );
+  logger.info(
+    `Reconciled competition ${competition.id} credit for ${profileId}`
   );
 }

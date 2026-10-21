@@ -90,7 +90,12 @@ export async function listCompetitionVoteActivity(
     invoker: profiles[row.voter_profile_id],
     drop_author: row.submitter_id ? profiles[row.submitter_id] : undefined,
     invoker_proxy: row.proxy_id ? profiles[row.proxy_id] : undefined,
-    created_at: new Date(Number(row.occurred_at)),
+    // Retained shared logs can contain NULL despite the frozen API's Date type.
+    // Keep their original wire value without changing that published contract.
+    created_at:
+      row.legacy_id != null && row.legacy_created_at === null
+        ? (null as unknown as ApiWaveLog['created_at'])
+        : new Date(Number(row.occurred_at)),
     // The retained contents column is NOT NULL JSON, validated by MySQL.
     // Preserve its complete original payload, as the legacy log API does.
     contents: row.legacy_contents
