@@ -314,6 +314,10 @@ export * from './ICompetitionMigration';
 
 export * from './IDropForgeLaunch';
 export * from './IDropForgeEvidence';
+export {
+  MemeCollaborationEntity,
+  MemeCollaborationInvitationEntity
+} from './IMemeCollaboration';
 export { TransferReconciliationEntity } from './ITransferReconciliation';
 
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';

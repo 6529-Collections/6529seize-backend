@@ -314,4 +314,7 @@ export const DROP_FORGE_SIGNERS_TABLE = 'drop_forge_signers';
 export const DROP_FORGE_PREPARATIONS_TABLE = 'drop_forge_preparations';
 export const DROP_FORGE_JOBS_TABLE = 'drop_forge_jobs';
 export const DROP_FORGE_EVIDENCE_TABLE = 'drop_forge_evidence';
+export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
+export const MEME_COLLABORATION_INVITATIONS_TABLE =
+  'meme_collaboration_invitations';
 export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';
