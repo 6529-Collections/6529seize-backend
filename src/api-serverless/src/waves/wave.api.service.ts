@@ -640,6 +640,9 @@ export class WaveApiService {
     const timer = this.getRequiredTimer(ctx);
     const authenticationContext = this.getRequiredAuthenticationContext(ctx);
     const actingAsId = this.getRequiredActingAsId(authenticationContext);
+    if (createWaveRequest.wave.type !== ApiWaveType.Chat) {
+      throw new BadRequestException('Only CHAT waves can be created');
+    }
     timer.start(`${this.constructor.name}->createWave`);
     await this.validateWaveRelations(createWaveRequest, ctx);
     this.validateOutcomes(createWaveRequest);

@@ -1109,7 +1109,9 @@ Competition storage and execution ownership are explicit per competition.
 Legacy-primary mappings keep existing decision and leaderboard workers active;
 native execution additionally requires its global kill switch and is disabled
 by default. `dbMigrationsLoop` creates the additive competition/read-model
-tables and backfills stable legacy mappings before API or worker deployments.
+tables before API or worker deployments. Legacy wave writes maintain stable
+per-wave mappings; migration and scheduled maintenance invocations do not scan
+legacy waves or backfill mappings.
 The independent unified-read, native-write, native-execution, native-hub, and
 sampled-shadow flags default off. Shadow observations persist only canonical
 hashes and identifiers, never vote/signature/private payloads. Sampled legacy
@@ -1490,6 +1492,13 @@ There are two DB access modes:
 
 - API mode uses mysql read/write pools. Simple SQL classification routes `INSERT`, `UPDATE`, `DELETE`, and `REPLACE` to the write pool; other queries default to the read pool unless forced.
 - Loop mode uses TypeORM initialization and the shared `SqlExecutor` abstraction. Schema ownership is entities-first: add or update TypeORM entity classes, export them from `src/entities/entities.ts`, and let `dbMigrationsLoop` run entity synchronization. Do not create SQL migrations for schema changes unless explicitly requested; migrations are reserved for one-off data work or views.
+
+The MySQL query options capture the legacy GET compatibility boolean conversion
+mode when each statement is submitted. Compatibility views can expose boolean
+columns as BIGINT, so their declared flags need explicit conversion. Field parsing
+must not read request context from a reused socket: that socket can have been
+opened by another request. Queries outside the compatibility scope retain numeric
+BIGINT values, including when they reuse a socket opened inside that scope.
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
 
