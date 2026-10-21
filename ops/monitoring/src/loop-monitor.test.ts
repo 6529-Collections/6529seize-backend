@@ -623,12 +623,7 @@ test('monitoring passes the shared budget to in-flight SDK reads and propagates 
   );
   try {
     const policy = policiesFor('staging')[0]!;
-    const pending = monitorLoop(
-      policy,
-      'staging',
-      100,
-      controller.signal
-    );
+    const pending = monitorLoop(policy, 'staging', 100, controller.signal);
     controller.abort();
     await assert.rejects(pending, { name: 'AbortError' });
     assert.equal(dbMock.mock.callCount(), 2 + policy.operations.length);
