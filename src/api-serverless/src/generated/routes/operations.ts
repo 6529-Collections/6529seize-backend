@@ -186,6 +186,7 @@ import { ApiModerationActionRequest } from '@/api/generated/models/ApiModeration
 import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCheckDetail';
 import { ApiModerationCheckPage } from '@/api/generated/models/ApiModerationCheckPage';
 import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts';
+import { ApiModerationReviewCasePage } from '@/api/generated/models/ApiModerationReviewCasePage';
 import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
@@ -1248,6 +1249,7 @@ export type GetContentModerationBlockActivityRequest = Request<
 export type GetModerationChecksPathParams = Record<string, never>;
 
 export interface GetModerationChecksQuery {
+  "case_id"?: string;
   "subject_type"?: "REP_CATEGORY" | "PROFILE_BIO" | "GROUP_NAME" | "DROP";
   "outcome"?: "ALLOW" | "REJECT" | "ERROR" | "PENDING";
   "policy_family"?: "PUBLIC_FIELDS" | "WAVE_CONTENT";
@@ -1314,6 +1316,23 @@ export type GetModerationAccessRequest = Request<
   ApiResponse<GetModerationAccessResponse>,
   never,
   GetModerationAccessQuery,
+  Record<string, never>
+>;
+
+export type GetModerationReviewCasesPathParams = Record<string, never>;
+
+export interface GetModerationReviewCasesQuery {
+  "before"?: string;
+  "limit"?: number;
+}
+
+export type GetModerationReviewCasesResponse = ApiModerationReviewCasePage;
+
+export type GetModerationReviewCasesRequest = Request<
+  GetModerationReviewCasesPathParams,
+  ApiResponse<GetModerationReviewCasesResponse>,
+  never,
+  GetModerationReviewCasesQuery,
   Record<string, never>
 >;
 

@@ -207,3 +207,27 @@ time `retain` and one `deleteExpiredPrePublicationChecks` batch, and verify the
 remaining row counts. Repeat with realistic deployment volume and evidence
 sizes before treating the local numbers as a production capacity or latency
 budget.
+
+## Manual review cases
+
+WatchTower's Needs review queue groups open reports and checks marked
+NEEDS_REVIEW into one case per subject, before cursor pagination. Evaluations
+still in PENDING are excluded until they finish or enter failure recovery. Reports and
+check revisions concerning the same published post share one case. Rejected
+new-post submissions without a published post ID retain separate cases per
+saved check, so unrelated drafts by the same author are not collapsed. Other
+public fields group by subject type and subject identity across revisions.
+Case IDs are opaque hashes; REP category text never appears in URLs.
+
+`GET /content-moderation/checks/cases` provides the private paged queue. The
+`case_id` filter on the existing checks endpoint exposes related check revisions
+without changing revision-scoped review actions. Cases remain outstanding while
+any open report or check needs manual review. Mark reviewed does not close open
+reports. Resolved reports and reviewed checks do not create cases.
+
+`needs_review_count` on moderator access and `needs_review` on check counts
+use the same case definition. The frontend uses the moderator-access count for
+the sidebar indicator, Needs review badge and top summary. The report-specific
+counts and `has_open_reports` retain their existing meanings. Current servers
+always return the additive `needs_review_count`; deploy the API before the
+dependent frontend. No schema changes or data migration are needed.
