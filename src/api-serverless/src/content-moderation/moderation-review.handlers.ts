@@ -21,6 +21,7 @@ import {
 import {
   GetModerationAccessRequest,
   GetModerationChecksRequest,
+  GetModerationReviewCasesRequest,
   GetModerationCheckRequest,
   GetModerationCountsRequest,
   GetModerationProfileCheckRequest,
@@ -30,7 +31,6 @@ import {
 import { ApiModerationAccess } from '@/api/generated/models/ApiModerationAccess';
 import { ApiModerationCheckPage } from '@/api/generated/models/ApiModerationCheckPage';
 import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCheckDetail';
-import { GetModerationReviewCasesRequest } from '@/api/generated/routes/operations';
 import { ApiModerationReviewCasePage } from '@/api/generated/models/ApiModerationReviewCasePage';
 import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts';
 import { broadcastDropModerationChange } from './moderation-broadcast';

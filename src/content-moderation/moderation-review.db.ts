@@ -1,6 +1,7 @@
 import {
   moderationCaseIdSql,
   moderationCaseWorkSql,
+  moderationNonAdministrativeSql,
   ModerationReviewCase
 } from './moderation-review-cases';
 import { randomUUID } from 'node:crypto';
@@ -581,9 +582,7 @@ export class ModerationReviewDb extends LazyDbAccessCompatibleService {
   }
   async list(filter: ModerationFilter, ctx: RequestContext = {}) {
     return this.timed('list', ctx, async () => {
-      const clauses = [
-        "coalesce(json_extract(scope,'$.administrative'),false)=false"
-      ];
+      const clauses = [moderationNonAdministrativeSql()];
       const params: Record<string, unknown> = { limit: filter.limit + 1 };
       for (const key of [
         'subject_type',

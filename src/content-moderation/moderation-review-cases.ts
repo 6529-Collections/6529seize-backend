@@ -11,6 +11,12 @@ export function moderationCaseIdSql(prefix = ''): string {
   return `sha2(concat(${prefix}subject_type, ':', case when ${prefix}subject_type='DROP' and ${prefix}operation='CREATE' and ${prefix}published_subject_id is null then ${prefix}id else coalesce(${prefix}published_subject_id, ${prefix}subject_id) end), 256)`;
 }
 
+// Compare the JSON flag as text. Comparing a COALESCE-wrapped JSON boolean
+// with SQL false can coerce both true and false to zero and include admin work.
+export function moderationNonAdministrativeSql(): string {
+  return "coalesce(json_unquote(json_extract(scope,'$.administrative')),'false')<>'true'";
+}
+
 // All consumers (queue, summary, sidebar) derive their cases from this same set.
 // UNION ALL retains each pending requirement so a case survives until all of its
 // open reports and pending checks are handled. In-flight evaluations are not
@@ -20,7 +26,7 @@ export function moderationCaseWorkSql(): string {
       id check_id, null report_id, created_at
     from ${CONTENT_MODERATION_ITEMS_TABLE}
     where review_status='NEEDS_REVIEW' and outcome<>'PENDING'
-      and coalesce(json_extract(scope,'$.administrative'),false)=false
+      and ${moderationNonAdministrativeSql()}
     union all
     select sha2(concat('DROP:',drop_id),256) case_id, 'DROP' subject_type,
       null check_id, id report_id, created_at

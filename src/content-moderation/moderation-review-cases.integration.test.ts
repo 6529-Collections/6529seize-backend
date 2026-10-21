@@ -120,6 +120,11 @@ describe('unique manual review cases', () => {
       'PUBLIC_FIELD'
     );
     expect(await db.countReviewCases()).toBe(2);
+    const page = await db.listReviewCases({ limit: 10 });
+    expect(page.items).toHaveLength(2);
+    for (const item of page.items) {
+      expect(item).toMatchObject({ drop_id: null, drop_deleted: false });
+    }
   });
   it('keeps a case until both its report and check requirements are closed', async () => {
     const first = await flag(input('post'), 'PUBLIC_FIELD');
@@ -148,14 +153,30 @@ describe('unique manual review cases', () => {
       { ...input('admin'), scope: { administrative: true } },
       'PUBLIC_FIELD'
     );
-    await flag(input('other'), 'PUBLIC_FIELD');
+    const other = await flag(input('other'), 'PUBLIC_FIELD');
+    expect(await db.countReviewCases()).toBe(2);
+    expect(
+      (await db.list({ review_status: 'NEEDS_REVIEW', limit: 10 })).items.map(
+        (item) => item.id
+      )
+    ).toEqual([other.item.id]);
     const first = await db.listReviewCases({ limit: 1 });
     expect(first.next_cursor).not.toBeNull();
+    expect(first.items[0]).toMatchObject({
+      check_id: other.item.id,
+      pending_check_count: 1,
+      open_report_count: 0
+    });
     const second = await db.listReviewCases({
       limit: 1,
       before: first.next_cursor!
     });
     expect(second.items).toHaveLength(1);
+    expect(second.items[0]).toMatchObject({
+      check_id: null,
+      open_report_count: 2,
+      pending_check_count: 0
+    });
     expect(second.items[0].id).not.toBe(first.items[0].id);
     expect(second.next_cursor).toBeNull();
     expect(await db.countReviewCases()).toBe(2);
