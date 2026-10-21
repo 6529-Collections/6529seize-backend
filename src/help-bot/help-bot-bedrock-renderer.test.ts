@@ -159,7 +159,7 @@ describe('HelpBotBedrockRenderer', () => {
     expect(readBody(send)).not.toHaveProperty('temperature');
     expect(readBody(send)).not.toHaveProperty('top_k');
     expect(readBody(send)).not.toHaveProperty('top_p');
-    expect(readBody(send)).not.toHaveProperty('thinking');
+    expect(readBody(send)).toMatchObject({ thinking: { type: 'adaptive' } });
   });
 
   it('keeps the Sonnet 4.5 sampling payload when the model is overridden back', async () => {

@@ -75,6 +75,7 @@ describe('bedrock anthropic helpers', () => {
       max_tokens: 100,
       system: 'system prompt',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+      thinking: { type: 'adaptive' },
       output_config: {
         effort: 'low',
         format: { type: 'json_schema', schema: { type: 'object' } }
@@ -88,7 +89,9 @@ describe('bedrock anthropic helpers', () => {
         fc.constantFrom(
           'us.anthropic.claude-sonnet-5-5',
           'us.anthropic.claude-haiku-5-5',
-          'us.anthropic.claude-opus-5-5'
+          'us.anthropic.claude-opus-5-5',
+          'us.anthropic.claude-sonnet-4-6',
+          'us.anthropic.claude-opus-4-8'
         ),
         fc.string(),
         fc.integer({ min: 1, max: 64_000 }),
@@ -107,6 +110,7 @@ describe('bedrock anthropic helpers', () => {
           );
           expect(body).not.toHaveProperty('temperature');
           expect(body).not.toHaveProperty('top_k');
+          expect(body.thinking).toEqual({ type: 'adaptive' });
           expect(body.output_config).toEqual({ effort });
           expect(body.messages).toHaveLength(1);
           expect(body.messages[0].role).toBe('user');
