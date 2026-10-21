@@ -153,6 +153,43 @@ describeWithSeed(
         ]);
     });
 
+    it('stores the same explicit null policy member for bulk-prepared and trigger-written SQL-null strategies', async () => {
+      await prepareWaveHubConfiguration(sqlExecutor);
+      const inserted = { ...old, id: 'a-sql-null-trigger', serial_no: 3 };
+      const fields = Object.keys(inserted).filter(
+        (field) => !field.startsWith('hub_')
+      );
+      await sqlExecutor.bulkInsert(tables.WAVES_TABLE, [inserted], fields, {});
+      const archive = {
+        ...inserted,
+        archive_id: 301,
+        archival_entry_created_at: 1800000000000
+      };
+      await sqlExecutor.bulkInsert(
+        tables.WAVES_ARCHIVE_TABLE,
+        [archive],
+        [
+          ...fields.filter((field) => field !== 'next_decision_time'),
+          'archive_id',
+          'archival_entry_created_at'
+        ],
+        {}
+      );
+      const prepared = (await livePolicy(old.id)).voting;
+      expect(prepared).toHaveProperty('decision_strategy', null);
+      expect((await livePolicy(inserted.id)).voting).toEqual(prepared);
+      const snapshot = await sqlExecutor.oneOrNull<{ voting: string }>(
+        `SELECT hub_voting_config AS voting FROM ${tables.WAVES_ARCHIVE_TABLE} WHERE archive_id=301`
+      );
+      expect(JSON.parse(snapshot!.voting)).toEqual(prepared);
+      await installLegacyCompetitionGetFacade(sqlExecutor);
+      const repository = new WavesApiDb(() => sqlExecutor);
+      for (const id of [old.id, inserted.id])
+        expect(
+          (await repository.findWaveById(id))?.decisions_strategy
+        ).toBeNull();
+    });
+
     it('retains typed Chat and DM strategy values and their archive snapshots through native preparation', async () => {
       await prepareWaveHubConfiguration(sqlExecutor);
       const previousCaptures = await sqlExecutor.execute<{
@@ -814,6 +851,37 @@ describeWithSeed(
         waves: 2,
         archives: 1
       });
+    });
+
+    it('rejects an inverted strategy capture order before dropping any capture', async () => {
+      await prepareWaveHubConfiguration(sqlExecutor);
+      await installLegacyCompetitionGetFacade(sqlExecutor);
+      const name = 'temporary_wave_hub_configuration_strategy_wave_update';
+      const parent = 'temporary_wave_hub_configuration_wave_update';
+      const stored = await sqlExecutor.oneOrNull<{ body: string }>(
+        'SELECT ACTION_STATEMENT AS body FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=database() AND TRIGGER_NAME=:name',
+        { name }
+      );
+      await sqlExecutor.execute(`DROP TRIGGER ${name}`);
+      await sqlExecutor.execute(
+        `CREATE TRIGGER ${name} BEFORE UPDATE ON ${tables.WAVES_TABLE} FOR EACH ROW PRECEDES ${parent} ${stored!.body}`
+      );
+      try {
+        await expect(
+          finalizeWaveHubConfigurationCapture(sqlExecutor)
+        ).rejects.toThrow(
+          'Unrecognized temporary shared-hub configuration capture order'
+        );
+        const row = await sqlExecutor.oneOrNull<{ remaining: number }>(
+          "SELECT COUNT(*) AS remaining FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=database() AND TRIGGER_NAME LIKE 'temporary_wave_hub_configuration_%'"
+        );
+        expect(Number(row!.remaining)).toBe(14);
+      } finally {
+        await sqlExecutor.execute(`DROP TRIGGER ${name}`);
+        await sqlExecutor.execute(
+          `CREATE TRIGGER ${name} BEFORE UPDATE ON ${tables.WAVES_TABLE} FOR EACH ROW FOLLOWS ${parent} ${stored!.body}`
+        );
+      }
     });
 
     it('validates the entire temporary namespace, finalizes idempotently, and never imports sources after native cutover', async () => {

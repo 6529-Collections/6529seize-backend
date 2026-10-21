@@ -47,9 +47,18 @@ type Trigger = {
   body: string;
   follows?: string;
 };
+type InstalledTrigger = {
+  name: string;
+  table_name: string;
+  event: string;
+  timing: string;
+  body: string;
+  action_order: number;
+};
 
 // Structural validation preserves historical values without applying today's
 // scheduling constraints to existing, non-executing CHAT metadata.
+// This fixed schema contains no SQL quoting characters; it is never request input.
 const decisionStrategySchema = JSON.stringify({
   type: ['object', 'null'],
   required: ['first_decision_time', 'subsequent_decisions', 'is_rolling'],
@@ -235,18 +244,27 @@ const triggers: Trigger[] = sources
     ])
   );
 
+function assertCaptureOrder(
+  row: InstalledTrigger,
+  predecessor?: InstalledTrigger
+) {
+  if (!predecessor) return;
+  if (
+    predecessor.table_name !== row.table_name ||
+    predecessor.event !== row.event ||
+    predecessor.timing !== row.timing ||
+    Number(predecessor.action_order) >= Number(row.action_order)
+  )
+    throw new Error(
+      'Unrecognized temporary shared-hub configuration capture order'
+    );
+}
+
 async function installedCapture(
   db: SqlExecutor,
   connection: NonNullable<RequestContext['connection']>
 ) {
-  const rows = await db.execute<{
-    name: string;
-    table_name: string;
-    event: string;
-    timing: string;
-    body: string;
-    action_order: number;
-  }>(
+  const rows = await db.execute<InstalledTrigger>(
     `select TRIGGER_NAME as name,EVENT_OBJECT_TABLE as table_name,EVENT_MANIPULATION as event,
     ACTION_TIMING as timing,ACTION_STATEMENT as body,ACTION_ORDER as action_order from information_schema.TRIGGERS
     where TRIGGER_SCHEMA=database() and TRIGGER_NAME like :pattern`,
@@ -266,16 +284,10 @@ async function installedCapture(
       throw new Error(
         'Unrecognized temporary shared-hub configuration capture'
       );
-    const predecessor = rows.find(
-      (candidate) => candidate.name === expected.follows
+    assertCaptureOrder(
+      row,
+      rows.find((candidate) => candidate.name === expected.follows)
     );
-    if (
-      predecessor &&
-      Number(predecessor.action_order) >= Number(row.action_order)
-    )
-      throw new Error(
-        'Unrecognized temporary shared-hub configuration capture order'
-      );
   }
   return rows;
 }
@@ -538,18 +550,16 @@ export async function finalizeWaveHubConfigurationCapture(
       const installed = await installedCapture(db, connection);
       // Drop dependent overlays first so interrupted finalization remains
       // compatible with the original captures and ordinary retries.
-      const order = new Map(
-        triggers.map((trigger, index) => [trigger.name, index])
-      );
-      for (const trigger of [...installed].sort(
-        (left, right) => order.get(right.name)! - order.get(left.name)!
-      ))
+      for (let index = triggers.length - 1; index >= 0; index--) {
+        const trigger = triggers[index];
+        if (!installed.some((row) => row.name === trigger.name)) continue;
         await db // NOSONAR -- Ordered DDL shares one connection; drop dependent overlays before predecessors.
           .execute(
             `drop trigger if exists \`${trigger.name}\``,
             {},
             { wrappedConnection: connection }
           );
+      }
       return installed.length;
     }
   );
