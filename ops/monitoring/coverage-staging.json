@@ -1,6 +1,7 @@
 {
   "environment": "staging",
   "source": "src/config/deploy-services.json",
+  "retainedSource": "ops/monitoring/retained-producers.json",
   "services": [
     {
       "service": "api",

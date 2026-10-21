@@ -125,6 +125,7 @@ export async function handleCreateWaveHubV3(
       visibility: WaveVisibilitySchema.required(),
       chat: WaveChatSchema.required(),
       admin_group: WaveScopeSchema.required(),
+      admin_drop_deletion_enabled: Joi.boolean().default(false),
       parent_wave_id: Joi.string().min(1).max(100).allow(null)
     }).unknown(false)
   );

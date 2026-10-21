@@ -17,19 +17,13 @@ import {
   DROP_POLLS_TABLE,
   DROP_POLL_OPTIONS_TABLE,
   DROP_POLL_VOTES_TABLE,
-  DROP_RANK_TABLE,
   DROP_REACTIONS_TABLE,
-  DROP_REAL_VOTE_IN_TIME_TABLE,
-  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
-  DROP_VOTER_STATE_TABLE,
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
-  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   WAVE_CURATIONS_TABLE,
-  WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVE_METRICS_TABLE,
   WAVE_DROPPER_METRICS_TABLE
 } from '@/constants';
@@ -47,7 +41,9 @@ export type ChatHistoryPurgeScope = {
 
 // Keep this inventory aligned with DeleteDropUseCase. Shared assets (uploads,
 // attachments, NFT metadata) and reply/quote references survive; drop-owned
-// associations do not. Special ordering/watch semantics are handled below.
+// associations do not. Competition allocations, independent observations and
+// published orphan snapshots survive even when no entry membership exists.
+// Special ordering/watch semantics are handled below.
 const DROP_OWNED_TABLES = [
   DROPS_PARTS_TABLE,
   DROPS_MENTIONS_TABLE,
@@ -61,12 +57,6 @@ const DROP_OWNED_TABLES = [
   DROP_POLL_VOTES_TABLE,
   DROP_POLL_OPTIONS_TABLE,
   DROP_POLLS_TABLE,
-  DROP_VOTER_STATE_TABLE,
-  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-  DROP_RANK_TABLE,
-  DROP_REAL_VOTE_IN_TIME_TABLE,
-  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
-  WAVE_LEADERBOARD_ENTRIES_TABLE,
   DROP_BOOKMARKS_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_NFT_LINKS_TABLE

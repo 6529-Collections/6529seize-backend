@@ -12,8 +12,8 @@ import {
 import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { BadRequestException } from '@/exceptions';
-import { IdentitiesDb, identitiesDb } from '@/identities/identities.db';
-import { RatingsDb, ratingsDb } from '@/rates/ratings.db';
+import type { IdentitiesDb } from '@/identities/identities.db';
+import type { RatingsDb } from '@/rates/ratings.db';
 import { RequestContext } from '@/request.context';
 import {
   normalizeWaveVotingCreditNfts,
@@ -344,6 +344,24 @@ export class CompetitionCreditService {
 
 export const competitionCreditService = new CompetitionCreditService(
   competitionCreditRepository,
-  identitiesDb,
-  ratingsDb
+  // These sources also import competition consumers. Resolve their exports only
+  // when requested, after module initialization has completed in either order.
+  {
+    getIdentityByProfileId: async (...args) =>
+      (
+        await import('@/identities/identities.db')
+      ).identitiesDb.getIdentityByProfileId(...args),
+    getIdentitiesByIds: async (...args) =>
+      (
+        await import('@/identities/identities.db')
+      ).identitiesDb.getIdentitiesByIds(...args),
+    getSingleNftVotingCreditsByProfileId: async (...args) =>
+      (
+        await import('@/identities/identities.db')
+      ).identitiesDb.getSingleNftVotingCreditsByProfileId(...args)
+  },
+  {
+    getRepRating: async (...args) =>
+      (await import('@/rates/ratings.db')).ratingsDb.getRepRating(...args)
+  }
 );

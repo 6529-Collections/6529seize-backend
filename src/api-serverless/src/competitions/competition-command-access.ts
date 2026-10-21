@@ -1,4 +1,3 @@
-import { appFeatures } from '@/app-features';
 import { userGroupsService } from '@/api/community-members/user-groups.service';
 import {
   assertWaveAndParentVisibleOrThrow,
@@ -72,11 +71,6 @@ export async function administerCompetitionWave(
   return visible;
 }
 
-export function requireNativeWrites(): void {
-  if (!appFeatures.isNativeCompetitionWritesEnabled())
-    throw new NotFoundException('Competition commands are not enabled');
-}
-
 export async function lockNativeCompetition(
   waveId: string,
   competitionId: string,
@@ -89,7 +83,7 @@ export async function lockNativeCompetition(
     ctx
   );
   if (record.storage_mode !== CompetitionStorageMode.NATIVE)
-    competitionConflict('Use the original wave commands for this competition');
+    competitionConflict('Competition is unavailable');
   if (Number(record.config_version) !== version)
     competitionConflict('Competition rules changed. Reload before retrying');
   const competition = await new NativeCompetitionReader(
@@ -106,8 +100,7 @@ export function assertCompetitionOpen(
 ): void {
   if (
     competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
-    competition.execution_mode !== CompetitionExecutionMode.ACTIVE ||
-    !appFeatures.isNativeCompetitionExecutionEnabled()
+    competition.execution_mode !== CompetitionExecutionMode.ACTIVE
   )
     competitionConflict('Competition is not accepting entries or votes');
   const period =

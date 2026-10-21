@@ -1,3 +1,16 @@
+import { nativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
+import {
+  legacyCompetitionId,
+  legacyCompetitionEntryId,
+  legacyCompetitionDecisionId
+} from '@/competitions/competition-id';
+import {
+  COMPETITIONS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
+  COMPETITION_CAPABILITIES_TABLE,
+  COMPETITION_DECISION_WINNERS_TABLE,
+  COMPETITION_DECISIONS_TABLE
+} from '@/constants';
 import 'reflect-metadata';
 import {
   CONTENT_MODERATION_DROP_STATES_TABLE,
@@ -127,6 +140,11 @@ const extraDrops = [
 const allDrops = [...drops, ...extraDrops];
 const db = new NewsletterDb(() => sqlExecutor);
 
+const newsletterCompetitionId = legacyCompetitionId(MAIN_STAGE_WAVE_ID);
+const newsletterWinners = [
+  { drop_id: 'old-winner', time: window.start },
+  { drop_id: `drop-${MAIN_STAGE_WAVE_ID}`, time: window.end }
+];
 describeWithSeed(
   'newsletter public database boundary',
   [
@@ -156,25 +174,70 @@ describeWithSeed(
       rows: [{ drop_id: 'hidden', status: 'HIDDEN', updated_at: window.start }]
     },
     {
-      table: WAVES_DECISION_WINNER_DROPS_TABLE,
+      table: COMPETITIONS_TABLE,
+      rows: [
+        nativeOriginalPrimaryFixture(
+          waves.find((wave) => wave.id === MAIN_STAGE_WAVE_ID)!
+        )
+      ]
+    },
+    {
+      table: COMPETITION_CAPABILITIES_TABLE,
       rows: [
         {
-          drop_id: 'old-winner',
+          competition_id: newsletterCompetitionId,
           wave_id: MAIN_STAGE_WAVE_ID,
-          decision_time: window.start,
-          ranking: 1,
-          final_vote: 100,
-          prizes: []
-        },
-        {
-          drop_id: `drop-${MAIN_STAGE_WAVE_ID}`,
-          wave_id: MAIN_STAGE_WAVE_ID,
-          decision_time: window.end,
-          ranking: 1,
-          final_vote: 100,
-          prizes: []
+          capability: 'MAIN_STAGE',
+          assigned_at: 1
         }
       ]
+    },
+    {
+      table: COMPETITION_ENTRIES_TABLE,
+      rows: newsletterWinners.map((winner) => ({
+        id: legacyCompetitionEntryId(newsletterCompetitionId, winner.drop_id),
+        competition_id: newsletterCompetitionId,
+        wave_id: MAIN_STAGE_WAVE_ID,
+        drop_id: winner.drop_id,
+        submitter_id: 'author',
+        status: 'WINNER',
+        config_version: 1,
+        submitted_at: winner.time - 1,
+        won_at: winner.time,
+        decision_id: legacyCompetitionDecisionId(
+          newsletterCompetitionId,
+          winner.time
+        )
+      }))
+    },
+    {
+      table: COMPETITION_DECISIONS_TABLE,
+      rows: newsletterWinners.map((winner) => ({
+        id: legacyCompetitionDecisionId(newsletterCompetitionId, winner.time),
+        competition_id: newsletterCompetitionId,
+        scheduled_at: winner.time,
+        decided_at: winner.time,
+        status: 'COMPLETED',
+        execution_key: `winner:${winner.time}`,
+        created_at: winner.time
+      }))
+    },
+    {
+      table: COMPETITION_DECISION_WINNERS_TABLE,
+      rows: newsletterWinners.map((winner) => ({
+        competition_id: newsletterCompetitionId,
+        entry_id: legacyCompetitionEntryId(
+          newsletterCompetitionId,
+          winner.drop_id
+        ),
+        decision_id: legacyCompetitionDecisionId(
+          newsletterCompetitionId,
+          winner.time
+        ),
+        rank: 1,
+        final_rating: 100,
+        created_at: winner.time
+      }))
     },
     {
       table: DROP_METADATA_TABLE,

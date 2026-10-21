@@ -14,7 +14,6 @@ import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionService } from '@/competitions/competition.service';
 import { Competition } from '@/competitions/competition.types';
-import { LegacyCompetitionAdapter } from '@/competitions/legacy-competition.adapter';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
@@ -33,7 +32,6 @@ import {
   assertCompetitionOpen,
   competitionActor,
   lockNativeCompetition,
-  requireNativeWrites,
   visibleCompetitionWave
 } from './competition-command-access';
 import { verifyCompetitionSignature } from './competition-signature';
@@ -68,7 +66,6 @@ export class CompetitionVotingService {
     request: ApiSetCompetitionVoteRequest,
     ctx: RequestContext
   ) {
-    requireNativeWrites();
     await visibleCompetitionWave(waveId, ctx);
     const actor = competitionActor(ctx);
     return competitionCommandRepository.command(
@@ -206,11 +203,9 @@ export class CompetitionVotingService {
       competitionId,
       ctx
     );
-    if (!record) throw new NotFoundException('Competition not found');
-    const reader =
-      record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER
-        ? new LegacyCompetitionAdapter(competitionRepository, wavesApiDb, ctx)
-        : new NativeCompetitionReader(competitionRepository, ctx);
+    if (!record || record.storage_mode !== CompetitionStorageMode.NATIVE)
+      throw new NotFoundException('Competition not found');
+    const reader = new NativeCompetitionReader(competitionRepository, ctx);
     return reader.getCompetition(record, Date.now());
   }
 }

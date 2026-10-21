@@ -20,7 +20,6 @@ import { userGroupsService } from '@/api/community-members/user-groups.service';
 import { userNotifier } from '@/notifications/user.notifier';
 import { metricsRecorder } from '@/metrics/MetricsRecorder';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
-import { appFeatures } from '@/app-features';
 
 /** Replacement values are inherently replayable: a retry with the same value
  * changes neither spend nor history nor notifications. The caller holds the
@@ -41,11 +40,7 @@ export async function voteForMigratedLegacyEntry(
     competitionRepository,
     ctx
   ).getCompetition(record, now);
-  if (
-    !appFeatures.isNativeCompetitionExecutionEnabled() ||
-    !appFeatures.isNativeCompetitionWritesEnabled() ||
-    competition.execution_mode !== 'ACTIVE'
-  )
+  if (competition.execution_mode !== 'ACTIVE')
     throw new ForbiddenException(
       'Voting is temporarily unavailable. Try again later'
     );

@@ -24,6 +24,7 @@ import { ApiDropReferencedNFT } from '../models/ApiDropReferencedNFT';
 import { ApiDropV2ContextProfileContext } from '../models/ApiDropV2ContextProfileContext';
 import { ApiDropViewerModerationContext } from '../models/ApiDropViewerModerationContext';
 import { ApiIdentityOverview } from '../models/ApiIdentityOverview';
+import { ApiMemeCollaboratorProfile } from '../models/ApiMemeCollaboratorProfile';
 import { ApiMentionedWaveV2 } from '../models/ApiMentionedWaveV2';
 import { ApiReplyToDropV2 } from '../models/ApiReplyToDropV2';
 import { ApiSubmissionDropContext } from '../models/ApiSubmissionDropContext';
@@ -63,6 +64,10 @@ export class ApiDropV2 {
     'moderation'?: ApiDropModeration;
     'poll'?: ApiDropPoll;
     'wave'?: ApiWaveOverview;
+    /**
+    * Accepted collaborators only. Pending invitations are private.
+    */
+    'collaborators'?: Array<ApiMemeCollaboratorProfile>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -241,6 +246,12 @@ export class ApiDropV2 {
             "name": "wave",
             "baseName": "wave",
             "type": "ApiWaveOverview",
+            "format": ""
+        },
+        {
+            "name": "collaborators",
+            "baseName": "collaborators",
+            "type": "Array<ApiMemeCollaboratorProfile>",
             "format": ""
         }    ];
 
