@@ -165,6 +165,73 @@ describeWithSeed(
       }
     );
 
+    it.each([
+      {
+        label: 'public strategy object',
+        strategy: {
+          first_decision_time: 1712345678999,
+          subsequent_decisions: [987654321],
+          is_rolling: true
+        },
+        expected: {
+          source_json_type: 'OBJECT',
+          first_decision_time_type: 'UNSIGNED INTEGER',
+          subsequent_decisions_type: 'ARRAY',
+          is_rolling_type: 'BOOLEAN',
+          property_count: 3,
+          encoded_null_rows: 0
+        }
+      },
+      {
+        label: 'encoded null string',
+        strategy: 'null',
+        expected: {
+          source_json_type: 'STRING',
+          first_decision_time_type: null,
+          subsequent_decisions_type: null,
+          is_rolling_type: null,
+          property_count: 1,
+          encoded_null_rows: 1
+        }
+      }
+    ])(
+      'reports only aggregate strategy shape for $label',
+      async ({ strategy, expected }) => {
+        await sqlExecutor.execute(
+          `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=CAST(:strategy AS JSON) WHERE id=:id`,
+          { strategy: JSON.stringify(strategy), id: old.id }
+        );
+        const repository = new WavesApiDb(() => sqlExecutor);
+        expect(
+          (await repository.findWaveById(old.id))?.decisions_strategy
+        ).toEqual(strategy);
+        const message = await prepareWaveHubConfiguration(sqlExecutor).then(
+          () => {
+            throw new Error('Expected non-null strategy parity rejection');
+          },
+          (error: unknown) => {
+            if (!(error instanceof Error)) throw error;
+            return error.message;
+          }
+        );
+        const prefix = 'strategy_shapes=';
+        expect(message).toContain(prefix);
+        expect(
+          JSON.parse(message.slice(message.indexOf(prefix) + prefix.length))
+        ).toEqual([
+          {
+            table: tables.WAVES_TABLE,
+            is_direct_message: 0,
+            ...expected,
+            count: 1
+          }
+        ]);
+        expect(message).not.toContain(old.id);
+        expect(message).not.toContain('1712345678999');
+        expect(message).not.toContain('987654321');
+      }
+    );
+
     it('captures old parent/child writes behind bounded cursors, retains each archive ID, and matches full frozen CHAT/DM projection primitives', async () => {
       const batches: number[] = [];
       let inserted = false;
