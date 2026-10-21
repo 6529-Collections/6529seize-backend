@@ -217,8 +217,12 @@ describeWithSeed(
       const overlays = await sqlExecutor.execute<{ name: string }>(
         "SELECT TRIGGER_NAME AS name FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=database() AND TRIGGER_NAME LIKE 'temporary_wave_hub_configuration_strategy_%'"
       );
-      for (const overlay of overlays)
+      for (const overlay of overlays) {
+        expect(overlay.name).toMatch(
+          /^temporary_wave_hub_configuration_strategy_(wave|archive)_(insert|update)$/
+        );
         await sqlExecutor.execute(`DROP TRIGGER \`${overlay.name}\``);
+      }
       await sqlExecutor.execute(
         `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=JSON_REMOVE(hub_voting_config,'$.decision_strategy')`
       );
