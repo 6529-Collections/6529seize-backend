@@ -5,6 +5,7 @@ import {
   DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID,
   getAbusivenessBedrockModelId
 } from './bedrock-ai.prompter';
+import { DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID } from '@/bedrock.config';
 
 const mockSend = jest.fn();
 jest.mock('@/bedrock', () => ({
@@ -16,7 +17,6 @@ function mockReply(body: Record<string, unknown>) {
     body: new TextEncoder().encode(JSON.stringify(body))
   });
 }
-import { DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID } from '@/bedrock.config';
 
 describe('bedrock abusiveness prompter', () => {
   const originalModelId = process.env.ABUSIVENESS_BEDROCK_MODEL_ID;
