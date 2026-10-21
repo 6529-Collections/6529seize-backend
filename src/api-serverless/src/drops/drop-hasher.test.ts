@@ -19,6 +19,19 @@ describe('DropHasher', () => {
     signature: null
   };
 
+  it('distinguishes absent, empty and populated collaborator lists in the signed payload', () => {
+    const hash = (drop: ApiCreateDropRequest) =>
+      dropHasher.hash({ drop, termsOfService: null });
+    const original = hash(aDrop);
+    expect(hash({ ...aDrop, collaborator_ids: undefined })).toBe(original);
+    const managed = hash({ ...aDrop, collaborator_ids: [] });
+    expect(managed).not.toBe(original);
+    expect(hash({ ...aDrop, collaborator_ids: ['B', 'C'] })).not.toBe(managed);
+    expect(hash({ ...aDrop, collaborator_ids: ['B', 'C'] })).not.toBe(
+      hash({ ...aDrop, collaborator_ids: ['B'] })
+    );
+  });
+
   it('TOS affects the hash', () => {
     expect(
       dropHasher.hash({

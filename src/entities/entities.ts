@@ -314,6 +314,10 @@ export * from './ICompetitionMigration';
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export {
+  MemeCollaborationEntity,
+  MemeCollaborationInvitationEntity
+} from './IMemeCollaboration';
 export { TransferReconciliationEntity } from './ITransferReconciliation';
 
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';

@@ -34,6 +34,11 @@ import { HttpFile } from '../http/http';
 export class ApiCurationDrop {
     'drop_priority_order': number | null;
     /**
+    * Original submitter artist credit before accepted collaborator credits are appended.
+    */
+    'submission_artist'?: string;
+    'collaborators'?: Array<ApiMemeCollaboratorProfile>;
+    /**
     * False when a winner has no saved at-decision voter records. The voter count is then unknown, not zero. Omitted by older servers.
     */
     'voters_count_available'?: boolean;
@@ -82,7 +87,6 @@ export class ApiCurationDrop {
     'hide_link_preview': boolean;
     'poll'?: ApiDropPoll;
     'nft_links'?: Array<ApiDropNftLink>;
-    'collaborators'?: Array<ApiMemeCollaboratorProfile>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -94,6 +98,18 @@ export class ApiCurationDrop {
             "baseName": "drop_priority_order",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "submission_artist",
+            "baseName": "submission_artist",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "collaborators",
+            "baseName": "collaborators",
+            "type": "Array<ApiMemeCollaboratorProfile>",
+            "format": ""
         },
         {
             "name": "voters_count_available",
@@ -297,12 +313,6 @@ export class ApiCurationDrop {
             "name": "nft_links",
             "baseName": "nft_links",
             "type": "Array<ApiDropNftLink>",
-            "format": ""
-        },
-        {
-            "name": "collaborators",
-            "baseName": "collaborators",
-            "type": "Array<ApiMemeCollaboratorProfile>",
             "format": ""
         }    ];
 
