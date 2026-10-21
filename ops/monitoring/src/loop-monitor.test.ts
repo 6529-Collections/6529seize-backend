@@ -622,15 +622,16 @@ test('monitoring passes the shared budget to in-flight SDK reads and propagates 
     }
   );
   try {
+    const policy = policiesFor('staging')[0]!;
     const pending = monitorLoop(
-      policiesFor('staging')[0]!,
+      policy,
       'staging',
       100,
       controller.signal
     );
     controller.abort();
     await assert.rejects(pending, { name: 'AbortError' });
-    assert.equal(dbMock.mock.callCount(), 3);
+    assert.equal(dbMock.mock.callCount(), 2 + policy.operations.length);
   } finally {
     dbMock.mock.restore();
     if (original === undefined) delete process.env.RECEIPTS_TABLE;

@@ -131,7 +131,8 @@ function getMessages(event: unknown): WaveScoreRefreshMessage[] {
         }[];
       }
     ).Records.map((record) => {
-      const message = parseMessageBody(String(record.body ?? '{}'));
+      const body = typeof record.body === 'string' ? record.body : '{}';
+      const message = parseMessageBody(body);
       return {
         ...message,
         automaticRetry: record.eventSource === 'aws:sqs',
