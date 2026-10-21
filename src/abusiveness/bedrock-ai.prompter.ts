@@ -68,6 +68,9 @@ class BedrockAiPrompter implements AiPrompter {
       )
     );
     const reply = parseBedrockAnthropicReply(response.body);
+    if (reply.stopReason === 'max_tokens') {
+      throw new Error('Abusiveness classifier response was truncated');
+    }
     if (!reply.text) {
       throw new Error(`Unexpected response from Bedrock: ${reply.raw}`);
     }
