@@ -105,7 +105,7 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
        left join ${COMPETITION_DECISIONS_TABLE} decision on decision.id=award.decision_id and decision.competition_id=award.competition_id
        left join ${COMPETITION_DECISION_WINNERS_TABLE} winner on winner.decision_id=award.decision_id and winner.competition_id=award.competition_id and winner.entry_id=award.entry_id
        WHERE award.competition_id=:competitionId AND ${competitionEntryVisibleSql('e')}
-       ${entryIds ? 'AND award.entry_id in (:entryIds) AND award.decision_id=e.decision_id' : ''}
+       ${entryIds ? "AND award.entry_id in (:entryIds) AND (e.status='ACTIVE' OR award.decision_id=e.decision_id)" : ''}
        ORDER BY coalesce(decision.scheduled_at,award.created_at),winner.\`rank\`,e.drop_id,award.outcome_position,award.id ${entryIds ? '' : 'LIMIT :offset,:limit'}`,
       { competitionId: record.id, offset, limit, entryIds },
       ctx

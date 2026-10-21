@@ -3,8 +3,7 @@ import { GetCompetitionEntryContextsV3Request } from '@/api/generated/routes/ope
 import { ApiCompetitionEntryContextPage } from '@/api/generated/models/ApiCompetitionEntryContextPage';
 import { ApiCompetitionEntry } from '@/api/generated/models/ApiCompetitionEntry';
 import { ApiCompetitionDropVoteSummary } from '@/api/generated/models/ApiCompetitionDropVoteSummary';
-import { ApiCompetitionAward } from '@/api/generated/models/ApiCompetitionAward';
-import { getAuthenticationContext } from '@/api/auth/auth';
+import { toApiCompetitionAward } from './competition-award.mapper';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { competitionService } from '@/competitions/competition.service';
@@ -13,9 +12,11 @@ import { competitionInteractionRepository } from '@/competitions/competition-int
 import { competitionEntrySummaryDb } from '@/competitions/competition-entry-summary.db';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { dropsDb } from '@/drops/drops.db';
-import { RequestContext } from '@/request.context';
-import { Timer } from '@/time';
-import { toApiCompetition, toApiEntryPage } from './competitions-v3.handlers';
+import {
+  getContext,
+  toApiCompetition,
+  toApiEntryPage
+} from './competitions-v3.handlers';
 
 type BatchSummary = Awaited<ReturnType<typeof competitionEntrySummaryDb.read>>;
 type Profiles = Awaited<ReturnType<typeof identityFetcher.getOverviewsByIds>>;
@@ -66,6 +67,7 @@ export async function handleGetCompetitionEntryContextsV3(
   );
   const { entry_ids } = getValidatedByJoiOrThrow(
     req.query,
+    // 50 canonical UUIDs plus 49 commas. The array schema validates each ID.
     Joi.object<{ entry_ids: string }>({
       entry_ids: Joi.string().min(1).max(1849).required()
     }).unknown(false)
@@ -81,10 +83,7 @@ export async function handleGetCompetitionEntryContextsV3(
         .required()
     })
   );
-  const ctx: RequestContext = {
-    timer: Timer.getFromRequest(req),
-    authenticationContext: await getAuthenticationContext(req)
-  };
+  const ctx = await getContext(req);
   const competition = await competitionService.getCompetition(
     wave_id,
     competition_id,
@@ -147,9 +146,9 @@ export async function handleGetCompetitionEntryContextsV3(
     data: page.data.map((entry) => {
       return {
         entry,
-        awards: awards.filter(
-          (award) => award.entry_id === entry.id
-        ) as ApiCompetitionAward[],
+        awards: awards
+          .filter((award) => award.entry_id === entry.id)
+          .map(toApiCompetitionAward),
         vote_summary: voteSummary(
           entry,
           competition.decisions.time_lock_ms,

@@ -32,6 +32,9 @@ jest.mock('@/drops/drops.db', () => ({
   dropsDb: { getDropsByIds: jest.fn() }
 }));
 jest.mock('./competitions-v3.handlers', () => ({
+  getContext: async () => ({
+    authenticationContext: { getActingAsId: () => 'viewer' }
+  }),
   toApiCompetition: (value: unknown) => value,
   toApiEntryPage: async (value: unknown) => value
 }));
@@ -106,7 +109,7 @@ it('does not read membership after a parent access denial', async () => {
   );
   expect(competitionRepository.findNativeEntriesByIds).not.toHaveBeenCalled();
 });
-it.each(['not-a-uuid', `${entryId},${entryId}`, ''])(
+it.each(['not-a-uuid', `${entryId},${entryId}`, '', `${entryId},`])(
   'rejects invalid or duplicate entry identifiers %s',
   async (ids) => {
     await expect(

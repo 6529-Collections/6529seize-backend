@@ -42,6 +42,12 @@ export class CompetitionEntrySummaryDb extends LazyDbAccessCompatibleService {
     viewer: string | null,
     ctx: RequestContext
   ) {
+    if (!entryIds.length)
+      return {
+        totals: new Map<string, EntryTotal>(),
+        scores: new Map<string, EntryScore>(),
+        voters: [] as EntryVoter[]
+      };
     const params = { competitionId, entryIds, viewer };
     const options = { wrappedConnection: ctx.connection };
     const [totals, scores, voters] = await Promise.all([

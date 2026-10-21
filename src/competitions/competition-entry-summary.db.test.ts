@@ -92,6 +92,13 @@ describeWithSeed(
     const batch = new CompetitionEntrySummaryDb(() => sqlExecutor);
     const single = new CompetitionDropVotesDb(() => sqlExecutor);
     const repository = new CompetitionRepository(() => sqlExecutor);
+    it('handles an empty batch without issuing invalid SQL', async () => {
+      expect(await batch.read('competition', [], null, {})).toEqual({
+        totals: new Map(),
+        scores: new Map(),
+        voters: []
+      });
+    });
     it('matches individual current and at-decision vote reads including missing and zero snapshots', async () => {
       const result = await batch.read(
         'competition',

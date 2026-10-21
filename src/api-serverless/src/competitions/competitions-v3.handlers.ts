@@ -225,7 +225,7 @@ const VotersQuerySchema: Joi.ObjectSchema<VotersQuery> =
     .unknown(false)
     .required();
 
-async function getContext(
+export async function getContext(
   req: Parameters<typeof getAuthenticationContext>[0]
 ): Promise<RequestContext> {
   const timer = Timer.getFromRequest(req);
