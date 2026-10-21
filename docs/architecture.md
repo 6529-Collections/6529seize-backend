@@ -53,10 +53,11 @@ nearest voting end or next decision, with open-ended votes last. This endpoint
 does not assert that the current viewer can vote, and does not filter by joined,
 pinned or recommendation status.
 
-The endpoint reads existing wave/decision tables without a new cache, worker or
-migration. Deploy the API before frontend clients that use active-vote discovery.
-The additive competition foundation does not change this endpoint's legacy
-voting source of truth.
+The endpoint retains its wave-shaped original-primary contract. Compatibility
+projections read native configuration and decisions for native original owners;
+only genuine legacy owners retain their preparation fallback. The same projection
+names remain valid across the final native-only switch. Siblings do not enter
+this wave-shaped discovery contract.
 
 ## Joined wave snapshot pagination
 
@@ -1249,7 +1250,35 @@ schema → message consumers → workers → API → frontend rollout and the na
 kill switches. No new Lambda or queue is introduced; all new features remain
 disabled by default.
 
-Legacy migration is explicitly invoked one wave UUID at a time. Additive migration
+Runtime-retirement preparation adds independent native AGGREGATE and VOTER
+score observations, retained vote-event attribution, shared Activity scope and
+weighted snapshot publication markers. Existing writers retain physical mirrors
+while writing exact source IDs into native history. Bounded explicit history
+preparation preserves raw observations and parentless distribution children in
+the existing native domain; ordinary schema maintenance never transfers history.
+Original settings, pauses and identity consolidation use native authority during
+the rolling overlap. Original Settings applies its rule policy under the owner
+lock before saving: credit rules freeze after native or not-yet-copied voter
+history, while permitted title and presentation edits remain available. Native
+credit revocation discovers each competition's
+current voter namespace, including siblings, and reads its native budget under
+its owner lock; only legacy owners use physical allocation selection. Curation
+watch processing locks competition owners before watches and selects ACTIVE
+entries with the explicit CURATION capability, independently of retained drop
+categories. Trusted content permits identify the competition before entry insert;
+shared chat and orphan watch rows cannot acquire membership or resolve a native
+decision. Native decision receipts/outboxes and primary winner/history mirrors
+remain active during preparation. Deploy and drain `artCurationNftWatchLoop`,
+`tdhLoop`, `overRatesRevocationLoop`, `helpBotReplyLoop` and API preparation before
+any final writer stops mirroring. Historical GET readers initially use passthrough history
+views so the final view switch also reaches in-flight prepared API invocations.
+The migration Lambda is inert with reserved concurrency zero. Its resources and
+all legacy schema entities remain registered. No Lambda or queue is added. See
+the [preparation runbook](./legacy-competition-migration-runbook.md) for deployment
+order and the explicit copy/parity gate. The following migration details describe
+the retained historical implementation and are not instructions to invoke it.
+
+Legacy migration was explicitly invoked one wave UUID at a time. Additive migration
 entities hold durable stage/keyset checkpoints, source/applied watermarks and
 comparison reports. Transactional triggers journal accepted competition/content
 changes under the owner lock; APIs, maintenance/identity merges and actual worker

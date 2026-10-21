@@ -6,6 +6,7 @@ import { ApiWaveCreditType } from '@/api/generated/models/ApiWaveCreditType';
 import { ApiWaveCreditScope } from '@/api/generated/models/ApiWaveCreditScope';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { waveApiService } from '@/api/waves/wave.api.service';
 import {
   administerCompetitionWave,
@@ -27,6 +28,14 @@ jest.mock('@/competitions/competition.repository', () => ({
 }));
 jest.mock('@/competitions/native-competition-runtime.repository', () => ({
   nativeCompetitionRuntimeRepository: { enqueueEvent: jest.fn() }
+}));
+jest.mock('@/competitions/native-competition.reader', () => ({
+  NativeCompetitionReader: jest.fn().mockImplementation(() => ({
+    getCompetition: jest.fn().mockResolvedValue({ id: 'competition' })
+  }))
+}));
+jest.mock('@/competitions/native-competition-runtime.service', () => ({
+  nativeCompetitionRuntimeService: { enqueueDueTransitions: jest.fn() }
 }));
 jest.mock('./competition-command-access', () => ({
   requireNativeWrites: jest.fn(),
@@ -176,6 +185,16 @@ it.each([
         event_type: 'COMPETITION_UPDATED'
       }),
       expect.anything()
+    );
+    expect(
+      nativeCompetitionRuntimeService.enqueueDueTransitions
+    ).toHaveBeenCalledWith({ id: 'competition' }, expect.any(Number), {});
+    expect(
+      jest.mocked(nativeCompetitionRuntimeService.enqueueDueTransitions).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      jest.mocked(competitionCommandRepository.saveCompetition).mock
+        .invocationCallOrder[0]
     );
   }
 );

@@ -4,6 +4,8 @@ import {
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
   COMPETITION_VOTES_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
+  DROP_REAL_VOTE_IN_TIME_TABLE,
+  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   COMPETITION_ENTRY_RUNTIME_TABLE,
   CONTENT_MODERATION_ITEMS_TABLE,
   COMPETITION_LEADERBOARD_ENTRIES_TABLE,
@@ -200,12 +202,22 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
   ): Promise<void> {
     if (!ctx.connection)
       throw new Error('Entry deletion requires a transaction');
+    // Keep accepted history attributable after membership disappears. Public
+    // content reads still require the live entry; signed revisions stay stored.
+    await this.rows(
+      'retainVoteHistoryContext',
+      `update ${COMPETITION_VOTE_HISTORY_TABLE} history
+       join ${COMPETITION_ENTRIES_TABLE} entry on entry.id=history.entry_id
+       set history.drop_id=coalesce(history.drop_id,entry.drop_id),
+         history.submitter_id=coalesce(history.submitter_id,entry.submitter_id)
+       where entry.id=:entryId and (history.drop_id is null or history.submitter_id is null)`,
+      { entryId },
+      ctx
+    );
     for (const table of [
       COMPETITION_LEADERBOARD_ENTRIES_TABLE,
       COMPETITION_VOTES_TABLE,
-      COMPETITION_VOTE_HISTORY_TABLE,
-      COMPETITION_ENTRY_RUNTIME_TABLE,
-      COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE
+      COMPETITION_ENTRY_RUNTIME_TABLE
     ]) {
       await this.rows(
         'deleteEntryData',
@@ -220,6 +232,36 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
       { entryId },
       ctx
     );
+  }
+
+  public async voteHistoryReset(
+    competitionId: string,
+    entryId: string,
+    ctx: RequestContext
+  ): Promise<{
+    vote_history_sequence: number;
+    aggregate_history_sequence: number;
+    voter_history_sequence: number;
+  }> {
+    const [row] = await this.rows<{
+      vote_history_sequence: number;
+      aggregate_history_sequence: number;
+      voter_history_sequence: number;
+    }>(
+      'voteHistoryReset',
+      `select (select coalesce(max(sequence),0) from ${COMPETITION_VOTE_HISTORY_TABLE} where competition_id=:competitionId and entry_id=:entryId) as vote_history_sequence,
+       (select coalesce(max(h.id),0) from ${DROP_REAL_VOTE_IN_TIME_TABLE} h join ${COMPETITION_ENTRIES_TABLE} e
+        on e.drop_id=h.drop_id and e.wave_id=h.wave_id where e.competition_id=:competitionId and e.id=:entryId) as aggregate_history_sequence,
+       (select coalesce(max(h.id),0) from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} h join ${COMPETITION_ENTRIES_TABLE} e
+        on e.drop_id=h.drop_id and e.wave_id=h.wave_id where e.competition_id=:competitionId and e.id=:entryId) as voter_history_sequence`,
+      { competitionId, entryId },
+      ctx
+    );
+    return {
+      vote_history_sequence: Number(row?.vote_history_sequence ?? 0),
+      aggregate_history_sequence: Number(row?.aggregate_history_sequence ?? 0),
+      voter_history_sequence: Number(row?.voter_history_sequence ?? 0)
+    };
   }
 
   public async saveContent(

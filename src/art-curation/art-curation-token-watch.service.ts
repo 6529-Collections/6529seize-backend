@@ -16,7 +16,7 @@ import {
 } from '@/entities/IArtCurationTokenWatch';
 import { DropType } from '@/entities/IDrop';
 import { WaveDecisionWinnerPrize } from '@/entities/IWaveDecision';
-import { WaveEntity } from '@/entities/IWave';
+import { WaveEntity, WaveType } from '@/entities/IWave';
 import { env } from '@/env';
 import { Logger } from '@/logging';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
@@ -32,6 +32,16 @@ import { dropsDb, DropsDb } from '@/drops/drops.db';
 import { DropRealVoterVoteInTimeEntityWithoutId } from '@/entities/IDropRealVoterVoteInTime';
 import { WinnerDropVoterVoteEntity } from '@/entities/IWinnerDropVoterVote';
 import { dropVotingDb, DropVotingDb } from '@/api/drops/drop-voting.db';
+
+import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
+import { competitionRepository } from '@/competitions/competition.repository';
+import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
+import { competitionExecutionRouter } from '@/competitions/competition-execution.router';
+import {
+  CompetitionCapability,
+  CompetitionLifecycle
+} from '@/entities/ICompetition';
 
 const EMPTY_PRIZES: WaveDecisionWinnerPrize[] = [];
 
@@ -52,23 +62,106 @@ export class ArtCurationTokenWatchService {
     return !!configuredWaveId && configuredWaveId === waveId;
   }
 
+  private async canRegisterDrop(
+    dropId: string,
+    waveId: string,
+    dropType: DropType,
+    competitionId: string | undefined,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    if (dropType !== DropType.PARTICIPATORY) return false;
+    if (competitionId) return this.isNativeCuration(competitionId, waveId, ctx);
+    const entries = await competitionEntryRepository.lockDropMemberships(
+      dropId,
+      ctx
+    );
+    for (const entry of entries) {
+      if (
+        entry.wave_id === waveId &&
+        entry.status === 'ACTIVE' &&
+        (await this.isNativeCuration(entry.competition_id, waveId, ctx))
+      )
+        return true;
+    }
+    return (
+      this.isEnabledForWave(waveId) &&
+      competitionExecutionRouter.shouldUseLegacyWaveExecution(waveId, ctx)
+    );
+  }
+
+  private async isNativeCuration(
+    competitionId: string,
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const record = await competitionRepository.findCompetitionRecordById(
+      competitionId,
+      ctx
+    );
+    if (record?.storage_mode !== 'NATIVE' || record.wave_id !== waveId)
+      return false;
+    return (
+      await competitionRepository.findCapabilities(competitionId, ctx)
+    ).includes(CompetitionCapability.CURATION);
+  }
+
+  private async lockWatchOwners(waveId: string, ctx: RequestContext) {
+    const records = await competitionRepository.listCompetitionRecordsForWave(
+      waveId,
+      ctx
+    );
+    const nativeCompetitionIds: string[] = [];
+    for (const record of [...records].sort((a, b) =>
+      a.id.localeCompare(b.id)
+    )) {
+      const competition =
+        await nativeCompetitionRuntimeRepository.lockCompetition(
+          record.id,
+          ctx
+        );
+      if (
+        competition?.capabilities.includes(CompetitionCapability.CURATION) &&
+        competition.lifecycle === CompetitionLifecycle.PUBLISHED &&
+        competitionExecutionRouter.isNativeExecutionAllowed(competition)
+      )
+        nativeCompetitionIds.push(competition.id);
+    }
+    return {
+      nativeCompetitionIds,
+      legacyOwner:
+        await competitionExecutionRouter.shouldUseLegacyWaveExecution(
+          waveId,
+          ctx
+        )
+    };
+  }
+
   public async registerDrop(
     {
       dropId,
       waveId,
       dropType,
+      competitionId,
       links
     }: {
       dropId: string;
       waveId: string;
       dropType: DropType;
+      competitionId?: string;
       links: DropNftLinkInsertModel[];
     },
     ctx: RequestContext
   ): Promise<void> {
-    if (!this.isEnabledForWave(waveId) || dropType !== DropType.PARTICIPATORY) {
+    if (
+      !(await this.canRegisterDrop(
+        dropId,
+        waveId,
+        dropType,
+        competitionId,
+        ctx
+      ))
+    )
       return;
-    }
     const previousWatchLink = await this.artCurationTokenWatchDb.findByDropId(
       dropId,
       ctx
@@ -259,6 +352,11 @@ export class ArtCurationTokenWatchService {
         timer: ctx.timer,
         connection
       };
+      // Match entry commands' competition-before-watch lock order.
+      const { nativeCompetitionIds, legacyOwner } = await this.lockWatchOwners(
+        watch.wave_id,
+        txCtx
+      );
       const lockedWatch = await this.artCurationTokenWatchDb.findByIdForUpdate(
         watch.id,
         txCtx
@@ -266,21 +364,61 @@ export class ArtCurationTokenWatchService {
       if (lockedWatch?.status !== ArtCurationTokenWatchStatus.ACTIVE) {
         return;
       }
-      const dropIds =
-        await this.artCurationTokenWatchDb.findTrackedParticipatoryDropIds(
-          watch.id,
-          txCtx
-        );
-      if (!dropIds.length) {
-        await this.artCurationTokenWatchDb.cancel(watch.id, txCtx);
-        return;
-      }
       const wave = await this.dropsDb.findWaveByIdOrNull(
         lockedWatch.wave_id,
         connection
       );
       if (!wave) {
-        await this.artCurationTokenWatchDb.cancel(watch.id, txCtx);
+        await this.artCurationTokenWatchDb.unlock(watch.id, txCtx);
+        return;
+      }
+      const nativeDropIds = nativeCompetitionIds.length
+        ? await this.artCurationTokenWatchDb.findTrackedNativeParticipatoryDropIds(
+            watch.id,
+            nativeCompetitionIds,
+            txCtx
+          )
+        : [];
+      const dropIds =
+        legacyOwner &&
+        this.isEnabledForWave(wave.id) &&
+        wave.type !== WaveType.CHAT
+          ? await this.artCurationTokenWatchDb.findTrackedParticipatoryDropIds(
+              watch.id,
+              txCtx
+            )
+          : [];
+      if (!nativeDropIds.length && !dropIds.length) {
+        // A native owner never resolves an orphan through stale physical state.
+        await this.artCurationTokenWatchDb.unlock(watch.id, txCtx);
+        return;
+      }
+      for (const competitionId of nativeCompetitionIds) {
+        if (
+          !(await nativeCompetitionRuntimeService.resolveCurationEntries(
+            competitionId,
+            nativeDropIds,
+            event.timestampMs,
+            `curation:${watch.id}:${event.txHash}:${event.logIndex}`,
+            txCtx
+          ))
+        ) {
+          await this.artCurationTokenWatchDb.unlock(watch.id, txCtx);
+          return;
+        }
+      }
+      if (!dropIds.length) {
+        await this.dropsDb.resyncParticipatoryDropCountsForWaves(
+          [wave.id],
+          txCtx
+        );
+        await this.completeWatch(
+          lockedWatch,
+          event,
+          transferPrice,
+          nativeDropIds.length,
+          txCtx
+        );
         return;
       }
       await this.convertDropsToWinnersForTrigger(
@@ -347,6 +485,16 @@ export class ArtCurationTokenWatchService {
     await this.waveDecisionsDb.deleteDropsRanks(dropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([wave.id], ctx);
     await this.dropVotingDb.deleteStaleLeaderboardEntriesForWave(wave.id, ctx);
+    await this.completeWatch(watch, event, transferPrice, dropIds.length, ctx);
+  }
+
+  private async completeWatch(
+    watch: ArtCurationTokenWatchEntity,
+    event: ArtCurationTokenTransferEvent,
+    transferPrice: ArtCurationTokenTransferPrice,
+    dropCount: number,
+    ctx: RequestContext
+  ): Promise<void> {
     await this.artCurationTokenWatchDb.markResolved(
       {
         watchId: watch.id,
@@ -362,7 +510,7 @@ export class ArtCurationTokenWatchService {
       ctx
     );
     this.logger.info(
-      `Resolved Art Curation watch ${watch.id} for ${dropIds.length} drops`
+      `Resolved Art Curation watch ${watch.id} for ${dropCount} drops`
     );
   }
 

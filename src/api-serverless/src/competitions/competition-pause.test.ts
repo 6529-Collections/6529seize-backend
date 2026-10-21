@@ -3,11 +3,15 @@ import { competitionLifecycleService } from './competition-lifecycle.service';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import {
   administerCompetitionWave,
   lockNativeCompetition
 } from './competition-command-access';
 
+jest.mock('./competition-command-configuration', () => ({
+  loadNativeCommandConfiguration: jest.fn().mockResolvedValue({})
+}));
 jest.mock('@/api/identities/identity.fetcher', () => ({ identityFetcher: {} }));
 jest.mock('@/api/waves/wave.api.service', () => ({
   waveApiService: { validateNativeCompetitionConfiguration: jest.fn() }
@@ -23,6 +27,14 @@ jest.mock('@/competitions/competition.repository', () => ({
 }));
 jest.mock('@/competitions/native-competition-runtime.repository', () => ({
   nativeCompetitionRuntimeRepository: { enqueueEvent: jest.fn() }
+}));
+jest.mock('@/competitions/native-competition.reader', () => ({
+  NativeCompetitionReader: jest.fn().mockImplementation(() => ({
+    getCompetition: jest.fn().mockResolvedValue({ id: 'competition' })
+  }))
+}));
+jest.mock('@/competitions/native-competition-runtime.service', () => ({
+  nativeCompetitionRuntimeService: { enqueueDueTransitions: jest.fn() }
 }));
 jest.mock('./competition-command-access', () => ({
   requireNativeWrites: jest.fn(),
@@ -117,6 +129,9 @@ it('persists the trimmed reason in pause and lifecycle history', async () => {
     expect.anything()
   );
   expect(nativeCompetitionRuntimeRepository.enqueueEvent).toHaveBeenCalled();
+  expect(
+    nativeCompetitionRuntimeService.enqueueDueTransitions
+  ).toHaveBeenCalledWith({ id: 'competition' }, expect.any(Number), {});
 });
 
 it('allows resuming without another reason and keeps the original pause record', async () => {

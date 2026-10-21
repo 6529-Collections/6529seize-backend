@@ -58,7 +58,7 @@ function legacy(
     additional_data_2: wave,
     proxy_id: 'proxy',
     type,
-    created_at: new Date(time).toISOString().slice(0, 23).replace('T', ' '),
+    created_at: new Date(time),
     contents
   };
 }
@@ -126,6 +126,94 @@ describeWithSeed(
         'legacy-old'
       ]);
       expect(await list(8, 2)).toEqual([]);
+    });
+
+    it('merges raw driver-decoded shared dates and exact native milliseconds before bounded pagination', async () => {
+      await sqlExecutor.execute(
+        `DELETE FROM ${COMPETITION_VOTE_HISTORY_TABLE}`
+      );
+      await sqlExecutor.execute(`DELETE FROM ${PROFILES_ACTIVITY_LOGS_TABLE}`);
+      const logs = ['legacy-a', 'legacy-z', `${competitionId}:33`];
+      for (const id of logs) {
+        await sqlExecutor.execute(
+          `INSERT INTO ${PROFILES_ACTIVITY_LOGS_TABLE}
+           (id,competition_id,profile_id,target_id,additional_data_1,additional_data_2,proxy_id,type,created_at,contents)
+           VALUES (:id,:competitionId,'voter','drop-entry','submitter',:waveId,'proxy','DROP_VOTE_EDIT',
+             '2025-08-09 12:14:22',:contents)`,
+          { id, competitionId, waveId, contents: JSON.stringify(contents) }
+        );
+      }
+      const [source] = await sqlExecutor.execute<{ created_at: string }>(
+        `SELECT created_at FROM ${PROFILES_ACTIVITY_LOGS_TABLE} WHERE id='legacy-a'`
+      );
+      // This is the unchanged wave-log reader's actual DATETIME acquisition,
+      // not an inferred pairing to a native event or a SQL session timezone.
+      const sharedTime = new Date(source.created_at).getTime();
+      expect(sharedTime).toBe(new Date('2025-08-09T12:14:22').getTime());
+      const nativeRows = [
+        native(31, sharedTime + 1000),
+        native(32, sharedTime - 1000),
+        native(33, sharedTime + 2234)
+      ];
+      await sqlExecutor.bulkInsert(
+        COMPETITION_VOTE_HISTORY_TABLE,
+        nativeRows,
+        Object.keys(nativeRows[0]),
+        {}
+      );
+      const page = (offset: number, limit: number) =>
+        repository.listTransferred(
+          competitionId,
+          waveId,
+          null,
+          offset,
+          limit,
+          {}
+        );
+      const actual = [];
+      for (const offset of [0, 2, 4]) actual.push(...(await page(offset, 2)));
+      expect(
+        actual.map((row) => row.legacy_id ?? Number(row.sequence))
+      ).toEqual([33, 31, 'legacy-z', 'legacy-a', 32]);
+      expect(actual.map((row) => Number(row.occurred_at))).toEqual([
+        sharedTime + 2234,
+        sharedTime + 1000,
+        sharedTime,
+        sharedTime,
+        sharedTime - 1000
+      ]);
+      expect(actual.filter((row) => Number(row.sequence) === 33)).toHaveLength(
+        1
+      );
+      expect(await page(5, 2)).toEqual([]);
+    });
+
+    it('retains an unknown shared timestamp as null after every dated activity', async () => {
+      const log = {
+        ...legacy('unknown-time', transferredAt),
+        created_at: null
+      };
+      await sqlExecutor.bulkInsert(
+        PROFILES_ACTIVITY_LOGS_TABLE,
+        [{ ...log, contents: JSON.stringify(log.contents) }],
+        Object.keys(log),
+        {}
+      );
+      const rows = await repository.listTransferred(
+        competitionId,
+        waveId,
+        null,
+        0,
+        50,
+        {}
+      );
+      const retained = {
+        legacy_id: 'unknown-time',
+        legacy_created_at: null,
+        occurred_at: null
+      };
+      expect(rows[rows.length - 1]).toMatchObject(retained);
+      expect((await list(0, 50)).pop()).toMatchObject(retained);
     });
 
     it('preserves original adjustment contents, proxy, author and deleted-drop references', async () => {
