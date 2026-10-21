@@ -1,4 +1,5 @@
 import * as tables from '@/constants';
+import { createHash } from 'node:crypto';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
@@ -134,7 +135,7 @@ describeWithSeed(
       expect(await prepareWaveHubConfiguration(sqlExecutor)).toEqual({
         waves: 2,
         archives: 2,
-        capture_triggers: 10
+        capture_triggers: 14
       });
       await installLegacyCompetitionGetFacade(sqlExecutor);
       for (const wave of waves)
@@ -152,18 +153,144 @@ describeWithSeed(
         ]);
     });
 
-    it.each(['{}', '[]', '"null"'])(
-      'still rejects non-null Chat decision strategy %s',
-      async (strategy) => {
-        await sqlExecutor.execute(
-          `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=CAST(:strategy AS JSON) WHERE id=:id`,
-          { strategy, id: old.id }
+    it('stores the same explicit null policy member for bulk-prepared and trigger-written SQL-null strategies', async () => {
+      await prepareWaveHubConfiguration(sqlExecutor);
+      const inserted = { ...old, id: 'a-sql-null-trigger', serial_no: 3 };
+      const fields = Object.keys(inserted).filter(
+        (field) => !field.startsWith('hub_')
+      );
+      await sqlExecutor.bulkInsert(tables.WAVES_TABLE, [inserted], fields, {});
+      const archive = {
+        ...inserted,
+        archive_id: 301,
+        archival_entry_created_at: 1800000000000
+      };
+      await sqlExecutor.bulkInsert(
+        tables.WAVES_ARCHIVE_TABLE,
+        [archive],
+        [
+          ...fields.filter((field) => field !== 'next_decision_time'),
+          'archive_id',
+          'archival_entry_created_at'
+        ],
+        {}
+      );
+      const prepared = (await livePolicy(old.id)).voting;
+      expect(prepared).toHaveProperty('decision_strategy', null);
+      expect((await livePolicy(inserted.id)).voting).toEqual(prepared);
+      const snapshot = await sqlExecutor.oneOrNull<{ voting: string }>(
+        `SELECT hub_voting_config AS voting FROM ${tables.WAVES_ARCHIVE_TABLE} WHERE archive_id=301`
+      );
+      expect(JSON.parse(snapshot!.voting)).toEqual(prepared);
+      await installLegacyCompetitionGetFacade(sqlExecutor);
+      const repository = new WavesApiDb(() => sqlExecutor);
+      for (const id of [old.id, inserted.id])
+        expect(
+          (await repository.findWaveById(id))?.decisions_strategy
+        ).toBeNull();
+    });
+
+    it('retains typed Chat and DM strategy values and their archive snapshots through native preparation', async () => {
+      await prepareWaveHubConfiguration(sqlExecutor);
+      const previousCaptures = await sqlExecutor.execute<{
+        name: string;
+        body: string;
+      }>(
+        "SELECT TRIGGER_NAME AS name,ACTION_STATEMENT AS body FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=database() AND TRIGGER_NAME LIKE 'temporary_wave_hub_configuration_%' AND TRIGGER_NAME NOT LIKE 'temporary_wave_hub_configuration_strategy_%' ORDER BY TRIGGER_NAME"
+      );
+      expect(previousCaptures).toHaveLength(10);
+      // Recorded against the actually deployed predecessor before this fix.
+      expect(
+        createHash('sha256')
+          .update(
+            JSON.stringify(
+              previousCaptures.map((row) => ({
+                ...row,
+                body: row.body.replace(/\s+/g, ' ').trim()
+              }))
+            )
+          )
+          .digest('hex')
+      ).toBe(
+        'b341562030dc77438c3ce485a62b0b0bcfb11c3b3f17602dd7f2141ece8e7e47'
+      );
+      const overlays = await sqlExecutor.execute<{ name: string }>(
+        "SELECT TRIGGER_NAME AS name FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=database() AND TRIGGER_NAME LIKE 'temporary_wave_hub_configuration_strategy_%'"
+      );
+      for (const overlay of overlays) {
+        expect(overlay.name).toMatch(
+          /^temporary_wave_hub_configuration_strategy_(wave|archive)_(insert|update)$/
         );
-        await expect(prepareWaveHubConfiguration(sqlExecutor)).rejects.toThrow(
-          '"field":"decisions_strategy","count":1'
-        );
+        await sqlExecutor.execute(`DROP TRIGGER \`${overlay.name}\``);
       }
-    );
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=JSON_REMOVE(hub_voting_config,'$.decision_strategy')`
+      );
+      const strategy = {
+        first_decision_time: 1712345678999,
+        subsequent_decisions: [12345, 67890],
+        is_rolling: true
+      };
+      const repository = new WavesApiDb(() => sqlExecutor);
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=CAST(:strategy AS JSON)`,
+        { strategy: JSON.stringify(strategy) }
+      );
+      const archives = [old, second].map((wave, index) => ({
+        ...wave,
+        archive_id: index + 201,
+        archival_entry_created_at: 1800000000000,
+        decisions_strategy: JSON.stringify(strategy)
+      }));
+      await sqlExecutor.bulkInsert(
+        tables.WAVES_ARCHIVE_TABLE,
+        archives,
+        Object.keys(archives[0]).filter(
+          (field) => !field.startsWith('hub_') && field !== 'next_decision_time'
+        ),
+        {}
+      );
+      for (const wave of [old, second])
+        expect(
+          (await repository.findWaveById(wave.id))?.decisions_strategy
+        ).toEqual(strategy);
+      await prepareWaveHubConfiguration(sqlExecutor);
+      for (const wave of [old, second])
+        expect((await livePolicy(wave.id)).voting.decision_strategy).toEqual(
+          strategy
+        );
+      const snapshots = await sqlExecutor.execute<{
+        policy: string;
+        source: string;
+      }>(
+        `SELECT hub_voting_config AS policy,decisions_strategy AS source FROM ${tables.WAVES_ARCHIVE_TABLE} ORDER BY archive_id`
+      );
+      for (const snapshot of snapshots) {
+        expect(JSON.parse(snapshot.policy).decision_strategy).toEqual(strategy);
+        expect(JSON.parse(snapshot.source)).toEqual(strategy);
+      }
+      await installLegacyCompetitionGetFacade(sqlExecutor);
+      for (const wave of [old, second])
+        expect(
+          (await repository.findWaveById(wave.id))?.decisions_strategy
+        ).toEqual(strategy);
+    });
+
+    it.each([
+      '{}',
+      '[]',
+      '"null"',
+      '{"first_decision_time":1,"subsequent_decisions":["not-an-integer"],"is_rolling":true}',
+      '{"first_decision_time":1,"subsequent_decisions":[],"is_rolling":true,"extra":1}'
+    ])('still rejects non-null Chat decision strategy %s', async (strategy) => {
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=CAST(:strategy AS JSON) WHERE id=:id`,
+        { strategy, id: old.id }
+      );
+      await expect(prepareWaveHubConfiguration(sqlExecutor)).rejects.toThrow(
+        '"field":"decisions_strategy","count":1'
+      );
+    });
 
     it.each([
       {
@@ -205,6 +332,17 @@ describeWithSeed(
         expect(
           (await repository.findWaveById(old.id))?.decisions_strategy
         ).toEqual(strategy);
+        // An existing explicit native value is never overwritten by preparation.
+        await sqlExecutor.execute(
+          `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=:policy WHERE id=:id`,
+          {
+            id: old.id,
+            policy: JSON.stringify({
+              ...waveHubConfigurationFromWave(old).voting,
+              decision_strategy: null
+            })
+          }
+        );
         const message = await prepareWaveHubConfiguration(sqlExecutor).then(
           () => {
             throw new Error('Expected non-null strategy parity rejection');
@@ -231,6 +369,114 @@ describeWithSeed(
         expect(message).not.toContain('987654321');
       }
     );
+
+    it('preserves and clears strategies across old and native writers, rejecting new malformed writes atomically', async () => {
+      const strategy = {
+        first_decision_time: 1712345678999,
+        subsequent_decisions: [3600000],
+        is_rolling: false
+      };
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=CAST(:strategy AS JSON) WHERE id=:id`,
+        { id: old.id, strategy: JSON.stringify(strategy) }
+      );
+      await prepareWaveHubConfiguration(sqlExecutor);
+      // The original parent capture replaces its policy from changed old fields.
+      // The ordered overlay must preserve the separately owned strategy member.
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET voting_period_end=1712349999999 WHERE id=:id`,
+        { id: old.id }
+      );
+      expect((await livePolicy(old.id)).voting.decision_strategy).toEqual(
+        strategy
+      );
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=JSON_SET(hub_voting_config,'$.decision_strategy',CAST('null' AS JSON)) WHERE id=:id`,
+        { id: old.id }
+      );
+      expect(
+        await sqlExecutor.oneOrNull(
+          `SELECT decisions_strategy FROM ${tables.WAVES_TABLE} WHERE id=:id`,
+          { id: old.id }
+        )
+      ).toEqual({ decisions_strategy: null });
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=CAST(:strategy AS JSON) WHERE id=:id`,
+        { id: old.id, strategy: JSON.stringify(strategy) }
+      );
+      await expect(
+        sqlExecutor.execute(
+          `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=CAST('"null"' AS JSON) WHERE id=:id`,
+          { id: old.id }
+        )
+      ).rejects.toThrow(
+        'Shared hub decision strategy has an unsupported shape'
+      );
+      await expect(
+        sqlExecutor.execute(
+          `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=JSON_SET(hub_voting_config,'$.decision_strategy',JSON_ARRAY()) WHERE id=:id`,
+          { id: old.id }
+        )
+      ).rejects.toThrow(
+        'Native hub decision strategy has an unsupported shape'
+      );
+      expect((await livePolicy(old.id)).voting.decision_strategy).toEqual(
+        strategy
+      );
+      expect(
+        JSON.parse(
+          (await sqlExecutor.oneOrNull<{ strategy: string }>(
+            `SELECT decisions_strategy AS strategy FROM ${tables.WAVES_TABLE} WHERE id=:id`,
+            { id: old.id }
+          ))!.strategy
+        )
+      ).toEqual(strategy);
+      expect(await assertWaveHubConfigurationParity(sqlExecutor)).toEqual({
+        waves: 2,
+        archives: 0
+      });
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=NULL WHERE id=:id`,
+        { id: old.id }
+      );
+      expect((await livePolicy(old.id)).voting.decision_strategy).toBeNull();
+    });
+
+    it('treats missing additive strategies as null after retirement and validates only current typed values', async () => {
+      await prepareWaveHubConfiguration(sqlExecutor);
+      await installLegacyCompetitionGetFacade(sqlExecutor);
+      await finalizeWaveHubConfigurationCapture(sqlExecutor);
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=JSON_REMOVE(hub_voting_config,'$.decision_strategy'),decisions_strategy=JSON_OBJECT('obsolete','ignored') WHERE id=:id`,
+        { id: old.id }
+      );
+      expect(
+        (await new WavesApiDb(() => sqlExecutor).findWaveById(old.id))
+          ?.decisions_strategy
+      ).toBeNull();
+      expect(await finalizeWaveHubConfigurationCapture(sqlExecutor)).toEqual({
+        disabled_triggers: 0
+      });
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=JSON_SET(hub_voting_config,'$.decision_strategy',JSON_ARRAY()) WHERE id=:id`,
+        { id: old.id }
+      );
+      try {
+        await expect(
+          finalizeWaveHubConfigurationCapture(sqlExecutor)
+        ).rejects.toThrow(
+          '"field":"hub_voting_config.decision_strategy","count":1'
+        );
+      } finally {
+        await sqlExecutor.execute(
+          `UPDATE ${tables.WAVES_TABLE} SET hub_voting_config=JSON_REMOVE(hub_voting_config,'$.decision_strategy') WHERE id=:id`,
+          { id: old.id }
+        );
+      }
+      await expect(prepareWaveHubConfiguration(sqlExecutor)).rejects.toThrow(
+        'no longer permitted'
+      );
+    });
 
     it('captures old parent/child writes behind bounded cursors, retains each archive ID, and matches full frozen CHAT/DM projection primitives', async () => {
       const batches: number[] = [];
@@ -293,7 +539,7 @@ describeWithSeed(
           );
         }
       });
-      expect(result).toEqual({ waves: 3, archives: 1, capture_triggers: 10 });
+      expect(result).toEqual({ waves: 3, archives: 1, capture_triggers: 14 });
       expect(batches.every((rows) => rows === 1)).toBe(true);
       expect(await livePolicy('a-new-old-api-hub')).toMatchObject({
         participation: { terms: 'Résumé 二' },
@@ -380,6 +626,40 @@ describeWithSeed(
         { id: 'a-new-old-api-hub', participation_terms: 'Résumé 二' }
       ]);
       expect(await filter(legacyGetView(tables.WAVES_TABLE))).toEqual(matched);
+    });
+
+    it('never rewrites contradictory source voting fields while adding a missing strategy member', async () => {
+      const strategy = {
+        first_decision_time: 1712345678999,
+        subsequent_decisions: [],
+        is_rolling: false
+      };
+      const policy = {
+        ...waveHubConfigurationFromWave(old).voting,
+        credit_category: 'private-native-voting-value'
+      };
+      delete policy.decision_strategy;
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=CAST(:strategy AS JSON),hub_voting_config=CAST(:policy AS JSON) WHERE id=:id`,
+        {
+          id: old.id,
+          strategy: JSON.stringify(strategy),
+          policy: JSON.stringify(policy)
+        }
+      );
+      await expect(prepareWaveHubConfiguration(sqlExecutor)).rejects.toThrow(
+        '"field":"voting_credit_category","count":1'
+      );
+      expect(
+        await sqlExecutor.oneOrNull(
+          `SELECT voting_credit_category FROM ${tables.WAVES_TABLE} WHERE id=:id`,
+          { id: old.id }
+        )
+      ).toEqual({ voting_credit_category: 'null' });
+      expect((await livePolicy(old.id)).voting).toMatchObject({
+        credit_category: 'private-native-voting-value',
+        decision_strategy: strategy
+      });
     });
 
     it('preserves explicit native policy writes and emits only field/count diagnostics for contradictory source parity', async () => {
@@ -577,6 +857,37 @@ describeWithSeed(
       });
     });
 
+    it('rejects an inverted strategy capture order before dropping any capture', async () => {
+      await prepareWaveHubConfiguration(sqlExecutor);
+      await installLegacyCompetitionGetFacade(sqlExecutor);
+      const name = 'temporary_wave_hub_configuration_strategy_wave_update';
+      const parent = 'temporary_wave_hub_configuration_wave_update';
+      const stored = await sqlExecutor.oneOrNull<{ body: string }>(
+        'SELECT ACTION_STATEMENT AS body FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=database() AND TRIGGER_NAME=:name',
+        { name }
+      );
+      await sqlExecutor.execute(`DROP TRIGGER ${name}`);
+      await sqlExecutor.execute(
+        `CREATE TRIGGER ${name} BEFORE UPDATE ON ${tables.WAVES_TABLE} FOR EACH ROW PRECEDES ${parent} ${stored!.body}`
+      );
+      try {
+        await expect(
+          finalizeWaveHubConfigurationCapture(sqlExecutor)
+        ).rejects.toThrow(
+          'Unrecognized temporary shared-hub configuration capture order'
+        );
+        const row = await sqlExecutor.oneOrNull<{ remaining: number }>(
+          "SELECT COUNT(*) AS remaining FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=database() AND TRIGGER_NAME LIKE 'temporary_wave_hub_configuration_%'"
+        );
+        expect(Number(row!.remaining)).toBe(14);
+      } finally {
+        await sqlExecutor.execute(`DROP TRIGGER ${name}`);
+        await sqlExecutor.execute(
+          `CREATE TRIGGER ${name} BEFORE UPDATE ON ${tables.WAVES_TABLE} FOR EACH ROW FOLLOWS ${parent} ${stored!.body}`
+        );
+      }
+    });
+
     it('validates the entire temporary namespace, finalizes idempotently, and never imports sources after native cutover', async () => {
       await prepareWaveHubConfiguration(sqlExecutor);
       await expect(
@@ -603,7 +914,7 @@ describeWithSeed(
       const [{ count }] = await sqlExecutor.execute<{ count: number }>(
         "SELECT count(*) AS count FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=database() AND TRIGGER_NAME LIKE 'temporary_wave_hub_configuration_%'"
       );
-      expect(Number(count)).toBe(11);
+      expect(Number(count)).toBe(15);
       await sqlExecutor.execute(
         'DROP TRIGGER temporary_wave_hub_configuration_unrecognized'
       );
@@ -626,15 +937,15 @@ describeWithSeed(
         }>(
           "SELECT count(*) AS remaining FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=database() AND TRIGGER_NAME LIKE 'temporary_wave_hub_configuration_%'"
         );
-        expect(Number(remaining)).toBe(10);
+        expect(Number(remaining)).toBe(14);
       } finally {
         await sqlExecutor.execute(`DROP TRIGGER ${captureName}`);
         await sqlExecutor.execute(
-          `CREATE TRIGGER ${captureName} BEFORE UPDATE ON ${tables.WAVES_TABLE} FOR EACH ROW ${original!.body}`
+          `CREATE TRIGGER ${captureName} BEFORE UPDATE ON ${tables.WAVES_TABLE} FOR EACH ROW PRECEDES temporary_wave_hub_configuration_strategy_wave_update ${original!.body}`
         );
       }
       expect(await finalizeWaveHubConfigurationCapture(sqlExecutor)).toEqual({
-        disabled_triggers: 10
+        disabled_triggers: 14
       });
       expect(await finalizeWaveHubConfigurationCapture(sqlExecutor)).toEqual({
         disabled_triggers: 0

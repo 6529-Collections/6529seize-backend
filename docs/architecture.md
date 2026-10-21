@@ -1098,12 +1098,18 @@ RANK/APPROVE wave types remain schema-compatible and do not block hub updates.
 Shared CHAT participation and voting settings are live typed policies in
 `waves.hub_participation_config` and `waves.hub_voting_config`. They preserve
 independent nullable roles, credit settings, periods, signatures, required
-content, terms and retained credit-NFT tuples. Current hub creation, editing and
-reading own these policies; `waves_archive` holds their corresponding snapshots.
+content, terms, retained credit-NFT tuples and existing typed decision-strategy
+metadata. Strategy metadata preserves current GETs and explicit clearing; it does
+not enroll a competition or enable CHAT decision execution. Current hub creation,
+editing and reading own these policies; `waves_archive` holds their snapshots.
 Original competition configuration continues to own original competition GETs.
 Explicit bounded preparation verifies retained policy parity. Temporary capture
-keeps prepared-version writes atomic during rollout; finalization disables its
-complete registry after the native API is healthy and old invocations drain.
+keeps prepared-version writes atomic during rollout. Four ordered strategy
+overlays extend the original ten capture bodies without replacing them;
+finalization validates body and dependency order before disabling the fourteen
+recognized captures. Already-retired policies missing the additive nullable
+strategy member mean null and never reimport obsolete physical values. This
+finalization occurs after the native API is healthy and old invocations drain.
 
 Permanent unversioned/v2 wave/drop GETs use explicit native-backed compatibility
 views. Their ownership is the immutable `legacy_wave_id=wave_id` original primary,

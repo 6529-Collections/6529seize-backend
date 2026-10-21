@@ -1,6 +1,7 @@
 import type {
   ParticipationRequiredMedia,
   WaveBaseType,
+  WaveDecisionStrategy,
   WaveCreditScope,
   WaveCreditType,
   WaveIdentitySubmissionDuplicates,
@@ -26,6 +27,9 @@ export interface NativeWaveHubParticipationConfig {
 }
 
 export interface NativeWaveHubVotingConfig {
+  /** Current hub metadata, including existing CHAT strategies exposed by GETs.
+   * Missing in policies written before this additive field means null. */
+  readonly decision_strategy?: WaveDecisionStrategy | null;
   readonly group_id: string | null;
   readonly credit_type: WaveCreditType;
   readonly credit_scope: WaveCreditScope;
@@ -72,6 +76,7 @@ type ConfigurationSource = Pick<
   WaveBaseType,
   | keyof typeof WAVE_HUB_PARTICIPATION_FIELDS
   | keyof typeof WAVE_HUB_VOTING_FIELDS
+  | 'decisions_strategy'
 > & {
   readonly voting_credit_nfts?:
     | readonly {
@@ -110,6 +115,7 @@ export function waveHubConfigurationFromWave(wave: ConfigurationSource): {
       terms: wave.participation_terms
     },
     voting: {
+      decision_strategy: wave.decisions_strategy,
       group_id: wave.voting_group_id,
       credit_type: wave.voting_credit_type,
       credit_scope: wave.voting_credit_scope,
