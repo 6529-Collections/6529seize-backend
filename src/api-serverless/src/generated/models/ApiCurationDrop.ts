@@ -25,6 +25,7 @@ import { ApiDropSubscriptionTargetAction } from '../models/ApiDropSubscriptionTa
 import { ApiDropType } from '../models/ApiDropType';
 import { ApiDropViewerModerationContext } from '../models/ApiDropViewerModerationContext';
 import { ApiDropWinningContext } from '../models/ApiDropWinningContext';
+import { ApiMemeCollaboratorProfile } from '../models/ApiMemeCollaboratorProfile';
 import { ApiMentionedWave } from '../models/ApiMentionedWave';
 import { ApiProfileMin } from '../models/ApiProfileMin';
 import { ApiReplyToDropResponse } from '../models/ApiReplyToDropResponse';
@@ -81,6 +82,7 @@ export class ApiCurationDrop {
     'hide_link_preview': boolean;
     'poll'?: ApiDropPoll;
     'nft_links'?: Array<ApiDropNftLink>;
+    'collaborators'?: Array<ApiMemeCollaboratorProfile>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -295,6 +297,12 @@ export class ApiCurationDrop {
             "name": "nft_links",
             "baseName": "nft_links",
             "type": "Array<ApiDropNftLink>",
+            "format": ""
+        },
+        {
+            "name": "collaborators",
+            "baseName": "collaborators",
+            "type": "Array<ApiMemeCollaboratorProfile>",
             "format": ""
         }    ];
 

@@ -1,7 +1,6 @@
 import {
   withLegacyPrimaryMutation,
-  reconcileAcceptedLegacySettings,
-  applyAcceptedLegacyPause
+  reconcileAcceptedLegacySettings
 } from '@/competitions/legacy-competition-mutation';
 import { competitionHistoryRepository } from '@/competitions/competition-history.repository';
 import { waveGroupIds } from '@/waves/wave-group-ids';
@@ -166,7 +165,7 @@ export class WaveApiService {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly createOrUpdateDrop: CreateOrUpdateDropUseCase,
     private readonly dropsMappers: DropsMappers,
-    private readonly dropVotingService: DropVotingService,
+    _dropVotingService: DropVotingService,
     private readonly reactionsService: ReactionsService,
     private readonly userNotifier: UserNotifier,
     private readonly identityFetcher: IdentityFetcher,
@@ -441,46 +440,6 @@ export class WaveApiService {
     }
   }
 
-  private shouldClearApproveThresholdState({
-    request,
-    waveBeforeUpdate
-  }: {
-    request: ApiUpdateWaveRequest;
-    waveBeforeUpdate: Pick<
-      WaveEntity,
-      | 'type'
-      | 'winning_min_threshold'
-      | 'winning_threshold_min_duration_ms'
-      | 'time_lock_ms'
-    >;
-  }): boolean {
-    if (waveBeforeUpdate.type !== WaveType.APPROVE) {
-      return false;
-    }
-    const previousWinningThreshold = numbers.parseIntOrNull(
-      waveBeforeUpdate.winning_min_threshold
-    );
-    const requestedWinningThreshold = numbers.parseIntOrNull(
-      request.wave.winning_threshold
-    );
-    const previousMinDuration =
-      numbers.parseIntOrNull(
-        waveBeforeUpdate.winning_threshold_min_duration_ms
-      ) ?? 0;
-    const requestedMinDuration =
-      numbers.parseIntOrNull(request.wave.winning_threshold_min_duration_ms) ??
-      0;
-    const previousTimeLock = numbers.parseIntOrNull(
-      waveBeforeUpdate.time_lock_ms
-    );
-    const requestedTimeLock = numbers.parseIntOrNull(request.wave.time_lock_ms);
-    return (
-      previousWinningThreshold !== requestedWinningThreshold ||
-      previousMinDuration !== requestedMinDuration ||
-      previousTimeLock !== requestedTimeLock
-    );
-  }
-
   private assertChangedDecisionStrategyStartsInFuture({
     request,
     waveBeforeUpdate,
@@ -550,59 +509,6 @@ export class WaveApiService {
     return this.calculateNextDecisionTimeRelativeToNow(
       waveUpdateTime,
       requestedDecisionStrategy
-    );
-  }
-
-  private async insertWaveOutcomes(
-    waveId: string,
-    request: ApiCreateNewWave,
-    ctx: RequestContextWithConnection
-  ): Promise<void> {
-    const outcomeEntities: WaveOutcomeEntity[] = [];
-    const distributionItemEntities: WaveOutcomeDistributionItemEntity[] = [];
-    for (
-      let outcomeIndex = 0;
-      outcomeIndex < request.outcomes.length;
-      outcomeIndex++
-    ) {
-      const apiOutcome = request.outcomes[outcomeIndex];
-      if (!apiOutcome) continue;
-      const waveOutcomePosition = outcomeIndex + 1;
-      outcomeEntities.push({
-        wave_id: waveId,
-        type: enums.resolveOrThrow(WaveOutcomeType, apiOutcome.type),
-        subtype: apiOutcome.subtype
-          ? enums.resolveOrThrow(WaveOutcomeSubType, apiOutcome.subtype)
-          : null,
-        description: apiOutcome.description,
-        credit: apiOutcome.credit
-          ? enums.resolveOrThrow(WaveOutcomeCredit, apiOutcome.credit)
-          : null,
-        rep_category: apiOutcome.rep_category ?? null,
-        amount: apiOutcome.amount ?? null,
-        wave_outcome_position: waveOutcomePosition
-      });
-      const apiDistributionItems = apiOutcome.distribution ?? [];
-      for (
-        let distributionIndex = 0;
-        distributionIndex < apiDistributionItems.length;
-        distributionIndex++
-      ) {
-        const apiDistributionItem = apiDistributionItems[distributionIndex];
-        if (!apiDistributionItem) continue;
-        distributionItemEntities.push({
-          amount: numbers.parseIntOrNull(apiDistributionItem.amount),
-          description: apiDistributionItem.description ?? null,
-          wave_outcome_position: waveOutcomePosition,
-          wave_outcome_distribution_item_position: distributionIndex + 1,
-          wave_id: waveId
-        });
-      }
-    }
-    await this.wavesApiDb.insertOutcomes(outcomeEntities, ctx);
-    await this.wavesApiDb.insertOutcomeDistributionItems(
-      distributionItemEntities,
-      ctx
     );
   }
 
@@ -678,11 +584,6 @@ export class WaveApiService {
             isDirectMessage
           });
           await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
-          await this.insertWaveOutcomes(
-            id,
-            createWaveRequest,
-            ctxWithConnection
-          );
           const {
             drop_id: descriptionDropId,
             pending_push_notification_ids,
@@ -867,46 +768,32 @@ export class WaveApiService {
     ctx: RequestContext,
     reason?: string
   ): Promise<ApiWave> {
+    const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
+    await this.assertProposedPauseValidForAddOrUpdate(wave, model, ctx);
     await this.withWaveSettingsTransaction(
       async (connection) =>
-        withLegacyPrimaryMutation(
-          waveId,
-          { ...ctx, connection },
-          async (nativeOwner) => {
-            const current = await this.assertUserAllowedToModifyPauses(
-              { ...ctx, connection },
-              waveId
-            );
-            await this.assertProposedPauseValidForAddOrUpdate(current, model, {
-              ...ctx,
-              connection
-            });
-            if (nativeOwner) {
-              await applyAcceptedLegacyPause(
-                nativeOwner,
-                {
-                  id: model.id ?? null,
-                  startTime: model.start_time,
-                  endTime: model.end_time,
-                  ...(reason === undefined ? {} : { reason })
-                },
-                { ...ctx, connection }
-              );
-            } else {
-              if (model.id)
-                await this.wavesApiDb.deletePause(model.id, connection);
-              await this.wavesApiDb.insertPause(
-                {
-                  startTime: model.start_time,
-                  endTime: model.end_time,
-                  waveId,
-                  ...(reason === undefined ? {} : { reason })
-                },
-                connection
-              );
-            }
+        withLegacyPrimaryMutation(waveId, { ...ctx, connection }, async () => {
+          const current = await this.assertUserAllowedToModifyPauses(
+            { ...ctx, connection },
+            waveId
+          );
+          await this.assertProposedPauseValidForAddOrUpdate(current, model, {
+            ...ctx,
+            connection
+          });
+          if (model.id) {
+            await this.wavesApiDb.deletePause(waveId, model.id, connection);
           }
-        ),
+          await this.wavesApiDb.insertPause(
+            {
+              startTime: model.start_time,
+              endTime: model.end_time,
+              waveId,
+              ...(reason === undefined ? {} : { reason })
+            },
+            connection
+          );
+        }),
       ctx
     );
     if (!ctx.connection) await giveReadReplicaTimeToCatchUp();
@@ -924,29 +811,21 @@ export class WaveApiService {
     pauseId: number,
     ctx: RequestContext
   ): Promise<ApiWave> {
+    const wave = await this.assertUserAllowedToModifyPauses(ctx, waveId);
+    await this.assertProposedPauseValidForDeletion(wave, pauseId, ctx);
     await this.withWaveSettingsTransaction(
       async (connection) =>
-        withLegacyPrimaryMutation(
-          waveId,
-          { ...ctx, connection },
-          async (nativeOwner) => {
-            const current = await this.assertUserAllowedToModifyPauses(
-              { ...ctx, connection },
-              waveId
-            );
-            await this.assertProposedPauseValidForDeletion(current, pauseId, {
-              ...ctx,
-              connection
-            });
-            if (nativeOwner)
-              await applyAcceptedLegacyPause(
-                nativeOwner,
-                { id: pauseId },
-                { ...ctx, connection }
-              );
-            else await this.wavesApiDb.deletePause(pauseId, connection);
-          }
-        ),
+        withLegacyPrimaryMutation(waveId, { ...ctx, connection }, async () => {
+          const current = await this.assertUserAllowedToModifyPauses(
+            { ...ctx, connection },
+            waveId
+          );
+          await this.assertProposedPauseValidForDeletion(current, pauseId, {
+            ...ctx,
+            connection
+          });
+          await this.wavesApiDb.deletePause(waveId, pauseId, connection);
+        }),
       ctx
     );
     if (!ctx.connection) await giveReadReplicaTimeToCatchUp();
@@ -2213,13 +2092,10 @@ export class WaveApiService {
       ),
       profileWavesDb.deleteByWaveId(waveId, ctx),
       this.curationsDb.deleteDropCurationsByWaveId(waveId, ctx),
-      this.dropVotingService.deleteVoteByWave(waveId, ctx),
       this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctx),
       this.wavesApiDb.deleteWaveMetrics(waveId, ctx),
       this.wavesApiDb.deleteWave(waveId, ctx),
       this.curationsDb.deleteWaveCurationsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteWaveOutcomes(waveId, ctx),
-      this.wavesApiDb.deleteWaveOutcomeDistributionItems(waveId, ctx),
       this.wavesApiDb.deleteDropRelations(waveId, ctx),
       this.wavesApiDb.deleteBoosts(waveId, ctx),
       waveMetadataDb.deleteByWaveId(waveId, ctx),
@@ -2361,6 +2237,15 @@ export class WaveApiService {
               groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
               ctx: ctxWithConnection
             });
+            // The public original-primary projection contains competition
+            // rules. Its separately owned shared hub policy must survive this
+            // shared-row replacement without copying those rules into it.
+            const preservedHubConfiguration = nativeOwner
+              ? await this.wavesApiDb.findWaveHubConfigurationForUpdate(
+                  waveId,
+                  ctxWithConnection
+                )
+              : undefined;
             await this.wavesApiDb.deleteWave(waveId, ctxWithConnection);
             const waveUpdateTime = Time.currentMillis();
             const updatedEntity =
@@ -2382,7 +2267,13 @@ export class WaveApiService {
                 existingWaveSettings: waveBeforeUpdate
               });
 
-            await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
+            await this.wavesApiDb.insertWave(
+              updatedEntity,
+              ctxWithConnection,
+              preservedHubConfiguration
+                ? { preserveHubConfigurationFrom: preservedHubConfiguration }
+                : undefined
+            );
             if (nativeOwner)
               await reconcileAcceptedLegacySettings(
                 nativeOwner,
@@ -2392,17 +2283,6 @@ export class WaveApiService {
                 ctxWithConnection
               );
 
-            if (
-              this.shouldClearApproveThresholdState({
-                request,
-                waveBeforeUpdate
-              })
-            ) {
-              await this.dropVotingService.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
-                waveId,
-                ctxWithConnection
-              );
-            }
             await this.metricsRecorder.recordActiveIdentity(
               { identityId: authenticatedProfileId },
               ctxWithConnection

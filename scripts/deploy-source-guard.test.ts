@@ -316,7 +316,11 @@ describe('generated deployment source guard', () => {
         'claims-media-upload',
         'nft-link-page-retry',
         'market-depth-publication-lock',
-        'competition-history-preparation'
+        'competition-history-preparation',
+        'competition-runtime-schema',
+        'competition-runtime-retirement',
+        'wave-hub-configuration-preparation',
+        'wave-hub-configuration-finalize'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
@@ -346,6 +350,24 @@ describe('generated deployment source guard', () => {
       ).toBe(1);
     }
   );
+
+  it.each([
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize'
+  ])('limits %s to explicit schema service dispatches', (scope) => {
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'dbMigrationsLoop',
+        DB_SCHEMA_SCOPE: scope
+      }).status
+    ).toBe(0);
+    expect(
+      validateDispatch(sourceSha, 'staging', {
+        INPUT_SERVICE: 'api',
+        DB_SCHEMA_SCOPE: scope
+      }).status
+    ).toBe(1);
+  });
 
   it('restricts NFT retry scope to dbMigrationsLoop before credentials', () => {
     expect(

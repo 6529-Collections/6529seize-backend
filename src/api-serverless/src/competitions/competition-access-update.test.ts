@@ -1,3 +1,7 @@
+jest.mock('@/competitions/native-competition-runtime.service', () => ({
+  nativeCompetitionRuntimeService: { enqueueDueTransitions: jest.fn() }
+}));
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionLifecycleService } from './competition-lifecycle.service';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
@@ -6,7 +10,6 @@ import { ApiWaveCreditType } from '@/api/generated/models/ApiWaveCreditType';
 import { ApiWaveCreditScope } from '@/api/generated/models/ApiWaveCreditScope';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
-import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { waveApiService } from '@/api/waves/wave.api.service';
 import {
   administerCompetitionWave,
@@ -29,14 +32,6 @@ jest.mock('@/competitions/competition.repository', () => ({
 jest.mock('@/competitions/native-competition-runtime.repository', () => ({
   nativeCompetitionRuntimeRepository: { enqueueEvent: jest.fn() }
 }));
-jest.mock('@/competitions/native-competition.reader', () => ({
-  NativeCompetitionReader: jest.fn().mockImplementation(() => ({
-    getCompetition: jest.fn().mockResolvedValue({ id: 'competition' })
-  }))
-}));
-jest.mock('@/competitions/native-competition-runtime.service', () => ({
-  nativeCompetitionRuntimeService: { enqueueDueTransitions: jest.fn() }
-}));
 jest.mock('./competition-command-access', () => ({
   requireNativeWrites: jest.fn(),
   administerCompetitionWave: jest.fn(),
@@ -56,6 +51,7 @@ jest.mock('@/competitions/competition-command.repository', () => ({
     ) => action({}),
     getConfiguration: jest.fn(),
     hasActivity: jest.fn(),
+    clearApprovalThresholds: jest.fn(),
     saveCompetition: jest.fn(),
     replaceOutcomeDefinitions: jest.fn()
   }
@@ -105,7 +101,8 @@ const record = {
   wave_id: 'wave',
   lifecycle: 'PUBLISHED',
   config_version: 4,
-  decision_config: progress
+  decision_config: progress,
+  winner_config: { winning_max_threshold: 12345 }
 };
 const update = (config: ApiCompetitionDraftInput) =>
   competitionLifecycleService.update(
@@ -131,7 +128,9 @@ beforeEach(() => {
   jest
     .mocked(administerCompetitionWave)
     .mockResolvedValue({ wave: { id: 'wave' } } as never);
-  jest.mocked(lockNativeCompetition).mockResolvedValue({ record } as never);
+  jest
+    .mocked(lockNativeCompetition)
+    .mockResolvedValue({ record, competition: { id: 'competition' } } as never);
   jest
     .mocked(competitionCommandRepository.getConfiguration)
     .mockResolvedValue(original);
@@ -166,7 +165,8 @@ it.each([
           group_id: 'new-participants'
         }),
         voting_config: expect.objectContaining({ group_id: null }),
-        decision_config: progress
+        decision_config: progress,
+        winner_config: expect.objectContaining({ winning_max_threshold: 12345 })
       }),
       'admin',
       expect.anything(),
@@ -185,16 +185,6 @@ it.each([
         event_type: 'COMPETITION_UPDATED'
       }),
       expect.anything()
-    );
-    expect(
-      nativeCompetitionRuntimeService.enqueueDueTransitions
-    ).toHaveBeenCalledWith({ id: 'competition' }, expect.any(Number), {});
-    expect(
-      jest.mocked(nativeCompetitionRuntimeService.enqueueDueTransitions).mock
-        .invocationCallOrder[0]
-    ).toBeLessThan(
-      jest.mocked(competitionCommandRepository.saveCompetition).mock
-        .invocationCallOrder[0]
     );
   }
 );
@@ -243,4 +233,53 @@ it('retains the stale-version guard', async () => {
     .mockRejectedValue(new Error('Version conflict'));
   await expect(update(original)).rejects.toThrow('Version conflict');
   expect(competitionCommandRepository.saveCompetition).not.toHaveBeenCalled();
+});
+
+it('allows approval threshold and hold edits after voting while preserving pending decisions and old phase delivery', async () => {
+  const config = {
+    ...original,
+    rules: {
+      ...original.rules,
+      type: ApiCompetitionRulesInputTypeEnum.Approve,
+      winning_threshold: 100,
+      winning_threshold_min_duration_ms: 1000
+    }
+  };
+  jest
+    .mocked(competitionCommandRepository.getConfiguration)
+    .mockResolvedValue(config);
+  await update({
+    ...config,
+    rules: {
+      ...config.rules,
+      winning_threshold: 200,
+      winning_threshold_min_duration_ms: 2000
+    }
+  });
+  expect(competitionCommandRepository.saveCompetition).toHaveBeenCalledWith(
+    expect.objectContaining({
+      decision_config: expect.objectContaining({
+        ...progress,
+        winning_min_threshold: 200,
+        winning_threshold_min_duration_ms: 2000
+      }),
+      winner_config: expect.objectContaining({ winning_max_threshold: 12345 })
+    }),
+    'admin',
+    expect.anything(),
+    expect.anything()
+  );
+  expect(
+    competitionCommandRepository.clearApprovalThresholds
+  ).toHaveBeenCalledWith('competition', {});
+  expect(
+    nativeCompetitionRuntimeService.enqueueDueTransitions
+  ).toHaveBeenCalledWith({ id: 'competition' }, expect.any(Number), {});
+  expect(
+    jest.mocked(nativeCompetitionRuntimeService.enqueueDueTransitions).mock
+      .invocationCallOrder[0]
+  ).toBeLessThan(
+    jest.mocked(competitionCommandRepository.saveCompetition).mock
+      .invocationCallOrder[0]
+  );
 });

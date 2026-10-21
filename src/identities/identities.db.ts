@@ -7,7 +7,6 @@ import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
-  COMPETITIONS_TABLE,
   DROP_BOOSTS_TABLE,
   DROPS_TABLE,
   ENS_TABLE,
@@ -1352,16 +1351,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         drop_id: string;
       }>(
         `
-      select legacy_drop.author_id as profile_id, legacy_drop.id as drop_id from ${dropsTable} legacy_drop
-      where legacy_drop.author_id in (:profileIds) and legacy_drop.wave_id = :mainStageWaveId
-        and legacy_drop.drop_type = '${DropType.PARTICIPATORY}'
-        ${
-          dropsTable === DROPS_TABLE
-            ? `and not exists(select 1 from ${COMPETITIONS_TABLE} original
-          where original.storage_mode='NATIVE' and original.legacy_wave_id=legacy_drop.wave_id
-            and original.wave_id=legacy_drop.wave_id)`
-            : ''
-        }
+      select author_id as profile_id, id as drop_id from ${dropsTable} where author_id in (:profileIds) and wave_id = :mainStageWaveId
+      and drop_type = '${DropType.PARTICIPATORY}'
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('ACTIVE')}) native_entry
       where submitter_id in (:profileIds)
       `,
@@ -1403,16 +1394,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         drop_id: string;
       }>(
         `
-      select legacy_drop.author_id as profile_id, legacy_drop.id as drop_id from ${dropsTable} legacy_drop
-      where legacy_drop.author_id in (:profileIds) and legacy_drop.wave_id = :mainStageWaveId
-        and legacy_drop.drop_type = '${DropType.WINNER}'
-        ${
-          dropsTable === DROPS_TABLE
-            ? `and not exists(select 1 from ${COMPETITIONS_TABLE} original
-          where original.storage_mode='NATIVE' and original.legacy_wave_id=legacy_drop.wave_id
-            and original.wave_id=legacy_drop.wave_id)`
-            : ''
-        }
+      select author_id as profile_id, id as drop_id from ${dropsTable} where author_id in (:profileIds) and wave_id = :mainStageWaveId
+      and drop_type = '${DropType.WINNER}'
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('WINNER')}) native_entry
       where submitter_id in (:profileIds)
       `,

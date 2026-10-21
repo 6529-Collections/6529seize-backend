@@ -1,3 +1,4 @@
+import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
 import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
 import { ForbiddenException } from '@/exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
@@ -51,8 +52,21 @@ export class DropCheeringService {
         return withLegacyPrimaryMutation(
           initial.wave_id,
           { ...ctx, connection },
-          async () => {
+          async (originalPrimary) => {
             const dropId = param.drop_id;
+            const memberships =
+              await competitionEntryRepository.findDropEntries(dropId, {
+                ...ctx,
+                connection
+              });
+            if (
+              memberships.some(
+                (entry) => entry.competition_id !== originalPrimary?.id
+              )
+            )
+              throw new ForbiddenException(
+                'Vote through the competition entry'
+              );
             const dropEntity =
               await this.dropsDb.findDropByIdWithEligibilityCheck(
                 dropId,

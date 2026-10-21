@@ -1,3 +1,4 @@
+import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import {
   DROP_QUICKVOTE_SKIPS_TABLE,
   DROPS_TABLE,
@@ -23,8 +24,8 @@ export class WaveQuickVoteDb extends LazyDbAccessCompatibleService {
 
   private getUnvotedDropsSql(): string {
     return `
-      FROM ${DROPS_TABLE} d
-      LEFT JOIN ${DROP_VOTER_STATE_TABLE} dvs
+      FROM ${legacyGetView(DROPS_TABLE)} d
+      LEFT JOIN ${legacyGetView(DROP_VOTER_STATE_TABLE)} dvs
         ON dvs.drop_id = d.id
        AND dvs.wave_id = :wave_id
        AND dvs.voter_id = :identity_id
@@ -36,8 +37,8 @@ export class WaveQuickVoteDb extends LazyDbAccessCompatibleService {
 
   private getUndiscoveredDropsSql(): string {
     return `
-      FROM ${DROPS_TABLE} d
-      LEFT JOIN ${DROP_VOTER_STATE_TABLE} dvs
+      FROM ${legacyGetView(DROPS_TABLE)} d
+      LEFT JOIN ${legacyGetView(DROP_VOTER_STATE_TABLE)} dvs
         ON dvs.drop_id = d.id
        AND dvs.wave_id = :wave_id
        AND dvs.voter_id = :identity_id
@@ -54,8 +55,8 @@ export class WaveQuickVoteDb extends LazyDbAccessCompatibleService {
 
   private getSkippedUnvotedDropsSql(): string {
     return `
-      FROM ${DROPS_TABLE} d
-      LEFT JOIN ${DROP_VOTER_STATE_TABLE} dvs
+      FROM ${legacyGetView(DROPS_TABLE)} d
+      LEFT JOIN ${legacyGetView(DROP_VOTER_STATE_TABLE)} dvs
         ON dvs.drop_id = d.id
        AND dvs.wave_id = :wave_id
        AND dvs.voter_id = :identity_id

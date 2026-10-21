@@ -4,12 +4,12 @@ import {
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
   COMPETITION_VOTES_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
-  DROP_REAL_VOTE_IN_TIME_TABLE,
-  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
+  COMPETITION_SCORE_HISTORY_TABLE,
   COMPETITION_ENTRY_RUNTIME_TABLE,
   CONTENT_MODERATION_ITEMS_TABLE,
   COMPETITION_LEADERBOARD_ENTRIES_TABLE,
   COMPETITIONS_TABLE,
+  COMPETITION_OUTBOX_TABLE,
   DROPS_TABLE,
   DROPS_PARTS_TABLE,
   DROP_MEDIA_TABLE,
@@ -65,6 +65,113 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async findNominationCompetitionIds(
+    profileIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    if (!profileIds.length) return [];
+    const rows = await this.rows<{ id: string }>(
+      'findNominationCompetitionIds',
+      `select distinct c.id from ${COMPETITIONS_TABLE} c join ${COMPETITION_ENTRIES_TABLE} e on e.competition_id=c.id
+       join ${DROP_METADATA_TABLE} metadata on metadata.drop_id=e.drop_id and metadata.data_key='identity'
+       where c.storage_mode='NATIVE' and json_unquote(json_extract(c.participation_config,'$.submission_type'))='IDENTITY'
+         and e.status in ('ACTIVE','WINNER') and metadata.data_value in (:profileIds) order by c.id`,
+      { profileIds },
+      ctx
+    );
+    return rows.map((row) => row.id);
+  }
+
+  public async rewriteNominationProfile(
+    competitionId: string,
+    source: string,
+    target: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.rows(
+      'rewriteNominationProfile',
+      `update ${DROP_METADATA_TABLE} metadata join ${COMPETITION_ENTRIES_TABLE} e on e.drop_id=metadata.drop_id
+       set metadata.data_value=:target where e.competition_id=:competitionId and e.status='ACTIVE'
+       and metadata.data_key='identity' and metadata.data_value=:source`,
+      { competitionId, source, target },
+      ctx
+    );
+  }
+
+  public async listNominations(
+    competitionId: string,
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<
+    Array<{
+      drop_id: string;
+      author_id: string;
+      wave_id: string;
+      nominated_profile_id: string;
+      created_at: number;
+      serial_no: number;
+      has_won: boolean;
+    }>
+  > {
+    const rows = await this.rows<{
+      drop_id: string;
+      author_id: string;
+      wave_id: string;
+      nominated_profile_id: string;
+      created_at: number;
+      serial_no: number;
+      has_won: boolean;
+    }>(
+      'listNominations',
+      `select e.drop_id,e.submitter_id as author_id,e.wave_id,metadata.data_value as nominated_profile_id,e.submitted_at as created_at,d.serial_no,e.status='WINNER' as has_won
+       from ${COMPETITION_ENTRIES_TABLE} e join ${DROPS_TABLE} d on d.id=e.drop_id
+       join ${DROP_METADATA_TABLE} metadata on metadata.drop_id=e.drop_id and metadata.data_key='identity'
+       where e.competition_id=:competitionId and e.status in ('ACTIVE','WINNER') and metadata.data_value=:profileId
+       order by e.submitted_at,d.serial_no,e.id`,
+      { competitionId, profileId },
+      ctx
+    );
+    return rows.map((row) => ({
+      ...row,
+      created_at: Number(row.created_at),
+      serial_no: Number(row.serial_no),
+      has_won: Boolean(row.has_won)
+    }));
+  }
+
+  public async nominationTallies(
+    dropIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<
+    Record<string, { tally: number; total_number_of_voters: number }>
+  > {
+    if (!dropIds.length) return {};
+    const rows = await this.rows<{
+      drop_id: string;
+      tally: number;
+      total_number_of_voters: number;
+    }>(
+      'nominationTallies',
+      `select e.drop_id,sum(v.value) as tally,count(distinct v.voter_profile_id) as total_number_of_voters
+       from ${COMPETITION_ENTRIES_TABLE} e join ${COMPETITION_VOTES_TABLE} v on v.competition_id=e.competition_id and v.entry_id=e.id
+       where e.drop_id in (:dropIds) and e.status='ACTIVE' and v.value<>0 group by e.drop_id`,
+      { dropIds },
+      ctx
+    );
+    return Object.fromEntries(
+      dropIds.map((dropId) => {
+        const row = rows.find((item) => item.drop_id === dropId);
+        return [
+          dropId,
+          {
+            tally: Number(row?.tally ?? 0),
+            total_number_of_voters: Number(row?.total_number_of_voters ?? 0)
+          }
+        ];
+      })
+    );
+  }
+
   public async findDropEntries(
     dropId: string,
     ctx: RequestContext
@@ -80,7 +187,7 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
     const rows = await withoutLegacyCompetitionGetFacade(() =>
       this.rows<NativeDropEntry>(
         'findDropEntries',
-        `select e.*, c.legacy_wave_id is not null and exists(select 1 from ${DROPS_TABLE} d where d.id=e.drop_id and d.drop_type in ('PARTICIPATORY','WINNER')) as legacy_origin, exists(select 1 from ${COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} v where v.entry_id=e.id and v.signature is not null) as signed
+        `select e.*, c.legacy_wave_id is not null and not exists(select 1 from ${COMPETITION_OUTBOX_TABLE} event where event.competition_id=c.id and json_unquote(json_extract(event.event,'$.competition_entry_id'))=e.id and json_unquote(json_extract(event.event,'$.event_type'))='COMPETITION_ENTRY_CREATED') as legacy_origin, exists(select 1 from ${COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} v where v.entry_id=e.id and v.signature is not null) as signed
        from ${COMPETITION_ENTRIES_TABLE} e join ${COMPETITIONS_TABLE} c on c.id=e.competition_id
        where e.drop_id=:dropId and c.storage_mode='NATIVE' order by e.competition_id,e.id${currentRead ? ' for update' : ''}`,
         { dropId },
@@ -250,10 +357,9 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
     }>(
       'voteHistoryReset',
       `select (select coalesce(max(sequence),0) from ${COMPETITION_VOTE_HISTORY_TABLE} where competition_id=:competitionId and entry_id=:entryId) as vote_history_sequence,
-       (select coalesce(max(h.id),0) from ${DROP_REAL_VOTE_IN_TIME_TABLE} h join ${COMPETITION_ENTRIES_TABLE} e
-        on e.drop_id=h.drop_id and e.wave_id=h.wave_id where e.competition_id=:competitionId and e.id=:entryId) as aggregate_history_sequence,
-       (select coalesce(max(h.id),0) from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} h join ${COMPETITION_ENTRIES_TABLE} e
-        on e.drop_id=h.drop_id and e.wave_id=h.wave_id where e.competition_id=:competitionId and e.id=:entryId) as voter_history_sequence`,
+       coalesce(max(case when kind='AGGREGATE' and mutation_sequence is null then sequence end),0) as aggregate_history_sequence,
+       coalesce(max(case when kind='VOTER' and mutation_sequence is null then sequence end),0) as voter_history_sequence
+       from ${COMPETITION_SCORE_HISTORY_TABLE} where competition_id=:competitionId and entry_id=:entryId`,
       { competitionId, entryId },
       ctx
     );

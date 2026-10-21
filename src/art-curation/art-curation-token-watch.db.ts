@@ -444,30 +444,6 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  public async findTrackedNativeParticipatoryDropIds(
-    watchId: string,
-    competitionIds: readonly string[],
-    ctx: RequestContext
-  ): Promise<string[]> {
-    if (!competitionIds.length) return [];
-    const timerName = `${this.constructor.name}->findTrackedNativeParticipatoryDropIds`;
-    ctx.timer?.start(timerName);
-    try {
-      const rows = await this.db.execute<{ drop_id: string }>(
-        `select distinct wd.drop_id from ${ART_CURATION_TOKEN_WATCH_DROPS_TABLE} wd
-         join ${COMPETITION_ENTRIES_TABLE} e on e.drop_id=wd.drop_id and e.status='ACTIVE'
-         join ${COMPETITIONS_TABLE} c on c.id=e.competition_id and c.wave_id=e.wave_id and c.storage_mode='NATIVE'
-         join ${COMPETITION_CAPABILITIES_TABLE} cap on cap.competition_id=c.id and cap.wave_id=c.wave_id and cap.capability='CURATION'
-         where wd.watch_id=:watchId and c.id in (:competitionIds)`,
-        { watchId, competitionIds },
-        { wrappedConnection: ctx.connection }
-      );
-      return rows.map((row) => row.drop_id);
-    } finally {
-      ctx.timer?.stop(timerName);
-    }
-  }
-
   public async findTrackedParticipatoryDropIds(
     watchId: string,
     ctx: RequestContext
@@ -481,13 +457,10 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
           select wd.drop_id
           from ${ART_CURATION_TOKEN_WATCH_DROPS_TABLE} wd
           join ${DROPS_TABLE} d on d.id = wd.drop_id
+          join ${COMPETITION_ENTRIES_TABLE} e on e.drop_id=d.id and e.status='ACTIVE'
+          join ${COMPETITIONS_TABLE} c on c.id=e.competition_id and c.storage_mode='NATIVE'
+          join ${COMPETITION_CAPABILITIES_TABLE} cap on cap.competition_id=c.id and cap.capability='CURATION'
           where wd.watch_id = :watchId
-            and d.drop_type = :dropType
-            and not exists (
-              select 1 from ${COMPETITION_ENTRIES_TABLE} e
-              join ${COMPETITIONS_TABLE} c on c.id=e.competition_id and c.storage_mode='NATIVE'
-              where e.drop_id=d.id
-            )
         `,
           {
             watchId,
