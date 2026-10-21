@@ -16,8 +16,8 @@ before proceeding to its dependents:
    capability-audit, vote-history, runtime-state, decision voter-snapshot,
    outcome-award, outbox, effect-receipt and claim-provenance tables; nullable
    competition presentation column and default-false device notification
-   capability. Rerunning the existing legacy backfill
-   must not change primary IDs.
+   capability. Existing primary IDs remain unchanged. Legacy mappings are
+   maintained by per-wave writes; the migration Lambda does not backfill them.
 2. `claimsBuilder`, then `pushNotificationsHandler`: consume optional native
    claim context and competition winner notifications while retaining old
    messages. Old producers continue to work.
