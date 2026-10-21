@@ -10,6 +10,7 @@ import {
   WaveType
 } from '@/entities/IWave';
 import { WavesMappers } from '@/api/waves/waves.mappers';
+import { WavesApiDb } from '@/api/waves/waves.api.db';
 import { UpdateWaveSchema } from '@/api/waves/wave-write.schemas';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { ApiWaveCreditType } from '@/api/generated/models/ApiWaveCreditType';
@@ -103,6 +104,66 @@ describeWithSeed(
           `DROP VIEW IF EXISTS ${frozenNativeGetView(table)}`
         );
     });
+
+    it('preserves JSON null decision strategies through Chat and DM preparation and native reads', async () => {
+      const waves = [old, second];
+      const repository = new WavesApiDb(() => sqlExecutor);
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=CAST('null' AS JSON) WHERE id IN (:ids)`,
+        { ids: waves.map((wave) => wave.id) }
+      );
+      const archives = waves.map((wave, index) => ({
+        ...wave,
+        archive_id: index + 101,
+        archival_entry_created_at: 1800000000000,
+        decisions_strategy: 'null'
+      }));
+      await sqlExecutor.bulkInsert(
+        tables.WAVES_ARCHIVE_TABLE,
+        archives,
+        Object.keys(archives[0]).filter(
+          (field) => !field.startsWith('hub_') && field !== 'next_decision_time'
+        ),
+        {}
+      );
+      for (const wave of waves)
+        expect(
+          (await repository.findWaveById(wave.id))?.decisions_strategy
+        ).toBeNull();
+
+      expect(await prepareWaveHubConfiguration(sqlExecutor)).toEqual({
+        waves: 2,
+        archives: 2,
+        capture_triggers: 10
+      });
+      await installLegacyCompetitionGetFacade(sqlExecutor);
+      for (const wave of waves)
+        expect(
+          (await repository.findWaveById(wave.id))?.decisions_strategy
+        ).toBeNull();
+      for (const table of [tables.WAVES_TABLE, tables.WAVES_ARCHIVE_TABLE])
+        expect(
+          await sqlExecutor.execute(
+            `SELECT JSON_TYPE(decisions_strategy) AS kind,decisions_strategy IS NULL AS sql_null FROM ${table} ORDER BY id`
+          )
+        ).toEqual([
+          { kind: 'NULL', sql_null: 0 },
+          { kind: 'NULL', sql_null: 0 }
+        ]);
+    });
+
+    it.each(['{}', '[]', '"null"'])(
+      'still rejects non-null Chat decision strategy %s',
+      async (strategy) => {
+        await sqlExecutor.execute(
+          `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=CAST(:strategy AS JSON) WHERE id=:id`,
+          { strategy, id: old.id }
+        );
+        await expect(prepareWaveHubConfiguration(sqlExecutor)).rejects.toThrow(
+          '"field":"decisions_strategy","count":1'
+        );
+      }
+    );
 
     it('captures old parent/child writes behind bounded cursors, retains each archive ID, and matches full frozen CHAT/DM projection primitives', async () => {
       const batches: number[] = [];

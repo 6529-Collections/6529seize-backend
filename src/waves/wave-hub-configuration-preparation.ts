@@ -298,7 +298,12 @@ function parityFields(source: Source) {
       continue;
     checks.push({
       field: column,
-      mismatch: `not(s.\`${column}\`<=>${CHAT_WAVE_COMPATIBILITY_DEFAULTS[column] ?? 'null'})`
+      // The existing API parses SQL NULL and JSON null to the same null strategy.
+      // Other JSON values must still fail instead of losing visible configuration.
+      mismatch:
+        column === 'decisions_strategy'
+          ? `not(s.\`${column}\` is null or json_type(s.\`${column}\`)='NULL')`
+          : `not(s.\`${column}\`<=>${CHAT_WAVE_COMPATIBILITY_DEFAULTS[column] ?? 'null'})`
     });
   }
   return checks;

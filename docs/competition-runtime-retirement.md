@@ -99,6 +99,9 @@ retirement. Deploy that preparation before switching any reader.
    explicit native configuration writes, including the old API readers' optional-field
    preservation during overlap. Report only field names and counts for
    failed parity; keep hub identities and setting values out of workflow logs.
+   A shared hub's SQL NULL and JSON null decision strategies both retain the
+   existing API's null value. Non-null objects, arrays and JSON strings still
+   fail parity; preparation never rewrites those historical strategy values.
    Then invoke the explicit `competition-runtime-retirement` scope. It requires all
    live original primaries to be native and the old execution-effect queue empty.
    During the initial or partial switch it rechecks history and hub-configuration
