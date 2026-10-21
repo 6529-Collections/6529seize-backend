@@ -17,7 +17,8 @@ import {
 import { AuthenticationContext } from '@/auth-context';
 import {
   RETIRED_WAVE_COMPETITION_COLUMNS,
-  installLegacyCompetitionGetFacade
+  installLegacyCompetitionGetFacade,
+  legacyGetView
 } from '@/competitions/legacy-competition-get-facade';
 import { DropsDb } from '@/drops/drops.db';
 import * as Entities from '@/entities/entities';
@@ -29,6 +30,10 @@ import { resetTestDatabase } from '@/tests/_setup/testDatabase';
 import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
 import { Timer } from '@/time';
 import { DataSource } from 'typeorm';
+import {
+  prepareWaveHubConfiguration,
+  finalizeWaveHubConfigurationCapture
+} from '@/waves/wave-hub-configuration-preparation';
 import { WaveApiService } from './wave.api.service';
 import { WavesApiDb } from './waves.api.db';
 import { WavesMappers } from './waves.mappers';
@@ -260,7 +265,16 @@ function serviceHarness() {
   return { service, ctx, groupIds };
 }
 
+function assertDisposableWaveSchema() {
+  if (
+    process.env.NODE_ENV !== 'local' ||
+    !process.env.DB_NAME?.includes('_jest_worker_')
+  )
+    throw new Error('Physical absence requires the disposable Jest database');
+}
+
 async function restoreDisposableSchema() {
+  assertDisposableWaveSchema();
   const schema = new DataSource({
     type: 'mysql',
     host: process.env.DB_HOST,
@@ -281,11 +295,149 @@ async function restoreDisposableSchema() {
   } finally {
     await schema.destroy();
   }
+  for (const table of [WAVES_TABLE, WAVES_ARCHIVE_TABLE]) {
+    const restored = await sqlExecutor.execute<{ name: string }>(
+      'select COLUMN_NAME as name from information_schema.COLUMNS where TABLE_SCHEMA=database() and TABLE_NAME=:table',
+      { table }
+    );
+    expect(restored.map((column) => column.name)).toEqual(
+      expect.arrayContaining(
+        RETIRED_WAVE_COMPETITION_COLUMNS.filter(
+          (column) =>
+            table !== WAVES_ARCHIVE_TABLE || column !== 'next_decision_time'
+        )
+      )
+    );
+  }
   await installLegacyCompetitionGetFacade(sqlExecutor);
+}
+
+async function removeDisposableWaveCompetitionColumns() {
+  assertDisposableWaveSchema();
+  for (const table of [WAVES_TABLE, WAVES_ARCHIVE_TABLE])
+    await sqlExecutor.execute(
+      `alter table ${table} ${RETIRED_WAVE_COMPETITION_COLUMNS.filter(
+        (column) =>
+          table !== WAVES_ARCHIVE_TABLE || column !== 'next_decision_time'
+      )
+        .map((column) => `drop column \`${column}\``)
+        .join(',')}`
+    );
 }
 
 describe('live native shared hub configuration', () => {
   beforeEach(resetTestDatabase);
+
+  it.each([
+    { mode: 'local', database: 'shared_schema_guard_fixture' },
+    { mode: 'prod', database: 'guard_fixture_jest_worker_not_real' }
+  ])(
+    'refuses column removal and schema restoration for $mode/$database',
+    async ({ mode, database }) => {
+      assertDisposableWaveSchema();
+      const originalMode = process.env.NODE_ENV;
+      const originalDatabase = process.env.DB_NAME;
+      process.env.NODE_ENV = mode;
+      process.env.DB_NAME = database;
+      try {
+        await expect(removeDisposableWaveCompetitionColumns()).rejects.toThrow(
+          'disposable Jest database'
+        );
+        await expect(restoreDisposableSchema()).rejects.toThrow(
+          'disposable Jest database'
+        );
+      } finally {
+        if (originalMode === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = originalMode;
+        if (originalDatabase === undefined) delete process.env.DB_NAME;
+        else process.env.DB_NAME = originalDatabase;
+        await restoreDisposableSchema();
+      }
+    }
+  );
+
+  it('reads and explicitly clears an existing Chat strategy after its obsolete columns and captures are absent', async () => {
+    await sqlExecutor.execute(
+      `create or replace view ${legacyGetView(WAVES_TABLE)} as select * from ${WAVES_TABLE}`
+    );
+    try {
+      await prepareWaveHubConfiguration(sqlExecutor);
+      const { service, ctx, groupIds } = serviceHarness();
+      const request = chatRequest();
+      const prepared = await service.prepareWaveCreation(request, ctx);
+      const created = await service.createWave(
+        request,
+        false,
+        ctx,
+        [],
+        prepared
+      );
+      const strategy = {
+        first_decision_time: 1712345678999,
+        subsequent_decisions: [3600000],
+        is_rolling: true
+      };
+      const overlays = await sqlExecutor.execute<{ name: string }>(
+        "select TRIGGER_NAME as name from information_schema.TRIGGERS where TRIGGER_SCHEMA=database() and TRIGGER_NAME like 'temporary_wave_hub_configuration_strategy_%'"
+      );
+      for (const overlay of overlays) {
+        expect(overlay.name).toMatch(
+          /^temporary_wave_hub_configuration_strategy_(wave|archive)_(insert|update)$/
+        );
+        await sqlExecutor.execute(`drop trigger \`${overlay.name}\``);
+      }
+      for (const table of [WAVES_TABLE, WAVES_ARCHIVE_TABLE])
+        await sqlExecutor.execute(
+          `update ${table} set decisions_strategy=cast(:strategy as json),
+        hub_voting_config=json_remove(hub_voting_config,'$.decision_strategy') where id=:id`,
+          { id: created.id, strategy: JSON.stringify(strategy) }
+        );
+      await sqlExecutor.execute(
+        `create or replace view ${legacyGetView(WAVES_TABLE)} as select * from ${WAVES_TABLE}`
+      );
+      expect(
+        (await service.findWaveByIdOrThrow(created.id, groupIds, ctx)).wave
+          .decisions_strategy
+      ).toEqual(strategy);
+      await prepareWaveHubConfiguration(sqlExecutor);
+      await installLegacyCompetitionGetFacade(sqlExecutor);
+      expect(await finalizeWaveHubConfigurationCapture(sqlExecutor)).toEqual({
+        disabled_triggers: 14
+      });
+      await removeDisposableWaveCompetitionColumns();
+      expect(
+        (await service.findWaveByIdOrThrow(created.id, groupIds, ctx)).wave
+          .decisions_strategy
+      ).toEqual(strategy);
+      const edited = await service.updateWave(
+        created.id,
+        validateUpdate(request),
+        ctx
+      );
+      expect(edited.wave.decisions_strategy).toBeNull();
+      expect(
+        (await service.findWaveByIdOrThrow(created.id, groupIds, ctx)).wave
+          .decisions_strategy
+      ).toBeNull();
+      const archives = await sqlExecutor.execute<{ policy: string }>(
+        `select hub_voting_config as policy from ${WAVES_ARCHIVE_TABLE} where id=:id order by archive_id`,
+        { id: created.id }
+      );
+      expect(
+        archives.map((row) => {
+          expect(row.policy).not.toBeNull();
+          return JSON.parse(row.policy).decision_strategy;
+        })
+      ).toEqual([strategy, null]);
+    } finally {
+      try {
+        await installLegacyCompetitionGetFacade(sqlExecutor);
+        await finalizeWaveHubConfigurationCapture(sqlExecutor);
+      } finally {
+        await restoreDisposableSchema();
+      }
+    }
+  });
 
   it('retains schema-validated CHAT credit, dates and independent private roles', async () => {
     const request = chatRequest();
