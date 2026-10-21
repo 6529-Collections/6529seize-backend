@@ -67,10 +67,12 @@ import { DeviceEventKind } from '@/api/device-signing/device-event';
 const router = asyncRouter();
 const logger = Logger.get('DropsRoutes');
 
-const LatestDropsSerialNosQuerySchema: Joi.ObjectSchema<{
+const LatestDropsSearchQuerySchema: Joi.ObjectSchema<{
   serial_nos: number[] | null;
+  public_only: boolean;
 }> = Joi.object({
-  serial_nos: SerialNosQueryParamSchema
+  serial_nos: SerialNosQueryParamSchema,
+  public_only: Joi.boolean().default(false)
 });
 
 const ToggleHideLinkPreviewSchema: Joi.ObjectSchema<ApiToggleHideLinkPreviewRequest> =
@@ -100,6 +102,7 @@ router.get(
         ids?: string;
         serial_nos?: string;
         contains_media?: string;
+        public_only?: string;
       },
       any
     >,
@@ -118,7 +121,8 @@ router.get(
       drop_type,
       ids,
       serial_nos,
-      contains_media
+      contains_media,
+      public_only
     } = await prepLatestDropsSearchQuery(req);
     const latestDrops = await dropsService.findLatestDrops(
       {
@@ -135,7 +139,8 @@ router.get(
         drop_type,
         ids,
         serial_nos,
-        contains_media
+        contains_media,
+        public_only
       },
       { timer, authenticationContext }
     );
@@ -934,6 +939,7 @@ export async function prepLatestDropsSearchQuery(
       ids?: string;
       serial_nos?: string;
       contains_media?: string;
+      public_only?: string;
     },
     any
   >
@@ -958,9 +964,9 @@ export async function prepLatestDropsSearchQuery(
         .map((id) => id.trim())
         .filter((id) => id.length > 0)
     : null;
-  const { serial_nos } = getValidatedByJoiOrThrow(
-    { serial_nos: req.query.serial_nos },
-    LatestDropsSerialNosQuerySchema
+  const { serial_nos, public_only } = getValidatedByJoiOrThrow(
+    { serial_nos: req.query.serial_nos, public_only: req.query.public_only },
+    LatestDropsSearchQuerySchema
   );
   const contains_media = req.query.contains_media === 'true';
   return {
@@ -974,7 +980,8 @@ export async function prepLatestDropsSearchQuery(
     drop_type: drop_type_enum,
     ids,
     serial_nos,
-    contains_media
+    contains_media,
+    public_only
   };
 }
 
