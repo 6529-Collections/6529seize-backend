@@ -21,7 +21,8 @@ import {
   WALLET_REGEX,
   WALLETS_TDH_TABLE,
   WAVES_TABLE,
-  X_TDH_COEFFICIENT
+  X_TDH_COEFFICIENT,
+  MEME_COLLABORATION_INVITATIONS_TABLE
 } from '@/constants';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
@@ -1355,6 +1356,10 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       and drop_type = '${DropType.PARTICIPATORY}'
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('ACTIVE')}) native_entry
       where submitter_id in (:profileIds)
+      union select invitation.profile_id, invitation.drop_id
+      from ${MEME_COLLABORATION_INVITATIONS_TABLE} invitation
+      join (${nativeMainStageEntriesSource('ACTIVE')}) collaboration_entry on collaboration_entry.drop_id=invitation.drop_id
+      where invitation.profile_id in (:profileIds) and invitation.status='ACCEPTED'
       `,
         {
           profileIds,
@@ -1398,6 +1403,10 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       and drop_type = '${DropType.WINNER}'
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('WINNER')}) native_entry
       where submitter_id in (:profileIds)
+      union select invitation.profile_id, invitation.drop_id
+      from ${MEME_COLLABORATION_INVITATIONS_TABLE} invitation
+      join (${nativeMainStageEntriesSource('WINNER')}) collaboration_entry on collaboration_entry.drop_id=invitation.drop_id
+      where invitation.profile_id in (:profileIds) and invitation.status='ACCEPTED'
       `,
         {
           profileIds,

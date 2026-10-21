@@ -1,6 +1,11 @@
+import { buildMemeCollaborationPushNotification } from './meme-collaboration-push-notification';
 import { handleMissingNotifications } from './missing-notifications';
 import { buildCompetitionLifecyclePushNotification } from './competition-lifecycle-push-notification';
-import type { CompetitionLifecycleNotificationData } from '@/notifications/user-notification.types';
+import type {
+  CompetitionLifecycleNotificationData,
+  MemeCollaborationNotificationData,
+  SubscriptionCoverageNotificationData
+} from '@/notifications/user-notification.types';
 import { In, Like } from 'typeorm';
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
@@ -28,7 +33,6 @@ import {
 import { WaveEntity } from '../entities/IWave';
 import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
-import type { SubscriptionCoverageNotificationData } from '@/notifications/user-notification.types';
 import {
   sendIdentityPushGroups,
   type IdentityPushNotificationMessage
@@ -649,6 +653,13 @@ async function generateNotificationData(
         targetProfile,
         wavePresentationResolver
       );
+    case IdentityNotificationCause.MEME_COLLABORATION: {
+      const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
+      const data =
+        extractAdditionalData<MemeCollaborationNotificationData>(notification);
+      const actor = await getAdditionalEntity().catch(() => null);
+      return buildMemeCollaborationPushNotification(data, dropSerialNo, actor);
+    }
     case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       return buildCompetitionLifecyclePushNotification(
         extractAdditionalData<CompetitionLifecycleNotificationData>(

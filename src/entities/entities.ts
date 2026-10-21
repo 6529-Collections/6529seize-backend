@@ -312,6 +312,10 @@ export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
 export * from './ICompetitionMigration';
 
+export {
+  MemeCollaborationEntity,
+  MemeCollaborationInvitationEntity
+} from './IMemeCollaboration';
 export { TransferReconciliationEntity } from './ITransferReconciliation';
 
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';

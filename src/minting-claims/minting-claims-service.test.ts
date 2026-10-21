@@ -16,6 +16,10 @@ import type {
   MintingClaimImageDetails
 } from '@/entities/IMintingClaim';
 
+jest.mock('@/meme-collaborations/meme-collaborations.db', () => ({
+  memeCollaborationsDb: { context: jest.fn().mockResolvedValue(null) }
+}));
+
 jest.mock('@/http/safe-fetch', () => ({
   fetchPublicUrlToBuffer: jest.fn()
 }));

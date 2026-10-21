@@ -30,6 +30,44 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Meme collaborator invitations
+
+Artwork submissions retain one author, voting result and minting claim. The API
+stores invitation status and the artwork/terms snapshot in `meme_collaborations`
+and `meme_collaboration_invitations`, created by entity synchronization. Only
+the invited identity can accept or decline; a proxy cannot consent. Acceptance
+is final. Invitee acceptance saves a nullable, submission-specific artist credit name (up to 200 characters) separately from the profile handle. Old clients without the field save their handle; older accepted records retain handle fallback. Pending identities are visible only to the submitter and their own
+invitee. Public drop V1/V2 mappings expose accepted collaborators and derive
+artist/profile/Collab metadata from those records.
+
+Native MAIN_STAGE decision transactions, including the transferred original Main Stage, lock the same
+collaboration row used by acceptance, save the accepted artist roster, and close
+pending invitations. Claims Builder consumes that saved roster for initial
+claim credits; pending invitations do not delay minting. Admins can edit all final claim credits, traits
+and artwork in Craft. The Arweave API and uploader use the saved claim with
+normal metadata/media validation, without consulting invitations or comparing
+it with the collaboration snapshot. Admin edits do not change invitation status
+or accepted-submission profile attribution. Existing submissions without a
+managed record remain compatible.
+
+Invitation, acceptance and author-cancellation notifications use the existing identity-notification
+and push pipelines with cause `MEME_COLLABORATION`. New generated endpoints are
+`GET /drops/{drop_id}/collaborations`,
+`POST /drops/{drop_id}/collaborations` (submitter-only additions on active
+designated Memes Main Stage entries, including transferred original submissions), and
+`POST /drops/{drop_id}/collaborations/{invitation_id}/response`; both use the
+existing wave visibility checks. Accepted identities participate in Main Stage
+profile artwork queries, without changing submission ownership or allowances.
+No new Lambda, queue, environment variable, or on-chain contract is introduced.
+
+After legacy runtime retirement, invitation eligibility and collaborator profile
+submissions/wins use native Main Stage membership rather than physical drop types
+or retired winner tables. Original submission routes pass their native owner to
+the invitation writer so consent uses that competition's terms. The retained
+wave GET compatibility projection supplies terms for older callers without an
+explicit competition ID. The retired wave decision service is not restored;
+`waveDecisionExecutionLoop` freezes credits through its native decision path.
+
 ## Oracle TDH API and retired Prenode registry
 
 The existing `api` service retains Oracle TDH totals, thresholds, percentile,
@@ -2197,6 +2235,10 @@ The runtime grouping callers are `api` (`db-api.fetchConsolidationsForWallet`), 
 The required key must be present and valid for all three runtimes in both regions before rollout. In particular, an unconfigured API fails the whole `/api/settings` response, not just consolidation setup. This is the agreed fail-closed policy, not a nullable-settings fallback. Configuration presence has to be verified as a deployment prerequisite; source inspection is not proof that a live secret contains the value.
 
 Configure production as `2026-10-15T00:00:00Z` and staging with its intended earlier cutoff before deployment. Schema sync still precedes the delegation indexer, TDH loop and API. Both environments index the same mainnet contract: staging registrations are real registrations, and pre-production-cutoff links require renewed consent after the production cutoff.
+
+Initial collaboration Artist credits use ` & ` for exactly two credited artists and `, ` for larger rosters; SEIZE Artist Profile always uses comma-separated handles. Confirmed invitee credit names are used in live metadata and the frozen mint-selection credit. Existing frozen claims and admin Craft edits are not rewritten.
+
+Collaboration retries retain each cancelled invitation under a distinct ID. The drop/profile index is non-unique; entity synchronization must remove the former unique index before API reinvites are enabled. Author and recipient state exposes the latest attempt only; historical invitation IDs cannot authorize a new attempt. Declined invitations cannot be resent. The five-collaborator cap counts pending and accepted attempts under the collaboration lock, preserving existing accepted rosters. API mutations send existing profile-scoped notification invalidations after commit, independently of push preferences. Acceptance also broadcasts accepted public attribution even when no notification row is created. No private invitation roster is added to public websocket payloads.
 
 WatchTower manual-review attention is derived from a subject-based union of
 open reports and pending moderation checks. The API groups this union before
