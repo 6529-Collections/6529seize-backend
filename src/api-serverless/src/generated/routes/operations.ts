@@ -148,11 +148,15 @@ import { ApiMarketTradeOrder } from '@/api/generated/models/ApiMarketTradeOrder'
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
+import { ApiMemeCollaborationInviteRequest } from '@/api/generated/models/ApiMemeCollaborationInviteRequest';
+import { ApiMemeCollaborationResponseRequest } from '@/api/generated/models/ApiMemeCollaborationResponseRequest';
+import { ApiMemeCollaborationState } from '@/api/generated/models/ApiMemeCollaborationState';
 import { ApiModerationAccess } from '@/api/generated/models/ApiModerationAccess';
 import { ApiModerationActionRequest } from '@/api/generated/models/ApiModerationActionRequest';
 import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCheckDetail';
 import { ApiModerationCheckPage } from '@/api/generated/models/ApiModerationCheckPage';
 import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts';
+import { ApiModerationReviewCasePage } from '@/api/generated/models/ApiModerationReviewCasePage';
 import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
@@ -1215,6 +1219,7 @@ export type GetContentModerationBlockActivityRequest = Request<
 export type GetModerationChecksPathParams = Record<string, never>;
 
 export interface GetModerationChecksQuery {
+  "case_id"?: string;
   "subject_type"?: "REP_CATEGORY" | "PROFILE_BIO" | "GROUP_NAME" | "DROP";
   "outcome"?: "ALLOW" | "REJECT" | "ERROR" | "PENDING";
   "policy_family"?: "PUBLIC_FIELDS" | "WAVE_CONTENT";
@@ -1281,6 +1286,23 @@ export type GetModerationAccessRequest = Request<
   ApiResponse<GetModerationAccessResponse>,
   never,
   GetModerationAccessQuery,
+  Record<string, never>
+>;
+
+export type GetModerationReviewCasesPathParams = Record<string, never>;
+
+export interface GetModerationReviewCasesQuery {
+  "before"?: string;
+  "limit"?: number;
+}
+
+export type GetModerationReviewCasesResponse = ApiModerationReviewCasePage;
+
+export type GetModerationReviewCasesRequest = Request<
+  GetModerationReviewCasesPathParams,
+  ApiResponse<GetModerationReviewCasesResponse>,
+  never,
+  GetModerationReviewCasesQuery,
   Record<string, never>
 >;
 
@@ -1404,6 +1426,55 @@ export type CreateProposalFrameRequest = Request<
   ApiResponse<CreateProposalFrameResponse>,
   ApiProposalFrameRequest,
   CreateProposalFrameQuery,
+  Record<string, never>
+>;
+
+export interface GetMemeCollaborationStatePathParams {
+  "drop_id": string;
+}
+
+export type GetMemeCollaborationStateQuery = Record<string, never>;
+
+export type GetMemeCollaborationStateResponse = ApiMemeCollaborationState;
+
+export type GetMemeCollaborationStateRequest = Request<
+  GetMemeCollaborationStatePathParams,
+  ApiResponse<GetMemeCollaborationStateResponse>,
+  never,
+  GetMemeCollaborationStateQuery,
+  Record<string, never>
+>;
+
+export interface InviteMemeCollaboratorsPathParams {
+  "drop_id": string;
+}
+
+export type InviteMemeCollaboratorsQuery = Record<string, never>;
+
+export type InviteMemeCollaboratorsResponse = ApiMemeCollaborationState;
+
+export type InviteMemeCollaboratorsRequest = Request<
+  InviteMemeCollaboratorsPathParams,
+  ApiResponse<InviteMemeCollaboratorsResponse>,
+  ApiMemeCollaborationInviteRequest,
+  InviteMemeCollaboratorsQuery,
+  Record<string, never>
+>;
+
+export interface RespondToMemeCollaborationPathParams {
+  "drop_id": string;
+  "invitation_id": string;
+}
+
+export type RespondToMemeCollaborationQuery = Record<string, never>;
+
+export type RespondToMemeCollaborationResponse = ApiMemeCollaborationState;
+
+export type RespondToMemeCollaborationRequest = Request<
+  RespondToMemeCollaborationPathParams,
+  ApiResponse<RespondToMemeCollaborationResponse>,
+  ApiMemeCollaborationResponseRequest,
+  RespondToMemeCollaborationQuery,
   Record<string, never>
 >;
 

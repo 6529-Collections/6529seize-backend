@@ -1,3 +1,4 @@
+import { freezeMemeCollaborationForNativeDecision } from '@/meme-collaborations/meme-collaboration-mint-selection';
 import { randomUUID } from 'node:crypto';
 import { collections } from '@/collections';
 import { readSequentially } from '@/competitions/competition-read-sequence';
@@ -658,6 +659,7 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
         );
       }
     }
+    await freezeMemeCollaborationForNativeDecision(params, ctx);
     if (!params.skipped)
       await this.enqueueEvent(
         {

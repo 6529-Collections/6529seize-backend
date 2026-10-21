@@ -22,6 +22,9 @@ Current creation, editing and GETs use that configuration, including independent
 nullable scopes, credit settings, periods, terms and required content. Existing
 wave archive rows retain the corresponding configuration snapshots. Original
 competition projections continue to use their immutable native competition.
+The voting policy also owns the existing typed `decision_strategy` metadata exposed
+by shared-hub GETs. Current edits can explicitly clear it; CHAT writes still reject
+new non-null strategies, and this metadata never enables competition execution.
 
 AGGREGATE and VOTER history observations retain their independent source IDs,
 times and values, including historical inconsistencies. No timestamp pairing or
@@ -100,13 +103,32 @@ retirement. Deploy that preparation before switching any reader.
    preservation during overlap. Report only field names and counts for
    failed parity; keep hub identities and setting values out of workflow logs.
    A shared hub's SQL NULL and JSON null decision strategies both retain the
-   existing API's null value. Non-null objects, arrays and JSON strings still
-   fail parity; preparation never rewrites those historical strategy values.
+   existing API's null value. Existing three-member typed strategy objects retain
+   their exact JSON value in the current voting policy and archive snapshots.
+   Preparation fills only a missing policy member and requires exact parity;
+   an existing contradictory native value is never overwritten. Arrays, JSON
+   strings, unknown properties and malformed member types fail the guard. Historical
+   integer times and intervals are preserved without applying today's scheduling
+   constraints to existing metadata. Structural validation uses MySQL's
+   [JSON Schema validation](https://dev.mysql.com/doc/refman/8.0/en/json-validation-functions.html),
+   supported by the deployed Aurora MySQL 3 engine's
+   [MySQL 8.0 feature compatibility](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/AuroraMySQL.Compare-80-v3.html).
+   The original ten capture bodies remain unchanged. Four recognized BEFORE
+   overlays follow their original parent captures to retain strategy metadata
+   during old/new writer overlap, including explicit clearing and rollback of
+   malformed new writes. Installation and finalization verify dependency order;
+   finalization removes the overlays before their original captures. The complete
+   temporary registry therefore has fourteen captures after this additive upgrade.
    Strategy failures additionally report up to 20 aggregate JSON type/public
    member-shape groups per source, including encoded-null row counts. They never
    report row identities, object keys or setting values; writers can change the
    source between the parity count and this diagnostic snapshot.
-   Then invoke the explicit `competition-runtime-retirement` scope. It requires all
+   Before invoking the explicit `competition-runtime-retirement` scope, drain
+   schema-Lambda invocations from before the first deployment of the updated
+   view definitions, using its previous configured timeout and routing evidence.
+   An older ordinary full-schema invocation must not restore the previous view
+   definition after cutover. This drain can overlap bounded hub preparation.
+   The retirement scope requires all
    live original primaries to be native and the old execution-effect queue empty.
    During the initial or partial switch it rechecks history and hub-configuration
    parity, preserves weighted snapshot publication, disables only
@@ -141,7 +163,10 @@ retirement. Deploy that preparation before switching any reader.
    `wave-hub-configuration-finalize` to disable the temporary hub captures.
    Require complete native views and valid current native hub configuration;
    retries must never reimport obsolete settings after the native switch. The
-   completed application operates with these captures disabled and the obsolete
+   additive strategy member is nullable: a missing member in an already-retired
+   native policy means null, even if an obsolete physical strategy differs. Native
+   finalization validates current strategy structure without consulting that source.
+   The completed application operates with these captures disabled and the obsolete
    physical columns absent in disposable acceptance tests.
 8. Only after backend build/artifact/version/health verification, merge frontend
    into current staging. Wait for `Web Deploy - STAGING` success and verify current

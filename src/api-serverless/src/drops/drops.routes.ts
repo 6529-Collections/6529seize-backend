@@ -208,6 +208,7 @@ router.post(
       author: { external_id: string };
     } = {
       author: { external_id: authorProfileId },
+      collaborator_ids: newDrop.collaborator_ids,
       title: newDrop.title,
       parts: newDrop.parts,
       referenced_nfts: newDrop.referenced_nfts,
