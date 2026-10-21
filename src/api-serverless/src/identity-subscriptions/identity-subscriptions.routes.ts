@@ -76,7 +76,8 @@ router.get(
     );
     const response =
       await identitySubscriptionsApiService.findIncomingSubscriptionsOfType(
-        params
+        params,
+        { timer: Timer.getFromRequest(req) }
       );
     res.send(response);
   }
