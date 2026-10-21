@@ -225,7 +225,7 @@ const VotersQuerySchema: Joi.ObjectSchema<VotersQuery> =
     .unknown(false)
     .required();
 
-async function getContext(
+export async function getContext(
   req: Parameters<typeof getAuthenticationContext>[0]
 ): Promise<RequestContext> {
   const timer = Timer.getFromRequest(req);
@@ -305,7 +305,7 @@ export async function toApiEntry(
   } as unknown as ApiCompetitionEntry;
 }
 
-async function toApiEntryPage(
+export async function toApiEntryPage(
   page: CompetitionPage<CompetitionEntry>,
   ctx: RequestContext
 ): Promise<ApiCompetitionEntryPage> {
@@ -526,7 +526,7 @@ export async function handleListCompetitionWinnersV3(
     req.params,
     CompetitionPathSchema
   );
-  const query = getValidatedByJoiOrThrow(req.query, cursorQuerySchema());
+  const query = getValidatedByJoiOrThrow(req.query, cursorQuerySchema('DESC'));
   const ctx = await getContext(req);
   return await toApiEntryPage(
     await competitionService.listWinners(

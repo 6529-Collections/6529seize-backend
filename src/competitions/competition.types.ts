@@ -198,6 +198,7 @@ export type CompetitionPageRequest = {
   readonly direction: 'ASC' | 'DESC';
   readonly sort?:
     | 'submitted_at'
+    | 'won_at'
     | 'rating'
     | 'rank'
     | 'real_time_rating'
