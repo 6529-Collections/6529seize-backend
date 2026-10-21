@@ -16,7 +16,7 @@ import { HttpFile } from '../http/http';
 
 export class ApiCompetitionLeaderboardPage {
     /**
-    * Authorized card content and native summaries when include=cards.
+    * Authorized card content and native summaries when include=cards. May be a sparse subset in a different order than data; join by entry.id, never by array position.
     */
     'cards'?: Array<ApiCompetitionEntryContext>;
     'data': Array<ApiCompetitionLeaderboardEntry>;

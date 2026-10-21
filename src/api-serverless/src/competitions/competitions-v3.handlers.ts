@@ -446,14 +446,9 @@ export async function handleListCompetitionWinnersV3(
   );
   const query = getValidatedByJoiOrThrow<CursorQuery & { include?: 'cards' }>(
     req.query,
-    Joi.object<CursorQuery & { include?: 'cards' }>({
-      direction: Joi.string().valid('ASC', 'DESC').default('DESC'),
-      cursor: Joi.string().min(1).max(1000).optional(),
-      limit: Joi.number().integer().min(1).max(100).default(50),
+    cursorQuerySchema('DESC').append<CursorQuery & { include?: 'cards' }>({
       include: Joi.string().valid('cards').optional()
     })
-      .unknown(false)
-      .required()
   );
   const ctx = await getContext(req);
   const page = await toApiEntryPage(

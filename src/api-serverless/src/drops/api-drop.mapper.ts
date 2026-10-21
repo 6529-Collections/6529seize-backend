@@ -175,10 +175,11 @@ export class ApiDropMapper {
           .map((drop) => drop.reply_to_drop_id)
           .filter((id): id is string => !!id)
       );
-      const submissionEntities =
-        options.includeSubmissionVoting === false
-          ? []
-          : entities.filter((drop) => this.isSubmissionDrop(drop));
+      const submissionEntities = entities.filter(
+        (drop) =>
+          options.includeSubmissionVoting !== false &&
+          this.isSubmissionDrop(drop)
+      );
       const submissionDropIds = submissionEntities.map((drop) => drop.id);
       const participatoryDropEntities = submissionEntities.filter(
         (drop) => drop.drop_type === DropType.PARTICIPATORY
@@ -322,12 +323,7 @@ export class ApiDropMapper {
             )
           : Promise.resolve({} as Record<string, ActivityEventAction[]>),
         this.dropsDb.getReplyPreviewsByDropIds(replyDropIds, ctx),
-        submissionDropIds.length
-          ? this.dropVotingDb.getDropV2SubmissionVotingSummaries(
-              submissionDropIds,
-              ctx
-            )
-          : Promise.resolve({} as Record<string, DropSubmissionVotingSummary>),
+        this.submissionVotingSummaries(submissionDropIds, ctx),
         contextProfileId && participatoryDropEntities.length
           ? this.dropVotingService.findCreditLeftForVotingForDrops(
               contextProfileId,
@@ -1058,6 +1054,15 @@ export class ApiDropMapper {
       viewer: { author_blocked: false, drop_hidden: false },
       moderation: { status: DropModerationStatus.VISIBLE, can_view: true }
     };
+  }
+
+  private submissionVotingSummaries(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, DropSubmissionVotingSummary>> {
+    return dropIds.length
+      ? this.dropVotingDb.getDropV2SubmissionVotingSummaries(dropIds, ctx)
+      : Promise.resolve({});
   }
 
   private isSubmissionDrop(drop: DropEntity): boolean {

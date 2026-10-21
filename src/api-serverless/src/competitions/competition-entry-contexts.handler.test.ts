@@ -179,14 +179,17 @@ it('does not enrich cards hidden from the viewer', async () => {
 });
 
 it('does not expose metadata when the content mapper observes a newer moderation decision', async () => {
-  jest
-    .mocked(apiDropMapper.mapDrops)
-    .mockResolvedValue({
-      drop: { id: 'drop', moderation: { can_view: false } }
-    } as never);
+  jest.mocked(apiDropMapper.mapDrops).mockResolvedValue({
+    drop: { id: 'drop', moderation: { can_view: false } }
+  } as never);
   const req = request();
   req.query.include = 'cards';
   const result = await handleGetCompetitionEntryContextsV3(req);
   expect(result.data[0].drop).toBeUndefined();
   expect(result.data[0].metadata).toBeUndefined();
+  expect(result.data[0].vote_summary).toMatchObject({
+    rating: 7,
+    user_vote: 7
+  });
+  expect(result.data[0].awards).toEqual([]);
 });

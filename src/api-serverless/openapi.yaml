@@ -5851,7 +5851,7 @@ paths:
               - cards
       responses:
         "200":
-          description: Visible entries with current voting summaries and scoped awards
+          description: Visible entries with current voting summaries and scoped awards; include=cards also returns optional first-part content and metadata.
           content:
             application/json:
               schema:
@@ -26216,7 +26216,7 @@ components:
         - has_more
       properties:
         cards:
-          description: Authorized card content and native summaries when include=cards.
+          description: Authorized card content and native summaries when include=cards. May be a sparse subset in a different order than data; join by entry.id, never by array position.
           type: array
           items:
             $ref: "#/components/schemas/ApiCompetitionEntryContext"
@@ -26335,7 +26335,7 @@ components:
         - has_more
       properties:
         cards:
-          description: Authorized card content and native summaries when include=cards.
+          description: Authorized card content and native summaries when include=cards. May be a sparse subset in a different order than data; join by entry.id, never by array position.
           type: array
           items:
             $ref: "#/components/schemas/ApiCompetitionEntryContext"

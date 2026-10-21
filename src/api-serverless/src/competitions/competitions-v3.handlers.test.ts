@@ -295,6 +295,11 @@ it.each([{ min_price: -1 }, { max_price: -1 }, { price_currency: ' ' }])(
 it('embeds authorized cards with the leaderboard page when requested', async () => {
   const page = {
     data: [
+      {
+        entry_id: 'hidden',
+        drop_id: 'hidden-drop',
+        competition_id: competitionId
+      },
       { entry_id: 'entry', drop_id: 'drop', competition_id: competitionId }
     ],
     has_more: false,
@@ -315,7 +320,7 @@ it('embeds authorized cards with the leaderboard page when requested', async () 
   expect(readCompetitionEntryContexts).toHaveBeenCalledWith(
     'wave-a',
     competitionId,
-    ['entry'],
+    ['hidden', 'entry'],
     expect.anything(),
     true
   );

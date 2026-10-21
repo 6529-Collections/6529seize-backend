@@ -170,6 +170,12 @@ export async function readCompetitionEntryContexts(
     summary.voters.map((voter) => voter.voter_id),
     ctx
   );
+  const metadataByDrop = new Map<string, typeof metadata>();
+  for (const item of metadata) {
+    const items = metadataByDrop.get(item.drop_id) ?? [];
+    items.push(item);
+    metadataByDrop.set(item.drop_id, items);
+  }
   return {
     competition: apiCompetition,
     data: page.data.map((entry) => {
@@ -186,22 +192,24 @@ export async function readCompetitionEntryContexts(
         !candidate.viewer_context?.author_blocked &&
         !candidate.viewer_context?.drop_hidden;
       const drop = canDisplay ? candidate : undefined;
+      const dropMetadata = metadataByDrop.get(entry.drop_id) ?? [];
       applyNativeVoting(
         drop,
         entry,
         vote_summary,
         apiCompetition.permissions.vote,
         viewer,
-        metadata.some((item) => item.drop_id === entry.drop_id)
+        dropMetadata.length > 0
       );
       return {
         entry,
         ...(includeCards && drop
           ? {
               drop,
-              metadata: metadata
-                .filter((item) => item.drop_id === entry.drop_id)
-                .map(({ data_key, data_value }) => ({ data_key, data_value }))
+              metadata: dropMetadata.map(({ data_key, data_value }) => ({
+                data_key,
+                data_value
+              }))
             }
           : {}),
         awards: awards
