@@ -185,6 +185,26 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
 }
 
 describe('ApiDropMapper', () => {
+  it('maps native competition content without running legacy voting or credit reads', async () => {
+    const { mapper, deps } = createMapper();
+    const drop = makeDrop({ drop_type: DropType.PARTICIPATORY });
+    const result = await mapper.mapDrops(
+      [drop],
+      {},
+      { includeSubmissionVoting: false }
+    );
+    expect(result[drop.id].id).toBe(drop.id);
+    expect(
+      deps.dropVotingDb.getDropV2SubmissionVotingSummaries
+    ).not.toHaveBeenCalled();
+    expect(
+      deps.dropVotingDb.getWinningDropsRatingsByVoter
+    ).not.toHaveBeenCalled();
+    expect(
+      deps.dropVotingService.findCreditLeftForVotingForDrops
+    ).not.toHaveBeenCalled();
+  });
+
   it('attaches participation for the author in the drop wave', async () => {
     const { mapper, deps } = createMapper();
     const drop = makeDrop();

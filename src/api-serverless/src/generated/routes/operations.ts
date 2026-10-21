@@ -3963,6 +3963,7 @@ export interface GetCompetitionEntryContextsV3PathParams {
 
 export interface GetCompetitionEntryContextsV3Query {
   "entry_ids": string;
+  "include"?: "cards";
 }
 
 export type GetCompetitionEntryContextsV3Response = ApiCompetitionEntryContextPage;
@@ -3988,6 +3989,7 @@ export interface ListCompetitionLeaderboardV3Query {
   "direction"?: string;
   "cursor"?: string;
   "limit"?: number;
+  "include"?: "cards";
 }
 
 export type ListCompetitionLeaderboardV3Response = ApiCompetitionLeaderboardPage;
@@ -4136,6 +4138,7 @@ export interface ListCompetitionWinnersV3Query {
   "direction"?: string;
   "cursor"?: string;
   "limit"?: number;
+  "include"?: "cards";
 }
 
 export type ListCompetitionWinnersV3Response = ApiCompetitionEntryPage;

@@ -1156,7 +1156,12 @@ navigation/settings/entries/voting/My Votes/leaderboards/winners/admin use the
 competition resources for every competition. The scoped `entry-contexts` GET
 batches up to 50 visible entries, current/at-decision vote summaries and their
 awards; it resolves competition access once and applies content visibility to the
-batch. Cards fetch rich content separately through the existing batch drop GET.
+batch. Leaderboard, winners and entry-context responses accept `include=cards`
+to return visible first-part content, complete metadata and native voting state
+in the same response. This projection bypasses legacy full-wave voting reads;
+summary refreshes reuse cached content, while opening a drop retains the full
+drop reader. The option is additive, with no schema changes; deploy `api` before
+the frontend that requests it.
 Winners paginate by win time, newest first; My Votes excludes completed winners
 without deleting historical allocations. Creating a hub always creates a
 CHAT wave; competition creation is a separate native command. Historical physical
