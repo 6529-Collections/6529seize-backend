@@ -79,12 +79,14 @@ describe('Developer review guards and evidence', () => {
     jest.mocked(db.get).mockImplementation(async () => record);
     jest.mocked(db.history).mockResolvedValue({ evaluations: [], audit: [] });
     jest.mocked(db.currentRevision).mockResolvedValue(revision);
+    jest.mocked(db.openReportCount).mockResolvedValue(0);
     jest
       .mocked(db.executeNativeQueriesInTransaction)
       .mockImplementation((run) => run({ connection: {} }));
     jest
       .spyOn(contentModerationDb, 'getProfileStatus')
       .mockResolvedValue(ModeratedProfileStatus.ACTIVE);
+    jest.spyOn(contentModerationDb, 'getPresentations').mockResolvedValue({});
   });
   afterEach(() => jest.restoreAllMocks());
   const action = {
@@ -131,6 +133,89 @@ describe('Developer review guards and evidence', () => {
       service.action('item', { ...action, expected_version: 2 }, ctx())
     ).rejects.toThrow('Refresh');
     expect(db.decide).not.toHaveBeenCalled();
+  });
+  function deletedReport() {
+    record.subject_type = 'DROP';
+    record.subject_id = 'deleted-drop';
+    record.published_subject_id = 'deleted-drop';
+    record.operation = 'REPORT';
+    record.scope.published_revision = revision;
+    jest.mocked(db.currentRevision).mockResolvedValue(null);
+    jest.mocked(db.openReportCount).mockResolvedValue(2);
+  }
+  it('offers explicit report resolution for a deleted post without claiming it is published or visible', async () => {
+    deletedReport();
+    const detail = await service.detail('item', ctx());
+    expect(detail.current_state).toMatchObject({
+      published: false,
+      deleted: true,
+      drop_status: null,
+      open_report_count: 2
+    });
+    expect(detail.allowed_actions).toContain('RESOLVE_DELETED_REPORT');
+    expect(detail.allowed_actions).not.toContain('REMOVE');
+    expect(detail.allowed_actions).not.toContain('RESTORE');
+    expect(detail.evidence).toEqual(record.evidence);
+  });
+  it('resolves deleted-post reports with an audited reason without changing content visibility', async () => {
+    deletedReport();
+    const visibility = jest.spyOn(
+      contentModerationDb,
+      'applyModeratorDropDecision'
+    );
+    await service.action(
+      'item',
+      { ...action, action: 'RESOLVE_DELETED_REPORT' },
+      ctx()
+    );
+    expect(db.resolveDeletedReports).toHaveBeenCalledWith(
+      'deleted-drop',
+      'dev',
+      action.reason,
+      expect.anything()
+    );
+    expect(db.audit).toHaveBeenCalledWith(
+      record,
+      expect.objectContaining({
+        action: 'RESOLVE_DELETED_REPORT',
+        reason: action.reason
+      }),
+      expect.anything()
+    );
+    expect(visibility).not.toHaveBeenCalled();
+  });
+  it('keeps deletion resolution available after saved evidence expires', async () => {
+    deletedReport();
+    record.evidence = null;
+    const detail = await service.detail('item', ctx());
+    expect(detail.allowed_actions).toContain('RESOLVE_DELETED_REPORT');
+    expect(detail.allowed_actions).not.toContain('REEVALUATE');
+  });
+  it.each(['live', 'edited', 'resolved', 'draft'])(
+    'rejects deletion resolution for a %s post or report',
+    async (state) => {
+      deletedReport();
+      if (state === 'live')
+        jest.mocked(db.currentRevision).mockResolvedValue(revision);
+      if (state === 'edited')
+        jest.mocked(db.currentRevision).mockResolvedValue('new-revision');
+      if (state === 'resolved')
+        jest.mocked(db.openReportCount).mockResolvedValue(0);
+      if (state === 'draft') record.published_subject_id = null;
+      await expect(
+        service.action(
+          'item',
+          { ...action, action: 'RESOLVE_DELETED_REPORT' },
+          ctx()
+        )
+      ).rejects.toThrow('unavailable');
+      expect(db.resolveDeletedReports).not.toHaveBeenCalled();
+    }
+  );
+  it('does not resolve a report merely by marking its deleted-post check reviewed', async () => {
+    deletedReport();
+    await service.action('item', { ...action, action: 'MARK_REVIEWED' }, ctx());
+    expect(db.resolveDeletedReports).not.toHaveBeenCalled();
   });
   it('rejects an approval after the author changes the target field', async () => {
     jest.mocked(db.currentRevision).mockResolvedValue('later-revision');

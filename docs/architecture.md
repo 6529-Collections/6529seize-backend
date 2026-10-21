@@ -2239,3 +2239,8 @@ Configure production as `2026-10-15T00:00:00Z` and staging with its intended ear
 Initial collaboration Artist credits use ` & ` for exactly two credited artists and `, ` for larger rosters; SEIZE Artist Profile always uses comma-separated handles. Confirmed invitee credit names are used in live metadata and the frozen mint-selection credit. Existing frozen claims and admin Craft edits are not rewritten.
 
 Collaboration retries retain each cancelled invitation under a distinct ID. The drop/profile index is non-unique; entity synchronization must remove the former unique index before API reinvites are enabled. Author and recipient state exposes the latest attempt only; historical invitation IDs cannot authorize a new attempt. Declined invitations cannot be resent. The five-collaborator cap counts pending and accepted attempts under the collaboration lock, preserving existing accepted rosters. API mutations send existing profile-scoped notification invalidations after commit, independently of push preferences. Acceptance also broadcasts accepted public attribution even when no notification row is created. No private invitation roster is added to public websocket payloads.
+
+WatchTower manual-review attention is derived from a subject-based union of
+open reports and pending moderation checks. The API groups this union before
+pagination and shares the case definition across queue and count surfaces; it
+adds no persisted case table, queue, service or background reconciliation.
