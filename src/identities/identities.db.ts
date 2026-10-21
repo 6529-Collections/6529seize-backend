@@ -1358,10 +1358,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       where submitter_id in (:profileIds)
       union select invitation.profile_id, invitation.drop_id
       from ${MEME_COLLABORATION_INVITATIONS_TABLE} invitation
-      join ${DROPS_TABLE} collaborator_drop on collaborator_drop.id=invitation.drop_id
+      join (${nativeMainStageEntriesSource('ACTIVE')}) collaboration_entry on collaboration_entry.drop_id=invitation.drop_id
       where invitation.profile_id in (:profileIds) and invitation.status='ACCEPTED'
-      and ((collaborator_drop.wave_id=:mainStageWaveId and collaborator_drop.drop_type='${DropType.PARTICIPATORY}')
-        or invitation.drop_id in (select drop_id from (${nativeMainStageEntriesSource('ACTIVE')}) collaboration_entry))
       `,
         {
           profileIds,
@@ -1407,10 +1405,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       where submitter_id in (:profileIds)
       union select invitation.profile_id, invitation.drop_id
       from ${MEME_COLLABORATION_INVITATIONS_TABLE} invitation
-      join ${DROPS_TABLE} collaborator_drop on collaborator_drop.id=invitation.drop_id
+      join (${nativeMainStageEntriesSource('WINNER')}) collaboration_entry on collaboration_entry.drop_id=invitation.drop_id
       where invitation.profile_id in (:profileIds) and invitation.status='ACCEPTED'
-      and ((collaborator_drop.wave_id=:mainStageWaveId and collaborator_drop.drop_type='${DropType.WINNER}')
-        or invitation.drop_id in (select drop_id from (${nativeMainStageEntriesSource('WINNER')}) collaboration_entry))
       `,
         {
           profileIds,

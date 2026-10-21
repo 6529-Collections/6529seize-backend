@@ -1,5 +1,4 @@
-import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
-import { competitionMainStageRepository } from './competition-main-stage.repository';
+import { freezeMemeCollaborationForNativeDecision } from '@/meme-collaborations/meme-collaboration-mint-selection';
 import { randomUUID } from 'node:crypto';
 import { collections } from '@/collections';
 import { readSequentially } from '@/competitions/competition-read-sequence';
@@ -24,10 +23,7 @@ import {
   COMPETITION_LIFECYCLE_EVENTS_TABLE,
   COMPETITION_SCORE_HISTORY_TABLE
 } from '@/constants';
-import {
-  CompetitionCapability,
-  CompetitionDecisionStatus
-} from '@/entities/ICompetition';
+import { CompetitionDecisionStatus } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
 import { BadRequestException } from '@/exceptions';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
@@ -663,17 +659,7 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
         );
       }
     }
-    if (
-      !params.skipped &&
-      params.competition.capabilities.includes(
-        CompetitionCapability.MAIN_STAGE
-      ) &&
-      (await competitionMainStageRepository.isDesignated(competitionId, ctx))
-    ) {
-      const nextMint = params.winners.find((winner) => winner.rank === 1);
-      if (nextMint)
-        await memeCollaborationsService.freezeForMint(nextMint.drop_id, ctx);
-    }
+    await freezeMemeCollaborationForNativeDecision(params, ctx);
     if (!params.skipped)
       await this.enqueueEvent(
         {

@@ -161,6 +161,21 @@ describeWithSeed(
     { table: MEME_COLLABORATION_INVITATIONS_TABLE, rows: invites }
   ],
   () => {
+    it('uses native membership for CHAT-backed original submissions and excludes inactive entries', async () => {
+      const db = new MemeCollaborationsDb(() => sqlExecutor);
+      await sqlExecutor.execute(
+        `update ${DROPS_TABLE} set drop_type='CHAT' where id='drop'`
+      );
+      expect(await db.activeMainStageDrop('drop', {})).toMatchObject({
+        competition_id: competition.id,
+        author_id: 'A'
+      });
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id=:entryId`,
+        { entryId }
+      );
+      expect(await db.activeMainStageDrop('drop', {})).toBeNull();
+    });
     it('retains cancelled attempts, reinvites with a fresh ID, and rejects old consent', async () => {
       const db = new MemeCollaborationsDb(() => sqlExecutor);
       const service = new MemeCollaborationsService(db);
