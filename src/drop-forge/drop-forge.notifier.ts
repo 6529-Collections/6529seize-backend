@@ -2,7 +2,7 @@ import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
 import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
-import { DROP_FORGERS_6529_MENTION } from '@/constants/mentions';
+import { DROPS_6529_MENTION } from '@/constants/mentions';
 import { DropForgeReportingConfig } from '@/drop-forge/drop-forge.config';
 import { DropForgeRepository } from '@/drop-forge/drop-forge.repository';
 import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
@@ -66,7 +66,7 @@ export async function postForgeReport(
   ctx: RequestContext
 ): Promise<{ drop_id: string; pending_push_notification_ids: number[] }> {
   const author = await validateForgeReporting(config, ctx);
-  const alert = error ? '\n\n' + DROP_FORGERS_6529_MENTION : '';
+  const alert = error ? '\n\n' + DROPS_6529_MENTION : '';
   const { drop_id, pending_push_notification_ids } =
     await createOrUpdateDrop.execute(
       {

@@ -1,5 +1,9 @@
 # Drop Forge Auto Launch — Backend Requirements Analysis
 
+The maintained operator setup document is
+[Drop Forge launch automation setup](../../../docs/drop-forge-auto-launch-setup.md).
+Configuration, IAM/KMS, reporting and rollout changes must update it in the same PR.
+
 ## Current Research requirement
 
 Research is the final automated Launch action; only Pay Artist remains excluded.
@@ -30,7 +34,7 @@ recipient resolution. Frontend owns configuration and operational visibility.
 Confirmed scope includes an operational wallet with on-chain creator-admin
 permission; claim initialization and phase updates; subscriber airdrops; an
 activity feed to a manually supplied wave; the global mention
-`@dropforgers6529` with manually supplied profile IDs; and investigation and
+`@drops6529` with manually supplied profile IDs; and investigation and
 fixes for reported EMMA phase-download/finalize timeouts. Other airdrop categories
 must be enumerated before implementation rather than implicitly enabled.
 
@@ -160,11 +164,11 @@ These are investigation leads, not a verified root cause of reported timeouts.
    airdrops cannot be established reliably, block for operator reconciliation;
    recipient balance or a checkbox alone is insufficient proof.
 
-## BE-5: Activity feed and @dropforgers6529
+## BE-5: Activity feed and @drops6529
 
 1. Proposed configuration: `DROP_FORGE_OPERATIONS_WAVE_ID`,
    `DROP_FORGE_BOT_PROFILE_ID`, and
-   `DROP_FORGERS_6529_MENTION_PROFILE_IDS` (comma-separated stable profile IDs).
+   `DROPS_6529_MENTION_PROFILE_IDS` (comma-separated stable profile IDs).
    Operator supplies wave/recipient values through environment configuration or
    secrets; no real values belong in these documents. Names are proposed.
 2. Validate author identity, wave access, and alert recipient configuration before
@@ -180,7 +184,7 @@ These are investigation leads, not a verified root cause of reported timeouts.
    independently and reconcile uncertain publication before repeating it.
    A reporting outage must not replay chain actions or erase execution state;
    retain fallback operational logs/alerts when the wave itself is unavailable.
-5. Implement `@dropforgers6529` as a global group mention following the existing
+5. Implement `@drops6529` as a global group mention following the existing
    developer mention pattern, with configured profile recipients and canonical
    notification metadata. Reserve its name against personal alias collisions.
    Recipients must pass existing visibility/access rules. Define invocation

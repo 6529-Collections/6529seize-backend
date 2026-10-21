@@ -93,7 +93,7 @@ export function getDropForgeReportingConfig(): DropForgeReportingConfig {
   const botId = required('DROP_FORGE_BOT_PROFILE_ID');
   const recipientIds = Array.from(
     new Set(
-      required('DROP_FORGERS_6529_MENTION_PROFILE_IDS')
+      required('DROPS_6529_MENTION_PROFILE_IDS')
         .split(',')
         .map((v) => v.trim())
         .filter(Boolean)

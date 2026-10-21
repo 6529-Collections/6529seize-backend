@@ -1806,6 +1806,14 @@ the next dispatch. The service catalog records allowed environments and
 default dependencies. The workflow's environment concurrency avoids overlapping
 backend deployment runs; it does not create a cross-repository scheduler.
 
+Drop Forge worker deployments additionally select their dedicated Lambda execution
+roles from the protected environment's `DROP_FORGE_WORKER_ROLE_ARN` and
+`DROP_FORGE_PREPARATION_ROLE_ARN` Actions variables. Only the selected worker's
+role is required and exported to Serverless; unrelated deployments are unaffected.
+The launch role alone receives permission to sign with the operational KMS key.
+Role provisioning, exact `iam:PassRole` grants and the observation/live rollout
+are covered by the maintained [setup guide](drop-forge-auto-launch-setup.md).
+
 Backend deployment uses separate IAM roles through GitHub OIDC in the
 `staging` and `production` GitHub environments, restricted to `1a-staging` and
 `main` respectively. Each environment's `AWS_DEPLOY_ROLE_ARN` selects its role;
@@ -1887,7 +1895,7 @@ flowchart LR
   Worker --> Chain[Creator and lazy claim contracts]
   Prep --> Wave[Durable wave reports]
   Worker --> Wave
-  Wave --> Alerts[Configured dropforgers6529 profiles]
+  Wave --> Alerts[Configured drops6529 profiles]
 ```
 
 Manual controls acquire a durable lease before prompting the wallet. Confirmed
@@ -1927,7 +1935,7 @@ back the stage for scheduler retry. Legacy synchronous endpoints retain their
 response shapes. Completed downloads are paginated reads of persisted results.
 
 Reporting drops and outbox acknowledgements share a DB transaction. Push
-transport runs after commit. `@dropforgers6529` resolves configured profile IDs
+transport runs after commit. `@drops6529` resolves configured profile IDs
 through existing visibility and notification rules. Initial wave reporting is
 required before new launch signing; receipt reconciliation continues separately.
 See [configuration and recovery](drop-forge-auto-launch.md). The creator owner

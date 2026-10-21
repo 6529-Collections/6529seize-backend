@@ -1473,11 +1473,11 @@ describe('CreateOrUpdateDropUseCase', () => {
     ).not.toThrow();
   });
 
-  it('resolves @dropforgers6529 to configured profiles with wave visibility filtering', async () => {
+  it('resolves @drops6529 to configured profiles with wave visibility filtering', async () => {
     jest
       .spyOn(env, 'getStringArray')
       .mockImplementation((name) =>
-        name === 'DROP_FORGERS_6529_MENTION_PROFILE_IDS'
+        name === 'DROPS_6529_MENTION_PROFILE_IDS'
           ? ['visible-forger', 'hidden-forger']
           : []
       );
@@ -1497,13 +1497,13 @@ describe('CreateOrUpdateDropUseCase', () => {
     const useCase = createUseCaseWithMocks({ userGroupsService });
     expect(
       normalizeDropGroupMentions({
-        parts: [{ content: 'failure @dropforgers6529' }]
+        parts: [{ content: 'failure @drops6529' }]
       })
-    ).toEqual([DropGroupMention.DROP_FORGERS_6529]);
+    ).toEqual([DropGroupMention.DROPS_6529]);
     await expect(
       (useCase as any).resolvePermissionGroupMentionRecipients(
         {
-          model: { mentioned_groups: [DropGroupMention.DROP_FORGERS_6529] },
+          model: { mentioned_groups: [DropGroupMention.DROPS_6529] },
           wave: {
             created_by: 'creator',
             chat_group_id: null,

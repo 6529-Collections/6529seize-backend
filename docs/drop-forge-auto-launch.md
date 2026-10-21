@@ -1,5 +1,10 @@
 # Drop Forge automated launch operations
 
+For environment values, wave/profile access, AWS KMS/IAM provisioning and the
+initial rollout without on-chain admin permission, use the maintained
+[setup guide](drop-forge-auto-launch-setup.md). Update that guide alongside any
+configuration, authority or deployment changes.
+
 EMMA exposes one durable **Process and Finalize** operation. Craft exposes
 **Launch** after publication and **Update Claim** after republishing metadata.
 The backend initializes immediately after Launch is accepted and continues phase
@@ -12,7 +17,7 @@ grants, and Pay Artist remain operator responsibilities.
 Supply configuration through the existing environment/secrets loading path.
 Keep signer settings stable until every outstanding transaction is reconciled.
 The API and worker need the same launch configuration; notification-producing
-services need the same `DROP_FORGERS_6529_MENTION_PROFILE_IDS` configuration.
+services need the same `DROPS_6529_MENTION_PROFILE_IDS` configuration.
 
 | Setting                                 | Meaning                                                                                                                                  |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -28,7 +33,7 @@ services need the same `DROP_FORGERS_6529_MENTION_PROFILE_IDS` configuration.
 | `DROP_FORGE_WORKER_ROLE_ARN`            | Dedicated deployment/execution role; manually provisioned                                                                                |
 | `DROP_FORGE_OPERATIONS_WAVE_ID`         | Manually confirmed operations wave UUID                                                                                                  |
 | `DROP_FORGE_BOT_PROFILE_ID`             | Existing bot profile UUID, with permission to chat in that wave                                                                          |
-| `DROP_FORGERS_6529_MENTION_PROFILE_IDS` | Manually supplied comma-separated profile UUIDs; all must exist and see the wave                                                         |
+| `DROPS_6529_MENTION_PROFILE_IDS` | Manually supplied comma-separated profile UUIDs; all must exist and see the wave                                                         |
 | `DROP_FORGE_CONFIRMATIONS`              | Confirmations before advancing, default 12, permitted range 2–64                                                                         |
 | `DROP_FORGE_MAX_FEE_PER_GAS_WEI`        | Required positive fee cap                                                                                                                |
 | `DROP_FORGE_MAX_GAS_PER_TX`             | Required positive gas-limit cap                                                                                                          |
@@ -152,7 +157,7 @@ per transaction, at most 20,000 phase-recipient entries per plan):
   signing. Confirmed manual Research receipts are reconciled separately from
   subscriber allocations, and their supply reduces any remaining top-up.
   Completion mirrors `RESEARCH_AIRDROP` into Launch and posts wave activity with
-  transaction links; failures use the existing `@dropforgers6529` alert path.
+  transaction links; failures use the existing `@drops6529` alert path.
   Pay Artist remains manual.
 
 For each initialization/transition, admission requires
@@ -216,7 +221,7 @@ receipts are checked for canonical block hashes before proceeding or completing.
 
 Unknown nonce consumption, a reorg, revoked admin permission, insufficient gas,
 changed source/configuration, or a missed deadline blocks the launch and records
-an error report with `@dropforgers6529`. `RESUME` requires the latest revision and
+an error report with `@drops6529`. `RESUME` requires the latest revision and
 rechecks source, proofs, scope and timing. It does not replace a transaction,
 reset a nonce, or replay a reverted airdrop. Outstanding transactions can block
 other launches using the same signer until reconciled.

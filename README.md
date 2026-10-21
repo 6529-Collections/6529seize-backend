@@ -95,6 +95,10 @@ The dashboard falls back to plain `gh run list` output in non-interactive shells
 See [Deployment](docs/deployment.md) for staging/production merges, service
 ordering, automatic frontend validation, and failure recovery.
 
+Drop Forge operators should start with the dedicated
+[launch automation setup guide](docs/drop-forge-auto-launch-setup.md) for
+environment configuration, KMS/IAM permissions, reporting and rollout.
+
 `ghdeploy` triggers the GitHub Actions deploy workflow for this repo.
 
 You can run it from anywhere inside this repository, but it only works in these locations:
