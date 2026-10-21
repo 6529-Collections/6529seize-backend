@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import {
   COMPETITION_VOTE_HISTORY_TABLE,
+  COMPETITION_SCORE_HISTORY_TABLE,
   COMPETITION_ENTRY_RUNTIME_TABLE,
   COMPETITION_WINNER_VOTES_TABLE,
   COMPETITION_OUTCOME_AWARDS_TABLE,
@@ -18,6 +19,7 @@ import {
 
 /** A sequence is required to order two accepted votes in the same millisecond. */
 @Entity(COMPETITION_VOTE_HISTORY_TABLE)
+@Index('idx_competition_vote_history_sequence', ['competition_id', 'sequence'])
 @Index('idx_competition_vote_history_entry_time', [
   'competition_id',
   'entry_id',
@@ -40,6 +42,10 @@ export class CompetitionVoteHistoryEntity {
   readonly competition_id!: string;
   @Column({ type: 'varchar', length: 36 })
   readonly entry_id!: string;
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly drop_id!: string | null;
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly submitter_id!: string | null;
   @Column({ type: 'varchar', length: 100 })
   readonly voter_profile_id!: string;
   @Column({ type: 'bigint' })
@@ -52,6 +58,44 @@ export class CompetitionVoteHistoryEntity {
   readonly credit_delta!: number;
   @Column({ type: 'bigint' })
   readonly occurred_at!: number;
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly proxy_id!: string | null;
+  @Column({ type: 'json', nullable: true })
+  readonly contents!: Record<string, unknown> | null;
+}
+
+/** Aggregate and individual voter observations are independent time series.
+ * A retained source sequence is never inferred from the other stream. */
+@Entity(COMPETITION_SCORE_HISTORY_TABLE)
+@Index('idx_competition_score_history_voter', [
+  'voter_profile_id',
+  'competition_id'
+])
+@Index('idx_competition_score_history_entry_time', [
+  'competition_id',
+  'entry_id',
+  'occurred_at',
+  'sequence'
+])
+export class CompetitionScoreHistoryEntity {
+  @PrimaryColumn({ type: 'varchar', length: 36 })
+  readonly competition_id!: string;
+  @PrimaryColumn({ type: 'varchar', length: 16 })
+  readonly kind!: 'AGGREGATE' | 'VOTER';
+  @PrimaryColumn({ type: 'bigint' })
+  readonly sequence!: number;
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  readonly entry_id!: string | null;
+  @Column({ type: 'varchar', length: 100 })
+  readonly drop_id!: string;
+  @Column({ type: 'varchar', length: 100 })
+  readonly voter_profile_id!: string;
+  @Column({ type: 'bigint' })
+  readonly value!: number;
+  @Column({ type: 'bigint' })
+  readonly occurred_at!: number;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly mutation_sequence!: number | null;
 }
 
 @Entity(COMPETITION_ENTRY_RUNTIME_TABLE)
@@ -116,6 +160,10 @@ export class CompetitionOutcomeAwardEntity {
 }
 
 @Entity(COMPETITION_OUTBOX_TABLE)
+@Index('idx_competition_outbox_competition_time', [
+  'competition_id',
+  'created_at'
+])
 @Index('idx_competition_outbox_pending', [
   'delivered_at',
   'next_attempt_at',

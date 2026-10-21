@@ -1,3 +1,5 @@
+import { DbPoolName } from '@/db-query.options';
+import { transferReconciliationDb } from '@/transactions/transfer-reconciliation.db';
 import {
   GRADIENT_CONTRACT,
   MANIFOLD,
@@ -12,8 +14,6 @@ import { Transaction } from '../entities/ITransaction';
 import {
   fetchAllSeasons,
   fetchConsolidationGroupsForAddresses,
-  fetchMaxTransactionsBlockNumber,
-  fetchTransactionsAfterBlock,
   fetchWalletTransactions
 } from '../db';
 import { Logger } from '../logging';
@@ -337,7 +337,8 @@ export const updateAggregatedActivity = async (reset?: boolean) => {
     ? 0
     : await getMaxAggregatedActivityBlockReference();
   reset = reset || lastActivityBlock === 0;
-  let blockReference = await fetchMaxTransactionsBlockNumber();
+  const blockReference = await transferReconciliationDb.maxBlock();
+  const pending = await transferReconciliationDb.pending('activity');
   const seasons = await fetchAllSeasons();
 
   const nextgenNetwork = getNextgenNetwork();
@@ -348,7 +349,7 @@ export const updateAggregatedActivity = async (reset?: boolean) => {
   );
 
   const addresses = new Set<string>();
-  const transactions: Transaction[] = await fetchTransactionsAfterBlock(
+  const transactions: Transaction[] = await transferReconciliationDb.changes(
     [MEMES_CONTRACT, MEMELAB_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT],
     lastActivityBlock,
     blockReference
@@ -359,20 +360,16 @@ export const updateAggregatedActivity = async (reset?: boolean) => {
     addresses.add(wallet.to_address.toLowerCase());
   });
 
+  pending.forEach((row) => addresses.add(row.wallet));
+
   if (!addresses.size) {
     logger.info(`[NO WALLETS TO PROCESS]`);
     return;
   }
 
-  const isValidTransactions = validateTransactions(transactions, seasons);
-  if (!isValidTransactions) {
-    logger.error(
-      `[INVALID TRANSACTIONS DETECTED] : [BLOCK REFERENCE KEPT TO ${lastActivityBlock}]`
-    );
-    blockReference = lastActivityBlock;
-  } else {
-    logger.info(
-      `[TRANSACTIONS VALIDATED ${transactions.length.toLocaleString()}]`
+  if (!validateTransactions(transactions, seasons)) {
+    throw new Error(
+      'Activity reconciliation requires current Meme season metadata'
     );
   }
 
@@ -397,6 +394,8 @@ export const updateAggregatedActivity = async (reset?: boolean) => {
     addresses,
     reset
   );
+
+  await transferReconciliationDb.acknowledge(pending);
 
   return {
     walletsActivity,
@@ -482,9 +481,16 @@ async function retrieveActivityDelta(
     addresses.map(async (address) => {
       let addressTransactions: Transaction[] = await fetchWalletTransactions(
         [MEMES_CONTRACT, GRADIENT_CONTRACT, MEMELAB_CONTRACT, nextgenContract],
-        address
+        address,
+        targetActivityBlock,
+        { forcePool: DbPoolName.WRITE }
       );
 
+      if (!validateTransactions(addressTransactions, seasons)) {
+        throw new Error(
+          'Activity reconciliation requires current Meme season metadata'
+        );
+      }
       if (ethTools.isNullOrDeadAddress(address)) {
         addressTransactions.forEach((at) => {
           at.value = 0;

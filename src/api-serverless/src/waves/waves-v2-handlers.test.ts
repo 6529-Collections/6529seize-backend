@@ -56,15 +56,7 @@ jest.mock('@/drops/drops.db', () => ({
 }));
 
 jest.mock('@/time', () => ({
-  Time: {
-    seconds: jest.fn((amount: number) => ({
-      toMillis: jest.fn(() => amount * 1000),
-      toSeconds: jest.fn(() => amount)
-    })),
-    minutes: jest.fn(() => ({
-      toMillis: jest.fn(() => 60000)
-    }))
-  },
+  Time: jest.requireActual('@/time').Time,
   Timer: {
     getFromRequest: mockGetFromRequest
   }

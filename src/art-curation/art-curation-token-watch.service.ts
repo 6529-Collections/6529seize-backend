@@ -15,25 +15,20 @@ import {
   ArtCurationTokenWatchStatus
 } from '@/entities/IArtCurationTokenWatch';
 import { DropType } from '@/entities/IDrop';
-import { WaveDecisionWinnerPrize } from '@/entities/IWaveDecision';
 import { WaveEntity } from '@/entities/IWave';
 import { env } from '@/env';
 import { Logger } from '@/logging';
 import { validateLinkUrl } from '@/nft-links/nft-link-resolver.validator';
 import { RequestContext } from '@/request.context';
 import { Time, Timer } from '@/time';
-import { waveDecisionsDb, WaveDecisionsDb } from '@/waves/wave-decisions.db';
-import {
-  waveLeaderboardCalculationService,
-  WaveLeaderboardCalculationService
-} from '@/waves/wave-leaderboard-calculation.service';
 import { randomUUID } from 'node:crypto';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
-import { DropRealVoterVoteInTimeEntityWithoutId } from '@/entities/IDropRealVoterVoteInTime';
-import { WinnerDropVoterVoteEntity } from '@/entities/IWinnerDropVoterVote';
-import { dropVotingDb, DropVotingDb } from '@/api/drops/drop-voting.db';
 
-const EMPTY_PRIZES: WaveDecisionWinnerPrize[] = [];
+import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
+import { competitionRepository } from '@/competitions/competition.repository';
+import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
+import { CompetitionCapability } from '@/entities/ICompetition';
 
 export class ArtCurationTokenWatchService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -41,15 +36,47 @@ export class ArtCurationTokenWatchService {
   public constructor(
     private readonly artCurationTokenWatchDb: ArtCurationTokenWatchDb,
     private readonly onchainService: ArtCurationTokenWatchOnchainService,
-    private readonly dropVotingDb: DropVotingDb,
-    private readonly dropsDb: DropsDb,
-    private readonly waveDecisionsDb: WaveDecisionsDb,
-    private readonly waveLeaderboardCalculationService: WaveLeaderboardCalculationService
+    private readonly dropsDb: DropsDb
   ) {}
 
-  public isEnabledForWave(waveId: string): boolean {
-    const configuredWaveId = env.getStringOrNull('ART_CURATIONS_WAVE_ID');
-    return !!configuredWaveId && configuredWaveId === waveId;
+  private async canRegisterDrop(
+    dropId: string,
+    waveId: string,
+    dropType: DropType,
+    competitionId: string | undefined,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    if (dropType !== DropType.PARTICIPATORY) return false;
+    if (competitionId) return this.isNativeCuration(competitionId, waveId, ctx);
+    const entries = await competitionEntryRepository.lockDropMemberships(
+      dropId,
+      ctx
+    );
+    for (const entry of entries) {
+      if (
+        entry.wave_id === waveId &&
+        entry.status === 'ACTIVE' &&
+        (await this.isNativeCuration(entry.competition_id, waveId, ctx))
+      )
+        return true;
+    }
+    return false;
+  }
+
+  private async isNativeCuration(
+    competitionId: string,
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const record = await competitionRepository.findCompetitionRecordById(
+      competitionId,
+      ctx
+    );
+    if (record?.storage_mode !== 'NATIVE' || record.wave_id !== waveId)
+      return false;
+    return (
+      await competitionRepository.findCapabilities(competitionId, ctx)
+    ).includes(CompetitionCapability.CURATION);
   }
 
   public async registerDrop(
@@ -57,18 +84,27 @@ export class ArtCurationTokenWatchService {
       dropId,
       waveId,
       dropType,
+      competitionId,
       links
     }: {
       dropId: string;
       waveId: string;
       dropType: DropType;
+      competitionId?: string;
       links: DropNftLinkInsertModel[];
     },
     ctx: RequestContext
   ): Promise<void> {
-    if (!this.isEnabledForWave(waveId) || dropType !== DropType.PARTICIPATORY) {
+    if (
+      !(await this.canRegisterDrop(
+        dropId,
+        waveId,
+        dropType,
+        competitionId,
+        ctx
+      ))
+    )
       return;
-    }
     const previousWatchLink = await this.artCurationTokenWatchDb.findByDropId(
       dropId,
       ctx
@@ -259,6 +295,25 @@ export class ArtCurationTokenWatchService {
         timer: ctx.timer,
         connection
       };
+      // Entry commands lock competitions before watches. Keep the same order.
+      const records = await competitionRepository.listCompetitionRecordsForWave(
+        watch.wave_id,
+        txCtx
+      );
+      const competitions = [];
+      for (const record of [...records].sort((a, b) =>
+        a.id.localeCompare(b.id)
+      )) {
+        const competition =
+          await nativeCompetitionRuntimeRepository.lockCompetition(
+            record.id,
+            txCtx
+          );
+        if (competition?.capabilities.includes(CompetitionCapability.CURATION))
+          competitions.push(competition);
+      }
+      if (!competitions.length)
+        throw new Error('Curation watch has no native capability owner');
       const lockedWatch = await this.artCurationTokenWatchDb.findByIdForUpdate(
         watch.id,
         txCtx
@@ -289,7 +344,8 @@ export class ArtCurationTokenWatchService {
           wave,
           dropIds,
           event,
-          transferPrice
+          transferPrice,
+          competitionIds: competitions.map((competition) => competition.id)
         },
         txCtx
       );
@@ -302,51 +358,34 @@ export class ArtCurationTokenWatchService {
       wave,
       dropIds,
       event,
-      transferPrice
+      transferPrice,
+      competitionIds
     }: {
       watch: ArtCurationTokenWatchEntity;
       wave: WaveEntity;
       dropIds: string[];
       event: ArtCurationTokenTransferEvent;
       transferPrice: ArtCurationTokenTransferPrice;
+      competitionIds: string[];
     },
     ctx: RequestContext
   ): Promise<void> {
     const decisionTime = event.timestampMs;
-    const { finalVotesByDropId, winnerVotes } =
-      await this.buildWinnerVoteArchive(
-        {
+    for (const competitionId of competitionIds) {
+      const resolved =
+        await nativeCompetitionRuntimeService.resolveCurationEntries(
+          competitionId,
           dropIds,
-          wave,
-          decisionTime
-        },
-        ctx
-      );
-    if (winnerVotes.length) {
-      await this.dropVotingDb.insertWinnerDropsVoterVotes(winnerVotes, ctx);
+          decisionTime,
+          `curation:${watch.id}:${event.txHash}:${event.logIndex}`,
+          ctx
+        );
+      if (!resolved) {
+        await this.artCurationTokenWatchDb.unlock(watch.id, ctx);
+        return;
+      }
     }
-    await this.waveDecisionsDb.insertDecisionIfMissing(
-      {
-        decision_time: decisionTime,
-        wave_id: wave.id
-      },
-      ctx
-    );
-    await this.waveDecisionsDb.insertDecisionWinners(
-      dropIds.map((dropId) => ({
-        drop_id: dropId,
-        ranking: 1,
-        decision_time: decisionTime,
-        prizes: EMPTY_PRIZES,
-        wave_id: wave.id,
-        final_vote: finalVotesByDropId[dropId] ?? 0
-      })),
-      ctx
-    );
-    await this.waveDecisionsDb.updateDropsToWinners(dropIds, ctx);
-    await this.waveDecisionsDb.deleteDropsRanks(dropIds, ctx);
     await this.dropsDb.resyncParticipatoryDropCountsForWaves([wave.id], ctx);
-    await this.dropVotingDb.deleteStaleLeaderboardEntriesForWave(wave.id, ctx);
     await this.artCurationTokenWatchDb.markResolved(
       {
         watchId: watch.id,
@@ -365,105 +404,10 @@ export class ArtCurationTokenWatchService {
       `Resolved Art Curation watch ${watch.id} for ${dropIds.length} drops`
     );
   }
-
-  private async buildWinnerVoteArchive(
-    {
-      dropIds,
-      wave,
-      decisionTime
-    }: {
-      dropIds: string[];
-      wave: WaveEntity;
-      decisionTime: number;
-    },
-    ctx: RequestContext
-  ): Promise<{
-    finalVotesByDropId: Record<string, number>;
-    winnerVotes: WinnerDropVoterVoteEntity[];
-  }> {
-    if (!wave.time_lock_ms || wave.time_lock_ms <= 0) {
-      const winnerVotes = await this.dropVotingDb.getCurrentVoterStatesForDrops(
-        dropIds,
-        ctx
-      );
-      const finalVotesByDropId = dropIds.reduce(
-        (acc, dropId) => {
-          acc[dropId] = 0;
-          return acc;
-        },
-        {} as Record<string, number>
-      );
-      for (const vote of winnerVotes) {
-        finalVotesByDropId[vote.drop_id] =
-          (finalVotesByDropId[vote.drop_id] ?? 0) + vote.votes;
-      }
-      return {
-        finalVotesByDropId,
-        winnerVotes
-      };
-    }
-
-    const startTime = Time.millis(decisionTime).minusMillis(wave.time_lock_ms);
-    const endTime = Time.millis(decisionTime);
-    const startTimeMillis = startTime.toMillis();
-    const voteLogs =
-      await this.dropVotingDb.getAllVoteChangeLogsForGivenDropsInTimeframe(
-        {
-          timeLockStart: startTimeMillis,
-          dropIds
-        },
-        ctx
-      );
-    const winnerVotes: WinnerDropVoterVoteEntity[] = [];
-    const finalVotesByDropId = dropIds.reduce(
-      (acc, dropId) => {
-        acc[dropId] = 0;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
-
-    for (const [dropId, votesByVoter] of Object.entries(voteLogs)) {
-      for (const [voterId, voteStates] of Object.entries(votesByVoter)) {
-        const transformed =
-          voteStates.map<DropRealVoterVoteInTimeEntityWithoutId>((vote) => ({
-            drop_id: dropId,
-            voter_id: voterId,
-            vote: vote.vote,
-            timestamp: Math.max(vote.timestamp, startTimeMillis),
-            wave_id: wave.id
-          }));
-        const finalVote =
-          this.waveLeaderboardCalculationService.calculateFinalVoteForDrop({
-            voteStates: transformed,
-            startTime,
-            endTime
-          });
-        finalVotesByDropId[dropId] =
-          (finalVotesByDropId[dropId] ?? 0) + finalVote;
-        if (finalVote !== 0) {
-          winnerVotes.push({
-            voter_id: voterId,
-            drop_id: dropId,
-            votes: finalVote,
-            wave_id: wave.id
-          });
-        }
-      }
-    }
-
-    return {
-      finalVotesByDropId,
-      winnerVotes
-    };
-  }
 }
 
 export const artCurationTokenWatchService = new ArtCurationTokenWatchService(
   artCurationTokenWatchDb,
   artCurationTokenWatchOnchainService,
-  dropVotingDb,
-  dropsDb,
-  waveDecisionsDb,
-  waveLeaderboardCalculationService
+  dropsDb
 );

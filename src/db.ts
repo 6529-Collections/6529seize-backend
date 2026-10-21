@@ -1,5 +1,6 @@
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import 'reflect-metadata';
+import { enqueueTransfersWithManager } from './transactions/transfer-reconciliation.db';
 import {
   DataSource,
   EntityManager,
@@ -12,6 +13,12 @@ import {
   ObjectLiteral
 } from 'typeorm';
 import { consolidationTools } from './consolidation-tools';
+import { formatConsolidationDisplay } from './consolidation-display';
+import {
+  ConsolidationRowPlan,
+  planConsolidationEvent,
+  planConsolidationRewind
+} from './consolidation-row-plan';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   ARTISTS_TABLE,
@@ -34,6 +41,7 @@ import {
   WALLETS_TDH_TABLE
 } from '@/constants';
 import { DbQueryOptions } from './db-query.options';
+import { writeDelegations } from '@/delegation-row';
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import { Artist } from './entities/IArtist';
 import {
@@ -41,7 +49,6 @@ import {
   ConsolidationEvent,
   Delegation,
   DelegationEvent,
-  EventType,
   NFTDelegationBlock,
   WalletConsolidationKey
 } from './entities/IDelegation';
@@ -93,6 +100,7 @@ import { identityConsolidationEffects } from './identity';
 import { Logger } from './logging';
 import { metricsRecorder } from './metrics/MetricsRecorder';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
+import { upsertTdhInBatches } from '@/tdhLoop/tdh-persistence-batches';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -438,7 +446,9 @@ export async function retrieveConsolidationsForWallets(
     SELECT DISTINCT
       LOWER(wallet1) AS wallet1,
       LOWER(wallet2) AS wallet2,
-      block
+      block,
+      wallet1_registered_at,
+      wallet2_registered_at
     FROM ${CONSOLIDATIONS_TABLE}
     WHERE confirmed = true
       AND (
@@ -454,7 +464,7 @@ export async function retrieveConsolidationsForWallets(
           SELECT wallet2 FROM wallet_cluster
         )
       )
-    ORDER BY block DESC;
+    ORDER BY block DESC, LOWER(wallet1), LOWER(wallet2);
   `;
 
   const consolidations = await sqlExecutor.execute<Consolidation>(
@@ -652,15 +662,6 @@ export async function fetchAllTDH(block: number, wallets?: string[]) {
   return results.map(parseTdhDataFromDB);
 }
 
-function shortFormatIfAddress(address: string): string {
-  if (!address || !ethTools.isEthAddress(address)) {
-    return address;
-  }
-  return `${address.substring(0, 5)}...${address.substring(
-    address.length - 3
-  )}`;
-}
-
 export async function fetchConsolidationDisplay(
   myWallets: string[]
 ): Promise<string> {
@@ -678,10 +679,12 @@ export async function fetchConsolidationDisplay(
     }
   });
 
-  if (displayArray.length == 1) {
-    return displayArray[0];
-  }
-  return displayArray.map((d) => shortFormatIfAddress(d)).join(' - ');
+  return formatConsolidationDisplay(
+    myWallets.map((wallet, index) => ({
+      wallet,
+      display: displayArray[index]
+    }))
+  );
 }
 
 export async function fetchConsolidationDisplays(
@@ -715,14 +718,12 @@ export async function fetchConsolidationDisplays(
   }
   return consolidationKeys.reduce(
     (acc, key) => {
-      const displays = key
-        .split('-')
-        .map((wallet) => allRelatedDisplays[wallet.toLowerCase()]!);
-      if (displays.length === 1) {
-        acc[key] = displays[0];
-      } else {
-        acc[key] = displays.map((it) => shortFormatIfAddress(it)).join(' - ');
-      }
+      acc[key] = formatConsolidationDisplay(
+        key.split('-').map((wallet) => ({
+          wallet,
+          display: allRelatedDisplays[wallet.toLowerCase()]!
+        }))
+      );
       return acc;
     },
     {} as Record<string, string>
@@ -817,7 +818,8 @@ export async function fetchAllConsolidationAddresses() {
 export async function fetchWalletTransactions(
   contracts: string[],
   wallet: string,
-  block?: number
+  block?: number,
+  options?: DbQueryOptions
 ) {
   const sql = `SELECT * FROM ${TRANSACTIONS_TABLE}`;
   const params: any = {
@@ -846,7 +848,7 @@ export async function fetchWalletTransactions(
 
   const fullSql = `${sql} ${filters}`;
 
-  return await sqlExecutor.execute(fullSql, params);
+  return await sqlExecutor.execute(fullSql, params, options);
 }
 
 export async function fetchEnsRefresh() {
@@ -933,6 +935,7 @@ export async function persistTransactions(transactions: BaseTransaction[]) {
           'to_address',
           'token_id'
         ]);
+      await enqueueTransfersWithManager(manager, consolidatedTransactions);
     });
 
     logger.info(
@@ -1122,9 +1125,12 @@ export async function persistTDH(
             .execute();
         })
       );
-      await tdhRepo.save(tdh);
-      await tdhMemesRepo.save(memesTdh);
-      await tdhEditionsRepo.save(tdhEditions);
+      await upsertTdhInBatches(tdhRepo, tdh);
+      logger.info(`[TDH] [SAVED WALLET ROWS ${tdh.length}]`);
+      await upsertTdhInBatches(tdhMemesRepo, memesTdh);
+      logger.info(`[TDH] [SAVED MEMES ROWS ${memesTdh.length}]`);
+      await upsertTdhInBatches(tdhEditionsRepo, tdhEditions);
+      logger.info(`[TDH] [SAVED EDITION ROWS ${tdhEditions.length}]`);
     } else {
       logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
       await tdhRepo.delete({ block: block });
@@ -1205,10 +1211,14 @@ export async function persistConsolidatedTDH(
         tdhEditionsRepo,
         scope.consolidationKeysToReplace
       );
-      await tdhRepo.save(tdh);
-
-      await tdhMemesRepo.save(memesTdh);
-      await tdhEditionsRepo.save(tdhEditions);
+      await upsertTdhInBatches(tdhRepo, tdh);
+      logger.info(`[CONSOLIDATED TDH] [SAVED GROUP ROWS ${tdh.length}]`);
+      await upsertTdhInBatches(tdhMemesRepo, memesTdh);
+      logger.info(`[CONSOLIDATED TDH] [SAVED MEMES ROWS ${memesTdh.length}]`);
+      await upsertTdhInBatches(tdhEditionsRepo, tdhEditions);
+      logger.info(
+        `[CONSOLIDATED TDH] [SAVED EDITION ROWS ${tdhEditions.length}]`
+      );
     } else {
       logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
       await deleteAll(tdhRepo);
@@ -1323,7 +1333,7 @@ export async function persistHistoricConsolidatedTDH(
       consolidationKeysToReplace,
       block
     );
-    await historicTdhRepo.save(tdh);
+    await upsertTdhInBatches(historicTdhRepo, tdh);
   } else {
     await historicTdhRepo.delete({ block: block });
     await insertWithoutUpdate(historicTdhRepo, tdh);
@@ -1365,7 +1375,7 @@ async function persistNftTdhWithManager(
   if (wallets) {
     logger.info(`[NFT TDH] [DELETING ${wallets.length} WALLETS]`);
     await deleteConsolidationsByKeys(nftTdhRepo, consolidationKeysToReplace!);
-    await nftTdhRepo.save(nftTdh);
+    await upsertTdhInBatches(nftTdhRepo, nftTdh);
   } else {
     logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);
     await deleteAll(nftTdhRepo);
@@ -1515,95 +1525,87 @@ export async function fetchRoyalties(startDate: Date, endDate: Date) {
 
 export async function persistConsolidations(
   startBlock: number | undefined,
-  consolidations: ConsolidationEvent[]
+  consolidations: ConsolidationEvent[],
+  resetBlockTimestamp?: number
 ) {
   logger.info(
     `[CONSOLIDATIONS] [START_BLOCK ${startBlock}] [PERSISTING ${consolidations.length} RESULTS]`
   );
 
-  const repo = AppDataSource.getRepository(Consolidation);
+  // One transaction, so a failure part-way through a batch cannot leave a
+  // pair with its old row removed and its new row unsaved.
+  await AppDataSource.transaction(async (manager) => {
+    const repo = manager.getRepository(Consolidation);
 
-  if (startBlock) {
-    //delete all with block >= startBlock
-    await repo.delete({
-      block: MoreThanOrEqual(startBlock)
-    });
-  }
-
-  for (const consolidation of consolidations) {
-    if (consolidation.type == EventType.REGISTER) {
-      const r = await repo.findOne({
-        where: {
-          wallet1: consolidation.wallet1,
-          wallet2: consolidation.wallet2
-        }
-      });
-      if (r) {
-        // do nothing
-      } else {
-        const r2 = await repo.findOne({
-          where: {
-            wallet1: consolidation.wallet2,
-            wallet2: consolidation.wallet1
-          }
-        });
-        if (r2) {
-          await repo.remove(r2);
-          const updatedConsolidation = new Consolidation();
-          updatedConsolidation.block = consolidation.block;
-          updatedConsolidation.wallet1 = consolidation.wallet2;
-          updatedConsolidation.wallet2 = consolidation.wallet1;
-          updatedConsolidation.confirmed = true;
-          await repo.save(updatedConsolidation);
-        } else {
-          const newConsolidation = new Consolidation();
-          newConsolidation.block = consolidation.block;
-          newConsolidation.wallet1 = consolidation.wallet1;
-          newConsolidation.wallet2 = consolidation.wallet2;
-          await repo.save(newConsolidation);
-        }
-      }
-    } else if (consolidation.type == EventType.REVOKE) {
-      const r = await repo.findOne({
-        where: {
-          wallet1: consolidation.wallet1,
-          wallet2: consolidation.wallet2
-        }
-      });
-      if (r) {
-        if (r.confirmed) {
-          await repo.remove(r);
-          const newConsolidation = new Consolidation();
-          newConsolidation.block = consolidation.block;
-          newConsolidation.wallet1 = consolidation.wallet2;
-          newConsolidation.wallet2 = consolidation.wallet1;
-          await repo.save(newConsolidation);
-        } else {
-          await repo.remove(r);
-        }
-      } else {
-        const r2 = await repo.findOne({
-          where: {
-            wallet1: consolidation.wallet2,
-            wallet2: consolidation.wallet1
-          }
-        });
-        if (r2) {
-          await repo.remove(r2);
-          const updatedConsolidation = new Consolidation();
-          updatedConsolidation.block = consolidation.block;
-          updatedConsolidation.wallet1 = consolidation.wallet2;
-          updatedConsolidation.wallet2 = consolidation.wallet1;
-          updatedConsolidation.confirmed = false;
-          await repo.save(updatedConsolidation);
-        }
-      }
+    if (startBlock) {
+      await rewindConsolidationsForReplay(
+        repo,
+        startBlock,
+        resetBlockTimestamp
+      );
     }
-  }
+
+    for (const consolidation of consolidations) {
+      const sameDirection = await repo.findOne({
+        where: {
+          wallet1: consolidation.wallet1,
+          wallet2: consolidation.wallet2
+        }
+      });
+      const reverseDirection = sameDirection
+        ? null
+        : await repo.findOne({
+            where: {
+              wallet1: consolidation.wallet2,
+              wallet2: consolidation.wallet1
+            }
+          });
+      await applyConsolidationRowPlan(
+        repo,
+        planConsolidationEvent(consolidation, sameDirection, reverseDirection)
+      );
+    }
+  });
 
   logger.info(
     `[CONSOLIDATIONS] [ALL ${consolidations.length} RESULTS PERSISTED]`
   );
+}
+
+async function applyConsolidationRowPlan(
+  repo: Repository<Consolidation>,
+  plan: ConsolidationRowPlan
+) {
+  if (plan.remove.length) {
+    await repo.remove(plan.remove);
+  }
+  if (plan.save.length) {
+    await repo.save(plan.save);
+  }
+}
+
+// Before replaying from a reset block, drop only the directions registered at
+// or after that block's time instead of whole rows, so directions registered
+// earlier (and their times) survive the replay. Without the block's time, rows
+// changed at or after the reset block are deleted as before.
+async function rewindConsolidationsForReplay(
+  repo: Repository<Consolidation>,
+  startBlock: number,
+  resetBlockTimestamp: number | undefined
+) {
+  if (resetBlockTimestamp === undefined) {
+    await repo.delete({ block: MoreThanOrEqual(startBlock) });
+    return;
+  }
+  const rows = await repo.find({
+    where: { block: MoreThanOrEqual(startBlock) }
+  });
+  for (const row of rows) {
+    await applyConsolidationRowPlan(
+      repo,
+      planConsolidationRewind(row, resetBlockTimestamp)
+    );
+  }
 }
 
 export async function persistDelegations(
@@ -1615,49 +1617,17 @@ export async function persistDelegations(
     `[DELEGATIONS] [START_BLOCK ${startBlock}] [PERSISTING ${registrations.length} REGISTRATIONS] [PERSISTING ${revocations.length} REVOCATIONS]`
   );
 
-  const repo = AppDataSource.getRepository(Delegation);
-
-  if (startBlock) {
-    //delete all with block >= startBlock
-    await repo.delete({
-      block: MoreThanOrEqual(startBlock)
-    });
-  }
-
-  for (const registration of registrations) {
-    const newDelegation = new Delegation();
-    newDelegation.block = registration.block;
-    newDelegation.from_address = registration.wallet1;
-    newDelegation.to_address = registration.wallet2;
-    newDelegation.collection = registration.collection;
-    newDelegation.use_case = registration.use_case;
-    if (registration.expiry) {
-      newDelegation.expiry = registration.expiry;
-    }
-    if (registration.all_tokens) {
-      newDelegation.all_tokens = registration.all_tokens;
-    }
-    if (registration.token_id) {
-      newDelegation.token_id = registration.token_id;
-    }
-    await repo.save(newDelegation);
-  }
-
-  for (const revocation of revocations) {
-    const r = await repo.find({
-      where: {
-        from_address: revocation.wallet1,
-        to_address: revocation.wallet2,
-        use_case: revocation.use_case,
-        collection: revocation.collection,
-        block: LessThan(revocation.block)
-      }
-    });
-
-    if (r) {
-      await repo.remove(r);
-    }
-  }
+  // One transaction, so a failure part-way through cannot leave the replay
+  // delete or some registrations applied without the rest, and readers never
+  // see a replay half-written.
+  await AppDataSource.transaction((manager) =>
+    writeDelegations(
+      manager.getRepository(Delegation),
+      startBlock,
+      registrations,
+      revocations
+    )
+  );
 
   logger.info(
     `[DELEGATIONS] [${registrations.length} REGISTRATIONS PERSISTED] [${revocations.length} REVOCATIONS PERSISTED]`

@@ -4,6 +4,10 @@ Agents and developers deploy with ordinary merges and the repository's GitHub
 Actions workflows. Use the phase authorized by the user; a staging request does
 not authorize production.
 
+Frontend-only, backend-only, and coupled releases use the direct workflows below
+without submitting a Coordinator request or waiting for its recording workflow.
+Keep existing `.release-coordinator/` run and outbox records as historical evidence.
+
 | Target     | Frontend                                                                       | Backend                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | Staging    | Merge into `1a-staging` and push; `Web Deploy - STAGING` starts automatically. | Merge into `1a-staging`, then dispatch `Deploy a service` for each required service with `environment=staging`. |
@@ -90,6 +94,11 @@ runs enabled historical migrations; it ignores the unregistered retired tables.
 Select `maintenance` explicitly for this rollout to avoid unrelated schema work.
 
 ### Operational failures
+
+The synchronous `dbMigrationsLoop` invocation waits up to 960 seconds for its
+900-second Lambda and disables AWS CLI retries for that invocation. If its response
+is lost, inspect the Lambda invocation logs and completion before retrying the
+workflow; a failed CLI response does not prove the migration stopped.
 
 Inspect the failing job and logs. Fix attributable failures on the development
 branch, merge the fix into the authorized target, and repeat only the required

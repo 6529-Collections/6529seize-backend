@@ -311,3 +311,7 @@ export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
 export * from './ICompetitionMigration';
+
+export { TransferReconciliationEntity } from './ITransferReconciliation';
+
+export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';

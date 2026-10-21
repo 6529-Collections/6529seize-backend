@@ -4,7 +4,6 @@ import { Logger } from '../logging';
 import * as Entities from '../entities/entities';
 import { doInDbContext } from '../secrets';
 import { appFeatures } from '../app-features';
-import { competitionRepository } from '../competitions/competition.repository';
 import { contentModerationDb } from '../content-moderation/content-moderation.db';
 import { Time } from '../time';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
@@ -20,8 +19,20 @@ import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 import { getDataSource } from '@/db';
 import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
-import { installMigrationCapture } from '@/competitions/competition-migration-capture';
+import { retireLegacyCompetitionRuntime } from '@/competitions/competition-runtime-retirement';
 import { dbSupplier } from '@/sql-executor';
+import { transferCompetitionRetirementHistory } from '@/competitions/competition-retirement-history';
+import {
+  assertCompetitionHistoryPreparationAllowed,
+  isCompetitionRuntimeRetired
+} from '@/competitions/competition-runtime-retirement-state';
+import { transferRetainedCompetitionDistributions } from '@/competitions/competition-retirement-distributions';
+import { transferRetainedCompetitionLeaderboardPublication } from '@/competitions/competition-retirement-leaderboard';
+import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import {
+  prepareWaveHubConfiguration,
+  finalizeWaveHubConfigurationCapture
+} from '@/waves/wave-hub-configuration-preparation';
 
 const DBMigrate = require('db-migrate');
 
@@ -82,7 +93,13 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'maintenance' &&
       scope !== 'wallet-transfer-analysis' &&
       scope !== 'claims-media-upload' &&
-      scope !== 'nft-link-page-retry')
+      scope !== 'nft-link-page-retry' &&
+      scope !== 'market-depth-publication-lock' &&
+      scope !== 'competition-runtime-schema' &&
+      scope !== 'competition-runtime-retirement' &&
+      scope !== 'wave-hub-configuration-preparation' &&
+      scope !== 'wave-hub-configuration-finalize' &&
+      scope !== 'competition-history-preparation')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -93,6 +110,81 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (
+    scope === 'wave-hub-configuration-preparation' ||
+    scope === 'wave-hub-configuration-finalize'
+  ) {
+    const result = await doInDbContext(
+      async () =>
+        scope === 'wave-hub-configuration-preparation'
+          ? await prepareWaveHubConfiguration(dbSupplier())
+          : await finalizeWaveHubConfigurationCapture(dbSupplier()),
+      {
+        logger,
+        entities: Object.values(Entities),
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    return { schema_scope: scope, ...result };
+  }
+  if (scope === 'competition-runtime-schema') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: Object.values(Entities),
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
+  }
+
+  if (scope === 'competition-history-preparation') {
+    const result = await doInDbContext(
+      async () => {
+        await assertCompetitionHistoryPreparationAllowed(dbSupplier());
+        return {
+          history: await transferCompetitionRetirementHistory(dbSupplier()),
+          distribution_history:
+            await transferRetainedCompetitionDistributions(dbSupplier()),
+          leaderboard_publication:
+            await transferRetainedCompetitionLeaderboardPublication(
+              dbSupplier()
+            )
+        };
+      },
+      {
+        logger,
+        entities: Object.values(Entities),
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    return { schema_scope: scope, ...result };
+  }
+
+  if (scope === 'competition-runtime-retirement') {
+    const result = await doInDbContext(
+      () => retireLegacyCompetitionRuntime(dbSupplier()),
+      {
+        logger,
+        entities: Object.values(Entities),
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    return { schema_scope: scope, ...result };
+  }
+
+  if (scope === 'market-depth-publication-lock') {
+    await doInDbContext(() => Promise.resolve(undefined), {
+      logger,
+      entities: [MarketDepthPublicationLockEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    logger.info('[FINISHED MARKET DEPTH PUBLICATION LOCK SCHEMA]');
+    return { schema_scope: scope };
+  }
   if (scope === 'nft-link-page-retry') {
     await doInDbContext(
       async () => {
@@ -139,10 +231,12 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       // Synchronization ignores tables outside the current entity registry; retirement is operator-only.
       if (!scheduledInvocation && scope === 'full')
         await getDataSource().synchronize();
-      if (!scheduledInvocation && scope === 'full') {
+      if (
+        !scheduledInvocation &&
+        scope === 'full' &&
+        (await isCompetitionRuntimeRetired(dbSupplier()))
+      ) {
         await installLegacyCompetitionGetFacade(dbSupplier());
-        if (process.env.COMPETITION_MIGRATION_CAPTURE_ENABLED === 'true')
-          await installMigrationCapture(dbSupplier());
       }
       if (
         !scheduledInvocation &&
@@ -156,11 +250,6 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         await dbmigrate.up();
       }
       await pushNotificationCancellationsDb.deleteExpired();
-      const insertedLegacyCompetitions =
-        await competitionRepository.backfillLegacyMappings({});
-      logger.info(
-        `Ensured immutable legacy competition mappings; inserted ${insertedLegacyCompetitions}`
-      );
       const deletedModerationChecks =
         await deleteExpiredContentModerationChecksInBatches(
           Time.currentMillis() - Time.days(30).toMillis()

@@ -185,7 +185,15 @@ const EntryListQuerySchema = Joi.object<{
   .required();
 
 type LeaderboardQuery = CursorQuery & {
-  readonly sort: 'rating' | 'real_time_rating' | 'submitted_at' | 'trend';
+  readonly sort:
+    | 'rating'
+    | 'real_time_rating'
+    | 'submitted_at'
+    | 'trend'
+    | 'price';
+  readonly price_currency?: string;
+  readonly min_price?: number;
+  readonly max_price?: number;
 };
 const LeaderboardQuerySchema: Joi.ObjectSchema<LeaderboardQuery> =
   Joi.object<LeaderboardQuery>({
@@ -193,8 +201,11 @@ const LeaderboardQuerySchema: Joi.ObjectSchema<LeaderboardQuery> =
     cursor: Joi.string().min(1).max(1000).optional(),
     limit: Joi.number().integer().min(1).max(100).default(50),
     sort: Joi.string()
-      .valid('rating', 'real_time_rating', 'submitted_at', 'trend')
-      .default('rating')
+      .valid('rating', 'real_time_rating', 'submitted_at', 'trend', 'price')
+      .default('rating'),
+    price_currency: Joi.string().trim().min(1).max(100).optional(),
+    min_price: Joi.number().min(0).optional(),
+    max_price: Joi.number().min(0).optional()
   })
     .unknown(false)
     .required();
@@ -464,7 +475,13 @@ export async function handleListCompetitionLeaderboardV3(
   return (await competitionService.listLeaderboard(
     wave_id,
     competition_id,
-    { ...toCursorRequest(query), sort: query.sort },
+    {
+      ...toCursorRequest(query),
+      sort: query.sort,
+      price_currency: query.price_currency,
+      min_price: query.min_price,
+      max_price: query.max_price
+    },
     await getContext(req)
   )) as unknown as ApiCompetitionLeaderboardPage;
 }

@@ -39,6 +39,7 @@ import {
 } from '@/entities/IDropMediaUpload';
 import { enqueueDropMediaSanitization } from '@/drops/drop-media-sanitizer-queue';
 import { storeDeviceVideoPoster } from './device-video-poster';
+import { IMMUTABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
 
 type MediaUploadSource =
   | DropMediaUploadSource.DROP
@@ -243,7 +244,8 @@ export class UploadMediaService {
       key,
       content_type,
       bucket: this.getS3Bucket(),
-      s3: this.getS3()
+      s3: this.getS3(),
+      cacheControl: IMMUTABLE_MEDIA_CACHE_CONTROL
     });
     return {
       key,
@@ -309,7 +311,8 @@ export class UploadMediaService {
         key,
         content_type,
         bucket: this.getS3Bucket(),
-        s3: this.getS3()
+        s3: this.getS3(),
+        cacheControl: IMMUTABLE_MEDIA_CACHE_CONTROL
       });
       return {
         key,
@@ -492,21 +495,30 @@ export class UploadMediaService {
     };
   }
 
+  /**
+   * Object metadata such as Cache-Control is fixed when a multipart upload is
+   * created, so the client's part uploads and completion stay unchanged. Public
+   * media keys contain a fresh random id per upload; the private ingest copy
+   * gets none because the sanitizer sets it when publishing.
+   */
   private async createMultipartUploadId({
     key,
     content_type,
     bucket,
-    s3
+    s3,
+    cacheControl
   }: {
     key: string;
     content_type: string;
     bucket: string;
     s3: S3Client;
+    cacheControl?: string;
   }): Promise<string> {
     const createCmd = new CreateMultipartUploadCommand({
       Bucket: bucket,
       Key: key,
-      ContentType: content_type
+      ContentType: content_type,
+      ...(cacheControl ? { CacheControl: cacheControl } : {})
     });
 
     const createResp = await s3.send(createCmd);

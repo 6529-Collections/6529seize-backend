@@ -37,7 +37,9 @@
         "aggregatedActivityLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "attachmentsOrchestrator",
@@ -123,29 +125,6 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": []
-    },
-    {
-      "name": "competitionMigrationLoop",
-      "allowed_environments": [
-        "staging",
-        "prod"
-      ],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": [
-        "competitionMigrationLoop"
-      ],
-      "validation_profile": "lambda-version",
-      "default_dependencies": [
-        "dbMigrationsLoop",
-        "waveLeaderboardSnapshotterLoop",
-        "tdhLoop",
-        "waveDecisionExecutionLoop",
-        "api"
-      ]
     },
     {
       "name": "customReplayLoop",
@@ -456,7 +435,9 @@
         "nextgenContractLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "nextgenMediaImageResolutions",
@@ -589,7 +570,9 @@
         "nftOwnersLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "nftsLoop",
@@ -930,7 +913,9 @@
         "memeLabTransactionsLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "transactionsProcessingLoop",
@@ -1070,6 +1055,23 @@
         "artworkDocumentationStorage",
         "dbMigrationsLoop"
       ]
+    },
+    {
+      "name": "webSocketDeliveryLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "webSocketDeliveryLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
     }
   ]
 }

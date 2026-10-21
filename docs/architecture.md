@@ -30,22 +30,57 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Oracle TDH API and retired Prenode registry
+
+The existing `api` service retains Oracle TDH totals, thresholds, percentile,
+cutoff, address breakdowns, season aggregations and NFT reads under `/oracle`.
+`POST /oracle/register-prenode` and `GET /oracle/prenodes` return uncached
+`410 Gone` responses with a 6529 Desktop deprecation notice. These terminal
+routes do not access the registry or geolocation service. The historical
+Prenode entity/table remains intact; no schema sync, migration or data deletion
+is needed. `/oracle/docs` continues to describe the preserved TDH API.
+Only `api` needs redeployment for this retirement.
+
 ## Active TDH voting discovery
 
 `GET /v2/waves/active-votes` is an optional-auth read in the existing API Lambda.
 It lists RANK/APPROVE waves using TDH, TDH_PLUS_XTDH or CARD_SET_TDH. Shared
 read-context group eligibility and wave/parent visibility apply before count and
 pagination; DMs and children of DM parents are excluded, even when readable.
-Legacy voting windows, next decision state and
-APPROVE winner limits determine whether voting is active. Results sort by the
+The immutable original-primary compatibility projection supplies voting windows,
+next decision state and APPROVE winner limits from native competition data. Results sort by the
 nearest voting end or next decision, with open-ended votes last. This endpoint
 does not assert that the current viewer can vote, and does not filter by joined,
 pinned or recommendation status.
 
-The endpoint reads existing wave/decision tables without a new cache, worker or
-migration. Deploy the API before frontend clients that use active-vote discovery.
-The additive competition foundation does not change this endpoint's legacy
-voting source of truth.
+The permanent endpoint reads explicit native-backed wave/decision compatibility
+views without a new cache or worker. New sibling competitions remain outside
+this old wave-shaped contract; v3 resources provide competition-scoped discovery.
+
+## Joined wave snapshot pagination
+
+`GET /v2/waves/joined` is an authenticated, non-proxy read in `seizeAPI`.
+It freezes the ordered IDs of joined, readable non-DM root waves, including
+parents of followed subwaves, in a profile-bound Redis snapshot for 15 minutes.
+Continuation cursors carry the snapshot ID, scan position and fixed page size.
+Each page rechecks current membership and wave/group visibility, advances past
+removed entries, and returns current overview data in the original ID order.
+Missing metric rows do not remove a membership. New memberships appear on a new
+snapshot. Snapshot creation verifies cache persistence; unavailable storage
+returns 503, and an expired/unavailable continuation returns 410 for a coherent
+client restart. Existing `/v2/waves` page-number contracts remain unchanged.
+Snapshots have a 50,000-root capacity guard (about 2 MB of UUIDs per value);
+larger lists return 503 without publishing a partial list or cursor. The normal
+API rate-limiting middleware runs before the root router (`app.ts`), including
+this route; the fixed TTL bounds refresh storage lifetime. Each page scans at
+most 500 candidate IDs. A heavily pruned page can be empty with a non-null
+continuation, keeping later memberships reachable without an excessive query loop.
+Only positions strictly before the end of a snapshot are valid continuations.
+
+The frontend opts into this endpoint only for Joined, retains loaded rows on
+failure, and replaces all loaded pages together on refresh/expiry. It offers
+Retry and Load more controls alongside automatic scrolling. This adds no table,
+migration, queue or loop. Deploy `api` before the frontend in each environment.
 
 ## Wave eligibility
 
@@ -600,6 +635,7 @@ successful rotation's `last_used_at`; repeated recovery does not reset it.
    Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for alert and recovery limits.
    The animation-preview implementation (requires `mediaResizerLoop` deployment) handles versioned GIF requests (`AUTOx450_gifv2`, and the other existing sizes with `_gifv2` appended) with animation-preserving processing instead of the legacy first-frame fallback. The suffix is removed before checking the existing size whitelist and resolving the original key, but retained in the S3 derivative key. AUTO sizes use a sequential native decode and one resize directly to bounded output dimensions; fixed crop sizes retain individually coalesced frames and a repeated-scan guard. The bounded RGBA strip is spooled before encoding; output resolution can shrink further to bound the complete animation. The deployment catalog sets this worker to 2048 MiB for CPU headroom while retaining its processing deadline and source/output safety limits. Frame timing, loop count, and transparency are retained. Admission limits cover source bytes, per-frame pixels, frame count, repeated decoder work, retained output, and processing time. An eligible original that already fits an AUTO dimension is copied unchanged. See [GIF animation previews](gif-animation-previews.md) for limits, rollout, and compatibility. Originals and legacy derivative keys are not overwritten.
+   Public media objects carry `Cache-Control` set when they are written, because the media CloudFront distribution also serves the desktop app's update feeds (`6529-core-app/`, `6529-staging-core-app/`), which must not be cached long. Keys that never receive different bytes use `public, max-age=31536000, immutable`: drop, wave and distribution uploads (random id per upload; multipart uploads set it at creation), sanitized drop media, profile pictures, rememe images (write-once), device video posters and NFT link previews. Per-token NFT originals and derivatives under `images/` and `videos/` are rewritten in place when a token's media source changes, so they use `public, max-age=86400`, as do on-demand resizer outputs. Single-PUT presigned uploads and MediaConvert renditions do not set it yet.
 
 7. Operational signals flow to Sentry, CloudWatch alarms, Discord, and SNS.
 
@@ -715,6 +751,38 @@ or media deletion is needed, and rollback treats the private marker as ordinary
 error text. None of these controls guarantees preview output for oversized
 assets or identical fallback behavior across frontend views.
 
+### NFT link refresh outcome monitoring
+
+The SQS refresher opts into one metadata-only Embedded Metric Format record
+(`6529.nft.refresh.v1`, namespace `6529/NftLinkRefresher`) after each successful
+persistence. Retry attempts and lock/eligibility skips do not count as completed
+refreshes. Dimensions are the fixed environment and provider; canonical-link
+hashes are source-log evidence only. The API's synchronous resolver keeps its
+existing notification policy, and refresh timing/cache semantics are unchanged.
+
+Recognized required-page 404s, bounded HTTP timeouts, retryable HTTP statuses
+and known network faults retain warning logs and outcome counters. Intermediate
+retries do not notify. Unknown errors, access denial, noncanonical 404s,
+persistence failures, preview/notification failures, and Lambda platform errors
+retain operational notification paths. Cancellation caused by the refresher's
+HTTP timeout is explicitly typed; arbitrary abort messages are not classified.
+
+The source monitoring stack owns provider-level CloudWatch incidents: 5% failed
+eligible outcomes with at least 20 samples in each of three consecutive
+five-minute periods; and a 15-minute newly-unavailable surge with at least 20
+completed outcomes and either five new failures comprising 10% of completions,
+or five previously working links newly failing. A link contributes to the new
+count only when its persisted failure episode starts; repeated 404s contribute
+to unavailable counts only. Success resets the existing failure episode.
+Both alarms require successful observations and at least 20 outcomes for
+recovery as well as detection; missing or sub-gate traffic preserves state. These are initial operational thresholds,
+not a product freshness SLO or proof that every affected link recovered.
+
+Existing platform/OOM alarms remain. The NFT queue additionally alarms on a
+30-minute oldest-message age in three of five minutes and on any visible dead
+letter. The source stack owns the dedicated NFT outcome dashboard and must deploy before the worker.
+See [monitoring policy and rollout](../ops/monitoring/README.md#nft-refresh-outcomes).
+
 ### NFT link refresh bounds
 
 The `nft-link-refreshes` SQS event source caps concurrent invocations at the
@@ -806,19 +874,36 @@ prices.
 
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.
-Publication uses a `READ COMMITTED` transaction and locks the collection's state
-row before replacing its current orders. This preserves serialization within a
-collection without retaining delete range/gap locks across other collections'
-refreshes. Snapshot reads retain their existing transaction isolation so metadata
-and orders come from one consistent view.
+Publication uses a `READ COMMITTED` transaction, locks the collection state and
+inserts its archive, then acquires the same exclusive row in
+`market_depth_publication_locks` across all four collectors before replacing
+current orders. The shared
+transaction lock prevents reciprocal PRIMARY-index insertion deadlocks between
+different collections and releases on commit or rollback. Fetching, normalization
+and compression, partition locking and archive insertion remain outside the
+shared lock. Each publication logs `lock_wait_ms`,
+`lock_held_ms` (through transaction finalization), `insert_ms` (order mapping,
+SQL construction and all insertion chunks), total time, row count and outcome;
+failed phases retain their measured timing without logging order payloads.
+Snapshot reads retain their existing transaction isolation so metadata and
+orders come from one consistent view.
 Existing price statistics run concurrently with an independent deadline; both
 tasks finish before the database context closes. Collection books are attempted
 before lifecycle maintenance, which prioritizes status reconciliation and
 checkpoints bounded REST catch-up batches.
 `marketDepthStreamLoop` records live order lifecycle events, while REST event
 catch-up and per-order status checks recover supported missed observations.
-Six `market_depth_*` tables retain immutable compressed archives, current orders,
-collection state, events, cursors and retry work. All amounts and quantities
+Stream appends opt into the shared SQL execution budget, with a five-second
+total deadline and one-second finalization reserve within the remaining run
+budget. The SQL owner finalizes the transaction or disposes of its connection
+before the stream retries or closes its database context. Pre-commit failures
+can retry after cleanup; an unacknowledged COMMIT leaves the batch unconfirmed
+and stops retries and final draining. Acknowledged commits remain confirmed
+through connection cleanup failures. REST appends retain their existing session
+and transaction behavior.
+Seven `market_depth_*` tables coordinate publication and retain immutable
+compressed archives, current orders, collection state, events, cursors and retry
+work. All amounts and quantities
 needed for normalization preserve exact integer strings.
 
 The API exposes currency-specific quoted depth for an individual token and a
@@ -840,6 +925,24 @@ returns HTTP 400. It uses V3 `getContractMetadata` and returns the provider
 metadata with `_checksum`, or JSON `null` when the provider returns 404. The
 route retains its five-minute request-cache middleware. FE uses this endpoint
 as fallback for its address-only picker.
+
+`POST /alchemy-proxy/contracts` accepts up to 50 Ethereum contract addresses
+and deduplicates case variants before lookup. It returns `{ contracts: [...] }`
+with checksummed addresses, chain, and provider metadata including `_checksum`.
+Provider 404 produces null metadata; other failures remain per-contract errors
+so successful entries are preserved. Lookups run at most ten at a time with
+five-second timeouts and no retries. A 20-second lookup scheduling budget
+reserves time for initialization and response handling within the API Lambda's
+30-second timeout. Once another full lookup cannot fit, remaining entries
+receive per-contract 504 errors while completed results are preserved.
+Responses use `Cache-Control: no-store`.
+The bounded lookup client reuses centralized Alchemy configuration and is
+cached per shared client. Provider initialization failures are logged and
+return HTTP 500 before individual lookups. Invalid provider payloads are
+reported as per-contract lookup failures.
+This completes the fallback used by the desktop xTDH Granted list without
+requiring a desktop update. Its OpenAPI path overrides the `/api` server base
+because the existing proxy router is mounted at the root.
 
 Collection-name search is retired: `GET /alchemy-proxy/collections` returns
 HTTP 410 with `Cache-Control: no-store` and the error message
@@ -929,13 +1032,17 @@ The push worker's SQS event source is capped at 18 concurrent batches, below the
 
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
 
-WebSocket registration and re-authentication persist the identity, JWT expiry and notification grants atomically. Existing connection mutations lock the connection row before subscription rows; identity resync and deletion use the same order, and missing connections cannot gain grants. Only a transaction's owner retries confirmed deadlocks, with at most three whole attempts and bounded jitter; caller-owned transactions and ambiguous failures propagate. Socket acknowledgements follow persistence, and socket/provider operations remain outside the retried transaction. New connections, re-authentication, and identity resyncs each retain a one-percent chance of running bounded cleanup of expired and orphaned subscriptions after persistence. The repository identity update method remains the sole write path for `ws_connections.identity_id`.
+WebSocket registration and re-authentication persist the identity, JWT expiry and notification grants atomically. Existing connection mutations lock the connection row before subscription rows; identity resync and deletion use the same order, and missing connections cannot gain grants. Repository-owned mutations use transaction-scoped `READ COMMITTED` to avoid shared subscription-gap locks when different sockets replace empty grants. Pooled session defaults, caller-owned isolation and sampled cleanup keep their existing policies. Only a transaction's owner retries confirmed deadlocks, with at most three whole attempts and bounded jitter; caller-owned transactions and ambiguous failures propagate. Socket acknowledgements follow persistence, and socket/provider operations remain outside the retried transaction. New connections, re-authentication, and identity resyncs each retain a one-percent chance of running bounded cleanup of expired and orphaned subscriptions after persistence. The repository identity update method remains the sole write path for `ws_connections.identity_id`.
 
 If authentication or notification identity sync finds that the stored connection has disappeared, the API requests transport closure and then removes orphan subscription state before returning 410. This condition does not reject the credential and sends no authentication or subscription acknowledgement. Unexpected operation, close or cleanup failures remain 5xx, with fixed action/stage warning labels alongside the existing response error envelope. The mounted web application's health check can reconnect a disconnected socket using its current token; reconnect timing depends on client lifecycle and browser scheduling. The local WebSocket adapter follows the same closure path. This defensive recovery does not establish the cause of any historical connection loss.
 
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
 
-Terminal WebSocket send failures replace the existing error message with an allowlisted outbound frame type, fixed error category, final HTTP status and numeric SDK attempt/retry-delay metadata. Frame content, connection IDs and exception text are not copied into this diagnostic; missing or malformed metadata remains unknown. The existing operational error fingerprint and single error-event path are retained. SDK retry policy and best-effort send behavior remain unchanged, Gone connections still take the cleanup path, and a diagnostic failure cannot turn a live connection into a cleanup candidate. This metadata describes a failed send, not confirmed client delivery or a rate-limit repair.
+Outbound WebSocket delivery uses one policy in `src/ws-delivery/`, shared by the API, background senders and the worker-specific NFT-link notifier. Final 429s retain a hashed connection identifier and bounded SDK metadata in warnings and low-cardinality EMF metrics; they do not emit per-send operational errors. Shared Redis cooldowns use exponential backoff with jitter and a short endpoint pause for broad throttling. Normal healthy sends remain concurrent. Atomic leases apply only to recovery probes. Each connection has one content-free pending refresh marker; user content and credentials are never queued. A revision prevents an in-flight recovery from acknowledging newer missed updates.
+
+The scheduled `webSocketDeliveryLoop` drains due markers every minute, rechecks stored JWT expiry, and sends `RESYNC_REQUIRED`. It never replays competition outbox events, notifications or winner effects. Updated clients invalidate active HTTP queries after a staggered delay, including after reconnect and app/tab resume. Only an isolated persistently blocked listener that advertised `recovery_capability=resync_v1` may be closed, after observing healthy peers; confirmed transport closure precedes subscription deletion. Widespread failures inhibit that close policy. Existing 410 cleanup and error reporting for non-429 provider failures remain intact. Authentication and notification-identity acknowledgements have priority; legacy failures return an explicit failed outcome and never enqueue a substitute refresh marker.
+
+Rolling fleet counters distinguish widespread throttling, a persistent outage even with a single listener, and an old retry backlog. The recovery worker emits the `6529/WebSocketDelivery` Degraded, WorkerHealthy and Pending metrics. CloudWatch alarms report sustained degradation, worker failure/missing heartbeat and repeated recovery-store failures, with explicit operational guidance in the isolated monitor. Application metrics retain SDK retries, 429s and cooldown suppressions because API Gateway metrics may omit 429s. Redis operations are bounded; unavailable recovery state fails open for direct sends, returns an explicit failed result when retry persistence is unknown, and retains independent monitoring. Retry state is versioned, endpoint-scoped and expires after two hours and five minutes without activity; deploying the worker before producers and the additive frontend consumer preserves a compatible rollout.
 
 ## API Boundary
 
@@ -980,196 +1087,116 @@ opaque handles. They deliberately have no expiry so a delayed retry retains its
 original cutoff; authentication and author/wave binding remain required on every
 request.
 
-Waves have an additive competition read boundary under `/v3/waves`. A wave is
-the chat/visibility hub and owns zero, one, or many competition resources. The
-competition service resolves each resource through either the immutable legacy
-adapter or the native competition repositories; it never infers an
-"active/current competition." Existing unversioned and v2 wave/drop GETs remain
-permanent façades over the immutable original primary. After a guarded migration,
-12 SQL views derive its frozen competition fields from native records and retained
-history; the request-scoped SQL read boundary excludes native v3 APIs and writes. A native
-hub therefore remains a contract-valid `CHAT` wave to those clients, and adding
-another competition cannot change a legacy Rank/Approve projection.
+Waves are chat, visibility and administration hubs containing zero or more native
+competitions under `/v3/waves`. Competition configuration and entry state own
+submissions, eligibility, voting, weighted scores, decisions and winners. Current
+navigation/settings/entries/voting/My Votes/leaderboards/winners/admin use the
+competition resources for every competition. Creating a hub always creates a
+CHAT wave; competition creation is a separate native command. Historical physical
+RANK/APPROVE wave types remain schema-compatible and do not block hub updates.
 
-The migrated primary's vote Activity feed combines retained pre-transfer wave logs
-with native vote history in one chronologically paginated query. It preserves original
-log JSON and proxy attribution; separate native competitions never inherit those
-wave logs. This read repair requires only an API deployment, without schema changes
-or remigrating transferred waves.
+Shared CHAT participation and voting settings are live typed policies in
+`waves.hub_participation_config` and `waves.hub_voting_config`. They preserve
+independent nullable roles, credit settings, periods, signatures, required
+content, terms, retained credit-NFT tuples and existing typed decision-strategy
+metadata. Strategy metadata preserves current GETs and explicit clearing; it does
+not enroll a competition or enable CHAT decision execution. Current hub creation,
+editing and reading own these policies; `waves_archive` holds their snapshots.
+Original competition configuration continues to own original competition GETs.
+Explicit bounded preparation verifies retained policy parity. Temporary capture
+keeps prepared-version writes atomic during rollout. Four ordered strategy
+overlays extend the original ten capture bodies without replacing them;
+finalization validates body and dependency order before disabling the fourteen
+recognized captures. Already-retired policies missing the additive nullable
+strategy member mean null and never reimport obsolete physical values. This
+finalization occurs after the native API is healthy and old invocations drain.
 
-Competition storage and execution ownership are explicit per competition.
-Legacy-primary mappings keep existing decision and leaderboard workers active;
-native execution additionally requires its global kill switch and is disabled
-by default. `dbMigrationsLoop` creates the additive competition/read-model
-tables and backfills stable legacy mappings before API or worker deployments.
-The independent unified-read, native-write, native-execution, native-hub, and
-sampled-shadow flags default off. Shadow observations persist only canonical
-hashes and identifiers, never vote/signature/private payloads. Sampled legacy
-reads compare an independent legacy-table baseline with the unified adapter's
-paged domain reads in one repeatable-read snapshot. Samples are bounded and
-best effort; failures preserve the API response. Historical adapter
-self-comparisons are not parity evidence. The current `legacy-read-v3` source
-also compares independently derived available/spent/remaining credit.
-Operational deployment, verification, and rollback are documented in the
-[competition read boundary runbook](./competition-read-boundary-runbook.md).
+Permanent unversioned/v2 wave/drop GETs use explicit native-backed compatibility
+views. Their ownership is the immutable `legacy_wave_id=wave_id` original primary,
+independent of default-competition selection. Sibling competitions do not appear
+as old competitions; their shared content retains CHAT classifications in those
+contracts. Views explicitly list public columns and never discover columns from
+or union retired physical competition tables. Wave metadata remains shared:
+primaries inherit it while `presentation_config` is null; native arrays override
+it, including an explicit empty array. Weighted snapshot publication is distinct
+from live standings and has its own native `published_at` marker.
+Published historical snapshots without an entry remain in the existing native
+leaderboard relation for permanent GET compatibility, including nullable hold
+thresholds. They create no membership and cannot participate in native listings,
+voting, ranking, decisions or claims.
 
-Implicit wave navigation has an additive unified-read boundary,
-`GET /v3/waves/{wave_id}/default-competition`. It selects across all visible
-competitions using active/upcoming/completed priority, authoritative legacy/native
-timing and deterministic ID ties, returning server evaluation and refresh times.
-The UI default is separate from the immutable legacy primary and execution
-ownership. A wave-leading legacy decision index supports bounded per-wave
-aggregation. Schema/index rollout precedes API and dependent frontend rollout;
-no execution worker changes. See [normalization and deployment order](./default-competition-navigation.md).
+Independent AGGREGATE and VOTER observations live in `competition_score_history`.
+Retained source IDs/timestamps/values and inconsistent observations stay intact,
+including observations without a current entry. A native mutation sequence orders
+accepted votes across rolling versions without pairing streams by timestamp.
+Weighted scoring consumes these native observations. Entry content revisions
+retain complete score history and use existing native update events to delimit
+the scoring revision. Current allocations, immutable decision voter snapshots,
+and awards retain their existing separate native tables.
 
-Legacy Settings commands use the same versioned competition update and pause/resume
-API as native competitions. The legacy adapter joins the existing wave update
-transaction and retains wave permissions, validation and storage. It preserves
-chat, visibility, administration, the pinned description and unrelated metadata.
-Legacy title and presentation changes update the shared wave properties. Public
-legacy configuration versions include the wave update timestamp, detecting edits
-through the original wave API without widening the stored competition version.
-Idempotent commands lock the competition and wave and advance both versions.
-The timestamp is an optimistic-concurrency token, while the stored integer
-version remains an internal revision counter. A fresh edit uses the last returned
-token; any intervening shared wave edit requires a reload because Settings
-preserves and rewrites those shared fields. Legacy voting credit rules cannot
-change after the first recorded legacy vote; original wave validation continues
-to govern access, scheduling and Approve threshold updates.
+Vote Activity combines competition-scoped shared profile logs and native vote
+history. Exact `<competition-id>:<sequence>` identities deduplicate before
+pagination; equal values/timestamps never imply a duplicate. IDs, timestamps,
+proxy attribution, reason JSON and independent shared profile history survive.
+The public profile API omits the internal competition scope column. Native
+outbox receipts preserve historical starts/transitions; a configuration update
+first enqueues due transitions for its prior version before replacing it.
 
-Pause reasons add a nullable `reason` column to `wave_decision_pauses`. Indefinite
-legacy pauses use a finite year-9999 end timestamp understood by existing decision
-workers; v3 reads normalize it to null. Resume shortens the active interval and
-retains the reason and history. No legacy execution worker deployment is required.
-The competition vote-activity endpoint checks wave/competition visibility before
-reading legacy wave logs or native history scoped by competition and visible entry.
-There is exactly one immutable legacy primary per wave. Legacy vote commands
-write wave logs, while every native competition writes its separate history, so
-additional native competitions in the same wave do not mix into legacy activity.
-An additive native-history index supports ordered activity pagination.
-For zero-downtime rollout, deploy and run `dbMigrationsLoop` entity synchronization
-first, then `api`, then the dependent frontend. Existing clients and workers can
-continue reading and writing the additive schema during rollout.
+`waveLeaderboardSnapshotterLoop` and `waveDecisionExecutionLoop` remain existing
+Lambda units and execute only native work. Per-competition execution mode,
+lifecycle, locks, command idempotency receipts, signature nonces, outbox leases,
+per-effect receipts and delivery receipts remain authoritative. Draft/DISABLED
+competitions cannot vote or execute. MAIN_STAGE/CURATION/QUORUM capabilities,
+claim mapping, curation transfers, nomination cleanup, REP/TDH revocation,
+profile consolidation, winner notifications and newsletter readers use native
+configuration/entries/snapshots. Capability restrictions remain independent of
+storage history or sharing a special wave. Mixed chat handlers retain chat
+posting/reactions/visibility/notifications.
+Curation token watches register only explicit eligible CURATION entry content.
+Pre-entry creation carries its verified competition permit; existing drops use
+locked active membership. A shared hub or default selection grants no watch
+behavior, and unresolved orphan drops remain inert. Independent transfers sharing
+a timestamp retain distinct effects and rank-one winners under a nonunique rank
+index; decision/entry identity remains unique.
 
-Native command APIs now implement hub creation, versioned draft/publication,
-entry submission, voting, credits, history and
-terminal lifecycle actions. Effective-actor idempotency receipts, signature
-nonces and domain writes commit atomically under competition locks. Each native
-competition keeps participation and voting access groups editable by wave
-administrators after entries exist. Access-only updates retain decision progress,
-outcome definitions and existing votes; the remaining execution rules stay locked.
-Each native
-entry creates one dedicated, immutable drop; existing chat messages or competition
-drops cannot be attached or reused. Native submissions use the internal
-`COMPETITION` drop type in the existing varchar column, keeping them outside legacy
-wave voting and winner-selection queries. Frozen unversioned/v2 GETs expose native-only submissions as CHAT; scoped native
-competition context supplies their submission/winner rendering and voting. Only
-the original migrated primary may project legacy participatory/winner semantics.
-Shared-chat voting resolves `/v3/waves/{wave_id}/drops/{drop_id}/competition-context`
-through wave, drop, moderation and competition visibility checks before selecting
-native entry credit/vote APIs. The context includes native current/projected
-totals, viewer vote, rank and top voters for the existing chat-card presentation.
-Drop voter and vote-log reads dispatch native submissions to competition vote and
-history tables after the same visibility checks. Only a successful null context selects legacy
-voting; unavailable or orphaned native entries never fall back to wave voting.
-Dedicated native content and presentation edits are rejected in every entry state.
-Original legacy submissions retain their approved pre-winner edit behavior after
-migration, with native content revisions and vote resets in the same transaction.
-Accepted snapshots still enforce current moderation and visibility. Entry deletion
-uses the existing drop deletion flow and transactionally removes
-the entry, its content snapshots, current votes and leaderboard state, releasing
-active credit. Public entry, vote, winner and award reads exclude removed entries
-and historical deletion tombstones. Frozen decision records remain internal.
-Chat purge preserves competition submissions; wave deletion rejects native history.
+Native command receipts include the effective actor and commit with domain writes,
+nonce consumption and events. Publication and current eligibility are rechecked
+under the competition lock. Shared-chat competition context selects scoped
+credits/votes and never falls back to an old executor. Dedicated native content
+remains immutable; imported submissions retain their allowed pre-winner edits,
+content revisions and atomic vote resets. Deletion hides entries through existing
+visibility/tombstone rules and does not replay accepted effects. Wave deletion
+still rejects competition history and chat purge preserves submissions.
 
-The existing leaderboard and decision Lambdas add an explicitly routed native
-engine. Both workers finish legacy wave processing before starting the native
-scan, so Main Stage decisions and leaderboard refreshes cannot be delayed by a
-large native backlog consuming the invocation. A failure in either engine is
-reported only after the other independent tasks have been attempted.
-Native vote history, immutable decision voter snapshots and award
-rows remain separate from legacy tables. Per-entry aggregate votes must fit the
-safe-integer API range; an overflowing mutation rolls back its transaction.
-Time-weighted scores and threshold crossings use exact integer integrals before
-conversion to persisted ratings. The decision worker leases a durable
-competition outbox and emits scoped WebSocket updates and winner notifications.
-Entry removal and competition status changes do not
-generate notifications; feed reads and unread counts exclude historical status
-notices. Per-effect SQL receipts and competition/decision/entry claim
-provenance protect retries. Entry creation commits ordinary shared-CHAT push
-notification IDs into its private outbox payload. The API attempts immediate
-handoff; the decision worker retries the same IDs after transport or partial
-SQS failure, and existing device delivery receipts suppress redelivery. Public
-WebSocket invalidations omit this private payload. `claimsBuilder` and
-`pushNotificationsHandler` understand the additive messages before producers are enabled. Explicit
-capabilities gate Main Stage claims, announcements, mappings and participation
-metrics; sharing a special wave never confers them. Operations assignment has
-an operator allowlist and durable actor/reason audit. Privileged public effects
-revalidate current public wave/parent access.
+Original Settings applies the native rule policy under the owner lock before
+saving. Credit rules freeze after any native voter history; permitted title and
+presentation edits remain available through both command routes.
 
-The [native runtime runbook](./native-competition-runtime-runbook.md) specifies
-schema → message consumers → workers → API → frontend rollout and the native
-kill switches. No new Lambda or queue is introduced; all new features remain
-disabled by default.
+The original native creation/write/read/execution/shadow rollout flags and
+migration/reverse/reconciliation commands are retired. The migration Lambda has
+an inert transition artifact and zero reserved concurrency. Its physical
+Lambda, IAM, alarms and retained schema belong to a later explicit retirement.
+The isolated monitor's `retained-producers.json` keeps its existing log subscription,
+relay permissions, producer allowlists and alarms independently of the ordinary
+deploy catalog; the generated infrastructure remains unchanged.
+`dbMigrationsLoop` retains all old entities/columns to prevent TypeORM from
+silently deleting schema during this application-only release. Ordinary sync
+never runs a data transfer or physical retirement. Explicit preparation/final
+scopes transfer and verify history and disable the obsolete capture triggers.
+The complete native view set is the cutover boundary: repeated retirement never
+reimports retained physical data after native-only writes begin, and preparation
+is rejected after cutover. Ordinary full sync cannot make the initial view switch.
+The staged compatible writer/reader rollout, service order, parity checks and
+rollback boundaries are in the [runtime retirement runbook](./competition-runtime-retirement.md).
 
-Legacy migration is explicitly invoked one wave UUID at a time. Additive migration
-entities hold durable stage/keyset checkpoints, source/applied watermarks and
-comparison reports. Transactional triggers journal accepted competition/content
-changes under the owner lock; APIs, maintenance/identity merges and actual worker
-decision transactions share that row. Legacy decisions commit stable claim/push
-publication receipts, so pending publication blocks transfer. Native workers
-retain independent aggregate/voter histories and skip already emitted lifecycle
-boundaries. No legacy history is dropped.
-
-Migration comparisons load complete source and candidate histories, including
-relations beyond 10,000 rows. The optional shadow sampler keeps its separate
-10,000-row ceiling and execution budget; migration and reverse reconciliation
-do not apply that sampling limit. Ownership transfer still requires full equality.
-Historical positive time locks below the new-competition minimum remain intact.
-Missing weighted snapshots stay absent in the compatibility projection until a
-native snapshot update, preserving both migration parity and subsequent reads.
-Decision batches budget both decision rows and their winners. Ordered catch-up
-rebuilds only captured decision keys; it does not replay unchanged decision history
-when refreshing entries, ranks, awards and archives. The applied watermark remains
-behind until these derived stages finish, and full comparison remains mandatory.
-This lets a large active history converge while recurring decisions continue.
-Imported decision winners retain a nullable `legacy_drop_id`, preserving source
-history and prizes even when the drop was deleted before migration. Historical
-winner reads do not recreate an entry or its deleted content. Deploy the additive
-column and compatibility view through `dbMigrationsLoop` first, then `api`, then
-`competitionMigrationLoop`. Older workers remain compatible with the nullable column.
-
-`competitionMigrationLoop` accepts `{"wave_id":"<uuid>"}` from an IAM-authorized
-AWS Console/SDK invocation. It derives staging (`eu-west-1`) or production
-(`us-east-1`) from its pinned deployment, loads the regional backend secret without
-schema synchronization or Redis, and runs bounded copying, concurrent-write catch-up,
-full independent comparison, atomic transfer and native verification. Application
-operators, reasons, shared acceptance records, completed-pilot ordering and seven
-timed comparison windows are not required. Signed voting, special capabilities,
-upper-threshold metadata and paginated large content comparisons are preserved.
-The immutable command snapshot retains legacy upper-threshold metadata alongside
-its normal native draft fields. Actual data mismatches retain legacy ownership;
-repair-required native ownership is never blindly reversed. Final comparison,
-effect drain and owner transfer occur under the same transaction lock.
-
-Migrated primaries inherit shared wave presentation metadata while
-`presentation_config` is null. Native appearance arrays override that inheritance,
-including an explicit empty array. Independent configuration comparison includes
-the full inherited metadata, and command snapshots, configuration export and
-cloning retain the supported competition appearance keys. This also restores
-appearance for already migrated primaries without rewriting their data.
-
-There is no EventBridge schedule: deployment invokes nothing. Clean time-budget
-pauses queue the same function/qualifier with a generated bounded continuation
-(up to 24 hours overall); a repeated wave ID resumes durable checkpoints or verifies
-an already migrated primary without copying it again. One reserved execution and
-transactional fences protect redelivery. Data failures do not queue continuation.
-Function-error retries are disabled. A narrow self-invocation role policy and
-regional error/dropped-event alarms cover the handoff. The independent monitoring
-inventory includes structured errors and Errors/Throttles alarms. Deploy the
-migration service after compatible schema/workers/API. The simplification alone
-requires redeploying `api` (legacy configuration snapshot adapter), then this Lambda; no schema, public API or frontend behavior
-change is introduced. See the [migration runbook](./legacy-competition-migration-runbook.md).
+Default navigation evaluates only published native configuration with deterministic
+active/upcoming/completed ordering, inclusive end boundaries and server refresh
+times. It never repoints the old public primary mapping. CURATION retains price
+ordering/bounds and capability-specific presentation on competition-scoped APIs.
+The immutable Phase 0 GET fixtures and route/OpenAPI census remain enforced.
+Disposable MySQL acceptance physically removes old tables/wave columns and checks
+compatibility projections, native votes/history/activity and repeatable decisions.
+No staging table/column deletion, orphan cleanup or media/CDN cleanup occurs.
 
 Important API responsibilities:
 
@@ -1312,6 +1339,13 @@ There are two DB access modes:
 
 - API mode uses mysql read/write pools. Simple SQL classification routes `INSERT`, `UPDATE`, `DELETE`, and `REPLACE` to the write pool; other queries default to the read pool unless forced.
 - Loop mode uses TypeORM initialization and the shared `SqlExecutor` abstraction. Schema ownership is entities-first: add or update TypeORM entity classes, export them from `src/entities/entities.ts`, and let `dbMigrationsLoop` run entity synchronization. Do not create SQL migrations for schema changes unless explicitly requested; migrations are reserved for one-off data work or views.
+
+The MySQL query options capture the legacy GET compatibility boolean conversion
+mode when each statement is submitted. Compatibility views can expose boolean
+columns as BIGINT, so their declared flags need explicit conversion. Field parsing
+must not read request context from a reused socket: that socket can have been
+opened by another request. Queries outside the compatibility scope retain numeric
+BIGINT values, including when they reuse a socket opened inside that scope.
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
 
@@ -1616,6 +1650,18 @@ changing alert or dirty state, while
 `SUBSCRIPTION_COVERAGE_BASELINE_ONLY=true` persists state but emits nothing.
 No request cache is used for the coverage read boundary, so a confirmed top-up
 or redemption can be reflected immediately.
+
+`delegationsLoop` also supports the explicit maintenance payload in staging and production
+`{"action":"reconsolidate","wallets":["<Ethereum address>"]}`. It expands
+requested seeds through old persisted and current confirmed groups, runs the
+same partial reconsolidation pipeline as chain-event handling, then updates
+affected primary addresses. It does not scan chain events or advance the
+delegation-indexing checkpoint. Scheduled indexing remains unchanged; there is
+no persistent action flag or new public API. See
+[on-demand reconsolidation](delegations-reconsolidation.md) for validation,
+completion semantics and AWS IAM invocation permissions. This action does not
+depend on mutable Sentry environment labels, including when AWS reuses a runtime
+that has already loaded regional secrets.
 
 `xTdhLoop` uses a two-phase FIFO queue flow. A full nightly TDH run relies only
 on the TDH completion SNS topic, published after the remaining TDH work
@@ -2104,3 +2150,55 @@ interval and now redrive after five receives to `xtdh-dead-letter.fifo`. Dead le
 are retained for 14 days and have a visible-message CloudWatch alarm on the existing
 alarm topic. Repeated consolidation drift therefore cannot block the FIFO group
 until source retention expires. Deploying `xTdhLoop` also provisions these resources.
+
+### Transfer reconciliation after late indexing
+
+Independent contract indexers atomically queue per-wallet `owners` and `activity`
+refreshes alongside transfer upserts in `transfer_reconciliations`. Ownership and
+activity consumers combine those durable requests with normal block selection,
+rebuild from primary transfer history, and acknowledge only the consumed revision
+after raw and consolidated publication. Ownership then queues `balances` refreshes
+for `ownersBalancesLoop`. An IAM-only `repair-wallets` action on `nftOwnersLoop`
+queues bounded repair of previously missed transfers without running calculations.
+Schema sync precedes consumers, which precede transaction producers. See
+[late-indexed transfer reconciliation](transfer-reconciliation.md) for deployment
+order, retry/concurrency guarantees, repair and limits.
+
+## Consolidation activation policy
+
+Delegation-driven partial TDH refreshes rank the complete current wallet/group
+universe so changed members also update unaffected owners' rank positions.
+Partial raw, consolidated, historic and per-NFT persistence uses sequential
+TypeORM upserts of at most 500 rows through the existing transaction managers.
+MySQL matches composite primary keys directly, avoiding ORM bigint string/number
+mismatches and loaded-entity scans. The insert query builders disable entity
+hydration, so returned default values cannot reassign input keys before those
+rows are reused for historical persistence.
+Batch failures propagate to those managers and roll back the scoped deletes and
+earlier writes; batching adds no transaction or publication boundary. Full TDH
+and historical replay retain their bulk-insert persistence paths. Verify partial
+refresh runtime separately from the full calculation; see [TDH ranking
+parity](./tdh-ranking.md).
+
+When consolidation links simultaneously split and merge old groups, profile
+retention is resolved for all resulting identities before merging profile data.
+A profile retained by another resulting identity is excluded from merge sources;
+its profile row and related data stay with that identity. Every resulting
+registered identity refreshes metadata from its own surviving profile, including
+when all potential merge sources were excluded. Pure merges and the existing
+mature-primary/highest-TDH split retention rules remain unchanged.
+
+`CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT` is required by settings and consolidation grouping after environment preparation. It is a valid ISO UTC datetime at whole-second precision. The regional `prod/lambdas` configuration is distinct in staging (`eu-west-1`) and production (`us-east-1`); do not select it from `NODE_ENV`, which is production in both. Local runs supply the same key in their normal environment file.
+
+The grouping resolver and `GET /api/settings` use the same value. Settings expose `consolidation.max_wallets` (4) and `ungated_max_wallets` (3), sourced from the existing backend constants, plus `four_wallet_activation_at` and `four_wallet_signing_opens_at` (derived ten minutes later). The limits are fixed backend policy, not new secret/configuration knobs; FE and native Core consume them instead of maintaining duplicate constants. No deployment-date fallback is supplied. Missing or malformed configuration fails the settings/grouping operation before writing a grouping result. Warm processes retain loaded regional configuration; restart affected services after changing it, verify `/api/settings`, and refresh existing browser sessions. A policy change requires full reconsolidation/TDH recalculation so persisted results match the new cutoff.
+
+The runtime grouping callers are `api` (`db-api.fetchConsolidationsForWallet`), `tdhLoop` (`tdh.ts` and `tdh_consolidation.ts`) and `delegationsLoop` (affected-wallet grouping and the TDH functions it invokes). The two loop handlers enter `doInDbContext`, which awaits `prepEnvironment` before work; the API initializes local configuration and its optional regional secret before wiring/serving routes. The singleton constructor captures a resolver without reading configuration at import time. Other imports such as `tdhHistoryLoop` only build deterministic consolidation keys and do not resolve policy.
+
+The required key must be present and valid for all three runtimes in both regions before rollout. In particular, an unconfigured API fails the whole `/api/settings` response, not just consolidation setup. This is the agreed fail-closed policy, not a nullable-settings fallback. Configuration presence has to be verified as a deployment prerequisite; source inspection is not proof that a live secret contains the value.
+
+Configure production as `2026-10-15T00:00:00Z` and staging with its intended earlier cutoff before deployment. Schema sync still precedes the delegation indexer, TDH loop and API. Both environments index the same mainnet contract: staging registrations are real registrations, and pre-production-cutoff links require renewed consent after the production cutoff.
+
+WatchTower manual-review attention is derived from a subject-based union of
+open reports and pending moderation checks. The API groups this union before
+pagination and shares the case definition across queue and count surfaces; it
+adds no persisted case table, queue, service or background reconciliation.

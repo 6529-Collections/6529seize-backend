@@ -1,79 +1,62 @@
-import path from 'node:path';
-import { CompetitionRepository } from '@/competitions/competition.repository';
-import { WAVES_DECISIONS_TABLE } from '@/constants';
+import { COMPETITION_DECISIONS_TABLE, COMPETITIONS_TABLE } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
+import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
+import { WaveType } from '@/entities/IWave';
+import { CompetitionRepository } from './competition.repository';
+import { legacyGetView } from './legacy-competition-get-facade';
 
-type Migration = {
-  up: (db: { runSql: (sql: string) => Promise<unknown> }) => Promise<unknown>;
-  down: () => Promise<unknown>;
-};
-const migration = require(
-  path.resolve(
-    process.cwd(),
-    'migrations/20261001120000-add-default-competition-decision-index.js'
-  )
-) as Migration;
-
+const wave = aWave(
+  { type: WaveType.RANK },
+  { id: 'summary-primary', name: 'Summary', serial_no: 1 }
+);
 describeWithSeed(
-  'default competition legacy decision summary',
-  {
-    table: WAVES_DECISIONS_TABLE,
-    rows: [
-      { wave_id: 'selected', decision_time: 10 },
-      { wave_id: 'selected', decision_time: 30 },
-      ...Array.from({ length: 100 }, (_, i) => ({
-        wave_id: 'other',
-        decision_time: i + 100
-      }))
-    ]
-  },
+  'permanent original-primary decision summary',
+  withWaves([wave]),
   () => {
-    it('aggregates only the selected wave through an online covering index', async () => {
-      const db = { runSql: (sql: string) => sqlExecutor.execute(sql) };
-      await migration.up(db);
-      await migration.up(db);
-      const repository = new CompetitionRepository(() => sqlExecutor);
-      await expect(
-        repository.getLegacyDecisionSummary('selected', {})
-      ).resolves.toEqual({
-        last_decision_time: 30,
-        decisions_done: 2
-      });
-      await expect(
-        repository.getLegacyDecisionSummary('absent', {})
-      ).resolves.toEqual({
-        last_decision_time: null,
-        decisions_done: 0
-      });
-      const plan = await sqlExecutor.execute<{ key: string; Extra: string }>(
-        `explain select max(decision_time), count(*) from ${WAVES_DECISIONS_TABLE} where wave_id = :waveId`,
-        { waveId: 'selected' }
+    it('reads native completed decisions and excludes native-only siblings', async () => {
+      const primary = await seedNativeOriginalPrimaryFixture(wave);
+      await sqlExecutor.bulkInsert(
+        COMPETITION_DECISIONS_TABLE,
+        [10, 30].map((time, index) => ({
+          id: `10000000-0000-4000-8000-00000000000${index}`,
+          competition_id: primary.id,
+          scheduled_at: time,
+          decided_at: time,
+          status: 'COMPLETED',
+          execution_key: `decision:${time}`,
+          created_at: time
+        })),
+        [
+          'id',
+          'competition_id',
+          'scheduled_at',
+          'decided_at',
+          'status',
+          'execution_key',
+          'created_at'
+        ]
       );
-      expect(plan[0]?.key).toBe('idx_wave_decisions_wave_time');
-      expect(plan[0]?.Extra).toContain('Using index');
-      await migration.down();
-      const rollbackPlan = await sqlExecutor.execute<{
-        key: string;
-        Extra: string;
-      }>(
-        `explain select max(decision_time), count(*) from ${WAVES_DECISIONS_TABLE} where wave_id = :waveId`,
-        { waveId: 'selected' }
+      const result = await sqlExecutor.execute(
+        `select max(decision_time) as last_decision_time,count(*) as decisions_done from \`${legacyGetView('wave_decisions')}\` where wave_id=:id`,
+        { id: wave.id }
       );
-      expect(rollbackPlan[0]?.key).toBe('idx_wave_decisions_wave_time');
-      expect(rollbackPlan[0]?.Extra).toContain('Using index');
-      await expect(
-        repository.getLegacyDecisionSummary('selected', {})
-      ).resolves.toMatchObject({ decisions_done: 2 });
+      expect(result).toEqual([{ last_decision_time: 30, decisions_done: 2 }]);
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set legacy_wave_id=null where id=:id`,
+        { id: primary.id }
+      );
+      expect(
+        await sqlExecutor.execute(
+          `select * from \`${legacyGetView('wave_decisions')}\``
+        )
+      ).toEqual([]);
+      expect(
+        await new CompetitionRepository(
+          () => sqlExecutor
+        ).listDefaultCompetitionRecords(wave.id, {})
+      ).toHaveLength(1);
     });
   }
 );
-
-it('propagates online DDL failures instead of retrying with a blocking table lock', async () => {
-  const error = Object.assign(new Error('online index unavailable'), {
-    code: 'ER_LOCK_WAIT_TIMEOUT'
-  });
-  await expect(
-    migration.up({ runSql: jest.fn().mockRejectedValue(error) })
-  ).rejects.toBe(error);
-});

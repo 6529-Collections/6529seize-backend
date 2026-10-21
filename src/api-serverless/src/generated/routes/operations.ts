@@ -130,6 +130,7 @@ import { ApiGlobalRepCategoryWaveContributorsPage } from '@/api/generated/models
 import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
+import { ApiJoinedWavesPage } from '@/api/generated/models/ApiJoinedWavesPage';
 import { ApiMarketBatchCapabilities } from '@/api/generated/models/ApiMarketBatchCapabilities';
 import { ApiMarketBatchPreflight } from '@/api/generated/models/ApiMarketBatchPreflight';
 import { ApiMarketBatchPreflightRequest } from '@/api/generated/models/ApiMarketBatchPreflightRequest';
@@ -152,6 +153,7 @@ import { ApiModerationActionRequest } from '@/api/generated/models/ApiModeration
 import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCheckDetail';
 import { ApiModerationCheckPage } from '@/api/generated/models/ApiModerationCheckPage';
 import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts';
+import { ApiModerationReviewCasePage } from '@/api/generated/models/ApiModerationReviewCasePage';
 import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
@@ -1214,6 +1216,7 @@ export type GetContentModerationBlockActivityRequest = Request<
 export type GetModerationChecksPathParams = Record<string, never>;
 
 export interface GetModerationChecksQuery {
+  "case_id"?: string;
   "subject_type"?: "REP_CATEGORY" | "PROFILE_BIO" | "GROUP_NAME" | "DROP";
   "outcome"?: "ALLOW" | "REJECT" | "ERROR" | "PENDING";
   "policy_family"?: "PUBLIC_FIELDS" | "WAVE_CONTENT";
@@ -1280,6 +1283,23 @@ export type GetModerationAccessRequest = Request<
   ApiResponse<GetModerationAccessResponse>,
   never,
   GetModerationAccessQuery,
+  Record<string, never>
+>;
+
+export type GetModerationReviewCasesPathParams = Record<string, never>;
+
+export interface GetModerationReviewCasesQuery {
+  "before"?: string;
+  "limit"?: number;
+}
+
+export type GetModerationReviewCasesResponse = ApiModerationReviewCasePage;
+
+export type GetModerationReviewCasesRequest = Request<
+  GetModerationReviewCasesPathParams,
+  ApiResponse<GetModerationReviewCasesResponse>,
+  never,
+  GetModerationReviewCasesQuery,
   Record<string, never>
 >;
 
@@ -3054,6 +3074,23 @@ export type GetActiveWaveVotesRequest = Request<
   Record<string, never>
 >;
 
+export type GetJoinedWavesPathParams = Record<string, never>;
+
+export interface GetJoinedWavesQuery {
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetJoinedWavesResponse = ApiJoinedWavesPage;
+
+export type GetJoinedWavesRequest = Request<
+  GetJoinedWavesPathParams,
+  ApiResponse<GetJoinedWavesResponse>,
+  never,
+  GetJoinedWavesQuery,
+  Record<string, never>
+>;
+
 export type SearchDraftWaveMentionsPathParams = Record<string, never>;
 
 export interface SearchDraftWaveMentionsQuery {
@@ -3433,7 +3470,10 @@ export interface ListCompetitionLeaderboardV3PathParams {
 }
 
 export interface ListCompetitionLeaderboardV3Query {
-  "sort"?: "rating" | "real_time_rating" | "submitted_at" | "trend";
+  "sort"?: "rating" | "real_time_rating" | "submitted_at" | "trend" | "price";
+  "price_currency"?: string;
+  "min_price"?: number;
+  "max_price"?: number;
   "direction"?: string;
   "cursor"?: string;
   "limit"?: number;

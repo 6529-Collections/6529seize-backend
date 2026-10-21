@@ -17,6 +17,7 @@ import { nativeCompetitionRuntimeRepository } from '@/competitions/native-compet
 
 export type NativeEntryEdit = {
   readonly entries: readonly NativeDropEntry[];
+  readonly reset_votes: boolean;
   readonly permit?: NativeEntryContentPermit;
   readonly metadata?: CreateOrUpdateDropModel['metadata'];
 };
@@ -48,7 +49,7 @@ export class CompetitionEntryDropHooks {
       )
     )
       throw new ForbiddenException('Competition submissions cannot be edited');
-    return { entries };
+    return { entries, reset_votes: true };
   }
 
   public async preparePresentationUpdate(
@@ -63,7 +64,7 @@ export class CompetitionEntryDropHooks {
       )
     )
       throw new ForbiddenException('Competition submissions cannot be edited');
-    return { entries };
+    return { entries, reset_votes: false };
   }
 
   public async recordUpdate(
@@ -82,6 +83,13 @@ export class CompetitionEntryDropHooks {
         undefined,
         ctx
       );
+      const voteHistoryReset = edit.reset_votes
+        ? await competitionEntryRepository.voteHistoryReset(
+            entry.competition_id,
+            entry.id,
+            ctx
+          )
+        : {};
       await nativeCompetitionRuntimeRepository.enqueueEvent(
         {
           key: `entry-content:${entry.id}:${revision}`,
@@ -91,7 +99,10 @@ export class CompetitionEntryDropHooks {
           competition_id: entry.competition_id,
           competition_entry_id: entry.id,
           drop_id: entry.drop_id,
-          data: { content_revision: revision }
+          data: {
+            content_revision: revision,
+            ...voteHistoryReset
+          }
         },
         ctx
       );

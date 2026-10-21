@@ -127,6 +127,7 @@ function createService() {
   };
   return {
     service: new ContentModerationService(db, aiService, {
+      countReviewCases: jest.fn().mockResolvedValue(0),
       start: jest.fn().mockResolvedValue({
         item: { id: 'review-item', version: 1 },
         evaluationId: 'evaluation'
@@ -487,6 +488,7 @@ describe('ContentModerationService', () => {
       service.getModeratorAccess('ordinary-profile', {})
     ).resolves.toEqual({
       moderator: false,
+      needs_review_count: 0,
       has_open_reports: false,
       open_report_count: 0,
       resolved_report_count: 0,

@@ -1,6 +1,5 @@
 import {
   MEME_CARD_DROP_MAPPINGS_TABLE,
-  WAVES_DECISION_WINNER_DROPS_TABLE,
   COMPETITION_CLAIMS_TABLE,
   COMPETITIONS_TABLE,
   COMPETITION_ENTRIES_TABLE,
@@ -10,7 +9,10 @@ import {
 } from '@/constants';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
-import { publicCompetitionWaveSql } from '@/competitions/competition-main-stage.repository';
+import {
+  nativeMainStageEntriesSource,
+  publicCompetitionWaveSql
+} from '@/competitions/competition-main-stage.repository';
 
 interface MemeCardDropMappingRow {
   readonly meme_card_id: number;
@@ -30,14 +32,17 @@ function isDuplicateEntryError(error: unknown): boolean {
  * Persistence for the purpose-built Memes Main Stage mapping table.
  *
  * The table is intentionally Main-Stage-only by construction: runtime writes
- * select configured legacy Main Stage winners or native winners with explicit
- * capability and verified claim provenance. Reads repeat that
+ * select original-primary native Main Stage winners or native winners with
+ * explicit capability and verified claim receipts. Reads repeat that
  * per-row Main Stage winner check, so an unrelated invalid mapping cannot
  * suppress valid mappings.
  */
 export class MemeCardDropMappingsDb extends LazyDbAccessCompatibleService {
   private mainStageWinnerSource(): string {
-    return `select drop_id from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id = :mainStageWaveId
+    return `select original.drop_id from (${nativeMainStageEntriesSource('WINNER')}) original
+      join ${COMPETITIONS_TABLE} primary_competition on primary_competition.id=original.competition_id
+        and primary_competition.legacy_wave_id=primary_competition.wave_id
+        and (:mainStageWaveId is null or primary_competition.wave_id=:mainStageWaveId)
       union select claim.drop_id from ${COMPETITION_CLAIMS_TABLE} claim
       join ${COMPETITION_ENTRIES_TABLE} entry on entry.id = claim.entry_id and entry.competition_id = claim.competition_id
         and entry.drop_id = claim.drop_id and entry.decision_id = claim.decision_id and entry.status = 'WINNER'

@@ -50,6 +50,7 @@ import { NULL_ADDRESS } from '@/constants';
 import { findEnsForAddress } from '@/ens-lookup';
 import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
 import { Logger } from '@/logging';
+import { IMMUTABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
 import {
   ContentModerationDb,
   contentModerationDb
@@ -319,7 +320,9 @@ export class IdentitiesService {
         Bucket: myBucket,
         Key: key,
         Body: file.buffer,
-        ContentType: `image/${keyExtension}`
+        ContentType: `image/${keyExtension}`,
+        // Each upload gets a fresh random key, so the bytes never change.
+        CacheControl: IMMUTABLE_MEDIA_CACHE_CONTROL
       })
     );
     if (uploadedScaledImage.$metadata.httpStatusCode == 200) {

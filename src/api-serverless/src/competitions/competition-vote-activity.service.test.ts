@@ -8,7 +8,6 @@ import {
 } from '@/competitions/competition.repository';
 import { competitionVoteActivityRepository } from '@/competitions/competition-vote-activity.repository';
 import { CompetitionStorageMode } from '@/entities/ICompetition';
-import { dropsService } from '@/api/drops/drops.api.service';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { ApiProfileMin } from '@/api/generated/models/ApiProfileMin';
 import { NotFoundException } from '@/exceptions';
@@ -22,12 +21,8 @@ jest.mock('@/competitions/competition.repository', () => ({
 }));
 jest.mock('@/competitions/competition-vote-activity.repository', () => ({
   competitionVoteActivityRepository: {
-    list: jest.fn(),
-    listTransferred: jest.fn()
+    list: jest.fn()
   }
-}));
-jest.mock('@/api/drops/drops.api.service', () => ({
-  dropsService: { findWaveLogs: jest.fn() }
 }));
 jest.mock('@/api/identities/identity.fetcher', () => ({
   identityFetcher: { getOverviewsByIds: jest.fn() }
@@ -43,7 +38,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   jest
     .mocked(competitionService.getCompetition)
-    .mockResolvedValue({ legacy_transferred_at: 10000 } as PublicCompetition);
+    .mockResolvedValue({} as PublicCompetition);
   jest
     .mocked(competitionRepository.findCompetitionRecordById)
     .mockResolvedValue({
@@ -56,9 +51,25 @@ beforeEach(() => {
     .mocked(identityFetcher.getOverviewsByIds)
     .mockResolvedValue({ voter: profile, submitter, proxy });
   jest.mocked(competitionVoteActivityRepository.list).mockResolvedValue([]);
-  jest
-    .mocked(competitionVoteActivityRepository.listTransferred)
-    .mockResolvedValue([]);
+});
+
+it('preserves the original null shared timestamp without inventing an epoch date', async () => {
+  jest.mocked(competitionVoteActivityRepository.list).mockResolvedValue([
+    {
+      sequence: 0,
+      legacy_id: 'unknown-time',
+      legacy_created_at: null,
+      drop_id: 'drop',
+      voter_profile_id: 'voter',
+      submitter_id: null,
+      previous_value: 0,
+      value: 0,
+      occurred_at: null
+    }
+  ]);
+  expect(await read()).toMatchObject([
+    { id: 'unknown-time', created_at: null }
+  ]);
 });
 
 it('restores transferred primary history with original IDs, adjustment reasons and proxy attribution', async () => {
@@ -67,22 +78,20 @@ it('restores transferred primary history with original IDs, adjustment reasons a
     oldVote: '85192',
     newVote: 555
   };
-  jest
-    .mocked(competitionVoteActivityRepository.listTransferred)
-    .mockResolvedValue([
-      {
-        sequence: 0,
-        legacy_id: 'original-log',
-        legacy_contents: JSON.stringify(contents),
-        proxy_id: 'proxy',
-        drop_id: 'drop',
-        voter_profile_id: 'voter',
-        submitter_id: 'submitter',
-        previous_value: 0,
-        value: 0,
-        occurred_at: 9000
-      }
-    ]);
+  jest.mocked(competitionVoteActivityRepository.list).mockResolvedValue([
+    {
+      sequence: 0,
+      legacy_id: 'original-log',
+      legacy_contents: JSON.stringify(contents),
+      proxy_id: 'proxy',
+      drop_id: 'drop',
+      voter_profile_id: 'voter',
+      submitter_id: 'submitter',
+      previous_value: 0,
+      value: 0,
+      occurred_at: 9000
+    }
+  ]);
   expect(await read()).toEqual([
     {
       id: 'original-log',
@@ -96,10 +105,12 @@ it('restores transferred primary history with original IDs, adjustment reasons a
       contents
     }
   ]);
-  expect(
-    competitionVoteActivityRepository.listTransferred
-  ).toHaveBeenCalledWith('competition', 'wave', 10000, 20, 50, {});
-  expect(dropsService.findWaveLogs).not.toHaveBeenCalled();
+  expect(competitionVoteActivityRepository.list).toHaveBeenCalledWith(
+    'competition',
+    20,
+    50,
+    {}
+  );
 });
 
 it('does not expose primary-wave logs through a separate native competition', async () => {
@@ -125,34 +136,6 @@ it('does not expose primary-wave logs through a separate native competition', as
   expect(await read()).toMatchObject([
     { id: 'competition:7', contents: { oldVote: 3, newVote: 4 } }
   ]);
-  expect(
-    competitionVoteActivityRepository.listTransferred
-  ).not.toHaveBeenCalled();
-});
-
-it('retains adapter reads before transfer', async () => {
-  jest
-    .mocked(competitionRepository.findCompetitionRecordById)
-    .mockResolvedValue({
-      id: 'competition',
-      wave_id: 'wave',
-      legacy_wave_id: 'wave',
-      storage_mode: CompetitionStorageMode.LEGACY_ADAPTER
-    } as CompetitionRecord);
-  jest.mocked(dropsService.findWaveLogs).mockResolvedValue([]);
-  expect(await read()).toEqual([]);
-  expect(dropsService.findWaveLogs).toHaveBeenCalledWith(
-    expect.objectContaining({
-      wave_id: 'wave',
-      offset: 20,
-      limit: 50,
-      log_types: ['DROP_VOTE_EDIT']
-    }),
-    {}
-  );
-  expect(
-    competitionVoteActivityRepository.listTransferred
-  ).not.toHaveBeenCalled();
 });
 
 it('masks unreadable competitions before querying any history', async () => {
@@ -163,9 +146,7 @@ it('masks unreadable competitions before querying any history', async () => {
   expect(
     competitionRepository.findCompetitionRecordById
   ).not.toHaveBeenCalled();
-  expect(
-    competitionVoteActivityRepository.listTransferred
-  ).not.toHaveBeenCalled();
+  expect(competitionVoteActivityRepository.list).not.toHaveBeenCalled();
 });
 
 it('rejects a child from another wave without querying its history', async () => {
@@ -173,7 +154,5 @@ it('rejects a child from another wave without querying its history', async () =>
     .mocked(competitionRepository.findCompetitionRecordById)
     .mockResolvedValue({ wave_id: 'other-wave' } as CompetitionRecord);
   await expect(read()).rejects.toThrow('Competition not found');
-  expect(
-    competitionVoteActivityRepository.listTransferred
-  ).not.toHaveBeenCalled();
+  expect(competitionVoteActivityRepository.list).not.toHaveBeenCalled();
 });
