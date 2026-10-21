@@ -315,3 +315,5 @@ export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
 export { TransferReconciliationEntity } from './ITransferReconciliation';
+
+export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';

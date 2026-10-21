@@ -24,10 +24,6 @@ jest.mock('@/competitions/competition-command.repository', () => ({
     command: (...args: unknown[]) => mockCommand(...args)
   }
 }));
-jest.mock('@/app-features', () => ({
-  appFeatures: { isNativeCompetitionHubCreationEnabled: () => true }
-}));
-
 describe('Native private hub creation', () => {
   const request = {
     idempotency_key: 'create-private-hub',
@@ -109,4 +105,25 @@ describe('Native private hub creation', () => {
     await expect(service.create(request, ctx)).resolves.toEqual(hub);
     expect(mockCreate).toHaveBeenCalledTimes(1);
   });
+  it.each([true, false])(
+    'preserves administrator drop deletion choice %s on the CHAT hub',
+    async (enabled) => {
+      await new WaveHubCreationService().create(
+        { ...request, admin_drop_deletion_enabled: enabled },
+        ctx
+      );
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          wave: expect.objectContaining({
+            type: 'CHAT',
+            admin_drop_deletion_enabled: enabled
+          })
+        }),
+        false,
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      );
+    }
+  );
 });

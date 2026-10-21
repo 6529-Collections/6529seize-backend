@@ -126,7 +126,8 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
           'waveScoreRefreshLoopThrottles',
           'subscriptionCoverageReconciliationLoopThrottles',
           'nftsLoopThrottles',
-          'releaseNotesGenerationLoopThrottles'
+          'releaseNotesGenerationLoopThrottles',
+          'transactionsProcessingLoopThrottles'
         ].includes(id) &&
         resource.Type === 'AWS::CloudWatch::Alarm' &&
         resource.Properties.Namespace === 'AWS/Lambda'
@@ -135,6 +136,56 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
         assert.equal(resource.Properties.DatapointsToAlarm, undefined, id);
       }
     }
+  }
+});
+
+test('transaction processing tolerates brief airdrop contention and alerts after five breaching minutes while failures stay immediate', () => {
+  for (const env of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
+    ).Resources;
+    const throttles = resources.transactionsProcessingLoopThrottles.Properties;
+    const errors = resources.transactionsProcessingLoopErrors.Properties;
+    assert.deepEqual(throttles, {
+      AlarmName: {
+        'Fn::Sub':
+          'seize-monitoring-${Environment}-transactionsProcessingLoop-Throttles'
+      },
+      Namespace: 'AWS/Lambda',
+      MetricName: 'Throttles',
+      Dimensions: [
+        { Name: 'FunctionName', Value: 'transactionsProcessingLoop' }
+      ],
+      Statistic: 'Sum',
+      Period: 60,
+      EvaluationPeriods: 5,
+      DatapointsToAlarm: 5,
+      Threshold: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+      TreatMissingData: 'notBreaching',
+      AlarmActions: {
+        'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+      }
+    });
+    // Replay the observed three-minute burst, plus shorter and sustained cases.
+    for (const { counts, expected } of [
+      { counts: [0, 0, 5, 5, 7], expected: false },
+      { counts: [0, 0, 0, 0, 100], expected: false },
+      { counts: [0, 1, 1, 1, 1], expected: false },
+      { counts: [1, 1, 0, 1, 1], expected: false },
+      { counts: [1, 1, 1, 1, 1], expected: true }
+    ]) {
+      const breachingMinutes: number = counts.filter(
+        (count) => count >= throttles.Threshold
+      ).length;
+      assert.equal(breachingMinutes >= throttles.DatapointsToAlarm, expected);
+    }
+    assert.equal(errors.MetricName, 'Errors');
+    assert.equal(errors.Period, 60);
+    assert.equal(errors.EvaluationPeriods, 1);
+    assert.equal(errors.DatapointsToAlarm, undefined);
+    assert.equal(errors.Threshold, 1);
+    assert.deepEqual(errors.AlarmActions, throttles.AlarmActions);
   }
 });
 
@@ -361,7 +412,13 @@ test('source catalog coverage is complete and monitoring delivery has no applica
     const coverage = JSON.parse(
       readFileSync(new URL(`../coverage-${env}.json`, import.meta.url), 'utf8')
     );
-    const targets: string[] = catalog.services
+    const retained = JSON.parse(
+      readFileSync(
+        new URL('../retained-producers.json', import.meta.url),
+        'utf8'
+      )
+    );
+    const targets: string[] = [...catalog.services, ...retained.services]
       .filter((s: { allowed_environments: string[] }) =>
         s.allowed_environments.includes(env)
       )
@@ -369,8 +426,10 @@ test('source catalog coverage is complete and monitoring delivery has no applica
         (s: { verification_targets: string[] }) => s.verification_targets
       );
     assert.deepEqual(
-      coverage.services.flatMap((s: { functions: string[] }) => s.functions),
-      targets
+      coverage.services
+        .flatMap((s: { functions: string[] }) => s.functions)
+        .sort((left: string, right: string) => left.localeCompare(right)),
+      targets.sort((left, right) => left.localeCompare(right))
     );
     const filters = Object.values(source.Resources).filter(
       (r: unknown) =>
@@ -498,6 +557,183 @@ test('archive logging and encrypted fallback preserve narrowly scoped delivery p
     });
     assert.equal(
       JSON.stringify(write.Condition.ArnEquals).includes('*'),
+      false
+    );
+  }
+});
+
+test('NFT incidents use completed outcomes, sample gates, sustained failures and observed-success recovery', () => {
+  for (const environment of ['prod', 'staging']) {
+    const resources = JSON.parse(
+      readFileSync(
+        new URL(`../source-${environment}.json`, import.meta.url),
+        'utf8'
+      )
+    ).Resources;
+    for (const provider of [
+      'SUPERRARE',
+      'OPENSEA',
+      'FOUNDATION',
+      'MANIFOLD',
+      'TRANSIENT',
+      'GAMMAIO'
+    ]) {
+      for (const kind of ['FailureRate', 'NewUnavailableSurge']) {
+        const alarm = resources[`NftRefresh${provider}${kind}`].Properties;
+        assert.equal(alarm.TreatMissingData, 'ignore');
+        assert.equal(alarm.EvaluationPeriods, kind === 'FailureRate' ? 3 : 1);
+        assert.deepEqual(alarm.OKActions, alarm.AlarmActions);
+        const inputs = alarm.Metrics.filter(
+          (metric: { MetricStat?: unknown }) => metric.MetricStat
+        );
+        for (const input of inputs) {
+          assert.equal(
+            input.MetricStat.Period,
+            kind === 'FailureRate' ? 300 : 900
+          );
+          assert.equal(
+            input.MetricStat.Metric.Namespace,
+            '6529/NftLinkRefresher'
+          );
+          assert.deepEqual(input.MetricStat.Metric.Dimensions, [
+            { Name: 'Environment', Value: { Ref: 'Environment' } },
+            { Name: 'Provider', Value: provider }
+          ]);
+        }
+        const expression = alarm.Metrics.at(-1).Expression;
+        assert.equal(
+          expression,
+          kind === 'FailureRate'
+            ? 'IF((s+f)>=20,IF(100*f/(s+f)>=5,1,0))'
+            : 'IF((c>=20) AND (((n>=5 AND 100*n/c>=10) OR p>=5) OR s>0),IF((n>=5 AND 100*n/c>=10) OR p>=5,1,0))'
+        );
+      }
+    }
+    const body = JSON.parse(
+      resources.NftRefreshDashboard.Properties.DashboardBody['Fn::Sub']
+    );
+    assert.equal(body.widgets.length, 12);
+    for (const widget of body.widgets) {
+      assert.equal(widget.properties.region, '${AWS::Region}');
+      assert.equal(widget.properties.accountId, '${AWS::AccountId}');
+      for (const metric of widget.properties.metrics) {
+        assert.equal(metric.length, 6);
+        assert.equal(metric[0], '6529/NftLinkRefresher');
+        assert.equal(metric[4], 'Provider');
+      }
+    }
+    assert.equal(resources.NftRefreshAge.Properties.Threshold, 1800);
+    assert.equal(resources.NftRefreshDeadLetters.Properties.Threshold, 1);
+    assert.equal(
+      resources.nftLinkRefresherLoopErrors.Properties.EvaluationPeriods,
+      1
+    );
+  }
+});
+
+test('retained migrator keeps existing log and alarm resources without becoming an ordinary deploy target', () => {
+  const name = 'competitionMigrationLoop';
+  const catalog = JSON.parse(
+    readFileSync(
+      new URL('../../../src/config/deploy-services.json', import.meta.url),
+      'utf8'
+    )
+  );
+  assert.equal(
+    catalog.services.some((service: { name: string }) => service.name === name),
+    false
+  );
+  const retained = JSON.parse(
+    readFileSync(new URL('../retained-producers.json', import.meta.url), 'utf8')
+  );
+  assert.deepEqual(retained.services, [
+    {
+      name,
+      allowed_environments: ['staging', 'prod'],
+      aws_region: { staging: 'eu-west-1', prod: 'us-east-1' },
+      verification_targets: [name]
+    }
+  ]);
+  for (const env of ['prod', 'staging']) {
+    const source = JSON.parse(
+      readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
+    );
+    const monitor = JSON.parse(
+      readFileSync(
+        new URL(`../monitoring-${env}.json`, import.meta.url),
+        'utf8'
+      )
+    );
+    const coverage = JSON.parse(
+      readFileSync(new URL(`../coverage-${env}.json`, import.meta.url), 'utf8')
+    );
+    assert.equal(
+      coverage.retainedSource,
+      'ops/monitoring/retained-producers.json'
+    );
+    assert.deepEqual(
+      coverage.services.find(
+        (service: { service: string }) => service.service === name
+      ),
+      {
+        service: name,
+        region: env === 'prod' ? 'us-east-1' : 'eu-west-1',
+        functions: [name],
+        coverage: ['structured-error-logs', 'lambda-errors', 'lambda-throttles']
+      }
+    );
+    assert.deepEqual(source.Resources[`${name}ErrorLogs`], {
+      Type: 'AWS::Logs::SubscriptionFilter',
+      DependsOn: ['LogPermission', 'claimsMediaArweaveUploaderErrorLogs'],
+      Properties: {
+        DestinationArn: { 'Fn::GetAtt': ['LogRelay', 'Arn'] },
+        LogGroupName: `/aws/lambda/${name}`,
+        FilterPattern: '"6529.ops.error.v1"'
+      }
+    });
+    for (const metric of ['Errors', 'Throttles']) {
+      const alarm = source.Resources[`${name}${metric}`];
+      assert.equal(alarm.Type, 'AWS::CloudWatch::Alarm');
+      assert.equal(alarm.Properties.Namespace, 'AWS/Lambda');
+      assert.equal(alarm.Properties.MetricName, metric);
+      assert.deepEqual(alarm.Properties.Dimensions, [
+        { Name: 'FunctionName', Value: name }
+      ]);
+    }
+    const allowedLogGroups =
+      source.Resources.LogRelay.Properties.Environment.Variables.ALLOWED_LOG_GROUPS.split(
+        ','
+      );
+    assert.ok(allowedLogGroups.includes(`/aws/lambda/${name}`));
+    assert.deepEqual(source.Resources.LogPermission.Properties.SourceArn, {
+      'Fn::Sub':
+        'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*'
+    });
+    assert.deepEqual(source.Resources.LogPermission.Properties.FunctionName, {
+      Ref: 'LogRelay'
+    });
+    const serviceAllowlists = Object.values(monitor.Resources)
+      .map(
+        (resource: unknown) =>
+          (
+            resource as {
+              Properties?: {
+                Environment?: { Variables?: { ALLOWED_SERVICES?: string } };
+              };
+            }
+          ).Properties?.Environment?.Variables?.ALLOWED_SERVICES
+      )
+      .filter((value): value is string => typeof value === 'string');
+    assert.ok(serviceAllowlists.length > 0);
+    for (const allowed of serviceAllowlists)
+      assert.ok(allowed.split(',').includes(name));
+    assert.equal(
+      Object.values(source.Resources).some(
+        (resource: unknown) =>
+          (resource as { Type: string }).Type === 'AWS::Serverless::Function' &&
+          (resource as { Properties: { FunctionName?: string } }).Properties
+            .FunctionName === name
+      ),
       false
     );
   }

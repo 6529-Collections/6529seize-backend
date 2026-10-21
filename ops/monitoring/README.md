@@ -6,6 +6,11 @@ receipt table, archive and webhook secrets. No function uses the application VPC
 MySQL, Redis, root dependencies, Discord bot session or application secret loader.
 The preferred monitoring region differs from the production application region.
 
+Retained inert functions are listed in `retained-producers.json`, independently of the
+ordinary backend deploy catalog. They keep their existing structured log subscriptions,
+producer allowlists, relay permissions and Lambda platform alarms. This inventory never
+enables code deployment or removes retained application resources.
+
 The infrastructure source is `scripts/templates.mjs`. `monitoring-{env}.json`,
 `source-{env}.json` and `coverage-{env}.json` are generated from the backend service
 catalog; CI fails when their inventory is stale. This separate operational package
@@ -64,6 +69,14 @@ it does not measure successful business output or guarantee a detection SLA.
 Recovery follows the same rolling window without a separate cooldown.
 Invocation-error and OOM alarms remain immediate, as do other services' throttle
 alarms. Direct SNS alarm actions are retained.
+
+Transaction processing requires at least one throttle in each of five one-minute
+periods before alerting. Airdrop validation and redemption run sequentially with
+one reserved execution, so a short batch can overlap several scheduled runs and
+their retries before catching up successfully. The five-of-five rule tolerates
+the observed three-minute burst; five breaching minutes in the evaluation window
+still alert. Missing data is non-breaching. Invocation-error and OOM alarms, the
+one-minute schedule, concurrency limit and notification actions are unchanged.
 
 Three audited production low-CPU autoscaling controls are recorded without
 operator notifications when the collector positively matches their exact source
@@ -346,3 +359,89 @@ grants are independent of runtime delivery. Follow the
 [dashboard runbook](../docs/operations/monitoring-health-dashboard.md) for metric
 semantics, required resource parameters, rollout and validation. Pipeline
 heartbeats do not establish application-job success.
+
+## NFT refresh outcomes
+
+`nftLinkRefresherLoop` emits `6529.nft.refresh.v1` EMF records after persistence,
+with `Completed`, `Success`, `Failure`, `Unavailable`, `NewUnavailable`, and
+`PreviouslyWorkingUnavailable` counts in `6529/NftLinkRefresher`. All six values
+(including zeros) share each record. Only `Environment` and the six catalogued
+NFT `Provider` values are metric dimensions. Per-link hashes and correlation IDs
+stay in source logs. The source-owned `seize-monitoring-{environment}-nft-refresh` dashboard shows
+outcomes and newly unavailable counts for each provider; it supplies the persistent-failure review
+surface without generating a notification for each link.
+
+Expected canonical-page 404s and recognized recoverable fetch failures do not
+send individual notifications. Retry attempts are warnings, counted only when
+an outcome is persisted. Unexpected failures, auth errors and unrecognized 404s
+still notify; DB/lock exceptions continue through the handler/platform path.
+The worker deployment explicitly sets `OPS_ENVIRONMENT`. Missing or invalid
+markers emit a configuration error once per warm worker, publish no metrics,
+and retain final-failure notifications. Unclassified upstream HTTP failures
+remain `unexpected_failure` outcomes and count in provider failure health; only
+page-scoped Transient/Manifold 404 evidence qualifies as unavailable.
+Only the SQS worker opts into this policy. API callers, retry timings, backoff,
+cache preservation and preview/WS failure notifications keep their behavior.
+
+Initial provider policies:
+
+- `FailureRate`: at least 5% failed eligible outcomes, excluding unavailable
+  pages from numerator and denominator; at least 20 eligible outcomes per
+  five-minute period, breaching three consecutive periods (15 minutes).
+- `NewUnavailableSurge`: at least 20 completions in a 15-minute period and either
+  five newly unavailable links representing at least 10% of completions, or
+  five previously successful links starting a failure episode. A link counts
+  once until a successful refresh clears its existing `failed_since` field.
+  Links already in a failure episode do not become new incidents on deployment.
+- Both alarms require at least 20 outcomes for recovery as well as detection:
+  eligible success/failure outcomes for `FailureRate`, or all completions for
+  `NewUnavailableSurge`. Each also requires successful samples for recovery.
+  A successful window below its 20-outcome gate preserves the prior incident. Missing/ineligible observations leave the prior state
+  (`TreatMissingData=ignore`); silence is not recovery. A recovery means the
+  aggregate threshold cleared, not that every missing page returned.
+- Existing Lambda Errors/OOM/Throttles remain. `NftRefreshAge` alarms at 1,800
+  seconds in three of five minutes; `NftRefreshDeadLetters` alarms on one visible
+  message. These independently cover a stalled worker.
+
+Before deployment, run the read-only acceptance check from this package:
+
+```sh
+AWS_CLI_PATH=/absolute/path/to/aws MONITORING_ENVIRONMENT=staging ../../bin/6529 run verify:nft-refresh-math
+```
+
+It evaluates generated expressions with `GetMetricData`/`TIME_SERIES` fixtures
+without publishing metrics or notifications. It covers healthy, failed,
+low-volume failures and successes, quiet, persistent-unavailable,
+new-unavailable, previously-working, and recovery observations. The unavailable-surge expression filters recovery at
+its outer boundary: a missing nested `IF` branch can otherwise become zero in
+CloudWatch and manufacture recovery without success. Run the matching `prod`
+check before production acceptance as well.
+
+Thresholds are operational starting values; low-volume providers may not meet
+sample gates. Inspect dashboard counts and retained logs when tuning. Do not
+raise thresholds to conceal an unexplained regression. In particular, provider
+404 bursts and previously-working pages remain separate signals from persistent
+individual missing pages. Raw logs/EMF publication are best effort, and platform
+alarms remain independent of the application emitter.
+
+Roll out each environment in this order: refresh the monitoring receiver via
+`Deploy operational monitoring` when the target source catalog adds services
+since its last deployment; then deploy the generated source stack including the
+NFT dashboard (existing `deploy:source` runbook path); finally run `Deploy a
+service` for `nftLinkRefresherLoop`. Receiver inventory must precede new source
+subscriptions so new service envelopes are accepted. Build/generate from the
+merged target branch to preserve staging-only catalog and coverage changes.
+The monitoring workflow prints its public health endpoint; verify that health
+response and the existing pipeline heartbeat checks before advancing.
+Verify all source alarm
+expressions/dimensions and queue guards before the worker rollout. Verify EMF
+extraction and preserved error coverage from natural traffic or a controlled
+staging check. For every provider observed emitting post-rollout outcome records,
+require a non-zero CloudWatch `Completed` Sum under the exact environment/provider
+dimensions. Compare source-log counters with extracted metric sums; source stdout
+alone does not establish extraction. Idle providers stay unverified rather than
+healthy. Missing/mismatched metric extraction blocks acceptance and requires
+restoring the previous worker before proceeding. Dashboard counts use five-minute
+periods; select 15 minutes when reconciling a `NewUnavailableSurge` alarm. No API, frontend or schema deployment is needed.
+Rollback the worker first to restore individual reporting; retained counters and
+additive source alarms can remain while investigation continues.

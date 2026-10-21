@@ -1,4 +1,3 @@
-import { appFeatures, AppFeatures } from '@/app-features';
 import {
   CompetitionCreditService,
   competitionCreditService
@@ -6,6 +5,7 @@ import {
 import { Competition, CompetitionPause } from './competition.types';
 import {
   CompetitionLifecycle,
+  CompetitionCapability,
   CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
@@ -16,6 +16,8 @@ import {
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
+import { WaveCreditScope } from '@/entities/IWave';
+import { readSequentially } from '@/competitions/competition-read-sequence';
 import { computeCompetitionPhase } from './competition-phase';
 import {
   NativeCompetitionRuntimeRepository,
@@ -67,7 +69,7 @@ function aggregatePoints(
     .map((row) => ({
       timestamp: row.occurred_at,
       vote: row.aggregate_value,
-      sequence: row.sequence
+      sequence: row.order_sequence ?? row.sequence
     }));
 }
 
@@ -90,7 +92,7 @@ function voterPoints(
     points.push({
       timestamp: row.occurred_at,
       vote: row.value,
-      sequence: row.sequence
+      sequence: row.order_sequence ?? row.sequence
     });
   }
   return result;
@@ -101,12 +103,11 @@ export class NativeCompetitionRuntimeService {
 
   public constructor(
     private readonly repository: NativeCompetitionRuntimeRepository,
-    private readonly credits: Pick<CompetitionCreditService, 'getBudget'>,
-    private readonly executionRouter: CompetitionExecutionRouter,
-    private readonly features: Pick<
-      AppFeatures,
-      'isNativeCompetitionExecutionEnabled'
-    >
+    private readonly credits: Pick<
+      CompetitionCreditService,
+      'getBudget' | 'getWaveBudgets'
+    >,
+    private readonly executionRouter: CompetitionExecutionRouter
   ) {}
 
   public async reconcileVoterCredit(
@@ -148,7 +149,7 @@ export class NativeCompetitionRuntimeService {
       };
       await this.repository.replaceVoteForReconciliation(mutation, ctx);
       await this.repository.recordVoteChange(
-        { ...mutation, previousVote },
+        { ...mutation, previousVote, reason: 'CREDIT_OVERSPENT' },
         ctx
       );
     }
@@ -160,13 +161,27 @@ export class NativeCompetitionRuntimeService {
     ctx: RequestContext
   ): Promise<void> {
     const voters = await this.repository.listActiveVoters(competition.id, ctx);
-    for (const voterProfileId of voters) {
-      const budget = await this.credits.getBudget(
-        competition,
-        voterProfileId,
-        undefined,
-        ctx
-      );
+    const waveBudgets =
+      competition.voting.credit_scope === WaveCreditScope.WAVE
+        ? await this.credits.getWaveBudgets(competition, voters, ctx)
+        : null;
+    await readSequentially(voters, async (voterProfileId) => {
+      const budget =
+        waveBudgets?.get(voterProfileId) ??
+        (await this.credits.getBudget(
+          competition,
+          voterProfileId,
+          undefined,
+          ctx
+        ));
+      // WAVE spending is the sum of absolute active votes. If it fits, no
+      // individual vote needs reducing. DROP budgets must still check each entry.
+      if (
+        waveBudgets &&
+        budget.spent !== null &&
+        budget.spent <= budget.available
+      )
+        return;
       await this.reconcileVoterCredit(
         {
           competitionId: competition.id,
@@ -177,7 +192,7 @@ export class NativeCompetitionRuntimeService {
         },
         ctx
       );
-    }
+    });
   }
 
   /** The API may refresh its just-written leaderboard in the existing transaction.
@@ -207,12 +222,68 @@ export class NativeCompetitionRuntimeService {
     await this.refreshLeaderboard(competition, state, now, ctx);
   }
 
+  /** A confirmed NFT transfer resolves CURATION entries through native winner
+   * snapshots. The transfer key makes retries harmless; different transfers in
+   * the same millisecond may append to the same historical decision identity. */
+  public async resolveCurationEntries(
+    competitionId: string,
+    dropIds: readonly string[],
+    decisionTime: number,
+    transferKey: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const competition = await this.repository.lockCompetition(
+      competitionId,
+      ctx
+    );
+    if (
+      !competition ||
+      !competition.capabilities.includes(CompetitionCapability.CURATION)
+    )
+      return false;
+    if (
+      competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
+      !this.executionRouter.isNativeExecutionAllowed(competition)
+    )
+      return false;
+    const state = await this.loadState(competitionId, ctx);
+    const selected = this.scores(competition, state, decisionTime).filter(
+      (score) => dropIds.includes(score.entry.drop_id)
+    );
+    if (!selected.length) return true;
+    await this.repository.saveDecision(
+      {
+        competition,
+        scheduledAt: decisionTime,
+        now: Date.now(),
+        winners: selected.map((score) => this.winner(score, 1)),
+        awards: new Map(),
+        voterPoints: voterPoints(state.history),
+        finalVote: (points) =>
+          flooredWeightedNativeVote(
+            points,
+            decisionTime,
+            competition.decisions.time_lock_ms ?? 0
+          ),
+        skipped: false,
+        decisionKey: transferKey
+      },
+      ctx
+    );
+    const won = new Set(selected.map((score) => score.entry.id));
+    state.entries = state.entries.filter((entry) => !won.has(entry.id));
+    await this.refreshLeaderboard(competition, state, Date.now(), ctx);
+    return true;
+  }
+
   public async refreshNativeLeaderboards(
     timer: Timer,
     now = Date.now()
   ): Promise<void> {
-    await this.forEachNativeCompetition(timer, (competitionId, ctx) =>
-      this.refreshCompetition(competitionId, now, ctx)
+    await this.forEachNativeCompetition(
+      timer,
+      'leaderboard',
+      (competitionId, ctx) => this.refreshCompetition(competitionId, now, ctx)
     );
   }
 
@@ -220,16 +291,18 @@ export class NativeCompetitionRuntimeService {
     now = Date.now(),
     timer
   }: { now?: number; timer?: Timer } = {}): Promise<void> {
-    await this.forEachNativeCompetition(timer, (competitionId, ctx) =>
-      this.processCompetition(competitionId, now, ctx)
+    await this.forEachNativeCompetition(
+      timer,
+      'decisions',
+      (competitionId, ctx) => this.processCompetition(competitionId, now, ctx)
     );
   }
 
   private async forEachNativeCompetition(
     timer: Timer | undefined,
+    operation: 'leaderboard' | 'decisions',
     execute: (id: string, ctx: RequestContext) => Promise<void>
   ): Promise<void> {
-    if (!this.features.isNativeCompetitionExecutionEnabled()) return;
     let afterId = '';
     for (;;) {
       const ids = await this.repository.discoverCompetitions(afterId, 100, {
@@ -237,12 +310,20 @@ export class NativeCompetitionRuntimeService {
       });
       if (!ids.length) break;
       for (const id of ids) {
+        const startedAt = Date.now();
         try {
           await execute(id, { timer });
+          this.logger.info('native_competition_execution_completed', {
+            competition_id: id,
+            operation,
+            duration_ms: Date.now() - startedAt
+          });
         } catch {
           // Do not log signed payloads, user content or DB error values.
           this.logger.error('native_competition_execution_failed', {
-            competition_id: id
+            competition_id: id,
+            operation,
+            duration_ms: Date.now() - startedAt
           });
         }
       }
@@ -289,6 +370,20 @@ export class NativeCompetitionRuntimeService {
     return { entries, history, pauses };
   }
 
+  /** Preserve due observations of a configuration before its version changes. */
+  public async enqueueDueTransitions(
+    competition: Competition,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (
+      competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
+      !this.executionRouter.isNativeExecutionAllowed(competition)
+    )
+      return;
+    await this.emitScheduledTransitions(competition, now, ctx);
+  }
+
   private async emitScheduledTransitions(
     competition: Competition,
     now: number,
@@ -300,8 +395,9 @@ export class NativeCompetitionRuntimeService {
       competition.voting.starts_at
     ].map((time) => Math.max(time ?? publishedAt, publishedAt));
     const startedAt = Math.min(...starts);
-    const transferredAt = competition.legacy_transferred_at ?? -1;
-    if (startedAt <= now && startedAt > transferredAt)
+    const configurationActivatedAt =
+      competition.configuration_activated_at ?? publishedAt;
+    if (startedAt <= now)
       await this.repository.enqueueEvent(
         {
           key: 'started',
@@ -324,7 +420,7 @@ export class NativeCompetitionRuntimeService {
             time !== null &&
             time >= publishedAt &&
             time <= now &&
-            time > transferredAt
+            time >= configurationActivatedAt
         )
       )
     ).sort((a, b) => a - b);
@@ -653,6 +749,5 @@ export const nativeCompetitionRuntimeService =
   new NativeCompetitionRuntimeService(
     nativeCompetitionRuntimeRepository,
     competitionCreditService,
-    competitionExecutionRouter,
-    appFeatures
+    competitionExecutionRouter
   );

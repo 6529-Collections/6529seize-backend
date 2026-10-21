@@ -250,15 +250,20 @@ export class ContentModerationService {
     if (!moderator) {
       return {
         moderator: false,
+        needs_review_count: 0,
         has_open_reports: false,
         open_report_count: 0,
         resolved_report_count: 0,
         suspended_profile_count: 0
       };
     }
-    const counts = await this.db.getModerationCounts(ctx.connection);
+    const [counts, needsReviewCount] = await Promise.all([
+      this.db.getModerationCounts(ctx.connection),
+      this.reviews.countReviewCases(ctx)
+    ]);
     return {
       moderator: true,
+      needs_review_count: needsReviewCount,
       has_open_reports: counts.open_report_count > 0,
       ...counts
     };
@@ -270,6 +275,7 @@ export class ContentModerationService {
       limit: number;
       before?: string | null;
       view?: ModerationReportsView;
+      case_id?: string;
     },
     ctx: RequestContext
   ) {

@@ -28,6 +28,7 @@ import {
   authenticateWebSocketToken
 } from '@/api/ws/ws';
 import WebSocket from 'ws';
+import { webSocketDelivery } from '@/ws-delivery/ws-delivery';
 
 const identityFetcherMock = identityFetcher as jest.Mocked<
   typeof identityFetcher
@@ -170,6 +171,67 @@ describe('AppWebSockets.send', () => {
 
   afterEach(() => {
     process.env.NODE_ENV = originalNodeEnv;
+  });
+
+  it.each([undefined, false, true])(
+    'registers reconnect safety only for capable clients (%s)',
+    async (recoveryCapable) => {
+      process.env.NODE_ENV = 'test';
+      const enable = jest
+        .spyOn(webSocketDelivery, 'enableReconnect')
+        .mockResolvedValue(undefined);
+      const repository = {
+        save: jest.fn().mockResolvedValue(undefined),
+        maybeCleanupStaleNotificationSubscriptions: jest
+          .fn()
+          .mockResolvedValue(undefined)
+      };
+      try {
+        await new AppWebSockets(
+          repository as unknown as WsConnectionRepository
+        ).register({
+          identityId: 'identity',
+          connectionId: 'capable-connection',
+          jwtExpiry: 1234,
+          recoveryCapable
+        });
+        expect(repository.save).toHaveBeenCalledTimes(1);
+        if (recoveryCapable)
+          expect(enable).toHaveBeenCalledWith('capable-connection');
+        else expect(enable).not.toHaveBeenCalled();
+      } finally {
+        enable.mockRestore();
+      }
+    }
+  );
+
+  it('rejects an expired stored JWT before sending a recovery marker', async () => {
+    const repository = {
+      getByConnectionId: jest.fn().mockResolvedValue({
+        jwt_expiry: Math.floor(Date.now() / 1000) - 60
+      })
+    };
+    const sockets = new AppWebSockets(
+      repository as unknown as WsConnectionRepository
+    );
+    const close = jest
+      .spyOn(sockets, 'deregister')
+      .mockResolvedValue(undefined);
+    const deliver = jest.spyOn(webSocketDelivery, 'deliver');
+    try {
+      await expect(
+        sockets.send({
+          connectionId: 'expired-recovery',
+          message: '{"type":"RESYNC_REQUIRED","data":{}}',
+          recovery: true
+        })
+      ).resolves.toEqual({ status: 'gone' });
+      expect(close).toHaveBeenCalledWith({ connectionId: 'expired-recovery' });
+      expect(deliver).not.toHaveBeenCalled();
+    } finally {
+      close.mockRestore();
+      deliver.mockRestore();
+    }
   });
 
   it('can send protocol failure frames without the stale expiry lookup', async () => {

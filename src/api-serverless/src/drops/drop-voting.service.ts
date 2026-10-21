@@ -286,38 +286,6 @@ export class DropVotingService {
       {} as Record<string, { min: number; current: number; max: number }>
     );
   }
-
-  public async deleteVotes(dropId: string, ctx: RequestContext) {
-    await Promise.all([
-      this.votingDb.deleteForDrop(dropId, ctx),
-      this.votingDb.deleteCreditSpendings(dropId, ctx),
-      this.votingDb.deleteDropRanks(dropId, ctx),
-      this.votingDb.deleteDropRealVoteInTimes(dropId, ctx),
-      this.votingDb.deleteDropRealVoterVoteInTimes(dropId, ctx),
-      this.votingDb.deleteDropsLeaderboardEntry(dropId, ctx)
-    ]);
-  }
-
-  public async deleteVoteByWave(waveId: string, ctx: RequestContext) {
-    await Promise.all([
-      this.votingDb.deleteForWave(waveId, ctx),
-      this.votingDb.deleteCreditSpendingsForWave(waveId, ctx),
-      this.votingDb.deleteDropRanksForWave(waveId, ctx),
-      this.votingDb.deleteDropRealVoteInTimesForWave(waveId, ctx),
-      this.votingDb.deleteWavesLeaderboardEntries(waveId, ctx),
-      this.votingDb.deleteDropRealVoterVoteInTimesForWave(waveId, ctx)
-    ]);
-  }
-
-  public async clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
-    waveId: string,
-    ctx: RequestContext
-  ) {
-    await this.votingDb.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
-      waveId,
-      ctx
-    );
-  }
 }
 
 export const dropVotingService = new DropVotingService(

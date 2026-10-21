@@ -1,6 +1,7 @@
 {
   "environment": "staging",
   "source": "src/config/deploy-services.json",
+  "retainedSource": "ops/monitoring/retained-producers.json",
   "services": [
     {
       "service": "api",
@@ -644,6 +645,18 @@
       "region": "eu-west-1",
       "functions": [
         "artworkDocumentationProcessor"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "webSocketDeliveryLoop",
+      "region": "eu-west-1",
+      "functions": [
+        "webSocketDeliveryLoop"
       ],
       "coverage": [
         "structured-error-logs",
