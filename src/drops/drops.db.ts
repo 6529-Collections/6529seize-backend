@@ -840,7 +840,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       drop_type,
       ids,
       serial_nos,
-      contains_media
+      contains_media,
+      public_only = false
     }: {
       group_id: string | null;
       group_ids_user_is_eligible_for: string[];
@@ -855,6 +856,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       ids: string[] | null;
       serial_nos: number[] | null;
       contains_media: boolean;
+      public_only?: boolean;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
@@ -881,7 +883,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
-         join ${legacyGetView(WAVES_TABLE)} w on d.wave_id = w.id and ${waveReadAccessSql('w', group_ids_user_is_eligible_for.length > 0, 'groupsUserIsEligibleFor')} ${wave_id ? `and w.id = :wave_id` : ``}
+         join ${legacyGetView(WAVES_TABLE)} w on d.wave_id = w.id and ${waveReadAccessSql('w', !public_only && group_ids_user_is_eligible_for.length > 0, 'groupsUserIsEligibleFor')} ${wave_id ? `and w.id = :wave_id` : ``}
+         ${public_only ? 'and coalesce(w.is_direct_message, false) = false' : ''}
          where ${
            drop_type ? ` d.drop_type = :drop_type and ` : ``
          } d.serial_no < :serialNoLessThan ${
