@@ -158,7 +158,9 @@ export class NativeCompetitionReader implements CompetitionReader {
     record: CompetitionRoutingRecord,
     request: CompetitionPageRequest
   ): Promise<CompetitionPage<CompetitionEntry>> {
-    return this.listEntries(record, request, [CompetitionEntryStatus.WINNER]);
+    return this.listEntries(record, { ...request, sort: 'won_at' }, [
+      CompetitionEntryStatus.WINNER
+    ]);
   }
 
   public listOutcomes(

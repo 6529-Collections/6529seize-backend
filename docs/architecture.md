@@ -1153,7 +1153,12 @@ Waves are chat, visibility and administration hubs containing zero or more nativ
 competitions under `/v3/waves`. Competition configuration and entry state own
 submissions, eligibility, voting, weighted scores, decisions and winners. Current
 navigation/settings/entries/voting/My Votes/leaderboards/winners/admin use the
-competition resources for every competition. Creating a hub always creates a
+competition resources for every competition. The scoped `entry-contexts` GET
+batches up to 50 visible entries, current/at-decision vote summaries and their
+awards; it resolves competition access once and applies content visibility to the
+batch. Cards fetch rich content separately through the existing batch drop GET.
+Winners paginate by win time, newest first; My Votes excludes completed winners
+without deleting historical allocations. Creating a hub always creates a
 CHAT wave; competition creation is a separate native command. Historical physical
 RANK/APPROVE wave types remain schema-compatible and do not block hub updates.
 
