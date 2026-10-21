@@ -121,13 +121,19 @@ export async function loopPolicies(catalog, environment) {
   );
   const policies = await Promise.all(
     services.map(async (service) => {
-      const file = new URL(`src/${service.name}/serverless.yaml`, root);
-      const doc = parseDocument(await readFile(file, 'utf8'), {
-        customTags: tags
-      });
-      if (doc.errors.length)
-        throw new Error(`Invalid loop configuration: ${service.name}`);
-      return policiesFromConfig(service, doc.toJS());
+      try {
+        const file = new URL(`src/${service.name}/serverless.yaml`, root);
+        const doc = parseDocument(await readFile(file, 'utf8'), {
+          customTags: tags
+        });
+        if (doc.errors.length)
+          throw new AggregateError(doc.errors, 'Invalid loop configuration');
+        return policiesFromConfig(service, doc.toJS());
+      } catch (cause) {
+        throw new Error(`Unable to derive loop policy: ${service.name}`, {
+          cause
+        });
+      }
     })
   );
   return policies.flat().sort((a, b) => a.service.localeCompare(b.service));

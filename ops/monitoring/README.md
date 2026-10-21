@@ -488,7 +488,10 @@ production rollout. They can be changed without changing execution settings.
 Observations are monotonic with optimistic conditional writes. Late/repeated
 observations and alarm transitions cannot overwrite newer state. Multiple raw
 alarms for one worker are tracked individually and ORed; one clearing alarm
-cannot hide another active alarm. The collector retains up to eight recent alarm
+cannot hide another active alarm. `INSUFFICIENT_DATA` preserves the last known
+contention state; a subsequent `OK` clears that alarm even when its immediate
+previous state was insufficient data. Missing data alone cannot announce recovery.
+The collector retains up to eight recent alarm
 identities, reclaiming oldest resolved entries on rename and never evicting an
 active alarm. More than eight simultaneous active identities fails closed through
 the collector failure guard. A collector-owned

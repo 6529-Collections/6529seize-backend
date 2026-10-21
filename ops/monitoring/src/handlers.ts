@@ -244,8 +244,6 @@ export async function collectAlarm(
 ): Promise<void> {
   const detail = record(event.detail);
   const state = record(detail.state).value;
-  if (state !== 'ALARM' && state !== 'OK') return;
-  if (state === 'OK' && record(detail.previousState).value !== 'ALARM') return;
   const configuration = record(detail.configuration);
   const metrics = Array.isArray(configuration.metrics)
     ? configuration.metrics
@@ -267,6 +265,9 @@ export async function collectAlarm(
     Object.keys(dimensions).length === 1 &&
     policiesFor(environment()).some((policy) => policy.service === service)
   ) {
+    // Missing data preserves the last known contention state. Accept a later OK
+    // even when its immediate predecessor was INSUFFICIENT_DATA, not ALARM.
+    if (state !== 'ALARM' && state !== 'OK') return;
     await receiveLoopThrottle(
       service,
       state === 'ALARM',
@@ -275,6 +276,8 @@ export async function collectAlarm(
     );
     return;
   }
+  if (state !== 'ALARM' && state !== 'OK') return;
+  if (state === 'OK' && record(detail.previousState).value !== 'ALARM') return;
   const alert: Alert = {
     _type: EVENT_TYPE,
     eventId: `alarm:${event.id}`,

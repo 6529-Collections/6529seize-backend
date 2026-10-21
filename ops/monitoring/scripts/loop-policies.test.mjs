@@ -18,6 +18,28 @@ test('rates retain the known minute/hour/day cadence; cron remains unknown', () 
   assert.equal(intervalSeconds('cron(0 12 * * ? *)'), undefined);
 });
 
+test('configuration read failures identify the service and preserve their original cause', async () => {
+  await assert.rejects(
+    loopPolicies(
+      {
+        services: [
+          {
+            name: 'missing-loop-policy-fixture',
+            allowed_environments: ['staging'],
+            deploy_adapter: 'serverless'
+          }
+        ]
+      },
+      'staging'
+    ),
+    (error) => {
+      assert.match(error.message, /missing-loop-policy-fixture/);
+      assert.equal(error.cause.code, 'ENOENT');
+      return true;
+    }
+  );
+});
+
 test('queue-triggered schedules resolve GetAtt and Sub targets and ignore disabled rules', () => {
   const service = { verification_targets: ['worker'] };
   for (const arn of [

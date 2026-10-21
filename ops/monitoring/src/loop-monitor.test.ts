@@ -328,6 +328,104 @@ test('enrolled raw throttles are recorded without immediate notifications; reque
   }
 });
 
+test('insufficient throttle data cannot recover an incident; a later OK clears contention regardless of its previous state', async () => {
+  const original = process.env;
+  process.env = {
+    ...original,
+    ENVIRONMENT: 'staging',
+    SOURCE_ACCOUNTS: '123',
+    SOURCE_REGION: 'eu-west-1',
+    RECEIPTS_TABLE: 'test',
+    CRITICAL_QUEUE_URL: 'critical'
+  };
+  const { data, dbMock } = fakeState();
+  const sent: string[] = [];
+  const queueMock = mock.method(
+    sqs,
+    'send',
+    async (command: { input: { MessageBody?: string } }) => {
+      sent.push(command.input.MessageBody!);
+      return {};
+    }
+  );
+  const policy = policiesFor('staging').find(
+    (item) => item.service === 'delegationsLoop'
+  )!;
+  const now = Math.floor(Date.now() / 1000) - 60;
+  const event = (
+    state: string,
+    previousState: string,
+    at: number
+  ): EventBridgeEvent<string, unknown> => ({
+    account: '123',
+    region: 'eu-west-1',
+    source: 'aws.cloudwatch',
+    'detail-type': 'CloudWatch Alarm State Change',
+    time: new Date(at * 1000).toISOString(),
+    id: `throttle-${at}`,
+    resources: [],
+    version: '0',
+    detail: {
+      alarmName: 'delegations-throttles',
+      state: { value: state },
+      previousState: { value: previousState },
+      configuration: {
+        metrics: [
+          {
+            metricStat: {
+              metric: {
+                namespace: 'AWS/Lambda',
+                name: 'Throttles',
+                dimensions: { FunctionName: policy.service }
+              },
+              stat: 'Sum',
+              period: 60
+            }
+          }
+        ]
+      }
+    }
+  });
+  const active = () =>
+    (data.get(`loop:throttle:${policy.service}`)?.payload as { active: boolean })
+      .active;
+  try {
+    await collect(event('OK', 'INSUFFICIENT_DATA', now));
+    await monitorLoop(policy, 'staging', now);
+    assert.equal(active(), false);
+    assert.equal(sent.length, 0);
+
+    await collect(event('ALARM', 'OK', now + 1));
+    await monitorLoop(policy, 'staging', now + 1);
+    assert.equal(active(), true);
+    assert.equal(sent.length, 1);
+    assert.equal(JSON.parse(sent[0]!).alert.loop.reason, 'unconfirmed');
+
+    await collect(event('INSUFFICIENT_DATA', 'ALARM', now + 2));
+    await monitorLoop(policy, 'staging', now + 2);
+    assert.equal(active(), true);
+    assert.equal(sent.length, 1);
+
+    await collect(event('OK', 'INSUFFICIENT_DATA', now + 3));
+    await monitorLoop(policy, 'staging', now + 3);
+    assert.equal(active(), false);
+    assert.equal(sent.length, 2);
+    const recovery = JSON.parse(sent[1]!).alert;
+    assert.equal(recovery.code, 'LOOP_RECOVERY');
+    assert.equal(recovery.loop.scope, 'contention');
+    assert.equal(recovery.loop.reason, 'contention_cleared');
+
+    await collect(event('ALARM', 'OK', now + 1));
+    await monitorLoop(policy, 'staging', now + 4);
+    assert.equal(active(), false);
+    assert.equal(sent.length, 2);
+  } finally {
+    dbMock.mock.restore();
+    queueMock.mock.restore();
+    process.env = original;
+  }
+});
+
 function fakeState() {
   const data = new Map<string, Record<string, unknown>>();
   const dbMock = mock.method(
