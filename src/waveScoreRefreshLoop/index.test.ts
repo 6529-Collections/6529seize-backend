@@ -39,14 +39,14 @@ const run = (event: unknown, ctx = context) => handler(event, ctx, jest.fn());
 beforeEach(() => {
   jest.resetAllMocks();
   jest.spyOn(Date, 'now').mockReturnValue(now * 1000);
-  jest.mocked(readLoopHealthRows).mockResolvedValue([]);
+  jest.mocked(readLoopHealthRows).mockResolvedValue([{ oldest: null }]);
 });
 afterEach(() => jest.restoreAllMocks());
 
 it('does not turn a successful dirty return or attempted-wave count into recovery', async () => {
   jest
     .mocked(readLoopHealthRows)
-    .mockResolvedValue([{ dirty_at: (now - 900) * 1000 }]);
+    .mockResolvedValue([{ oldest: (now - 900) * 1000 }]);
   jest
     .mocked(waveScoreService.refreshDirtyWaveScores)
     .mockResolvedValue({ waves: 10, batches: 1, hasMore: false });
@@ -67,7 +67,7 @@ it('surveys remaining dirty work even after a business failure, without masking 
   jest.mocked(waveScoreService.refreshDirtyWaveScores).mockRejectedValue(error);
   jest
     .mocked(readLoopHealthRows)
-    .mockResolvedValue([{ dirty_at: (now - 900) * 1000 }]);
+    .mockResolvedValue([{ oldest: (now - 900) * 1000 }]);
   await expect(run({ mode: 'DIRTY' })).rejects.toBe(error);
   expect(reportLoopHealth).toHaveBeenCalledTimes(2);
   expect(reportLoopHealth).toHaveBeenLastCalledWith(

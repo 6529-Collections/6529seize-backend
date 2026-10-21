@@ -548,11 +548,15 @@ remains unverified; that cannot clear an incident about business processing.
   establish end-to-end claims-builder, push-delivery or announcement success after
   the outbox has handed work to another service. Those retain their own guards.
 - `waveScoreRefreshLoop`: independently observes `dirty_refresh` and optional
-  `full_refresh`. Bounded writer reads select the oldest persisted dirty version
+  `full_refresh`. Bounded writer reads survey outstanding requests and their persisted scores
   before and after processing (including failure); an empty request table establishes
   dirty catch-up. Attempted-wave counts and successful handler returns do not:
   per-wave failures can be handled internally, and re-dirtied versions survive
-  processing. The existing one-minute fallback supplies automatic dirty recovery
+  processing. Pending age starts at each request's original `created_at` and
+  advances only with a persisted `wave_score_calculated_at` or removal of older
+  work. Re-dirty timestamps and failed-attempt updates cannot reset the stall
+  clock; an already old score does not prematurely age a newly created request.
+  The existing one-minute fallback supplies automatic dirty recovery
   even if a wakeup/continuation enqueue fails. Diagnostic failures or reads skipped
   near the existing timeout leave the last observation unchanged, eventually stale.
   Full scans report committed refresh work and remain pending until the scan ends;

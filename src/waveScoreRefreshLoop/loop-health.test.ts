@@ -12,9 +12,7 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 it('keeps the oldest dirty version pending across handled failures and retries', async () => {
-  jest
-    .mocked(readLoopHealthRows)
-    .mockResolvedValue([{ dirty_at: '1900000000' }]);
+  jest.mocked(readLoopHealthRows).mockResolvedValue([{ oldest: '1900000000' }]);
   await observeDirtyRefreshBacklog();
   await observeDirtyRefreshBacklog();
   for (const [observation] of jest.mocked(reportLoopHealth).mock.calls) {
@@ -29,7 +27,7 @@ it('keeps the oldest dirty version pending across handled failures and retries',
 });
 
 it('verifies dirty catch-up only from an empty persisted request backlog', async () => {
-  jest.mocked(readLoopHealthRows).mockResolvedValue([]);
+  jest.mocked(readLoopHealthRows).mockResolvedValue([{ oldest: null }]);
   await observeDirtyRefreshBacklog();
   expect(reportLoopHealth).toHaveBeenCalledWith({
     operation: 'dirty_refresh',
@@ -40,8 +38,8 @@ it('verifies dirty catch-up only from an empty persisted request backlog', async
 
 it.each(['invalid', '0', '2000001000'])(
   'leaves invalid/future dirty evidence %s unconfirmed',
-  async (dirty_at) => {
-    jest.mocked(readLoopHealthRows).mockResolvedValue([{ dirty_at }]);
+  async (oldest) => {
+    jest.mocked(readLoopHealthRows).mockResolvedValue([{ oldest }]);
     await observeDirtyRefreshBacklog();
     expect(reportLoopHealth).not.toHaveBeenCalled();
   }
@@ -50,6 +48,12 @@ it.each(['invalid', '0', '2000001000'])(
 it('cannot manufacture catch-up or interrupt business processing when diagnostics fail', async () => {
   jest.mocked(readLoopHealthRows).mockRejectedValue(new Error('unavailable'));
   await expect(observeDirtyRefreshBacklog()).resolves.toBeUndefined();
+  expect(reportLoopHealth).not.toHaveBeenCalled();
+});
+
+it('does not interpret a missing aggregate row as an empty backlog', async () => {
+  jest.mocked(readLoopHealthRows).mockResolvedValue([]);
+  await observeDirtyRefreshBacklog();
   expect(reportLoopHealth).not.toHaveBeenCalled();
 });
 
@@ -90,7 +94,7 @@ it('does not promise replay of a direct full invocation until its continuation i
 
 it('does not clear full refreshes when a dirty survey catches up', async () => {
   new FullRefreshHealth(now - 900, true);
-  jest.mocked(readLoopHealthRows).mockResolvedValue([]);
+  jest.mocked(readLoopHealthRows).mockResolvedValue([{ oldest: null }]);
   await observeDirtyRefreshBacklog();
   expect(
     jest

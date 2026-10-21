@@ -1,19 +1,26 @@
-import { WAVE_SCORE_REFRESH_REQUESTS_TABLE } from '@/constants';
+import {
+  WAVE_METRICS_TABLE,
+  WAVE_SCORE_REFRESH_REQUESTS_TABLE
+} from '@/constants';
 import { reportLoopHealth } from '@/loop-health';
 import { readLoopHealthRows } from '@/loop-health-read';
 
-/** Inspect durable dirty versions, not the service's attempted-wave count:
- * individual refresh failures are handled internally and still count as waves.
- * New versions dirtied during processing remain pending. */
+/** New writes and failed attempts cannot advance the business-progress clock.
+ * A request remains outstanding since its first dirty mark or the last persisted
+ * score calculation, whichever is later. Re-dirtying preserves created_at. */
 export async function observeDirtyRefreshBacklog(): Promise<void> {
   try {
-    const rows = await readLoopHealthRows<{ dirty_at: number | string }>(
-      `select dirty_at from ${WAVE_SCORE_REFRESH_REQUESTS_TABLE}
-       order by dirty_at asc, wave_id asc limit 1`
+    const rows = await readLoopHealthRows<{ oldest: number | string | null }>(
+      `select min(greatest(request.created_at, coalesce(metric.wave_score_calculated_at, 0))) as oldest
+       from ${WAVE_SCORE_REFRESH_REQUESTS_TABLE} request
+       left join ${WAVE_METRICS_TABLE} metric on metric.wave_id = request.wave_id`
     );
-    const oldest = rows.length
-      ? Math.floor(Number(rows[0].dirty_at) / 1000)
-      : undefined;
+    // An aggregate over an empty backlog returns null. A missing row is unknown.
+    if (rows[0]?.oldest === undefined) return;
+    const oldest =
+      rows[0].oldest !== null
+        ? Math.floor(Number(rows[0].oldest) / 1000)
+        : undefined;
     const now = Math.floor(Date.now() / 1000);
     if (
       oldest !== undefined &&
