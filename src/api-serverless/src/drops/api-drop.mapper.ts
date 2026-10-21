@@ -122,6 +122,8 @@ const PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY = 'additional_media';
 export interface ApiDropMapperOptions {
   readonly groupIdsUserIsEligibleFor?: string[];
   readonly includeLargestVote?: boolean;
+  /** Native competition readers supply their own scoped voting summary. */
+  readonly includeSubmissionVoting?: boolean;
 }
 
 export class ApiDropMapper {
@@ -173,9 +175,10 @@ export class ApiDropMapper {
           .map((drop) => drop.reply_to_drop_id)
           .filter((id): id is string => !!id)
       );
-      const submissionEntities = entities.filter((drop) =>
-        this.isSubmissionDrop(drop)
-      );
+      const submissionEntities =
+        options.includeSubmissionVoting === false
+          ? []
+          : entities.filter((drop) => this.isSubmissionDrop(drop));
       const submissionDropIds = submissionEntities.map((drop) => drop.id);
       const participatoryDropEntities = submissionEntities.filter(
         (drop) => drop.drop_type === DropType.PARTICIPATORY
@@ -319,18 +322,20 @@ export class ApiDropMapper {
             )
           : Promise.resolve({} as Record<string, ActivityEventAction[]>),
         this.dropsDb.getReplyPreviewsByDropIds(replyDropIds, ctx),
-        this.dropVotingDb.getDropV2SubmissionVotingSummaries(
-          submissionDropIds,
-          ctx
-        ),
-        contextProfileId
+        submissionDropIds.length
+          ? this.dropVotingDb.getDropV2SubmissionVotingSummaries(
+              submissionDropIds,
+              ctx
+            )
+          : Promise.resolve({} as Record<string, DropSubmissionVotingSummary>),
+        contextProfileId && participatoryDropEntities.length
           ? this.dropVotingService.findCreditLeftForVotingForDrops(
               contextProfileId,
               participatoryDropEntities,
               ctx.connection
             )
           : Promise.resolve({} as VoteRangeByDropId),
-        contextProfileId
+        contextProfileId && winnerDropIds.length
           ? this.dropVotingDb.getWinningDropsRatingsByVoter(
               winnerDropIds,
               contextProfileId,
