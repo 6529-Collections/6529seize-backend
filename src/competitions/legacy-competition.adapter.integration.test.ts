@@ -183,7 +183,7 @@ describeWithSeed(
     const repository = new CompetitionRepository(() => sqlExecutor);
 
     async function adapter() {
-      await repository.backfillLegacyMappings({});
+      await repository.ensureLegacyMappingForWave(wave, {});
       const [record] = await repository.listCompetitionRecordsForWave(
         wave.id,
         {}

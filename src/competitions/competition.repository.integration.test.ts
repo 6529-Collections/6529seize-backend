@@ -41,9 +41,18 @@ describeWithSeed(
       delete process.env.MAIN_STAGE_WAVE_ID;
     });
 
-    it('backfills exactly one stable primary for every non-chat wave', async () => {
-      await expect(repository.backfillLegacyMappings({}, 1)).resolves.toBe(2);
-      await expect(repository.backfillLegacyMappings({}, 1)).resolves.toBe(0);
+    it('creates a stable primary for each non-chat wave', async () => {
+      await expect(
+        repository.ensureLegacyMappingForWave(chat, {})
+      ).resolves.toBe(false);
+      for (const wave of [rank, approve]) {
+        await expect(
+          repository.ensureLegacyMappingForWave(wave, {})
+        ).resolves.toBe(true);
+        await expect(
+          repository.ensureLegacyMappingForWave(wave, {})
+        ).resolves.toBe(false);
+      }
 
       await expect(
         repository.listCompetitionRecordsForWave(chat.id, {})
@@ -74,7 +83,7 @@ describeWithSeed(
     });
 
     it('never lets an additional competition replace the legacy primary', async () => {
-      await repository.backfillLegacyMappings({});
+      await repository.ensureLegacyMappingForWave(rank, {});
       const nativeId = '00000000-0000-4000-8000-000000000001';
       await sqlExecutor.execute(
         `insert into ${COMPETITIONS_TABLE}
@@ -111,7 +120,7 @@ describeWithSeed(
     });
 
     it('keeps the primary ID stable and appends config history on legacy edits', async () => {
-      await repository.backfillLegacyMappings({});
+      await repository.ensureLegacyMappingForWave(rank, {});
       await expect(
         repository.ensureLegacyMappingForWave(
           {
@@ -156,7 +165,7 @@ describeWithSeed(
 
     it('maps the configured Main Stage capability only to its primary', async () => {
       process.env.MAIN_STAGE_WAVE_ID = rank.id;
-      await repository.backfillLegacyMappings({});
+      await repository.ensureLegacyMappingForWave(rank, {});
       const capabilities = await sqlExecutor.execute<{
         capability: CompetitionCapability;
         competition_id: string;
@@ -175,7 +184,8 @@ describeWithSeed(
     });
 
     it('represents the same capability independently per competition', async () => {
-      await repository.backfillLegacyMappings({});
+      await repository.ensureLegacyMappingForWave(rank, {});
+      await repository.ensureLegacyMappingForWave(approve, {});
       const assignedAt = Date.now();
       await sqlExecutor.execute(
         `insert into ${COMPETITION_CAPABILITIES_TABLE}
@@ -204,7 +214,7 @@ describeWithSeed(
       );
       expect(capabilities).toEqual(
         [legacyCompetitionId(rank.id), legacyCompetitionId(approve.id)]
-          .sort()
+          .sort((a, b) => a.localeCompare(b))
           .map((competition_id) => ({ competition_id }))
       );
     });

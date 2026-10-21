@@ -23,7 +23,7 @@ import {
 } from '@/entities/IWave';
 import { Time } from '@/time';
 import { DbPoolName } from '@/db-query.options';
-import { ForbiddenException } from '@/exceptions';
+import { BadRequestException, ForbiddenException } from '@/exceptions';
 
 jest.mock('@/profiles/profile-waves.db', () => ({
   profileWavesDb: {
@@ -1158,6 +1158,34 @@ describe('WaveApiService subwave creation authorization', () => {
       scope: { group_id: null }
     }
   } as ApiCreateNewWave;
+
+  it.each([ApiWaveType.Rank, ApiWaveType.Approve])(
+    'rejects creating a %s wave before any lookup or description preparation',
+    async (type) => {
+      const { service, wavesApiDb, userGroupsService, createOrUpdateDrop } =
+        createService({ parentWave: null, eligibleGroups: [] });
+      const timer = { start: jest.fn(), stop: jest.fn() };
+      const result = service.createWave(
+        { ...request, wave: { type } } as ApiCreateNewWave,
+        false,
+        {
+          authenticationContext:
+            AuthenticationContext.fromProfileId('creator-profile'),
+          timer
+        } as any
+      );
+
+      await expect(result).rejects.toBeInstanceOf(BadRequestException);
+      await expect(result).rejects.toThrow('Only CHAT waves can be created');
+      expect(timer.start).not.toHaveBeenCalled();
+      expect(wavesApiDb.findWaveById).not.toHaveBeenCalled();
+      expect(wavesApiDb.findWaveByIdForUpdate).not.toHaveBeenCalled();
+      expect(
+        userGroupsService.getGroupsUserIsEligibleFor
+      ).not.toHaveBeenCalled();
+      expect(createOrUpdateDrop.preparePrePublication).not.toHaveBeenCalled();
+    }
+  );
 
   it('allows parent wave admins to create subwaves', async () => {
     const parentWave = aWave(
