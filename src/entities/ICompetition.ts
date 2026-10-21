@@ -344,6 +344,13 @@ export class CompetitionVoteEntity {
   'entry_id'
 ])
 export class CompetitionLeaderboardEntryEntity {
+  /** Publication of a weighted snapshot is distinct from live ranking state. */
+  @Column({ type: 'bigint', nullable: true })
+  readonly published_at!: number | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  readonly over_threshold_since!: number | null;
+
   @Column({ type: 'bigint', nullable: true }) readonly ordering_time!:
     | number
     | null;
@@ -409,7 +416,8 @@ export class CompetitionDecisionEntity {
 }
 
 @Entity(COMPETITION_DECISION_WINNERS_TABLE)
-@Unique('uq_competition_decision_winner_rank', ['decision_id', 'rank'])
+// Independent curation transfers can share a timestamp and each retain rank 1.
+@Index('idx_competition_decision_winner_rank', ['decision_id', 'rank'])
 export class CompetitionDecisionWinnerEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 })
   readonly decision_id!: string;
@@ -485,6 +493,10 @@ export class CompetitionOutcomeEntity {
   'outcome_id',
   'position'
 ])
+@Index('idx_competition_distribution_parent_position', [
+  'competition_id',
+  'outcome_position'
+])
 export class CompetitionOutcomeDistributionItemEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 })
   readonly id!: string;
@@ -494,6 +506,10 @@ export class CompetitionOutcomeDistributionItemEntity {
 
   @Column({ type: 'varchar', length: 36, nullable: false })
   readonly outcome_id!: string;
+
+  /** Original parent index also remains meaningful when its definition is absent. */
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly outcome_position!: number | null;
 
   @Column({ type: 'int', nullable: false })
   readonly position!: number;

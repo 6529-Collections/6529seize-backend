@@ -1,7 +1,10 @@
 import 'reflect-metadata';
 import {
   COMPETITION_VOTES_TABLE,
-  COMPETITION_WINNER_VOTES_TABLE
+  COMPETITION_WINNER_VOTES_TABLE,
+  COMPETITION_ENTRIES_TABLE,
+  COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+  COMPETITION_ENTRY_RUNTIME_TABLE
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -72,3 +75,80 @@ describeWithSeed('CompetitionDropVotesDb voter availability', [], () => {
     });
   });
 });
+
+const active: CompetitionEntry = {
+  ...winner,
+  status: CompetitionEntryStatus.ACTIVE,
+  rank: null,
+  won_at: null,
+  decision_id: null
+};
+const retainedSnapshot = {
+  ...active,
+  id: 'retained-orphan',
+  drop_id: 'retained-orphan-drop'
+};
+const foreignEntry = {
+  ...active,
+  id: 'foreign-entry',
+  drop_id: 'foreign-drop'
+};
+
+describeWithSeed(
+  'CompetitionDropVotesDb native score membership',
+  [
+    {
+      table: COMPETITION_ENTRIES_TABLE,
+      rows: [
+        active,
+        { ...foreignEntry, competition_id: 'different-competition' }
+      ]
+    },
+    {
+      table: COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+      rows: [active, retainedSnapshot, foreignEntry].map((entry, index) => ({
+        competition_id: entry.competition_id,
+        entry_id: entry.id,
+        drop_id: entry.drop_id,
+        rating: [42, 999, 888][index],
+        real_time_rating: [50, 1_000, 900][index],
+        rank: index + 1,
+        published_at: 2,
+        submitted_at: 1,
+        updated_at: 2
+      }))
+    },
+    {
+      table: COMPETITION_ENTRY_RUNTIME_TABLE,
+      rows: [active, retainedSnapshot].map((entry) => ({
+        competition_id: entry.competition_id,
+        entry_id: entry.id,
+        real_time_rating: 50,
+        last_increased_at: 1,
+        over_threshold_since: 1_234,
+        updated_at: 2
+      }))
+    }
+  ],
+  () => {
+    const db = new CompetitionDropVotesDb(() => sqlExecutor);
+
+    it.each([
+      ['no entry exists', retainedSnapshot],
+      ['the entry belongs to a different competition', foreignEntry]
+    ] as const)(
+      'ignores a published leaderboard snapshot when %s',
+      async (_description, entry) => {
+        expect(await db.score(entry, {})).toBeNull();
+      }
+    );
+
+    it('preserves a real native entry score and its runtime threshold', async () => {
+      expect(await db.score(active, {})).toEqual({
+        rating: 42,
+        rank: 1,
+        over_threshold_since: 1_234
+      });
+    });
+  }
+);

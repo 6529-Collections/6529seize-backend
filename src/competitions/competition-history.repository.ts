@@ -1,9 +1,32 @@
-import { COMPETITIONS_TABLE, WAVES_TABLE } from '@/constants';
+import {
+  COMPETITIONS_TABLE,
+  WAVES_TABLE,
+  COMPETITION_CONFIG_VERSIONS_TABLE
+} from '@/constants';
 import { CustomApiCompliantException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
 export class CompetitionHistoryRepository extends LazyDbAccessCompatibleService {
+  public async findConfigurationActivationTime(
+    competitionId: string,
+    version: number,
+    ctx: RequestContext
+  ): Promise<number | null> {
+    const timerName = `${this.constructor.name}->findConfigurationActivationTime`;
+    ctx.timer?.start(timerName);
+    try {
+      const row = await this.db.oneOrNull<{ created_at: number | string }>(
+        `SELECT created_at FROM ${COMPETITION_CONFIG_VERSIONS_TABLE} WHERE competition_id=:competitionId AND version=:version`,
+        { competitionId, version },
+        { wrappedConnection: ctx.connection }
+      );
+      return row ? Number(row.created_at) : null;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async assertWaveCanBeDeleted(
     waveId: string,
     ctx: RequestContext & Required<Pick<RequestContext, 'connection'>>

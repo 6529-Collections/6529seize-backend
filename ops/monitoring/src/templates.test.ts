@@ -412,7 +412,13 @@ test('source catalog coverage is complete and monitoring delivery has no applica
     const coverage = JSON.parse(
       readFileSync(new URL(`../coverage-${env}.json`, import.meta.url), 'utf8')
     );
-    const targets: string[] = catalog.services
+    const retained = JSON.parse(
+      readFileSync(
+        new URL('../retained-producers.json', import.meta.url),
+        'utf8'
+      )
+    );
+    const targets: string[] = [...catalog.services, ...retained.services]
       .filter((s: { allowed_environments: string[] }) =>
         s.allowed_environments.includes(env)
       )
@@ -420,8 +426,10 @@ test('source catalog coverage is complete and monitoring delivery has no applica
         (s: { verification_targets: string[] }) => s.verification_targets
       );
     assert.deepEqual(
-      coverage.services.flatMap((s: { functions: string[] }) => s.functions),
-      targets
+      coverage.services
+        .flatMap((s: { functions: string[] }) => s.functions)
+        .sort((left: string, right: string) => left.localeCompare(right)),
+      targets.sort((left, right) => left.localeCompare(right))
     );
     const filters = Object.values(source.Resources).filter(
       (r: unknown) =>
@@ -619,6 +627,114 @@ test('NFT incidents use completed outcomes, sample gates, sustained failures and
     assert.equal(
       resources.nftLinkRefresherLoopErrors.Properties.EvaluationPeriods,
       1
+    );
+  }
+});
+
+test('retained migrator keeps existing log and alarm resources without becoming an ordinary deploy target', () => {
+  const name = 'competitionMigrationLoop';
+  const catalog = JSON.parse(
+    readFileSync(
+      new URL('../../../src/config/deploy-services.json', import.meta.url),
+      'utf8'
+    )
+  );
+  assert.equal(
+    catalog.services.some((service: { name: string }) => service.name === name),
+    false
+  );
+  const retained = JSON.parse(
+    readFileSync(new URL('../retained-producers.json', import.meta.url), 'utf8')
+  );
+  assert.deepEqual(retained.services, [
+    {
+      name,
+      allowed_environments: ['staging', 'prod'],
+      aws_region: { staging: 'eu-west-1', prod: 'us-east-1' },
+      verification_targets: [name]
+    }
+  ]);
+  for (const env of ['prod', 'staging']) {
+    const source = JSON.parse(
+      readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
+    );
+    const monitor = JSON.parse(
+      readFileSync(
+        new URL(`../monitoring-${env}.json`, import.meta.url),
+        'utf8'
+      )
+    );
+    const coverage = JSON.parse(
+      readFileSync(new URL(`../coverage-${env}.json`, import.meta.url), 'utf8')
+    );
+    assert.equal(
+      coverage.retainedSource,
+      'ops/monitoring/retained-producers.json'
+    );
+    assert.deepEqual(
+      coverage.services.find(
+        (service: { service: string }) => service.service === name
+      ),
+      {
+        service: name,
+        region: env === 'prod' ? 'us-east-1' : 'eu-west-1',
+        functions: [name],
+        coverage: ['structured-error-logs', 'lambda-errors', 'lambda-throttles']
+      }
+    );
+    assert.deepEqual(source.Resources[`${name}ErrorLogs`], {
+      Type: 'AWS::Logs::SubscriptionFilter',
+      DependsOn: ['LogPermission', 'claimsMediaArweaveUploaderErrorLogs'],
+      Properties: {
+        DestinationArn: { 'Fn::GetAtt': ['LogRelay', 'Arn'] },
+        LogGroupName: `/aws/lambda/${name}`,
+        FilterPattern: '"6529.ops.error.v1"'
+      }
+    });
+    for (const metric of ['Errors', 'Throttles']) {
+      const alarm = source.Resources[`${name}${metric}`];
+      assert.equal(alarm.Type, 'AWS::CloudWatch::Alarm');
+      assert.equal(alarm.Properties.Namespace, 'AWS/Lambda');
+      assert.equal(alarm.Properties.MetricName, metric);
+      assert.deepEqual(alarm.Properties.Dimensions, [
+        { Name: 'FunctionName', Value: name }
+      ]);
+    }
+    const allowedLogGroups =
+      source.Resources.LogRelay.Properties.Environment.Variables.ALLOWED_LOG_GROUPS.split(
+        ','
+      );
+    assert.ok(allowedLogGroups.includes(`/aws/lambda/${name}`));
+    assert.deepEqual(source.Resources.LogPermission.Properties.SourceArn, {
+      'Fn::Sub':
+        'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*'
+    });
+    assert.deepEqual(source.Resources.LogPermission.Properties.FunctionName, {
+      Ref: 'LogRelay'
+    });
+    const serviceAllowlists = Object.values(monitor.Resources)
+      .map(
+        (resource: unknown) =>
+          (
+            resource as {
+              Properties?: {
+                Environment?: { Variables?: { ALLOWED_SERVICES?: string } };
+              };
+            }
+          ).Properties?.Environment?.Variables?.ALLOWED_SERVICES
+      )
+      .filter((value): value is string => typeof value === 'string');
+    assert.ok(serviceAllowlists.length > 0);
+    for (const allowed of serviceAllowlists)
+      assert.ok(allowed.split(',').includes(name));
+    assert.equal(
+      Object.values(source.Resources).some(
+        (resource: unknown) =>
+          (resource as { Type: string }).Type === 'AWS::Serverless::Function' &&
+          (resource as { Properties: { FunctionName?: string } }).Properties
+            .FunctionName === name
+      ),
+      false
     );
   }
 });

@@ -27,7 +27,6 @@ import { NativeCompetitionRuntimeRepository } from './native-competition-runtime
 import { NativeCompetitionRuntimeService } from './native-competition-runtime.service';
 import { competitionRepository } from './competition.repository';
 import { CompetitionExecutionRouter } from './competition-execution.router';
-import { appFeatures } from '@/app-features';
 import {
   CompetitionCreditBudget,
   competitionCreditService,
@@ -196,13 +195,10 @@ describeWithSeed(
     const service = new NativeCompetitionRuntimeService(
       repository,
       { getBudget, getWaveBudgets },
-      new CompetitionExecutionRouter(competitionRepository, appFeatures),
-      appFeatures
+      new CompetitionExecutionRouter()
     );
-    const originalFeature = process.env.FEATURE_NATIVE_COMPETITION_EXECUTION;
 
     beforeEach(() => {
-      process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = 'true';
       getBudget.mockReset();
       getBudget.mockImplementation(async (resource, profileId) => ({
         competition_id: resource.id,
@@ -236,11 +232,6 @@ describeWithSeed(
         }
         return budgets;
       });
-    });
-    afterEach(() => {
-      if (originalFeature === undefined)
-        delete process.env.FEATURE_NATIVE_COMPETITION_EXECUTION;
-      else process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = originalFeature;
     });
 
     async function vote(
@@ -388,8 +379,7 @@ describeWithSeed(
       const realService = new NativeCompetitionRuntimeService(
         realRepository,
         competitionCreditService,
-        new CompetitionExecutionRouter(competitionRepository, appFeatures),
-        appFeatures
+        new CompetitionExecutionRouter()
       );
       const reads = jest.spyOn(realRepository, 'getVoterActiveVotes');
       try {
@@ -441,6 +431,53 @@ describeWithSeed(
       );
     });
 
+    it('retains published missing-entry snapshots while removing unpublished and inactive standings', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id=:id`,
+        { id: secondRankEntry }
+      );
+      const snapshots = [
+        {
+          entry_id: randomUUID(),
+          drop_id: 'retained-orphan',
+          published_at: 12
+        },
+        {
+          entry_id: randomUUID(),
+          drop_id: 'unpublished-orphan',
+          published_at: null
+        },
+        { entry_id: secondRankEntry, drop_id: 'rank-drop-2', published_at: 12 }
+      ].map((row) => ({
+        ...row,
+        competition_id: rankId,
+        rating: 40,
+        real_time_rating: 40,
+        rank: null,
+        submitted_at: 12,
+        updated_at: 12,
+        ordering_time: 12,
+        decision_rating: 90,
+        over_threshold_since: null
+      }));
+      await sqlExecutor.bulkInsert(
+        COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+        snapshots,
+        Object.keys(snapshots[0])
+      );
+      await repository.executeNativeQueriesInTransaction(async (connection) => {
+        const ctx = { connection };
+        await repository.lockCompetition(rankId, ctx);
+        await repository.saveLeaderboard(rankId, [], 500, ctx);
+      });
+      expect(
+        await sqlExecutor.execute(
+          `select * from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:rankId`,
+          { rankId }
+        )
+      ).toEqual([snapshots[0]]);
+    });
+
     it('persists 475 leaderboard entries in bounded batches without replacing vote runtime fields', async () => {
       const rows = await largeLeaderboard();
       const batchRepository = new NativeCompetitionRuntimeRepository(
@@ -481,7 +518,9 @@ describeWithSeed(
             submitted_at: row.entry.submitted_at,
             updated_at: 600,
             ordering_time: row.orderingTime ?? 600,
-            decision_rating: row.decisionRating ?? row.rating + 1
+            decision_rating: row.decisionRating ?? row.rating + 1,
+            published_at: null,
+            over_threshold_since: row.overThresholdSince
           }))
         );
         const runtime = await sqlExecutor.execute<{
@@ -517,8 +556,7 @@ describeWithSeed(
       const batchService = new NativeCompetitionRuntimeService(
         batchRepository,
         competitionCreditService,
-        new CompetitionExecutionRouter(competitionRepository, appFeatures),
-        appFeatures
+        new CompetitionExecutionRouter()
       );
       const execute = sqlExecutor.execute.bind(sqlExecutor);
       let thresholdWrites = 0;
@@ -923,7 +961,7 @@ describeWithSeed(
       ).toEqual([{ n: 5 }]);
     });
 
-    it('leaves cancelled, shadow and feature-disabled competitions untouched', async () => {
+    it('leaves cancelled, shadow, disabled and draft competitions untouched', async () => {
       await vote(rankId, rankEntry, 20, 100);
       await sqlExecutor.execute(
         `update ${COMPETITIONS_TABLE} set lifecycle = 'CANCELLED' where id = :rankId`,
@@ -936,10 +974,14 @@ describeWithSeed(
       );
       await service.processCompetition(rankId, 1001);
       await sqlExecutor.execute(
-        `update ${COMPETITIONS_TABLE} set execution_mode = 'ACTIVE' where id = :rankId`,
+        `update ${COMPETITIONS_TABLE} set execution_mode = 'DISABLED' where id = :rankId`,
         { rankId }
       );
-      process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = 'false';
+      await service.processCompetition(rankId, 1001);
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set execution_mode='ACTIVE',lifecycle='DRAFT' where id=:rankId`,
+        { rankId }
+      );
       await service.processCompetition(rankId, 1001);
       expect(
         await sqlExecutor.execute(
