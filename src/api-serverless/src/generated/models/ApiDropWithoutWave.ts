@@ -86,7 +86,6 @@ export class ApiDropWithoutWave {
     'hide_link_preview': boolean;
     'poll'?: ApiDropPoll;
     'nft_links'?: Array<ApiDropNftLink>;
-    'collaborators'?: Array<ApiMemeCollaboratorProfile>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -307,12 +306,6 @@ export class ApiDropWithoutWave {
             "name": "nft_links",
             "baseName": "nft_links",
             "type": "Array<ApiDropNftLink>",
-            "format": ""
-        },
-        {
-            "name": "collaborators",
-            "baseName": "collaborators",
-            "type": "Array<ApiMemeCollaboratorProfile>",
             "format": ""
         }    ];
 

@@ -91,10 +91,6 @@ export class ApiDrop {
     'hide_link_preview': boolean;
     'poll'?: ApiDropPoll;
     'nft_links'?: Array<ApiDropNftLink>;
-    /**
-    * Accepted collaborators only. Pending invitations are private.
-    */
-    'collaborators'?: Array<ApiMemeCollaboratorProfile>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -321,12 +317,6 @@ export class ApiDrop {
             "name": "nft_links",
             "baseName": "nft_links",
             "type": "Array<ApiDropNftLink>",
-            "format": ""
-        },
-        {
-            "name": "collaborators",
-            "baseName": "collaborators",
-            "type": "Array<ApiMemeCollaboratorProfile>",
             "format": ""
         }    ];
 

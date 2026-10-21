@@ -72,10 +72,6 @@ export class ApiDropV2 {
     'moderation'?: ApiDropModeration;
     'poll'?: ApiDropPoll;
     'wave'?: ApiWaveOverview;
-    /**
-    * Accepted collaborators only. Pending invitations are private.
-    */
-    'collaborators'?: Array<ApiMemeCollaboratorProfile>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -266,12 +262,6 @@ export class ApiDropV2 {
             "name": "wave",
             "baseName": "wave",
             "type": "ApiWaveOverview",
-            "format": ""
-        },
-        {
-            "name": "collaborators",
-            "baseName": "collaborators",
-            "type": "Array<ApiMemeCollaboratorProfile>",
             "format": ""
         }    ];
 
