@@ -328,11 +328,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       }>(
         `select count(distinct s.subscriber_id) as cnt
          from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
-         ${
-           params.target_type === ActivityEventTargetType.WAVE
-             ? `join ${IDENTITIES_TABLE} i on i.profile_id = s.subscriber_id`
-             : ''
-         }
+         join ${IDENTITIES_TABLE} i on i.profile_id = s.subscriber_id
          where s.target_id = :target_id and s.target_type = :target_type
          ${filter.clause}`,
         { ...params, ...filter.params },

@@ -226,5 +226,35 @@ describeWithSeed(
       });
       expect(await page('wave', 2, 2)).toEqual({ ids: ['carol'], count: 3 });
     });
+
+    it.each([ActivityEventTargetType.IDENTITY, ActivityEventTargetType.DROP])(
+      'keeps count and data symmetric for %s followers with a missing identity',
+      async (target_type) => {
+        await sqlExecutor.execute(
+          `insert into ${IDENTITY_SUBSCRIPTIONS_TABLE} (subscriber_id,target_id,target_type,target_action)
+           values ('alice','other-target',:target_type,'DROP_CREATED'),
+                  ('deleted','other-target',:target_type,'DROP_CREATED')`,
+          { target_type }
+        );
+        const params = {
+          target_id: 'other-target',
+          target_type,
+          page: 1,
+          page_size: 1
+        };
+        expect(
+          Object.keys(await repo.findSubscriberIdsAndActionsForTarget(params))
+        ).toEqual(['alice']);
+        expect(await repo.countDistinctSubscriberIdsForTarget(params)).toBe(1);
+        expect(
+          Object.keys(
+            await repo.findSubscriberIdsAndActionsForTarget({
+              ...params,
+              page: 2
+            })
+          )
+        ).toEqual([]);
+      }
+    );
   }
 );
