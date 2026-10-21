@@ -441,6 +441,53 @@ describeWithSeed(
       );
     });
 
+    it('retains published missing-entry snapshots while removing unpublished and inactive standings', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id=:id`,
+        { id: secondRankEntry }
+      );
+      const snapshots = [
+        {
+          entry_id: randomUUID(),
+          drop_id: 'retained-orphan',
+          published_at: 12
+        },
+        {
+          entry_id: randomUUID(),
+          drop_id: 'unpublished-orphan',
+          published_at: null
+        },
+        { entry_id: secondRankEntry, drop_id: 'rank-drop-2', published_at: 12 }
+      ].map((row) => ({
+        ...row,
+        competition_id: rankId,
+        rating: 40,
+        real_time_rating: 40,
+        rank: null,
+        submitted_at: 12,
+        updated_at: 12,
+        ordering_time: 12,
+        decision_rating: 90,
+        over_threshold_since: null
+      }));
+      await sqlExecutor.bulkInsert(
+        COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+        snapshots,
+        Object.keys(snapshots[0])
+      );
+      await repository.executeNativeQueriesInTransaction(async (connection) => {
+        const ctx = { connection };
+        await repository.lockCompetition(rankId, ctx);
+        await repository.saveLeaderboard(rankId, [], 500, ctx);
+      });
+      expect(
+        await sqlExecutor.execute(
+          `select * from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:rankId`,
+          { rankId }
+        )
+      ).toEqual([snapshots[0]]);
+    });
+
     it('persists 475 leaderboard entries in bounded batches without replacing vote runtime fields', async () => {
       const rows = await largeLeaderboard();
       const batchRepository = new NativeCompetitionRuntimeRepository(
@@ -481,7 +528,9 @@ describeWithSeed(
             submitted_at: row.entry.submitted_at,
             updated_at: 600,
             ordering_time: row.orderingTime ?? 600,
-            decision_rating: row.decisionRating ?? row.rating + 1
+            decision_rating: row.decisionRating ?? row.rating + 1,
+            published_at: null,
+            over_threshold_since: row.overThresholdSince
           }))
         );
         const runtime = await sqlExecutor.execute<{

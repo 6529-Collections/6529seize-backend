@@ -123,21 +123,23 @@ export class ProfileActivityLogsApiService {
     let convertedData: ApiProfileActivityLog[];
     ctx.timer?.start(convertLogsTimerKey);
     try {
-      convertedData = foundLogs.map((log) => {
-        const logContents = JSON.parse(log.contents);
-        return {
-          ...log,
-          contents: logContents,
-          profile_handle: profilesHandlesByIds[log.profile_id],
-          target_profile_handle: !isTargetOfTypeDrop(log.type)
-            ? profilesHandlesByIds[log.target_id!]
-            : null,
-          is_target_of_type_drop: isTargetOfTypeDrop(log.type),
-          proxy_handle: log.proxy_id
-            ? (profilesHandlesByIds[log.proxy_id] ?? null)
-            : null
-        };
-      });
+      convertedData = foundLogs.map(
+        ({ competition_id: _competitionId, ...log }) => {
+          const logContents = JSON.parse(log.contents);
+          return {
+            ...log,
+            contents: logContents,
+            profile_handle: profilesHandlesByIds[log.profile_id],
+            target_profile_handle: !isTargetOfTypeDrop(log.type)
+              ? profilesHandlesByIds[log.target_id!]
+              : null,
+            is_target_of_type_drop: isTargetOfTypeDrop(log.type),
+            proxy_handle: log.proxy_id
+              ? (profilesHandlesByIds[log.proxy_id] ?? null)
+              : null
+          };
+        }
+      );
     } finally {
       ctx.timer?.stop(convertLogsTimerKey);
     }
@@ -152,7 +154,7 @@ export class ProfileActivityLogsApiService {
 
 export interface ApiProfileActivityLog extends Omit<
   ProfileActivityLog,
-  'contents'
+  'contents' | 'competition_id'
 > {
   readonly contents: object;
   readonly profile_handle: string;
