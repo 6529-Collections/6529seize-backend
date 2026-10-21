@@ -206,9 +206,8 @@ describe('ContentModerationAiService', () => {
     expect(send.mock.calls[0]?.[0].input.modelId).toBe('runtime-model-id');
     expect(send.mock.calls[0]?.[1]?.abortSignal).toBeInstanceOf(AbortSignal);
   });
-  it('sends Claude Sonnet 5.5 low effort and a JSON schema', async () => {
-    process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID =
-      'us.anthropic.claude-sonnet-5-5';
+  it('defaults to Claude Sonnet 5.5 with low effort and a JSON schema', async () => {
+    delete process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID;
     const { send, service } = createService(ALLOWED_REPORT);
 
     await service.assessReportedContent({
@@ -236,9 +235,8 @@ describe('ContentModerationAiService', () => {
     expect(body).not.toHaveProperty('top_k');
   });
 
-  it('constrains pre-publication output to the outcome schema', async () => {
-    process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID =
-      'us.anthropic.claude-sonnet-5-5';
+  it('defaults pre-publication checks to Sonnet 5.5 with the outcome schema', async () => {
+    delete process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID;
     const { send, service } = createService({
       outcome: 'ALLOW',
       category: 'NONE',
@@ -251,8 +249,12 @@ describe('ContentModerationAiService', () => {
       content: 'Stripe sandbox test card: 4242 4242 4242 4242'
     });
 
+    expect(send.mock.calls[0]?.[0].input.modelId).toBe(
+      'us.anthropic.claude-sonnet-5-5'
+    );
     expect(readRequestBody(send)).toMatchObject({
       output_config: {
+        effort: 'low',
         format: {
           schema: {
             properties: { outcome: { enum: ['ALLOW', 'REJECT'] } }
@@ -262,8 +264,9 @@ describe('ContentModerationAiService', () => {
     });
   });
 
-  it('keeps the Sonnet 4.5 deterministic payload by default', async () => {
-    delete process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID;
+  it('keeps the Sonnet 4.5 deterministic payload for a rollback override', async () => {
+    process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID =
+      'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
     const { send, service } = createService(ALLOWED_REPORT);
 
     await service.assessReportedContent({

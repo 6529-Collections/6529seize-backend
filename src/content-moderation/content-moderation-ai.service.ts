@@ -3,7 +3,7 @@ import {
   parseBedrockAnthropicReply
 } from '@/bedrock-anthropic';
 import {
-  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
+  DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID,
   getConfiguredBedrockAnthropicModelId
 } from '@/bedrock.config';
 import {
@@ -25,7 +25,7 @@ export const REPORTED_CONTENT_EVALUATOR_VERSION =
 export const CONTENT_MODERATION_BEDROCK_MODEL_ID_ENV =
   'CONTENT_MODERATION_BEDROCK_MODEL_ID';
 export const DEFAULT_CONTENT_MODERATION_BEDROCK_MODEL_ID =
-  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID;
+  DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID;
 
 // Secrets are loaded after modules are imported in Lambda runtimes, so the
 // service-specific override must be resolved at request time.

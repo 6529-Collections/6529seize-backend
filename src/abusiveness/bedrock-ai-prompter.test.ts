@@ -5,7 +5,7 @@ import {
   DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID,
   getAbusivenessBedrockModelId
 } from './bedrock-ai.prompter';
-import { DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID } from '@/bedrock.config';
+import { DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID } from '@/bedrock.config';
 
 const mockSend = jest.fn();
 jest.mock('@/bedrock', () => ({
@@ -29,12 +29,12 @@ describe('bedrock abusiveness prompter', () => {
     }
   });
 
-  it('uses the shared Claude Sonnet 4.5 default model', () => {
+  it('uses the shared Claude Sonnet 5.5 default model', () => {
     expect(DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID).toBe(
-      DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
+      DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID
     );
     expect(DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID).toBe(
-      'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
+      'us.anthropic.claude-sonnet-5-5'
     );
   });
 
@@ -75,7 +75,7 @@ describe('bedrock abusiveness prompter', () => {
     expect(body).not.toHaveProperty('top_p');
   });
 
-  it('keeps the Sonnet 4.5 sampling payload for Sonnet 4.5', () => {
+  it('keeps the Sonnet 4.5 payload for a rollback override', () => {
     const input = buildAbusivenessBedrockInvokeModelInput(
       'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
       'is this category okay?'
