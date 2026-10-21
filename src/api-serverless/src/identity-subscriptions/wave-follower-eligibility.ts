@@ -42,7 +42,7 @@ export class WaveFollowerEligibilityService {
         return membership ? { key, ...membership } : null;
       })
     );
-    if (memberships.some((membership) => membership === null)) return null;
+    if (memberships.includes(null)) return null;
     return memberships.filter((membership) => membership !== null);
   }
 }
