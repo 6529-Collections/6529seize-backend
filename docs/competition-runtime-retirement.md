@@ -102,6 +102,10 @@ retirement. Deploy that preparation before switching any reader.
    A shared hub's SQL NULL and JSON null decision strategies both retain the
    existing API's null value. Non-null objects, arrays and JSON strings still
    fail parity; preparation never rewrites those historical strategy values.
+   Strategy failures additionally report up to 20 aggregate JSON type/public
+   member-shape groups per source, including encoded-null row counts. They never
+   report row identities, object keys or setting values; writers can change the
+   source between the parity count and this diagnostic snapshot.
    Then invoke the explicit `competition-runtime-retirement` scope. It requires all
    live original primaries to be native and the old execution-effect queue empty.
    During the initial or partial switch it rechecks history and hub-configuration

@@ -309,6 +309,74 @@ function parityFields(source: Source) {
   return checks;
 }
 
+async function describeStrategyShapes(
+  db: SqlExecutor,
+  source: Source,
+  mismatch: string
+) {
+  const rows = await db.execute<{
+    is_direct_message: number | string | null;
+    source_json_type: string;
+    first_decision_time_type: string | null;
+    subsequent_decisions_type: string | null;
+    is_rolling_type: string | null;
+    property_count: number | string | null;
+    encoded_null_rows: number | string;
+    row_count: number | string;
+  }>(
+    `select s.is_direct_message,json_type(s.decisions_strategy) as source_json_type,
+      json_type(json_extract(s.decisions_strategy,'$.first_decision_time')) as first_decision_time_type,
+      json_type(json_extract(s.decisions_strategy,'$.subsequent_decisions')) as subsequent_decisions_type,
+      json_type(json_extract(s.decisions_strategy,'$.is_rolling')) as is_rolling_type,
+      json_length(s.decisions_strategy) as property_count,
+      sum(json_type(s.decisions_strategy)='STRING' and json_unquote(s.decisions_strategy)='null') as encoded_null_rows,
+      count(*) as row_count from ${source.table} s
+      where ${eligible('s')} and ${mismatch}
+      group by s.is_direct_message,source_json_type,first_decision_time_type,
+        subsequent_decisions_type,is_rolling_type,property_count
+      order by row_count desc,source_json_type,first_decision_time_type,
+        subsequent_decisions_type,is_rolling_type,property_count limit 20`,
+    {}
+  );
+  return rows.map((row) => ({
+    table: source.table,
+    is_direct_message:
+      row.is_direct_message === null ? null : Number(row.is_direct_message),
+    source_json_type: row.source_json_type,
+    first_decision_time_type: row.first_decision_time_type,
+    subsequent_decisions_type: row.subsequent_decisions_type,
+    is_rolling_type: row.is_rolling_type,
+    property_count:
+      row.property_count === null ? null : Number(row.property_count),
+    encoded_null_rows: Number(row.encoded_null_rows),
+    count: Number(row.row_count)
+  }));
+}
+
+async function describeStrategyFailures(
+  db: SqlExecutor,
+  errors: readonly { table: string; field: string }[]
+) {
+  const shapes: Awaited<ReturnType<typeof describeStrategyShapes>> = [];
+  for (const source of sources) {
+    if (
+      !errors.some(
+        (error) =>
+          error.table === source.table && error.field === 'decisions_strategy'
+      )
+    )
+      continue;
+    const check = parityFields(source).find(
+      (candidate) => candidate.field === 'decisions_strategy'
+    );
+    if (check)
+      shapes.push(
+        ...(await describeStrategyShapes(db, source, check.mismatch))
+      );
+  }
+  return shapes;
+}
+
 export async function assertWaveHubConfigurationParity(
   db: SqlExecutor
 ): Promise<{ waves: number; archives: number }> {
@@ -344,10 +412,12 @@ export async function assertWaveHubConfigurationParity(
       });
     }
   }
-  if (errors.length)
+  if (errors.length) {
+    const strategyShapes = await describeStrategyFailures(db, errors);
     throw new Error(
-      `Native shared-hub configuration parity failed: ${JSON.stringify(errors)}`
+      `Native shared-hub configuration parity failed: ${JSON.stringify(errors)}; strategy_shapes=${JSON.stringify(strategyShapes)}`
     );
+  }
   return counts;
 }
 
