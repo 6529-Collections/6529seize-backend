@@ -17,6 +17,8 @@ import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
 import { reportLoopHealth } from '@/loop-health';
+import { WaveCreditScope } from '@/entities/IWave';
+import { readSequentially } from '@/competitions/competition-read-sequence';
 import { computeCompetitionPhase } from './competition-phase';
 import {
   NativeCompetitionRuntimeRepository,
@@ -102,7 +104,10 @@ export class NativeCompetitionRuntimeService {
 
   public constructor(
     private readonly repository: NativeCompetitionRuntimeRepository,
-    private readonly credits: Pick<CompetitionCreditService, 'getBudget'>,
+    private readonly credits: Pick<
+      CompetitionCreditService,
+      'getBudget' | 'getWaveBudgets'
+    >,
     private readonly executionRouter: CompetitionExecutionRouter,
     private readonly features: Pick<
       AppFeatures,
@@ -161,13 +166,27 @@ export class NativeCompetitionRuntimeService {
     ctx: RequestContext
   ): Promise<void> {
     const voters = await this.repository.listActiveVoters(competition.id, ctx);
-    for (const voterProfileId of voters) {
-      const budget = await this.credits.getBudget(
-        competition,
-        voterProfileId,
-        undefined,
-        ctx
-      );
+    const waveBudgets =
+      competition.voting.credit_scope === WaveCreditScope.WAVE
+        ? await this.credits.getWaveBudgets(competition, voters, ctx)
+        : null;
+    await readSequentially(voters, async (voterProfileId) => {
+      const budget =
+        waveBudgets?.get(voterProfileId) ??
+        (await this.credits.getBudget(
+          competition,
+          voterProfileId,
+          undefined,
+          ctx
+        ));
+      // WAVE spending is the sum of absolute active votes. If it fits, no
+      // individual vote needs reducing. DROP budgets must still check each entry.
+      if (
+        waveBudgets &&
+        budget.spent !== null &&
+        budget.spent <= budget.available
+      )
+        return;
       await this.reconcileVoterCredit(
         {
           competitionId: competition.id,
@@ -178,7 +197,7 @@ export class NativeCompetitionRuntimeService {
         },
         ctx
       );
-    }
+    });
   }
 
   /** The API may refresh its just-written leaderboard in the existing transaction.
@@ -212,8 +231,10 @@ export class NativeCompetitionRuntimeService {
     timer: Timer,
     now = Date.now()
   ): Promise<void> {
-    await this.forEachNativeCompetition(timer, (competitionId, ctx) =>
-      this.refreshCompetition(competitionId, now, ctx)
+    await this.forEachNativeCompetition(
+      timer,
+      'leaderboard',
+      (competitionId, ctx) => this.refreshCompetition(competitionId, now, ctx)
     );
   }
 
@@ -223,6 +244,7 @@ export class NativeCompetitionRuntimeService {
   }: { now?: number; timer?: Timer } = {}): Promise<void> {
     const failed = await this.forEachNativeCompetition(
       timer,
+      'decisions',
       (competitionId, ctx) => this.processCompetition(competitionId, now, ctx)
     );
     reportLoopHealth({
@@ -235,6 +257,7 @@ export class NativeCompetitionRuntimeService {
 
   private async forEachNativeCompetition(
     timer: Timer | undefined,
+    operation: 'leaderboard' | 'decisions',
     execute: (id: string, ctx: RequestContext) => Promise<void>
   ): Promise<number> {
     if (!this.features.isNativeCompetitionExecutionEnabled()) return 0;
@@ -246,13 +269,21 @@ export class NativeCompetitionRuntimeService {
       });
       if (!ids.length) break;
       for (const id of ids) {
+        const startedAt = Date.now();
         try {
           await execute(id, { timer });
+          this.logger.info('native_competition_execution_completed', {
+            competition_id: id,
+            operation,
+            duration_ms: Date.now() - startedAt
+          });
         } catch {
           failed++;
           // Do not log signed payloads, user content or DB error values.
           this.logger.error('native_competition_execution_failed', {
-            competition_id: id
+            competition_id: id,
+            operation,
+            duration_ms: Date.now() - startedAt
           });
         }
       }

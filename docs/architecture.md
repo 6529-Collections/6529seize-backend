@@ -1109,7 +1109,9 @@ Competition storage and execution ownership are explicit per competition.
 Legacy-primary mappings keep existing decision and leaderboard workers active;
 native execution additionally requires its global kill switch and is disabled
 by default. `dbMigrationsLoop` creates the additive competition/read-model
-tables and backfills stable legacy mappings before API or worker deployments.
+tables before API or worker deployments. Legacy wave writes maintain stable
+per-wave mappings; migration and scheduled maintenance invocations do not scan
+legacy waves or backfill mappings.
 The independent unified-read, native-write, native-execution, native-hub, and
 sampled-shadow flags default off. Shadow observations persist only canonical
 hashes and identifiers, never vote/signature/private payloads. Sampled legacy
@@ -1205,6 +1207,23 @@ engine. Both workers finish legacy wave processing before starting the native
 scan, so Main Stage decisions and leaderboard refreshes cannot be delayed by a
 large native backlog consuming the invocation. A failure in either engine is
 reported only after the other independent tasks have been attempted.
+Native vote saves, including migrated legacy rating requests, reconcile only
+the acting voter's current credit and validate the replacement vote inside the
+existing competition transaction. Vote state, aggregate runtime totals, history,
+metrics, notifications and durable vote events commit together. The save does
+not scan other voters or rebuild standings. Competition-wide credit
+reconciliation, time-weighted leaderboard snapshots and leaderboard events remain
+with `waveLeaderboardSnapshotterLoop` and `waveDecisionExecutionLoop`; standings
+can lag a confirmed vote until the next worker refresh. These existing workers
+must be healthy before deploying the API change. No schema, API contract,
+schedule or frontend deployment change is required.
+Native maintenance retains the competition transaction lock. WAVE credit checks
+batch identity and spending reads and only load individual votes for over-budget
+voters; DROP credit checks still reconcile each entry. Leaderboard upserts and
+runtime threshold updates use bounded batches of 100 entries on the same
+connection, retaining atomic scores, thresholds, cleanup and event publication.
+Each successful worker competition pass logs its operation and elapsed time,
+including lock acquisition and commit, independently of the detailed timer report.
 Native vote history, immutable decision voter snapshots and award
 rows remain separate from legacy tables. Per-entry aggregate votes must fit the
 safe-integer API range; an overflowing mutation rolls back its transaction.
@@ -1473,6 +1492,13 @@ There are two DB access modes:
 
 - API mode uses mysql read/write pools. Simple SQL classification routes `INSERT`, `UPDATE`, `DELETE`, and `REPLACE` to the write pool; other queries default to the read pool unless forced.
 - Loop mode uses TypeORM initialization and the shared `SqlExecutor` abstraction. Schema ownership is entities-first: add or update TypeORM entity classes, export them from `src/entities/entities.ts`, and let `dbMigrationsLoop` run entity synchronization. Do not create SQL migrations for schema changes unless explicitly requested; migrations are reserved for one-off data work or views.
+
+The MySQL query options capture the legacy GET compatibility boolean conversion
+mode when each statement is submitted. Compatibility views can expose boolean
+columns as BIGINT, so their declared flags need explicit conversion. Field parsing
+must not read request context from a reused socket: that socket can have been
+opened by another request. Queries outside the compatibility scope retain numeric
+BIGINT values, including when they reuse a socket opened inside that scope.
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
 
@@ -2128,11 +2154,12 @@ of directly notifying through SNS. Its inventory is generated from existing
 schedules/SQS mappings; rate intervals at most five minutes with one reserved
 execution are marked as expected-overlap context. The existing source LogRelay
 also reconstructs finite `6529.ops.loop-health.v1` business observations. The
-normal collector binds service identity, shares its admission budget and stores
-monotonic observations in the existing receipt table. The existing one-minute
-Probe independently evaluates backlog, committed progress, telemetry freshness,
-recovery availability and decision deadline margins. It persists notification
-intent before enqueue and sends incident changes through the protected lane.
+normal collector binds service identity and applies a separate health admission
+budget. It stores monotonic observations in the existing receipt table. The
+existing one-minute Probe independently evaluates backlog, committed progress,
+telemetry freshness, recovery availability and decision deadline margins. It
+persists notification intent before enqueue and sends incident changes through
+the protected lane.
 Routine verified overlap has no incident or recovery. Missing business evidence
 produces explicit unconfirmed contention; invocation success is never a business
 recovery signal. Delegation checkpoint/stage observations and decision/outbox

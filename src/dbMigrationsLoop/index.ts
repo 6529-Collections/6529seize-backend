@@ -4,7 +4,6 @@ import { Logger } from '../logging';
 import * as Entities from '../entities/entities';
 import { doInDbContext } from '../secrets';
 import { appFeatures } from '../app-features';
-import { competitionRepository } from '../competitions/competition.repository';
 import { contentModerationDb } from '../content-moderation/content-moderation.db';
 import { Time } from '../time';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
@@ -168,11 +167,6 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         await dbmigrate.up();
       }
       await pushNotificationCancellationsDb.deleteExpired();
-      const insertedLegacyCompetitions =
-        await competitionRepository.backfillLegacyMappings({});
-      logger.info(
-        `Ensured immutable legacy competition mappings; inserted ${insertedLegacyCompetitions}`
-      );
       const deletedModerationChecks =
         await deleteExpiredContentModerationChecksInBatches(
           Time.currentMillis() - Time.days(30).toMillis()
