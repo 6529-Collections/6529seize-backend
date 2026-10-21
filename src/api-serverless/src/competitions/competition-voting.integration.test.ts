@@ -159,12 +159,6 @@ describeWithSeed(
       process.env.USER_NOTIFIER_ACTIVATED = 'true';
       process.env.PUSH_NOTIFICATIONS_ACTIVATED = 'true';
       jest
-        .spyOn(appFeatures, 'isNativeCompetitionWritesEnabled')
-        .mockReturnValue(true);
-      jest
-        .spyOn(appFeatures, 'isNativeCompetitionExecutionEnabled')
-        .mockReturnValue(true);
-      jest
         .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
         .mockResolvedValue([visibilityGroup]);
     });

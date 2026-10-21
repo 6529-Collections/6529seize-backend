@@ -1,8 +1,5 @@
 jest.mock('@/loop-health-read', () => ({ readLoopHealthRows: jest.fn() }));
 jest.mock('@/loop-health', () => ({ reportLoopHealth: jest.fn() }));
-jest.mock('@/app-features', () => ({
-  appFeatures: { isNativeCompetitionExecutionEnabled: () => true }
-}));
 import { readLoopHealthRows } from '@/loop-health-read';
 import { reportLoopHealth } from '@/loop-health';
 import { observeDecisionBacklogs } from './loop-health';
@@ -31,7 +28,6 @@ it('monitors the oldest overdue decision and incomplete publication independentl
     })
   );
   expect(execute.mock.calls[1][0]).toContain('delivered_at is null');
-  expect(execute.mock.calls[1][0]).toContain('completed_at is null');
   expect(execute.mock.calls[1][0]).not.toContain('next_attempt_at <=');
 });
 it('reports verified empty work without requiring decisions to exist', async () => {

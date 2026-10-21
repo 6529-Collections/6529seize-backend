@@ -1,6 +1,5 @@
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { randomUUID } from 'node:crypto';
-import { appFeatures } from '@/app-features';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { ApiCompetitionActionRequest } from '@/api/generated/models/ApiCompetitionActionRequest';
 import { ApiCreateCompetitionRequest } from '@/api/generated/models/ApiCreateCompetitionRequest';
@@ -17,6 +16,7 @@ import {
   CompetitionRecord
 } from '@/competitions/competition.repository';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import {
   CompetitionEntity,
   CompetitionExecutionMode,
@@ -29,19 +29,16 @@ import { RequestContext } from '@/request.context';
 import {
   administerCompetitionWave,
   competitionActor,
-  lockNativeCompetition,
-  requireNativeWrites
+  lockNativeCompetition
 } from './competition-command-access';
 import {
   competitionValidationWave,
   competitionPresentationKeys,
   configurationToRecord
 } from './competition-configuration';
-import { legacyCompetitionSettingsService } from './legacy-competition-settings.service';
-import { loadNativeCommandConfiguration } from './competition-command-configuration';
-import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
-import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
+import { loadNativeCommandConfiguration } from './competition-command-configuration';
+import { validateOriginalPrimaryRuleUpdate } from './original-primary-rule-update';
 
 export type CompetitionLifecycleAction =
   | 'publish'
@@ -65,8 +62,13 @@ function immutableRules(config: ApiCompetitionDraftInput): unknown {
   } = config;
   // Access remains administrable after entries exist, just like wave access.
   // Keep the scoring, submission and outcome rules locked independently.
+  const editableApprovalRules =
+    config.rules.type === 'APPROVE'
+      ? { winning_threshold: null, winning_threshold_min_duration_ms: null }
+      : {};
   return {
     ...rules,
+    rules: { ...rules.rules, ...editableApprovalRules },
     participation: {
       ...rules.participation,
       scope: { ...rules.participation.scope, group_id: null }
@@ -150,7 +152,6 @@ export class CompetitionLifecycleService {
     request: ApiCreateCompetitionRequest,
     ctx: RequestContext
   ) {
-    requireNativeWrites();
     await administerCompetitionWave(waveId, ctx);
     const actor = competitionActor(ctx);
     return competitionCommandRepository.command(
@@ -179,12 +180,6 @@ export class CompetitionLifecycleService {
     ctx: RequestContext
   ): Promise<ApiCompetitionDraftInput> {
     await competitionService.getCompetition(waveId, competitionId, ctx);
-    const competition = await competitionRepository.findCompetitionRecordById(
-      competitionId,
-      ctx
-    );
-    if (competition?.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER)
-      return legacyCompetitionSettingsService.configuration(waveId, ctx);
     await administerCompetitionWave(waveId, ctx);
     const record = await competitionRepository.findCompetitionRecordById(
       competitionId,
@@ -205,18 +200,6 @@ export class CompetitionLifecycleService {
     ctx: RequestContext
   ) {
     await competitionService.getCompetition(waveId, competitionId, ctx);
-    const competition = await competitionRepository.findCompetitionRecordById(
-      competitionId,
-      ctx
-    );
-    if (competition?.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER)
-      return legacyCompetitionSettingsService.update(
-        waveId,
-        competitionId,
-        request,
-        ctx
-      );
-    requireNativeWrites();
     await administerCompetitionWave(waveId, ctx);
     const actor = competitionActor(ctx);
     return competitionCommandRepository.command(
@@ -224,7 +207,7 @@ export class CompetitionLifecycleService {
       request.idempotency_key,
       { waveId, competitionId, action: 'update', request },
       async (tx) => {
-        const { record } = await lockNativeCompetition(
+        const { record, competition } = await lockNativeCompetition(
           waveId,
           competitionId,
           request.config_version,
@@ -241,16 +224,16 @@ export class CompetitionLifecycleService {
           competitionConflict(
             'Clone a terminal competition to change its rules'
           );
-        const previous = await loadNativeCommandConfiguration(record, tx);
-        const originalPrimary = record.legacy_wave_id === record.wave_id;
-        if (
-          originalPrimary &&
-          competitionPayloadHash(previous.outcomes) !==
-            competitionPayloadHash(config.outcomes)
-        )
-          competitionConflict(
-            'Original competition outcome definitions are immutable'
-          );
+        const previous = await this.commandConfiguration(record, tx);
+        const originalPolicy =
+          record.legacy_wave_id === record.wave_id
+            ? await validateOriginalPrimaryRuleUpdate(
+                previous,
+                config,
+                competition,
+                tx
+              )
+            : null;
         const rulesChanged =
           competitionPayloadHash(immutableRules(previous)) !==
           competitionPayloadHash(immutableRules(config));
@@ -261,25 +244,35 @@ export class CompetitionLifecycleService {
           competitionConflict('Published competition type cannot change');
         if (
           rulesChanged &&
+          originalPolicy === null &&
           (await competitionCommandRepository.hasActivity(competitionId, tx))
         )
           competitionConflict(
-            'Rules are immutable after the first accepted entry'
+            'Rules are immutable after the first accepted entry or vote'
           );
         await waveApiService.validateNativeCompetitionConfiguration(
           competitionValidationWave(config, wave),
           tx
         );
         const now = Date.now();
-        if (record.lifecycle === CompetitionLifecycle.PUBLISHED && rulesChanged)
+        if (
+          record.lifecycle === CompetitionLifecycle.PUBLISHED &&
+          rulesChanged &&
+          originalPolicy === null
+        )
           this.validatePublicationDates(config, now);
+        const approvalRulesChanged =
+          config.rules.type === 'APPROVE' &&
+          (config.rules.winning_threshold !==
+            previous.rules.winning_threshold ||
+            config.rules.winning_threshold_min_duration_ms !==
+              previous.rules.winning_threshold_min_duration_ms);
         const updated = configurationToRecord(config, entity(record));
         const next = {
           ...updated,
           presentation_config:
-            originalPrimary &&
             competitionPayloadHash(config.presentation) ===
-              competitionPayloadHash(previous.presentation)
+            competitionPayloadHash(previous.presentation)
               ? entity(record).presentation_config
               : updated.presentation_config,
           config_version: Number(record.config_version) + 1,
@@ -288,19 +281,22 @@ export class CompetitionLifecycleService {
             ? {
                 ...updated.decision_config,
                 next_decision_time:
-                  originalPrimary &&
-                  competitionPayloadHash(config.rules.decisions_strategy) ===
-                    competitionPayloadHash(previous.rules.decisions_strategy)
-                    ? entity(record).decision_config.next_decision_time
-                    : updated.decision_config.next_decision_time
+                  originalPolicy === null
+                    ? updated.decision_config.next_decision_time
+                    : originalPolicy.nextDecisionTime
               }
-            : entity(record).decision_config
+            : approvalRulesChanged
+              ? {
+                  ...entity(record).decision_config,
+                  winning_min_threshold:
+                    updated.decision_config.winning_min_threshold,
+                  winning_threshold_min_duration_ms:
+                    updated.decision_config.winning_threshold_min_duration_ms
+                }
+              : entity(record).decision_config
         };
         await nativeCompetitionRuntimeService.enqueueDueTransitions(
-          await new NativeCompetitionReader(
-            competitionRepository,
-            tx
-          ).getCompetition(record, now),
+          competition,
           now,
           tx
         );
@@ -310,7 +306,12 @@ export class CompetitionLifecycleService {
           config,
           tx
         );
-        if (rulesChanged && !originalPrimary)
+        if (approvalRulesChanged)
+          await competitionCommandRepository.clearApprovalThresholds(
+            competitionId,
+            tx
+          );
+        if (rulesChanged && originalPolicy === null)
           await competitionCommandRepository.replaceOutcomeDefinitions(
             competitionId,
             config.outcomes,
@@ -337,24 +338,6 @@ export class CompetitionLifecycleService {
     ctx: RequestContext
   ) {
     await competitionService.getCompetition(waveId, competitionId, ctx);
-    const competition = await competitionRepository.findCompetitionRecordById(
-      competitionId,
-      ctx
-    );
-    if (competition?.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER) {
-      if (action !== 'pause' && action !== 'resume')
-        competitionConflict(
-          'Legacy competitions support pause and resume only'
-        );
-      return legacyCompetitionSettingsService.action(
-        waveId,
-        competitionId,
-        action,
-        request,
-        ctx
-      );
-    }
-    requireNativeWrites();
     await administerCompetitionWave(waveId, ctx);
     const reason = request.reason?.trim() || null;
     if (action === 'pause' && !reason)
@@ -365,7 +348,7 @@ export class CompetitionLifecycleService {
       request.idempotency_key,
       { waveId, competitionId, action, request },
       async (tx) => {
-        const { record } = await lockNativeCompetition(
+        const { record, competition } = await lockNativeCompetition(
           waveId,
           competitionId,
           request.config_version,
@@ -388,16 +371,17 @@ export class CompetitionLifecycleService {
           return competitionService.getCompetition(waveId, clone.id, tx);
         }
         if (action === 'publish') {
-          if (!appFeatures.isNativeCompetitionExecutionEnabled())
-            competitionConflict(
-              'Native execution must be enabled before publication'
-            );
           await waveApiService.validateNativeCompetitionConfiguration(
             competitionValidationWave(config, wave),
             tx
           );
           this.validatePublicationDates(config, now);
         }
+        await nativeCompetitionRuntimeService.enqueueDueTransitions(
+          competition,
+          now,
+          tx
+        );
         const changed = this.transition(entity(record), action, now);
         if (action === 'pause') {
           const startsAt = request.starts_at ?? now;
@@ -421,14 +405,6 @@ export class CompetitionLifecycleService {
           config_version: Number(record.config_version) + 1,
           updated_at: now
         };
-        await nativeCompetitionRuntimeService.enqueueDueTransitions(
-          await new NativeCompetitionReader(
-            competitionRepository,
-            tx
-          ).getCompetition(record, now),
-          now,
-          tx
-        );
         await competitionCommandRepository.saveCompetition(
           next,
           actor,

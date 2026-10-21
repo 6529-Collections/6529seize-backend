@@ -1,3 +1,4 @@
+import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import {
   dbSupplier,
   LazyDbAccessCompatibleService,
@@ -416,7 +417,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       `select w.visibility_group_id, w.parent_wave_id, p.id as parent_id,
               p.parent_wave_id as parent_parent_id,
               p.visibility_group_id as parent_group_id
-       from ${WAVES_TABLE} w left join ${WAVES_TABLE} p on p.id = w.parent_wave_id
+       from ${legacyGetView(WAVES_TABLE)} w left join ${legacyGetView(WAVES_TABLE)} p on p.id = w.parent_wave_id
        where w.id = :waveId`,
       { waveId },
       { wrappedConnection: ctx.connection }
@@ -463,11 +464,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     }
     const rows = await this.db.execute<{ drop_id: string }>(
       `select d.id as drop_id
-       from ${DROPS_TABLE} d
-       join ${WAVES_TABLE} qw on qw.id = d.wave_id
-       left join ${WAVES_TABLE} qp on qp.id = qw.parent_wave_id
-       join ${WAVES_TABLE} rw on rw.id = :waveId
-       left join ${WAVES_TABLE} rp on rp.id = rw.parent_wave_id
+       from ${legacyGetView(DROPS_TABLE)} d
+       join ${legacyGetView(WAVES_TABLE)} qw on qw.id = d.wave_id
+       left join ${legacyGetView(WAVES_TABLE)} qp on qp.id = qw.parent_wave_id
+       join ${legacyGetView(WAVES_TABLE)} rw on rw.id = :waveId
+       left join ${legacyGetView(WAVES_TABLE)} rp on rp.id = rw.parent_wave_id
        where d.id in (:dropIds)
          and (rw.parent_wave_id is null
            or (rp.id is not null and rp.parent_wave_id is null))
@@ -635,7 +636,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       credit_scope: WaveCreditScope;
     }>(
       `select voting_credit_type as credit_type, voting_credit_scope as credit_scope
-         from ${WAVES_TABLE}
+         from ${legacyGetView(WAVES_TABLE)}
          where id = :waveId`,
       { waveId }
     );
@@ -669,7 +670,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           `
             with given_votes as (
               select voter_id as profile_id, sum(abs(votes)) as credit_spent
-              from ${DROP_VOTER_STATE_TABLE}
+              from ${legacyGetView(DROP_VOTER_STATE_TABLE)}
               where ${creditSpentFilter} and voter_id in (:profileIds)
               group by 1
             ),
@@ -700,7 +701,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           .oneOrNull<{ cnt: number }>(
             `
               select count(*) as cnt
-              from ${WAVE_VOTING_CREDIT_NFTS_TABLE}
+              from ${legacyGetView(WAVE_VOTING_CREDIT_NFTS_TABLE)}
               where wave_id = :waveId
             `,
             { waveId }
@@ -719,7 +720,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           `
             with given_votes as (
               select voter_id as profile_id, sum(abs(votes)) as credit_spent
-              from ${DROP_VOTER_STATE_TABLE}
+              from ${legacyGetView(DROP_VOTER_STATE_TABLE)}
               where ${creditSpentFilter} and voter_id in (:profileIds)
               group by 1
             ),
@@ -732,7 +733,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
               select p.profile_id as profile_id,
                      coalesce(sum(tn.boosted_tdh), 0) as total_credit
               from profile_consolidation_keys p
-              join ${WAVE_VOTING_CREDIT_NFTS_TABLE} wvcn
+              join ${legacyGetView(WAVE_VOTING_CREDIT_NFTS_TABLE)} wvcn
                 on wvcn.wave_id = :waveId
               left join ${TDH_NFT_TABLE} tn
                 on tn.consolidation_key = p.consolidation_key
@@ -787,7 +788,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       rep_category: string | null;
       credit_scope: WaveCreditScope;
     }>(
-      `select voting_credit_category as rep_category, voting_credit_creditor as rep_giver, voting_credit_scope as credit_scope from ${WAVES_TABLE} where id = :waveId`,
+      `select voting_credit_category as rep_category, voting_credit_creditor as rep_giver, voting_credit_scope as credit_scope from ${legacyGetView(WAVES_TABLE)} where id = :waveId`,
       { waveId }
     );
     const rep_giver = waveProps?.rep_giver ?? null;
@@ -801,7 +802,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       credit_left: number;
     }>(
       `
-        with given_votes as (select voter_id as profile_id, sum(abs(votes)) as credit_spent from ${DROP_VOTER_STATE_TABLE}
+        with given_votes as (select voter_id as profile_id, sum(abs(votes)) as credit_spent from ${legacyGetView(DROP_VOTER_STATE_TABLE)}
             where ${creditSpentFilter} and voter_id in (:profileIds)
             group by 1),
         total_reps as (select matter_target_id as profile_id, sum(rating) as rep from ${RATINGS_TABLE} where matter_target_id in (:profileIds) and matter = 'REP' and rating <> 0 ${
@@ -838,9 +839,12 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     return this.db
       .oneOrNull<{
         visibility_group_id: string | null;
-      }>(`select visibility_group_id from ${WAVES_TABLE} where id = :waveId`, {
-        waveId
-      })
+      }>(
+        `select visibility_group_id from ${legacyGetView(WAVES_TABLE)} where id = :waveId`,
+        {
+          waveId
+        }
+      )
       .then((row) => row?.visibility_group_id);
   }
 

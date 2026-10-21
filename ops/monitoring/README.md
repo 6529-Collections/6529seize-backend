@@ -6,6 +6,11 @@ receipt table, archive and webhook secrets. No function uses the application VPC
 MySQL, Redis, root dependencies, Discord bot session or application secret loader.
 The preferred monitoring region differs from the production application region.
 
+Retained inert functions are listed in `retained-producers.json`, independently of the
+ordinary backend deploy catalog. They keep their existing structured log subscriptions,
+producer allowlists, relay permissions and Lambda platform alarms. This inventory never
+enables code deployment or removes retained application resources.
+
 The infrastructure source is `scripts/templates.mjs`. `monitoring-{env}.json`,
 `source-{env}.json` and `coverage-{env}.json` are generated from the backend service
 catalog; CI fails when their inventory is stale. This separate operational package
@@ -527,8 +532,10 @@ remains unverified; that cannot clear an incident about business processing.
   scans do not replay that explicit action. Backfill mode does not claim ordinary
   indexing recovery. Intermediate phases
   are progress, not proof that the whole non-transactional pipeline is complete.
-- `waveDecisionExecutionLoop`: surveys persisted legacy/native scheduled RANK decisions
-  and both durable publication outboxes after business processing. New diagnostic
+- `waveDecisionExecutionLoop`: surveys persisted active native scheduled RANK decisions
+  (including transferred original-primary competitions) and the durable native
+  publication outbox after business processing. Retired wave decision fields and
+  legacy execution-effect rows do not establish outstanding work. New diagnostic
   reads have a short owned SQL budget and are skipped near the existing Lambda
   deadline; they never change existing execution settings or run ahead of decisions.
   Their scoped SQL errors stay in source logs without generating application-failure

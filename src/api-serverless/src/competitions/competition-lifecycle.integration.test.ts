@@ -121,15 +121,6 @@ describeWithSeed(
   () => {
     beforeEach(() => {
       jest
-        .spyOn(appFeatures, 'isUnifiedCompetitionReadsEnabled')
-        .mockReturnValue(true);
-      jest
-        .spyOn(appFeatures, 'isNativeCompetitionWritesEnabled')
-        .mockReturnValue(true);
-      jest
-        .spyOn(appFeatures, 'isNativeCompetitionExecutionEnabled')
-        .mockReturnValue(true);
-      jest
         .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
         .mockResolvedValue([]);
     });

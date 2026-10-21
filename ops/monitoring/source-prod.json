@@ -505,7 +505,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/competitionMigrationLoop",
-        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
+        "FilterPattern": "\"6529.ops.error.v1\""
       }
     },
     "customReplayLoopErrorLogs": {

@@ -1,26 +1,23 @@
+jest.mock('@/competitions/competition.repository', () => ({
+  competitionRepository: {
+    findCompetitionRecordById: jest.fn(),
+    findCapabilities: jest.fn()
+  }
+}));
 jest.mock('@/competitions/competition-entry.repository', () => ({
   competitionEntryRepository: {
     lockDropMemberships: jest.fn().mockResolvedValue([])
   }
 }));
-jest.mock('@/competitions/competition.repository', () => ({
-  competitionRepository: {
-    findCompetitionRecordById: jest.fn(),
-    findCapabilities: jest.fn(),
-    listCompetitionRecordsForWave: jest.fn().mockResolvedValue([])
-  }
+jest.mock('@/competitions/native-competition-runtime.service', () => ({
+  nativeCompetitionRuntimeService: { resolveCurationEntries: jest.fn() }
 }));
-jest.mock('@/competitions/competition-execution.router', () => ({
-  competitionExecutionRouter: {
-    shouldUseLegacyWaveExecution: jest.fn().mockResolvedValue(true)
-  }
-}));
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { ArtCurationTokenWatchService } from '@/art-curation/art-curation-token-watch.service';
 import { DropType } from '@/entities/IDrop';
 import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { CompetitionCapability } from '@/entities/ICompetition';
-import { competitionExecutionRouter } from '@/competitions/competition-execution.router';
 
 describe('ArtCurationTokenWatchService', () => {
   const baseCtx = {};
@@ -31,7 +28,17 @@ describe('ArtCurationTokenWatchService', () => {
       .mocked(competitionEntryRepository.lockDropMemberships)
       .mockResolvedValue([]);
     jest
-      .mocked(competitionExecutionRouter.shouldUseLegacyWaveExecution)
+      .mocked(competitionRepository.findCompetitionRecordById)
+      .mockResolvedValue({
+        id: 'curation',
+        wave_id: 'wave-1',
+        storage_mode: 'NATIVE'
+      } as never);
+    jest
+      .mocked(competitionRepository.findCapabilities)
+      .mockResolvedValue([CompetitionCapability.CURATION]);
+    jest
+      .mocked(nativeCompetitionRuntimeService.resolveCurationEntries)
       .mockResolvedValue(true);
   });
 
@@ -92,22 +99,8 @@ describe('ArtCurationTokenWatchService', () => {
           findTransferPrice
         } as any,
         {
-          getCurrentVoterStatesForDrops,
-          insertWinnerDropsVoterVotes,
-          deleteStaleLeaderboardEntriesForWave: deleteStaleLeaderboardEntries
-        } as any,
-        {
           executeNativeQueriesInTransaction,
           resyncParticipatoryDropCountsForWaves
-        } as any,
-        {
-          insertDecisionIfMissing,
-          insertDecisionWinners,
-          updateDropsToWinners,
-          deleteDropsRanks
-        } as any,
-        {
-          calculateFinalVoteForDrop
         } as any
       ),
       mocks: {
@@ -149,6 +142,7 @@ describe('ArtCurationTokenWatchService', () => {
         dropId: 'drop-1',
         waveId: 'wave-1',
         dropType: DropType.PARTICIPATORY,
+        competitionId: 'curation',
         links: []
       },
       baseCtx as any
@@ -181,6 +175,7 @@ describe('ArtCurationTokenWatchService', () => {
         dropId: 'drop-1',
         waveId: 'wave-1',
         dropType: DropType.PARTICIPATORY,
+        competitionId: 'curation',
         links: [
           {
             url_in_text:
@@ -201,96 +196,112 @@ describe('ArtCurationTokenWatchService', () => {
     expect(mocks.cancelIfEmpty).toHaveBeenCalledWith('watch-old', baseCtx);
   });
 
-  it.each([
-    {
-      dropType: DropType.PARTICIPATORY,
-      capabilities: [CompetitionCapability.CURATION],
-      expected: true
-    },
-    { dropType: DropType.PARTICIPATORY, capabilities: [], expected: false },
-    {
-      dropType: DropType.CHAT,
-      capabilities: [CompetitionCapability.CURATION],
-      expected: false
-    }
-  ])(
-    'registers only explicit native CURATION entry content ($dropType, $capabilities)',
-    async ({ dropType, capabilities, expected }) => {
-      delete process.env.ART_CURATIONS_WAVE_ID;
+  it('registers explicit CURATION content in a different hub before membership insertion', async () => {
+    jest
+      .mocked(competitionRepository.findCompetitionRecordById)
+      .mockResolvedValue({
+        id: 'curation',
+        wave_id: 'different-hub',
+        storage_mode: 'NATIVE'
+      } as never);
+    const { service, mocks } = createService({
+      snapshotSubmissionState: jest.fn().mockResolvedValue({
+        blockNumber: 123,
+        observedAt: 456,
+        owner: '0x0000000000000000000000000000000000000001',
+        isTrackable: true
+      }),
+      upsertActiveWatchAndGet: jest
+        .fn()
+        .mockResolvedValue({ id: 'watch-curation' })
+    });
+    await service.registerDrop(
+      {
+        dropId: 'new-drop',
+        waveId: 'different-hub',
+        dropType: DropType.PARTICIPATORY,
+        competitionId: 'curation',
+        links: [
+          {
+            url_in_text:
+              'https://opensea.io/assets/ethereum/0x1111111111111111111111111111111111111111/1',
+            canonical_id:
+              'OPENSEA:eth:0x1111111111111111111111111111111111111111:1'
+          }
+        ]
+      },
+      baseCtx
+    );
+    expect(mocks.upsertDropWatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        drop_id: 'new-drop',
+        watch_id: 'watch-curation'
+      }),
+      baseCtx
+    );
+    expect(
+      competitionEntryRepository.lockDropMemberships
+    ).not.toHaveBeenCalled();
+  });
+
+  it('ignores non-CURATION content in the formerly configured curation hub', async () => {
+    jest
+      .mocked(competitionRepository.findCapabilities)
+      .mockResolvedValue([CompetitionCapability.MAIN_STAGE]);
+    const { service, mocks } = createService();
+    await service.registerDrop(
+      {
+        dropId: 'drop-1',
+        waveId: 'wave-1',
+        dropType: DropType.PARTICIPATORY,
+        competitionId: 'other',
+        links: []
+      },
+      baseCtx
+    );
+    expect(mocks.findByDropId).not.toHaveBeenCalled();
+  });
+
+  it.each(['ACTIVE', 'WINNER', 'WITHDRAWN', null])(
+    'uses actual ACTIVE membership for existing content (status %s)',
+    async (status) => {
       jest
-        .mocked(competitionRepository.findCompetitionRecordById)
-        .mockResolvedValue({
-          id: 'curation',
-          wave_id: 'wave-1',
-          storage_mode: 'NATIVE'
-        } as never);
-      jest
-        .mocked(competitionRepository.findCapabilities)
-        .mockResolvedValue(capabilities);
+        .mocked(competitionEntryRepository.lockDropMemberships)
+        .mockResolvedValue(
+          status
+            ? [
+                {
+                  competition_id: 'curation',
+                  wave_id: 'wave-1',
+                  status
+                } as never
+              ]
+            : []
+        );
       const { service, mocks } = createService();
       await service.registerDrop(
         {
           dropId: 'drop-1',
           waveId: 'wave-1',
-          dropType,
-          competitionId: 'curation',
+          dropType: DropType.PARTICIPATORY,
           links: []
         },
         baseCtx
       );
-      expect(mocks.findByDropId).toHaveBeenCalledTimes(expected ? 1 : 0);
-      expect(
-        competitionExecutionRouter.shouldUseLegacyWaveExecution
-      ).not.toHaveBeenCalled();
+      expect(mocks.findByDropId).toHaveBeenCalledTimes(
+        status === 'ACTIVE' ? 1 : 0
+      );
     }
   );
 
-  it('registers an edited actual ACTIVE CURATION entry without inferring a primary owner', async () => {
-    jest
-      .mocked(competitionExecutionRouter.shouldUseLegacyWaveExecution)
-      .mockResolvedValue(false);
-    jest
-      .mocked(competitionEntryRepository.lockDropMemberships)
-      .mockResolvedValue([
-        {
-          competition_id: 'curation',
-          wave_id: 'wave-1',
-          status: 'ACTIVE'
-        } as never
-      ]);
-    jest
-      .mocked(competitionRepository.findCompetitionRecordById)
-      .mockResolvedValue({
-        id: 'curation',
-        wave_id: 'wave-1',
-        storage_mode: 'NATIVE'
-      } as never);
-    jest
-      .mocked(competitionRepository.findCapabilities)
-      .mockResolvedValue([CompetitionCapability.CURATION]);
+  it('never watches shared CHAT content with a CURATION identifier', async () => {
     const { service, mocks } = createService();
     await service.registerDrop(
       {
-        dropId: 'drop-1',
+        dropId: 'chat',
         waveId: 'wave-1',
-        dropType: DropType.PARTICIPATORY,
-        links: []
-      },
-      baseCtx
-    );
-    expect(mocks.findByDropId).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not implicitly select native CURATION for shared content without a permit', async () => {
-    jest
-      .mocked(competitionExecutionRouter.shouldUseLegacyWaveExecution)
-      .mockResolvedValue(false);
-    const { service, mocks } = createService();
-    await service.registerDrop(
-      {
-        dropId: 'drop-1',
-        waveId: 'wave-1',
-        dropType: DropType.PARTICIPATORY,
+        dropType: DropType.CHAT,
+        competitionId: 'curation',
         links: []
       },
       baseCtx
@@ -356,6 +367,7 @@ describe('ArtCurationTokenWatchService', () => {
           time_lock_ms: null
         },
         dropIds: ['drop-1'],
+        competitionIds: ['competition-1'],
         event: {
           from: '0x0000000000000000000000000000000000000001',
           to: '0x0000000000000000000000000000000000000002',
@@ -373,11 +385,13 @@ describe('ArtCurationTokenWatchService', () => {
       baseCtx as any
     );
 
-    expect(mocks.insertDecisionIfMissing).toHaveBeenCalledWith(
-      {
-        decision_time: 999,
-        wave_id: 'wave-1'
-      },
+    expect(
+      nativeCompetitionRuntimeService.resolveCurationEntries
+    ).toHaveBeenCalledWith(
+      'competition-1',
+      ['drop-1'],
+      999,
+      'curation:watch-1:0xtx:4',
       baseCtx
     );
     expect(mocks.markResolved).toHaveBeenCalledWith(
@@ -409,6 +423,7 @@ describe('ArtCurationTokenWatchService', () => {
           time_lock_ms: null
         },
         dropIds: ['drop-1'],
+        competitionIds: ['competition-1'],
         event: {
           from: '0x0000000000000000000000000000000000000001',
           to: '0x0000000000000000000000000000000000000002',

@@ -1,10 +1,4 @@
-import { appFeatures } from '@/app-features';
-import {
-  COMPETITIONS_TABLE,
-  COMPETITION_OUTBOX_TABLE,
-  COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE,
-  WAVES_TABLE
-} from '@/constants';
+import { COMPETITIONS_TABLE, COMPETITION_OUTBOX_TABLE } from '@/constants';
 import { reportLoopHealth } from '@/loop-health';
 import { readLoopHealthRows } from '@/loop-health-read';
 
@@ -14,21 +8,11 @@ export async function observeDecisionBacklogs(): Promise<void> {
   const now = Date.now();
   try {
     const rows = await readLoopHealthRows<{ oldest: number | string | null }>(
-      `select min(due_at) as oldest from (
-        select w.next_decision_time as due_at from ${WAVES_TABLE} w
-        left join ${COMPETITIONS_TABLE} c on c.legacy_wave_id = w.id
-        where w.next_decision_time is not null
-          and (c.id is null or (c.storage_mode = 'LEGACY_ADAPTER' and c.execution_mode = 'ACTIVE'))
-        union all
-        select cast(nullif(json_unquote(json_extract(decision_config, '$.next_decision_time')), 'null') as unsigned) as due_at
-        from ${COMPETITIONS_TABLE} where storage_mode = 'NATIVE' and execution_mode = 'ACTIVE'
-          and lifecycle = 'PUBLISHED' and type = 'RANK' and :nativeEnabled = 1
-          and nullif(json_unquote(json_extract(decision_config, '$.next_decision_time')), 'null') is not null
-      ) due`,
-      {
-        now,
-        nativeEnabled: appFeatures.isNativeCompetitionExecutionEnabled() ? 1 : 0
-      }
+      `select min(cast(nullif(json_unquote(json_extract(decision_config, '$.next_decision_time')), 'null') as unsigned)) as oldest
+       from ${COMPETITIONS_TABLE}
+       where storage_mode = 'NATIVE' and execution_mode = 'ACTIVE'
+         and lifecycle = 'PUBLISHED' and type = 'RANK'
+         and nullif(json_unquote(json_extract(decision_config, '$.next_decision_time')), 'null') is not null`
     );
     publish('decisions', rows[0]?.oldest, now, 300);
   } catch {
@@ -36,11 +20,7 @@ export async function observeDecisionBacklogs(): Promise<void> {
   }
   try {
     const rows = await readLoopHealthRows<{ oldest: number | string | null }>(
-      `select min(created_at) as oldest from (
-        select created_at from ${COMPETITION_OUTBOX_TABLE} where delivered_at is null
-        union all
-        select created_at from ${COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE} where completed_at is null
-      ) pending`
+      `select min(created_at) as oldest from ${COMPETITION_OUTBOX_TABLE} where delivered_at is null`
     );
     publish('publication', rows[0]?.oldest, now);
   } catch {

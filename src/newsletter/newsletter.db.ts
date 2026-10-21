@@ -10,8 +10,8 @@ import {
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
   TRANSACTIONS_TABLE,
-  WAVES_DECISION_WINNER_DROPS_TABLE,
   COMPETITION_DECISIONS_TABLE,
+  COMPETITIONS_TABLE,
   COMPETITION_DECISION_WINNERS_TABLE,
   WAVES_TABLE
 } from '@/constants';
@@ -212,12 +212,11 @@ export class NewsletterDb extends LazyDbAccessCompatibleService {
       'winners',
       `${DROP_SELECT.replace('select d.id', 'select winner.decision_time, winner.ranking, winner.competition_id, winner.entry_id, d.id')}
         join (
-          select drop_id, wave_id, decision_time, ranking, null as competition_id, null as entry_id
-            from ${WAVES_DECISION_WINNER_DROPS_TABLE} where wave_id = :mainStage
-          union all
           select entry.drop_id, entry.wave_id, decision.scheduled_at as decision_time, native_winner.\`rank\` as ranking,
-            entry.competition_id, entry.id as entry_id
+            case when competition.legacy_wave_id is null then entry.competition_id else null end as competition_id,
+            case when competition.legacy_wave_id is null then entry.id else null end as entry_id
             from (${nativeMainStageEntriesSource('WINNER')}) entry
+            join ${COMPETITIONS_TABLE} competition on competition.id=entry.competition_id
             join ${COMPETITION_DECISION_WINNERS_TABLE} native_winner on native_winner.entry_id = entry.id
               and native_winner.competition_id = entry.competition_id and native_winner.decision_id = entry.decision_id
             join ${COMPETITION_DECISIONS_TABLE} decision on decision.id = native_winner.decision_id

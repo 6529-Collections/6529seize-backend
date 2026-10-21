@@ -12,8 +12,7 @@ it('keeps handled per-competition failures pending despite a successful worker r
   const service = new NativeCompetitionRuntimeService(
     repository as never,
     {} as never,
-    {} as never,
-    { isNativeCompetitionExecutionEnabled: () => true }
+    {} as never
   );
   const process = jest
     .spyOn(service, 'processCompetition')

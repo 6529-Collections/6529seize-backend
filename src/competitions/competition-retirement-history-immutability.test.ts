@@ -9,7 +9,8 @@ import {
   legacyCompetitionId
 } from './competition-id';
 import { transferCompetitionRetirementHistory } from './competition-retirement-history';
-import { withLegacyCompetitionProfileMerge as withCompetitionProfileMerge } from './legacy-competition-profile-merge';
+import { withCompetitionProfileMerge } from './competition-profile-merge';
+import { retireLegacyCompetitionRuntime } from './competition-runtime-retirement';
 
 const wave = aWave(
   { type: WaveType.RANK, time_lock_ms: 1000 },
@@ -121,6 +122,13 @@ describeWithSeed(
         )
       ).toEqual([{ voter_profile_id: 'target' }]);
       const accepted = await retained();
+      // The completed native view set is the operational cutover boundary.
+      // A repeated transition never reimports now-stale retained sources.
+      expect(await retireLegacyCompetitionRuntime(sqlExecutor)).toMatchObject({
+        already_retired: true,
+        history: []
+      });
+      expect(await retained()).toEqual(accepted);
       await expect(
         transferCompetitionRetirementHistory(sqlExecutor, id)
       ).rejects.toThrow('Retained VOTER history parity failed');

@@ -1,4 +1,3 @@
-import { appFeatures, AppFeatures } from '@/app-features';
 import {
   CompetitionCreditService,
   competitionCreditService
@@ -109,11 +108,7 @@ export class NativeCompetitionRuntimeService {
       CompetitionCreditService,
       'getBudget' | 'getWaveBudgets'
     >,
-    private readonly executionRouter: CompetitionExecutionRouter,
-    private readonly features: Pick<
-      AppFeatures,
-      'isNativeCompetitionExecutionEnabled'
-    >
+    private readonly executionRouter: CompetitionExecutionRouter
   ) {}
 
   public async reconcileVoterCredit(
@@ -315,7 +310,6 @@ export class NativeCompetitionRuntimeService {
     operation: 'leaderboard' | 'decisions',
     execute: (id: string, ctx: RequestContext) => Promise<void>
   ): Promise<number> {
-    if (!this.features.isNativeCompetitionExecutionEnabled()) return 0;
     let failed = 0;
     let afterId = '';
     for (;;) {
@@ -411,10 +405,9 @@ export class NativeCompetitionRuntimeService {
       competition.voting.starts_at
     ].map((time) => Math.max(time ?? publishedAt, publishedAt));
     const startedAt = Math.min(...starts);
-    const transferredAt = competition.legacy_transferred_at ?? -1;
     const configurationActivatedAt =
       competition.configuration_activated_at ?? publishedAt;
-    if (startedAt <= now && startedAt > transferredAt)
+    if (startedAt <= now)
       await this.repository.enqueueEvent(
         {
           key: 'started',
@@ -436,9 +429,8 @@ export class NativeCompetitionRuntimeService {
           (time): time is number =>
             time !== null &&
             time >= publishedAt &&
-            time >= configurationActivatedAt &&
             time <= now &&
-            time > transferredAt
+            time >= configurationActivatedAt
         )
       )
     ).sort((a, b) => a - b);
@@ -767,6 +759,5 @@ export const nativeCompetitionRuntimeService =
   new NativeCompetitionRuntimeService(
     nativeCompetitionRuntimeRepository,
     competitionCreditService,
-    competitionExecutionRouter,
-    appFeatures
+    competitionExecutionRouter
   );

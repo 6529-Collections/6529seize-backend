@@ -2,13 +2,10 @@ jest.mock('@/loop-health', () => ({ reportLoopHealth: jest.fn() }));
 import {
   COMPETITIONS_TABLE,
   COMPETITION_OUTBOX_TABLE,
-  COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE,
-  NFTDELEGATION_BLOCKS_TABLE,
-  WAVES_TABLE
+  NFTDELEGATION_BLOCKS_TABLE
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
-import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { reportLoopHealth } from '@/loop-health';
 import { observeDecisionBacklogs } from './loop-health';
 import { DelegationsLoopHealth } from '@/delegationsLoop/delegations-loop-health';
@@ -48,17 +45,31 @@ describeWithSeed(
       table: NFTDELEGATION_BLOCKS_TABLE,
       rows: [{ block: 123, timestamp: Math.floor(now / 1000) }]
     },
-    withWaves([
-      aWave(
-        { next_decision_time: now - 120_000 },
-        { id: 'legacy', name: 'legacy' }
-      )
-    ]),
     {
       table: COMPETITIONS_TABLE,
       rows: [
-        competition('due', now - 180_000),
-        competition('no-decision', null)
+        {
+          ...competition('due', now - 180_000),
+          legacy_wave_id: 'original-primary'
+        },
+        competition('no-decision', null),
+        { ...competition('missing-schedule', null), decision_config: {} },
+        {
+          ...competition('disabled', now - 900_000),
+          execution_mode: 'DISABLED'
+        },
+        {
+          ...competition('unpublished', now - 900_000),
+          lifecycle: 'DRAFT'
+        },
+        {
+          ...competition('approve', now - 900_000),
+          type: 'APPROVE'
+        },
+        {
+          ...competition('retired-adapter', now - 900_000),
+          storage_mode: 'LEGACY_ADAPTER'
+        }
       ]
     },
     {
@@ -76,34 +87,25 @@ describeWithSeed(
           delivered_at: null,
           lease_token: 'lease',
           attempts: 5
-        }
-      ]
-    },
-    {
-      table: COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE,
-      rows: [
+        },
         {
-          id: 'legacy-effects',
-          competition_id: 'legacy',
-          wave_id: 'legacy',
-          payload: {},
-          created_at: now - 300_000,
-          completed_at: null,
-          lease_until: now + 600_000,
-          lease_token: 'lease',
-          attempts: 2
+          id: 'delivered',
+          competition_id: 'due',
+          wave_id: 'hub',
+          semantic_key: 'delivered',
+          event: {},
+          created_at: now - 900_000,
+          next_attempt_at: now,
+          lease_until: null,
+          delivered_at: now,
+          lease_token: null,
+          attempts: 1
         }
       ]
     }
   ],
   () => {
-    beforeEach(() => {
-      jest.clearAllMocks();
-      process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = 'true';
-    });
-    afterEach(() => {
-      delete process.env.FEATURE_NATIVE_COMPETITION_EXECUTION;
-    });
+    beforeEach(() => jest.clearAllMocks());
     it('reads the delegation checkpoint through the bounded monitoring reader', async () => {
       await DelegationsLoopHealth.start(false);
       expect(reportLoopHealth).toHaveBeenCalledWith(
@@ -115,7 +117,7 @@ describeWithSeed(
         })
       );
     });
-    it('keeps due work and leased/backed-off publication visible while excluding JSON null schedules', async () => {
+    it('monitors active native decisions including original primaries and leased/backed-off native publication only', async () => {
       await observeDecisionBacklogs();
       expect(reportLoopHealth).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -128,15 +130,12 @@ describeWithSeed(
         expect.objectContaining({
           operation: 'publication',
           pending: true,
-          oldestPendingAt: Math.floor((now - 300_000) / 1000)
+          oldestPendingAt: Math.floor((now - 240_000) / 1000)
         })
       );
     });
     it('retains a future native obligation for independent deadline evaluation', async () => {
       const future = Date.now() + 60_000;
-      await sqlExecutor.execute(
-        `update ${WAVES_TABLE} set next_decision_time = null`
-      );
       await sqlExecutor.execute(
         `update ${COMPETITIONS_TABLE} set decision_config = json_object('next_decision_time', :future) where id = 'due'`,
         { future }
@@ -153,17 +152,10 @@ describeWithSeed(
     });
     it('verifies recovery only after all persisted due work and delivery work clear', async () => {
       await sqlExecutor.execute(
-        `update ${WAVES_TABLE} set next_decision_time = null`
-      );
-      await sqlExecutor.execute(
         `update ${COMPETITIONS_TABLE} set decision_config = '{"next_decision_time": null}'`
       );
       await sqlExecutor.execute(
         `update ${COMPETITION_OUTBOX_TABLE} set delivered_at = :now`,
-        { now }
-      );
-      await sqlExecutor.execute(
-        `update ${COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE} set completed_at = :now`,
         { now }
       );
       await observeDecisionBacklogs();
