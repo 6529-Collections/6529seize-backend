@@ -28,6 +28,10 @@ import {
 } from './moderation-review.types';
 import { assertModerationDeveloper } from './moderation-developer-access';
 import {
+  checkPreview,
+  evidenceExpired
+} from '@/content-moderation/moderation-review-preview';
+import {
   getConfiguredBedrockAnthropicModelId,
   DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
 } from '@/bedrock.config';
@@ -58,19 +62,6 @@ export function publicationPermitGeneration(
   )
     moderationConflict();
   return generation;
-}
-function evidenceExpired(item: ModerationItem): boolean {
-  return (
-    !item.evidence ||
-    item.evidence.evidence_expired === true ||
-    (item.evidence_expires_at !== null &&
-      item.evidence_expires_at <= Date.now())
-  );
-}
-export function checkPreview(item: ModerationItem): string | null {
-  if (evidenceExpired(item)) return null;
-  const text = item.evidence?.text ?? item.evidence?.title;
-  return typeof text === 'string' ? text.slice(0, 160) : null;
 }
 export function itemSummary(item: ModerationItem) {
   const { evidence, ...check } = item;

@@ -384,6 +384,11 @@ saved check, so unrelated drafts by the same author are not collapsed. Other
 public fields group by subject type and subject identity across revisions.
 Case IDs are opaque hashes; REP category text never appears in URLs.
 
+Check-list previews use retained text or the saved post title and textual parts,
+in saved order, capped at 160 characters. Titleless multipart posts therefore
+remain recognizable after deletion. Missing, flagged-expired or deadline-expired
+evidence produces no preview; malformed and nontext parts are ignored.
+
 `GET /content-moderation/checks/cases` provides the private paged queue. The
 `case_id` filter on the existing checks endpoint exposes related check revisions
 without changing revision-scoped review actions. Cases remain outstanding while
