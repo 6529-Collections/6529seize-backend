@@ -45,7 +45,42 @@ type Trigger = {
   event: string;
   timing: string;
   body: string;
+  follows?: string;
 };
+type InstalledTrigger = {
+  name: string;
+  table_name: string;
+  event: string;
+  timing: string;
+  body: string;
+  action_order: number;
+};
+
+// Structural validation preserves historical values without applying today's
+// scheduling constraints to existing, non-executing CHAT metadata.
+// This fixed schema contains no SQL quoting characters; it is never request input.
+const decisionStrategySchema = JSON.stringify({
+  type: ['object', 'null'],
+  required: ['first_decision_time', 'subsequent_decisions', 'is_rolling'],
+  additionalProperties: false,
+  properties: {
+    first_decision_time: { type: 'integer' },
+    subsequent_decisions: { type: 'array', items: { type: 'integer' } },
+    is_rolling: { type: 'boolean' }
+  }
+});
+
+function supportedStrategy(value: string): string {
+  return `(${value} is null or coalesce(json_schema_valid('${decisionStrategySchema}',${value}),false))`;
+}
+
+function strategyValue(alias: string): string {
+  return `json_extract(${alias}.hub_voting_config,'$.decision_strategy')`;
+}
+
+function hasStrategy(alias: string): string {
+  return `coalesce(json_contains_path(${alias}.hub_voting_config,'one','$.decision_strategy'),false)`;
+}
 
 function eligible(alias: string) {
   return `${alias}.type='CHAT' and not exists(select 1 from ${COMPETITIONS_TABLE} c
@@ -152,27 +187,86 @@ function childTrigger(
   };
 }
 
-const triggers: Trigger[] = sources.flatMap((source) => [
-  parentTrigger(source, 'INSERT'),
-  parentTrigger(source, 'UPDATE'),
-  childTrigger(source, 'INSERT'),
-  childTrigger(source, 'UPDATE'),
-  childTrigger(source, 'DELETE')
-]);
+/** The original ten capture bodies stay frozen for already-installed registries.
+ * Seed the typed member only after the original parent has run, so the addition
+ * cannot make it mirror a contradictory existing voting policy into the source. */
+function strategyTrigger(source: Source, event: 'INSERT' | 'UPDATE'): Trigger {
+  const native = strategyValue('NEW');
+  const explicit = `${hasStrategy('NEW')}${event === 'UPDATE' ? ' and not(NEW.hub_voting_config<=>OLD.hub_voting_config)' : ''}`;
+  const restore =
+    event === 'UPDATE'
+      ? `elseif not(${hasStrategy('NEW')}) and ${hasStrategy('OLD')}
+        and NEW.decisions_strategy<=>OLD.decisions_strategy then
+        set NEW.hub_voting_config=json_set(NEW.hub_voting_config,'$.decision_strategy',${strategyValue('OLD')});`
+      : '';
+  const changed =
+    event === 'UPDATE'
+      ? ` or not(NEW.decisions_strategy<=>OLD.decisions_strategy)`
+      : '';
+  const rawWrite =
+    event === 'INSERT'
+      ? 'true'
+      : 'not(NEW.decisions_strategy<=>OLD.decisions_strategy)';
+  return {
+    name: `${prefix}strategy_${source.table === WAVES_TABLE ? 'wave' : 'archive'}_${event.toLowerCase()}`,
+    table: source.table,
+    event,
+    timing: 'BEFORE',
+    follows: parentTrigger(source, event).name,
+    body: `begin if ${eligible('NEW')} then
+      if ${explicit} then
+        if not(${supportedStrategy(native)}) then
+          signal sqlstate '45000' set message_text='Native hub decision strategy has an unsupported shape'; end if;
+        if not(coalesce(${native},cast('null' as json))<=>coalesce(NEW.decisions_strategy,cast('null' as json))) then
+          set NEW.decisions_strategy=case when json_type(${native})='NULL' then null else ${native} end;
+        end if;
+      ${restore}
+      elseif ${rawWrite} and not(${supportedStrategy('NEW.decisions_strategy')}) then
+        signal sqlstate '45000' set message_text='Shared hub decision strategy has an unsupported shape';
+      elseif (not(${hasStrategy('NEW')})${changed}) and ${supportedStrategy('NEW.decisions_strategy')} then
+        set NEW.hub_voting_config=json_set(NEW.hub_voting_config,'$.decision_strategy',NEW.decisions_strategy);
+      end if; end if; end`
+  };
+}
+
+const triggers: Trigger[] = sources
+  .flatMap((source) => [
+    parentTrigger(source, 'INSERT'),
+    parentTrigger(source, 'UPDATE'),
+    childTrigger(source, 'INSERT'),
+    childTrigger(source, 'UPDATE'),
+    childTrigger(source, 'DELETE')
+  ])
+  .concat(
+    sources.flatMap((source) => [
+      strategyTrigger(source, 'INSERT'),
+      strategyTrigger(source, 'UPDATE')
+    ])
+  );
+
+function assertCaptureOrder(
+  row: InstalledTrigger,
+  predecessor?: InstalledTrigger
+) {
+  if (!predecessor) return;
+  if (
+    predecessor.table_name !== row.table_name ||
+    predecessor.event !== row.event ||
+    predecessor.timing !== row.timing ||
+    Number(predecessor.action_order) >= Number(row.action_order)
+  )
+    throw new Error(
+      'Unrecognized temporary shared-hub configuration capture order'
+    );
+}
 
 async function installedCapture(
   db: SqlExecutor,
   connection: NonNullable<RequestContext['connection']>
 ) {
-  const rows = await db.execute<{
-    name: string;
-    table_name: string;
-    event: string;
-    timing: string;
-    body: string;
-  }>(
+  const rows = await db.execute<InstalledTrigger>(
     `select TRIGGER_NAME as name,EVENT_OBJECT_TABLE as table_name,EVENT_MANIPULATION as event,
-    ACTION_TIMING as timing,ACTION_STATEMENT as body from information_schema.TRIGGERS
+    ACTION_TIMING as timing,ACTION_STATEMENT as body,ACTION_ORDER as action_order from information_schema.TRIGGERS
     where TRIGGER_SCHEMA=database() and TRIGGER_NAME like :pattern`,
     { pattern: `${prefix}%` },
     { wrappedConnection: connection }
@@ -190,6 +284,10 @@ async function installedCapture(
       throw new Error(
         'Unrecognized temporary shared-hub configuration capture'
       );
+    assertCaptureOrder(
+      row,
+      rows.find((candidate) => candidate.name === expected.follows)
+    );
   }
   return rows;
 }
@@ -197,14 +295,27 @@ async function installedCapture(
 async function installCapture(db: SqlExecutor) {
   return withCompetitionSchemaConnection(db, async ({ connection }) => {
     const existing = await installedCapture(db, connection);
+    for (const trigger of triggers)
+      if (
+        existing.some((row) => row.name === trigger.name) &&
+        trigger.follows &&
+        !existing.some((row) => row.name === trigger.follows)
+      )
+        throw new Error(
+          'Temporary shared-hub strategy capture is missing its predecessor'
+        );
     for (const trigger of triggers) {
       if (existing.some((row) => row.name === trigger.name)) continue;
-      await db.execute(
-        `create trigger \`${trigger.name}\` ${trigger.timing} ${trigger.event}
-        on \`${trigger.table}\` for each row ${trigger.body}`,
-        {},
-        { wrappedConnection: connection }
-      );
+      const placement = trigger.follows
+        ? `follows \`${trigger.follows}\` `
+        : '';
+      await db // NOSONAR -- Ordered DDL shares one schema connection; overlays require their predecessors.
+        .execute(
+          `create trigger \`${trigger.name}\` ${trigger.timing} ${trigger.event}
+        on \`${trigger.table}\` for each row ${placement}${trigger.body}`,
+          {},
+          { wrappedConnection: connection }
+        );
     }
     return triggers.length;
   });
@@ -257,7 +368,7 @@ export async function prepareWaveHubConfiguration(
         }
       );
       if (!rows.length) break;
-      after = rows[rows.length - 1].row_key;
+      after = rows.at(-1)!.row_key;
       await options.onBatch?.({ table: source.table, rows: rows.length });
       if (rows.length < batchSize) break;
     }
@@ -279,15 +390,21 @@ function parityFields(source: Source) {
     ...Object.entries(WAVE_HUB_VOTING_FIELDS).map(([column, field]) => ({
       field: column,
       mismatch: `not(json_extract(s.hub_voting_config,'$.${field}')<=>json_extract(${configuration(source, 's', 'voting')},'$.${field}'))`
-    }))
+    })),
+    {
+      field: 'decisions_strategy',
+      mismatch: `not(${supportedStrategy('s.decisions_strategy')} and ${supportedStrategy(strategyValue('s'))}
+      and coalesce(s.decisions_strategy,cast('null' as json))<=>coalesce(${strategyValue('s')},cast('null' as json)))`
+    },
+    {
+      field: 'credit_nfts',
+      mismatch: `not(json_extract(s.hub_voting_config,'$.credit_nfts')<=>${creditNfts(source, 's')})`
+    }
   );
-  checks.push({
-    field: 'credit_nfts',
-    mismatch: `not(json_extract(s.hub_voting_config,'$.credit_nfts')<=>${creditNfts(source, 's')})`
-  });
   const owned = new Set<string>([
     ...Object.keys(WAVE_HUB_PARTICIPATION_FIELDS),
-    ...Object.keys(WAVE_HUB_VOTING_FIELDS)
+    ...Object.keys(WAVE_HUB_VOTING_FIELDS),
+    'decisions_strategy'
   ]);
   for (const column of RETIRED_WAVE_COMPETITION_COLUMNS) {
     if (
@@ -298,12 +415,7 @@ function parityFields(source: Source) {
       continue;
     checks.push({
       field: column,
-      // The existing API parses SQL NULL and JSON null to the same null strategy.
-      // Other JSON values must still fail instead of losing visible configuration.
-      mismatch:
-        column === 'decisions_strategy'
-          ? `not(s.\`${column}\` is null or json_type(s.\`${column}\`)='NULL')`
-          : `not(s.\`${column}\`<=>${CHAT_WAVE_COMPATIBILITY_DEFAULTS[column] ?? 'null'})`
+      mismatch: `not(s.\`${column}\`<=>${CHAT_WAVE_COMPATIBILITY_DEFAULTS[column] ?? 'null'})`
     });
   }
   return checks;
@@ -371,10 +483,10 @@ async function describeStrategyFailures(
     const check = parityFields(source).find(
       (candidate) => candidate.field === 'decisions_strategy'
     );
-    if (check)
-      shapes.push(
-        ...(await describeStrategyShapes(db, source, check.mismatch))
-      );
+    if (check) {
+      const found = await describeStrategyShapes(db, source, check.mismatch); // NOSONAR -- Bound failure-path scan pressure to one source at a time.
+      shapes.push(...found);
+    }
   }
   return shapes;
 }
@@ -391,11 +503,12 @@ export async function assertWaveHubConfigurationParity(
   }[] = [];
   for (const source of sources) {
     const checks = parityFields(source);
-    const rows = await db.execute<Record<string, number | string | null>>(
-      `select s.is_direct_message,count(*) as total,${checks.map((check, index) => `sum(${check.mismatch}) as f${index}`).join(',')}
+    const rows = await db // NOSONAR -- Bound aggregate scan pressure and preserve deterministic source ordering.
+      .execute<Record<string, number | string | null>>(
+        `select s.is_direct_message,count(*) as total,${checks.map((check, index) => `sum(${check.mismatch}) as f${index}`).join(',')}
        from ${source.table} s where ${eligible('s')} group by s.is_direct_message`,
-      {}
-    );
+        {}
+      );
     for (const row of rows) {
       counts[source.table === WAVES_TABLE ? 'waves' : 'archives'] += Number(
         row.total
@@ -435,12 +548,18 @@ export async function finalizeWaveHubConfigurationCapture(
     db,
     async ({ connection }) => {
       const installed = await installedCapture(db, connection);
-      for (const trigger of installed)
-        await db.execute(
-          `drop trigger if exists \`${trigger.name}\``,
-          {},
-          { wrappedConnection: connection }
-        );
+      // Drop dependent overlays first so interrupted finalization remains
+      // compatible with the original captures and ordinary retries.
+      for (let index = triggers.length - 1; index >= 0; index--) {
+        const trigger = triggers[index];
+        if (!installed.some((row) => row.name === trigger.name)) continue;
+        await db // NOSONAR -- Ordered DDL shares one connection; drop dependent overlays before predecessors.
+          .execute(
+            `drop trigger if exists \`${trigger.name}\``,
+            {},
+            { wrappedConnection: connection }
+          );
+      }
       return installed.length;
     }
   );
@@ -451,6 +570,10 @@ async function assertNativeConfigurationShapes(db: SqlExecutor) {
   const errors: { table: string; field: string; count: number }[] = [];
   for (const source of sources) {
     const checks: { field: string; mismatch: string }[] = [];
+    checks.push({
+      field: 'hub_voting_config.decision_strategy',
+      mismatch: `not(${supportedStrategy(strategyValue('s'))})`
+    });
     for (const kind of ['participation', 'voting'] as const) {
       const column = `hub_${kind}_config`;
       const fields = Object.values(
@@ -480,10 +603,11 @@ async function assertNativeConfigurationShapes(db: SqlExecutor) {
       source.table === WAVES_TABLE
         ? `not exists(select 1 from ${COMPETITIONS_TABLE} c where c.legacy_wave_id=s.id and c.legacy_wave_id=c.wave_id and c.storage_mode='NATIVE')`
         : '(s.hub_participation_config is not null or s.hub_voting_config is not null)';
-    const [row] = await db.execute<Record<string, number | string | null>>(
-      `select ${checks.map((check, index) => `sum(${check.mismatch}) as f${index}`).join(',')} from ${source.table} s where ${predicate}`,
-      {}
-    );
+    const [row] = await db // NOSONAR -- Validate one source at a time to bound aggregate scan pressure.
+      .execute<Record<string, number | string | null>>(
+        `select ${checks.map((check, index) => `sum(${check.mismatch}) as f${index}`).join(',')} from ${source.table} s where ${predicate}`,
+        {}
+      );
     checks.forEach((check, index) => {
       if (Number(row[`f${index}`]))
         errors.push({
