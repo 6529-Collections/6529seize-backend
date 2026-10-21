@@ -587,6 +587,40 @@ describeWithSeed(
       expect(await filter(legacyGetView(tables.WAVES_TABLE))).toEqual(matched);
     });
 
+    it('never rewrites contradictory source voting fields while adding a missing strategy member', async () => {
+      const strategy = {
+        first_decision_time: 1712345678999,
+        subsequent_decisions: [],
+        is_rolling: false
+      };
+      const policy = {
+        ...waveHubConfigurationFromWave(old).voting,
+        credit_category: 'private-native-voting-value'
+      };
+      delete policy.decision_strategy;
+      await sqlExecutor.execute(
+        `UPDATE ${tables.WAVES_TABLE} SET decisions_strategy=CAST(:strategy AS JSON),hub_voting_config=CAST(:policy AS JSON) WHERE id=:id`,
+        {
+          id: old.id,
+          strategy: JSON.stringify(strategy),
+          policy: JSON.stringify(policy)
+        }
+      );
+      await expect(prepareWaveHubConfiguration(sqlExecutor)).rejects.toThrow(
+        '"field":"voting_credit_category","count":1'
+      );
+      expect(
+        await sqlExecutor.oneOrNull(
+          `SELECT voting_credit_category FROM ${tables.WAVES_TABLE} WHERE id=:id`,
+          { id: old.id }
+        )
+      ).toEqual({ voting_credit_category: 'null' });
+      expect((await livePolicy(old.id)).voting).toMatchObject({
+        credit_category: 'private-native-voting-value',
+        decision_strategy: strategy
+      });
+    });
+
     it('preserves explicit native policy writes and emits only field/count diagnostics for contradictory source parity', async () => {
       await sqlExecutor.execute(
         `UPDATE ${tables.WAVES_TABLE} SET hub_participation_config=:policy WHERE id=:id`,

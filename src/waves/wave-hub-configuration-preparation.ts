@@ -179,7 +179,8 @@ function childTrigger(
 }
 
 /** The original ten capture bodies stay frozen for already-installed registries.
- * These ordered overlays add one typed field without replacing those captures. */
+ * Seed the typed member only after the original parent has run, so the addition
+ * cannot make it mirror a contradictory existing voting policy into the source. */
 function strategyTrigger(source: Source, event: 'INSERT' | 'UPDATE'): Trigger {
   const native = strategyValue('NEW');
   const explicit = `${hasStrategy('NEW')}${event === 'UPDATE' ? ' and not(NEW.hub_voting_config<=>OLD.hub_voting_config)' : ''}`;
@@ -293,12 +294,16 @@ async function installCapture(db: SqlExecutor) {
         );
     for (const trigger of triggers) {
       if (existing.some((row) => row.name === trigger.name)) continue;
-      await db.execute(
-        `create trigger \`${trigger.name}\` ${trigger.timing} ${trigger.event}
-        on \`${trigger.table}\` for each row ${trigger.follows ? `follows \`${trigger.follows}\` ` : ''}${trigger.body}`,
-        {},
-        { wrappedConnection: connection }
-      );
+      const placement = trigger.follows
+        ? `follows \`${trigger.follows}\` `
+        : '';
+      await db // NOSONAR -- Ordered DDL shares one schema connection; overlays require their predecessors.
+        .execute(
+          `create trigger \`${trigger.name}\` ${trigger.timing} ${trigger.event}
+        on \`${trigger.table}\` for each row ${placement}${trigger.body}`,
+          {},
+          { wrappedConnection: connection }
+        );
     }
     return triggers.length;
   });
@@ -342,9 +347,7 @@ export async function prepareWaveHubConfiguration(
             await db.execute(
               `update ${source.table} s set
           s.hub_participation_config=coalesce(s.hub_participation_config,${configuration(source, 's', 'participation')}),
-          s.hub_voting_config=case when ${supportedStrategy('s.decisions_strategy')}
-            then json_insert(coalesce(s.hub_voting_config,${configuration(source, 's', 'voting')}),'$.decision_strategy',s.decisions_strategy)
-            else coalesce(s.hub_voting_config,${configuration(source, 's', 'voting')}) end
+          s.hub_voting_config=coalesce(s.hub_voting_config,${configuration(source, 's', 'voting')})
           where s.${source.key} in (:keys)`,
               { keys: selected.map((row) => row.row_key) },
               { wrappedConnection: connection }
@@ -353,7 +356,7 @@ export async function prepareWaveHubConfiguration(
         }
       );
       if (!rows.length) break;
-      after = rows[rows.length - 1].row_key;
+      after = rows.at(-1)!.row_key;
       await options.onBatch?.({ table: source.table, rows: rows.length });
       if (rows.length < batchSize) break;
     }
@@ -375,17 +378,17 @@ function parityFields(source: Source) {
     ...Object.entries(WAVE_HUB_VOTING_FIELDS).map(([column, field]) => ({
       field: column,
       mismatch: `not(json_extract(s.hub_voting_config,'$.${field}')<=>json_extract(${configuration(source, 's', 'voting')},'$.${field}'))`
-    }))
-  );
-  checks.push({
-    field: 'decisions_strategy',
-    mismatch: `not(${supportedStrategy('s.decisions_strategy')} and ${supportedStrategy(strategyValue('s'))}
+    })),
+    {
+      field: 'decisions_strategy',
+      mismatch: `not(${supportedStrategy('s.decisions_strategy')} and ${supportedStrategy(strategyValue('s'))}
       and coalesce(s.decisions_strategy,cast('null' as json))<=>coalesce(${strategyValue('s')},cast('null' as json)))`
-  });
-  checks.push({
-    field: 'credit_nfts',
-    mismatch: `not(json_extract(s.hub_voting_config,'$.credit_nfts')<=>${creditNfts(source, 's')})`
-  });
+    },
+    {
+      field: 'credit_nfts',
+      mismatch: `not(json_extract(s.hub_voting_config,'$.credit_nfts')<=>${creditNfts(source, 's')})`
+    }
+  );
   const owned = new Set<string>([
     ...Object.keys(WAVE_HUB_PARTICIPATION_FIELDS),
     ...Object.keys(WAVE_HUB_VOTING_FIELDS),
@@ -468,10 +471,10 @@ async function describeStrategyFailures(
     const check = parityFields(source).find(
       (candidate) => candidate.field === 'decisions_strategy'
     );
-    if (check)
-      shapes.push(
-        ...(await describeStrategyShapes(db, source, check.mismatch))
-      );
+    if (check) {
+      const found = await describeStrategyShapes(db, source, check.mismatch); // NOSONAR -- Bound failure-path scan pressure to one source at a time.
+      shapes.push(...found);
+    }
   }
   return shapes;
 }
@@ -488,11 +491,12 @@ export async function assertWaveHubConfigurationParity(
   }[] = [];
   for (const source of sources) {
     const checks = parityFields(source);
-    const rows = await db.execute<Record<string, number | string | null>>(
-      `select s.is_direct_message,count(*) as total,${checks.map((check, index) => `sum(${check.mismatch}) as f${index}`).join(',')}
+    const rows = await db // NOSONAR -- Bound aggregate scan pressure and preserve deterministic source ordering.
+      .execute<Record<string, number | string | null>>(
+        `select s.is_direct_message,count(*) as total,${checks.map((check, index) => `sum(${check.mismatch}) as f${index}`).join(',')}
        from ${source.table} s where ${eligible('s')} group by s.is_direct_message`,
-      {}
-    );
+        {}
+      );
     for (const row of rows) {
       counts[source.table === WAVES_TABLE ? 'waves' : 'archives'] += Number(
         row.total
@@ -540,11 +544,12 @@ export async function finalizeWaveHubConfigurationCapture(
       for (const trigger of [...installed].sort(
         (left, right) => order.get(right.name)! - order.get(left.name)!
       ))
-        await db.execute(
-          `drop trigger if exists \`${trigger.name}\``,
-          {},
-          { wrappedConnection: connection }
-        );
+        await db // NOSONAR -- Ordered DDL shares one connection; drop dependent overlays before predecessors.
+          .execute(
+            `drop trigger if exists \`${trigger.name}\``,
+            {},
+            { wrappedConnection: connection }
+          );
       return installed.length;
     }
   );
@@ -588,10 +593,11 @@ async function assertNativeConfigurationShapes(db: SqlExecutor) {
       source.table === WAVES_TABLE
         ? `not exists(select 1 from ${COMPETITIONS_TABLE} c where c.legacy_wave_id=s.id and c.legacy_wave_id=c.wave_id and c.storage_mode='NATIVE')`
         : '(s.hub_participation_config is not null or s.hub_voting_config is not null)';
-    const [row] = await db.execute<Record<string, number | string | null>>(
-      `select ${checks.map((check, index) => `sum(${check.mismatch}) as f${index}`).join(',')} from ${source.table} s where ${predicate}`,
-      {}
-    );
+    const [row] = await db // NOSONAR -- Validate one source at a time to bound aggregate scan pressure.
+      .execute<Record<string, number | string | null>>(
+        `select ${checks.map((check, index) => `sum(${check.mismatch}) as f${index}`).join(',')} from ${source.table} s where ${predicate}`,
+        {}
+      );
     checks.forEach((check, index) => {
       if (Number(row[`f${index}`]))
         errors.push({
