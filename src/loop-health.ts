@@ -7,6 +7,8 @@ export interface LoopHealthObservation {
     | 'decisions'
     | 'native_execution'
     | 'publication'
+    | 'dirty_refresh'
+    | 'full_refresh'
     | 'processing';
   pending: boolean;
   progressAt?: number;

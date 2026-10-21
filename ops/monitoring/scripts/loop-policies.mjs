@@ -57,6 +57,11 @@ function scheduleIntervals(event) {
 }
 
 function operationsFor(name) {
+  if (name === 'waveScoreRefreshLoop')
+    return {
+      operations: ['dirty_refresh', 'full_refresh'],
+      optionalOperations: ['full_refresh']
+    };
   if (name === 'delegationsLoop')
     return {
       operations: ['indexing', 'recalculation'],

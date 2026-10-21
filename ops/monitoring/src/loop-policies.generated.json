@@ -676,7 +676,11 @@
       "stallSeconds": 1200,
       "freshSeconds": 1020,
       "operations": [
-        "processing"
+        "dirty_refresh",
+        "full_refresh"
+      ],
+      "optionalOperations": [
+        "full_refresh"
       ]
     },
     {
@@ -1335,7 +1339,11 @@
       "stallSeconds": 1200,
       "freshSeconds": 1020,
       "operations": [
-        "processing"
+        "dirty_refresh",
+        "full_refresh"
+      ],
+      "optionalOperations": [
+        "full_refresh"
       ]
     },
     {

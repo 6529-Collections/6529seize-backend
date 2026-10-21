@@ -2003,8 +2003,15 @@ persists notification intent before enqueue and sends incident changes through
 the protected lane.
 Routine verified overlap has no incident or recovery. Missing business evidence
 produces explicit unconfirmed contention; invocation success is never a business
-recovery signal. Delegation checkpoint/stage observations and native decision/outbox
-surveys are the initial adapters. Other scheduled/queued workers retain their
+recovery signal. Initial adapters cover delegation checkpoint/stage observations,
+native decision/outbox surveys, and independent dirty/full Wave Score refreshes.
+Score refresh health reads persisted dirty request versions on the writer before
+and after work, including handled failures; attempted-wave counts do not prove
+progress. Full scans report committed work and confirmed continuation handoffs,
+carrying their original request time in a message attribute that preserves FIFO
+body deduplication. Dirty catch-up cannot clear a pending full scan. Waiting full
+messages retain their independent SQS age guard, and diagnostic failures leave
+health unconfirmed. Other scheduled/queued workers retain their
 independent error and queue protections while awaiting business adapters. No
 application schedules, timeouts, concurrency, memory or public API contracts
 change. See [processing-health policies and rollout](../ops/monitoring/README.md#background-processing-health).

@@ -547,6 +547,27 @@ remains unverified; that cannot clear an incident about business processing.
   Decision completion and publication are independent operations; this does not
   establish end-to-end claims-builder, push-delivery or announcement success after
   the outbox has handed work to another service. Those retain their own guards.
+- `waveScoreRefreshLoop`: independently observes `dirty_refresh` and optional
+  `full_refresh`. Bounded writer reads select the oldest persisted dirty version
+  before and after processing (including failure); an empty request table establishes
+  dirty catch-up. Attempted-wave counts and successful handler returns do not:
+  per-wave failures can be handled internally, and re-dirtied versions survive
+  processing. The existing one-minute fallback supplies automatic dirty recovery
+  even if a wakeup/continuation enqueue fails. Diagnostic failures or reads skipped
+  near the existing timeout leave the last observation unchanged, eventually stale.
+  Full scans report committed refresh work and remain pending until the scan ends;
+  successful continuation handoffs retain the original request time in a message
+  attribute, preserving the body and its FIFO deduplication identity. SQS inputs
+  can replay after failure; direct full
+  invocations report unknown recovery until a continuation is accepted, and
+  unavailable recovery if they fail. Dirty runs
+  never clear full-scan incidents. Full refreshes not yet started retain their
+  independent 30-minute SQS age guard; a completed scan is not proof that every
+  queued full request has drained. Both operations use the existing initial
+  600-second delay, 1,200-second stall and 1,020-second freshness budgets.
+  Verified bounded contention is silent, older pending work warns amber, and
+  stalled processing escalates red. The dirty DLQ, queue-age, Errors and OOM
+  guards remain independent.
 
 ### Rollout and rollback
 
@@ -560,12 +581,19 @@ No deployment is performed by the implementation PR. For each authorized environ
    The last updates only its error composite; it changes no execution settings.
    The shared native execution helper is also bundled by
    `waveLeaderboardSnapshotterLoop`; include that service to refresh its shared
-   helper implementation. No API, frontend, schema or migrations deployment is required.
+   helper implementation. Then deploy `waveScoreRefreshLoop` for dirty/full refresh
+   observations. No API, frontend, schema or migrations deployment is required.
 4. From natural traffic or an authorized controlled staging check, verify recent
-   observations for indexing and every decision operation, pending-work detection,
-   routine-overlap silence, amber/red escalation, and incident-backed recovery.
+   observations for indexing, every decision operation and dirty/full score refreshes,
+   pending-work detection, routine-overlap silence, amber/red escalation, and
+   incident-backed recovery.
    Confirm overdue decision/outbox observations against persisted state before
    claiming business-health acceptance. Missing telemetry remains unverified.
+   For score refreshes, compare dirty observations to persisted request rows, verify
+   handled per-wave failures stay pending, and verify a dirty success cannot clear
+   an unfinished full continuation. Confirm full continuation acceptance and
+   original request age, plus preserved SQS/DLQ/Error/OOM routes. Full refresh is
+   optional only while idle; a remembered pending full scan still escalates.
 
 Receiver rollout must precede source forwarding and producer changes. Before
 changing source routing, reconcile any already-ALARM worker throttle conditions.

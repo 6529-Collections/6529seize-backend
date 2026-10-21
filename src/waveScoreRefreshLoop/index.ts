@@ -17,6 +17,7 @@ import {
   waveScoreService
 } from '../api-serverless/src/waves/wave-score.service';
 import { randomUUID } from 'crypto';
+import { FullRefreshHealth, observeDirtyRefreshBacklog } from './loop-health';
 
 const logger = Logger.get('WAVE_SCORE_REFRESH_LOOP');
 const FULL_REFRESH_QUEUE_NAME = 'wave-score-refresh-start.fifo';
@@ -28,6 +29,17 @@ interface WaveScoreRefreshMessage {
   readonly batchSize?: number;
   readonly maxBatches?: number;
   readonly startAfterWaveId?: string;
+  readonly healthStartedAt?: number;
+  readonly automaticRetry?: boolean;
+}
+
+function healthStartedAt(value: unknown): number | undefined {
+  const seconds = Math.floor(Number(value) / 1000);
+  return Number.isSafeInteger(seconds) &&
+    seconds > 0 &&
+    seconds <= Math.floor(Date.now() / 1000)
+    ? seconds
+    : undefined;
 }
 
 function parsePositiveIntEnv(name: string): number | undefined {
@@ -107,9 +119,28 @@ function getMessages(event: unknown): WaveScoreRefreshMessage[] {
     'Records' in event &&
     Array.isArray((event as { Records?: unknown }).Records)
   ) {
-    return (event as { Records: { body?: unknown }[] }).Records.map((record) =>
-      parseMessageBody(String(record.body ?? '{}'))
-    );
+    return (
+      event as {
+        Records: {
+          body?: unknown;
+          eventSource?: string;
+          attributes?: { SentTimestamp?: string };
+          messageAttributes?: {
+            LoopHealthStartedAt?: { stringValue?: string };
+          };
+        }[];
+      }
+    ).Records.map((record) => {
+      const message = parseMessageBody(String(record.body ?? '{}'));
+      return {
+        ...message,
+        automaticRetry: record.eventSource === 'aws:sqs',
+        healthStartedAt:
+          healthStartedAt(
+            record.messageAttributes?.LoopHealthStartedAt?.stringValue
+          ) ?? healthStartedAt(record.attributes?.SentTimestamp)
+      };
+    });
   }
   if (!event || typeof event !== 'object') {
     return [{}];
@@ -149,11 +180,13 @@ function resolveRefreshOptions(message: WaveScoreRefreshMessage) {
 async function enqueueFullRefreshContinuation({
   batchSize,
   maxBatches,
-  startAfterWaveId
+  startAfterWaveId,
+  startedAt
 }: {
   batchSize?: number;
   maxBatches: number;
   startAfterWaveId: string;
+  startedAt: number;
 }) {
   await sqs.sendToQueueName({
     queueName: FULL_REFRESH_QUEUE_NAME,
@@ -163,6 +196,13 @@ async function enqueueFullRefreshContinuation({
       ...(batchSize ? { batchSize } : {}),
       maxBatches,
       startAfterWaveId
+    },
+    // FIFO content-based deduplication hashes the body, not message attributes.
+    messageAttributes: {
+      LoopHealthStartedAt: {
+        DataType: 'Number',
+        StringValue: String(startedAt * 1000)
+      }
     }
   });
 }
@@ -187,13 +227,54 @@ async function enqueueDirtyRefreshContinuation({
   });
 }
 
-const waveScoreRefreshHandler: Handler = async (event) => {
+async function refreshFullScores(
+  message: WaveScoreRefreshMessage,
+  options: ReturnType<typeof resolveRefreshOptions>,
+  timer: Timer
+): Promise<void> {
+  const health = new FullRefreshHealth(
+    message.healthStartedAt ?? Math.floor(Date.now() / 1000),
+    message.automaticRetry === true
+  );
+  try {
+    const result = await waveScoreService.refreshAllWaveScores(options, {
+      timer
+    });
+    health.committed(result.waves);
+    logger.info(`Refreshed wave scores ${JSON.stringify(result)}`);
+    if (result.hasMore && result.lastWaveId) {
+      await enqueueFullRefreshContinuation({
+        batchSize: options.batchSize,
+        maxBatches: options.maxBatches,
+        startAfterWaveId: result.lastWaveId,
+        startedAt: health.startedAt
+      });
+      health.continued();
+      logger.info(
+        `Queued wave score refresh continuation after ${result.lastWaveId}`
+      );
+    } else if (!result.hasMore) health.completed();
+  } catch (error) {
+    health.failed();
+    throw error;
+  }
+}
+
+const waveScoreRefreshHandler: Handler = async (event, context) => {
+  const observeDirty = async () => {
+    if (
+      !context?.getRemainingTimeInMillis ||
+      context.getRemainingTimeInMillis() > 5000
+    )
+      await observeDirtyRefreshBacklog();
+  };
   await doInDbContext(
     async () => {
       for (const message of getMessages(event)) {
         const timer = new Timer('WAVE_SCORE_REFRESH_LOOP');
         try {
           const options = resolveRefreshOptions(message);
+          await observeDirty();
           if (message.mode === 'DIRTY') {
             const result = await waveScoreService.refreshDirtyWaveScores(
               options,
@@ -212,25 +293,10 @@ const waveScoreRefreshHandler: Handler = async (event) => {
               logger.info(`Queued dirty wave score refresh continuation`);
             }
           } else {
-            const result = await waveScoreService.refreshAllWaveScores(
-              options,
-              {
-                timer
-              }
-            );
-            logger.info(`Refreshed wave scores ${JSON.stringify(result)}`);
-            if (result.hasMore && result.lastWaveId) {
-              await enqueueFullRefreshContinuation({
-                batchSize: options.batchSize,
-                maxBatches: options.maxBatches,
-                startAfterWaveId: result.lastWaveId
-              });
-              logger.info(
-                `Queued wave score refresh continuation after ${result.lastWaveId}`
-              );
-            }
+            await refreshFullScores(message, options, timer);
           }
         } finally {
+          await observeDirty();
           logger.info(`Finished executing ${timer.getReport()}`);
         }
       }

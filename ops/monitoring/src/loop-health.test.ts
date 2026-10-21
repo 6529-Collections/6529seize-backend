@@ -306,3 +306,38 @@ test('empty policy inventories return a safe contention-only assessment', () => 
     'contention_cleared'
   );
 });
+
+test('wave score overlap is silent only with fresh dirty evidence and no stalled full scan', () => {
+  const scorePolicy = {
+    ...policy,
+    service: 'waveScoreRefreshLoop',
+    operations: ['dirty_refresh', 'full_refresh'],
+    optionalOperations: ['full_refresh']
+  };
+  const dirty = { ...observation, operation: 'dirty_refresh', pending: false };
+  assert.equal(assessLoop(scorePolicy, [], true, now).level, 'amber');
+  assert.equal(assessLoop(scorePolicy, [dirty], true, now).level, 'healthy');
+  const full = {
+    ...observation,
+    operation: 'full_refresh',
+    oldestPendingAt: now - 700
+  };
+  assert.equal(
+    assessLoop(scorePolicy, [dirty, full], true, now).reason,
+    'delayed'
+  );
+  assert.equal(
+    assessLoop(
+      scorePolicy,
+      [dirty, { ...full, progressAt: now - 1201 }],
+      false,
+      now
+    ).reason,
+    'stalled'
+  );
+  assert.equal(
+    assessLoop(scorePolicy, [dirty, { ...full, pending: false }], true, now)
+      .level,
+    'healthy'
+  );
+});

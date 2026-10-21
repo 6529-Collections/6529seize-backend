@@ -109,5 +109,10 @@ test('generated data matches both environments and separates scan budgets from k
     assert.equal(policy.freshSeconds, 1020);
     assert.equal(policy.operationBudgets.decisions.freshSeconds, 120);
     assert.equal(policy.operationBudgets.publication.stallSeconds, 3900);
+    const score = generated[env].find(
+      (p) => p.service === 'waveScoreRefreshLoop'
+    );
+    assert.deepEqual(score.operations, ['dirty_refresh', 'full_refresh']);
+    assert.deepEqual(score.optionalOperations, ['full_refresh']);
   }
 });
