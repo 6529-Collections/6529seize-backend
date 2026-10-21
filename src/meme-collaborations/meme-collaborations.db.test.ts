@@ -5,6 +5,14 @@ import {
   MEME_COLLABORATIONS_TABLE,
   MEME_COLLABORATION_INVITATIONS_TABLE
 } from '@/constants';
+import {
+  COMPETITIONS_TABLE,
+  COMPETITION_CAPABILITIES_TABLE,
+  COMPETITION_DECISION_WINNERS_TABLE,
+  COMPETITION_ENTRIES_TABLE
+} from '@/constants';
+import { nativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
+import { legacyCompetitionId } from '@/competitions/competition-id';
 import { PROFILES_TABLE } from '@/constants';
 import { DropType } from '@/entities/IDrop';
 import { env } from '@/env';
@@ -14,6 +22,7 @@ import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
+import { WaveType } from '@/entities/IWave';
 import { userNotifier } from '@/notifications/user.notifier';
 import { MemeCollaborationsDb } from './meme-collaborations.db';
 import {
@@ -23,6 +32,11 @@ import {
 } from './meme-collaborations.service';
 
 const originalGetStringOrNull = env.getStringOrNull.bind(env);
+const mainStageWave = aWave(
+  { type: WaveType.RANK, participation_terms: 'Terms' },
+  { id: 'wave', name: 'Main Stage' }
+);
+const mainStageCompetitionId = legacyCompetitionId(mainStageWave.id);
 const wallet = (index: number) => `0x${String(index).padStart(40, '0')}`;
 const artworkModel: CreateOrUpdateDropModel = {
   drop_id: null,
@@ -104,12 +118,37 @@ describeWithSeed(
         })
       )
     ),
-    withWaves([
-      aWave(
-        { participation_terms: 'Terms' },
-        { id: 'wave', name: 'Main Stage' }
-      )
-    ]),
+    withWaves([mainStageWave]),
+    {
+      table: COMPETITIONS_TABLE,
+      rows: [nativeOriginalPrimaryFixture(mainStageWave)]
+    },
+    {
+      table: COMPETITION_CAPABILITIES_TABLE,
+      rows: [
+        {
+          capability: 'MAIN_STAGE',
+          competition_id: mainStageCompetitionId,
+          wave_id: 'wave',
+          assigned_at: 0
+        }
+      ]
+    },
+    {
+      table: COMPETITION_ENTRIES_TABLE,
+      rows: [
+        {
+          id: 'main-stage-entry',
+          competition_id: mainStageCompetitionId,
+          wave_id: 'wave',
+          drop_id: 'drop',
+          submitter_id: 'A',
+          status: 'ACTIVE',
+          config_version: 1,
+          submitted_at: 1
+        }
+      ]
+    },
     {
       table: DROPS_TABLE,
       rows: [
@@ -128,6 +167,20 @@ describeWithSeed(
     { table: MEME_COLLABORATION_INVITATIONS_TABLE, rows: invites }
   ],
   () => {
+    it('uses native membership for CHAT-backed original submissions and excludes inactive entries', async () => {
+      const db = new MemeCollaborationsDb(() => sqlExecutor);
+      await sqlExecutor.execute(
+        `update ${DROPS_TABLE} set drop_type='CHAT' where id='drop'`
+      );
+      expect(await db.activeMainStageDrop('drop', {})).toMatchObject({
+        competition_id: mainStageCompetitionId,
+        author_id: 'A'
+      });
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id='main-stage-entry'`
+      );
+      expect(await db.activeMainStageDrop('drop', {})).toBeNull();
+    });
     it('retains cancelled attempts, reinvites with a fresh ID, and rejects old consent', async () => {
       const db = new MemeCollaborationsDb(() => sqlExecutor);
       const service = new MemeCollaborationsService(db);
@@ -388,6 +441,9 @@ describeWithSeed(
 
     it('lists accepted submissions and wins on both artist profiles without listing pending invitations', async () => {
       jest.spyOn(env, 'getStringOrNull').mockReturnValue('wave');
+      await sqlExecutor.execute(
+        `update ${DROPS_TABLE} set drop_type='CHAT' where id='drop'`
+      );
       await service.respond(
         'drop',
         invites[0].id,
@@ -410,9 +466,15 @@ describeWithSeed(
       });
       await db.query(
         'winner',
-        `update ${DROPS_TABLE} set drop_type='WINNER' where id='drop'`,
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WINNER',decision_id='decision' where id='main-stage-entry'`,
         {},
         {}
+      );
+      await sqlExecutor.execute(
+        `insert into ${COMPETITION_DECISION_WINNERS_TABLE}
+        (decision_id,competition_id,entry_id,\`rank\`,final_rating,created_at)
+        values ('decision',:competitionId,'main-stage-entry',1,100,1000)`,
+        { competitionId: mainStageCompetitionId }
       );
       expect(
         await identitiesDb.getActiveMainStageDropIds(['A', 'B', 'C'], {})

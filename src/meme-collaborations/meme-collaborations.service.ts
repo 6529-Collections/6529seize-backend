@@ -7,6 +7,7 @@ import { env } from '@/env';
 import { competitionMainStageRepository } from '@/competitions/competition-main-stage.repository';
 import { createHash, randomUUID } from 'node:crypto';
 import { AuthenticationContext } from '@/auth-context';
+import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import {
   DROPS_TABLE,
   DROP_METADATA_TABLE,
@@ -391,7 +392,7 @@ export class MemeCollaborationsService {
       visibility_group_id: string | null;
     }>(
       'wave',
-      `select participation_terms, visibility_group_id from ${WAVES_TABLE} where id=:id`,
+      `select participation_terms, visibility_group_id from ${legacyGetView(WAVES_TABLE)} where id=:id`,
       { id: model.wave_id },
       ctx
     );

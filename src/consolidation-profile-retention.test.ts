@@ -4,7 +4,7 @@ import { IdentitiesService } from '@/api/identities/identities.service';
 import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
 import { identitiesDb } from '@/identities/identities.db';
 import { IdentityConsolidationEffects, ProfileIdGenerator } from '@/identity';
-import { dropsDb } from '@/drops/drops.db';
+import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
 import { profilesDb } from '@/profiles/profiles.db';
 import { profilesService } from '@/profiles/profiles.service';
 import { ConnectionWrapper, setSqlExecutor, SqlExecutor } from '@/sql-executor';
@@ -116,7 +116,7 @@ describe('simultaneous consolidation split and merge profile retention', () => {
           id === 'alicePID' ? aliceProfile : bobProfile
         );
       jest
-        .spyOn(dropsDb, 'findIdentityNominationWaveIdsByProfileIds')
+        .spyOn(competitionEntryRepository, 'findNominationCompetitionIds')
         .mockResolvedValue([]);
       const merge = jest
         .spyOn(profilesService, 'mergeProfileSet')

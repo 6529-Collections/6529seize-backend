@@ -1,0 +1,149 @@
+{
+  "revision": "f3c959853",
+  "source": "src/competitions/legacy-competition-get-facade.ts",
+  "source_sha256": "c954319262071b5a50cc5415dd00b9658352242f00a985daaec7946acbe91800",
+  "native_primary": "(c.storage_mode='NATIVE' or exists(select 1 from competition_legacy_mirror_permits p where p.competition_id=c.id and p.connection_id=connection_id() and p.depth=-1)) and c.legacy_wave_id=c.wave_id",
+  "wave_fields": {
+    "name": "c.title",
+    "updated_at": "case when w.updated_at is null and c.updated_at=c.created_at then null else c.updated_at end",
+    "type": "c.type",
+    "participation_group_id": "nullif(json_unquote(json_extract(c.participation_config, '$.group_id')), 'null')",
+    "participation_signature_required": "case nullif(json_unquote(json_extract(c.participation_config, '$.signature_required')), 'null') when 'true' then 1 when 'false' then 0 else cast(nullif(json_unquote(json_extract(c.participation_config, '$.signature_required')), 'null') as signed) end",
+    "participation_max_applications_per_participant": "cast(nullif(json_unquote(json_extract(c.participation_config, '$.max_entries_per_participant')), 'null') as signed)",
+    "participation_required_metadata": "if(json_type(json_extract(c.participation_config, '$.required_metadata'))='NULL', null, json_extract(c.participation_config, '$.required_metadata'))",
+    "participation_required_media": "if(json_type(json_extract(c.participation_config, '$.required_media'))='NULL', null, json_extract(c.participation_config, '$.required_media'))",
+    "submission_type": "nullif(json_unquote(json_extract(c.participation_config, '$.submission_type')), 'null')",
+    "identity_submission_strategy": "nullif(json_unquote(json_extract(c.participation_config, '$.identity_submission_strategy')), 'null')",
+    "identity_submission_duplicates": "nullif(json_unquote(json_extract(c.participation_config, '$.identity_submission_duplicates')), 'null')",
+    "participation_period_start": "c.participation_starts_at",
+    "participation_period_end": "c.participation_ends_at",
+    "participation_terms": "nullif(json_unquote(json_extract(c.participation_config, '$.terms')), 'null')",
+    "voting_group_id": "nullif(json_unquote(json_extract(c.voting_config, '$.group_id')), 'null')",
+    "voting_signature_required": "case nullif(json_unquote(json_extract(c.voting_config, '$.signature_required')), 'null') when 'true' then 1 when 'false' then 0 else cast(nullif(json_unquote(json_extract(c.voting_config, '$.signature_required')), 'null') as signed) end",
+    "voting_credit_type": "nullif(json_unquote(json_extract(c.voting_config, '$.credit_type')), 'null')",
+    "voting_credit_scope": "nullif(json_unquote(json_extract(c.voting_config, '$.credit_scope')), 'null')",
+    "voting_credit_category": "nullif(json_unquote(json_extract(c.voting_config, '$.credit_category')), 'null')",
+    "voting_credit_creditor": "nullif(json_unquote(json_extract(c.voting_config, '$.credit_creditor')), 'null')",
+    "voting_period_start": "c.voting_starts_at",
+    "voting_period_end": "c.voting_ends_at",
+    "max_votes_per_identity_to_drop": "cast(nullif(json_unquote(json_extract(c.voting_config, '$.max_votes_per_identity_to_entry')), 'null') as signed)",
+    "forbid_negative_votes": "case nullif(json_unquote(json_extract(c.voting_config, '$.forbid_negative_votes')), 'null') when 'true' then 1 when 'false' then 0 else cast(nullif(json_unquote(json_extract(c.voting_config, '$.forbid_negative_votes')), 'null') as signed) end",
+    "decisions_strategy": "if(json_type(json_extract(c.decision_config, '$.strategy'))='NULL', null, json_extract(c.decision_config, '$.strategy'))",
+    "next_decision_time": "cast(nullif(json_unquote(json_extract(c.decision_config, '$.next_decision_time')), 'null') as signed)",
+    "winning_min_threshold": "cast(nullif(json_unquote(json_extract(c.decision_config, '$.winning_min_threshold')), 'null') as signed)",
+    "winning_max_threshold": "cast(nullif(json_unquote(json_extract(c.decision_config, '$.winning_max_threshold')), 'null') as signed)",
+    "winning_threshold_min_duration_ms": "cast(nullif(json_unquote(json_extract(c.decision_config, '$.winning_threshold_min_duration_ms')), 'null') as signed)",
+    "max_winners": "cast(nullif(json_unquote(json_extract(c.decision_config, '$.max_winners')), 'null') as signed)",
+    "time_lock_ms": "cast(nullif(json_unquote(json_extract(c.decision_config, '$.time_lock_ms')), 'null') as signed)"
+  },
+  "drop_type": "case when e.status='WINNER' then 'WINNER' when e.status='ACTIVE' then 'PARTICIPATORY' when e.status in ('WITHDRAWN','DISQUALIFIED') then 'CHAT' when d.drop_type='COMPETITION' then 'CHAT' else d.drop_type end",
+  "definitions": {
+    "drop_ranks": {
+      "from": "competition_entries e join competitions c on c.id=e.competition_id and (c.storage_mode='NATIVE' or exists(select 1 from competition_legacy_mirror_permits p where p.competition_id=c.id and p.connection_id=connection_id() and p.depth=-1)) and c.legacy_wave_id=c.wave_id join competition_entry_runtime r on r.entry_id=e.id and r.competition_id=c.id where ((e.status='ACTIVE' and (r.last_increased_at is not null or r.real_time_rating<>0)) or (e.status='WINNER' and r.last_increased_at is not null))",
+      "fields": {
+        "drop_id": "e.drop_id",
+        "wave_id": "c.wave_id",
+        "vote": "r.real_time_rating",
+        "last_increased": "coalesce(r.last_increased_at,e.submitted_at)"
+      },
+      "ownership": ""
+    },
+    "drop_voter_states": {
+      "from": "competition_entries e join competitions c on c.id=e.competition_id and (c.storage_mode='NATIVE' or exists(select 1 from competition_legacy_mirror_permits p where p.competition_id=c.id and p.connection_id=connection_id() and p.depth=-1)) and c.legacy_wave_id=c.wave_id join competition_votes v on v.entry_id=e.id and v.competition_id=c.id",
+      "fields": {
+        "drop_id": "e.drop_id",
+        "wave_id": "c.wave_id",
+        "voter_id": "v.voter_profile_id",
+        "votes": "v.value"
+      },
+      "ownership": ""
+    },
+    "wave_leaderboard_entries": {
+      "from": "competition_entries e join competitions c on c.id=e.competition_id and (c.storage_mode='NATIVE' or exists(select 1 from competition_legacy_mirror_permits p where p.competition_id=c.id and p.connection_id=connection_id() and p.depth=-1)) and c.legacy_wave_id=c.wave_id join competition_leaderboard_entries lb on lb.entry_id=e.id and lb.competition_id=c.id left join competition_entry_runtime r on r.entry_id=e.id and r.competition_id=c.id where e.status='ACTIVE' and (exists(select 1 from wave_leaderboard_entries original where original.drop_id=e.drop_id and original.wave_id=c.wave_id) or (cast(json_unquote(json_extract(c.decision_config,'$.time_lock_ms')) as signed)>0 and lb.updated_at>e.submitted_at))",
+      "fields": {
+        "drop_id": "e.drop_id",
+        "wave_id": "c.wave_id",
+        "vote": "lb.rating",
+        "vote_on_decision_time": "coalesce(lb.decision_rating,lb.rating)",
+        "timestamp": "coalesce(lb.ordering_time,r.last_increased_at,e.submitted_at)",
+        "over_threshold_since_ms": "r.over_threshold_since"
+      },
+      "ownership": "and exists(select 1 from competition_entries e where e.competition_id=c.id and e.drop_id=s.drop_id and e.status='ACTIVE')"
+    },
+    "wave_decisions": {
+      "from": "competitions c join competition_decisions d on d.competition_id=c.id where (c.storage_mode='NATIVE' or exists(select 1 from competition_legacy_mirror_permits p where p.competition_id=c.id and p.connection_id=connection_id() and p.depth=-1)) and c.legacy_wave_id=c.wave_id and d.status='COMPLETED'",
+      "fields": {
+        "wave_id": "c.wave_id",
+        "decision_time": "d.scheduled_at"
+      },
+      "ownership": ""
+    },
+    "wave_decision_winner_drops": {
+      "from": "competitions c join competition_decision_winners win on win.competition_id=c.id join competition_decisions d on d.competition_id=c.id and d.id=win.decision_id left join competition_entries e on e.id=win.entry_id and e.competition_id=c.id where (c.storage_mode='NATIVE' or exists(select 1 from competition_legacy_mirror_permits p where p.competition_id=c.id and p.connection_id=connection_id() and p.depth=-1)) and c.legacy_wave_id=c.wave_id and coalesce(win.legacy_drop_id,e.drop_id) is not null",
+      "fields": {
+        "wave_id": "c.wave_id",
+        "decision_time": "d.scheduled_at",
+        "drop_id": "coalesce(win.legacy_drop_id,e.drop_id)",
+        "ranking": "cast(win.rank as double)",
+        "final_vote": "win.final_rating",
+        "prizes": "coalesce((select json_arrayagg(a.award) over(order by a.outcome_position,a.id rows between unbounded preceding and unbounded following) from competition_outcome_awards a where a.competition_id=c.id and a.decision_id=d.id and a.entry_id=win.entry_id limit 1),json_array())"
+      },
+      "ownership": ""
+    },
+    "wave_outcomes": {
+      "from": "competitions c join competition_outcomes o on o.competition_id=c.id where (c.storage_mode='NATIVE' or exists(select 1 from competition_legacy_mirror_permits p where p.competition_id=c.id and p.connection_id=connection_id() and p.depth=-1)) and c.legacy_wave_id=c.wave_id",
+      "fields": {
+        "wave_id": "c.wave_id",
+        "wave_outcome_position": "o.position",
+        "type": "o.type",
+        "subtype": "o.subtype",
+        "description": "o.description",
+        "credit": "o.credit",
+        "rep_category": "o.rep_category",
+        "amount": "o.amount"
+      },
+      "ownership": ""
+    },
+    "wave_outcome_distribution_items": {
+      "from": "competitions c join competition_outcomes o on o.competition_id=c.id join competition_outcome_distribution_items i on i.outcome_id=o.id and i.competition_id=c.id where (c.storage_mode='NATIVE' or exists(select 1 from competition_legacy_mirror_permits p where p.competition_id=c.id and p.connection_id=connection_id() and p.depth=-1)) and c.legacy_wave_id=c.wave_id",
+      "fields": {
+        "wave_id": "c.wave_id",
+        "wave_outcome_position": "o.position",
+        "wave_outcome_distribution_item_position": "i.position",
+        "description": "i.description",
+        "amount": "i.amount"
+      },
+      "ownership": "and exists(select 1 from competition_outcomes o where o.competition_id=c.id and o.position=s.wave_outcome_position)"
+    },
+    "winner_drop_voter_votes": {
+      "from": "competition_entries e join competitions c on c.id=e.competition_id and (c.storage_mode='NATIVE' or exists(select 1 from competition_legacy_mirror_permits p where p.competition_id=c.id and p.connection_id=connection_id() and p.depth=-1)) and c.legacy_wave_id=c.wave_id join competition_winner_votes v on v.entry_id=e.id and v.competition_id=c.id and v.decision_id=e.decision_id",
+      "fields": {
+        "wave_id": "c.wave_id",
+        "drop_id": "e.drop_id",
+        "voter_id": "v.voter_profile_id",
+        "votes": "v.value"
+      },
+      "ownership": ""
+    },
+    "waves_decision_pauses": {
+      "from": "competitions c join competition_pauses p on p.competition_id=c.id where (c.storage_mode='NATIVE' or exists(select 1 from competition_legacy_mirror_permits p where p.competition_id=c.id and p.connection_id=connection_id() and p.depth=-1)) and c.legacy_wave_id=c.wave_id and p.legacy_source_id is not null",
+      "fields": {
+        "id": "p.legacy_source_id",
+        "wave_id": "c.wave_id",
+        "start_time": "p.start_time",
+        "end_time": "p.end_time",
+        "reason": "p.reason"
+      },
+      "ownership": ""
+    },
+    "wave_voting_credit_nfts": {
+      "from": "competitions c join json_table(c.voting_config,'$.credit_nfts[*]' columns(contract varchar(50) path '$.contract',token_id bigint path '$.token_id')) n where (c.storage_mode='NATIVE' or exists(select 1 from competition_legacy_mirror_permits p where p.competition_id=c.id and p.connection_id=connection_id() and p.depth=-1)) and c.legacy_wave_id=c.wave_id",
+      "fields": {
+        "wave_id": "c.wave_id",
+        "contract": "n.contract",
+        "token_id": "n.token_id"
+      },
+      "ownership": ""
+    }
+  }
+}

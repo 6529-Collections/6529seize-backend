@@ -42,7 +42,7 @@ it('rejects edit-time invitation changes before querying or mutating collaborati
   );
 });
 
-it('restricts invitation eligibility to active legacy or designated native Main Stage entries and excludes selected legacy drops', async () => {
+it('uses active designated native Main Stage membership, including transferred original submissions, independently of stored drop type', async () => {
   const execute = jest.fn().mockResolvedValue([]);
   const db = new MemeCollaborationsDb(
     () => ({ execute }) as unknown as SqlExecutor
@@ -52,8 +52,9 @@ it('restricts invitation eligibility to active legacy or designated native Main 
   expect(sql).toContain("cap.capability = 'MAIN_STAGE'");
   expect(sql).toContain("entry.status = 'ACTIVE'");
   expect(sql).toContain("competition.lifecycle = 'PUBLISHED'");
-  expect(sql).toContain("d.drop_type='PARTICIPATORY'");
-  expect(sql).toContain('winner.drop_id=d.id');
+  expect(sql).toContain('native_entry.drop_id=d.id');
+  expect(sql).not.toContain('d.drop_type');
+  expect(sql).not.toContain('wave_decision_winner_drops');
   expect(execute.mock.calls[0][2]).toEqual({ forcePool: DbPoolName.WRITE });
 });
 

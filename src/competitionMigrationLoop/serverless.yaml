@@ -9,8 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs22.x
-  # Complete parity hashes are CPU-heavy; avoid a sub-vCPU allocation while
-  # retaining the existing five-second ownership fence and SQL deadlines.
+  # Retain the existing allocation and resources until infrastructure retirement.
   memorySize: 2048
   timeout: 900
   architecture: arm64

@@ -87,6 +87,7 @@ export class ApiCurationDrop {
     'hide_link_preview': boolean;
     'poll'?: ApiDropPoll;
     'nft_links'?: Array<ApiDropNftLink>;
+    'collaborators'?: Array<ApiMemeCollaboratorProfile>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -313,6 +314,12 @@ export class ApiCurationDrop {
             "name": "nft_links",
             "baseName": "nft_links",
             "type": "Array<ApiDropNftLink>",
+            "format": ""
+        },
+        {
+            "name": "collaborators",
+            "baseName": "collaborators",
+            "type": "Array<ApiMemeCollaboratorProfile>",
             "format": ""
         }    ];
 

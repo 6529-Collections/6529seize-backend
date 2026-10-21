@@ -1,11 +1,9 @@
-import { env } from '@/env';
 import { formatMemeArtistNames } from './meme-collaboration-credit';
 import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
 import {
   MEME_COLLABORATIONS_TABLE,
   MEME_COLLABORATION_INVITATIONS_TABLE,
   DROPS_TABLE,
-  WAVES_DECISION_WINNER_DROPS_TABLE,
   PROFILES_TABLE
 } from '@/constants';
 import {
@@ -76,17 +74,14 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
       id: string;
       author_id: string;
       wave_id: string;
-      competition_id: string | null;
+      competition_id: string;
     }>(
       'activeMainStageDrop',
       `select d.id, d.author_id, d.wave_id, native_entry.competition_id
        from ${DROPS_TABLE} d
-       left join (${nativeMainStageEntriesSource('ACTIVE')}) native_entry on native_entry.drop_id=d.id
-       where d.id=:dropId and (
-         (d.wave_id=:mainStageWaveId and d.drop_type='PARTICIPATORY'
-           and not exists (select 1 from ${WAVES_DECISION_WINNER_DROPS_TABLE} winner where winner.drop_id=d.id))
-         or (d.drop_type='COMPETITION' and native_entry.id is not null))`,
-      { dropId, mainStageWaveId: env.getStringOrNull('MAIN_STAGE_WAVE_ID') },
+       join (${nativeMainStageEntriesSource('ACTIVE')}) native_entry on native_entry.drop_id=d.id
+       where d.id=:dropId`,
+      { dropId },
       ctx,
       DbPoolName.WRITE
     );

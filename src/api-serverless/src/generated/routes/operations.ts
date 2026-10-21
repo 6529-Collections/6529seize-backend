@@ -3503,7 +3503,10 @@ export interface ListCompetitionLeaderboardV3PathParams {
 }
 
 export interface ListCompetitionLeaderboardV3Query {
-  "sort"?: "rating" | "real_time_rating" | "submitted_at" | "trend";
+  "sort"?: "rating" | "real_time_rating" | "submitted_at" | "trend" | "price";
+  "price_currency"?: string;
+  "min_price"?: number;
+  "max_price"?: number;
   "direction"?: string;
   "cursor"?: string;
   "limit"?: number;

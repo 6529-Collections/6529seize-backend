@@ -2,7 +2,6 @@ import * as sentryContext from '../sentry.context';
 import { Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
-import { waveDecisionsService } from '../waves/wave-decisions.service';
 import { Timer } from '../time';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { competitionEventDispatcher } from '@/competitions/competition-event-dispatcher';
@@ -16,9 +15,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
       const timer = new Timer('WAVE_DECISION_EXECUTION_LOOP');
       try {
         await runCompetitionWorkerTasks([
-          // Main Stage and other existing waves must not wait behind the
-          // potentially unbounded native competition scan.
-          () => waveDecisionsService.createMissingDecisionsForAllWaves(timer),
           () =>
             nativeCompetitionRuntimeService.processDueCompetitions({ timer }),
           () => competitionEventDispatcher.dispatchPending({ timer })

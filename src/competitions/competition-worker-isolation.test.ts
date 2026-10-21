@@ -7,14 +7,6 @@ jest.mock('@/sentry.context', () => ({
 jest.mock('@/logging', () => ({
   Logger: { get: () => ({ info: jest.fn() }) }
 }));
-jest.mock('@/waves/wave-decisions.service', () => ({
-  waveDecisionsService: { createMissingDecisionsForAllWaves: jest.fn() }
-}));
-jest.mock('@/waves/wave-leaderboard-calculation.service', () => ({
-  waveLeaderboardCalculationService: {
-    refreshLeaderboardEntriesForDropsInNeed: jest.fn()
-  }
-}));
 jest.mock('./native-competition-runtime.service', () => ({
   nativeCompetitionRuntimeService: {
     processDueCompetitions: jest.fn(),
@@ -27,83 +19,33 @@ jest.mock('./competition-event-dispatcher', () => ({
 
 import { handler as decisionHandler } from '@/waveDecisionExecutionLoop';
 import { handler as leaderboardHandler } from '@/waveLeaderboardSnapshotterLoop';
-import { waveDecisionsService } from '@/waves/wave-decisions.service';
-import { waveLeaderboardCalculationService } from '@/waves/wave-leaderboard-calculation.service';
 import { nativeCompetitionRuntimeService } from './native-competition-runtime.service';
 import { competitionEventDispatcher } from './competition-event-dispatcher';
 
-const workers = [
-  {
-    name: 'decisions',
-    invoke: decisionHandler as unknown as () => Promise<void>,
-    legacy: jest.mocked(waveDecisionsService.createMissingDecisionsForAllWaves),
-    native: jest.mocked(nativeCompetitionRuntimeService.processDueCompetitions)
-  },
-  {
-    name: 'leaderboards',
-    invoke: leaderboardHandler as unknown as () => Promise<void>,
-    legacy: jest.mocked(
-      waveLeaderboardCalculationService.refreshLeaderboardEntriesForDropsInNeed
-    ),
-    native: jest.mocked(
-      nativeCompetitionRuntimeService.refreshNativeLeaderboards
-    )
-  }
-];
+beforeEach(() => jest.resetAllMocks());
 
-describe.each(workers)(
-  'Main Stage isolation: $name',
-  ({ invoke, legacy, native }) => {
-    beforeEach(() => {
-      jest.resetAllMocks();
-      legacy.mockResolvedValue(undefined);
-      native.mockResolvedValue(undefined);
-    });
+it('keeps the decision unit processing native work and pending durable effects', async () => {
+  await decisionHandler({} as never, {} as never, jest.fn());
+  expect(
+    nativeCompetitionRuntimeService.processDueCompetitions
+  ).toHaveBeenCalledTimes(1);
+  expect(competitionEventDispatcher.dispatchPending).toHaveBeenCalledTimes(1);
+});
 
-    it('finishes legacy work before starting a slow native scan', async () => {
-      let finishNative!: () => void;
-      let nativeStarted!: () => void;
-      const pendingNative = new Promise<void>((resolve) => {
-        finishNative = resolve;
-      });
-      const started = new Promise<void>((resolve) => {
-        nativeStarted = resolve;
-      });
-      const finishedLegacy = jest.fn();
-      legacy.mockImplementation(async () => {
-        finishedLegacy();
-      });
-      native.mockImplementation(() => {
-        nativeStarted();
-        return pendingNative;
-      });
+it('still drains pending effects when native decision processing fails', async () => {
+  const failure = new Error('decision failed');
+  jest
+    .mocked(nativeCompetitionRuntimeService.processDueCompetitions)
+    .mockRejectedValue(failure);
+  await expect(
+    decisionHandler({} as never, {} as never, jest.fn())
+  ).rejects.toBe(failure);
+  expect(competitionEventDispatcher.dispatchPending).toHaveBeenCalledTimes(1);
+});
 
-      const running = invoke();
-      await started;
-      try {
-        expect(finishedLegacy).toHaveBeenCalledTimes(1);
-      } finally {
-        finishNative();
-        await running;
-      }
-    });
-
-    it('keeps native processing available after a legacy failure', async () => {
-      const failure = new Error('legacy failure');
-      legacy.mockRejectedValue(failure);
-      await expect(invoke()).rejects.toBe(failure);
-      expect(native).toHaveBeenCalledTimes(1);
-    });
-
-    it('preserves completed legacy work and reports native failure', async () => {
-      const failure = new Error('native failure');
-      native.mockRejectedValue(failure);
-      await expect(invoke()).rejects.toBe(failure);
-      expect(legacy).toHaveBeenCalledTimes(1);
-      if (invoke === workers[0].invoke)
-        expect(
-          competitionEventDispatcher.dispatchPending
-        ).toHaveBeenCalledTimes(1);
-    });
-  }
-);
+it('keeps the leaderboard unit refreshing native leaderboards', async () => {
+  await leaderboardHandler({} as never, {} as never, jest.fn());
+  expect(
+    nativeCompetitionRuntimeService.refreshNativeLeaderboards
+  ).toHaveBeenCalledTimes(1);
+});

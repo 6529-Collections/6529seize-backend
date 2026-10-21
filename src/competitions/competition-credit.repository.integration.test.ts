@@ -24,6 +24,7 @@ import { competitionCreditRepository } from './competition-credit.repository';
 const profileId = 'budget-voter';
 const waveId = 'shared-wave';
 const nativeId = 'budget-native';
+const originalPrimaryId = 'budget-original-primary';
 const entry = {
   id: 'entry-a',
   drop_id: 'drop-a',
@@ -89,10 +90,39 @@ const nativeEntries = [
   }
 ];
 const nativeValues = [-20, 30, 45, 50, 60, 70];
+const originalPrimaryEntries = [
+  {
+    id: 'original-entry-a',
+    drop_id: 'legacy-a',
+    competition_id: originalPrimaryId,
+    status: CompetitionEntryStatus.ACTIVE
+  },
+  {
+    id: 'original-entry-b',
+    drop_id: 'legacy-b',
+    competition_id: originalPrimaryId,
+    status: CompetitionEntryStatus.ACTIVE
+  },
+  {
+    id: 'original-entry-winner',
+    drop_id: 'legacy-winner',
+    competition_id: originalPrimaryId,
+    status: CompetitionEntryStatus.WINNER
+  }
+];
+const currentEntries = [
+  ...nativeEntries.map((item) => ({
+    ...item,
+    drop_id: item.id === entry.id ? entry.drop_id : `drop-${item.id}`
+  })),
+  ...originalPrimaryEntries
+];
+const currentValues = [...nativeValues, 10, -15, 100];
+// Retained shared rows deliberately disagree with native membership and votes.
 const legacyDrops = [
-  { id: 'legacy-a', drop_type: 'PARTICIPATORY' },
-  { id: 'legacy-b', drop_type: 'PARTICIPATORY' },
-  { id: 'legacy-winner', drop_type: 'WINNER' }
+  { id: 'legacy-a', drop_type: 'WINNER' },
+  { id: 'legacy-b', drop_type: 'CHAT' },
+  { id: 'legacy-winner', drop_type: 'PARTICIPATORY' }
 ];
 
 describeWithSeed(
@@ -101,32 +131,29 @@ describeWithSeed(
     withIdentities([identity]),
     {
       table: COMPETITIONS_TABLE,
-      rows: [
-        {
-          id: nativeId,
-          wave_id: waveId,
-          legacy_wave_id: null,
-          storage_mode: 'NATIVE',
-          execution_mode: 'ACTIVE',
-          type: 'RANK',
-          lifecycle: 'PUBLISHED',
-          title: 'Budget fixture',
-          participation_config: {},
-          voting_config: native.voting,
-          decision_config: {},
-          winner_config: {},
-          outcome_config: [],
-          created_at: 1,
-          updated_at: 1
-        }
-      ]
+      rows: [nativeId, 'parallel-native', originalPrimaryId].map((id) => ({
+        id,
+        wave_id: waveId,
+        legacy_wave_id: id === originalPrimaryId ? waveId : null,
+        storage_mode: 'NATIVE',
+        execution_mode: 'ACTIVE',
+        type: 'RANK',
+        lifecycle: 'PUBLISHED',
+        title: 'Budget fixture',
+        participation_config: {},
+        voting_config: native.voting,
+        decision_config: {},
+        winner_config: {},
+        outcome_config: [],
+        created_at: 1,
+        updated_at: 1
+      }))
     },
     {
       table: COMPETITION_ENTRIES_TABLE,
-      rows: nativeEntries.map((item) => ({
+      rows: currentEntries.map((item) => ({
         ...item,
         wave_id: waveId,
-        drop_id: item.id === entry.id ? entry.drop_id : `drop-${item.id}`,
         submitter_id: 'submitter',
         config_version: 1,
         submitted_at: 1
@@ -134,13 +161,13 @@ describeWithSeed(
     },
     {
       table: COMPETITION_VOTES_TABLE,
-      rows: nativeEntries.map((item, index) => ({
+      rows: currentEntries.map((item, index) => ({
         id: `vote-${index}`,
         competition_id: item.competition_id,
         entry_id: item.id,
         voter_profile_id: profileId,
-        value: nativeValues[index],
-        credit_spent: Math.abs(nativeValues[index]),
+        value: currentValues[index],
+        credit_spent: Math.abs(currentValues[index]),
         created_at: 1,
         updated_at: 1
       }))
@@ -167,12 +194,12 @@ describeWithSeed(
         voter_id: profileId,
         drop_id: item.id,
         wave_id: waveId,
-        votes: [10, -15, 100][index]
+        votes: [91, -92, 1_000][index]
       }))
     }
   ],
   () => {
-    it('separates two native competitions and the legacy primary in one shared wave', async () => {
+    it('isolates two native siblings and their native original primary from stale physical votes', async () => {
       expect(
         await competitionCreditService.getBudget(native, profileId, entry, {})
       ).toMatchObject({
@@ -195,11 +222,10 @@ describeWithSeed(
         await competitionCreditService.getBudget(
           {
             ...native,
-            id: 'legacy',
-            storage_mode: CompetitionStorageMode.LEGACY_ADAPTER
+            id: originalPrimaryId
           },
           profileId,
-          { id: 'legacy-entry-a', drop_id: 'legacy-a' },
+          originalPrimaryEntries[0],
           {}
         )
       ).toMatchObject({
@@ -291,15 +317,14 @@ describeWithSeed(
       WaveCreditType.XTDH,
       WaveCreditType.TDH_PLUS_XTDH
     ])(
-      'matches single-profile %s budgets across native siblings and the legacy primary',
+      'matches single-profile %s budgets across native siblings and the native original primary',
       async (credit_type) => {
         for (const namespace of [
           native,
           { ...native, id: 'parallel-native' },
           {
             ...native,
-            id: 'legacy',
-            storage_mode: CompetitionStorageMode.LEGACY_ADAPTER
+            id: originalPrimaryId
           }
         ]) {
           const selected = {
