@@ -125,6 +125,17 @@ describeWithSeed(
         );
       }
     });
+    it('returns visible membership in requested order', async () => {
+      expect(
+        (
+          await repository.findNativeEntriesByIds(
+            'competition',
+            ['recent', 'active'],
+            {}
+          )
+        ).map((entry) => entry.id)
+      ).toEqual(['recent', 'active']);
+    });
     it('scopes summary and membership reads to the selected competition', async () => {
       const result = await batch.read(
         'other-competition',

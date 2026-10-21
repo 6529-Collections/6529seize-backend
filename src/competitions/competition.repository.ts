@@ -307,7 +307,11 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
       { competitionId, entryIds },
       dbOptions(ctx)
     );
-    return rows.map((row) => this.mapNativeEntry(row));
+    const byId = new Map(rows.map((row) => [row.id, this.mapNativeEntry(row)]));
+    return entryIds.flatMap((id) => {
+      const entry = byId.get(id);
+      return entry ? [entry] : [];
+    });
   }
 
   public async listNativeEntries(
