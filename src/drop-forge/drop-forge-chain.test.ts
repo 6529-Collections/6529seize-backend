@@ -1,5 +1,6 @@
 import { Interface, JsonRpcProvider, Transaction, ZeroAddress } from 'ethers';
 import { claimAbi, EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
+import { LaunchRpcUnavailableError } from '@/drop-forge/drop-forge.types';
 import {
   testConfig,
   testLaunchData
@@ -129,6 +130,29 @@ describe('Drop Forge transaction boundary', () => {
       confirmations: 12
     });
   });
+  it.each([null, { hash: null }])(
+    'retries unavailable receipt blocks without reporting a reorg: %j',
+    async (block) => {
+      const { chain, provider } = setup();
+      const confirmations = jest.fn().mockResolvedValue(12);
+      provider.getTransactionReceipt.mockResolvedValue({
+        status: 1,
+        blockNumber: 100,
+        blockHash: 'canonical',
+        confirmations
+      });
+      provider.getBlock.mockResolvedValueOnce(block);
+      await expect(chain.receipt('tx')).rejects.toBeInstanceOf(
+        LaunchRpcUnavailableError
+      );
+      expect(confirmations).not.toHaveBeenCalled();
+      provider.getBlock.mockResolvedValue({ hash: 'canonical' });
+      expect(await chain.receipt('tx')).toMatchObject({
+        blockHash: 'canonical',
+        confirmations: 12
+      });
+    }
+  );
   it('requires exactly the previously confirmed batch supply before the next airdrop', async () => {
     const { chain, provider } = setup();
     jest.restoreAllMocks();

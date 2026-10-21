@@ -6,7 +6,10 @@ import {
 } from '@/drop-forge/drop-forge.recovery';
 import { DropForgeRepository } from '@/drop-forge/drop-forge.repository';
 import { LaunchChain, encodeLaunchAction } from '@/drop-forge/drop-forge.chain';
-import { LaunchRecord } from '@/drop-forge/drop-forge.types';
+import {
+  LaunchRecord,
+  LaunchRpcUnavailableError
+} from '@/drop-forge/drop-forge.types';
 import { ApiDropForgeRecoveryRequest } from '@/api/generated/models/ApiDropForgeRecoveryRequest';
 import {
   testConfig,
@@ -150,6 +153,25 @@ function setup() {
     evidence
   };
 }
+it('retains the recovery ledger and reservation when receipt block evidence is unavailable', async () => {
+  const f = setup();
+  await f.start();
+  await f.request('CANCEL');
+  const before = structuredClone(f.record);
+  f.chain.recoveryEvidence.mockRejectedValueOnce(
+    new LaunchRpcUnavailableError('Receipt block unavailable')
+  );
+  await expect(f.recovery.tick('launch')).rejects.toBeInstanceOf(
+    LaunchRpcUnavailableError
+  );
+  expect(f.record).toEqual(before);
+  expect(f.pending).toMatchObject({
+    launch_id: 'launch',
+    action_id: f.action.id
+  });
+  expect(f.signer.sign).not.toHaveBeenCalled();
+  expect(f.chain.broadcast).not.toHaveBeenCalled();
+});
 it('keeps the same action/nonce and persists signed speed-up bytes before broadcast; restarts rebroadcast only those bytes', async () => {
   const f = setup();
   await f.start();

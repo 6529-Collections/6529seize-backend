@@ -15,6 +15,7 @@ import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import {
   LaunchAction,
   LaunchData,
+  LaunchRpcUnavailableError,
   LaunchSafetyError,
   RecoveryAttempt,
   assertPhaseScopedPlan
@@ -155,7 +156,11 @@ export class EthereumLaunchChain implements LaunchChain {
     const block = await rpcWithDeadline(
       this.provider.getBlock(receipt.blockNumber)
     );
-    if (block?.hash !== receipt.blockHash) return null;
+    if (!block?.hash)
+      throw new LaunchRpcUnavailableError(
+        'Receipt block is unavailable; transaction evidence and wallet reservation retained for retry'
+      );
+    if (block.hash !== receipt.blockHash) return null;
     return {
       status: receipt.status,
       blockNumber: receipt.blockNumber,

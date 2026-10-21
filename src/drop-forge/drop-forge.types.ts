@@ -144,6 +144,8 @@ export class LaunchSafetyError extends Error {
 
 export class LaunchRevisionConflict extends LaunchSafetyError {}
 
+export class LaunchRpcUnavailableError extends LaunchSafetyError {}
+
 export function assertPhaseScopedPlan(data: LaunchData): void {
   if (data.plan_version !== DROP_FORGE_PLAN_VERSION)
     throw new LaunchSafetyError(

@@ -10,6 +10,7 @@ import {
 import {
   LaunchAction,
   LaunchRecord,
+  LaunchRpcUnavailableError,
   LaunchRevisionConflict,
   LaunchSafetyError,
   RecoveryAttempt,
@@ -344,6 +345,7 @@ export class DropForgeRecovery {
       if (work) await this.sign(work.record.id, work.action.id, work.attempt);
       await this.broadcast(launch);
     } catch (error) {
+      if (error instanceof LaunchRpcUnavailableError) throw error;
       await this.repository.change(
         launch,
         (record) => {

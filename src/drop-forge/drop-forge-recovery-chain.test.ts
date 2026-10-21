@@ -6,6 +6,7 @@ import {
 } from '@/drop-forge/drop-forge.recovery-chain';
 import { encodeLaunchAction, claimAbi } from '@/drop-forge/drop-forge.chain';
 import { originalRecovery } from '@/drop-forge/drop-forge.recovery';
+import { LaunchRpcUnavailableError } from '@/drop-forge/drop-forge.types';
 import {
   testConfig,
   testLaunchData,
@@ -153,6 +154,35 @@ it('requires canonical finality and exact mint evidence; reads supply at the win
   f.reorg();
   expect(await f.chain.evidence(f.data, f.action, attempt)).toBeNull();
 });
+it.each([1, 2])(
+  'retries an unavailable receipt block at canonical read %i',
+  async (read) => {
+    const f = setup();
+    await f.start();
+    f.finalize();
+    const getBlock = jest.spyOn(
+      f.provider as unknown as JsonRpcProvider,
+      'getBlock'
+    );
+    if (read === 2) {
+      getBlock.mockResolvedValueOnce({ hash: 'block', number: 100 } as Awaited<
+        ReturnType<JsonRpcProvider['getBlock']>
+      >);
+      getBlock.mockResolvedValueOnce({ hash: 'final', number: 100 } as Awaited<
+        ReturnType<JsonRpcProvider['getBlock']>
+      >);
+    }
+    getBlock.mockResolvedValueOnce(null);
+    const attempt = f.action.recovery!.attempts[0];
+    await expect(
+      f.chain.evidence(f.data, f.action, attempt)
+    ).rejects.toBeInstanceOf(LaunchRpcUnavailableError);
+    expect(await f.chain.evidence(f.data, f.action, attempt)).toMatchObject({
+      finalized: true,
+      total: 1
+    });
+  }
+);
 it('rejects equal total supply credited to the wrong recipient or a non-mint transfer', () => {
   const f = setup();
   expect(() => verifyRecoveryMints(f.data, f.action, f.logs())).not.toThrow();

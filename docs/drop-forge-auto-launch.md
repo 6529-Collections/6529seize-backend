@@ -218,6 +218,9 @@ already-known response, and repeated EventBridge delivery can only retry those
 same bytes. A confirmed receipt advances the ledger after the configured
 confirmation count; a revert is terminal for that action. Previously confirmed
 receipts are checked for canonical block hashes before proceeding or completing.
+If an RPC cannot return a receipt's block, reconciliation retries without changing
+the action or releasing its wallet reservation. An available block with a different
+hash remains reorg evidence and still stops conflicting writes.
 
 Unknown nonce consumption, a reorg, revoked admin permission, insufficient gas,
 changed source/configuration, or a missed deadline blocks the launch and records

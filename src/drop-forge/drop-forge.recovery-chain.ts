@@ -9,6 +9,7 @@ import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 import {
   LaunchAction,
   LaunchData,
+  LaunchRpcUnavailableError,
   LaunchSafetyError,
   RecoveryAttempt
 } from '@/drop-forge/drop-forge.types';
@@ -190,8 +191,10 @@ export class RecoveryChain {
     validateRecoveryTransaction(data, action, attempt);
     const receipt = await this.provider.getTransactionReceipt(attempt.hash!);
     if (!receipt) return null;
-    const canonical = await this.provider.getBlock(receipt.blockNumber);
-    if (canonical?.hash !== receipt.blockHash) return null;
+    if (
+      !(await this.receiptBlockMatches(receipt.blockNumber, receipt.blockHash))
+    )
+      return null;
     if (
       attempt.operation === 'CANCEL' &&
       (await this.provider.getCode(data.signer, receipt.blockNumber)) !== '0x'
@@ -216,8 +219,10 @@ export class RecoveryChain {
       action.kind === 'INITIALIZE' &&
         (attempt.operation === 'CANCEL' || receipt.status === 0)
     );
-    const check = await this.provider.getBlock(receipt.blockNumber);
-    if (check?.hash !== receipt.blockHash) return null;
+    if (
+      !(await this.receiptBlockMatches(receipt.blockNumber, receipt.blockHash))
+    )
+      return null;
     return {
       receipt: {
         status: receipt.status,
@@ -228,6 +233,17 @@ export class RecoveryChain {
       finalized: finalized.number >= receipt.blockNumber,
       total
     };
+  }
+  private async receiptBlockMatches(
+    number: number,
+    hash: string
+  ): Promise<boolean> {
+    const block = await this.provider.getBlock(number);
+    if (!block?.hash)
+      throw new LaunchRpcUnavailableError(
+        'Recovery receipt block is unavailable; transaction evidence and wallet reservation retained for retry'
+      );
+    return block.hash === hash;
   }
   private async supplyAt(
     data: LaunchData,

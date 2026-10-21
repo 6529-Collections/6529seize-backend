@@ -21,6 +21,7 @@ import {
 import {
   LaunchAction,
   LaunchRecord,
+  LaunchRpcUnavailableError,
   LaunchSafetyError,
   DROP_FORGE_PLAN_VERSION,
   assertPhaseScopedPlan
@@ -108,6 +109,7 @@ export class DropForgeWorker {
       const reserved = await this.reserve(record, pending, ctx);
       return reserved;
     } catch (error) {
+      if (error instanceof LaunchRpcUnavailableError) throw error;
       if (pending.launch_id === record.id) throw error;
       setLaunchState(
         record,
@@ -141,6 +143,7 @@ export class DropForgeWorker {
         );
         await mirrorCompletion(record, ctx);
       } catch (error) {
+        if (error instanceof LaunchRpcUnavailableError) throw error;
         setLaunchState(
           record,
           'BLOCKED',

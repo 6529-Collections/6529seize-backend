@@ -1,11 +1,16 @@
-import { Transaction } from 'ethers';
+import { JsonRpcProvider, Transaction } from 'ethers';
 import { DropForgeWorker } from '@/drop-forge/drop-forge.worker';
 import {
   DropForgeRepository,
   launchId,
   setLaunchState
 } from '@/drop-forge/drop-forge.repository';
-import { claimAbi, LaunchChain } from '@/drop-forge/drop-forge.chain';
+import {
+  claimAbi,
+  EthereumLaunchChain,
+  LaunchChain
+} from '@/drop-forge/drop-forge.chain';
+import { LaunchRpcUnavailableError } from '@/drop-forge/drop-forge.types';
 import {
   testConfig,
   testLaunchData,
@@ -472,6 +477,80 @@ describe('Drop Forge durable worker', () => {
     expect((await read())!.state).toBe('RUNNING');
     expect((await read())!.data.actions[0].state).toBe('CONFIRMED');
     expect(chain.broadcast).toHaveBeenCalledTimes(1);
+  });
+  it('retains signed intent through an unavailable receipt block and confirms it exactly once', async () => {
+    await start();
+    const original = (await read())!.data.actions[0];
+    const provider = {
+      getTransactionReceipt: jest.fn().mockResolvedValue({
+        status: 1,
+        blockNumber: 100,
+        blockHash: 'block',
+        confirmations: async () => 12
+      }),
+      getBlock: jest.fn()
+    };
+    const ethereum = new EthereumLaunchChain(
+      testConfig,
+      provider as unknown as JsonRpcProvider
+    );
+    chain.receipt.mockImplementation((hash) => ethereum.receipt(hash));
+    chain.nonce.mockResolvedValue(1);
+    provider.getBlock.mockResolvedValue(null);
+    await expect(worker.tick()).rejects.toBeInstanceOf(
+      LaunchRpcUnavailableError
+    );
+    const deferred = (await read())!;
+    expect(deferred.state).toBe('RUNNING');
+    expect(deferred.data.actions[0]).toEqual(original);
+    await repository.wallet(
+      `${testConfig.chainId}:${testConfig.signer.toLowerCase()}`,
+      async (pending) => {
+        expect(pending).toMatchObject({
+          launch_id: id,
+          action_id: original.id
+        });
+      },
+      {}
+    );
+    expect(signer.sign).toHaveBeenCalledTimes(1);
+    expect(chain.broadcast).toHaveBeenCalledTimes(1);
+    provider.getBlock.mockResolvedValue({ hash: 'block' });
+    await worker.tick();
+    const confirmed = (await read())!;
+    expect(confirmed.data.actions[0].state).toBe('CONFIRMED');
+    expect(confirmed.data.actions[0].hash).toBe(original.hash);
+    expect(signer.sign).toHaveBeenCalledTimes(1);
+    expect(chain.broadcast).toHaveBeenCalledTimes(1);
+    await repository.wallet(
+      `${testConfig.chainId}:${testConfig.signer.toLowerCase()}`,
+      async (pending) => {
+        expect(pending).toMatchObject({ launch_id: null, action_id: null });
+      },
+      {}
+    );
+  });
+  it('keeps confirmed work runnable when its canonical block is temporarily unavailable', async () => {
+    await start();
+    chain.receipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'block',
+      confirmations: 12
+    });
+    await worker.tick();
+    await acknowledgeReports();
+    chain.receipt.mockRejectedValueOnce(
+      new LaunchRpcUnavailableError('Receipt block unavailable')
+    );
+    await expect(worker.tick()).rejects.toBeInstanceOf(
+      LaunchRpcUnavailableError
+    );
+    expect((await read())!.state).toBe('RUNNING');
+    expect((await read())!.data.actions[0].state).toBe('CONFIRMED');
+    await worker.tick();
+    expect((await read())!.data.actions[1].state).toBe('RESERVED');
+    expect(signer.sign).toHaveBeenCalledTimes(1);
   });
   it('checks one chain descendant instead of all historical batch receipts', async () => {
     await repository.change(

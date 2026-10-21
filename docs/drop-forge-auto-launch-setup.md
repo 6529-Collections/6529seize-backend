@@ -224,3 +224,8 @@ Pay Artist remains manual and is outside this automation.
 Use Launch's Pause/recovery controls for operational intervention. Disabling flags
 does not cancel signed transactions, and disabling both automation and recovery also
 stops receipt reconciliation. Never release an uncertain nonce with a database reset.
+
+An unavailable RPC receipt block defers reconciliation to a later invocation while
+retaining the signed transaction and nonce reservation. A confirmed block-hash
+mismatch still requires reorg investigation; unavailable RPC data alone does not
+mean that the transaction disappeared or should be sent again with a fresh nonce.
