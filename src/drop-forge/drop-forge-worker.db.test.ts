@@ -83,6 +83,32 @@ describe('Drop Forge durable worker', () => {
     await acknowledgeReports();
     await worker.tick();
   };
+  it('targets one queued claim and respects another claim owning the shared signer', async () => {
+    const second = testLaunchData();
+    second.claim_id = 2;
+    const other = launchId(testConfig.chainId, testConfig.creator, 2);
+    await repository.putDraft(other, 0, second, {});
+    await repository.change(
+      other,
+      (record) => {
+        record.state = 'ARMED';
+      },
+      {}
+    );
+    jest
+      .spyOn(repository, 'active')
+      .mockRejectedValue(
+        new Error('Global scan is not allowed for targeted delivery')
+      );
+    await worker.tick(other);
+    expect((await repository.find(other, {}))!.data.actions[0].state).toBe(
+      'RESERVED'
+    );
+    await worker.tick(id);
+    expect((await read())!.data.actions[0].state).toBe('PENDING');
+    expect(signer.sign).not.toHaveBeenCalled();
+    expect(chain.broadcast).not.toHaveBeenCalled();
+  });
   it('keeps fully missed launches out of the candidate limit while retaining manual reconciliation', async () => {
     const missed = Array.from({ length: 25 }, (_, index) => {
       const data = testLaunchData();
