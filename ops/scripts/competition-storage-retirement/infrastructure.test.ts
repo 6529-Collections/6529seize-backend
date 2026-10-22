@@ -3,6 +3,7 @@ import {
   removeMigratorMonitoring,
   RETIRED_MIGRATOR,
   retainMigratorRecoveryArtifacts,
+  retirementChangeDiagnostics,
   retirementExecutionRole,
   Template
 } from './infrastructure';
@@ -172,6 +173,20 @@ it('identifies rejected dependency changes without exposing property values', ()
   expect(message).toContain('Collector.Arn');
   expect(message).toContain('Targets');
   expect(message).not.toContain('private-template-value');
+  const diagnostics = retirementChangeDiagnostics([
+    { ResourceChange: change },
+    {
+      ResourceChange: {
+        ...change,
+        LogicalResourceId: 'AnotherDependency'
+      }
+    },
+    {}
+  ]);
+  expect(diagnostics).toHaveLength(3);
+  expect(diagnostics[1]).toMatchObject({ id: 'AnotherDependency' });
+  expect(diagnostics[2]).toEqual({ unreadable: true });
+  expect(JSON.stringify(diagnostics)).not.toContain('private-template-value');
 });
 
 function subscriptionEvaluation() {

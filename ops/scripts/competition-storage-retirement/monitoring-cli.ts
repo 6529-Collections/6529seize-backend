@@ -8,6 +8,7 @@ import {
   assertRetirementChangeSet,
   removeMigratorMonitoring,
   retainMigratorRecoveryArtifacts,
+  retirementChangeDiagnostics,
   retirementExecutionRole,
   type Template,
   type TemplateEdit
@@ -268,6 +269,7 @@ async function propose(
       changeSetId: changes.ChangeSetId,
       status: 'proposal_rejected',
       mayHaveChangedResources: false,
+      resourceChanges: retirementChangeDiagnostics(changes.Changes ?? []),
       message: error instanceof Error ? error.message : 'Change set rejected'
     });
     throw error;
