@@ -257,7 +257,21 @@ async function propose(
     throw new Error('CloudFormation did not identify the proposed change set');
   const changes = await awaitChangeSet(command, created.Id);
   save(selected.output, 'change-set.json', changes);
-  assertRetirementChangeSet(edit, changes.Changes ?? []);
+  try {
+    assertRetirementChangeSet(edit, changes.Changes ?? []);
+  } catch (error) {
+    save(selected.output, 'receipt.json', {
+      environment: selected.environment,
+      kind: selected.kind,
+      revision: selected.revision,
+      stackName: selected.stackName,
+      changeSetId: changes.ChangeSetId,
+      status: 'proposal_rejected',
+      mayHaveChangedResources: false,
+      message: error instanceof Error ? error.message : 'Change set rejected'
+    });
+    throw error;
+  }
   return changes;
 }
 
@@ -358,7 +372,7 @@ async function main() {
       ...summary,
       status: 'already_complete'
     });
-    console.log('Retired producer registration is already absent.');
+    process.stdout.write('Retired producer registration is already absent.\n');
     return;
   }
   if (selected.apply && selected.approvedPlanSha256 !== summary.planSha256)
@@ -366,12 +380,12 @@ async function main() {
       'Live retirement proposal differs from the approved plan; preserve concurrent changes and re-plan'
     );
   const changes = await propose(selected, command, stack, edit, role);
-  console.log(
-    JSON.stringify({
+  process.stdout.write(
+    `${JSON.stringify({
       ...summary,
       changeSetId: changes.ChangeSetId,
       status: 'reviewed_change_set'
-    })
+    })}\n`
   );
   if (!selected.apply) {
     save(selected.output, 'receipt.json', {
@@ -416,12 +430,12 @@ async function main() {
       `Retirement apply was attempted and requires inspection; no automatic retry: ${message}`
     );
   }
-  console.log('Verified the exact retirement template update.');
+  process.stdout.write('Verified the exact retirement template update.\n');
 }
 
 main().catch((error: unknown) => {
-  console.error(
-    error instanceof Error ? error.message : 'Infrastructure retirement failed'
+  process.stderr.write(
+    `${error instanceof Error ? error.message : 'Infrastructure retirement failed'}\n`
   );
   process.exitCode = 1;
 });

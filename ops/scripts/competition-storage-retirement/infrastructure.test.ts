@@ -136,6 +136,44 @@ it('accepts only the full deletion set and the reviewed environment/dependency u
   );
 });
 
+it('identifies rejected dependency changes without exposing property values', () => {
+  const change = {
+    Action: 'Modify',
+    LogicalResourceId: 'UnexpectedSchedule',
+    ResourceType: 'AWS::Events::Rule',
+    Replacement: 'False',
+    Scope: ['Properties'],
+    BeforeContext: 'private-template-value',
+    AfterContext: 'private-template-value',
+    Details: [
+      {
+        Evaluation: 'Dynamic',
+        ChangeSource: 'ResourceAttribute',
+        CausingEntity: 'Collector.Arn',
+        Target: {
+          Attribute: 'Properties',
+          Name: 'Targets',
+          RequiresRecreation: 'Never',
+          BeforeValue: 'private-template-value',
+          AfterValue: 'private-template-value'
+        }
+      }
+    ]
+  };
+  let message = '';
+  try {
+    assertRetirementChangeSet(removeMigratorMonitoring(monitor()), [
+      { ResourceChange: change }
+    ]);
+  } catch (error) {
+    message = error instanceof Error ? error.message : '';
+  }
+  expect(message).toContain('UnexpectedSchedule');
+  expect(message).toContain('Collector.Arn');
+  expect(message).toContain('Targets');
+  expect(message).not.toContain('private-template-value');
+});
+
 function subscriptionEvaluation() {
   return {
     Action: 'Modify',

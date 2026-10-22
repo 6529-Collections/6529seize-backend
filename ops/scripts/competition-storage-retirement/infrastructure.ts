@@ -262,6 +262,28 @@ interface ResourceChange {
   }[];
 }
 
+function describeRejectedChange(change: ResourceChange): string {
+  // Structural diagnostics only: never include templates, property values or
+  // CloudFormation's BeforeContext/AfterContext in workflow logs or receipts.
+  return JSON.stringify({
+    id: change.LogicalResourceId,
+    action: change.Action,
+    resourceType: change.ResourceType,
+    replacement: change.Replacement,
+    scope: change.Scope,
+    details: change.Details?.map((detail) => ({
+      evaluation: detail.Evaluation,
+      source: detail.ChangeSource,
+      causingEntity: detail.CausingEntity,
+      target: detail.Target && {
+        attribute: detail.Target.Attribute,
+        name: detail.Target.Name,
+        requiresRecreation: detail.Target.RequiresRecreation
+      }
+    }))
+  });
+}
+
 function isUnchangedSubscriptionEvaluation(
   edit: TemplateEdit,
   change: ResourceChange
@@ -326,7 +348,7 @@ export function assertRetirementChangeSet(
       change.Replacement !== 'False'
     )
       throw new Error(
-        'CloudFormation proposes an unrelated change, new resource or replacement'
+        `CloudFormation proposes an unrelated change, new resource or replacement: ${describeRejectedChange(change)}`
       );
   }
   if (removed.size !== edit.deleted.length)
