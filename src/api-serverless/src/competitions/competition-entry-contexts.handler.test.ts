@@ -1,3 +1,4 @@
+import { apiDropMapper } from '@/api/drops/api-drop.mapper';
 import { handleGetCompetitionEntryContextsV3 } from './competition-entry-contexts.handler';
 import { competitionService } from '@/competitions/competition.service';
 import { competitionRepository } from '@/competitions/competition.repository';
@@ -29,7 +30,14 @@ jest.mock('@/content-moderation/content-moderation.db', () => ({
   contentModerationDb: { getPresentations: jest.fn() }
 }));
 jest.mock('@/drops/drops.db', () => ({
-  dropsDb: { getDropsByIds: jest.fn() }
+  dropsDb: { getDropsByIds: jest.fn(), findMetadataByDropIds: jest.fn() }
+}));
+jest.mock('@/api/drops/api-drop.mapper', () => ({
+  apiDropMapper: { mapDrops: jest.fn() }
+}));
+jest.mock('./competition-api.mapper', () => ({
+  toApiCompetition: (value: unknown) => value,
+  toApiEntryPage: async (value: unknown) => value
 }));
 jest.mock('./competitions-v3.handlers', () => ({
   getContext: async () => ({
@@ -47,10 +55,19 @@ const request = (entryIds = entryId) =>
   }) as GetCompetitionEntryContextsV3Request;
 beforeEach(() => {
   jest.clearAllMocks();
+  jest
+    .mocked(apiDropMapper.mapDrops)
+    .mockResolvedValue({ drop: { id: 'drop' } } as never);
+  jest
+    .mocked(dropsDb.findMetadataByDropIds)
+    .mockResolvedValue([
+      { drop_id: 'drop', data_key: 'Artist', data_value: 'Artist name' }
+    ] as never);
   jest.mocked(competitionService.getCompetition).mockResolvedValue({
     id: competitionId,
     wave_id: 'wave',
-    decisions: { time_lock_ms: null }
+    decisions: { time_lock_ms: null },
+    permissions: { vote: true }
   } as never);
   jest
     .mocked(competitionRepository.findNativeEntriesByIds)
@@ -118,3 +135,61 @@ it.each(['not-a-uuid', `${entryId},${entryId}`, '', `${entryId},`])(
     expect(competitionService.getCompetition).not.toHaveBeenCalled();
   }
 );
+
+it('returns renderable content and native votes together without legacy vote enrichment', async () => {
+  const req = request();
+  req.query.include = 'cards';
+  const result = await handleGetCompetitionEntryContextsV3(req);
+  expect(apiDropMapper.mapDrops).toHaveBeenCalledWith(
+    [{ id: 'drop', wave_id: 'wave' }],
+    expect.anything(),
+    { includeSubmissionVoting: false }
+  );
+  expect(result.data[0].drop).toMatchObject({
+    id: 'drop',
+    submission_context: {
+      status: 'ACTIVE',
+      voting: {
+        current_calculated_vote: 7,
+        context_profile_context: { current: 7 }
+      }
+    }
+  });
+  expect(result.data[0].metadata).toEqual([
+    { data_key: 'Artist', data_value: 'Artist name' }
+  ]);
+});
+it('refreshes summaries without loading card content', async () => {
+  const result = await handleGetCompetitionEntryContextsV3(request());
+  expect(result.data[0].drop).toBeUndefined();
+  expect(apiDropMapper.mapDrops).not.toHaveBeenCalled();
+  expect(dropsDb.findMetadataByDropIds).not.toHaveBeenCalled();
+});
+it('does not enrich cards hidden from the viewer', async () => {
+  jest.mocked(contentModerationDb.getPresentations).mockResolvedValue({
+    drop: {
+      moderation: { can_view: false },
+      viewer: { author_blocked: false, drop_hidden: false }
+    }
+  } as never);
+  const req = request();
+  req.query.include = 'cards';
+  expect((await handleGetCompetitionEntryContextsV3(req)).data).toEqual([]);
+  expect(apiDropMapper.mapDrops).not.toHaveBeenCalled();
+});
+
+it('does not expose metadata when the content mapper observes a newer moderation decision', async () => {
+  jest.mocked(apiDropMapper.mapDrops).mockResolvedValue({
+    drop: { id: 'drop', moderation: { can_view: false } }
+  } as never);
+  const req = request();
+  req.query.include = 'cards';
+  const result = await handleGetCompetitionEntryContextsV3(req);
+  expect(result.data[0].drop).toBeUndefined();
+  expect(result.data[0].metadata).toBeUndefined();
+  expect(result.data[0].vote_summary).toMatchObject({
+    rating: 7,
+    user_vote: 7
+  });
+  expect(result.data[0].awards).toEqual([]);
+});
