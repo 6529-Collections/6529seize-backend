@@ -3,6 +3,7 @@ import {
   removeMigratorMonitoring,
   RETIRED_MIGRATOR,
   retainMigratorRecoveryArtifacts,
+  retirementExecutionRole,
   Template
 } from './infrastructure';
 
@@ -97,6 +98,8 @@ it.each([
   { Action: 'Add', LogicalResourceId: 'LogRelay', Replacement: 'False' },
   { Action: 'Modify', LogicalResourceId: 'SharedRole', Replacement: 'False' },
   { Action: 'Modify', LogicalResourceId: 'LogRelay', Replacement: 'True' },
+  { Action: 'Modify', LogicalResourceId: 'LogRelay' },
+  { Action: 'Modify', LogicalResourceId: 'LogRelay', Replacement: null },
   {
     Action: 'Modify',
     LogicalResourceId: 'LogRelay',
@@ -235,4 +238,40 @@ it('refuses deletion of a shared role policy with permissions beyond the retired
   expect(() => retainMigratorRecoveryArtifacts(original)).toThrow(
     'exclusively scoped'
   );
+});
+
+it.each(['source', 'migrator'])(
+  'preserves the audited direct-caller boundary for %s',
+  (kind) => {
+    expect(retirementExecutionRole('prod', kind)).toBeUndefined();
+    expect(() =>
+      retirementExecutionRole(
+        'prod',
+        kind,
+        'arn:aws:iam::987989283142:role/unexpected'
+      )
+    ).toThrow('without a role override');
+    expect(() =>
+      retirementExecutionRole(
+        'prod',
+        kind,
+        undefined,
+        'arn:aws:iam::987989283142:role/unexpected'
+      )
+    ).toThrow('without a role override');
+  }
+);
+it('allows only the matching scoped monitoring role and never replaces an unexpected stack role', () => {
+  const role =
+    'arn:aws:iam::876382073372:role/6529-observability-prod-cfn-execution';
+  expect(retirementExecutionRole('prod', 'monitoring', role)).toBe(role);
+  expect(retirementExecutionRole('prod', 'monitoring', undefined, role)).toBe(
+    role
+  );
+  expect(() => retirementExecutionRole('staging', 'monitoring', role)).toThrow(
+    'Unexpected scoped'
+  );
+  expect(() =>
+    retirementExecutionRole('prod', 'monitoring', 'unexpected', role)
+  ).toThrow('Unexpected scoped');
 });

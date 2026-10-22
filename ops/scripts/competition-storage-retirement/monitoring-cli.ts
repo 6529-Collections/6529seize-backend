@@ -7,6 +7,7 @@ import {
   assertRetirementChangeSet,
   removeMigratorMonitoring,
   retainMigratorRecoveryArtifacts,
+  retirementExecutionRole,
   type Template,
   type TemplateEdit
 } from './infrastructure';
@@ -37,6 +38,7 @@ interface Options {
   stackName: string;
   output: string;
   apply: boolean;
+  approvedPlanSha256?: string;
 }
 
 function options(): Options {
@@ -62,6 +64,12 @@ function options(): Options {
     kind === 'migrator'
       ? `competitionMigrationLoop-${environment}`
       : `seize-monitoring-${environment}${kind === 'source' ? '-source' : ''}`;
+  const apply = process.env.RETIRE_APPLY === 'true';
+  const approvedPlanSha256 = process.env.RETIRE_APPROVED_PLAN_SHA256;
+  if (apply && !/^[a-f0-9]{64}$/.test(approvedPlanSha256 ?? ''))
+    throw new Error(
+      'Apply requires the exact SHA-256 from the prior proposed retirement receipt'
+    );
   return {
     environment,
     kind,
@@ -70,7 +78,8 @@ function options(): Options {
     revision,
     stackName,
     output,
-    apply: process.env.RETIRE_APPLY === 'true'
+    apply,
+    approvedPlanSha256
   };
 }
 
@@ -215,7 +224,8 @@ async function propose(
   selected: Options,
   command: AwsCommand,
   stack: Stack,
-  edit: TemplateEdit
+  edit: TemplateEdit,
+  role: string | undefined
 ): Promise<ChangeSet> {
   const url = uploadTemplate(selected, command, edit);
   save(
@@ -226,15 +236,6 @@ async function propose(
       UsePreviousValue: true
     }))
   );
-  const role = process.env.MONITORING_CLOUDFORMATION_ROLE_ARN ?? stack.RoleARN;
-  if (
-    selected.kind === 'monitoring' &&
-    role !==
-      `arn:aws:iam::${selected.account}:role/6529-observability-${selected.environment}-cfn-execution`
-  )
-    throw new Error(
-      'Unexpected scoped monitoring CloudFormation execution role'
-    );
   const created = command<{ Id: string }>([
     'cloudformation',
     'create-change-set',
@@ -322,19 +323,31 @@ async function main() {
     throw new Error(
       'Another stack operation is active or requires attention; wait without cancelling it'
     );
+  const role = retirementExecutionRole(
+    selected.environment,
+    selected.kind,
+    stack.RoleARN,
+    process.env.MONITORING_CLOUDFORMATION_ROLE_ARN
+  );
   const original = readTemplate(command, selected.stackName);
   const edit =
     selected.kind === 'migrator'
       ? retainMigratorRecoveryArtifacts(original)
       : removeMigratorMonitoring(original);
   mkdirSync(selected.output, { recursive: true, mode: 0o700 });
-  const summary = {
-    ...selected,
+  const plan = {
+    environment: selected.environment,
+    kind: selected.kind,
+    account: selected.account,
+    region: selected.region,
+    revision: selected.revision,
+    stackName: selected.stackName,
     originalDigest: digest(original),
     desiredDigest: digest(edit.template),
     deleted: edit.deleted,
     modified: edit.modified
   };
+  const summary = { ...plan, planSha256: digest(plan) };
   save(selected.output, 'template-plan.json', {
     ...summary,
     original,
@@ -348,7 +361,11 @@ async function main() {
     console.log('Retired producer registration is already absent.');
     return;
   }
-  const changes = await propose(selected, command, stack, edit);
+  if (selected.apply && selected.approvedPlanSha256 !== summary.planSha256)
+    throw new Error(
+      'Live retirement proposal differs from the approved plan; preserve concurrent changes and re-plan'
+    );
+  const changes = await propose(selected, command, stack, edit, role);
   console.log(
     JSON.stringify({
       ...summary,
@@ -356,25 +373,49 @@ async function main() {
       status: 'reviewed_change_set'
     })
   );
-  if (!selected.apply) return;
+  if (!selected.apply) {
+    save(selected.output, 'receipt.json', {
+      ...summary,
+      changeSetId: changes.ChangeSetId,
+      status: 'proposed'
+    });
+    return;
+  }
   assertUnmoved(selected, command, stack, original);
-  command([
-    'cloudformation',
-    'execute-change-set',
-    '--change-set-name',
-    changes.ChangeSetId
-  ]);
-  await awaitUpdate(
-    selected,
-    command,
-    changes.ChangeSetId,
-    summary.desiredDigest
-  );
-  save(selected.output, 'receipt.json', {
-    ...summary,
-    changeSetId: changes.ChangeSetId,
-    status: 'complete'
+  const receipt = { ...summary, changeSetId: changes.ChangeSetId };
+  save(selected.output, 'apply-started.json', {
+    ...receipt,
+    status: 'apply_attempted'
   });
+  try {
+    command([
+      'cloudformation',
+      'execute-change-set',
+      '--change-set-name',
+      changes.ChangeSetId
+    ]);
+    await awaitUpdate(
+      selected,
+      command,
+      changes.ChangeSetId,
+      summary.desiredDigest
+    );
+    save(selected.output, 'receipt.json', { ...receipt, status: 'complete' });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message.split('\n')[0]
+        : 'Retirement verification failed';
+    save(selected.output, 'receipt.json', {
+      ...receipt,
+      status: 'apply_verification_failed',
+      mayHaveChangedResources: true,
+      message
+    });
+    throw new Error(
+      `Retirement apply was attempted and requires inspection; no automatic retry: ${message}`
+    );
+  }
   console.log('Verified the exact retirement template update.');
 }
 

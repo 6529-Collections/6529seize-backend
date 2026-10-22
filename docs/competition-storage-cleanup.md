@@ -198,7 +198,10 @@ account is `876382073372` in `eu-west-1` for both environments.
 2. Archive the dedicated log group to the existing private recovery bucket with
    encryption, verify the archive, and retain its code/template artifacts.
 3. Run `monitoring-cli.ts` through the existing scoped monitoring workflow using
-   `operation=retire-competition-registration`. Its fresh live template must
+   `operation=retire-competition-registration` and leave `retirement_plan_sha256`
+   empty to propose. Read the receipt, then dispatch again with its exact
+   `planSha256` to apply the same environment/revision/template change. A moved
+   stack or branch requires a fresh proposal. Its fresh live template must
    change only the exact retired producer allowlist entries; no broad admin
    credentials or IAM trust expansion is needed. For source registration run
    the same CLI with `RETIRE_STACK_KIND=source` and the source-account identity.
@@ -220,8 +223,13 @@ account is `876382073372` in `eu-west-1` for both environments.
 The CLI requires `AWS_CLI_PATH` outside the checkout, `AWS_REGION`,
 `MONITORING_ENVIRONMENT`, `MONITORING_COMMIT_SHA`, the existing private
 `MONITORING_ARTIFACT_BUCKET`, a fresh private `RETIRE_EVIDENCE_DIR`, and
-`RETIRE_APPLY=true` only for the reviewed execution. Default mode creates a
-validated proposal without executing it. Respect concurrent operations; never
+`RETIRE_APPLY=true` plus `RETIRE_APPROVED_PLAN_SHA256` from the prior proposal
+receipt only for the reviewed execution. Default mode creates a validated
+proposal without executing it. An apply attempt writes `apply-started.json`
+before execution and a completion/failure `receipt.json` afterward; failure
+requires inspection rather than an automatic retry. Source/migrator stacks retain
+their audited direct-caller execution with no role override. Monitoring uses only
+its existing environment-scoped execution role. Respect concurrent operations; never
 cancel someone else's deployment or overwrite a moved shared ref.
 
 After deletion, recover forward with compatible native code. For data repair,

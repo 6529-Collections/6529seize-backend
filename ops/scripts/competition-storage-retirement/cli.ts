@@ -122,7 +122,9 @@ async function main() {
 
 main().catch((error: unknown) => {
   let message =
-    error instanceof Error ? error.message : 'Unknown operator failure';
+    error instanceof Error
+      ? error.message.split('\n')[0]
+      : 'Unknown operator failure';
   for (const key of ['HOST', 'USER', 'PASSWORD']) {
     const value = process.env[`RETIRE_DB_${key}`];
     if (value) message = message.split(value).join('[redacted]');

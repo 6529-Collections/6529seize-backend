@@ -58,3 +58,11 @@ it('permits fresh and explicitly cleaned schemas without requiring retired sourc
   ).resolves.toBeUndefined();
   expect(execute).toHaveBeenCalledTimes(1);
 });
+
+it('pins the complete audited deletion boundary including historical copies', () => {
+  expect(RETIRED_COMPETITION_TABLES).toHaveLength(26);
+  expect(new Set(RETIRED_COMPETITION_TABLES).size).toBe(26);
+  expect(RETIRED_COMPETITION_COLUMNS.waves).toHaveLength(29);
+  expect(RETIRED_COMPETITION_COLUMNS.waves_archive).toHaveLength(28);
+  expect(RETIRED_COMPETITION_COLUMNS.competitions).toEqual(['storage_mode']);
+});

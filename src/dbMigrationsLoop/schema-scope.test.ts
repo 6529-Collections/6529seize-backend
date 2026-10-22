@@ -212,6 +212,16 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       });
       expect(migrations.up).toHaveBeenCalledTimes(1);
       expect(
+        jest.mocked(getDataSource().synchronize).mock.invocationCallOrder[0]
+      ).toBeLessThan(
+        jest.mocked(compatibilityFacade.installLegacyCompetitionGetFacade).mock
+          .invocationCallOrder[0]
+      );
+      expect(
+        jest.mocked(compatibilityFacade.installLegacyCompetitionGetFacade).mock
+          .invocationCallOrder[0]
+      ).toBeLessThan(migrations.up.mock.invocationCallOrder[0]);
+      expect(
         contentModerationDb.deleteExpiredPrePublicationChecks
       ).toHaveBeenCalledTimes(1);
       expect(moderationReviewDb.retain).toHaveBeenCalledTimes(1);

@@ -235,7 +235,7 @@ export function assertRetirementChangeSet(
     ResourceChange?: {
       Action?: string;
       LogicalResourceId?: string;
-      Replacement?: string;
+      Replacement?: string | null;
     };
   }[]
 ): void {
@@ -248,7 +248,7 @@ export function assertRetirementChangeSet(
     else if (
       change.Action !== 'Modify' ||
       !edit.modified.includes(id) ||
-      (change.Replacement !== undefined && change.Replacement !== 'False')
+      change.Replacement !== 'False'
     )
       throw new Error(
         'CloudFormation proposes an unrelated change, new resource or replacement'
@@ -258,4 +258,30 @@ export function assertRetirementChangeSet(
     throw new Error(
       'CloudFormation does not remove the complete reviewed producer registration'
     );
+}
+
+/** Preserve the audited identity boundary: these source stacks have no service
+ * role; monitoring uses only its existing environment-scoped execution role. */
+export function retirementExecutionRole(
+  environment: 'staging' | 'prod',
+  kind: string,
+  stackRole?: string,
+  requestedRole?: string
+): string | undefined {
+  if (kind !== 'monitoring') {
+    if (stackRole || requestedRole)
+      throw new Error(
+        'Audited source and migrator stacks must retain direct-caller execution without a role override'
+      );
+    return undefined;
+  }
+  const expected = `arn:aws:iam::876382073372:role/6529-observability-${environment}-cfn-execution`;
+  if (
+    (stackRole && stackRole !== expected) ||
+    (requestedRole ?? stackRole) !== expected
+  )
+    throw new Error(
+      'Unexpected scoped monitoring CloudFormation execution role'
+    );
+  return expected;
 }

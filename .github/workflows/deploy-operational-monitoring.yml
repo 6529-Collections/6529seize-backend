@@ -12,6 +12,10 @@ on:
         type: choice
         default: deploy
         options: [deploy, retire-competition-registration]
+      retirement_plan_sha256:
+        description: Leave empty to propose retirement; apply only the exact plan SHA-256 from the prior receipt
+        required: false
+        type: string
 permissions:
   contents: read
   id-token: write
@@ -27,11 +31,18 @@ jobs:
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           DEPLOY_OPERATION: ${{ inputs.operation || 'deploy' }}
+          RETIRE_APPROVED_PLAN_SHA256: ${{ inputs.retirement_plan_sha256 }}
         run: |
           case "${DEPLOY_OPERATION:-deploy}" in
             deploy|retire-competition-registration) ;;
             *) echo "Unsupported monitoring operation" >&2; exit 1 ;;
           esac
+          if [[ -n "${RETIRE_APPROVED_PLAN_SHA256:-}" ]]; then
+            if [[ "${DEPLOY_OPERATION:-deploy}" != retire-competition-registration || ! "$RETIRE_APPROVED_PLAN_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "Retirement confirmation requires the exact proposed SHA-256 and retirement operation" >&2
+              exit 1
+            fi
+          fi
           case "$DEPLOY_ENVIRONMENT" in
             prod) expected_ref=refs/heads/main ;;
             staging) expected_ref=refs/heads/1a-staging ;;
@@ -81,6 +92,7 @@ jobs:
           MONITORING_PARAMETERS: ${{ vars.MONITORING_PARAMETERS }}
         run: ../../bin/6529 run deploy
       - name: Remove only the retired competition producer registration
+        id: retirement
         if: inputs.operation == 'retire-competition-registration'
         working-directory: ops/monitoring
         env:
@@ -90,16 +102,19 @@ jobs:
           MONITORING_ARTIFACT_BUCKET: ${{ vars.AWS_MONITORING_ARTIFACT_BUCKET }}
           MONITORING_CLOUDFORMATION_ROLE_ARN: ${{ vars.AWS_MONITORING_CFN_ROLE_ARN }}
           RETIRE_STACK_KIND: monitoring
-          RETIRE_APPLY: 'true'
+          RETIRE_APPLY: ${{ inputs.retirement_plan_sha256 != '' && 'true' || 'false' }}
+          RETIRE_APPROVED_PLAN_SHA256: ${{ inputs.retirement_plan_sha256 }}
           RETIRE_EVIDENCE_DIR: ${{ runner.temp }}/competition-monitoring-retirement
         run: ../../bin/6529 exec tsx ../scripts/competition-storage-retirement/monitoring-cli.ts
       - name: Save retirement receipt
-        if: inputs.operation == 'retire-competition-registration' && always()
+        if: inputs.operation == 'retire-competition-registration' && steps.retirement.outcome != 'skipped' && always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: competition-monitoring-retirement-${{ inputs.environment }}
-          path: ${{ runner.temp }}/competition-monitoring-retirement/receipt.json
-          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/competition-monitoring-retirement/receipt.json
+            ${{ runner.temp }}/competition-monitoring-retirement/apply-started.json
+          if-no-files-found: error
       - name: Verify monitoring health
         shell: bash
         env:
