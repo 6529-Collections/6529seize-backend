@@ -61,3 +61,32 @@ it('leaves evidence unchanged on diagnostic failure', async () => {
   await expect(observePreviewBacklog()).resolves.toBeUndefined();
   expect(report).not.toHaveBeenCalled();
 });
+
+it('never reintroduces a historical READY success into a newer pending episode', async () => {
+  const snapshot = [
+    { pending: 1, unknown_age: 0, oldest: 1_990_000, progress: 1_000_000 }
+  ];
+  read.mockResolvedValue(snapshot);
+  await observePreviewBacklog();
+  await observePreviewBacklog();
+  expect(report).toHaveBeenCalledTimes(2);
+  for (const [observation] of report.mock.calls) {
+    expect(observation).toMatchObject({
+      pending: true,
+      oldestPendingAt: 1990,
+      recovery: 'unknown'
+    });
+    expect(observation.progressAt).toBeUndefined();
+  }
+});
+
+it('retains actual READY progress made during an already old backlog', async () => {
+  read.mockResolvedValueOnce([
+    { pending: 1, unknown_age: 0, oldest: 1_000_000, progress: 1_500_000 }
+  ]);
+  await observePreviewBacklog();
+  expect(report.mock.calls[0][0]).toMatchObject({
+    oldestPendingAt: 1000,
+    progressAt: 1500
+  });
+});

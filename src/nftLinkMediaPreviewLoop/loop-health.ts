@@ -46,7 +46,13 @@ export async function observePreviewBacklog(): Promise<void> {
       operation: 'processing',
       pending: Number(row.pending) > 0,
       oldestPendingAt: oldest,
-      progressAt: progress,
+      // A READY result predating all active work belongs to an earlier episode.
+      // Repeated surveys must not reintroduce that historical success as the
+      // new backlog's stall clock. Real progress during older work is retained.
+      progressAt:
+        oldest !== undefined && progress !== undefined && progress < oldest
+          ? undefined
+          : progress,
       // A DB PENDING row alone cannot prove that its SQS send succeeded or
       // that it still has a deliverable message. Never invent automatic retry.
       recovery: Number(row.pending) > 0 ? 'unknown' : 'automatic'

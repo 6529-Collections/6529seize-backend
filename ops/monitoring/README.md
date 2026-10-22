@@ -548,7 +548,10 @@ remains unverified; that cannot clear an incident about business processing.
 - `nftLinkMediaPreviewLoop`: one bounded writer survey after each batch (including
   failure, skipped near the Lambda deadline) uses
   original `media_preview_queued_at` for active PENDING/PROCESSING work and only
-  saved READY results for progress. Lease acquisition, retries, discarded messages,
+  saved READY results for progress. A READY timestamp before the oldest active
+  queued work belongs to an earlier episode and is omitted on every survey;
+  an idle period cannot make newly queued work immediately appear stalled.
+  Lease acquisition, retries, discarded messages,
   stale completion fences and terminal FAILED/SKIPPED results cannot fabricate
   successful preview progress. A DB pending row does not prove SQS delivery/retry,
   so nonempty backlog reports recovery unknown; this adapter does not promise
