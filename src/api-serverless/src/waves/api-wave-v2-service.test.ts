@@ -128,6 +128,7 @@ function createService() {
     getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['group-1'])
   };
   const wavesApiDb = {
+    findWavesByIdsEligibleForRead: jest.fn().mockResolvedValue([wave]),
     searchWaves: jest.fn().mockResolvedValue([]),
     findMostSubscribedWaves: jest.fn().mockResolvedValue([]),
     findRecentlyDroppedToWaves: jest.fn().mockResolvedValue([]),
@@ -830,5 +831,49 @@ describe('ApiWaveV2Service', () => {
       )
     ).rejects.toThrow(NotFoundException);
     expect(deps.dropsDb.searchWaveAuthors).not.toHaveBeenCalled();
+  });
+  it('searches all readable waves and embeds wave context with bounded pagination', async () => {
+    const { service, deps } = createService();
+    const ctx = {
+      authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+    };
+    const result = await service.searchDrops(
+      { term: 'hello', author_id: 'author-1', page: 2, size: 2 },
+      ctx
+    );
+    expect(deps.dropsDb.searchDropsInWave).toHaveBeenCalledWith(
+      {
+        term: 'hello',
+        author_id: 'author-1',
+        group_ids_user_is_eligible_for: ['group-1'],
+        limit: 3,
+        offset: 2
+      },
+      ctx
+    );
+    expect(deps.wavesApiDb.findWavesByIdsEligibleForRead).toHaveBeenCalledWith(
+      ['wave-1'],
+      ['group-1'],
+      undefined
+    );
+    expect(result).toEqual({
+      data: [
+        { id: 'search-drop-1', wave: { id: 'wave-1' } },
+        { id: 'search-drop-2', wave: { id: 'wave-1' } }
+      ],
+      page: 2,
+      next: true
+    });
+  });
+
+  it('does not emit a cross-wave result if its wave loses visibility during mapping', async () => {
+    const { service, deps } = createService();
+    deps.wavesApiDb.findWavesByIdsEligibleForRead.mockResolvedValue([]);
+    const result = await service.searchDrops(
+      { term: 'hello', page: 1, size: 2 },
+      {}
+    );
+    expect(result.data).toEqual([]);
+    expect(result.next).toBe(true);
   });
 });

@@ -5,6 +5,7 @@ const mockFindWaveCompetitionDrops = jest.fn();
 const mockFindDropRepliesFeed = jest.fn();
 const mockFindWaveCurationDrops = jest.fn();
 const mockSearchDropsInWave = jest.fn();
+const mockSearchDrops = jest.fn();
 const mockSearchWaveAuthors = jest.fn();
 const mockSearchConcludedWaveDecisionsV2 = jest.fn();
 const mockFindLeaderboardV2 = jest.fn();
@@ -30,6 +31,7 @@ jest.mock('@/api/waves/api-wave-v2.service', () => ({
     findDropRepliesFeed: mockFindDropRepliesFeed,
     findWaveCurationDrops: mockFindWaveCurationDrops,
     searchDropsInWave: mockSearchDropsInWave,
+    searchDrops: mockSearchDrops,
     searchWaveAuthors: mockSearchWaveAuthors
   }
 }));
@@ -79,6 +81,7 @@ import {
   handleGetWavesV2,
   handleListWaveCurationDropsV2,
   handleSearchDropsInWaveV2,
+  handleSearchDropsV2,
   handleSearchWaveAuthorsV2
 } from './waves-v2.handlers';
 
@@ -810,6 +813,37 @@ describe('waves v2 handlers', () => {
           query: { handle: 'not-valid!' }
         } as any)
       ).rejects.toThrow();
+    });
+  });
+  describe('handleSearchDropsV2', () => {
+    it('accepts text and author criteria and normalizes pagination', async () => {
+      mockSearchDrops.mockResolvedValue({ data: [], page: 2, next: false });
+      await handleSearchDropsV2({
+        query: { term: ' hello ', author_id: 'alice', page: '2', size: '50' }
+      } as any);
+      expect(mockSearchDrops).toHaveBeenCalledWith(
+        { term: 'hello', author_id: 'alice', page: 2, size: 50 },
+        expect.any(Object)
+      );
+    });
+    it.each([
+      {},
+      { term: 'xx' },
+      { term: 'x'.repeat(201) },
+      { author_id: '' },
+      { term: 'hello', size: 101 },
+      { term: 'hello', page: 0 },
+      { term: 'hello', wave_id: 'hidden' }
+    ])('rejects invalid cross-wave criteria %j', async (query) => {
+      await expect(handleSearchDropsV2({ query } as any)).rejects.toThrow();
+      expect(mockSearchDrops).not.toHaveBeenCalled();
+    });
+    it('supports author-only searches', async () => {
+      await handleSearchDropsV2({ query: { author_id: 'alice' } } as any);
+      expect(mockSearchDrops).toHaveBeenCalledWith(
+        { author_id: 'alice', page: 1, size: 20 },
+        expect.any(Object)
+      );
     });
   });
 });

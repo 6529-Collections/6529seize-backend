@@ -30,6 +30,7 @@ import {
   GetDropRepliesV2Request,
   GetWaveCompetitionDropsV2Request,
   SearchDropsInWaveV2Request,
+  SearchDropsV2Request,
   SearchWaveAuthorsV2Request
 } from '@/api/generated/routes/operations';
 import { dropsService } from '@/api/drops/drops.api.service';
@@ -568,6 +569,26 @@ export async function handleSearchDropsInWaveV2(
       timer
     }
   );
+}
+
+export async function handleSearchDropsV2(
+  req: SearchDropsV2Request
+): Promise<ApiDropV2PageWithoutCount> {
+  const criteria = getValidatedByJoiOrThrow(
+    req.query,
+    Joi.object({
+      term: Joi.string().trim().min(3).max(200).optional(),
+      author_id: Joi.string().trim().min(1).max(100).optional(),
+      size: Joi.number().integer().min(1).max(100).default(20),
+      page: Joi.number().integer().min(1).default(1)
+    }).or('term', 'author_id')
+  );
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  return apiWaveV2Service.searchDrops(criteria, {
+    authenticationContext,
+    timer
+  });
 }
 
 export async function handleSearchWaveAuthorsV2(

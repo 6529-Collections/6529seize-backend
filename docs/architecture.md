@@ -2294,3 +2294,12 @@ WatchTower manual-review attention is derived from a subject-based union of
 open reports and pending moderation checks. The API groups this union before
 pagination and shares the case definition across queue and count surfaces; it
 adds no persisted case table, queue, service or background reconciliation.
+
+## Cross-wave message search
+
+`GET /v2/drops/search` reuses wave search text matching and accepts text, an
+author ID, or both. Live wave and parent-wave read eligibility is applied in
+SQL before stable newest-first pagination. Each result carries an eligible wave
+overview for navigation. Deploy the additive `api` endpoint before the frontend
+uses it; no schema changes or additional services are required. Existing scoped
+search remains compatible.

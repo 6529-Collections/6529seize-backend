@@ -444,6 +444,55 @@ export class ApiWaveV2Service {
     }
   }
 
+  public async searchDrops(
+    request: { term?: string; author_id?: string; page: number; size: number },
+    ctx: RequestContext
+  ): Promise<ApiDropV2PageWithoutCount> {
+    const groupIdsUserIsEligibleFor =
+      await getGroupsUserIsEligibleForReadContext(this.userGroupsService, ctx);
+    const entities = await this.dropsDb.searchDropsInWave(
+      {
+        term: request.term,
+        author_id: request.author_id,
+        group_ids_user_is_eligible_for: groupIdsUserIsEligibleFor,
+        limit: request.size + 1,
+        offset: request.size * (request.page - 1)
+      },
+      ctx
+    );
+    const pageEntities = entities.slice(0, request.size);
+    if (!pageEntities.length) {
+      return { data: [], next: false, page: request.page };
+    }
+    const waveIds = Array.from(
+      new Set(pageEntities.map((drop) => drop.wave_id))
+    );
+    const [drops, waves] = await Promise.all([
+      this.apiDropMapper.mapDrops(pageEntities, ctx, {
+        groupIdsUserIsEligibleFor
+      }),
+      this.wavesApiDb
+        .findWavesByIdsEligibleForRead(
+          waveIds,
+          groupIdsUserIsEligibleFor,
+          ctx.connection
+        )
+        .then((rows) =>
+          this.apiWaveOverviewMapper.mapWaves(rows, ctx, {
+            groupIdsUserIsEligibleFor
+          })
+        )
+    ]);
+    return {
+      data: pageEntities.flatMap((drop) => {
+        const wave = waves[drop.wave_id];
+        return wave ? [{ ...drops[drop.id], wave }] : [];
+      }),
+      next: entities.length > request.size,
+      page: request.page
+    };
+  }
+
   public async searchWaveAuthors(
     request: { wave_id: string; handle: string; limit: number },
     ctx: RequestContext

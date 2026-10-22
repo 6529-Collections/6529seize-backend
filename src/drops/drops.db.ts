@@ -3282,7 +3282,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async searchDropsInWave(
     param: {
-      wave_id: string;
+      wave_id?: string;
+      group_ids_user_is_eligible_for?: string[];
       term?: string;
       author_id?: string;
       after?: number;
@@ -3295,12 +3296,23 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     try {
       ctx.timer?.start(`${this.constructor.name}->searchDropsInWave`);
       const normalizedTerm = param.term?.trim().replace(/\s+/g, ' ');
-      const filters = ['d.wave_id = :wave_id'];
-      const queryParams: Record<string, string | number> = {
-        wave_id: param.wave_id,
+      const filters: string[] = [];
+      const queryParams: Record<string, string | number | string[]> = {
         limit: param.limit,
         offset: param.offset
       };
+      if (param.wave_id) {
+        filters.push('d.wave_id = :wave_id');
+        queryParams.wave_id = param.wave_id;
+      } else {
+        const groups = param.group_ids_user_is_eligible_for ?? [];
+        filters.push(`EXISTS (
+          SELECT 1 FROM ${legacyGetView(WAVES_TABLE)} search_wave
+          WHERE search_wave.id = d.wave_id
+            AND ${waveReadAccessSql('search_wave', groups.length > 0, 'searchGroups')}
+        )`);
+        if (groups.length) queryParams.searchGroups = groups;
+      }
 
       if (normalizedTerm) {
         const booleanPrefixQuery = normalizedTerm
@@ -3343,7 +3355,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             d.*
         FROM ${DROPS_TABLE} d
         WHERE ${filters.join('\n          AND ')}
-        ORDER BY d.created_at DESC
+        ORDER BY d.created_at DESC, d.id DESC
         LIMIT :limit OFFSET :offset
       `,
         queryParams,

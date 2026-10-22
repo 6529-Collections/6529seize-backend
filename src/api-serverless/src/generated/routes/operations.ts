@@ -2798,6 +2798,25 @@ export type GetDropV2VoteEditLogsByIdRequest = Request<
   Record<string, never>
 >;
 
+export type SearchDropsV2PathParams = Record<string, never>;
+
+export interface SearchDropsV2Query {
+  "term"?: string;
+  "author_id"?: string;
+  "page"?: number;
+  "size"?: number;
+}
+
+export type SearchDropsV2Response = ApiDropV2PageWithoutCount;
+
+export type SearchDropsV2Request = Request<
+  SearchDropsV2PathParams,
+  ApiResponse<SearchDropsV2Response>,
+  never,
+  SearchDropsV2Query,
+  Record<string, never>
+>;
+
 export type GetNotificationsV2PathParams = Record<string, never>;
 
 export interface GetNotificationsV2Query {

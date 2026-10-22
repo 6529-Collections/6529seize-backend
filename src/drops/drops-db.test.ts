@@ -15,6 +15,41 @@ import { DropType } from '@/entities/IDrop';
 import { DropsDb, LeaderboardSort } from './drops.db';
 
 describe('DropsDb', () => {
+  it('applies live wave and parent visibility before cross-wave pagination', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(() => ({ execute }) as any);
+    await repo.searchDropsInWave(
+      {
+        term: 'hello',
+        group_ids_user_is_eligible_for: ['readable'],
+        limit: 21,
+        offset: 20
+      },
+      {}
+    );
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('search_wave.visibility_group_id in (:searchGroups)');
+    expect(sql).toContain(
+      'access_parent.visibility_group_id in (:searchGroups)'
+    );
+    expect(sql).toContain('access_parent.parent_wave_id is null');
+    expect(sql).toContain('ORDER BY d.created_at DESC, d.id DESC');
+    expect(params.searchGroups).toEqual(['readable']);
+    expect(params).not.toHaveProperty('wave_id');
+  });
+  it('defaults a cross-wave search without eligible groups to public waves only', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(() => ({ execute }) as any);
+    await repo.searchDropsInWave(
+      { author_id: 'alice', limit: 20, offset: 0 },
+      {}
+    );
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('search_wave.visibility_group_id is null');
+    expect(sql).toContain('access_parent.visibility_group_id is null');
+    expect(sql).not.toContain('in (:searchGroups)');
+    expect(params).not.toHaveProperty('searchGroups');
+  });
   it('uses prefix-aware content matching and all structured filters', async () => {
     const execute = jest.fn().mockResolvedValue([]);
     const repo = new DropsDb(() => ({ execute }) as any);
