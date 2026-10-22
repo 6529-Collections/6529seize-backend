@@ -196,5 +196,40 @@ describeWithSeed(
       );
       expect(Number(retained[0].value)).toBe(80);
     });
+    it('orders personal votes by signed value, then vote time, across pages', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='ACTIVE' where competition_id=:competitionId`,
+        { competitionId: record.id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${COMPETITION_VOTES_TABLE}
+          (id,competition_id,entry_id,voter_profile_id,value,credit_spent,created_at,updated_at)
+         values ('second-vote',:competitionId,:entryId,'voter',120,120,2,2)`,
+        {
+          competitionId: record.id,
+          entryId: legacyCompetitionEntryId(record.id, 'second')
+        }
+      );
+      const readIds = async (offset = 0, limit = 10) =>
+        (await repository.myVotes(record, 'voter', offset, limit, {})).map(
+          (row) => row.drop_id
+        );
+      expect(await readIds()).toEqual(['second', 'first']);
+      expect(await readIds(1, 1)).toEqual(['first']);
+      await sqlExecutor.execute(
+        `update ${COMPETITION_VOTES_TABLE} set value=80,credit_spent=80 where id='second-vote'`,
+        {}
+      );
+      expect(await readIds()).toEqual(['first', 'second']);
+      await sqlExecutor.execute(
+        `update ${COMPETITION_VOTES_TABLE} set value=120,credit_spent=120 where id='second-vote'`,
+        {}
+      );
+      await sqlExecutor.execute(
+        `update ${COMPETITION_VOTES_TABLE} set value=-credit_spent`,
+        {}
+      );
+      expect(await readIds()).toEqual(['first', 'second']);
+    });
   }
 );

@@ -73,7 +73,7 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
        JOIN ${COMPETITION_ENTRIES_TABLE} e ON e.id=v.entry_id AND e.competition_id=v.competition_id
        WHERE v.competition_id=:competitionId AND v.voter_profile_id=:profileId AND v.value<>0 AND e.status='ACTIVE'
          AND ${competitionEntryVisibleSql('e')}
-       ORDER BY e.submitted_at DESC,e.id DESC LIMIT :offset,:limit`,
+       ORDER BY v.value DESC,v.updated_at ASC,e.drop_id ASC LIMIT :offset,:limit`,
       { competitionId: record.id, profileId, offset, limit },
       ctx
     );

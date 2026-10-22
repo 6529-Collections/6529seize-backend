@@ -1151,7 +1151,17 @@ post-TDH over-rate cleanup. Deploy the affected consumers sequentially:
 xTDH dependencies are already compatible. No schema or frontend rollout is needed.
 
 Winners paginate by win time, newest first; My Votes excludes completed winners
-without deleting historical allocations. Creating a hub always creates a
+without deleting historical allocations. Personal votes sort by signed vote value
+descending, vote update time ascending and drop ID ascending. Its optional
+`include=cards` response reuses the authorized lightweight competition card reader;
+deploy `api` before the frontend that requests this additive projection.
+Personal-vote cursors describe a live list, not a snapshot. After a vote edit,
+clients must refresh loaded pages from the first cursor before loading more,
+because changing a value can move an entry across page boundaries. The frontend
+invalidates the scoped My Votes query after each confirmed vote. The existing
+competition/voter index restricts reads to that actor's allocations; an additional
+sort index is deferred until query-plan evidence justifies a schema rollout.
+Creating a hub always creates a
 CHAT wave; competition creation is a separate native command. Historical RANK/APPROVE wire types are projected from native original-primary
 configuration; shared wave storage no longer owns a competition type.
 
