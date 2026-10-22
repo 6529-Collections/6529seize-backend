@@ -2079,7 +2079,16 @@ refresh progress. Full scans report committed work and confirmed continuation ha
 carrying their original request time in a message attribute that preserves FIFO
 body deduplication. Dirty catch-up cannot clear a pending full scan. Waiting full
 messages retain their independent SQS age guard, and diagnostic failures leave
-health unconfirmed. Other scheduled/queued workers retain their
+health unconfirmed. NFT processing health additionally separates discovery,
+refresh, audit and durable media publication. NextGen block checkpoint progress
+is published only after transaction commit and cannot clear independent handled
+reconciliation failures. Preview processing surveys persisted active backlog and
+saved READY results; terminal asset errors retain their independent application
+alerts. Event-driven idle surveys do not expire into noise, while new contention
+requires fresh evidence. Superseded preview completion failures stay in source
+logs without reporting a failure owned by another worker. These adapters reuse
+the existing relay, receipt table and Probe; no schema or trigger changes are
+needed. Other scheduled/queued workers retain their
 independent error and queue protections while awaiting business adapters. No
 application schedules, timeouts, concurrency, memory or public API contracts
 change. See [processing-health policies and rollout](../ops/monitoring/README.md#background-processing-health).
@@ -2310,3 +2319,38 @@ search remains compatible.
 Clients follow the opaque response cursor while `next` is true, including when
 a concurrent visibility change removes every result on a page. The cursor is
 derived from the last scanned row so this safely advances through that case.
+
+## Voting credit return notifications
+
+When an ACTIVE native competition entry wins or is permanently deleted by its
+submitter, WAVE-scoped active allocations are released by the existing spending
+formula. The transition transaction records one `voting_credit_releases` header
+and copies nonzero current votes into `voting_credit_release_recipients` with a
+set-based INSERT SELECT. Amounts are absolute allocations, never weighted scores.
+The entry/competition lock serializes capture against voting and decision work.
+Titles, credit type, event identity and release time survive later hard deletion.
+
+`votingCreditReturnNotificationsLoop` is a separate 1-minute worker with reserved
+concurrency 1. Each invocation processes at most 20 pages of 100 recipients within
+40 seconds. A page locks its release header with SKIP LOCKED; notification rows,
+push-outbox rows, recipient cleanup and progress commit atomically. Failure rolls
+back the page and defers that release by a minute; after ten failed attempts it
+is parked for operator recovery without discarding recipients. Other releases remain eligible.
+Completed headers retain the release identity; processed recipient snapshots are
+removed. Five-minute backlog warnings, EMF pending/dead-letter counts and Lambda errors
+expose delayed delivery.
+No network publish or per-voter application loop runs in the transition path.
+
+The profile consolidation paths in `tdhLoop` and `delegationsLoop` transfer
+pending allocations to the retained profile before migrating existing notices.
+They lock only affected release headers; already delivered recipient rows stay
+deleted when the pending cursor restarts. Both current primary reads and the
+consolidation transaction's own writes are included in candidate discovery.
+
+`VOTING_CREDITS_RETURNED` uses snapshot context, nullable actor/drop references,
+existing vote preferences and live wave visibility. This deliberately survives
+ordinary drop notification cancellation. Native-competition-capable push devices
+receive links to the winning entry or, after deletion, its competition. API V1/V2
+map the additive cause without hydrating deleted drops. The EventBridge schedule
+is disabled on deployment and activated only after the dependent frontend is
+ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.

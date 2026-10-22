@@ -341,3 +341,76 @@ test('wave score overlap is silent only with fresh dirty evidence and no stalled
     'healthy'
   );
 });
+
+test('event-driven idle surveys do not expire into noise, but cannot hide new contention', () => {
+  const idlePolicy = {
+    ...policy,
+    operations: ['processing'],
+    idleOperations: ['processing']
+  };
+  const idle = {
+    ...observation,
+    operation: 'processing',
+    pending: false,
+    observedAt: now - 5000,
+    progressAt: undefined,
+    oldestPendingAt: undefined
+  };
+  assert.equal(assessLoop(idlePolicy, [idle], false, now).level, 'healthy');
+  assert.equal(
+    assessLoop(idlePolicy, [idle], true, now).reason,
+    'telemetry_stale'
+  );
+  assert.equal(
+    assessLoop(idlePolicy, [{ ...idle, observedAt: now }], true, now).level,
+    'healthy'
+  );
+  assert.equal(
+    assessLoop(idlePolicy, [{ ...idle, pending: true }], false, now).reason,
+    'stalled'
+  );
+});
+
+test('a successful NFT discovery cannot clear a stuck refresh or audit', () => {
+  const modes = { ...policy, operations: ['discovery', 'refresh', 'audit'] };
+  const result = assessLoop(
+    modes,
+    [
+      { ...observation, operation: 'discovery', pending: false },
+      { ...observation, operation: 'refresh', pending: false },
+      { ...observation, operation: 'audit', progressAt: now - 1300 }
+    ],
+    true,
+    now
+  );
+  assert.equal(result.level, 'red');
+  assert.equal(result.operation, 'audit');
+});
+
+test('recent READY saves keep a moving preview backlog amber while older work remains overdue', () => {
+  const preview = {
+    ...policy,
+    service: 'nftLinkMediaPreviewLoop',
+    operations: ['processing'],
+    stallSeconds: 420,
+    freshSeconds: 240
+  };
+  const delayed = {
+    ...observation,
+    operation: 'processing',
+    oldestPendingAt: now - 1200,
+    progressAt: now - 30,
+    recovery: 'unknown' as const
+  };
+  const moving = assessLoop(preview, [delayed], true, now);
+  assert.equal(moving.level, 'amber');
+  assert.equal(moving.reason, 'delayed');
+  const stalled = assessLoop(
+    preview,
+    [{ ...delayed, progressAt: now - 421 }],
+    true,
+    now
+  );
+  assert.equal(stalled.level, 'red');
+  assert.equal(stalled.reason, 'stalled');
+});

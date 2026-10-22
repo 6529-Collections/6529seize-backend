@@ -111,3 +111,19 @@ References:
 ## WebSocket recovery worker
 
 `WebSocketDeliveryDeployment.json` is an additional narrowly scoped inline policy for the existing deployment role. An administrative identity installs it before deploying `webSocketDeliveryLoop`; the GitHub role cannot modify its own permissions. It permits only the new worker function/versions, its environment-specific CloudFormation stack, deployment-bucket prefix, schedule, log group and alarms. Existing managed policies and their ten attachments are unchanged. The deployment-bucket prefix allows CloudFormation's truncated stack component and generated suffix (for example, `websocketdeliveryloop-sta-serverlessdeploymentbuck-...` on staging); it does not grant application-data access. Validate the document with Access Analyzer and simulate new-worker operations and unrelated denials before installation. Deploy through the ordinary GitHub workflow afterward.
+
+## Voting credit return worker
+
+`VotingCreditReturnDeployment.json` enrolls only the voting credit return
+notification worker in this environment. Install it as the
+`VotingCreditReturnDeployment` inline policy on this environment's existing
+GitHub deployment role through the administrative identity after Access Analyzer
+validation and positive/negative simulation. The ten managed policies, trust
+policy and runtime role remain unchanged. The exact schedule name is declared
+in the worker definition; four alarm ARNs are enumerated. CloudFormation truncates
+the long stack name in generated deployment buckets, so artifact access uses
+the unique `votingcreditreturnnotific*-serverlessdeploy*` prefix with the
+environment's required AWS region. It grants no application-bucket access.
+Keep the aggregate role inline-policy size below 10,240 characters. Verify the
+remote document and unrelated-resource/other-environment denials, then deploy
+through GitHub Actions and verify the disabled schedule before activation.

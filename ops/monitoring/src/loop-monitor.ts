@@ -86,24 +86,43 @@ function saveIncident(
 
 function continuedObservation(
   observation: LoopObservation,
-  previous: Record<string, unknown>
+  previous: Record<string, unknown>,
+  policy: LoopPolicy
 ): Record<string, unknown> {
-  const continuing = previous.pending === true && observation.pending;
+  // A late scheduled start is still the same overdue work. Starting a retry
+  // cannot clear its incident or restart its stall/delay clock.
+  const overdueAt =
+    previous.pending === false &&
+    typeof previous.nextDueAt === 'number' &&
+    previous.nextDueAt <= observation.observedAt &&
+    observation.pending
+      ? previous.nextDueAt
+      : undefined;
+  const continuing =
+    observation.pending &&
+    (previous.pending === true || overdueAt !== undefined);
   const baselineAt =
-    continuing && typeof previous.baselineAt === 'number'
+    overdueAt ??
+    (continuing && typeof previous.baselineAt === 'number'
       ? previous.baselineAt
-      : observation.observedAt;
+      : observation.observedAt);
   const priorProgress =
-    continuing && typeof previous.progressAt === 'number'
+    continuing &&
+    overdueAt === undefined &&
+    typeof previous.progressAt === 'number'
       ? previous.progressAt
       : 0;
   const oldestAdvanced =
+    policy.oldestAdvanceIsProgress !== false &&
     continuing &&
     typeof previous.oldestPendingAt === 'number' &&
     observation.oldestPendingAt !== undefined &&
     observation.oldestPendingAt > previous.oldestPendingAt;
   return {
     ...observation,
+    ...(continuing && observation.oldestPendingAt === undefined
+      ? { oldestPendingAt: overdueAt ?? previous.oldestPendingAt }
+      : {}),
     baselineAt,
     progressAt:
       Math.max(
@@ -137,7 +156,7 @@ export async function receiveLoopObservation(
     const accepted = await latest(
       key,
       observation.observedAt,
-      continuedObservation(observation, record(saved?.payload)),
+      continuedObservation(observation, record(saved?.payload), policy),
       typeof saved?.observedAt === 'number' ? saved.observedAt : null
     );
     if (accepted) return;

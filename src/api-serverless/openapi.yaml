@@ -34342,6 +34342,18 @@ components:
     ApiNotificationAdditionalContextV2:
       type: object
       properties:
+        reason:
+          $ref: "#/components/schemas/ApiVotingCreditReleaseReason"
+        submission_title:
+          type: string
+          description: Submission title saved before winning or deletion.
+        credit_type:
+          type: string
+          description: Credit type at the time of release.
+        released_at:
+          type: integer
+          format: int64
+          description: Release timestamp in Unix milliseconds.
         artwork_name:
           type: string
           description: >-
@@ -34463,6 +34475,11 @@ components:
         event_type, wave_id, competition_id and competition_title; winner events
         also include entry_id and drop_id. These identify the native competition
         destination independently of the shared drop's legacy projection.
+        VOTING_CREDITS_RETURNED includes event_id, reason, wave_id,
+        competition_id, competition_title, entry_id, drop_id, submission_title,
+        credit_type, amount and released_at. Amount is the positive released
+        allocation, independent of time-weighted winning scores. Related drops
+        are not required.
     ApiNotificationCause:
       type: string
       enum:
@@ -34482,6 +34499,7 @@ components:
         - SUBSCRIPTION_COVERAGE
         - COMPETITION_LIFECYCLE
         - MEME_COLLABORATION
+        - VOTING_CREDITS_RETURNED
     ApiNotificationDropReactedReactor:
       type: object
       required:
@@ -38507,6 +38525,12 @@ components:
           type: boolean
         enforce_hashes:
           type: boolean
+    ApiVotingCreditReleaseReason:
+      type: string
+      description: Why an active WAVE-scoped voting allocation was released.
+      enum:
+        - WIN
+        - AUTHOR_DELETED
     ApiWallet:
       type: object
       required:
