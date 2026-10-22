@@ -403,6 +403,7 @@ export * from '../models/ApiDropReactionV2';
 export * from '../models/ApiDropReferencedNFT';
 export * from '../models/ApiDropResolvedIdentityProfile';
 export * from '../models/ApiDropResolvedIdentityProfileV2';
+export * from '../models/ApiDropSearchPage';
 export * from '../models/ApiDropSearchStrategy';
 export * from '../models/ApiDropSignedEvents';
 export * from '../models/ApiDropSubscriptionActions';
@@ -1362,6 +1363,7 @@ import { ApiDropReactionV2 } from '../models/ApiDropReactionV2';
 import { ApiDropReferencedNFT } from '../models/ApiDropReferencedNFT';
 import { ApiDropResolvedIdentityProfile                         } from '../models/ApiDropResolvedIdentityProfile';
 import { ApiDropResolvedIdentityProfileV2            } from '../models/ApiDropResolvedIdentityProfileV2';
+import { ApiDropSearchPage } from '../models/ApiDropSearchPage';
 import { ApiDropSearchStrategy } from '../models/ApiDropSearchStrategy';
 import { ApiDropSignedEvents } from '../models/ApiDropSignedEvents';
 import { ApiDropSubscriptionActions } from '../models/ApiDropSubscriptionActions';
@@ -2592,6 +2594,7 @@ let typeMap: {[index: string]: any} = {
     "ApiDropReferencedNFT": ApiDropReferencedNFT,
     "ApiDropResolvedIdentityProfile": ApiDropResolvedIdentityProfile,
     "ApiDropResolvedIdentityProfileV2": ApiDropResolvedIdentityProfileV2,
+    "ApiDropSearchPage": ApiDropSearchPage,
     "ApiDropSignedEvents": ApiDropSignedEvents,
     "ApiDropSubscriptionActions": ApiDropSubscriptionActions,
     "ApiDropTraceItem": ApiDropTraceItem,
