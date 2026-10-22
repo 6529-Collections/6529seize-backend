@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import type { Context } from 'aws-lambda';
 import sharp from 'sharp';
-import { GetObjectCommand } from '@aws-sdk/client-s3';
+import {
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand
+} from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { Logger } from '@/logging';
 import {
@@ -22,25 +26,51 @@ let mockContentLength: number | undefined;
 let mockUploadError: Error | undefined;
 let mockDecoderError: Error | undefined;
 let mockGetObjectError: Error | undefined;
+let mockHeadError: Error | undefined;
+let mockPutError: Error | undefined;
+let mockRevision: string;
+const mockRejections = new Set<string>();
 const mockReportUnsupported = jest.fn();
 jest.mock('@/mediaResizerLoop/unsupported-resize-report', () => ({
+  ...jest.requireActual('@/mediaResizerLoop/unsupported-resize-report'),
   reportUnsupportedResizeOnce: (...args: unknown[]) =>
     mockReportUnsupported(...args)
 }));
 jest.mock('@aws-sdk/client-s3', () => ({
   GetObjectCommand: jest.fn(),
+  HeadObjectCommand: jest.fn((input) => ({ kind: 'head', input })),
+  PutObjectCommand: jest.fn((input) => ({ kind: 'put', input })),
   S3Client: jest.fn(() => ({
-    send: jest.fn(async () => {
-      if (mockGetObjectError) throw mockGetObjectError;
-      return {
-        Body:
-          mockSource ??
-          Readable.from([mockInput.subarray(0, 8), mockInput.subarray(8)]),
-        ContentType: mockContentType,
-        ETag: 'synthetic-etag',
-        ContentLength: mockContentLength
-      };
-    })
+    send: jest.fn(
+      async (command: { kind?: string; input?: { Key: string } }) => {
+        if (command.kind === 'head') {
+          if (mockHeadError) throw mockHeadError;
+          if (!mockRejections.has(command.input!.Key)) {
+            throw Object.assign(new Error('missing'), {
+              name: 'NotFound',
+              $metadata: { httpStatusCode: 404 }
+            });
+          }
+          return { Metadata: { 'rejection-code': 'HEIC_DECODE_FAILED' } };
+        }
+        if (command.kind === 'put') {
+          if (mockPutError) throw mockPutError;
+          if (mockRejections.has(command.input!.Key))
+            throw { $metadata: { httpStatusCode: 412 } };
+          mockRejections.add(command.input!.Key);
+          return {};
+        }
+        if (mockGetObjectError) throw mockGetObjectError;
+        return {
+          Body:
+            mockSource ??
+            Readable.from([mockInput.subarray(0, 8), mockInput.subarray(8)]),
+          ContentType: mockContentType,
+          ETag: mockRevision,
+          ContentLength: mockContentLength
+        };
+      }
+    )
   }))
 }));
 jest.mock('@aws-sdk/lib-storage', () => ({
@@ -64,7 +94,13 @@ jest.mock('@/sentry.context', () => ({
   wrapLambdaHandler: (handler: unknown) => handler
 }));
 
+const previousBucket = process.env.BUCKET;
+process.env.BUCKET = 'synthetic-bucket';
 import { handler } from '@/mediaResizerLoop';
+afterAll(() => {
+  if (previousBucket === undefined) delete process.env.BUCKET;
+  else process.env.BUCKET = previousBucket;
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -77,6 +113,10 @@ beforeEach(() => {
   mockUploadError = undefined;
   mockDecoderError = undefined;
   mockGetObjectError = undefined;
+  mockHeadError = undefined;
+  mockPutError = undefined;
+  mockRevision = 'synthetic-etag';
+  mockRejections.clear();
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -546,7 +586,7 @@ it('returns 422 and reports a known unsupported decoder failure even when MIME s
   expect(JSON.parse(result.body).code).toBe('UNSUPPORTED_CODEC');
   expect(mockReportUnsupported).toHaveBeenCalledWith(
     expect.anything(),
-    undefined,
+    'synthetic-bucket',
     'synthetic/fixture',
     'synthetic-etag'
   );
@@ -762,3 +802,113 @@ it('returns a cacheable 422 for a native GIF per-frame pixel rejection', async (
   expect(result.headers?.['Cache-Control']).toBe('public, max-age=300');
   expect(Upload).not.toHaveBeenCalled();
 });
+
+function useHeicFixture(corrupt = false) {
+  mockInput = readFileSync(
+    join(__dirname, '../../scripts/media-fixtures/heic')
+  );
+  mockContentType = 'image/jpeg';
+  if (corrupt) {
+    // Keep HEIF metadata valid and destroy only the encoded pixel payload.
+    for (let offset = 0; offset < mockInput.length; ) {
+      const length = mockInput.readUInt32BE(offset);
+      if (mockInput.toString('ascii', offset + 4, offset + 8) === 'mdat') {
+        mockInput.fill(0, offset + 8, offset + length);
+        break;
+      }
+      offset += length;
+    }
+  }
+}
+
+it('resizes mislabeled HEIC as JPEG without changing its source or destination key', async () => {
+  useHeicFixture();
+  const original = Buffer.from(mockInput);
+  const directories = jest.spyOn(fs, 'mkdtemp');
+  const result = await resize();
+  expect(result.statusCode).toBe(302);
+  expect(await sharp(mockUploaded).metadata()).toMatchObject({
+    format: 'jpeg',
+    width: 6,
+    height: 6
+  });
+  expect(Upload).toHaveBeenCalledWith(
+    expect.objectContaining({
+      params: expect.objectContaining({
+        Key: 'synthetic/6x6_max/fixture',
+        ContentType: 'image/jpeg'
+      })
+    })
+  );
+  expect(mockInput).toEqual(original);
+  expect(PutObjectCommand).not.toHaveBeenCalled();
+  await expect(
+    fs.access(await directories.mock.results[0].value)
+  ).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('caches a confirmed HEIC decoder rejection across sizes and retries a new source revision', async () => {
+  useHeicFixture(true);
+  const first = await resize();
+  expect(first.statusCode).toBe(422);
+  expect(JSON.parse(first.body).code).toBe('HEIC_DECODE_FAILED');
+  expect(PutObjectCommand).toHaveBeenCalledTimes(1);
+  expect(mockRejections.size).toBe(1);
+  // A different resize option hits the same revision marker, without a worker.
+  const exec = jest.spyOn(require('node:child_process'), 'execFile');
+  const second = await handler(
+    { queryStringParameters: { path: 'synthetic/AUTOx450/fixture' } },
+    {} as Context,
+    () => undefined
+  );
+  expect(second.statusCode).toBe(422);
+  expect(exec).not.toHaveBeenCalled();
+  expect(PutObjectCommand).toHaveBeenCalledTimes(1);
+  expect(Upload).not.toHaveBeenCalled();
+  useHeicFixture();
+  mockRevision = 'replacement-etag';
+  expect((await resize()).statusCode).toBe(302);
+  expect(exec).toHaveBeenCalledTimes(1);
+});
+
+it.each(['lookup', 'marker write', 'upload'])(
+  'preserves HEIC %s infrastructure failures',
+  async (failure) => {
+    useHeicFixture(failure === 'marker write');
+    const error = new Error('synthetic HEIC infrastructure failure');
+    if (failure === 'lookup') mockHeadError = error;
+    if (failure === 'marker write') mockPutError = error;
+    if (failure === 'upload') mockUploadError = error;
+    await expect(resize()).rejects.toBe(error);
+    expect(mockRejections.size).toBe(0);
+  }
+);
+
+it('keeps a silently short S3 response operational before decoding or caching', async () => {
+  useHeicFixture();
+  mockContentLength = mockInput.length + 1;
+  await expect(resize()).rejects.toThrow('RESIZE_SOURCE_LENGTH_MISMATCH');
+  expect(HeadObjectCommand).not.toHaveBeenCalled();
+  expect(Upload).not.toHaveBeenCalled();
+  expect(PutObjectCommand).not.toHaveBeenCalled();
+});
+
+it.each([2500, 1999])(
+  'does not cache a HEIC deadline failure with %i ms remaining',
+  async (remaining) => {
+    useHeicFixture();
+    let calls = 0;
+    const getRemainingTimeInMillis = () =>
+      remaining === 2500 || calls++ > 0 ? remaining : 30000;
+    await expect(
+      handler(
+        { queryStringParameters: { path: 'synthetic/6x6_max/fixture' } },
+        { getRemainingTimeInMillis } as Context,
+        () => undefined
+      )
+    ).rejects.toThrow('HEIC_CONVERSION_DEADLINE_EXCEEDED');
+    expect(mockRejections.size).toBe(0);
+    expect(PutObjectCommand).not.toHaveBeenCalled();
+    expect(Upload).not.toHaveBeenCalled();
+  }
+);
