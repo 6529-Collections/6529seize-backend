@@ -6,6 +6,15 @@ deletions of active entries, excluding admin/system cleanup and edit replacement
 
 Deploy sequentially using the ordinary deployment workflow:
 
+Before the new worker deployment, an administrative identity must install the
+matching `ops/iam/backend-{staging,production}/VotingCreditReturnDeployment.json`
+as the `VotingCreditReturnDeployment` inline policy on that environment's
+existing GitHub deployment role. Validate it with Access Analyzer and simulate
+the worker operations and unrelated denials first, following the IAM runbook.
+Install only for the authorized environment. This enrolls the new stack,
+function, artifact bucket prefix, exact schedule, log group and four alarms;
+it does not let the GitHub role change its own policies or runtime role.
+
 1. `dbMigrationsLoop` with `db_schema_scope=voting-credit-returns`. This syncs only
    the two new entities and avoids unrelated schema work.
 2. `pushNotificationsHandler` and then `api` (both understand the new cause).

@@ -23,6 +23,7 @@ functions:
     reservedConcurrency: 1
     events:
       - schedule:
+          name: votingCreditReturnNotificationsLoop-${opt:stage, self:provider.stage}
           rate: rate(1 minute)
           # Enable only after backend readers, push consumer and frontend are ready.
           enabled: false
