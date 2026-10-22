@@ -18,6 +18,7 @@ export interface TemplateEdit {
   template: Template;
   deleted: string[];
   modified: string[];
+  reevaluated?: string[];
 }
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
@@ -107,7 +108,21 @@ export function removeMigratorMonitoring(original: Template): TemplateEdit {
       JSON.stringify(template.Resources[id]) !==
       JSON.stringify(original.Resources[id])
   );
-  return { template, deleted: present, modified };
+  // Updating the relay environment makes CloudFormation reevaluate GetAtt ARN
+  // references even though the function identity and subscription are unchanged.
+  const reevaluated = modified.includes('LogRelay')
+    ? Object.keys(template.Resources).filter((id) => {
+        const resource = template.Resources[id];
+        return (
+          !modified.includes(id) &&
+          resource.Type === 'AWS::Logs::SubscriptionFilter' &&
+          JSON.stringify(resource.Properties?.DestinationArn) ===
+            JSON.stringify({ 'Fn::GetAtt': ['LogRelay', 'Arn'] }) &&
+          JSON.stringify(resource) === JSON.stringify(original.Resources[id])
+        );
+      })
+    : [];
+  return { template, deleted: present, modified, reevaluated };
 }
 
 function assertMigratorResourceOwnership(resources: Template['Resources']) {
@@ -229,17 +244,73 @@ export function retainMigratorRecoveryArtifacts(
   };
 }
 
+interface ResourceChange {
+  Action?: string;
+  LogicalResourceId?: string;
+  ResourceType?: string;
+  Replacement?: string | null;
+  Scope?: string[];
+  Details?: {
+    Target?: {
+      Attribute?: string;
+      Name?: string;
+      RequiresRecreation?: string;
+    };
+    Evaluation?: string;
+    ChangeSource?: string;
+    CausingEntity?: string;
+  }[];
+}
+
+function isUnchangedSubscriptionEvaluation(
+  edit: TemplateEdit,
+  change: ResourceChange
+): boolean {
+  const detail = change.Details?.[0];
+  return (
+    !!change.LogicalResourceId &&
+    (edit.reevaluated ?? []).includes(change.LogicalResourceId) &&
+    change.ResourceType === 'AWS::Logs::SubscriptionFilter' &&
+    change.Scope?.length === 1 &&
+    change.Scope[0] === 'Properties' &&
+    change.Details?.length === 1 &&
+    detail?.Evaluation === 'Dynamic' &&
+    detail.ChangeSource === 'ResourceAttribute' &&
+    detail.CausingEntity === 'LogRelay.Arn' &&
+    detail.Target?.Attribute === 'Properties' &&
+    detail.Target.Name === 'DestinationArn' &&
+    detail.Target.RequiresRecreation === 'Never'
+  );
+}
+
+function isRelayEnvironmentUpdate(change: ResourceChange | undefined): boolean {
+  const detail = change?.Details?.[0];
+  return (
+    change?.Action === 'Modify' &&
+    change.LogicalResourceId === 'LogRelay' &&
+    change.ResourceType === 'AWS::Lambda::Function' &&
+    change.Replacement === 'False' &&
+    change.Scope?.length === 1 &&
+    change.Scope[0] === 'Properties' &&
+    change.Details?.length === 1 &&
+    detail?.Evaluation === 'Static' &&
+    detail.ChangeSource === 'DirectModification' &&
+    detail.Target?.Attribute === 'Properties' &&
+    detail.Target.Name === 'Environment' &&
+    detail.Target.RequiresRecreation === 'Never'
+  );
+}
+
 export function assertRetirementChangeSet(
   edit: TemplateEdit,
-  changes: {
-    ResourceChange?: {
-      Action?: string;
-      LogicalResourceId?: string;
-      Replacement?: string | null;
-    };
-  }[]
+  changes: { ResourceChange?: ResourceChange }[]
 ): void {
   const removed = new Set<string>();
+  const relayEnvironmentUpdate = isRelayEnvironmentUpdate(
+    changes.find(
+      ({ ResourceChange: change }) => change?.LogicalResourceId === 'LogRelay'
+    )?.ResourceChange
+  );
   for (const { ResourceChange: change } of changes) {
     const id = change?.LogicalResourceId;
     if (!id) throw new Error('Unreadable CloudFormation resource change');
@@ -247,7 +318,11 @@ export function assertRetirementChangeSet(
       removed.add(id);
     else if (
       change.Action !== 'Modify' ||
-      !edit.modified.includes(id) ||
+      (!edit.modified.includes(id) &&
+        !(
+          relayEnvironmentUpdate &&
+          isUnchangedSubscriptionEvaluation(edit, change)
+        )) ||
       change.Replacement !== 'False'
     )
       throw new Error(

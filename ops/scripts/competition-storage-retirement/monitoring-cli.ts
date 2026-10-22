@@ -256,8 +256,8 @@ async function propose(
   if (!created.Id)
     throw new Error('CloudFormation did not identify the proposed change set');
   const changes = await awaitChangeSet(command, created.Id);
-  assertRetirementChangeSet(edit, changes.Changes ?? []);
   save(selected.output, 'change-set.json', changes);
+  assertRetirementChangeSet(edit, changes.Changes ?? []);
   return changes;
 }
 
@@ -344,7 +344,8 @@ async function main() {
     originalDigest: digest(original),
     desiredDigest: digest(edit.template),
     deleted: edit.deleted,
-    modified: edit.modified
+    modified: edit.modified,
+    reevaluated: edit.reevaluated ?? []
   };
   const summary = { ...plan, planSha256: digest(plan) };
   save(selected.output, 'template-plan.json', {

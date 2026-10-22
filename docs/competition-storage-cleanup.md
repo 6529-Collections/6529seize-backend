@@ -232,6 +232,14 @@ their audited direct-caller execution with no role override. Monitoring uses onl
 its existing environment-scoped execution role. Respect concurrent operations; never
 cancel someone else's deployment or overwrite a moved shared ref.
 
+Original JSON and YAML templates retain long-form intrinsic functions; unsupported
+short-form YAML tags fail before a proposal. Named IAM acknowledgement preserves
+the existing roles. Source updates may report unchanged log subscriptions because
+CloudFormation reevaluates `LogRelay.Arn`. Only an unchanged subscription's exact
+dynamic `DestinationArn` evaluation is accepted, with the relay's environment-only
+update and explicit nonreplacement evidence. These dependent evaluations are
+listed separately in the plan and bound to its approval digest.
+
 After deletion, recover forward with compatible native code. For data repair,
 restore the encrypted snapshot in isolation, compare exact affected rows/schema,
 and selectively recover only the reviewed data; never replace the live database
