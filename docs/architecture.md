@@ -2063,7 +2063,8 @@ AWS-wide failures. Moderation evidence is excluded from this operational contrac
 Source log subscription filters retain their permission dependency and form one
 chain in ordinal logical-ID order. CloudFormation therefore updates them serially,
 avoiding a parallel burst against CloudWatch Logs subscription API limits while
-preserving filter identities, destinations and patterns. This increases source
+preserving filter identities and destinations; optional quoted terms accept both
+error and loop-health envelopes. This increases source
 stack update time; it does not rate-limit unrelated callers in the account/region.
 Selected serialized-worker throttle alarms, including release-note generation,
 require three breaching minutes out of five while invocation errors and OOM
@@ -2075,6 +2076,33 @@ detect sustained 30-minute backlog in either refresh queue and any visible
 dirty-refresh dead letter. Queue age is a transport guard, not proof of business
 completion. Protected alarm notifications include bounded infrastructure labels
 and numeric thresholds without forwarding free-form CloudWatch reasons.
+Background-worker throttle transitions now feed a shared impact evaluator instead
+of directly notifying through SNS. Its inventory is generated from existing
+schedules/SQS mappings; rate intervals at most five minutes with one reserved
+execution are marked as expected-overlap context. The existing source LogRelay
+also reconstructs finite `6529.ops.loop-health.v1` business observations. The
+normal collector binds service identity and applies a separate health admission
+budget. It stores monotonic observations in the existing receipt table. The
+existing one-minute Probe independently evaluates backlog, committed progress,
+telemetry freshness, recovery availability and decision deadline margins. It
+persists notification intent before enqueue and sends incident changes through
+the protected lane.
+Routine verified overlap has no incident or recovery. Missing business evidence
+produces explicit unconfirmed contention; invocation success is never a business
+recovery signal. Initial adapters cover delegation checkpoint/stage observations,
+native decision/outbox surveys, and independent dirty/full Wave Score refreshes.
+Score refresh health reads persisted dirty request versions on the writer before
+and after work, including handled failures; attempted-wave counts do not prove
+progress. Dirty age follows the original request creation and persisted score
+calculation timestamps; new writes and failed-attempt updates cannot manufacture
+refresh progress. Full scans report committed work and confirmed continuation handoffs,
+carrying their original request time in a message attribute that preserves FIFO
+body deduplication. Dirty catch-up cannot clear a pending full scan. Waiting full
+messages retain their independent SQS age guard, and diagnostic failures leave
+health unconfirmed. Other scheduled/queued workers retain their
+independent error and queue protections while awaiting business adapters. No
+application schedules, timeouts, concurrency, memory or public API contracts
+change. See [processing-health policies and rollout](../ops/monitoring/README.md#background-processing-health).
 Three exact audited low-CPU scale-in controls instead produce sanitized,
 deterministically keyed S3 audit objects when trusted source identity, metric
 configuration, observed low-direction reason grammar and numeric evidence match.

@@ -132,4 +132,36 @@ describe('SQS', () => {
     expect(SendMessageCommand).toHaveBeenCalledTimes(2);
     expect(sendMock).toHaveBeenCalledTimes(3);
   });
+
+  it('forwards health metadata and cancellation while preserving the FIFO message body', async () => {
+    sendMock
+      .mockResolvedValueOnce({
+        QueueUrl: 'https://sqs.us-east-1.amazonaws.com/123/refresh.fifo'
+      })
+      .mockResolvedValueOnce({ MessageId: 'mid-123' });
+    const message = {
+      mode: 'FULL',
+      maxBatches: 10,
+      startAfterWaveId: 'cursor'
+    };
+    const messageAttributes = {
+      LoopHealthStartedAt: { DataType: 'Number', StringValue: '2000000' }
+    };
+    const abortSignal = new AbortController().signal;
+    await new SQS().sendToQueueName({
+      queueName: 'refresh.fifo',
+      message,
+      messageAttributes,
+      abortSignal
+    });
+    expect(SendMessageCommand).toHaveBeenCalledWith({
+      QueueUrl: 'https://sqs.us-east-1.amazonaws.com/123/refresh.fifo',
+      MessageBody: JSON.stringify(message),
+      MessageGroupId: 'default',
+      MessageAttributes: messageAttributes
+    });
+    expect(sendMock).toHaveBeenLastCalledWith(expect.anything(), {
+      abortSignal
+    });
+  });
 });
