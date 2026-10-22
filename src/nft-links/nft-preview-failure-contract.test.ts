@@ -82,3 +82,11 @@ it('rejects the invocation if failure persistence fails', async () => {
     'synthetic persistence failure'
   );
 });
+
+it('does not alert on a superseded failure whose completion fence no longer owns the row', async () => {
+  const f = fixture(new Error('late failure from superseded worker'));
+  f.write.mockResolvedValue(false);
+  await f.service.processQueueMessage(f.message, {});
+  expect(f.write).toHaveBeenCalledTimes(1);
+  expect(f.logged).not.toHaveBeenCalled();
+});

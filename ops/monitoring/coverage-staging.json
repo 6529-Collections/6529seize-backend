@@ -561,6 +561,18 @@
       ]
     },
     {
+      "service": "votingCreditReturnNotificationsLoop",
+      "region": "eu-west-1",
+      "functions": [
+        "votingCreditReturnNotificationsLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
       "service": "waveDecisionExecutionLoop",
       "region": "eu-west-1",
       "functions": [

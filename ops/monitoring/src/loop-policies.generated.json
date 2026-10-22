@@ -327,7 +327,11 @@
       "stallSeconds": 1200,
       "freshSeconds": 1020,
       "operations": [
-        "processing"
+        "indexing",
+        "recalculation"
+      ],
+      "optionalOperations": [
+        "recalculation"
       ]
     },
     {
@@ -387,7 +391,11 @@
       "freshSeconds": 240,
       "operations": [
         "processing"
-      ]
+      ],
+      "idleOperations": [
+        "processing"
+      ],
+      "oldestAdvanceIsProgress": false
     },
     {
       "service": "nftLinkRefresherLoop",
@@ -421,8 +429,19 @@
       "stallSeconds": 1200,
       "freshSeconds": 1020,
       "operations": [
-        "processing"
-      ]
+        "discovery",
+        "refresh",
+        "audit",
+        "publication"
+      ],
+      "operationBudgets": {
+        "refresh": {
+          "freshSeconds": 1620
+        },
+        "audit": {
+          "freshSeconds": 4620
+        }
+      }
     },
     {
       "service": "overRatesRevocationLoop",
@@ -1036,7 +1055,11 @@
       "stallSeconds": 1200,
       "freshSeconds": 1020,
       "operations": [
-        "processing"
+        "indexing",
+        "recalculation"
+      ],
+      "optionalOperations": [
+        "recalculation"
       ]
     },
     {
@@ -1072,7 +1095,11 @@
       "freshSeconds": 240,
       "operations": [
         "processing"
-      ]
+      ],
+      "idleOperations": [
+        "processing"
+      ],
+      "oldestAdvanceIsProgress": false
     },
     {
       "service": "nftLinkRefresherLoop",
@@ -1106,8 +1133,19 @@
       "stallSeconds": 1200,
       "freshSeconds": 1020,
       "operations": [
-        "processing"
-      ]
+        "discovery",
+        "refresh",
+        "audit",
+        "publication"
+      ],
+      "operationBudgets": {
+        "refresh": {
+          "freshSeconds": 1620
+        },
+        "audit": {
+          "freshSeconds": 4620
+        }
+      }
     },
     {
       "service": "overRatesRevocationLoop",

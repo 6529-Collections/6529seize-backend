@@ -8,6 +8,7 @@ import {
 } from '@/constants';
 import { SqlExecutor } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
+import { mergePendingVotingCreditRecipients } from '@/notifications/voting-credit-returns-profile-merge';
 
 /** Consolidation locks native competitions before shared profile/drop changes. */
 export async function withCompetitionProfileMerge<T>(
@@ -31,6 +32,7 @@ export async function withCompetitionProfileMerge<T>(
     { sources },
     options
   );
+  await mergePendingVotingCreditRecipients(db, sources, target, ctx);
   const result = await action();
   for (const record of records) {
     const params = { id: record.id, sources, target };

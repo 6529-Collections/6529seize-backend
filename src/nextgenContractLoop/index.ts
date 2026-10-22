@@ -15,13 +15,16 @@ import {
 import { findNextGenTransactions } from '../nextgen/nextgen';
 import { Transaction } from '../entities/ITransaction';
 import { doInDbContext } from '../secrets';
+import { NextgenLoopHealth } from '@/nextgenContractLoop/loop-health';
 
 const logger = Logger.get('NEXTGEN_CONTRACT_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     async () => {
-      await findNextGenTransactions();
+      const health = new NextgenLoopHealth();
+      await health.start();
+      await findNextGenTransactions(health);
     },
     {
       entities: [

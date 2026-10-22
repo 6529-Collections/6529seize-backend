@@ -1,3 +1,4 @@
+import { votingCreditReturnsDb } from '@/notifications/voting-credit-returns.db';
 import { freezeMemeCollaborationForNativeDecision } from '@/meme-collaborations/meme-collaboration-mint-selection';
 import { randomUUID } from 'node:crypto';
 import { collections } from '@/collections';
@@ -575,6 +576,15 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
         ctx
       );
     for (const winner of params.winners) {
+      await votingCreditReturnsDb.capture(
+        {
+          competitionId,
+          entryId: winner.entry_id,
+          reason: 'WIN',
+          occurredAt: params.now
+        },
+        ctx
+      );
       await this.saveWinner(
         {
           competitionId,

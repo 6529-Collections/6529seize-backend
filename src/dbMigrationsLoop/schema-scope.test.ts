@@ -1,3 +1,7 @@
+import {
+  VotingCreditReleaseEntity,
+  VotingCreditReleaseRecipientEntity
+} from '@/entities/IVotingCreditRelease';
 import { pushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 jest.mock('@/notifications/push-notification-cancellations.db', () => ({
   pushNotificationCancellationsDb: {
@@ -148,6 +152,10 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       ]
     },
     { scope: 'claims-media-upload', entities: [MintingClaimEntity] },
+    {
+      scope: 'voting-credit-returns',
+      entities: [VotingCreditReleaseEntity, VotingCreditReleaseRecipientEntity]
+    },
     {
       scope: 'market-depth-publication-lock',
       entities: [MarketDepthPublicationLockEntity]
@@ -305,6 +313,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     'claims-media-upload',
     'nft-link-page-retry',
     'market-depth-publication-lock',
+    'voting-credit-returns',
     'wave-hub-configuration-preparation',
     'wave-hub-configuration-finalize',
     'membership-refresh',
@@ -320,7 +329,8 @@ describe('dbMigrationsLoop explicit schema scope', () => {
   it.each([
     'wallet-transfer-analysis',
     'claims-media-upload',
-    'market-depth-publication-lock'
+    'market-depth-publication-lock',
+    'voting-credit-returns'
   ])(
     'propagates %s schema synchronization failure without starting maintenance',
     async (scope) => {

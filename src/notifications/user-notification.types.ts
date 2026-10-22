@@ -227,7 +227,27 @@ export interface SubscriptionCoverageNotification extends UserNotificationBase {
   data: SubscriptionCoverageNotificationData;
 }
 
+export interface VotingCreditsReturnedNotificationData {
+  event_id: string;
+  reason: 'WIN' | 'AUTHOR_DELETED';
+  wave_id: string;
+  competition_id: string;
+  competition_title: string;
+  entry_id: string;
+  drop_id: string;
+  submission_title: string;
+  credit_type: string;
+  amount: number;
+  released_at: number;
+}
+
+export interface VotingCreditsReturnedNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.VOTING_CREDITS_RETURNED;
+  data: VotingCreditsReturnedNotificationData;
+}
+
 export type UserNotification =
+  | VotingCreditsReturnedNotification
   | MemeCollaborationNotification
   | CompetitionLifecycleNotification
   | IdentitySubscriptionNotification
