@@ -732,13 +732,12 @@ export class ApiDropMapper {
     if (replyPreview.content !== null) {
       apiReply.content = replyPreview.content;
     }
-    if (
-      replyPreview.author_handle !== null &&
-      replyPreview.author_pfp !== null
-    ) {
+    if (replyPreview.author_handle !== null) {
       apiReply.author = {
         handle: replyPreview.author_handle,
-        pfp: replyPreview.author_pfp
+        ...(replyPreview.author_pfp !== null
+          ? { pfp: replyPreview.author_pfp }
+          : {})
       };
     }
     return apiReply;
