@@ -3,6 +3,7 @@ import {
   removeMigratorMonitoring,
   RETIRED_MIGRATOR,
   retainMigratorRecoveryArtifacts,
+  retirementChangeDiagnostics,
   retirementExecutionRole,
   Template
 } from './infrastructure';
@@ -134,6 +135,58 @@ it('accepts only the full deletion set and the reviewed environment/dependency u
   expect(() => assertRetirementChangeSet(edit, changes.slice(1))).toThrow(
     'complete reviewed'
   );
+});
+
+it('identifies rejected dependency changes without exposing property values', () => {
+  const change = {
+    Action: 'Modify',
+    LogicalResourceId: 'UnexpectedSchedule',
+    ResourceType: 'AWS::Events::Rule',
+    Replacement: 'False',
+    Scope: ['Properties'],
+    BeforeContext: 'private-template-value',
+    AfterContext: 'private-template-value',
+    Details: [
+      {
+        Evaluation: 'Dynamic',
+        ChangeSource: 'ResourceAttribute',
+        CausingEntity: 'Collector.Arn',
+        Target: {
+          Attribute: 'Properties',
+          Name: 'Targets',
+          RequiresRecreation: 'Never',
+          BeforeValue: 'private-template-value',
+          AfterValue: 'private-template-value'
+        }
+      }
+    ]
+  };
+  let message = '';
+  try {
+    assertRetirementChangeSet(removeMigratorMonitoring(monitor()), [
+      { ResourceChange: change }
+    ]);
+  } catch (error) {
+    message = error instanceof Error ? error.message : '';
+  }
+  expect(message).toContain('UnexpectedSchedule');
+  expect(message).toContain('Collector.Arn');
+  expect(message).toContain('Targets');
+  expect(message).not.toContain('private-template-value');
+  const diagnostics = retirementChangeDiagnostics([
+    { ResourceChange: change },
+    {
+      ResourceChange: {
+        ...change,
+        LogicalResourceId: 'AnotherDependency'
+      }
+    },
+    {}
+  ]);
+  expect(diagnostics).toHaveLength(3);
+  expect(diagnostics[1]).toMatchObject({ id: 'AnotherDependency' });
+  expect(diagnostics[2]).toEqual({ unreadable: true });
+  expect(JSON.stringify(diagnostics)).not.toContain('private-template-value');
 });
 
 function subscriptionEvaluation() {
