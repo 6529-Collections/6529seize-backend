@@ -657,9 +657,32 @@ describeWithSeed(
               )
             ).available
           ).toBe(49);
-          expect(
-            await competitionTdhOvervotesDb.findOvervoters(selected, ctx)
-          ).toEqual([profileId]);
+          const session = await sqlExecutor.oneOrNull<{ collation: string }>(
+            'select @@collation_connection as collation',
+            {},
+            { wrappedConnection: connection }
+          );
+          try {
+            for (const collation of [
+              'utf8mb4_general_ci',
+              'utf8mb4_0900_ai_ci'
+            ]) {
+              await sqlExecutor.execute(
+                'set collation_connection=:collation',
+                { collation },
+                { wrappedConnection: connection }
+              );
+              expect(
+                await competitionTdhOvervotesDb.findOvervoters(selected, ctx)
+              ).toEqual([profileId]);
+            }
+          } finally {
+            await sqlExecutor.execute(
+              'set collation_connection=:collation',
+              { collation: session!.collation },
+              { wrappedConnection: connection }
+            );
+          }
           await sqlExecutor.execute(
             `update ${TDH_NFT_TABLE} set boosted_tdh=20 where id=2`,
             {},

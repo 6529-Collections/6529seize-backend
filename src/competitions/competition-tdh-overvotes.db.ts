@@ -31,6 +31,8 @@ function creditSource(competition: Pick<Competition, 'voting'>): {
   return {
     // Match the public budget: deduplicate NFTs, take the maximum per NFT across
     // the profile's consolidation keys, then sum that configured set only.
+    // JSON_TABLE and persisted columns may inherit different collations. Hex
+    // addresses use one explicit case-insensitive collation at that boundary.
     sql: `select profile_id, sum(credit) as available from (
       select spending.profile_id, nft.contract, nft.token_id,
         coalesce(max(t.boosted_tdh), 0) as credit
@@ -40,7 +42,8 @@ function creditSource(competition: Pick<Competition, 'voting'>): {
       )) nft
       left join ${IDENTITIES_TABLE} i on i.profile_id = spending.profile_id
       left join ${TDH_NFT_TABLE} t on t.consolidation_key = i.consolidation_key
-        and t.contract = nft.contract and t.id = nft.token_id
+        and t.contract = convert(nft.contract using utf8mb4) collate utf8mb4_unicode_ci
+        and t.id = nft.token_id
       group by spending.profile_id, nft.contract, nft.token_id
     ) nft_credit group by profile_id`,
     params: {
