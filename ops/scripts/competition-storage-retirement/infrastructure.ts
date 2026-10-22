@@ -53,6 +53,94 @@ function dependencies(resource: Resource): string[] {
     : (resource.DependsOn ?? []);
 }
 
+const collectorLanes = ['Normal', 'Critical'] as const;
+const getArn = (id: string) => ({ 'Fn::GetAtt': [id, 'Arn'] });
+const same = (left: unknown, right: unknown) =>
+  JSON.stringify(left) === JSON.stringify(right);
+
+function unchanged(original: Template, desired: Template, id: string) {
+  return (
+    desired.Resources[id] !== undefined &&
+    same(original.Resources[id], desired.Resources[id])
+  );
+}
+
+function unchangedCollectorRoute(
+  original: Template,
+  desired: Template,
+  lane: string
+) {
+  const rule = desired.Resources[`${lane}Rule`];
+  const targets = rule?.Properties?.Targets as { Arn?: unknown }[] | undefined;
+  const permission = desired.Resources[`${lane}Invocation`];
+  const props = permission?.Properties;
+  return (
+    unchanged(original, desired, `${lane}Rule`) &&
+    rule.Type === 'AWS::Events::Rule' &&
+    Array.isArray(targets) &&
+    targets.length === 1 &&
+    same(targets[0]?.Arn, getArn(`${lane}Collector`)) &&
+    unchanged(original, desired, `${lane}Invocation`) &&
+    permission.Type === 'AWS::Lambda::Permission' &&
+    props?.Action === 'lambda:InvokeFunction' &&
+    props.Principal === 'events.amazonaws.com' &&
+    same(props.FunctionName, { Ref: `${lane}Collector` }) &&
+    same(props.SourceArn, getArn(`${lane}Rule`))
+  );
+}
+
+function unchangedCollectorQueuePolicy(original: Template, desired: Template) {
+  const resource = desired.Resources.EventDeadLettersPolicy;
+  const props = resource?.Properties;
+  const document = props?.PolicyDocument as
+    | {
+        Version?: string;
+        Statement?: {
+          Effect?: string;
+          Principal?: { Service?: string };
+          Action?: string;
+          Resource?: unknown;
+          Condition?: { ArnEquals?: Record<string, unknown> };
+        }[];
+      }
+    | undefined;
+  const statement = document?.Statement?.[0];
+  return (
+    unchanged(original, desired, 'EventDeadLettersPolicy') &&
+    resource.Type === 'AWS::SQS::QueuePolicy' &&
+    same(props?.Queues, [{ Ref: 'EventDeadLetters' }]) &&
+    document?.Version === '2012-10-17' &&
+    document.Statement?.length === 1 &&
+    statement?.Effect === 'Allow' &&
+    statement.Principal?.Service === 'events.amazonaws.com' &&
+    statement.Action === 'sqs:SendMessage' &&
+    same(statement.Resource, getArn('EventDeadLetters')) &&
+    same(
+      statement.Condition?.ArnEquals?.['aws:SourceArn'],
+      collectorLanes.map((lane) => getArn(`${lane}Rule`))
+    )
+  );
+}
+
+function collectorReevaluations(
+  original: Template,
+  desired: Template,
+  modified: string[]
+): string[] {
+  const lanes = collectorLanes.filter(
+    (lane) =>
+      modified.includes(`${lane}Collector`) &&
+      unchangedCollectorRoute(original, desired, lane)
+  );
+  const ids = lanes.flatMap((lane) => [`${lane}Rule`, `${lane}Invocation`]);
+  if (
+    lanes.length === collectorLanes.length &&
+    unchangedCollectorQueuePolicy(original, desired)
+  )
+    ids.push('EventDeadLettersPolicy');
+  return ids;
+}
+
 export function removeMigratorMonitoring(original: Template): TemplateEdit {
   const template = clone(original);
   const targets = [
@@ -122,6 +210,7 @@ export function removeMigratorMonitoring(original: Template): TemplateEdit {
         );
       })
     : [];
+  reevaluated.push(...collectorReevaluations(original, template, modified));
   return { template, deleted: present, modified, reevaluated };
 }
 
@@ -313,11 +402,14 @@ function isUnchangedSubscriptionEvaluation(
   );
 }
 
-function isRelayEnvironmentUpdate(change: ResourceChange | undefined): boolean {
+function isEnvironmentUpdate(
+  change: ResourceChange | undefined,
+  id: string
+): boolean {
   const detail = change?.Details?.[0];
   return (
     change?.Action === 'Modify' &&
-    change.LogicalResourceId === 'LogRelay' &&
+    change.LogicalResourceId === id &&
     change.ResourceType === 'AWS::Lambda::Function' &&
     change.Replacement === 'False' &&
     change.Scope?.length === 1 &&
@@ -331,29 +423,133 @@ function isRelayEnvironmentUpdate(change: ResourceChange | undefined): boolean {
   );
 }
 
+function isDynamicEvaluation(
+  change: ResourceChange | undefined,
+  type: string,
+  property: string,
+  causes: string[],
+  recreation: string
+): boolean {
+  return (
+    change?.Action === 'Modify' &&
+    change.ResourceType === type &&
+    change.Scope?.length === 1 &&
+    change.Scope[0] === 'Properties' &&
+    change.Details?.length === causes.length &&
+    new Set(change.Details.map((detail) => detail.CausingEntity)).size ===
+      causes.length &&
+    change.Details.every(
+      (detail) =>
+        detail.Evaluation === 'Dynamic' &&
+        detail.ChangeSource === 'ResourceAttribute' &&
+        causes.includes(detail.CausingEntity ?? '') &&
+        detail.Target?.Attribute === 'Properties' &&
+        detail.Target.Name === property &&
+        detail.Target.RequiresRecreation === recreation
+    )
+  );
+}
+
+function verifiedCollectorRules(
+  edit: TemplateEdit,
+  changes: { ResourceChange?: ResourceChange }[]
+): string[] {
+  const find = (id: string) =>
+    changes.find(
+      ({ ResourceChange: change }) => change?.LogicalResourceId === id
+    )?.ResourceChange;
+  return collectorLanes.filter((lane) => {
+    const rule = find(`${lane}Rule`);
+    return (
+      (edit.reevaluated ?? []).includes(`${lane}Rule`) &&
+      isEnvironmentUpdate(find(`${lane}Collector`), `${lane}Collector`) &&
+      rule?.Replacement === 'False' &&
+      isDynamicEvaluation(
+        rule,
+        'AWS::Events::Rule',
+        'Targets',
+        [`${lane}Collector.Arn`],
+        'Never'
+      )
+    );
+  });
+}
+
+function isCollectorReevaluation(
+  edit: TemplateEdit,
+  change: ResourceChange,
+  verifiedLanes: string[]
+): boolean {
+  if (
+    !(edit.reevaluated ?? []).includes(change.LogicalResourceId ?? '') ||
+    edit.modified.includes(change.LogicalResourceId ?? '')
+  )
+    return false;
+  if (verifiedLanes.some((lane) => change.LogicalResourceId === `${lane}Rule`))
+    return true;
+  for (const lane of verifiedLanes) {
+    if (change.LogicalResourceId !== `${lane}Invocation`) continue;
+    // The complete permission and rule templates are unchanged. Its only
+    // evaluation is SourceArn from an explicitly nonreplacing rule whose only
+    // evaluation is Targets from an explicitly nonreplacing collector. Neither
+    // rule Name/EventBusName nor permission properties can change. Conditional
+    // here is the transitive GetAtt reevaluation, not permission replacement.
+    return (
+      (change.Replacement === 'Conditional' ||
+        change.Replacement === 'False') &&
+      isDynamicEvaluation(
+        change,
+        'AWS::Lambda::Permission',
+        'SourceArn',
+        [`${lane}Rule.Arn`],
+        'Always'
+      )
+    );
+  }
+  return (
+    change.LogicalResourceId === 'EventDeadLettersPolicy' &&
+    verifiedLanes.length === collectorLanes.length &&
+    change.Replacement === 'False' &&
+    isDynamicEvaluation(
+      change,
+      'AWS::SQS::QueuePolicy',
+      'PolicyDocument',
+      collectorLanes.map((lane) => `${lane}Rule.Arn`),
+      'Never'
+    )
+  );
+}
+
 export function assertRetirementChangeSet(
   edit: TemplateEdit,
   changes: { ResourceChange?: ResourceChange }[]
 ): void {
   const removed = new Set<string>();
-  const relayEnvironmentUpdate = isRelayEnvironmentUpdate(
+  const seen = new Set<string>();
+  const relayEnvironmentUpdate = isEnvironmentUpdate(
     changes.find(
       ({ ResourceChange: change }) => change?.LogicalResourceId === 'LogRelay'
-    )?.ResourceChange
+    )?.ResourceChange,
+    'LogRelay'
   );
+  const verifiedLanes = verifiedCollectorRules(edit, changes);
   for (const { ResourceChange: change } of changes) {
     const id = change?.LogicalResourceId;
     if (!id) throw new Error('Unreadable CloudFormation resource change');
+    if (seen.has(id))
+      throw new Error('Duplicate CloudFormation resource change');
+    seen.add(id);
     if (change.Action === 'Remove' && edit.deleted.includes(id))
       removed.add(id);
     else if (
       change.Action !== 'Modify' ||
-      (!edit.modified.includes(id) &&
-        !(
-          relayEnvironmentUpdate &&
-          isUnchangedSubscriptionEvaluation(edit, change)
-        )) ||
-      change.Replacement !== 'False'
+      !(
+        (change.Replacement === 'False' &&
+          (edit.modified.includes(id) ||
+            (relayEnvironmentUpdate &&
+              isUnchangedSubscriptionEvaluation(edit, change)))) ||
+        isCollectorReevaluation(edit, change, verifiedLanes)
+      )
     )
       throw new Error(
         `CloudFormation proposes an unrelated change, new resource or replacement: ${JSON.stringify(describeRejectedChange(change))}`
