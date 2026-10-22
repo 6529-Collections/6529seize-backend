@@ -43,6 +43,9 @@ import { RequestContext } from '@/request.context';
 import { competitionEventRepository } from './competition-event.repository';
 import { competitionMainStageRepository } from './competition-main-stage.repository';
 import { identitiesDb } from '@/identities/identities.db';
+import { revokeTdhBasedDropWavesOverVotes } from '@/drops/participation-drops-over-vote-revocation';
+import { nativeCompetitionRuntimeService } from './native-competition-runtime.service';
+import { userNotifier } from '@/notifications/user.notifier';
 import { metricsRecorder } from '@/metrics/MetricsRecorder';
 import { memeCardDropMappingsDb } from '@/minting-claims/meme-card-drop-mappings.db';
 import {
@@ -327,6 +330,104 @@ describeWithSeed(
         })
       );
     }
+
+    it('bulk TDH revocation changes only over-limit voters, retains history and refreshes once on retry', async () => {
+      const identities = ['first', 'second', 'funded'].map(
+        (profile_id, index) =>
+          anIdentity(
+            { tdh: [10, 20, 100][index] },
+            {
+              profile_id,
+              consolidation_key: `bulk-${profile_id}`,
+              primary_address: `0x${String(index + 1).repeat(40)}`,
+              handle: profile_id
+            }
+          )
+      );
+      await sqlExecutor.bulkInsert(
+        IDENTITIES_TABLE,
+        identities,
+        Object.keys(identities[0])
+      );
+      for (const [entryId, voterProfileId, value] of [
+        [rankEntry, 'first', 100],
+        [secondRankEntry, 'first', -20],
+        [rankEntry, 'second', 40],
+        [rankEntry, 'funded', 100]
+      ] as const) {
+        await sqlExecutor.execute(
+          `insert into ${COMPETITION_VOTES_TABLE} (id,competition_id,entry_id,voter_profile_id,value,credit_spent,created_at,updated_at) values (:id,:competitionId,:entryId,:voterProfileId,:value,abs(:value),1,1)`,
+          {
+            id: randomUUID(),
+            competitionId: rankId,
+            entryId,
+            voterProfileId,
+            value
+          }
+        );
+      }
+      const notifications = jest
+        .spyOn(userNotifier, 'notifyOfDropVote')
+        .mockResolvedValue(undefined);
+      const refreshed = jest.spyOn(
+        nativeCompetitionRuntimeService,
+        'refreshLeaderboardAfterCreditReconciliation'
+      );
+      const full = jest.spyOn(
+        nativeCompetitionRuntimeService,
+        'refreshCompetition'
+      );
+      const budget = jest.spyOn(competitionCreditService, 'getBudget');
+      try {
+        const run = () =>
+          sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+            revokeTdhBasedDropWavesOverVotes(connection)
+          );
+        await run();
+        expect(
+          await sqlExecutor.execute(
+            `select voter_profile_id,value from ${COMPETITION_VOTES_TABLE} where competition_id=:rankId order by voter_profile_id,entry_id`,
+            { rankId }
+          )
+        ).toEqual([
+          { voter_profile_id: 'first', value: 8 },
+          { voter_profile_id: 'first', value: -1 },
+          { voter_profile_id: 'funded', value: 100 },
+          { voter_profile_id: 'second', value: 20 }
+        ]);
+        expect(budget).toHaveBeenCalledTimes(2);
+        expect(notifications).toHaveBeenCalledTimes(3);
+        expect(refreshed).toHaveBeenCalledTimes(1);
+        expect(full).not.toHaveBeenCalled();
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) as count from ${COMPETITION_VOTE_HISTORY_TABLE} where competition_id=:rankId`,
+            { rankId }
+          )
+        ).toEqual({ count: 3 });
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) as count from ${COMPETITION_OUTBOX_TABLE} where competition_id=:rankId and json_unquote(json_extract(event,'$.event_type'))='COMPETITION_LEADERBOARD_UPDATED'`,
+            { rankId }
+          )
+        ).toEqual({ count: 1 });
+        await run();
+        expect(budget).toHaveBeenCalledTimes(2);
+        expect(notifications).toHaveBeenCalledTimes(3);
+        expect(refreshed).toHaveBeenCalledTimes(1);
+        expect(
+          await sqlExecutor.oneOrNull(
+            `select count(*) as count from ${COMPETITION_VOTE_HISTORY_TABLE} where competition_id=:rankId`,
+            { rankId }
+          )
+        ).toEqual({ count: 3 });
+      } finally {
+        notifications.mockRestore();
+        refreshed.mockRestore();
+        full.mockRestore();
+        budget.mockRestore();
+      }
+    });
 
     it('batches WAVE budgets and only reconciles voters over their shared credit', async () => {
       await vote(rankId, rankEntry, -60, 10, 'overspent');
