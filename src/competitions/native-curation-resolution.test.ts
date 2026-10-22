@@ -5,7 +5,6 @@ function fixture() {
   const competition = {
     id: 'curation',
     wave_id: 'hub',
-    storage_mode: 'NATIVE',
     execution_mode: 'ACTIVE',
     lifecycle: 'PUBLISHED',
     capabilities: [CompetitionCapability.CURATION],

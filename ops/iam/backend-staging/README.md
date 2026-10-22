@@ -62,7 +62,7 @@ rule, mapping, alarms, and log group. `manifest.json` records both source refs.
 
 ## Deliberate limits
 
-IAM changes in `competitionMigrationLoop`, `dropVideoConversionInvokerLoop`,
+IAM changes in `dropVideoConversionInvokerLoop`,
 `artworkDocumentationProcessor`, and `artworkDocumentationStorage` require a
 separate administrative infrastructure step. In particular, granting arbitrary
 `iam:PutRolePolicy` on the shared execution role would permit privilege

@@ -6,8 +6,7 @@ import {
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import {
   CompetitionExecutionMode,
-  CompetitionLifecycle,
-  CompetitionStorageMode
+  CompetitionLifecycle
 } from '@/entities/ICompetition';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import {
@@ -82,8 +81,6 @@ export async function lockNativeCompetition(
     competitionId,
     ctx
   );
-  if (record.storage_mode !== CompetitionStorageMode.NATIVE)
-    competitionConflict('Competition is unavailable');
   if (Number(record.config_version) !== version)
     competitionConflict('Competition rules changed. Reload before retrying');
   const competition = await new NativeCompetitionReader(

@@ -34,7 +34,6 @@ describeWithSeed(
           id: competitionId,
           wave_id: 'hub',
           legacy_wave_id: null,
-          storage_mode: 'NATIVE',
           execution_mode: 'ACTIVE',
           type: 'RANK',
           lifecycle: 'PUBLISHED',

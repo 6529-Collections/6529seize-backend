@@ -185,7 +185,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
   ): Promise<DefaultCompetitionRecord[]> {
     return this.timed(ctx, 'listDefaultCompetitionRecords', () =>
       this.db.execute<DefaultCompetitionRecord>(
-        `select id, storage_mode, type, lifecycle, published_at, ended_at, cancelled_at,
+        `select id, type, lifecycle, published_at, ended_at, cancelled_at,
          participation_starts_at, participation_ends_at, voting_starts_at, voting_ends_at, decision_config
          from ${COMPETITIONS_TABLE} where wave_id = :waveId`,
         { waveId },

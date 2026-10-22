@@ -12,6 +12,7 @@ mirrors or a legacy adapter. The old read/write/execution/hub/shadow flags are
 retired. Per-competition lifecycle, execution mode, capabilities and authorization
 remain enforced.
 
-See [runtime retirement](./competition-runtime-retirement.md) for staged deployment,
-parity and physical-absence acceptance. The immutable Phase 0 GET contract
+See [runtime retirement](./competition-runtime-retirement.md) for permanent behavior
+and [final cleanup](competition-storage-cleanup.md) for deployment, recovery and
+physical-absence acceptance. The immutable Phase 0 GET contract
 fixtures are retained unchanged and must not be regenerated to accept a regression.

@@ -29,11 +29,7 @@ export async function voteForMigratedLegacyEntry(
   model: VoteForDropModel,
   ctx: RequestContext
 ): Promise<boolean> {
-  if (
-    !ctx.connection ||
-    record.legacy_wave_id !== model.wave_id ||
-    record.storage_mode !== 'NATIVE'
-  )
+  if (!ctx.connection || record.legacy_wave_id !== model.wave_id)
     throw new Error('Native legacy voting requires its primary ownership lock');
   const now = Date.now();
   const competition = await new NativeCompetitionReader(

@@ -213,13 +213,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
        ON DUPLICATE KEY UPDATE ${columns
          .filter(
            (key) =>
-             ![
-               'id',
-               'wave_id',
-               'legacy_wave_id',
-               'storage_mode',
-               'created_at'
-             ].includes(key)
+             !['id', 'wave_id', 'legacy_wave_id', 'created_at'].includes(key)
          )
          .map((key) => `${key} = VALUES(${key})`)
          .join(',')}`,

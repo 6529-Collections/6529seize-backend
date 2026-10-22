@@ -1,0 +1,266 @@
+{
+  "revision": "8ea218977",
+  "definitions": [
+    "CREATE TABLE `competition_parity_observations` (`id` varchar(36) NOT NULL, `wave_id` varchar(100) NOT NULL, `competition_id` varchar(36) NOT NULL, `category` varchar(48) NOT NULL, `matched` tinyint NOT NULL, `baseline_hash` varchar(64) NOT NULL, `candidate_hash` varchar(64) NOT NULL, `baseline_storage_mode` varchar(32) NOT NULL, `candidate_storage_mode` varchar(32) NOT NULL, `baseline_config_version` int NOT NULL, `candidate_config_version` int NOT NULL, `source_version` varchar(64) NOT NULL, `observed_at` bigint NOT NULL, INDEX `idx_competition_parity_category_time` (`category`, `observed_at`), INDEX `idx_competition_parity_competition_time` (`competition_id`, `observed_at`), PRIMARY KEY (`id`)) ENGINE=InnoDB",
+    "CREATE TABLE `competition_migration_environments` (`id` varchar(36) NOT NULL, `environment` varchar(16) NOT NULL, `operator` varchar(100) NOT NULL, `reason` text NOT NULL, `acceptance` json NOT NULL, `created_at` bigint NOT NULL, INDEX `idx_competition_migration_environment_review` (`environment`, `created_at`), PRIMARY KEY (`id`)) ENGINE=InnoDB",
+    "CREATE TABLE `competition_migrations` (`competition_id` varchar(36) NOT NULL, `wave_id` varchar(100) NOT NULL, `state` varchar(24) NOT NULL, `cohort` varchar(24) NOT NULL, `owner` varchar(100) NOT NULL, `source_watermark` bigint NOT NULL DEFAULT '0', `applied_watermark` bigint NOT NULL DEFAULT '0', `target_watermark` bigint NOT NULL DEFAULT '0', `reset_table_index` int NULL, `stage` varchar(24) NOT NULL, `next_batch_at` bigint NULL, `stage_offset` bigint NOT NULL DEFAULT '0', `stage_cursor` varchar(500) NULL, `reverse_checkpoint` json NULL, `reverse_ready` tinyint NOT NULL DEFAULT 0, `completed_stages` json NOT NULL, `consecutive_full_windows` int NOT NULL DEFAULT '0', `window_started_at` bigint NULL, `window_duration_ms` bigint NULL, `window_samples` int NOT NULL DEFAULT '0', `last_window_end` bigint NULL, `last_comparison_at` bigint NULL, `last_comparison_watermark` bigint NULL, `acceptance` json NULL, `exceptions` json NOT NULL, `cutover_at` bigint NULL, `cutover_decision_count` bigint NULL, `updated_at` bigint NOT NULL, UNIQUE INDEX `IDX_0aeedfce154795da2310300b9d` (`wave_id`), PRIMARY KEY (`competition_id`)) ENGINE=InnoDB",
+    "CREATE TABLE `competition_migration_changes` (`sequence` bigint NOT NULL AUTO_INCREMENT, `competition_id` varchar(36) NOT NULL, `watermark` bigint NOT NULL, `source_table` varchar(100) NOT NULL, `operation` varchar(8) NOT NULL, `before_row` json NULL, `after_row` json NULL, `occurred_at` bigint NOT NULL, INDEX `idx_competition_migration_changes_watermark` (`competition_id`, `watermark`, `sequence`), PRIMARY KEY (`sequence`)) ENGINE=InnoDB",
+    "CREATE TABLE `competition_migration_audits` (`id` varchar(36) NOT NULL, `competition_id` varchar(36) NOT NULL, `actor` varchar(100) NOT NULL, `action` varchar(48) NOT NULL, `reason` text NOT NULL, `report` json NOT NULL, `created_at` bigint NOT NULL, INDEX `idx_competition_migration_audit` (`competition_id`, `created_at`), PRIMARY KEY (`id`)) ENGINE=InnoDB",
+    "CREATE TABLE `competition_legacy_mirror_permits` (`connection_id` bigint NOT NULL, `competition_id` varchar(36) NOT NULL, `depth` int NOT NULL DEFAULT '1', PRIMARY KEY (`connection_id`, `competition_id`)) ENGINE=InnoDB",
+    "CREATE TABLE `competition_legacy_execution_effects` (`id` varchar(36) NOT NULL, `competition_id` varchar(36) NOT NULL, `wave_id` varchar(100) NOT NULL, `payload` json NOT NULL, `lease_token` varchar(36) NULL, `lease_until` bigint NULL, `completed_at` bigint NULL, `attempts` int NOT NULL DEFAULT '0', `created_at` bigint NOT NULL, INDEX `idx_legacy_execution_effects_pending` (`completed_at`, `competition_id`), PRIMARY KEY (`id`)) ENGINE=InnoDB",
+    "CREATE TABLE `drop_ranks` (`drop_id` varchar(100) NOT NULL, `last_increased` bigint NOT NULL, `vote` varchar(100) NOT NULL, `wave_id` varchar(100) NOT NULL, INDEX `IDX_ac432bebdee2c13c9b68f7dad0` (`last_increased`), INDEX `IDX_3bf7689c753d112974994224ce` (`vote`), INDEX `IDX_a4270c083f577130aa811f7d8c` (`wave_id`), PRIMARY KEY (`drop_id`)) ENGINE=InnoDB",
+    "CREATE TABLE `drop_real_vote_in_time` (`id` int NOT NULL AUTO_INCREMENT, `drop_id` varchar(100) NOT NULL, `wave_id` varchar(100) NOT NULL, `timestamp` bigint NOT NULL, `vote` bigint NOT NULL, INDEX `drop_real_vote_in_time_drop_id_idx` (`drop_id`), INDEX `drop_real_vote_in_time_wave_id_idx` (`wave_id`), INDEX `drop_real_vote_in_time_drop_id_timestamp_idx` (`drop_id`, `timestamp`), PRIMARY KEY (`id`)) ENGINE=InnoDB",
+    "CREATE TABLE `drop_real_voter_vote_in_time` (`id` int NOT NULL AUTO_INCREMENT, `drop_id` varchar(100) NOT NULL, `voter_id` varchar(100) NOT NULL, `wave_id` varchar(100) NOT NULL, `timestamp` bigint NOT NULL, `vote` bigint NOT NULL, INDEX `drop_real_voter_vote_in_time_drop_id_idx` (`drop_id`), INDEX `drop_real_voter_vote_in_time_voter_id_idx` (`voter_id`), INDEX `drop_real_voter_vote_in_time_wave_id_idx` (`wave_id`), PRIMARY KEY (`id`)) ENGINE=InnoDB",
+    "CREATE TABLE `drops_votes_credit_spendings` (`id` bigint NOT NULL AUTO_INCREMENT, `voter_id` varchar(100) NOT NULL, `drop_id` varchar(100) NOT NULL, `credit_spent` bigint NOT NULL, `created_at` bigint NOT NULL, `wave_id` varchar(100) NOT NULL, INDEX `IDX_2b87d004258873102fdda8b0e2` (`voter_id`), INDEX `IDX_f0c7f113cab1c5bde822b8c546` (`drop_id`), INDEX `IDX_6d7bc1def5b6fd17838d3e403e` (`created_at`), INDEX `IDX_53207e7c05d48e9e62ac117d55` (`wave_id`), PRIMARY KEY (`id`)) ENGINE=InnoDB",
+    "CREATE TABLE `drop_voter_states` (`voter_id` varchar(100) NOT NULL, `drop_id` varchar(100) NOT NULL, `votes` bigint NOT NULL, `wave_id` varchar(100) NOT NULL, INDEX `IDX_4fe2cf31a67787133ac7d206fb` (`wave_id`), PRIMARY KEY (`voter_id`, `drop_id`)) ENGINE=InnoDB",
+    "CREATE TABLE `waves_decision_pauses` (`id` bigint NOT NULL AUTO_INCREMENT, `wave_id` varchar(100) NOT NULL, `start_time` bigint NOT NULL, `end_time` bigint NOT NULL, `reason` varchar(2000) NULL, INDEX `IDX_d5b0075d09ef983673f7e8f15a` (`wave_id`), PRIMARY KEY (`id`)) ENGINE=InnoDB",
+    "CREATE TABLE `wave_outcomes` (`wave_id` varchar(100) NOT NULL, `wave_outcome_position` int NOT NULL, `type` varchar(20) NOT NULL, `subtype` varchar(20) NULL, `description` text NOT NULL, `credit` varchar(20) NULL, `rep_category` text NULL, `amount` bigint NULL, INDEX `IDX_520513e37b1cbe29e42338a176` (`wave_id`), INDEX `IDX_9450e9a5d678b8bd22adff7d2a` (`wave_outcome_position`), PRIMARY KEY (`wave_id`, `wave_outcome_position`)) ENGINE=InnoDB",
+    "CREATE TABLE `wave_outcome_distribution_items` (`wave_id` varchar(100) NOT NULL, `wave_outcome_position` int NOT NULL, `wave_outcome_distribution_item_position` int NOT NULL, `amount` bigint NULL, `description` text NULL, INDEX `IDX_6f45525a9eb4c3d5aa5bd34ad8` (`wave_id`), INDEX `IDX_dd83c4dc4f06441812e08ddb9c` (`wave_outcome_position`), INDEX `IDX_1a33cbb023592f731ef0c0c98c` (`wave_outcome_distribution_item_position`), INDEX `IDX_9b9ac926132cf06bbe18802c41` (`amount`), PRIMARY KEY (`wave_id`, `wave_outcome_position`, `wave_outcome_distribution_item_position`)) ENGINE=InnoDB",
+    "CREATE TABLE `wave_decisions` (`decision_time` bigint NOT NULL, `wave_id` varchar(100) NOT NULL, PRIMARY KEY (`decision_time`, `wave_id`)) ENGINE=InnoDB",
+    "CREATE TABLE `wave_decision_winner_drops` (`decision_time` bigint NOT NULL, `drop_id` varchar(100) NOT NULL, `ranking` int NOT NULL, `final_vote` bigint NOT NULL DEFAULT '0', `prizes` json NOT NULL, `wave_id` varchar(100) NOT NULL, PRIMARY KEY (`decision_time`, `drop_id`, `wave_id`)) ENGINE=InnoDB",
+    "CREATE TABLE `wave_leaderboard_entries` (`drop_id` varchar(100) NOT NULL, `wave_id` varchar(100) NOT NULL, `timestamp` bigint NOT NULL, `vote` bigint NOT NULL, `vote_on_decision_time` bigint NOT NULL DEFAULT '0', `over_threshold_since_ms` bigint NULL, INDEX `wave_leaderboard_entries_wave_id_idx` (`wave_id`), PRIMARY KEY (`drop_id`)) ENGINE=InnoDB",
+    "CREATE TABLE `wave_voting_credit_nfts` (`wave_id` varchar(100) NOT NULL, `contract` varchar(50) NOT NULL, `token_id` bigint NOT NULL, INDEX `idx_wave_voting_credit_nfts_contract_token_id` (`contract`, `token_id`), INDEX `idx_wave_voting_credit_nfts_wave_id` (`wave_id`), PRIMARY KEY (`wave_id`, `contract`, `token_id`)) ENGINE=InnoDB",
+    "CREATE TABLE `wave_voting_credit_nfts_archive` (`wave_archive_id` bigint NOT NULL, `wave_id` varchar(100) NOT NULL, `contract` varchar(50) NOT NULL, `token_id` bigint NOT NULL, INDEX `IDX_cc7fb0f4acbbbd010d9d4f16da` (`wave_id`), INDEX `idx_wave_voting_credit_nfts_archive_wave_id` (`wave_id`), INDEX `idx_wave_voting_credit_nfts_archive_wave_archive_id` (`wave_archive_id`), PRIMARY KEY (`wave_archive_id`, `contract`, `token_id`)) ENGINE=InnoDB",
+    "CREATE TABLE `winner_drop_voter_votes` (`voter_id` varchar(100) NOT NULL, `drop_id` varchar(100) NOT NULL, `votes` bigint NOT NULL, `wave_id` varchar(100) NOT NULL, INDEX `IDX_e621c2492b61e8a485c5fcb895` (`wave_id`), PRIMARY KEY (`voter_id`, `drop_id`)) ENGINE=InnoDB"
+  ],
+  "columns": {
+    "waves": [
+      {
+        "name": "voting_group_id",
+        "definition": "`voting_group_id` varchar(100) NULL"
+      },
+      {
+        "name": "voting_credit_type",
+        "definition": "`voting_credit_type` varchar(100) NOT NULL DEFAULT 'TDH'"
+      },
+      {
+        "name": "voting_credit_scope",
+        "definition": "`voting_credit_scope` varchar(20) NOT NULL DEFAULT 'WAVE'"
+      },
+      {
+        "name": "voting_credit_category",
+        "definition": "`voting_credit_category` varchar(100) NULL"
+      },
+      {
+        "name": "voting_credit_creditor",
+        "definition": "`voting_credit_creditor` varchar(100) NULL"
+      },
+      {
+        "name": "voting_signature_required",
+        "definition": "`voting_signature_required` tinyint NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "voting_period_start",
+        "definition": "`voting_period_start` bigint NULL"
+      },
+      {
+        "name": "voting_period_end",
+        "definition": "`voting_period_end` bigint NULL"
+      },
+      {
+        "name": "participation_group_id",
+        "definition": "`participation_group_id` varchar(100) NULL"
+      },
+      {
+        "name": "participation_max_applications_per_participant",
+        "definition": "`participation_max_applications_per_participant` bigint NULL"
+      },
+      {
+        "name": "participation_required_metadata",
+        "definition": "`participation_required_metadata` json NOT NULL DEFAULT (json_array())"
+      },
+      {
+        "name": "participation_required_media",
+        "definition": "`participation_required_media` json NOT NULL DEFAULT (json_array())"
+      },
+      {
+        "name": "submission_type",
+        "definition": "`submission_type` varchar(50) NULL"
+      },
+      {
+        "name": "identity_submission_strategy",
+        "definition": "`identity_submission_strategy` varchar(50) NULL"
+      },
+      {
+        "name": "identity_submission_duplicates",
+        "definition": "`identity_submission_duplicates` varchar(50) NULL"
+      },
+      {
+        "name": "participation_period_start",
+        "definition": "`participation_period_start` bigint NULL"
+      },
+      {
+        "name": "participation_period_end",
+        "definition": "`participation_period_end` bigint NULL"
+      },
+      {
+        "name": "participation_signature_required",
+        "definition": "`participation_signature_required` tinyint NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "type",
+        "definition": "`type` varchar(100) NOT NULL DEFAULT 'CHAT'"
+      },
+      {
+        "name": "winning_min_threshold",
+        "definition": "`winning_min_threshold` bigint NULL"
+      },
+      {
+        "name": "winning_max_threshold",
+        "definition": "`winning_max_threshold` bigint NULL"
+      },
+      {
+        "name": "winning_threshold_min_duration_ms",
+        "definition": "`winning_threshold_min_duration_ms` bigint NOT NULL DEFAULT '0'"
+      },
+      {
+        "name": "max_winners",
+        "definition": "`max_winners` bigint NULL"
+      },
+      {
+        "name": "max_votes_per_identity_to_drop",
+        "definition": "`max_votes_per_identity_to_drop` bigint NULL"
+      },
+      {
+        "name": "time_lock_ms",
+        "definition": "`time_lock_ms` bigint NULL"
+      },
+      {
+        "name": "decisions_strategy",
+        "definition": "`decisions_strategy` json NULL"
+      },
+      {
+        "name": "participation_terms",
+        "definition": "`participation_terms` text NULL"
+      },
+      {
+        "name": "forbid_negative_votes",
+        "definition": "`forbid_negative_votes` tinyint NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "next_decision_time",
+        "definition": "`next_decision_time` bigint NULL"
+      }
+    ],
+    "waves_archive": [
+      {
+        "name": "voting_group_id",
+        "definition": "`voting_group_id` varchar(100) NULL"
+      },
+      {
+        "name": "voting_credit_type",
+        "definition": "`voting_credit_type` varchar(100) NOT NULL DEFAULT 'TDH'"
+      },
+      {
+        "name": "voting_credit_scope",
+        "definition": "`voting_credit_scope` varchar(20) NOT NULL DEFAULT 'WAVE'"
+      },
+      {
+        "name": "voting_credit_category",
+        "definition": "`voting_credit_category` varchar(100) NULL"
+      },
+      {
+        "name": "voting_credit_creditor",
+        "definition": "`voting_credit_creditor` varchar(100) NULL"
+      },
+      {
+        "name": "voting_signature_required",
+        "definition": "`voting_signature_required` tinyint NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "voting_period_start",
+        "definition": "`voting_period_start` bigint NULL"
+      },
+      {
+        "name": "voting_period_end",
+        "definition": "`voting_period_end` bigint NULL"
+      },
+      {
+        "name": "participation_group_id",
+        "definition": "`participation_group_id` varchar(100) NULL"
+      },
+      {
+        "name": "participation_max_applications_per_participant",
+        "definition": "`participation_max_applications_per_participant` bigint NULL"
+      },
+      {
+        "name": "participation_required_metadata",
+        "definition": "`participation_required_metadata` json NOT NULL DEFAULT (json_array())"
+      },
+      {
+        "name": "participation_required_media",
+        "definition": "`participation_required_media` json NOT NULL DEFAULT (json_array())"
+      },
+      {
+        "name": "submission_type",
+        "definition": "`submission_type` varchar(50) NULL"
+      },
+      {
+        "name": "identity_submission_strategy",
+        "definition": "`identity_submission_strategy` varchar(50) NULL"
+      },
+      {
+        "name": "identity_submission_duplicates",
+        "definition": "`identity_submission_duplicates` varchar(50) NULL"
+      },
+      {
+        "name": "participation_period_start",
+        "definition": "`participation_period_start` bigint NULL"
+      },
+      {
+        "name": "participation_period_end",
+        "definition": "`participation_period_end` bigint NULL"
+      },
+      {
+        "name": "participation_signature_required",
+        "definition": "`participation_signature_required` tinyint NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "type",
+        "definition": "`type` varchar(100) NOT NULL DEFAULT 'CHAT'"
+      },
+      {
+        "name": "winning_min_threshold",
+        "definition": "`winning_min_threshold` bigint NULL"
+      },
+      {
+        "name": "winning_max_threshold",
+        "definition": "`winning_max_threshold` bigint NULL"
+      },
+      {
+        "name": "winning_threshold_min_duration_ms",
+        "definition": "`winning_threshold_min_duration_ms` bigint NOT NULL DEFAULT '0'"
+      },
+      {
+        "name": "max_winners",
+        "definition": "`max_winners` bigint NULL"
+      },
+      {
+        "name": "max_votes_per_identity_to_drop",
+        "definition": "`max_votes_per_identity_to_drop` bigint NULL"
+      },
+      {
+        "name": "time_lock_ms",
+        "definition": "`time_lock_ms` bigint NULL"
+      },
+      {
+        "name": "decisions_strategy",
+        "definition": "`decisions_strategy` json NULL"
+      },
+      {
+        "name": "participation_terms",
+        "definition": "`participation_terms` text NULL"
+      },
+      {
+        "name": "forbid_negative_votes",
+        "definition": "`forbid_negative_votes` tinyint NOT NULL DEFAULT 0"
+      }
+    ],
+    "competitions": [
+      {
+        "name": "storage_mode",
+        "definition": "`storage_mode` varchar(32) NOT NULL"
+      }
+    ]
+  }
+}

@@ -1,15 +1,11 @@
 import type { CompetitionCreditService } from './competition-credit.service';
-import {
-  CompetitionEntryStatus,
-  CompetitionStorageMode
-} from '@/entities/ICompetition';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { anIdentity } from '@/tests/fixtures/identity.fixture';
 
 const competition: Parameters<CompetitionCreditService['getBudget']>[0] = {
   id: 'competition-a',
   wave_id: 'wave-a',
-  storage_mode: CompetitionStorageMode.NATIVE,
   voting: {
     group_id: null,
     credit_type: WaveCreditType.REP,

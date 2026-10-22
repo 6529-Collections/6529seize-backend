@@ -53,7 +53,6 @@ export function nativeOriginalPrimaryFixture(wave: WaveEntity) {
     id: legacyCompetitionId(wave.id),
     wave_id: wave.id,
     legacy_wave_id: wave.id,
-    storage_mode: 'NATIVE',
     execution_mode: 'ACTIVE',
     type: wave.type,
     lifecycle: 'PUBLISHED',

@@ -52,3 +52,79 @@ test('monitoring pins checkout and artifact identity to dispatch SHA without a S
       workflow.indexOf('uses: actions/checkout@')
   );
 });
+
+for (const operation of [
+  'deploy',
+  'retire-competition-registration',
+  'unknown'
+]) {
+  test(`monitoring operation stays inside the existing protected environment: ${operation}`, () => {
+    const result = spawnSync('bash', ['-e', '-c', guard], {
+      env: {
+        ...process.env,
+        DEPLOY_ENVIRONMENT: 'prod',
+        GITHUB_REF: 'refs/heads/main',
+        DEPLOY_OPERATION: operation
+      }
+    });
+    assert.equal(result.status, operation === 'unknown' ? 1 : 0);
+  });
+}
+
+test('retirement reuses the scoped identity and preserves runtime deployment and health guards', () => {
+  assert.ok(
+    workflow.includes(
+      "if: inputs.operation != 'retire-competition-registration'"
+    )
+  );
+  assert.ok(
+    workflow.includes(
+      "if: inputs.operation == 'retire-competition-registration'"
+    )
+  );
+  assert.ok(workflow.includes('RETIRE_STACK_KIND: monitoring'));
+  assert.ok(
+    workflow.includes(
+      'MONITORING_CLOUDFORMATION_ROLE_ARN: ${{ vars.AWS_MONITORING_CFN_ROLE_ARN }}'
+    )
+  );
+  assert.ok(workflow.includes('Verify monitoring health'));
+  assert.ok(!workflow.includes('MonitoringAdmin'));
+});
+
+for (const [operation, confirmation, allowed] of [
+  ['retire-competition-registration', '', true],
+  ['retire-competition-registration', 'a'.repeat(64), true],
+  ['retire-competition-registration', 'wrong-plan', false],
+  ['deploy', 'a'.repeat(64), false]
+] as const) {
+  test(`retirement confirmation is explicit and validated before credentials: ${operation}/${confirmation.length}`, () => {
+    const result = spawnSync('bash', ['-e', '-c', guard], {
+      env: {
+        ...process.env,
+        DEPLOY_ENVIRONMENT: 'prod',
+        GITHUB_REF: 'refs/heads/main',
+        DEPLOY_OPERATION: operation,
+        RETIRE_APPROVED_PLAN_SHA256: confirmation
+      }
+    });
+    assert.equal(result.status, allowed ? 0 : 1);
+  });
+}
+test('retirement defaults to a proposal and retains an apply-attempt receipt on failures', () => {
+  assert.ok(workflow.includes('retirement_plan_sha256:'));
+  assert.ok(
+    workflow.includes(
+      "RETIRE_APPLY: ${{ inputs.retirement_plan_sha256 != '' && 'true' || 'false' }}"
+    )
+  );
+  assert.ok(
+    workflow.includes(
+      'RETIRE_APPROVED_PLAN_SHA256: ${{ inputs.retirement_plan_sha256 }}'
+    )
+  );
+  assert.ok(
+    workflow.includes('competition-monitoring-retirement/apply-started.json')
+  );
+  assert.ok(workflow.includes('if-no-files-found: error'));
+});

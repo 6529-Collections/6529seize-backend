@@ -17,7 +17,6 @@ import {
   CompetitionEntryStatus,
   CompetitionExecutionMode,
   CompetitionLifecycle,
-  CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
 import { sqlExecutor } from '@/sql-executor';
@@ -40,7 +39,6 @@ const routingRecord = {
   id: competitionId,
   wave_id: 'wave-native',
   legacy_wave_id: null,
-  storage_mode: CompetitionStorageMode.NATIVE,
   execution_mode: CompetitionExecutionMode.DISABLED
 };
 

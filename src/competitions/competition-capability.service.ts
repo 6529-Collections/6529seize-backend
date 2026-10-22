@@ -1,10 +1,7 @@
 import { administerCompetitionWave } from '@/api/competitions/competition-command-access';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { AuthenticationContext } from '@/auth-context';
-import {
-  CompetitionLifecycle,
-  CompetitionStorageMode
-} from '@/entities/ICompetition';
+import { CompetitionLifecycle } from '@/entities/ICompetition';
 import { ForbiddenException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
@@ -67,8 +64,6 @@ export class CompetitionCapabilityService {
       await administerCompetitionWave(change.waveId, tx);
       if (change.action === 'assign')
         await this.assertPublicHub(change.waveId, tx);
-      if (competition.storage_mode !== CompetitionStorageMode.NATIVE)
-        competitionConflict('Legacy capability assignments are immutable');
       if (
         ![CompetitionLifecycle.DRAFT, CompetitionLifecycle.PUBLISHED].includes(
           competition.lifecycle

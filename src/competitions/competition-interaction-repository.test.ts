@@ -9,10 +9,7 @@ import {
   COMPETITION_WINNER_VOTES_TABLE,
   COMPETITION_DECISIONS_TABLE
 } from '@/constants';
-import {
-  CompetitionExecutionMode,
-  CompetitionStorageMode
-} from '@/entities/ICompetition';
+import { CompetitionExecutionMode } from '@/entities/ICompetition';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { CompetitionInteractionRepository } from './competition-interaction.repository';
@@ -25,7 +22,6 @@ const record = {
   id: 'aaa00000-0000-4000-8000-000000000001',
   wave_id: 'legacy-wave',
   legacy_wave_id: 'legacy-wave',
-  storage_mode: CompetitionStorageMode.LEGACY_ADAPTER,
   execution_mode: CompetitionExecutionMode.ACTIVE
 };
 const prize = {

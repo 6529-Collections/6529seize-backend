@@ -30,7 +30,7 @@ const ctx = { connection: {} as never };
 beforeEach(() => jest.resetAllMocks());
 
 it('dispatches the permanent old vote command to its immutable native primary with proxy attribution', async () => {
-  const record = { id: 'original-primary', storage_mode: 'NATIVE' };
+  const record = { id: 'original-primary' };
   jest
     .mocked(competitionRepository.lockOriginalPrimary)
     .mockResolvedValue(record as never);
@@ -39,7 +39,7 @@ it('dispatches the permanent old vote command to its immutable native primary wi
   expect(voteForMigratedLegacyEntry).toHaveBeenCalledWith(record, model, ctx);
 });
 
-it.each([null, { storage_mode: 'LEGACY_ADAPTER' }])(
+it.each([null])(
   'does not write retired vote storage for %j',
   async (record) => {
     jest
