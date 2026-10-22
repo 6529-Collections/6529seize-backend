@@ -90,3 +90,18 @@ it('retains actual READY progress made during an already old backlog', async () 
     progressAt: 1500
   });
 });
+
+it.each([
+  { progress: 1_989_500, expected: undefined },
+  { progress: 1_989_950, expected: 1989 }
+])(
+  'compares READY and queued timestamps within the same second: %p',
+  async ({ progress, expected }) => {
+    read.mockResolvedValueOnce([
+      { pending: 1, unknown_age: 0, oldest: 1_989_900, progress }
+    ]);
+    await observePreviewBacklog();
+    expect(report.mock.calls[0][0].oldestPendingAt).toBe(1989);
+    expect(report.mock.calls[0][0].progressAt).toBe(expected);
+  }
+);

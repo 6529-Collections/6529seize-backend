@@ -48,9 +48,12 @@ export async function observePreviewBacklog(): Promise<void> {
       oldestPendingAt: oldest,
       // A READY result predating all active work belongs to an earlier episode.
       // Repeated surveys must not reintroduce that historical success as the
-      // new backlog's stall clock. Real progress during older work is retained.
+      // new backlog's stall clock. Compare persisted milliseconds so two events
+      // in the same reported second retain their actual ordering.
       progressAt:
-        oldest !== undefined && progress !== undefined && progress < oldest
+        oldest !== undefined &&
+        progress !== undefined &&
+        Number(row.progress) < Number(row.oldest)
           ? undefined
           : progress,
       // A DB PENDING row alone cannot prove that its SQS send succeeded or

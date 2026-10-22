@@ -534,7 +534,10 @@ remains unverified; that cannot clear an incident about business processing.
   Publication surveys the writer before/after work, including failure: pending
   outbox rows below the publisher's throwing threshold cannot disappear behind a
   successful return. S3 generation itself remains protected by its separate queue
-  guards. Initial acceptance requires observing all three natural scheduled modes.
+  guards. Acceptance samples all three mode payloads; ordinary staging invocations
+  can exercise them without waiting for the hourly audit. The existing S3-uploader
+  production-only gate remains intact: staging audit/publication verify disabled,
+  idle handling, not real S3 checks or queue handoffs.
 - `nextgenContractLoop`: compares the committed block checkpoint with the actual
   RPC scan target, preserving the scanned block timestamp. Capped ranges stay
   pending while their saved indexing checkpoint advances; they do not complete
