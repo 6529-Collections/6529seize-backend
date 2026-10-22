@@ -285,7 +285,10 @@ drains up to five events per launch. A Launch invocation reports once before wor
 and after each of up to three work cycles; larger backlogs remain durable and
 drain across targeted outstanding-work deliveries. New signing waits for the backlog
 to clear. Canonicality is rechecked against the latest confirmed
-action; serialized actions share the same chain ancestry. Missing wave/profile
+action; serialized actions share the same chain ancestry. A confirmed on-chain
+batch must be recorded together with wallet release in one database commit before
+the next batch can reserve that wallet. A failed commit retains the earlier signed
+intent for receipt reconciliation. Missing wave/profile
 permissions require operator correction. CloudWatch invocation-error alarms cover
 worker/config failures when wave delivery cannot report an error. Arming checks
 the reporting bot's chat/visibility access and recipient visibility; actual

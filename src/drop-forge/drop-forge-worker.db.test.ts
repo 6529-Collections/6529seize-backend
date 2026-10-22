@@ -1,4 +1,4 @@
-import { JsonRpcProvider, Transaction } from 'ethers';
+import { JsonRpcProvider, Transaction, ZeroAddress } from 'ethers';
 import { DropForgeWorker } from '@/drop-forge/drop-forge.worker';
 import {
   DropForgeRepository,
@@ -7,6 +7,7 @@ import {
 } from '@/drop-forge/drop-forge.repository';
 import {
   claimAbi,
+  encodeLaunchAction,
   EthereumLaunchChain,
   LaunchChain
 } from '@/drop-forge/drop-forge.chain';
@@ -14,12 +15,14 @@ import { LaunchRpcUnavailableError } from '@/drop-forge/drop-forge.types';
 import {
   testConfig,
   testLaunchData,
+  testPlan,
   testSource,
   testWallet
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtures';
 import { DROP_FORGE_LAUNCHES_TABLE } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
+import { buildLaunchPlan } from '@/drop-forge/drop-forge.plan';
 
 describe('Drop Forge durable worker', () => {
   beforeEach(clearDropForgeTestTables);
@@ -83,6 +86,108 @@ describe('Drop Forge durable worker', () => {
     await acknowledgeReports();
     await worker.tick();
   };
+  it('reconciles a confirmed batch atomically after a crash before signing the next batch', async () => {
+    const source = {
+      ...testSource,
+      edition: 200,
+      rows: Array.from({ length: 101 }, (_, index) => ({
+        ...testSource.rows[0],
+        wallet: '0x' + (index + 1).toString(16).padStart(40, '0')
+      }))
+    };
+    const data = buildLaunchPlan(testConfig, 1, testPlan, source, 0);
+    data.actions[0].state = 'CONFIRMED';
+    jest.mocked(repository.source).mockResolvedValue(source);
+    await repository.change(
+      id,
+      (record) => {
+        record.data = data;
+      },
+      {}
+    );
+    const phase = data.phases[0];
+    let total = 0;
+    let nonce = 0;
+    const provider = {
+      call: jest.fn(({ data: calldata }: { data: string }) =>
+        Promise.resolve(
+          calldata.startsWith(claimAbi.getFunction('getClaim')!.selector)
+            ? claimAbi.encodeFunctionResult('getClaim', [
+                [
+                  total,
+                  data.edition_size,
+                  0,
+                  phase.start,
+                  phase.end,
+                  2,
+                  phase.root,
+                  data.metadata,
+                  data.claim_id,
+                  phase.price_wei,
+                  data.receiver,
+                  ZeroAddress,
+                  ZeroAddress
+                ]
+              ])
+            : '0x' + '0'.repeat(63) + '1'
+        )
+      )
+    };
+    const boundary = new EthereumLaunchChain(
+      testConfig,
+      provider as unknown as JsonRpcProvider
+    );
+    jest.spyOn(boundary, 'now').mockResolvedValue(1100);
+    chain.verify.mockImplementation((current, action) =>
+      boundary.verify(current, action)
+    );
+    const unsigned = Transaction.from(
+      await chain.prepare(data, data.actions[1])
+    );
+    chain.prepare.mockClear().mockImplementation(
+      async (current, action) =>
+        Transaction.from({
+          ...unsigned.toJSON(),
+          nonce,
+          data: encodeLaunchAction(current, action)
+        }).unsignedSerialized
+    );
+    await start();
+    const first = (await read())!.data.actions[1];
+    expect((await read())!.error).toBeNull();
+    expect(first.attempt_error).toBeUndefined();
+    expect(first).toMatchObject({ state: 'SIGNED' });
+    total = 100;
+    chain.receipt.mockImplementation(async (hash) =>
+      hash === first.hash
+        ? {
+            status: 1,
+            blockNumber: 100,
+            blockHash: 'block',
+            confirmations: testConfig.confirmations
+          }
+        : null
+    );
+    jest
+      .spyOn(repository, 'save')
+      .mockRejectedValueOnce(new Error('crash after receipt reconciliation'));
+    await expect(worker.tick()).rejects.toThrow('crash after receipt');
+    expect((await read())!.data.actions[1].state).toBe('SIGNED');
+    expect((await read())!.data.actions[2].state).toBe('PENDING');
+    expect(chain.prepare).toHaveBeenCalledTimes(1);
+    expect(signer.sign).toHaveBeenCalledTimes(1);
+    await worker.tick();
+    expect((await read())!.data.actions[1].state).toBe('CONFIRMED');
+    expect(chain.prepare).toHaveBeenCalledTimes(1);
+    nonce = 1;
+    chain.nonce.mockResolvedValue(nonce);
+    await acknowledgeReports();
+    await start();
+    expect((await read())!.data.actions[2].state).toBe('SIGNED');
+    expect(chain.prepare).toHaveBeenCalledTimes(2);
+    expect(signer.sign).toHaveBeenCalledTimes(2);
+    expect(Transaction.from(signer.sign.mock.calls[1][0]).nonce).toBe(1);
+  });
   it('targets one queued claim and respects another claim owning the shared signer', async () => {
     const second = testLaunchData();
     second.claim_id = 2;
