@@ -29,6 +29,8 @@ const ACCEPTED_NULLABLE_REFERENCE_EXTENSIONS = new Set([
 ]);
 
 const ACCEPTED_REMOVED_REQUIRED_FIELDS: Readonly<Record<string, string[]>> = {
+  // Reply previews preserve authors without pictures by omitting optional pfp.
+  'schema ApiReplyToDropAuthor.required': ['pfp'],
   'schema ApiSeizeSettings.required': [
     'all_drops_notifications_subscribers_limit'
   ]
