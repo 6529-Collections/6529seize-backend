@@ -59,7 +59,7 @@ it('permits cancellation with recovery enabled while normal scheduled execution 
     testConfig.signer,
     testConfig.creator
   );
-  expect(wake.wakeDropForge).toHaveBeenCalledTimes(1);
+  expect(wake.wakeDropForge).not.toHaveBeenCalled();
 });
 it.each(['RETRY', 'DELIVER_REMAINING'])(
   'does not permit %s while scheduled signing is disabled',

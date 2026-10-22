@@ -6,6 +6,7 @@ import { sqlExecutor } from '@/sql-executor';
 import { NotFoundException } from '@/exceptions';
 import { DbPoolName } from '@/db-query.options';
 import { PreparationAuthRequired } from '@/drop-forge/drop-forge.preparation-auth';
+import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
 
 function storedJobResult(job: DropForgeJobEntity): object | null {
   if (!job.result) return null;
@@ -18,7 +19,8 @@ export class DropForgeJobsRepository {
       job: DropForgeJobEntity,
       ctx: RequestContext
     ) => Promise<{ drop_id: string; pending_push_notification_ids: number[] }>,
-    ctx: RequestContext
+    ctx: RequestContext,
+    id?: string
   ): Promise<number[]> {
     const timer = 'DropForgeJobsRepository->reportOne';
     ctx.timer?.start(timer);
@@ -26,8 +28,8 @@ export class DropForgeJobsRepository {
       return await sqlExecutor.executeNativeQueriesInTransaction(
         async (connection) => {
           const job = await sqlExecutor.oneOrNull<DropForgeJobEntity>(
-            `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE status <> 'PENDING' AND drop_id IS NULL ORDER BY updated_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`,
-            {},
+            `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE status <> 'PENDING' AND drop_id IS NULL ${id ? 'AND id = :id' : ''} ORDER BY updated_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`,
+            { id: id ?? null },
             { wrappedConnection: connection }
           );
           if (!job) return [];
@@ -81,6 +83,10 @@ export class DropForgeJobsRepository {
     job: DropForgeJobEntity,
     ctx: RequestContext
   ): Promise<DropForgeJobEntity> {
+    if (!ctx.connection)
+      return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        this.create(job, { ...ctx, connection })
+      );
     const timer = 'DropForgeJobsRepository->create';
     ctx.timer?.start(timer);
     try {
@@ -109,7 +115,8 @@ export class DropForgeJobsRepository {
         throw new LaunchSafetyError(
           'Request ID already belongs to a different preparation job'
         );
-      return saved;
+      if (saved.status === 'PENDING') await this.dispatch(saved, ctx);
+      return this.find(job.id, ctx);
     } finally {
       ctx.timer?.stop(timer);
     }
@@ -119,6 +126,11 @@ export class DropForgeJobsRepository {
     encryptedAuth: string,
     ctx: RequestContext
   ): Promise<DropForgeJobEntity> {
+    if (!ctx.connection)
+      return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        this.resumeAuthentication(job, encryptedAuth, { ...ctx, connection })
+      );
+    await this.dispatch(job, ctx);
     await sqlExecutor.execute(
       `UPDATE ${DROP_FORGE_JOBS_TABLE} SET encrypted_auth = :encrypted_auth, status = 'PENDING', error = NULL, drop_id = NULL, updated_at = :updated_at WHERE id = :id AND status = 'AWAITING_AUTH'`,
       { id: job.id, encrypted_auth: encryptedAuth, updated_at: Date.now() },
@@ -128,7 +140,8 @@ export class DropForgeJobsRepository {
   }
   async processOne(
     process: (job: DropForgeJobEntity, ctx: RequestContext) => Promise<object>,
-    ctx: RequestContext
+    ctx: RequestContext,
+    id?: string
   ): Promise<void> {
     const timer = 'DropForgeJobsRepository->processOne';
     ctx.timer?.start(timer);
@@ -137,8 +150,8 @@ export class DropForgeJobsRepository {
         async (connection) => {
           const txCtx = { ...ctx, connection };
           const job = await sqlExecutor.oneOrNull<DropForgeJobEntity>(
-            `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE status = 'PENDING' ORDER BY updated_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`,
-            {},
+            `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE status = 'PENDING' ${id ? 'AND id = :id' : ''} ORDER BY updated_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`,
+            { id: id ?? null },
             { wrappedConnection: connection }
           );
           if (!job) return;
@@ -198,6 +211,21 @@ export class DropForgeJobsRepository {
     } finally {
       ctx.timer?.stop(timer);
     }
+  }
+  async dispatch(job: DropForgeJobEntity, ctx: RequestContext): Promise<void> {
+    const current = await sqlExecutor.oneOrNull<DropForgeJobEntity>(
+      `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE id = :id FOR UPDATE`,
+      { id: job.id },
+      { wrappedConnection: ctx.connection }
+    );
+    if (!current) throw new NotFoundException('Distribution job not found');
+    const revision = Number(current.dispatch_revision ?? 0) + 1;
+    await wakeDropForge({ id: job.id, revision }, true);
+    await sqlExecutor.execute(
+      `UPDATE ${DROP_FORGE_JOBS_TABLE} SET dispatch_revision = :revision WHERE id = :id`,
+      { id: job.id, revision },
+      { wrappedConnection: ctx.connection }
+    );
   }
 }
 export const dropForgeJobsRepository = new DropForgeJobsRepository();

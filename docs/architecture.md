@@ -1860,13 +1860,12 @@ the next dispatch. The service catalog records allowed environments and
 default dependencies. The workflow's environment concurrency avoids overlapping
 backend deployment runs; it does not create a cross-repository scheduler.
 
-Drop Forge worker deployments additionally select their dedicated Lambda execution
-roles from the protected environment's `DROP_FORGE_WORKER_ROLE_ARN` and
-`DROP_FORGE_PREPARATION_ROLE_ARN` Actions variables. Only the selected worker's
-role is required and exported to Serverless; unrelated deployments are unaffected.
-The launch role alone receives permission to sign with the operational KMS key.
-Role provisioning, exact `iam:PassRole` grants and the observation/live rollout
-are covered by the maintained [setup guide](drop-forge-auto-launch-setup.md).
+Drop Forge handler deployments reference dedicated execution roles through versioned
+`serverless-config/{staging,prod}/drop-forge.js`; no feature-specific GitHub role
+variables are required. Only the launch role can sign with the operational KMS key.
+The separate Scheduler delivery role can publish only to the work queues/DLQs.
+Role provisioning, scoped `iam:PassRole` and rollout are covered by the
+maintained [setup guide](drop-forge-auto-launch-setup.md).
 
 Backend deployment uses separate IAM roles through GitHub OIDC in the
 `staging` and `production` GitHub environments, restricted to `1a-staging` and
@@ -1915,8 +1914,19 @@ For a documentation-only change, no Lambda redeploy is required.
 
 ## Drop Forge Automated Launch
 
-`dropForgeLaunchLoop` and `dropForgePreparationLoop` have independent one-minute
-EventBridge recovery schedules and default-disabled flags. The API returns a
+`dropForgeLaunchHandler` and `memesDistributionHandler` consume dedicated SQS
+queues and have default-disabled flags, with no recurring schedules. API mutations
+publish under their SQL lock before committing a dispatch revision; consumers retry
+if the revision is not yet committed. This closes the commit-before-publish crash
+gap. Launch installs independent, per-drop one-time Scheduler events for future
+phase/Research groups before opening work. Each active invocation establishes a
+two-minute one-time watchdog before processing and removes it on normal exit;
+hard crashes leave it intact. Outstanding checkpoints/receipts/report backlogs queue
+continuations before acknowledgement. Between phases and after completion there
+are no idle handler invocations. Scheduler events delete themselves after delivery;
+stale deliveries check current pause/cancel/action state before any write. Queue
+redelivery uses the existing SQL and signer locks. Each queue has a DLQ and alarm;
+no uncertain nonce or mint allocation is reset during redrive. The API returns a
 single PROCESS_ALL job for EMMA, immediately wakes preparation, and exposes
 read-only completed list pages. The operator's Authorization header is encrypted
 for its specific preparation job using a key derived from the existing JWT secret,
@@ -1939,10 +1949,14 @@ flowchart LR
   Craft[Craft Launch / Update Claim] --> API
   Manual[Manual Launch wallet controls] --> API
   API --> DB[Launch, signer, evidence, preparation and job tables]
-  API --> Prep[dropForgePreparationLoop]
-  API --> Worker[dropForgeLaunchLoop]
-  EventBridge --> Prep
-  EventBridge --> Worker
+  API --> PrepQueue[Distribution SQS]
+  API --> LaunchQueue[Launch SQS]
+  PrepQueue --> Prep[memesDistributionHandler]
+  LaunchQueue --> Worker[dropForgeLaunchHandler]
+  Worker --> Scheduler[One-time phase / Research / watchdog schedules]
+  Prep --> Scheduler
+  Scheduler --> PrepQueue
+  Scheduler --> LaunchQueue
   Prep --> DB
   Worker --> DB
   Worker --> KMS[AWS KMS secp256k1]
@@ -2000,7 +2014,7 @@ Drop Forge launch scheduling groups actions by phase, with independent completed
 ### Drop Forge exceptional transaction recovery
 
 The existing Launch API queues revision-checked administrator recovery requests.
-`dropForgeLaunchLoop` tracks same-nonce original, speed-up and cancellation attempts,
+`dropForgeLaunchHandler` tracks same-nonce original, speed-up and cancellation attempts,
 signs with AWS KMS and waits for canonical finalized evidence. Winning ERC-1155
 mint events reconcile exact recipient allocations; receipt-block supply, action
 outcome, completion flags, signer reservation release and wave outbox commit

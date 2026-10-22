@@ -54,7 +54,8 @@ it('hands the request header to the workflow and never returns credentials in th
   expect(JSON.stringify(result)).not.toMatch(
     /operator-token|encrypted_auth|ciphertext/
   );
-  expect(wake.wakeDropForge).toHaveBeenCalledWith(true);
+  // Persistence owns the atomic queue handoff, not the HTTP handler.
+  expect(wake.wakeDropForge).not.toHaveBeenCalled();
 });
 it('maps a waiting job without exposing its stored credential', () => {
   expect(

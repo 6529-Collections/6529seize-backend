@@ -18,6 +18,7 @@ import {
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { NotFoundException } from '@/exceptions';
+import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
 
 interface StoredLaunch extends Omit<LaunchRecord, 'data'> {
   data: string | LaunchData;
@@ -93,10 +94,19 @@ export class DropForgeRepository {
       ctx.timer?.stop(timer);
     }
   }
-  async save(record: LaunchRecord, ctx: RequestContext): Promise<void> {
+  async save(
+    record: LaunchRecord,
+    ctx: RequestContext,
+    dispatch = false
+  ): Promise<void> {
     const timer = 'DropForgeRepository->save';
     ctx.timer?.start(timer);
     try {
+      if (dispatch) {
+        if (!ctx.connection)
+          throw new LaunchSafetyError('Dispatch requires a transaction');
+        await wakeDropForge({ id: record.id, revision: record.revision + 1 });
+      }
       record.revision++;
       record.updated_at = Date.now();
       await sqlExecutor.execute(
@@ -115,11 +125,12 @@ export class DropForgeRepository {
   async change<T>(
     id: string,
     fn: (launch: LaunchRecord, ctx: RequestContext) => T | Promise<T>,
-    parentCtx: RequestContext
+    parentCtx: RequestContext,
+    dispatch = false
   ): Promise<T> {
     if (!parentCtx.connection)
       return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-        this.change(id, fn, { ...parentCtx, connection })
+        this.change(id, fn, { ...parentCtx, connection }, dispatch)
       );
     const timer = 'DropForgeRepository->change';
     parentCtx.timer?.start(timer);
@@ -135,7 +146,7 @@ export class DropForgeRepository {
       const record = decodeLaunch(row);
       const result = await fn(record, ctx);
       record.updated_at = Date.now();
-      await this.save(record, ctx);
+      await this.save(record, ctx, dispatch);
       return result;
     } finally {
       parentCtx.timer?.stop(timer);

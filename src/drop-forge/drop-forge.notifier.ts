@@ -15,10 +15,16 @@ import { validateForgeReporting } from '@/drop-forge/drop-forge.reporting-access
 const logger = Logger.get('DROP_FORGE_REPORTING');
 export async function reportLaunchEvents(
   config: DropForgeReportingConfig,
-  repository: DropForgeRepository
+  repository: DropForgeRepository,
+  id?: string
 ): Promise<boolean> {
   let delivered = true;
-  for (const candidate of await repository.reporting({})) {
+  const target = id ? await repository.find(id, {}) : null;
+  for (const candidate of id
+    ? target
+      ? [target]
+      : []
+    : await repository.reporting({})) {
     try {
       const pushes = await repository.change(
         candidate.id,
@@ -108,26 +114,31 @@ export async function postForgeReport(
 }
 
 export async function reportPreparationJob(
-  config: DropForgeReportingConfig
+  config: DropForgeReportingConfig,
+  id?: string
 ): Promise<boolean> {
   try {
-    const pushes = await dropForgeJobsRepository.reportOne((job, ctx) => {
-      const reset = job.error === 'Distribution reset; process again';
-      const detail = job.error ? '\n' + job.error : '';
-      const operation = preparationOperation(job.kind);
-      let outcome = 'failed.';
-      if (reset) outcome = 'invalidated by an explicit reset.';
-      else if (job.status === 'AWAITING_AUTH')
-        outcome = 'paused. Sign in to resume EMMA input retrieval.';
-      else if (job.status === 'COMPLETED')
-        outcome = 'completed. Read-only results are ready.';
-      return postForgeReport(
-        config,
-        `Claim #${job.claim_id}: ${operation} ${outcome}${detail}`,
-        ['FAILED', 'AWAITING_AUTH'].includes(job.status) && !reset,
-        ctx
-      );
-    }, {});
+    const pushes = await dropForgeJobsRepository.reportOne(
+      (job, ctx) => {
+        const reset = job.error === 'Distribution reset; process again';
+        const detail = job.error ? '\n' + job.error : '';
+        const operation = preparationOperation(job.kind);
+        let outcome = 'failed.';
+        if (reset) outcome = 'invalidated by an explicit reset.';
+        else if (job.status === 'AWAITING_AUTH')
+          outcome = 'paused. Sign in to resume EMMA input retrieval.';
+        else if (job.status === 'COMPLETED')
+          outcome = 'completed. Read-only results are ready.';
+        return postForgeReport(
+          config,
+          `Claim #${job.claim_id}: ${operation} ${outcome}${detail}`,
+          ['FAILED', 'AWAITING_AUTH'].includes(job.status) && !reset,
+          ctx
+        );
+      },
+      {},
+      id
+    );
     try {
       await sendIdentityPushNotifications(pushes);
     } catch {

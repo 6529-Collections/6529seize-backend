@@ -60,16 +60,21 @@ export class DropForgeWorker {
     private readonly scheduledEnabled = true
   ) {}
 
-  async tick(): Promise<void> {
+  async tick(target?: string): Promise<void> {
     const walletId = `${this.config.chainId}:${this.config.signer.toLowerCase()}`;
     const work = await this.repository.wallet(
       walletId,
       async (pending, ctx): Promise<Work | null> => {
-        if (pending.launch_id) return this.pendingWork(pending, ctx);
-        for (const candidate of await this.repository.active(
-          await this.chain.now(),
-          ctx
-        )) {
+        if (pending.launch_id)
+          return !target || pending.launch_id === target
+            ? this.pendingWork(pending, ctx)
+            : null;
+        const candidates = target
+          ? [await this.repository.find(target, ctx)].filter(
+              (it): it is LaunchRecord => !!it
+            )
+          : await this.repository.active(await this.chain.now(), ctx);
+        for (const candidate of candidates) {
           const record = await this.repository.lockLaunch(candidate.id, ctx);
           if (!runnable(record) || !this.scheduledEnabled) {
             await this.reconcileInactive(record, ctx);

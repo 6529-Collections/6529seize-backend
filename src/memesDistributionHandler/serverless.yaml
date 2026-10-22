@@ -1,0 +1,83 @@
+service: memesDistributionHandler
+package:
+  artifact: dist/index.zip
+provider:
+  name: aws
+  runtime: nodejs22.x
+  stage: ${opt:stage, 'staging'}
+  memorySize: 2048
+  timeout: 300
+  architecture: arm64
+  logRetentionInDays: 60
+functions:
+  memesDistributionHandler:
+    handler: index.handler
+    name: memesDistributionHandler
+    description: ${env:VERSION_DESCRIPTION}
+    reservedConcurrency: 1
+    role: ${file(../../serverless-config/${sls:stage}/drop-forge.js):distributionRole}
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      DROP_FORGE_SCHEDULE_GROUP: drop-forge-${sls:stage}
+      DROP_FORGE_SCHEDULER_ROLE_ARN: ${file(../../serverless-config/${sls:stage}/drop-forge.js):schedulerRole}
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: memesDistributionHandler_${opt:stage, self:provider.stage}
+    events:
+      - sqs:
+          arn: !GetAtt WorkQueue.Arn
+          batchSize: 1
+resources:
+  Resources:
+    WorkQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: memes-distribution
+        SqsManagedSseEnabled: true
+        VisibilityTimeout: 1800
+        MessageRetentionPeriod: 1209600
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt WorkDLQ.Arn
+          maxReceiveCount: 10
+    WorkDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: memes-distribution-dlq
+        SqsManagedSseEnabled: true
+        MessageRetentionPeriod: 1209600
+    WorkDLQAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmDescription: Queued operations need operator inspection and redrive; do not reset transaction ledgers
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: memes-distribution-dlq
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${sls:stage}/vpc.js):cwtopic}
+    DropForgePreparationErrorAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-memesDistributionHandler-errors'
+        AlarmDescription: Drop Forge invocation or configuration failed; inspect the durable preparation job
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: memesDistributionHandler
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

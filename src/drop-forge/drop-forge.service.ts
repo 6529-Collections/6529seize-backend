@@ -250,7 +250,8 @@ export async function controlLaunch(
             : 'Launch resumed after operator review.'
         );
       },
-      controlCtx
+      controlCtx,
+      true
     );
   if (request.operation === 'ARM') {
     await validateForgeReporting(config, ctx);

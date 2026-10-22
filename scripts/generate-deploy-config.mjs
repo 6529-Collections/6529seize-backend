@@ -216,25 +216,6 @@ jobs:
               exit 1
             fi
           fi
-      - name: Configure Drop Forge execution role
-        if: github.event.inputs.service == 'dropForgeLaunchLoop' || github.event.inputs.service == 'dropForgePreparationLoop'
-        env:
-          DROP_FORGE_WORKER_ROLE_ARN: \${{ vars.DROP_FORGE_WORKER_ROLE_ARN }}
-          DROP_FORGE_PREPARATION_ROLE_ARN: \${{ vars.DROP_FORGE_PREPARATION_ROLE_ARN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          case "$INPUT_SERVICE" in
-            dropForgeLaunchLoop) role_variable=DROP_FORGE_WORKER_ROLE_ARN ;;
-            dropForgePreparationLoop) role_variable=DROP_FORGE_PREPARATION_ROLE_ARN ;;
-            *) echo "::error::Unexpected Drop Forge service"; exit 1 ;;
-          esac
-          execution_role="\${!role_variable:-}"
-          if ! [[ "$execution_role" =~ ^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$ ]]; then
-            echo "::error::$role_variable must be a valid IAM role ARN in the selected GitHub environment"
-            exit 1
-          fi
-          printf '%s=%s\\n' "$role_variable" "$execution_role" >> "$GITHUB_ENV"
       - name: Check production preconditions
         shell: bash
         if: ${prodCondition}

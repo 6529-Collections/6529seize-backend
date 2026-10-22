@@ -126,7 +126,7 @@ export class DropForgeRecovery {
           record,
           `Claim #${record.data.claim_id}: Administrator requested ${request.operation} for ${action.id}; original transaction ${request.expected_hash}.`
         );
-        await this.repository.save(record, txCtx);
+        await this.repository.save(record, txCtx, true);
         return record;
       },
       ctx

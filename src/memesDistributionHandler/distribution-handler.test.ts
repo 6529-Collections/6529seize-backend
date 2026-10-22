@@ -1,4 +1,4 @@
-import { runPreparationTick } from './index';
+import { runPreparationJob } from './index';
 import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
 import * as workflow from '@/drop-forge/drop-forge.workflow';
 import * as preparation from '@/drop-forge/drop-forge.preparation';
@@ -8,7 +8,12 @@ import {
   PreparationAuthRequired
 } from '@/drop-forge/drop-forge.preparation-auth';
 import { CustomApiCompliantException } from '@/exceptions';
+import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
 
+jest.mock('@/drop-forge/drop-forge.dispatch', () => ({
+  launchWatchdog: jest.fn().mockResolvedValue('watchdog'),
+  removeLaunchWatchdog: jest.fn().mockResolvedValue(undefined)
+}));
 jest.mock('@/secrets', () => ({ doInDbContext: jest.fn() }));
 jest.mock('@/sentry.context', () => ({
   wrapLambdaHandler: (handler: unknown) => handler
@@ -32,6 +37,8 @@ beforeEach(() => {
   process.env.JWT_SECRET = 'worker-preparation-test-secret';
   current = Object.assign(new DropForgeJobEntity(), {
     id: 'job',
+    dispatch_revision: 1,
+    status: 'PENDING',
     contract: 'creator',
     claim_id: 1,
     kind: 'PROCESS_ALL',
@@ -41,6 +48,9 @@ beforeEach(() => {
     step: 0,
     result: null
   });
+  jest
+    .spyOn(dropForgeJobsRepository, 'find')
+    .mockImplementation(async () => current);
   current.encrypted_auth = encryptPreparationAuth(
     current,
     'Bearer clicking-operator'
@@ -48,7 +58,9 @@ beforeEach(() => {
   jest
     .spyOn(dropForgeJobsRepository, 'processOne')
     .mockImplementation(async (operation) => {
-      await operation(current, {});
+      const result = (await operation(current, {})) as { continue?: boolean };
+      current.result = result;
+      current.status = result.continue ? 'PENDING' : 'COMPLETED';
     });
   jest.spyOn(workflow, 'processStep').mockResolvedValue({
     continue: true,
@@ -64,7 +76,7 @@ afterEach(() => {
   else process.env.JWT_SECRET = oldSecret;
 });
 it('uses the clicking operator credential for the background input capture', async () => {
-  await runPreparationTick();
+  await runPreparationJob({ id: current.id, revision: 1 });
   expect(workflow.processStep).toHaveBeenCalledWith(
     current,
     'Bearer clicking-operator',
@@ -75,7 +87,7 @@ it('continues from captured inputs without retaining or requiring an operator cr
   current.encrypted_auth = null;
   current.step = 1;
   current.result = { inputs: { frozen: true }, lists: {}, continue: true };
-  await runPreparationTick();
+  await runPreparationJob({ id: current.id, revision: 1 });
   expect(workflow.processStep).toHaveBeenCalledWith(
     current,
     '',
@@ -88,9 +100,13 @@ it('classifies expired EMMA access as resumable and missing legacy credentials t
     .mockRejectedValue(
       new CustomApiCompliantException(401, 'upstream token expired')
     );
-  await expect(runPreparationTick()).rejects.toThrow(PreparationAuthRequired);
+  await expect(
+    runPreparationJob({ id: current.id, revision: 1 })
+  ).rejects.toThrow(PreparationAuthRequired);
   current.encrypted_auth = null;
-  await expect(runPreparationTick()).rejects.toThrow(PreparationAuthRequired);
+  await expect(
+    runPreparationJob({ id: current.id, revision: 1 })
+  ).rejects.toThrow(PreparationAuthRequired);
 });
 it('does not require EMMA authentication for finalization or public subscription processing', async () => {
   const finalize = jest
@@ -98,7 +114,7 @@ it('does not require EMMA authentication for finalization or public subscription
     .mockResolvedValue();
   current.kind = 'FINALIZE';
   current.encrypted_auth = null;
-  await runPreparationTick();
+  await runPreparationJob({ id: current.id, revision: 1 });
   expect(finalize).toHaveBeenCalledTimes(1);
   current.kind = 'PHASE';
   current.phase_id = 'public';
@@ -110,7 +126,7 @@ it('does not require EMMA authentication for finalization or public subscription
       airdrops_unconsolidated: [],
       allowlists: []
     });
-  await runPreparationTick();
+  await runPreparationJob({ id: current.id, revision: 1 });
   expect(prepare).toHaveBeenCalledWith(
     'creator',
     1,
@@ -122,6 +138,25 @@ it('does not require EMMA authentication for finalization or public subscription
 });
 it('does no processing while the preparation switch is disabled', async () => {
   process.env.DROP_FORGE_PREPARATION_ENABLED = 'false';
-  await runPreparationTick();
+  await expect(
+    runPreparationJob({ id: current.id, revision: 1 })
+  ).rejects.toThrow('disabled');
   expect(dropForgeJobsRepository.processOne).not.toHaveBeenCalled();
+});
+it('ignores a stale checkpoint watchdog and rejects delivery before the dispatch commit', async () => {
+  current.step = 2;
+  await runPreparationJob({ id: current.id, revision: 1, step: 1 });
+  expect(dropForgeJobsRepository.processOne).not.toHaveBeenCalled();
+  await expect(
+    runPreparationJob({ id: current.id, revision: 2 })
+  ).rejects.toThrow('not committed');
+});
+it('continues from a watchdog delivery without retaining its stale checkpoint filter', async () => {
+  current.step = 1;
+  current.result = { inputs: { frozen: true }, lists: {}, continue: true };
+  await runPreparationJob({ id: current.id, revision: 1, step: 1 });
+  expect(wakeDropForge).toHaveBeenLastCalledWith(
+    { id: current.id, revision: 1 },
+    true
+  );
 });

@@ -40,6 +40,7 @@ export class DropForgePreparationEntity {
 @Index('drop_forge_job_status_idx', ['status', 'updated_at'])
 export class DropForgeJobEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 }) id!: string;
+  @Column({ type: 'int', default: 0 }) dispatch_revision!: number;
   @Column({ type: 'varchar', length: 42 }) contract!: string;
   @Column({ type: 'int' }) claim_id!: number;
   @Column({ type: 'varchar', length: 16 }) kind!: string;

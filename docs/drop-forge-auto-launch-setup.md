@@ -27,8 +27,9 @@ worker must read compatible configuration. The loader caches it in each warm pro
 follow the normal service restart/redeployment procedure when changing configuration.
 Changing a secret is not proof that every running instance has adopted it.
 
-Deployment role ARNs are a separate input: put them in the selected **GitHub
-environment's Actions variables**, not only in runtime Secrets Manager.
+Execution role references are versioned in `serverless-config/{staging,prod}/drop-forge.js`.
+No new GitHub environment variables or role secrets are needed. The existing
+GitHub deployment authentication stays in place.
 
 ## 2. Set up the wave and profiles
 
@@ -68,29 +69,49 @@ operational key created below. Permit that role in the KMS key policy too. Do no
 grant signing permission to the API, preparation role or shared Lambda role. Check
 existing broad IAM grants when reviewing the effective key policy.
 
-The API execution role needs `lambda:InvokeFunction` on the deployed
-`dropForgeLaunchLoop` and `dropForgePreparationLoop` function ARNs. The preparation
-role needs permission to invoke `dropForgePreparationLoop` itself. These permissions
-make the immediate async wake work; the one-minute schedules also recover queued work.
+Role names are maintained in the stage configuration:
 
-The backend deployment role must have `iam:PassRole` for the **exact execution role
-ARNs**, restricted to the Lambda service. Existing deployment policies that permit
-only the shared `lambda-vpc-role` must be updated administratively before rollout.
-Do not grant the deploy workflow permission to edit arbitrary IAM policies.
+| Role | Staging name | Production name |
+| --- | --- | --- |
+| Launch Lambda | `drop-forge-staging-launch` | `drop-forge-prod-launch` |
+| Distribution Lambda | `drop-forge-staging-distribution` | `drop-forge-prod-distribution` |
+| Scheduler delivery | `drop-forge-staging-scheduler` | `drop-forge-prod-scheduler` |
 
-In GitHub repository settings, open **Environments**, choose `staging` or
-`production`, and add these **environment variables**:
+Serverless builds their ARNs using the deployment account and partition. Provision
+these roles administratively before deployment; change the stage file if your approved
+role names differ. These are separate roles, not aliases for the shared Lambda role.
+The Scheduler delivery role trusts `scheduler.amazonaws.com`, restricted by
+`aws:SourceAccount` and the ARN of `drop-forge-{stage}` schedule group. It can only
+`sqs:SendMessage` to `drop-forge-launch`, `memes-distribution` and their `-dlq`
+queues in the selected region. It has no KMS signing permission.
 
-| GitHub environment variable | Value |
-| --- | --- |
-| `DROP_FORGE_WORKER_ROLE_ARN` | Dedicated launch execution role ARN |
-| `DROP_FORGE_PREPARATION_ROLE_ARN` | Preparation execution role ARN |
+Required runtime permissions, scoped to this account and region:
 
-The deployment job selects the protected environment automatically, validates the
-role needed by the selected worker and exports it before Serverless deployment.
-Missing/invalid roles fail before deployment; unrelated services do not need these
-variables. Role ARNs are identifiers, not AWS access keys. The workflow continues
-using its existing deployment authentication.
+- API role: `sqs:GetQueueUrl` and `sqs:SendMessage` on the two work queues.
+- Each handler role: `sqs:GetQueueUrl`, `sqs:GetQueueAttributes`,
+  `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:ChangeMessageVisibility` and
+  `sqs:SendMessage` on its own queue; existing wave/push delivery permissions.
+- Each handler role: `scheduler:CreateSchedule` and `scheduler:DeleteSchedule`
+  on `schedule/drop-forge-{stage}/forge-*`, plus `iam:PassRole` for only the
+  Scheduler delivery role, restricted to `scheduler.amazonaws.com`.
+- Launch alone: `kms:GetPublicKey` and `kms:Sign` on the exact operational key.
+- Deployment role: existing scoped CloudFormation/SQS/alarms/event-source-mapping
+  permissions, Scheduler schedule-group creation, and `iam:PassRole` on the two
+  exact Lambda execution roles, restricted to `lambda.amazonaws.com`.
+
+The API and handlers do not require `lambda:InvokeFunction` for this feature.
+Review/apply the proposed `DropForgeHandlersDeployment.json` and
+`DropForgeDispatchDeployment.json` supplements under
+`ops/iam/backend-{staging,production}/`; their READMEs state the scope and remaining
+administrative step. They have not been applied or AWS-validated in this change.
+No permissions to edit arbitrary IAM policies are added to deployment. Ensure VPC
+endpoints or outbound networking allow SQS and Scheduler as well as RPC/KMS/EMMA.
+
+The handler Serverless stacks own their encrypted standard SQS queue, a 14-day DLQ,
+and a CloudWatch DLQ alarm. Launch owns the `drop-forge-{stage}` Scheduler group.
+Queues deliver one job/claim per invocation. Standard queues can redeliver:
+SQL locks, action readiness and persisted signed intents remain the safeguards
+against repeated transactions; queue delivery alone is not an exactly-once guarantee.
 
 ## 4. Create the KMS wallet
 
@@ -179,10 +200,38 @@ EMMA endpoint configuration and the operator's upstream permissions still apply.
 ## 6. Deploy disabled, then observe without contract-admin permission
 
 Follow the repository's authorized [deployment procedure](deployment.md). Deploy
-entity sync before API, then both workers, then dependent frontend controls and the
-reporting consumers/monitoring updates listed in the operations guide. Initially
-keep preparation and automation disabled. Each worker definition creates its
-one-minute EventBridge schedule; a separate manually created schedule is unnecessary.
+`dbMigrationsLoop` first, then `dropForgeLaunchHandler` (queue and schedule group),
+then `memesDistributionHandler` (its queue), then `api`, dependent frontend controls,
+and the reporting consumers/monitoring updates listed in the operations guide.
+Initially keep preparation and automation disabled. Both handlers have **no recurring
+schedule**. Process and Finalize and Launch/Update Claim enqueue work immediately;
+Launch establishes per-drop one-time phase/Research schedules. Short continuations
+exist only while checkpoints, reports or receipts are outstanding.
+
+If the earlier loop services were ever deployed, disable/remove their scheduled
+rules before enabling the new handlers. Drain and reconcile existing SQL jobs,
+reports and signed transactions, then enqueue each outstanding job/claim into its
+new queue using its ID and current dispatch revision/launch revision. An authorized
+Launch Resume or metadata/manual/recovery request also queues its claim. Do not
+reset job IDs, signer locks or airdrop progress to migrate them. Delete the retired
+loop stacks only after verifying no in-flight invocation can still sign.
+
+A request publishes its targeted message under the SQL lock before committing the
+new dispatch revision. An early message retries; failed publication rolls back the
+request. Each handler establishes a one-time two-minute watchdog before doing work.
+It removes that watchdog only after normal completion or an acknowledged failure;
+a killed invocation leaves a recovery wake. The new checkpoint is queued before the
+current delivery is acknowledged. Future groups have independent schedules, so a
+failed earlier group cannot remove their triggers. Completed one-time schedules
+remove themselves. Paused/cancelled stale deliveries recheck state and cannot start
+fresh transaction work; signed receipts continue reconciliation.
+
+On a DLQ alarm, inspect the exact message and ledger, fix authorization/network/
+configuration, then use SQS **Start DLQ redrive** to its original queue. Redrive does
+not authorize repeating airdrops or releasing a nonce. Inspect both handler DLQs,
+Lambda errors and Scheduler delivery metrics; never delete an uncertain transaction
+record. Disabled flags retain queued deliveries for retry/DLQ instead of accepting
+and discarding work.
 
 For the observation rollout:
 

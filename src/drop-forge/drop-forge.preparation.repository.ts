@@ -6,6 +6,8 @@ import {
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
+import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
+import { DropForgeJobEntity } from '@/entities/IDropForgeLaunch';
 import { DbPoolName } from '@/db-query.options';
 import { launchId } from '@/drop-forge/drop-forge.repository';
 
@@ -148,6 +150,13 @@ export async function resetDistributionPreparation(
         { contract: contract.toLowerCase(), claim },
         { wrappedConnection: txCtx.connection }
       );
+      const reports = await sqlExecutor.execute<DropForgeJobEntity>(
+        `SELECT * FROM ${DROP_FORGE_JOBS_TABLE} WHERE contract = :contract AND claim_id = :claim AND drop_id IS NULL AND status <> 'PENDING'`,
+        { contract: contract.toLowerCase(), claim },
+        { wrappedConnection: txCtx.connection }
+      );
+      for (const job of reports)
+        await dropForgeJobsRepository.dispatch(job, txCtx);
     },
     ctx
   );

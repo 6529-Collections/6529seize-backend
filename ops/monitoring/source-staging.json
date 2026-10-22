@@ -145,7 +145,7 @@
             "MONITOR_EVENT_BUS_ARN": {
               "Ref": "MonitoringEventBusArn"
             },
-            "ALLOWED_LOG_GROUPS": "/aws/lambda/seizeAPI,/aws/lambda/aggregatedActivityLoop,/aws/lambda/attachmentsOrchestrator,/aws/lambda/attachmentsProcessor,/aws/lambda/artCurationNftWatchLoop,/aws/lambda/claimsBuilder,/aws/lambda/claimsMediaArweaveUploader,/aws/lambda/competitionMigrationLoop,/aws/lambda/customReplayLoop,/aws/lambda/dbDumpsDaily,/aws/lambda/dbMigrationsLoop,/aws/lambda/delegationsLoop,/aws/lambda/discoverEnsLoop,/aws/lambda/dropMediaSanitizer,/aws/lambda/dropVideoConversionInvokerLoop,/aws/lambda/ethPriceLoop,/aws/lambda/externalCollectionLiveTailingLoop,/aws/lambda/externalCollectionSnapshottingLoop,/aws/lambda/helpBotReplyLoop,/aws/lambda/helpBotDailyActivityCreditLoop,/aws/lambda/marketStatsMEMES,/aws/lambda/marketStatsLAB,/aws/lambda/marketStatsGRADIENT,/aws/lambda/marketStatsNEXTGEN,/aws/lambda/marketDepthStreamLoop,/aws/lambda/mintAnnouncementsLoop,/aws/lambda/nextgenContractLoop,/aws/lambda/nextgenMetadataLoop,/aws/lambda/nftHistoryLoop,/aws/lambda/nftLinkRefresherLoop,/aws/lambda/nftLinkMediaPreviewLoop,/aws/lambda/nftOwnersLoop,/aws/lambda/nftsLoop,/aws/lambda/overRatesRevocationLoop,/aws/lambda/ownersBalancesLoop,/aws/lambda/populateHistoricConsolidatedTdh,/aws/lambda/pushNotificationsHandler,/aws/lambda/rateEventProcessingLoop,/aws/lambda/refreshENS,/aws/lambda/rememesS3Loop,/aws/lambda/rememesRefreshMetadataLoop,/aws/lambda/rememesFileLoop,/aws/lambda/royaltiesLoop,/aws/lambda/s3Uploader,/aws/lambda/subscriptionsDaily,/aws/lambda/subscriptionCoverageReconciliationLoop,/aws/lambda/subscriptionsTopUpLoop,/aws/lambda/xTdhGrantsReviewerLoop,/aws/lambda/tdhHistoryLoop,/aws/lambda/tdhLoop,/aws/lambda/teamLoop,/aws/lambda/memesTransactionsLoop,/aws/lambda/gradientsTransactionsLoop,/aws/lambda/memeLabTransactionsLoop,/aws/lambda/transactionsProcessingLoop,/aws/lambda/waveDecisionExecutionLoop,/aws/lambda/waveLeaderboardSnapshotterLoop,/aws/lambda/waveDropMetricsRefreshLoop,/aws/lambda/waveScoreRefreshLoop,/aws/lambda/xTdhLoop,/aws/lambda/artworkDocumentationProcessor,/aws/lambda/dropForgeLaunchLoop,/aws/lambda/dropForgePreparationLoop,/aws/lambda/webSocketDeliveryLoop"
+            "ALLOWED_LOG_GROUPS": "/aws/lambda/seizeAPI,/aws/lambda/aggregatedActivityLoop,/aws/lambda/attachmentsOrchestrator,/aws/lambda/attachmentsProcessor,/aws/lambda/artCurationNftWatchLoop,/aws/lambda/claimsBuilder,/aws/lambda/claimsMediaArweaveUploader,/aws/lambda/competitionMigrationLoop,/aws/lambda/customReplayLoop,/aws/lambda/dbDumpsDaily,/aws/lambda/dbMigrationsLoop,/aws/lambda/delegationsLoop,/aws/lambda/discoverEnsLoop,/aws/lambda/dropMediaSanitizer,/aws/lambda/dropVideoConversionInvokerLoop,/aws/lambda/ethPriceLoop,/aws/lambda/externalCollectionLiveTailingLoop,/aws/lambda/externalCollectionSnapshottingLoop,/aws/lambda/helpBotReplyLoop,/aws/lambda/helpBotDailyActivityCreditLoop,/aws/lambda/marketStatsMEMES,/aws/lambda/marketStatsLAB,/aws/lambda/marketStatsGRADIENT,/aws/lambda/marketStatsNEXTGEN,/aws/lambda/marketDepthStreamLoop,/aws/lambda/mintAnnouncementsLoop,/aws/lambda/nextgenContractLoop,/aws/lambda/nextgenMetadataLoop,/aws/lambda/nftHistoryLoop,/aws/lambda/nftLinkRefresherLoop,/aws/lambda/nftLinkMediaPreviewLoop,/aws/lambda/nftOwnersLoop,/aws/lambda/nftsLoop,/aws/lambda/overRatesRevocationLoop,/aws/lambda/ownersBalancesLoop,/aws/lambda/populateHistoricConsolidatedTdh,/aws/lambda/pushNotificationsHandler,/aws/lambda/rateEventProcessingLoop,/aws/lambda/refreshENS,/aws/lambda/rememesS3Loop,/aws/lambda/rememesRefreshMetadataLoop,/aws/lambda/rememesFileLoop,/aws/lambda/royaltiesLoop,/aws/lambda/s3Uploader,/aws/lambda/subscriptionsDaily,/aws/lambda/subscriptionCoverageReconciliationLoop,/aws/lambda/subscriptionsTopUpLoop,/aws/lambda/xTdhGrantsReviewerLoop,/aws/lambda/tdhHistoryLoop,/aws/lambda/tdhLoop,/aws/lambda/teamLoop,/aws/lambda/memesTransactionsLoop,/aws/lambda/gradientsTransactionsLoop,/aws/lambda/memeLabTransactionsLoop,/aws/lambda/transactionsProcessingLoop,/aws/lambda/waveDecisionExecutionLoop,/aws/lambda/waveLeaderboardSnapshotterLoop,/aws/lambda/waveDropMetricsRefreshLoop,/aws/lambda/waveScoreRefreshLoop,/aws/lambda/xTdhLoop,/aws/lambda/artworkDocumentationProcessor,/aws/lambda/dropForgeLaunchHandler,/aws/lambda/memesDistributionHandler,/aws/lambda/webSocketDeliveryLoop"
           }
         }
       }
@@ -597,7 +597,7 @@
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
         "LogPermission",
-        "dropForgePreparationLoopErrorLogs"
+        "dropForgeLaunchHandlerErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1243,7 +1243,7 @@
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
         "LogPermission",
-        "memeLabTransactionsLoopErrorLogs"
+        "memesDistributionHandlerErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1409,7 +1409,7 @@
         "FilterPattern": "\"6529.ops.error.v1\""
       }
     },
-    "dropForgeLaunchLoopErrorLogs": {
+    "dropForgeLaunchHandlerErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
         "LogPermission",
@@ -1422,15 +1422,15 @@
             "Arn"
           ]
         },
-        "LogGroupName": "/aws/lambda/dropForgeLaunchLoop",
+        "LogGroupName": "/aws/lambda/dropForgeLaunchHandler",
         "FilterPattern": "\"6529.ops.error.v1\""
       }
     },
-    "dropForgePreparationLoopErrorLogs": {
+    "memesDistributionHandlerErrorLogs": {
       "Type": "AWS::Logs::SubscriptionFilter",
       "DependsOn": [
         "LogPermission",
-        "dropForgeLaunchLoopErrorLogs"
+        "memeLabTransactionsLoopErrorLogs"
       ],
       "Properties": {
         "DestinationArn": {
@@ -1439,7 +1439,7 @@
             "Arn"
           ]
         },
-        "LogGroupName": "/aws/lambda/dropForgePreparationLoop",
+        "LogGroupName": "/aws/lambda/memesDistributionHandler",
         "FilterPattern": "\"6529.ops.error.v1\""
       }
     },
@@ -5491,18 +5491,18 @@
         }
       }
     },
-    "dropForgeLaunchLoopErrors": {
+    "dropForgeLaunchHandlerErrors": {
       "Type": "AWS::CloudWatch::Alarm",
       "Properties": {
         "AlarmName": {
-          "Fn::Sub": "seize-monitoring-${Environment}-dropForgeLaunchLoop-Errors"
+          "Fn::Sub": "seize-monitoring-${Environment}-dropForgeLaunchHandler-Errors"
         },
         "Namespace": "AWS/Lambda",
         "MetricName": "Errors",
         "Dimensions": [
           {
             "Name": "FunctionName",
-            "Value": "dropForgeLaunchLoop"
+            "Value": "dropForgeLaunchHandler"
           }
         ],
         "Statistic": "Sum",
@@ -5524,18 +5524,18 @@
         }
       }
     },
-    "dropForgeLaunchLoopThrottles": {
+    "dropForgeLaunchHandlerThrottles": {
       "Type": "AWS::CloudWatch::Alarm",
       "Properties": {
         "AlarmName": {
-          "Fn::Sub": "seize-monitoring-${Environment}-dropForgeLaunchLoop-Throttles"
+          "Fn::Sub": "seize-monitoring-${Environment}-dropForgeLaunchHandler-Throttles"
         },
         "Namespace": "AWS/Lambda",
         "MetricName": "Throttles",
         "Dimensions": [
           {
             "Name": "FunctionName",
-            "Value": "dropForgeLaunchLoop"
+            "Value": "dropForgeLaunchHandler"
           }
         ],
         "Statistic": "Sum",
@@ -5557,18 +5557,18 @@
         }
       }
     },
-    "dropForgePreparationLoopErrors": {
+    "memesDistributionHandlerErrors": {
       "Type": "AWS::CloudWatch::Alarm",
       "Properties": {
         "AlarmName": {
-          "Fn::Sub": "seize-monitoring-${Environment}-dropForgePreparationLoop-Errors"
+          "Fn::Sub": "seize-monitoring-${Environment}-memesDistributionHandler-Errors"
         },
         "Namespace": "AWS/Lambda",
         "MetricName": "Errors",
         "Dimensions": [
           {
             "Name": "FunctionName",
-            "Value": "dropForgePreparationLoop"
+            "Value": "memesDistributionHandler"
           }
         ],
         "Statistic": "Sum",
@@ -5590,18 +5590,18 @@
         }
       }
     },
-    "dropForgePreparationLoopThrottles": {
+    "memesDistributionHandlerThrottles": {
       "Type": "AWS::CloudWatch::Alarm",
       "Properties": {
         "AlarmName": {
-          "Fn::Sub": "seize-monitoring-${Environment}-dropForgePreparationLoop-Throttles"
+          "Fn::Sub": "seize-monitoring-${Environment}-memesDistributionHandler-Throttles"
         },
         "Namespace": "AWS/Lambda",
         "MetricName": "Throttles",
         "Dimensions": [
           {
             "Name": "FunctionName",
-            "Value": "dropForgePreparationLoop"
+            "Value": "memesDistributionHandler"
           }
         ],
         "Statistic": "Sum",

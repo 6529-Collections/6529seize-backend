@@ -25,7 +25,6 @@ import {
 } from '@/drop-forge/drop-forge.evidence';
 import { LaunchRecord, LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
-import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
 
 export async function readyLaunch(
   claim: number,
@@ -80,14 +79,13 @@ export async function readyLaunch(
         saved,
         `Claim #${claim}: Launch requested; initialization queued.`
       );
-      await dropForgeRepository.save(saved, txCtx);
+      await dropForgeRepository.save(saved, txCtx, true);
       return saved;
     },
     ctx,
     false,
     true
   );
-  await wakeDropForge();
   return result;
 }
 export async function requestMetadataUpdate(
@@ -194,9 +192,9 @@ export async function requestMetadataUpdate(
         `Claim #${claim}: Published metadata update queued.`
       );
     },
-    ctx
+    ctx,
+    true
   );
-  await wakeDropForge();
   return (await dropForgeRepository.find(id, ctx))!;
 }
 export async function coordinateManual(
@@ -279,12 +277,12 @@ export async function coordinateManual(
             `Claim #${claim}: ${hash ? 'Manual transaction registered: ' + hash : 'Manual operation cancelled.'}`
           );
         },
-        txCtx
+        txCtx,
+        true
       );
     },
     ctx
   );
-  if (operation !== 'BEGIN') await wakeDropForge();
   return leaseId;
 }
 

@@ -717,10 +717,10 @@
       ]
     },
     {
-      "service": "dropForgeLaunchLoop",
+      "service": "dropForgeLaunchHandler",
       "region": "us-east-1",
       "functions": [
-        "dropForgeLaunchLoop"
+        "dropForgeLaunchHandler"
       ],
       "coverage": [
         "structured-error-logs",
@@ -729,10 +729,10 @@
       ]
     },
     {
-      "service": "dropForgePreparationLoop",
+      "service": "memesDistributionHandler",
       "region": "us-east-1",
       "functions": [
-        "dropForgePreparationLoop"
+        "memesDistributionHandler"
       ],
       "coverage": [
         "structured-error-logs",

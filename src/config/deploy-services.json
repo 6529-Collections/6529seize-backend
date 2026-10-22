@@ -19,7 +19,9 @@
       "validation_profile": "api-health",
       "default_dependencies": [
         "dbMigrationsLoop",
-        "artworkDocumentationProcessor"
+        "artworkDocumentationProcessor",
+        "memesDistributionHandler",
+        "dropForgeLaunchHandler"
       ]
     },
     {
@@ -1057,7 +1059,7 @@
       ]
     },
     {
-      "name": "dropForgeLaunchLoop",
+      "name": "dropForgeLaunchHandler",
       "allowed_environments": [
         "staging",
         "prod"
@@ -1068,16 +1070,15 @@
         "prod": "us-east-1"
       },
       "verification_targets": [
-        "dropForgeLaunchLoop"
+        "dropForgeLaunchHandler"
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
-        "dbMigrationsLoop",
-        "api"
+        "dbMigrationsLoop"
       ]
     },
     {
-      "name": "dropForgePreparationLoop",
+      "name": "memesDistributionHandler",
       "allowed_environments": [
         "staging",
         "prod"
@@ -1088,12 +1089,12 @@
         "prod": "us-east-1"
       },
       "verification_targets": [
-        "dropForgePreparationLoop"
+        "memesDistributionHandler"
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
         "dbMigrationsLoop",
-        "api"
+        "dropForgeLaunchHandler"
       ]
     },
     {

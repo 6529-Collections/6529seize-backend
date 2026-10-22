@@ -22,7 +22,6 @@ import {
   LaunchSafetyError
 } from '@/drop-forge/drop-forge.types';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
-import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
 import { Timer } from '@/time';
 export async function recoverDropForgeLaunch(
   req: RecoverDropForgeLaunchRequest
@@ -88,7 +87,6 @@ export async function recoverDropForgeLaunch(
     ).request(launchId(config.chainId, contract, claim_id), wallet!, body, {
       timer: Timer.getFromRequest(req)
     });
-    await wakeDropForge();
     return mapLaunch(record);
   } catch (error) {
     if (error instanceof LaunchRevisionConflict)

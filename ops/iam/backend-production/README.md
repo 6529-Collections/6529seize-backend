@@ -111,3 +111,22 @@ References:
 ## WebSocket recovery worker
 
 `WebSocketDeliveryDeployment.json` is an additional narrowly scoped inline policy for the existing deployment role. An administrative identity installs it before deploying `webSocketDeliveryLoop`; the GitHub role cannot modify its own permissions. It permits only the new worker function/versions, its environment-specific CloudFormation stack, deployment-bucket prefix, schedule, log group and alarms. Existing managed policies and their ten attachments are unchanged. The deployment-bucket prefix allows CloudFormation's truncated stack component and generated suffix (for example, `websocketdeliveryloop-sta-serverlessdeploymentbuck-...` on staging); it does not grant application-data access. Validate the document with Access Analyzer and simulate new-worker operations and unrelated denials before installation. Deploy through the ordinary GitHub workflow afterward.
+
+## Drop Forge handlers (proposed, not applied)
+
+`DropForgeHandlersDeployment.json` and `DropForgeDispatchDeployment.json` supplement the existing deploy role for
+`dropForgeLaunchHandler` and `memesDistributionHandler`: their stacks, artifact
+buckets, functions, logs/alarms, queues, schedule group and dedicated execution-role
+PassRole. It grants no KMS signing or IAM-policy-editing permission. An AWS
+administrator must review/apply this addition before rollout; the existing
+`manifest.json` and `verification.json` describe the earlier applied policies and
+do not claim this addition was deployed or AWS-validated. Check managed-policy
+attachment quota and regroup scoped policy statements administratively if needed.
+Runtime role policies and queue-producer permissions are separate; see the
+[maintained setup guide](../../../docs/drop-forge-auto-launch-setup.md).
+
+GetEventSourceMapping is read-only and region-scoped across mapping IDs because
+new UUIDs do not exist before creation and that read API has no FunctionArn
+condition. Mapping creation/update/delete remains constrained to the two named
+functions. The longer distribution stack's generated artifact bucket prefix is
+service-scoped; its AWS region condition separates staging from production.

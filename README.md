@@ -495,3 +495,11 @@ Currently 6529.io uses an Admin Panel to manage:
 The admin panel repo is located [here](https://github.com/6529-Collections/6529seize-admin).
 
 \* Note: Please bear in mind that in the near future the admin panel will be deprecated and all functionality will be moved to the 6529SEIZE-BACKEND repo.
+
+### Internal Memes operations handlers
+
+`memesDistributionHandler` consumes queued Process and Finalize checkpoints.
+`dropForgeLaunchHandler` consumes Launch/Update Claim and per-drop scheduled work.
+Neither has an always-on recurring trigger. See the maintained
+[setup and rollout guide](docs/drop-forge-auto-launch-setup.md) before enabling them;
+it covers versioned IAM roles, queues, one-time schedules, secrets and recovery.

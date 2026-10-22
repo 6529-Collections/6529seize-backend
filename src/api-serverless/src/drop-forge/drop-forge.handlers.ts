@@ -34,7 +34,6 @@ import {
 } from '@/exceptions';
 import { Timer } from '@/time';
 import { createProcess } from '@/drop-forge/drop-forge.workflow';
-import { wakeDropForge } from '@/drop-forge/drop-forge.wake';
 import { isAddress } from 'ethers';
 import { encryptPreparationAuth } from '@/drop-forge/drop-forge.preparation-auth';
 
@@ -237,7 +236,6 @@ export async function createDropForgeDistributionJob(
             req.headers.authorization ?? '',
             Timer.getFromRequest(req)
           );
-    await wakeDropForge(true);
     return mapJob(saved);
   });
 }

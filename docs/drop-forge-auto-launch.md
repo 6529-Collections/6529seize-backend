@@ -8,7 +8,7 @@ configuration, authority or deployment changes.
 EMMA exposes one durable **Process and Finalize** operation. Craft exposes
 **Launch** after publication and **Update Claim** after republishing metadata.
 The backend initializes immediately after Launch is accepted and continues phase
-transitions from a one-minute EventBridge recovery schedule. Both workers default
+transitions from per-drop one-time EventBridge Scheduler events. Both handlers default
 to disabled. Winner selection, craft publication, keys, gas funding, creator-admin
 grants, and Pay Artist remain operator responsibilities.
 
@@ -30,7 +30,6 @@ services need the same `DROPS_6529_MENTION_PROFILE_IDS` configuration.
 | `DROP_FORGE_PAYMENT_RECEIVER`           | Fixed receiver frozen in each plan; required on Sepolia                                                                                  |
 | `DROP_FORGE_SIGNER_ADDRESS`             | Expected operational wallet address derived from the KMS public key                                                                      |
 | `DROP_FORGE_KMS_KEY_ID`                 | KMS asymmetric `ECC_SECG_P256K1`, `SIGN_VERIFY` key in the worker's AWS region                                                           |
-| `DROP_FORGE_WORKER_ROLE_ARN`            | Dedicated deployment/execution role; manually provisioned                                                                                |
 | `DROP_FORGE_OPERATIONS_WAVE_ID`         | Manually confirmed operations wave UUID                                                                                                  |
 | `DROP_FORGE_BOT_PROFILE_ID`             | Existing bot profile UUID, with permission to chat in that wave                                                                          |
 | `DROPS_6529_MENTION_PROFILE_IDS` | Manually supplied comma-separated profile UUIDs; all must exist and see the wave                                                         |
@@ -39,11 +38,11 @@ services need the same `DROPS_6529_MENTION_PROFILE_IDS` configuration.
 | `DROP_FORGE_MAX_GAS_PER_TX`             | Required positive gas-limit cap                                                                                                          |
 | `DROP_FORGE_MAX_TX_COST_ETH`            | Required positive total transaction cost cap                                                                                             |
 
-The separate `dropForgePreparationLoop` role is supplied through
-`DROP_FORGE_PREPARATION_ROLE_ARN`. API roles need `lambda:InvokeFunction` on
-`dropForgeLaunchLoop` and `dropForgePreparationLoop`; the preparation role needs
-self-invocation permission. Scope those resources to the actual deployed function
-ARNs. The preparation worker does not need KMS signing permission.
+Dedicated execution and Scheduler delivery roles are referenced by versioned
+stage configuration, not GitHub variables. The API publishes targeted SQS work;
+handlers consume only that job/claim and establish one-time phase/Research events
+and outstanding-work watchdogs. The preparation handler has no signing permission.
+See the setup guide for exact IAM grants, queue redrive and rollout ordering.
 `DROP_FORGE_CALENDAR_BASE_URL` defaults to `https://6529.io` and supplies the
 mint-day calendar used by the server to derive the fixed schedule.
 
@@ -162,7 +161,7 @@ per transaction, at most 20,000 phase-recipient entries per plan):
 
 For each initialization/transition, admission requires
 `transaction_count * (confirmations * 12 + 60) + 120` seconds: Ethereum slot
-budget, one scheduler interval per serial transaction, and the two-minute
+budget, targeted continuation/confirmation time per serial transaction, and the two-minute
 no-new-submission cutoff. Ten-minute gaps are accepted when their own batch
 count fits; a large later batch cannot borrow time before Phase 0. This allowance
 is not a guarantee of inclusion/finality; reporting, RPC or network delays can
@@ -192,7 +191,7 @@ phase update.
 An HTTP timeout does not prove preparation failed. The single job makes request
 completion independent of the write workload and refresh discovers its status.
 Each phase's writes and checkpoint commit together. Lambda termination rolls
-back the unfinished stage, which the recovery schedule can retry. Ordinary stage
+back the unfinished stage, which targeted queue redelivery can retry. Ordinary stage
 errors become FAILED; correcting the cause and retrying uses a new request ID
 and reuses compatible committed phase results. A completed job binds its
 read-only lists to the distribution version. Source changes require reset rather
@@ -232,7 +231,7 @@ other launches using the same signer until reconciled.
 An authorized Launch administrator can inspect the exact action, signer, nonce,
 original/replacement hashes and allocation amounts. Recovery requests carry a
 stable request ID, expected action hash and launch revision. The API queues work;
-the same launch loop prepares and signs asynchronously through KMS. No signed
+the same launch handler prepares and signs asynchronously through KMS. No signed
 bytes are returned through the API.
 
 `SPEED_UP` preserves the original nonce, destination, value and calldata and
@@ -265,7 +264,7 @@ supply before signing. Research still derives its remaining target from fresh
 supply. Terminal launches are not restarted; coordinated manual proof can credit
 outstanding allocations instead. Every retry archives the settled nonce evidence.
 
-`DROP_FORGE_RECOVERY_ENABLED=true` enables the same loop's exceptional recovery
+`DROP_FORGE_RECOVERY_ENABLED=true` enables the same handler's exceptional recovery
 without scheduling fresh phase actions. Fresh-nonce retry/delivery also requires
 `DROP_FORGE_AUTOMATION_ENABLED=true`. Both flags default to disabled. Provision
 keys, permission, gas budgets and reporting configuration before use. Empty RPC
@@ -284,7 +283,7 @@ Already-signed intent continues receipt reconciliation during a reporting outage
 wave delivery failures do not cause replacement transactions. Each reporting pass
 drains up to five events per launch. A Launch invocation reports once before work
 and after each of up to three work cycles; larger backlogs remain durable and
-drain across passes and the one-minute schedule. New signing waits for the backlog
+drain across targeted outstanding-work deliveries. New signing waits for the backlog
 to clear. Canonicality is rechecked against the latest confirmed
 action; serialized actions share the same chain ancestry. Missing wave/profile
 permissions require operator correction. CloudWatch invocation-error alarms cover
@@ -297,8 +296,8 @@ exercised in local validation.
 
 ## Future rollout order
 
-Deploy `dbMigrationsLoop` for entity sync, then `api`, then
-`dropForgePreparationLoop` and `dropForgeLaunchLoop` with both flags disabled,
+Deploy `dbMigrationsLoop` for entity sync, then `dropForgeLaunchHandler`, then
+`memesDistributionHandler`, then `api`, with both flags disabled,
 then the dependent frontend controls. Redeploy the existing wave-report
 consumers `subscriptionsDaily`, `subscriptionsTopUpLoop`,
 `transactionsProcessingLoop`, `helpBotReplyLoop`, `nftsLoop`,
