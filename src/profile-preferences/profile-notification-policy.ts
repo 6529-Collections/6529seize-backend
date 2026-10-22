@@ -20,6 +20,7 @@ const CAUSE_CLASSIFICATION: Record<
   [IdentityNotificationCause.IDENTITY_NIC]: 'rep_and_nic',
   [IdentityNotificationCause.DROP_QUOTED]: 'mentions_replies_quotes',
   [IdentityNotificationCause.DROP_REPLIED]: 'mentions_replies_quotes',
+  [IdentityNotificationCause.VOTING_CREDITS_RETURNED]: 'reactions_votes_boosts',
   [IdentityNotificationCause.DROP_VOTED]: 'reactions_votes_boosts',
   [IdentityNotificationCause.DROP_POLL_VOTED]: 'reactions_votes_boosts',
   [IdentityNotificationCause.DROP_REACTED]: 'reactions_votes_boosts',
