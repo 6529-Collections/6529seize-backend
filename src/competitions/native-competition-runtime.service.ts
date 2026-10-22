@@ -219,6 +219,24 @@ export class NativeCompetitionRuntimeService {
       return;
     await this.emitScheduledTransitions(competition, now, ctx);
     await this.reconcileCompetitionCredit(competition, now, ctx);
+    await this.refreshLeaderboardAfterCreditReconciliation(
+      competition,
+      now,
+      ctx
+    );
+  }
+
+  /** Bulk TDH revocation has already reconciled every over-limit voter under
+   * this competition's transaction lock, including their notifications. */
+  public async refreshLeaderboardAfterCreditReconciliation(
+    competition: Competition,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!ctx.connection)
+      throw new Error(
+        'Leaderboard refresh requires the competition transaction lock'
+      );
     const state = await this.loadState(competition.id, ctx);
     await this.refreshLeaderboard(competition, state, now, ctx);
   }

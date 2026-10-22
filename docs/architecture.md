@@ -1162,6 +1162,18 @@ in the same response. This projection bypasses legacy full-wave voting reads;
 summary refreshes reuse cached content, while opening a drop retains the full
 drop reader. The option is additive, with no schema changes; deploy `api` before
 the frontend that requests it.
+TDH publication discovers native overvotes in one set-based query per locked
+competition, using absolute active-entry spending and current TDH/xTDH or the
+configured NFT set. WAVE credit compares the shared total; DROP credit compares
+the largest individual allocation. Only over-limit voters enter the existing
+credit-reduction/history/notification path, and the leaderboard is rebuilt once
+after all reductions. Fully funded competitions do not reload vote history or
+rewrite leaderboards. Discovery and mutations remain in the existing TDH
+publication transaction, including delegation-driven partial recalculations and
+post-TDH over-rate cleanup. Deploy the affected consumers sequentially:
+`overRatesRevocationLoop`, `delegationsLoop`, then `tdhLoop`; their unchanged
+xTDH dependencies are already compatible. No schema or frontend rollout is needed.
+
 Winners paginate by win time, newest first; My Votes excludes completed winners
 without deleting historical allocations. Creating a hub always creates a
 CHAT wave; competition creation is a separate native command. Historical physical
