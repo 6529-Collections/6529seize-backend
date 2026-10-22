@@ -150,3 +150,62 @@ beforeEach(() => {
 afterEach(() => {
   process.env.NODE_ENV = originalNodeEnvironment;
 });
+
+it.each(['muteIdentity', 'unmuteIdentity'] as const)(
+  'captures every affected offline wave for multiple pairs during %s',
+  async (method) => {
+    const { db, repo } = createRepo();
+    const connection = { connection: {} };
+    const pairs = [
+      { muter_id: 'reader-a', muted_identity_id: 'author-a' },
+      { muter_id: 'reader-b', muted_identity_id: 'author-b' }
+    ];
+    db.execute.mockImplementation(async (sql: string, params) =>
+      sql.includes('select r.wave_id')
+        ? [
+            { wave_id: `${params.readerId}-one` },
+            { wave_id: `${params.readerId}-two` }
+          ]
+        : []
+    );
+    for (const pair of pairs) {
+      await repo[method](pair, { connection });
+    }
+    for (const pair of pairs) {
+      expect(db.execute).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'set unread_state_version = unread_state_version + 1'
+        ),
+        {
+          readerId: pair.muter_id,
+          waveIds: [`${pair.muter_id}-one`, `${pair.muter_id}-two`]
+        },
+        { wrappedConnection: connection }
+      );
+    }
+    const captured = db.bulkInsert.mock.calls.flatMap((call) =>
+      call[1].map((row: { event: string }) => JSON.parse(row.event))
+    );
+    expect(captured).toEqual(
+      pairs.flatMap((pair) =>
+        ['one', 'two'].map((suffix) => ({
+          type: 'dm',
+          profileIds: [pair.muter_id],
+          waveId: `${pair.muter_id}-${suffix}`,
+          deliveryCapability: 'durable_updates_v1'
+        }))
+      )
+    );
+    const scopeQueries = db.execute.mock.calls.filter(([sql]) =>
+      sql.includes('select r.wave_id')
+    );
+    expect(scopeQueries).toHaveLength(2);
+    for (const [sql, , options] of scopeQueries) {
+      expect(sql).toContain('w.is_direct_message = true');
+      expect(sql).not.toContain('ws_connections');
+      expect(options.wrappedConnection).toBe(connection);
+    }
+    for (const call of db.bulkInsert.mock.calls)
+      expect(call[3].connection).toBe(connection);
+  }
+);

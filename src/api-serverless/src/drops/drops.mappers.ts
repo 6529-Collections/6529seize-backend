@@ -1,3 +1,5 @@
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import { applyCollaborationPresentation } from '@/meme-collaborations/meme-collaboration-presentation';
 import {
   DropEntity,
   DropMediaEntity,
@@ -160,6 +162,7 @@ export class DropsMappers {
     request: ApiUpdateDropRequest & {
       drop_type: ApiDropType;
       mentioned_groups?: ApiDropGroupMention[];
+      collaborator_ids?: string[];
       is_additional_action_promised?: boolean | null;
     };
     waveId: string;
@@ -169,6 +172,7 @@ export class DropsMappers {
     dropId?: string;
   }): CreateOrUpdateDropModel {
     return {
+      collaborator_ids: request.collaborator_ids,
       author_identity: authorId,
       author_id: authorId,
       proxy_identity: proxyId,
@@ -844,6 +848,16 @@ export class DropsMappers {
       contextProfileId ?? null,
       ctx.connection
     );
+    const collaboratorsByDropId = await memeCollaborationsDb.acceptedByDrops(
+      allEntities.map((entity) => entity.id),
+      ctx
+    );
+    const collaborationPresentation =
+      await memeCollaborationsDb.presentationByDrops(
+        allEntities.map((entity) => entity.id),
+        ctx,
+        collaboratorsByDropId
+      );
     return entities.map<ApiDropWithoutWave>((dropEntity) => {
       const drop = this.toDrop({
         dropEntity,
@@ -885,6 +899,11 @@ export class DropsMappers {
         rootDropIds,
         visibleQuotedDropIds
       });
+      applyCollaborationPresentation(
+        drop,
+        collaboratorsByDropId,
+        collaborationPresentation
+      );
       return this.applyModerationPresentation(
         drop,
         moderationPresentations,
@@ -996,6 +1015,7 @@ export class DropsMappers {
       };
     });
     if (!presentation.moderation.can_view) {
+      delete drop.submission_artist;
       drop.title = null;
       drop.referenced_nfts = [];
       drop.mentioned_users = [];

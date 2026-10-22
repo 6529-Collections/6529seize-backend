@@ -66,7 +66,7 @@ export type CompetitionWinnerConfig = {
 
 export type Competition = {
   readonly legacy_origin?: boolean;
-  readonly legacy_transferred_at?: number | null;
+  readonly configuration_activated_at?: number | null;
   readonly id: string;
   readonly wave_id: string;
   readonly storage_mode: CompetitionStorageMode;
@@ -198,10 +198,15 @@ export type CompetitionPageRequest = {
   readonly direction: 'ASC' | 'DESC';
   readonly sort?:
     | 'submitted_at'
+    | 'won_at'
     | 'rating'
     | 'rank'
     | 'real_time_rating'
-    | 'trend';
+    | 'trend'
+    | 'price';
+  readonly price_currency?: string | null;
+  readonly min_price?: number | null;
+  readonly max_price?: number | null;
 };
 
 export type CompetitionSnapshot = {

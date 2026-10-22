@@ -1,3 +1,4 @@
+import { competitionCreditNfts } from '@/competitions/competition-credit-nfts';
 import { readSequentially } from '@/competitions/competition-read-sequence';
 import { collections } from '@/collections';
 import {
@@ -12,14 +13,10 @@ import {
 import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { BadRequestException } from '@/exceptions';
-import { IdentitiesDb, identitiesDb } from '@/identities/identities.db';
-import { RatingsDb, ratingsDb } from '@/rates/ratings.db';
+import type { IdentitiesDb } from '@/identities/identities.db';
+import type { RatingsDb } from '@/rates/ratings.db';
 import { RequestContext } from '@/request.context';
-import {
-  normalizeWaveVotingCreditNfts,
-  sumWaveVotingCreditNftValues,
-  WaveVotingCreditNft
-} from '@/waves/wave-voting-credit-nfts';
+import { sumWaveVotingCreditNftValues } from '@/waves/wave-voting-credit-nfts';
 
 export type CompetitionCreditBudget = {
   readonly competition_id: string;
@@ -97,25 +94,6 @@ function voteRange(
   };
 }
 
-function creditNfts(voting: Competition['voting']): WaveVotingCreditNft[] {
-  const nfts = voting.credit_nfts.map((nft) => ({
-    contract: String(nft.contract ?? ''),
-    tokenId: Number(nft.token_id ?? nft.tokenId)
-  }));
-  if (
-    !nfts.length ||
-    nfts.some(
-      (nft) =>
-        !/^0x[0-9a-f]{40}$/i.test(nft.contract) ||
-        !Number.isSafeInteger(nft.tokenId) ||
-        nft.tokenId < 0
-    )
-  ) {
-    throw new Error('CARD_SET_TDH requires valid voting credit NFTs');
-  }
-  return normalizeWaveVotingCreditNfts(nfts);
-}
-
 /**
  * Authoritative budget reads for an already authorized effective profile.
  * Mutating callers must hold the native competition lock and read/write within
@@ -137,7 +115,7 @@ export class CompetitionCreditService {
     private readonly ratings: Pick<RatingsDb, 'getRepRating'>
   ) {}
 
-  /** Migration-wide WAVE reads keep the public single-profile budget formula,
+  /** Batched WAVE reads keep the public single-profile budget formula,
    * prefetching bounded source pages on the caller's snapshot connection. */
   public async getWaveBudgets(
     competition: BudgetCompetition,
@@ -302,7 +280,7 @@ export class CompetitionCreditService {
         ctx
       );
     } else if (voting.credit_type === WaveCreditType.CARD_SET_TDH) {
-      const nfts = creditNfts(voting);
+      const nfts = competitionCreditNfts(voting);
       const values = await this.identities.getSingleNftVotingCreditsByProfileId(
         profileId,
         nfts,
@@ -344,6 +322,24 @@ export class CompetitionCreditService {
 
 export const competitionCreditService = new CompetitionCreditService(
   competitionCreditRepository,
-  identitiesDb,
-  ratingsDb
+  // These sources also import competition consumers. Resolve their exports only
+  // when requested, after module initialization has completed in either order.
+  {
+    getIdentityByProfileId: async (...args) =>
+      (
+        await import('@/identities/identities.db')
+      ).identitiesDb.getIdentityByProfileId(...args),
+    getIdentitiesByIds: async (...args) =>
+      (
+        await import('@/identities/identities.db')
+      ).identitiesDb.getIdentitiesByIds(...args),
+    getSingleNftVotingCreditsByProfileId: async (...args) =>
+      (
+        await import('@/identities/identities.db')
+      ).identitiesDb.getSingleNftVotingCreditsByProfileId(...args)
+  },
+  {
+    getRepRating: async (...args) =>
+      (await import('@/rates/ratings.db')).ratingsDb.getRepRating(...args)
+  }
 );

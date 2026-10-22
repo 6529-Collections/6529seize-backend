@@ -1,3 +1,4 @@
+import { readCompetitionEntryContexts } from './competition-entry-context.reader';
 import {
   handleGetWaveCompetitionV3,
   handleGetDefaultWaveCompetitionV3,
@@ -22,6 +23,10 @@ import { ApiCompetitionComputedPhase } from '@/api/generated/models/ApiCompetiti
 import { ApiCompetitionCapability } from '@/api/generated/models/ApiCompetitionCapability';
 import { ApiCompetitionParticipationConfigRequiredMediaEnum } from '@/api/generated/models/ApiCompetitionParticipationConfig';
 import { BadRequestException } from '@/exceptions';
+
+jest.mock('./competition-entry-context.reader', () => ({
+  readCompetitionEntryContexts: jest.fn()
+}));
 
 jest.mock('@/api/auth/auth', () => ({
   getAuthenticationContext: jest.fn()
@@ -249,3 +254,74 @@ it.each(['rating', 'real_time_rating', 'submitted_at', 'trend'])(
     );
   }
 );
+
+it('preserves curation price ordering and bounds in the competition scope', async () => {
+  await handleListCompetitionLeaderboardV3({
+    params: { wave_id: 'wave-a', competition_id: competitionId },
+    query: {
+      sort: 'price',
+      direction: 'ASC',
+      price_currency: 'ETH',
+      min_price: '0',
+      max_price: '3'
+    }
+  } as never);
+  expect(competitionService.listLeaderboard).toHaveBeenLastCalledWith(
+    'wave-a',
+    competitionId,
+    expect.objectContaining({
+      sort: 'price',
+      direction: 'ASC',
+      price_currency: 'ETH',
+      min_price: 0,
+      max_price: 3
+    }),
+    expect.anything()
+  );
+});
+
+it.each([{ min_price: -1 }, { max_price: -1 }, { price_currency: ' ' }])(
+  'rejects invalid native price filters %j',
+  async (query) => {
+    await expect(
+      handleListCompetitionLeaderboardV3({
+        params: { wave_id: 'wave-a', competition_id: competitionId },
+        query
+      } as never)
+    ).rejects.toBeInstanceOf(BadRequestException);
+  }
+);
+
+it('embeds authorized cards with the leaderboard page when requested', async () => {
+  const page = {
+    data: [
+      {
+        entry_id: 'hidden',
+        drop_id: 'hidden-drop',
+        competition_id: competitionId
+      },
+      { entry_id: 'entry', drop_id: 'drop', competition_id: competitionId }
+    ],
+    has_more: false,
+    next_cursor: null
+  };
+  jest
+    .mocked(competitionService.listLeaderboard)
+    .mockResolvedValue(page as never);
+  const cards = [{ entry: { id: 'entry' }, drop: { id: 'drop' } }];
+  jest
+    .mocked(readCompetitionEntryContexts)
+    .mockResolvedValue({ data: cards } as never);
+  const result = await handleListCompetitionLeaderboardV3({
+    params: { wave_id: 'wave-a', competition_id: competitionId },
+    query: { include: 'cards' }
+  } as never);
+  expect(result).toEqual({ ...page, cards });
+  expect(readCompetitionEntryContexts).toHaveBeenCalledWith(
+    'wave-a',
+    competitionId,
+    ['hidden', 'entry'],
+    expect.anything(),
+    true
+  );
+});

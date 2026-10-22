@@ -1,3 +1,4 @@
+import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
 import {
   recordWebSocketEvent,
   recordWebSocketEvents
@@ -71,7 +72,7 @@ import { canDeleteRepliesInWave } from '@/waves/wave-chat-replies.helpers';
 export class DeleteDropUseCase {
   public constructor(
     private readonly reactionsService: ReactionsService,
-    private readonly dropVotingService: DropVotingService,
+    _dropVotingService: DropVotingService,
     private readonly dropsDb: DropsDb,
     private readonly dropBookmarksDb: DropBookmarksDb,
     private readonly curationsDb: CurationsDb,
@@ -241,13 +242,29 @@ export class DeleteDropUseCase {
     return withDropOwnershipMutation(
       ownershipDrop.wave_id,
       { timer, connection },
-      async () => {
+      async (originalPrimary) => {
         const dropId = model.drop_id;
         const nativeEntries = isPermanentDelete
           ? await this.entryHooks.lockForDelete(dropId, { timer, connection })
           : [];
-        const drop = await this.dropsDb.findDropById(dropId, connection);
-        if (drop === null) return null;
+        const current = await this.dropsDb.findDropById(dropId, connection);
+        if (current === null) return null;
+        const primaryEntry = nativeEntries.find(
+          (entry) => entry.competition_id === originalPrimary?.id
+        );
+        const drop = !isPermanentDelete
+          ? current
+          : {
+              ...current,
+              drop_type:
+                primaryEntry?.status === 'WINNER'
+                  ? DropType.WINNER
+                  : primaryEntry?.status === 'ACTIVE'
+                    ? DropType.PARTICIPATORY
+                    : nativeEntries.length
+                      ? DropType.COMPETITION
+                      : ownershipDrop.drop_type
+            };
         const waveId = drop.wave_id;
         const wave = await this.dropsDb.findWaveByIdOrNull(waveId, connection);
         if (!isBackendDelete) {
@@ -273,6 +290,7 @@ export class DeleteDropUseCase {
             { timer, connection }
           );
         await Promise.all([
+          memeCollaborationsService.closeDeleted(dropId, { timer, connection }),
           this.dropsDb.deleteDropParts(dropId, { timer, connection }),
           this.dropsDb.deleteDropMentions(dropId, { timer, connection }),
           this.dropsDb.deleteDropMentionedWaves(dropId, {
@@ -296,9 +314,6 @@ export class DeleteDropUseCase {
             connection
           }),
           this.dropPollsDb.deleteByDropId(dropId, { timer, connection }),
-          !isPermanentDelete && ownershipDrop.drop_type === DropType.CHAT
-            ? undefined
-            : this.dropVotingService.deleteVotes(dropId, { timer, connection }),
           this.curationsDb.deleteDropCurationsByDropId(dropId, {
             timer,
             connection

@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import {
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
@@ -51,6 +52,10 @@ describe('WavesApiDb profile wave activity queries', () => {
       'case when w.visibility_group_id is not null or parent.visibility_group_id is not null then 1 else 0 end as is_private'
     );
     expect(sql).not.toContain('admin_group_id');
+    expect(sql).toContain(`from ${legacyGetView(WAVES_TABLE)} w`);
+    expect(sql).toContain(
+      `left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id`
+    );
     expect(sql).toContain(
       `left join ${WAVE_DROPPER_METRICS_TABLE} wdm on wdm.wave_id = w.id and wdm.dropper_id = :profileId`
     );
@@ -128,7 +133,10 @@ describe('WavesApiDb profile wave activity queries', () => {
     );
     expect(sql).not.toContain('admin_group_id');
     expect(sql).toContain(
-      `from ${WAVE_DROPPER_METRICS_TABLE} wdm join ${WAVES_TABLE} w on w.id = wdm.wave_id`
+      `from ${WAVE_DROPPER_METRICS_TABLE} wdm join ${legacyGetView(WAVES_TABLE)} w on w.id = wdm.wave_id`
+    );
+    expect(sql).toContain(
+      `left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id`
     );
     expect(sql).toContain(
       `left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id`

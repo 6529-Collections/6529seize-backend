@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "description": "Inert retained application functions whose existing structured logs and platform alarms remain monitored independently of ordinary code deployment.",
+  "services": [
+    {
+      "name": "competitionMigrationLoop",
+      "allowed_environments": ["staging", "prod"],
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": ["competitionMigrationLoop"]
+    }
+  ]
+}

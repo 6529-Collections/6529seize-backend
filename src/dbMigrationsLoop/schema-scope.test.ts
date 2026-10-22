@@ -5,7 +5,6 @@ jest.mock('@/notifications/push-notification-cancellations.db', () => ({
   }
 }));
 import { doInDbContext } from '@/secrets';
-import { competitionRepository } from '@/competitions/competition.repository';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import * as Entities from '@/entities/entities';
@@ -16,6 +15,23 @@ import {
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import {
+  isCompetitionRuntimeRetired,
+  assertCompetitionHistoryPreparationAllowed
+} from '@/competitions/competition-runtime-retirement-state';
+jest.mock('@/competitions/competition-runtime-retirement-state', () => ({
+  isCompetitionRuntimeRetired: jest.fn().mockResolvedValue(false),
+  assertCompetitionHistoryPreparationAllowed: jest.fn()
+}));
+import * as compatibilityFacade from '@/competitions/legacy-competition-get-facade';
+import {
+  prepareWaveHubConfiguration,
+  finalizeWaveHubConfigurationCapture
+} from '@/waves/wave-hub-configuration-preparation';
+jest.mock('@/waves/wave-hub-configuration-preparation', () => ({
+  prepareWaveHubConfiguration: jest.fn(),
+  finalizeWaveHubConfigurationCapture: jest.fn()
+}));
 import { handler } from './index';
 import { getDataSource } from '@/db';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
@@ -47,11 +63,6 @@ jest.mock('@/secrets', () => ({
 }));
 jest.mock('@/app-features', () => ({
   appFeatures: { isDbMigrateDisabled: () => false }
-}));
-jest.mock('@/competitions/competition.repository', () => ({
-  competitionRepository: {
-    backfillLegacyMappings: jest.fn().mockResolvedValue(0)
-  }
 }));
 jest.mock('@/content-moderation/content-moderation.db', () => ({
   contentModerationDb: {
@@ -85,6 +96,14 @@ const scheduledEvent = {
 describe('dbMigrationsLoop explicit schema scope', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(prepareWaveHubConfiguration).mockResolvedValue({
+      waves: 0,
+      archives: 0,
+      capture_triggers: 0
+    });
+    jest
+      .mocked(finalizeWaveHubConfigurationCapture)
+      .mockResolvedValue({ disabled_triggers: 10 });
     jest
       .mocked(moderationRetentionSchemaDb.missingColumns)
       .mockResolvedValue([]);
@@ -114,7 +133,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     expect(applyNftLinkPageRetrySchema).toHaveBeenCalledTimes(1);
     expect(applyClaimsMediaUploadSchema).not.toHaveBeenCalled();
     expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
     expect(
       contentModerationDb.deleteExpiredPrePublicationChecks
     ).not.toHaveBeenCalled();
@@ -130,7 +148,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       invoke({ schema_scope: 'nft-link-page-retry' })
     ).rejects.toThrow('synthetic drift');
     expect(migrations.getInstance).not.toHaveBeenCalled();
-    expect(competitionRepository.backfillLegacyMappings).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -166,15 +183,85 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(applyNftLinkPageRetrySchema).not.toHaveBeenCalled();
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(
-        competitionRepository.backfillLegacyMappings
-      ).not.toHaveBeenCalled();
-      expect(
         contentModerationDb.deleteExpiredPrePublicationChecks
       ).not.toHaveBeenCalled();
       expect(moderationReviewDb.retain).not.toHaveBeenCalled();
       expect(moderationRetentionSchemaDb.missingColumns).not.toHaveBeenCalled();
     }
   );
+
+  it('never performs the initial view cutover during ordinary full schema work', async () => {
+    const install = jest.spyOn(
+      compatibilityFacade,
+      'installLegacyCompetitionGetFacade'
+    );
+    await invoke({ schema_scope: 'full' });
+    expect(isCompetitionRuntimeRetired).toHaveBeenCalledTimes(1);
+    expect(install).not.toHaveBeenCalled();
+    install.mockRestore();
+  });
+
+  it('rejects retained source preparation after native cutover', async () => {
+    jest
+      .mocked(assertCompetitionHistoryPreparationAllowed)
+      .mockRejectedValueOnce(new Error('retired source guard'));
+    await expect(
+      invoke({ schema_scope: 'competition-history-preparation' })
+    ).rejects.toThrow('retired source guard');
+  });
+
+  it.each([
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize'
+  ])(
+    'runs only the explicit %s operation without schema sync or maintenance',
+    async (scope) => {
+      const finalize = scope === 'wave-hub-configuration-finalize';
+      const prepared = { waves: 2, archives: 3, capture_triggers: 10 };
+      const result = finalize ? { disabled_triggers: 10 } : prepared;
+      if (!finalize)
+        jest
+          .mocked(prepareWaveHubConfiguration)
+          .mockResolvedValueOnce(prepared);
+      await expect(invoke({ schema_scope: scope })).resolves.toEqual({
+        schema_scope: scope,
+        ...result
+      });
+      expect(prepareWaveHubConfiguration).toHaveBeenCalledTimes(
+        finalize ? 0 : 1
+      );
+      expect(finalizeWaveHubConfigurationCapture).toHaveBeenCalledTimes(
+        finalize ? 1 : 0
+      );
+      expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+        logger: expect.anything(),
+        entities: Object.values(Entities),
+        syncEntities: false,
+        skipRedis: true
+      });
+      expect(migrations.getInstance).not.toHaveBeenCalled();
+      expect(
+        contentModerationDb.deleteExpiredPrePublicationChecks
+      ).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize'
+  ])('propagates %s failure without starting unrelated work', async (scope) => {
+    const failure = new Error('Hub policy parity did not pass');
+    const operation =
+      scope === 'wave-hub-configuration-preparation'
+        ? prepareWaveHubConfiguration
+        : finalizeWaveHubConfigurationCapture;
+    jest.mocked(operation).mockRejectedValueOnce(failure);
+    await expect(invoke({ schema_scope: scope })).rejects.toBe(failure);
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(
+      contentModerationDb.deleteExpiredPrePublicationChecks
+    ).not.toHaveBeenCalled();
+  });
 
   it.each([undefined, {}, { schema_scope: 'full' }])(
     'preserves full manual migration behavior for %j',
@@ -191,9 +278,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         env: 'main'
       });
       expect(migrations.up).toHaveBeenCalledTimes(1);
-      expect(
-        competitionRepository.backfillLegacyMappings
-      ).toHaveBeenCalledTimes(1);
       expect(
         contentModerationDb.deleteExpiredPrePublicationChecks
       ).toHaveBeenCalledTimes(1);
@@ -221,9 +305,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(getDataSource().synchronize).not.toHaveBeenCalled();
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(
-        competitionRepository.backfillLegacyMappings
-      ).toHaveBeenCalledTimes(1);
-      expect(
         contentModerationDb.deleteExpiredPrePublicationChecks
       ).toHaveBeenCalledTimes(1);
       expect(moderationReviewDb.retain).toHaveBeenCalledTimes(1);
@@ -241,9 +322,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         'content_moderation_audit_log.item_id'
       ]);
     await expect(invoke(scheduledEvent)).resolves.toBeUndefined();
-    expect(competitionRepository.backfillLegacyMappings).toHaveBeenCalledTimes(
-      1
-    );
     expect(
       contentModerationDb.deleteExpiredPrePublicationChecks
     ).toHaveBeenCalledTimes(1);
@@ -284,6 +362,8 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     'claims-media-upload',
     'nft-link-page-retry',
     'market-depth-publication-lock',
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize',
     'membership-refresh',
     'membership-evaluator-index',
     'membership-runtime-control'
@@ -305,9 +385,6 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       jest.mocked(doInDbContext).mockRejectedValueOnce(failure);
       await expect(invoke({ schema_scope: scope })).rejects.toBe(failure);
       expect(migrations.getInstance).not.toHaveBeenCalled();
-      expect(
-        competitionRepository.backfillLegacyMappings
-      ).not.toHaveBeenCalled();
     }
   );
 });

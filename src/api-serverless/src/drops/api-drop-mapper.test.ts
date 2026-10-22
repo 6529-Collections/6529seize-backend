@@ -12,6 +12,7 @@ import { ApiDropMainType } from '@/api/generated/models/ApiDropMainType';
 import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import { ApiSubmissionDropStatus } from '@/api/generated/models/ApiSubmissionDropStatus';
 import { ApiDropMapper } from './api-drop.mapper';
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 
 function makeDrop(overrides: Partial<DropEntity> = {}): DropEntity {
   return {
@@ -184,6 +185,128 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
 }
 
 describe('ApiDropMapper', () => {
+  describe('reply previews', () => {
+    beforeEach(() => {
+      jest.spyOn(memeCollaborationsDb, 'acceptedByDrops').mockResolvedValue({});
+      jest
+        .spyOn(memeCollaborationsDb, 'presentationByDrops')
+        .mockResolvedValue({});
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    const replyDrop = makeDrop({
+      reply_to_drop_id: 'parent-1',
+      reply_to_part_id: 1
+    });
+    const parentPreview = {
+      id: 'parent-1',
+      serial_no: 42,
+      content: 'parent text',
+      author_handle: 'parent-author',
+      author_pfp: null
+    };
+
+    it.each([null, 'parent.png'])(
+      'keeps the author when their picture is %s',
+      async (pfp) => {
+        const { mapper, deps } = createMapper();
+        deps.dropsDb.getReplyPreviewsByDropIds.mockResolvedValue({
+          'parent-1': { ...parentPreview, author_pfp: pfp }
+        });
+
+        const result = await mapper.mapDrops([replyDrop], {});
+        const preview = result[replyDrop.id].reply_to_drop;
+
+        expect(preview).toMatchObject({
+          id: 'parent-1',
+          serial_no: 42,
+          content: 'parent text',
+          author: { handle: 'parent-author' }
+        });
+        if (pfp === null) {
+          expect(preview?.author).not.toHaveProperty('pfp');
+        } else {
+          expect(preview?.author?.pfp).toBe(pfp);
+        }
+      }
+    );
+
+    it('omits the author when their handle is unavailable', async () => {
+      const { mapper, deps } = createMapper();
+      deps.dropsDb.getReplyPreviewsByDropIds.mockResolvedValue({
+        'parent-1': {
+          ...parentPreview,
+          author_handle: null,
+          author_pfp: 'p.png'
+        }
+      });
+
+      const result = await mapper.mapDrops([replyDrop], {});
+
+      expect(result[replyDrop.id].reply_to_drop?.author).toBeUndefined();
+    });
+
+    it('keeps a missing parent as a structural reference', async () => {
+      const { mapper } = createMapper();
+
+      const result = await mapper.mapDrops([replyDrop], {});
+
+      expect(result[replyDrop.id].reply_to_drop).toEqual({
+        id: 'parent-1',
+        viewer_context: { author_blocked: false, drop_hidden: false },
+        moderation: { status: 'VISIBLE', can_view: true }
+      });
+    });
+
+    it.each([null, 'parent.png'])(
+      'redacts an unavailable parent when their picture is %s',
+      async (pfp) => {
+        const { mapper, deps } = createMapper();
+        deps.dropsDb.getReplyPreviewsByDropIds.mockResolvedValue({
+          'parent-1': { ...parentPreview, author_pfp: pfp }
+        });
+        deps.moderationDb.getPresentations.mockResolvedValue({
+          'parent-1': {
+            viewer: { author_blocked: false, drop_hidden: false },
+            moderation: { status: 'MODERATOR_REMOVED', can_view: false }
+          }
+        });
+
+        const result = await mapper.mapDrops([replyDrop], {});
+
+        expect(result[replyDrop.id].reply_to_drop).toEqual({
+          id: 'parent-1',
+          serial_no: 42,
+          viewer_context: { author_blocked: false, drop_hidden: false },
+          moderation: { status: 'MODERATOR_REMOVED', can_view: false }
+        });
+      }
+    );
+  });
+
+  it('maps native competition content without running legacy voting or credit reads', async () => {
+    const { mapper, deps } = createMapper();
+    const drop = makeDrop({ drop_type: DropType.PARTICIPATORY });
+    const result = await mapper.mapDrops(
+      [drop],
+      {},
+      { includeSubmissionVoting: false }
+    );
+    expect(result[drop.id].id).toBe(drop.id);
+    expect(
+      deps.dropVotingDb.getDropV2SubmissionVotingSummaries
+    ).not.toHaveBeenCalled();
+    expect(
+      deps.dropVotingDb.getWinningDropsRatingsByVoter
+    ).not.toHaveBeenCalled();
+    expect(
+      deps.dropVotingService.findCreditLeftForVotingForDrops
+    ).not.toHaveBeenCalled();
+  });
+
   it('attaches participation for the author in the drop wave', async () => {
     const { mapper, deps } = createMapper();
     const drop = makeDrop();
@@ -812,6 +935,36 @@ describe('ApiDropMapper', () => {
         }
       ]
     });
+  });
+
+  it('hides the managed submission artist in a moderated tombstone', async () => {
+    const presentation = jest
+      .spyOn(memeCollaborationsDb, 'presentationByDrops')
+      .mockResolvedValue({
+        'drop-1': {
+          submission_artist: 'private artist',
+          credit: {
+            artist: 'private artist',
+            artist_profiles: 'author-1',
+            collab: false
+          }
+        }
+      });
+    try {
+      const { mapper, deps } = createMapper();
+      deps.moderationDb.getPresentations.mockResolvedValue({
+        'drop-1': {
+          viewer: { author_blocked: false, drop_hidden: false },
+          moderation: { status: 'MODERATOR_REMOVED', can_view: false }
+        }
+      });
+      const result = await mapper.mapDrops([makeDrop()], {
+        authenticationContext: AuthenticationContext.fromProfileId('viewer-1')
+      });
+      expect(result['drop-1'].submission_artist).toBeUndefined();
+    } finally {
+      presentation.mockRestore();
+    }
   });
 
   it('returns a structural tombstone without content for a globally unavailable drop', async () => {

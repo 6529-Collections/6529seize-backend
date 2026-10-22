@@ -84,6 +84,20 @@ states. Re-evaluation always examines the preserved original snapshot, records a
 new result using current policy/model configuration and does not revoke explicit
 human decisions. The initial deterministic signal is preserved for later checks.
 
+Reported posts that no longer exist expose a deleted state separately from
+moderation visibility. An explicit `RESOLVE_DELETED_REPORT` action resolves all
+of the deleted post's open reports as `RESOLVED_DELETED`, preserving the saved
+snapshot, moderator reason, actor and resolution time. Existing role, version
+and idempotency guards apply; live posts cannot use this action. Mark reviewed
+remains a check-history action and does not close an open report. Resolved
+reports stop contributing to the navigation indicator and remain available in
+the resolved history.
+
+The report-create transaction locks and rechecks the live drop before inserting
+the allegation. A stale snapshot cannot create a report after deletion, and
+deletion cannot overtake an in-flight report insert. Deleted-post resolution
+therefore cannot be followed by an open report inserted from that snapshot.
+
 ## Capture, privacy and retention
 
 `content_moderation_items` stores the review scope, latest assessment, explicit
@@ -193,3 +207,27 @@ time `retain` and one `deleteExpiredPrePublicationChecks` batch, and verify the
 remaining row counts. Repeat with realistic deployment volume and evidence
 sizes before treating the local numbers as a production capacity or latency
 budget.
+
+## Manual review cases
+
+WatchTower's Needs review queue groups open reports and checks marked
+NEEDS_REVIEW into one case per subject, before cursor pagination. Evaluations
+still in PENDING are excluded until they finish or enter failure recovery. Reports and
+check revisions concerning the same published post share one case. Rejected
+new-post submissions without a published post ID retain separate cases per
+saved check, so unrelated drafts by the same author are not collapsed. Other
+public fields group by subject type and subject identity across revisions.
+Case IDs are opaque hashes; REP category text never appears in URLs.
+
+`GET /content-moderation/checks/cases` provides the private paged queue. The
+`case_id` filter on the existing checks endpoint exposes related check revisions
+without changing revision-scoped review actions. Cases remain outstanding while
+any open report or check needs manual review. Mark reviewed does not close open
+reports. Resolved reports and reviewed checks do not create cases.
+
+`needs_review_count` on moderator access and `needs_review` on check counts
+use the same case definition. The frontend uses the moderator-access count for
+the sidebar indicator, Needs review badge and top summary. The report-specific
+counts and `has_open_reports` retain their existing meanings. Current servers
+always return the additive `needs_review_count`; deploy the API before the
+dependent frontend. No schema changes or data migration are needed.

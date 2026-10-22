@@ -20,7 +20,6 @@ import { userGroupsService } from '@/api/community-members/user-groups.service';
 import { userNotifier } from '@/notifications/user.notifier';
 import { metricsRecorder } from '@/metrics/MetricsRecorder';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
-import { appFeatures } from '@/app-features';
 
 /** Replacement values are inherently replayable: a retry with the same value
  * changes neither spend nor history nor notifications. The caller holds the
@@ -41,11 +40,7 @@ export async function voteForMigratedLegacyEntry(
     competitionRepository,
     ctx
   ).getCompetition(record, now);
-  if (
-    !appFeatures.isNativeCompetitionExecutionEnabled() ||
-    !appFeatures.isNativeCompetitionWritesEnabled() ||
-    competition.execution_mode !== 'ACTIVE'
-  )
+  if (competition.execution_mode !== 'ACTIVE')
     throw new ForbiddenException(
       'Voting is temporarily unavailable. Try again later'
     );
@@ -87,6 +82,24 @@ export async function voteForMigratedLegacyEntry(
     ).includes(group)
   )
     throw new ForbiddenException('Voter is not eligible to vote in this wave');
+  // Derive current credit first; reconciliation can change spending and votes,
+  // so validation must use a fresh budget afterward.
+  const initial = await competitionCreditService.getBudget(
+    competition,
+    model.voter_id,
+    entry,
+    ctx
+  );
+  await nativeCompetitionRuntimeService.reconcileVoterCredit(
+    {
+      competitionId: record.id,
+      voterProfileId: model.voter_id,
+      availableCredit: initial.available,
+      creditScope: competition.voting.credit_scope,
+      occurredAt: now
+    },
+    ctx
+  );
   const budget = await competitionCreditService.getBudget(
     competition,
     model.voter_id,
@@ -142,6 +155,5 @@ export async function voteForMigratedLegacyEntry(
       ctx.connection
     );
   }
-  await nativeCompetitionRuntimeService.refreshCompetition(record.id, now, ctx);
   return true;
 }

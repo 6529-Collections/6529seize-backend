@@ -135,7 +135,8 @@ export function configurationToRecord(
       next_decision_time:
         input.rules.decisions_strategy?.first_decision_time ?? null,
       winning_min_threshold: input.rules.winning_threshold,
-      winning_max_threshold: null,
+      winning_max_threshold:
+        previous.decision_config.winning_max_threshold ?? null,
       winning_threshold_min_duration_ms:
         input.rules.winning_threshold_min_duration_ms ?? 0,
       max_winners: input.rules.max_winners,
@@ -144,7 +145,8 @@ export function configurationToRecord(
     winner_config: {
       max_winners: input.rules.max_winners,
       winning_min_threshold: input.rules.winning_threshold,
-      winning_max_threshold: null,
+      winning_max_threshold:
+        previous.winner_config?.winning_max_threshold ?? null,
       winning_threshold_min_duration_ms:
         input.rules.winning_threshold_min_duration_ms ?? 0
     },

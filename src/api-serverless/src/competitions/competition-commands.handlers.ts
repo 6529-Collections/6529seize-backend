@@ -56,6 +56,7 @@ import { waveHubCreationService } from './wave-hub-creation.service';
 import { competitionActor } from './competition-command-access';
 import { toApiCompetition, toApiEntry } from './competitions-v3.handlers';
 import { enums } from '@/enums';
+import { toApiCompetitionAward } from './competition-award.mapper';
 
 const pathFields = {
   wave_id: Joi.string().min(1).max(100).required(),
@@ -125,6 +126,7 @@ export async function handleCreateWaveHubV3(
       visibility: WaveVisibilitySchema.required(),
       chat: WaveChatSchema.required(),
       admin_group: WaveScopeSchema.required(),
+      admin_drop_deletion_enabled: Joi.boolean().default(false),
       parent_wave_id: Joi.string().min(1).max(100).allow(null)
     }).unknown(false)
   );
@@ -352,7 +354,7 @@ export async function handleListCompetitionAwardsV3(
     ctx
   );
   return {
-    data: rows.slice(0, query.limit),
+    data: rows.slice(0, query.limit).map(toApiCompetitionAward),
     has_more: rows.length > query.limit,
     next_cursor:
       rows.length > query.limit

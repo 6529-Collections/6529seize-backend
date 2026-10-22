@@ -280,6 +280,7 @@ export const PUSH_NOTIFICATION_CANCELLATIONS_TABLE =
 export const WEBSOCKET_OUTBOX_TABLE = 'websocket_outbox';
 
 export const COMPETITION_VOTE_HISTORY_TABLE = 'competition_vote_history';
+export const COMPETITION_SCORE_HISTORY_TABLE = 'competition_score_history';
 export const COMPETITION_ENTRY_RUNTIME_TABLE = 'competition_entry_runtime';
 export const COMPETITION_WINNER_VOTES_TABLE = 'competition_winner_votes';
 export const COMPETITION_OUTCOME_AWARDS_TABLE = 'competition_outcome_awards';
@@ -310,4 +311,7 @@ export const COMPETITION_LEGACY_MIRROR_PERMITS_TABLE =
 export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
   'competition_legacy_execution_effects';
 
+export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
+export const MEME_COLLABORATION_INVITATIONS_TABLE =
+  'meme_collaboration_invitations';
 export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';
