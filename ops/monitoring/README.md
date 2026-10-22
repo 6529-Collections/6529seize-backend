@@ -49,34 +49,18 @@ Ordinary 4xx responses and moderation decisions are not operational errors. Sile
 catches, console-only handled errors outside the shared logger, failures before
 telemetry reaches AWS, and unconfigured frontend/external providers remain gaps.
 Platform alarms can detect a failed invocation even when JavaScript cannot log it.
-The NFT link refresher, wave score refresher, subscription coverage reconciler,
-NFT processing loop and release-note generation throttle alarms require at least
-one throttle in three of the last five one-minute periods. The NFT refresher's
-SQS event source caps concurrency at the
-function's reserved capacity, preventing the poller from overshooting that limit.
-Isolated throttles therefore do not generate immediate alarm/recovery pairs;
-repeated throttling still alerts. Wave score refresh keeps its single reserved
-execution: its two FIFO sources and one-minute fallback can contend for that
-capacity even while messages drain normally. Subscription coverage reconciliation
-and NFT processing also reserve one execution while running overlapping
-one-minute and longer schedules. Their short contention can be retried before
-the next scheduled run. Release-note generation keeps its single reserved
-execution and batch-one SQS consumer; brief polling contention can occur while
-messages drain successfully. Its queue, retry/redrive and publication contracts
-are unchanged. The sustained rule delays the first throttle warning
-until three breaching minutes occur within the five-minute evaluation window;
-it does not measure successful business output or guarantee a detection SLA.
-Recovery follows the same rolling window without a separate cooldown.
-Invocation-error and OOM alarms remain immediate, as do other services' throttle
-alarms. Direct SNS alarm actions are retained.
+Scheduled and queue-driven catalog workers use the shared processing-health policy
+below. Their raw Lambda Throttles alarms remain as visibility signals with their
+existing periods and thresholds, but direct SNS actions are removed for those
+alarms. The collector records transitions instead of immediately posting a red
+infrastructure incident. API and external/legacy functions outside that inventory
+retain their existing throttle behavior. Lambda Errors, OOM, source-forwarding,
+queue-age and dead-letter failure protections remain independent.
 
-Transaction processing requires at least one throttle in each of five one-minute
-periods before alerting. Airdrop validation and redemption run sequentially with
-one reserved execution, so a short batch can overlap several scheduled runs and
-their retries before catching up successfully. The five-of-five rule tolerates
-the observed three-minute burst; five breaching minutes in the evaluation window
-still alert. Missing data is non-breaching. Invocation-error and OOM alarms, the
-one-minute schedule, concurrency limit and notification actions are unchanged.
+Selected raw metrics still use the existing three-of-five or five-of-five
+qualification. Those windows describe contention, not successful business output.
+The transaction-ingestion composite now includes invocation errors only; its
+three child throttle metrics feed the shared contention assessment instead.
 
 Three audited production low-CPU autoscaling controls are recorded without
 operator notifications when the collector positively matches their exact source
@@ -114,8 +98,9 @@ treat missing data as non-breaching, so an inactive queue does not page. They do
 not detect unqueued database refresh requests or prove that derived scores are
 correct. The scheduled fallback remains responsible for missed wakeups.
 
-Every accepted CloudWatch alarm/recovery transition still uses the protected
-delivery lane immediately; there is no incident cooldown or delayed recovery.
+Unclassified CloudWatch alarm/recovery transitions still use the protected
+delivery lane immediately. Enrolled worker throttles use the processing-health
+incident lifecycle below.
 An alarm that repeatedly crosses its sustained threshold can still notify more
 than once. Notifications include bounded alarm identity, metric namespace/name,
 statistic, period and numeric datapoint threshold when AWS supplies them. The
@@ -445,3 +430,182 @@ restoring the previous worker before proceeding. Dashboard counts use five-minut
 periods; select 15 minutes when reconciling a `NewUnavailableSurge` alarm. No API, frontend or schema deployment is needed.
 Rollback the worker first to restore individual reporting; retained counters and
 additive source alarms can remain while investigation continues.
+
+## Background processing health
+
+`scripts/loop-policies.mjs` derives the worker inventory from the deploy catalog
+and existing Serverless function events. It includes schedules, SQS consumers,
+and scheduled rules targeting their queues. Request-serving Lambdas are excluded.
+`src/loop-policies.generated.json` is generated for each environment. The shortest
+known rate interval is used for multi-mode workers; cron cadence is left unknown
+rather than guessed. A rate interval **at most 300 seconds** and reserved
+concurrency **exactly one** marks expected overlap. That hint never proves
+business progress or authorizes suppression by itself.
+
+`6529.ops.loop-health.v1` contains only finite operation labels, timestamps,
+pending status and recovery state. The existing source subscription uses optional
+quoted terms to forward either envelope in TEXT or JSON logging, following the
+[AWS filter syntax](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html).
+AWS log metadata binds the service. The relay reconstructs the allowlist; the
+normal collector validates catalog membership and applies a separate
+health-only admission budget (120/service/minute, separate from error alerts).
+The log relay does not charge admission; the receiver charges once per delivered
+event. Noisy health observations cannot consume the error budget. Producers cannot
+choose notification severity or the protected lane. No messages, wallets, decision IDs, SQL, user content or exception text are
+forwarded. Emission failure cannot fail business work.
+
+The existing monitoring Probe evaluates observations once per minute without
+using application DB/VPC/Redis or changing its schedule, timeout or concurrency.
+It reads at most five workers concurrently. Missing observations during a throttle
+produce amber contention with **catch-up unconfirmed**. Uninstrumented workers
+have contention coverage and their existing independent failure guards; they do
+not acquire fabricated backlog or business-success coverage. An inactive worker
+with no observations is unverified, not positively healthy. Verified idle surveys
+can establish that no work is due. A generic handler return never publishes health.
+
+The evaluator distinguishes:
+
+- Bounded overlap with current pending-work/recovery evidence: no incident.
+- Old backlog with automatic recovery still available: amber, with the affected
+  operation, delay and recovery mechanism.
+- Required pending work with no confirmed progress beyond its stall budget,
+  unavailable/exhausted recovery, or a threatened deadline: red.
+- Stale observations: amber visibility loss; previously observed pending work
+  can still exceed its no-progress budget. Missing data cannot clear an incident.
+
+Default delay budget is `max(600 seconds, twice the known rate interval)`.
+Default stall budget is `max(function timeout + 300 seconds, three intervals)`;
+freshness is `max(timeout + 120 seconds, two intervals)`. Unknown intervals use
+60 seconds for these initial operational budgets. These are monitoring policies,
+not changes to execution configuration or contractual product SLAs.
+The decisions operation uses a 120-second delay/freshness budget and a 300-second
+execution-lateness budget, warning red when 60 seconds or less remain. The last
+verified survey includes the next future decision, so a hung worker cannot hide
+a newly due obligation behind its earlier idle status. Native scans use the normal
+stall/freshness allowances (1,200/1,020 seconds for the existing 900-second Lambda),
+so a long scan alone cannot trigger the decision lateness alarm. A known due
+decision still threatens its deadline even while the native scan runs.
+Publication separately allows 600 seconds of delay and 3,900 seconds without progress, accommodating its existing
+up-to-one-hour backoff. These initial tolerances are explicit in the generator and
+should be calibrated against observed workload and product deadlines before a
+production rollout. They can be changed without changing execution settings.
+
+Observations are monotonic with optimistic conditional writes. Late/repeated
+observations and alarm transitions cannot overwrite newer state. Multiple raw
+alarms for one worker are tracked individually and ORed; one clearing alarm
+cannot hide another active alarm. `INSUFFICIENT_DATA` preserves the last known
+contention state; a subsequent `OK` clears that alarm even when its immediate
+previous state was insufficient data. Missing data alone cannot announce recovery.
+The collector retains up to eight recent alarm
+identities, reclaiming oldest resolved entries on rename and never evicting an
+active alarm. More than eight simultaneous active identities fails closed through
+the collector failure guard. A collector-owned
+baseline measures time since outstanding work was first observed; it is not a
+fabricated business-progress timestamp. A verified advance of the oldest pending
+item counts as progress; repeated polls, invocation starts and successful returns
+do not reset that clock. Multiple operations are assessed independently so a
+moving operation cannot hide a blocked one.
+
+Probe is the sole incident writer under its existing concurrency of one. It saves
+an exact pending notification before enqueue, so ambiguous enqueue acceptance
+replays the same event ID and existing delivery receipts deduplicate it. Five
+concurrent monitoring workers drain the catalog with a shared 20-second I/O budget
+inside Probe's unchanged 90-second timeout. An exhausted budget fails the probe
+and withholds the external check-in; it cannot report monitoring as healthy.
+Changes in severity, cause, operation or recovery state update the incident. A recovery
+requires an open incident and fresh evidence that its reported impact cleared.
+Active alarms, outstanding obligations and open incidents do not expire under
+the receipt TTL; expiry must never manufacture recovery. Resolved state uses the
+ordinary retention window. Routine overlap never opens one and never produces
+recovery. A contention-only
+warning can close when contention ends, explicitly stating that business catch-up
+remains unverified; that cannot clear an incident about business processing.
+
+### Initial business observations
+
+- `delegationsLoop`: reads the saved block timestamp best effort, records completed
+  persistence/recalculation stages, and reports the actual scanned block timestamp
+  only after saving its checkpoint. A scan that took minutes still exposes its
+  older watermark. Maintenance completion clears its optional recalculation
+  operation, while indexing remains pending until a scheduled scan commits.
+  A failed synchronous maintenance action reports recovery unavailable: scheduled
+  scans do not replay that explicit action. Backfill mode does not claim ordinary
+  indexing recovery. Intermediate phases
+  are progress, not proof that the whole non-transactional pipeline is complete.
+- `waveDecisionExecutionLoop`: surveys persisted active native scheduled RANK decisions
+  (including transferred original-primary competitions) and the durable native
+  publication outbox after business processing. Retired wave decision fields and
+  legacy execution-effect rows do not establish outstanding work. New diagnostic
+  reads have a short owned SQL budget and are skipped near the existing Lambda
+  deadline; they never change existing execution settings or run ahead of decisions.
+  Their scoped SQL errors stay in source logs without generating application-failure
+  incidents; ordinary business DB errors retain their existing reporting. Surveys use
+  the writer to avoid replica-lag recovery. Leased and backed-off publication stays
+  pending. JSON null native schedules are excluded. Native APPROVE/per-item handled
+  failures remain pending even when the worker returns successfully. The native
+  engine reports a completed pass only when every discovered item was processed.
+  Decision completion and publication are independent operations; this does not
+  establish end-to-end claims-builder, push-delivery or announcement success after
+  the outbox has handed work to another service. Those retain their own guards.
+- `waveScoreRefreshLoop`: independently observes `dirty_refresh` and optional
+  `full_refresh`. Bounded writer reads survey outstanding requests and their persisted scores
+  before and after processing (including failure); an empty request table establishes
+  dirty catch-up. Attempted-wave counts and successful handler returns do not:
+  per-wave failures can be handled internally, and re-dirtied versions survive
+  processing. Pending age starts at each request's original `created_at` and
+  advances only with a persisted `wave_score_calculated_at` or removal of older
+  work. Re-dirty timestamps and failed-attempt updates cannot reset the stall
+  clock; an already old score does not prematurely age a newly created request.
+  The existing one-minute fallback supplies automatic dirty recovery
+  even if a wakeup/continuation enqueue fails. Diagnostic failures or reads skipped
+  near the existing timeout leave the last observation unchanged, eventually stale.
+  Full scans report committed refresh work and remain pending until the scan ends;
+  successful continuation handoffs retain the original request time in a message
+  attribute, preserving the body and its FIFO deduplication identity. SQS inputs
+  can replay after failure; direct full
+  invocations report unknown recovery until a continuation is accepted, and
+  unavailable recovery if they fail. Dirty runs
+  never clear full-scan incidents. Full refreshes not yet started retain their
+  independent 30-minute SQS age guard; a completed scan is not proof that every
+  queued full request has drained. Both operations use the existing initial
+  600-second delay, 1,200-second stall and 1,020-second freshness budgets.
+  Verified bounded contention is silent, older pending work warns amber, and
+  stalled processing escalates red. The dirty DLQ, queue-age, Errors and OOM
+  guards remain independent.
+
+### Rollout and rollback
+
+No deployment is performed by the implementation PR. For each authorized environment:
+
+1. Deploy the isolated monitoring stack/artifact first (collectors, Probe and
+   dispatchers), retaining all existing failure alarms. Confirm pipeline health.
+2. Deploy the source monitoring stack/LogRelay and generated source alarm routing.
+   Confirm both envelope types are accepted and throttles retain their metrics.
+3. Deploy `delegationsLoop`, `waveDecisionExecutionLoop` and `transactionsLoop`.
+   The last updates only its error composite; it changes no execution settings.
+   The shared native execution helper is also bundled by
+   `waveLeaderboardSnapshotterLoop`; include that service to refresh its shared
+   helper implementation. Then deploy `waveScoreRefreshLoop` for dirty/full refresh
+   observations. No API, frontend, schema or migrations deployment is required.
+4. From natural traffic or an authorized controlled staging check, verify recent
+   observations for indexing, every decision operation and dirty/full score refreshes,
+   pending-work detection, routine-overlap silence, amber/red escalation, and
+   incident-backed recovery.
+   Confirm overdue decision/outbox observations against persisted state before
+   claiming business-health acceptance. Missing telemetry remains unverified.
+   For score refreshes, compare dirty observations to persisted request rows, verify
+   handled per-wave failures stay pending, and verify a dirty success cannot clear
+   an unfinished full continuation. Confirm full continuation acceptance and
+   original request age, plus preserved SQS/DLQ/Error/OOM routes. Full refresh is
+   optional only while idle; a remembered pending full scan still escalates.
+
+Receiver rollout must precede source forwarding and producer changes. Before
+changing source routing, reconcile any already-ALARM worker throttle conditions.
+Keep their existing notification route until they clear or their active state is
+explicitly preserved in the new monitor; transition events alone cannot bootstrap
+a pre-existing alarm. Do not claim cutover acceptance with untracked active alarms. Existing
+queue/platform alerts remain in place through the transition. Roll back producers
+and the transaction composite, restore source throttle SNS actions/subscriptions,
+then restore the monitoring artifact if needed. Preserve pending incident/outbox
+state so accepted notifications are not lost. Source and monitoring artifacts
+remain subject to the existing rollback retention windows.

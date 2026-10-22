@@ -109,7 +109,8 @@ async function writeGroupWithRetry(
   }
 }
 export async function read(
-  pk: string
+  pk: string,
+  abortSignal?: AbortSignal
 ): Promise<Record<string, unknown> | undefined> {
   return (
     await ddb.send(
@@ -117,19 +118,22 @@ export async function read(
         TableName: setting('RECEIPTS_TABLE'),
         Key: { pk },
         ConsistentRead: true
-      })
+      }),
+      { abortSignal }
     )
   ).Item;
 }
 export async function put(
   pk: string,
-  values: Record<string, unknown>
+  values: Record<string, unknown>,
+  abortSignal?: AbortSignal
 ): Promise<void> {
   await ddb.send(
     new PutCommand({
       TableName: setting('RECEIPTS_TABLE'),
       Item: { pk, expiresAt: expiry(), ...values }
-    })
+    }),
+    { abortSignal }
   );
 }
 export const store: Store = {
@@ -335,14 +339,16 @@ async function firstDelivery(group: Group): Promise<DeliveryTarget | null> {
 export async function enqueue(
   work: Work,
   critical = false,
-  delay = 0
+  delay = 0,
+  abortSignal?: AbortSignal
 ): Promise<void> {
   await sqs.send(
     new SendMessageCommand({
       QueueUrl: setting(critical ? 'CRITICAL_QUEUE_URL' : 'NORMAL_QUEUE_URL'),
       MessageBody: JSON.stringify(work),
       DelaySeconds: Math.max(0, Math.min(900, delay))
-    })
+    }),
+    { abortSignal }
   );
 }
 export async function archive(value: unknown, reason: string): Promise<void> {
@@ -461,13 +467,18 @@ export async function normalDeliverySlot(): Promise<void> {
   }
 }
 
-export async function admit(alert: Alert): Promise<boolean> {
+export async function admit(
+  alert: Pick<Alert, 'environment' | 'service'>,
+  category: 'error' | 'loop-health' = 'error'
+): Promise<boolean> {
   const minute = Math.floor(Date.now() / 60000);
   try {
     await ddb.send(
       new UpdateCommand({
         TableName: setting('RECEIPTS_TABLE'),
-        Key: { pk: `quota:${alert.environment}:${alert.service}:${minute}` },
+        Key: {
+          pk: `${category === 'error' ? 'quota' : 'loop-quota'}:${alert.environment}:${alert.service}:${minute}`
+        },
         UpdateExpression: 'SET expiresAt = :expiry ADD #count :one',
         ConditionExpression: 'attribute_not_exists(#count) OR #count < :limit',
         ExpressionAttributeNames: { '#count': 'count' },

@@ -619,7 +619,8 @@
             "6529.ops"
           ],
           "detail-type": [
-            "6529.ops.error.v1"
+            "6529.ops.error.v1",
+            "6529.ops.loop-health.v1"
           ]
         },
         "Targets": [
@@ -998,6 +999,20 @@
           {
             "Version": "2012-10-17",
             "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "Receipts",
+                    "Arn"
+                  ]
+                }
+              },
               {
                 "Effect": "Allow",
                 "Action": [
