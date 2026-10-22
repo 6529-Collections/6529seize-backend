@@ -1952,8 +1952,8 @@ The launch stays active through Research, eligible fifteen minutes after the
 final mint close (17:15 Europe/Athens the following day). Version 3 plans derive
 the top-up from fresh on-chain total toward `min(310, frozen Craft edition)`,
 verify the on-chain maximum, and reconcile manual Research evidence separately.
-Research uses the existing signer ledger, wave reports and completion flags;
-no new Lambda, trigger or API boundary is introduced. Pay Artist remains manual.
+Research shares the launch handler, signer ledger, wave reports and completion
+flags, with its own one-time scheduled wake. Pay Artist remains manual.
 
 ```mermaid
 flowchart LR
