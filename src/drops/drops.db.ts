@@ -840,7 +840,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       drop_type,
       ids,
       serial_nos,
-      contains_media
+      contains_media,
+      public_only = false
     }: {
       group_id: string | null;
       group_ids_user_is_eligible_for: string[];
@@ -855,6 +856,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       ids: string[] | null;
       serial_nos: number[] | null;
       contains_media: boolean;
+      public_only?: boolean;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
@@ -876,12 +878,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${WAVE_CURATIONS_TABLE} wc on wc.id = dc.curation_id and wc.name = :curation_name`
       : '';
     const serialNoLessThan = serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
+    // Public-only scope must ignore viewer membership for both wave and parent visibility.
+    const includeEligibleGroups =
+      !public_only && group_ids_user_is_eligible_for.length > 0;
     const sql = `${sqlAndParams.sql} select d.* from ${DROPS_TABLE} d
          ${curationJoin}
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
-         join ${legacyGetView(WAVES_TABLE)} w on d.wave_id = w.id and ${waveReadAccessSql('w', group_ids_user_is_eligible_for.length > 0, 'groupsUserIsEligibleFor')} ${wave_id ? `and w.id = :wave_id` : ``}
+         join ${legacyGetView(WAVES_TABLE)} w on d.wave_id = w.id and ${waveReadAccessSql('w', includeEligibleGroups, 'groupsUserIsEligibleFor')} ${wave_id ? `and w.id = :wave_id` : ``}
+         ${public_only ? 'and coalesce(w.is_direct_message, false) = false' : ''}
          where ${
            drop_type ? ` d.drop_type = :drop_type and ` : ``
          } d.serial_no < :serialNoLessThan ${

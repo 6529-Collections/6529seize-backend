@@ -246,6 +246,46 @@ describe('DropsApiService', () => {
     expect(dropsDb.boostDrop).toHaveBeenCalledTimes(1);
   });
 
+  it.each([true, false, undefined])(
+    'keeps viewer context while forwarding public_only=%s',
+    async (public_only) => {
+      const { service, dropsDb, dropsMappers, userGroupsService, ctx } =
+        createService();
+      userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
+        'private-group'
+      ]);
+      await service.findLatestDrops(
+        {
+          amount: 10,
+          group_id: null,
+          serial_no_less_than: null,
+          wave_id: null,
+          curation_id: null,
+          curation_name: null,
+          author_id: 'author-1',
+          include_replies: true,
+          drop_type: null,
+          ids: null,
+          serial_nos: null,
+          contains_media: false,
+          public_only
+        },
+        ctx
+      );
+      expect(dropsDb.findLatestDrops).toHaveBeenCalledWith(
+        expect.objectContaining({
+          public_only: public_only ?? false,
+          group_ids_user_is_eligible_for: ['private-group']
+        }),
+        ctx
+      );
+      expect(dropsMappers.convertToDropFulls).toHaveBeenCalledWith(
+        { dropEntities: [], authenticationContext: ctx.authenticationContext },
+        undefined
+      );
+    }
+  );
+
   it('constrains latest drop filtering to the curation wave and persisted membership', async () => {
     const { service, dropsDb, ctx } = createService();
 
