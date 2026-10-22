@@ -1,3 +1,7 @@
+import {
+  VotingCreditReleaseEntity,
+  VotingCreditReleaseRecipientEntity
+} from '@/entities/IVotingCreditRelease';
 import { pushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import * as sentryContext from '../sentry.context';
 import { Logger } from '../logging';
@@ -95,6 +99,7 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'claims-media-upload' &&
       scope !== 'nft-link-page-retry' &&
       scope !== 'market-depth-publication-lock' &&
+      scope !== 'voting-credit-returns' &&
       scope !== 'competition-runtime-schema' &&
       scope !== 'competition-runtime-retirement' &&
       scope !== 'wave-hub-configuration-preparation' &&
@@ -128,6 +133,16 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     );
     return { schema_scope: scope, ...result };
   }
+  if (scope === 'voting-credit-returns') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [VotingCreditReleaseEntity, VotingCreditReleaseRecipientEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
+  }
+
   if (scope === 'competition-runtime-schema') {
     await doInDbContext(() => Promise.resolve(), {
       logger,

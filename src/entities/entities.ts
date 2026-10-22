@@ -319,3 +319,5 @@ export {
 export { TransferReconciliationEntity } from './ITransferReconciliation';
 
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';
+
+export * from './IVotingCreditRelease';

@@ -316,6 +316,7 @@ describe('generated deployment source guard', () => {
         'claims-media-upload',
         'nft-link-page-retry',
         'market-depth-publication-lock',
+        'voting-credit-returns',
         'competition-history-preparation',
         'competition-runtime-schema',
         'competition-runtime-retirement',
