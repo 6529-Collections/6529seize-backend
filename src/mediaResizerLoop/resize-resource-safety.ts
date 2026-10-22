@@ -54,6 +54,7 @@ type InputFailureCode =
   | 'SOURCE_TOO_LARGE'
   | 'DECODED_IMAGE_TOO_LARGE'
   | 'INVALID_IMAGE'
+  | 'HEIC_DECODE_FAILED'
   | 'UNSUPPORTED_CODEC';
 
 export class UnprocessableResizeInput extends Error {
@@ -143,7 +144,7 @@ export async function withResizeInputFile<T>(
   source: Readable,
   contentLength: number | undefined,
   animated: boolean,
-  useFile: (path: string, animated: boolean) => Promise<T>,
+  useFile: (path: string, animated: boolean, metadata: Metadata) => Promise<T>,
   target?: ResizeTarget
 ): Promise<T> {
   return withResizeSourceFile(source, contentLength, async (path) => {
@@ -177,7 +178,7 @@ export async function withResizeInputFile<T>(
       assertDecodedWorkBudget(firstFrame, false);
       resizeAnimated = false;
     }
-    return useFile(path, resizeAnimated);
+    return useFile(path, resizeAnimated, metadata);
   });
 }
 
@@ -225,6 +226,9 @@ export async function withResizeSourceFile<T>(
   try {
     if (sourceError) throw sourceError;
     await pipeline(source, limit, createWriteStream(path));
+    if (contentLength !== undefined && receivedBytes !== contentLength) {
+      throw new Error('RESIZE_SOURCE_LENGTH_MISMATCH');
+    }
     result = await useFile(path);
   } catch (error) {
     // A secondary cleanup failure must not change input classification or hide
