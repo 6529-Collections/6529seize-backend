@@ -1,3 +1,4 @@
+import { readSequentially } from '@/competitions/competition-read-sequence';
 import { ConnectionWrapper } from '@/sql-executor';
 import { Timer } from '@/time';
 import { RequestContext } from '@/request.context';
@@ -12,6 +13,7 @@ import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { Competition } from '@/competitions/competition.types';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
+import { competitionTdhOvervotesDb } from '@/competitions/competition-tdh-overvotes.db';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -61,7 +63,7 @@ async function revokeNativeOvervotes(
       ctx
     );
     if (!ids.length) return;
-    for (const id of ids) {
+    await readSequentially(ids, async (id) => {
       const competition =
         await nativeCompetitionRuntimeRepository.lockCompetition(id, ctx);
       if (
@@ -70,13 +72,10 @@ async function revokeNativeOvervotes(
         competition.execution_mode !== 'ACTIVE' ||
         competition.lifecycle !== 'PUBLISHED'
       )
-        continue;
-      const voters = profileId
-        ? [profileId]
-        : await nativeCompetitionRuntimeRepository.listActiveVoters(id, ctx);
-      for (const voter of voters)
-        await reconcileNativeVoter(competition, voter, ctx);
-    }
+        return;
+      if (profileId) await reconcileNativeVoter(competition, profileId, ctx);
+      else await reconcileTdhOvervoters(competition, ctx);
+    });
     afterId = ids[ids.length - 1];
   }
 }
@@ -86,12 +85,59 @@ async function reconcileNativeVoter(
   profileId: string,
   ctx: RequestContext
 ): Promise<void> {
+  if ((await reduceNativeVoter(competition, profileId, ctx)) === null) return;
+  await nativeCompetitionRuntimeService.refreshCompetition(
+    competition.id,
+    Date.now(),
+    ctx
+  );
+  logger.info(
+    `Reconciled competition ${competition.id} credit for ${profileId}`
+  );
+}
+
+async function reconcileTdhOvervoters(
+  competition: Competition,
+  ctx: RequestContext
+): Promise<void> {
+  const voters = await competitionTdhOvervotesDb.findOvervoters(
+    competition,
+    ctx
+  );
+  let changed = 0;
+  await readSequentially(voters, async (voter) => {
+    if (await reduceNativeVoter(competition, voter, ctx)) changed++;
+  });
+  if (!changed) return;
+  const now = Date.now();
+  // Match normal refresh: publish due transitions before the leaderboard update.
+  await nativeCompetitionRuntimeService.enqueueDueTransitions(
+    competition,
+    now,
+    ctx
+  );
+  await nativeCompetitionRuntimeService.refreshLeaderboardAfterCreditReconciliation(
+    competition,
+    now,
+    ctx
+  );
+  logger.info(
+    `Reconciled competition ${competition.id} TDH overvotes for ${changed} voters`
+  );
+}
+
+/** null means there are no active votes; false means none required reducing. */
+async function reduceNativeVoter(
+  competition: Competition,
+  profileId: string,
+  ctx: RequestContext
+): Promise<boolean | null> {
   const before = await nativeCompetitionRuntimeRepository.getVoterActiveVotes(
     competition.id,
     profileId,
     ctx
   );
-  if (!before.length) return;
+  if (!before.length) return null;
   const budget = await competitionCreditService.getBudget(
     competition,
     profileId,
@@ -117,9 +163,11 @@ async function reconcileNativeVoter(
       )
     ).map((vote) => [vote.entryId, vote.value])
   );
+  let changed = false;
   for (const vote of before) {
     const value = after.get(vote.entryId) ?? 0;
     if (value === vote.value) continue;
+    changed = true;
     const entry = await competitionRepository.findNativeEntry(
       competition.id,
       vote.entryId,
@@ -143,12 +191,5 @@ async function reconcileNativeVoter(
       ctx.connection
     );
   }
-  await nativeCompetitionRuntimeService.refreshCompetition(
-    competition.id,
-    Date.now(),
-    ctx
-  );
-  logger.info(
-    `Reconciled competition ${competition.id} credit for ${profileId}`
-  );
+  return changed;
 }
