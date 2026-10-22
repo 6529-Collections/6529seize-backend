@@ -232,6 +232,11 @@ their audited direct-caller execution with no role override. Monitoring uses onl
 its existing environment-scoped execution role. Respect concurrent operations; never
 cancel someone else's deployment or overwrite a moved shared ref.
 
+A rejected change set saves a `proposal_rejected` receipt before execution.
+Its diagnostics identify resource IDs, actions and dependency properties without
+including template contexts or property values. Inspect the rejected dependency
+before changing the guard or proposing another update.
+
 Original JSON and YAML templates retain long-form intrinsic functions; unsupported
 short-form YAML tags fail before a proposal. Named IAM acknowledgement preserves
 the existing roles. Source updates may report unchanged log subscriptions because
