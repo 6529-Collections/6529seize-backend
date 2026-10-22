@@ -6,17 +6,28 @@ deletions of active entries, excluding admin/system cleanup and edit replacement
 
 Deploy sequentially using the ordinary deployment workflow:
 
+Before the new worker deployment, an administrative identity must install the
+matching `ops/iam/backend-{staging,production}/VotingCreditReturnDeployment.json`
+as the `VotingCreditReturnDeployment` inline policy on that environment's
+existing GitHub deployment role. Validate it with Access Analyzer and simulate
+the worker operations and unrelated denials first, following the IAM runbook.
+Install only for the authorized environment. This enrolls the new stack,
+function, artifact bucket prefix, exact schedule, log group and four alarms;
+it does not let the GitHub role change its own policies or runtime role.
+
 1. `dbMigrationsLoop` with `db_schema_scope=voting-credit-returns`. This syncs only
    the two new entities and avoids unrelated schema work.
-2. `pushNotificationsHandler` and then `api` (both understand the new cause).
-3. `waveDecisionExecutionLoop`, then `artCurationNftWatchLoop`, capturing every
+2. `tdhLoop`, then `delegationsLoop`. Both perform profile consolidations and
+   must transfer pending recipients before producers begin capturing releases.
+3. `pushNotificationsHandler` and then `api` (both understand the new cause).
+4. `waveDecisionExecutionLoop`, then `artCurationNftWatchLoop`, capturing every
    winner path. Author deletions are captured by the updated API.
-4. `votingCreditReturnNotificationsLoop`. Its schedule is disabled by default.
-5. Refresh operational monitoring for the authorized environment with
+5. `votingCreditReturnNotificationsLoop`. Its schedule is disabled by default.
+6. Refresh operational monitoring for the authorized environment with
    `deploy-operational-monitoring.yml` after the new log group exists. The
    generated coverage/source templates include the new worker.
-6. The dependent frontend, including generated API types and the new card.
-7. Activate the worker schedule after checking the frontend live version and
+7. The dependent frontend, including generated API types and the new card.
+8. Activate the worker schedule after checking the frontend live version and
    health. Repeat activation after any subsequent deployment of this worker:
    Serverless deliberately restores its disabled default.
 
@@ -67,3 +78,11 @@ Re-invoking the worker is safe: notification rows, push-outbox rows and release
 progress share a transaction. A committed page is never recreated; a failed page
 rolls back all effects. `push_notification_outbox.notification_id` is already a
 primary key. An empty/filtered notification batch does not touch the outbox.
+
+Profile consolidation transfers pending allocations under release-header locks
+before migrating existing notifications. Overlapping pending allocations are
+summed for the retained profile. The cursor restarts over remaining recipients;
+already delivered rows have been removed and are not recreated. A failed profile
+merge rolls back the transfer with the other profile changes. Candidate discovery
+includes both current primary data and the parent transaction's own writes so
+older consolidation snapshots cannot strand a newly committed release.
