@@ -245,6 +245,22 @@ dynamic `DestinationArn` evaluation is accepted, with the relay's environment-on
 update and explicit nonreplacement evidence. These dependent evaluations are
 listed separately in the plan and bound to its approval digest.
 
+Monitoring collector updates also cause unchanged rules, invoke permissions and
+the dead-letter queue policy to be reevaluated. Direct template edits still require
+explicit nonreplacement. The two unchanged invoke permissions can report
+`Conditional` solely for their `SourceArn` reference: the validator requires the
+exact unchanged permission/rule templates, an explicitly nonreplacing collector
+environment-only update, and an explicitly nonreplacing rule whose sole evaluation
+is its collector target ARN. Rule name/event bus and permission bindings cannot
+change through that chain. Missing ancestors, other properties, direct permission
+edits, unknown or true replacements fail closed. See the AWS definitions of
+[dynamic evaluation](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ResourceChangeDetail.html)
+and [conditional replacement](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ResourceChange.html).
+The proposal also binds the stack ID, update timestamp, parameter digest and
+physical dependency identities. The CLI rereads those identities immediately
+before execution and verifies them again after completion; an unexpected
+replacement produces a failed receipt requiring inspection.
+
 After deletion, recover forward with compatible native code. For data repair,
 restore the encrypted snapshot in isolation, compare exact affected rows/schema,
 and selectively recover only the reviewed data; never replace the live database

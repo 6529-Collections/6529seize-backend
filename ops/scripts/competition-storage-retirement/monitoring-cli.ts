@@ -6,6 +6,7 @@ import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parseCloudFormationTemplate } from '../../monitoring/src/cloudformation-template.js';
 import {
   assertRetirementChangeSet,
+  assertRetirementResourceIdentities,
   removeMigratorMonitoring,
   retainMigratorRecoveryArtifacts,
   retirementChangeDiagnostics,
@@ -22,7 +23,11 @@ interface Stack {
   StackId: string;
   StackStatus: string;
   LastUpdatedTime?: string;
-  Parameters?: { ParameterKey: string }[];
+  Parameters?: {
+    ParameterKey: string;
+    ParameterValue?: string;
+    ResolvedValue?: string;
+  }[];
   RoleARN?: string;
 }
 interface ChangeSet {
@@ -163,6 +168,60 @@ function save(output: string, name: string, value: unknown) {
     mode: 0o600,
     flag: 'wx'
   });
+}
+
+function dependencyIdentities(
+  selected: Options,
+  command: AwsCommand,
+  stack: Stack,
+  edit: TemplateEdit
+): Record<string, string> {
+  if (selected.kind !== 'monitoring') return {};
+  const wanted = new Set([
+    'NormalCollector',
+    'NormalRule',
+    'NormalInvocation',
+    'CriticalCollector',
+    'CriticalRule',
+    'CriticalInvocation',
+    'EventDeadLettersPolicy'
+  ]);
+  const ids = Array.from(
+    new Set([...edit.modified, ...(edit.reevaluated ?? [])])
+  )
+    .filter((id) => wanted.has(id))
+    .sort((left, right) => left.localeCompare(right));
+  return Object.fromEntries(
+    ids.map((id) => {
+      const resources = command<{
+        StackResources: {
+          LogicalResourceId: string;
+          PhysicalResourceId?: string;
+          ResourceStatus?: string;
+        }[];
+      }>([
+        'cloudformation',
+        'describe-stack-resources',
+        '--stack-name',
+        stack.StackId,
+        '--logical-resource-id',
+        id
+      ]).StackResources;
+      const resource = resources[0];
+      if (
+        resources.length !== 1 ||
+        resource.LogicalResourceId !== id ||
+        !resource.PhysicalResourceId ||
+        !['CREATE_COMPLETE', 'UPDATE_COMPLETE'].includes(
+          resource.ResourceStatus ?? ''
+        )
+      )
+        throw new Error(
+          'Monitoring dependency identity is missing or unstable'
+        );
+      return [id, resource.PhysicalResourceId];
+    })
+  );
 }
 
 async function awaitChangeSet(
@@ -350,6 +409,8 @@ async function main() {
       ? retainMigratorRecoveryArtifacts(original)
       : removeMigratorMonitoring(original);
   mkdirSync(selected.output, { recursive: true, mode: 0o700 });
+  const identities = dependencyIdentities(selected, command, stack, edit);
+  save(selected.output, 'dependency-identities.json', identities);
   const plan = {
     environment: selected.environment,
     kind: selected.kind,
@@ -357,6 +418,14 @@ async function main() {
     region: selected.region,
     revision: selected.revision,
     stackName: selected.stackName,
+    stackId: stack.StackId,
+    stackLastUpdatedTime: stack.LastUpdatedTime ?? null,
+    parameterDigest: digest(
+      [...(stack.Parameters ?? [])].sort((left, right) =>
+        left.ParameterKey.localeCompare(right.ParameterKey)
+      )
+    ),
+    dependencyIdentityDigest: digest(identities),
     originalDigest: digest(original),
     desiredDigest: digest(edit.template),
     deleted: edit.deleted,
@@ -398,6 +467,10 @@ async function main() {
     return;
   }
   assertUnmoved(selected, command, stack, original);
+  assertRetirementResourceIdentities(
+    identities,
+    dependencyIdentities(selected, command, stack, edit)
+  );
   const receipt = { ...summary, changeSetId: changes.ChangeSetId };
   save(selected.output, 'apply-started.json', {
     ...receipt,
@@ -415,6 +488,10 @@ async function main() {
       command,
       changes.ChangeSetId,
       summary.desiredDigest
+    );
+    assertRetirementResourceIdentities(
+      identities,
+      dependencyIdentities(selected, command, stack, edit)
     );
     save(selected.output, 'receipt.json', { ...receipt, status: 'complete' });
   } catch (error) {

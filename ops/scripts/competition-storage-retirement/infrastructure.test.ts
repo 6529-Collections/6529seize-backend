@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   assertRetirementChangeSet,
+  assertRetirementResourceIdentities,
   removeMigratorMonitoring,
   RETIRED_MIGRATOR,
   retainMigratorRecoveryArtifacts,
@@ -461,3 +464,299 @@ it('allows only the matching scoped monitoring role and never replaces an unexpe
     retirementExecutionRole('prod', 'monitoring', 'unexpected', role)
   ).toThrow('Unexpected scoped');
 });
+
+type PlannedChange = NonNullable<
+  Parameters<typeof assertRetirementChangeSet>[1][number]['ResourceChange']
+>;
+
+it('requires unchanged physical dependency identities before and after retirement', () => {
+  const expected = {
+    NormalCollector: 'function',
+    NormalInvocation: 'statement'
+  };
+  expect(() =>
+    assertRetirementResourceIdentities(expected, { ...expected })
+  ).not.toThrow();
+  expect(() =>
+    assertRetirementResourceIdentities(expected, {
+      NormalInvocation: 'statement',
+      NormalCollector: 'function'
+    })
+  ).not.toThrow();
+  expect(() =>
+    assertRetirementResourceIdentities(expected, {
+      ...expected,
+      NormalInvocation: 'replacement'
+    })
+  ).toThrow('identity changed');
+  expect(() =>
+    assertRetirementResourceIdentities(expected, {
+      NormalCollector: 'function'
+    })
+  ).toThrow('identity changed');
+  expect(() =>
+    assertRetirementResourceIdentities(expected, {
+      ...expected,
+      Unexpected: 'other'
+    })
+  ).toThrow('identity changed');
+  expect(() =>
+    assertRetirementResourceIdentities(
+      { NormalInvocation: '' },
+      {
+        NormalInvocation: ''
+      }
+    )
+  ).toThrow('identity changed');
+});
+const arn = (id: string) => ({ 'Fn::GetAtt': [id, 'Arn'] });
+
+function collectorMonitoring(): Template {
+  const resources: Template['Resources'] = {};
+  for (const lane of ['Normal', 'Critical']) {
+    resources[`${lane}Collector`] = {
+      Type: 'AWS::Serverless::Function',
+      Properties: {
+        CodeUri: 'same-private-artifact',
+        Environment: {
+          Variables: { ALLOWED_SERVICES: `other,${RETIRED_MIGRATOR}` }
+        }
+      }
+    };
+    resources[`${lane}Rule`] = {
+      Type: 'AWS::Events::Rule',
+      Properties: {
+        Name: `permanent-${lane}`,
+        EventBusName: { Ref: 'EventBus' },
+        Targets: [{ Id: lane, Arn: arn(`${lane}Collector`) }]
+      }
+    };
+    resources[`${lane}Invocation`] = {
+      Type: 'AWS::Lambda::Permission',
+      Properties: {
+        Action: 'lambda:InvokeFunction',
+        Principal: 'events.amazonaws.com',
+        FunctionName: { Ref: `${lane}Collector` },
+        SourceArn: arn(`${lane}Rule`)
+      }
+    };
+  }
+  resources.EventDeadLettersPolicy = {
+    Type: 'AWS::SQS::QueuePolicy',
+    Properties: {
+      Queues: [{ Ref: 'EventDeadLetters' }],
+      PolicyDocument: {
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Effect: 'Allow',
+            Principal: { Service: 'events.amazonaws.com' },
+            Action: 'sqs:SendMessage',
+            Resource: arn('EventDeadLetters'),
+            Condition: {
+              ArnEquals: {
+                'aws:SourceArn': [arn('NormalRule'), arn('CriticalRule')]
+              }
+            }
+          }
+        ]
+      }
+    }
+  };
+  return { Resources: resources };
+}
+
+function dynamicDetail(cause: string, name: string, recreation = 'Never') {
+  return {
+    Evaluation: 'Dynamic',
+    ChangeSource: 'ResourceAttribute',
+    CausingEntity: cause,
+    Target: {
+      Attribute: 'Properties',
+      Name: name,
+      RequiresRecreation: recreation
+    }
+  };
+}
+
+function collectorChanges(): { ResourceChange: PlannedChange }[] {
+  const changes: PlannedChange[] = [];
+  for (const lane of ['Normal', 'Critical']) {
+    changes.push(
+      {
+        Action: 'Modify',
+        LogicalResourceId: `${lane}Collector`,
+        ResourceType: 'AWS::Lambda::Function',
+        Replacement: 'False',
+        Scope: ['Properties'],
+        Details: [
+          {
+            Evaluation: 'Static',
+            ChangeSource: 'DirectModification',
+            Target: {
+              Attribute: 'Properties',
+              Name: 'Environment',
+              RequiresRecreation: 'Never'
+            }
+          }
+        ]
+      },
+      {
+        Action: 'Modify',
+        LogicalResourceId: `${lane}Rule`,
+        ResourceType: 'AWS::Events::Rule',
+        Replacement: 'False',
+        Scope: ['Properties'],
+        Details: [dynamicDetail(`${lane}Collector.Arn`, 'Targets')]
+      },
+      {
+        Action: 'Modify',
+        LogicalResourceId: `${lane}Invocation`,
+        ResourceType: 'AWS::Lambda::Permission',
+        Replacement: 'Conditional',
+        Scope: ['Properties'],
+        Details: [dynamicDetail(`${lane}Rule.Arn`, 'SourceArn', 'Always')]
+      }
+    );
+  }
+  changes.push({
+    Action: 'Modify',
+    LogicalResourceId: 'EventDeadLettersPolicy',
+    ResourceType: 'AWS::SQS::QueuePolicy',
+    Replacement: 'False',
+    Scope: ['Properties'],
+    Details: [
+      dynamicDetail('CriticalRule.Arn', 'PolicyDocument'),
+      dynamicDetail('NormalRule.Arn', 'PolicyDocument')
+    ]
+  });
+  return changes.map((ResourceChange) => ({ ResourceChange }));
+}
+
+it('recognizes the exact unchanged monitoring dependency chain from the live seven-resource proposal', () => {
+  const original = collectorMonitoring();
+  const edit = removeMigratorMonitoring(original);
+  expect(edit.modified).toEqual(['NormalCollector', 'CriticalCollector']);
+  expect(edit.reevaluated).toEqual([
+    'NormalRule',
+    'NormalInvocation',
+    'CriticalRule',
+    'CriticalInvocation',
+    'EventDeadLettersPolicy'
+  ]);
+  for (const id of edit.reevaluated!)
+    expect(edit.template.Resources[id]).toEqual(original.Resources[id]);
+  expect(() =>
+    assertRetirementChangeSet(edit, collectorChanges())
+  ).not.toThrow();
+});
+
+it('recognizes the same dependency chain in the full generated SAM monitoring template', () => {
+  const original = JSON.parse(
+    readFileSync(
+      join(__dirname, '../../monitoring/monitoring-staging.json'),
+      'utf8'
+    )
+  ) as Template;
+  for (const lane of ['Normal', 'Critical']) {
+    const environment = original.Resources[`${lane}Collector`].Properties!
+      .Environment as { Variables: Record<string, string> };
+    environment.Variables.ALLOWED_SERVICES += `,${RETIRED_MIGRATOR}`;
+  }
+  const edit = removeMigratorMonitoring(original);
+  expect(edit.modified).toEqual(['NormalCollector', 'CriticalCollector']);
+  expect(edit.reevaluated).toHaveLength(5);
+  expect(() =>
+    assertRetirementChangeSet(edit, collectorChanges())
+  ).not.toThrow();
+});
+
+it.each([
+  ['CriticalCollector', 'Conditional'],
+  ['CriticalCollector', undefined],
+  ['CriticalCollector', null],
+  ['CriticalRule', 'Conditional'],
+  ['CriticalRule', undefined],
+  ['CriticalInvocation', 'True'],
+  ['CriticalInvocation', undefined],
+  ['CriticalInvocation', null],
+  ['EventDeadLettersPolicy', 'Conditional']
+])('rejects unproven or replacing %s change (%s)', (id, replacement) => {
+  const changes = collectorChanges();
+  changes.find(
+    ({ ResourceChange: change }) => change.LogicalResourceId === id
+  )!.ResourceChange.Replacement = replacement;
+  expect(() =>
+    assertRetirementChangeSet(
+      removeMigratorMonitoring(collectorMonitoring()),
+      changes
+    )
+  ).toThrow();
+});
+
+it.each(['CriticalCollector', 'CriticalRule'])(
+  'requires positive nonreplacement evidence for ancestor %s',
+  (id) => {
+    const changes = collectorChanges().filter(
+      ({ ResourceChange: change }) => change.LogicalResourceId !== id
+    );
+    expect(() =>
+      assertRetirementChangeSet(
+        removeMigratorMonitoring(collectorMonitoring()),
+        changes
+      )
+    ).toThrow();
+  }
+);
+
+it.each([
+  ['CriticalCollector', 'Code'],
+  ['CriticalRule', 'Name'],
+  ['CriticalRule', 'EventBusName'],
+  ['CriticalInvocation', 'FunctionName'],
+  ['EventDeadLettersPolicy', 'Queues']
+])(
+  'rejects a changed %s property outside the exact dependency (%s)',
+  (id, name) => {
+    const changes = collectorChanges();
+    const change = changes.find(
+      ({ ResourceChange: value }) => value.LogicalResourceId === id
+    )!.ResourceChange;
+    change.Details![0].Target!.Name = name;
+    expect(() =>
+      assertRetirementChangeSet(
+        removeMigratorMonitoring(collectorMonitoring()),
+        changes
+      )
+    ).toThrow();
+  }
+);
+
+it('rejects wrong causes, duplicate policy causes and duplicate resource records', () => {
+  const edit = removeMigratorMonitoring(collectorMonitoring());
+  const wrongCause = collectorChanges();
+  wrongCause[2].ResourceChange.Details![0].CausingEntity = 'OtherRule.Arn';
+  expect(() => assertRetirementChangeSet(edit, wrongCause)).toThrow();
+  const policy = collectorChanges();
+  policy.at(-1)!.ResourceChange.Details![1].CausingEntity = 'CriticalRule.Arn';
+  expect(() => assertRetirementChangeSet(edit, policy)).toThrow();
+  const duplicates = collectorChanges();
+  duplicates.push({
+    ResourceChange: { ...duplicates[1].ResourceChange, Replacement: 'True' }
+  });
+  expect(() => assertRetirementChangeSet(edit, duplicates)).toThrow(
+    'Duplicate'
+  );
+});
+
+it.each(['Principal', 'FunctionName', 'SourceArn'])(
+  'does not classify an unreviewed permission binding (%s) as an unchanged dependency',
+  (property) => {
+    const template = collectorMonitoring();
+    template.Resources.CriticalInvocation.Properties![property] =
+      'other-binding';
+    const edit = removeMigratorMonitoring(template);
+    expect(edit.reevaluated).not.toContain('CriticalInvocation');
+    expect(() => assertRetirementChangeSet(edit, collectorChanges())).toThrow();
+  }
+);
