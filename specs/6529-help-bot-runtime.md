@@ -465,15 +465,22 @@ V1 should use a managed LLM provider rather than self-hosting.
 V1 provider:
 
 - Amazon Bedrock with an Anthropic Claude model. Help6529 uses
-  `HELP_BOT_BEDROCK_MODEL_ID`, defaulting to the Claude Sonnet 4.5 US geo
-  inference profile `us.anthropic.claude-sonnet-4-5-20250929-v1:0`. Other
-  Bedrock integrations keep their own service-specific env vars and defaults;
-  for example, the abusiveness checker uses `ABUSIVENESS_BEDROCK_MODEL_ID` and
-  preserves its historical Claude 3 Sonnet default unless explicitly changed.
-  These values are loaded from process environment at startup, so deployments
-  must restart the affected Lambda runtime to pick up changes.
+  `HELP_BOT_BEDROCK_MODEL_ID`, defaulting to the Claude Sonnet 5.5 US geo
+  inference profile `us.anthropic.claude-sonnet-5-5`. Other Bedrock
+  integrations keep their own service-specific env vars; for example, the
+  abusiveness checker uses `ABUSIVENESS_BEDROCK_MODEL_ID`. These values are
+  loaded from process environment at startup, so deployments must restart the
+  affected Lambda runtime to pick up changes.
+- Requests to Claude 4.6 and later send `output_config.effort: "low"` with
+  explicit adaptive thinking (`thinking: {"type": "adaptive"}`; Sonnet 4.6 and
+  Opus 4.6-4.8 do not think when it is omitted) and no sampling parameters. Answer token caps are sized
+  for the Sonnet 5.5 tokenizer, which uses about 30% more tokens than Sonnet
+  4.5 for the same text. Setting the model override back to a Claude 4.5 or
+  older ID sends the previous temperature/top_k request instead, because those
+  models reject `effort`.
 - Bedrock answer rendering uses `HELP_BOT_BEDROCK_TIMEOUT_MS`, defaulting to
-  10 seconds.
+  10 seconds. A Bedrock refusal (`stop_reason: "refusal"`) is treated like any
+  other rendering failure.
 
 The backend should isolate provider calls behind an internal service boundary so
 the model can change later.
