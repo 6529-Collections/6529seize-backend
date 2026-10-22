@@ -537,7 +537,11 @@ remains unverified; that cannot clear an incident about business processing.
   guards. Acceptance samples all three mode payloads; ordinary staging invocations
   can exercise them without waiting for the hourly audit. The existing S3-uploader
   production-only gate remains intact: staging audit/publication verify disabled,
-  idle handling, not real S3 checks or queue handoffs.
+  idle handling, not real S3 checks or queue handoffs. This does not satisfy
+  production hourly-audit acceptance: after an authorized production rollout,
+  read-only observation of a natural scheduled audit must confirm its actual S3
+  checks and any necessary queue handoffs. Manual staging payload checks do not
+  replace that production observation.
 - `nextgenContractLoop`: compares the committed block checkpoint with the actual
   RPC scan target, preserving the scanned block timestamp. Capped ranges stay
   pending while their saved indexing checkpoint advances; they do not complete
