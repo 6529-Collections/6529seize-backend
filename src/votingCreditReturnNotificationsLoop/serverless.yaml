@@ -78,3 +78,31 @@ resources:
         TreatMissingData: notBreaching
         AlarmActions:
           - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    CreditReturnDepthAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-pending-depth'
+        Namespace: VotingCreditReturns
+        MetricName: PendingReleases
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 20
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    CreditReturnDeadLetterAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-dead-letters'
+        Namespace: VotingCreditReturns
+        MetricName: DeadLetterReleases
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

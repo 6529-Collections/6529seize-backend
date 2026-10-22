@@ -2281,9 +2281,11 @@ Titles, credit type, event identity and release time survive later hard deletion
 concurrency 1. Each invocation processes at most 20 pages of 100 recipients within
 40 seconds. A page locks its release header with SKIP LOCKED; notification rows,
 push-outbox rows, recipient cleanup and progress commit atomically. Failure rolls
-back the page and defers that release by a minute. Other releases remain eligible.
+back the page and defers that release by a minute; after ten failed attempts it
+is parked for operator recovery without discarding recipients. Other releases remain eligible.
 Completed headers retain the release identity; processed recipient snapshots are
-removed. Five-minute backlog warnings and Lambda errors expose delayed delivery.
+removed. Five-minute backlog warnings, EMF pending/dead-letter counts and Lambda errors
+expose delayed delivery.
 No network publish or per-voter application loop runs in the transition path.
 
 `VOTING_CREDITS_RETURNED` uses snapshot context, nullable actor/drop references,

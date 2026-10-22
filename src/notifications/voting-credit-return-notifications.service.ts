@@ -8,6 +8,7 @@ import {
   votingCreditReturnsDb,
   VotingCreditReturnsDb
 } from './voting-credit-returns.db';
+import { recordVotingCreditReturnMetrics } from './voting-credit-return-metrics';
 
 export class VotingCreditReturnNotificationsService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -15,7 +16,7 @@ export class VotingCreditReturnNotificationsService {
   public constructor(
     private readonly repository: Pick<
       VotingCreditReturnsDb,
-      'processBatch' | 'oldestPendingAt'
+      'processBatch' | 'deliveryStats'
     > = votingCreditReturnsDb
   ) {}
 
@@ -23,11 +24,7 @@ export class VotingCreditReturnNotificationsService {
     if (process.env.USER_NOTIFIER_ACTIVATED !== 'true') return;
     // Bound both database pressure and runtime independently of recipient count.
     const deadline = Date.now() + 40_000;
-    const oldest = await this.repository.oldestPendingAt(ctx);
-    if (oldest !== null && Date.now() - oldest > 5 * 60_000)
-      this.logger.warn('voting_credit_return_backlog', {
-        oldest_pending_at: oldest
-      });
+    await this.checkBacklog(ctx);
     for (let batch = 0; batch < 20 && Date.now() < deadline; batch++) {
       const worked = await this.repository.processBatch(
         async (notifications, tx) => {
@@ -50,6 +47,24 @@ export class VotingCreditReturnNotificationsService {
         ctx
       );
       if (!worked) return;
+    }
+  }
+
+  private async checkBacklog(ctx: RequestContext): Promise<void> {
+    try {
+      const stats = await this.repository.deliveryStats(ctx);
+      recordVotingCreditReturnMetrics(stats);
+      if (
+        stats.oldest_pending_at !== null &&
+        Date.now() - stats.oldest_pending_at > 5 * 60_000
+      )
+        this.logger.warn('voting_credit_return_backlog', {
+          oldest_pending_at: stats.oldest_pending_at
+        });
+    } catch (error) {
+      this.logger.warn('voting_credit_return_backlog_check_failed', {
+        error_name: error instanceof Error ? error.name : 'UNKNOWN'
+      });
     }
   }
 }

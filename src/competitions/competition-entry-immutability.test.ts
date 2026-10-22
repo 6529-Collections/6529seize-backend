@@ -32,6 +32,29 @@ const ctx = { connection: {} as ConnectionWrapper<unknown> };
 const model = { drop_id: 'submission' } as CreateOrUpdateDropModel;
 const drop = { id: 'submission' } as DropEntity;
 
+it.each([null, 'admin'])(
+  'does not capture credits for a system/admin actor (%s)',
+  async (actorId) => {
+    jest.clearAllMocks();
+    const entry = {
+      id: 'entry',
+      competition_id: 'competition',
+      wave_id: 'wave',
+      drop_id: drop.id,
+      submitter_id: 'author',
+      status: CompetitionEntryStatus.ACTIVE
+    } as NativeDropEntry;
+    await expect(
+      competitionEntryDropHooks.beforeDelete(drop, [entry], actorId, ctx)
+    ).resolves.toBeUndefined();
+    expect(votingCreditReturnsDb.capture).not.toHaveBeenCalled();
+    expect(competitionEntryRepository.deleteEntry).toHaveBeenCalledWith(
+      'entry',
+      ctx
+    );
+  }
+);
+
 it.each(Object.values(CompetitionEntryStatus))(
   'rejects content and presentation edits for an unsigned %s entry',
   async (status) => {

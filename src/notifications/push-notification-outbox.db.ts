@@ -27,6 +27,7 @@ export class PushNotificationOutboxDb extends LazyDbAccessCompatibleService {
     notificationIds: readonly number[],
     ctx: RequestContext
   ): Promise<void> {
+    if (!notificationIds.length) return;
     if (!ctx.connection) throw new Error('Push outbox requires a transaction');
     await this.db.bulkInsert(
       PUSH_NOTIFICATION_OUTBOX_TABLE,

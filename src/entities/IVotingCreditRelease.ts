@@ -9,6 +9,7 @@ import type { VotingCreditsReturnedNotificationData } from '@/notifications/user
 @Entity(VOTING_CREDIT_RELEASES_TABLE)
 @Index('idx_voting_credit_releases_pending', [
   'completed_at',
+  'dead_lettered_at',
   'next_attempt_at'
 ])
 export class VotingCreditReleaseEntity {
@@ -32,6 +33,9 @@ export class VotingCreditReleaseEntity {
 
   @Column({ type: 'bigint', nullable: true })
   readonly completed_at!: number | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  readonly dead_lettered_at!: number | null;
 }
 
 @Entity(VOTING_CREDIT_RELEASE_RECIPIENTS_TABLE)

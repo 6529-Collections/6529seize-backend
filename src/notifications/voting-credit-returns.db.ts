@@ -11,14 +11,22 @@ import type { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import type { VotingCreditReleaseEntity } from '@/entities/IVotingCreditRelease';
 import type { VotingCreditsReturnedNotificationData } from './user-notification.types';
+import { Logger } from '@/logging';
 
 export const CREDIT_RETURN_BATCH_SIZE = 100;
+export const CREDIT_RETURN_MAX_ATTEMPTS = 10;
+export type CreditReturnDeliveryStats = {
+  oldest_pending_at: number | null;
+  pending_releases: number;
+  failed_releases: number;
+};
 type Recipient = { voter_profile_id: string; amount: number };
 type Release = Omit<VotingCreditReleaseEntity, 'context'> & {
   context: VotingCreditReleaseEntity['context'] | string;
 };
 
 export class VotingCreditReturnsDb extends LazyDbAccessCompatibleService {
+  private readonly logger = Logger.get(this.constructor.name);
   private async query<T>(
     operation: string,
     sql: string,
@@ -36,7 +44,10 @@ export class VotingCreditReturnsDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  /** Caller holds the competition lock. Never hydrate voters or publish here. */
+  /** Caller holds the competition lock. Only ACTIVE entries consume credit;
+   * winning and deletion are mutually exclusive releases for this entry ID.
+   * A later deletion of a winner must never create another refund notice.
+   * Never hydrate voters or publish here. */
   public async capture(
     params: {
       competitionId: string;
@@ -106,6 +117,8 @@ export class VotingCreditReturnsDb extends LazyDbAccessCompatibleService {
     now: number,
     ctx: RequestContext = {}
   ): Promise<boolean> {
+    if (ctx.connection)
+      throw new Error('Credit-return processing owns its transaction');
     let releaseId: string | undefined;
     try {
       return await this.executeNativeQueriesInTransaction(
@@ -113,8 +126,9 @@ export class VotingCreditReturnsDb extends LazyDbAccessCompatibleService {
           const tx = { ...ctx, connection };
           const [release] = await this.query<Release>(
             'claimRelease',
-            `select * from ${VOTING_CREDIT_RELEASES_TABLE}
-           where completed_at is null and next_attempt_at<=:now
+            `select id,context,after_profile_id,created_at,next_attempt_at,attempts,completed_at,dead_lettered_at
+           from ${VOTING_CREDIT_RELEASES_TABLE}
+           where completed_at is null and dead_lettered_at is null and next_attempt_at<=:now
            order by next_attempt_at,id limit 1 for update skip locked`,
             { now },
             tx
@@ -170,26 +184,51 @@ export class VotingCreditReturnsDb extends LazyDbAccessCompatibleService {
         { isolationLevel: 'READ COMMITTED' }
       );
     } catch (error) {
-      if (releaseId)
-        await this.query(
-          'deferRelease',
-          `update ${VOTING_CREDIT_RELEASES_TABLE} set next_attempt_at=:retryAt,
+      if (releaseId) {
+        try {
+          await this.query(
+            'deferRelease',
+            `update ${VOTING_CREDIT_RELEASES_TABLE} set next_attempt_at=:retryAt,
+         dead_lettered_at=if(attempts+1>=:maxAttempts,:now,null),
          attempts=attempts+1 where id=:id and completed_at is null`,
-          { id: releaseId, retryAt: now + 60_000 },
-          ctx
-        );
+            {
+              id: releaseId,
+              retryAt: now + 60_000,
+              now,
+              maxAttempts: CREDIT_RETURN_MAX_ATTEMPTS
+            },
+            ctx
+          );
+        } catch (deferError) {
+          this.logger.error('voting_credit_return_defer_failed', {
+            release_id: releaseId,
+            error_name:
+              deferError instanceof Error ? deferError.name : 'UNKNOWN'
+          });
+        }
+      }
       throw error;
     }
   }
 
-  public async oldestPendingAt(ctx: RequestContext): Promise<number | null> {
-    const [row] = await this.query<{ created_at: number | null }>(
-      'oldestPendingAt',
-      `select min(created_at) as created_at from ${VOTING_CREDIT_RELEASES_TABLE} where completed_at is null`,
+  public async deliveryStats(
+    ctx: RequestContext
+  ): Promise<CreditReturnDeliveryStats> {
+    const [row] = await this.query<CreditReturnDeliveryStats>(
+      'deliveryStats',
+      `select min(if(dead_lettered_at is null,created_at,null)) as oldest_pending_at,
+       coalesce(sum(dead_lettered_at is null),0) as pending_releases,
+       coalesce(sum(dead_lettered_at is not null),0) as failed_releases
+       from ${VOTING_CREDIT_RELEASES_TABLE} where completed_at is null`,
       {},
       ctx
     );
-    return row?.created_at == null ? null : Number(row.created_at);
+    return {
+      oldest_pending_at:
+        row?.oldest_pending_at == null ? null : Number(row.oldest_pending_at),
+      pending_releases: Number(row?.pending_releases ?? 0),
+      failed_releases: Number(row?.failed_releases ?? 0)
+    };
   }
 }
 

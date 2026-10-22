@@ -14,7 +14,8 @@ import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
   VotingCreditReturnsDb,
-  CREDIT_RETURN_BATCH_SIZE
+  CREDIT_RETURN_BATCH_SIZE,
+  CREDIT_RETURN_MAX_ATTEMPTS
 } from './voting-credit-returns.db';
 import { PushNotificationOutboxDb } from './push-notification-outbox.db';
 import type { VotingCreditsReturnedNotificationData } from './user-notification.types';
@@ -326,6 +327,74 @@ describeWithSeed(
         `select count(*) as count from ${VOTING_CREDIT_RELEASE_RECIPIENTS_TABLE}`
       );
       expect(Number(count.count)).toBe(rows.length);
+    });
+    it('does not return credits twice when an author deletes an already-winning entry', async () => {
+      await vote('voter', 500);
+      await capture('WIN');
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WINNER' where id=:entryId`,
+        { entryId }
+      );
+      await capture('AUTHOR_DELETED');
+      const deliver = jest.fn().mockResolvedValue(undefined);
+      await repo.processBatch(deliver, now);
+      expect(deliver.mock.calls[0][0]).toEqual([
+        {
+          recipientId: 'voter',
+          data: expect.objectContaining({ reason: 'WIN', amount: 500 })
+        }
+      ]);
+      expect(await repo.processBatch(deliver, now)).toBe(false);
+    });
+
+    it('uses the generated drop serial number when the saved title is blank', async () => {
+      await vote('voter', 500);
+      await sqlExecutor.execute(
+        `update ${DROPS_TABLE} set title=null where id='artwork'`
+      );
+      await capture();
+      const deliver = jest.fn().mockResolvedValue(undefined);
+      await repo.processBatch(deliver, now);
+      expect(deliver.mock.calls[0][0][0].data.submission_title).toMatch(
+        /^Submission #\d+$/
+      );
+    });
+
+    it('parks poison releases after a bounded retry count while keeping recipients for recovery', async () => {
+      await vote('voter', 500);
+      await capture();
+      const deliver = jest
+        .fn()
+        .mockRejectedValue(new Error('Permanent failure'));
+      for (let attempt = 0; attempt < CREDIT_RETURN_MAX_ATTEMPTS; attempt++)
+        await expect(
+          repo.processBatch(deliver, now + attempt * 60_000)
+        ).rejects.toThrow('Permanent failure');
+      expect(
+        await repo.processBatch(
+          deliver,
+          now + CREDIT_RETURN_MAX_ATTEMPTS * 60_000
+        )
+      ).toBe(false);
+      expect(deliver).toHaveBeenCalledTimes(CREDIT_RETURN_MAX_ATTEMPTS);
+      expect(await repo.deliveryStats({})).toEqual({
+        oldest_pending_at: null,
+        pending_releases: 0,
+        failed_releases: 1
+      });
+      const [release] = await sqlExecutor.execute<{
+        completed_at: number | null;
+        dead_lettered_at: number | null;
+      }>(
+        `select completed_at,dead_lettered_at from ${VOTING_CREDIT_RELEASES_TABLE}`
+      );
+      expect(release.completed_at).toBeNull();
+      expect(release.dead_lettered_at).not.toBeNull();
+      expect(
+        await sqlExecutor.execute(
+          `select * from ${VOTING_CREDIT_RELEASE_RECIPIENTS_TABLE}`
+        )
+      ).toHaveLength(1);
     });
   }
 );
