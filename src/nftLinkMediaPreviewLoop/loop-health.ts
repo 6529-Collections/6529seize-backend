@@ -2,6 +2,8 @@ import { NFT_LINKS_TABLE } from '@/constants';
 import { reportLoopHealth } from '@/loop-health';
 import { readLoopHealthRows } from '@/loop-health-read';
 
+type DbTimestamp = number | string | null;
+
 /** Survey the writer, not handler return values or retry/lease timestamps.
  * Terminal asset failures retain APPLICATION_ERROR; this operation describes
  * outstanding preview processing, not recovery of a failed individual asset. */
@@ -10,8 +12,8 @@ export async function observePreviewBacklog(): Promise<void> {
     const [row] = await readLoopHealthRows<{
       pending: number | string;
       unknown_age: number | string;
-      oldest: number | string | null;
-      progress: number | string | null;
+      oldest: DbTimestamp;
+      progress: DbTimestamp;
     }>(`select
       count(case when media_preview_status in ('PENDING', 'PROCESSING') then 1 end) as pending,
       count(case when media_preview_status in ('PENDING', 'PROCESSING') and media_preview_queued_at is null then 1 end) as unknown_age,
@@ -25,7 +27,7 @@ export async function observePreviewBacklog(): Promise<void> {
       Number(row.unknown_age) !== 0
     )
       return;
-    const seconds = (value: number | string | null) =>
+    const seconds = (value: DbTimestamp) =>
       value === null ? undefined : Math.floor(Number(value) / 1000);
     const oldest = seconds(row.oldest);
     const progress = seconds(row.progress);

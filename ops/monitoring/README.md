@@ -537,7 +537,8 @@ remains unverified; that cannot clear an incident about business processing.
   guards. Initial acceptance requires observing all three natural scheduled modes.
 - `nextgenContractLoop`: compares the committed block checkpoint with the actual
   RPC scan target, preserving the scanned block timestamp. Capped ranges stay
-  pending. No progress or completion is emitted from inside its transaction;
+  pending while their saved indexing checkpoint advances; they do not complete
+  reconciliation. No progress or completion is emitted from inside its transaction;
   rollback and lock-retry attempts cannot establish recovery. Reconciliation is
   independent of indexing: handled metadata/mint-data exceptions and missing
   collection records leave it pending/unconfirmed even if blocks advance. A
@@ -558,6 +559,13 @@ remains unverified; that cannot clear an incident about business processing.
   active queue does not recover those failures. Only errors rejected by an obsolete
   completion fence become informational source logs, since that worker no longer
   owns the result. Ordinary saved failures keep their existing error reporting.
+  The preview aggregate has no status index in the declared schema. It is one
+  writer survey per batch, with the existing 1-second statement/2-second owned
+  read budget, rather than an unbounded query. Before rollout, check its plan and
+  latency against live table cardinality; do not increase the budget to force a
+  scan through. An unavailable survey must remain unconfirmed. The publication
+  outbox already has status-leading indexes, so its pending-only aggregate does
+  not require scanning published history.
 
 For these three additional adapters, deploy the isolated monitoring artifact first
 (including generated operation policies), then `nftsLoop`, `nextgenContractLoop`

@@ -55,12 +55,11 @@ export class NextgenLoopHealth {
     target: number,
     timestamp: number
   ): void {
+    const now = Math.floor(Date.now() / 1000);
     reportLoopHealth({
       operation: 'indexing',
       pending: endBlock < target,
-      ...(endBlock > startBlock
-        ? { progressAt: Math.floor(Date.now() / 1000) }
-        : {}),
+      ...(endBlock > startBlock ? { progressAt: now } : {}),
       watermarkAt: timestamp,
       ...(endBlock < target ? { oldestPendingAt: timestamp } : {}),
       recovery: 'automatic'
@@ -69,9 +68,7 @@ export class NextgenLoopHealth {
       reportLoopHealth({
         operation: 'recalculation',
         pending: this.incomplete,
-        ...(!this.incomplete
-          ? { progressAt: Math.floor(Date.now() / 1000) }
-          : {}),
+        ...(!this.incomplete ? { progressAt: now } : {}),
         recovery: this.incomplete ? 'unknown' : 'automatic'
       });
   }

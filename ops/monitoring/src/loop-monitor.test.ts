@@ -717,3 +717,48 @@ test('terminal preview removals cannot advance successful processing progress', 
     else process.env.RECEIPTS_TABLE = original;
   }
 });
+
+test('a preview backlog shrinking only through terminal failures still opens a red stalled incident', async () => {
+  const original = process.env;
+  process.env = {
+    ...original,
+    RECEIPTS_TABLE: 'test',
+    CRITICAL_QUEUE_URL: 'https://example.com/critical'
+  };
+  const { data, dbMock } = fakeState();
+  let sent = 0;
+  const queueMock = mock.method(sqs, 'send', async () => {
+    sent++;
+    return {};
+  });
+  const policy = policiesFor('staging').find(
+    (p) => p.service === 'nftLinkMediaPreviewLoop'
+  )!;
+  const now = 100 + policy.stallSeconds + 1;
+  const base = {
+    _type: LOOP_EVENT_TYPE,
+    service: policy.service,
+    operation: 'processing',
+    pending: true,
+    recovery: 'unknown'
+  };
+  try {
+    await receiveLoopObservation(
+      { ...base, observedAt: 100, oldestPendingAt: 80 },
+      'staging'
+    );
+    await receiveLoopObservation(
+      { ...base, observedAt: now, oldestPendingAt: now - 10 },
+      'staging'
+    );
+    await monitorLoop(policy, 'staging', now);
+    const incident = data.get(`loop:incident:${policy.service}`);
+    assert.equal(incident?.level, 'red');
+    assert.equal(incident?.reason, 'stalled');
+    assert.equal(sent, 1);
+  } finally {
+    queueMock.mock.restore();
+    dbMock.mock.restore();
+    process.env = original;
+  }
+});

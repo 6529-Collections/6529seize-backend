@@ -386,3 +386,31 @@ test('a successful NFT discovery cannot clear a stuck refresh or audit', () => {
   assert.equal(result.level, 'red');
   assert.equal(result.operation, 'audit');
 });
+
+test('recent READY saves keep a moving preview backlog amber while older work remains overdue', () => {
+  const preview = {
+    ...policy,
+    service: 'nftLinkMediaPreviewLoop',
+    operations: ['processing'],
+    stallSeconds: 420,
+    freshSeconds: 240
+  };
+  const delayed = {
+    ...observation,
+    operation: 'processing',
+    oldestPendingAt: now - 1200,
+    progressAt: now - 30,
+    recovery: 'unknown' as const
+  };
+  const moving = assessLoop(preview, [delayed], true, now);
+  assert.equal(moving.level, 'amber');
+  assert.equal(moving.reason, 'delayed');
+  const stalled = assessLoop(
+    preview,
+    [{ ...delayed, progressAt: now - 421 }],
+    true,
+    now
+  );
+  assert.equal(stalled.level, 'red');
+  assert.equal(stalled.reason, 'stalled');
+});

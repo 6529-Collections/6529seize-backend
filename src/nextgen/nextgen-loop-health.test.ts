@@ -1,7 +1,7 @@
 import { findNextGenTransactions } from './nextgen';
 import { getDataSource } from '@/db';
 import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
-import { fetchNextGenLatestBlock } from './nextgen.db';
+import { fetchNextGenLatestBlock, persistNextGenBlock } from './nextgen.db';
 import { processPendingMetadataTokens } from './nextgen_pending_metadata';
 import { NextgenLoopHealth } from '@/nextgenContractLoop/loop-health';
 import { reportLoopHealth } from '@/loop-health';
@@ -92,12 +92,17 @@ it('keeps a capped block scan pending and does not claim enrichment completed', 
     getBlock: jest.fn().mockResolvedValue({ timestamp: 1900 })
   } as never);
   await findNextGenTransactions(new NextgenLoopHealth());
-  expect(report).toHaveBeenLastCalledWith(
-    expect.objectContaining({
-      operation: 'indexing',
-      pending: true,
-      oldestPendingAt: 1900
-    })
+  expect(persistNextGenBlock).toHaveBeenCalledWith(
+    {},
+    { block: 100090, timestamp: 1900 }
   );
+  expect(report).toHaveBeenLastCalledWith({
+    operation: 'indexing',
+    pending: true,
+    oldestPendingAt: 1900,
+    watermarkAt: 1900,
+    progressAt: 2000,
+    recovery: 'automatic'
+  });
   expect(processPendingMetadataTokens).not.toHaveBeenCalled();
 });

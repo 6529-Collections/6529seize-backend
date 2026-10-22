@@ -149,6 +149,18 @@ export function parseLoopObservation(input: unknown): LoopObservation {
   return result;
 }
 
+function isVerifiedIdle(
+  policy: LoopPolicy,
+  observation: LoopObservation,
+  throttleActive: boolean
+): boolean {
+  if (observation.pending) return false;
+  if (policy.optionalOperations?.includes(observation.operation)) return true;
+  return (
+    !throttleActive && !!policy.idleOperations?.includes(observation.operation)
+  );
+}
+
 function assessOperation(
   policy: LoopPolicy,
   observation: LoopObservation,
@@ -183,16 +195,7 @@ function assessOperation(
     (observation.progressAt ??
       observation.baselineAt ??
       observation.observedAt);
-  if (
-    !observation.pending &&
-    policy.optionalOperations?.includes(observation.operation)
-  )
-    return { ...base, level: 'healthy', reason: 'caught_up' };
-  if (
-    !observation.pending &&
-    !throttleActive &&
-    policy.idleOperations?.includes(observation.operation)
-  )
+  if (isVerifiedIdle(policy, observation, throttleActive))
     return { ...base, level: 'healthy', reason: 'caught_up' };
   const behind =
     observation.pending ||
