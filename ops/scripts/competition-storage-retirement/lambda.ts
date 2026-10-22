@@ -43,9 +43,9 @@ function options(context: { invokedFunctionArn: string }) {
   if (
     override &&
     (operation !== 'plan' ||
-      !/^competition-retirement-(staging|prod)-restore-[a-z0-9.-]+\.rds\.amazonaws\.com$/.test(
-        override
-      ))
+      !new RegExp(
+        `^competition-retirement-${environment}-restore-[a-z0-9.-]+\\.${region}\\.rds\\.amazonaws\\.com$`
+      ).test(override))
   )
     throw new Error(
       'Snapshot restore connections are read-only and require the named isolated recovery target'
@@ -128,7 +128,9 @@ export const handler = async (
     try {
       await runner.query('set session lock_wait_timeout=5');
       await runner.query('set session innodb_lock_wait_timeout=5');
-      await runner.query('set session max_execution_time=10000');
+      await runner.query(
+        `set session max_execution_time=${selected.override ? 60000 : 10000}`
+      );
       if (!plan) {
         const result: CompetitionCleanupPlan = {
           environment: selected.environment,

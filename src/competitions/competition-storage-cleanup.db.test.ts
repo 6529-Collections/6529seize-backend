@@ -53,6 +53,7 @@ describe('guarded physical competition storage cleanup', () => {
 
   afterEach(async () => {
     await runner.query('drop view if exists cleanup_unexpected_reader');
+    await runner.query('drop trigger if exists cleanup_unexpected_capture');
     await removeHistoricalCompetitionFixture();
     await source.synchronize();
     await installLegacyCompetitionGetFacade(sqlExecutor);
@@ -176,6 +177,30 @@ describe('guarded physical competition storage cleanup', () => {
     const inventory = await inspectCompetitionStorage(runner);
     await expect(dropCompetitionStorage(runner, inventory)).rejects.toThrow(
       'native compatibility views'
+    );
+    expect((await inspectCompetitionStorage(runner)).tables).toHaveLength(21);
+  });
+
+  it('rejects renamed physical wave aliases inside an otherwise native compatibility view', async () => {
+    await runner.query(
+      'create or replace view legacy_get_waves as select another_alias.*,c.id as competition_id from waves another_alias join competitions c on c.wave_id=another_alias.id'
+    );
+    const inventory = await inspectCompetitionStorage(runner);
+    await expect(dropCompetitionStorage(runner, inventory)).rejects.toThrow(
+      'native compatibility views'
+    );
+    expect((await inspectCompetitionStorage(runner)).columns).toEqual(
+      inventory.columns
+    );
+  });
+
+  it('rejects a newly introduced trigger on shared storage before deleting its columns', async () => {
+    await runner.query(
+      'create trigger cleanup_unexpected_capture before update on waves for each row set NEW.type=OLD.type'
+    );
+    const inventory = await inspectCompetitionStorage(runner);
+    await expect(dropCompetitionStorage(runner, inventory)).rejects.toThrow(
+      'physical dependencies'
     );
     expect((await inspectCompetitionStorage(runner)).tables).toHaveLength(21);
   });

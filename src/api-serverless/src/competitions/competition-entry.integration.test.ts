@@ -299,17 +299,10 @@ describeWithSeed(
       ])
         expect(
           await sqlExecutor.execute(
-            `select * from ${table} where drop_id=:dropId`,
-            { dropId: entry.drop_id }
+            `select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA=database() and TABLE_NAME=:table`,
+            { table }
           )
         ).toEqual([]);
-      // Retained physical rows are inert; the retired capture implementation is
-      // deliberately absent and native commands neither read nor mirror them.
-      await sqlExecutor.execute(
-        `insert into ${tables.WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,vote,timestamp)
-         values (:dropId,:waveId,99999,1)`,
-        { dropId: entry.drop_id, waveId: wave.id }
-      );
       expect(
         await competitionVotingService.vote(
           wave.id,
@@ -319,12 +312,6 @@ describeWithSeed(
           ctx
         )
       ).toMatchObject({ current_vote: 8 });
-      const retained = await sqlExecutor.execute<{ vote: number | string }>(
-        `select vote from ${tables.WAVE_LEADERBOARD_ENTRIES_TABLE} where drop_id=:dropId`,
-        { dropId: entry.drop_id }
-      );
-      expect(retained).toHaveLength(1);
-      expect(Number(retained[0].vote)).toBe(99999);
     });
     it('masks cross-wave content routes and a private parent from anonymous readers', async () => {
       const entry = await service.create(

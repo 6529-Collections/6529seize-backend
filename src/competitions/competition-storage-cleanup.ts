@@ -53,6 +53,35 @@ const identifier = (value: string): string => {
 const placeholders = (values: readonly unknown[]): string =>
   values.map(() => '?').join(',');
 
+function referencesRetiredWaveColumns(definition: string): boolean {
+  const sql = definition.replace(/`/g, '');
+  const aliases = new Set(['waves', 'waves_archive']);
+  const sources =
+    /\b(?:from|join)\s+\(*\s*(?:[a-zA-Z0-9_]+\.)?(waves|waves_archive)\b(?:\s+(?:as\s+)?([a-zA-Z0-9_]+))?/gi;
+  const reserved = new Set([
+    'left',
+    'right',
+    'inner',
+    'outer',
+    'cross',
+    'join',
+    'where',
+    'on',
+    'group',
+    'order',
+    'union'
+  ]);
+  let match: RegExpExecArray | null;
+  while ((match = sources.exec(sql)) !== null) {
+    if (match[2] && !reserved.has(match[2].toLowerCase()))
+      aliases.add(match[2]);
+  }
+  const fields = RETIRED_COMPETITION_COLUMNS.waves.join('|');
+  return Array.from(aliases).some((alias) =>
+    new RegExp(`\\b${alias}\\.(${fields})\\b`, 'i').test(sql)
+  );
+}
+
 async function assertNoPhysicalDependencies(runner: QueryRunner) {
   const tables = [...RETIRED_COMPETITION_TABLES];
   const dependencies: { name: string }[] = await runner.query(
@@ -62,16 +91,22 @@ async function assertNoPhysicalDependencies(runner: QueryRunner) {
      where REFERENCED_TABLE_SCHEMA=database() and REFERENCED_TABLE_NAME in (${placeholders(tables)})`,
     [...tables, ...tables]
   );
-  const programs: { definition: string | null }[] = await runner.query(
-    `select ROUTINE_DEFINITION as definition from information_schema.ROUTINES where ROUTINE_SCHEMA=database()
-     union all select ACTION_STATEMENT from information_schema.TRIGGERS where TRIGGER_SCHEMA=database()
-     union all select EVENT_DEFINITION from information_schema.EVENTS where EVENT_SCHEMA=database()`
-  );
+  const programs: { definition: string | null; objectTable: string | null }[] =
+    await runner.query(
+      `select ROUTINE_DEFINITION as definition,null as objectTable from information_schema.ROUTINES where ROUTINE_SCHEMA=database()
+     union all select ACTION_STATEMENT,EVENT_OBJECT_TABLE from information_schema.TRIGGERS where TRIGGER_SCHEMA=database()
+     union all select EVENT_DEFINITION,null from information_schema.EVENTS where EVENT_SCHEMA=database()`
+    );
   const retired = new RegExp(`\\b(${tables.join('|')})\\b`, 'i');
   if (
     dependencies.length ||
     programs.some(
-      ({ definition }) => definition === null || retired.test(definition)
+      ({ definition, objectTable }) =>
+        definition === null ||
+        retired.test(definition) ||
+        /\b(waves|waves_archive|competitions)\b/i.test(definition) ||
+        (objectTable !== null &&
+          Object.keys(RETIRED_COMPETITION_COLUMNS).includes(objectTable))
     )
   )
     throw new Error(
@@ -93,10 +128,6 @@ async function assertNoPhysicalDependencies(runner: QueryRunner) {
      where TABLE_SCHEMA=database() and TABLE_NAME in (${placeholders(names)})`,
       names
     );
-  const physicalWaveField = new RegExp(
-    `\\bw\\.(${RETIRED_COMPETITION_COLUMNS.waves.join('|')})\\b`,
-    'i'
-  );
   if (
     views.length !== names.length ||
     views.some(
@@ -104,7 +135,7 @@ async function assertNoPhysicalDependencies(runner: QueryRunner) {
         definition === null ||
         !/(^|[^a-z_0-9])competitions([^a-z_0-9]|$)/i.test(definition) ||
         /\.\s*`?storage_mode`?\b/i.test(definition) ||
-        physicalWaveField.test(definition.replace(/`/g, ''))
+        referencesRetiredWaveColumns(definition)
     )
   )
     throw new Error(

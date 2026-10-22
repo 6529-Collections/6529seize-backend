@@ -91,7 +91,8 @@ task-owned temporary Lambda. Use the existing API VPC configuration/execution
 role, no trigger, no public URL and explicit `RETIRE_ENVIRONMENT` /
 `RETIRE_OPERATION`. `plan` uses `DB_USER_READ` against the writer endpoint;
 `RETIRE_RESTORE_HOST` is allowed only for a named isolated restore and only in
-plan mode. Mutation requires the independently reviewed `approved-plan.json`
+plan mode. Isolated restore SELECTs have a bounded sixty-second limit for cold
+snapshot reads; live SELECTs retain their ten-second limit. Mutation requires the independently reviewed `approved-plan.json`
 and `recovery.json` packaged in the artifact, and the exact confirmation token
 in the invocation. Verify the function artifact hash/configuration before
 invocation. Never print the payload/plan or database credentials to public logs.
@@ -147,6 +148,41 @@ Complete local/PR review and relevant checks first. In each environment:
    be green before promotion for this release. Production E2E is reported
    separately. Keep autonomous release-note PR/service grouping, with the final
    publication signal only on the final successful production service run.
+
+## Services for this cleanup
+
+Deploy these units one at a time in this order. Skip production-only units in
+staging. Repeat `dbMigrationsLoop` with full scope after intentional deletion;
+its initial run uses maintenance. Verify the unchanged xTDH and artwork
+processor dependencies through their existing catalog/runtime checks.
+
+| Service                                   | Changed executed path                                     |
+| ----------------------------------------- | --------------------------------------------------------- |
+| `dbMigrationsLoop`                        | Guarded entity sync and permanent view maintenance        |
+| `claimsBuilder`                           | Native decision/winner context and card mapping           |
+| `newsletterLoop` (production)             | Native Main Stage winner reads                            |
+| `pushNotificationsHandler`                | Badge eligibility uses the native group catalogue         |
+| `dropMediaSanitizer`                      | Status broadcasts hydrate native profile/drop context     |
+| `artCurationNftWatchLoop`                 | Native entry/configuration and confirmed transfers        |
+| `overRatesRevocationLoop`                 | Native revocation discovery and accounting                |
+| `delegationsLoop`                         | Profile merge and partial TDH reconciliation              |
+| `tdhLoop`                                 | Main Stage totals and native overvote reconciliation      |
+| `mintAnnouncementsLoop`                   | Shared drop update membership hooks and profile context   |
+| `transactionsProcessingLoop`              | Subscription drop creation and native context             |
+| `helpBotReplyLoop`                        | Drop/native context, including its daily-credit companion |
+| `releaseDigestLoop` (production)          | Shared drop creation/profile context                      |
+| `releaseNotesGenerationLoop` (production) | Shared drop creation/profile context                      |
+| `waveLeaderboardSnapshotterLoop`          | Native discovery and history reads                        |
+| `waveDecisionExecutionLoop`               | Native discovery, decisions and event context             |
+| `api`                                     | Native commands, readers, navigation and group catalogue  |
+
+Static import reachability alone overcounts consumers. Priority-alert-only
+indexers use unchanged direct group/identity methods; documentation uses explicit
+group IDs; xTDH creation/grant review uses unchanged identity/rate methods;
+attachment/NFT-link notifications and delivery recovery do not call the changed
+profile enrichment paths. Metrics refresh uses the unchanged permanent view
+rewriter. These do not need deployment merely because they import a class or
+the facade's schema-definition module.
 
 ## Retired infrastructure
 
