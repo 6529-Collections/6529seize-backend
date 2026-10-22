@@ -965,12 +965,10 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           select w.voting_group_id as id from ${legacyGetView(WAVES_TABLE)} w
           union all
           select json_unquote(json_extract(c.participation_config,'$.group_id')) as id
-          from ${COMPETITIONS_TABLE} c where c.storage_mode='NATIVE'
-            and json_type(json_extract(c.participation_config,'$.group_id'))='STRING'
+          from ${COMPETITIONS_TABLE} c where json_type(json_extract(c.participation_config,'$.group_id'))='STRING'
           union all
           select json_unquote(json_extract(c.voting_config,'$.group_id')) as id
-          from ${COMPETITIONS_TABLE} c where c.storage_mode='NATIVE'
-            and json_type(json_extract(c.voting_config,'$.group_id'))='STRING'
+          from ${COMPETITIONS_TABLE} c where json_type(json_extract(c.voting_config,'$.group_id'))='STRING'
           union all
           select wcg.community_group_id as id from ${WAVE_CURATIONS_TABLE} wcg
         ) x where id is not null

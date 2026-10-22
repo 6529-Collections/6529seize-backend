@@ -1,3 +1,9 @@
+import {
+  historicalCompetitionFixture,
+  seedRetainedScoreFixture,
+  seedRetainedDistributionFixture,
+  seedRetainedPublicationFixture
+} from '@/tests/fixtures/retained-competition.fixture';
 import * as tables from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -28,9 +34,6 @@ import {
   installLegacyCompetitionGetFacade,
   withLegacyCompetitionGetFacade
 } from './legacy-competition-get-facade';
-import { transferCompetitionRetirementHistory } from './competition-retirement-history';
-import { transferRetainedCompetitionDistributions } from './competition-retirement-distributions';
-import { transferRetainedCompetitionLeaderboardPublication } from './competition-retirement-leaderboard';
 import {
   normalizeDefaultCompetition,
   selectDefaultCompetition
@@ -171,7 +174,7 @@ function sorted(rows: unknown[]): unknown[] {
 
 describeWithSeed(
   'rich permanent GET projection parity against frozen origin/main',
-  [withWaves([primaryWave, chatWave, dmWave])],
+  [withWaves([primaryWave, chatWave, dmWave], true)],
   () => {
     afterEach(async () => {
       for (const table of FROZEN_NATIVE_GET_TABLES)
@@ -688,8 +691,8 @@ describeWithSeed(
           updated_at: 3000
         }
       ]);
-      await transferCompetitionRetirementHistory(sqlExecutor, id);
-      await transferRetainedCompetitionDistributions(sqlExecutor, id);
+      await seedRetainedScoreFixture(sqlExecutor, id);
+      await seedRetainedDistributionFixture(sqlExecutor, id);
       await installFrozenNativeGetProjections(sqlExecutor);
     });
 
@@ -702,7 +705,7 @@ describeWithSeed(
           serial_no: 4
         }
       );
-      const source = withWaves([zeroLockWave]);
+      const source = withWaves([zeroLockWave], true);
       await insert(source.table, source.rows);
       const zeroLock = await seedNativeOriginalPrimaryFixture(zeroLockWave);
       const nativeSnapshot = drop('native-snapshot');
@@ -860,12 +863,7 @@ describeWithSeed(
           { nativeSnapshot }
         )
       ).toEqual([]);
-      await transferRetainedCompetitionLeaderboardPublication(
-        sqlExecutor,
-        undefined,
-        {},
-        { batchSize: 1 }
-      );
+      await seedRetainedPublicationFixture(sqlExecutor, undefined);
       expect(
         await projection(legacyGetView(tables.WAVE_LEADERBOARD_ENTRIES_TABLE))
       ).toEqual(expected);
@@ -890,12 +888,7 @@ describeWithSeed(
         [drop('withdrawn')]: null,
         [drop('unvoted')]: null
       });
-      await transferRetainedCompetitionLeaderboardPublication(
-        sqlExecutor,
-        undefined,
-        {},
-        { batchSize: 1 }
-      );
+      await seedRetainedPublicationFixture(sqlExecutor, undefined);
       expect(
         await projection(legacyGetView(tables.WAVE_LEADERBOARD_ENTRIES_TABLE))
       ).toEqual(expected);
@@ -975,28 +968,7 @@ describeWithSeed(
       const membersBefore = await sqlExecutor.execute(
         `SELECT id FROM ${tables.COMPETITION_ENTRIES_TABLE} ORDER BY id`
       );
-      const batches: number[] = [];
-      await transferRetainedCompetitionLeaderboardPublication(
-        sqlExecutor,
-        id,
-        {},
-        {
-          batchSize: 1,
-          onBatch: async (report) => {
-            batches.push(report.rows);
-            await sqlExecutor.executeNativeQueriesInTransaction(
-              async (connection) => {
-                await sqlExecutor.execute(
-                  `SELECT id FROM ${tables.COMPETITIONS_TABLE} WHERE id=:id FOR UPDATE NOWAIT`,
-                  { id },
-                  { wrappedConnection: connection }
-                );
-              }
-            );
-          }
-        }
-      );
-      expect(batches).toEqual([1, 1]);
+      await seedRetainedPublicationFixture(sqlExecutor, id);
       for (const table of FROZEN_NATIVE_GET_TABLES)
         expect({
           table,
@@ -1030,12 +1002,7 @@ describeWithSeed(
           rank: null
         }))
       );
-      await transferRetainedCompetitionLeaderboardPublication(
-        sqlExecutor,
-        id,
-        {},
-        { batchSize: 1 }
-      );
+      await seedRetainedPublicationFixture(sqlExecutor, id);
       expect(await voting.getWeightedDropRates(orphans, {})).toEqual(
         originalRates!
       );
@@ -1329,5 +1296,6 @@ describeWithSeed(
         )
       ).toEqual([{ name: 'Native original title', type: 'RANK' }]);
     });
-  }
+  },
+  historicalCompetitionFixture
 );

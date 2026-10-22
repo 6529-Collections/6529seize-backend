@@ -8,6 +8,7 @@ import { Time } from '../../time';
 import { randomUUID } from 'node:crypto';
 import { Seed } from '../_setup/seed';
 import { WAVES_TABLE } from '@/constants';
+import { RETIRED_WAVE_COMPETITION_COLUMNS } from '@/competitions/legacy-competition-get-facade';
 import { serializeWaveHubConfiguration } from '@/waves/wave-hub-configuration';
 
 type BaseWave = Omit<WaveEntity, 'serial_no' | 'id' | 'name'>;
@@ -102,9 +103,17 @@ export function aWave(
   };
 }
 
-export function withWaves(entities: WaveEntity[]): Seed {
+export function withWaves(entities: WaveEntity[], historical = false): Seed {
   return {
     table: WAVES_TABLE,
-    rows: entities
+    rows: historical
+      ? entities
+      : entities.map((wave) =>
+          Object.fromEntries(
+            Object.entries(wave).filter(
+              ([column]) => !RETIRED_WAVE_COMPETITION_COLUMNS.includes(column)
+            )
+          )
+        )
   };
 }

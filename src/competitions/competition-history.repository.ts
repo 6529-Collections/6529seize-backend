@@ -42,7 +42,7 @@ export class CompetitionHistoryRepository extends LazyDbAccessCompatibleService 
         options
       );
       const history = await this.db.oneOrNull<{ id: string }>(
-        `SELECT id FROM ${COMPETITIONS_TABLE} WHERE wave_id = :waveId AND storage_mode = 'NATIVE' LIMIT 1 FOR SHARE`,
+        `SELECT id FROM ${COMPETITIONS_TABLE} WHERE wave_id = :waveId LIMIT 1 FOR SHARE`,
         { waveId },
         options
       );

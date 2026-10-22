@@ -1186,8 +1186,8 @@ invalidates the scoped My Votes query after each confirmed vote. The existing
 competition/voter index restricts reads to that actor's allocations; an additional
 sort index is deferred until query-plan evidence justifies a schema rollout.
 Creating a hub always creates a
-CHAT wave; competition creation is a separate native command. Historical physical
-RANK/APPROVE wave types remain schema-compatible and do not block hub updates.
+CHAT wave; competition creation is a separate native command. Historical RANK/APPROVE wire types are projected from native original-primary
+configuration; shared wave storage no longer owns a competition type.
 
 Shared CHAT participation and voting settings are live typed policies in
 `waves.hub_participation_config` and `waves.hub_voting_config`. They preserve
@@ -1197,13 +1197,8 @@ metadata. Strategy metadata preserves current GETs and explicit clearing; it doe
 not enroll a competition or enable CHAT decision execution. Current hub creation,
 editing and reading own these policies; `waves_archive` holds their snapshots.
 Original competition configuration continues to own original competition GETs.
-Explicit bounded preparation verifies retained policy parity. Temporary capture
-keeps prepared-version writes atomic during rollout. Four ordered strategy
-overlays extend the original ten capture bodies without replacing them;
-finalization validates body and dependency order before disabling the fourteen
-recognized captures. Already-retired policies missing the additive nullable
-strategy member mean null and never reimport obsolete physical values. This
-finalization occurs after the native API is healthy and old invocations drain.
+One-time policy preparation and all fourteen temporary capture triggers are
+retired. Current nullable strategy members never reimport obsolete physical values.
 
 Permanent unversioned/v2 wave/drop GETs use explicit native-backed compatibility
 views. Their ownership is the immutable `legacy_wave_id=wave_id` original primary,
@@ -1273,22 +1268,24 @@ Original Settings applies the native rule policy under the owner lock before
 saving. Credit rules freeze after any native voter history; permitted title and
 presentation edits remain available through both command routes.
 
-The original native creation/write/read/execution/shadow rollout flags and
-migration/reverse/reconciliation commands are retired. The migration Lambda has
-an inert transition artifact and zero reserved concurrency. Its physical
-Lambda, IAM, alarms and retained schema belong to a later explicit retirement.
-The isolated monitor's `retained-producers.json` keeps its existing log subscription,
-relay permissions, producer allowlists and alarms independently of the ordinary
-deploy catalog; the generated infrastructure remains unchanged.
-`dbMigrationsLoop` retains all old entities/columns to prevent TypeORM from
-silently deleting schema during this application-only release. Ordinary sync
-never runs a data transfer or physical retirement. Explicit preparation/final
-scopes transfer and verify history and disable the obsolete capture triggers.
-The complete native view set is the cutover boundary: repeated retirement never
-reimports retained physical data after native-only writes begin, and preparation
-is rejected after cutover. Ordinary full sync cannot make the initial view switch.
-The staged compatible writer/reader rollout, service order, parity checks and
-rollback boundaries are in the [runtime retirement runbook](./competition-runtime-retirement.md).
+The original creation/write/read/execution/shadow flags, storage selector and
+migration/reverse/reconciliation commands are removed. The inert
+`competitionMigrationLoop` and its dedicated continuation policy, version,
+invocation configuration, alarms and monitoring registrations are retired. Its
+private recovery artifacts remain independently retained; the native decision
+and leaderboard units remain deployed. `retained-producers.json` is empty.
+
+`dbMigrationsLoop` has no old competition entities or transition scopes. Manual
+`maintenance` installs the permanent native views without synchronizing entities;
+scheduled maintenance performs no DDL. Explicit `full` first rejects remaining
+retired columns, then synchronizes current entities and maintains native views.
+Intentional physical deletion is an operator boundary with encrypted snapshot,
+independent restore verification, exact schema/data manifest, old-invocation
+drain, short metadata-lock waits and online-only DDL. It never occurs implicitly
+through TypeORM. Repeated full maintenance must leave old objects absent.
+The [cleanup procedure](competition-storage-cleanup.md) specifies the compatible
+service order, recovery evidence and exact four deleted-wave orphan targets.
+Native history, receipts, claims and shared archival/user history remain intact.
 
 Default navigation evaluates only published native configuration with deterministic
 active/upcoming/completed ordering, inclusive end boundaries and server refresh
@@ -1297,7 +1294,8 @@ ordering/bounds and capability-specific presentation on competition-scoped APIs.
 The immutable Phase 0 GET fixtures and route/OpenAPI census remain enforced.
 Disposable MySQL acceptance physically removes old tables/wave columns and checks
 compatibility projections, native votes/history/activity and repeatable decisions.
-No staging table/column deletion, orphan cleanup or media/CDN cleanup occurs.
+Staging and production physical cleanup follow the separate reviewed manifest.
+Media/CDN objects are outside this cleanup.
 
 Important API responsibilities:
 
@@ -1379,14 +1377,10 @@ Wave rows can be top-level waves or subwaves through the nullable `parent_wave_i
 
 Wave overview `has_competition` is true for Rank or Approve wave types, or when the wave has any competition record, including drafts and completed competitions. Competition existence is fetched in one batch for the overview page and its visible parent waves.
 
-Ordinary chat drop creates and edits do not acquire the legacy competition
-ownership lock. Edits still lock any existing competition entry memberships,
-and use the stored drop type to decide whether the legacy owner lock is needed.
-Chat persistence does not initialize legacy leaderboard/vote-history rows, and
-chat edit row replacement does not clear legacy voting state; these writes
-otherwise acquire the same ownership lock through migration triggers. Competition
-submissions and permanent drop deletions retain the ownership fence so writes
-cannot race a legacy-to-native competition transfer.
+Ordinary chat drop creates and edits do not initialize obsolete competition
+storage. Edits lock existing native entry memberships; imported submissions and
+permanent deletion retain the native ownership fence. No migration trigger or
+legacy-to-native transfer participates in current writes.
 
 Wave writes enforce that every active Drop, Vote, Chat, and Admin membership is
 contained by the Wave View membership. The generated

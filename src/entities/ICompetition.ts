@@ -9,20 +9,13 @@ import {
   COMPETITION_LIFECYCLE_EVENTS_TABLE,
   COMPETITION_OUTCOMES_TABLE,
   COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-  COMPETITION_PARITY_OBSERVATIONS_TABLE,
   COMPETITION_PAUSES_TABLE,
   COMPETITION_VOTES_TABLE,
   COMPETITIONS_TABLE
 } from '@/constants';
 
-export enum CompetitionStorageMode {
-  LEGACY_ADAPTER = 'LEGACY_ADAPTER',
-  NATIVE = 'NATIVE'
-}
-
 export enum CompetitionExecutionMode {
   DISABLED = 'DISABLED',
-  SHADOW = 'SHADOW',
   ACTIVE = 'ACTIVE'
 }
 
@@ -59,27 +52,6 @@ export enum CompetitionDecisionStatus {
   CANCELLED = 'CANCELLED'
 }
 
-export enum CompetitionParityCategory {
-  CONFIG_FIELD = 'CONFIG_FIELD',
-  ENTRY_MEMBERSHIP = 'ENTRY_MEMBERSHIP',
-  ENTRY_STATUS = 'ENTRY_STATUS',
-  PRIMARY_COMPETITION_SELECTION = 'PRIMARY_COMPETITION_SELECTION',
-  CREDIT_AVAILABLE = 'CREDIT_AVAILABLE',
-  CREDIT_SPEND = 'CREDIT_SPEND',
-  VOTE_TOTAL = 'VOTE_TOTAL',
-  LEADERBOARD_ORDER = 'LEADERBOARD_ORDER',
-  LEADERBOARD_FIELD = 'LEADERBOARD_FIELD',
-  DECISION_DUE_SET = 'DECISION_DUE_SET',
-  WINNER_SET_OR_ORDER = 'WINNER_SET_OR_ORDER',
-  OUTCOME_OR_DISTRIBUTION = 'OUTCOME_OR_DISTRIBUTION',
-  PAUSE_HANDLING = 'PAUSE_HANDLING',
-  CLAIM_OR_MINT_ELIGIBILITY = 'CLAIM_OR_MINT_ELIGIBILITY',
-  AUTH_OR_VISIBILITY = 'AUTH_OR_VISIBILITY',
-  STATUS_OR_ERROR = 'STATUS_OR_ERROR',
-  SCHEMA_OR_NULLABILITY = 'SCHEMA_OR_NULLABILITY',
-  PAGINATION_OR_FILTER = 'PAGINATION_OR_FILTER'
-}
-
 @Entity(COMPETITIONS_TABLE)
 @Index('idx_competitions_wave_lifecycle', ['wave_id', 'lifecycle'])
 @Index('idx_competitions_wave_created_id', ['wave_id', 'created_at', 'id'])
@@ -95,9 +67,6 @@ export class CompetitionEntity {
 
   @Column({ type: 'varchar', length: 100, nullable: true, unique: true })
   readonly legacy_wave_id!: string | null;
-
-  @Column({ type: 'varchar', length: 32, nullable: false })
-  readonly storage_mode!: CompetitionStorageMode;
 
   @Column({
     type: 'varchar',
@@ -546,51 +515,4 @@ export class CompetitionPauseEntity {
 
   @Column({ type: 'text', nullable: true, default: null })
   readonly reason!: string | null;
-}
-
-@Entity(COMPETITION_PARITY_OBSERVATIONS_TABLE)
-@Index('idx_competition_parity_competition_time', [
-  'competition_id',
-  'observed_at'
-])
-@Index('idx_competition_parity_category_time', ['category', 'observed_at'])
-export class CompetitionParityObservationEntity {
-  @PrimaryColumn({ type: 'varchar', length: 36 })
-  readonly id!: string;
-
-  @Column({ type: 'varchar', length: 100, nullable: false })
-  readonly wave_id!: string;
-
-  @Column({ type: 'varchar', length: 36, nullable: false })
-  readonly competition_id!: string;
-
-  @Column({ type: 'varchar', length: 48, nullable: false })
-  readonly category!: CompetitionParityCategory;
-
-  @Column({ type: 'boolean', nullable: false })
-  readonly matched!: boolean;
-
-  @Column({ type: 'varchar', length: 64, nullable: false })
-  readonly baseline_hash!: string;
-
-  @Column({ type: 'varchar', length: 64, nullable: false })
-  readonly candidate_hash!: string;
-
-  @Column({ type: 'varchar', length: 32, nullable: false })
-  readonly baseline_storage_mode!: CompetitionStorageMode;
-
-  @Column({ type: 'varchar', length: 32, nullable: false })
-  readonly candidate_storage_mode!: CompetitionStorageMode;
-
-  @Column({ type: 'int', nullable: false })
-  readonly baseline_config_version!: number;
-
-  @Column({ type: 'int', nullable: false })
-  readonly candidate_config_version!: number;
-
-  @Column({ type: 'varchar', length: 64, nullable: false })
-  readonly source_version!: string;
-
-  @Column({ type: 'bigint', nullable: false })
-  readonly observed_at!: number;
 }

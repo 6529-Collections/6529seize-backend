@@ -3,17 +3,14 @@ import {
   WAVE_CURATIONS_TABLE,
   WAVES_TABLE
 } from '@/constants';
-import * as Entities from '@/entities/entities';
 import { WaveType } from '@/entities/IWave';
-import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 import { sqlExecutor } from '@/sql-executor';
 import { resetTestDatabase } from '@/tests/_setup/testDatabase';
 import {
   nativeOriginalPrimaryFixture,
   seedNativeOriginalPrimaryFixture
 } from '@/tests/fixtures/native-competition.fixture';
-import { aWave } from '@/tests/fixtures/wave.fixture';
-import { DataSource } from 'typeorm';
+import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { UserGroupsDb } from './user-groups.db';
 
 const repo = new UserGroupsDb(() => sqlExecutor);
@@ -48,11 +45,7 @@ async function seedCurrentCatalog() {
     { id: 'native-dm', serial_no: 3, name: 'Native DM' }
   );
   for (const wave of [chat, original, dm]) {
-    const row = {
-      ...wave,
-      participation_group_id: 'stale-physical-participants',
-      voting_group_id: 'stale-physical-voters'
-    };
+    const row = withWaves([wave]).rows[0];
     await sqlExecutor.bulkInsert(WAVES_TABLE, [row], Object.keys(row));
   }
   await seedNativeOriginalPrimaryFixture(original);
@@ -115,30 +108,6 @@ function expectedCatalog() {
   ].sort((left, right) => left.localeCompare(right));
 }
 
-async function restoreDisposableSchema() {
-  const schema = new DataSource({
-    type: 'mysql',
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT),
-    username: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    database: process.env.DB_NAME,
-    charset: 'utf8mb4',
-    timezone: 'Etc/UTC',
-    entities: Object.values(Entities).filter(
-      (entity) => typeof entity === 'function'
-    ),
-    synchronize: false
-  });
-  await schema.initialize();
-  try {
-    await schema.synchronize();
-  } finally {
-    await schema.destroy();
-  }
-  await installLegacyCompetitionGetFacade(sqlExecutor);
-}
-
 describe('native wave eligibility group catalogue', () => {
   beforeEach(resetTestDatabase);
 
@@ -162,17 +131,19 @@ describe('native wave eligibility group catalogue', () => {
       `select count(*) as count from information_schema.triggers where trigger_schema=database() and action_statement like '%hub_participation_config%'`
     );
     expect(Number(activeCapture?.count)).toBe(0);
-    try {
+    expect(
       await sqlExecutor.execute(
-        `alter table ${WAVES_TABLE} drop column participation_group_id,drop column voting_group_id`
-      );
-      expect(
-        (await repo.getAllWaveRelatedGroups({})).sort((left, right) =>
-          left.localeCompare(right)
-        )
-      ).toEqual(expectedCatalog());
-    } finally {
-      await restoreDisposableSchema();
-    }
+        'select COLUMN_NAME from information_schema.COLUMNS where TABLE_SCHEMA=database() and TABLE_NAME=:table and COLUMN_NAME in (:columns)',
+        {
+          table: WAVES_TABLE,
+          columns: ['participation_group_id', 'voting_group_id']
+        }
+      )
+    ).toEqual([]);
+    expect(
+      (await repo.getAllWaveRelatedGroups({})).sort((left, right) =>
+        left.localeCompare(right)
+      )
+    ).toEqual(expectedCatalog());
   });
 });

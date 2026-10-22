@@ -67,7 +67,6 @@ describeWithSeed(
         {
           id: competitionId,
           wave_id: wave.id,
-          storage_mode: 'NATIVE',
           execution_mode: 'ACTIVE',
           type: 'RANK',
           lifecycle: 'PUBLISHED',

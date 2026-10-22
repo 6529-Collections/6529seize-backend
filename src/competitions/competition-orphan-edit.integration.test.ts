@@ -61,8 +61,8 @@ describeWithSeed(
       process.env.FEATURE_NATIVE_COMPETITION_EXECUTION = 'true';
       await sqlExecutor.execute(
         `insert into ${COMPETITIONS_TABLE}
-      (id,wave_id,legacy_wave_id,storage_mode,execution_mode,type,lifecycle,title,participation_config,voting_config,decision_config,winner_config,outcome_config,config_version,published_at,created_at,updated_at)
-      values (:id,:waveId,:waveId,'NATIVE','ACTIVE','RANK','PUBLISHED','Original',
+      (id,wave_id,legacy_wave_id,execution_mode,type,lifecycle,title,participation_config,voting_config,decision_config,winner_config,outcome_config,config_version,published_at,created_at,updated_at)
+      values (:id,:waveId,:waveId,'ACTIVE','RANK','PUBLISHED','Original',
       :participation,:voting,:decisions,'{}','[]',1,1,1,1)`,
         {
           id: competitionId,

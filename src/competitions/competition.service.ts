@@ -1,8 +1,7 @@
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import {
   CompetitionEntryStatus,
-  CompetitionLifecycle,
-  CompetitionStorageMode
+  CompetitionLifecycle
 } from '@/entities/ICompetition';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
@@ -64,10 +63,7 @@ export type CompetitionPermissions = {
 
 export type PublicCompetition = Omit<
   Competition,
-  | 'storage_mode'
-  | 'execution_mode'
-  | 'decision_pauses'
-  | 'configuration_activated_at'
+  'execution_mode' | 'decision_pauses' | 'configuration_activated_at'
 > & {
   readonly permissions: CompetitionPermissions;
 };
@@ -174,7 +170,6 @@ export class CompetitionService {
     );
     const now = Time.currentMillis();
     const inputs = records.flatMap((record) => {
-      if (record.storage_mode !== CompetitionStorageMode.NATIVE) return [];
       const input = normalizeDefaultCompetition(record, now);
       return input ? [input] : [];
     });
@@ -205,11 +200,7 @@ export class CompetitionService {
     const mayReadDrafts = this.canAdminister(wave, eligibleGroups, ctx);
     const competitions = await Promise.all(
       records
-        .filter(
-          (record) =>
-            record.storage_mode === CompetitionStorageMode.NATIVE &&
-            (mayReadDrafts || record.published_at !== null)
-        )
+        .filter((record) => mayReadDrafts || record.published_at !== null)
         .map(async (record) => {
           const reader = this.createReader(record, ctx);
           return await reader.getCompetition(record, Time.currentMillis());
@@ -549,7 +540,6 @@ export class CompetitionService {
     );
     if (
       record?.wave_id !== waveId ||
-      record.storage_mode !== CompetitionStorageMode.NATIVE ||
       (record.published_at === null &&
         !this.canAdminister(wave, eligibleGroups, ctx))
     ) {
@@ -595,10 +585,6 @@ export class CompetitionService {
   ): Promise<string[]> {
     const groupIds = new Set(
       competitions
-        .filter(
-          (competition) =>
-            competition.storage_mode === CompetitionStorageMode.NATIVE
-        )
         .flatMap((competition) => [
           competition.participation.group_id,
           competition.voting.group_id
@@ -625,7 +611,6 @@ export class CompetitionService {
     originalPrimary: boolean
   ): Promise<PublicCompetition> {
     const {
-      storage_mode: _storage,
       execution_mode: _execution,
       decision_pauses: _decisionPauses,
       configuration_activated_at: _configurationActivatedAt,

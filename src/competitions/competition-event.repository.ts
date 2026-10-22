@@ -58,7 +58,7 @@ export class CompetitionEventRepository extends LazyDbAccessCompatibleService {
       'getContext',
       `select c.title, c.lifecycle, c.published_at, w.visibility_group_id
       from ${COMPETITIONS_TABLE} c join ${WAVES_TABLE} w on w.id = c.wave_id
-      where c.id = :competitionId and c.wave_id = :waveId and c.storage_mode = 'NATIVE'`,
+      where c.id = :competitionId and c.wave_id = :waveId`,
       { competitionId: event.competition_id, waveId: event.wave_id },
       ctx
     );
@@ -166,7 +166,7 @@ export class CompetitionEventRepository extends LazyDbAccessCompatibleService {
       `select e.id as entry_id, e.drop_id, e.submitter_id, w.\`rank\`, w.final_rating
       from ${COMPETITION_ENTRIES_TABLE} e
       join ${COMPETITION_DECISION_WINNERS_TABLE} w on w.entry_id = e.id and w.decision_id = e.decision_id and w.competition_id = e.competition_id
-      join ${COMPETITIONS_TABLE} c on c.id = e.competition_id and c.storage_mode = 'NATIVE'
+      join ${COMPETITIONS_TABLE} c on c.id = e.competition_id
       join ${WAVES_TABLE} hub on hub.id = c.wave_id and ${publicCompetitionWaveSql('hub')}
       join ${COMPETITION_CAPABILITIES_TABLE} cap on cap.competition_id = c.id and cap.wave_id = c.wave_id and cap.capability = 'MAIN_STAGE'
       where e.competition_id = :competitionId and e.decision_id = :decisionId and e.status = 'WINNER'
