@@ -193,6 +193,7 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
+        "dbMigrationsLoop",
         "xTdhLoop"
       ]
     },
@@ -876,6 +877,7 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
+        "dbMigrationsLoop",
         "xTdhLoop"
       ]
     },
@@ -954,7 +956,9 @@
       "default_dependencies": [
         "dbMigrationsLoop",
         "api",
-        "pushNotificationsHandler"
+        "pushNotificationsHandler",
+        "tdhLoop",
+        "delegationsLoop"
       ]
     },
     {

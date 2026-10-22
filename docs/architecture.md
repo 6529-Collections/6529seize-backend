@@ -2316,6 +2316,12 @@ removed. Five-minute backlog warnings, EMF pending/dead-letter counts and Lambda
 expose delayed delivery.
 No network publish or per-voter application loop runs in the transition path.
 
+The profile consolidation paths in `tdhLoop` and `delegationsLoop` transfer
+pending allocations to the retained profile before migrating existing notices.
+They lock only affected release headers; already delivered recipient rows stay
+deleted when the pending cursor restarts. Both current primary reads and the
+consolidation transaction's own writes are included in candidate discovery.
+
 `VOTING_CREDITS_RETURNED` uses snapshot context, nullable actor/drop references,
 existing vote preferences and live wave visibility. This deliberately survives
 ordinary drop notification cancellation. Native-competition-capable push devices
