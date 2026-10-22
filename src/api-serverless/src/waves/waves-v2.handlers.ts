@@ -1,3 +1,8 @@
+import {
+  decodeDropSearchCursor,
+  MAX_GLOBAL_SEARCH_PAGE
+} from '@/drops/drop-search-cursor';
+import { ApiDropSearchPage } from '@/api/generated/models/ApiDropSearchPage';
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { ApiDropSearchStrategy } from '@/api/generated/models/ApiDropSearchStrategy';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
@@ -573,22 +578,38 @@ export async function handleSearchDropsInWaveV2(
 
 export async function handleSearchDropsV2(
   req: SearchDropsV2Request
-): Promise<ApiDropV2PageWithoutCount> {
+): Promise<ApiDropSearchPage> {
   const criteria = getValidatedByJoiOrThrow(
     req.query,
     Joi.object({
       term: Joi.string().trim().min(3).max(200).optional(),
+      cursor: Joi.string()
+        .pattern(/^[A-Za-z0-9_-]+$/)
+        .max(300)
+        .optional(),
       author_id: Joi.string().trim().min(1).max(100).optional(),
       size: Joi.number().integer().min(1).max(100).default(20),
-      page: Joi.number().integer().min(1).default(1)
-    }).or('term', 'author_id')
+      page: Joi.number().integer().min(1).max(MAX_GLOBAL_SEARCH_PAGE).default(1)
+    })
+      .or('term', 'author_id')
+      .custom((value, helpers) =>
+        value.page > 1 && !value.cursor ? helpers.error('any.invalid') : value
+      )
   );
   const timer = Timer.getFromRequest(req);
   const authenticationContext = await getAuthenticationContext(req, timer);
-  return apiWaveV2Service.searchDrops(criteria, {
-    authenticationContext,
-    timer
-  });
+  return apiWaveV2Service.searchDrops(
+    {
+      ...criteria,
+      cursor: criteria.cursor
+        ? decodeDropSearchCursor(criteria.cursor)
+        : undefined
+    },
+    {
+      authenticationContext,
+      timer
+    }
+  );
 }
 
 export async function handleSearchWaveAuthorsV2(

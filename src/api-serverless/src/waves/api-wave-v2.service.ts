@@ -1,3 +1,9 @@
+import {
+  DropSearchCursor,
+  encodeDropSearchCursor,
+  MAX_GLOBAL_SEARCH_PAGE
+} from '@/drops/drop-search-cursor';
+import { ApiDropSearchPage } from '@/api/generated/models/ApiDropSearchPage';
 import { collections } from '@/collections';
 import { assertUnreachable } from '@/assertions';
 import { DropEntity, DropType } from '@/entities/IDrop';
@@ -445,9 +451,15 @@ export class ApiWaveV2Service {
   }
 
   public async searchDrops(
-    request: { term?: string; author_id?: string; page: number; size: number },
+    request: {
+      term?: string;
+      author_id?: string;
+      cursor?: DropSearchCursor;
+      page: number;
+      size: number;
+    },
     ctx: RequestContext
-  ): Promise<ApiDropV2PageWithoutCount> {
+  ): Promise<ApiDropSearchPage> {
     const groupIdsUserIsEligibleFor =
       await getGroupsUserIsEligibleForReadContext(this.userGroupsService, ctx);
     const entities = await this.dropsDb.searchDropsInWave(
@@ -456,7 +468,8 @@ export class ApiWaveV2Service {
         author_id: request.author_id,
         group_ids_user_is_eligible_for: groupIdsUserIsEligibleFor,
         limit: request.size + 1,
-        offset: request.size * (request.page - 1)
+        offset: 0,
+        cursor: request.cursor
       },
       ctx
     );
@@ -483,12 +496,16 @@ export class ApiWaveV2Service {
           })
         )
     ]);
+    const next =
+      entities.length > request.size && request.page < MAX_GLOBAL_SEARCH_PAGE;
+    const last = pageEntities[pageEntities.length - 1];
     return {
+      ...(next ? { cursor: encodeDropSearchCursor(last) } : {}),
       data: pageEntities.flatMap((drop) => {
         const wave = waves[drop.wave_id];
         return wave ? [{ ...drops[drop.id], wave }] : [];
       }),
-      next: entities.length > request.size,
+      next,
       page: request.page
     };
   }

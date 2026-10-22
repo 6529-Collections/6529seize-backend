@@ -1,3 +1,4 @@
+import { encodeDropSearchCursor } from '@/drops/drop-search-cursor';
 const mockFindWaves = jest.fn();
 const mockFindOfficialWaves = jest.fn();
 const mockFindDropsFeed = jest.fn();
@@ -819,10 +820,22 @@ describe('waves v2 handlers', () => {
     it('accepts text and author criteria and normalizes pagination', async () => {
       mockSearchDrops.mockResolvedValue({ data: [], page: 2, next: false });
       await handleSearchDropsV2({
-        query: { term: ' hello ', author_id: 'alice', page: '2', size: '50' }
+        query: {
+          term: ' hello ',
+          author_id: 'alice',
+          page: '2',
+          size: '50',
+          cursor: encodeDropSearchCursor({ created_at: 100, id: 'drop-1' })
+        }
       } as any);
       expect(mockSearchDrops).toHaveBeenCalledWith(
-        { term: 'hello', author_id: 'alice', page: 2, size: 50 },
+        {
+          term: 'hello',
+          author_id: 'alice',
+          page: 2,
+          size: 50,
+          cursor: { created_at: 100, id: 'drop-1' }
+        },
         expect.any(Object)
       );
     });
@@ -833,6 +846,9 @@ describe('waves v2 handlers', () => {
       { author_id: '' },
       { term: 'hello', size: 101 },
       { term: 'hello', page: 0 },
+      { term: 'hello', page: 101 },
+      { term: 'hello', page: 2 },
+      { term: 'hello', cursor: 'bad-cursor' },
       { term: 'hello', wave_id: 'hidden' }
     ])('rejects invalid cross-wave criteria %j', async (query) => {
       await expect(handleSearchDropsV2({ query } as any)).rejects.toThrow();

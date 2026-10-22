@@ -2299,7 +2299,14 @@ adds no persisted case table, queue, service or background reconciliation.
 
 `GET /v2/drops/search` reuses wave search text matching and accepts text, an
 author ID, or both. Live wave and parent-wave read eligibility is applied in
-SQL before stable newest-first pagination. Each result carries an eligible wave
+SQL before cursor pagination over `(created_at, id)`. Queries have a 3-second
+SQL execution budget and at most 100 pages. DMs require a non-null eligible
+visibility group; malformed public DMs and unsupported deeper nesting fail closed.
+Physically deleted drops are absent from the base drops table. Each result carries an eligible wave
 overview for navigation. Deploy the additive `api` endpoint before the frontend
 uses it; no schema changes or additional services are required. Existing scoped
 search remains compatible.
+
+Clients follow the opaque response cursor while `next` is true, including when
+a concurrent visibility change removes every result on a page. The cursor is
+derived from the last scanned row so this safely advances through that case.

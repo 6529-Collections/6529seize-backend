@@ -1,3 +1,4 @@
+import { encodeDropSearchCursor } from '@/drops/drop-search-cursor';
 import { AuthenticationContext } from '@/auth-context';
 import { DropEntity, DropType } from '@/entities/IDrop';
 import {
@@ -847,7 +848,8 @@ describe('ApiWaveV2Service', () => {
         author_id: 'author-1',
         group_ids_user_is_eligible_for: ['group-1'],
         limit: 3,
-        offset: 2
+        offset: 0,
+        cursor: undefined
       },
       ctx
     );
@@ -862,7 +864,8 @@ describe('ApiWaveV2Service', () => {
         { id: 'search-drop-2', wave: { id: 'wave-1' } }
       ],
       page: 2,
-      next: true
+      next: true,
+      cursor: encodeDropSearchCursor({ created_at: 100, id: 'search-drop-2' })
     });
   });
 
@@ -875,5 +878,8 @@ describe('ApiWaveV2Service', () => {
     );
     expect(result.data).toEqual([]);
     expect(result.next).toBe(true);
+    expect(result.cursor).toBe(
+      encodeDropSearchCursor({ created_at: 100, id: 'search-drop-2' })
+    );
   });
 });

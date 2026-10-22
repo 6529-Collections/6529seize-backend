@@ -9962,6 +9962,16 @@ paths:
             type: string
             minLength: 1
             maxLength: 100
+        - name: cursor
+          in: query
+          description: >-
+            Opaque continuation cursor from the previous response; required
+            after page one.
+          required: false
+          schema:
+            type: string
+            maxLength: 300
+            pattern: ^[A-Za-z0-9_-]+$
         - name: page
           in: query
           required: false
@@ -9969,6 +9979,7 @@ paths:
             type: number
             format: int64
             minimum: 1
+            maximum: 100
             default: 1
         - name: size
           in: query
@@ -9981,11 +9992,14 @@ paths:
             default: 20
       responses:
         "200":
-          description: successful operation
+          description: >-
+            Messages ordered newest first. Follow cursor while next is true,
+            even if data is empty after a concurrent visibility change. Searches
+            are limited to 100 pages and a 3-second SQL execution budget.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiDropV2PageWithoutCount"
+                $ref: "#/components/schemas/ApiDropSearchPage"
         "400":
           description: >-
             At least one of term or author_id is required; term must contain 3
@@ -29620,6 +29634,16 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/ApiProfileRepCategorySummary"
+    ApiDropSearchPage:
+      allOf:
+        - $ref: "#/components/schemas/ApiDropV2PageWithoutCount"
+        - type: object
+          properties:
+            cursor:
+              type: string
+              description: >-
+                Opaque continuation cursor. Present when next is true, including
+                for an empty filtered page.
     ApiDropSearchStrategy:
       type: string
       enum:

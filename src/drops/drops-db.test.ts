@@ -34,6 +34,7 @@ describe('DropsDb', () => {
     );
     expect(sql).toContain('access_parent.parent_wave_id is null');
     expect(sql).toContain('ORDER BY d.created_at DESC, d.id DESC');
+    expect(sql).toContain('MAX_EXECUTION_TIME(3000)');
     expect(params.searchGroups).toEqual(['readable']);
     expect(params).not.toHaveProperty('wave_id');
   });

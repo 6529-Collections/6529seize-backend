@@ -1,3 +1,7 @@
+import {
+  DropSearchCursor,
+  GLOBAL_SEARCH_QUERY_BUDGET_MS
+} from './drop-search-cursor';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
@@ -3284,6 +3288,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     param: {
       wave_id?: string;
       group_ids_user_is_eligible_for?: string[];
+      cursor?: DropSearchCursor;
       term?: string;
       author_id?: string;
       after?: number;
@@ -3309,9 +3314,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         filters.push(`EXISTS (
           SELECT 1 FROM ${legacyGetView(WAVES_TABLE)} search_wave
           WHERE search_wave.id = d.wave_id
+            AND (search_wave.is_direct_message = false OR search_wave.visibility_group_id IS NOT NULL)
             AND ${waveReadAccessSql('search_wave', groups.length > 0, 'searchGroups')}
         )`);
         if (groups.length) queryParams.searchGroups = groups;
+      }
+
+      if (param.cursor) {
+        filters.push(
+          '(d.created_at < :cursorCreatedAt OR (d.created_at = :cursorCreatedAt AND d.id < :cursorId))'
+        );
+        queryParams.cursorCreatedAt = param.cursor.created_at;
+        queryParams.cursorId = param.cursor.id;
       }
 
       if (normalizedTerm) {
@@ -3351,7 +3365,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
       return this.db.execute<DropEntity>(
         `
-        SELECT
+        SELECT ${param.wave_id ? '' : `/*+ MAX_EXECUTION_TIME(${GLOBAL_SEARCH_QUERY_BUDGET_MS}) */`}
             d.*
         FROM ${DROPS_TABLE} d
         WHERE ${filters.join('\n          AND ')}
