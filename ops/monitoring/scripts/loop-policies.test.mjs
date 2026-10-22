@@ -116,3 +116,33 @@ test('generated data matches both environments and separates scan budgets from k
     assert.deepEqual(score.optionalOperations, ['full_refresh']);
   }
 });
+
+test('NFT modes, NextGen reconciliation and event-driven preview idle state have separate policies', async () => {
+  const generated = JSON.parse(
+    await readFile(
+      new URL('../src/loop-policies.generated.json', import.meta.url),
+      'utf8'
+    )
+  );
+  for (const env of ['prod', 'staging']) {
+    const nfts = generated[env].find((p) => p.service === 'nftsLoop');
+    assert.deepEqual(nfts.operations, [
+      'discovery',
+      'refresh',
+      'audit',
+      'publication'
+    ]);
+    assert.equal(nfts.operationBudgets.audit.freshSeconds, 4620);
+    assert.equal(nfts.operationBudgets.refresh.freshSeconds, 1620);
+    assert.deepEqual(
+      generated[env].find((p) => p.service === 'nextgenContractLoop')
+        .operations,
+      ['indexing', 'recalculation']
+    );
+    assert.deepEqual(
+      generated[env].find((p) => p.service === 'nftLinkMediaPreviewLoop')
+        .idleOperations,
+      ['processing']
+    );
+  }
+});

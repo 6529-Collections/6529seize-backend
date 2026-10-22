@@ -9,6 +9,9 @@ export interface LoopHealthObservation {
     | 'publication'
     | 'dirty_refresh'
     | 'full_refresh'
+    | 'discovery'
+    | 'refresh'
+    | 'audit'
     | 'processing';
   pending: boolean;
   progressAt?: number;
