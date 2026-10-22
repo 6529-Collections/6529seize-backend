@@ -5,9 +5,13 @@ import {
   S3Client
 } from '@aws-sdk/client-s3';
 import Sharp from 'sharp';
+import { Readable } from 'node:stream';
 import { getS3 } from '@/s3.client';
 import {
   DROP_MEDIA_CACHE_CONTROL,
+  DROP_MEDIA_MAX_IMAGE_BYTES,
+  DROP_MEDIA_FORMAT_VALIDATED_METADATA_KEY,
+  DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY,
   DROP_MEDIA_SANITIZED_METADATA_KEY,
   DROP_MEDIA_SANITIZED_METADATA_VALUE,
   getDropMediaIngestS3
@@ -144,26 +148,10 @@ export class DropMediaSanitizerService {
     if (declaredMimeType.toLowerCase() === 'image/avif') {
       return await sanitizeAvif(input);
     }
-    const animated = declaredMimeType.toLowerCase() === 'image/gif';
-    const image = Sharp(input, {
-      animated,
-      failOn: 'none',
-      limitInputPixels: 1_000_000_000
-    }).rotate();
-    const metadata = await image.metadata();
-    const format = metadata.format;
-    if (!isAllowedSharpFormat(format)) {
-      throw new PermanentMediaSanitizationError(
-        `Unsupported image format ${format ?? 'unknown'}`
-      );
-    }
-    const contentType = ALLOWED_FORMAT_MIME_TYPES[format];
-    if (!declaredMimeTypeMatchesDetectedFormat(declaredMimeType, format)) {
-      throw new PermanentMediaSanitizationError(
-        `Declared MIME type ${declaredMimeType} does not match detected ${contentType}`
-      );
-    }
-
+    const { image, format, contentType } = await inspectImageFormat(
+      input,
+      declaredMimeType
+    );
     const output = formatSharpOutput(image, format);
     return {
       buffer: await output.toBuffer(),
@@ -174,7 +162,7 @@ export class DropMediaSanitizerService {
   private async sanitizeAndPublish(
     upload: DropMediaUploadEntity
   ): Promise<void> {
-    this.logger.info(`Sanitizing drop media upload ${upload.id}`);
+    this.logger.info(`Validating drop media upload ${upload.id}`);
     const rawObject = await this.ingestS3().send(
       new GetObjectCommand({
         Bucket: upload.ingest_bucket,
@@ -185,24 +173,42 @@ export class DropMediaSanitizerService {
       throw new Error(`Ingest object body missing for ${upload.id}`);
     }
 
-    const rawBuffer = Buffer.from(
-      await (rawObject.Body as any).transformToByteArray()
+    const rawBuffer = await readImageSource(
+      rawObject.Body,
+      rawObject.ContentLength
     );
-    const sanitized = await this.sanitizeBuffer({
-      input: rawBuffer,
-      declaredMimeType: upload.declared_mime_type
-    });
+    // Multipart object metadata is fixed by the API, not by uploaded part bytes.
+    // Missing policy belongs to an older in-flight upload: retain sanitization.
+    const stripMetadata =
+      rawObject.Metadata?.[DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY] !==
+        'false' || upload.declared_mime_type.toLowerCase() === 'image/avif';
+    const imageToPublish = stripMetadata
+      ? await this.sanitizeBuffer({
+          input: rawBuffer,
+          declaredMimeType: upload.declared_mime_type
+        })
+      : {
+          buffer: rawBuffer,
+          contentType: (
+            await inspectImageFormat(rawBuffer, upload.declared_mime_type)
+          ).contentType
+        };
 
     await this.publicS3().send(
       new PutObjectCommand({
         Bucket: this.getPublicBucket(),
         Key: upload.public_key,
-        Body: sanitized.buffer,
-        ContentType: sanitized.contentType,
+        Body: imageToPublish.buffer,
+        ContentType: imageToPublish.contentType,
         CacheControl: DROP_MEDIA_CACHE_CONTROL,
         Metadata: {
-          [DROP_MEDIA_SANITIZED_METADATA_KEY]:
-            DROP_MEDIA_SANITIZED_METADATA_VALUE
+          [DROP_MEDIA_FORMAT_VALIDATED_METADATA_KEY]: 'true',
+          ...(stripMetadata
+            ? {
+                [DROP_MEDIA_SANITIZED_METADATA_KEY]:
+                  DROP_MEDIA_SANITIZED_METADATA_VALUE
+              }
+            : {})
         }
       })
     );
@@ -266,11 +272,105 @@ export class DropMediaSanitizerService {
   }
 }
 
+/** Verify the container format, without re-encoding or stripping original bytes. */
+async function inspectImageFormat(input: Buffer, declaredMimeType: string) {
+  assertImageContainerSignature(input);
+  const image = Sharp(input, {
+    animated: declaredMimeType.toLowerCase() === 'image/gif',
+    failOn: 'none',
+    limitInputPixels: 1_000_000_000
+  }).rotate();
+  const metadata = await image.metadata().catch((error: unknown) => {
+    if (
+      error instanceof Error &&
+      /Input buffer (?:contains unsupported image format|has corrupt header)|Input image exceeds pixel limit/.test(
+        error.message
+      )
+    ) {
+      throw new PermanentMediaSanitizationError(
+        'The image format could not be verified. Upload a complete JPEG, PNG, WebP or GIF image.'
+      );
+    }
+    throw error;
+  });
+  if (metadata.format === 'heif' && metadata.compression === 'hevc') {
+    throw new PermanentMediaSanitizationError(
+      'HEIC/HEIF uploads are not supported. Export this image as JPEG or PNG; changing its filename does not convert it.'
+    );
+  }
+  const format = metadata.format;
+  if (!isAllowedSharpFormat(format)) {
+    throw new PermanentMediaSanitizationError(
+      `Unsupported image format ${format ?? 'unknown'}`
+    );
+  }
+  const contentType = ALLOWED_FORMAT_MIME_TYPES[format];
+  if (!declaredMimeTypeMatchesDetectedFormat(declaredMimeType, format)) {
+    throw new PermanentMediaSanitizationError(
+      `Declared MIME type ${declaredMimeType} does not match detected ${contentType}`
+    );
+  }
+  return { image, format, contentType };
+}
+
+/** Do not hand unsupported containers (for example SVG) to native parsers. */
+function assertImageContainerSignature(input: Buffer): void {
+  const isJpeg =
+    input.length >= 3 &&
+    input[0] === 0xff &&
+    input[1] === 0xd8 &&
+    input[2] === 0xff;
+  const isPng = input
+    .subarray(0, 8)
+    .equals(Buffer.from('89504e470d0a1a0a', 'hex'));
+  const isGif = ['GIF87a', 'GIF89a'].includes(input.toString('ascii', 0, 6));
+  const isWebp =
+    input.toString('ascii', 0, 4) === 'RIFF' &&
+    input.toString('ascii', 8, 12) === 'WEBP';
+  const isHeif =
+    input.length >= 16 &&
+    input.toString('ascii', 4, 8) === 'ftyp' &&
+    input.readUInt32BE(0) >= 16 &&
+    input.readUInt32BE(0) <= Math.min(4096, input.length);
+  if (!isJpeg && !isPng && !isGif && !isWebp && !isHeif) {
+    throw new PermanentMediaSanitizationError(
+      'Unsupported image format. Upload a complete JPEG, PNG, WebP, GIF or supported still AVIF image.'
+    );
+  }
+}
+
+/** Transport truncation stays operational; no public object is written on failure. */
+async function readImageSource(
+  body: { transformToByteArray(): Promise<Uint8Array> },
+  contentLength: number | undefined
+): Promise<Buffer> {
+  try {
+    if (
+      contentLength === undefined ||
+      !Number.isSafeInteger(contentLength) ||
+      contentLength < 0
+    ) {
+      throw new Error('Image ingest source length is unavailable');
+    }
+    if (contentLength > DROP_MEDIA_MAX_IMAGE_BYTES) {
+      throw new PermanentMediaSanitizationError(
+        'Image uploads must be 500 MB or smaller.'
+      );
+    }
+    const bytes = await body.transformToByteArray();
+    if (bytes.byteLength !== contentLength)
+      throw new Error('Image ingest source length mismatch');
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  } finally {
+    if (body instanceof Readable) body.destroy();
+  }
+}
+
 /** Decode a bounded still AVIF and publish an oriented, metadata-free WebP. */
 async function sanitizeAvif(
   input: Buffer
 ): Promise<{ buffer: Buffer; contentType: string }> {
-  if (input.length > 500 * 1024 * 1024) {
+  if (input.length > DROP_MEDIA_MAX_IMAGE_BYTES) {
     throw new PermanentMediaSanitizationError(
       'AVIF uploads must be 500 MB or smaller.'
     );
@@ -279,6 +379,9 @@ async function sanitizeAvif(
     throw new PermanentMediaSanitizationError(
       'Animated AVIF is not supported. Export a still AVIF image or use GIF.'
     );
+  }
+  if (input.length < 16 || input.toString('ascii', 4, 8) !== 'ftyp') {
+    throw new PermanentMediaSanitizationError('The file is not an AVIF image.');
   }
   try {
     const image = Sharp(input, {
