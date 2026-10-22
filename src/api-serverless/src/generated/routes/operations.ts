@@ -3677,6 +3677,7 @@ export interface ListCompetitionMyVotesV3PathParams {
 
 export interface ListCompetitionMyVotesV3Query {
   "cursor"?: string;
+  "include"?: "cards";
   "limit"?: number;
 }
 
