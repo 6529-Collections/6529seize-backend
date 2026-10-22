@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   assertRetirementChangeSet,
+  assertRetirementResourceIdentities,
   removeMigratorMonitoring,
   RETIRED_MIGRATOR,
   retainMigratorRecoveryArtifacts,
@@ -467,6 +468,47 @@ it('allows only the matching scoped monitoring role and never replaces an unexpe
 type PlannedChange = NonNullable<
   Parameters<typeof assertRetirementChangeSet>[1][number]['ResourceChange']
 >;
+
+it('requires unchanged physical dependency identities before and after retirement', () => {
+  const expected = {
+    NormalCollector: 'function',
+    NormalInvocation: 'statement'
+  };
+  expect(() =>
+    assertRetirementResourceIdentities(expected, { ...expected })
+  ).not.toThrow();
+  expect(() =>
+    assertRetirementResourceIdentities(expected, {
+      NormalInvocation: 'statement',
+      NormalCollector: 'function'
+    })
+  ).not.toThrow();
+  expect(() =>
+    assertRetirementResourceIdentities(expected, {
+      ...expected,
+      NormalInvocation: 'replacement'
+    })
+  ).toThrow('identity changed');
+  expect(() =>
+    assertRetirementResourceIdentities(expected, {
+      NormalCollector: 'function'
+    })
+  ).toThrow('identity changed');
+  expect(() =>
+    assertRetirementResourceIdentities(expected, {
+      ...expected,
+      Unexpected: 'other'
+    })
+  ).toThrow('identity changed');
+  expect(() =>
+    assertRetirementResourceIdentities(
+      { NormalInvocation: '' },
+      {
+        NormalInvocation: ''
+      }
+    )
+  ).toThrow('identity changed');
+});
 const arn = (id: string) => ({ 'Fn::GetAtt': [id, 'Arn'] });
 
 function collectorMonitoring(): Template {

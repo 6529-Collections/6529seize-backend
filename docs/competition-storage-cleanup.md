@@ -256,6 +256,10 @@ change through that chain. Missing ancestors, other properties, direct permissio
 edits, unknown or true replacements fail closed. See the AWS definitions of
 [dynamic evaluation](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ResourceChangeDetail.html)
 and [conditional replacement](https://docs.aws.amazon.com/AWSCloudFormation/latest/APIReference/API_ResourceChange.html).
+The proposal also binds the stack ID, update timestamp, parameter digest and
+physical dependency identities. The CLI rereads those identities immediately
+before execution and verifies them again after completion; an unexpected
+replacement produces a failed receipt requiring inspection.
 
 After deletion, recover forward with compatible native code. For data repair,
 restore the encrypted snapshot in isolation, compare exact affected rows/schema,

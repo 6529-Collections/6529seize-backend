@@ -381,6 +381,19 @@ export function retirementChangeDiagnostics(
   );
 }
 
+export function assertRetirementResourceIdentities(
+  expected: Record<string, string>,
+  actual: Record<string, string>
+) {
+  const changed = Array.from(
+    new Set([...Object.keys(expected), ...Object.keys(actual)])
+  ).filter((id) => !expected[id] || actual[id] !== expected[id]);
+  if (changed.length)
+    throw new Error(
+      `Reviewed monitoring resource identity changed: ${changed.join(', ')}`
+    );
+}
+
 function isUnchangedSubscriptionEvaluation(
   edit: TemplateEdit,
   change: ResourceChange
