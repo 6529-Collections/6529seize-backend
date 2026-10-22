@@ -14,6 +14,7 @@ function creditSource(competition: Pick<Competition, 'voting'>): {
   sql: string;
   params: Record<string, unknown>;
 } {
+  // SQL column expressions form a closed allowlist, independent of caller text.
   const fields: Partial<Record<WaveCreditType, string>> = {
     [WaveCreditType.TDH]: 'i.tdh',
     [WaveCreditType.XTDH]: 'i.xtdh',

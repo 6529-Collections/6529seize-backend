@@ -5,10 +5,10 @@ import {
 } from '@/waves/wave-voting-credit-nfts';
 
 export function competitionCreditNfts(
-  voting: Competition['voting']
+  voting: Pick<Competition['voting'], 'credit_nfts'>
 ): WaveVotingCreditNft[] {
   const nfts = voting.credit_nfts.map((nft) => ({
-    contract: String(nft.contract ?? ''),
+    contract: typeof nft.contract === 'string' ? nft.contract : '',
     tokenId: Number(nft.token_id ?? nft.tokenId)
   }));
   if (

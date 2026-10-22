@@ -1,3 +1,4 @@
+import { readSequentially } from '@/competitions/competition-read-sequence';
 import { ConnectionWrapper } from '@/sql-executor';
 import { Timer } from '@/time';
 import { RequestContext } from '@/request.context';
@@ -62,7 +63,7 @@ async function revokeNativeOvervotes(
       ctx
     );
     if (!ids.length) return;
-    for (const id of ids) {
+    await readSequentially(ids, async (id) => {
       const competition =
         await nativeCompetitionRuntimeRepository.lockCompetition(id, ctx);
       if (
@@ -71,10 +72,10 @@ async function revokeNativeOvervotes(
         competition.execution_mode !== 'ACTIVE' ||
         competition.lifecycle !== 'PUBLISHED'
       )
-        continue;
+        return;
       if (profileId) await reconcileNativeVoter(competition, profileId, ctx);
       else await reconcileTdhOvervoters(competition, ctx);
-    }
+    });
     afterId = ids[ids.length - 1];
   }
 }
@@ -104,10 +105,12 @@ async function reconcileTdhOvervoters(
     ctx
   );
   let changed = 0;
-  for (const voter of voters)
+  await readSequentially(voters, async (voter) => {
     if (await reduceNativeVoter(competition, voter, ctx)) changed++;
+  });
   if (!changed) return;
   const now = Date.now();
+  // Match normal refresh: publish due transitions before the leaderboard update.
   await nativeCompetitionRuntimeService.enqueueDueTransitions(
     competition,
     now,
