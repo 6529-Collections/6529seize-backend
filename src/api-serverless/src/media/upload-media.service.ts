@@ -22,6 +22,7 @@ import { CLOUDFRONT_LINK } from '@/constants';
 import { BadRequestException, ForbiddenException } from '@/exceptions';
 import {
   createDropMediaIngestKey,
+  DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY,
   getDropMediaIngestS3,
   getDropMediaIngestS3Bucket,
   getPublishedDropMediaMimeType,
@@ -141,6 +142,7 @@ export class UploadMediaService {
   }): Promise<string> {
     const upload = await this.findTrackedDropMediaUpload({ key, upload_id });
     this.assertDropMediaUploadOwner({ upload, key, authenticatedProfileId });
+    this.assertImageUploadIsTracked(key, upload);
     const bucket = upload?.ingest_bucket ?? this.getS3Bucket();
     const objectKey = upload?.ingest_key ?? key;
     const s3 = upload ? this.getIngestS3() : this.getS3();
@@ -171,6 +173,7 @@ export class UploadMediaService {
   }): Promise<ApiCompleteMultipartUploadResponse> {
     const upload = await this.findTrackedDropMediaUpload({ key, upload_id });
     this.assertDropMediaUploadOwner({ upload, key, authenticatedProfileId });
+    this.assertImageUploadIsTracked(key, upload);
     if (upload) {
       return await this.completeSanitizedImageMultipartUpload({
         upload,
@@ -306,7 +309,7 @@ export class UploadMediaService {
     author_id: string;
     source: MediaUploadSource;
   }): Promise<ApiStartMultipartMediaUploadResponse> {
-    if (!this.shouldSanitizeMultipartUpload(content_type)) {
+    if (!isImageMimeType(content_type)) {
       const uploadId = await this.createMultipartUploadId({
         key,
         content_type,
@@ -329,7 +332,12 @@ export class UploadMediaService {
       key: ingestKey,
       content_type,
       bucket: ingestBucket,
-      s3: this.getIngestS3()
+      s3: this.getIngestS3(),
+      metadata: {
+        [DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY]: String(
+          isDropMediaSanitizationEnabled()
+        )
+      }
     });
     const mediaUploadId = randomUUID();
     const now = Time.currentMillis();
@@ -506,18 +514,21 @@ export class UploadMediaService {
     content_type,
     bucket,
     s3,
-    cacheControl
+    cacheControl,
+    metadata
   }: {
     key: string;
     content_type: string;
     bucket: string;
     s3: S3Client;
     cacheControl?: string;
+    metadata?: Record<string, string>;
   }): Promise<string> {
     const createCmd = new CreateMultipartUploadCommand({
       Bucket: bucket,
       Key: key,
       ContentType: content_type,
+      ...(metadata ? { Metadata: metadata } : {}),
       ...(cacheControl ? { CacheControl: cacheControl } : {})
     });
 
@@ -529,14 +540,6 @@ export class UploadMediaService {
       );
     }
     return uploadId;
-  }
-
-  /** Always convert AVIF for older viewers, regardless of the sanitizer flag. */
-  private shouldSanitizeMultipartUpload(contentType: string): boolean {
-    return (
-      contentType === 'image/avif' ||
-      (isDropMediaSanitizationEnabled() && isImageMimeType(contentType))
-    );
   }
 
   private async findTrackedDropMediaUpload({
@@ -604,9 +607,26 @@ export class UploadMediaService {
   }
 
   private assertSinglePutImageUploadAllowed(contentType: string): void {
-    if (this.shouldSanitizeMultipartUpload(contentType)) {
+    if (isImageMimeType(contentType)) {
       throw new BadRequestException(
-        'Image uploads must use multipart upload while image sanitization is enabled'
+        'Image uploads must use multipart upload so the file format can be validated'
+      );
+    }
+  }
+
+  /** Old public image sessions cannot bypass the private publication gate. */
+  private assertImageUploadIsTracked(
+    key: string,
+    upload: DropMediaUploadEntity | null
+  ): void {
+    if (upload) return;
+    const isPublicImage =
+      key.startsWith('waves/') ||
+      (key.startsWith('drops/') &&
+        /\.(?:jpe?g|png|webp|gif|avif|heic|heif)$/i.test(key));
+    if (isPublicImage) {
+      throw new BadRequestException(
+        'Restart this image upload using a new multipart upload so the file format can be validated'
       );
     }
   }
