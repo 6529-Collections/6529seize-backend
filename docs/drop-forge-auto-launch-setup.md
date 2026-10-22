@@ -206,6 +206,9 @@ Follow the repository's authorized [deployment procedure](deployment.md). Deploy
 `dbMigrationsLoop` first, then `dropForgeLaunchHandler` (queue and schedule group),
 then `memesDistributionHandler` (its queue), then `api`, dependent frontend controls,
 and the reporting consumers/monitoring updates listed in the operations guide.
+Apply monitoring artifacts generated from the same reviewed revision. Both handlers
+must appear in the production/staging policy inventory without a recurring interval;
+keep their handler DLQ alarms enabled when applying the shared monitoring updates.
 Initially keep preparation and automation disabled. Both handlers have **no recurring
 schedule**. Process and Finalize and Launch/Update Claim enqueue work immediately;
 Launch establishes per-drop one-time phase/Research schedules. Short continuations

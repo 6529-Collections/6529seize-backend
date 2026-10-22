@@ -1423,7 +1423,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/dropForgeLaunchHandler",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "memesDistributionHandlerErrorLogs": {
@@ -1440,7 +1440,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/memesDistributionHandler",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "webSocketDeliveryLoopErrorLogs": {
@@ -5004,17 +5004,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "memesDistributionHandlerErrors": {
@@ -5070,17 +5060,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "webSocketDeliveryLoopErrors": {

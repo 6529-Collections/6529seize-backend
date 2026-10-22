@@ -132,6 +132,17 @@
       ]
     },
     {
+      "service": "dropForgeLaunchHandler",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 600,
+      "freshSeconds": 420,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
       "service": "dropMediaSanitizer",
       "reservedConcurrency": 2,
       "expectedOverlap": false,
@@ -280,6 +291,17 @@
       "delaySeconds": 600,
       "stallSeconds": 1200,
       "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "memesDistributionHandler",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 600,
+      "freshSeconds": 420,
       "operations": [
         "processing"
       ]
@@ -852,6 +874,17 @@
       ]
     },
     {
+      "service": "dropForgeLaunchHandler",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 600,
+      "freshSeconds": 420,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
       "service": "dropMediaSanitizer",
       "reservedConcurrency": 2,
       "expectedOverlap": false,
@@ -1000,6 +1033,17 @@
       "delaySeconds": 600,
       "stallSeconds": 1200,
       "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "memesDistributionHandler",
+      "reservedConcurrency": 2,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 600,
+      "freshSeconds": 420,
       "operations": [
         "processing"
       ]
