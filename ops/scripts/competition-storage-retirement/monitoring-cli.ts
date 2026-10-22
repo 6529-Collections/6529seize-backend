@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { parseCloudFormationTemplate } from '../../monitoring/src/cloudformation-template.js';
 import {
   assertRetirementChangeSet,
   removeMigratorMonitoring,
@@ -154,9 +155,7 @@ function readTemplate(command: AwsCommand, name: string): Template {
     '--template-stage',
     'Original'
   ]);
-  return typeof result.TemplateBody === 'string'
-    ? (JSON.parse(result.TemplateBody) as Template)
-    : result.TemplateBody;
+  return parseCloudFormationTemplate(result.TemplateBody);
 }
 function save(output: string, name: string, value: unknown) {
   writeFileSync(join(output, name), JSON.stringify(value, null, 2) + '\n', {
