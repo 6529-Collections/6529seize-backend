@@ -14,9 +14,15 @@ export interface LoopPolicy {
   freshSeconds: number;
   operations: string[];
   optionalOperations?: string[];
+  /** Event-driven workers can be idle indefinitely, but an old empty survey
+   * cannot suppress new contention. Pending work never gets an idle exemption. */
+  idleOperations?: string[];
   operationBudgets?: Record<
     string,
-    Partial<Pick<LoopPolicy, 'delaySeconds' | 'stallSeconds' | 'freshSeconds'>>
+    | Partial<
+        Pick<LoopPolicy, 'delaySeconds' | 'stallSeconds' | 'freshSeconds'>
+      >
+    | undefined
   >;
 }
 export interface LoopObservation {
@@ -143,7 +149,8 @@ export function parseLoopObservation(input: unknown): LoopObservation {
 function assessOperation(
   policy: LoopPolicy,
   observation: LoopObservation,
-  now: number
+  now: number,
+  throttleActive: boolean
 ): LoopAssessment {
   policy = { ...policy, ...policy.operationBudgets?.[observation.operation] };
   if (
@@ -176,6 +183,12 @@ function assessOperation(
   if (
     !observation.pending &&
     policy.optionalOperations?.includes(observation.operation)
+  )
+    return { ...base, level: 'healthy', reason: 'caught_up' };
+  if (
+    !observation.pending &&
+    !throttleActive &&
+    policy.idleOperations?.includes(observation.operation)
   )
     return { ...base, level: 'healthy', reason: 'caught_up' };
   const behind =
@@ -241,7 +254,8 @@ export function assessLoop(
     const observation = observations.find(
       (item) => item.operation === operation
     );
-    if (observation) return assessOperation(policy, observation, now);
+    if (observation)
+      return assessOperation(policy, observation, now, throttleActive);
     if (policy.optionalOperations?.includes(operation))
       return {
         level: 'healthy',

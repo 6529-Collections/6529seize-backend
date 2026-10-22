@@ -2079,7 +2079,16 @@ refresh progress. Full scans report committed work and confirmed continuation ha
 carrying their original request time in a message attribute that preserves FIFO
 body deduplication. Dirty catch-up cannot clear a pending full scan. Waiting full
 messages retain their independent SQS age guard, and diagnostic failures leave
-health unconfirmed. Other scheduled/queued workers retain their
+health unconfirmed. NFT processing health additionally separates discovery,
+refresh, audit and durable media publication. NextGen block checkpoint progress
+is published only after transaction commit and cannot clear independent handled
+reconciliation failures. Preview processing surveys persisted active backlog and
+saved READY results; terminal asset errors retain their independent application
+alerts. Event-driven idle surveys do not expire into noise, while new contention
+requires fresh evidence. Superseded preview completion failures stay in source
+logs without reporting a failure owned by another worker. These adapters reuse
+the existing relay, receipt table and Probe; no schema or trigger changes are
+needed. Other scheduled/queued workers retain their
 independent error and queue protections while awaiting business adapters. No
 application schedules, timeouts, concurrency, memory or public API contracts
 change. See [processing-health policies and rollout](../ops/monitoring/README.md#background-processing-health).

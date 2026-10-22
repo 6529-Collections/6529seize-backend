@@ -387,8 +387,11 @@ test('insufficient throttle data cannot recover an incident; a later OK clears c
     }
   });
   const active = () =>
-    (data.get(`loop:throttle:${policy.service}`)?.payload as { active: boolean })
-      .active;
+    (
+      data.get(`loop:throttle:${policy.service}`)?.payload as {
+        active: boolean;
+      }
+    ).active;
   try {
     await collect(event('OK', 'INSUFFICIENT_DATA', now));
     await monitorLoop(policy, 'staging', now);
@@ -627,6 +630,47 @@ test('monitoring passes the shared budget to in-flight SDK reads and propagates 
     controller.abort();
     await assert.rejects(pending, { name: 'AbortError' });
     assert.equal(dbMock.mock.callCount(), 2 + policy.operations.length);
+  } finally {
+    dbMock.mock.restore();
+    if (original === undefined) delete process.env.RECEIPTS_TABLE;
+    else process.env.RECEIPTS_TABLE = original;
+  }
+});
+
+test('late scheduled starts retain the due baseline across retries without inventing progress', async () => {
+  const original = process.env.RECEIPTS_TABLE;
+  process.env.RECEIPTS_TABLE = 'test';
+  const { data, dbMock } = fakeState();
+  const base = {
+    _type: LOOP_EVENT_TYPE,
+    service: 'nftsLoop',
+    operation: 'discovery',
+    recovery: 'automatic'
+  };
+  try {
+    await receiveLoopObservation(
+      {
+        ...base,
+        observedAt: 100,
+        pending: false,
+        progressAt: 100,
+        nextDueAt: 160
+      },
+      'staging'
+    );
+    await receiveLoopObservation(
+      { ...base, observedAt: 2000, pending: true },
+      'staging'
+    );
+    await receiveLoopObservation(
+      { ...base, observedAt: 2001, pending: true },
+      'staging'
+    );
+    const payload = data.get('loop:observation:nftsLoop:discovery')
+      ?.payload as Record<string, unknown>;
+    assert.equal(payload.baselineAt, 160);
+    assert.equal(payload.oldestPendingAt, 160);
+    assert.equal(payload.progressAt, undefined);
   } finally {
     dbMock.mock.restore();
     if (original === undefined) delete process.env.RECEIPTS_TABLE;

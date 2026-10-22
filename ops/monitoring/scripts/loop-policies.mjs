@@ -57,6 +57,21 @@ function scheduleIntervals(event) {
 }
 
 function operationsFor(name) {
+  if (name === 'nftsLoop')
+    return {
+      operations: ['discovery', 'refresh', 'audit', 'publication'],
+      operationBudgets: {
+        refresh: { freshSeconds: 1620 },
+        audit: { freshSeconds: 4620 }
+      }
+    };
+  if (name === 'nextgenContractLoop')
+    return {
+      operations: ['indexing', 'recalculation'],
+      optionalOperations: ['recalculation']
+    };
+  if (name === 'nftLinkMediaPreviewLoop')
+    return { operations: ['processing'], idleOperations: ['processing'] };
   if (name === 'waveScoreRefreshLoop')
     return {
       operations: ['dirty_refresh', 'full_refresh'],
