@@ -247,7 +247,7 @@ async function propose(
     '--template-url',
     url,
     '--capabilities',
-    'CAPABILITY_IAM',
+    'CAPABILITY_NAMED_IAM',
     'CAPABILITY_AUTO_EXPAND',
     '--parameters',
     `file://${join(selected.output, 'previous-parameters.json')}`,
