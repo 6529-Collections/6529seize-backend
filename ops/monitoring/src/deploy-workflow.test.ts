@@ -52,3 +52,42 @@ test('monitoring pins checkout and artifact identity to dispatch SHA without a S
       workflow.indexOf('uses: actions/checkout@')
   );
 });
+
+for (const operation of [
+  'deploy',
+  'retire-competition-registration',
+  'unknown'
+]) {
+  test(`monitoring operation stays inside the existing protected environment: ${operation}`, () => {
+    const result = spawnSync('bash', ['-e', '-c', guard], {
+      env: {
+        ...process.env,
+        DEPLOY_ENVIRONMENT: 'prod',
+        GITHUB_REF: 'refs/heads/main',
+        DEPLOY_OPERATION: operation
+      }
+    });
+    assert.equal(result.status, operation === 'unknown' ? 1 : 0);
+  });
+}
+
+test('retirement reuses the scoped identity and preserves runtime deployment and health guards', () => {
+  assert.ok(
+    workflow.includes(
+      "if: inputs.operation != 'retire-competition-registration'"
+    )
+  );
+  assert.ok(
+    workflow.includes(
+      "if: inputs.operation == 'retire-competition-registration'"
+    )
+  );
+  assert.ok(workflow.includes('RETIRE_STACK_KIND: monitoring'));
+  assert.ok(
+    workflow.includes(
+      'MONITORING_CLOUDFORMATION_ROLE_ARN: ${{ vars.AWS_MONITORING_CFN_ROLE_ARN }}'
+    )
+  );
+  assert.ok(workflow.includes('Verify monitoring health'));
+  assert.ok(!workflow.includes('MonitoringAdmin'));
+});

@@ -7,7 +7,6 @@ import {
   CompetitionRecord
 } from '@/competitions/competition.repository';
 import { competitionVoteActivityRepository } from '@/competitions/competition-vote-activity.repository';
-import { CompetitionStorageMode } from '@/entities/ICompetition';
 import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { ApiProfileMin } from '@/api/generated/models/ApiProfileMin';
 import { NotFoundException } from '@/exceptions';
@@ -44,8 +43,7 @@ beforeEach(() => {
     .mockResolvedValue({
       id: 'competition',
       wave_id: 'wave',
-      legacy_wave_id: 'wave',
-      storage_mode: CompetitionStorageMode.NATIVE
+      legacy_wave_id: 'wave'
     } as CompetitionRecord);
   jest
     .mocked(identityFetcher.getOverviewsByIds)
@@ -119,8 +117,7 @@ it('does not expose primary-wave logs through a separate native competition', as
     .mockResolvedValue({
       id: 'competition',
       wave_id: 'wave',
-      legacy_wave_id: null,
-      storage_mode: CompetitionStorageMode.NATIVE
+      legacy_wave_id: null
     } as CompetitionRecord);
   jest.mocked(competitionVoteActivityRepository.list).mockResolvedValue([
     {

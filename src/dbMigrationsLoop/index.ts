@@ -19,21 +19,9 @@ import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 import { getDataSource } from '@/db';
 import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
-import { retireLegacyCompetitionRuntime } from '@/competitions/competition-runtime-retirement';
 import { dbSupplier } from '@/sql-executor';
-import { transferCompetitionRetirementHistory } from '@/competitions/competition-retirement-history';
-import {
-  assertCompetitionHistoryPreparationAllowed,
-  isCompetitionRuntimeRetired
-} from '@/competitions/competition-runtime-retirement-state';
-import { transferRetainedCompetitionDistributions } from '@/competitions/competition-retirement-distributions';
-import { transferRetainedCompetitionLeaderboardPublication } from '@/competitions/competition-retirement-leaderboard';
+import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
-import {
-  prepareWaveHubConfiguration,
-  finalizeWaveHubConfigurationCapture
-} from '@/waves/wave-hub-configuration-preparation';
-
 const DBMigrate = require('db-migrate');
 
 const logger = Logger.get('DB_MIGRATIONS_LOOP');
@@ -94,12 +82,7 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'wallet-transfer-analysis' &&
       scope !== 'claims-media-upload' &&
       scope !== 'nft-link-page-retry' &&
-      scope !== 'market-depth-publication-lock' &&
-      scope !== 'competition-runtime-schema' &&
-      scope !== 'competition-runtime-retirement' &&
-      scope !== 'wave-hub-configuration-preparation' &&
-      scope !== 'wave-hub-configuration-finalize' &&
-      scope !== 'competition-history-preparation')
+      scope !== 'market-depth-publication-lock')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -110,71 +93,6 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
-  if (
-    scope === 'wave-hub-configuration-preparation' ||
-    scope === 'wave-hub-configuration-finalize'
-  ) {
-    const result = await doInDbContext(
-      async () =>
-        scope === 'wave-hub-configuration-preparation'
-          ? await prepareWaveHubConfiguration(dbSupplier())
-          : await finalizeWaveHubConfigurationCapture(dbSupplier()),
-      {
-        logger,
-        entities: Object.values(Entities),
-        syncEntities: false,
-        skipRedis: true
-      }
-    );
-    return { schema_scope: scope, ...result };
-  }
-  if (scope === 'competition-runtime-schema') {
-    await doInDbContext(() => Promise.resolve(), {
-      logger,
-      entities: Object.values(Entities),
-      syncEntities: true,
-      skipRedis: true
-    });
-    return { schema_scope: scope };
-  }
-
-  if (scope === 'competition-history-preparation') {
-    const result = await doInDbContext(
-      async () => {
-        await assertCompetitionHistoryPreparationAllowed(dbSupplier());
-        return {
-          history: await transferCompetitionRetirementHistory(dbSupplier()),
-          distribution_history:
-            await transferRetainedCompetitionDistributions(dbSupplier()),
-          leaderboard_publication:
-            await transferRetainedCompetitionLeaderboardPublication(
-              dbSupplier()
-            )
-        };
-      },
-      {
-        logger,
-        entities: Object.values(Entities),
-        syncEntities: false,
-        skipRedis: true
-      }
-    );
-    return { schema_scope: scope, ...result };
-  }
-
-  if (scope === 'competition-runtime-retirement') {
-    const result = await doInDbContext(
-      () => retireLegacyCompetitionRuntime(dbSupplier()),
-      {
-        logger,
-        entities: Object.values(Entities),
-        syncEntities: false,
-        skipRedis: true
-      }
-    );
-    return { schema_scope: scope, ...result };
-  }
-
   if (scope === 'market-depth-publication-lock') {
     await doInDbContext(() => Promise.resolve(undefined), {
       logger,
@@ -229,12 +147,13 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   await doInDbContext(
     async () => {
       // Synchronization ignores tables outside the current entity registry; retirement is operator-only.
-      if (!scheduledInvocation && scope === 'full')
+      if (!scheduledInvocation && scope === 'full') {
+        await assertCompetitionSchemaSyncSafe(dbSupplier());
         await getDataSource().synchronize();
+      }
       if (
         !scheduledInvocation &&
-        scope === 'full' &&
-        (await isCompetitionRuntimeRetired(dbSupplier()))
+        (scope === 'full' || scope === 'maintenance')
       ) {
         await installLegacyCompetitionGetFacade(dbSupplier());
       }

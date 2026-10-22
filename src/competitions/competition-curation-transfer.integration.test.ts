@@ -144,7 +144,6 @@ describeWithSeed(
           id,
           wave_id: wave.id,
           legacy_wave_id: id === primary ? wave.id : null,
-          storage_mode: 'NATIVE',
           execution_mode: 'ACTIVE',
           type: 'RANK',
           lifecycle: 'PUBLISHED',

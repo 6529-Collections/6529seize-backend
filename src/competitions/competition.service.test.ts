@@ -3,7 +3,6 @@ import { CompetitionService } from '@/competitions/competition.service';
 import {
   CompetitionExecutionMode,
   CompetitionLifecycle,
-  CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
 import { WaveType } from '@/entities/IWave';
@@ -18,7 +17,6 @@ function nativeRecord(id: string, waveId: string, createdAt: number) {
     id,
     wave_id: waveId,
     legacy_wave_id: null,
-    storage_mode: CompetitionStorageMode.NATIVE,
     execution_mode: CompetitionExecutionMode.DISABLED,
     type: CompetitionType.RANK,
     lifecycle: CompetitionLifecycle.PUBLISHED,

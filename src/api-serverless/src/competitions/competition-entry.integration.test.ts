@@ -83,7 +83,6 @@ const participation = {
 const record = {
   id: competitionId,
   wave_id: wave.id,
-  storage_mode: 'NATIVE',
   legacy_wave_id: null,
   execution_mode: 'ACTIVE',
   type: 'RANK',
@@ -254,7 +253,7 @@ describeWithSeed(
       else process.env.API_BASE_URL = originalApiBaseUrl;
     });
 
-    it('creates native submissions after legacy cutover without touching frozen vote tables', async () => {
+    it('creates native submissions with obsolete vote tables physically absent', async () => {
       await sqlExecutor.execute(
         `update ${tables.COMPETITIONS_TABLE} set legacy_wave_id=:waveId where id=:id`,
         { waveId: wave.id, id: competitionId }
@@ -274,10 +273,8 @@ describeWithSeed(
       ]) {
         expect(
           await sqlExecutor.execute(
-            `select * from ${table} where wave_id=:waveId`,
-            {
-              waveId: wave.id
-            }
+            `select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA=database() and TABLE_NAME=:table`,
+            { table }
           )
         ).toEqual([]);
       }

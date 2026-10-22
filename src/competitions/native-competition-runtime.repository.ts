@@ -134,7 +134,7 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     const rows = await this.query<{ id: string }>(
       'discoverCompetitions',
       `select id from ${COMPETITIONS_TABLE}
-      where storage_mode = 'NATIVE' and execution_mode = 'ACTIVE' and lifecycle = 'PUBLISHED'
+      where execution_mode = 'ACTIVE' and lifecycle = 'PUBLISHED'
       and id > :afterId order by id asc limit :limit`,
       { afterId, limit },
       ctx
@@ -158,7 +158,7 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       competitionId,
       ctx
     );
-    if (!record || record.storage_mode !== 'NATIVE') return null;
+    if (!record) return null;
     return new NativeCompetitionReader(
       competitionRepository,
       ctx

@@ -52,7 +52,7 @@ IAM's managed-policy size and default role attachment limits.
 
 ## Infrastructure boundaries
 
-IAM changes in `competitionMigrationLoop`, `artworkDocumentationProcessor`,
+IAM changes in `artworkDocumentationProcessor`,
 and `artworkDocumentationStorage` require a separate administrative step.
 Application storage, backup, malware-protection, and IAM provisioning also
 remain administrative. An unchanged infrastructure definition can accompany a

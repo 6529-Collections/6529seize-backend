@@ -15,22 +15,13 @@ import {
   WalletTransferWalletDailyEntity
 } from '@/entities/IWalletTransferAnalysis';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
-import {
-  isCompetitionRuntimeRetired,
-  assertCompetitionHistoryPreparationAllowed
-} from '@/competitions/competition-runtime-retirement-state';
-jest.mock('@/competitions/competition-runtime-retirement-state', () => ({
-  isCompetitionRuntimeRetired: jest.fn().mockResolvedValue(false),
-  assertCompetitionHistoryPreparationAllowed: jest.fn()
-}));
 import * as compatibilityFacade from '@/competitions/legacy-competition-get-facade';
-import {
-  prepareWaveHubConfiguration,
-  finalizeWaveHubConfigurationCapture
-} from '@/waves/wave-hub-configuration-preparation';
-jest.mock('@/waves/wave-hub-configuration-preparation', () => ({
-  prepareWaveHubConfiguration: jest.fn(),
-  finalizeWaveHubConfigurationCapture: jest.fn()
+jest.mock('@/competitions/legacy-competition-get-facade', () => ({
+  installLegacyCompetitionGetFacade: jest.fn()
+}));
+import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
+jest.mock('@/competitions/retired-competition-storage', () => ({
+  assertCompetitionSchemaSyncSafe: jest.fn()
 }));
 import { handler } from './index';
 import { getDataSource } from '@/db';
@@ -96,20 +87,17 @@ const scheduledEvent = {
 describe('dbMigrationsLoop explicit schema scope', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.mocked(prepareWaveHubConfiguration).mockResolvedValue({
-      waves: 0,
-      archives: 0,
-      capture_triggers: 0
-    });
-    jest
-      .mocked(finalizeWaveHubConfigurationCapture)
-      .mockResolvedValue({ disabled_triggers: 10 });
     jest
       .mocked(moderationRetentionSchemaDb.missingColumns)
       .mockResolvedValue([]);
   });
 
   it.each([
+    'competition-history-preparation',
+    'competition-runtime-schema',
+    'competition-runtime-retirement',
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize',
     'membership-refresh',
     'membership-evaluator-index',
     'membership-runtime-control'
@@ -190,77 +178,18 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     }
   );
 
-  it('never performs the initial view cutover during ordinary full schema work', async () => {
-    const install = jest.spyOn(
-      compatibilityFacade,
-      'installLegacyCompetitionGetFacade'
-    );
-    await invoke({ schema_scope: 'full' });
-    expect(isCompetitionRuntimeRetired).toHaveBeenCalledTimes(1);
-    expect(install).not.toHaveBeenCalled();
-    install.mockRestore();
-  });
-
-  it('rejects retained source preparation after native cutover', async () => {
+  it('stops full sync before destructive column removal when operator cleanup is pending', async () => {
     jest
-      .mocked(assertCompetitionHistoryPreparationAllowed)
-      .mockRejectedValueOnce(new Error('retired source guard'));
-    await expect(
-      invoke({ schema_scope: 'competition-history-preparation' })
-    ).rejects.toThrow('retired source guard');
-  });
-
-  it.each([
-    'wave-hub-configuration-preparation',
-    'wave-hub-configuration-finalize'
-  ])(
-    'runs only the explicit %s operation without schema sync or maintenance',
-    async (scope) => {
-      const finalize = scope === 'wave-hub-configuration-finalize';
-      const prepared = { waves: 2, archives: 3, capture_triggers: 10 };
-      const result = finalize ? { disabled_triggers: 10 } : prepared;
-      if (!finalize)
-        jest
-          .mocked(prepareWaveHubConfiguration)
-          .mockResolvedValueOnce(prepared);
-      await expect(invoke({ schema_scope: scope })).resolves.toEqual({
-        schema_scope: scope,
-        ...result
-      });
-      expect(prepareWaveHubConfiguration).toHaveBeenCalledTimes(
-        finalize ? 0 : 1
-      );
-      expect(finalizeWaveHubConfigurationCapture).toHaveBeenCalledTimes(
-        finalize ? 1 : 0
-      );
-      expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
-        logger: expect.anything(),
-        entities: Object.values(Entities),
-        syncEntities: false,
-        skipRedis: true
-      });
-      expect(migrations.getInstance).not.toHaveBeenCalled();
-      expect(
-        contentModerationDb.deleteExpiredPrePublicationChecks
-      ).not.toHaveBeenCalled();
-    }
-  );
-
-  it.each([
-    'wave-hub-configuration-preparation',
-    'wave-hub-configuration-finalize'
-  ])('propagates %s failure without starting unrelated work', async (scope) => {
-    const failure = new Error('Hub policy parity did not pass');
-    const operation =
-      scope === 'wave-hub-configuration-preparation'
-        ? prepareWaveHubConfiguration
-        : finalizeWaveHubConfigurationCapture;
-    jest.mocked(operation).mockRejectedValueOnce(failure);
-    await expect(invoke({ schema_scope: scope })).rejects.toBe(failure);
-    expect(migrations.getInstance).not.toHaveBeenCalled();
+      .mocked(assertCompetitionSchemaSyncSafe)
+      .mockRejectedValueOnce(new Error('operator cleanup required'));
+    await expect(invoke({ schema_scope: 'full' })).rejects.toThrow(
+      'operator cleanup required'
+    );
+    expect(getDataSource().synchronize).not.toHaveBeenCalled();
     expect(
-      contentModerationDb.deleteExpiredPrePublicationChecks
+      compatibilityFacade.installLegacyCompetitionGetFacade
     ).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
   });
 
   it.each([undefined, {}, { schema_scope: 'full' }])(
@@ -272,7 +201,11 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         entities: Object.values(Entities),
         syncEntities: false
       });
+      expect(assertCompetitionSchemaSyncSafe).toHaveBeenCalledTimes(1);
       expect(getDataSource().synchronize).toHaveBeenCalledTimes(1);
+      expect(
+        compatibilityFacade.installLegacyCompetitionGetFacade
+      ).toHaveBeenCalledTimes(1);
       expect(migrations.getInstance).toHaveBeenCalledWith(true, {
         config: './database.json',
         env: 'main'

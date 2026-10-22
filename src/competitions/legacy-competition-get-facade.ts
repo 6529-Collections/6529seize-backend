@@ -54,7 +54,7 @@ export function withoutLegacyCompetitionGetFacade<T>(action: () => T): T {
   return scope.run(false, action);
 }
 // Frozen ownership is intentionally independent of the current default competition.
-const nativePrimary = `c.storage_mode='NATIVE' and c.legacy_wave_id=c.wave_id`;
+const nativePrimary = `c.legacy_wave_id=c.wave_id`;
 const owners = `${COMPETITIONS_TABLE} c`;
 const entries = `${COMPETITION_ENTRIES_TABLE} e join ${owners} on c.id=e.competition_id and ${nativePrimary}`;
 

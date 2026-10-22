@@ -4,7 +4,6 @@ import {
   CompetitionEntryStatus,
   CompetitionExecutionMode,
   CompetitionLifecycle,
-  CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
 
@@ -69,7 +68,6 @@ export type Competition = {
   readonly configuration_activated_at?: number | null;
   readonly id: string;
   readonly wave_id: string;
-  readonly storage_mode: CompetitionStorageMode;
   readonly execution_mode: CompetitionExecutionMode;
   readonly type: CompetitionType;
   readonly lifecycle: CompetitionLifecycle;
@@ -211,7 +209,6 @@ export type CompetitionPageRequest = {
 
 export type CompetitionSnapshot = {
   readonly credit_budgets?: unknown;
-  readonly storage_mode: CompetitionStorageMode;
   readonly config_version: number;
   readonly configuration: unknown;
   readonly entries: unknown;
@@ -280,7 +277,6 @@ export type CompetitionRoutingRecord = {
   readonly id: string;
   readonly wave_id: string;
   readonly legacy_wave_id: string | null;
-  readonly storage_mode: CompetitionStorageMode;
   readonly execution_mode: CompetitionExecutionMode;
   readonly config_version?: number | string;
 };

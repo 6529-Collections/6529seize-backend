@@ -21,7 +21,7 @@ export async function withCompetitionProfileMerge<T>(
   if (!ctx.connection) throw new Error('Profile merge requires a transaction');
   const options = { wrappedConnection: ctx.connection };
   const records = await db.execute<{ id: string }>(
-    `select c.id from ${COMPETITIONS_TABLE} c where c.storage_mode='NATIVE' and (
+    `select c.id from ${COMPETITIONS_TABLE} c where (
       exists(select 1 from ${COMPETITION_ENTRIES_TABLE} e where e.competition_id=c.id and e.submitter_id in (:sources)) or
       exists(select 1 from ${COMPETITION_VOTES_TABLE} v where v.competition_id=c.id and v.voter_profile_id in (:sources)) or
       exists(select 1 from ${COMPETITION_VOTE_HISTORY_TABLE} v where v.competition_id=c.id and (v.voter_profile_id in (:sources) or v.submitter_id in (:sources))) or
