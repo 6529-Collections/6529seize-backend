@@ -4,6 +4,7 @@ import {
   PermanentMediaSanitizationError
 } from '@/drops/drop-media-sanitizer.service';
 import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
+import { Logger } from '@/logging';
 
 describe('DropMediaSanitizerService', () => {
   const service = new DropMediaSanitizerService({} as any);
@@ -277,10 +278,10 @@ describe('image format validation before publication', () => {
       () => ({ send: ingestSend }) as any,
       notifier as any
     );
-    const process = () =>
+    const process = (approximateReceiveCount = 1) =>
       service.processUpload({
         mediaUploadId: 'upload',
-        approximateReceiveCount: 1
+        approximateReceiveCount
       });
     return {
       process,
@@ -349,6 +350,12 @@ describe('image format validation before publication', () => {
   it.each(['true', 'false'])(
     'rejects mislabeled HEIC before publishing with privacy policy %s',
     async (policy) => {
+      const errorLog = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation();
+      const warningLog = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation();
       const p = pipeline(fixture('heic'), 'image/jpeg', policy);
       await p.process();
       await p.process();
@@ -365,6 +372,8 @@ describe('image format validation before publication', () => {
         })
       );
       expect(p.notifier.notifyStatusTransition).toHaveBeenCalledTimes(1);
+      expect(warningLog).toHaveBeenCalledTimes(1);
+      expect(errorLog).not.toHaveBeenCalled();
     }
   );
 
@@ -374,12 +383,18 @@ describe('image format validation before publication', () => {
     ['svg', 'image/jpeg'],
     ['tiff', 'image/jpeg']
   ])('rejects %s bytes labeled %s without publishing', async (format, mime) => {
+    const errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    const warningLog = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation();
     const p = pipeline(fixture(format), mime);
     await p.process();
     expect(p.publicSend).not.toHaveBeenCalled();
     expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
       expect.objectContaining({ toStatus: DropMediaUploadStatus.FAILED })
     );
+    expect(warningLog).toHaveBeenCalledTimes(1);
+    expect(errorLog).not.toHaveBeenCalled();
   });
 
   it('continues converting AVIF when privacy stripping is disabled', async () => {
@@ -394,6 +409,12 @@ describe('image format validation before publication', () => {
   it.each(['read', 'write', 'short response'])(
     'keeps %s failures operational without marking media ready or invalid',
     async (failure) => {
+      const errorLog = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation();
+      const warningLog = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation();
       const p = pipeline(fixture('jpeg'));
       const error = new Error('synthetic infrastructure failure');
       if (failure === 'read')
@@ -405,6 +426,17 @@ describe('image format validation before publication', () => {
         await expect(result).rejects.toThrow('source length mismatch');
       else await expect(result).rejects.toBe(error);
       expect(p.uploadsDb.transitionStatus.mock.calls).toHaveLength(1);
+      expect(errorLog).not.toHaveBeenCalled();
+      await p.process(3);
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ toStatus: DropMediaUploadStatus.FAILED })
+      );
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(errorLog).toHaveBeenCalledWith(
+        expect.stringContaining('failed after retries'),
+        expect.any(Error)
+      );
+      expect(warningLog).not.toHaveBeenCalled();
     }
   );
 

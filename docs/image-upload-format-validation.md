@@ -49,6 +49,10 @@ failures, missing or inconsistent length and unmatched native failures remain
 operational. Detected invalid/unsupported formats mark the upload failed once;
 retrying a failed record does not publish it or repeat processing. Failed bytes
 remain private under the existing ingest retention policy.
+Known permanent input rejections use warning logs and the upload's error/status
+fields; they do not emit an operational application-error alert. Unclassified,
+transport and storage failures retain operational error reporting, including when
+their processing retries are exhausted.
 
 ## Client and compatibility contract
 

@@ -236,10 +236,9 @@ export class DropMediaSanitizerService {
     error: unknown;
     approximateReceiveCount: number;
   }): Promise<void> {
-    if (
-      error instanceof PermanentMediaSanitizationError ||
-      approximateReceiveCount >= 3
-    ) {
+    const isPermanentInputError =
+      error instanceof PermanentMediaSanitizationError;
+    if (isPermanentInputError || approximateReceiveCount >= 3) {
       const errorReason =
         error instanceof Error ? error.message : String(error);
       await this.dropMediaUploadsDb.transitionStatus({
@@ -255,9 +254,16 @@ export class DropMediaSanitizerService {
         }
       });
       await this.notifier.notifyStatusTransition(upload.id);
-      this.logger.error(
-        `Drop media upload ${upload.id} failed permanently: ${errorReason}`
-      );
+      if (isPermanentInputError) {
+        this.logger.warn(
+          `Drop media upload ${upload.id} rejected: ${errorReason}`
+        );
+      } else {
+        this.logger.error(
+          `Drop media upload ${upload.id} failed after retries: ${errorReason}`,
+          error
+        );
+      }
       return;
     }
     throw error;
