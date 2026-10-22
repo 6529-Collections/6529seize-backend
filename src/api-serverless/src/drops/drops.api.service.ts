@@ -259,7 +259,8 @@ export class DropsApiService {
       drop_type,
       ids,
       serial_nos,
-      contains_media
+      contains_media,
+      public_only = false
     }: {
       group_id: string | null;
       serial_no_less_than: number | null;
@@ -273,6 +274,7 @@ export class DropsApiService {
       ids: string[] | null;
       serial_nos: number[] | null;
       contains_media: boolean;
+      public_only?: boolean;
     },
     ctx: RequestContext
   ): Promise<ApiDrop[]> {
@@ -311,7 +313,8 @@ export class DropsApiService {
         drop_type: drop_type ? enums.resolveOrThrow(DropType, drop_type) : null,
         ids,
         serial_nos,
-        contains_media
+        contains_media,
+        public_only
       },
       ctx
     );

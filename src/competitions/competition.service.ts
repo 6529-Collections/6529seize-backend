@@ -93,6 +93,7 @@ export type WaveHub = {
 export type CursorPageRequest<
   TSort extends string =
     | 'submitted_at'
+    | 'won_at'
     | 'rating'
     | 'rank'
     | 'real_time_rating'
@@ -425,7 +426,7 @@ export class CompetitionService {
       waveId,
       competitionId,
       'winners',
-      request,
+      { ...request, sort: 'won_at' },
       {},
       ctx,
       (resolved, page) => resolved.reader.listWinners(resolved.record, page)

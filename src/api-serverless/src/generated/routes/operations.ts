@@ -81,6 +81,7 @@ import { ApiCompetitionDecisionPage } from '@/api/generated/models/ApiCompetitio
 import { ApiCompetitionDistributionItemPage } from '@/api/generated/models/ApiCompetitionDistributionItemPage';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { ApiCompetitionEntry } from '@/api/generated/models/ApiCompetitionEntry';
+import { ApiCompetitionEntryContextPage } from '@/api/generated/models/ApiCompetitionEntryContextPage';
 import { ApiCompetitionEntryPage } from '@/api/generated/models/ApiCompetitionEntryPage';
 import { ApiCompetitionEntryVotePage } from '@/api/generated/models/ApiCompetitionEntryVotePage';
 import { ApiCompetitionLeaderboardPage } from '@/api/generated/models/ApiCompetitionLeaderboardPage';
@@ -3716,6 +3717,26 @@ export type SetCompetitionVoteV3Request = Request<
   Record<string, never>
 >;
 
+export interface GetCompetitionEntryContextsV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface GetCompetitionEntryContextsV3Query {
+  "entry_ids": string;
+  "include"?: "cards";
+}
+
+export type GetCompetitionEntryContextsV3Response = ApiCompetitionEntryContextPage;
+
+export type GetCompetitionEntryContextsV3Request = Request<
+  GetCompetitionEntryContextsV3PathParams,
+  ApiResponse<GetCompetitionEntryContextsV3Response>,
+  never,
+  GetCompetitionEntryContextsV3Query,
+  Record<string, never>
+>;
+
 export interface ListCompetitionLeaderboardV3PathParams {
   "wave_id": string;
   "competition_id": string;
@@ -3729,6 +3750,7 @@ export interface ListCompetitionLeaderboardV3Query {
   "direction"?: string;
   "cursor"?: string;
   "limit"?: number;
+  "include"?: "cards";
 }
 
 export type ListCompetitionLeaderboardV3Response = ApiCompetitionLeaderboardPage;
@@ -3877,6 +3899,7 @@ export interface ListCompetitionWinnersV3Query {
   "direction"?: string;
   "cursor"?: string;
   "limit"?: number;
+  "include"?: "cards";
 }
 
 export type ListCompetitionWinnersV3Response = ApiCompetitionEntryPage;

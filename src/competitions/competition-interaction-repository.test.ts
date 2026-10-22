@@ -182,16 +182,23 @@ describeWithSeed(
         3
       );
     });
-    it('preserves raw submitted winner votes as personal history while final weighted votes remain archived', async () => {
-      expect(await repository.myVotes(record, 'voter', 0, 10, {})).toEqual([
-        {
-          entry_id: legacyCompetitionEntryId(record.id, 'first'),
-          drop_id: 'first',
-          value: 80,
-          credit_spent: 80,
-          entry_status: 'WINNER'
-        }
-      ]);
+    it('retains scoped descriptors on an active entry with an existing award', async () => {
+      const entryId = legacyCompetitionEntryId(record.id, 'first');
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='ACTIVE' where id=:entryId`,
+        { entryId }
+      );
+      expect(await repository.awards(record, 0, 0, {}, [entryId])).toHaveLength(
+        2
+      );
+    });
+    it('excludes winners from active personal votes while preserving their recorded votes', async () => {
+      expect(await repository.myVotes(record, 'voter', 0, 10, {})).toEqual([]);
+      const retained = await sqlExecutor.execute<{ value: number }>(
+        `select value from ${COMPETITION_VOTES_TABLE} where id='vote'`,
+        {}
+      );
+      expect(Number(retained[0].value)).toBe(80);
     });
   }
 );

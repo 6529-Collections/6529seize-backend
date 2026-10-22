@@ -1129,7 +1129,17 @@ Waves are chat, visibility and administration hubs containing zero or more nativ
 competitions under `/v3/waves`. Competition configuration and entry state own
 submissions, eligibility, voting, weighted scores, decisions and winners. Current
 navigation/settings/entries/voting/My Votes/leaderboards/winners/admin use the
-competition resources for every competition. Creating a hub always creates a
+competition resources for every competition. The scoped `entry-contexts` GET
+batches up to 50 visible entries, current/at-decision vote summaries and their
+awards; it resolves competition access once and applies content visibility to the
+batch. Leaderboard, winners and entry-context responses accept `include=cards`
+to return visible first-part content, complete metadata and native voting state
+in the same response. This projection bypasses legacy full-wave voting reads;
+summary refreshes reuse cached content, while opening a drop retains the full
+drop reader. The option is additive, with no schema changes; deploy `api` before
+the frontend that requests it.
+Winners paginate by win time, newest first; My Votes excludes completed winners
+without deleting historical allocations. Creating a hub always creates a
 CHAT wave; competition creation is a separate native command. Historical physical
 RANK/APPROVE wave types remain schema-compatible and do not block hub updates.
 
@@ -2339,7 +2349,7 @@ The required key must be present and valid for all three runtimes in both region
 
 Configure production as `2026-10-15T00:00:00Z` and staging with its intended earlier cutoff before deployment. Schema sync still precedes the delegation indexer, TDH loop and API. Both environments index the same mainnet contract: staging registrations are real registrations, and pre-production-cutoff links require renewed consent after the production cutoff.
 
-Initial collaboration Artist credits use ` & ` for exactly two credited artists and `, ` for larger rosters; SEIZE Artist Profile always uses comma-separated handles. Confirmed invitee credit names are used in live metadata and the frozen mint-selection credit. Existing frozen claims and admin Craft edits are not rewritten.
+Initial collaboration Artist credits use `&` for exactly two credited artists and `, ` for larger rosters; SEIZE Artist Profile always uses comma-separated handles. Confirmed invitee credit names are used in live metadata and the frozen mint-selection credit. Existing frozen claims and admin Craft edits are not rewritten.
 
 Collaboration retries retain each cancelled invitation under a distinct ID. The drop/profile index is non-unique; entity synchronization must remove the former unique index before API reinvites are enabled. Author and recipient state exposes the latest attempt only; historical invitation IDs cannot authorize a new attempt. Declined invitations cannot be resent. The five-collaborator cap counts pending and accepted attempts under the collaboration lock, preserving existing accepted rosters. API mutations send existing profile-scoped notification invalidations after commit, independently of push preferences. Acceptance also broadcasts accepted public attribution even when no notification row is created. No private invitation roster is added to public websocket payloads.
 
