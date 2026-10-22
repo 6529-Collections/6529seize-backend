@@ -523,6 +523,68 @@ remains unverified; that cannot clear an incident about business processing.
 
 ### Initial business observations
 
+- `nftsLoop`: independently tracks `discovery`, `refresh`, `audit` and durable S3
+  `publication`. Only committed NFT updates or verified unchanged collections advance
+  progress; audit advances after an NFT's S3 checks and necessary queue handoffs.
+  In-memory discovery/fetches do not advance progress. Internally handled metadata
+  refresh failures stay pending with recovery unconfirmed. Each mode completes only
+  after its business pipeline, with its next existing schedule due time retained;
+  another mode cannot clear it. The ten-minute/hourly modes have matching freshness
+  allowances, while overdue due work still has the normal delay/stall budgets.
+  Publication surveys the writer before/after work, including failure: pending
+  outbox rows below the publisher's throwing threshold cannot disappear behind a
+  successful return. S3 generation itself remains protected by its separate queue
+  guards. Acceptance samples all three mode payloads; ordinary staging invocations
+  can exercise them without waiting for the hourly audit. The existing S3-uploader
+  production-only gate remains intact: staging audit/publication verify disabled,
+  idle handling, not real S3 checks or queue handoffs. This does not satisfy
+  production hourly-audit acceptance: after an authorized production rollout,
+  read-only observation of a natural scheduled audit must confirm its actual S3
+  checks and any necessary queue handoffs. Manual staging payload checks do not
+  replace that production observation.
+- `nextgenContractLoop`: compares the committed block checkpoint with the actual
+  RPC scan target, preserving the scanned block timestamp. Capped ranges stay
+  pending while their saved indexing checkpoint advances; they do not complete
+  reconciliation. No progress or completion is emitted from inside its transaction;
+  rollback and lock-retry attempts cannot establish recovery. Reconciliation is
+  independent of indexing: handled metadata/mint-data exceptions and missing
+  collection records leave it pending/unconfirmed even if blocks advance. A
+  capped scan cannot clear a remembered reconciliation incident. Intentionally
+  unrevealed metadata and thumbnails not yet produced by the separate generator
+  are not classified as failed indexing work.
+- `nftLinkMediaPreviewLoop`: one bounded writer survey after each batch (including
+  failure, skipped near the Lambda deadline) uses
+  original `media_preview_queued_at` for active PENDING/PROCESSING work and only
+  saved READY results for progress. A READY timestamp before the oldest active
+  queued work belongs to an earlier episode and is omitted on every survey;
+  an idle period cannot make newly queued work immediately appear stalled.
+  Lease acquisition, retries, discarded messages,
+  stale completion fences and terminal FAILED/SKIPPED results cannot fabricate
+  successful preview progress. A DB pending row does not prove SQS delivery/retry,
+  so nonempty backlog reports recovery unknown; this adapter does not promise
+  silent overlap for every preview throttle. Verified empty active backlog may
+  remain idle indefinitely without telemetry warnings, but a stale empty survey
+  cannot suppress a new active throttle. Queue age/DLQ/Error/OOM alarms remain
+  independent. Saved asset failures retain their application error: draining the
+  active queue does not recover those failures. Only errors rejected by an obsolete
+  completion fence become informational source logs, since that worker no longer
+  owns the result. Ordinary saved failures keep their existing error reporting.
+  The preview aggregate has no status index in the declared schema. It is one
+  writer survey per batch, with the existing 1-second statement/2-second owned
+  read budget, rather than an unbounded query. Before rollout, check its plan and
+  latency against live table cardinality; do not increase the budget to force a
+  scan through. An unavailable survey must remain unconfirmed. The publication
+  outbox already has status-leading indexes, so its pending-only aggregate does
+  not require scanning published history.
+
+For these three additional adapters, deploy the isolated monitoring artifact first
+(including generated operation policies), then `nftsLoop`, `nextgenContractLoop`
+and `nftLinkMediaPreviewLoop`. No source routing/template, API, frontend or schema
+change is required. Roll back these three producer artifacts before reverting the
+monitoring artifact; new operation labels require the matching receiver inventory.
+No execution settings change. A late scheduled start retains the overdue baseline:
+starting a run is not business progress or recovery.
+
 - `delegationsLoop`: reads the saved block timestamp best effort, records completed
   persistence/recalculation stages, and reports the actual scanned block timestamp
   only after saving its checkpoint. A scan that took minutes still exposes its
