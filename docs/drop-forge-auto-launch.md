@@ -301,12 +301,10 @@ exercised in local validation.
 
 Deploy `dbMigrationsLoop` for entity sync, then `dropForgeLaunchHandler`, then
 `memesDistributionHandler`, then `api`, with both flags disabled,
-then the dependent frontend controls. Redeploy the existing wave-report
-consumers `subscriptionsDaily`, `subscriptionsTopUpLoop`,
-`transactionsProcessingLoop`, `helpBotReplyLoop`, `nftsLoop`,
-`mintAnnouncementsLoop`, and `waveDecisionExecutionLoop` so the new configured mention group resolves
-consistently. Supply the recipient configuration to those services too. These
-consumers can deploy after entity sync/API and before enabling the new worker.
+then the dependent frontend controls. The new handlers create their own wave
+reports; existing reporting services do not need redeployment for these alerts.
+Make `DROPS_6529_MENTION_PROFILE_IDS` available to the API and both handlers.
+Existing subscription alerts retain their `@devs6529` mention and configured wave.
 Apply the generated monitoring stack updates and deploy frontend mention
 compatibility before enablement.
 No data migration is introduced. Enable and exercise a manually configured

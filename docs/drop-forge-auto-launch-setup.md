@@ -51,9 +51,29 @@ as `@devs6529`. It is a reserved mention shortcut, not a requirement to create a
 profile with that handle. The posting profile may be separate from the KMS wallet.
 No additional posting-profile authentication token or ENS name is required.
 
-Supply the same recipient setting to services that create drops/notifications;
-deploy the consumers listed in the operations guide so parsing and delivery agree.
+Make the recipient setting available to `api`, `dropForgeLaunchHandler` and
+`memesDistributionHandler`. The new handlers create their own reports and resolve
+mention recipients when creating each drop. Existing subscription and other
+reporting services do not need redeployment or new recipient configuration for
+these automation alerts. Their existing `@devs6529` alerts are unchanged.
 The old shortcut and its old configuration key are not aliases for the new name.
+
+### What tags the group, and where
+
+| Source | When `@drops6529` is included | Wave destination |
+| --- | --- | --- |
+| `dropForgeLaunchHandler` | Recorded failures for initialization, claim updates, airdrops (including Research), signing/broadcasting and manual/recovery reconciliation | `DROP_FORGE_OPERATIONS_WAVE_ID` |
+| `memesDistributionHandler` | Failed processing/finalization jobs or jobs paused because EMMA authorization expired/was denied; an explicit distribution reset does not tag the group | `DROP_FORGE_OPERATIONS_WAVE_ID` |
+| A normal post containing the global shortcut | A chat participant includes `@drops6529` | The wave where the participant posts it |
+
+Successful actions, already-completed skips and ordinary status reports go to the
+same operations wave without tagging the group. The shortcut selects recipients,
+not a destination: manually using it does not forward a post to the operations
+wave. Recipient visibility and notification settings still apply.
+
+Automation reports do not fall back to the subscriptions wave or a developer wave.
+Failures that prevent creating a wave report remain observable through the existing
+CloudWatch/Sentry monitoring and retained report retry state.
 
 ## 3. Create the AWS execution roles
 
@@ -205,7 +225,8 @@ EMMA endpoint configuration and the operator's upstream permissions still apply.
 Follow the repository's authorized [deployment procedure](deployment.md). Deploy
 `dbMigrationsLoop` first, then `dropForgeLaunchHandler` (queue and schedule group),
 then `memesDistributionHandler` (its queue), then `api`, dependent frontend controls,
-and the reporting consumers/monitoring updates listed in the operations guide.
+and the monitoring updates listed in the operations guide. No additional existing
+reporting-consumer redeploy is required for the new automation mentions.
 Apply monitoring artifacts generated from the same reviewed revision. Both handlers
 must appear in the production/staging policy inventory without a recurring interval;
 keep their handler DLQ alarms enabled when applying the shared monitoring updates.
