@@ -387,7 +387,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/seizeAPI",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "aggregatedActivityLoopErrorLogs": {
@@ -403,7 +403,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/aggregatedActivityLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "attachmentsOrchestratorErrorLogs": {
@@ -420,7 +420,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/attachmentsOrchestrator",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "attachmentsProcessorErrorLogs": {
@@ -437,7 +437,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/attachmentsProcessor",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "artCurationNftWatchLoopErrorLogs": {
@@ -454,7 +454,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/artCurationNftWatchLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "claimsBuilderErrorLogs": {
@@ -471,7 +471,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/claimsBuilder",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "claimsMediaArweaveUploaderErrorLogs": {
@@ -488,7 +488,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/claimsMediaArweaveUploader",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "competitionMigrationLoopErrorLogs": {
@@ -522,7 +522,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/customReplayLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "dbDumpsDailyErrorLogs": {
@@ -539,7 +539,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/dbDumpsDaily",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "dbMigrationsLoopErrorLogs": {
@@ -556,7 +556,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/dbMigrationsLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "delegationsLoopErrorLogs": {
@@ -573,7 +573,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/delegationsLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "discoverEnsLoopErrorLogs": {
@@ -590,7 +590,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/discoverEnsLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "dropMediaSanitizerErrorLogs": {
@@ -607,7 +607,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/dropMediaSanitizer",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "ethPriceLoopErrorLogs": {
@@ -624,7 +624,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/ethPriceLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "externalCollectionLiveTailingLoopErrorLogs": {
@@ -641,7 +641,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/externalCollectionLiveTailingLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "externalCollectionSnapshottingLoopErrorLogs": {
@@ -658,7 +658,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/externalCollectionSnapshottingLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "helpBotReplyLoopErrorLogs": {
@@ -675,7 +675,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/helpBotReplyLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "helpBotDailyActivityCreditLoopErrorLogs": {
@@ -692,7 +692,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/helpBotDailyActivityCreditLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "marketStatsMEMESErrorLogs": {
@@ -709,7 +709,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/marketStatsMEMES",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "marketStatsLABErrorLogs": {
@@ -726,7 +726,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/marketStatsLAB",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "marketStatsGRADIENTErrorLogs": {
@@ -743,7 +743,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/marketStatsGRADIENT",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "marketStatsNEXTGENErrorLogs": {
@@ -760,7 +760,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/marketStatsNEXTGEN",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "marketDepthStreamLoopErrorLogs": {
@@ -777,7 +777,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/marketDepthStreamLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "mediaResizerLoopErrorLogs": {
@@ -794,7 +794,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/mediaResizerLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "mintAnnouncementsLoopErrorLogs": {
@@ -811,7 +811,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/mintAnnouncementsLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "newsletterLoopErrorLogs": {
@@ -828,7 +828,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/newsletterLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "nextgenContractLoopErrorLogs": {
@@ -845,7 +845,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/nextgenContractLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "nextgenMediaImageResolutionsErrorLogs": {
@@ -862,7 +862,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/nextgenMediaImageResolutions",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "nextgenMediaProxyInterceptorErrorLogs": {
@@ -879,7 +879,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/nextgenMediaProxyInterceptor",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "nextgenMediaUploaderErrorLogs": {
@@ -896,7 +896,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/nextgenMediaUploader",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "nextgenMetadataLoopErrorLogs": {
@@ -913,7 +913,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/nextgenMetadataLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "nftHistoryLoopErrorLogs": {
@@ -930,7 +930,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/nftHistoryLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "nftLinkRefresherLoopErrorLogs": {
@@ -947,7 +947,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/nftLinkRefresherLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "nftLinkMediaPreviewLoopErrorLogs": {
@@ -964,7 +964,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/nftLinkMediaPreviewLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "nftOwnersLoopErrorLogs": {
@@ -981,7 +981,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/nftOwnersLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "nftsLoopErrorLogs": {
@@ -998,7 +998,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/nftsLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "overRatesRevocationLoopErrorLogs": {
@@ -1015,7 +1015,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/overRatesRevocationLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "ownersBalancesLoopErrorLogs": {
@@ -1032,7 +1032,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/ownersBalancesLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "populateHistoricConsolidatedTdhErrorLogs": {
@@ -1049,7 +1049,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/populateHistoricConsolidatedTdh",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "pushNotificationsHandlerErrorLogs": {
@@ -1066,7 +1066,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/pushNotificationsHandler",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "rateEventProcessingLoopErrorLogs": {
@@ -1083,7 +1083,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/rateEventProcessingLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "releaseDigestLoopErrorLogs": {
@@ -1100,7 +1100,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/releaseDigestLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "releaseNotesGenerationLoopErrorLogs": {
@@ -1117,7 +1117,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/releaseNotesGenerationLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "refreshENSErrorLogs": {
@@ -1134,7 +1134,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/refreshENS",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "rememesS3LoopErrorLogs": {
@@ -1151,7 +1151,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/rememesS3Loop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "rememesRefreshMetadataLoopErrorLogs": {
@@ -1168,7 +1168,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/rememesRefreshMetadataLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "rememesFileLoopErrorLogs": {
@@ -1185,7 +1185,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/rememesFileLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "royaltiesLoopErrorLogs": {
@@ -1202,7 +1202,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/royaltiesLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "s3UploaderErrorLogs": {
@@ -1219,7 +1219,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/s3Uploader",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "subscriptionsDailyErrorLogs": {
@@ -1236,7 +1236,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/subscriptionsDaily",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "subscriptionCoverageReconciliationLoopErrorLogs": {
@@ -1253,7 +1253,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/subscriptionCoverageReconciliationLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "subscriptionsTopUpLoopErrorLogs": {
@@ -1270,7 +1270,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/subscriptionsTopUpLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "xTdhGrantsReviewerLoopErrorLogs": {
@@ -1287,7 +1287,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/xTdhGrantsReviewerLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "tdhHistoryLoopErrorLogs": {
@@ -1304,7 +1304,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/tdhHistoryLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "tdhLoopErrorLogs": {
@@ -1321,7 +1321,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/tdhLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "teamLoopErrorLogs": {
@@ -1338,7 +1338,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/teamLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "memesTransactionsLoopErrorLogs": {
@@ -1355,7 +1355,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/memesTransactionsLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "gradientsTransactionsLoopErrorLogs": {
@@ -1372,7 +1372,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/gradientsTransactionsLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "memeLabTransactionsLoopErrorLogs": {
@@ -1389,7 +1389,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/memeLabTransactionsLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "transactionsProcessingLoopErrorLogs": {
@@ -1406,7 +1406,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/transactionsProcessingLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "votingCreditReturnNotificationsLoopErrorLogs": {
@@ -1423,7 +1423,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/votingCreditReturnNotificationsLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "waveDecisionExecutionLoopErrorLogs": {
@@ -1440,7 +1440,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/waveDecisionExecutionLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "waveLeaderboardSnapshotterLoopErrorLogs": {
@@ -1457,7 +1457,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/waveLeaderboardSnapshotterLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "waveDropMetricsRefreshLoopErrorLogs": {
@@ -1474,7 +1474,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/waveDropMetricsRefreshLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "waveScoreRefreshLoopErrorLogs": {
@@ -1491,7 +1491,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/waveScoreRefreshLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "xTdhLoopErrorLogs": {
@@ -1508,7 +1508,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/xTdhLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "artworkDocumentationProcessorErrorLogs": {
@@ -1525,7 +1525,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/artworkDocumentationProcessor",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "webSocketDeliveryLoopErrorLogs": {
@@ -1542,7 +1542,7 @@
           ]
         },
         "LogGroupName": "/aws/lambda/webSocketDeliveryLoop",
-        "FilterPattern": "\"6529.ops.error.v1\""
+        "FilterPattern": "?\"6529.ops.error.v1\" ?\"6529.ops.loop-health.v1\""
       }
     },
     "seizeAPIErrors": {
@@ -1664,17 +1664,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "attachmentsOrchestratorErrors": {
@@ -1730,17 +1720,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "attachmentsProcessorErrors": {
@@ -1796,17 +1776,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "artCurationNftWatchLoopErrors": {
@@ -1862,17 +1832,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "claimsBuilderErrors": {
@@ -1928,17 +1888,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "claimsMediaArweaveUploaderErrors": {
@@ -1994,17 +1944,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "competitionMigrationLoopErrors": {
@@ -2192,17 +2132,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "dbMigrationsLoopErrors": {
@@ -2258,17 +2188,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "delegationsLoopErrors": {
@@ -2324,17 +2244,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "discoverEnsLoopErrors": {
@@ -2390,17 +2300,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "dropMediaSanitizerErrors": {
@@ -2456,17 +2356,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "ethPriceLoopErrors": {
@@ -2522,17 +2412,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "externalCollectionLiveTailingLoopErrors": {
@@ -2588,17 +2468,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "externalCollectionSnapshottingLoopErrors": {
@@ -2654,17 +2524,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "helpBotReplyLoopErrors": {
@@ -2720,17 +2580,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "helpBotDailyActivityCreditLoopErrors": {
@@ -2786,17 +2636,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "marketStatsMEMESErrors": {
@@ -2852,17 +2692,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "marketStatsLABErrors": {
@@ -2918,17 +2748,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "marketStatsGRADIENTErrors": {
@@ -2984,17 +2804,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "marketStatsNEXTGENErrors": {
@@ -3050,17 +2860,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "marketDepthStreamLoopErrors": {
@@ -3116,17 +2916,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "mediaResizerLoopErrors": {
@@ -3248,17 +3038,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "newsletterLoopErrors": {
@@ -3314,17 +3094,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "nextgenContractLoopErrors": {
@@ -3380,17 +3150,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "nextgenMediaImageResolutionsErrors": {
@@ -3446,17 +3206,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "nextgenMediaProxyInterceptorErrors": {
@@ -3578,17 +3328,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "nextgenMetadataLoopErrors": {
@@ -3644,17 +3384,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "nftHistoryLoopErrors": {
@@ -3710,17 +3440,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "nftLinkRefresherLoopErrors": {
@@ -3777,17 +3497,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "nftLinkMediaPreviewLoopErrors": {
@@ -3843,17 +3553,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "nftOwnersLoopErrors": {
@@ -3909,17 +3609,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "nftsLoopErrors": {
@@ -3976,17 +3666,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "overRatesRevocationLoopErrors": {
@@ -4042,17 +3722,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "ownersBalancesLoopErrors": {
@@ -4108,17 +3778,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "populateHistoricConsolidatedTdhErrors": {
@@ -4240,17 +3900,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "rateEventProcessingLoopErrors": {
@@ -4306,17 +3956,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "releaseDigestLoopErrors": {
@@ -4372,17 +4012,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "releaseNotesGenerationLoopErrors": {
@@ -4439,17 +4069,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "refreshENSErrors": {
@@ -4505,17 +4125,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "rememesS3LoopErrors": {
@@ -4571,17 +4181,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "rememesRefreshMetadataLoopErrors": {
@@ -4637,17 +4237,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "rememesFileLoopErrors": {
@@ -4769,17 +4359,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "s3UploaderErrors": {
@@ -4835,17 +4415,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "subscriptionsDailyErrors": {
@@ -4901,17 +4471,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "subscriptionCoverageReconciliationLoopErrors": {
@@ -4968,17 +4528,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "subscriptionsTopUpLoopErrors": {
@@ -5034,17 +4584,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "xTdhGrantsReviewerLoopErrors": {
@@ -5100,17 +4640,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "tdhHistoryLoopErrors": {
@@ -5166,17 +4696,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "tdhLoopErrors": {
@@ -5232,17 +4752,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "teamLoopErrors": {
@@ -5364,17 +4874,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "gradientsTransactionsLoopErrors": {
@@ -5430,17 +4930,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "memeLabTransactionsLoopErrors": {
@@ -5496,17 +4986,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "transactionsProcessingLoopErrors": {
@@ -5563,17 +5043,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "votingCreditReturnNotificationsLoopErrors": {
@@ -5695,17 +5165,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "waveLeaderboardSnapshotterLoopErrors": {
@@ -5761,17 +5221,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "waveDropMetricsRefreshLoopErrors": {
@@ -5827,17 +5277,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "waveScoreRefreshLoopErrors": {
@@ -5894,17 +5334,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "xTdhLoopErrors": {
@@ -5960,17 +5390,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "artworkDocumentationProcessorErrors": {
@@ -6026,17 +5446,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "webSocketDeliveryLoopErrors": {
@@ -6092,17 +5502,7 @@
         "Threshold": 1,
         "ComparisonOperator": "GreaterThanOrEqualToThreshold",
         "TreatMissingData": "notBreaching",
-        "AlarmActions": {
-          "Fn::If": [
-            "HasAlarmTopic",
-            [
-              {
-                "Ref": "ExistingAlarmTopicArn"
-              }
-            ],
-            []
-          ]
-        }
+        "AlarmActions": []
       }
     },
     "allowlistapiErrors": {

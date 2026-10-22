@@ -1,3 +1,4 @@
+import { ApiVotingCreditReleaseReason } from '@/api/generated/models/ApiVotingCreditReleaseReason';
 import { requestDeviceBadgeRefresh } from '@/api/push-notifications/push-notifications.service';
 import { assertUnreachable } from '../../../assertions';
 import { AuthenticationContext } from '../../../auth-context';
@@ -20,10 +21,7 @@ import { RequestContext } from '../../../request.context';
 import { Time } from '../../../time';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
-import {
-  ApiNotificationAdditionalContextV2,
-  ApiNotificationAdditionalContextV2ReasonEnum
-} from '@/api/generated/models/ApiNotificationAdditionalContextV2';
+import { ApiNotificationAdditionalContextV2 } from '@/api/generated/models/ApiNotificationAdditionalContextV2';
 import { ApiNotificationV2 } from '@/api/generated/models/ApiNotificationV2';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiSubscriptionCoverageStatus } from '@/api/generated/models/ApiSubscriptionCoverageStatus';
@@ -431,10 +429,7 @@ export class NotificationsApiService {
   ): ApiNotificationAdditionalContextV2 {
     return {
       ...data,
-      reason: enums.resolveOrThrow(
-        ApiNotificationAdditionalContextV2ReasonEnum,
-        data.reason
-      )
+      reason: enums.resolveOrThrow(ApiVotingCreditReleaseReason, data.reason)
     };
   }
 
