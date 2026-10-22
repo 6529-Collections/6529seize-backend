@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   CreateScheduleCommand,
   DeleteScheduleCommand,
@@ -95,7 +95,7 @@ export async function launchWatchdog(
   now: number,
   preparation = false
 ): Promise<string> {
-  const key = `watchdog:${delivery.revision}:${delivery.step ?? 'launch'}:${now}`;
+  const key = `watchdog:${delivery.revision}:${delivery.step ?? 'launch'}:${randomUUID()}`;
   await scheduleLaunch(delivery, key, now + 120, preparation);
   return key;
 }

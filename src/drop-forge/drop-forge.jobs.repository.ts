@@ -142,11 +142,11 @@ export class DropForgeJobsRepository {
     process: (job: DropForgeJobEntity, ctx: RequestContext) => Promise<object>,
     ctx: RequestContext,
     id?: string
-  ): Promise<void> {
+  ): Promise<boolean> {
     const timer = 'DropForgeJobsRepository->processOne';
     ctx.timer?.start(timer);
     try {
-      await sqlExecutor.executeNativeQueriesInTransaction(
+      return await sqlExecutor.executeNativeQueriesInTransaction(
         async (connection) => {
           const txCtx = { ...ctx, connection };
           const job = await sqlExecutor.oneOrNull<DropForgeJobEntity>(
@@ -154,7 +154,7 @@ export class DropForgeJobsRepository {
             { id: id ?? null },
             { wrappedConnection: connection }
           );
-          if (!job) return;
+          if (!job) return false;
           await sqlExecutor.execute('SAVEPOINT drop_forge_job', undefined, {
             wrappedConnection: connection
           });
@@ -206,6 +206,7 @@ export class DropForgeJobsRepository {
             },
             { wrappedConnection: connection }
           );
+          return true;
         }
       );
     } finally {

@@ -17,6 +17,8 @@ it.each(['dropForgeLaunchHandler', 'memesDistributionHandler'])(
     expect(source).not.toMatch(/rate\(|cron\(|env:DROP_FORGE.*ROLE/);
     expect(source).toContain('drop-forge.js)');
     expect(source).toContain('batchSize: 1');
+    expect(source).toContain('maximumConcurrency: 2');
+    expect(source).toContain('reservedConcurrency: 2');
     expect(source).toContain('VisibilityTimeout: 1800');
     expect(source).toContain('maxReceiveCount: 10');
     expect(source).toContain('ApproximateNumberOfMessagesVisible');

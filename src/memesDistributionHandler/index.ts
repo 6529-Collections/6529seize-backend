@@ -83,7 +83,7 @@ export async function runPreparationJob(
         )
       : null;
   try {
-    await dropForgeJobsRepository.processOne(
+    const processed = await dropForgeJobsRepository.processOne(
       processPreparationJob,
       {},
       delivery.id
@@ -92,7 +92,8 @@ export async function runPreparationJob(
     if (updated.status === 'PENDING')
       await wakeDropForge(
         { id: updated.id, revision: Number(updated.dispatch_revision) },
-        true
+        true,
+        processed ? 1 : 60
       );
     if (updated.kind === 'PROCESS_ALL' && updated.status === 'COMPLETED') {
       await evictRedisCacheForPathWithTimeout({

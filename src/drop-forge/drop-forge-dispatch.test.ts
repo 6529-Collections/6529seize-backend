@@ -87,6 +87,14 @@ it('removes a watchdog only on normal completion and tolerates its already-firin
   await removeLaunchWatchdog('launch', key);
   expect(send.mock.calls[1][0]).toBeInstanceOf(DeleteScheduleCommand);
 });
+it('gives concurrent deliveries independent watchdogs even at the same revision and time', async () => {
+  const first = await launchWatchdog({ id: 'launch', revision: 1 }, 1000);
+  const second = await launchWatchdog({ id: 'launch', revision: 1 }, 1000);
+  expect(first).not.toBe(second);
+  expect(send.mock.calls[0][0].input.Name).not.toBe(
+    send.mock.calls[1][0].input.Name
+  );
+});
 it('stops between future groups and after completion, but reconciles signed work beyond cutoffs and pause', () => {
   const launch = record();
   launch.data.events = [];

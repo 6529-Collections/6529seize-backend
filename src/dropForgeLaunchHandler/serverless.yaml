@@ -14,7 +14,7 @@ functions:
     handler: index.handler
     name: dropForgeLaunchHandler
     description: ${env:VERSION_DESCRIPTION}
-    reservedConcurrency: 1
+    reservedConcurrency: 2
     role: ${file(../../serverless-config/${sls:stage}/drop-forge.js):launchRole}
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
@@ -28,6 +28,7 @@ functions:
       - sqs:
           arn: !GetAtt WorkQueue.Arn
           batchSize: 1
+          maximumConcurrency: 2
 resources:
   Resources:
     LaunchScheduleGroup:

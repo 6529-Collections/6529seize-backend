@@ -61,6 +61,7 @@ beforeEach(() => {
       const result = (await operation(current, {})) as { continue?: boolean };
       current.result = result;
       current.status = result.continue ? 'PENDING' : 'COMPLETED';
+      return true;
     });
   jest.spyOn(workflow, 'processStep').mockResolvedValue({
     continue: true,
@@ -157,6 +158,16 @@ it('continues from a watchdog delivery without retaining its stale checkpoint fi
   await runPreparationJob({ id: current.id, revision: 1, step: 1 });
   expect(wakeDropForge).toHaveBeenLastCalledWith(
     { id: current.id, revision: 1 },
-    true
+    true,
+    1
+  );
+});
+it('backs off a concurrent delivery when another invocation owns the job checkpoint', async () => {
+  jest.mocked(dropForgeJobsRepository.processOne).mockResolvedValueOnce(false);
+  await runPreparationJob({ id: current.id, revision: 1 });
+  expect(wakeDropForge).toHaveBeenLastCalledWith(
+    { id: current.id, revision: 1 },
+    true,
+    60
   );
 });

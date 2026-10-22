@@ -109,7 +109,10 @@ endpoints or outbound networking allow SQS and Scheduler as well as RPC/KMS/EMMA
 
 The handler Serverless stacks own their encrypted standard SQS queue, a 14-day DLQ,
 and a CloudWatch DLQ alarm. Launch owns the `drop-forge-{stage}` Scheduler group.
-Queues deliver one job/claim per invocation. Standard queues can redeliver:
+Queues deliver one job/claim per invocation, with SQS maximum concurrency and
+Lambda reserved concurrency both set to two. The SQL signer lock still serializes
+transactions; a concurrently owned preparation checkpoint backs off instead of
+spinning. Each invocation owns a separate watchdog. Standard queues can redeliver:
 SQL locks, action readiness and persisted signed intents remain the safeguards
 against repeated transactions; queue delivery alone is not an exactly-once guarantee.
 
