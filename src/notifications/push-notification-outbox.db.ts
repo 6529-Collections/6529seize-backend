@@ -23,6 +23,22 @@ export class PushNotificationOutboxDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async enqueueMany(
+    notificationIds: readonly number[],
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!ctx.connection) throw new Error('Push outbox requires a transaction');
+    await this.db.bulkInsert(
+      PUSH_NOTIFICATION_OUTBOX_TABLE,
+      notificationIds.map((notification_id) => ({
+        notification_id,
+        created_at: Time.currentMillis()
+      })),
+      ['notification_id', 'created_at'],
+      ctx
+    );
+  }
+
   async oldestPendingAt(): Promise<number | null> {
     const row = await this.db.oneOrNull<{ created_at: number }>(
       `select min(created_at) as created_at from ${PUSH_NOTIFICATION_OUTBOX_TABLE}`,

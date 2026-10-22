@@ -93,6 +93,62 @@ describe('NotificationsApiService V2 notifications', () => {
     };
   }
 
+  it('maps returned-credit snapshots without loading deleted drops or an actor', async () => {
+    const { service, notificationsReader, dropsService, identityFetcher } =
+      createService();
+    const data = {
+      event_id: 'release',
+      reason: 'AUTHOR_DELETED',
+      wave_id: 'wave',
+      competition_id: 'competition',
+      competition_title: 'Main Stage',
+      entry_id: 'entry',
+      drop_id: 'deleted',
+      submission_title: 'Freedom To Transcend',
+      credit_type: 'TDH',
+      amount: 500,
+      released_at: 1000
+    };
+    notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+      notifications: [
+        {
+          id: 1,
+          created_at: 2000,
+          read_at: null,
+          cause: IdentityNotificationCause.VOTING_CREDITS_RETURNED,
+          data
+        }
+      ],
+      total_unread: 1
+    });
+    const authenticationContext = AuthenticationContext.fromProfileId('voter');
+    const result = await service.getNotificationsV2(
+      {
+        id_less_than: null,
+        limit: 10,
+        cause: null,
+        cause_exclude: null,
+        unread_only: false
+      },
+      authenticationContext,
+      { authenticationContext }
+    );
+    expect(result.notifications[0]).toMatchObject({
+      cause: ApiNotificationCause.VotingCreditsReturned,
+      related_identity: null,
+      related_drops: [],
+      additional_context: data
+    });
+    expect(dropsService.findDropsV2ByIds).toHaveBeenCalledWith(
+      [],
+      expect.anything()
+    );
+    expect(identityFetcher.getApiIdentityOverviewsByIds).toHaveBeenCalledWith(
+      [],
+      expect.anything()
+    );
+  });
+
   it('maps V2 notifications with ApiIdentityOverview and ApiDropV2', async () => {
     const { service, notificationsReader, identityFetcher, dropsService } =
       createService();

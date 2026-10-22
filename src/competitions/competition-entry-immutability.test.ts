@@ -1,3 +1,4 @@
+import { votingCreditReturnsDb } from '@/notifications/voting-credit-returns.db';
 import { nativeCompetitionRuntimeService } from './native-competition-runtime.service';
 import { nativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
 import { competitionEntryDropHooks } from './competition-entry-drop-hooks';
@@ -9,6 +10,10 @@ import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { DropEntity } from '@/entities/IDrop';
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { ConnectionWrapper } from '@/sql-executor';
+
+jest.mock('@/notifications/voting-credit-returns.db', () => ({
+  votingCreditReturnsDb: { capture: jest.fn() }
+}));
 
 jest.mock('./competition-entry.repository', () => ({
   competitionEntryRepository: {
@@ -64,9 +69,22 @@ it.each(Object.values(CompetitionEntryStatus))(
       competition_id: 'competition',
       wave_id: 'wave',
       drop_id: drop.id,
-      status
+      status,
+      submitter_id: 'author'
     } as NativeDropEntry;
     await competitionEntryDropHooks.beforeDelete(drop, [entry], 'author', ctx);
+    expect(votingCreditReturnsDb.capture).toHaveBeenCalledTimes(
+      status === CompetitionEntryStatus.ACTIVE ? 1 : 0
+    );
+    if (status === CompetitionEntryStatus.ACTIVE)
+      expect(votingCreditReturnsDb.capture).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entryId: 'entry',
+          reason: 'AUTHOR_DELETED',
+          actorId: 'author'
+        }),
+        ctx
+      );
     expect(competitionEntryRepository.deleteEntry).toHaveBeenCalledWith(
       'entry',
       ctx

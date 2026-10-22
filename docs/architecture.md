@@ -2266,3 +2266,30 @@ WatchTower manual-review attention is derived from a subject-based union of
 open reports and pending moderation checks. The API groups this union before
 pagination and shares the case definition across queue and count surfaces; it
 adds no persisted case table, queue, service or background reconciliation.
+
+## Voting credit return notifications
+
+When an ACTIVE native competition entry wins or is permanently deleted by its
+submitter, WAVE-scoped active allocations are released by the existing spending
+formula. The transition transaction records one `voting_credit_releases` header
+and copies nonzero current votes into `voting_credit_release_recipients` with a
+set-based INSERT SELECT. Amounts are absolute allocations, never weighted scores.
+The entry/competition lock serializes capture against voting and decision work.
+Titles, credit type, event identity and release time survive later hard deletion.
+
+`votingCreditReturnNotificationsLoop` is a separate 1-minute worker with reserved
+concurrency 1. Each invocation processes at most 20 pages of 100 recipients within
+40 seconds. A page locks its release header with SKIP LOCKED; notification rows,
+push-outbox rows, recipient cleanup and progress commit atomically. Failure rolls
+back the page and defers that release by a minute. Other releases remain eligible.
+Completed headers retain the release identity; processed recipient snapshots are
+removed. Five-minute backlog warnings and Lambda errors expose delayed delivery.
+No network publish or per-voter application loop runs in the transition path.
+
+`VOTING_CREDITS_RETURNED` uses snapshot context, nullable actor/drop references,
+existing vote preferences and live wave visibility. This deliberately survives
+ordinary drop notification cancellation. Native-competition-capable push devices
+receive links to the winning entry or, after deletion, its competition. API V1/V2
+map the additive cause without hydrating deleted drops. The EventBridge schedule
+is disabled on deployment and activated only after the dependent frontend is
+ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.

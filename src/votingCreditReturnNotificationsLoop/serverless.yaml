@@ -1,0 +1,80 @@
+service: votingCreditReturnNotificationsLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 60
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  votingCreditReturnNotificationsLoop:
+    handler: index.handler
+    name: votingCreditReturnNotificationsLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule:
+          rate: rate(1 minute)
+          # Enable only after backend readers, push consumer and frontend are ready.
+          enabled: false
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'votingCreditReturnNotificationsLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    CreditReturnBacklogFilter:
+      Type: AWS::Logs::MetricFilter
+      Properties:
+        LogGroupName: !Ref VotingCreditReturnNotificationsLoopLogGroup
+        FilterPattern: '"voting_credit_return_backlog"'
+        MetricTransformations:
+          - MetricNamespace: VotingCreditReturns
+            MetricName: Backlog
+            MetricValue: '1'
+            DefaultValue: 0
+    CreditReturnBacklogAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: CreditReturnBacklogFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-backlog'
+        AlarmDescription: Voting credit notifications have waited longer than five minutes.
+        Namespace: VotingCreditReturns
+        MetricName: Backlog
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    CreditReturnErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-errors'
+        Namespace: AWS/Lambda
+        MetricName: Errors
+        Dimensions:
+          - Name: FunctionName
+            Value: votingCreditReturnNotificationsLoop
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
