@@ -71,7 +71,11 @@ function operationsFor(name) {
       optionalOperations: ['recalculation']
     };
   if (name === 'nftLinkMediaPreviewLoop')
-    return { operations: ['processing'], idleOperations: ['processing'] };
+    return {
+      operations: ['processing'],
+      idleOperations: ['processing'],
+      oldestAdvanceIsProgress: false
+    };
   if (name === 'waveScoreRefreshLoop')
     return {
       operations: ['dirty_refresh', 'full_refresh'],

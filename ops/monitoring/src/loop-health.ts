@@ -17,6 +17,9 @@ export interface LoopPolicy {
   /** Event-driven workers can be idle indefinitely, but an old empty survey
    * cannot suppress new contention. Pending work never gets an idle exemption. */
   idleOperations?: string[];
+  /** Some backlogs also shrink through terminal failures. Those workers must
+   * supply successful persistence explicitly instead of counting removals. */
+  oldestAdvanceIsProgress?: boolean;
   operationBudgets?: Record<
     string,
     | Partial<

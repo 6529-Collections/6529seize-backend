@@ -86,7 +86,8 @@ function saveIncident(
 
 function continuedObservation(
   observation: LoopObservation,
-  previous: Record<string, unknown>
+  previous: Record<string, unknown>,
+  policy: LoopPolicy
 ): Record<string, unknown> {
   // A late scheduled start is still the same overdue work. Starting a retry
   // cannot clear its incident or restart its stall/delay clock.
@@ -112,6 +113,7 @@ function continuedObservation(
       ? previous.progressAt
       : 0;
   const oldestAdvanced =
+    policy.oldestAdvanceIsProgress !== false &&
     continuing &&
     typeof previous.oldestPendingAt === 'number' &&
     observation.oldestPendingAt !== undefined &&
@@ -154,7 +156,7 @@ export async function receiveLoopObservation(
     const accepted = await latest(
       key,
       observation.observedAt,
-      continuedObservation(observation, record(saved?.payload)),
+      continuedObservation(observation, record(saved?.payload), policy),
       typeof saved?.observedAt === 'number' ? saved.observedAt : null
     );
     if (accepted) return;

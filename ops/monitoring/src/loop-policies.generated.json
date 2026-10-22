@@ -394,7 +394,8 @@
       ],
       "idleOperations": [
         "processing"
-      ]
+      ],
+      "oldestAdvanceIsProgress": false
     },
     {
       "service": "nftLinkRefresherLoop",
@@ -1097,7 +1098,8 @@
       ],
       "idleOperations": [
         "processing"
-      ]
+      ],
+      "oldestAdvanceIsProgress": false
     },
     {
       "service": "nftLinkRefresherLoop",

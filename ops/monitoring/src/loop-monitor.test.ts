@@ -677,3 +677,43 @@ test('late scheduled starts retain the due baseline across retries without inven
     else process.env.RECEIPTS_TABLE = original;
   }
 });
+
+test('terminal preview removals cannot advance successful processing progress', async () => {
+  const original = process.env.RECEIPTS_TABLE;
+  process.env.RECEIPTS_TABLE = 'test';
+  const { data, dbMock } = fakeState();
+  const base = {
+    _type: LOOP_EVENT_TYPE,
+    service: 'nftLinkMediaPreviewLoop',
+    operation: 'processing',
+    pending: true,
+    recovery: 'unknown'
+  };
+  try {
+    await receiveLoopObservation(
+      { ...base, observedAt: 100, oldestPendingAt: 80 },
+      'staging'
+    );
+    await receiveLoopObservation(
+      { ...base, observedAt: 110, oldestPendingAt: 90 },
+      'staging'
+    );
+    const key = 'loop:observation:nftLinkMediaPreviewLoop:processing';
+    assert.equal(
+      (data.get(key)?.payload as Record<string, unknown>).progressAt,
+      undefined
+    );
+    await receiveLoopObservation(
+      { ...base, observedAt: 120, oldestPendingAt: 95, progressAt: 115 },
+      'staging'
+    );
+    assert.equal(
+      (data.get(key)?.payload as Record<string, unknown>).progressAt,
+      115
+    );
+  } finally {
+    dbMock.mock.restore();
+    if (original === undefined) delete process.env.RECEIPTS_TABLE;
+    else process.env.RECEIPTS_TABLE = original;
+  }
+});
