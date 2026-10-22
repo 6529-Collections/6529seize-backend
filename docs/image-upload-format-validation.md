@@ -25,6 +25,17 @@ choice rather than consulting a potentially different worker environment:
 - Missing policy: retain sanitization for older in-flight private uploads.
 - AVIF: always convert to an oriented, metadata-free WebP as before.
 
+The API sets this metadata in `CreateMultipartUploadCommand`; clients receive
+only signed `UploadPartCommand` URLs for the owned key/upload ID/part number.
+Those URLs do not authorize creating or replacing an object or its metadata.
+The ingest storage definition blocks public access and grants the existing
+Lambda role access to the ingest prefixes. This remains a trusted AWS-credential
+boundary: public-access blocking does not restrict a separately authorized IAM
+principal. Before rollout, verify that no client principal has direct ingest
+object-write/copy or multipart-initiation permissions. This PR does not audit or
+change deployed IAM. See `src/dropMediaIngestStorage/serverless.yaml` and
+`src/api-serverless/src/media/upload-media.service.ts` for the declared boundary.
+
 Published objects carry `format-validated=true`. `privacy-sanitized=true` is set
 only when bytes were actually sanitized. The format check is container/header
 validation, not a claim that every pixel/frame of an unchanged original has been
@@ -55,6 +66,11 @@ paths. A previously issued single-PUT URL cannot be revoked by this code and
 remains valid until its existing one-hour expiry; this is not a retroactive repair
 of public objects or a bucket-policy change.
 
+Wave initiation accepts only PNG, JPEG and GIF MIME types; there is no supported
+non-image wave upload path. Drop initiation validates filename extensions against
+the declared MIME type before this service runs. The legacy-session guard is
+defense in depth, not a retrospective audit of every historical public object.
+
 ## Service order and rollback
 
 Deploy `dropMediaSanitizer` before `api` when rollout is authorized. The worker
@@ -63,6 +79,12 @@ through it. The existing ingest storage, database table and queue are reused; no
 schema changes or resizer deployment are needed. API deployment already checks
 the ingest bucket and queue. All images now incur queue/publication latency;
 capacity and the existing worker concurrency need observation during rollout.
+Watch SQS oldest-message age and visible backlog, worker errors/throttles and DLQ
+messages. If backlog/age keeps growing while the two reserved worker slots are
+saturated, or uploads stop reaching ready, roll back API routing rather than
+bypassing validation or changing privacy policy. Choose an acceptable processing
+latency and backlog threshold from measured traffic before production rollout;
+this PR introduces no new alarm or automatic backpressure policy.
 
 Rollback the API first to stop creating the new ingest policy. Drain or retain a
 compatible worker for queued private uploads before rolling back the worker, so
