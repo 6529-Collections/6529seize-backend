@@ -77,8 +77,7 @@ beforeEach(() => {
     .mocked(competitionRepository.findCompetitionRecordById)
     .mockResolvedValue({
       id: 'competition',
-      wave_id: 'wave',
-      storage_mode: 'NATIVE'
+      wave_id: 'wave'
     } as never);
   jest
     .mocked(administerCompetitionWave)

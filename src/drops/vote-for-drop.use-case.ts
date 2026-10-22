@@ -47,7 +47,7 @@ export class VoteForDropUseCase {
       );
     }
     const owner = await competitionRepository.lockOriginalPrimary(wave_id, ctx);
-    if (!owner || owner.storage_mode !== 'NATIVE')
+    if (!owner)
       throw new ForbiddenException(
         'This drop does not belong to a competition'
       );

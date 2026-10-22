@@ -6,17 +6,16 @@ Original-primary identity remains immutable for permanent old public GETs.
 
 ## Deployment and operation
 
-Follow [application runtime retirement](./competition-runtime-retirement.md) for
-the compatible preparation/final rollout. Schema and required consumers/workers
-must be healthy before API and dependent frontend deployment. The old global
-competition rollout/shadow flags and migration tools are retired. Publication,
-ACTIVE/DISABLED execution mode, decision pauses and special capabilities remain
-real runtime controls; frontend visibility is not an authorization boundary.
+Follow the [final cleanup procedure](competition-storage-cleanup.md) for the
+compatible schema/consumer rollout and intentional physical deletion. The old
+global rollout/shadow flags, storage selector and migration tools are removed.
+Publication, ACTIVE/DISABLED execution, pauses, capabilities and authorization
+remain runtime controls.
 
-Do not delete schema or infrastructure during the application chunk. Rolling
-back must preserve native ownership, accepted outbox events, effect/delivery
-receipts, command receipts, signatures and history. A committed external claim
-or announcement cannot be undone by a code rollback.
+Rollback must preserve native ownership, accepted outbox events, effect/delivery
+receipts, command receipts, signatures and history. After physical deletion use
+compatible native code or the verified isolated recovery snapshot. A committed
+external claim or announcement cannot be undone by a code rollback.
 
 ## Command and signing contract
 
@@ -198,4 +197,4 @@ capabilities independently from ordinary competitions in the same hub.
 Inspect outbox backlog, oldest pending event, retries/leases, decision lag and
 receipt/claim counts. Record deployed versions, health and relevant E2E evidence.
 A passing disposable test is not environment parity evidence. Follow the
-[retirement runbook](competition-runtime-retirement.md) for the staged transition.
+[cleanup procedure](competition-storage-cleanup.md) for physical deletion and recovery.

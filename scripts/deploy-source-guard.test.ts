@@ -316,12 +316,7 @@ describe('generated deployment source guard', () => {
         'claims-media-upload',
         'nft-link-page-retry',
         'market-depth-publication-lock',
-        'voting-credit-returns',
-        'competition-history-preparation',
-        'competition-runtime-schema',
-        'competition-runtime-retirement',
-        'wave-hub-configuration-preparation',
-        'wave-hub-configuration-finalize'
+        'voting-credit-returns'
       ]
     });
     expect(job.env.DB_SCHEMA_SCOPE).toBe(
@@ -340,35 +335,45 @@ describe('generated deployment source guard', () => {
     ).toBe(1);
   });
 
-  it.each(['unknown', '$(exit 73)', 'full\nwallet-transfer-analysis', ''])(
-    'rejects unsupported schema scope %j as data',
+  it.each([
+    'competition-history-preparation',
+    'competition-runtime-schema',
+    'competition-runtime-retirement',
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize',
+    'unknown',
+    '$(exit 73)',
+    'full\nwallet-transfer-analysis',
+    ''
+  ])('rejects unsupported schema scope %j as data', (scope) => {
+    expect(
+      validateDispatch('', 'prod', {
+        INPUT_SERVICE: 'dbMigrationsLoop',
+        DB_SCHEMA_SCOPE: scope
+      }).status
+    ).toBe(1);
+  });
+
+  it.each([
+    'wave-hub-configuration-preparation',
+    'wave-hub-configuration-finalize'
+  ])(
+    'rejects retired %s even in explicit schema service dispatches',
     (scope) => {
       expect(
-        validateDispatch('', 'prod', {
+        validateDispatch(sourceSha, 'staging', {
           INPUT_SERVICE: 'dbMigrationsLoop',
+          DB_SCHEMA_SCOPE: scope
+        }).status
+      ).toBe(1);
+      expect(
+        validateDispatch(sourceSha, 'staging', {
+          INPUT_SERVICE: 'api',
           DB_SCHEMA_SCOPE: scope
         }).status
       ).toBe(1);
     }
   );
-
-  it.each([
-    'wave-hub-configuration-preparation',
-    'wave-hub-configuration-finalize'
-  ])('limits %s to explicit schema service dispatches', (scope) => {
-    expect(
-      validateDispatch(sourceSha, 'staging', {
-        INPUT_SERVICE: 'dbMigrationsLoop',
-        DB_SCHEMA_SCOPE: scope
-      }).status
-    ).toBe(0);
-    expect(
-      validateDispatch(sourceSha, 'staging', {
-        INPUT_SERVICE: 'api',
-        DB_SCHEMA_SCOPE: scope
-      }).status
-    ).toBe(1);
-  });
 
   it('restricts NFT retry scope to dbMigrationsLoop before credentials', () => {
     expect(

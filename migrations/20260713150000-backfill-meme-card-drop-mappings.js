@@ -19,7 +19,7 @@ exports.up = async function(db) {
   }
   var anchors = await db.runSql(
     `select winner.drop_id, claim.claim_id
-     from wave_decision_winner_drops winner
+     from legacy_get_wave_decision_winner_drops winner
      join minting_claims claim on claim.drop_id = winner.drop_id
      where winner.wave_id = ?
      order by winner.decision_time asc, winner.ranking asc, winner.drop_id asc`,
@@ -30,7 +30,7 @@ exports.up = async function(db) {
   }
   var winners = await db.runSql(
     `select drop_id, decision_time, ranking
-     from wave_decision_winner_drops
+     from legacy_get_wave_decision_winner_drops
      where wave_id = ?
      order by decision_time asc, ranking asc, drop_id asc`,
     [mainStageWaveId]

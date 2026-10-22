@@ -38,7 +38,7 @@ export async function recordNativePrimaryVoteActivity(
          DATE_ADD('1970-01-01', INTERVAL :occurredAt MICROSECOND), e.submitter_id, c.wave_id, c.id
        FROM ${COMPETITIONS_TABLE} c JOIN ${COMPETITION_ENTRIES_TABLE} e
          ON e.competition_id = c.id AND e.id = :entryId
-       WHERE c.id = :competitionId AND c.legacy_wave_id = c.wave_id AND c.storage_mode = 'NATIVE'`,
+       WHERE c.id = :competitionId AND c.legacy_wave_id = c.wave_id`,
       {
         ...params,
         occurredAt: params.occurredAt * 1000,

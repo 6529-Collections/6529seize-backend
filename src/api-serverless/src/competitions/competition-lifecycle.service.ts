@@ -21,7 +21,6 @@ import {
   CompetitionEntity,
   CompetitionExecutionMode,
   CompetitionLifecycle,
-  CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
 import { BadRequestException } from '@/exceptions';
@@ -89,7 +88,6 @@ function newRecord(
     id: randomUUID(),
     wave_id: waveId,
     legacy_wave_id: null,
-    storage_mode: CompetitionStorageMode.NATIVE,
     execution_mode: CompetitionExecutionMode.DISABLED,
     lifecycle: CompetitionLifecycle.DRAFT,
     type: CompetitionType.RANK,
@@ -185,10 +183,7 @@ export class CompetitionLifecycleService {
       competitionId,
       ctx
     );
-    if (
-      record?.wave_id !== waveId ||
-      record.storage_mode !== CompetitionStorageMode.NATIVE
-    )
+    if (record?.wave_id !== waveId)
       competitionConflict('Native competition configuration is unavailable');
     return this.commandConfiguration(record, ctx);
   }

@@ -15,7 +15,6 @@ const competition = (id: string, next: number | null) => ({
   id,
   wave_id: 'hub',
   legacy_wave_id: null,
-  storage_mode: 'NATIVE',
   execution_mode: 'ACTIVE',
   type: 'RANK',
   lifecycle: 'PUBLISHED',
@@ -67,8 +66,8 @@ describeWithSeed(
           type: 'APPROVE'
         },
         {
-          ...competition('retired-adapter', now - 900_000),
-          storage_mode: 'LEGACY_ADAPTER'
+          ...competition('ended', now - 900_000),
+          lifecycle: 'ENDED'
         }
       ]
     },

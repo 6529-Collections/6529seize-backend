@@ -1,3 +1,7 @@
+import {
+  historicalCompetitionFixture,
+  seedRetainedScoreFixture
+} from '@/tests/fixtures/retained-competition.fixture';
 import * as tables from '@/constants';
 import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
 import { dropsDb } from '@/drops/drops.db';
@@ -13,7 +17,6 @@ import {
   legacyCompetitionEntryId,
   legacyCompetitionId
 } from './competition-id';
-import { transferCompetitionRetirementHistory } from './competition-retirement-history';
 import { NativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
 import { flooredWeightedNativeVote } from './native-competition-runtime.helpers';
 
@@ -143,7 +146,7 @@ describeWithSeed(
   () => {
     beforeEach(async () => {
       await seedNativeOriginalPrimaryFixture(wave);
-      await transferCompetitionRetirementHistory(sqlExecutor, id);
+      await seedRetainedScoreFixture(sqlExecutor, id);
     });
     afterEach(() => jest.restoreAllMocks());
 
@@ -277,5 +280,6 @@ describeWithSeed(
       ).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
       expect(notify).toHaveBeenCalledTimes(2);
     });
-  }
+  },
+  historicalCompetitionFixture
 );

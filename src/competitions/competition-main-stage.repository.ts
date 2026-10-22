@@ -30,7 +30,7 @@ export function nativeMainStageEntriesSource(
   return `select entry.id, entry.competition_id, entry.drop_id, entry.submitter_id, entry.wave_id, entry.decision_id
     from ${COMPETITION_ENTRIES_TABLE} entry
     join ${COMPETITIONS_TABLE} competition on competition.id = entry.competition_id
-      and competition.wave_id = entry.wave_id and competition.storage_mode = 'NATIVE'
+      and competition.wave_id = entry.wave_id
       and competition.published_at is not null ${lifecycle}
     join ${COMPETITION_CAPABILITIES_TABLE} cap on cap.competition_id = competition.id
       and cap.wave_id = competition.wave_id and cap.capability = 'MAIN_STAGE'
@@ -48,7 +48,7 @@ export class CompetitionMainStageRepository extends LazyDbAccessCompatibleServic
       `select c.id from ${COMPETITIONS_TABLE} c
        join ${COMPETITION_CAPABILITIES_TABLE} cap on cap.competition_id = c.id and cap.wave_id = c.wave_id
        join ${WAVES_TABLE} hub on hub.id = c.wave_id and ${publicCompetitionWaveSql('hub')}
-       where c.id = :competitionId and c.storage_mode = 'NATIVE' and cap.capability = 'MAIN_STAGE'`,
+       where c.id = :competitionId and cap.capability = 'MAIN_STAGE'`,
       { competitionId },
       { wrappedConnection: ctx.connection }
     );
