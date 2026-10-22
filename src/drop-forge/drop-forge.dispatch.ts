@@ -16,7 +16,11 @@ import { launchGroup } from '@/drop-forge/drop-forge.groups';
 const scheduler = new SchedulerClient({});
 const sqs = new SQSClient({});
 function scheduleName(id: string, key: string): string {
-  return `forge-${createHash('sha256').update(`${id}:${key}`).digest('hex').slice(0, 48)}`;
+  const digest = createHash('sha256')
+    .update(`${id}:${key}`)
+    .digest('hex')
+    .slice(0, 48);
+  return `forge-${digest}`;
 }
 function scheduleConfig() {
   const GroupName = process.env.DROP_FORGE_SCHEDULE_GROUP;

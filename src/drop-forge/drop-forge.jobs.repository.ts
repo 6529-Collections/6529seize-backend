@@ -12,6 +12,15 @@ function storedJobResult(job: DropForgeJobEntity): object | null {
   if (!job.result) return null;
   return typeof job.result === 'string' ? JSON.parse(job.result) : job.result;
 }
+function retainedAuthorization(
+  job: DropForgeJobEntity,
+  result: object | null,
+  status: string
+): string | null {
+  if (status !== 'PENDING' || (result as { inputs?: object } | null)?.inputs)
+    return null;
+  return job.encrypted_auth ?? null;
+}
 
 export class DropForgeJobsRepository {
   async reportOne(
@@ -185,11 +194,7 @@ export class DropForgeJobsRepository {
           const continuing =
             (result as { continue?: boolean } | null)?.continue === true;
           if (continuing && status === 'COMPLETED') status = 'PENDING';
-          const encryptedAuth =
-            status === 'PENDING' &&
-            !(result as { inputs?: object } | null)?.inputs
-              ? (job.encrypted_auth ?? null)
-              : null;
+          const encryptedAuth = retainedAuthorization(job, result, status);
           await sqlExecutor.execute(
             `UPDATE ${DROP_FORGE_JOBS_TABLE} SET step = :step, status = :status, error = :error, result = :result, encrypted_auth = :encrypted_auth, updated_at = :updated_at WHERE id = :id`,
             {

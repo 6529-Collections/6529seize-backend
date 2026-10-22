@@ -9,6 +9,7 @@ import {
 import { DropForgeJobEntity } from '@/entities/IDropForgeLaunch';
 import * as wake from '@/drop-forge/drop-forge.wake';
 import { sqlExecutor } from '@/sql-executor';
+import { resetDistributionPreparation } from '@/drop-forge/drop-forge.preparation.repository';
 
 const repository = new DropForgeRepository();
 beforeEach(clearDropForgeTestTables);
@@ -113,4 +114,36 @@ it('processes and reports only the requested job when other jobs are pending', a
   await dropForgeJobsRepository.reportOne(report, {}, second.id);
   await dropForgeJobsRepository.reportOne(report, {}, second.id);
   expect(report).toHaveBeenCalledTimes(1);
+});
+it('rolls back a multi-job reset if dispatching any report fails', async () => {
+  const first = await dropForgeJobsRepository.create(
+    { ...job(), kind: 'PROCESS_ALL' },
+    {}
+  );
+  const second = await dropForgeJobsRepository.create(
+    { ...job(), kind: 'PROCESS_ALL' },
+    {}
+  );
+  await dropForgeJobsRepository.processOne(async () => ({}), {}, first.id);
+  await dropForgeJobsRepository.processOne(async () => ({}), {}, second.id);
+  jest
+    .mocked(wake.wakeDropForge)
+    .mockClear()
+    .mockResolvedValueOnce()
+    .mockRejectedValueOnce(new Error('second dispatch failed'));
+  await expect(
+    resetDistributionPreparation(testConfig.creator, 1, async () => undefined)
+  ).rejects.toThrow('second dispatch failed');
+  expect(wake.wakeDropForge).toHaveBeenCalledTimes(2);
+  const savedJobs = await Promise.all(
+    [first, second].map((original) =>
+      dropForgeJobsRepository.find(original.id, {})
+    )
+  );
+  savedJobs.forEach((saved, index) => {
+    expect(saved.status).toBe('COMPLETED');
+    expect(saved.dispatch_revision).toBe(
+      [first, second][index].dispatch_revision
+    );
+  });
 });

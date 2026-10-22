@@ -155,8 +155,11 @@ export async function resetDistributionPreparation(
         { contract: contract.toLowerCase(), claim },
         { wrappedConnection: txCtx.connection }
       );
-      for (const job of reports)
-        await dropForgeJobsRepository.dispatch(job, txCtx);
+      await reports.reduce<Promise<void>>(
+        (previous, job) =>
+          previous.then(() => dropForgeJobsRepository.dispatch(job, txCtx)),
+        Promise.resolve()
+      );
     },
     ctx
   );

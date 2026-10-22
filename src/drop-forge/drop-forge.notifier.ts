@@ -20,11 +20,9 @@ export async function reportLaunchEvents(
 ): Promise<boolean> {
   let delivered = true;
   const target = id ? await repository.find(id, {}) : null;
-  for (const candidate of id
-    ? target
-      ? [target]
-      : []
-    : await repository.reporting({})) {
+  const targeted = target ? [target] : [];
+  const candidates = id ? targeted : await repository.reporting({});
+  for (const candidate of candidates) {
     try {
       const pushes = await repository.change(
         candidate.id,
