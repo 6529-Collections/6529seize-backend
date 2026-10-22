@@ -142,6 +142,11 @@ to `main`.
    `MonitoringEventBusArn` from the monitoring stack output. Set
    `ExistingAlarmTopicArn` to the existing regional confirmed email topic where
    available. Preserve every existing email subscription and existing alarm.
+   Enrolled background-worker Throttles alarms retain metrics but use the
+   [processing-health policy](../../monitoring/README.md#background-processing-health)
+   for notification routing. Deploy its receiver before source forwarding and
+   producers, and reconcile already-active worker alarms before removing their
+   old notification route. Errors, OOM and independent queue guards stay active.
    The guarded `../../bin/6529 run deploy:source` command performs account,
    region, artifact ownership and coverage/subscription preflight before packaging
    and deploying `seize-monitoring-{env}-source`, then enables termination

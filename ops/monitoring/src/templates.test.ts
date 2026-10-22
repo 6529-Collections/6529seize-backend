@@ -41,6 +41,17 @@ test('low-control audit grants only the existing archive prefix and preserves co
 });
 
 test('catalog log subscriptions form one deterministic acyclic chain without changing their resource contract', () => {
+  const retainedFunctions = new Set<string>(
+    JSON.parse(
+      readFileSync(
+        new URL('../retained-producers.json', import.meta.url),
+        'utf8'
+      )
+    ).services.flatMap(
+      (service: { verification_targets: string[] }) =>
+        service.verification_targets
+    )
+  );
   for (const env of ['prod', 'staging']) {
     const resources = JSON.parse(
       readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
@@ -78,7 +89,9 @@ test('catalog log subscriptions form one deterministic acyclic chain without cha
           Properties: {
             DestinationArn: { 'Fn::GetAtt': ['LogRelay', 'Arn'] },
             LogGroupName: `/aws/lambda/${name}`,
-            FilterPattern: '"6529.ops.error.v1"'
+            FilterPattern: retainedFunctions.has(name)
+              ? '"6529.ops.error.v1"'
+              : '?"6529.ops.error.v1" ?"6529.ops.loop-health.v1"'
           }
         },
         `${env}: ${id}`
@@ -106,14 +119,14 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
     assert.equal(throttles.Threshold, 1);
     assert.equal(throttles.ComparisonOperator, 'GreaterThanOrEqualToThreshold');
     assert.equal(throttles.TreatMissingData, 'notBreaching');
-    assert.deepEqual(throttles.AlarmActions, {
-      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
-    });
+    assert.deepEqual(throttles.AlarmActions, []);
     assert.equal(errors.MetricName, 'Errors');
     assert.equal(errors.Period, 60);
     assert.equal(errors.EvaluationPeriods, 1);
     assert.equal(errors.Threshold, 1);
-    assert.deepEqual(errors.AlarmActions, throttles.AlarmActions);
+    assert.deepEqual(errors.AlarmActions, {
+      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+    });
 
     // This exception must not weaken other services or monitoring itself.
     for (const [id, resource] of Object.entries(resources) as [
@@ -139,7 +152,7 @@ test('NFT refresher throttling requires three breaching minutes out of five whil
   }
 });
 
-test('transaction processing tolerates brief airdrop contention and alerts after five breaching minutes while failures stay immediate', () => {
+test('transaction processing retains five-minute raw contention qualification and independent error actions', () => {
   for (const env of ['prod', 'staging']) {
     const resources = JSON.parse(
       readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
@@ -163,9 +176,7 @@ test('transaction processing tolerates brief airdrop contention and alerts after
       Threshold: 1,
       ComparisonOperator: 'GreaterThanOrEqualToThreshold',
       TreatMissingData: 'notBreaching',
-      AlarmActions: {
-        'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
-      }
+      AlarmActions: []
     });
     // Replay the observed three-minute burst, plus shorter and sustained cases.
     for (const { counts, expected } of [
@@ -185,11 +196,13 @@ test('transaction processing tolerates brief airdrop contention and alerts after
     assert.equal(errors.EvaluationPeriods, 1);
     assert.equal(errors.DatapointsToAlarm, undefined);
     assert.equal(errors.Threshold, 1);
-    assert.deepEqual(errors.AlarmActions, throttles.AlarmActions);
+    assert.deepEqual(errors.AlarmActions, {
+      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+    });
   }
 });
 
-test('overlapping scheduled workers qualify sustained throttles without delaying invocation failures or changing notification actions', () => {
+test('overlapping workers retain raw throttle qualification while processing-health monitoring owns notifications', () => {
   for (const env of ['prod', 'staging']) {
     const resources = JSON.parse(
       readFileSync(new URL(`../source-${env}.json`, import.meta.url), 'utf8')
@@ -211,15 +224,15 @@ test('overlapping scheduled workers qualify sustained throttles without delaying
         Threshold: 1,
         ComparisonOperator: 'GreaterThanOrEqualToThreshold',
         TreatMissingData: 'notBreaching',
-        AlarmActions: {
-          'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
-        }
+        AlarmActions: []
       });
       assert.equal(errors.MetricName, 'Errors');
       assert.equal(errors.EvaluationPeriods, 1);
       assert.equal(errors.DatapointsToAlarm, undefined);
       assert.equal(errors.Threshold, 1);
-      assert.deepEqual(errors.AlarmActions, throttles.AlarmActions);
+      assert.deepEqual(errors.AlarmActions, {
+        'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+      });
     }
     assert.equal(resources.LogRelayErrors.Properties.EvaluationPeriods, 1);
     assert.equal(
@@ -229,7 +242,7 @@ test('overlapping scheduled workers qualify sustained throttles without delaying
   }
 });
 
-test('release-note throttles require sustained contention while errors stay immediate and direct email actions remain', () => {
+test('release-note contention uses processing-health routing while errors retain immediate email actions', () => {
   const prod = JSON.parse(
     readFileSync(new URL('../source-prod.json', import.meta.url), 'utf8')
   ).Resources;
@@ -253,9 +266,7 @@ test('release-note throttles require sustained contention while errors stay imme
     Threshold: 1,
     ComparisonOperator: 'GreaterThanOrEqualToThreshold',
     TreatMissingData: 'notBreaching',
-    AlarmActions: {
-      'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
-    }
+    AlarmActions: []
   });
   const error = prod.releaseNotesGenerationLoopErrors.Properties;
   assert.equal(error.MetricName, 'Errors');
@@ -263,7 +274,9 @@ test('release-note throttles require sustained contention while errors stay imme
   assert.equal(error.EvaluationPeriods, 1);
   assert.equal(error.DatapointsToAlarm, undefined);
   assert.equal(error.Threshold, 1);
-  assert.deepEqual(error.AlarmActions, throttle.AlarmActions);
+  assert.deepEqual(error.AlarmActions, {
+    'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+  });
   assert.equal(prod.LogRelayErrors.Properties.EvaluationPeriods, 1);
   assert.equal(prod.RelayDeadLettersAlarm.Properties.EvaluationPeriods, 1);
 });
@@ -305,7 +318,9 @@ test('wave throttling is sustained while queue backlog and dead letters have ind
       assert.equal(alarm.EvaluationPeriods, deadLetters ? 1 : 5);
       assert.equal(alarm.DatapointsToAlarm, deadLetters ? undefined : 3);
       assert.equal(alarm.TreatMissingData, 'notBreaching');
-      assert.deepEqual(alarm.AlarmActions, throttles.AlarmActions);
+      assert.deepEqual(alarm.AlarmActions, {
+        'Fn::If': ['HasAlarmTopic', [{ Ref: 'ExistingAlarmTopicArn' }], []]
+      });
     }
     const worker = readFileSync(
       new URL(

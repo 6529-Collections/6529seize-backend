@@ -49,7 +49,7 @@ describe('transactions loop alarm configuration', () => {
     }
   );
 
-  it('routes the six child alarm signals through one composite alarm', () => {
+  it('keeps invocation failures in the composite and delegates contention to the loop evaluator', () => {
     const alarm = resourceBlock('TransactionsLoopIncidentAlarm');
 
     expect(alarm).toContain('Type: AWS::CloudWatch::CompositeAlarm');
@@ -59,10 +59,10 @@ describe('transactions loop alarm configuration', () => {
       'memeLabTransactionsLoop'
     ]) {
       expect(alarm).toContain(`${functionName}-Errors`);
-      expect(alarm).toContain(`${functionName}-Throttles`);
+      expect(alarm).not.toContain(`${functionName}-Throttles`);
     }
-    expect(alarm.match(/ALARM\(/g)).toHaveLength(6);
-    expect(alarm.match(/\bOR\b/g)).toHaveLength(5);
+    expect(alarm.match(/ALARM\(/g)).toHaveLength(3);
+    expect(alarm.match(/\bOR\b/g)).toHaveLength(2);
     expect(alarm).not.toMatch(/\bAND\b/);
     expect(alarm).toContain('AlarmActions:');
     expect(alarm).toContain('OKActions:');
