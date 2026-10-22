@@ -13,6 +13,18 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function makeImageUploadService() {
+  return new UploadMediaService(
+    () => ({ send: jest.fn() }) as any,
+    () =>
+      ({
+        send: jest.fn().mockResolvedValue({ UploadId: 'image-upload' })
+      }) as any,
+    { createUpload: jest.fn() } as any,
+    jest.fn()
+  );
+}
+
 describe('UploadMediaService', () => {
   const getSignedUrlMock = jest.mocked(getSignedUrl);
 
@@ -21,7 +33,8 @@ describe('UploadMediaService', () => {
     process.env = {
       ...ORIGINAL_ENV,
       NODE_ENV: 'test',
-      S3_BUCKET: 'test-bucket'
+      S3_BUCKET: 'test-bucket',
+      DROP_MEDIA_INGEST_S3_BUCKET: 'ingest-bucket'
     };
     getSignedUrlMock.mockResolvedValue('https://signed-upload-url.example');
   });
@@ -63,20 +76,15 @@ describe('UploadMediaService', () => {
   });
 
   it('includes a sanitized slug of the original name in drop media keys', async () => {
-    const service = new UploadMediaService(
-      () =>
-        ({
-          send: jest.fn()
-        }) as any
-    );
+    const service = makeImageUploadService();
 
-    const result = await service.createSingedDropMediaUploadUrl({
+    const result = await service.getDropMediaMultipartUploadKeyAndUploadId({
       content_type: 'image/jpeg',
       file_name: 'My Vacation Photo!.JPG',
       author_id: 'author-123'
     });
 
-    expect(result.media_url).toMatch(
+    expect(`${CLOUDFRONT_LINK}/${result.key}`).toMatch(
       new RegExp(
         `^${escapeRegex(CLOUDFRONT_LINK)}/drops/author_author-123/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/My-Vacation-Photo\\.JPG$`
       )
@@ -84,20 +92,15 @@ describe('UploadMediaService', () => {
   });
 
   it('falls back to a UUID-only drop media key when the name has no safe characters', async () => {
-    const service = new UploadMediaService(
-      () =>
-        ({
-          send: jest.fn()
-        }) as any
-    );
+    const service = makeImageUploadService();
 
-    const result = await service.createSingedDropMediaUploadUrl({
+    const result = await service.getDropMediaMultipartUploadKeyAndUploadId({
       content_type: 'image/jpeg',
       file_name: '🎉🎊.jpg',
       author_id: 'author-123'
     });
 
-    expect(result.media_url).toMatch(
+    expect(`${CLOUDFRONT_LINK}/${result.key}`).toMatch(
       new RegExp(
         `^${escapeRegex(CLOUDFRONT_LINK)}/drops/author_author-123/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/\\1\\.jpg$`
       )
@@ -105,14 +108,9 @@ describe('UploadMediaService', () => {
   });
 
   it('includes a sanitized slug of the original name in wave media keys', async () => {
-    const service = new UploadMediaService(
-      () =>
-        ({
-          send: jest.fn()
-        }) as any
-    );
+    const service = makeImageUploadService();
 
-    const result = await service.createSingedWaveMediaUploadUrl({
+    const result = await service.getWaveMediaMultipartUploadKeyAndUploadId({
       content_type: 'image/png',
       file_name: 'Banner Image.PNG',
       author_id: 'author-xyz'
@@ -120,66 +118,70 @@ describe('UploadMediaService', () => {
 
     const uuidPattern =
       '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-    expect(result.media_url).toMatch(
+    expect(`${CLOUDFRONT_LINK}/${result.key}`).toMatch(
       new RegExp(
         `^${escapeRegex(CLOUDFRONT_LINK)}/waves/author_author-xyz/Banner-Image-${uuidPattern}\\.PNG$`
       )
     );
   });
 
-  it('creates image multipart uploads in the ingest bucket when sanitization is enabled', async () => {
-    process.env.DROP_MEDIA_SANITIZE_IMAGES = 'true';
-    process.env.DROP_MEDIA_INGEST_S3_BUCKET = 'ingest-bucket';
-    process.env.DROP_MEDIA_INGEST_STAGE = 'staging';
+  it.each(['true', 'false', undefined])(
+    'requires private image ingest when privacy sanitization is %s',
+    async (enabled) => {
+      if (enabled === undefined) delete process.env.DROP_MEDIA_SANITIZE_IMAGES;
+      else process.env.DROP_MEDIA_SANITIZE_IMAGES = enabled;
+      process.env.DROP_MEDIA_INGEST_S3_BUCKET = 'ingest-bucket';
+      process.env.DROP_MEDIA_INGEST_STAGE = 'staging';
 
-    const publicS3 = {
-      send: jest.fn()
-    };
-    const ingestS3 = {
-      send: jest.fn().mockResolvedValue({ UploadId: 'upload-123' })
-    };
-    const uploadsDb = {
-      createUpload: jest.fn()
-    };
+      const publicS3 = {
+        send: jest.fn()
+      };
+      const ingestS3 = {
+        send: jest.fn().mockResolvedValue({ UploadId: 'upload-123' })
+      };
+      const uploadsDb = {
+        createUpload: jest.fn()
+      };
 
-    const service = new UploadMediaService(
-      () => publicS3 as any,
-      () => ingestS3 as any,
-      uploadsDb as any,
-      jest.fn()
-    );
+      const service = new UploadMediaService(
+        () => publicS3 as any,
+        () => ingestS3 as any,
+        uploadsDb as any,
+        jest.fn()
+      );
 
-    const result = await service.getDropMediaMultipartUploadKeyAndUploadId({
-      content_type: 'image/jpeg',
-      file_name: 'phone-photo.jpg',
-      author_id: 'author-123'
-    });
+      const result = await service.getDropMediaMultipartUploadKeyAndUploadId({
+        content_type: 'image/jpeg',
+        file_name: 'phone-photo.jpg',
+        author_id: 'author-123'
+      });
 
-    expect(result.upload_id).toBe('upload-123');
-    expect(result.media_upload_id).toBeDefined();
-    expect(result.media_status).toBe(ApiDropMediaStatus.Uploading);
-    expect(publicS3.send).not.toHaveBeenCalled();
-    expect(ingestS3.send).toHaveBeenCalledTimes(1);
-    expect(ingestS3.send.mock.calls[0][0].input).toMatchObject({
-      Bucket: 'ingest-bucket',
-      Key: expect.stringMatching(
-        /^staging\/drop-media-ingest\/drops\/author_author-123\//
-      ),
-      ContentType: 'image/jpeg'
-    });
-    // The sanitizer sets public caching when it publishes the cleaned copy.
-    expect(ingestS3.send.mock.calls[0][0].input.CacheControl).toBeUndefined();
-    expect(uploadsDb.createUpload).toHaveBeenCalledWith(
-      expect.objectContaining({
-        profile_id: 'author-123',
-        public_key: result.key,
-        ingest_bucket: 'ingest-bucket',
-        s3_upload_id: 'upload-123',
-        declared_mime_type: 'image/jpeg',
-        status: 'uploading'
-      })
-    );
-  });
+      expect(result.upload_id).toBe('upload-123');
+      expect(result.media_upload_id).toBeDefined();
+      expect(result.media_status).toBe(ApiDropMediaStatus.Uploading);
+      expect(publicS3.send).not.toHaveBeenCalled();
+      expect(ingestS3.send).toHaveBeenCalledTimes(1);
+      expect(ingestS3.send.mock.calls[0][0].input).toMatchObject({
+        Bucket: 'ingest-bucket',
+        Key: expect.stringMatching(
+          /^staging\/drop-media-ingest\/drops\/author_author-123\//
+        ),
+        ContentType: 'image/jpeg'
+      });
+      // The sanitizer sets public caching when it publishes the cleaned copy.
+      expect(ingestS3.send.mock.calls[0][0].input.CacheControl).toBeUndefined();
+      expect(uploadsDb.createUpload).toHaveBeenCalledWith(
+        expect.objectContaining({
+          profile_id: 'author-123',
+          public_key: result.key,
+          ingest_bucket: 'ingest-bucket',
+          s3_upload_id: 'upload-123',
+          declared_mime_type: 'image/jpeg',
+          status: 'uploading'
+        })
+      );
+    }
+  );
 
   it.each(['true', 'false'])(
     'converts AVIF through private ingest when sanitization is %s',
@@ -609,24 +611,152 @@ describe('UploadMediaService', () => {
     ).rejects.toThrow('Cannot write this media upload');
   });
 
-  it('rejects single PUT image upload prep while sanitization is enabled', async () => {
-    process.env.DROP_MEDIA_SANITIZE_IMAGES = 'true';
+  it.each(['true', 'false', undefined])(
+    'rejects single PUT images regardless of privacy policy %s',
+    async (enabled) => {
+      if (enabled === undefined) delete process.env.DROP_MEDIA_SANITIZE_IMAGES;
+      else process.env.DROP_MEDIA_SANITIZE_IMAGES = enabled;
 
+      const service = new UploadMediaService(
+        () =>
+          ({
+            send: jest.fn()
+          }) as any
+      );
+
+      await expect(
+        service.createSingedDropMediaUploadUrl({
+          content_type: 'image/jpeg',
+          file_name: 'phone-photo.jpg',
+          author_id: 'author-123'
+        })
+      ).rejects.toThrow(
+        'Image uploads must use multipart upload so the file format can be validated'
+      );
+    }
+  );
+});
+
+describe('mandatory image validation gate', () => {
+  const env = { ...process.env };
+  afterEach(() => {
+    process.env = { ...env };
+  });
+
+  it.each(['true', 'false', undefined])(
+    'captures privacy choice %s on the private multipart object',
+    async (enabled) => {
+      process.env.S3_BUCKET = 'public-bucket';
+      process.env.DROP_MEDIA_INGEST_S3_BUCKET = 'ingest-bucket';
+      if (enabled === undefined) delete process.env.DROP_MEDIA_SANITIZE_IMAGES;
+      else process.env.DROP_MEDIA_SANITIZE_IMAGES = enabled;
+      const publicSend = jest.fn();
+      const ingestSend = jest.fn().mockResolvedValue({ UploadId: 'upload' });
+      const createUpload = jest.fn();
+      const service = new UploadMediaService(
+        () => ({ send: publicSend }) as any,
+        () => ({ send: ingestSend }) as any,
+        { createUpload } as any,
+        jest.fn()
+      );
+      for (const source of ['drop', 'wave'] as const) {
+        const input = {
+          file_name: 'image.png',
+          content_type: 'image/png',
+          author_id: 'author'
+        };
+        const response =
+          source === 'drop'
+            ? await service.getDropMediaMultipartUploadKeyAndUploadId(input)
+            : await service.getWaveMediaMultipartUploadKeyAndUploadId(input);
+        expect(response.media_status).toBe(ApiDropMediaStatus.Uploading);
+        expect(response.media_upload_id).toBeDefined();
+      }
+      expect(publicSend).not.toHaveBeenCalled();
+      expect(ingestSend.mock.calls.map(([c]) => c.input)).toEqual([
+        expect.objectContaining({
+          Bucket: 'ingest-bucket',
+          Metadata: { 'sanitize-image-metadata': String(enabled === 'true') }
+        }),
+        expect.objectContaining({
+          Bucket: 'ingest-bucket',
+          Metadata: { 'sanitize-image-metadata': String(enabled === 'true') }
+        })
+      ]);
+      expect(createUpload.mock.calls.map(([u]) => u.source)).toEqual([
+        'drop',
+        'wave'
+      ]);
+    }
+  );
+
+  it.each([
+    'drops/author_author/old/photo.JPG',
+    'waves/author_author/old-name'
+  ])(
+    'blocks untracked public image session %s before signing or completing',
+    async (key) => {
+      const send = jest.fn();
+      const service = new UploadMediaService(
+        () => ({ send }) as any,
+        () => ({ send }) as any,
+        {
+          findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue(null)
+        } as any,
+        jest.fn()
+      );
+      await expect(
+        service.getSignedUrlForPartOfMultipartUpload({
+          key,
+          upload_id: 'old',
+          part_no: 1,
+          authenticatedProfileId: 'author'
+        })
+      ).rejects.toThrow('Restart this image upload');
+      await expect(
+        service.completeMultipartUpload({
+          key,
+          upload_id: 'old',
+          parts: [{ part_no: 1, etag: 'etag' }],
+          authenticatedProfileId: 'author'
+        })
+      ).rejects.toThrow('Restart this image upload');
+      expect(send).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps untracked video completion working', async () => {
+    process.env.S3_BUCKET = 'public-bucket';
+    const send = jest
+      .fn()
+      .mockResolvedValue({ Key: 'drops/author_author/old/video.mp4' });
     const service = new UploadMediaService(
-      () =>
-        ({
-          send: jest.fn()
-        }) as any
+      () => ({ send }) as any,
+      () => ({ send }) as any,
+      {
+        findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue(null)
+      } as any,
+      jest.fn()
     );
+    const result = await service.completeMultipartUpload({
+      key: 'drops/author_author/old/video.mp4',
+      upload_id: 'old',
+      parts: [{ part_no: 1, etag: 'etag' }],
+      authenticatedProfileId: 'author'
+    });
+    expect(result.media_status).toBe(ApiDropMediaStatus.Ready);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
 
+  it('does not issue a single-PUT wave image URL with sanitization disabled', async () => {
+    process.env.DROP_MEDIA_SANITIZE_IMAGES = 'false';
+    const service = new UploadMediaService(() => ({ send: jest.fn() }) as any);
     await expect(
-      service.createSingedDropMediaUploadUrl({
-        content_type: 'image/jpeg',
-        file_name: 'phone-photo.jpg',
-        author_id: 'author-123'
+      service.createSingedWaveMediaUploadUrl({
+        file_name: 'image.png',
+        content_type: 'image/png',
+        author_id: 'author'
       })
-    ).rejects.toThrow(
-      'Image uploads must use multipart upload while image sanitization is enabled'
-    );
+    ).rejects.toThrow('file format can be validated');
   });
 });

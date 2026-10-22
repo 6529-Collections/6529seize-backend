@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import {
   ACTIVITY_EVENTS_TABLE,
   DROPS_TABLE,
+  DROPS_PARTS_TABLE,
   DROP_BOOKMARKS_TABLE
 } from '@/constants';
 import {
@@ -89,6 +90,17 @@ describeWithSeed(
       }))
     },
     {
+      table: DROPS_PARTS_TABLE,
+      rows: children.flatMap((wave) =>
+        [0, 1].map((part) => ({
+          drop_id: `drop-${wave.id}`,
+          drop_part_id: part,
+          wave_id: wave.id,
+          content: 'searchable wave message'
+        }))
+      )
+    },
+    {
       table: DROP_BOOKMARKS_TABLE,
       rows: children.map((wave) => ({
         identity_id: author.profile_id!,
@@ -127,6 +139,28 @@ describeWithSeed(
           values.sort((a, b) => a.localeCompare(b));
         const expected = sort([...ids]);
         const requestedIds = children.map((w) => w.id);
+        const searchResults = await drops.searchDropsInWave(
+          {
+            author_id: author.profile_id!,
+            group_ids_user_is_eligible_for: groups,
+            limit: 20,
+            offset: 0
+          },
+          {}
+        );
+        expect(sort(searchResults.map((drop) => drop.wave_id))).toEqual(
+          expected
+        );
+        const textResults = await drops.searchDropsInWave(
+          {
+            term: 'searchable wave',
+            group_ids_user_is_eligible_for: groups,
+            limit: 20,
+            offset: 0
+          },
+          {}
+        );
+        expect(sort(textResults.map((drop) => drop.wave_id))).toEqual(expected);
         for (const child of children) {
           const drop = await drops.findDropByIdWithEligibilityCheck(
             `drop-${child.id}`,

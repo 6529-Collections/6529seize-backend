@@ -779,3 +779,17 @@ are expanded without model generation. Supported placeholders are `percentage`,
 `minimum_block`, `checkpoint`, and `from_block`. Deploy this backend before the
 companion corpus templates. No new API, persistence, service, or Desktop build is
 needed; the reply loop consumes the updated frontend-owned corpus.
+
+
+## Image upload format policy
+
+The backend validates every new drop/wave image container before public
+publication, independently of optional privacy metadata stripping. HEIC uploads,
+including HEIC bytes renamed as JPEG, must be exported to real JPEG/PNG bytes.
+Changing a suffix is not conversion. Image media can be processing until the
+worker finishes; rejected old public image upload sessions need a fresh upload.
+The existing media status/error fields communicate these outcomes.
+
+This policy is documented in `docs/image-upload-format-validation.md`. The
+frontend-owned `/help-index.json` needs the same guidance in its next corpus
+update; this backend change does not hardcode frontend UI flows into the bot.

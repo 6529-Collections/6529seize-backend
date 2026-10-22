@@ -4,6 +4,7 @@ import {
   PermanentMediaSanitizationError
 } from '@/drops/drop-media-sanitizer.service';
 import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
+import { Logger } from '@/logging';
 
 describe('DropMediaSanitizerService', () => {
   const service = new DropMediaSanitizerService({} as any);
@@ -216,6 +217,237 @@ describe('DropMediaSanitizerService', () => {
     });
     expect(notifier.notifyStatusTransition).toHaveBeenCalledWith(
       'media-upload-123'
+    );
+  });
+});
+
+describe('image format validation before publication', () => {
+  const originalEnv = { ...process.env };
+  beforeEach(() => {
+    process.env.S3_BUCKET = 'public-bucket';
+  });
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    jest.restoreAllMocks();
+  });
+  const fixture = (format: string) =>
+    require('node:fs').readFileSync(
+      require('node:path').join(
+        __dirname,
+        '../../scripts/media-fixtures',
+        format
+      )
+    ) as Buffer;
+
+  function pipeline(
+    input: Buffer,
+    declaredMimeType = 'image/jpeg',
+    policy: string | undefined = 'false'
+  ) {
+    const upload = {
+      id: 'upload',
+      status: DropMediaUploadStatus.PROCESSING,
+      ingest_bucket: 'ingest-bucket',
+      ingest_key: 'private/image.jpg',
+      public_key: 'drops/author/image.jpg',
+      declared_mime_type: declaredMimeType
+    };
+    let status = upload.status;
+    const uploadsDb = {
+      findById: jest.fn(async () => ({ ...upload, status })),
+      transitionStatus: jest.fn(
+        async ({ toStatus }: { toStatus: DropMediaUploadStatus }) => {
+          status = toStatus;
+          return true;
+        }
+      )
+    };
+    const body = { transformToByteArray: jest.fn().mockResolvedValue(input) };
+    const object = {
+      Body: body,
+      ContentLength: input.length,
+      Metadata:
+        policy === undefined ? {} : { 'sanitize-image-metadata': policy }
+    };
+    const ingestSend = jest.fn().mockResolvedValue(object);
+    const publicSend = jest.fn().mockResolvedValue({});
+    const notifier = { notifyStatusTransition: jest.fn() };
+    const service = new DropMediaSanitizerService(
+      uploadsDb as any,
+      () => ({ send: publicSend }) as any,
+      () => ({ send: ingestSend }) as any,
+      notifier as any
+    );
+    const process = (approximateReceiveCount = 1) =>
+      service.processUpload({
+        mediaUploadId: 'upload',
+        approximateReceiveCount
+      });
+    return {
+      process,
+      publicSend,
+      ingestSend,
+      uploadsDb,
+      object,
+      body,
+      notifier
+    };
+  }
+
+  it.each(['jpeg', 'png', 'webp', 'gif'])(
+    'validates and preserves exact %s bytes when privacy stripping is disabled',
+    async (format) => {
+      const input = fixture(format);
+      const p = pipeline(input, `image/${format}`);
+      await p.process();
+      expect(p.publicSend.mock.calls[0][0].input).toMatchObject({
+        Body: input,
+        ContentType: `image/${format}`,
+        Metadata: { 'format-validated': 'true' },
+        CacheControl: 'public, max-age=31536000, immutable'
+      });
+      expect(p.publicSend.mock.calls[0][0].input.Metadata).not.toHaveProperty(
+        'privacy-sanitized'
+      );
+      expect(p.body.transformToByteArray).toHaveBeenCalledTimes(1);
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
+      );
+    }
+  );
+
+  it.each(['true', 'legacy'])(
+    'retains privacy sanitization for policy %s',
+    async (policy) => {
+      const input = fixture('jpeg');
+      const p = pipeline(
+        input,
+        'image/jpeg',
+        policy === 'legacy' ? undefined : policy
+      );
+      // The default argument models new uploads; remove metadata to model legacy.
+      if (policy === 'legacy') p.object.Metadata = {};
+      await p.process();
+      const published = p.publicSend.mock.calls[0][0].input;
+      expect(published.Body).not.toEqual(input);
+      expect(published.Metadata).toEqual({
+        'privacy-sanitized': 'true',
+        'format-validated': 'true'
+      });
+      expect((await Sharp(published.Body).metadata()).exif).toBeUndefined();
+    }
+  );
+
+  it('preserves JPEG metadata and orientation exactly with stripping disabled', async () => {
+    const input = fixture('jpeg');
+    expect((await Sharp(input).metadata()).exif).toBeDefined();
+    const p = pipeline(input, 'image/jpg');
+    await p.process();
+    expect(p.publicSend.mock.calls[0][0].input.Body).toEqual(input);
+    expect(p.publicSend.mock.calls[0][0].input.ContentType).toBe('image/jpeg');
+  });
+
+  it.each(['true', 'false'])(
+    'rejects mislabeled HEIC before publishing with privacy policy %s',
+    async (policy) => {
+      const errorLog = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation();
+      const warningLog = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation();
+      const p = pipeline(fixture('heic'), 'image/jpeg', policy);
+      await p.process();
+      await p.process();
+      expect(p.publicSend).not.toHaveBeenCalled();
+      expect(p.ingestSend).toHaveBeenCalledTimes(1);
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          toStatus: DropMediaUploadStatus.FAILED,
+          patch: expect.objectContaining({
+            error_reason: expect.stringContaining(
+              'changing its filename does not convert it'
+            )
+          })
+        })
+      );
+      expect(p.notifier.notifyStatusTransition).toHaveBeenCalledTimes(1);
+      expect(warningLog).toHaveBeenCalledTimes(1);
+      expect(errorLog).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['png', 'image/jpeg'],
+    ['avif', 'image/png'],
+    ['svg', 'image/jpeg'],
+    ['tiff', 'image/jpeg']
+  ])('rejects %s bytes labeled %s without publishing', async (format, mime) => {
+    const errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    const warningLog = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation();
+    const p = pipeline(fixture(format), mime);
+    await p.process();
+    expect(p.publicSend).not.toHaveBeenCalled();
+    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ toStatus: DropMediaUploadStatus.FAILED })
+    );
+    expect(warningLog).toHaveBeenCalledTimes(1);
+    expect(errorLog).not.toHaveBeenCalled();
+  });
+
+  it('continues converting AVIF when privacy stripping is disabled', async () => {
+    const p = pipeline(fixture('avif'), 'image/avif');
+    await p.process();
+    const published = p.publicSend.mock.calls[0][0].input;
+    expect(published.ContentType).toBe('image/webp');
+    expect(published.Metadata['privacy-sanitized']).toBe('true');
+    expect((await Sharp(published.Body).metadata()).format).toBe('webp');
+  });
+
+  it.each(['read', 'write', 'short response'])(
+    'keeps %s failures operational without marking media ready or invalid',
+    async (failure) => {
+      const errorLog = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation();
+      const warningLog = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation();
+      const p = pipeline(fixture('jpeg'));
+      const error = new Error('synthetic infrastructure failure');
+      if (failure === 'read')
+        p.body.transformToByteArray.mockRejectedValue(error);
+      if (failure === 'write') p.publicSend.mockRejectedValue(error);
+      if (failure === 'short response') p.object.ContentLength++;
+      const result = p.process();
+      if (failure === 'short response')
+        await expect(result).rejects.toThrow('source length mismatch');
+      else await expect(result).rejects.toBe(error);
+      expect(p.uploadsDb.transitionStatus.mock.calls).toHaveLength(1);
+      expect(errorLog).not.toHaveBeenCalled();
+      await p.process(3);
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ toStatus: DropMediaUploadStatus.FAILED })
+      );
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(errorLog).toHaveBeenCalledWith(
+        expect.stringContaining('failed after retries'),
+        expect.any(Error)
+      );
+      expect(warningLog).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects an oversized object before buffering its body', async () => {
+    const p = pipeline(fixture('jpeg'));
+    p.object.ContentLength = 500 * 1024 * 1024 + 1;
+    await p.process();
+    expect(p.body.transformToByteArray).not.toHaveBeenCalled();
+    expect(p.publicSend).not.toHaveBeenCalled();
+    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ toStatus: DropMediaUploadStatus.FAILED })
     );
   });
 });

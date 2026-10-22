@@ -122,6 +122,8 @@ const PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY = 'additional_media';
 export interface ApiDropMapperOptions {
   readonly groupIdsUserIsEligibleFor?: string[];
   readonly includeLargestVote?: boolean;
+  /** Native competition readers supply their own scoped voting summary. */
+  readonly includeSubmissionVoting?: boolean;
 }
 
 export class ApiDropMapper {
@@ -173,8 +175,10 @@ export class ApiDropMapper {
           .map((drop) => drop.reply_to_drop_id)
           .filter((id): id is string => !!id)
       );
-      const submissionEntities = entities.filter((drop) =>
-        this.isSubmissionDrop(drop)
+      const submissionEntities = entities.filter(
+        (drop) =>
+          options.includeSubmissionVoting !== false &&
+          this.isSubmissionDrop(drop)
       );
       const submissionDropIds = submissionEntities.map((drop) => drop.id);
       const participatoryDropEntities = submissionEntities.filter(
@@ -319,18 +323,15 @@ export class ApiDropMapper {
             )
           : Promise.resolve({} as Record<string, ActivityEventAction[]>),
         this.dropsDb.getReplyPreviewsByDropIds(replyDropIds, ctx),
-        this.dropVotingDb.getDropV2SubmissionVotingSummaries(
-          submissionDropIds,
-          ctx
-        ),
-        contextProfileId
+        this.submissionVotingSummaries(submissionDropIds, ctx),
+        contextProfileId && participatoryDropEntities.length
           ? this.dropVotingService.findCreditLeftForVotingForDrops(
               contextProfileId,
               participatoryDropEntities,
               ctx.connection
             )
           : Promise.resolve({} as VoteRangeByDropId),
-        contextProfileId
+        contextProfileId && winnerDropIds.length
           ? this.dropVotingDb.getWinningDropsRatingsByVoter(
               winnerDropIds,
               contextProfileId,
@@ -731,13 +732,12 @@ export class ApiDropMapper {
     if (replyPreview.content !== null) {
       apiReply.content = replyPreview.content;
     }
-    if (
-      replyPreview.author_handle !== null &&
-      replyPreview.author_pfp !== null
-    ) {
+    if (replyPreview.author_handle !== null) {
       apiReply.author = {
         handle: replyPreview.author_handle,
-        pfp: replyPreview.author_pfp
+        ...(replyPreview.author_pfp !== null
+          ? { pfp: replyPreview.author_pfp }
+          : {})
       };
     }
     return apiReply;
@@ -1053,6 +1053,15 @@ export class ApiDropMapper {
       viewer: { author_blocked: false, drop_hidden: false },
       moderation: { status: DropModerationStatus.VISIBLE, can_view: true }
     };
+  }
+
+  private submissionVotingSummaries(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, DropSubmissionVotingSummary>> {
+    return dropIds.length
+      ? this.dropVotingDb.getDropV2SubmissionVotingSummaries(dropIds, ctx)
+      : Promise.resolve({});
   }
 
   private isSubmissionDrop(drop: DropEntity): boolean {

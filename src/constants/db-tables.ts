@@ -316,3 +316,7 @@ export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
 export const MEME_COLLABORATION_INVITATIONS_TABLE =
   'meme_collaboration_invitations';
 export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';
+
+export const VOTING_CREDIT_RELEASES_TABLE = 'voting_credit_releases';
+export const VOTING_CREDIT_RELEASE_RECIPIENTS_TABLE =
+  'voting_credit_release_recipients';

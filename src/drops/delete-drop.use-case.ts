@@ -273,7 +273,7 @@ export class DeleteDropUseCase {
           await this.entryHooks.beforeDelete(
             drop,
             nativeEntries,
-            resolvedDeleterId,
+            isBackendDelete ? null : resolvedDeleterId,
             { timer, connection }
           );
         await Promise.all([

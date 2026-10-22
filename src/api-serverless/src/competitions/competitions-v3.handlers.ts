@@ -1,17 +1,20 @@
+import {
+  toApiCompetition,
+  toApiEntry,
+  toApiEntryPage
+} from './competition-api.mapper';
+export {
+  toApiCompetition,
+  toApiEntry,
+  toApiEntryPage
+} from './competition-api.mapper';
+import { readCompetitionEntryContexts } from './competition-entry-context.reader';
 import { listCompetitionVoteActivity } from './competition-vote-activity.service';
 import { ApiWaveLog } from '@/api/generated/models/ApiWaveLog';
-import { memeCardDropMappingsDb } from '@/minting-claims/meme-card-drop-mappings.db';
 import { getAuthenticationContext } from '@/api/auth/auth';
-import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
 import { ApiDefaultCompetition } from '@/api/generated/models/ApiDefaultCompetition';
-import { ApiCompetitionCapability } from '@/api/generated/models/ApiCompetitionCapability';
-import { ApiCompetitionComputedPhase } from '@/api/generated/models/ApiCompetitionComputedPhase';
-import { ApiCompetitionLifecycle } from '@/api/generated/models/ApiCompetitionLifecycle';
-import { ApiCompetitionType } from '@/api/generated/models/ApiCompetitionType';
-import { ApiCompetitionParticipationConfigRequiredMediaEnum } from '@/api/generated/models/ApiCompetitionParticipationConfig';
-import { enums } from '@/enums';
 import { ApiCompetitionConfigVersionPage } from '@/api/generated/models/ApiCompetitionConfigVersionPage';
 import { ApiCompetitionDecisionPage } from '@/api/generated/models/ApiCompetitionDecisionPage';
 import { ApiCompetitionDistributionItemPage } from '@/api/generated/models/ApiCompetitionDistributionItemPage';
@@ -46,16 +49,11 @@ import {
   CompetitionEntryStatus,
   CompetitionLifecycle
 } from '@/entities/ICompetition';
-import { NotFoundException } from '@/exceptions';
 import {
   competitionService,
   CursorPageRequest,
   PublicCompetition
 } from '@/competitions/competition.service';
-import {
-  CompetitionEntry,
-  CompetitionPage
-} from '@/competitions/competition.types';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
 import * as Joi from 'joi';
@@ -185,6 +183,7 @@ const EntryListQuerySchema = Joi.object<{
   .required();
 
 type LeaderboardQuery = CursorQuery & {
+  readonly include?: 'cards';
   readonly sort:
     | 'rating'
     | 'real_time_rating'
@@ -205,7 +204,8 @@ const LeaderboardQuerySchema: Joi.ObjectSchema<LeaderboardQuery> =
       .default('rating'),
     price_currency: Joi.string().trim().min(1).max(100).optional(),
     min_price: Joi.number().min(0).optional(),
-    max_price: Joi.number().min(0).optional()
+    max_price: Joi.number().min(0).optional(),
+    include: Joi.string().valid('cards').optional()
   })
     .unknown(false)
     .required();
@@ -240,98 +240,6 @@ function toCursorRequest(query: CursorQuery): CursorPageRequest {
     direction: query.direction,
     cursor: query.cursor,
     limit: query.limit
-  };
-}
-
-export function toApiCompetition(
-  competition: PublicCompetition
-): ApiCompetition {
-  const { presentation, ...details } = competition;
-  return {
-    ...details,
-    type: enums.resolveOrThrow(ApiCompetitionType, competition.type),
-    lifecycle: enums.resolveOrThrow(
-      ApiCompetitionLifecycle,
-      competition.lifecycle
-    ),
-    computed_phase: enums.resolveOrThrow(
-      ApiCompetitionComputedPhase,
-      competition.computed_phase
-    ),
-    participation: {
-      ...competition.participation,
-      required_metadata: [...competition.participation.required_metadata],
-      required_media: competition.participation.required_media.map((media) =>
-        enums.resolveOrThrow(
-          ApiCompetitionParticipationConfigRequiredMediaEnum,
-          media
-        )
-      )
-    },
-    voting: {
-      ...competition.voting,
-      credit_nfts: [...competition.voting.credit_nfts]
-    },
-    outcome_config: [...competition.outcome_config],
-    capabilities: competition.capabilities.map((capability) =>
-      enums.resolveOrThrow(ApiCompetitionCapability, capability)
-    ),
-    ...(presentation ? { presentation: [...presentation] } : {})
-  };
-}
-
-export async function toApiEntry(
-  entry: CompetitionEntry,
-  ctx: RequestContext
-): Promise<ApiCompetitionEntry> {
-  const submitters = await identityFetcher.getOverviewsByIds(
-    [entry.submitter_id],
-    ctx
-  );
-  const submitter = submitters[entry.submitter_id];
-  if (!submitter) {
-    throw new NotFoundException(`Entry submitter not found`);
-  }
-  const { submitter_id: _submitterId, ...data } = entry;
-  const memeCardIds = await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
-    entry.competition_id,
-    [entry.id],
-    ctx
-  );
-  return {
-    ...data,
-    submitter,
-    meme_card_id: memeCardIds[entry.id] ?? null
-  } as unknown as ApiCompetitionEntry;
-}
-
-export async function toApiEntryPage(
-  page: CompetitionPage<CompetitionEntry>,
-  ctx: RequestContext
-): Promise<ApiCompetitionEntryPage> {
-  const profileIds = Array.from(
-    new Set(page.data.map((it) => it.submitter_id))
-  );
-  const submitters = await identityFetcher.getOverviewsByIds(profileIds, ctx);
-  const memeCardIds = page.data.length
-    ? await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
-        page.data[0].competition_id,
-        page.data.map((entry) => entry.id),
-        ctx
-      )
-    : {};
-  return {
-    ...page,
-    data: page.data.map((entry) => {
-      const submitter = submitters[entry.submitter_id];
-      if (!submitter) throw new NotFoundException(`Entry submitter not found`);
-      const { submitter_id: _submitterId, ...data } = entry;
-      return {
-        ...data,
-        submitter,
-        meme_card_id: memeCardIds[entry.id] ?? null
-      } as unknown as ApiCompetitionEntry;
-    })
   };
 }
 
@@ -472,7 +380,8 @@ export async function handleListCompetitionLeaderboardV3(
     CompetitionPathSchema
   );
   const query = getValidatedByJoiOrThrow(req.query, LeaderboardQuerySchema);
-  return (await competitionService.listLeaderboard(
+  const ctx = await getContext(req);
+  const page = (await competitionService.listLeaderboard(
     wave_id,
     competition_id,
     {
@@ -482,8 +391,17 @@ export async function handleListCompetitionLeaderboardV3(
       min_price: query.min_price,
       max_price: query.max_price
     },
-    await getContext(req)
+    ctx
   )) as unknown as ApiCompetitionLeaderboardPage;
+  if (query.include !== 'cards') return page;
+  return withCompetitionCards(
+    page,
+    page.data.map((entry) => entry.entry_id),
+    wave_id,
+    competition_id,
+    query.include,
+    ctx
+  );
 }
 
 export async function handleListCompetitionVotersV3(
@@ -526,9 +444,14 @@ export async function handleListCompetitionWinnersV3(
     req.params,
     CompetitionPathSchema
   );
-  const query = getValidatedByJoiOrThrow(req.query, cursorQuerySchema('DESC'));
+  const query = getValidatedByJoiOrThrow<CursorQuery & { include?: 'cards' }>(
+    req.query,
+    cursorQuerySchema('DESC').append<CursorQuery & { include?: 'cards' }>({
+      include: Joi.string().valid('cards').optional()
+    })
+  );
   const ctx = await getContext(req);
-  return await toApiEntryPage(
+  const page = await toApiEntryPage(
     await competitionService.listWinners(
       wave_id,
       competition_id,
@@ -537,6 +460,40 @@ export async function handleListCompetitionWinnersV3(
     ),
     ctx
   );
+  if (query.include !== 'cards') return page;
+  return withCompetitionCards(
+    page,
+    page.data.map((entry) => entry.id),
+    wave_id,
+    competition_id,
+    query.include,
+    ctx
+  );
+}
+
+async function withCompetitionCards<
+  T extends ApiCompetitionEntryPage | ApiCompetitionLeaderboardPage
+>(
+  page: T,
+  entryIds: string[],
+  waveId: string,
+  competitionId: string,
+  include: 'cards' | undefined,
+  ctx: RequestContext
+): Promise<T> {
+  if (include !== 'cards') return page;
+  const cards = entryIds.length
+    ? (
+        await readCompetitionEntryContexts(
+          waveId,
+          competitionId,
+          entryIds,
+          ctx,
+          true
+        )
+      ).data
+    : [];
+  return { ...page, cards };
 }
 
 export async function handleListCompetitionOutcomesV3(

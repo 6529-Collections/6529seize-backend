@@ -16,6 +16,7 @@ import {
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
+import { reportLoopHealth } from '@/loop-health';
 import { WaveCreditScope } from '@/entities/IWave';
 import { readSequentially } from '@/competitions/competition-read-sequence';
 import { computeCompetitionPhase } from './competition-phase';
@@ -218,6 +219,24 @@ export class NativeCompetitionRuntimeService {
       return;
     await this.emitScheduledTransitions(competition, now, ctx);
     await this.reconcileCompetitionCredit(competition, now, ctx);
+    await this.refreshLeaderboardAfterCreditReconciliation(
+      competition,
+      now,
+      ctx
+    );
+  }
+
+  /** Bulk TDH revocation has already reconciled every over-limit voter under
+   * this competition's transaction lock, including their notifications. */
+  public async refreshLeaderboardAfterCreditReconciliation(
+    competition: Competition,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (!ctx.connection)
+      throw new Error(
+        'Leaderboard refresh requires the competition transaction lock'
+      );
     const state = await this.loadState(competition.id, ctx);
     await this.refreshLeaderboard(competition, state, now, ctx);
   }
@@ -291,18 +310,25 @@ export class NativeCompetitionRuntimeService {
     now = Date.now(),
     timer
   }: { now?: number; timer?: Timer } = {}): Promise<void> {
-    await this.forEachNativeCompetition(
+    const failed = await this.forEachNativeCompetition(
       timer,
       'decisions',
       (competitionId, ctx) => this.processCompetition(competitionId, now, ctx)
     );
+    reportLoopHealth({
+      operation: 'native_execution',
+      pending: failed > 0,
+      recovery: 'automatic',
+      ...(failed ? {} : { progressAt: Math.floor(Date.now() / 1000) })
+    });
   }
 
   private async forEachNativeCompetition(
     timer: Timer | undefined,
     operation: 'leaderboard' | 'decisions',
     execute: (id: string, ctx: RequestContext) => Promise<void>
-  ): Promise<void> {
+  ): Promise<number> {
+    let failed = 0;
     let afterId = '';
     for (;;) {
       const ids = await this.repository.discoverCompetitions(afterId, 100, {
@@ -319,6 +345,7 @@ export class NativeCompetitionRuntimeService {
             duration_ms: Date.now() - startedAt
           });
         } catch {
+          failed++;
           // Do not log signed payloads, user content or DB error values.
           this.logger.error('native_competition_execution_failed', {
             competition_id: id,
@@ -329,6 +356,7 @@ export class NativeCompetitionRuntimeService {
       }
       afterId = ids[ids.length - 1];
     }
+    return failed;
   }
 
   public async processCompetition(

@@ -296,7 +296,7 @@ export class NftLinkMediaPreviewService {
         );
     } catch (e: any) {
       const message = this.normalizeErrorMessage(e);
-      await this.nftLinksDb.updateMediaPreviewWithFailure(
+      const stored = await this.nftLinksDb.updateMediaPreviewWithFailure(
         {
           canonicalId: prepared.canonicalId,
           fence,
@@ -304,6 +304,12 @@ export class NftLinkMediaPreviewService {
         },
         ctx
       );
+      if (!stored) {
+        this.logger.info(
+          `Preview failure superseded by a newer lease/source for ${prepared.canonicalId}`
+        );
+        return;
+      }
       this.logger.error(
         `Failed to generate NFT link preview for ${prepared.canonicalId}`,
         e
