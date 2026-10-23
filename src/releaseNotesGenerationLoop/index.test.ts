@@ -12,6 +12,11 @@ import {
   shouldCaptureReleaseNoteError,
   shouldRetryReleaseNoteError
 } from './index';
+import { usesDurableReleaseNoteRecovery, routeReleaseNoteEvent } from './index';
+import { buildReleaseNoteRecoveryFailureAlert } from './index';
+import type { Context, ScheduledEvent } from 'aws-lambda';
+import { ReleaseNoteRecoveryService } from '@/release-notes/release-note-recovery.service';
+import * as secrets from '@/secrets';
 
 const request: ReleaseNoteGenerationRequest = {
   repo: '6529seize-backend',
@@ -30,6 +35,168 @@ const request: ReleaseNoteGenerationRequest = {
   publish_release_note: false,
   deployed_at: '2026-07-13T11:38:00.000Z'
 };
+
+describe('durable release-note event routing', () => {
+  const context = { getRemainingTimeInMillis: () => 180_000 } as Context;
+  afterEach(() => jest.restoreAllMocks());
+
+  it('hands a final SQS delivery to durable recovery instead of exhausting publication retries', async () => {
+    jest.spyOn(secrets, 'doInDbContext').mockImplementation(async (fn) => fn());
+    const recover = jest
+      .spyOn(ReleaseNoteRecoveryService.prototype, 'process')
+      .mockResolvedValue(undefined);
+    const queued = {
+      ...request,
+      repo: '6529seize-frontend',
+      workflow: 'Web Deploy - PROD',
+      pull_request_number: null,
+      service: 'web',
+      release_group_services: ['web']
+    };
+    await routeReleaseNoteEvent(
+      {
+        Records: [
+          {
+            body: JSON.stringify(queued),
+            attributes: { ApproximateReceiveCount: '5' }
+          }
+        ]
+      } as import('aws-lambda').SQSEvent,
+      context
+    );
+    expect(recover).toHaveBeenCalledWith(
+      expect.objectContaining({ run_id: request.run_id }),
+      expect.any(Function),
+      {}
+    );
+  });
+
+  it('does not acknowledge a final delivery when durable recovery could not save it', async () => {
+    jest.spyOn(secrets, 'doInDbContext').mockImplementation(async (fn) => fn());
+    jest
+      .spyOn(ReleaseNoteRecoveryService.prototype, 'process')
+      .mockRejectedValue(new Error('recovery store unavailable'));
+    const queued = {
+      ...request,
+      repo: '6529seize-frontend',
+      workflow: 'Web Deploy - PROD',
+      pull_request_number: null,
+      service: 'web',
+      release_group_services: ['web']
+    };
+    await expect(
+      routeReleaseNoteEvent(
+        {
+          Records: [
+            {
+              body: JSON.stringify(queued),
+              attributes: { ApproximateReceiveCount: '5' }
+            }
+          ]
+        } as import('aws-lambda').SQSEvent,
+        context
+      )
+    ).rejects.toThrow('recovery store unavailable');
+  });
+
+  it('runs scheduled recovery in production and selects only the explicitly requested manual retry', async () => {
+    const previous = process.env.RELEASE_NOTES_STAGE;
+    process.env.RELEASE_NOTES_STAGE = 'prod';
+    jest.spyOn(secrets, 'doInDbContext').mockImplementation(async (fn) => fn());
+    const recover = jest
+      .spyOn(ReleaseNoteRecoveryService.prototype, 'recoverDue')
+      .mockResolvedValue(undefined);
+    const retry = jest
+      .spyOn(ReleaseNoteRecoveryService.prototype, 'retry')
+      .mockResolvedValue(undefined);
+    try {
+      await routeReleaseNoteEvent(
+        {
+          source: 'aws.events',
+          'detail-type': 'Scheduled Event'
+        } as ScheduledEvent,
+        context
+      );
+      expect(recover).toHaveBeenCalledTimes(1);
+      const publicationId = 'a'.repeat(64);
+      await routeReleaseNoteEvent(
+        { recover_publication_id: publicationId },
+        context
+      );
+      expect(retry).toHaveBeenCalledWith(
+        publicationId,
+        expect.any(Function),
+        {}
+      );
+      expect(recover).toHaveBeenCalledTimes(1);
+      await expect(
+        routeReleaseNoteEvent({ recover_publication_id: 'not-an-id' }, context)
+      ).rejects.toThrow('must be a release-note publication id');
+    } finally {
+      if (previous === undefined) delete process.env.RELEASE_NOTES_STAGE;
+      else process.env.RELEASE_NOTES_STAGE = previous;
+    }
+  });
+
+  it('distinguishes automatic retry from a permanent operator-recovery requirement in failure alerts', () => {
+    const transient = buildReleaseNoteRecoveryFailureAlert(
+      request,
+      new Error('GitHub 500'),
+      5
+    );
+    expect(transient.title).toContain('recovery required');
+    expect(transient.description).toContain('will retry automatically');
+    expect(transient.description).toContain('failed 5 processing attempts');
+    const permanent = buildReleaseNoteRecoveryFailureAlert(
+      request,
+      new NonRetryableReleaseNoteError('history error'),
+      1
+    );
+    expect(permanent.description).toContain('operator review');
+    expect(permanent.description).not.toContain('will retry automatically');
+  });
+
+  it('uses durable recovery for ordered per-run jobs while preserving PR grouping and legacy metadata', () => {
+    const perRun = {
+      ...request,
+      pull_request_number: null,
+      release_group_services: ['web']
+    };
+    expect(usesDurableReleaseNoteRecovery(perRun)).toBe(true);
+    expect(usesDurableReleaseNoteRecovery(request)).toBe(false);
+    expect(
+      usesDurableReleaseNoteRecovery({ ...perRun, run_number: null })
+    ).toBe(false);
+    expect(
+      usesDurableReleaseNoteRecovery({ ...perRun, run_number: '-1' })
+    ).toBe(false);
+    expect(
+      usesDurableReleaseNoteRecovery({
+        ...perRun,
+        release_group_services: ['api', 'worker']
+      })
+    ).toBe(false);
+  });
+
+  it('does no scheduled recovery outside production', async () => {
+    const original = process.env.RELEASE_NOTES_STAGE;
+    process.env.RELEASE_NOTES_STAGE = 'staging';
+    try {
+      await expect(
+        routeReleaseNoteEvent(
+          {
+            source: 'aws.events',
+            'detail-type': 'Scheduled Event'
+          } as ScheduledEvent,
+          {} as Context
+        )
+      ).resolves.toBeUndefined();
+    } finally {
+      if (original === undefined) delete process.env.RELEASE_NOTES_STAGE;
+      else process.env.RELEASE_NOTES_STAGE = original;
+    }
+  });
+});
 
 describe('parseReleaseNoteMessage', () => {
   it('parses a valid message', () => {

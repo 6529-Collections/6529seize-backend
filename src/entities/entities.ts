@@ -298,3 +298,4 @@ export { TransferReconciliationEntity } from './ITransferReconciliation';
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';
 
 export * from './IVotingCreditRelease';
+export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
