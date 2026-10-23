@@ -92,7 +92,8 @@ describe('future calendar overrides', () => {
     ['off-cadence skip', ['2026-01-06'], [], 0],
     ['weekday skip wins', ['2026-01-05'], ['2026-01-05'], -1],
     ['off-cadence skip wins', ['2026-01-06'], ['2026-01-06'], 0],
-    ['reschedule', ['2026-01-05'], ['2026-01-06'], 0]
+    ['reschedule', ['2026-01-05'], ['2026-01-06'], 0],
+    ['reschedule onto an eligible day', ['2026-01-05'], ['2026-01-07'], -1]
   ] as const)(
     'keeps forward and inverse numbering aligned for %s',
     (_label, removed, added, delta) => {

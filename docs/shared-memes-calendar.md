@@ -35,3 +35,7 @@ Sync prunes only unchanged obsolete files owned by the previous manifest, preser
 unrelated files and refusing local edits or paths outside the managed directory.
 Future skips, extras and reschedules apply in both numbering directions; a skipped
 day takes precedence over an extra-day override for the same date.
+The existing date-based model counts each eligible UTC day once. Moving a mint
+onto an already eligible date removes the source day without adding a second mint
+on the destination day. Scheduling two distinct mints on one day would require a
+different event model; an extra-day override does not provide that behavior.
