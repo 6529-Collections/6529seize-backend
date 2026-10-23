@@ -6,15 +6,18 @@ Configuration, IAM/KMS, reporting and rollout changes must update it in the same
 
 ## Current Research requirement
 
-Research is the final automated Launch action; only Pay Artist remains excluded.
-Eligibility is fifteen minutes after the calendar's mint end (17:15 Europe/Athens
-on the following day). Target total is `min(310, frozen Craft edition size)` and
+Research and optional Pay Artist share the post-mint group. Payment defaults Off.
+Eligibility is one hour after the calendar's mint end (18:00 Europe/Athens on the
+following day); a separate informational preview runs at 17:15 in the operations
+wave only and never authorizes a transaction. Target total is `min(310, frozen Craft edition size)` and
 quantity is `max(0, target - fresh on-chain total minted)`. Verify Craft edition
 equals on-chain `totalMax`; for edition 305 and total 287, send 18. Recheck supply
 before signing, retain one durable signed intent, reconcile confirmed manual
 Research receipts separately, skip satisfied targets, mirror the Research flag,
-and report activity/transactions/failures in the configured wave. Version 3 plans
-include this step; older plans require reconciliation before automatic execution.
+and report activity/transactions/failures in the operations wave. Version 4 plans
+include this timing and payment group; older plans require reconciliation before
+automatic execution. RPC/database agreement, finalized indexing coverage and
+1/5/15-minute discrepancy backoff apply to Research and artist payment.
 
 Status: original requirements analysis, 2026-10-09, retained as design context.
 The backend implementation now accompanies this analysis. Confirmed choices and
@@ -126,8 +129,9 @@ These are investigation leads, not a verified root cause of reported timeouts.
    signer across claims and coordinate every service allowed to use that key.
 5. Operational wallet pays gas; mint proceeds retain the configured receiver.
    Preserve receiver configuration rather than substituting the signer.
-   Automating Pay Artist is excluded pending a separate payout decision because
-   the current operation transfers ETH from the signing wallet's balance.
+   Optional automatic Pay Artist uses the signing wallet's ETH balance, defaults
+   Off, and requires verified accounting, the designated payee, funding plus gas
+   and a positive configured payment cap.
 
 ## BE-3: Trigger, sequencing, and timing
 
@@ -263,16 +267,18 @@ and [KMS key specs](https://docs.aws.amazon.com/kms/latest/developerguide/symm-a
 ## Current rollout requirements
 
 The durable EMMA workflow, KMS signer, Craft controls, phase execution and reports
-are implemented. Supply the manually confirmed key/role/gas/wave/profile/EMMA
-configuration, verify creator-admin permission, and exercise on Sepolia before
-any separately authorized rollout. Database validation and live execution gaps
-are listed in the operator guide/report. Both workers remain disabled.
+are implemented. Supply the manually confirmed key/role/gas/wave/profile
+configuration; EMMA uses the clicking operator's authorization. Verify creator-admin
+permission and exercise separately on Sepolia before any authorized live rollout.
+Full post-mint test-chain checks need isolated matching transaction data and
+coverage; the existing discovery service remains mainnet-only. Live execution
+boundaries are listed in the operator guide/report. Both handlers default disabled.
 
 ## Scheduled groups and independent readiness
 
 Use the Launch phase grouping: opening initialization plus general/artist/team
 and Phase 0 airdrops, each later phase configuration plus its subscribers,
-Public configuration, metadata requests, and post-mint Research. Completion,
+Public configuration, metadata requests, and post-mint Research/optional Pay Artist. Completion,
 errors and signed intents remain per action. Failed unsigned readiness attempts
 retry within the action window; missed or unsuccessful earlier work does not
 prevent a later group from checking its own readiness. Confirmed manual

@@ -714,26 +714,7 @@ export class DropForgeWorker {
           await this.repository.save(record, ctx);
           return null;
         }
-        const now = await this.chain.now();
-        if ((action.retry_at ?? 0) > now) return null;
-        try {
-          await this.chain.verify(record.data, action);
-        } catch (error) {
-          reportActionFailure(
-            record,
-            action,
-            now,
-            error instanceof Error
-              ? error.message
-              : 'Readiness changed before broadcast',
-            error
-          );
-          await this.repository.save(record, ctx);
-          return null;
-        }
-        action.retry_at = now + 60;
-        await this.repository.save(record, ctx);
-        return action.signed_tx!;
+        return this.prepareBroadcast(record, action, ctx);
       },
       {}
     );
@@ -761,6 +742,33 @@ export class DropForgeWorker {
         );
       }
     }
+  }
+
+  private async prepareBroadcast(
+    record: LaunchRecord,
+    action: LaunchAction,
+    ctx: RequestContext
+  ): Promise<string | null> {
+    const now = await this.chain.now();
+    if ((action.retry_at ?? 0) > now) return null;
+    try {
+      await this.chain.verify(record.data, action);
+    } catch (error) {
+      reportActionFailure(
+        record,
+        action,
+        now,
+        error instanceof Error
+          ? error.message
+          : 'Readiness changed before broadcast',
+        error
+      );
+      await this.repository.save(record, ctx);
+      return null;
+    }
+    action.retry_at = now + 60;
+    await this.repository.save(record, ctx);
+    return action.signed_tx!;
   }
 
   private async applyVerifiedReceipt(

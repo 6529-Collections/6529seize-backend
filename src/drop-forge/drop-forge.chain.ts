@@ -691,14 +691,16 @@ export class EthereumLaunchChain implements LaunchChain {
       if (action) action.supply_evidence = evidence;
       return evidence;
     } catch (error) {
+      const reason =
+        error instanceof LaunchSafetyError
+          ? error.message
+          : 'Supply verification unavailable';
       const failure =
         error instanceof SupplyEvidenceError
           ? error
           : new SupplyEvidenceError(
               { status: 'WAITING', checked_at: Date.now() },
-              error instanceof LaunchSafetyError
-                ? error.message
-                : 'Supply verification unavailable'
+              reason
             );
       if (action) action.supply_evidence = failure.evidence;
       throw failure;
@@ -745,7 +747,7 @@ export class EthereumLaunchChain implements LaunchChain {
       const mined = await rpcWithDeadline(
         this.provider.getTransactionReceipt(hash)
       );
-      if (!mined || mined.blockHash !== receipt.blockHash)
+      if (mined?.blockHash !== receipt.blockHash)
         throw new LaunchSafetyError(
           'Research receipt changed before delivery verification'
         );
@@ -762,7 +764,7 @@ export class EthereumLaunchChain implements LaunchChain {
         );
     } else {
       const proof = await this.inspectPayment(data, action, hash);
-      if (!proof || proof.status !== 1 || proof.blockHash !== receipt.blockHash)
+      if (proof?.status !== 1 || proof.blockHash !== receipt.blockHash)
         throw new LaunchSafetyError(
           'Artist payment evidence changed before completion'
         );
