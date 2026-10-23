@@ -213,9 +213,12 @@ export async function coordinateManual(
   const id = launchId(config.chainId, config.creator, claim);
   if (operation === 'SUBMIT') {
     if (!hash) throw new LaunchSafetyError('Transaction hash is required');
-    await chain.inspectTransaction(config.creator, claim, hash, wallet);
     const held = (await dropForgeRepository.find(id, ctx))?.data.manual_lease;
-    await storeEvidence(config, claim, hash, held?.action ?? actionHint, ctx);
+    const category = held?.action ?? actionHint;
+    if (category === 'PAY_ARTIST')
+      await chain.inspectPaymentSubmission(hash, wallet);
+    else await chain.inspectTransaction(config.creator, claim, hash, wallet);
+    await storeEvidence(config, claim, hash, category, ctx);
   }
   let leaseId: string | null = null;
   await dropForgeRepository.wallet(

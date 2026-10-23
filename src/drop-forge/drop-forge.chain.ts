@@ -565,6 +565,23 @@ export class EthereumLaunchChain implements LaunchChain {
     }
     return { calldata: tx.data, receipt };
   }
+  async inspectPaymentSubmission(hash: string, sender: string): Promise<void> {
+    const tx = await rpcWithDeadline(this.provider.getTransaction(hash));
+    if (!tx)
+      throw new LaunchSafetyError(
+        'Manual artist payment is not yet visible; retain its hash and retry'
+      );
+    if (
+      tx.chainId !== BigInt(this.config.chainId) ||
+      tx.from.toLowerCase() !== sender.toLowerCase() ||
+      !tx.to ||
+      tx.value <= BigInt(0) ||
+      tx.data !== '0x'
+    )
+      throw new LaunchSafetyError(
+        'Manual artist payment must be a direct ETH transfer from this wallet on the configured chain'
+      );
+  }
   private async paymentQuote(
     data: LaunchData
   ): Promise<NonNullable<LaunchAction['payment']>> {

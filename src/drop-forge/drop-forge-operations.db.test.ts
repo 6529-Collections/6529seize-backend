@@ -5,6 +5,9 @@ import {
   requestMetadataUpdate,
   coordinateManual
 } from '@/drop-forge/drop-forge.operations';
+import { DROP_FORGE_EVIDENCE_TABLE } from '@/constants';
+import { sqlExecutor } from '@/sql-executor';
+import { storeEvidence } from '@/drop-forge/drop-forge.evidence';
 import { dropForgeRepository } from '@/drop-forge/drop-forge.repository';
 import * as config from '@/drop-forge/drop-forge.config';
 import * as schedule from '@/drop-forge/drop-forge.schedule';
@@ -137,4 +140,56 @@ it('pauses for manual work and cancels only when no nonce was consumed', async (
       {}
     )
   ).rejects.toThrow('uncertain');
+});
+
+it('records direct ETH payment evidence under its manual lease without treating it as a contract call', async () => {
+  const ready = await readyLaunch(1, {});
+  const payment = jest
+    .spyOn(EthereumLaunchChain.prototype, 'inspectPaymentSubmission')
+    .mockResolvedValue();
+  const contract = jest.spyOn(
+    EthereumLaunchChain.prototype,
+    'inspectTransaction'
+  );
+  const lease = await coordinateManual(
+    1,
+    testConfig.signer,
+    'BEGIN',
+    undefined,
+    undefined,
+    'PAY_ARTIST',
+    {}
+  );
+  const hash = '0x' + 'ab'.repeat(32);
+  await coordinateManual(
+    1,
+    testConfig.signer,
+    'SUBMIT',
+    lease!,
+    hash,
+    'PAY_ARTIST',
+    {}
+  );
+  expect(payment).toHaveBeenCalledWith(hash, testConfig.signer);
+  expect(contract).not.toHaveBeenCalled();
+  const stored = (await dropForgeRepository.find(ready.id, {}))!;
+  expect(stored.data.manual_transactions).toEqual([
+    expect.objectContaining({ hash, action: 'PAY_ARTIST', state: 'PENDING' })
+  ]);
+  expect(stored.data.manual_lease).toBeUndefined();
+});
+it('refuses reusing payment evidence on another claim without relabeling the original proof', async () => {
+  const hash = '0x' + 'cd'.repeat(32);
+  await storeEvidence(testConfig, 1, hash, undefined, {});
+  await expect(
+    storeEvidence(testConfig, 2, hash, 'PAY_ARTIST', {})
+  ).rejects.toThrow('already assigned');
+  const row = await sqlExecutor.oneOrNull<{
+    claim_id: number;
+    action: string | null;
+  }>(
+    `SELECT claim_id, action FROM ${DROP_FORGE_EVIDENCE_TABLE} WHERE hash = :hash`,
+    { hash }
+  );
+  expect(row).toMatchObject({ claim_id: 1, action: null });
 });

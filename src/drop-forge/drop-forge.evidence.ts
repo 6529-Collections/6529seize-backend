@@ -39,7 +39,7 @@ export async function storeEvidence(
   ctx.timer?.start(timer);
   try {
     await sqlExecutor.execute(
-      `INSERT IGNORE INTO ${DROP_FORGE_EVIDENCE_TABLE} (id,contract,claim_id,chain_id,hash,action) VALUES (:id,:contract,:claim,:chain,:hash,:action) ON DUPLICATE KEY UPDATE action = COALESCE(action, VALUES(action))`,
+      `INSERT IGNORE INTO ${DROP_FORGE_EVIDENCE_TABLE} (id,contract,claim_id,chain_id,hash,action) VALUES (:id,:contract,:claim,:chain,:hash,:action) ON DUPLICATE KEY UPDATE action = IF(contract = VALUES(contract) AND claim_id = VALUES(claim_id), COALESCE(action, VALUES(action)), action)`,
       {
         id: `${config.chainId}:${hash.toLowerCase()}`,
         contract: config.creator.toLowerCase(),

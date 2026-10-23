@@ -45,6 +45,7 @@ function setup(cap = BigInt(1000)) {
     getTransaction: jest.fn().mockResolvedValue({
       chainId: BigInt(data.chain_id),
       to: recipient,
+      from: data.signer,
       value: BigInt(1000),
       data: '0x'
     })
@@ -86,6 +87,7 @@ it('rejects manual transfers with an incorrect value or recipient', async () => 
   const f = setup();
   f.provider.getTransaction.mockResolvedValueOnce({
     chainId: BigInt(f.data.chain_id),
+    from: f.data.signer,
     to: recipient,
     value: BigInt(999),
     data: '0x'
@@ -95,6 +97,7 @@ it('rejects manual transfers with an incorrect value or recipient', async () => 
   ).rejects.toThrow('exact chain');
   f.provider.getTransaction.mockResolvedValueOnce({
     chainId: BigInt(f.data.chain_id),
+    from: f.data.signer,
     to: f.data.signer,
     value: BigInt(1000),
     data: '0x'
@@ -102,4 +105,24 @@ it('rejects manual transfers with an incorrect value or recipient', async () => 
   await expect(
     f.chain.inspectPayment(f.data, f.action, 'hash')
   ).rejects.toThrow('exact chain');
+});
+
+it('accepts only a direct payment from the authenticated manual wallet', async () => {
+  const f = setup();
+  await expect(
+    f.chain.inspectPaymentSubmission('hash', f.data.signer)
+  ).resolves.toBeUndefined();
+  await expect(
+    f.chain.inspectPaymentSubmission('hash', recipient)
+  ).rejects.toThrow('direct ETH transfer');
+  f.provider.getTransaction.mockResolvedValueOnce({
+    chainId: BigInt(f.data.chain_id),
+    from: f.data.signer,
+    to: recipient,
+    value: BigInt(1000),
+    data: '0x1234'
+  });
+  await expect(
+    f.chain.inspectPaymentSubmission('hash', f.data.signer)
+  ).rejects.toThrow('direct ETH transfer');
 });

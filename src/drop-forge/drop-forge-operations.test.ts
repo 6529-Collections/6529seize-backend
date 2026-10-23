@@ -4,7 +4,11 @@ import * as rpc from '@/ethereum-rpc/ethereum-rpc-provider';
 import * as wake from '@/drop-forge/drop-forge.wake';
 import { EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
 import { dropForgeRepository } from '@/drop-forge/drop-forge.repository';
-import { requestMetadataUpdate } from '@/drop-forge/drop-forge.operations';
+import * as evidence from '@/drop-forge/drop-forge.evidence';
+import {
+  requestMetadataUpdate,
+  coordinateManual
+} from '@/drop-forge/drop-forge.operations';
 import { hashLaunchDistribution } from '@/drop-forge/drop-forge.plan';
 import {
   testConfig,
@@ -97,4 +101,36 @@ it('does not replace a metadata transaction already signed or change allocation 
   await expect(requestMetadataUpdate(1, {})).rejects.toThrow(
     'Edition or distribution'
   );
+});
+
+it('routes a manual artist payment hash to native-transfer validation and keeps its exact category', async () => {
+  const hash = '0x' + 'ab'.repeat(32);
+  const payment = jest
+    .spyOn(EthereumLaunchChain.prototype, 'inspectPaymentSubmission')
+    .mockResolvedValue();
+  const contract = jest.spyOn(
+    EthereumLaunchChain.prototype,
+    'inspectTransaction'
+  );
+  const proof = jest.spyOn(evidence, 'storeEvidence').mockResolvedValue();
+  jest
+    .spyOn(dropForgeRepository, 'wallet')
+    .mockImplementation(async (_id, fn) =>
+      fn({ launch_id: null, action_id: null }, {})
+    );
+  await coordinateManual(
+    1,
+    testConfig.signer,
+    'SUBMIT',
+    undefined,
+    hash,
+    'PAY_ARTIST',
+    {}
+  );
+  expect(payment).toHaveBeenCalledWith(hash, testConfig.signer);
+  expect(contract).not.toHaveBeenCalled();
+  expect(proof).toHaveBeenCalledWith(testConfig, 1, hash, 'PAY_ARTIST', {});
+  expect(record.data.manual_transactions).toEqual([
+    expect.objectContaining({ hash, action: 'PAY_ARTIST', state: 'PENDING' })
+  ]);
 });
