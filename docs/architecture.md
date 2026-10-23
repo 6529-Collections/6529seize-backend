@@ -2584,3 +2584,7 @@ receive links to the winning entry or, after deletion, its competition. API V1/V
 map the additive cause without hydrating deleted drops. The EventBridge schedule
 is disabled on deployment and activated only after the dependent frontend is
 ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.
+
+## Local Memes calendar
+
+Craft resolves claim seasons with the bundled, versioned Memes calendar instead of a frontend HTTP call. See [shared calendar maintenance](shared-memes-calendar.md) for canonical-source synchronization and Athens/DST policy. Existing unrelated calendar API clients retain their current behavior.

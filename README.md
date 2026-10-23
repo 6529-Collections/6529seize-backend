@@ -507,3 +507,5 @@ Post-mint work includes a one-time 17:15 preview and fresh RPC/database agreemen
 checks for 18:00 Research and optional Pay Artist. Deploy the transaction-indexing
 coverage prerequisite in the guide. All new posts use only the dedicated operations
 wave; existing mint-announcement waves are unchanged.
+
+Shared Memes calendar maintenance: [guide](docs/shared-memes-calendar.md).
