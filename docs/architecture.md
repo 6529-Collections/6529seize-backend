@@ -1930,6 +1930,20 @@ For a documentation-only change, no Lambda redeploy is required.
 
 ## Drop Forge Automated Launch
 
+This section describes the internal EMMA and launch execution architecture. Use
+the maintained [setup guide](drop-forge-auto-launch-setup.md) for environment values,
+IAM/KMS provisioning, deployment order and rollout, and the
+[operations guide](drop-forge-auto-launch.md) for manual evidence and recovery.
+
+| Component | Responsibility |
+| --- | --- |
+| `api` | Authorize operator requests, persist revisioned jobs/launches and publish targeted SQS messages under the SQL lock |
+| `memesDistributionHandler` | Consume `memes-distribution`; snapshot the clicking operator's EMMA inputs, process checkpoints and finalize persisted download lists |
+| `dropForgeLaunchHandler` | Consume `drop-forge-launch`; reconcile manual/automatic work, execute due actions, track signed transactions and recover exceptional failures |
+| EventBridge Scheduler | Deliver one-time future group and crash-watchdog messages to SQS; it does not sign or invoke the handlers directly |
+| MySQL | Authoritative job checkpoints, exact allocation evidence, signed-intent/nonce reservations and reporting acknowledgements |
+| AWS KMS | Hold the operational private key and sign digests only for the dedicated launch role |
+
 `dropForgeLaunchHandler` and `memesDistributionHandler` consume dedicated SQS
 queues and have default-disabled flags, with no recurring schedules. API mutations
 publish under their SQL lock before committing a dispatch revision; consumers retry
@@ -1977,10 +1991,34 @@ flowchart LR
   Worker --> DB
   Worker --> KMS[AWS KMS secp256k1]
   Worker --> Chain[Creator and lazy claim contracts]
-  Prep --> Wave[Durable wave reports]
+  Prep --> Wave[Configured operations wave]
   Worker --> Wave
-  Wave --> Alerts[Configured drops6529 profiles]
+  Wave -->|Failures only| Alerts[Configured drops6529 profiles]
 ```
+
+### Drop Forge scheduled groups
+
+Craft Launch accepts the standard plan derived from the configured Memes calendar;
+there is no per-drop manual time handoff. These are the standard `Europe/Athens`
+times, including DST. Later transitions become eligible one second after the prior
+phase closes, as encoded by `buildPhaseActions` in
+[`drop-forge.plan.ts`](../src/drop-forge/drop-forge.plan.ts).
+
+| Group | Eligible time | Actions |
+| --- | --- | --- |
+| Opening | Immediately after accepted Launch, before Phase 0 opens at 17:40 | Initialize, then general/artist/team and Phase 0 subscriber batches |
+| Phase 1 | 18:20:01; Phase 1 opens at 18:30 | Update claim, then Phase 1 subscriber batches |
+| Phase 2 | 18:50:01; Phase 2 opens at 19:00 | Update claim, then Phase 2 and Public subscriber batches |
+| Public | 19:20:01; public is scheduled from 19:20 | Update claim after Phase 2 closes; actual public availability follows transaction inclusion |
+| Research | 17:15 the next day, after public closes at 17:00 | Top up from fresh supply toward `min(310, frozen Craft edition)` after fixed allocations are reconciled |
+| Metadata | Immediately after an accepted Craft Update Claim request | Synchronize republished metadata while preserving active phase configuration and completed allocations |
+
+Eligibility is not guaranteed block inclusion or finality. Admission budgets serial
+transactions and confirmations; new submissions stop two minutes before the action's
+deadline. SQS delays handle short continuations, while longer future wakes use
+one-time Scheduler events. Ordinary readiness failures leave independent later
+groups scheduled; a signed or uncertain transaction still holds the signer lock
+until reconciled. Every action checks confirmed completion before sending work.
 
 Manual controls acquire a durable lease before prompting the wallet. Confirmed
 transaction evidence carries the action category and credits exact remaining
@@ -2015,17 +2053,32 @@ PROCESS_ALL job snapshots upstream inputs once and processes each stage in a
 separate invocation. Pending jobs block conflicting preparation/reset operations.
 Finalization shares that lock and chunks normalized-row inserts. A savepoint
 rolls back a failed stage before persisting the failure; invocation loss rolls
-back the stage for scheduler retry. Legacy synchronous endpoints retain their
-response shapes. Completed downloads are paginated reads of persisted results.
+back the stage for SQS redelivery or its one-time watchdog. Legacy synchronous
+endpoints retain their response shapes. Completed downloads are paginated reads
+of persisted results.
 
 Reporting drops and outbox acknowledgements share a DB transaction. Push
 transport runs after commit. `@drops6529` resolves configured profile IDs
-through existing visibility and notification rules. Initial wave reporting is
-required before new launch signing; receipt reconciliation continues separately.
+through existing visibility and notification rules. Both handlers create their own
+reports in `DROP_FORGE_OPERATIONS_WAVE_ID`; failures tag the group, while successes
+and detected-complete skips do not. Existing subscription alerts retain `@devs6529`
+and their existing wave; those reporting consumers need no redeploy for these
+automation alerts. Initial wave reporting is required before new launch signing;
+receipt reconciliation continues separately.
 See [configuration and recovery](drop-forge-auto-launch.md). The creator owner
 still grants/revokes on-chain admins, and Pay Artist remains outside automation.
 
 Drop Forge launch scheduling groups actions by phase, with independent completed-state and readiness checks. Unsigned action failures and missed windows remain visible without blocking later groups; a persisted signed nonce remains reserved until reconciled. The Launch API exposes groups, attempt errors and observed skips, and each outcome is committed to the operations-wave outbox.
+
+Environment boundaries are regional: staging uses `eu-west-1`, production uses
+`us-east-1`, and each reads its own regional `prod/lambdas` runtime secret. Chain
+selection is explicit and does not follow the deployment environment automatically.
+The two Lambda execution roles and Scheduler delivery role are referenced in
+`serverless-config/{staging,prod}/drop-forge.js`; handler stacks inject the Scheduler
+settings, without feature-specific GitHub role variables. Only the launch role has
+KMS signing authority; the distribution handler uses the clicking operator's
+encrypted EMMA authorization, and the wave posting profile is configured separately
+from the on-chain wallet. All execution flags default to disabled.
 
 ### Drop Forge exceptional transaction recovery
 

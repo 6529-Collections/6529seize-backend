@@ -3,7 +3,9 @@
 This is the setup guide for EMMA Process and Finalize, Craft Launch/Update Claim,
 scheduled launch actions, and reports mentioning `@drops6529`. Operational behavior,
 phase times, manual evidence and transaction recovery are described in
-[Drop Forge automated launch operations](drop-forge-auto-launch.md).
+[Drop Forge automated launch operations](drop-forge-auto-launch.md). The
+[architecture overview](architecture.md#drop-forge-automated-launch) shows the
+components, queue delivery, signing boundary and exact scheduled groups.
 
 **Maintenance:** update this guide in the same change whenever configuration,
 deployment roles, signing permissions, reporting access or rollout behavior changes.
@@ -30,6 +32,10 @@ Changing a secret is not proof that every running instance has adopted it.
 Execution role references are versioned in `serverless-config/{staging,prod}/drop-forge.js`.
 No new GitHub environment variables or role secrets are needed. The existing
 GitHub deployment authentication stays in place.
+The handler stacks also inject `DROP_FORGE_SCHEDULE_GROUP` and
+`DROP_FORGE_SCHEDULER_ROLE_ARN`; do not add these to the runtime secret. Queue
+names are fixed in the stacks and discovered through SQS, so no queue URL setting
+needs to be supplied manually.
 
 ## 2. Set up the wave and profiles
 
@@ -220,20 +226,39 @@ the clicking administrator's authorization, encrypted for the durable job. **No
 EMMA service-account token or new encryption secret needs prepopulation.** Existing
 EMMA endpoint configuration and the operator's upstream permissions still apply.
 
+Initially set all three execution flags to `false`. With automation enabled,
+recovery/reconciliation is enabled too. With automation disabled, setting only
+`DROP_FORGE_RECOVERY_ENABLED=true` allows reconciliation and exceptional same-nonce
+recovery; reviewed fresh-nonce retry or remaining delivery still requires automation.
+Turning both launch flags off stops receipt reconciliation as well as new execution.
+
 ## 6. Deploy disabled, then observe without contract-admin permission
 
-Follow the repository's authorized [deployment procedure](deployment.md). Deploy
-`dbMigrationsLoop` first, then `dropForgeLaunchHandler` (queue and schedule group),
-then `memesDistributionHandler` (its queue), then `api`, dependent frontend controls,
-and the monitoring updates listed in the operations guide. No additional existing
-reporting-consumer redeploy is required for the new automation mentions.
+Follow the repository's authorized [deployment procedure](deployment.md). Complete
+AWS role/key provisioning and runtime configuration first, then deploy sequentially:
+
+| Order | Deployment unit | What must be available before continuing |
+| --- | --- | --- |
+| 1 | Existing `dbMigrationsLoop` | Run the workflow with `db_schema_scope=full`; its synchronous invocation must finish entity synchronization, including the launch, signer, evidence and preparation/job tables |
+| 2 | New `dropForgeLaunchHandler` | Launch Lambda, `drop-forge-launch` queue/DLQ, alarms and the shared `drop-forge-{stage}` Scheduler group |
+| 3 | New `memesDistributionHandler` | Distribution Lambda, `memes-distribution` queue/DLQ and alarms; its watchdogs use the group from step 2 |
+| 4 | Existing `api` | Operation endpoints, targeted queue dispatch and `@drops6529` recipient resolution |
+| 5 | Frontend | Process and Finalize, Craft Launch/Update Claim, execution/recovery UI and mention compatibility |
+
+Apply the generated monitoring stack updates before enabling either workflow.
+No additional existing reporting-consumer redeploy is required for the new
+automation mentions; existing `@devs6529` subscription alerts are unchanged.
 Apply monitoring artifacts generated from the same reviewed revision. Both handlers
 must appear in the production/staging policy inventory without a recurring interval;
 keep their handler DLQ alarms enabled when applying the shared monitoring updates.
 Initially keep preparation and automation disabled. Both handlers have **no recurring
 schedule**. Process and Finalize and Launch/Update Claim enqueue work immediately;
 Launch establishes per-drop one-time phase/Research schedules. Short continuations
-exist only while checkpoints, reports or receipts are outstanding.
+exist only while checkpoints, reports or receipts are outstanding. The
+[scheduled groups](architecture.md#drop-forge-scheduled-groups) run in the gaps
+between phases; there is no permanently running one-minute worker. Launch admission
+checks that the remaining time fits its serial transaction/confirmation budget, so
+clicking just before 17:40 is not sufficient merely because minting has not opened.
 
 If the earlier loop services were ever deployed, disable/remove their scheduled
 rules before enabling the new handlers. Drain and reconcile existing SQL jobs,
