@@ -7,6 +7,12 @@ import {
 import { testLaunchData } from '@/drop-forge/drop-forge.test-fixtures';
 import { RESEARCH_DELAY_SECONDS } from '@/drop-forge/drop-forge.research';
 
+jest.mock('@/sql-executor', () => ({
+  ...jest.requireActual<typeof import('@/sql-executor')>('@/sql-executor'),
+  sqlExecutor: { oneOrNull: jest.fn() }
+}));
+beforeEach(() => jest.mocked(sqlExecutor.oneOrNull).mockReset());
+
 const recipient = '0x' + '66'.repeat(20);
 function fixture() {
   const data = testLaunchData();

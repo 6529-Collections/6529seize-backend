@@ -144,8 +144,7 @@ export function assertPaymentQuote(
 ): void {
   if (!action.payment && capture) action.payment = quote;
   if (
-    !action.payment ||
-    action.payment.recipient !== quote.recipient ||
+    action.payment?.recipient !== quote.recipient ||
     action.payment.amount_wei !== quote.amount_wei
   )
     throw new LaunchSafetyError(

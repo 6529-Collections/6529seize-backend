@@ -350,6 +350,8 @@ worker paths; they are not a replacement for the operator-facing switch.
 Configure `DROP_FORGE_MAX_ARTIST_PAYMENT_ETH` in the regional `prod/lambdas` secret
 before enabling artist payment and refresh the API/launch handler configuration.
 Choose a positive maximum for one artist payout; no value is invented by deployment.
+If the cap is later removed, you can still turn launch execution or artist payment Off;
+a new payment opt-in or re-enabling execution with payment enabled requires the cap.
 Fund the KMS wallet for payouts plus gas. Mint proceeds still go to the separate
 payment receiver. Verify the claim's payment details/designated payee and completed
 subscription accounting. Research and optional Pay Artist are independent actions

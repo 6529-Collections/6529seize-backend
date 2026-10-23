@@ -256,16 +256,7 @@ export class EthereumLaunchChain implements LaunchChain {
         'Operational signer lacks creator-admin permission'
       );
     if (action.kind === 'PAY_ARTIST') {
-      verifyPaymentTiming(data, action, await this.now());
-      const quote = await this.paymentQuote(data);
-      assertPaymentQuote(action, quote, captureSupply);
-      if (
-        !this.config.maxArtistPayment ||
-        BigInt(quote.amount_wei) > this.config.maxArtistPayment
-      )
-        throw new LaunchSafetyError(
-          'Artist payment exceeds the configured payment limit'
-        );
+      await this.verifyArtistPayment(data, action, captureSupply);
       return;
     }
     let result: string;
@@ -564,6 +555,22 @@ export class EthereumLaunchChain implements LaunchChain {
       );
     }
     return { calldata: tx.data, receipt };
+  }
+  private async verifyArtistPayment(
+    data: LaunchData,
+    action: LaunchAction,
+    capture: boolean
+  ): Promise<void> {
+    verifyPaymentTiming(data, action, await this.now());
+    const quote = await this.paymentQuote(data);
+    assertPaymentQuote(action, quote, capture);
+    if (
+      !this.config.maxArtistPayment ||
+      BigInt(quote.amount_wei) > this.config.maxArtistPayment
+    )
+      throw new LaunchSafetyError(
+        'Artist payment exceeds the configured payment limit'
+      );
   }
   async inspectPaymentSubmission(hash: string, sender: string): Promise<void> {
     const tx = await rpcWithDeadline(this.provider.getTransaction(hash));

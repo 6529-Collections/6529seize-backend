@@ -62,7 +62,7 @@ export async function getDropForgeSettings(
       contract: config.creator,
       signer_address: config.signer,
       ens_name: ens,
-      balance_wei: balance?.toString() ?? null,
+      balance_wei: typeof balance === 'bigint' ? balance.toString() : null,
       execution_available: automationEnabled(),
       artist_payment_available:
         !!config.maxArtistPayment && config.maxArtistPayment > BigInt(0)

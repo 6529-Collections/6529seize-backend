@@ -60,19 +60,20 @@ export async function updateForgeSettings(
     pay_artist_enabled: boolean;
   }
 ): Promise<void> {
-  if (
-    input.pay_artist_enabled &&
-    (!config.maxArtistPayment || config.maxArtistPayment <= BigInt(0))
-  )
-    throw new LaunchSafetyError(
-      'Configure a positive artist payment limit before enabling automatic payments'
-    );
   await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
     const ctx = { connection };
     const current = await readForgeSettings(config, ctx, true);
     if (current.revision !== input.revision)
       throw new LaunchRevisionConflict(
         'Launch settings changed; refresh before saving'
+      );
+    if (
+      input.pay_artist_enabled &&
+      (!current.pay_artist_enabled || input.automation_enabled) &&
+      (!config.maxArtistPayment || config.maxArtistPayment <= BigInt(0))
+    )
+      throw new LaunchSafetyError(
+        'Configure a positive artist payment limit before enabling automatic payments'
       );
     await sqlExecutor.execute(
       `UPDATE ${DROP_FORGE_SETTINGS_TABLE} SET revision = revision + 1, automation_enabled = :automation_enabled, pay_artist_enabled = :pay_artist_enabled, updated_by = :wallet, updated_at = :now WHERE id = :id`,
@@ -88,8 +89,13 @@ export async function updateForgeSettings(
       },
       { wrappedConnection: connection }
     );
-    for (const record of records)
-      await wakeDropForge({ id: record.id, revision: Number(record.revision) });
+    await records.reduce(
+      (pending, record) =>
+        pending.then(() =>
+          wakeDropForge({ id: record.id, revision: Number(record.revision) })
+        ),
+      Promise.resolve()
+    );
   });
 }
 

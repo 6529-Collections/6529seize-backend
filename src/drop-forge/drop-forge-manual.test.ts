@@ -179,3 +179,45 @@ it('does not confirm an empty unrelated batch that this proof did not credit', a
   await reconcileManual(record, chain, testConfig);
   expect(empty.state).toBe('PENDING');
 });
+
+it('credits a confirmed manual artist payment once without crediting airdrop allocations', async () => {
+  const { record, chain, receipt } = setup();
+  record.data.manual_transactions![0].action = 'PAY_ARTIST';
+  const inspect = jest.fn().mockResolvedValue(receipt);
+  chain.inspectPayment = inspect;
+  const payment = record.data.actions.find(
+    (action) => action.kind === 'PAY_ARTIST'
+  )!;
+  expect(await reconcileManual(record, chain, testConfig)).toBe(true);
+  expect(payment).toMatchObject({
+    state: 'CONFIRMED',
+    hash: 'manual-hash',
+    observed: true,
+    block_hash: 'canonical'
+  });
+  expect(record.data.actions[1].credited_tokens).toBeUndefined();
+  expect(record.data.manual_transactions![0]).toMatchObject({
+    state: 'CONFIRMED',
+    method: 'PAY_ARTIST'
+  });
+  await reconcileManual(record, chain, testConfig);
+  expect(inspect).toHaveBeenCalledTimes(1);
+});
+it('defers unconfirmed artist payment evidence and does not release a signed intent', async () => {
+  const { record, chain, receipt } = setup();
+  record.data.manual_transactions![0].action = 'PAY_ARTIST';
+  receipt.confirmations = 1;
+  const inspect = jest.fn().mockResolvedValue(receipt);
+  chain.inspectPayment = inspect;
+  const payment = record.data.actions.find(
+    (action) => action.kind === 'PAY_ARTIST'
+  )!;
+  expect(await reconcileManual(record, chain, testConfig)).toBe(false);
+  expect(payment.state).toBe('PENDING');
+  payment.state = 'SIGNED';
+  await expect(reconcileManual(record, chain, testConfig)).rejects.toThrow(
+    'signed intent'
+  );
+  expect(payment.state).toBe('SIGNED');
+  expect(inspect).toHaveBeenCalledTimes(1);
+});

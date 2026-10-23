@@ -18,49 +18,67 @@ export async function reportLaunchEvents(
   repository: DropForgeRepository,
   id?: string
 ): Promise<boolean> {
-  let delivered = true;
   const target = id ? await repository.find(id, {}) : null;
   const targeted = target ? [target] : [];
   const candidates = id ? targeted : await repository.reporting({});
-  for (const candidate of candidates) {
-    try {
-      const pushes = await repository.change(
-        candidate.id,
-        async (record, ctx) => {
-          const notifications: number[] = [];
-          for (const event of record.data.events
-            .filter((it) => !it.drop_id)
-            .slice(0, 5)) {
-            const { drop_id, pending_push_notification_ids } =
-              await postForgeReport(
+  return candidates.reduce(
+    (pending, candidate) =>
+      pending.then(async (delivered) => {
+        const outcome = await reportLaunchCandidate(
+          config,
+          repository,
+          candidate.id
+        );
+        return outcome && delivered;
+      }),
+    Promise.resolve(true)
+  );
+}
+
+async function reportLaunchCandidate(
+  config: DropForgeReportingConfig,
+  repository: DropForgeRepository,
+  id: string
+): Promise<boolean> {
+  try {
+    const pushes = await repository.change(
+      id,
+      async (record, ctx) => {
+        const notifications: number[] = [];
+        const events = record.data.events
+          .filter((event) => !event.drop_id)
+          .slice(0, 5);
+        await events.reduce(
+          (pending, event) =>
+            pending.then(async () => {
+              const report = await postForgeReport(
                 config,
                 formatLaunchReport(record.data, event),
                 event.error,
                 ctx
               );
-            event.drop_id = drop_id;
-            notifications.push(...pending_push_notification_ids);
-          }
-          return notifications;
-        },
-        {}
-      );
-      // Drop and outbox acknowledgement share a DB commit. Push transport is
-      // best effort and cannot roll back or duplicate the wave report.
-      try {
-        await sendIdentityPushNotifications(pushes);
-      } catch {
-        logger.warn('Drop Forge push delivery failed; wave report is durable');
-      }
-    } catch (error_) {
-      logger.warn(
-        `Drop Forge wave delivery deferred for ${candidate.id}`,
-        reportDiagnostic(error_)
-      );
-      delivered = false;
+              event.drop_id = report.drop_id;
+              notifications.push(...report.pending_push_notification_ids);
+            }),
+          Promise.resolve()
+        );
+        return notifications;
+      },
+      {}
+    );
+    try {
+      await sendIdentityPushNotifications(pushes);
+    } catch {
+      logger.warn('Drop Forge push delivery failed; wave report is durable');
     }
+    return true;
+  } catch (error_) {
+    logger.warn(
+      `Drop Forge wave delivery deferred for ${id}`,
+      reportDiagnostic(error_)
+    );
+    return false;
   }
-  return delivered;
 }
 
 export async function postForgeReport(

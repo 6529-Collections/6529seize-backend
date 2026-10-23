@@ -60,8 +60,7 @@ export async function storeEvidence(
       { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
     );
     if (
-      !existing ||
-      existing.contract.toLowerCase() !== config.creator.toLowerCase() ||
+      existing?.contract.toLowerCase() !== config.creator.toLowerCase() ||
       Number(existing.claim_id) !== claim ||
       (existing.action && action && existing.action !== action)
     )
