@@ -38,7 +38,7 @@ After five processing failures the worker posts a recovery-required alert once
 and continues retrying the saved request. Exhausting SQS deliveries no longer
 removes these jobs from the recovery path. Permanent content/history errors
 remain `FAILED`, retain the original payload, and require operator review;
-their failure-alert delivery is retried separately. No recovery path deletes an
+their failure-alert delivery is retried separately at five-minute intervals. An alert-delivery failure does not abort recovery of other saved jobs or unrelated streams. No recovery path deletes an
 unfinished publication, advances its cursor manually, or silently skips content.
 
 ## Operator recovery

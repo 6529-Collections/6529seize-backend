@@ -2,7 +2,10 @@ import { RELEASE_NOTE_RECOVERY_JOBS_TABLE } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
-import { ReleaseNoteRecoveryDb } from './release-note-recovery.db';
+import {
+  ReleaseNoteRecoveryDb,
+  recoveryStreamKey
+} from './release-note-recovery.db';
 
 const request: ReleaseNoteGenerationRequest = {
   repo: '6529seize-frontend',
@@ -140,13 +143,29 @@ describeWithSeed(
         {}
       );
       expect((await db.findDue(2000, {}))[0].status).toBe('FAILED');
-      await db.markAlerted('publication', 2500, {});
-      expect(await db.findDue(3000, {})).toEqual([]);
+      await db.deferAlert('publication', 3000, 2500, {});
+      expect(await db.findDue(2999, {})).toEqual([]);
+      expect((await db.findDue(3000, {}))[0].status).toBe('FAILED');
+      await db.markAlerted('publication', 3500, {});
+      expect(await db.findDue(3500, {})).toEqual([]);
+      const newer = await db.enqueue(
+        'newer',
+        { ...request, run_number: '1948' },
+        3500,
+        {}
+      );
+      expect((await db.findEarlier(newer, {}))?.publication_id).toBe(
+        'publication'
+      );
       const saved = await db.requestRetry('publication', 4000, {});
-      expect(saved.status).toBe('PENDING');
-      expect(saved.alerted_at).toBeNull();
-      expect(saved.failure_count).toBe(0);
-      expect(JSON.parse(saved.request_json)).toEqual(request);
+      expect(saved).toEqual(
+        expect.objectContaining({
+          status: 'PENDING',
+          alerted_at: null,
+          failure_count: 0,
+          request_json: JSON.stringify(request)
+        })
+      );
     });
 
     it('never resets completed jobs and fails clearly for an unknown operator retry', async () => {
@@ -162,15 +181,49 @@ describeWithSeed(
         2000,
         {}
       );
-      expect((await db.requestRetry('publication', 3000, {})).status).toBe(
+      expect((await db.requestRetry('publication', 3000, {}))?.status).toBe(
         'COMPLETED'
       );
       expect((await db.enqueue('publication', request, 4000, {})).status).toBe(
         'COMPLETED'
       );
-      await expect(db.requestRetry('unknown', 3000, {})).rejects.toThrow(
-        'does not exist'
-      );
+      await expect(db.requestRetry('unknown', 3000, {})).resolves.toBeNull();
     });
   }
 );
+
+describe('Recovery request validation', () => {
+  it('canonicalizes workflow and repository aliases without merging case-sensitive branches', () => {
+    expect(recoveryStreamKey(request)).toBe(
+      recoveryStreamKey({
+        ...request,
+        repo: '6529-Collections/6529seize-frontend',
+        workflow: ' WEB DEPLOY - PROD ',
+        environment: 'PROD'
+      })
+    );
+    expect(recoveryStreamKey({ ...request, branch: 'Main' })).not.toBe(
+      recoveryStreamKey(request)
+    );
+    expect(
+      recoveryStreamKey({
+        ...request,
+        repo: '6529-Collections/6529-CORE',
+        branch: 'v0.3.1'
+      })
+    ).toBe(
+      recoveryStreamKey({ ...request, repo: '6529-core', branch: 'v0.3.2' })
+    );
+  });
+  it.each([undefined, null, '', 'NaN', '-1', '0', '1.5', '4294967296'])(
+    'rejects invalid run number %s before opening a database transaction',
+    async (runNumber) => {
+      const supplier = jest.fn();
+      const db = new ReleaseNoteRecoveryDb(supplier);
+      await expect(
+        db.enqueue('invalid', { ...request, run_number: runNumber }, 1000, {})
+      ).rejects.toThrow('valid GitHub run number');
+      expect(supplier).not.toHaveBeenCalled();
+    }
+  );
+});

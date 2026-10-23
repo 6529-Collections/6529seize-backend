@@ -5,15 +5,16 @@ import {
 } from '@/release-notes/release-note-errors';
 import {
   buildReleaseNoteFailureAlert,
+  buildReleaseNoteRecoveryFailureAlert,
   parseReleaseNoteMessage,
   prepareReleaseNoteErrorForRetry,
   processRequest,
   processRequestWithRetryPolicy,
   shouldCaptureReleaseNoteError,
-  shouldRetryReleaseNoteError
+  shouldRetryReleaseNoteError,
+  usesDurableReleaseNoteRecovery,
+  routeReleaseNoteEvent
 } from './index';
-import { usesDurableReleaseNoteRecovery, routeReleaseNoteEvent } from './index';
-import { buildReleaseNoteRecoveryFailureAlert } from './index';
 import type { Context, ScheduledEvent } from 'aws-lambda';
 import { ReleaseNoteRecoveryService } from '@/release-notes/release-note-recovery.service';
 import * as secrets from '@/secrets';

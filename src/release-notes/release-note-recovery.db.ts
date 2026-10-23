@@ -12,20 +12,24 @@ import {
 import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
 import { createHash } from 'node:crypto';
 
-function recoveryStreamKey(request: ReleaseNoteGenerationRequest): string {
-  const repo = request.repo.includes('/')
-    ? request.repo
-    : `6529-Collections/${request.repo}`;
+export function recoveryStreamKey(
+  request: ReleaseNoteGenerationRequest
+): string {
+  const repo = (
+    request.repo.includes('/')
+      ? request.repo
+      : `6529-Collections/${request.repo}`
+  ).toLowerCase();
   const branch = repo.endsWith('/6529-core')
     ? 'production-release-branches'
     : request.branch?.trim() || 'main';
   return createHash('sha256')
     .update(
       JSON.stringify([
-        repo.toLowerCase(),
-        request.workflow,
+        repo,
+        request.workflow.trim().toLowerCase(),
         branch,
-        request.environment.toLowerCase()
+        request.environment.trim().toLowerCase()
       ])
     )
     .digest('hex');
@@ -46,6 +50,16 @@ export class ReleaseNoteRecoveryDb extends LazyDbAccessCompatibleService {
     now: number,
     ctx: RequestContext
   ): Promise<ReleaseNoteRecoveryJobEntity> {
+    const runNumber = Number(request.run_number);
+    if (
+      !Number.isSafeInteger(runNumber) ||
+      runNumber <= 0 ||
+      runNumber > 0xffffffff
+    ) {
+      throw new TypeError(
+        'A valid GitHub run number is required for durable release-note recovery'
+      );
+    }
     const timerName = `${this.constructor.name}->enqueue`;
     ctx.timer?.start(timerName);
     try {
@@ -62,7 +76,7 @@ export class ReleaseNoteRecoveryDb extends LazyDbAccessCompatibleService {
               publicationId,
               streamKey: recoveryStreamKey(request),
               runId: request.run_id,
-              runNumber: Number(request.run_number),
+              runNumber,
               request: JSON.stringify(request),
               now
             },
@@ -176,12 +190,33 @@ export class ReleaseNoteRecoveryDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async deferAlert(
+    publicationId: string,
+    nextAttemptAt: number,
+    now: number,
+    ctx: RequestContext
+  ): Promise<void> {
+    const timerName = `${this.constructor.name}->deferAlert`;
+    ctx.timer?.start(timerName);
+    try {
+      await this.db.execute(
+        `update ${RELEASE_NOTE_RECOVERY_JOBS_TABLE}
+         set next_attempt_at = :nextAttemptAt, updated_at = :now
+         where publication_id = :publicationId and status = 'FAILED' and alerted_at is null`,
+        { publicationId, nextAttemptAt, now },
+        queryOptions(ctx)
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   /** Explicit operator retry preserves the envelope, baseline and drop receipts. */
   public async requestRetry(
     publicationId: string,
     now: number,
     ctx: RequestContext
-  ): Promise<ReleaseNoteRecoveryJobEntity> {
+  ): Promise<ReleaseNoteRecoveryJobEntity | null> {
     const timerName = `${this.constructor.name}->requestRetry`;
     ctx.timer?.start(timerName);
     try {
@@ -201,10 +236,6 @@ export class ReleaseNoteRecoveryDb extends LazyDbAccessCompatibleService {
             { publicationId },
             queryOptions(txCtx)
           );
-          if (!job)
-            throw new Error(
-              `Release-note recovery job ${publicationId} does not exist`
-            );
           return job;
         }
       );

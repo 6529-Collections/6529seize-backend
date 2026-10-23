@@ -1,4 +1,7 @@
-import { ReleaseNoteRecoveryJobEntity } from '@/entities/IReleaseNoteRecoveryJob';
+import {
+  ReleaseNoteRecoveryJobEntity,
+  ReleaseNoteRecoveryStatus
+} from '@/entities/IReleaseNoteRecoveryJob';
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import {
@@ -28,11 +31,28 @@ type RecoveryRepository = Pick<
   | 'findEarlier'
   | 'recordOutcome'
   | 'markAlerted'
+  | 'deferAlert'
   | 'requestRetry'
 >;
 
 const FAILURE_ALERT_THRESHOLD = 5;
 const DEFER_DELAY_MS = 5 * 60_000;
+
+function recoveryStatus(error: unknown): ReleaseNoteRecoveryStatus {
+  if (error instanceof UntrustedReleaseNoteMetadataError) return 'REJECTED';
+  if (isNonRetryableReleaseNoteError(error)) return 'FAILED';
+  return 'PENDING';
+}
+
+function recoveryDelay(error: unknown, failures: number): number {
+  if (error instanceof DeferredReleaseNoteError) return DEFER_DELAY_MS;
+  const dependencyDelay =
+    error instanceof ReleaseNoteDependencyError ? error.retryAfterMs : 0;
+  return Math.max(
+    dependencyDelay,
+    Math.min(60_000 * 2 ** Math.min(failures - 1, 6), 3_600_000)
+  );
+}
 
 export class ReleaseNoteRecoveryService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -67,7 +87,17 @@ export class ReleaseNoteRecoveryService {
     const jobs = await this.repository.findDue(this.now(), ctx);
     for (const job of jobs) {
       if (getRemainingTimeInMillis() < 45_000) break;
-      await this.runJob(job, process, ctx);
+      try {
+        await this.runJob(job, process, ctx);
+      } catch (error) {
+        this.logger.error(
+          'Release-note recovery could not finish; saved job remains available',
+          {
+            publication_id: job.publication_id,
+            error: error instanceof Error ? error.message : String(error)
+          }
+        );
+      }
     }
   }
 
@@ -81,6 +111,10 @@ export class ReleaseNoteRecoveryService {
       this.now(),
       ctx
     );
+    if (!job)
+      throw new NonRetryableReleaseNoteError(
+        `Release-note recovery job ${publicationId} does not exist`
+      );
     await this.runJob(job, process, ctx);
   }
 
@@ -94,14 +128,24 @@ export class ReleaseNoteRecoveryService {
       job.request_json
     ) as ReleaseNoteGenerationRequest;
     if (job.status === 'FAILED' && job.alerted_at === null) {
-      await this.postFailure(
-        request,
-        new NonRetryableReleaseNoteError(
-          job.last_error ?? 'Release-note publication failed'
-        ),
-        job.failure_count
-      );
-      await this.repository.markAlerted(job.publication_id, this.now(), ctx);
+      try {
+        await this.postFailure(
+          request,
+          new NonRetryableReleaseNoteError(
+            job.last_error ?? 'Release-note publication failed'
+          ),
+          job.failure_count
+        );
+        await this.repository.markAlerted(job.publication_id, this.now(), ctx);
+      } catch (error) {
+        await this.repository.deferAlert(
+          job.publication_id,
+          this.now() + DEFER_DELAY_MS,
+          this.now(),
+          ctx
+        );
+        throw error;
+      }
       return;
     }
     if (job.status !== 'PENDING') return;
@@ -144,22 +188,12 @@ export class ReleaseNoteRecoveryService {
     const deferred = error instanceof DeferredReleaseNoteError;
     const permanent = isNonRetryableReleaseNoteError(error);
     const failures = job.failure_count + (deferred ? 0 : 1);
-    const delay = deferred
-      ? DEFER_DELAY_MS
-      : Math.max(
-          error instanceof ReleaseNoteDependencyError ? error.retryAfterMs : 0,
-          Math.min(60_000 * 2 ** Math.min(failures - 1, 6), 3_600_000)
-        );
+    const delay = recoveryDelay(error, failures);
     const message = error instanceof Error ? error.message : String(error);
     await this.repository.recordOutcome(
       job.publication_id,
       {
-        status:
-          error instanceof UntrustedReleaseNoteMetadataError
-            ? 'REJECTED'
-            : permanent
-              ? 'FAILED'
-              : 'PENDING',
+        status: recoveryStatus(error),
         failures,
         nextAttemptAt: this.now() + delay,
         lastError: message.slice(0, 4000)

@@ -40,6 +40,14 @@ functions:
       API_GATEWAY_WS_ENDPOINT: ${env:API_GATEWAY_WS_ENDPOINT}
 
 resources:
+  Conditions:
+    ReleaseNoteRecoveryProduction:
+      Fn::Equals: ['${opt:stage, self:provider.stage}', 'prod']
+  extensions:
+    ReleaseNotesGenerationLoopEventsRuleSchedule1:
+      Condition: ReleaseNoteRecoveryProduction
+    ReleaseNotesGenerationLoopLambdaPermissionEventsRuleSchedule1:
+      Condition: ReleaseNoteRecoveryProduction
   Resources:
     ReleaseNotesGenerationLoopLogGroup:
       Type: AWS::Logs::LogGroup

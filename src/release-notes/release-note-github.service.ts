@@ -1,4 +1,5 @@
 import fetch, { Response } from 'node-fetch';
+import { randomInt } from 'node:crypto';
 import deployConfig from '@/config/deploy-services.json';
 import { env } from '@/env';
 import { Logger } from '@/logging';
@@ -417,10 +418,7 @@ async function waitForGitHubRetry(
   await new Promise((resolve) =>
     setTimeout(
       resolve,
-      Math.max(
-        retryAfterMs,
-        250 * 2 ** (attempt - 1) + Math.floor(Math.random() * 100)
-      )
+      Math.max(retryAfterMs, 250 * 2 ** (attempt - 1) + randomInt(100))
     )
   );
 }

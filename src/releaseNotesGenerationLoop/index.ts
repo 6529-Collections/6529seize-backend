@@ -29,8 +29,7 @@ import {
   CiPipelineAlertRequest,
   ciPipelineAlertService
 } from '@/api-serverless/src/ci-pipeline-alerts/ci-pipeline-alert.service';
-import type { SQSHandler } from 'aws-lambda';
-import type { Context, ScheduledEvent, SQSEvent } from 'aws-lambda';
+import type { SQSHandler, Context, ScheduledEvent, SQSEvent } from 'aws-lambda';
 import { releaseNoteRecoveryDb } from '@/release-notes/release-note-recovery.db';
 import { ReleaseNoteRecoveryService } from '@/release-notes/release-note-recovery.service';
 import { randomUUID } from 'node:crypto';
@@ -817,6 +816,11 @@ async function recoverReleaseNotes(
             'recover_publication_id must be a release-note publication id'
           );
         }
+        logger.info('Operator requested release-note recovery', {
+          publication_id: event.recover_publication_id,
+          aws_request_id: context.awsRequestId,
+          invocation_source: 'operator'
+        });
         await releaseNoteRecoveryService.retry(
           event.recover_publication_id,
           (request) =>

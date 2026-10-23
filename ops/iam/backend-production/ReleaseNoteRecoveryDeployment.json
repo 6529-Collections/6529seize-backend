@@ -7,6 +7,8 @@
       "Action": [
         "events:DeleteRule",
         "events:DescribeRule",
+        "events:DisableRule",
+        "events:EnableRule",
         "events:ListTagsForResource",
         "events:ListTargetsByRule",
         "events:PutRule",

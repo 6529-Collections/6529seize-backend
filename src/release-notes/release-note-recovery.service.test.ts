@@ -46,6 +46,7 @@ type Repository = Pick<
   | 'findEarlier'
   | 'recordOutcome'
   | 'markAlerted'
+  | 'deferAlert'
   | 'requestRetry'
 >;
 
@@ -57,6 +58,7 @@ function setup(overrides: Partial<ReleaseNoteRecoveryJobEntity> = {}) {
     findEarlier: jest.fn().mockResolvedValue(null),
     recordOutcome: jest.fn().mockResolvedValue(undefined),
     markAlerted: jest.fn().mockResolvedValue(undefined),
+    deferAlert: jest.fn().mockResolvedValue(undefined),
     requestRetry: jest.fn().mockResolvedValue(saved)
   };
   const postFailure = jest.fn().mockResolvedValue(undefined);
@@ -251,6 +253,51 @@ describe('ReleaseNoteRecoveryService', () => {
     expect(repository.markAlerted).toHaveBeenCalled();
   });
 
+  it('retries a thrown permanent-failure alert on subsequent polls until delivery succeeds', async () => {
+    const { service, postFailure, repository, saved } = setup();
+    const process = jest
+      .fn()
+      .mockRejectedValue(new NonRetryableReleaseNoteError('history error'));
+    postFailure.mockRejectedValue(new Error('alert API unavailable'));
+    await expect(service.process(request, process, {})).rejects.toThrow(
+      'alert API unavailable'
+    );
+    expect(repository.recordOutcome).toHaveBeenCalledWith(
+      job.publication_id,
+      expect.objectContaining({ status: 'FAILED', failures: 1 }),
+      now,
+      {}
+    );
+    expect(repository.markAlerted).not.toHaveBeenCalled();
+    repository.findDue.mockResolvedValue([
+      {
+        ...saved,
+        status: 'FAILED',
+        failure_count: 1,
+        last_error: 'history error'
+      }
+    ]);
+    await expect(
+      service.recoverDue(process, () => 180_000, {})
+    ).resolves.toBeUndefined();
+    expect(repository.markAlerted).not.toHaveBeenCalled();
+    expect(repository.deferAlert).toHaveBeenCalledWith(
+      job.publication_id,
+      now + 300_000,
+      now,
+      {}
+    );
+    postFailure.mockResolvedValue(undefined);
+    await service.recoverDue(process, () => 180_000, {});
+    expect(postFailure).toHaveBeenCalledTimes(3);
+    expect(process).toHaveBeenCalledTimes(1);
+    expect(repository.markAlerted).toHaveBeenCalledWith(
+      job.publication_id,
+      now,
+      {}
+    );
+  });
+
   it('rejects untrusted metadata without publishing a forged failure alert', async () => {
     const { service, repository, postFailure } = setup();
     await service.process(
@@ -269,6 +316,45 @@ describe('ReleaseNoteRecoveryService', () => {
       {}
     );
     expect(postFailure).not.toHaveBeenCalled();
+  });
+
+  it('continues other recovery jobs when a permanent failure alert cannot be delivered', async () => {
+    const { service, repository, postFailure, saved } = setup({
+      status: 'FAILED',
+      failure_count: 1
+    });
+    const other = {
+      ...job,
+      publication_id: 'other-stream',
+      stream_key: 'other-stream'
+    };
+    repository.findDue.mockResolvedValue([saved, other]);
+    postFailure.mockRejectedValue(new Error('alert API unavailable'));
+    const process = jest.fn().mockResolvedValue(undefined);
+    await service.recoverDue(process, () => 180_000, {});
+    expect(repository.deferAlert).toHaveBeenCalledWith(
+      saved.publication_id,
+      now + 300_000,
+      now,
+      {}
+    );
+    expect(process).toHaveBeenCalledTimes(1);
+    expect(repository.recordOutcome).toHaveBeenCalledWith(
+      'other-stream',
+      expect.objectContaining({ status: 'COMPLETED' }),
+      now,
+      {}
+    );
+  });
+
+  it('fails an unknown operator request outside the database transaction', async () => {
+    const { service, repository } = setup();
+    repository.requestRetry.mockResolvedValue(null);
+    const process = jest.fn();
+    await expect(service.retry('unknown', process, {})).rejects.toThrow(
+      'does not exist'
+    );
+    expect(process).not.toHaveBeenCalled();
   });
 
   it('leaves due work untouched when the invocation budget is insufficient', async () => {
