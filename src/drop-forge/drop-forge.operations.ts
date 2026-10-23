@@ -41,7 +41,7 @@ export async function readyLaunch(
     throw new LaunchSafetyError('Publish Craft changes before launching');
   const chain = new EthereumLaunchChain(config);
   const now = await chain.now();
-  const input = await standardLaunchPlan(claim, source, now);
+  const input = standardLaunchPlan(claim, source, now);
   const data = buildLaunchPlan(config, claim, input, source, now, true);
   data.managed = true;
   data.distribution_hash = hashLaunchDistribution(source);

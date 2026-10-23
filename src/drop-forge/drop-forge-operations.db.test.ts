@@ -35,7 +35,7 @@ beforeEach(async () => {
   jest.spyOn(dropForgeRepository, 'assertPrepared').mockResolvedValue();
   jest
     .spyOn(schedule, 'standardLaunchPlan')
-    .mockResolvedValue({ ...testPlan, initialize_at: 1100 });
+    .mockReturnValue({ ...testPlan, initialize_at: 1100 });
   jest.spyOn(workflow, 'assertProcessComplete').mockResolvedValue();
   jest.spyOn(reporting, 'validateForgeReporting').mockResolvedValue('bot');
   jest.spyOn(wake, 'wakeDropForge').mockResolvedValue();

@@ -2,11 +2,11 @@ import { getMintSchedule } from '@/memes-calendar';
 import { LaunchPlanInput, LaunchSource } from '@/drop-forge/drop-forge.plan';
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 
-export async function standardLaunchPlan(
+export function standardLaunchPlan(
   claim: number,
   source: LaunchSource,
   now: number
-): Promise<LaunchPlanInput> {
+): LaunchPlanInput {
   const calendar = getMintSchedule(claim);
   if (calendar.phases[0].start.getTime() / 1000 <= now)
     throw new LaunchSafetyError(

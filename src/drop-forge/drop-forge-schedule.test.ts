@@ -13,12 +13,12 @@ const source = {
 };
 it.each(['2026-10-23', '2026-10-26', '2026-03-27', '2026-03-30'])(
   'derives local phase gaps and persists the version for %s without HTTP',
-  async (day) => {
+  (day) => {
     const claim = getMintNumberForMintDate(new Date(day + 'T00:00:00Z'));
     const calendar = getMintSchedule(claim);
     const start = calendar.phases[0].start.getTime() / 1000;
     const end = calendar.mintEnd.getTime() / 1000;
-    const input = await standardLaunchPlan(claim, source, start - 3600);
+    const input = standardLaunchPlan(claim, source, start - 3600);
     const plan = buildLaunchPlan(
       testConfig,
       claim,
@@ -44,13 +44,11 @@ it.each(['2026-10-23', '2026-10-26', '2026-03-27', '2026-03-30'])(
     expect(plan.phases[0].start).toBe(start);
   }
 );
-it('rejects a mint already started or incomplete distribution', async () => {
+it('rejects a mint already started or incomplete distribution', () => {
   const claim = 564;
   const start = getMintSchedule(claim).phases[0].start.getTime() / 1000;
-  await expect(standardLaunchPlan(claim, source, start)).rejects.toThrow(
-    'future mint'
-  );
-  await expect(
+  expect(() => standardLaunchPlan(claim, source, start)).toThrow('future mint');
+  expect(() =>
     standardLaunchPlan(claim, { ...source, rows: [] }, start - 3600)
-  ).rejects.toThrow('Phase 0');
+  ).toThrow('Phase 0');
 });
