@@ -4,7 +4,9 @@ The canonical pure TypeScript module lives in the frontend at `shared/memes-cale
 This repository bundles a byte-identical copy in `src/memes-calendar`. Calendar
 calculation requires no network, frontend availability, or package registry.
 Craft uses it to resolve a claim's season, retaining the database creation-window check.
-Other existing calendar API consumers are unchanged by this foundation.
+Subscription coverage and Help Bot next/current/specific-mint answers also calculate
+locally. Shared query functions back the existing frontend calendar API as well.
+No backend calendar consumer requires the frontend calendar HTTP service.
 
 ## Updating the calendar
 
@@ -39,3 +41,27 @@ The existing date-based model counts each eligible UTC day once. Moving a mint
 onto an already eligible date removes the source day without adding a second mint
 on the destination day. Scheduling two distinct mints on one day would require a
 different event model; an extra-day override does not provide that behavior.
+
+## Existing-service rollout
+
+After merging the paired calendar changes, redeploy `claimsBuilder` for claim
+season resolution, `api` (the `seizeAPI` Lambda) for coverage reads,
+`subscriptionsDaily` for coverage reconciliation, and `helpBotReplyLoop` for
+calendar answers. These existing services are independent consumers; deploy them
+before the frontend if rolling out the paired change.
+There are no new Lambdas or schema changes in the calendar foundation.
+
+`SUBSCRIPTION_COVERAGE_CALENDAR_BASE_URL`, `SUBSCRIPTION_COVERAGE_ENVIRONMENT`,
+`SUBSCRIPTION_COVERAGE_SCHEDULE_TIMEOUT_MS`, and
+`SUBSCRIPTION_COVERAGE_SCHEDULE_FAILURE_TTL_MS` are retired and may be removed
+from environment configuration. Horizon (default 24, maximum 60) and cache TTL
+(default five minutes, capped at the next mint start) remain supported.
+Help Bot calendar fetch timeout code is removed; its help-index and model
+settings are unchanged.
+
+Year-round regression coverage includes all twelve months, both DST transitions,
+exact opening/closing instants, midnight carry-over, year/season boundaries,
+leap day, historical reschedules, and different host timezones. A five-year sweep
+checks every regular mint date and Athens phase window from 2026 through 2030.
+Timezone rules come from the runtime's IANA data; keep deployed Node/ICU data
+current if governments change timezone law.

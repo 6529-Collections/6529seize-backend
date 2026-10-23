@@ -1,8 +1,10 @@
-import { HELP_BOT_CALENDAR_FETCH_TIMEOUT_MS } from './help-bot.config';
 import {
-  ensureCanonicalMarkdownLink,
-  formatHelpBotMarkdownLink
-} from './help-bot-response-text';
+  getMintTimelineDetails,
+  getNextMintTimelineDetails,
+  getCurrentMintTimelineDetails,
+  getMintTimelineStatus
+} from '@/memes-calendar';
+import { formatHelpBotMarkdownLink } from './help-bot-response-text';
 
 export interface HelpBotCalendarAnswerRequest {
   readonly question: string;
@@ -20,27 +22,7 @@ type CalendarEndpoint =
   | { readonly kind: 'next' }
   | { readonly kind: 'current' };
 
-interface MemeCalendarMintResponse {
-  readonly mint_number: number;
-  readonly mint_date: string;
-  readonly mint_start: string;
-  readonly mint_end: string;
-  readonly status: 'past' | 'live' | 'upcoming';
-  readonly season: number;
-  readonly year: number;
-  readonly epoch: number;
-  readonly period: number;
-  readonly era: number;
-  readonly eon: number;
-  readonly calendar_path: string;
-  readonly mint_path: string;
-}
-
-interface MemeCalendarCurrentResponse {
-  readonly status: 'live' | 'none';
-  readonly current: MemeCalendarMintResponse | null;
-  readonly next?: MemeCalendarMintResponse;
-}
+type CalendarMint = ReturnType<typeof getMintTimelineDetails>;
 
 const CALENDAR_LINK_LABEL = 'Memes Calendar';
 
@@ -201,105 +183,6 @@ function resolveCalendarEndpoint(
   return { kind: 'next' };
 }
 
-function buildUrl(baseUrl: string, endpoint: CalendarEndpoint): string {
-  const root = trimTrailingSlashes(baseUrl);
-  if (endpoint.kind === 'mint') {
-    return `${root}/api/meme-calendar/${endpoint.mintNumber}`;
-  }
-  return `${root}/api/meme-calendar/${endpoint.kind}`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function readNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function readMintStatus(
-  value: unknown
-): MemeCalendarMintResponse['status'] | null {
-  return value === 'past' || value === 'live' || value === 'upcoming'
-    ? value
-    : null;
-}
-
-function parseMintResponse(value: unknown): MemeCalendarMintResponse | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-  const mintNumber = readNumber(value.mint_number);
-  const mintDate = readString(value.mint_date);
-  const mintStart = readString(value.mint_start);
-  const mintEnd = readString(value.mint_end);
-  const status = readMintStatus(value.status);
-  const season = readNumber(value.season);
-  const year = readNumber(value.year);
-  const epoch = readNumber(value.epoch);
-  const period = readNumber(value.period);
-  const era = readNumber(value.era);
-  const eon = readNumber(value.eon);
-  const calendarPath = readString(value.calendar_path);
-  const mintPath = readString(value.mint_path);
-  if (
-    mintNumber === null ||
-    !mintDate ||
-    !mintStart ||
-    !mintEnd ||
-    !status ||
-    season === null ||
-    year === null ||
-    epoch === null ||
-    period === null ||
-    era === null ||
-    eon === null ||
-    !calendarPath ||
-    !mintPath
-  ) {
-    return null;
-  }
-  return {
-    mint_number: mintNumber,
-    mint_date: mintDate,
-    mint_start: mintStart,
-    mint_end: mintEnd,
-    status,
-    season,
-    year,
-    epoch,
-    period,
-    era,
-    eon,
-    calendar_path: calendarPath,
-    mint_path: mintPath
-  };
-}
-
-function parseCurrentResponse(
-  value: unknown
-): MemeCalendarCurrentResponse | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-  if (value.status === 'live') {
-    const current = parseMintResponse(value.current);
-    return current ? { status: 'live', current } : null;
-  }
-  if (value.status === 'none') {
-    if (value.next === undefined || value.next === null) {
-      return { status: 'none', current: null };
-    }
-    const next = parseMintResponse(value.next);
-    return next ? { status: 'none', current: null, next } : null;
-  }
-  return null;
-}
-
 function formatUtcTimestamp(value: string): string {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) {
@@ -340,51 +223,45 @@ function withLinks(
   return `${text}\n\nLinks: ${renderedLinks.join(' | ')}`;
 }
 
-function withCalendarLink(text: string, baseUrl: string): string {
-  return ensureCanonicalMarkdownLink({
-    text,
-    canonicalUrl: calendarUrl(baseUrl),
-    label: CALENDAR_LINK_LABEL
-  });
-}
-
 function withMintAndCalendarLinks(
   text: string,
-  mint: MemeCalendarMintResponse,
+  mint: CalendarMint,
   baseUrl: string
 ): string {
   return withLinks(text, [
     {
-      label: `Meme #${mint.mint_number}`,
-      url: absoluteSiteUrl(baseUrl, mint.mint_path)
+      label: `Meme #${mint.mintNumber}`,
+      url: absoluteSiteUrl(baseUrl, `/the-memes/${mint.mintNumber}`)
     },
     { label: CALENDAR_LINK_LABEL, url: calendarUrl(baseUrl) }
   ]);
 }
 
-function divisionText(mint: MemeCalendarMintResponse): string {
-  return `SZN ${mint.season}, Year ${mint.year}`;
+function divisionText(mint: CalendarMint): string {
+  return `SZN ${mint.seasonNumber}, Year ${mint.yearNumber}`;
 }
 
 function mintOpenCloseText(
-  mint: MemeCalendarMintResponse,
+  mint: CalendarMint,
   openVerb: 'opens' | 'opened',
   closeVerb: 'closes' | 'closed'
 ): string {
   return `${openVerb} ${formatUtcTimestamp(
-    mint.mint_start
-  )} and ${closeVerb} ${formatUtcTimestamp(mint.mint_end)}`;
+    mint.instantUtc.toISOString()
+  )} and ${closeVerb} ${formatUtcTimestamp(mint.mintEndUtc.toISOString())}`;
 }
 
 function buildMintAnswer(
-  mint: MemeCalendarMintResponse,
-  baseUrl: string
+  mint: CalendarMint,
+  baseUrl: string,
+  now: Date
 ): string {
+  const status = getMintTimelineStatus(mint, now);
   const window = mintOpenCloseText(mint, 'opens', 'closes');
   const division = divisionText(mint);
-  if (mint.status === 'live') {
+  if (status === 'live') {
     return withMintAndCalendarLinks(
-      `Meme Card #${mint.mint_number} is minting now. It ${mintOpenCloseText(
+      `Meme Card #${mint.mintNumber} is minting now. It ${mintOpenCloseText(
         mint,
         'opened',
         'closes'
@@ -393,9 +270,9 @@ function buildMintAnswer(
       baseUrl
     );
   }
-  if (mint.status === 'past') {
+  if (status === 'past') {
     return withMintAndCalendarLinks(
-      `Meme Card #${mint.mint_number} minted on ${mint.mint_date}. It ${mintOpenCloseText(
+      `Meme Card #${mint.mintNumber} minted on ${mint.instantUtc.toISOString().slice(0, 10)}. It ${mintOpenCloseText(
         mint,
         'opened',
         'closed'
@@ -405,18 +282,15 @@ function buildMintAnswer(
     );
   }
   return withMintAndCalendarLinks(
-    `Meme Card #${mint.mint_number} ${window}. It is in ${division}.`,
+    `Meme Card #${mint.mintNumber} ${window}. It is in ${division}.`,
     mint,
     baseUrl
   );
 }
 
-function buildNextAnswer(
-  mint: MemeCalendarMintResponse,
-  baseUrl: string
-): string {
+function buildNextAnswer(mint: CalendarMint, baseUrl: string): string {
   return withMintAndCalendarLinks(
-    `The next Meme Card drop is Meme #${mint.mint_number}. It ${mintOpenCloseText(
+    `The next Meme Card drop is Meme #${mint.mintNumber}. It ${mintOpenCloseText(
       mint,
       'opens',
       'closes'
@@ -426,81 +300,41 @@ function buildNextAnswer(
   );
 }
 
-function buildCurrentAnswer(
-  response: MemeCalendarCurrentResponse,
-  baseUrl: string
-): string {
-  if (response.status === 'live' && response.current) {
-    return buildMintAnswer(response.current, baseUrl);
-  }
-  const next = response.next;
-  if (!next) {
-    return withCalendarLink('Nothing is minting right now.', baseUrl);
-  }
+function buildCurrentAnswer(now: Date, baseUrl: string): string {
+  const current = getCurrentMintTimelineDetails(now);
+  if (current) return buildMintAnswer(current, baseUrl, now);
+  const next = getNextMintTimelineDetails(now);
   return withMintAndCalendarLinks(
-    `Nothing is minting right now. The next Meme Card drop is Meme #${
-      next.mint_number
-    }, which ${mintOpenCloseText(next, 'opens', 'closes')}.`,
+    `Nothing is minting right now. The next Meme Card drop is Meme #${next.mintNumber}, which ${mintOpenCloseText(next, 'opens', 'closes')}.`,
     next,
     baseUrl
   );
 }
 
-async function fetchJsonWithTimeout(
-  url: string,
-  fetchImpl: typeof fetch
-): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    HELP_BOT_CALENDAR_FETCH_TIMEOUT_MS
-  );
-  try {
-    const response = await fetchImpl(url, { signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`Help bot calendar fetch failed: ${response.status}`);
-    }
-    return await response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 export class HelpBotCalendarService {
-  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  constructor(private readonly now: () => Date = () => new Date()) {}
 
   public async answer(
     request: HelpBotCalendarAnswerRequest
   ): Promise<HelpBotCalendarAnswer | null> {
     const endpoint = resolveCalendarEndpoint(request);
-    if (!endpoint) {
-      return null;
-    }
-    const raw = await fetchJsonWithTimeout(
-      buildUrl(request.baseUrl, endpoint),
-      this.fetchImpl
-    );
-
+    if (!endpoint) return null;
+    const now = this.now();
     if (endpoint.kind === 'current') {
-      const current = parseCurrentResponse(raw);
-      if (!current) {
-        throw new Error('Invalid Help6529 calendar current response');
-      }
       return {
-        answer: buildCurrentAnswer(current, request.baseUrl),
+        answer: buildCurrentAnswer(now, request.baseUrl),
         queryId: 'meme_calendar.current'
       };
     }
-
-    const mint = parseMintResponse(raw);
-    if (!mint) {
-      throw new Error('Invalid Help6529 calendar mint response');
-    }
+    const mint =
+      endpoint.kind === 'next'
+        ? getNextMintTimelineDetails(now)
+        : getMintTimelineDetails(endpoint.mintNumber);
     return {
       answer:
         endpoint.kind === 'next'
           ? buildNextAnswer(mint, request.baseUrl)
-          : buildMintAnswer(mint, request.baseUrl),
+          : buildMintAnswer(mint, request.baseUrl, now),
       queryId:
         endpoint.kind === 'next'
           ? 'meme_calendar.next'
