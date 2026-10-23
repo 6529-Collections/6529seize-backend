@@ -19,6 +19,8 @@ const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
   ],
   'schema ApiProfileCmsPointerEvent.properties.event_type.enum': ['unpublish'],
   'schema ApiPushNotificationSettings.required': ['subscription_coverage'],
+  // The explicitly configured Drop Forge alert shortcut extends existing groups.
+  'schema ApiDropGroupMention.enum': ['DROPS_6529'],
   // Settings responses gain the four-wallet consolidation policy; existing
   // fields are unchanged, so older clients keep working.
   'schema ApiSeizeSettings.required': ['consolidation']

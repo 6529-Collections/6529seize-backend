@@ -1875,6 +1875,13 @@ the next dispatch. The service catalog records allowed environments and
 default dependencies. The workflow's environment concurrency avoids overlapping
 backend deployment runs; it does not create a cross-repository scheduler.
 
+Drop Forge handler deployments reference dedicated execution roles through versioned
+`serverless-config/{staging,prod}/drop-forge.js`; no feature-specific GitHub role
+variables are required. Only the launch role can sign with the operational KMS key.
+The separate Scheduler delivery role can publish only to the work queues/DLQs.
+Role provisioning, scoped `iam:PassRole` and rollout are covered by the
+maintained [setup guide](drop-forge-auto-launch-setup.md).
+
 Backend deployment uses separate IAM roles through GitHub OIDC in the
 `staging` and `production` GitHub environments, restricted to `1a-staging` and
 `main` respectively. Each environment's `AWS_DEPLOY_ROLE_ARN` selects its role;
@@ -1919,6 +1926,225 @@ Typical deployment order when schema or generated API contracts change:
 4. `api` when routes, OpenAPI models, auth behavior, upload behavior, or user-facing responses changed.
 
 For a documentation-only change, no Lambda redeploy is required.
+
+## Drop Forge Automated Launch
+
+This section describes the internal EMMA and launch execution architecture. Use
+the maintained [setup guide](drop-forge-auto-launch-setup.md) for environment values,
+IAM/KMS provisioning, deployment order and rollout, and the
+[operations guide](drop-forge-auto-launch.md) for manual evidence and recovery.
+
+| Component | Responsibility |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api` | Authorize operator requests, persist revisioned jobs/launches and publish targeted SQS messages under the SQL lock |
+| `memesDistributionHandler` | Consume `memes-distribution`; snapshot the clicking operator's EMMA inputs, process checkpoints and finalize persisted download lists |
+| `dropForgeLaunchHandler` | Consume `drop-forge-launch`; reconcile manual/automatic work, execute due actions, track signed transactions and recover exceptional failures |
+| EventBridge Scheduler | Deliver one-time future group and crash-watchdog messages to SQS; it does not sign or invoke the handlers directly |
+| MySQL | Authoritative job checkpoints, exact allocation evidence, signed-intent/nonce reservations and reporting acknowledgements |
+| Existing `transactionsLoop` | Complete creator transaction discovery, then record bounded finalized scan coverage, including empty blocks, for post-mint accounting |
+| AWS KMS | Hold the operational private key and sign digests only for the dedicated launch role |
+
+`dropForgeLaunchHandler` and `memesDistributionHandler` consume dedicated SQS
+queues and have default-disabled flags, with no recurring schedules. API mutations
+publish under their SQL lock before committing a dispatch revision; consumers retry
+if the revision is not yet committed. This closes the commit-before-publish crash
+gap. Launch installs independent, per-drop one-time Scheduler events for future
+phase/Research groups before opening work. Each active invocation establishes a
+two-minute one-time watchdog before processing and removes it on normal exit;
+hard crashes leave it intact. Outstanding checkpoints/receipts/report backlogs queue
+continuations before acknowledgement. Between phases and after completion there
+are no idle handler invocations. Scheduler events delete themselves after delivery;
+stale deliveries check current pause/cancel/action state before any write. Queue
+redelivery uses the existing SQL and signer locks. Each queue has a DLQ and alarm;
+no uncertain nonce or mint allocation is reset during redrive. The API returns a
+single PROCESS_ALL job for EMMA, immediately wakes preparation, and exposes
+read-only completed list pages. The operator's Authorization header is encrypted
+for its specific preparation job using a key derived from the existing JWT secret,
+then cleared when upstream inputs commit or the job fails. Expired or denied
+EMMA access pauses for authenticated resumption of the same job and checkpoints;
+no preconfigured EMMA token is required. Preparation snapshots upstream phase inputs,
+commits ordered phase checkpoints and finalizes. Craft Launch derives the fixed
+mint calendar and arms execution immediately; Craft Update Claim queues a
+metadata-only action without reopening completed allocations.
+The launch stays active through Research, eligible one hour after the
+final mint close (18:00 Europe/Athens the following day). Version 4 plans derive
+the top-up from fresh on-chain total toward `min(310, frozen Craft edition)`,
+verify the on-chain maximum, and reconcile manual Research evidence separately.
+Research shares the launch handler, signer ledger, wave reports and completion
+flags, with its own one-time scheduled wake. Optional artist payment shares its 18:00 eligibility group and the same transaction/recovery ledger.
+
+The comparison uses a covered finalized block no more than five minutes behind
+the finalized tip, so normal indexer cadence does not chase a moving block. Missing,
+older or pre-close coverage defers execution. Recovery winners use the same
+post-mint settlement gate before releasing their reservation.
+
+A separate one-time **17:15 Europe/Athens** wake records a readonly preview once.
+It reports expected Research quantity and optional artist payment without signing;
+normal previews are untagged, while discrepancies alert once without recalculation.
+All new reports use `DROP_FORGE_OPERATIONS_WAVE_ID`; the preexisting
+`DEPLOYER_ANNOUNCEMENTS_WAVE_IDS` destinations are never used by this feature.
+
+Research/payment share `drop-forge.supply.ts`: the configured RPC reads a finalized
+post-close claim at an explicit canonical block hash; DB cumulative mints through
+that block must agree and have completed scan coverage. The new
+`transaction_scan_checkpoints` entity advances monotonically only after an explicit
+bounded scan succeeds. Normal discovery and past data remain in place; explicit
+backfills do not publish that coverage. The existing discovery service remains
+mainnet-only and cannot publish coverage under a test-chain ID. Sepolia post-mint
+exercises need isolated matching transaction data and coverage. The checkpoint assumes existing history
+is complete rather than certifying or rewriting historical data. Subscription
+redemptions are additionally scoped to indexed transactions at the payment cutoff.
+Unsigned discrepancies retry after 1/5/15 minutes within the action window.
+Pre-sign and pre-broadcast checks retain the quantity and exact signed intent.
+Confirmed Research checks mint logs and resulting supply; payment checks its actual
+recipient/value. A lagging DB retains the reservation until finalized settlement;
+unexpected evidence blocks for recovery. Completion, reservation release and the
+operations outbox remain atomic. The API returns optional evidence and retry times
+for the Launch UI. No new Lambda or RPC provider is introduced for these checks.
+
+```mermaid
+flowchart LR
+  EMMA[EMMA Process and Finalize] --> API[Operation APIs]
+  Craft[Craft Launch / Update Claim] --> API
+  Manual[Manual Launch wallet controls] --> API
+  API --> DB[Launch, signer, evidence, preparation and job tables]
+  API --> PrepQueue[Distribution SQS]
+  API --> LaunchQueue[Launch SQS]
+  PrepQueue --> Prep[memesDistributionHandler]
+  LaunchQueue --> Worker[dropForgeLaunchHandler]
+  Worker --> Scheduler[One-time phase / Research / watchdog schedules]
+  Prep --> Scheduler
+  Scheduler --> PrepQueue
+  Scheduler --> LaunchQueue
+  Prep --> DB
+  Worker --> DB
+  Worker --> KMS[AWS KMS secp256k1]
+  Worker --> Chain[Creator and lazy claim contracts]
+  Prep --> Wave[Configured operations wave]
+  Worker --> Wave
+  Wave -->|Failures only| Alerts[Configured drops6529 profiles]
+```
+
+### Drop Forge scheduled groups
+
+Craft Launch accepts the standard plan derived from the configured Memes calendar;
+there is no per-drop manual time handoff. These are the standard `Europe/Athens`
+times, including DST. Later transitions become eligible one second after the prior
+phase closes, as encoded by `buildPhaseActions` in
+[`drop-forge.plan.ts`](../src/drop-forge/drop-forge.plan.ts).
+
+| Group | Eligible time | Actions |
+| -------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Opening | Immediately after accepted Launch, before Phase 0 opens at 17:40 | Initialize, then general/artist/team and Phase 0 subscriber batches |
+| Phase 1 | 18:20:01; Phase 1 opens at 18:30 | Update claim, then Phase 1 subscriber batches |
+| Phase 2 | 18:50:01; Phase 2 opens at 19:00 | Update claim, then Phase 2 and Public subscriber batches |
+| Public | 19:20:01; public is scheduled from 19:20 | Update claim after Phase 2 closes; actual public availability follows transaction inclusion |
+| Research and optional Pay Artist | 18:00 the next day, after public closes at 17:00                 | Research tops up toward `min(310, frozen Craft edition)`; artist payment independently sends the final 50% share to the designated payee |
+| Metadata | Immediately after an accepted Craft Update Claim request | Synchronize republished metadata while preserving active phase configuration and completed allocations |
+
+Eligibility is not guaranteed block inclusion or finality. Admission budgets serial
+transactions and confirmations; new submissions stop two minutes before the action's
+deadline. SQS delays handle short continuations, while longer future wakes use
+one-time Scheduler events. Ordinary readiness failures leave independent later
+groups scheduled; a signed or uncertain transaction still holds the signer lock
+until reconciled. Every action checks confirmed completion before sending work.
+
+Manual controls acquire a durable lease before prompting the wallet. Confirmed
+transaction evidence carries the action category and credits exact remaining
+allocations. Compatible initialize/update configuration is observed on chain;
+ambiguous state blocks. Completion is mirrored into existing manual action flags.
+Metadata updates retain current mint configuration and cannot replay airdrops.
+
+The worker reserves an unsigned intent under a signer row lock, persists its
+signed bytes and hash in another commit, and only then broadcasts. Pending
+reports are rechecked at the final signature commit. Candidate selection filters
+by the next unfinished action's due time and report acknowledgement before its
+20-row limit, preventing future launches from starving due work. Fully missed launches stay available for manual reconciliation without occupying scheduled candidate slots. Pending
+receipts reconcile across pause/cancel, with configurable confirmations. Exceptional administrator recovery tracks
+same-nonce replacements and waits for finalized winning evidence; normal scheduling
+does not replace transactions automatically. Each subsequent action checks the latest
+confirmed canonical receipt, frozen source hash, claim configuration, creator-admin
+permission, nonce availability, and gas budgets. Confirmation is distinct from a
+scheduled mint window becoming active. Already-signed transactions cannot be
+revoked or guaranteed to mine before a deadline.
+
+Phase-scoped plans initialize and execute only Phase 0 allocations before its
+window, then update and airdrop each later phase inside its own closed transition
+gap. Gapless public subscriptions share the preceding Phase 2 transition, matching
+the existing launch UI; the public update waits until Phase 2 closes. Updates
+persist a minted-supply checkpoint so legitimate prior-phase mints do not block
+later airdrops. Legacy flattened plans fail closed while outstanding receipts
+remain reconcilable. Late confirmations credit completed work without reopening expired submission windows or stopping later groups.
+
+EMMA phase results, subscription assignments, distribution rows and Merkle
+proofs commit with replayable checkpoints under the preparation lock. The
+PROCESS_ALL job snapshots upstream inputs once and processes each stage in a
+separate invocation. Pending jobs block conflicting preparation/reset operations.
+Finalization shares that lock and chunks normalized-row inserts. A savepoint
+rolls back a failed stage before persisting the failure; invocation loss rolls
+back the stage for SQS redelivery or its one-time watchdog. Legacy synchronous
+endpoints retain their response shapes. Completed downloads are paginated reads
+of persisted results.
+
+Reporting drops and outbox acknowledgements share a DB transaction. Push
+transport runs after commit. `@drops6529` resolves configured profile IDs
+through existing visibility and notification rules. Both handlers create their own
+reports in `DROP_FORGE_OPERATIONS_WAVE_ID`; failures tag the group, while successes
+and detected-complete skips do not. Existing subscription alerts retain `@devs6529`
+and their existing wave; those reporting consumers need no redeploy for these
+automation alerts. Initial wave reporting is required before new launch signing;
+receipt reconciliation continues separately.
+See [configuration and recovery](drop-forge-auto-launch.md). The creator owner
+still grants/revokes on-chain admins, and artist payments require the separate opt-in setting and configured payout cap.
+
+Drop Forge launch scheduling groups actions by phase, with independent completed-state and readiness checks. Unsigned action failures and missed windows remain visible without blocking later groups; a persisted signed nonce remains reserved until reconciled. The Launch API exposes groups, attempt errors and observed skips, and each outcome is committed to the operations-wave outbox.
+
+Environment boundaries are regional: staging uses `eu-west-1`, production uses
+`us-east-1`, and each reads its own regional `prod/lambdas` runtime secret. Chain
+selection is explicit and does not follow the deployment environment automatically.
+The two Lambda execution roles and Scheduler delivery role are referenced in
+`serverless-config/{staging,prod}/drop-forge.js`; handler stacks inject the Scheduler
+settings, without feature-specific GitHub role variables. Only the launch role has
+KMS signing authority; the distribution handler uses the clicking operator's
+encrypted EMMA authorization, and the wave posting profile is configured separately
+from the on-chain wallet. All execution flags default to disabled.
+
+### Drop Forge exceptional transaction recovery
+
+The existing Launch API queues revision-checked administrator recovery requests.
+`dropForgeLaunchHandler` tracks same-nonce original, speed-up and cancellation attempts,
+signs with AWS KMS and waits for canonical finalized evidence. Winning ERC-1155
+mint events reconcile exact recipient allocations; receipt-block supply, action
+outcome, completion flags, signer reservation release and wave outbox commit
+atomically. A recovery-only flag permits this path while normal scheduling remains
+disabled. Signed bytes stay server-side. Reviewed fresh-nonce delivery requires
+proven prior nonce settlement; unknown evidence blocks further wallet use.
+
+### Launch settings and funding boundary
+
+The `drop_forge_settings` row is scoped by chain/creator and defaults both switches
+Off. API changes use an optimistic revision and row lock; only the creator owner
+or configured claims-list wallet can edit. Workers check the same row while
+reserving, committing a signature and considering rebroadcast. Turning Off retains
+future one-time deliveries for disabled-action reporting and signed-receipt tracking.
+Skip reporting is deduplicated per action/settings revision and does not complete
+an allocation. Enabling wakes existing active claims without creating historical
+launches. Environment kill switches remain an outer capability; EMMA is independent.
+
+The `PAY_ARTIST` action stores the exact wei amount and designated payee in the
+existing launch ledger. Fresh paid-mint/subscription accounting must match confirmed
+indexed supply before reservation, and the positive payout cap is independent of
+gas caps. Manual payment hashes are claim-bound evidence; a completion checkbox
+alone blocks automatic payment. Same-nonce speed-up retains recipient/value;
+cancellation uses zero value. Successful canonical settlement mirrors `PAY_ARTIST`.
+
+All authorized Drop Forge users can view the configured wallet and fund it. Top Up
+ETH is signed by their connected wallet, not KMS. The API verifies sender, network,
+destination and value, then persists a `drop_forge_funding` intent keyed by sending
+wallet/nonce and queues it to the existing launch handler. Replacement hashes remain
+on that intent; canonical receipt evidence chooses the winner. Its wave report and
+acknowledgement commit atomically. ENS is optional display data, forward-checked
+against the pinned address. Funding never grants settings or on-chain admin rights.
 
 ## Architecture Notes
 
@@ -2361,3 +2587,16 @@ ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.
 ## Local Memes calendar
 
 Craft, subscription coverage and Help Bot calendar answers use the bundled, versioned Memes calendar instead of frontend HTTP calls. See [shared calendar maintenance](shared-memes-calendar.md) for canonical-source synchronization, rollout services and Athens/DST policy. Shared next/current/status queries also back the existing frontend API, preserving its routes and response shapes.
+
+### Drop Forge calendar and environment policy
+
+Launch planning imports the bundled [shared calendar](shared-memes-calendar.md), never
+a frontend endpoint. Accepted managed ledgers store the calendar version, timezone
+and UTC windows. Later code versions and Craft metadata updates preserve those windows.
+The manual Launch UI reads saved phase times for an accepted launch.
+
+`drop-forge.policy.ts` pins stage-specific network and contract bindings, receiver,
+confirmations and gas ceilings. Deployment supplies the stage to API/handlers/indexer;
+wallet/reporting identities remain in regional secrets. Launch and preparation keep
+independent environment switches and default-Off UI controls. Signed-intent recovery
+continues with launch execution Off. A receiver mismatch still blocks execution.

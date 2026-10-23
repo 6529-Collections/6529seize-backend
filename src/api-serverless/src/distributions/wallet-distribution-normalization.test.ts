@@ -1,5 +1,4 @@
 import { DISTRIBUTION_PHASE_AIRDROP_TEAM } from '@/airdrop-phases';
-import { DISTRIBUTION_NORMALIZED_TABLE } from '@/constants';
 import { Distribution } from '@/entities/IDistribution';
 import { sqlExecutor } from '@/sql-executor';
 import { populateDistributionNormalized } from './api.distributions.service';
@@ -12,6 +11,9 @@ describe('wallet distribution normalization contract', () => {
 
   it('serializes wallet-scoped allowlists consumed by the allocation endpoint', async () => {
     const execute = jest.spyOn(sqlExecutor, 'execute');
+    const bulkInsert = jest
+      .spyOn(sqlExecutor, 'bulkInsert')
+      .mockResolvedValue();
     const executeNativeQueriesInTransaction = jest.spyOn(
       sqlExecutor,
       'executeNativeQueriesInTransaction'
@@ -61,38 +63,25 @@ describe('wallet distribution normalization contract', () => {
 
     await populateDistributionNormalized('0xContract', 534);
 
-    const insertCall = execute.mock.calls.find(([query]) =>
-      String(query).includes(`INSERT INTO ${DISTRIBUTION_NORMALIZED_TABLE}`)
-    );
-    expect(insertCall).toBeDefined();
-    const params = insertCall?.[1] as Record<string, unknown>;
-    const walletAIndex = params.wallet_0 === '0xaaa' ? 0 : 1;
-    const walletBIndex = walletAIndex === 0 ? 1 : 0;
-    const walletAAllowlist = params[`allowlist_${walletAIndex}`] as string;
-
-    expect(params[`wallet_${walletAIndex}`]).toBe('0xaaa');
-    expect(params[`contract_${walletAIndex}`]).toBe('0xcontract');
-    expect(params[`airdrops_${walletAIndex}`]).toBe(2);
+    const normalized = bulkInsert.mock.calls[0][1] as Array<{
+      wallet: string;
+      contract: string;
+      airdrops: number;
+      allowlist: string;
+    }>;
+    const walletA = normalized.find((row) => row.wallet === '0xaaa')!;
+    const walletB = normalized.find((row) => row.wallet === '0xbbb')!;
+    const walletAAllowlist = walletA.allowlist;
+    expect(walletA.contract).toBe('0xcontract');
+    expect(walletA.airdrops).toBe(2);
     expect(JSON.parse(walletAAllowlist)).toEqual([
       { phase: 'P0', spots: 3, spots_airdrop: 3, spots_allowlist: 0 },
-      {
-        phase: 'Phase 0',
-        spots: 4,
-        spots_airdrop: 0,
-        spots_allowlist: 4
-      }
+      { phase: 'Phase 0', spots: 4, spots_airdrop: 0, spots_allowlist: 4 }
     ]);
-    expect(params[`wallet_${walletBIndex}`]).toBe('0xbbb');
-    expect(params[`contract_${walletBIndex}`]).toBe('0xcontract');
-    expect(JSON.parse(params[`allowlist_${walletBIndex}`] as string)).toEqual([
-      {
-        phase: 'Phase 1',
-        spots: 5,
-        spots_airdrop: 0,
-        spots_allowlist: 5
-      }
+    expect(walletB.contract).toBe('0xcontract');
+    expect(JSON.parse(walletB.allowlist)).toEqual([
+      { phase: 'Phase 1', spots: 5, spots_airdrop: 0, spots_allowlist: 5 }
     ]);
-
     const oneOrNull = jest
       .fn()
       .mockResolvedValueOnce({ has_distribution: 1 })

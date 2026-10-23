@@ -30,6 +30,10 @@ import { handleGetPublicContentModerationProfileStatus } from '@/api/content-mod
 import { handleGetModerationAccess, handleGetModerationCheck, handleGetModerationChecks, handleGetModerationCounts, handleGetModerationProfileCheck, handleGetModerationReportCheck, handleGetModerationReviewCases, handleModerationCheckAction } from '@/api/content-moderation/moderation-review.handlers';
 import { handleGetWalletDistributionAllocations } from '@/api/distributions/get-wallet-distribution-allocations.handler';
 import { handleGetDmDropsUnread, handleGetDmUnreadSnapshot } from '@/api/dm-drops/dm-drops.handlers';
+import { coordinateDropForgeManualAction, getDropForgeCompletedList, getLatestDropForgeProcess, readyDropForgeLaunch, updateDropForgeMetadata } from '@/api/drop-forge/drop-forge-operations.handlers';
+import { recoverDropForgeLaunch } from '@/api/drop-forge/drop-forge-recovery.handler';
+import { getDropForgeSettings, postDropForgeFunding, putDropForgeSettings } from '@/api/drop-forge/drop-forge-settings.handlers';
+import { controlDropForgeLaunch, createDropForgeDistributionJob, getDropForgeDistributionJob, getDropForgeLaunch, putDropForgeLaunch } from '@/api/drop-forge/drop-forge.handlers';
 import { handleGetDropPollOptionVotersV2, handleGetWavePollsV2, handleVoteDropPollV2 } from '@/api/drops/drop-polls.handlers';
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
 import { handleGetDropV2VoteSummaryById } from '@/api/drops/get-drop-vote-summary.handler';
@@ -59,7 +63,7 @@ import { handleGetProfileWaveActivity } from '@/api/waves/profile-wave-activity.
 import { handleValidateWaveGroups } from '@/api/waves/wave-group-validation.handler';
 import { handleSearchDraftWaveMentions, handleSearchWaveMentions } from '@/api/waves/wave-mention-search.handler';
 import { handleCreateWaveMetadata, handleDeleteWaveMetadata, handleGetDropRepliesV2, handleGetOfficialWaves, handleGetWaveCompetitionDropsV2, handleGetWaveDecisionsV2, handleGetWaveDropsV2, handleGetWaveLeaderboardV2, handleGetWaveMetadata, handleGetWavesV2, handleListWaveCurationDropsV2, handleListWaveSubwaves, handleSearchDropsInWaveV2, handleSearchDropsV2, handleSearchWaveAuthorsV2 } from '@/api/waves/waves-v2.handlers';
-import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, CreateCompetitionEntryV3Request, CreateCompetitionEntryV3Response, CreateCompetitionV3Request, CreateCompetitionV3Response, CreateProfileCmsAgentGrantRequest, CreateProfileCmsAgentGrantResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateProposalFrameRequest, CreateProposalFrameResponse, CreateWaveHubV3Request, CreateWaveHubV3Response, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteEulaConsentRequest, DeleteEulaConsentResponse, DeleteMyWaveChatHistoryRequest, DeleteMyWaveChatHistoryResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExecuteCompetitionActionV3Request, ExecuteCompetitionActionV3Response, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetActiveWaveVotesRequest, GetActiveWaveVotesResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCompetitionConfigurationV3Request, GetCompetitionConfigurationV3Response, GetCompetitionCreditBudgetV3Request, GetCompetitionCreditBudgetV3Response, GetCompetitionEntryContentV3Request, GetCompetitionEntryContentV3Response, GetContentModerationBlockActivityRequest, GetContentModerationBlockActivityResponse, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDefaultWaveCompetitionV3Request, GetDefaultWaveCompetitionV3Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDmUnreadSnapshotRequest, GetDmUnreadSnapshotResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetDropV2VoteSummaryByIdRequest, GetDropV2VoteSummaryByIdResponse, GetEulaConsentRequest, GetEulaConsentResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetJoinedWavesRequest, GetJoinedWavesResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetMemeCollaborationStateRequest, GetMemeCollaborationStateResponse, GetNftMarketActivityRequest, GetNftMarketActivityResponse, GetNftMarketDepthRequest, GetNftMarketDepthResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetOwnerProfileCmsAgentProposalRequest, GetOwnerProfileCmsAgentProposalResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentDraftRequest, GetProfileCmsAgentDraftResponse, GetProfileCmsAgentProposalRequest, GetProfileCmsAgentProposalResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetProfileWaveActivityRequest, GetProfileWaveActivityResponse, GetPublicContentModerationProfileStatusRequest, GetPublicContentModerationProfileStatusResponse, GetSubscriptionCoverageRequest, GetSubscriptionCoverageResponse, GetTdhRulesRequest, GetTdhRulesResponse, GetWalletDistributionAllocationsRequest, GetWalletDistributionAllocationsResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, InviteMemeCollaboratorsRequest, InviteMemeCollaboratorsResponse, ListCompetitionAwardsV3Request, ListCompetitionAwardsV3Response, ListCompetitionMyVotesV3Request, ListCompetitionMyVotesV3Response, ListProfileCmsAgentGrantsRequest, ListProfileCmsAgentGrantsResponse, ListProfileCmsAgentProposalsRequest, ListProfileCmsAgentProposalsResponse, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PrepareMyWaveChatHistoryPurgeRequest, PrepareMyWaveChatHistoryPurgeResponse, PreviewGroupMembersRequest, PreviewGroupMembersResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, RefreshPushInstallationBadgeRequest, RefreshPushInstallationBadgeResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, RespondToMemeCollaborationRequest, RespondToMemeCollaborationResponse, ReviewProfileCmsAgentProposalRequest, ReviewProfileCmsAgentProposalResponse, RevokeProfileCmsAgentGrantRequest, RevokeProfileCmsAgentGrantResponse, RevokePushInstallationRequest, RevokePushInstallationResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveEulaConsentRequest, SaveEulaConsentResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchDropsV2Request, SearchDropsV2Response, SearchWaveAuthorsV2Request, SearchWaveAuthorsV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, SetCompetitionVoteV3Request, SetCompetitionVoteV3Response, SubmitProfileCmsAgentProposalRequest, SubmitProfileCmsAgentProposalResponse, UnpublishProfileCmsPackageRequest, UnpublishProfileCmsPackageResponse, UpdateCompetitionV3Request, UpdateCompetitionV3Response, UploadProfileCmsPackageStorageRequest, UploadProfileCmsPackageStorageResponse, ValidateProfileCmsAgentCandidateRequest, ValidateProfileCmsAgentCandidateResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, ValidateWaveGroupsRequest, ValidateWaveGroupsResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
+import { ArchiveProfileCmsPackageRequest, ArchiveProfileCmsPackageResponse, ControlDropForgeLaunchRequest, ControlDropForgeLaunchResponse, CoordinateDropForgeManualActionRequest, CoordinateDropForgeManualActionResponse, CreateCompetitionEntryV3Request, CreateCompetitionEntryV3Response, CreateCompetitionV3Request, CreateCompetitionV3Response, CreateDropForgeDistributionJobRequest, CreateDropForgeDistributionJobResponse, CreateProfileCmsAgentGrantRequest, CreateProfileCmsAgentGrantResponse, CreateProfileCmsWalletGallerySnapshotRequest, CreateProfileCmsWalletGallerySnapshotResponse, CreateProposalFrameRequest, CreateProposalFrameResponse, CreateWaveHubV3Request, CreateWaveHubV3Response, CreateWaveMetadataRequest, CreateWaveMetadataResponse, DeleteEulaConsentRequest, DeleteEulaConsentResponse, DeleteMyWaveChatHistoryRequest, DeleteMyWaveChatHistoryResponse, DeleteWaveMetadataRequest, DeleteWaveMetadataResponse, DownloadDropV2VotersByIdRequest, DownloadDropV2VotersByIdResponse, ExecuteCompetitionActionV3Request, ExecuteCompetitionActionV3Response, ExportProfileCmsPackageRequest, ExportProfileCmsPackageResponse, GetActiveWaveVotesRequest, GetActiveWaveVotesResponse, GetBoostedDropsV2Request, GetBoostedDropsV2Response, GetCompetitionConfigurationV3Request, GetCompetitionConfigurationV3Response, GetCompetitionCreditBudgetV3Request, GetCompetitionCreditBudgetV3Response, GetCompetitionEntryContentV3Request, GetCompetitionEntryContentV3Response, GetContentModerationBlockActivityRequest, GetContentModerationBlockActivityResponse, GetCuratedProfileWaveDropsV2Request, GetCuratedProfileWaveDropsV2Response, GetDefaultWaveCompetitionV3Request, GetDefaultWaveCompetitionV3Response, GetDmDropsUnreadRequest, GetDmDropsUnreadResponse, GetDmUnreadSnapshotRequest, GetDmUnreadSnapshotResponse, GetDropForgeCompletedListRequest, GetDropForgeCompletedListResponse, GetDropForgeDistributionJobRequest, GetDropForgeDistributionJobResponse, GetDropForgeLaunchRequest, GetDropForgeLaunchResponse, GetDropForgeSettingsRequest, GetDropForgeSettingsResponse, GetDropPollOptionVotersV2Request, GetDropPollOptionVotersV2Response, GetDropRepliesV2Request, GetDropRepliesV2Response, GetDropsV2Request, GetDropsV2Response, GetDropV2BoostsByIdRequest, GetDropV2BoostsByIdResponse, GetDropV2ByIdRequest, GetDropV2ByIdResponse, GetDropV2MetadataByIdRequest, GetDropV2MetadataByIdResponse, GetDropV2PartByIdRequest, GetDropV2PartByIdResponse, GetDropV2ReactionsByIdRequest, GetDropV2ReactionsByIdResponse, GetDropV2VoteEditLogsByIdRequest, GetDropV2VoteEditLogsByIdResponse, GetDropV2VotersByIdRequest, GetDropV2VotersByIdResponse, GetDropV2VoteSummaryByIdRequest, GetDropV2VoteSummaryByIdResponse, GetEulaConsentRequest, GetEulaConsentResponse, GetGlobalRepCategoryGiversRequest, GetGlobalRepCategoryGiversResponse, GetGlobalRepCategoryOverviewRequest, GetGlobalRepCategoryOverviewResponse, GetGlobalRepCategoryRatingsRequest, GetGlobalRepCategoryRatingsResponse, GetGlobalRepCategoryRecipientsRequest, GetGlobalRepCategoryRecipientsResponse, GetGlobalRepCategoryWaveContributorsRequest, GetGlobalRepCategoryWaveContributorsResponse, GetGlobalRepCategoryWaveOverviewRequest, GetGlobalRepCategoryWaveOverviewResponse, GetGlobalRepCategoryWavesRequest, GetGlobalRepCategoryWavesResponse, GetJoinedWavesRequest, GetJoinedWavesResponse, GetLatestDropForgeProcessRequest, GetLatestDropForgeProcessResponse, GetMemeCardDropMappingRequest, GetMemeCardDropMappingResponse, GetMemeCollaborationStateRequest, GetMemeCollaborationStateResponse, GetNftMarketActivityRequest, GetNftMarketActivityResponse, GetNftMarketDepthRequest, GetNftMarketDepthResponse, GetNotificationsV2Request, GetNotificationsV2Response, GetOfficialWavesRequest, GetOfficialWavesResponse, GetOgMetadataDropRequest, GetOgMetadataDropResponse, GetOgMetadataProfileRequest, GetOgMetadataProfileResponse, GetOgMetadataWaveRequest, GetOgMetadataWaveResponse, GetOwnerProfileCmsAgentProposalRequest, GetOwnerProfileCmsAgentProposalResponse, GetPrimaryProfileCmsPackageRequest, GetPrimaryProfileCmsPackageResponse, GetProfileCmsAgentDraftRequest, GetProfileCmsAgentDraftResponse, GetProfileCmsAgentProposalRequest, GetProfileCmsAgentProposalResponse, GetProfileCmsAgentSchemaBundleRequest, GetProfileCmsAgentSchemaBundleResponse, GetProfileCmsAgentSourcePacketRequest, GetProfileCmsAgentSourcePacketResponse, GetProfileCmsPackageByHashRequest, GetProfileCmsPackageByHashResponse, GetProfileCmsPackageByIdRequest, GetProfileCmsPackageByIdResponse, GetProfileCmsPackageByVersionRequest, GetProfileCmsPackageByVersionResponse, GetProfileWaveActivityRequest, GetProfileWaveActivityResponse, GetPublicContentModerationProfileStatusRequest, GetPublicContentModerationProfileStatusResponse, GetSubscriptionCoverageRequest, GetSubscriptionCoverageResponse, GetTdhRulesRequest, GetTdhRulesResponse, GetWalletDistributionAllocationsRequest, GetWalletDistributionAllocationsResponse, GetWaveCompetitionDropsV2Request, GetWaveCompetitionDropsV2Response, GetWaveDecisionsV2Request, GetWaveDecisionsV2Response, GetWaveDropsV2Request, GetWaveDropsV2Response, GetWaveLeaderboardV2Request, GetWaveLeaderboardV2Response, GetWaveMetadataRequest, GetWaveMetadataResponse, GetWavePollsV2Request, GetWavePollsV2Response, GetWavesV2Request, GetWavesV2Response, InviteMemeCollaboratorsRequest, InviteMemeCollaboratorsResponse, ListCompetitionAwardsV3Request, ListCompetitionAwardsV3Response, ListCompetitionMyVotesV3Request, ListCompetitionMyVotesV3Response, ListProfileCmsAgentGrantsRequest, ListProfileCmsAgentGrantsResponse, ListProfileCmsAgentProposalsRequest, ListProfileCmsAgentProposalsResponse, ListProfileCmsPackagesRequest, ListProfileCmsPackagesResponse, ListWaveCurationDropsV2Request, ListWaveCurationDropsV2Response, ListWaveSubwavesRequest, ListWaveSubwavesResponse, PostDropForgeFundingRequest, PostDropForgeFundingResponse, PrepareMyWaveChatHistoryPurgeRequest, PrepareMyWaveChatHistoryPurgeResponse, PreviewGroupMembersRequest, PreviewGroupMembersResponse, PublishProfileCmsPackageRequest, PublishProfileCmsPackageResponse, PutDropForgeLaunchRequest, PutDropForgeLaunchResponse, PutDropForgeSettingsRequest, PutDropForgeSettingsResponse, ReadyDropForgeLaunchRequest, ReadyDropForgeLaunchResponse, RecoverDropForgeLaunchRequest, RecoverDropForgeLaunchResponse, RefreshPushInstallationBadgeRequest, RefreshPushInstallationBadgeResponse, ResolveDecentralizedMediaRequest, ResolveDecentralizedMediaResponse, RespondToMemeCollaborationRequest, RespondToMemeCollaborationResponse, ReviewProfileCmsAgentProposalRequest, ReviewProfileCmsAgentProposalResponse, RevokeProfileCmsAgentGrantRequest, RevokeProfileCmsAgentGrantResponse, RevokePushInstallationRequest, RevokePushInstallationResponse, RollbackProfileCmsPackageRequest, RollbackProfileCmsPackageResponse, SaveEulaConsentRequest, SaveEulaConsentResponse, SaveProfileCmsPackageDraftRequest, SaveProfileCmsPackageDraftResponse, SearchDraftWaveMentionsRequest, SearchDraftWaveMentionsResponse, SearchDropsInWaveV2Request, SearchDropsInWaveV2Response, SearchDropsV2Request, SearchDropsV2Response, SearchWaveAuthorsV2Request, SearchWaveAuthorsV2Response, SearchWaveMentionsRequest, SearchWaveMentionsResponse, SetCompetitionVoteV3Request, SetCompetitionVoteV3Response, SubmitProfileCmsAgentProposalRequest, SubmitProfileCmsAgentProposalResponse, UnpublishProfileCmsPackageRequest, UnpublishProfileCmsPackageResponse, UpdateCompetitionV3Request, UpdateCompetitionV3Response, UpdateDropForgeMetadataRequest, UpdateDropForgeMetadataResponse, UploadProfileCmsPackageStorageRequest, UploadProfileCmsPackageStorageResponse, ValidateProfileCmsAgentCandidateRequest, ValidateProfileCmsAgentCandidateResponse, ValidateProfileCmsAgentPatchRequest, ValidateProfileCmsAgentPatchResponse, ValidateProfileCmsPackageRequest, ValidateProfileCmsPackageResponse, ValidateWaveGroupsRequest, ValidateWaveGroupsResponse, VoteDropPollV2Request, VoteDropPollV2Response } from './operations';
 const router = asyncRouter();
 router.get(
   '/artwork-documentation/contexts/:id',
@@ -866,6 +870,160 @@ router.get(
     res: Response<ApiResponse<GetDmUnreadSnapshotResponse>>
   ) => {
     res.send(await handleGetDmUnreadSnapshot(req));
+  }
+);
+
+router.get(
+  '/drop-forge/automation-settings',
+  needsAuthenticatedUser(),
+  async (
+    req: GetDropForgeSettingsRequest,
+    res: Response<ApiResponse<GetDropForgeSettingsResponse>>
+  ) => {
+    res.send(await getDropForgeSettings(req));
+  }
+);
+
+router.put(
+  '/drop-forge/automation-settings',
+  needsAuthenticatedUser(),
+  async (
+    req: PutDropForgeSettingsRequest,
+    res: Response<ApiResponse<PutDropForgeSettingsResponse>>
+  ) => {
+    res.send(await putDropForgeSettings(req));
+  }
+);
+
+router.get(
+  '/drop-forge/distribution-jobs/:contract/:claim_id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetLatestDropForgeProcessRequest,
+    res: Response<ApiResponse<GetLatestDropForgeProcessResponse>>
+  ) => {
+    res.send(await getLatestDropForgeProcess(req));
+  }
+);
+
+router.post(
+  '/drop-forge/distribution-jobs/:contract/:claim_id',
+  needsAuthenticatedUser(),
+  async (
+    req: CreateDropForgeDistributionJobRequest,
+    res: Response<ApiResponse<CreateDropForgeDistributionJobResponse>>
+  ) => {
+    res.send(await createDropForgeDistributionJob(req));
+  }
+);
+
+router.get(
+  '/drop-forge/distribution-jobs/:job_id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetDropForgeDistributionJobRequest,
+    res: Response<ApiResponse<GetDropForgeDistributionJobResponse>>
+  ) => {
+    res.send(await getDropForgeDistributionJob(req));
+  }
+);
+
+router.get(
+  '/drop-forge/distribution-jobs/:job_id/lists/:phase_id/:list',
+  needsAuthenticatedUser(),
+  async (
+    req: GetDropForgeCompletedListRequest,
+    res: Response<ApiResponse<GetDropForgeCompletedListResponse>>
+  ) => {
+    res.send(await getDropForgeCompletedList(req));
+  }
+);
+
+router.post(
+  '/drop-forge/funding',
+  needsAuthenticatedUser(),
+  async (
+    req: PostDropForgeFundingRequest,
+    res: Response<ApiResponse<PostDropForgeFundingResponse>>
+  ) => {
+    res.send(await postDropForgeFunding(req));
+  }
+);
+
+router.get(
+  '/drop-forge/launches/:contract/:claim_id',
+  needsAuthenticatedUser(),
+  async (
+    req: GetDropForgeLaunchRequest,
+    res: Response<ApiResponse<GetDropForgeLaunchResponse>>
+  ) => {
+    res.send(await getDropForgeLaunch(req));
+  }
+);
+
+router.put(
+  '/drop-forge/launches/:contract/:claim_id',
+  needsAuthenticatedUser(),
+  async (
+    req: PutDropForgeLaunchRequest,
+    res: Response<ApiResponse<PutDropForgeLaunchResponse>>
+  ) => {
+    res.send(await putDropForgeLaunch(req));
+  }
+);
+
+router.post(
+  '/drop-forge/launches/:contract/:claim_id/control',
+  needsAuthenticatedUser(),
+  async (
+    req: ControlDropForgeLaunchRequest,
+    res: Response<ApiResponse<ControlDropForgeLaunchResponse>>
+  ) => {
+    res.send(await controlDropForgeLaunch(req));
+  }
+);
+
+router.post(
+  '/drop-forge/launches/:contract/:claim_id/manual',
+  needsAuthenticatedUser(),
+  async (
+    req: CoordinateDropForgeManualActionRequest,
+    res: Response<ApiResponse<CoordinateDropForgeManualActionResponse>>
+  ) => {
+    res.send(await coordinateDropForgeManualAction(req));
+  }
+);
+
+router.post(
+  '/drop-forge/launches/:contract/:claim_id/metadata',
+  needsAuthenticatedUser(),
+  async (
+    req: UpdateDropForgeMetadataRequest,
+    res: Response<ApiResponse<UpdateDropForgeMetadataResponse>>
+  ) => {
+    res.send(await updateDropForgeMetadata(req));
+  }
+);
+
+router.post(
+  '/drop-forge/launches/:contract/:claim_id/ready',
+  needsAuthenticatedUser(),
+  async (
+    req: ReadyDropForgeLaunchRequest,
+    res: Response<ApiResponse<ReadyDropForgeLaunchResponse>>
+  ) => {
+    res.send(await readyDropForgeLaunch(req));
+  }
+);
+
+router.post(
+  '/drop-forge/launches/:contract/:claim_id/recovery',
+  needsAuthenticatedUser(),
+  async (
+    req: RecoverDropForgeLaunchRequest,
+    res: Response<ApiResponse<RecoverDropForgeLaunchResponse>>
+  ) => {
+    res.send(await recoverDropForgeLaunch(req));
   }
 );
 

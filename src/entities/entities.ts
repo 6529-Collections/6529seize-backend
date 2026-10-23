@@ -289,6 +289,9 @@ export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
 
+export * from './IDropForgeLaunch';
+export * from './IDropForgeEvidence';
+export * from './IDropForgeSettings';
 export {
   MemeCollaborationEntity,
   MemeCollaborationInvitationEntity
@@ -298,3 +301,4 @@ export { TransferReconciliationEntity } from './ITransferReconciliation';
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';
 
 export * from './IVotingCreditRelease';
+export * from './ITransactionScanCheckpoint';
