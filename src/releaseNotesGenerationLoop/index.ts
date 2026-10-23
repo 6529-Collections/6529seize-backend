@@ -21,6 +21,7 @@ import {
   DeferredReleaseNoteError,
   isNonRetryableReleaseNoteError,
   NonRetryableReleaseNoteError,
+  NoReleaseNoteBaselineError,
   UntrustedReleaseNoteMetadataError
 } from '@/release-notes/release-note-errors';
 import { doInDbContext } from '@/secrets';
@@ -501,7 +502,7 @@ async function prepareDurablePublication(
     {}
   );
   if (!prepared) {
-    throw new NonRetryableReleaseNoteError(
+    throw new NoReleaseNoteBaselineError(
       `No previous successful production run was found for ${request.repo} run ${request.run_id}`
     );
   }
@@ -776,6 +777,13 @@ export function buildReleaseNoteRecoveryFailureAlert(
 ): CiPipelineAlertRequest {
   const permanent = isNonRetryableReleaseNoteError(error);
   const alert = buildReleaseNoteFailureAlert(request, error, failures);
+  if (error instanceof NoReleaseNoteBaselineError) {
+    return {
+      ...alert,
+      title: `${getReleaseNoteSurface(request)} release-note baseline unavailable`,
+      description: `No publication range was created because this stream has no earlier successful production run. The request is retained; a later deployment can bootstrap from this run. ${getErrorMessage(error)}`
+    };
+  }
   return {
     ...alert,
     title: `${getReleaseNoteSurface(request)} release-note recovery required`,

@@ -5,6 +5,7 @@ export type ReleaseNoteRecoveryStatus =
   | 'PENDING'
   | 'COMPLETED'
   | 'FAILED'
+  | 'NO_BASELINE'
   | 'REJECTED';
 
 /** Request envelopes survive SQS retention and Redis expiration. */

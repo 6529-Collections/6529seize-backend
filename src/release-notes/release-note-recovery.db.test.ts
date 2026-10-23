@@ -129,6 +129,38 @@ describeWithSeed(
       ]);
     });
 
+    it('allows a later deploy to bootstrap after the first stream run had no baseline', async () => {
+      await db.enqueue('initial', request, 1000, {});
+      await db.recordOutcome(
+        'initial',
+        {
+          status: 'NO_BASELINE',
+          failures: 1,
+          nextAttemptAt: 2000,
+          lastError: 'No previous run'
+        },
+        2000,
+        {}
+      );
+      const newer = await db.enqueue(
+        'newer',
+        { ...request, run_number: '1948', run_id: '39818018345' },
+        3000,
+        {}
+      );
+      expect(await db.findEarlier(newer, {})).toBeNull();
+      expect(
+        (await db.findDue(3000, {})).map((j) => j.publication_id)
+      ).toContain('initial');
+      await db.markAlerted('initial', 3000, {});
+      expect(
+        (await db.findDue(3000, {})).map((j) => j.publication_id)
+      ).not.toContain('initial');
+      expect((await db.enqueue('initial', request, 4000, {})).status).toBe(
+        'NO_BASELINE'
+      );
+    });
+
     it('retains permanent blockers and retries their failed alert separately', async () => {
       await db.enqueue('publication', request, 1000, {});
       await db.recordOutcome(

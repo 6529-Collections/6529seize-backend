@@ -17,6 +17,15 @@ export class UntrustedReleaseNoteMetadataError extends NonRetryableReleaseNoteEr
   }
 }
 
+/** An empty stream has no publication range yet; later deploys may bootstrap. */
+export class NoReleaseNoteBaselineError extends NonRetryableReleaseNoteError {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'NoReleaseNoteBaselineError';
+    Object.setPrototypeOf(this, NoReleaseNoteBaselineError.prototype);
+  }
+}
+
 export function isNonRetryableReleaseNoteError(
   error: unknown
 ): error is NonRetryableReleaseNoteError {

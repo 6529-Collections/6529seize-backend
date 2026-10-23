@@ -109,7 +109,7 @@ export class ReleaseNoteRecoveryDb extends LazyDbAccessCompatibleService {
     try {
       return await this.db.execute<ReleaseNoteRecoveryJobEntity>(
         `select * from ${RELEASE_NOTE_RECOVERY_JOBS_TABLE}
-         where (status = 'PENDING' or (status = 'FAILED' and alerted_at is null))
+         where (status = 'PENDING' or (status in ('FAILED', 'NO_BASELINE') and alerted_at is null))
            and next_attempt_at <= :now
          order by next_attempt_at asc, created_at asc, publication_id asc limit 10`,
         { now },
@@ -202,7 +202,7 @@ export class ReleaseNoteRecoveryDb extends LazyDbAccessCompatibleService {
       await this.db.execute(
         `update ${RELEASE_NOTE_RECOVERY_JOBS_TABLE}
          set next_attempt_at = :nextAttemptAt, updated_at = :now
-         where publication_id = :publicationId and status = 'FAILED' and alerted_at is null`,
+         where publication_id = :publicationId and status in ('FAILED', 'NO_BASELINE') and alerted_at is null`,
         { publicationId, nextAttemptAt, now },
         queryOptions(ctx)
       );

@@ -8,6 +8,7 @@ import {
   DeferredReleaseNoteError,
   isNonRetryableReleaseNoteError,
   NonRetryableReleaseNoteError,
+  NoReleaseNoteBaselineError,
   ReleaseNoteDependencyError,
   UntrustedReleaseNoteMetadataError
 } from '@/release-notes/release-note-errors';
@@ -39,6 +40,7 @@ const FAILURE_ALERT_THRESHOLD = 5;
 const DEFER_DELAY_MS = 5 * 60_000;
 
 function recoveryStatus(error: unknown): ReleaseNoteRecoveryStatus {
+  if (error instanceof NoReleaseNoteBaselineError) return 'NO_BASELINE';
   if (error instanceof UntrustedReleaseNoteMetadataError) return 'REJECTED';
   if (isNonRetryableReleaseNoteError(error)) return 'FAILED';
   return 'PENDING';
@@ -127,15 +129,20 @@ export class ReleaseNoteRecoveryService {
     const request = JSON.parse(
       job.request_json
     ) as ReleaseNoteGenerationRequest;
-    if (job.status === 'FAILED' && job.alerted_at === null) {
+    if (
+      (job.status === 'FAILED' || job.status === 'NO_BASELINE') &&
+      job.alerted_at === null
+    ) {
+      const alertError =
+        job.status === 'NO_BASELINE'
+          ? new NoReleaseNoteBaselineError(
+              job.last_error ?? 'No earlier production baseline'
+            )
+          : new NonRetryableReleaseNoteError(
+              job.last_error ?? 'Release-note publication failed'
+            );
       try {
-        await this.postFailure(
-          request,
-          new NonRetryableReleaseNoteError(
-            job.last_error ?? 'Release-note publication failed'
-          ),
-          job.failure_count
-        );
+        await this.postFailure(request, alertError, job.failure_count);
         await this.repository.markAlerted(job.publication_id, this.now(), ctx);
       } catch (error) {
         await this.repository.deferAlert(

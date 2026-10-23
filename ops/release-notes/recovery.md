@@ -41,6 +41,13 @@ remain `FAILED`, retain the original payload, and require operator review;
 their failure-alert delivery is retried separately at five-minute intervals. An alert-delivery failure does not abort recovery of other saved jobs or unrelated streams. No recovery path deletes an
 unfinished publication, advances its cursor manually, or silently skips content.
 
+The first-ever run of a stream may have no earlier successful deployment from
+which to build a publication range. That pre-existing bootstrap case is retained
+as `NO_BASELINE`, with a specific alert, rather than as a permanent blocker. No
+publication exists to complete or bypass. A later deployment can bootstrap from
+the first successful run normally. Initial-baseline alert delivery is retried
+without trying to generate a nonexistent range.
+
 ## Operator recovery
 
 Use the normal wave API and CloudWatch logs to inspect the run, publication

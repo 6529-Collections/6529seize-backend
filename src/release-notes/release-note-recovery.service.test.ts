@@ -3,6 +3,7 @@ import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-gener
 import {
   DeferredReleaseNoteError,
   NonRetryableReleaseNoteError,
+  NoReleaseNoteBaselineError,
   ReleaseNoteDependencyError,
   UntrustedReleaseNoteMetadataError
 } from '@/release-notes/release-note-errors';
@@ -238,6 +239,41 @@ describe('ReleaseNoteRecoveryService', () => {
       {}
     );
     expect(postFailure).toHaveBeenCalledWith(request, error, 1);
+  });
+
+  it('retains a first deployment without a baseline without creating a permanent stream blocker', async () => {
+    const { service, repository, postFailure } = setup();
+    const error = new NoReleaseNoteBaselineError(
+      'No previous successful production run'
+    );
+    await service.process(request, jest.fn().mockRejectedValue(error), {});
+    expect(repository.recordOutcome).toHaveBeenCalledWith(
+      job.publication_id,
+      expect.objectContaining({
+        status: 'NO_BASELINE',
+        lastError: error.message
+      }),
+      now,
+      {}
+    );
+    expect(postFailure).toHaveBeenCalledWith(request, error, 1);
+    expect(repository.markAlerted).toHaveBeenCalled();
+  });
+
+  it('retries the initial-baseline alert without trying to generate a missing publication range', async () => {
+    const { service, repository, postFailure } = setup({
+      status: 'NO_BASELINE',
+      failure_count: 1
+    });
+    const process = jest.fn();
+    await service.recoverDue(process, () => 180_000, {});
+    expect(process).not.toHaveBeenCalled();
+    expect(postFailure).toHaveBeenCalledWith(
+      request,
+      expect.any(NoReleaseNoteBaselineError),
+      1
+    );
+    expect(repository.markAlerted).toHaveBeenCalled();
   });
 
   it('retries a failed terminal alert without trying to publish a permanent failure', async () => {

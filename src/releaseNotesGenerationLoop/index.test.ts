@@ -1,6 +1,7 @@
 import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
 import {
   NonRetryableReleaseNoteError,
+  NoReleaseNoteBaselineError,
   UntrustedReleaseNoteMetadataError
 } from '@/release-notes/release-note-errors';
 import {
@@ -155,6 +156,13 @@ describe('durable release-note event routing', () => {
     );
     expect(permanent.description).toContain('operator review');
     expect(permanent.description).not.toContain('will retry automatically');
+    const baseline = buildReleaseNoteRecoveryFailureAlert(
+      request,
+      new NoReleaseNoteBaselineError('No previous run'),
+      1
+    );
+    expect(baseline.title).toContain('baseline unavailable');
+    expect(baseline.description).toContain('later deployment can bootstrap');
   });
 
   it('uses durable recovery for ordered per-run jobs while preserving PR grouping and legacy metadata', () => {
