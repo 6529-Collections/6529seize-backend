@@ -7,7 +7,7 @@ import { getAuthenticatedWalletOrNull } from '@/api/auth/auth';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import {
   getDropForgeConfig,
-  recoveryEnabled,
+  launchConfigured,
   automationEnabled
 } from '@/drop-forge/drop-forge.config';
 import { assertLaunchAccess, mapLaunch } from '@/drop-forge/drop-forge.service';
@@ -66,9 +66,9 @@ export async function recoverDropForgeLaunch(
           .required()
       })
     );
-    if (!recoveryEnabled())
+    if (!launchConfigured())
       throw new LaunchSafetyError(
-        'Drop Forge transaction recovery is disabled'
+        'Drop Forge transaction recovery is not configured'
       );
     if (
       ['RETRY', 'DELIVER_REMAINING'].includes(body.operation) &&

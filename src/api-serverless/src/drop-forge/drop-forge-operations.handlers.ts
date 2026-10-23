@@ -10,7 +10,7 @@ import {
 } from '@/drop-forge/drop-forge.operations';
 import {
   getDropForgeConfig,
-  recoveryEnabled
+  launchConfigured
 } from '@/drop-forge/drop-forge.config';
 import { dropForgeJobsRepository } from '@/drop-forge/drop-forge.jobs.repository';
 import { decodeProcessResult } from '@/drop-forge/drop-forge.workflow';
@@ -117,7 +117,7 @@ export async function coordinateDropForgeManualAction(
     );
     // The legacy manual UI still operates when the new automation is disabled.
     if (
-      !recoveryEnabled() ||
+      !launchConfigured() ||
       contract.toLowerCase() !== getDropForgeConfig().creator.toLowerCase()
     )
       return { lease_id: null };

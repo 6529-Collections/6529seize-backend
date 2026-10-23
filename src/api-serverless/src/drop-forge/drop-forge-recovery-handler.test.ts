@@ -35,7 +35,7 @@ const request = (operation = 'CANCEL') =>
   }) as unknown as RecoverDropForgeLaunchRequest;
 beforeEach(() => {
   jest.spyOn(config, 'getDropForgeConfig').mockReturnValue(testConfig);
-  jest.spyOn(config, 'recoveryEnabled').mockReturnValue(true);
+  jest.spyOn(config, 'launchConfigured').mockReturnValue(true);
   jest.spyOn(config, 'automationEnabled').mockReturnValue(false);
   jest
     .spyOn(auth, 'getAuthenticatedWalletOrNull')
@@ -70,10 +70,12 @@ it.each(['RETRY', 'DELIVER_REMAINING'])(
     expect(DropForgeRecovery.prototype.request).not.toHaveBeenCalled();
   }
 );
-it('rejects disabled recovery and missing existing-transaction evidence', async () => {
-  jest.mocked(config.recoveryEnabled).mockReturnValue(false);
-  await expect(recoverDropForgeLaunch(request())).rejects.toThrow('disabled');
-  jest.mocked(config.recoveryEnabled).mockReturnValue(true);
+it('rejects unconfigured recovery and missing existing-transaction evidence', async () => {
+  jest.mocked(config.launchConfigured).mockReturnValue(false);
+  await expect(recoverDropForgeLaunch(request())).rejects.toThrow(
+    'not configured'
+  );
+  jest.mocked(config.launchConfigured).mockReturnValue(true);
   await expect(
     recoverDropForgeLaunch(request('RECORD_WINNER'))
   ).rejects.toThrow();
