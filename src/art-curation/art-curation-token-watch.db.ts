@@ -458,7 +458,7 @@ export class ArtCurationTokenWatchDb extends LazyDbAccessCompatibleService {
           from ${ART_CURATION_TOKEN_WATCH_DROPS_TABLE} wd
           join ${DROPS_TABLE} d on d.id = wd.drop_id
           join ${COMPETITION_ENTRIES_TABLE} e on e.drop_id=d.id and e.status='ACTIVE'
-          join ${COMPETITIONS_TABLE} c on c.id=e.competition_id and c.storage_mode='NATIVE'
+          join ${COMPETITIONS_TABLE} c on c.id=e.competition_id
           join ${COMPETITION_CAPABILITIES_TABLE} cap on cap.competition_id=c.id and cap.capability='CURATION'
           where wd.watch_id = :watchId
         `,

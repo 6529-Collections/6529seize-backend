@@ -6,10 +6,13 @@ receipt table, archive and webhook secrets. No function uses the application VPC
 MySQL, Redis, root dependencies, Discord bot session or application secret loader.
 The preferred monitoring region differs from the production application region.
 
-Retained inert functions are listed in `retained-producers.json`, independently of the
-ordinary backend deploy catalog. They keep their existing structured log subscriptions,
-producer allowlists, relay permissions and Lambda platform alarms. This inventory never
-enables code deployment or removes retained application resources.
+`retained-producers.json` is empty after final competition migration retirement.
+The native decision and leaderboard units remain ordinary monitored services.
+The optional `retire-competition-registration` operation in
+`deploy-operational-monitoring.yml` removes only the retired producer from the
+fresh live template using the existing scoped OIDC/CloudFormation identities.
+It validates the complete change set before execution and preserves shared
+monitoring resources. See [the cleanup procedure](../../docs/competition-storage-cleanup.md).
 
 The infrastructure source is `scripts/templates.mjs`. `monitoring-{env}.json`,
 `source-{env}.json` and `coverage-{env}.json` are generated from the backend service

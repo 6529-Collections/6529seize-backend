@@ -10,7 +10,7 @@ export async function observeDecisionBacklogs(): Promise<void> {
     const rows = await readLoopHealthRows<{ oldest: number | string | null }>(
       `select min(cast(nullif(json_unquote(json_extract(decision_config, '$.next_decision_time')), 'null') as unsigned)) as oldest
        from ${COMPETITIONS_TABLE}
-       where storage_mode = 'NATIVE' and execution_mode = 'ACTIVE'
+       where execution_mode = 'ACTIVE'
          and lifecycle = 'PUBLISHED' and type = 'RANK'
          and nullif(json_unquote(json_extract(decision_config, '$.next_decision_time')), 'null') is not null`
     );

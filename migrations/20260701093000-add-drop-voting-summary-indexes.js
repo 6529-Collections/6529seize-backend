@@ -33,18 +33,6 @@ function dropIndex(db, sql) {
 
 var INDEXES = [
   {
-    add: 'ALTER TABLE drop_voter_states ADD INDEX idx_drop_voter_states_drop_votes_voter (drop_id, votes, voter_id), ALGORITHM=INPLACE, LOCK=NONE',
-    drop: 'DROP INDEX idx_drop_voter_states_drop_votes_voter ON drop_voter_states'
-  },
-  {
-    add: 'ALTER TABLE winner_drop_voter_votes ADD INDEX idx_winner_drop_voter_votes_drop_votes_voter (drop_id, votes, voter_id), ALGORITHM=INPLACE, LOCK=NONE',
-    drop: 'DROP INDEX idx_winner_drop_voter_votes_drop_votes_voter ON winner_drop_voter_votes'
-  },
-  {
-    add: 'ALTER TABLE wave_leaderboard_entries ADD INDEX idx_wave_leaderboard_entries_wave_vote_time_drop (wave_id, vote, timestamp, drop_id), ALGORITHM=INPLACE, LOCK=NONE',
-    drop: 'DROP INDEX idx_wave_leaderboard_entries_wave_vote_time_drop ON wave_leaderboard_entries'
-  },
-  {
     add: 'ALTER TABLE drops ADD INDEX idx_drops_wave_type_created_id (wave_id, drop_type, created_at, id), ALGORITHM=INPLACE, LOCK=NONE',
     drop: 'DROP INDEX idx_drops_wave_type_created_id ON drops'
   }

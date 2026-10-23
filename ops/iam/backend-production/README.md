@@ -52,7 +52,7 @@ IAM's managed-policy size and default role attachment limits.
 
 ## Infrastructure boundaries
 
-IAM changes in `competitionMigrationLoop`, `artworkDocumentationProcessor`,
+IAM changes in `artworkDocumentationProcessor`,
 and `artworkDocumentationStorage` require a separate administrative step.
 Application storage, backup, malware-protection, and IAM provisioning also
 remain administrative. An unchanged infrastructure definition can accompany a
@@ -130,3 +130,19 @@ new UUIDs do not exist before creation and that read API has no FunctionArn
 condition. Mapping creation/update/delete remains constrained to the two named
 functions. The longer distribution stack's generated artifact bucket prefix is
 service-scoped; its AWS region condition separates staging from production.
+
+## Voting credit return worker
+
+`VotingCreditReturnDeployment.json` enrolls only the voting credit return
+notification worker in this environment. Install it as the
+`VotingCreditReturnDeployment` inline policy on this environment's existing
+GitHub deployment role through the administrative identity after Access Analyzer
+validation and positive/negative simulation. The ten managed policies, trust
+policy and runtime role remain unchanged. The exact schedule name is declared
+in the worker definition; four alarm ARNs are enumerated. CloudFormation truncates
+the long stack name in generated deployment buckets, so artifact access uses
+the unique `votingcreditreturnnotific*-serverlessdeploy*` prefix with the
+environment's required AWS region. It grants no application-bucket access.
+Keep the aggregate role inline-policy size below 10,240 characters. Verify the
+remote document and unrelated-resource/other-environment denials, then deploy
+through GitHub Actions and verify the disabled schedule before activation.

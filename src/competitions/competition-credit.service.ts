@@ -34,10 +34,7 @@ export type CompetitionCreditBudget = {
   readonly max_vote: number | null;
 };
 
-type BudgetCompetition = Pick<
-  Competition,
-  'id' | 'wave_id' | 'storage_mode' | 'voting'
->;
+type BudgetCompetition = Pick<Competition, 'id' | 'wave_id' | 'voting'>;
 type BudgetEntry = Pick<CompetitionEntry, 'id' | 'drop_id'> &
   Partial<Pick<CompetitionEntry, 'status'>>;
 

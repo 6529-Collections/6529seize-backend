@@ -1151,9 +1151,19 @@ post-TDH over-rate cleanup. Deploy the affected consumers sequentially:
 xTDH dependencies are already compatible. No schema or frontend rollout is needed.
 
 Winners paginate by win time, newest first; My Votes excludes completed winners
-without deleting historical allocations. Creating a hub always creates a
-CHAT wave; competition creation is a separate native command. Historical physical
-RANK/APPROVE wave types remain schema-compatible and do not block hub updates.
+without deleting historical allocations. Personal votes sort by signed vote value
+descending, vote update time ascending and drop ID ascending. Its optional
+`include=cards` response reuses the authorized lightweight competition card reader;
+deploy `api` before the frontend that requests this additive projection.
+Personal-vote cursors describe a live list, not a snapshot. After a vote edit,
+clients must refresh loaded pages from the first cursor before loading more,
+because changing a value can move an entry across page boundaries. The frontend
+invalidates the scoped My Votes query after each confirmed vote. The existing
+competition/voter index restricts reads to that actor's allocations; an additional
+sort index is deferred until query-plan evidence justifies a schema rollout.
+Creating a hub always creates a
+CHAT wave; competition creation is a separate native command. Historical RANK/APPROVE wire types are projected from native original-primary
+configuration; shared wave storage no longer owns a competition type.
 
 Shared CHAT participation and voting settings are live typed policies in
 `waves.hub_participation_config` and `waves.hub_voting_config`. They preserve
@@ -1163,13 +1173,8 @@ metadata. Strategy metadata preserves current GETs and explicit clearing; it doe
 not enroll a competition or enable CHAT decision execution. Current hub creation,
 editing and reading own these policies; `waves_archive` holds their snapshots.
 Original competition configuration continues to own original competition GETs.
-Explicit bounded preparation verifies retained policy parity. Temporary capture
-keeps prepared-version writes atomic during rollout. Four ordered strategy
-overlays extend the original ten capture bodies without replacing them;
-finalization validates body and dependency order before disabling the fourteen
-recognized captures. Already-retired policies missing the additive nullable
-strategy member mean null and never reimport obsolete physical values. This
-finalization occurs after the native API is healthy and old invocations drain.
+One-time policy preparation and all fourteen temporary capture triggers are
+retired. Current nullable strategy members never reimport obsolete physical values.
 
 Permanent unversioned/v2 wave/drop GETs use explicit native-backed compatibility
 views. Their ownership is the immutable `legacy_wave_id=wave_id` original primary,
@@ -1232,22 +1237,24 @@ Original Settings applies the native rule policy under the owner lock before
 saving. Credit rules freeze after any native voter history; permitted title and
 presentation edits remain available through both command routes.
 
-The original native creation/write/read/execution/shadow rollout flags and
-migration/reverse/reconciliation commands are retired. The migration Lambda has
-an inert transition artifact and zero reserved concurrency. Its physical
-Lambda, IAM, alarms and retained schema belong to a later explicit retirement.
-The isolated monitor's `retained-producers.json` keeps its existing log subscription,
-relay permissions, producer allowlists and alarms independently of the ordinary
-deploy catalog; the generated infrastructure remains unchanged.
-`dbMigrationsLoop` retains all old entities/columns to prevent TypeORM from
-silently deleting schema during this application-only release. Ordinary sync
-never runs a data transfer or physical retirement. Explicit preparation/final
-scopes transfer and verify history and disable the obsolete capture triggers.
-The complete native view set is the cutover boundary: repeated retirement never
-reimports retained physical data after native-only writes begin, and preparation
-is rejected after cutover. Ordinary full sync cannot make the initial view switch.
-The staged compatible writer/reader rollout, service order, parity checks and
-rollback boundaries are in the [runtime retirement runbook](./competition-runtime-retirement.md).
+The original creation/write/read/execution/shadow flags, storage selector and
+migration/reverse/reconciliation commands are removed. The inert
+`competitionMigrationLoop` and its dedicated continuation policy, version,
+invocation configuration, alarms and monitoring registrations are retired. Its
+private recovery artifacts remain independently retained; the native decision
+and leaderboard units remain deployed. `retained-producers.json` is empty.
+
+`dbMigrationsLoop` has no old competition entities or transition scopes. Manual
+`maintenance` installs the permanent native views without synchronizing entities;
+scheduled maintenance performs no DDL. Explicit `full` first rejects remaining
+retired columns, then synchronizes current entities and maintains native views.
+Intentional physical deletion is an operator boundary with encrypted snapshot,
+independent restore verification, exact schema/data manifest, old-invocation
+drain, short metadata-lock waits and online-only DDL. It never occurs implicitly
+through TypeORM. Repeated full maintenance must leave old objects absent.
+The [cleanup procedure](competition-storage-cleanup.md) specifies the compatible
+service order, recovery evidence and exact four deleted-wave orphan targets.
+Native history, receipts, claims and shared archival/user history remain intact.
 
 Default navigation evaluates only published native configuration with deterministic
 active/upcoming/completed ordering, inclusive end boundaries and server refresh
@@ -1256,7 +1263,8 @@ ordering/bounds and capability-specific presentation on competition-scoped APIs.
 The immutable Phase 0 GET fixtures and route/OpenAPI census remain enforced.
 Disposable MySQL acceptance physically removes old tables/wave columns and checks
 compatibility projections, native votes/history/activity and repeatable decisions.
-No staging table/column deletion, orphan cleanup or media/CDN cleanup occurs.
+Staging and production physical cleanup follow the separate reviewed manifest.
+Media/CDN objects are outside this cleanup.
 
 Important API responsibilities:
 
@@ -1333,14 +1341,10 @@ Wave rows can be top-level waves or subwaves through the nullable `parent_wave_i
 
 Wave overview `has_competition` is true for Rank or Approve wave types, or when the wave has any competition record, including drafts and completed competitions. Competition existence is fetched in one batch for the overview page and its visible parent waves.
 
-Ordinary chat drop creates and edits do not acquire the legacy competition
-ownership lock. Edits still lock any existing competition entry memberships,
-and use the stored drop type to decide whether the legacy owner lock is needed.
-Chat persistence does not initialize legacy leaderboard/vote-history rows, and
-chat edit row replacement does not clear legacy voting state; these writes
-otherwise acquire the same ownership lock through migration triggers. Competition
-submissions and permanent drop deletions retain the ownership fence so writes
-cannot race a legacy-to-native competition transfer.
+Ordinary chat drop creates and edits do not initialize obsolete competition
+storage. Edits lock existing native entry memberships; imported submissions and
+permanent deletion retain the native ownership fence. No migration trigger or
+legacy-to-native transfer participates in current writes.
 
 Wave writes enforce that every active Drop, Vote, Chat, and Admin membership is
 contained by the Wave View membership. The generated
@@ -2420,3 +2424,54 @@ WatchTower manual-review attention is derived from a subject-based union of
 open reports and pending moderation checks. The API groups this union before
 pagination and shares the case definition across queue and count surfaces; it
 adds no persisted case table, queue, service or background reconciliation.
+
+## Cross-wave message search
+
+`GET /v2/drops/search` reuses wave search text matching and accepts text, an
+author ID, or both. Live wave and parent-wave read eligibility is applied in
+SQL before cursor pagination over `(created_at, id)`. Queries have a 3-second
+SQL execution budget and at most 100 pages. DMs require a non-null eligible
+visibility group; malformed public DMs and unsupported deeper nesting fail closed.
+Physically deleted drops are absent from the base drops table. Each result carries an eligible wave
+overview for navigation. Deploy the additive `api` endpoint before the frontend
+uses it; no schema changes or additional services are required. Existing scoped
+search remains compatible.
+
+Clients follow the opaque response cursor while `next` is true, including when
+a concurrent visibility change removes every result on a page. The cursor is
+derived from the last scanned row so this safely advances through that case.
+
+## Voting credit return notifications
+
+When an ACTIVE native competition entry wins or is permanently deleted by its
+submitter, WAVE-scoped active allocations are released by the existing spending
+formula. The transition transaction records one `voting_credit_releases` header
+and copies nonzero current votes into `voting_credit_release_recipients` with a
+set-based INSERT SELECT. Amounts are absolute allocations, never weighted scores.
+The entry/competition lock serializes capture against voting and decision work.
+Titles, credit type, event identity and release time survive later hard deletion.
+
+`votingCreditReturnNotificationsLoop` is a separate 1-minute worker with reserved
+concurrency 1. Each invocation processes at most 20 pages of 100 recipients within
+40 seconds. A page locks its release header with SKIP LOCKED; notification rows,
+push-outbox rows, recipient cleanup and progress commit atomically. Failure rolls
+back the page and defers that release by a minute; after ten failed attempts it
+is parked for operator recovery without discarding recipients. Other releases remain eligible.
+Completed headers retain the release identity; processed recipient snapshots are
+removed. Five-minute backlog warnings, EMF pending/dead-letter counts and Lambda errors
+expose delayed delivery.
+No network publish or per-voter application loop runs in the transition path.
+
+The profile consolidation paths in `tdhLoop` and `delegationsLoop` transfer
+pending allocations to the retained profile before migrating existing notices.
+They lock only affected release headers; already delivered recipient rows stay
+deleted when the pending cursor restarts. Both current primary reads and the
+consolidation transaction's own writes are included in candidate discovery.
+
+`VOTING_CREDITS_RETURNED` uses snapshot context, nullable actor/drop references,
+existing vote preferences and live wave visibility. This deliberately survives
+ordinary drop notification cancellation. Native-competition-capable push devices
+receive links to the winning entry or, after deletion, its competition. API V1/V2
+map the additive cause without hydrating deleted drops. The EventBridge schedule
+is disabled on deployment and activated only after the dependent frontend is
+ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.

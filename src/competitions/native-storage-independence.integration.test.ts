@@ -1,7 +1,10 @@
+import {
+  withHistoricalCompetitionFixture,
+  seedRetainedDistributionFixture,
+  seedRetainedPublicationFixture
+} from '@/tests/fixtures/retained-competition.fixture';
 import { NotFoundException } from '@/exceptions';
 import { competitionService } from './competition.service';
-import { transferRetainedCompetitionDistributions } from './competition-retirement-distributions';
-import { transferRetainedCompetitionLeaderboardPublication } from './competition-retirement-leaderboard';
 import { DropVotingDb } from '@/api/drops/drop-voting.db';
 import {
   legacyCompetitionOutcomeId,
@@ -54,6 +57,7 @@ const obsoleteTables = [
 // Physical absence is exercised ONLY in the isolated, automatically discarded
 // MySQL test database. Staging deliberately retains every physical object.
 describe('application and permanent projections without obsolete competition storage', () => {
+  withHistoricalCompetitionFixture();
   beforeEach(async () => {
     if (
       process.env.NODE_ENV !== 'local' ||
@@ -270,12 +274,7 @@ describe('application and permanent projections without obsolete competition sto
       ]
     );
     expect(
-      await transferRetainedCompetitionDistributions(
-        sqlExecutor,
-        undefined,
-        {},
-        { batchSize: 1 }
-      )
+      await seedRetainedDistributionFixture(sqlExecutor, undefined)
     ).toEqual([{ competition_id: primary.id, rows: 1 }]);
     const expectedDistribution = [
       {
@@ -304,12 +303,7 @@ describe('application and permanent projections without obsolete competition sto
       VALUES ('shared-orphan-participation',:waveId,10,40,90,5)`,
       { waveId: wave.id }
     );
-    await transferRetainedCompetitionLeaderboardPublication(
-      sqlExecutor,
-      primary.id,
-      {},
-      { batchSize: 1 }
-    );
+    await seedRetainedPublicationFixture(sqlExecutor, primary.id);
     const retainedOrphanRates = () =>
       new DropVotingDb(() => sqlExecutor).getWeightedDropRates(
         ['shared-orphan-participation'],

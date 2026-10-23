@@ -1,8 +1,10 @@
+import { buildVotingCreditReturnPushNotification } from '@/pushNotificationsHandler/voting-credit-return-push-notification';
 import { buildMemeCollaborationPushNotification } from './meme-collaboration-push-notification';
 import { handleMissingNotifications } from './missing-notifications';
 import { buildCompetitionLifecyclePushNotification } from './competition-lifecycle-push-notification';
 import type {
   CompetitionLifecycleNotificationData,
+  VotingCreditsReturnedNotificationData,
   MemeCollaborationNotificationData,
   SubscriptionCoverageNotificationData
 } from '@/notifications/user-notification.types';
@@ -504,9 +506,10 @@ async function buildIdentityNotificationMessages(
               ...grouping
             },
             identityId: notification.identity_id,
-            requiresCompetitionSupport:
-              notification.cause ===
+            requiresCompetitionSupport: [
               IdentityNotificationCause.COMPETITION_LIFECYCLE,
+              IdentityNotificationCause.VOTING_CREDITS_RETURNED
+            ].includes(notification.cause),
             device
           };
         }
@@ -660,6 +663,12 @@ async function generateNotificationData(
       const actor = await getAdditionalEntity().catch(() => null);
       return buildMemeCollaborationPushNotification(data, dropSerialNo, actor);
     }
+    case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
+      return buildVotingCreditReturnPushNotification(
+        extractAdditionalData<VotingCreditsReturnedNotificationData>(
+          notification
+        )
+      );
     case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       return buildCompetitionLifecyclePushNotification(
         extractAdditionalData<CompetitionLifecycleNotificationData>(

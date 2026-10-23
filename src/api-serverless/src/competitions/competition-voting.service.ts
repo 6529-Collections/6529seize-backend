@@ -17,10 +17,7 @@ import { Competition } from '@/competitions/competition.types';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
-import {
-  CompetitionEntryStatus,
-  CompetitionStorageMode
-} from '@/entities/ICompetition';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
@@ -203,8 +200,7 @@ export class CompetitionVotingService {
       competitionId,
       ctx
     );
-    if (!record || record.storage_mode !== CompetitionStorageMode.NATIVE)
-      throw new NotFoundException('Competition not found');
+    if (!record) throw new NotFoundException('Competition not found');
     const reader = new NativeCompetitionReader(competitionRepository, ctx);
     return reader.getCompetition(record, Date.now());
   }
