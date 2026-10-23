@@ -257,7 +257,7 @@ fallback); the normal indexing path and existing reporting destinations are unch
 Explicit start/end backfills do not advance normal coverage. The ordinary contract
 history must already be complete; the marker does not certify or repair old data.
 The existing transaction discovery service indexes mainnet. It publishes coverage
-only for the versioned production mainnet policy, never under a Sepolia chain ID. Full post-mint
+only for the versioned production mainnet policy, never under a Sepolia chain ID. Coverage indexing continues when launch execution is Off so already-signed post-mint transactions can settle. Full post-mint
 Sepolia exercises require an isolated, correctly populated Sepolia transaction
 index/database and its coverage checkpoint; the production indexer is not switched
 to a test chain by the launch settings. Without that evidence, test-chain post-mint

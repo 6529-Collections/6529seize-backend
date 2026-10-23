@@ -34,7 +34,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
       );
       const policy = process.env.DROP_FORGE_STAGE ? getDropForgePolicy() : null;
       if (
-        process.env.DROP_FORGE_AUTOMATION_ENABLED === 'true' &&
         policy?.chainId === 1 &&
         contract.toLowerCase() === policy.creator.toLowerCase() &&
         startingBlock === null &&
