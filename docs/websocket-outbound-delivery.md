@@ -70,7 +70,10 @@ a total ordering of concurrent business transaction commits.
 
 The drain processes at most 100 jobs with four database/publication workers per
 invocation, stops starting jobs near the Lambda deadline, awaits in-flight work,
-and schedules another wakeup after making progress. Failed jobs remain in MySQL
+and schedules another wakeup after making progress. After the current workers
+settle, committed progress triggers another scan within the same claim and
+deadline limits: concurrent `SKIP LOCKED` scans can briefly hide the next head.
+An empty pass without progress stops rather than polling. Failed jobs remain in MySQL
 with an exponential retry delay capped at one minute. Partial recipient-job
 inserts roll back to a savepoint. Outbox rows have no automatic expiry; failures
 must be investigated rather than discarded. Original event age is retained when
@@ -213,7 +216,8 @@ For full transactional capture across background notification producers, also
 redeploy `overRatesRevocationLoop`, `waveDecisionExecutionLoop`, `tdhHistoryLoop`,
 `tdhLoop`, `subscriptionsTopUpLoop`, `subscriptionsDaily` (including its
 `subscriptionCoverageReconciliationLoop` Lambda), `nftsLoop`, `claimsBuilder`,
-`claimsMediaArweaveUploader`, and `s3Uploader` after the worker. These include
+`claimsMediaArweaveUploader`, `s3Uploader`, and
+`votingCreditReturnNotificationsLoop` after the worker. These include
 subscription and vote-revocation notifications and configured priority alerts.
 The service catalog records the worker prerequisite. The push-input handoff
 preserves existing queued invalidations during mixed-version rollout; an old

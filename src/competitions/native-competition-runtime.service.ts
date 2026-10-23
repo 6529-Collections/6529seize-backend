@@ -6,7 +6,6 @@ import { Competition, CompetitionPause } from './competition.types';
 import {
   CompetitionLifecycle,
   CompetitionCapability,
-  CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
 import {
@@ -374,7 +373,6 @@ export class NativeCompetitionRuntimeService {
     );
     if (
       !competition ||
-      competition.storage_mode !== CompetitionStorageMode.NATIVE ||
       competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
       !this.executionRouter.isNativeExecutionAllowed(competition)
     )

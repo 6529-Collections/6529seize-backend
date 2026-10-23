@@ -115,6 +115,7 @@ import { ApiDropPollsPage } from '@/api/generated/models/ApiDropPollsPage';
 import { ApiDropPollVoteRequest } from '@/api/generated/models/ApiDropPollVoteRequest';
 import { ApiDropPollVotersPage } from '@/api/generated/models/ApiDropPollVotersPage';
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
+import { ApiDropSearchPage } from '@/api/generated/models/ApiDropSearchPage';
 import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeaderboardPageV2';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
@@ -2798,6 +2799,26 @@ export type GetDropV2VoteEditLogsByIdRequest = Request<
   Record<string, never>
 >;
 
+export type SearchDropsV2PathParams = Record<string, never>;
+
+export interface SearchDropsV2Query {
+  "term"?: string;
+  "author_id"?: string;
+  "cursor"?: string;
+  "page"?: number;
+  "size"?: number;
+}
+
+export type SearchDropsV2Response = ApiDropSearchPage;
+
+export type SearchDropsV2Request = Request<
+  SearchDropsV2PathParams,
+  ApiResponse<SearchDropsV2Response>,
+  never,
+  SearchDropsV2Query,
+  Record<string, never>
+>;
+
 export type GetNotificationsV2PathParams = Record<string, never>;
 
 export interface GetNotificationsV2Query {
@@ -3677,6 +3698,7 @@ export interface ListCompetitionMyVotesV3PathParams {
 
 export interface ListCompetitionMyVotesV3Query {
   "cursor"?: string;
+  "include"?: "cards";
   "limit"?: number;
 }
 

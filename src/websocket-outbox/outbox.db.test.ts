@@ -292,5 +292,6 @@ describeWithSeed('WebSocket outbox MySQL transaction boundary', [], () => {
       'frame',
       'second'
     ]);
+    expect(await rows()).toEqual([]);
   });
 });

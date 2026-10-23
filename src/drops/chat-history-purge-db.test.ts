@@ -113,29 +113,6 @@ describeWithSeed(
         content: 'shared chat',
         wave_id: wave.id
       });
-      await insert(tables.DROP_REAL_VOTE_IN_TIME_TABLE, {
-        id: 21,
-        drop_id: 'drop-1',
-        wave_id: wave.id,
-        timestamp: 10,
-        vote: 40
-      });
-      await insert(tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE, {
-        id: 37,
-        drop_id: 'drop-1',
-        wave_id: wave.id,
-        voter_id: 'historical-voter',
-        timestamp: 20,
-        vote: 17
-      });
-      await insert(tables.WAVE_LEADERBOARD_ENTRIES_TABLE, {
-        drop_id: 'drop-1',
-        wave_id: wave.id,
-        timestamp: 30,
-        vote: 40,
-        vote_on_decision_time: 90,
-        over_threshold_since_ms: 5
-      });
       for (const observation of [
         {
           kind: 'AGGREGATE',
@@ -170,9 +147,6 @@ describeWithSeed(
         published_at: 30
       });
       const retainedTables = [
-        tables.DROP_REAL_VOTE_IN_TIME_TABLE,
-        tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
-        tables.WAVE_LEADERBOARD_ENTRIES_TABLE,
         tables.COMPETITION_SCORE_HISTORY_TABLE,
         tables.COMPETITION_LEADERBOARD_ENTRIES_TABLE
       ];
@@ -478,35 +452,6 @@ describeWithSeed(
           }
         ],
         [
-          tables.DROP_VOTER_STATE_TABLE,
-          { voter_id: 'reader', wave_id: 'wave', votes: 1 }
-        ],
-        [
-          tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-          {
-            voter_id: 'reader',
-            wave_id: 'wave',
-            credit_spent: 1,
-            created_at: 1
-          }
-        ],
-        [
-          tables.DROP_RANK_TABLE,
-          { wave_id: 'wave', last_increased: 1, vote: 1 }
-        ],
-        [
-          tables.DROP_REAL_VOTE_IN_TIME_TABLE,
-          { wave_id: 'wave', timestamp: 1, vote: 1 }
-        ],
-        [
-          tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
-          { voter_id: 'reader', wave_id: 'wave', timestamp: 1, vote: 1 }
-        ],
-        [
-          tables.WAVE_LEADERBOARD_ENTRIES_TABLE,
-          { wave_id: 'wave', timestamp: 1, vote: 1 }
-        ],
-        [
           tables.DROP_BOOKMARKS_TABLE,
           { identity_id: 'reader', bookmarked_at: 1 }
         ],
@@ -623,18 +568,10 @@ describeWithSeed(
         ids: ['drop-1', 'drop-2', 'drop-4', 'drop-5'],
         hasMore: false
       });
-      const retainedCompetitionTables = new Set<string>([
-        tables.DROP_VOTER_STATE_TABLE,
-        tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-        tables.DROP_RANK_TABLE,
-        tables.DROP_REAL_VOTE_IN_TIME_TABLE,
-        tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
-        tables.WAVE_LEADERBOARD_ENTRIES_TABLE
-      ]);
       for (const [table] of fixtures)
         expect(
           await sqlExecutor.oneOrNull(`select count(*) as count from ${table}`)
-        ).toEqual({ count: retainedCompetitionTables.has(table) ? 1 : 0 });
+        ).toEqual({ count: 0 });
       for (const table of [
         tables.IDENTITY_NOTIFICATIONS_TABLE,
         tables.ACTIVITY_EVENTS_TABLE

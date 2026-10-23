@@ -144,7 +144,6 @@ describeWithSeed(
           id,
           wave_id: wave.id,
           legacy_wave_id: id === primary ? wave.id : null,
-          storage_mode: 'NATIVE',
           execution_mode: 'ACTIVE',
           type: 'RANK',
           lifecycle: 'PUBLISHED',
@@ -186,26 +185,20 @@ describeWithSeed(
         capability: 'CURATION',
         assigned_at: 1
       });
-      // A final profile merge moved native allocations; the retired physical profile stays stale.
-      await insert(DROP_VOTER_STATE_TABLE, {
-        voter_id: sourceVoter,
-        drop_id: `drop-${primary}`,
-        wave_id: wave.id,
-        votes: 999
-      });
-      await insert(DROP_REAL_VOTE_IN_TIME_TABLE, {
-        drop_id: `drop-${primary}`,
-        wave_id: wave.id,
-        timestamp: 1,
-        vote: 999
-      });
-      await insert(DROP_REAL_VOTER_VOTE_IN_TIME_TABLE, {
-        drop_id: `drop-${primary}`,
-        wave_id: wave.id,
-        voter_id: sourceVoter,
-        timestamp: 1,
-        vote: 999
-      });
+      // A final profile merge moved native allocations. The old profile remains,
+      // while obsolete physical allocations and history are absent.
+      expect(
+        await sqlExecutor.execute(
+          'select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA=database() and TABLE_NAME in (:tables)',
+          {
+            tables: [
+              DROP_VOTER_STATE_TABLE,
+              DROP_REAL_VOTE_IN_TIME_TABLE,
+              DROP_REAL_VOTER_VOTE_IN_TIME_TABLE
+            ]
+          }
+        )
+      ).toEqual([]);
       await insert(RATINGS_TABLE, {
         rater_profile_id: 'creditor',
         matter_target_id: voter,

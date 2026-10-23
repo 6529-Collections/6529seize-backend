@@ -64,7 +64,6 @@ function competition(id: string, type: 'RANK' | 'APPROVE') {
     id,
     wave_id: 'shared-hub',
     legacy_wave_id: null,
-    storage_mode: 'NATIVE',
     execution_mode: 'ACTIVE',
     type,
     lifecycle: 'PUBLISHED',

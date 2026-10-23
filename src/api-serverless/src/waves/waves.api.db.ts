@@ -3442,8 +3442,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       param.waveId,
       ctx
     );
-    if (!owner || owner.storage_mode !== 'NATIVE')
-      throw new Error('Native primary competition not found');
+    if (!owner) throw new Error('Native primary competition not found');
     await competitionCommandRepository.pause(
       owner.id,
       param.startTime,

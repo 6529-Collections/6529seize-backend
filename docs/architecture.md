@@ -668,10 +668,10 @@ successful rotation's `last_used_at`; repeated recovery does not reset it.
 4. Derived-data Lambdas read canonical tables and write projections such as TDH, owner balances, aggregated activity, wave decisions, leaderboards, metrics, and reputation aggregates.
 5. SQS workers handle slow or retryable side effects through named queues: claim building, claim media Arweave uploads, S3 media mirroring, attachment orchestration/processing, NFT link resolution/previews, xTDH recalculation, Wave Score dirty refreshes, and notification delivery through Firebase plus recipient-scoped WebSocket invalidations.
 
-6. S3 and CloudFront serve media. AVIF still-image drop uploads always use private ingest and the sanitizer, even when `DROP_MEDIA_SANITIZE_IMAGES=false`. The worker applies orientation, strips metadata, and publishes WebP at quality 95 for compatibility with older supported mobile viewers. Multipart completion/status responses return the published `mime_type`, and drop references validate that type. AVIF admission rejects sequences, invalid content, images over 64 million pixels, dimensions over 16,383 pixels, and file-type headers over 4 KiB before publication. These decoder and header bounds apply only to AVIF; other formats retain their existing behavior. The existing 500 MB media byte limit remains. Verify shared ingest storage, then deploy the sanitizer in each environment before enabling AVIF through the API and frontend. API deployment verifies the ingest bucket and sanitizer queue exist.
+6. S3 and CloudFront serve media. All new drop/wave image multipart uploads use private ingest and the image worker, regardless of `DROP_MEDIA_SANITIZE_IMAGES`. The worker checks the container format against the declared MIME type before publication and rejects HEIC/HEIF with export guidance. The API captures the privacy choice in private multipart object metadata: false preserves original image bytes and true retains metadata stripping; missing policy preserves sanitization for older queued uploads. Published validation and privacy markers are separate. Single-PUT image preparation and legacy untracked public image multipart sessions cannot bypass the gate. Transport length failures remain operational. See [image-upload-format-validation.md](image-upload-format-validation.md) for scope, limits and compatibility. AVIF still-image drop uploads always convert through this worker, even when `DROP_MEDIA_SANITIZE_IMAGES=false`. The worker applies orientation, strips metadata, and publishes WebP at quality 95 for compatibility with older supported mobile viewers. Multipart completion/status responses return the published `mime_type`, and drop references validate that type. AVIF admission rejects sequences, invalid content, images over 64 million pixels, dimensions over 16,383 pixels, and file-type headers over 4 KiB before publication. These decoder and header bounds apply only to AVIF; other formats retain their existing behavior. The existing 500 MB media byte limit remains. Verify shared ingest storage, then deploy the sanitizer in each environment before enabling AVIF through the API and frontend. API deployment verifies the ingest bucket and sanitizer queue exist.
 
    Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
-   The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for alert and recovery limits.
+   The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A 256 MiB source limit and conservative 512 MiB decoded-work estimate reject unsupported or oversized inputs with HTTP 422; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. Detected HEIF/HEVC inputs now use an isolated, pinned WebAssembly HEVC decoder and explicit JPEG output, independent of the source suffix/MIME label. The child has separate source/pixel, JS heap, WASM memory and time budgets. Confirmed permanent HEVC decoder rejections use `_resize-rejections/v2/` markers keyed by source revision and decoder policy: later requests still spool/inspect the source but skip pixel decoding and return HTTP 422. Source or decoder-policy changes permit another attempt. S3/worker/timeout/allocation failures remain operational; the generic Sharp HEIF `(7.0)` error is not broadly suppressed. A source length mismatch remains operational before decoding or caching. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for decoder, alert and recovery limits.
    The animation-preview implementation (requires `mediaResizerLoop` deployment) handles versioned GIF requests (`AUTOx450_gifv2`, and the other existing sizes with `_gifv2` appended) with animation-preserving processing instead of the legacy first-frame fallback. The suffix is removed before checking the existing size whitelist and resolving the original key, but retained in the S3 derivative key. AUTO sizes use a sequential native decode and one resize directly to bounded output dimensions; fixed crop sizes retain individually coalesced frames and a repeated-scan guard. The bounded RGBA strip is spooled before encoding; output resolution can shrink further to bound the complete animation. The deployment catalog sets this worker to 2048 MiB for CPU headroom while retaining its processing deadline and source/output safety limits. Frame timing, loop count, and transparency are retained. Admission limits cover source bytes, per-frame pixels, frame count, repeated decoder work, retained output, and processing time. An eligible original that already fits an AUTO dimension is copied unchanged. See [GIF animation previews](gif-animation-previews.md) for limits, rollout, and compatibility. Originals and legacy derivative keys are not overwritten.
    Public media objects carry `Cache-Control` set when they are written, because the media CloudFront distribution also serves the desktop app's update feeds (`6529-core-app/`, `6529-staging-core-app/`), which must not be cached long. Keys that never receive different bytes use `public, max-age=31536000, immutable`: drop, wave and distribution uploads (random id per upload; multipart uploads set it at creation), sanitized drop media, profile pictures, rememe images (write-once), device video posters and NFT link previews. Per-token NFT originals and derivatives under `images/` and `videos/` are rewritten in place when a token's media source changes, so they use `public, max-age=86400`, as do on-demand resizer outputs. Single-PUT presigned uploads and MediaConvert renditions do not set it yet.
 
@@ -1171,9 +1171,19 @@ post-TDH over-rate cleanup. Deploy the affected consumers sequentially:
 xTDH dependencies are already compatible. No schema or frontend rollout is needed.
 
 Winners paginate by win time, newest first; My Votes excludes completed winners
-without deleting historical allocations. Creating a hub always creates a
-CHAT wave; competition creation is a separate native command. Historical physical
-RANK/APPROVE wave types remain schema-compatible and do not block hub updates.
+without deleting historical allocations. Personal votes sort by signed vote value
+descending, vote update time ascending and drop ID ascending. Its optional
+`include=cards` response reuses the authorized lightweight competition card reader;
+deploy `api` before the frontend that requests this additive projection.
+Personal-vote cursors describe a live list, not a snapshot. After a vote edit,
+clients must refresh loaded pages from the first cursor before loading more,
+because changing a value can move an entry across page boundaries. The frontend
+invalidates the scoped My Votes query after each confirmed vote. The existing
+competition/voter index restricts reads to that actor's allocations; an additional
+sort index is deferred until query-plan evidence justifies a schema rollout.
+Creating a hub always creates a
+CHAT wave; competition creation is a separate native command. Historical RANK/APPROVE wire types are projected from native original-primary
+configuration; shared wave storage no longer owns a competition type.
 
 Shared CHAT participation and voting settings are live typed policies in
 `waves.hub_participation_config` and `waves.hub_voting_config`. They preserve
@@ -1183,13 +1193,8 @@ metadata. Strategy metadata preserves current GETs and explicit clearing; it doe
 not enroll a competition or enable CHAT decision execution. Current hub creation,
 editing and reading own these policies; `waves_archive` holds their snapshots.
 Original competition configuration continues to own original competition GETs.
-Explicit bounded preparation verifies retained policy parity. Temporary capture
-keeps prepared-version writes atomic during rollout. Four ordered strategy
-overlays extend the original ten capture bodies without replacing them;
-finalization validates body and dependency order before disabling the fourteen
-recognized captures. Already-retired policies missing the additive nullable
-strategy member mean null and never reimport obsolete physical values. This
-finalization occurs after the native API is healthy and old invocations drain.
+One-time policy preparation and all fourteen temporary capture triggers are
+retired. Current nullable strategy members never reimport obsolete physical values.
 
 Permanent unversioned/v2 wave/drop GETs use explicit native-backed compatibility
 views. Their ownership is the immutable `legacy_wave_id=wave_id` original primary,
@@ -1252,22 +1257,24 @@ Original Settings applies the native rule policy under the owner lock before
 saving. Credit rules freeze after any native voter history; permitted title and
 presentation edits remain available through both command routes.
 
-The original native creation/write/read/execution/shadow rollout flags and
-migration/reverse/reconciliation commands are retired. The migration Lambda has
-an inert transition artifact and zero reserved concurrency. Its physical
-Lambda, IAM, alarms and retained schema belong to a later explicit retirement.
-The isolated monitor's `retained-producers.json` keeps its existing log subscription,
-relay permissions, producer allowlists and alarms independently of the ordinary
-deploy catalog; the generated infrastructure remains unchanged.
-`dbMigrationsLoop` retains all old entities/columns to prevent TypeORM from
-silently deleting schema during this application-only release. Ordinary sync
-never runs a data transfer or physical retirement. Explicit preparation/final
-scopes transfer and verify history and disable the obsolete capture triggers.
-The complete native view set is the cutover boundary: repeated retirement never
-reimports retained physical data after native-only writes begin, and preparation
-is rejected after cutover. Ordinary full sync cannot make the initial view switch.
-The staged compatible writer/reader rollout, service order, parity checks and
-rollback boundaries are in the [runtime retirement runbook](./competition-runtime-retirement.md).
+The original creation/write/read/execution/shadow flags, storage selector and
+migration/reverse/reconciliation commands are removed. The inert
+`competitionMigrationLoop` and its dedicated continuation policy, version,
+invocation configuration, alarms and monitoring registrations are retired. Its
+private recovery artifacts remain independently retained; the native decision
+and leaderboard units remain deployed. `retained-producers.json` is empty.
+
+`dbMigrationsLoop` has no old competition entities or transition scopes. Manual
+`maintenance` installs the permanent native views without synchronizing entities;
+scheduled maintenance performs no DDL. Explicit `full` first rejects remaining
+retired columns, then synchronizes current entities and maintains native views.
+Intentional physical deletion is an operator boundary with encrypted snapshot,
+independent restore verification, exact schema/data manifest, old-invocation
+drain, short metadata-lock waits and online-only DDL. It never occurs implicitly
+through TypeORM. Repeated full maintenance must leave old objects absent.
+The [cleanup procedure](competition-storage-cleanup.md) specifies the compatible
+service order, recovery evidence and exact four deleted-wave orphan targets.
+Native history, receipts, claims and shared archival/user history remain intact.
 
 Default navigation evaluates only published native configuration with deterministic
 active/upcoming/completed ordering, inclusive end boundaries and server refresh
@@ -1276,7 +1283,8 @@ ordering/bounds and capability-specific presentation on competition-scoped APIs.
 The immutable Phase 0 GET fixtures and route/OpenAPI census remain enforced.
 Disposable MySQL acceptance physically removes old tables/wave columns and checks
 compatibility projections, native votes/history/activity and repeatable decisions.
-No staging table/column deletion, orphan cleanup or media/CDN cleanup occurs.
+Staging and production physical cleanup follow the separate reviewed manifest.
+Media/CDN objects are outside this cleanup.
 
 Important API responsibilities:
 
@@ -1345,7 +1353,7 @@ Important API responsibilities:
   clients that synchronize unread state through WebSockets.
 - Authenticated social writes: drops, votes, reactions, curations, subscriptions, groups, proxies, profile CMS package drafts/publish actions, minting claims, and push settings.
 - `@help6529` trigger detection after drop creation. The API writes a durable `help_bot_interactions` row, reacts with the bot's seen marker, and enqueues the reply worker when the `help6529` profile exists.
-- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. For AVIF drops unconditionally, and other supported drop/wave images when `DROP_MEDIA_SANITIZE_IMAGES=true`, image multipart uploads complete into private ingest storage, return `media_status=processing`, and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed. Participatory drops in the configured Main Stage wave accept managed-CDN GLB media and verify each stored S3 object's authoritative size is no more than 250 MB (250,000,000 bytes) before attachment.
+- Upload preparation and multipart completion for drop media, wave media, distribution photos, and attachments. All new drop/wave image multipart uploads complete into private ingest storage for mandatory format validation; metadata stripping remains a separately captured upload policy. They return `media_status=processing` and publish a `DROP_UPDATE` websocket event with reason `MEDIA_STATUS` after the sanitizer marks the media ready or failed. Participatory drops in the configured Main Stage wave accept managed-CDN GLB media and verify each stored S3 object's authoritative size is no more than 250 MB (250,000,000 bytes) before attachment.
 - WebSocket connection registration and real-time wave-related messages.
 - Operational endpoints such as health, docs, RPC/proxy routes, webhooks, and deploy-related routes.
 
@@ -1353,14 +1361,10 @@ Wave rows can be top-level waves or subwaves through the nullable `parent_wave_i
 
 Wave overview `has_competition` is true for Rank or Approve wave types, or when the wave has any competition record, including drafts and completed competitions. Competition existence is fetched in one batch for the overview page and its visible parent waves.
 
-Ordinary chat drop creates and edits do not acquire the legacy competition
-ownership lock. Edits still lock any existing competition entry memberships,
-and use the stored drop type to decide whether the legacy owner lock is needed.
-Chat persistence does not initialize legacy leaderboard/vote-history rows, and
-chat edit row replacement does not clear legacy voting state; these writes
-otherwise acquire the same ownership lock through migration triggers. Competition
-submissions and permanent drop deletions retain the ownership fence so writes
-cannot race a legacy-to-native competition transfer.
+Ordinary chat drop creates and edits do not initialize obsolete competition
+storage. Edits lock existing native entry memberships; imported submissions and
+permanent deletion retain the native ownership fence. No migration trigger or
+legacy-to-native transfer participates in current writes.
 
 Wave writes enforce that every active Drop, Vote, Chat, and Admin membership is
 contained by the Wave View membership. The generated
@@ -2099,7 +2103,16 @@ refresh progress. Full scans report committed work and confirmed continuation ha
 carrying their original request time in a message attribute that preserves FIFO
 body deduplication. Dirty catch-up cannot clear a pending full scan. Waiting full
 messages retain their independent SQS age guard, and diagnostic failures leave
-health unconfirmed. Other scheduled/queued workers retain their
+health unconfirmed. NFT processing health additionally separates discovery,
+refresh, audit and durable media publication. NextGen block checkpoint progress
+is published only after transaction commit and cannot clear independent handled
+reconciliation failures. Preview processing surveys persisted active backlog and
+saved READY results; terminal asset errors retain their independent application
+alerts. Event-driven idle surveys do not expire into noise, while new contention
+requires fresh evidence. Superseded preview completion failures stay in source
+logs without reporting a failure owned by another worker. These adapters reuse
+the existing relay, receipt table and Probe; no schema or trigger changes are
+needed. Other scheduled/queued workers retain their
 independent error and queue protections while awaiting business adapters. No
 application schedules, timeouts, concurrency, memory or public API contracts
 change. See [processing-health policies and rollout](../ops/monitoring/README.md#background-processing-health).
@@ -2314,3 +2327,54 @@ WatchTower manual-review attention is derived from a subject-based union of
 open reports and pending moderation checks. The API groups this union before
 pagination and shares the case definition across queue and count surfaces; it
 adds no persisted case table, queue, service or background reconciliation.
+
+## Cross-wave message search
+
+`GET /v2/drops/search` reuses wave search text matching and accepts text, an
+author ID, or both. Live wave and parent-wave read eligibility is applied in
+SQL before cursor pagination over `(created_at, id)`. Queries have a 3-second
+SQL execution budget and at most 100 pages. DMs require a non-null eligible
+visibility group; malformed public DMs and unsupported deeper nesting fail closed.
+Physically deleted drops are absent from the base drops table. Each result carries an eligible wave
+overview for navigation. Deploy the additive `api` endpoint before the frontend
+uses it; no schema changes or additional services are required. Existing scoped
+search remains compatible.
+
+Clients follow the opaque response cursor while `next` is true, including when
+a concurrent visibility change removes every result on a page. The cursor is
+derived from the last scanned row so this safely advances through that case.
+
+## Voting credit return notifications
+
+When an ACTIVE native competition entry wins or is permanently deleted by its
+submitter, WAVE-scoped active allocations are released by the existing spending
+formula. The transition transaction records one `voting_credit_releases` header
+and copies nonzero current votes into `voting_credit_release_recipients` with a
+set-based INSERT SELECT. Amounts are absolute allocations, never weighted scores.
+The entry/competition lock serializes capture against voting and decision work.
+Titles, credit type, event identity and release time survive later hard deletion.
+
+`votingCreditReturnNotificationsLoop` is a separate 1-minute worker with reserved
+concurrency 1. Each invocation processes at most 20 pages of 100 recipients within
+40 seconds. A page locks its release header with SKIP LOCKED; notification rows,
+push-outbox rows, recipient cleanup and progress commit atomically. Failure rolls
+back the page and defers that release by a minute; after ten failed attempts it
+is parked for operator recovery without discarding recipients. Other releases remain eligible.
+Completed headers retain the release identity; processed recipient snapshots are
+removed. Five-minute backlog warnings, EMF pending/dead-letter counts and Lambda errors
+expose delayed delivery.
+No network publish or per-voter application loop runs in the transition path.
+
+The profile consolidation paths in `tdhLoop` and `delegationsLoop` transfer
+pending allocations to the retained profile before migrating existing notices.
+They lock only affected release headers; already delivered recipient rows stay
+deleted when the pending cursor restarts. Both current primary reads and the
+consolidation transaction's own writes are included in candidate discovery.
+
+`VOTING_CREDITS_RETURNED` uses snapshot context, nullable actor/drop references,
+existing vote preferences and live wave visibility. This deliberately survives
+ordinary drop notification cancellation. Native-competition-capable push devices
+receive links to the winning entry or, after deletion, its competition. API V1/V2
+map the additive cause without hydrating deleted drops. The EventBridge schedule
+is disabled on deployment and activated only after the dependent frontend is
+ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.

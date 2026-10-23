@@ -1,3 +1,4 @@
+import { ApiVotingCreditReleaseReason } from '@/api/generated/models/ApiVotingCreditReleaseReason';
 import { requestDeviceBadgeRefresh } from '@/api/push-notifications/push-notifications.service';
 import { assertUnreachable } from '../../../assertions';
 import { AuthenticationContext } from '../../../auth-context';
@@ -8,7 +9,10 @@ import {
   identityNotificationsDb,
   IdentityNotificationsDb
 } from '../../../notifications/identity-notifications.db';
-import { UserNotification } from '../../../notifications/user-notification.types';
+import {
+  VotingCreditsReturnedNotificationData,
+  UserNotification
+} from '../../../notifications/user-notification.types';
 import {
   userNotificationReader,
   UserNotificationsReader
@@ -420,6 +424,15 @@ export class NotificationsApiService {
     );
   }
 
+  private getVotingCreditsReturnedContext(
+    data: VotingCreditsReturnedNotificationData
+  ): ApiNotificationAdditionalContextV2 {
+    return {
+      ...data,
+      reason: enums.resolveOrThrow(ApiVotingCreditReleaseReason, data.reason)
+    };
+  }
+
   private getAllRelatedIds(notifications: UserNotification[]): {
     profileIds: string[];
     dropIds: string[];
@@ -501,6 +514,7 @@ export class NotificationsApiService {
             profileIds.push(notification.data.actor_id);
           break;
         }
+        case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
         case IdentityNotificationCause.COMPETITION_LIFECYCLE:
         case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
           break;
@@ -551,6 +565,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.DROP_QUOTED:
       case IdentityNotificationCause.DROP_REPLIED:
       case IdentityNotificationCause.MEME_COLLABORATION:
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
       case IdentityNotificationCause.ALL_DROPS:
@@ -570,6 +585,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.IDENTITY_REP:
       case IdentityNotificationCause.IDENTITY_NIC:
       case IdentityNotificationCause.MEME_COLLABORATION:
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
@@ -821,6 +837,18 @@ export class NotificationsApiService {
           additional_context: {}
         };
       }
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: null,
+          related_drops: [],
+          additional_context: this.getVotingCreditsReturnedContext(
+            notification.data
+          )
+        };
       case IdentityNotificationCause.MEME_COLLABORATION:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
         return {
@@ -1124,6 +1152,18 @@ export class NotificationsApiService {
           additional_context: {}
         };
       }
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: null,
+          related_drops: [],
+          additional_context: this.getVotingCreditsReturnedContext(
+            notification.data
+          )
+        };
       case IdentityNotificationCause.MEME_COLLABORATION:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
         return {

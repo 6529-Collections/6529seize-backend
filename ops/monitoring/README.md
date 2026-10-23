@@ -6,10 +6,13 @@ receipt table, archive and webhook secrets. No function uses the application VPC
 MySQL, Redis, root dependencies, Discord bot session or application secret loader.
 The preferred monitoring region differs from the production application region.
 
-Retained inert functions are listed in `retained-producers.json`, independently of the
-ordinary backend deploy catalog. They keep their existing structured log subscriptions,
-producer allowlists, relay permissions and Lambda platform alarms. This inventory never
-enables code deployment or removes retained application resources.
+`retained-producers.json` is empty after final competition migration retirement.
+The native decision and leaderboard units remain ordinary monitored services.
+The optional `retire-competition-registration` operation in
+`deploy-operational-monitoring.yml` removes only the retired producer from the
+fresh live template using the existing scoped OIDC/CloudFormation identities.
+It validates the complete change set before execution and preserves shared
+monitoring resources. See [the cleanup procedure](../../docs/competition-storage-cleanup.md).
 
 The infrastructure source is `scripts/templates.mjs`. `monitoring-{env}.json`,
 `source-{env}.json` and `coverage-{env}.json` are generated from the backend service
@@ -522,6 +525,68 @@ warning can close when contention ends, explicitly stating that business catch-u
 remains unverified; that cannot clear an incident about business processing.
 
 ### Initial business observations
+
+- `nftsLoop`: independently tracks `discovery`, `refresh`, `audit` and durable S3
+  `publication`. Only committed NFT updates or verified unchanged collections advance
+  progress; audit advances after an NFT's S3 checks and necessary queue handoffs.
+  In-memory discovery/fetches do not advance progress. Internally handled metadata
+  refresh failures stay pending with recovery unconfirmed. Each mode completes only
+  after its business pipeline, with its next existing schedule due time retained;
+  another mode cannot clear it. The ten-minute/hourly modes have matching freshness
+  allowances, while overdue due work still has the normal delay/stall budgets.
+  Publication surveys the writer before/after work, including failure: pending
+  outbox rows below the publisher's throwing threshold cannot disappear behind a
+  successful return. S3 generation itself remains protected by its separate queue
+  guards. Acceptance samples all three mode payloads; ordinary staging invocations
+  can exercise them without waiting for the hourly audit. The existing S3-uploader
+  production-only gate remains intact: staging audit/publication verify disabled,
+  idle handling, not real S3 checks or queue handoffs. This does not satisfy
+  production hourly-audit acceptance: after an authorized production rollout,
+  read-only observation of a natural scheduled audit must confirm its actual S3
+  checks and any necessary queue handoffs. Manual staging payload checks do not
+  replace that production observation.
+- `nextgenContractLoop`: compares the committed block checkpoint with the actual
+  RPC scan target, preserving the scanned block timestamp. Capped ranges stay
+  pending while their saved indexing checkpoint advances; they do not complete
+  reconciliation. No progress or completion is emitted from inside its transaction;
+  rollback and lock-retry attempts cannot establish recovery. Reconciliation is
+  independent of indexing: handled metadata/mint-data exceptions and missing
+  collection records leave it pending/unconfirmed even if blocks advance. A
+  capped scan cannot clear a remembered reconciliation incident. Intentionally
+  unrevealed metadata and thumbnails not yet produced by the separate generator
+  are not classified as failed indexing work.
+- `nftLinkMediaPreviewLoop`: one bounded writer survey after each batch (including
+  failure, skipped near the Lambda deadline) uses
+  original `media_preview_queued_at` for active PENDING/PROCESSING work and only
+  saved READY results for progress. A READY timestamp before the oldest active
+  queued work belongs to an earlier episode and is omitted on every survey;
+  an idle period cannot make newly queued work immediately appear stalled.
+  Lease acquisition, retries, discarded messages,
+  stale completion fences and terminal FAILED/SKIPPED results cannot fabricate
+  successful preview progress. A DB pending row does not prove SQS delivery/retry,
+  so nonempty backlog reports recovery unknown; this adapter does not promise
+  silent overlap for every preview throttle. Verified empty active backlog may
+  remain idle indefinitely without telemetry warnings, but a stale empty survey
+  cannot suppress a new active throttle. Queue age/DLQ/Error/OOM alarms remain
+  independent. Saved asset failures retain their application error: draining the
+  active queue does not recover those failures. Only errors rejected by an obsolete
+  completion fence become informational source logs, since that worker no longer
+  owns the result. Ordinary saved failures keep their existing error reporting.
+  The preview aggregate has no status index in the declared schema. It is one
+  writer survey per batch, with the existing 1-second statement/2-second owned
+  read budget, rather than an unbounded query. Before rollout, check its plan and
+  latency against live table cardinality; do not increase the budget to force a
+  scan through. An unavailable survey must remain unconfirmed. The publication
+  outbox already has status-leading indexes, so its pending-only aggregate does
+  not require scanning published history.
+
+For these three additional adapters, deploy the isolated monitoring artifact first
+(including generated operation policies), then `nftsLoop`, `nextgenContractLoop`
+and `nftLinkMediaPreviewLoop`. No source routing/template, API, frontend or schema
+change is required. Roll back these three producer artifacts before reverting the
+monitoring artifact; new operation labels require the matching receiver inventory.
+No execution settings change. A late scheduled start retains the overdue baseline:
+starting a run is not business progress or recovery.
 
 - `delegationsLoop`: reads the saved block timestamp best effort, records completed
   persistence/recalculation stages, and reports the actual scanned block timestamp

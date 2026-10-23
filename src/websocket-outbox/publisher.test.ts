@@ -13,7 +13,7 @@ const frame = {
   connectionId: 'c',
   message: 'frame'
 };
-function database(rows: object[]) {
+function database(rows: (object | null)[]) {
   const execute = jest.fn().mockResolvedValue([]);
   const bulkInsert = jest.fn().mockResolvedValue(undefined);
   const oneOrNull = jest.fn(async () => rows.shift() ?? null);
@@ -123,6 +123,33 @@ describe('WebSocket outbox publication', () => {
     expect(db.execute.mock.invocationCallOrder[deletion]).toBeGreaterThan(
       send.mock.invocationCallOrder[0]!
     );
+  });
+  it('rechecks after concurrent empty scans when committed progress exposes the next head', async () => {
+    // SKIP LOCKED scans can report empty while another transaction is finishing.
+    // Once the four current scans settle, the next same-connection head is claimable.
+    const db = database([
+      pending(),
+      null,
+      null,
+      null,
+      null,
+      { ...pending({ ...frame, message: 'second' }), id: 2 }
+    ]);
+    const send = jest.fn().mockResolvedValue(undefined);
+    expect(
+      await publishWebSocketOutbox(send, db as unknown as SqlExecutor)
+    ).toBe(2);
+    expect(send.mock.calls.map(([event]) => event.message)).toEqual([
+      'frame',
+      'second'
+    ]);
+  });
+  it('does not repeat empty scans without committed progress', async () => {
+    const db = database([]);
+    expect(
+      await publishWebSocketOutbox(jest.fn(), db as unknown as SqlExecutor)
+    ).toBe(0);
+    expect(db.oneOrNull).toHaveBeenCalledTimes(4);
   });
   it('retains and reports an intent whose drop cursor cannot be resolved safely', async () => {
     const db = database([

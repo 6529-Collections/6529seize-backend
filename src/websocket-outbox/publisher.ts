@@ -111,9 +111,17 @@ export async function publishWebSocketOutbox(
       if (!found) break;
     }
   };
-  const results = await Promise.allSettled(Array.from({ length: 4 }, worker));
-  const failure = results.find((result) => result.status === 'rejected');
-  if (failure?.status === 'rejected') throw failure.reason;
+  const drain = async (): Promise<void> => {
+    const previousPublished = published;
+    const results = await Promise.allSettled(Array.from({ length: 4 }, worker));
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+    // Concurrent SKIP LOCKED scans can briefly hide a newly exposed head.
+    // Recheck only after committed progress, within the same claim/deadline limits.
+    if (published > previousPublished && count < 100 && hasBudget())
+      return drain();
+  };
+  await drain();
   return published;
 }
 

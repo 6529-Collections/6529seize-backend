@@ -43,6 +43,7 @@ it('keeps queued failures retryable with headroom, retention and operational ala
   for (const producer of [
     'api',
     'pushNotificationsHandler',
+    'votingCreditReturnNotificationsLoop',
     'releaseNotesGenerationLoop',
     'helpBotReplyLoop',
     'nftLinkRefresherLoop',

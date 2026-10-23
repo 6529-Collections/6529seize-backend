@@ -5,15 +5,11 @@ import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_VOTES_TABLE,
   DROPS_TABLE,
-  DROP_VOTER_STATE_TABLE,
   RATINGS_TABLE,
   TDH_NFT_TABLE,
   IDENTITIES_TABLE
 } from '@/constants';
-import {
-  CompetitionEntryStatus,
-  CompetitionStorageMode
-} from '@/entities/ICompetition';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -34,7 +30,6 @@ const entry = {
 const native = {
   id: nativeId,
   wave_id: waveId,
-  storage_mode: CompetitionStorageMode.NATIVE,
   voting: {
     group_id: null,
     credit_type: WaveCreditType.TDH,
@@ -136,7 +131,6 @@ describeWithSeed(
         id,
         wave_id: waveId,
         legacy_wave_id: id === originalPrimaryId ? waveId : null,
-        storage_mode: 'NATIVE',
         execution_mode: 'ACTIVE',
         type: 'RANK',
         lifecycle: 'PUBLISHED',
@@ -188,19 +182,10 @@ describeWithSeed(
         signature: null,
         hide_link_preview: false
       }))
-    },
-    {
-      table: DROP_VOTER_STATE_TABLE,
-      rows: legacyDrops.map((item, index) => ({
-        voter_id: profileId,
-        drop_id: item.id,
-        wave_id: waveId,
-        votes: [91, -92, 1_000][index]
-      }))
     }
   ],
   () => {
-    it('isolates two native siblings and their native original primary from stale physical votes', async () => {
+    it('isolates two native siblings and their native original primary with obsolete vote storage absent', async () => {
       expect(
         await competitionCreditService.getBudget(native, profileId, entry, {})
       ).toMatchObject({

@@ -118,33 +118,6 @@ describeWithSeed(
   [
     withWaves([wave]),
     {
-      table: tables.WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-      rows: [
-        {
-          wave_id: wave.id,
-          wave_outcome_position: 1,
-          wave_outcome_distribution_item_position: 1,
-          description: 'First',
-          amount: null
-        }
-      ]
-    },
-    {
-      table: tables.WAVE_OUTCOMES_TABLE,
-      rows: [
-        {
-          wave_id: wave.id,
-          wave_outcome_position: 1,
-          type: 'MANUAL',
-          subtype: null,
-          description: 'Synthetic winner',
-          credit: null,
-          rep_category: null,
-          amount: null
-        }
-      ]
-    },
-    {
       table: tables.IDENTITY_SUBSCRIPTIONS_TABLE,
       rows: [
         {
@@ -179,64 +152,6 @@ describeWithSeed(
           drop_type: 'PARTICIPATORY',
           signature: 'retained-legacy-signature',
           hide_link_preview: false
-        }
-      ]
-    },
-    {
-      table: tables.DROP_RANK_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          vote: 7,
-          last_increased: start - day
-        }
-      ]
-    },
-    {
-      table: tables.DROP_VOTER_STATE_TABLE,
-      rows: [{ drop_id: dropId, wave_id: wave.id, voter_id: actor, votes: 7 }]
-    },
-    {
-      table: tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          voter_id: actor,
-          credit_spent: 7,
-          created_at: start - day
-        }
-      ]
-    },
-    {
-      table: tables.DROP_REAL_VOTE_IN_TIME_TABLE,
-      rows: [
-        { drop_id: dropId, wave_id: wave.id, timestamp: start - day, vote: 7 }
-      ]
-    },
-    {
-      table: tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          voter_id: actor,
-          timestamp: start - day,
-          vote: 7
-        }
-      ]
-    },
-    {
-      table: tables.WAVE_LEADERBOARD_ENTRIES_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          timestamp: start,
-          vote: 7,
-          vote_on_decision_time: 7,
-          over_threshold_since_ms: null
         }
       ]
     },
@@ -750,12 +665,6 @@ describeWithSeed(
           tables.COMPETITION_ENTRY_RUNTIME_TABLE,
           tables.COMPETITION_COMMANDS_TABLE,
           tables.COMPETITION_OUTBOX_TABLE,
-          tables.COMPETITION_LEGACY_MIRROR_PERMITS_TABLE,
-          tables.DROP_VOTER_STATE_TABLE,
-          tables.DROP_RANK_TABLE,
-          tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-          tables.DROP_REAL_VOTE_IN_TIME_TABLE,
-          tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
           tables.PROFILES_ACTIVITY_LOGS_TABLE,
           tables.PROFILE_LATEST_LOG_TABLE
         ])
