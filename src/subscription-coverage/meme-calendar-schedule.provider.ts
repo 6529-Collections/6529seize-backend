@@ -41,7 +41,11 @@ export class MemeCalendarScheduleProvider {
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  public async getSchedule(): Promise<SubscriptionCoverageSchedule> {
+  public getSchedule(): Promise<SubscriptionCoverageSchedule> {
+    return Promise.resolve().then(() => this.calculateSchedule());
+  }
+
+  private calculateSchedule(): SubscriptionCoverageSchedule {
     const now = this.now();
     if (
       this.cache &&

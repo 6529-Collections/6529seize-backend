@@ -314,9 +314,15 @@ function buildCurrentAnswer(now: Date, baseUrl: string): string {
 export class HelpBotCalendarService {
   constructor(private readonly now: () => Date = () => new Date()) {}
 
-  public async answer(
+  public answer(
     request: HelpBotCalendarAnswerRequest
   ): Promise<HelpBotCalendarAnswer | null> {
+    return Promise.resolve().then(() => this.buildAnswer(request));
+  }
+
+  private buildAnswer(
+    request: HelpBotCalendarAnswerRequest
+  ): HelpBotCalendarAnswer | null {
     const endpoint = resolveCalendarEndpoint(request);
     if (!endpoint) return null;
     const now = this.now();
