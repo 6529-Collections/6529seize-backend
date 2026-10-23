@@ -1,3 +1,5 @@
+import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
+import * as websocketOutbox from '@/websocket-outbox/outbox.db';
 jest.mock('@/competitions/legacy-competition-mutation', () => ({
   withLegacyPrimaryMutation: jest.fn(
     (_wave: string, _ctx: unknown, action: (owner: null) => unknown) =>
@@ -17,6 +19,16 @@ import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh
 import { DropType } from '@/entities/IDrop';
 import { DeleteDropUseCase } from './delete-drop.use-case';
 import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
+
+// Unit tests isolate persistence; transactional outbox inserts are covered by outbox.db.test.ts.
+beforeEach(() => {
+  jest
+    .spyOn(websocketOutbox, 'recordWebSocketEvents')
+    .mockResolvedValue(undefined);
+  jest
+    .spyOn(websocketOutbox, 'recordWebSocketEvent')
+    .mockResolvedValue(undefined);
+});
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -100,6 +112,34 @@ describe('DeleteDropUseCase', () => {
     };
   }
 
+  it('does not record a permanent deletion during edit delete-and-reinsert', async () => {
+    jest
+      .spyOn(memeCollaborationsService, 'closeDeleted')
+      .mockResolvedValue(undefined);
+    const capture = jest
+      .spyOn(websocketOutbox, 'recordWebSocketEvent')
+      .mockResolvedValue(undefined);
+    const { useCase, dropsDb } = createUseCase({
+      drop: {
+        id: 'edit-drop',
+        wave_id: 'wave-1',
+        author_id: 'author',
+        serial_no: 7
+      },
+      wave: { description_drop_id: 'edit-drop' }
+    });
+    await useCase.execute(
+      {
+        drop_id: 'edit-drop',
+        deleter_id: 'author',
+        deletion_purpose: 'UPDATE'
+      },
+      { connection: {} as any }
+    );
+    expect(dropsDb.deleteDropEntity).toHaveBeenCalled();
+    expect(dropsDb.insertDeletedDrop).not.toHaveBeenCalled();
+    expect(capture).not.toHaveBeenCalled();
+  });
   it.each([DropType.CHAT, DropType.PARTICIPATORY])(
     'only bypasses the competition owner for chat edit cleanup (%s)',
     async (dropType) => {
@@ -340,6 +380,15 @@ describe('DeleteDropUseCase', () => {
         created_at: 123,
         deleted_at: expect.any(Number)
       }),
+      { timer: undefined, connection }
+    );
+    expect(websocketOutbox.recordWebSocketEvent).toHaveBeenCalledWith(
+      {
+        type: 'drop-delete',
+        dropId: 'drop-1',
+        waveId: 'wave-1',
+        serialNo: 7
+      },
       { timer: undefined, connection }
     );
   });
@@ -733,6 +782,15 @@ describe('DeleteDropUseCase chat history batch', () => {
         ctx as never
       )
     ).resolves.toEqual(['reader']);
+    expect(websocketOutbox.recordWebSocketEvents).toHaveBeenCalledWith(
+      drops.map((drop) => ({
+        type: 'drop-delete',
+        dropId: drop.id,
+        waveId: drop.wave_id,
+        serialNo: drop.serial_no
+      })),
+      ctx
+    );
     expect(purgeDb.deleteBatch).toHaveBeenCalledTimes(1);
     expect(metrics).toHaveBeenCalledTimes(1);
     expect(scores).toHaveBeenCalledTimes(1);

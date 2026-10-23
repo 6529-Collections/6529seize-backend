@@ -35,6 +35,11 @@ import {
   withWebSocketOperationDiagnostics
 } from '@/api/ws/ws-operation-diagnostics';
 
+import {
+  DELIVERY_CAPABILITY_QUERY,
+  supportsDurableUpdates
+} from '@/api/ws/ws-shared';
+
 const serverlessHttp = require('serverless-http');
 const logger = Logger.get('API_HANDLER');
 const SET_COOKIE_HEADER = 'set-cookie';
@@ -229,6 +234,9 @@ async function wsHandler(
           identityId,
           connectionId: connectionId!,
           jwtExpiry,
+          durableUpdates: supportsDurableUpdates(
+            event.queryStringParameters?.[DELIVERY_CAPABILITY_QUERY]
+          ),
           ...(event.queryStringParameters?.recovery_capability ===
           WS_RECOVERY_CAPABILITY
             ? { recoveryCapable: true }

@@ -888,19 +888,13 @@ including older responses without a recognizable instance ID. A listingType-only
 response keeps those legacy assets and uses an unknown market state with a view
 action, without inferring a claim price.
 
-After persistence, a worker-specific notifier reads active WebSocket recipients
-once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
-five-second request limits, and a 15-second broadcast deadline. Notification
-failure cannot change a successful metadata refresh. The notification metadata
-read is bounded to five seconds; both notification queries also use a three-second
-database execution limit. Late read results cannot trigger delivery.
-Cancelled preview-queue sends leave their source retryable, without overwriting
-newer previews or active consumers. Expired or disconnected
-clients are skipped; normal WebSocket lifecycle handling retains ownership of
-stale-connection deletion. The API and other resolver callers retain their
-existing policy. Request IDs, message IDs, and stage durations connect these
-operations to CloudWatch invocation reports. Sentry's existing warning timer is
-unchanged. No API, schema, queue, or frontend deployment dependency is added.
+NFT resolution and preview transitions capture a WebSocket outbox event in the
+same database transaction. The post-commit notifier wakes `websocketOutboundHandler`;
+its scheduled fallback recovers a lost wakeup. The worker resolves current NFT
+state, materializes durable recipient jobs, and queues `MEDIA_LINK_UPDATED`
+frames for capable clients. Legacy connections retain immediate NFT broadcasts;
+a producer deadline cannot discard capable-client committed delivery intent.
+See [WebSocket outbound delivery](./websocket-outbound-delivery.md).
 
 ### NFT market depth and activity
 
@@ -1076,11 +1070,37 @@ If authentication or notification identity sync finds that the stored connection
 
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
 
-Outbound WebSocket delivery uses one policy in `src/ws-delivery/`, shared by the API, background senders and the worker-specific NFT-link notifier. Final 429s retain a hashed connection identifier and bounded SDK metadata in warnings and low-cardinality EMF metrics; they do not emit per-send operational errors. Shared Redis cooldowns use exponential backoff with jitter and a short endpoint pause for broad throttling. Normal healthy sends remain concurrent. Atomic leases apply only to recovery probes. Each connection has one content-free pending refresh marker; user content and credentials are never queued. A revision prevents an in-flight recovery from acknowledging newer missed updates.
+Terminal WebSocket send failures retain the existing operational error event with an allowlisted frame type, error category, final HTTP status and SDK attempt/retry-delay metadata. Diagnostics also include frame byte count, a UTC-day-scoped hash of the random connection ID, and a fixed SDK/queue-full/deadline failure label; they never include raw connection IDs, payloads or exception text. These describe failed sends, not confirmed client delivery.
+
+Persistent WebSocket-producing mutations write `websocket_outbox` in their business
+transaction. Post-commit SQS wakeups and a one-minute EventBridge schedule drive
+the existing `websocketOutboundHandler`. Resource events resolve current state
+and audience on the writer and atomically materialize recipient jobs; only SQS
+acceptance deletes a recipient job. Hashed per-resource/per-connection partitions
+prevent later jobs from overtaking a deferred head. Stable envelope IDs aid FIFO
+deduplication, while client-side canonical reconciliation and stale/deletion
+guards handle at-least-once delivery. Drop events carry compact canonical-fetch
+references. The encrypted FIFO consumer retains failed Gateway sends with
+randomized backoff and a monitored DLQ. Throttling never deletes a live connection.
+Outbox-age/missing-health alarms cover the database-to-queue boundary. Deploy
+`dbMigrationsLoop` before the worker and capability-aware API/producers. The
+frontend opts into durable delivery with `delivery_capability=durable_updates_v1`
+on every connection, including anonymous sessions. `ws_connections.durable_updates`
+defaults to false and remains fixed across reauthentication. Updated producers
+split legacy immediate Gateway delivery from capable-client outbox delivery;
+older clients and Core builds retain their legacy path until their frontend
+updates. Backend and frontend can therefore roll out independently. Previously
+accepted unmarked work retains its original delivery contract until drained. See
+[WebSocket outbound delivery](./websocket-outbound-delivery.md) for capture
+coverage, mixed-version rollout, limits and rollback.
+
+Direct WebSocket delivery uses the policy in `src/ws-delivery/`, shared by the API and background senders, including the legacy audience of the NFT-link notifier. Durable FIFO content uses the strict retry transport instead. Final 429s retain a hashed connection identifier and bounded SDK metadata in warnings and low-cardinality EMF metrics; they do not emit per-send operational errors. Shared Redis cooldowns use exponential backoff with jitter and a short endpoint pause for broad throttling. Normal healthy sends remain concurrent. Atomic leases apply only to recovery probes. Each connection has one content-free pending refresh marker; user content and credentials are never queued. A revision prevents an in-flight recovery from acknowledging newer missed updates.
 
 The scheduled `webSocketDeliveryLoop` drains due markers every minute, rechecks stored JWT expiry, and sends `RESYNC_REQUIRED`. It never replays competition outbox events, notifications or winner effects. Updated clients invalidate active HTTP queries after a staggered delay, including after reconnect and app/tab resume. Only an isolated persistently blocked listener that advertised `recovery_capability=resync_v1` may be closed, after observing healthy peers; confirmed transport closure precedes subscription deletion. Widespread failures inhibit that close policy. Existing 410 cleanup and error reporting for non-429 provider failures remain intact. Authentication and notification-identity acknowledgements have priority; legacy failures return an explicit failed outcome and never enqueue a substitute refresh marker.
 
 Rolling fleet counters distinguish widespread throttling, a persistent outage even with a single listener, and an old retry backlog. The recovery worker emits the `6529/WebSocketDelivery` Degraded, WorkerHealthy and Pending metrics. CloudWatch alarms report sustained degradation, worker failure/missing heartbeat and repeated recovery-store failures, with explicit operational guidance in the isolated monitor. Application metrics retain SDK retries, 429s and cooldown suppressions because API Gateway metrics may omit 429s. Redis operations are bounded; unavailable recovery state fails open for direct sends, returns an explicit failed result when retry persistence is unknown, and retains independent monitoring. Retry state is versioned, endpoint-scoped and expires after two hours and five minutes without activity; deploying the worker before producers and the additive frontend consumer preserves a compatible rollout.
+
+The durable FIFO worker bypasses the direct-send refresh policy: a cooldown or refresh marker never acknowledges its queued content. Direct legacy sends and recovery probes retain the shared refresh policy described above.
 
 ## API Boundary
 
