@@ -86,13 +86,14 @@ export function isMintEligibleUtcDay(utcDay: Date): boolean {
 const FIRST_MINT_DATE: Date = (() => {
   // find first Mon/Wed/Fri on/after 2023-01-01 that is inside the first phase
   const phase = HISTORIC_MINT_PHASES[0];
-  const d = startOfUtcDay(phase?.startUtcDay!);
-  while (+d <= +phase?.endUtcDay!) {
+  if (!phase) throw new Error('Historical mint phases are missing');
+  const d = startOfUtcDay(phase.startUtcDay);
+  while (+d <= +phase.endUtcDay) {
     if (isMintEligibleUtcDay(d)) return d;
     d.setUTCDate(d.getUTCDate() + 1);
   }
   // safety fallback (should never hit)
-  return nextMintDateOnOrAfter(phase?.startUtcDay);
+  return nextMintDateOnOrAfter(phase.startUtcDay);
 })();
 
 // ---- Mint schedule helpers (Mon/Wed/Fri only, by UTC weekday) ----
@@ -439,7 +440,9 @@ export function dateFromMintNumber(n: number): Date {
   }
   // Map #1..#47 to the exact historical instants in SZN1
   if (n >= 1 && n <= HISTORICAL_MINTS.length) {
-    return new Date(HISTORICAL_MINTS[n - 1]?.instantUtc!);
+    const historic = HISTORICAL_MINTS[n - 1];
+    if (!historic) throw new Error('Historical mint is missing');
+    return new Date(historic.instantUtc);
   }
 
   // #48 is FIRST_MINT_DATE (the first modeled 2023 mint day)
