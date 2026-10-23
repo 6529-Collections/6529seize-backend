@@ -10,18 +10,18 @@ components, queue delivery, signing boundary and exact scheduled groups.
 **Maintenance:** update this guide in the same change whenever configuration,
 deployment roles, signing permissions, reporting access or rollout behavior changes.
 Keep `.env.sample`, the workflow generator and the companion frontend aligned.
-All values below are operator-supplied; never commit real credentials or private keys.
+Wallet and reporting identities remain operator-supplied; never commit real credentials or private keys. Contract bindings, chain and gas policy are versioned.
 
 ## 1. Choose the environment
 
 | Deployment | Protected GitHub environment | AWS region | Ethereum chain |
 | ---------- | ---------------------------- | ----------- | --------------------------------------------------------------- |
-| Staging | `staging` | `eu-west-1` | Explicitly configured; use Sepolia `11155111` for test launches |
+| Staging | `staging` | `eu-west-1` | Sepolia `11155111`, selected by the reviewed staging policy |
 | Production | `production` | `us-east-1` | Mainnet `1` for real Memes launches |
 
 Use separate KMS keys, operational wallets, waves, profile configuration and spending
 limits for each environment. A profile or wave UUID must belong to the application's
-selected environment. Deploying to staging does not itself select Sepolia.
+selected environment. The deployment injects `DROP_FORGE_STAGE`; staging selects Sepolia and production selects mainnet. No feature-specific GitHub variable is needed.
 
 Runtime configuration is loaded from AWS Secrets Manager **`prod/lambdas` in the
 function's region**, including for staging. The API, launch worker and preparation
@@ -32,7 +32,7 @@ Changing a secret is not proof that every running instance has adopted it.
 Execution role references are versioned in `serverless-config/{staging,prod}/drop-forge.js`.
 No new GitHub environment variables or role secrets are needed. The existing
 GitHub deployment authentication stays in place.
-The handler stacks also inject `DROP_FORGE_SCHEDULE_GROUP` and
+The API, launch handler, distribution handler and Memes transaction indexer receive `DROP_FORGE_STAGE` from their deployment. Do not put it in Secrets Manager. The handler stacks also inject `DROP_FORGE_SCHEDULE_GROUP` and
 `DROP_FORGE_SCHEDULER_ROLE_ARN`; do not add these to the runtime secret. Queue
 names are fixed in the stacks and discovered through SQS, so no queue URL setting
 needs to be supplied manually.
@@ -205,37 +205,35 @@ Add the reporting and wallet values above to the regional runtime secret, plus:
 
 | Runtime setting | Meaning/default |
 | ----------------------------------- | ------------------------------------------------------------------------------------------- |
-| `DROP_FORGE_CHAIN_ID` | Explicit `1` or `11155111`; default is Sepolia |
-| `DROP_FORGE_CREATOR_CONTRACT` | Creator scope; existing Memes default on mainnet, required on Sepolia |
-| `DROP_FORGE_LAZY_CLAIM_CONTRACT` | Lazy-claim proxy; existing proxy default; verify for the selected chain |
-| `DROP_FORGE_PAYMENT_RECEIVER` | Mint proceeds receiver; existing default on mainnet, required on Sepolia |
 | `ETHEREUM_RPC_URL` | Existing mainnet HTTP(S) RPC configuration |
 | `ETHEREUM_SEPOLIA_RPC_URL` | Existing Sepolia HTTP(S) RPC configuration |
-| `DROP_FORGE_MAX_FEE_PER_GAS_WEI` | Required positive maximum fee per gas, in wei |
-| `DROP_FORGE_MAX_GAS_PER_TX` | Required positive transaction gas limit cap |
-| `DROP_FORGE_MAX_TX_COST_ETH`        | Required positive gas-cost cap, in ETH; artist principal has a separate cap                 |
 | `DROP_FORGE_MAX_ARTIST_PAYMENT_ETH` | Positive per-payment ETH cap, required before enabling Automatic artist payment; no default |
-| `DROP_FORGE_CONFIRMATIONS` | Default 12; allowed 2–64 |
-| `DROP_FORGE_CALENDAR_BASE_URL` | Calendar source; defaults to `https://6529.io`; choose the intended environment |
 | `DROP_FORGE_AUTOMATION_ENABLED` | Default disabled; exact `true` enables scheduled launch work |
 | `DROP_FORGE_PREPARATION_ENABLED` | Default disabled; exact `true` enables EMMA preparation/finalization |
-| `DROP_FORGE_RECOVERY_ENABLED` | Default disabled; allows recovery/reconciliation while scheduled work is disabled |
 
-Choose gas caps for the actual workload and network; there are no implicit spending
-defaults. Keep contract addresses, receiver, chain and signer consistent between API
-and worker and stable for each active ledger. Do not change them to work around a
-stuck transaction.
+Contract bindings, receiver, chain, confirmations and gas limits live in
+`src/drop-forge/drop-forge.policy.ts`: staging uses Sepolia's existing creator,
+production uses the Memes creator, and both pin the existing proxy and deployer
+payment receiver. The reviewed gas limits are 100 gwei per gas, 5,000,000 gas per
+transaction and 0.1 ETH maximum gas cost per transaction. Each limit applies
+independently; gas is estimated and these are ceilings, not amounts to spend.
+Change policy through a reviewed commit, not secret overrides. Artist payment
+principal still requires its own explicit positive cap before opting in.
+Retired chain/contract/receiver/gas/calendar/recovery override secrets have no effect;
+remove them from the regional secret during rollout. Keep signer and stage policy
+stable until outstanding transactions settle. An on-chain receiver mismatch blocks
+execution and raises an alert; automation never adopts or repairs it silently.
 
 The existing `JWT_SECRET` must match between API and preparation worker. EMMA uses
 the clicking administrator's authorization, encrypted for the durable job. **No
 EMMA service-account token or new encryption secret needs prepopulation.** Existing
 EMMA endpoint configuration and the operator's upstream permissions still apply.
 
-Initially set all three execution flags to `false`. With automation enabled,
-recovery/reconciliation is enabled too. With automation disabled, setting only
-`DROP_FORGE_RECOVERY_ENABLED=true` allows reconciliation and exceptional same-nonce
-recovery; reviewed fresh-nonce retry or remaining delivery still requires automation.
-Turning both launch flags off stops receipt reconciliation as well as new execution.
+Initially set both execution flags to `false`; the two persisted UI toggles
+also default Off. The preparation switch is independent of launch. Turning launch
+execution Off prevents new scheduled transactions, while queued signed intents
+continue receipt/replacement/cancellation reconciliation without a separate recovery
+flag. Reviewed fresh-nonce retries still require launch execution to be enabled.
 
 ## 6. Deploy disabled, then observe without contract-admin permission
 
@@ -259,7 +257,7 @@ fallback); the normal indexing path and existing reporting destinations are unch
 Explicit start/end backfills do not advance normal coverage. The ordinary contract
 history must already be complete; the marker does not certify or repair old data.
 The existing transaction discovery service indexes mainnet. It publishes coverage
-only for `DROP_FORGE_CHAIN_ID=1`, never under a Sepolia chain ID. Full post-mint
+only for the versioned production mainnet policy, never under a Sepolia chain ID. Full post-mint
 Sepolia exercises require an isolated, correctly populated Sepolia transaction
 index/database and its coverage checkpoint; the production indexer is not switched
 to a test chain by the launch settings. Without that evidence, test-chain post-mint

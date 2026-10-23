@@ -7,7 +7,12 @@ import { ApiDropForgeLaunch } from '@/api/generated/models/ApiDropForgeLaunch';
 import { ApiDropForgeSupplyEvidence } from '@/api/generated/models/ApiDropForgeSupplyEvidence';
 import { ApiDropForgePlanRequest } from '@/api/generated/models/ApiDropForgePlanRequest';
 import { getClaimsAdminWallets } from '@/api/seize-settings';
-import { EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
+import {
+  EthereumLaunchChain,
+  creatorAdmin
+} from '@/drop-forge/drop-forge.chain';
+import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
+import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { getDropForgeConfig } from '@/drop-forge/drop-forge.config';
 import {
   buildLaunchPlan,
@@ -135,7 +140,7 @@ export async function assertLaunchAccess(
   wallet: string | null,
   contract: string
 ): Promise<void> {
-  const config = getDropForgeConfig();
+  const config = getDropForgePolicy();
   if (config.creator.toLowerCase() !== contract.toLowerCase())
     throw new ForbiddenException(
       'Contract is outside the configured Drop Forge scope'
@@ -148,7 +153,13 @@ export async function assertLaunchAccess(
     )
   )
     return;
-  if (!(await new EthereumLaunchChain(config).assertAdmin(wallet)))
+  if (
+    !(await creatorAdmin(
+      getEthereumRpcProvider(config.chainId),
+      config.creator,
+      wallet
+    ))
+  )
     throw new ForbiddenException('Claims administrator access required');
 }
 export async function getLaunch(
@@ -157,7 +168,7 @@ export async function getLaunch(
   ctx: RequestContext
 ): Promise<LaunchRecord> {
   const record = await dropForgeRepository.find(
-    launchId(getDropForgeConfig().chainId, contract, claim),
+    launchId(getDropForgePolicy().chainId, contract, claim),
     ctx
   );
   if (!record) throw new NotFoundException('Launch not found');

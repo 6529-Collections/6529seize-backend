@@ -2588,3 +2588,16 @@ ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.
 ## Local Memes calendar
 
 Craft resolves claim seasons with the bundled, versioned Memes calendar instead of a frontend HTTP call. See [shared calendar maintenance](shared-memes-calendar.md) for canonical-source synchronization and Athens/DST policy. Existing unrelated calendar API clients retain their current behavior.
+
+### Drop Forge calendar and environment policy
+
+Launch planning imports the bundled [shared calendar](shared-memes-calendar.md), never
+a frontend endpoint. Accepted managed ledgers store the calendar version, timezone
+and UTC windows. Later code versions and Craft metadata updates preserve those windows.
+The manual Launch UI reads saved phase times for an accepted launch.
+
+`drop-forge.policy.ts` pins stage-specific network and contract bindings, receiver,
+confirmations and gas ceilings. Deployment supplies the stage to API/handlers/indexer;
+wallet/reporting identities remain in regional secrets. Launch and preparation keep
+independent environment switches and default-Off UI controls. Signed-intent recovery
+continues with launch execution Off. A receiver mismatch still blocks execution.

@@ -24,29 +24,24 @@ services need the same `DROPS_6529_MENTION_PROFILE_IDS` configuration.
 | Setting                                 | Meaning                                                                                                                                  |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `DROP_FORGE_AUTOMATION_ENABLED`  | Exact `true` enables launch tracking; the persisted Automatic launch switch separately permits execution                                 |
-| `DROP_FORGE_RECOVERY_ENABLED`           | Exact `true` permits exceptional replacement/cancellation and receipt recovery without enabling scheduled execution; disabled by default |
 | `DROP_FORGE_PREPARATION_ENABLED`        | Exact `true` enables queued EMMA preparation/finalization                                                                                |
-| `DROP_FORGE_CHAIN_ID`                   | Mainnet `1` or Sepolia `11155111`; defaults to Sepolia                                                                                   |
-| `DROP_FORGE_CREATOR_CONTRACT`           | Single configured creator scope; required on Sepolia                                                                                     |
-| `DROP_FORGE_LAZY_CLAIM_CONTRACT`        | Manifold proxy; defaults to the existing lazy-claim address                                                                              |
-| `DROP_FORGE_PAYMENT_RECEIVER`           | Fixed receiver frozen in each plan; required on Sepolia                                                                                  |
 | `DROP_FORGE_SIGNER_ADDRESS`             | Expected operational wallet address derived from the KMS public key                                                                      |
 | `DROP_FORGE_KMS_KEY_ID`                 | KMS asymmetric `ECC_SECG_P256K1`, `SIGN_VERIFY` key in the worker's AWS region                                                           |
 | `DROP_FORGE_OPERATIONS_WAVE_ID`         | Manually confirmed operations wave UUID                                                                                                  |
 | `DROP_FORGE_BOT_PROFILE_ID`             | Existing bot profile UUID, with permission to chat in that wave                                                                          |
 | `DROPS_6529_MENTION_PROFILE_IDS` | Manually supplied comma-separated profile UUIDs; all must exist and see the wave                                                         |
-| `DROP_FORGE_CONFIRMATIONS`              | Confirmations before advancing, default 12, permitted range 2–64                                                                         |
-| `DROP_FORGE_MAX_FEE_PER_GAS_WEI`        | Required positive fee cap                                                                                                                |
-| `DROP_FORGE_MAX_GAS_PER_TX`             | Required positive gas-limit cap                                                                                                          |
-| `DROP_FORGE_MAX_TX_COST_ETH`     | Required positive gas cost cap (artist payment principal is separate)                                                                    |
+
+The stage policy fixes network/creator/proxy/receiver, 12 confirmations, and gas
+ceilings (100 gwei, 5,000,000 gas, 0.1 ETH gas cost per transaction). The explicit
+`DROP_FORGE_MAX_ARTIST_PAYMENT_ETH` cap remains required before enabling payouts.
+Deployment supplies the stage; no manual stage secret or calendar URL is needed.
 
 Dedicated execution and Scheduler delivery roles are referenced by versioned
 stage configuration, not GitHub variables. The API publishes targeted SQS work;
 handlers consume only that job/claim and establish one-time phase/Research events
 and outstanding-work watchdogs. The preparation handler has no signing permission.
 See the setup guide for exact IAM grants, queue redrive and rollout ordering.
-`DROP_FORGE_CALENDAR_BASE_URL` defaults to `https://6529.io` and supplies the
-mint-day calendar used by the server to derive the fixed schedule.
+The server derives dates locally from the [shared Memes calendar](shared-memes-calendar.md). It stores the calendar version, Athens timezone and exact UTC phase timestamps when Launch is accepted. Metadata updates and newer calendar versions never recalculate an active launch.
 
 Mainnet creator and receiver defaults follow the existing Memes flow. No private
 wallet key is stored in the backend. The KMS public key must match the pinned
@@ -266,10 +261,10 @@ supply before signing. Research still derives its remaining target from fresh
 supply. Terminal launches are not restarted; coordinated manual proof can credit
 outstanding allocations instead. Every retry archives the settled nonce evidence.
 
-`DROP_FORGE_RECOVERY_ENABLED=true` enables the same handler's exceptional recovery
-without scheduling fresh phase actions. Fresh-nonce retry/delivery also requires
-`DROP_FORGE_AUTOMATION_ENABLED=true`. Both flags default to disabled. Provision
-keys, permission, gas budgets and reporting configuration before use. Empty RPC
+The targeted handler always reconciles existing signed intents when configured,
+including while execution is Off. No separate recovery flag is required.
+Fresh-nonce retry/delivery still requires `DROP_FORGE_AUTOMATION_ENABLED=true`.
+Provision keys, permission, reviewed stage policy and reporting configuration before use. Empty RPC
 results, a timeout, a missed deadline, pause or launch cancellation never prove
 that signed bytes are invalid. Never clear signer reservations through a DB reset.
 

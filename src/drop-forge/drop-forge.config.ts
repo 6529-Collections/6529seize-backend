@@ -32,8 +32,8 @@ function required(name: string): string {
   if (!value) throw new LaunchSafetyError(`${name} is required`);
   return value;
 }
-function address(name: string, fallback?: string): string {
-  const value = process.env[name]?.trim() || fallback || required(name);
+function address(name: string): string {
+  const value = required(name);
   if (!isAddress(value) || /^0x0{40}$/i.test(value))
     throw new LaunchSafetyError(`${name} must be a nonzero address`);
   return getAddress(value);

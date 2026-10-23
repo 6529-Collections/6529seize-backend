@@ -149,6 +149,20 @@ export function encodeLaunchAction(
   );
 }
 
+export async function creatorAdmin(
+  provider: JsonRpcProvider,
+  creator: string,
+  wallet: string
+): Promise<boolean> {
+  const result = await rpcWithDeadline(
+    provider.call({
+      to: creator,
+      data: adminAbi.encodeFunctionData('isAdmin', [wallet])
+    })
+  );
+  return adminAbi.decodeFunctionResult('isAdmin', result)[0] === true;
+}
+
 export class EthereumLaunchChain implements LaunchChain {
   constructor(
     private readonly config: DropForgeConfig,
@@ -263,14 +277,9 @@ export class EthereumLaunchChain implements LaunchChain {
     await rpcWithDeadline(this.provider.broadcastTransaction(raw));
   }
   async assertAdmin(wallet: string): Promise<boolean> {
-    const result = await rpcWithDeadline(
-      this.provider.call({
-        to: this.config.creator,
-        data: adminAbi.encodeFunctionData('isAdmin', [wallet])
-      })
-    );
-    return adminAbi.decodeFunctionResult('isAdmin', result)[0] === true;
+    return creatorAdmin(this.provider, this.config.creator, wallet);
   }
+
   async verify(
     data: LaunchData,
     action: LaunchAction,

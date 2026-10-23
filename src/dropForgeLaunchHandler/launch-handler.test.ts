@@ -28,6 +28,9 @@ jest.mock('@/drop-forge/drop-forge.chain', () => ({
 jest.mock('@/drop-forge/kms-signer', () => ({
   KmsTransactionSigner: jest.fn()
 }));
+jest.mock('@/drop-forge/drop-forge.preview', () => ({
+  recordPostMintPreview: jest.fn().mockResolvedValue(undefined)
+}));
 jest.mock('@/drop-forge/drop-forge.notifier', () => ({
   reportLaunchEvents: jest.fn().mockResolvedValue(true)
 }));
