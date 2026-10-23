@@ -30,3 +30,8 @@ Phase 0 17:40–18:20, Phase 1 18:30–18:50, Phase 2 19:00–19:20, then public
 
 The launch integration must save the version, timezone and exact UTC phase times
 when accepting a launch. A future calendar update must not move an accepted launch.
+
+Sync prunes only unchanged obsolete files owned by the previous manifest, preserving
+unrelated files and refusing local edits or paths outside the managed directory.
+Future skips, extras and reschedules apply in both numbering directions; a skipped
+day takes precedence over an extra-day override for the same date.
