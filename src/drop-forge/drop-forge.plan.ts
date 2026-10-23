@@ -16,6 +16,7 @@ import { RESEARCH_DELAY_SECONDS } from '@/drop-forge/drop-forge.research';
 const automaticPhases = new Set<string>(DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES);
 
 export interface LaunchPlanInput {
+  calendar?: { version: string; time_zone: string };
   initialize_at: number;
   phases: Array<{
     name: string;
@@ -285,6 +286,7 @@ export function buildLaunchPlan(
   );
   return {
     plan_version: DROP_FORGE_PLAN_VERSION,
+    ...(input.calendar ? { calendar: { ...input.calendar } } : {}),
     chain_id: config.chainId,
     contract: config.creator,
     claim_id: claim,

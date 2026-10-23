@@ -1,10 +1,6 @@
 import { getAddress, isAddress, parseEther } from 'ethers';
-import {
-  MANIFOLD_LAZY_CLAIM_CONTRACT,
-  MEMES_CONTRACT,
-  MEMES_DEPLOYER,
-  UUID_REGEX
-} from '@/constants';
+import { UUID_REGEX } from '@/constants';
+import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
 import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 
 export interface DropForgeReportingConfig {
@@ -25,8 +21,8 @@ export interface DropForgeConfig extends DropForgeReportingConfig {
   maxGas: bigint;
   maxCost: bigint;
 }
-export const recoveryEnabled = () =>
-  automationEnabled() || process.env.DROP_FORGE_RECOVERY_ENABLED === 'true';
+export const launchConfigured = () =>
+  Boolean(process.env.DROP_FORGE_KMS_KEY_ID?.trim());
 
 export const automationEnabled = () =>
   process.env.DROP_FORGE_AUTOMATION_ENABLED === 'true';
@@ -42,35 +38,12 @@ function address(name: string, fallback?: string): string {
     throw new LaunchSafetyError(`${name} must be a nonzero address`);
   return getAddress(value);
 }
-function integer(
-  name: string,
-  fallback: number,
-  min: number,
-  max: number
-): number {
-  const value = Number(process.env[name]?.trim() || fallback);
-  if (!Number.isSafeInteger(value) || value < min || value > max)
-    throw new LaunchSafetyError(`${name} is out of range`);
-  return value;
-}
 export function getDropForgeConfig(): DropForgeConfig {
-  const chainId = Number(process.env.DROP_FORGE_CHAIN_ID?.trim() || 11155111);
-  if (chainId !== 1 && chainId !== 11155111)
-    throw new LaunchSafetyError('Drop Forge supports mainnet and Sepolia only');
-  const { waveId, botId, recipientIds } = getDropForgeReportingConfig();
-  const maxFee = BigInt(required('DROP_FORGE_MAX_FEE_PER_GAS_WEI'));
-  const maxGas = BigInt(required('DROP_FORGE_MAX_GAS_PER_TX'));
-  const maxCost = parseEther(required('DROP_FORGE_MAX_TX_COST_ETH'));
-  if (maxFee <= BigInt(0) || maxGas <= BigInt(0) || maxCost <= BigInt(0))
-    throw new LaunchSafetyError('Gas budgets must be positive');
+  const policy = getDropForgePolicy();
+  const reporting = getDropForgeReportingConfig();
   return {
-    chainId,
-    waveId,
-    botId,
-    recipientIds,
-    maxFee,
-    maxGas,
-    maxCost,
+    ...policy,
+    ...reporting,
     ...(process.env.DROP_FORGE_MAX_ARTIST_PAYMENT_ETH?.trim()
       ? {
           maxArtistPayment: parseEther(
@@ -78,21 +51,8 @@ export function getDropForgeConfig(): DropForgeConfig {
           )
         }
       : {}),
-    creator: address(
-      'DROP_FORGE_CREATOR_CONTRACT',
-      chainId === 1 ? MEMES_CONTRACT : undefined
-    ),
-    proxy: address(
-      'DROP_FORGE_LAZY_CLAIM_CONTRACT',
-      MANIFOLD_LAZY_CLAIM_CONTRACT
-    ),
-    receiver: address(
-      'DROP_FORGE_PAYMENT_RECEIVER',
-      chainId === 1 ? MEMES_DEPLOYER : undefined
-    ),
     signer: address('DROP_FORGE_SIGNER_ADDRESS'),
-    keyId: required('DROP_FORGE_KMS_KEY_ID'),
-    confirmations: integer('DROP_FORGE_CONFIRMATIONS', 12, 2, 64)
+    keyId: required('DROP_FORGE_KMS_KEY_ID')
   };
 }
 

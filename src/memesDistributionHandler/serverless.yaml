@@ -20,6 +20,7 @@ functions:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
+      DROP_FORGE_STAGE: ${sls:stage}
       DROP_FORGE_SCHEDULE_GROUP: drop-forge-${sls:stage}
       DROP_FORGE_SCHEDULER_ROLE_ARN: ${file(../../serverless-config/${sls:stage}/drop-forge.js):schedulerRole}
       SENTRY_DSN: ${env:SENTRY_DSN}

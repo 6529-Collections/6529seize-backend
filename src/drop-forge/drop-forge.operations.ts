@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import {
   automationEnabled,
-  recoveryEnabled,
+  launchConfigured,
   getDropForgeConfig
 } from '@/drop-forge/drop-forge.config';
 import {
@@ -207,7 +207,7 @@ export async function coordinateManual(
   ctx: RequestContext
 ): Promise<string | null> {
   // Existing manual operations remain usable before automation is configured.
-  if (!recoveryEnabled()) return null;
+  if (!launchConfigured()) return null;
   const config = getDropForgeConfig();
   const chain = new EthereumLaunchChain(config);
   const id = launchId(config.chainId, config.creator, claim);

@@ -4,7 +4,7 @@ import { Logger } from '../logging';
 import { transactionsDiscoveryService } from '../transactions/transactions-discovery.service';
 import { doInDbContext } from '../secrets';
 import { numbers } from '../numbers';
-import { MEMES_CONTRACT } from '@/constants';
+import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
 import { TransactionScanCheckpoint } from '@/entities/ITransactionScanCheckpoint';
 import { checkpointTransactionScan } from '@/transactions/transaction-scan-checkpoint';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
@@ -32,19 +32,18 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         startingBlock,
         endBlock
       );
-      const creator = process.env.DROP_FORGE_CREATOR_CONTRACT || MEMES_CONTRACT;
-      const chain = Number(process.env.DROP_FORGE_CHAIN_ID || 11155111);
+      const policy = process.env.DROP_FORGE_STAGE ? getDropForgePolicy() : null;
       if (
         process.env.DROP_FORGE_AUTOMATION_ENABLED === 'true' &&
-        chain === 1 &&
-        contract.toLowerCase() === creator.toLowerCase() &&
+        policy?.chainId === 1 &&
+        contract.toLowerCase() === policy.creator.toLowerCase() &&
         startingBlock === null &&
         endBlock === null
       ) {
         await checkpointTransactionScan(
-          chain,
+          policy.chainId,
           contract,
-          getEthereumRpcProvider(chain),
+          getEthereumRpcProvider(policy.chainId),
           (start, end) =>
             transactionsDiscoveryService.getAndSaveTransactionsForContract(
               contract,

@@ -1,7 +1,6 @@
 import type { SQSHandler } from 'aws-lambda';
 import {
   automationEnabled,
-  recoveryEnabled,
   getDropForgeConfig
 } from '@/drop-forge/drop-forge.config';
 import { EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
@@ -34,10 +33,6 @@ export async function runLaunchDelivery(
     await processForgeFunding(getDropForgeConfig(), delivery);
     return;
   }
-  if (!recoveryEnabled())
-    throw new Error(
-      'Launch execution and recovery are disabled; queued work retained'
-    );
   const record = await dropForgeRepository.find(delivery.id, {});
   if (!record || record.revision < delivery.revision)
     throw new Error('Launch request has not committed');

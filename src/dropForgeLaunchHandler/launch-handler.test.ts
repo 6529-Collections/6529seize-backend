@@ -50,7 +50,6 @@ beforeEach(() => {
   };
   jest.spyOn(config, 'getDropForgeConfig').mockReturnValue(testConfig);
   jest.spyOn(config, 'automationEnabled').mockReturnValue(true);
-  jest.spyOn(config, 'recoveryEnabled').mockReturnValue(true);
   jest
     .spyOn(dropForgeRepository, 'find')
     .mockImplementation(async () => current);
@@ -126,8 +125,12 @@ it('does not acknowledge a reporting failure or silently discard disabled queued
     runLaunchDelivery({ id: current.id, revision: 5 })
   ).rejects.toThrow('wave delivery');
   expect(dispatch.continueLaunch).not.toHaveBeenCalled();
-  jest.mocked(config.recoveryEnabled).mockReturnValue(false);
-  await expect(
-    runLaunchDelivery({ id: current.id, revision: 5 })
-  ).rejects.toThrow('disabled');
+  jest.mocked(config.automationEnabled).mockReturnValue(false);
+  await runLaunchDelivery({ id: current.id, revision: 5 });
+  expect(dispatch.continueLaunch).toHaveBeenLastCalledWith(
+    current,
+    expect.any(Number),
+    false,
+    expect.any(Object)
+  );
 });

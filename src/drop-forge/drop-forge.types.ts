@@ -98,6 +98,7 @@ export interface LaunchEvent {
   drop_id?: string;
 }
 export interface LaunchData {
+  calendar?: { version: string; time_zone: string };
   post_mint_preview?: {
     checked_at: number;
     error?: string;
