@@ -298,8 +298,10 @@ exercised in local validation.
 
 Deploy `dbMigrationsLoop` for entity sync, then `transactionsLoop` for finalized
 creator scan coverage, then `dropForgeLaunchHandler`, then
-`memesDistributionHandler`, then `api`, with both flags disabled,
-then the dependent frontend controls. The new handlers create their own wave
+`memesDistributionHandler`, then `claimsBuilder` and `api`, with both flags disabled.
+Apply the shared-calendar foundation to `subscriptionsDaily` and `helpBotReplyLoop`
+as documented in [calendar maintenance](shared-memes-calendar.md), then deploy
+the dependent frontend controls. The new handlers create their own wave
 reports; existing reporting services do not need redeployment for these alerts.
 Make `DROPS_6529_MENTION_PROFILE_IDS` available to the API and both handlers.
 Existing subscription alerts retain their `@devs6529` mention and configured wave.

@@ -292,8 +292,16 @@ AWS role/key provisioning and runtime configuration first, then deploy sequentia
 | 2 | Existing `transactionsLoop` service | The configured creator consumer completes normal discovery and bounded finalized scans, including empty blocks; inspect its durable coverage before enabling post-mint execution |
 | 3 | New `dropForgeLaunchHandler` | Launch Lambda, queue/DLQ, alarms and shared Scheduler group |
 | 4 | New `memesDistributionHandler` | Distribution Lambda, queue/DLQ and alarms; watchdogs use the group from step 3 |
-| 5 | Existing `api` | Endpoints, targeted dispatch, mint-accounting evidence and mention resolution |
-| 6 | Frontend | Processing, Craft controls, execution/recovery and evidence display |
+| 5 | Existing `claimsBuilder` | Local shared-calendar season calculation for new claims |
+| 6 | Existing `api` | Endpoints, targeted dispatch, mint-accounting evidence, local subscription coverage and mention resolution |
+| 7 | Existing `subscriptionsDaily` | Local calendar forecasts and coverage reconciliation |
+| 8 | Existing `helpBotReplyLoop` | Local next/current/specific-mint calendar answers |
+| 9 | Frontend | Processing, Craft controls, execution/recovery and evidence display |
+
+The `claimsBuilder`, `subscriptionsDaily` and `helpBotReplyLoop` entries above
+apply the paired shared-calendar foundation; they are not reporting dependencies
+for `@drops6529`. See [calendar maintenance](shared-memes-calendar.md) for retired
+network settings and year-round timing coverage.
 
 Apply the generated monitoring stack updates before enabling either workflow.
 No additional existing reporting-consumer redeploy is required for the new
