@@ -84,7 +84,7 @@ export function getUpcomingMintsForCurrentOrNextSeason(
   const start = getSeasonStartDate(idx);
   const end = addMonths(start, 2);
 
-  let current = getUpcomingMintsBetween(start, end, now);
+  const current = getUpcomingMintsBetween(start, end, now);
   if (current.rows.length > 0) {
     return current;
   }
