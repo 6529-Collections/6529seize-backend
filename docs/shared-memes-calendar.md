@@ -63,5 +63,8 @@ Year-round regression coverage includes all twelve months, both DST transitions,
 exact opening/closing instants, midnight carry-over, year/season boundaries,
 leap day, historical reschedules, and different host timezones. A five-year sweep
 checks every regular mint date and Athens phase window from 2026 through 2030.
+Skips change the next mint date without extending an existing mint beyond its
+next-day close. Internal query calculations retain the asynchronous consumer API
+and rejected-error behavior.
 Timezone rules come from the runtime's IANA data; keep deployed Node/ICU data
 current if governments change timezone law.
