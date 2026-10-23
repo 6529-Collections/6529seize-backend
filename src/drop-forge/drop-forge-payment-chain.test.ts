@@ -55,6 +55,13 @@ function setup(cap = BigInt(1000)) {
     provider as unknown as JsonRpcProvider
   );
   jest.spyOn(chain, 'now').mockResolvedValue(action.due + 60);
+  jest.spyOn(chain, 'verifiedSupply').mockResolvedValue({
+    status: 'VERIFIED',
+    checked_at: 1,
+    block_number: 100,
+    rpc_total: 10,
+    db_total: 10
+  });
   jest.spyOn(payment, 'artistPaymentQuote').mockResolvedValue({
     recipient,
     amount_wei: '1000',

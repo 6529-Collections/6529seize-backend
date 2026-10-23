@@ -24,6 +24,7 @@ import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
 import { processForgeFunding } from '@/drop-forge/drop-forge.funding';
 import { doInDbContext } from '@/secrets';
 import { wrapLambdaHandler } from '@/sentry.context';
+import { recordPostMintPreview } from '@/drop-forge/drop-forge.preview';
 
 const logger = Logger.get('DROP_FORGE_LAUNCH_HANDLER');
 export async function runLaunchDelivery(
@@ -52,6 +53,14 @@ export async function runLaunchDelivery(
     now
   );
   try {
+    if (automationEnabled())
+      await recordPostMintPreview(
+        record.id,
+        config,
+        dropForgeRepository,
+        chain,
+        now
+      );
     const worker = new DropForgeWorker(
       config,
       dropForgeRepository,

@@ -1,4 +1,4 @@
-import { JsonRpcProvider, Transaction, ZeroAddress } from 'ethers';
+import { Interface, JsonRpcProvider, Transaction, ZeroAddress } from 'ethers';
 import { claimAbi, EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
 import {
   testConfig,
@@ -58,6 +58,19 @@ function setup(total = 287, edition = 305) {
     provider as unknown as JsonRpcProvider
   );
   jest.spyOn(chain, 'now').mockResolvedValue(action.due);
+  jest
+    .spyOn(chain, 'verifiedSupply')
+    .mockImplementation(async (_data, current) => {
+      const evidence = {
+        status: 'VERIFIED' as const,
+        checked_at: 1,
+        block_number: 100,
+        rpc_total: Number(tuple[0]),
+        db_total: Number(tuple[0])
+      };
+      if (current) current.supply_evidence = evidence;
+      return evidence;
+    });
   return { chain, data, action, tuple, provider };
 }
 it('prepares exactly eighteen research tokens for a 305 edition with 287 already minted', async () => {
@@ -106,5 +119,79 @@ it('keeps Research from consuming supply owed to outstanding phase allocations',
   data.actions[1].state = 'PENDING';
   await expect(chain.completed(data, action)).rejects.toThrow(
     'outstanding subscriber'
+  );
+});
+
+it('never treats a high RPC total as completed when shared DB verification fails', async () => {
+  const f = setup(305, 305);
+  jest
+    .spyOn(f.chain, 'verifiedSupply')
+    .mockRejectedValue(new Error('database mismatch'));
+  await expect(f.chain.completed(f.data, f.action)).rejects.toThrow(
+    'database mismatch'
+  );
+  expect(f.provider.estimateGas).not.toHaveBeenCalled();
+});
+
+it('checks exact Research receipt allocations and finalized indexed supply before settlement', async () => {
+  const { chain, data, action, tuple, provider } = setup();
+  await chain.prepare(data, action);
+  tuple[0] = 305;
+  const receipt = {
+    status: 1,
+    blockHash: 'block',
+    blockNumber: 101,
+    confirmations: 12
+  };
+  const events = new Interface([
+    'event TransferSingle(address indexed operator,address indexed from,address indexed to,uint256 id,uint256 value)'
+  ]);
+  const log = (recipient: string) => ({
+    address: data.contract,
+    ...events.encodeEventLog('TransferSingle', [
+      data.proxy,
+      ZeroAddress,
+      recipient,
+      data.claim_id,
+      18
+    ])
+  });
+  const getTransactionReceipt = jest.fn().mockResolvedValue({
+    blockHash: 'block',
+    logs: [log(RESEARCH_AIRDROP_ADDRESS)]
+  });
+  Object.assign(provider, { getTransactionReceipt });
+  await expect(
+    chain.verifySettlement(data, action, 'hash', receipt)
+  ).resolves.toBeUndefined();
+  expect(chain.verifiedSupply).toHaveBeenLastCalledWith(data, action, 101);
+  getTransactionReceipt.mockResolvedValue({
+    blockHash: 'block',
+    logs: [log(data.signer)]
+  });
+  await expect(
+    chain.verifySettlement(data, action, 'hash', receipt)
+  ).rejects.toThrow('allocations');
+  getTransactionReceipt.mockResolvedValue({
+    blockHash: 'block',
+    logs: [log(RESEARCH_AIRDROP_ADDRESS)]
+  });
+  tuple[0] = 304;
+  await expect(
+    chain.verifySettlement(data, action, 'hash', receipt)
+  ).rejects.toThrow('expected delivered total');
+});
+
+it('requires shared accounting for late Research delivery and speed-up', async () => {
+  const { chain, data, action } = setup();
+  action.late_delivery = true;
+  jest
+    .spyOn(chain, 'verifiedSupply')
+    .mockRejectedValue(new Error('accounting unavailable'));
+  await expect(chain.verify(data, action)).rejects.toThrow(
+    'accounting unavailable'
+  );
+  await expect(chain.prepareRecovery(data, action, 'SPEED_UP')).rejects.toThrow(
+    'accounting unavailable'
   );
 });

@@ -1,4 +1,7 @@
-import { formatLaunchReport } from '@/drop-forge/drop-forge.reports';
+import {
+  formatLaunchReport,
+  formatOperationsPost
+} from '@/drop-forge/drop-forge.reports';
 import { testLaunchData } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchAction } from '@/drop-forge/drop-forge.types';
 
@@ -49,4 +52,22 @@ it('reports a partial airdrop batch before reporting the group as completed', ()
   expect(formatLaunchReport(data, event)).toContain(
     'Artist airdrops completed.'
   );
+});
+
+it.each([
+  ['Confirmed x', false, '✅'],
+  ['Signed x', false, '✍️'],
+  ['Reserved x', false, '⏳'],
+  ['Skipped x', false, '⏭️'],
+  ['failed', true, '⚠️']
+])('keeps %s posts compact with a type emoji', (content, error, emoji) => {
+  const message = formatLaunchReport(testLaunchData(), {
+    id: 'event',
+    at: 1,
+    content,
+    error
+  });
+  expect(message.startsWith(emoji)).toBe(true);
+  expect(message).not.toMatch(/^#/m);
+  expect(formatOperationsPost(message, error)).toBe(message);
 });

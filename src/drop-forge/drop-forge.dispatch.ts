@@ -14,6 +14,7 @@ import { LaunchRecord, LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { launchGroup } from '@/drop-forge/drop-forge.groups';
 import { disabledActionReason } from '@/drop-forge/drop-forge.settings';
 import { DropForgeSettingsEntity } from '@/entities/IDropForgeSettings';
+import { POST_MINT_PREVIEW_DELAY } from '@/drop-forge/drop-forge.preview';
 
 const scheduler = new SchedulerClient({});
 const sqs = new SQSClient({});
@@ -81,6 +82,9 @@ export async function scheduleLaunchGroups(
   now: number
 ): Promise<void> {
   const groups = new Map<string, number>();
+  const previewDue = record.data.phases.at(-1)!.end + POST_MINT_PREVIEW_DELAY;
+  if (!record.data.post_mint_preview && previewDue > now)
+    groups.set('post-mint-preview', previewDue);
   for (const action of record.data.actions) {
     if (action.state !== 'CONFIRMED' && action.due > now)
       groups.set(
@@ -175,6 +179,29 @@ export async function continueLaunch(
     await wakeDropForge(
       { id: record.id, revision: record.revision },
       false,
-      60
+      continuationDelay(actions, now)
     );
+}
+
+function continuationDelay(
+  actions: LaunchRecord['data']['actions'],
+  now: number
+): number {
+  const signed = actions.filter((action) =>
+    ['SIGNED', 'RESERVED'].includes(action.state)
+  );
+  const due = signed.length
+    ? signed
+    : actions.filter(
+        (action) => action.state !== 'CONFIRMED' && action.due <= now
+      );
+  if (
+    !due.length ||
+    due.some((action) => !action.retry_at || action.retry_at <= now)
+  )
+    return 60;
+  return Math.min(
+    900,
+    Math.max(1, Math.min(...due.map((action) => action.retry_at!)) - now)
+  );
 }

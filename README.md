@@ -503,3 +503,7 @@ The admin panel repo is located [here](https://github.com/6529-Collections/6529s
 Neither has an always-on recurring trigger. See the maintained
 [setup and rollout guide](docs/drop-forge-auto-launch-setup.md) before enabling them;
 it covers versioned IAM roles, queues, one-time schedules, secrets and recovery.
+Post-mint work includes a one-time 17:15 preview and fresh RPC/database agreement
+checks for 18:00 Research and optional Pay Artist. Deploy the transaction-indexing
+coverage prerequisite in the guide. All new posts use only the dedicated operations
+wave; existing mint-announcement waves are unchanged.

@@ -316,6 +316,8 @@ export const DROP_FORGE_JOBS_TABLE = 'drop_forge_jobs';
 export const DROP_FORGE_EVIDENCE_TABLE = 'drop_forge_evidence';
 export const DROP_FORGE_SETTINGS_TABLE = 'drop_forge_settings';
 export const DROP_FORGE_FUNDING_TABLE = 'drop_forge_funding';
+export const TRANSACTION_SCAN_CHECKPOINTS_TABLE =
+  'transaction_scan_checkpoints';
 export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
 export const MEME_COLLABORATION_INVITATIONS_TABLE =
   'meme_collaboration_invitations';

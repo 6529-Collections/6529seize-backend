@@ -42,6 +42,10 @@ export interface RecoveryLedger {
   block_hash?: string;
 }
 export interface LaunchAction {
+  supply_evidence?: SupplyEvidence;
+  supply_retry_count?: number;
+  settlement_error?: string;
+  settlement_retry_at?: number;
   disabled_revision?: number;
   disabled_reason?: string;
   payment?: {
@@ -86,6 +90,7 @@ export interface LaunchAction {
   block_hash?: string;
 }
 export interface LaunchEvent {
+  formatted?: boolean;
   id: string;
   content: string;
   error: boolean;
@@ -93,6 +98,11 @@ export interface LaunchEvent {
   drop_id?: string;
 }
 export interface LaunchData {
+  post_mint_preview?: {
+    checked_at: number;
+    error?: string;
+    evidence?: SupplyEvidence;
+  };
   plan_version?: number;
   managed?: boolean;
   completion_flags?: string[];
@@ -153,6 +163,28 @@ export class LaunchSafetyError extends Error {
 export class LaunchRevisionConflict extends LaunchSafetyError {}
 
 export class LaunchRpcUnavailableError extends LaunchSafetyError {}
+
+export interface SupplyEvidence {
+  status: 'VERIFIED' | 'WAITING';
+  checked_at: number;
+  block_number?: number;
+  block_hash?: string;
+  block_timestamp?: number;
+  indexed_through?: number;
+  rpc_total?: number;
+  db_total?: number;
+  reason?: string;
+}
+
+export class SupplyEvidenceError extends LaunchSafetyError {
+  constructor(
+    public readonly evidence: SupplyEvidence,
+    reason: string
+  ) {
+    super(reason);
+    evidence.reason = reason;
+  }
+}
 
 export function assertPhaseScopedPlan(data: LaunchData): void {
   if (data.plan_version !== DROP_FORGE_PLAN_VERSION)

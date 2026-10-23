@@ -10,6 +10,7 @@ import {
   testLaunchData
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
+import { DROPS_6529_MENTION } from '@/constants/mentions';
 jest.mock('@/drops/create-or-update-drop.use-case', () => ({
   createOrUpdateDrop: { execute: jest.fn() }
 }));
@@ -55,6 +56,40 @@ beforeEach(() => {
   });
 });
 afterEach(() => jest.restoreAllMocks());
+it('posts new preview output only in the operations wave and tags only failures', async () => {
+  const previous = process.env.DEPLOYER_ANNOUNCEMENTS_WAVE_IDS;
+  process.env.DEPLOYER_ANNOUNCEMENTS_WAVE_IDS = 'unrelated-announcement-wave';
+  records[0].data.events = [];
+  addLaunchEvent(
+    records[0],
+    '🔔 **Public mint closed**\n\nResearch: 18 editions'
+  );
+  records[0].data.events[0].formatted = true;
+  addLaunchEvent(records[0], 'Supply mismatch', true);
+  jest.mocked(createOrUpdateDrop.execute).mockResolvedValue({
+    drop_id: 'posted',
+    dm_unread_recipient_ids: [],
+    pending_push_notification_ids: []
+  });
+  try {
+    await reportLaunchEvents(testConfig, repository, 'launch');
+    const messages = jest
+      .mocked(createOrUpdateDrop.execute)
+      .mock.calls.map(([request]) => request);
+    expect(messages.map((message) => message.wave_id)).toEqual([
+      testConfig.waveId,
+      testConfig.waveId
+    ]);
+    expect(messages[0].parts[0].content).toBe(
+      '🔔 **Public mint closed**\n\nResearch: 18 editions'
+    );
+    expect(messages[1].parts[0].content).toContain(DROPS_6529_MENTION);
+  } finally {
+    if (previous === undefined)
+      delete process.env.DEPLOYER_ANNOUNCEMENTS_WAVE_IDS;
+    else process.env.DEPLOYER_ANNOUNCEMENTS_WAVE_IDS = previous;
+  }
+});
 it('posts events in order and commits their acknowledgements before pushing notifications', async () => {
   type Report = Awaited<ReturnType<typeof createOrUpdateDrop.execute>>;
   let release!: (report: Report) => void;

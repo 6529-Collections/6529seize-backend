@@ -4,6 +4,7 @@ import { ApiDropForgeRecoveryAttempt } from '@/api/generated/models/ApiDropForge
 import { originalRecovery } from '@/drop-forge/drop-forge.recovery';
 import { ApiDropForgeControlRequest } from '@/api/generated/models/ApiDropForgeControlRequest';
 import { ApiDropForgeLaunch } from '@/api/generated/models/ApiDropForgeLaunch';
+import { ApiDropForgeSupplyEvidence } from '@/api/generated/models/ApiDropForgeSupplyEvidence';
 import { ApiDropForgePlanRequest } from '@/api/generated/models/ApiDropForgePlanRequest';
 import { getClaimsAdminWallets } from '@/api/seize-settings';
 import { EthereumLaunchChain } from '@/drop-forge/drop-forge.chain';
@@ -64,7 +65,8 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
         retry_at,
         disabled_reason,
         payment,
-        observed
+        observed,
+        supply_evidence
       }) => {
         const inspection =
           recovery ??
@@ -97,6 +99,13 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
               }
             : undefined,
           id,
+          supply_evidence: supply_evidence
+            ? {
+                ...supply_evidence,
+                status:
+                  supply_evidence.status as ApiDropForgeSupplyEvidence['status']
+              }
+            : undefined,
           disabled_reason: disabled_reason ?? null,
           payment_recipient: payment?.recipient ?? null,
           payment_amount_wei: payment?.amount_wei ?? null,

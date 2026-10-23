@@ -10,6 +10,7 @@ import {
 } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
+import { DbPoolName } from '@/db-query.options';
 import {
   LaunchAction,
   LaunchData,
@@ -55,7 +56,10 @@ export async function artistPaymentQuote(
     throw new LaunchSafetyError(
       'Artist accounting requires the standard fixed mint price'
     );
-  const options = { wrappedConnection: ctx.connection };
+  const options = {
+    wrappedConnection: ctx.connection,
+    forcePool: DbPoolName.WRITE
+  };
   const params = {
     contract: data.contract.toLowerCase(),
     claim: data.claim_id,
@@ -73,7 +77,7 @@ export async function artistPaymentQuote(
       'Mint indexing has not reconciled confirmed on-chain supply; artist payment deferred'
     );
   const subscriptions = await sqlExecutor.oneOrNull<{ count: string }>(
-    `SELECT COALESCE(SUM(count), 0) AS count FROM ${SUBSCRIPTIONS_REDEEMED_TABLE} WHERE contract = :contract AND token_id = :claim`,
+    `SELECT COALESCE(SUM(sr.count), 0) AS count FROM ${SUBSCRIPTIONS_REDEEMED_TABLE} sr WHERE sr.contract = :contract AND sr.token_id = :claim AND EXISTS (SELECT 1 FROM ${TRANSACTIONS_TABLE} t WHERE t.transaction = sr.transaction AND t.contract = sr.contract AND t.token_id = sr.token_id AND t.block <= :block)`,
     params,
     options
   );

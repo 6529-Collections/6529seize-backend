@@ -7,7 +7,11 @@ import {
   encodeLaunchAction,
   LaunchChain
 } from '@/drop-forge/drop-forge.chain';
-import { LaunchRecord } from '@/drop-forge/drop-forge.types';
+import {
+  LaunchRecord,
+  LaunchSafetyError,
+  SupplyEvidenceError
+} from '@/drop-forge/drop-forge.types';
 import { buildLaunchPlan } from '@/drop-forge/drop-forge.plan';
 import {
   testConfig,
@@ -62,6 +66,7 @@ function setup(total = 287) {
   let now = research.due - 1;
   let receipt = false;
   const chain = {
+    verifySettlement: jest.fn().mockResolvedValue(undefined),
     now: jest.fn(async () => now),
     nonce: jest.fn().mockResolvedValue(0),
     completed: jest.fn(async () =>
@@ -128,6 +133,11 @@ function setup(total = 287) {
     signer,
     chain,
     acknowledge,
+    advance: (seconds: number) => {
+      now += seconds;
+    },
+    restart: () =>
+      new DropForgeWorker(config, repository, chain as LaunchChain, signer),
     start: () => {
       now = research.due;
     },
@@ -179,6 +189,58 @@ it('waits for Research instead of finishing at the Public update, then signs one
   await worker.tick();
   expect(record.state).toBe('COMPLETED');
   expect(signer.sign).toHaveBeenCalledTimes(1);
+});
+
+it('retains a mined Research intent across indexing lag and restart without signing or broadcasting another delivery', async () => {
+  const f = setup();
+  f.start();
+  await f.worker.tick();
+  f.acknowledge();
+  await f.worker.tick();
+  const hash = f.research.hash;
+  f.confirm();
+  f.advance(61);
+  f.chain.verifySettlement.mockRejectedValueOnce(
+    new SupplyEvidenceError(
+      { status: 'WAITING', checked_at: 1, rpc_total: 305, db_total: 287 },
+      'Indexing lag'
+    )
+  );
+  f.acknowledge();
+  await f.restart().tick();
+  expect(f.research.state).toBe('SIGNED');
+  expect(f.pending.launch_id).toBe(f.record.id);
+  expect(f.research.hash).toBe(hash);
+  f.advance(61);
+  f.acknowledge();
+  await f.restart().tick();
+  expect(f.research.state).toBe('CONFIRMED');
+  expect(f.pending.launch_id).toBeNull();
+  expect(f.signer.sign).toHaveBeenCalledTimes(1);
+  expect(f.chain.broadcast).toHaveBeenCalledTimes(1);
+});
+
+it('blocks unexpected confirmed delivery evidence and keeps its reservation for operator recovery', async () => {
+  const f = setup();
+  f.start();
+  await f.worker.tick();
+  f.acknowledge();
+  await f.worker.tick();
+  f.confirm();
+  f.advance(61);
+  f.chain.verifySettlement.mockRejectedValue(
+    new LaunchSafetyError('Wrong research mint recipient')
+  );
+  f.acknowledge();
+  await f.worker.tick();
+  expect(f.record.state).toBe('BLOCKED');
+  expect(f.research.state).toBe('SIGNED');
+  expect(f.pending.launch_id).toBe(f.record.id);
+  f.advance(1000);
+  f.acknowledge();
+  await f.worker.tick();
+  expect(f.chain.verifySettlement).toHaveBeenCalledTimes(1);
+  expect(f.signer.sign).toHaveBeenCalledTimes(1);
 });
 it('observes confirmed manual Research with its transaction link without signing or broadcasting', async () => {
   const {

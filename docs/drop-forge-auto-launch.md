@@ -301,7 +301,8 @@ exercised in local validation.
 
 ## Future rollout order
 
-Deploy `dbMigrationsLoop` for entity sync, then `dropForgeLaunchHandler`, then
+Deploy `dbMigrationsLoop` for entity sync, then `transactionsLoop` for finalized
+creator scan coverage, then `dropForgeLaunchHandler`, then
 `memesDistributionHandler`, then `api`, with both flags disabled,
 then the dependent frontend controls. The new handlers create their own wave
 reports; existing reporting services do not need redeployment for these alerts.
@@ -314,6 +315,24 @@ Sepolia launch before a separately authorized mainnet rollout. No deployment is
 part of this PR implementation request.
 
 ## Grouped readiness and wave reporting
+
+Post-mint Research and Pay Artist now require matching configured-RPC/database
+accounting at the same finalized post-close block, including completed indexing
+coverage. The covered comparison block may be up to five minutes behind the
+finalized tip; older or pre-close coverage defers execution. A wrong high count cannot authorize an already-completed skip. Launch
+shows both counts, comparison block, indexing progress and next retry eligibility.
+Discrepancies retry after 1, 5 and then 15 minutes within the existing window.
+Signed transactions retain their hash and reservation; post-receipt evidence must
+verify delivery before completion is credited. Unexpected delivery requires recovery.
+
+The one-time 17:15 Europe/Athens preview is informational. It calculates the planned
+18:00 Research/payment work, respects disabled settings and existing payment limits,
+and reports normal results without tags. A discrepancy alerts once; it is not
+recalculated on retry. Execution at 18:00 always uses fresh evidence. Only wave
+delivery can retry for that stored preview. All these messages go exclusively to
+`DROP_FORGE_OPERATIONS_WAVE_ID`. Existing mint announcements and
+`DEPLOYER_ANNOUNCEMENTS_WAVE_IDS` are unchanged. Compact Markdown and small
+type-specific emojis distinguish success, pending, skipped and warning posts.
 
 The opening group contains initialization and general/artist/team/Phase 0 airdrops.
 Subsequent phase groups contain their claim update and subscriber batches; Public

@@ -1,4 +1,8 @@
-import { LaunchAction, LaunchRecord } from '@/drop-forge/drop-forge.types';
+import {
+  LaunchAction,
+  LaunchRecord,
+  SupplyEvidenceError
+} from '@/drop-forge/drop-forge.types';
 import { isResearchAirdrop } from '@/drop-forge/drop-forge.research';
 import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
 
@@ -26,11 +30,18 @@ export function reportActionFailure(
   record: LaunchRecord,
   action: LaunchAction,
   now: number,
-  message: string
+  message: string,
+  error?: unknown
 ): void {
   action.attempt_count = (action.attempt_count ?? 0) + 1;
   action.attempt_error = message;
-  action.retry_at = now + 60;
+  let delay = 60;
+  if (error instanceof SupplyEvidenceError) {
+    action.supply_evidence = error.evidence;
+    action.supply_retry_count = (action.supply_retry_count ?? 0) + 1;
+    delay = [60, 300, 900][Math.min(action.supply_retry_count - 1, 2)];
+  }
+  action.retry_at = now + delay;
   addLaunchEvent(
     record,
     `Claim #${record.data.claim_id}: ${actionDescription(record, action)} attempt ${action.attempt_count} failed (${action.id}): ${message}`,

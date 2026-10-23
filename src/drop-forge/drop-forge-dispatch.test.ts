@@ -3,12 +3,17 @@ import {
   DeleteScheduleCommand,
   SchedulerClient
 } from '@aws-sdk/client-scheduler';
-import { GetQueueAttributesCommand, SQSClient } from '@aws-sdk/client-sqs';
+import {
+  GetQueueAttributesCommand,
+  SendMessageCommand,
+  SQSClient
+} from '@aws-sdk/client-sqs';
 import {
   scheduleLaunchGroups,
   launchNeedsContinuation,
   launchWatchdog,
-  removeLaunchWatchdog
+  removeLaunchWatchdog,
+  continueLaunch
 } from '@/drop-forge/drop-forge.dispatch';
 import { testLaunchData } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
@@ -52,6 +57,10 @@ it('establishes future phase and research wakes independently of a failed openin
   launch.data.actions[0].window_reported = true;
   await scheduleLaunchGroups(launch, 0);
   expect(send).toHaveBeenCalled();
+  const preview = launch.data.phases.at(-1)!.end + 900;
+  expect(
+    send.mock.calls.map(([command]) => command.input.ScheduleExpression)
+  ).toContain(`at(${new Date(preview * 1000).toISOString().slice(0, 19)})`);
   for (const [command] of send.mock.calls) {
     expect(command).toBeInstanceOf(CreateScheduleCommand);
     expect(command.input).toEqual(
@@ -66,6 +75,19 @@ it('establishes future phase and research wakes independently of a failed openin
     });
     expect(command.input.Target.DeadLetterConfig.Arn).toMatch(/-dlq$/);
   }
+});
+it('honors the signed action evidence backoff instead of an unrelated due action', async () => {
+  const launch = record();
+  launch.data.events = [];
+  const action = launch.data.actions[0];
+  action.state = 'SIGNED';
+  action.retry_at = 1900;
+  await continueLaunch(launch, 1000, true);
+  const calls = jest.mocked(SQSClient.prototype.send).mock.calls;
+  const command = calls
+    .map(([entry]) => entry)
+    .find((entry) => entry instanceof SendMessageCommand) as SendMessageCommand;
+  expect(command.input.DelaySeconds).toBe(900);
 });
 it('keeps immutable schedules when duplicate delivery races, but surfaces other scheduling failures', async () => {
   send.mockRejectedValueOnce(

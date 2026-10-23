@@ -89,6 +89,7 @@ export function formatLaunchReport(
   data: LaunchData,
   event: LaunchEvent
 ): string {
+  if (event.formatted) return event.content;
   const explorer =
     data.chain_id === 1
       ? 'https://etherscan.io'
@@ -102,10 +103,30 @@ export function formatLaunchReport(
       event.content.includes(candidate.id + ':') ||
       event.content.endsWith('for ' + candidate.id)
   );
+  const emoji = event.error ? '⚠️' : reportEmoji(event.content);
   const lines = [
-    `Drop Forge [creator contract](${explorer}/address/${data.contract}) / claim ${data.claim_id}`,
+    `${emoji} **Claim #${data.claim_id}** · [Contract](${explorer}/address/${data.contract})`,
     action ? reportContent(data, event, action, content) : content
   ];
   if (action) lines.push(actionDetails(data, action));
   return lines.join('\n');
+}
+
+function reportEmoji(content: string): string {
+  if (content.startsWith('Confirmed ')) return '✅';
+  if (content.startsWith('Signed ')) return '✍️';
+  if (content.startsWith('Reserved ')) return '⏳';
+  if (content.includes('Skipped') || content.includes('disabled')) return '⏭️';
+  return 'ℹ️';
+}
+
+export function formatOperationsPost(message: string, error: boolean): string {
+  if (
+    ['⚠️', '🔔', '✅', '✍️', '⏳', '⏭️', 'ℹ️', '💰', '🧾'].some((emoji) =>
+      message.startsWith(emoji + ' ')
+    )
+  )
+    return message;
+  if (error) return `⚠️ ${message}`;
+  return `${message.toLowerCase().includes('fund') ? '💰' : '🧾'} ${message}`;
 }

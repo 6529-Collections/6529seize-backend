@@ -1942,6 +1942,7 @@ IAM/KMS provisioning, deployment order and rollout, and the
 | `dropForgeLaunchHandler` | Consume `drop-forge-launch`; reconcile manual/automatic work, execute due actions, track signed transactions and recover exceptional failures |
 | EventBridge Scheduler | Deliver one-time future group and crash-watchdog messages to SQS; it does not sign or invoke the handlers directly |
 | MySQL | Authoritative job checkpoints, exact allocation evidence, signed-intent/nonce reservations and reporting acknowledgements |
+| Existing `transactionsLoop` | Complete creator transaction discovery, then record bounded finalized scan coverage, including empty blocks, for post-mint accounting |
 | AWS KMS | Hold the operational private key and sign digests only for the dedicated launch role |
 
 `dropForgeLaunchHandler` and `memesDistributionHandler` consume dedicated SQS
@@ -1972,6 +1973,35 @@ the top-up from fresh on-chain total toward `min(310, frozen Craft edition)`,
 verify the on-chain maximum, and reconcile manual Research evidence separately.
 Research shares the launch handler, signer ledger, wave reports and completion
 flags, with its own one-time scheduled wake. Optional artist payment shares its 18:00 eligibility group and the same transaction/recovery ledger.
+
+The comparison uses a covered finalized block no more than five minutes behind
+the finalized tip, so normal indexer cadence does not chase a moving block. Missing,
+older or pre-close coverage defers execution. Recovery winners use the same
+post-mint settlement gate before releasing their reservation.
+
+A separate one-time **17:15 Europe/Athens** wake records a readonly preview once.
+It reports expected Research quantity and optional artist payment without signing;
+normal previews are untagged, while discrepancies alert once without recalculation.
+All new reports use `DROP_FORGE_OPERATIONS_WAVE_ID`; the preexisting
+`DEPLOYER_ANNOUNCEMENTS_WAVE_IDS` destinations are never used by this feature.
+
+Research/payment share `drop-forge.supply.ts`: the configured RPC reads a finalized
+post-close claim at an explicit canonical block hash; DB cumulative mints through
+that block must agree and have completed scan coverage. The new
+`transaction_scan_checkpoints` entity advances monotonically only after an explicit
+bounded scan succeeds. Normal discovery and past data remain in place; explicit
+backfills do not publish that coverage. The existing discovery service remains
+mainnet-only and cannot publish coverage under a test-chain ID. Sepolia post-mint
+exercises need isolated matching transaction data and coverage. The checkpoint assumes existing history
+is complete rather than certifying or rewriting historical data. Subscription
+redemptions are additionally scoped to indexed transactions at the payment cutoff.
+Unsigned discrepancies retry after 1/5/15 minutes within the action window.
+Pre-sign and pre-broadcast checks retain the quantity and exact signed intent.
+Confirmed Research checks mint logs and resulting supply; payment checks its actual
+recipient/value. A lagging DB retains the reservation until finalized settlement;
+unexpected evidence blocks for recovery. Completion, reservation release and the
+operations outbox remain atomic. The API returns optional evidence and retry times
+for the Launch UI. No new Lambda or RPC provider is introduced for these checks.
 
 ```mermaid
 flowchart LR

@@ -9,7 +9,10 @@ import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
 import { dropsDb } from '@/drops/drops.db';
 import { DropType } from '@/entities/IDrop';
 import { Logger } from '@/logging';
-import { formatLaunchReport } from '@/drop-forge/drop-forge.reports';
+import {
+  formatLaunchReport,
+  formatOperationsPost
+} from '@/drop-forge/drop-forge.reports';
 import { validateForgeReporting } from '@/drop-forge/drop-forge.reporting-access';
 
 const logger = Logger.get('DROP_FORGE_REPORTING');
@@ -98,7 +101,7 @@ export async function postForgeReport(
         title: null,
         parts: [
           {
-            content: message + alert,
+            content: formatOperationsPost(message, error) + alert,
             quoted_drop: null,
             media: []
           }

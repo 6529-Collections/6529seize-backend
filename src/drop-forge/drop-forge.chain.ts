@@ -18,6 +18,8 @@ import {
   LaunchRpcUnavailableError,
   LaunchSafetyError,
   RecoveryAttempt,
+  SupplyEvidence,
+  SupplyEvidenceError,
   assertPhaseScopedPlan
 } from '@/drop-forge/drop-forge.types';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
@@ -32,6 +34,7 @@ import {
   researchAirdropAmount,
   verifyResearchSupply
 } from '@/drop-forge/drop-forge.research';
+import { verifyIndexedSupply } from '@/drop-forge/drop-forge.supply';
 
 export async function rpcWithDeadline<T>(request: Promise<T>): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -69,6 +72,12 @@ export interface ChainReceipt {
   confirmations: number;
 }
 export interface LaunchChain {
+  verifySettlement?(
+    data: LaunchData,
+    action: LaunchAction,
+    hash: string,
+    receipt: ChainReceipt
+  ): Promise<void>;
   inspectPayment?(
     data: LaunchData,
     action: LaunchAction,
@@ -210,6 +219,11 @@ export class EthereumLaunchChain implements LaunchChain {
     operation: 'SPEED_UP' | 'CANCEL'
   ): Promise<string> {
     this.assertBinding(data);
+    if (
+      operation === 'SPEED_UP' &&
+      (isResearchAirdrop(action) || action.kind === 'PAY_ARTIST')
+    )
+      await this.verify(data, action);
     return rpcWithDeadline(
       new RecoveryChain(this.config, this.provider).prepare(
         data,
@@ -224,13 +238,26 @@ export class EthereumLaunchChain implements LaunchChain {
     attempt: RecoveryAttempt
   ): Promise<RecoveryEvidence | null> {
     this.assertBinding(data);
-    return rpcWithDeadline(
+    const evidence = await rpcWithDeadline(
       new RecoveryChain(this.config, this.provider).evidence(
         data,
         action,
         attempt
       )
     );
+    if (
+      evidence?.finalized &&
+      evidence.receipt.status === 1 &&
+      attempt.operation !== 'CANCEL'
+    ) {
+      await this.verifySettlement(
+        data,
+        action,
+        attempt.hash!,
+        evidence.receipt
+      );
+    }
+    return evidence;
   }
   async broadcast(raw: string): Promise<void> {
     await rpcWithDeadline(this.provider.broadcastTransaction(raw));
@@ -320,6 +347,8 @@ export class EthereumLaunchChain implements LaunchChain {
       throw new LaunchSafetyError(
         'Claim configuration changed outside this launch'
       );
+    if (isResearchAirdrop(action))
+      await this.verifyResearchAccounting(data, action, Number(claim.total));
     if (action.late_delivery) {
       await this.verifyLateDelivery(
         data,
@@ -463,6 +492,19 @@ export class EthereumLaunchChain implements LaunchChain {
           phaseActions.reduce((sum, it) => sum + (it.credited_tokens ?? 0), 0);
     }
   }
+  private async verifyResearchAccounting(
+    data: LaunchData,
+    action: LaunchAction,
+    total: number
+  ): Promise<void> {
+    const evidence = await this.verifiedSupply(data, action);
+    if (evidence.rpc_total !== total)
+      throw new SupplyEvidenceError(
+        { ...evidence, status: 'WAITING' },
+        'Live supply differs from finalized accounting; defer Research'
+      );
+  }
+
   private assertBinding(data: LaunchData): void {
     if (
       data.chain_id !== this.config.chainId ||
@@ -592,22 +634,139 @@ export class EthereumLaunchChain implements LaunchChain {
   private async paymentQuote(
     data: LaunchData
   ): Promise<NonNullable<LaunchAction['payment']>> {
-    const block = Math.max(
-      0,
-      (await rpcWithDeadline(this.provider.getBlockNumber())) -
-        this.config.confirmations +
-        1
+    const evidence = await this.verifiedSupply(
+      data,
+      data.actions.find((it) => it.kind === 'PAY_ARTIST')
     );
-    const claim = await this.readClaim(data, block);
-    if (
-      !claim ||
-      Number(claim.tokenId) !== data.claim_id ||
-      Number(claim.totalMax) !== data.edition_size
-    )
-      throw new LaunchSafetyError(
-        'Artist payment claim does not match the frozen edition'
+    try {
+      return await artistPaymentQuote(
+        data,
+        evidence.rpc_total!,
+        evidence.block_number!
       );
-    return artistPaymentQuote(data, Number(claim.total), block);
+    } catch (error) {
+      throw new SupplyEvidenceError(
+        { ...evidence, status: 'WAITING' },
+        error instanceof LaunchSafetyError
+          ? error.message
+          : 'Artist accounting is unavailable'
+      );
+    }
+  }
+
+  async verifiedSupply(
+    data: LaunchData,
+    action?: LaunchAction,
+    minimumBlock = 0
+  ): Promise<SupplyEvidence> {
+    try {
+      const evidence = await rpcWithDeadline(
+        verifyIndexedSupply(
+          data,
+          this.provider,
+          async (hash) => {
+            const result = await rpcWithDeadline(
+              this.provider.send('eth_call', [
+                {
+                  to: data.proxy,
+                  data: claimAbi.encodeFunctionData('getClaim', [
+                    data.contract,
+                    data.claim_id
+                  ])
+                },
+                { blockHash: hash, requireCanonical: true }
+              ])
+            );
+            const claim = claimAbi.decodeFunctionResult('getClaim', result)[0];
+            return {
+              total: Number(claim.total),
+              edition: Number(claim.totalMax),
+              token: Number(claim.tokenId),
+              end: Number(claim.endDate)
+            };
+          },
+          minimumBlock
+        )
+      );
+      if (action) action.supply_evidence = evidence;
+      return evidence;
+    } catch (error) {
+      const failure =
+        error instanceof SupplyEvidenceError
+          ? error
+          : new SupplyEvidenceError(
+              { status: 'WAITING', checked_at: Date.now() },
+              error instanceof LaunchSafetyError
+                ? error.message
+                : 'Supply verification unavailable'
+            );
+      if (action) action.supply_evidence = failure.evidence;
+      throw failure;
+    }
+  }
+
+  async previewPostMint(
+    data: LaunchData,
+    includePayment: boolean
+  ): Promise<{
+    evidence: SupplyEvidence;
+    research: number;
+    payment?: Awaited<ReturnType<typeof artistPaymentQuote>>;
+  }> {
+    const evidence = await this.verifiedSupply(data);
+    return {
+      evidence,
+      research: researchAirdropAmount(evidence.rpc_total!, data.edition_size),
+      ...(includePayment
+        ? {
+            payment: await artistPaymentQuote(
+              data,
+              evidence.rpc_total!,
+              evidence.block_number!
+            )
+          }
+        : {})
+    };
+  }
+
+  async verifySettlement(
+    data: LaunchData,
+    action: LaunchAction,
+    hash: string,
+    receipt: ChainReceipt
+  ): Promise<void> {
+    if (!isResearchAirdrop(action) && action.kind !== 'PAY_ARTIST') return;
+    const evidence = await this.verifiedSupply(
+      data,
+      action,
+      receipt.blockNumber
+    );
+    if (isResearchAirdrop(action)) {
+      const mined = await rpcWithDeadline(
+        this.provider.getTransactionReceipt(hash)
+      );
+      if (!mined || mined.blockHash !== receipt.blockHash)
+        throw new LaunchSafetyError(
+          'Research receipt changed before delivery verification'
+        );
+      verifyRecoveryMints(data, action, mined.logs);
+      const expected =
+        action.expected_supply! +
+        (action.remaining_recipients ?? action.recipients).reduce(
+          (sum, row) => sum + row.amount,
+          0
+        );
+      if (evidence.rpc_total !== expected)
+        throw new LaunchSafetyError(
+          'Confirmed Research supply differs from the expected delivered total; operator reconciliation required'
+        );
+    } else {
+      const proof = await this.inspectPayment(data, action, hash);
+      if (!proof || proof.status !== 1 || proof.blockHash !== receipt.blockHash)
+        throw new LaunchSafetyError(
+          'Artist payment evidence changed before completion'
+        );
+    }
   }
   async inspectPayment(
     data: LaunchData,
@@ -655,8 +814,9 @@ export class EthereumLaunchChain implements LaunchChain {
       throw new LaunchSafetyError(
         'Claim configuration changed before research reconciliation'
       );
-    return researchAirdropAmount(configured.total, data.edition_size) === 0
-      ? { total: configured.total }
+    const evidence = await this.verifiedSupply(data, action);
+    return researchAirdropAmount(evidence.rpc_total!, data.edition_size) === 0
+      ? { total: evidence.rpc_total! }
       : null;
   }
   private completedPhase(

@@ -389,6 +389,7 @@ export * from '../models/ApiDropForgeRecoveryAttempt';
 export * from '../models/ApiDropForgeRecoveryRequest';
 export * from '../models/ApiDropForgeSettings';
 export * from '../models/ApiDropForgeSettingsRequest';
+export * from '../models/ApiDropForgeSupplyEvidence';
 export * from '../models/ApiDropGroupMention';
 export * from '../models/ApiDropHiddenState';
 export * from '../models/ApiDropId';
@@ -1303,7 +1304,7 @@ import { ApiDropCompetitionContext } from '../models/ApiDropCompetitionContext';
 import { ApiDropContextProfileContext } from '../models/ApiDropContextProfileContext';
 import { ApiDropCuration } from '../models/ApiDropCuration';
 import { ApiDropCurationRequest } from '../models/ApiDropCurationRequest';
-import { ApiDropForgeAction           , ApiDropForgeActionKindEnum  , ApiDropForgeActionStateEnum         } from '../models/ApiDropForgeAction';
+import { ApiDropForgeAction            , ApiDropForgeActionKindEnum  , ApiDropForgeActionStateEnum         } from '../models/ApiDropForgeAction';
 import { ApiDropForgeControlRequest , ApiDropForgeControlRequestOperationEnum   } from '../models/ApiDropForgeControlRequest';
 import { ApiDropForgeFundingRequest } from '../models/ApiDropForgeFundingRequest';
 import { ApiDropForgeFundingResponse } from '../models/ApiDropForgeFundingResponse';
@@ -1323,6 +1324,7 @@ import { ApiDropForgeRecoveryAttempt , ApiDropForgeRecoveryAttemptOperationEnum 
 import { ApiDropForgeRecoveryRequest     , ApiDropForgeRecoveryRequestOperationEnum   } from '../models/ApiDropForgeRecoveryRequest';
 import { ApiDropForgeSettings } from '../models/ApiDropForgeSettings';
 import { ApiDropForgeSettingsRequest } from '../models/ApiDropForgeSettingsRequest';
+import { ApiDropForgeSupplyEvidence, ApiDropForgeSupplyEvidenceStatusEnum           } from '../models/ApiDropForgeSupplyEvidence';
 import { ApiDropGroupMention } from '../models/ApiDropGroupMention';
 import { ApiDropHiddenState } from '../models/ApiDropHiddenState';
 import { ApiDropId } from '../models/ApiDropId';
@@ -1999,6 +2001,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiDropForgeRecoveryOutcomeEnum",
     "ApiDropForgeRecoveryAttemptOperationEnum",
     "ApiDropForgeRecoveryRequestOperationEnum",
+    "ApiDropForgeSupplyEvidenceStatusEnum",
     "ApiDropGroupMention",
     "ApiDropMainType",
     "ApiDropMediaStatus",
@@ -2536,6 +2539,7 @@ let typeMap: {[index: string]: any} = {
     "ApiDropForgeRecoveryRequest": ApiDropForgeRecoveryRequest,
     "ApiDropForgeSettings": ApiDropForgeSettings,
     "ApiDropForgeSettingsRequest": ApiDropForgeSettingsRequest,
+    "ApiDropForgeSupplyEvidence": ApiDropForgeSupplyEvidence,
     "ApiDropHiddenState": ApiDropHiddenState,
     "ApiDropId": ApiDropId,
     "ApiDropMedia": ApiDropMedia,

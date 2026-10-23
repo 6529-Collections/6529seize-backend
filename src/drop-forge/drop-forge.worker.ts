@@ -22,6 +22,7 @@ import {
   LaunchAction,
   LaunchRecord,
   LaunchRpcUnavailableError,
+  SupplyEvidenceError,
   LaunchSafetyError,
   DROP_FORGE_PLAN_VERSION,
   assertPhaseScopedPlan
@@ -379,7 +380,8 @@ export class DropForgeWorker {
           now,
           error instanceof LaunchSafetyError
             ? error.message
-            : 'RPC or readiness check failed'
+            : 'RPC or readiness check failed',
+          error
         );
         if (now >= action.deadline - 120) action.window_reported = true;
       }
@@ -492,6 +494,9 @@ export class DropForgeWorker {
     }
     action.unsigned_tx = await this.chain.prepare(record.data, action);
     action.state = 'RESERVED';
+    delete action.supply_retry_count;
+    delete action.settlement_error;
+    delete action.settlement_retry_at;
     delete action.attempt_error;
     delete action.retry_at;
     pending.launch_id = record.id;
@@ -628,7 +633,8 @@ export class DropForgeWorker {
           now,
           error instanceof LaunchSafetyError
             ? error.message
-            : 'KMS signing failed'
+            : 'KMS signing failed',
+          error
         );
         await this.repository.save(record, ctx);
       },
@@ -650,7 +656,7 @@ export class DropForgeWorker {
         if (action.state !== 'SIGNED' || action.recovery) return null;
         const receipt = await this.chain.receipt(action.hash!);
         if (receipt && receipt.confirmations >= this.config.confirmations) {
-          this.applyReceipt(
+          await this.applyVerifiedReceipt(
             record,
             action,
             receipt,
@@ -679,7 +685,7 @@ export class DropForgeWorker {
           const included = await this.chain.receipt(action.hash!);
           if (included) {
             if (included.confirmations >= this.config.confirmations) {
-              this.applyReceipt(
+              await this.applyVerifiedReceipt(
                 record,
                 action,
                 included,
@@ -710,6 +716,21 @@ export class DropForgeWorker {
         }
         const now = await this.chain.now();
         if ((action.retry_at ?? 0) > now) return null;
+        try {
+          await this.chain.verify(record.data, action);
+        } catch (error) {
+          reportActionFailure(
+            record,
+            action,
+            now,
+            error instanceof Error
+              ? error.message
+              : 'Readiness changed before broadcast',
+            error
+          );
+          await this.repository.save(record, ctx);
+          return null;
+        }
         action.retry_at = now + 60;
         await this.repository.save(record, ctx);
         return action.signed_tx!;
@@ -740,6 +761,49 @@ export class DropForgeWorker {
         );
       }
     }
+  }
+
+  private async applyVerifiedReceipt(
+    record: LaunchRecord,
+    action: LaunchAction,
+    receipt: ChainReceipt,
+    pending: PendingSigner,
+    now: number
+  ): Promise<void> {
+    if (action.settlement_error) return;
+    if (receipt.status === 1 && this.chain.verifySettlement) {
+      if ((action.settlement_retry_at ?? 0) > now) return;
+      try {
+        await this.chain.verifySettlement(
+          record.data,
+          action,
+          action.hash!,
+          receipt
+        );
+      } catch (error) {
+        reportActionFailure(
+          record,
+          action,
+          now,
+          error instanceof Error
+            ? error.message
+            : 'Settlement verification failed',
+          error
+        );
+        action.settlement_retry_at = action.retry_at;
+        if (!(error instanceof SupplyEvidenceError)) {
+          action.settlement_error = action.attempt_error;
+          setLaunchState(
+            record,
+            'BLOCKED',
+            'Confirmed transaction evidence differs from the intended delivery; retain its hash and wallet reservation for operator reconciliation'
+          );
+        }
+        return;
+      }
+    }
+    delete action.settlement_retry_at;
+    this.applyReceipt(record, action, receipt, pending, now);
   }
 
   private applyReceipt(

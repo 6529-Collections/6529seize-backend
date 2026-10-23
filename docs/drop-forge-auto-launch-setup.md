@@ -78,6 +78,10 @@ not a destination: manually using it does not forward a post to the operations
 wave. Recipient visibility and notification settings still apply.
 
 Automation reports do not fall back to the subscriptions wave or a developer wave.
+All posts introduced here, including the 17:15 post-mint preview, use only
+`DROP_FORGE_OPERATIONS_WAVE_ID`. Existing mint announcements and
+`DEPLOYER_ANNOUNCEMENTS_WAVE_IDS` are unchanged and never a destination for this
+feature. Posts use compact Markdown and type-specific emojis, without large headings.
 Failures that prevent creating a wave report remain observable through the existing
 CloudWatch/Sentry monitoring and retained report retry state.
 
@@ -235,16 +239,63 @@ Turning both launch flags off stops receipt reconciliation as well as new execut
 
 ## 6. Deploy disabled, then observe without contract-admin permission
 
+### Post-mint verification and the 17:15 preview
+
+The existing configured `ETHEREUM_RPC_URL` (or chain-specific equivalent) and
+the database must agree before Research or Pay Artist can be sent or skipped as
+already satisfied. No second RPC provider, new contract or new RPC secret is added.
+The comparison uses a finalized block after public mint closes, pinned by hash,
+and cumulative DB mints through that same block. Burns do not reduce this count.
+Use the latest finalized block covered by the durable indexer checkpoint, at most
+five minutes behind the finalized tip. A moving tip does not require the indexer
+to finish in the exact same second. Missing, older or pre-close coverage defers work.
+
+The creator consumer in `transactionsLoop` records finalized scan coverage only
+after normal discovery and an explicit bounded rescan succeed. Empty blocks are
+covered; incomplete pagination or a changed block cannot advance the marker.
+Existing transaction history is retained. `DROP_FORGE_AUTOMATION_ENABLED=true`
+enables this coverage tracking for `DROP_FORGE_CREATOR_CONTRACT` (mainnet Memes
+fallback); the normal indexing path and existing reporting destinations are unchanged.
+Explicit start/end backfills do not advance normal coverage. The ordinary contract
+history must already be complete; the marker does not certify or repair old data.
+The existing transaction discovery service indexes mainnet. It publishes coverage
+only for `DROP_FORGE_CHAIN_ID=1`, never under a Sepolia chain ID. Full post-mint
+Sepolia exercises require an isolated, correctly populated Sepolia transaction
+index/database and its coverage checkpoint; the production indexer is not switched
+to a test chain by the launch settings. Without that evidence, test-chain post-mint
+work safely waits. Earlier signing/phase/recovery exercises remain separate.
+
+At **17:15 Europe/Athens**, one queued preview calculates the Research remainder
+and optional artist payment, showing whether automation/payment is Off or blocked
+by its existing limit. A normal preview is untagged. A mismatch/unavailable-evidence
+warning tags `@drops6529` once. Its stored result is never recalculated on retry;
+only failed wave delivery can be retried. A missed preview is not calculated once
+18:00 execution has started. The preview does not sign or approve a transaction.
+
+At **18:00**, execution obtains fresh evidence. Disagreement or incomplete coverage
+leaves work outstanding, records both counts/block/indexing progress in Launch,
+and posts the failed attempt. Retry delays are **1 minute, 5 minutes, then 15 minutes**
+within the existing action window. No value is chosen or averaged to break a tie.
+Artist accounting also verifies paid mints and redeemed subscriptions at the cutoff.
+
+After a successful receipt, Research verifies exact mint events and the resulting
+total; Pay Artist verifies the native transfer recipient and value. Both wait for
+finalized, indexed settlement evidence before recording completion and releasing
+the signer reservation. This can delay the next action beyond its 18:00 eligibility.
+Indexing lag retains the exact signed intent; an unexpected delivered result blocks
+for operator recovery instead of automatically sending another transfer.
+
 Follow the repository's authorized [deployment procedure](deployment.md). Complete
 AWS role/key provisioning and runtime configuration first, then deploy sequentially:
 
 | Order | Deployment unit | What must be available before continuing |
 | ----- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | Existing `dbMigrationsLoop`    | Run the workflow with `db_schema_scope=full`; its synchronous invocation must finish entity synchronization, including launch, signer, evidence, preparation/jobs, settings and funding tables |
-| 2 | New `dropForgeLaunchHandler` | Launch Lambda, `drop-forge-launch` queue/DLQ, alarms and the shared `drop-forge-{stage}` Scheduler group |
-| 3 | New `memesDistributionHandler` | Distribution Lambda, `memes-distribution` queue/DLQ and alarms; its watchdogs use the group from step 2 |
-| 4 | Existing `api` | Operation endpoints, targeted queue dispatch and `@drops6529` recipient resolution |
-| 5 | Frontend | Process and Finalize, Craft Launch/Update Claim, execution/recovery UI and mention compatibility |
+| 1 | Existing `dbMigrationsLoop` | Run with `db_schema_scope=full`; synchronize launch, signer, evidence, preparation/jobs, settings, funding and `transaction_scan_checkpoints` tables |
+| 2 | Existing `transactionsLoop` service | The configured creator consumer completes normal discovery and bounded finalized scans, including empty blocks; inspect its durable coverage before enabling post-mint execution |
+| 3 | New `dropForgeLaunchHandler` | Launch Lambda, queue/DLQ, alarms and shared Scheduler group |
+| 4 | New `memesDistributionHandler` | Distribution Lambda, queue/DLQ and alarms; watchdogs use the group from step 3 |
+| 5 | Existing `api` | Endpoints, targeted dispatch, mint-accounting evidence and mention resolution |
+| 6 | Frontend | Processing, Craft controls, execution/recovery and evidence display |
 
 Apply the generated monitoring stack updates before enabling either workflow.
 No additional existing reporting-consumer redeploy is required for the new
