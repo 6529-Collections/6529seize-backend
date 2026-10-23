@@ -110,6 +110,8 @@ import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
 import { ApiDropCompetitionContext } from '@/api/generated/models/ApiDropCompetitionContext';
 import { ApiDropForgeControlRequest } from '@/api/generated/models/ApiDropForgeControlRequest';
+import { ApiDropForgeFundingRequest } from '@/api/generated/models/ApiDropForgeFundingRequest';
+import { ApiDropForgeFundingResponse } from '@/api/generated/models/ApiDropForgeFundingResponse';
 import { ApiDropForgeJob } from '@/api/generated/models/ApiDropForgeJob';
 import { ApiDropForgeJobRequest } from '@/api/generated/models/ApiDropForgeJobRequest';
 import { ApiDropForgeLaunch } from '@/api/generated/models/ApiDropForgeLaunch';
@@ -118,6 +120,8 @@ import { ApiDropForgeManualRequest } from '@/api/generated/models/ApiDropForgeMa
 import { ApiDropForgeManualResponse } from '@/api/generated/models/ApiDropForgeManualResponse';
 import { ApiDropForgePlanRequest } from '@/api/generated/models/ApiDropForgePlanRequest';
 import { ApiDropForgeRecoveryRequest } from '@/api/generated/models/ApiDropForgeRecoveryRequest';
+import { ApiDropForgeSettings } from '@/api/generated/models/ApiDropForgeSettings';
+import { ApiDropForgeSettingsRequest } from '@/api/generated/models/ApiDropForgeSettingsRequest';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
 import { ApiDropPartV2 } from '@/api/generated/models/ApiDropPartV2';
 import { ApiDropPollsPage } from '@/api/generated/models/ApiDropPollsPage';
@@ -1426,6 +1430,34 @@ export type GetDmUnreadSnapshotRequest = Request<
   Record<string, never>
 >;
 
+export type GetDropForgeSettingsPathParams = Record<string, never>;
+
+export type GetDropForgeSettingsQuery = Record<string, never>;
+
+export type GetDropForgeSettingsResponse = ApiDropForgeSettings;
+
+export type GetDropForgeSettingsRequest = Request<
+  GetDropForgeSettingsPathParams,
+  ApiResponse<GetDropForgeSettingsResponse>,
+  never,
+  GetDropForgeSettingsQuery,
+  Record<string, never>
+>;
+
+export type PutDropForgeSettingsPathParams = Record<string, never>;
+
+export type PutDropForgeSettingsQuery = Record<string, never>;
+
+export type PutDropForgeSettingsResponse = ApiDropForgeSettings;
+
+export type PutDropForgeSettingsRequest = Request<
+  PutDropForgeSettingsPathParams,
+  ApiResponse<PutDropForgeSettingsResponse>,
+  ApiDropForgeSettingsRequest,
+  PutDropForgeSettingsQuery,
+  Record<string, never>
+>;
+
 export interface GetLatestDropForgeProcessPathParams {
   "contract": string;
   "claim_id": number;
@@ -1495,6 +1527,20 @@ export type GetDropForgeCompletedListRequest = Request<
   ApiResponse<GetDropForgeCompletedListResponse>,
   never,
   GetDropForgeCompletedListQuery,
+  Record<string, never>
+>;
+
+export type PostDropForgeFundingPathParams = Record<string, never>;
+
+export type PostDropForgeFundingQuery = Record<string, never>;
+
+export type PostDropForgeFundingResponse = ApiDropForgeFundingResponse;
+
+export type PostDropForgeFundingRequest = Request<
+  PostDropForgeFundingPathParams,
+  ApiResponse<PostDropForgeFundingResponse>,
+  ApiDropForgeFundingRequest,
+  PostDropForgeFundingQuery,
   Record<string, never>
 >;
 

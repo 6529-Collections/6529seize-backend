@@ -2,6 +2,7 @@ import { DROP_FORGE_EVIDENCE_TABLE } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { DbPoolName } from '@/db-query.options';
 import { RequestContext } from '@/request.context';
+import { LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { DropForgeConfig } from '@/drop-forge/drop-forge.config';
 export async function evidenceForClaim(
   config: DropForgeConfig,
@@ -49,6 +50,24 @@ export async function storeEvidence(
       },
       { wrappedConnection: ctx.connection }
     );
+    const existing = await sqlExecutor.oneOrNull<{
+      contract: string;
+      claim_id: number;
+      action: string | null;
+    }>(
+      `SELECT contract, claim_id, action FROM ${DROP_FORGE_EVIDENCE_TABLE} WHERE id = :id`,
+      { id: `${config.chainId}:${hash.toLowerCase()}` },
+      { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+    );
+    if (
+      !existing ||
+      existing.contract.toLowerCase() !== config.creator.toLowerCase() ||
+      Number(existing.claim_id) !== claim ||
+      (existing.action && action && existing.action !== action)
+    )
+      throw new LaunchSafetyError(
+        'Transaction evidence is already assigned to another claim or action'
+      );
   } finally {
     ctx.timer?.stop(timer);
   }

@@ -22,6 +22,15 @@ import {
 } from '@/drop-forge/drop-forge.research';
 import { mintingClaimActionsDb } from '@/api/minting-claims/minting-claim-actions.db';
 
+jest.mock('@/drop-forge/drop-forge.settings', () => ({
+  ...jest.requireActual('@/drop-forge/drop-forge.settings'),
+  readForgeSettings: jest.fn(async () => ({
+    revision: 1,
+    automation_enabled: true,
+    pay_artist_enabled: true
+  }))
+}));
+
 jest.mock('@/api/minting-claims/minting-claim-actions.db', () => ({
   mintingClaimActionsDb: {
     upsertAction: jest.fn().mockResolvedValue(undefined)

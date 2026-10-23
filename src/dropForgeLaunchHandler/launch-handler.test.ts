@@ -10,6 +10,14 @@ import {
 } from '@/drop-forge/drop-forge.test-fixtures';
 import { LaunchRecord } from '@/drop-forge/drop-forge.types';
 
+jest.mock('@/drop-forge/drop-forge.settings', () => ({
+  ...jest.requireActual('@/drop-forge/drop-forge.settings'),
+  readForgeSettings: jest.fn(async () => ({
+    revision: 1,
+    automation_enabled: true,
+    pay_artist_enabled: true
+  }))
+}));
 jest.mock('@/secrets', () => ({ doInDbContext: jest.fn() }));
 jest.mock('@/sentry.context', () => ({
   wrapLambdaHandler: (handler: unknown) => handler
@@ -75,7 +83,8 @@ it('installs independent groups and a crash watchdog before targeted transaction
   expect(dispatch.continueLaunch).toHaveBeenCalledWith(
     current,
     expect.any(Number),
-    true
+    true,
+    expect.objectContaining({ automation_enabled: true })
   );
   expect(dispatch.removeLaunchWatchdog).toHaveBeenCalledWith(
     current.id,

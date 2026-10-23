@@ -45,7 +45,7 @@ it.each(['2026-10-12T14:40:00Z', '2026-11-02T15:40:00Z'])(
         minute: '2-digit',
         hour12: false
       }).format(new Date(launch.actions.find(isResearchAirdrop)!.due * 1000))
-    ).toBe('17:15');
+    ).toBe('18:00');
   }
 );
 it('rejects a calendar for another claim or a mint already started', async () => {

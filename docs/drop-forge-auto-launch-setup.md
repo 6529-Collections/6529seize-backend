@@ -15,7 +15,7 @@ All values below are operator-supplied; never commit real credentials or private
 ## 1. Choose the environment
 
 | Deployment | Protected GitHub environment | AWS region | Ethereum chain |
-| --- | --- | --- | --- |
+| ---------- | ---------------------------- | ----------- | --------------------------------------------------------------- |
 | Staging | `staging` | `eu-west-1` | Explicitly configured; use Sepolia `11155111` for test launches |
 | Production | `production` | `us-east-1` | Mainnet `1` for real Memes launches |
 
@@ -43,7 +43,7 @@ Create or choose a dedicated operations wave with chat enabled. Choose the profi
 that should author reports and the profiles to notify on failures.
 
 | Runtime setting | Required value |
-| --- | --- |
+| -------------------------------- | ------------------------------------------------ |
 | `DROP_FORGE_OPERATIONS_WAVE_ID` | Operations wave UUID |
 | `DROP_FORGE_BOT_PROFILE_ID` | Existing posting profile UUID |
 | `DROPS_6529_MENTION_PROFILE_IDS` | Nonempty comma-separated recipient profile UUIDs |
@@ -67,7 +67,7 @@ The old shortcut and its old configuration key are not aliases for the new name.
 ### What tags the group, and where
 
 | Source | When `@drops6529` is included | Wave destination |
-| --- | --- | --- |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | `dropForgeLaunchHandler` | Recorded failures for initialization, claim updates, airdrops (including Research), signing/broadcasting and manual/recovery reconciliation | `DROP_FORGE_OPERATIONS_WAVE_ID` |
 | `memesDistributionHandler` | Failed processing/finalization jobs or jobs paused because EMMA authorization expired/was denied; an explicit distribution reset does not tag the group | `DROP_FORGE_OPERATIONS_WAVE_ID` |
 | A normal post containing the global shortcut | A chat participant includes `@drops6529` | The wave where the participant posts it |
@@ -98,7 +98,7 @@ existing broad IAM grants when reviewing the effective key policy.
 Role names are maintained in the stage configuration:
 
 | Role | Staging name | Production name |
-| --- | --- | --- |
+| ------------------- | --------------------------------- | ------------------------------ |
 | Launch Lambda | `drop-forge-staging-launch` | `drop-forge-prod-launch` |
 | Distribution Lambda | `drop-forge-staging-distribution` | `drop-forge-prod-distribution` |
 | Scheduler delivery | `drop-forge-staging-scheduler` | `drop-forge-prod-scheduler` |
@@ -200,7 +200,7 @@ and [PassRole permissions](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_r
 Add the reporting and wallet values above to the regional runtime secret, plus:
 
 | Runtime setting | Meaning/default |
-| --- | --- |
+| ----------------------------------- | ------------------------------------------------------------------------------------------- |
 | `DROP_FORGE_CHAIN_ID` | Explicit `1` or `11155111`; default is Sepolia |
 | `DROP_FORGE_CREATOR_CONTRACT` | Creator scope; existing Memes default on mainnet, required on Sepolia |
 | `DROP_FORGE_LAZY_CLAIM_CONTRACT` | Lazy-claim proxy; existing proxy default; verify for the selected chain |
@@ -209,7 +209,8 @@ Add the reporting and wallet values above to the regional runtime secret, plus:
 | `ETHEREUM_SEPOLIA_RPC_URL` | Existing Sepolia HTTP(S) RPC configuration |
 | `DROP_FORGE_MAX_FEE_PER_GAS_WEI` | Required positive maximum fee per gas, in wei |
 | `DROP_FORGE_MAX_GAS_PER_TX` | Required positive transaction gas limit cap |
-| `DROP_FORGE_MAX_TX_COST_ETH` | Required positive transaction cost cap, in ETH |
+| `DROP_FORGE_MAX_TX_COST_ETH`        | Required positive gas-cost cap, in ETH; artist principal has a separate cap                 |
+| `DROP_FORGE_MAX_ARTIST_PAYMENT_ETH` | Positive per-payment ETH cap, required before enabling Automatic artist payment; no default |
 | `DROP_FORGE_CONFIRMATIONS` | Default 12; allowed 2–64 |
 | `DROP_FORGE_CALENDAR_BASE_URL` | Calendar source; defaults to `https://6529.io`; choose the intended environment |
 | `DROP_FORGE_AUTOMATION_ENABLED` | Default disabled; exact `true` enables scheduled launch work |
@@ -238,8 +239,8 @@ Follow the repository's authorized [deployment procedure](deployment.md). Comple
 AWS role/key provisioning and runtime configuration first, then deploy sequentially:
 
 | Order | Deployment unit | What must be available before continuing |
-| --- | --- | --- |
-| 1 | Existing `dbMigrationsLoop` | Run the workflow with `db_schema_scope=full`; its synchronous invocation must finish entity synchronization, including the launch, signer, evidence and preparation/job tables |
+| ----- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Existing `dbMigrationsLoop`    | Run the workflow with `db_schema_scope=full`; its synchronous invocation must finish entity synchronization, including launch, signer, evidence, preparation/jobs, settings and funding tables |
 | 2 | New `dropForgeLaunchHandler` | Launch Lambda, `drop-forge-launch` queue/DLQ, alarms and the shared `drop-forge-{stage}` Scheduler group |
 | 3 | New `memesDistributionHandler` | Distribution Lambda, `memes-distribution` queue/DLQ and alarms; its watchdogs use the group from step 2 |
 | 4 | Existing `api` | Operation endpoints, targeted queue dispatch and `@drops6529` recipient resolution |
@@ -290,7 +291,7 @@ For the observation rollout:
 1. Configure and verify all IDs, IAM permissions, KMS binding and limits.
 2. Enable preparation when ready to use EMMA Process and Finalize. Complete EMMA,
    then publish Craft.
-3. Enable automation for Launch while **withholding on-chain creator-admin permission
+3. Enable the environment capability and the hub's Automatic launch switch while **withholding on-chain creator-admin permission
    from the KMS wallet**, then click **Launch** before the mint window. Backend
    operator authorization is a separate requirement.
 4. Continue normal manual Launch operations. Use the coordinated controls so hashes
@@ -312,7 +313,7 @@ independent dry-run mode. EMMA preparation still performs real backend writes.
 
 ## 7. Grant live authority when ready
 
-Fund the derived wallet with ETH on the selected chain for gas. The creator owner
+Fund the derived wallet with ETH on the selected chain for gas and any enabled artist payments. The hub's Top Up ETH flow can do this from a connected authorized wallet. The creator owner
 then grants that address creator-admin permission through the existing admin controls.
 `CLAIMS_ADMIN_WALLETS` only authorizes backend controls and cannot grant this authority.
 
@@ -320,7 +321,7 @@ Granting admin while automation is enabled is the live switch: eligible pending 
 can execute on the next run. First reconcile the active drop's manual evidence and
 outstanding transactions. Completed work is not repeated; expired execution windows
 are not automatically replayed. Mint proceeds keep going to the configured receiver;
-Pay Artist remains manual and is outside this automation.
+Automatic artist payment is separately opt-in and defaults Off. It runs with Research at 18:00 the following day, using the exact final accounting and configured payment cap.
 
 Use Launch's Pause/recovery controls for operational intervention. Disabling flags
 does not cancel signed transactions, and disabling both automation and recovery also
@@ -330,3 +331,34 @@ An unavailable RPC receipt block defers reconciliation to a later invocation whi
 retaining the signed transaction and nonce reservation. A confirmed block-hash
 mismatch still requires reorg investigation; unavailable RPC data alone does not
 mean that the transaction disappeared or should be sent again with a fresh nonce.
+
+## 8. Configure the Launch Automation panel
+
+After the environment capability is enabled, the hub's Automatic launch and
+Automatic artist payment settings both start Off. The settings are stored in SQL,
+not Secrets Manager, so changing them takes effect without redeploying services.
+The creator owner and `CLAIMS_ADMIN_WALLETS` can edit. Every Drop Forge administrator,
+including distribution-list and ordinary on-chain admins, can read the panel and
+use Top Up ETH. Changing contract admins remains owner-only on chain.
+
+Keep the environment capability on when using the hub's Off switch: this lets accepted
+Launch plans retain their one-time phase and 18:00 post-mint schedules and report
+why each due action was skipped. Off prevents new execution while retaining
+confirmation/recovery tracking. Deployment kill switches still stop their documented
+worker paths; they are not a replacement for the operator-facing switch.
+
+Configure `DROP_FORGE_MAX_ARTIST_PAYMENT_ETH` in the regional `prod/lambdas` secret
+before enabling artist payment and refresh the API/launch handler configuration.
+Choose a positive maximum for one artist payout; no value is invented by deployment.
+Fund the KMS wallet for payouts plus gas. Mint proceeds still go to the separate
+payment receiver. Verify the claim's payment details/designated payee and completed
+subscription accounting. Research and optional Pay Artist are independent actions
+eligible at 18:00 Europe/Athens the next day. Incomplete accounting or unindexed
+mints defer payment rather than using a partial amount. Record manual Pay Artist
+transaction hashes; a checked completion flag alone cannot authorize another payment.
+
+No new Lambda, queue or GitHub variable is added for these controls. Schema sync
+must include the new settings and funding entities before deploying the updated
+API and launch handler. Top-ups use the connected wallet and are reported after
+canonical confirmation, including tracked same-nonce replacements/cancellations.
+Validate these new money-transfer paths on Sepolia before enabling production payouts.

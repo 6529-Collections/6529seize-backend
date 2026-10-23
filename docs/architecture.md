@@ -1936,7 +1936,7 @@ IAM/KMS provisioning, deployment order and rollout, and the
 [operations guide](drop-forge-auto-launch.md) for manual evidence and recovery.
 
 | Component | Responsibility |
-| --- | --- |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `api` | Authorize operator requests, persist revisioned jobs/launches and publish targeted SQS messages under the SQL lock |
 | `memesDistributionHandler` | Consume `memes-distribution`; snapshot the clicking operator's EMMA inputs, process checkpoints and finalize persisted download lists |
 | `dropForgeLaunchHandler` | Consume `drop-forge-launch`; reconcile manual/automatic work, execute due actions, track signed transactions and recover exceptional failures |
@@ -1966,12 +1966,12 @@ no preconfigured EMMA token is required. Preparation snapshots upstream phase in
 commits ordered phase checkpoints and finalizes. Craft Launch derives the fixed
 mint calendar and arms execution immediately; Craft Update Claim queues a
 metadata-only action without reopening completed allocations.
-The launch stays active through Research, eligible fifteen minutes after the
-final mint close (17:15 Europe/Athens the following day). Version 3 plans derive
+The launch stays active through Research, eligible one hour after the
+final mint close (18:00 Europe/Athens the following day). Version 4 plans derive
 the top-up from fresh on-chain total toward `min(310, frozen Craft edition)`,
 verify the on-chain maximum, and reconcile manual Research evidence separately.
 Research shares the launch handler, signer ledger, wave reports and completion
-flags, with its own one-time scheduled wake. Pay Artist remains manual.
+flags, with its own one-time scheduled wake. Optional artist payment shares its 18:00 eligibility group and the same transaction/recovery ledger.
 
 ```mermaid
 flowchart LR
@@ -2005,12 +2005,12 @@ phase closes, as encoded by `buildPhaseActions` in
 [`drop-forge.plan.ts`](../src/drop-forge/drop-forge.plan.ts).
 
 | Group | Eligible time | Actions |
-| --- | --- | --- |
+| -------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | Opening | Immediately after accepted Launch, before Phase 0 opens at 17:40 | Initialize, then general/artist/team and Phase 0 subscriber batches |
 | Phase 1 | 18:20:01; Phase 1 opens at 18:30 | Update claim, then Phase 1 subscriber batches |
 | Phase 2 | 18:50:01; Phase 2 opens at 19:00 | Update claim, then Phase 2 and Public subscriber batches |
 | Public | 19:20:01; public is scheduled from 19:20 | Update claim after Phase 2 closes; actual public availability follows transaction inclusion |
-| Research | 17:15 the next day, after public closes at 17:00 | Top up from fresh supply toward `min(310, frozen Craft edition)` after fixed allocations are reconciled |
+| Research and optional Pay Artist | 18:00 the next day, after public closes at 17:00                 | Research tops up toward `min(310, frozen Craft edition)`; artist payment independently sends the final 50% share to the designated payee |
 | Metadata | Immediately after an accepted Craft Update Claim request | Synchronize republished metadata while preserving active phase configuration and completed allocations |
 
 Eligibility is not guaranteed block inclusion or finality. Admission budgets serial
@@ -2066,7 +2066,7 @@ and their existing wave; those reporting consumers need no redeploy for these
 automation alerts. Initial wave reporting is required before new launch signing;
 receipt reconciliation continues separately.
 See [configuration and recovery](drop-forge-auto-launch.md). The creator owner
-still grants/revokes on-chain admins, and Pay Artist remains outside automation.
+still grants/revokes on-chain admins, and artist payments require the separate opt-in setting and configured payout cap.
 
 Drop Forge launch scheduling groups actions by phase, with independent completed-state and readiness checks. Unsigned action failures and missed windows remain visible without blocking later groups; a persisted signed nonce remains reserved until reconciled. The Launch API exposes groups, attempt errors and observed skips, and each outcome is committed to the operations-wave outbox.
 
@@ -2090,6 +2090,32 @@ outcome, completion flags, signer reservation release and wave outbox commit
 atomically. A recovery-only flag permits this path while normal scheduling remains
 disabled. Signed bytes stay server-side. Reviewed fresh-nonce delivery requires
 proven prior nonce settlement; unknown evidence blocks further wallet use.
+
+### Launch settings and funding boundary
+
+The `drop_forge_settings` row is scoped by chain/creator and defaults both switches
+Off. API changes use an optimistic revision and row lock; only the creator owner
+or configured claims-list wallet can edit. Workers check the same row while
+reserving, committing a signature and considering rebroadcast. Turning Off retains
+future one-time deliveries for disabled-action reporting and signed-receipt tracking.
+Skip reporting is deduplicated per action/settings revision and does not complete
+an allocation. Enabling wakes existing active claims without creating historical
+launches. Environment kill switches remain an outer capability; EMMA is independent.
+
+The `PAY_ARTIST` action stores the exact wei amount and designated payee in the
+existing launch ledger. Fresh paid-mint/subscription accounting must match confirmed
+indexed supply before reservation, and the positive payout cap is independent of
+gas caps. Manual payment hashes are claim-bound evidence; a completion checkbox
+alone blocks automatic payment. Same-nonce speed-up retains recipient/value;
+cancellation uses zero value. Successful canonical settlement mirrors `PAY_ARTIST`.
+
+All authorized Drop Forge users can view the configured wallet and fund it. Top Up
+ETH is signed by their connected wallet, not KMS. The API verifies sender, network,
+destination and value, then persists a `drop_forge_funding` intent keyed by sending
+wallet/nonce and queues it to the existing launch handler. Replacement hashes remain
+on that intent; canonical receipt evidence chooses the winner. Its wave report and
+acknowledgement commit atomically. ENS is optional display data, forward-checked
+against the pinned address. Funding never grants settings or on-chain admin rights.
 
 ## Architecture Notes
 

@@ -28,6 +28,12 @@ import {
 } from '@/drop-forge/drop-forge.types';
 import { RequestContext } from '@/request.context';
 import { isResearchAirdrop } from '@/drop-forge/drop-forge.research';
+import {
+  readForgeSettings,
+  disabledActionReason,
+  recordDisabledAction
+} from '@/drop-forge/drop-forge.settings';
+import { DropForgeSettingsEntity } from '@/entities/IDropForgeSettings';
 
 type Work = { record: LaunchRecord; action: LaunchAction };
 type PendingSigner = { launch_id: string | null; action_id: string | null };
@@ -65,9 +71,10 @@ export class DropForgeWorker {
     const work = await this.repository.wallet(
       walletId,
       async (pending, ctx): Promise<Work | null> => {
+        const settings = await readForgeSettings(this.config, ctx, true);
         if (pending.launch_id)
           return !target || pending.launch_id === target
-            ? this.pendingWork(pending, ctx)
+            ? this.pendingWork(pending, ctx, settings)
             : null;
         const candidates = target
           ? [await this.repository.find(target, ctx)].filter(
@@ -76,12 +83,18 @@ export class DropForgeWorker {
           : await this.repository.active(await this.chain.now(), ctx);
         for (const candidate of candidates) {
           const record = await this.repository.lockLaunch(candidate.id, ctx);
+          if (await this.reconcileDisabled(record, ctx, settings)) continue;
           if (!runnable(record) || !this.scheduledEnabled) {
             await this.reconcileInactive(record, ctx);
             continue;
           }
           if (record.data.events.some((event) => !event.drop_id)) continue;
-          const reserved = await this.reserveCandidate(record, pending, ctx);
+          const reserved = await this.reserveCandidate(
+            record,
+            pending,
+            ctx,
+            settings
+          );
           if (reserved) return reserved;
         }
         return null;
@@ -105,13 +118,46 @@ export class DropForgeWorker {
     await this.reconcile(walletId, work.record.id);
   }
 
+  private async reconcileDisabled(
+    record: LaunchRecord,
+    ctx: RequestContext,
+    settings: DropForgeSettingsEntity
+  ): Promise<boolean> {
+    if (
+      settings.automation_enabled ||
+      !this.scheduledEnabled ||
+      ['DRAFT', 'COMPLETED', 'CANCELLED'].includes(record.state)
+    )
+      return false;
+    await this.reportDisabledPending(record, settings, ctx);
+    await this.reconcileInactive(record, ctx);
+    await this.repository.save(record, ctx);
+    return true;
+  }
+
+  private async reportDisabledPending(
+    record: LaunchRecord,
+    settings: DropForgeSettingsEntity,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (settings.automation_enabled || !this.scheduledEnabled) return;
+    const before = record.data.events.length;
+    for (const due of dueActions(record, await this.chain.now()).filter(
+      (it) => it.state !== 'SIGNED'
+    ))
+      recordDisabledAction(record, due, settings);
+    if (record.data.events.length !== before)
+      await this.repository.save(record, ctx);
+  }
+
   private async reserveCandidate(
     record: LaunchRecord,
     pending: PendingSigner,
-    ctx: RequestContext
+    ctx: RequestContext,
+    settings: DropForgeSettingsEntity
   ): Promise<Work | null> {
     try {
-      const reserved = await this.reserve(record, pending, ctx);
+      const reserved = await this.reserve(record, pending, ctx, settings);
       return reserved;
     } catch (error) {
       if (error instanceof LaunchRpcUnavailableError) throw error;
@@ -163,12 +209,14 @@ export class DropForgeWorker {
 
   private async pendingWork(
     pending: PendingSigner,
-    ctx: RequestContext
+    ctx: RequestContext,
+    settings: DropForgeSettingsEntity
   ): Promise<Work | null> {
     const record = await this.repository.lockLaunch(pending.launch_id!, ctx);
     const action = record.data.actions.find(
       (it) => it.id === pending.action_id
     );
+    await this.reportDisabledPending(record, settings, ctx);
     if (!action || !['RESERVED', 'SIGNED'].includes(action.state))
       throw new LaunchSafetyError(
         'Signer ledger is inconsistent; manual recovery required'
@@ -186,7 +234,10 @@ export class DropForgeWorker {
       (await this.chain.now()) >= action.deadline - 120;
     if (
       action.state === 'RESERVED' &&
-      (!runnable(record) || !this.scheduledEnabled || expiredUnsigned)
+      (!runnable(record) ||
+        !this.scheduledEnabled ||
+        !!disabledActionReason(settings, action) ||
+        expiredUnsigned)
     ) {
       if (expiredUnsigned) {
         reportActionFailure(
@@ -198,6 +249,7 @@ export class DropForgeWorker {
         action.window_reported = true;
       }
       action.state = 'PENDING';
+      recordDisabledAction(record, action, settings);
       delete action.unsigned_tx;
       pending.launch_id = null;
       pending.action_id = null;
@@ -247,7 +299,8 @@ export class DropForgeWorker {
   private async reserve(
     record: LaunchRecord,
     pending: PendingSigner,
-    ctx: RequestContext
+    ctx: RequestContext,
+    settings: DropForgeSettingsEntity
   ): Promise<Work | null> {
     assertPhaseScopedPlan(record.data);
     await this.assertCanonical(record);
@@ -284,7 +337,14 @@ export class DropForgeWorker {
     }
     const now = await this.chain.now();
     for (const action of dueActions(record, now)) {
-      const work = await this.tryAction(record, action, pending, ctx, now);
+      const work = await this.tryAction(
+        record,
+        action,
+        pending,
+        ctx,
+        now,
+        settings
+      );
       if (work) {
         await this.repository.save(record, ctx);
         return work;
@@ -300,9 +360,12 @@ export class DropForgeWorker {
     action: LaunchAction,
     pending: PendingSigner,
     ctx: RequestContext,
-    now: number
+    now: number,
+    settings: DropForgeSettingsEntity
   ): Promise<Work | null> {
     let work: Work | null = null;
+    if (recordDisabledAction(record, action, settings)) return null;
+    delete action.disabled_reason;
     try {
       if ((action.retry_at ?? 0) > now) return null;
       if (await this.observe(record, action)) return null;
@@ -503,6 +566,15 @@ export class DropForgeWorker {
           record.data.events.some((event) => !event.drop_id)
         )
           return;
+        const settings = await readForgeSettings(this.config, ctx, true);
+        if (recordDisabledAction(record, action, settings)) {
+          action.state = 'PENDING';
+          delete action.unsigned_tx;
+          pending.launch_id = null;
+          pending.action_id = null;
+          await this.repository.save(record, ctx);
+          return;
+        }
         if ((await this.chain.now()) >= action.deadline - 120) {
           action.state = 'PENDING';
           delete action.unsigned_tx;
@@ -599,6 +671,8 @@ export class DropForgeWorker {
           return null;
         }
         if (receipt || !runnable(record) || !this.scheduledEnabled) return null;
+        const settings = await readForgeSettings(this.config, ctx, true);
+        if (disabledActionReason(settings, action)) return null;
         const nonce = Transaction.from(action.signed_tx!).nonce;
         if ((await this.chain.nonce(record.data.signer, false)) > nonce) {
           // Inclusion may happen between the first receipt and nonce reads.

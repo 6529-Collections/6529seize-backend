@@ -271,6 +271,16 @@ export function buildLaunchPlan(
     recipients: [],
     state: 'PENDING'
   });
+  actions.push({
+    id: 'pay-artist',
+    label: 'Pay Artist',
+    kind: 'PAY_ARTIST',
+    phase: finalPhase,
+    due: researchDue,
+    deadline: researchDue + 24 * 60 * 60,
+    recipients: [],
+    state: 'PENDING'
+  });
   return {
     plan_version: DROP_FORGE_PLAN_VERSION,
     chain_id: config.chainId,

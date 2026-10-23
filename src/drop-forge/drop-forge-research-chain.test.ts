@@ -84,10 +84,8 @@ it.each([
 it('rejects early execution, Craft/max mismatches and changed supply after reservation', async () => {
   const { chain, data, action, tuple } = setup();
   jest.spyOn(chain, 'now').mockResolvedValue(action.due - 1);
-  await expect(chain.completed(data, action)).rejects.toThrow(
-    'fifteen minutes'
-  );
-  await expect(chain.prepare(data, action)).rejects.toThrow('fifteen minutes');
+  await expect(chain.completed(data, action)).rejects.toThrow('one hour');
+  await expect(chain.prepare(data, action)).rejects.toThrow('one hour');
   jest.spyOn(chain, 'now').mockResolvedValue(action.due);
   tuple[1] = 310;
   await expect(chain.completed(data, action)).rejects.toThrow(

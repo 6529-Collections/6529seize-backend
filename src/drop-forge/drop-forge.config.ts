@@ -13,6 +13,7 @@ export interface DropForgeReportingConfig {
   recipientIds: string[];
 }
 export interface DropForgeConfig extends DropForgeReportingConfig {
+  maxArtistPayment?: bigint;
   chainId: number;
   creator: string;
   proxy: string;
@@ -70,6 +71,13 @@ export function getDropForgeConfig(): DropForgeConfig {
     maxFee,
     maxGas,
     maxCost,
+    ...(process.env.DROP_FORGE_MAX_ARTIST_PAYMENT_ETH?.trim()
+      ? {
+          maxArtistPayment: parseEther(
+            process.env.DROP_FORGE_MAX_ARTIST_PAYMENT_ETH.trim()
+          )
+        }
+      : {}),
     creator: address(
       'DROP_FORGE_CREATOR_CONTRACT',
       chainId === 1 ? MEMES_CONTRACT : undefined

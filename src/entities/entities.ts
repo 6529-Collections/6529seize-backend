@@ -291,6 +291,7 @@ export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalid
 
 export * from './IDropForgeLaunch';
 export * from './IDropForgeEvidence';
+export * from './IDropForgeSettings';
 export {
   MemeCollaborationEntity,
   MemeCollaborationInvitationEntity

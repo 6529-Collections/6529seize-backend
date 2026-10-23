@@ -108,6 +108,69 @@ function setup() {
     }
   };
 }
+
+it('preserves the exact ETH recipient/value for payment speed-up and sends zero for cancellation', async () => {
+  const f = setup();
+  f.action.kind = 'PAY_ARTIST';
+  f.action.payment = {
+    recipient: '0x' + '77'.repeat(20),
+    amount_wei: '1000000000000000',
+    paid_count: 1,
+    subscriptions_count: 0
+  };
+  f.action.signed_tx = await testWallet.signTransaction({
+    type: 2,
+    to: f.action.payment.recipient,
+    value: BigInt(f.action.payment.amount_wei),
+    data: '0x',
+    nonce: 7,
+    chainId: f.data.chain_id,
+    gasLimit: 21000,
+    maxFeePerGas: 80,
+    maxPriorityFeePerGas: 2
+  });
+  f.action.hash = Transaction.from(f.action.signed_tx).hash!;
+  f.action.recovery = originalRecovery(f.action);
+  const speed = Transaction.from(
+    await f.chain.prepare(f.data, f.action, 'SPEED_UP')
+  );
+  expect(speed.value).toBe(BigInt(f.action.payment.amount_wei));
+  expect(speed.to!.toLowerCase()).toBe(
+    f.action.payment.recipient.toLowerCase()
+  );
+  expect(speed.nonce).toBe(7);
+  const cancel = Transaction.from(
+    await f.chain.prepare(f.data, f.action, 'CANCEL')
+  );
+  expect(cancel.value).toBe(BigInt(0));
+  expect(cancel.to!.toLowerCase()).toBe(f.data.signer.toLowerCase());
+  expect(cancel.nonce).toBe(7);
+  const raw = await testWallet.signTransaction(speed);
+  expect(() =>
+    validateRecoveryTransaction(f.data, f.action, {
+      id: 'payment-speed',
+      operation: 'SPEED_UP',
+      requested_by: 'admin',
+      requested_at: 0,
+      hash: Transaction.from(raw).hash!,
+      signed_tx: raw
+    })
+  ).not.toThrow();
+  const changed = await testWallet.signTransaction({
+    ...speed.toJSON(),
+    value: BigInt(1)
+  });
+  expect(() =>
+    validateRecoveryTransaction(f.data, f.action, {
+      id: 'bad-payment',
+      operation: 'SPEED_UP',
+      requested_by: 'admin',
+      requested_at: 0,
+      hash: Transaction.from(changed).hash!,
+      signed_tx: changed
+    })
+  ).toThrow('differs');
+});
 it('bumps both fees above every tracked attempt and preserves original nonce/calldata', async () => {
   const f = setup();
   await f.start();

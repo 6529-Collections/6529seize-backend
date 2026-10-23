@@ -5,6 +5,8 @@ import { isSupportedMintingClaimActionType } from '@/minting-claims/minting-clai
 
 function flagsForLabel(label: string): string[] {
   switch (label) {
+    case 'Pay Artist':
+      return ['PAY_ARTIST'];
     case 'Airdrop - Artist':
       return ['ARTIST_AIRDROP'];
     case 'Airdrop - Team':
@@ -26,6 +28,8 @@ function flagsForLabel(label: string): string[] {
 function completedFlags(record: LaunchRecord): string[] {
   const groups = new Map<string, boolean>();
   for (const action of record.data.actions) {
+    if (action.kind === 'PAY_ARTIST' && action.state === 'CONFIRMED')
+      groups.set('Pay Artist', true);
     if (action.kind !== 'AIRDROP' || !action.label) continue;
     groups.set(
       action.label,

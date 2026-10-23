@@ -62,6 +62,8 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
         attempt_count,
         attempt_error,
         retry_at,
+        disabled_reason,
+        payment,
         observed
       }) => {
         const inspection =
@@ -95,6 +97,9 @@ export function mapLaunch(record: LaunchRecord): ApiDropForgeLaunch {
               }
             : undefined,
           id,
+          disabled_reason: disabled_reason ?? null,
+          payment_recipient: payment?.recipient ?? null,
+          payment_amount_wei: payment?.amount_wei ?? null,
           group: launchGroup(
             record.data.actions.find((action) => action.id === id)!
           ),

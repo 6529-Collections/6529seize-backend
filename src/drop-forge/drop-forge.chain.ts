@@ -22,13 +22,18 @@ import {
 } from '@/drop-forge/drop-forge.types';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import {
+  artistPaymentQuote,
+  assertPaymentQuote,
+  verifyPaymentTiming
+} from '@/drop-forge/drop-forge.payment';
+import {
   assertResearchTiming,
   isResearchAirdrop,
   researchAirdropAmount,
   verifyResearchSupply
 } from '@/drop-forge/drop-forge.research';
 
-async function rpcWithDeadline<T>(request: Promise<T>): Promise<T> {
+export async function rpcWithDeadline<T>(request: Promise<T>): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -64,6 +69,11 @@ export interface ChainReceipt {
   confirmations: number;
 }
 export interface LaunchChain {
+  inspectPayment?(
+    data: LaunchData,
+    action: LaunchAction,
+    hash: string
+  ): Promise<ChainReceipt | null>;
   now(): Promise<number>;
   nonce(address: string, pending: boolean): Promise<number>;
   prepare(data: LaunchData, action: LaunchAction): Promise<string>;
@@ -245,6 +255,19 @@ export class EthereumLaunchChain implements LaunchChain {
       throw new LaunchSafetyError(
         'Operational signer lacks creator-admin permission'
       );
+    if (action.kind === 'PAY_ARTIST') {
+      verifyPaymentTiming(data, action, await this.now());
+      const quote = await this.paymentQuote(data);
+      assertPaymentQuote(action, quote, captureSupply);
+      if (
+        !this.config.maxArtistPayment ||
+        BigInt(quote.amount_wei) > this.config.maxArtistPayment
+      )
+        throw new LaunchSafetyError(
+          'Artist payment exceeds the configured payment limit'
+        );
+      return;
+    }
     let result: string;
     try {
       result = await rpcWithDeadline(
@@ -542,6 +565,47 @@ export class EthereumLaunchChain implements LaunchChain {
     }
     return { calldata: tx.data, receipt };
   }
+  private async paymentQuote(
+    data: LaunchData
+  ): Promise<NonNullable<LaunchAction['payment']>> {
+    const block = Math.max(
+      0,
+      (await rpcWithDeadline(this.provider.getBlockNumber())) -
+        this.config.confirmations +
+        1
+    );
+    const claim = await this.readClaim(data, block);
+    if (
+      !claim ||
+      Number(claim.tokenId) !== data.claim_id ||
+      Number(claim.totalMax) !== data.edition_size
+    )
+      throw new LaunchSafetyError(
+        'Artist payment claim does not match the frozen edition'
+      );
+    return artistPaymentQuote(data, Number(claim.total), block);
+  }
+  async inspectPayment(
+    data: LaunchData,
+    action: LaunchAction,
+    hash: string
+  ): Promise<ChainReceipt | null> {
+    if ((await this.now()) < data.phases.at(-1)!.end) return null;
+    const quote = await this.paymentQuote(data);
+    assertPaymentQuote(action, quote, true);
+    const tx = await rpcWithDeadline(this.provider.getTransaction(hash));
+    if (!tx) return null;
+    if (
+      tx.chainId !== BigInt(data.chain_id) ||
+      tx.to?.toLowerCase() !== quote.recipient.toLowerCase() ||
+      tx.value !== BigInt(quote.amount_wei) ||
+      tx.data !== '0x'
+    )
+      throw new LaunchSafetyError(
+        'Manual artist payment does not match the exact chain, recipient and amount'
+      );
+    return this.receipt(hash);
+  }
   private async researchCompleted(
     data: LaunchData,
     action: LaunchAction
@@ -610,6 +674,13 @@ export class EthereumLaunchChain implements LaunchChain {
     action: LaunchAction
   ): Promise<{ total: number; metadata?: string } | null> {
     this.assertBinding(data);
+    if (action.kind === 'PAY_ARTIST') {
+      if ((await this.now()) < action.due) return null;
+      const quote = await this.paymentQuote(data);
+      if (BigInt(quote.amount_wei) !== BigInt(0)) return null;
+      assertPaymentQuote(action, quote, true);
+      return { total: 0 };
+    }
     if (isResearchAirdrop(action)) return this.researchCompleted(data, action);
     if (!['INITIALIZE', 'UPDATE', 'METADATA'].includes(action.kind))
       return null;
@@ -706,9 +777,13 @@ export class EthereumLaunchChain implements LaunchChain {
       throw new LaunchSafetyError('Network gas fee exceeds configured budget');
     const request = {
       from: data.signer,
-      to: data.proxy,
-      data: encodeLaunchAction(data, action),
-      value: BigInt(0),
+      to: action.kind === 'PAY_ARTIST' ? action.payment!.recipient : data.proxy,
+      data:
+        action.kind === 'PAY_ARTIST' ? '0x' : encodeLaunchAction(data, action),
+      value:
+        action.kind === 'PAY_ARTIST'
+          ? BigInt(action.payment!.amount_wei)
+          : BigInt(0),
       type: 2,
       chainId: data.chain_id,
       nonce: pending,
@@ -732,7 +807,7 @@ export class EthereumLaunchChain implements LaunchChain {
       throw new LaunchSafetyError('Transaction exceeds configured gas budget');
     if (
       (await rpcWithDeadline(this.provider.getBalance(data.signer))) <
-      gasLimit * fee.maxFeePerGas
+      request.value + gasLimit * fee.maxFeePerGas
     )
       throw new LaunchSafetyError(
         'Operational signer has insufficient gas funds'

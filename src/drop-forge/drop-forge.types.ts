@@ -1,4 +1,4 @@
-export const DROP_FORGE_PLAN_VERSION = 3;
+export const DROP_FORGE_PLAN_VERSION = 4;
 export type LaunchState =
   | 'DRAFT'
   | 'ARMED'
@@ -42,6 +42,14 @@ export interface RecoveryLedger {
   block_hash?: string;
 }
 export interface LaunchAction {
+  disabled_revision?: number;
+  disabled_reason?: string;
+  payment?: {
+    recipient: string;
+    amount_wei: string;
+    paid_count: number;
+    subscriptions_count: number;
+  };
   attempt_count?: number;
   attempt_error?: string;
   retry_at?: number;
@@ -57,7 +65,7 @@ export interface LaunchAction {
   }>;
   late_delivery?: boolean;
   id: string;
-  kind: 'INITIALIZE' | 'AIRDROP' | 'UPDATE' | 'METADATA';
+  kind: 'INITIALIZE' | 'AIRDROP' | 'UPDATE' | 'METADATA' | 'PAY_ARTIST';
   label?: string;
   target_metadata?: string;
   observed?: boolean;

@@ -20,6 +20,8 @@ import {
   continueLaunch
 } from '@/drop-forge/drop-forge.dispatch';
 import { Logger } from '@/logging';
+import { readForgeSettings } from '@/drop-forge/drop-forge.settings';
+import { processForgeFunding } from '@/drop-forge/drop-forge.funding';
 import { doInDbContext } from '@/secrets';
 import { wrapLambdaHandler } from '@/sentry.context';
 
@@ -27,6 +29,10 @@ const logger = Logger.get('DROP_FORGE_LAUNCH_HANDLER');
 export async function runLaunchDelivery(
   delivery: ForgeDelivery
 ): Promise<void> {
+  if (delivery.id.startsWith('funding:')) {
+    await processForgeFunding(getDropForgeConfig(), delivery);
+    return;
+  }
   if (!recoveryEnabled())
     throw new Error(
       'Launch execution and recovery are disabled; queued work retained'
@@ -74,7 +80,8 @@ export async function runLaunchDelivery(
     await continueLaunch(
       updated,
       Math.floor(Date.now() / 1000),
-      automationEnabled()
+      automationEnabled(),
+      await readForgeSettings(config)
     );
   } finally {
     // A hard timeout cannot reach finally, leaving the recovery wake intact.

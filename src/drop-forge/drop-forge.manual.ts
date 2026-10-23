@@ -286,6 +286,33 @@ export async function reconcileManual(
   await assertLatestManualCanonical(record, chain, config);
   for (const proof of record.data.manual_transactions ?? []) {
     if (proof.state !== 'PENDING') continue;
+    if (proof.action === 'PAY_ARTIST') {
+      const action = record.data.actions.find((it) => it.kind === 'PAY_ARTIST');
+      if (!action || action.state !== 'PENDING' || !chain.inspectPayment)
+        throw new LaunchSafetyError(
+          'Artist payment cannot be credited while its signed intent is unresolved'
+        );
+      const receipt = await chain.inspectPayment(
+        record.data,
+        action,
+        proof.hash
+      );
+      if (!receipt || receipt.confirmations < config.confirmations)
+        return false;
+      if (receipt.status !== 1)
+        throw new LaunchSafetyError('Manual artist payment reverted');
+      action.state = 'CONFIRMED';
+      action.hash = proof.hash;
+      action.block_number = receipt.blockNumber;
+      action.block_hash = receipt.blockHash;
+      action.observed = true;
+      proof.state = 'CONFIRMED';
+      proof.method = 'PAY_ARTIST';
+      proof.block_number = receipt.blockNumber;
+      proof.block_hash = receipt.blockHash;
+      reportActionSkip(record, action);
+      continue;
+    }
     if (!chain.inspectTransaction)
       throw new LaunchSafetyError(
         'Manual transaction verification is unavailable'

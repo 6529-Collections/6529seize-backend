@@ -34,14 +34,20 @@ export function validateRecoveryTransaction(
   const tx = Transaction.from(attempt.signed_tx);
   const original = Transaction.from(action.signed_tx!);
   const cancel = attempt.operation === 'CANCEL';
-  const target = cancel ? data.signer : data.proxy;
+  const recipient =
+    action.kind === 'PAY_ARTIST' ? action.payment?.recipient : data.proxy;
+  const payment =
+    action.kind === 'PAY_ARTIST'
+      ? BigInt(action.payment?.amount_wei ?? '-1')
+      : BigInt(0);
+  const target = cancel ? data.signer : recipient;
   if (
     tx.hash !== attempt.hash ||
     tx.from?.toLowerCase() !== data.signer.toLowerCase() ||
     tx.chainId !== BigInt(data.chain_id) ||
     tx.nonce !== original.nonce ||
-    tx.to?.toLowerCase() !== target.toLowerCase() ||
-    tx.value !== BigInt(0) ||
+    tx.to?.toLowerCase() !== target?.toLowerCase() ||
+    tx.value !== (cancel ? BigInt(0) : payment) ||
     tx.data !== (cancel ? '0x' : original.data)
   )
     throw new LaunchSafetyError(
@@ -167,7 +173,10 @@ export class RecoveryChain {
       throw new LaunchSafetyError(
         'Recovery replacement exceeds configured gas budget'
       );
-    if ((await this.provider.getBalance(data.signer)) < gasLimit * maxFee)
+    if (
+      (await this.provider.getBalance(data.signer)) <
+      gasLimit * maxFee + (cancel ? BigInt(0) : original.value)
+    )
       throw new LaunchSafetyError(
         'Operational signer has insufficient gas funds for recovery'
       );
@@ -176,7 +185,7 @@ export class RecoveryChain {
       type: 2,
       nonce: original.nonce,
       to: cancel ? data.signer : original.to,
-      value: BigInt(0),
+      value: cancel ? BigInt(0) : original.value,
       data: cancel ? '0x' : original.data,
       gasLimit,
       maxFeePerGas: maxFee,

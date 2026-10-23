@@ -101,7 +101,8 @@ export async function coordinateDropForgeManualAction(
           'PHASE1_AIRDROP',
           'PHASE2_AIRDROP',
           'PUBLIC_PHASE_AIRDROP',
-          'RESEARCH_AIRDROP'
+          'RESEARCH_AIRDROP',
+          'PAY_ARTIST'
         ),
         operation: Joi.string().valid('BEGIN', 'SUBMIT', 'CANCEL').required(),
         lease_id: Joi.string().guid(),

@@ -23,6 +23,7 @@ import { clearDropForgeTestTables } from '@/drop-forge/drop-forge.db-test-fixtur
 import { DROP_FORGE_LAUNCHES_TABLE } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import { buildLaunchPlan } from '@/drop-forge/drop-forge.plan';
+import { updateForgeSettings } from '@/drop-forge/drop-forge.settings';
 
 describe('Drop Forge durable worker', () => {
   beforeEach(clearDropForgeTestTables);
@@ -86,6 +87,164 @@ describe('Drop Forge durable worker', () => {
     await acknowledgeReports();
     await worker.tick();
   };
+  it('reports disabled due actions once without signing or completing them, then resumes within the window', async () => {
+    await updateForgeSettings(testConfig, testConfig.signer, {
+      revision: 0,
+      automation_enabled: false,
+      pay_artist_enabled: false
+    });
+    await worker.tick(id);
+    const first = await read();
+    expect(first!.data.actions[0].state).toBe('PENDING');
+    expect(
+      first!.data.events.filter((event) =>
+        event.content.includes('launch automation disabled')
+      )
+    ).toHaveLength(2);
+    expect(signer.sign).not.toHaveBeenCalled();
+    await acknowledgeReports();
+    await worker.tick(id);
+    expect(
+      (await read())!.data.events.filter((event) =>
+        event.content.includes('launch automation disabled')
+      )
+    ).toHaveLength(2);
+    await updateForgeSettings(testConfig, testConfig.signer, {
+      revision: 1,
+      automation_enabled: true,
+      pay_artist_enabled: false
+    });
+    await start();
+    expect(signer.sign).toHaveBeenCalledTimes(1);
+  });
+  it('does not persist or broadcast a signature when settings are disabled during KMS signing', async () => {
+    const sign = signer.sign.getMockImplementation()!;
+    signer.sign.mockImplementationOnce(async (unsigned) => {
+      const raw = await sign(unsigned);
+      await updateForgeSettings(testConfig, testConfig.signer, {
+        revision: 0,
+        automation_enabled: false,
+        pay_artist_enabled: false
+      });
+      return raw;
+    });
+    await start();
+    expect((await read())!.data.actions[0].state).toBe('PENDING');
+    expect((await read())!.data.actions[0].signed_tx).toBeUndefined();
+    expect(chain.broadcast).not.toHaveBeenCalled();
+  });
+  it('keeps reconciling an already signed transaction after automation is disabled', async () => {
+    await start();
+    await updateForgeSettings(testConfig, testConfig.signer, {
+      revision: 0,
+      automation_enabled: false,
+      pay_artist_enabled: false
+    });
+    chain.receipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'canonical',
+      confirmations: 12
+    });
+    await worker.tick(id);
+    expect((await read())!.data.actions[0].state).toBe('CONFIRMED');
+    expect(signer.sign).toHaveBeenCalledTimes(1);
+  });
+  it('retains one nonzero artist payment intent across a worker restart and confirms it without paying twice', async () => {
+    let due = 0;
+    await repository.change(
+      id,
+      (record) => {
+        for (const action of record.data.actions) action.state = 'CONFIRMED';
+        const payment = record.data.actions.find(
+          (action) => action.kind === 'PAY_ARTIST'
+        )!;
+        payment.state = 'PENDING';
+        payment.payment = {
+          recipient: '0x' + '77'.repeat(20),
+          amount_wei: '1000000000000000',
+          paid_count: 1,
+          subscriptions_count: 0
+        };
+        due = payment.due;
+      },
+      {}
+    );
+    chain.now.mockResolvedValue(due + 60);
+    chain.prepare.mockResolvedValue(
+      Transaction.from({
+        type: 2,
+        chainId: testConfig.chainId,
+        nonce: 0,
+        to: '0x' + '77'.repeat(20),
+        value: BigInt(1000000000000000),
+        data: '0x',
+        gasLimit: 21000,
+        maxFeePerGas: 100,
+        maxPriorityFeePerGas: 1
+      }).unsignedSerialized
+    );
+    await start();
+    const signed = (await read())!.data.actions.find(
+      (action) => action.kind === 'PAY_ARTIST'
+    )!;
+    expect(signed.state).toBe('SIGNED');
+    expect(Transaction.from(signed.signed_tx!).value).toBe(
+      BigInt(1000000000000000)
+    );
+    const restarted = new DropForgeWorker(
+      testConfig,
+      repository,
+      chain,
+      signer
+    );
+    await restarted.tick(id);
+    expect(signer.sign).toHaveBeenCalledTimes(1);
+    chain.receipt.mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'canonical',
+      confirmations: 12
+    });
+    await restarted.tick(id);
+    expect(
+      (await read())!.data.actions.find(
+        (action) => action.kind === 'PAY_ARTIST'
+      )!.state
+    ).toBe('CONFIRMED');
+    expect(signer.sign).toHaveBeenCalledTimes(1);
+  });
+  it('credits an exact confirmed manual artist payment without reserving or signing another transfer', async () => {
+    await repository.change(
+      id,
+      (record) => {
+        for (const action of record.data.actions)
+          action.state = action.kind === 'PAY_ARTIST' ? 'PENDING' : 'CONFIRMED';
+        record.data.manual_transactions = [
+          {
+            hash: '0x' + 'ab'.repeat(32),
+            state: 'PENDING',
+            action: 'PAY_ARTIST'
+          }
+        ];
+      },
+      {}
+    );
+    chain.inspectPayment = jest.fn().mockResolvedValue({
+      status: 1,
+      blockNumber: 100,
+      blockHash: 'canonical',
+      confirmations: 12
+    });
+    await worker.tick(id);
+    const action = (await read())!.data.actions.find(
+      (it) => it.kind === 'PAY_ARTIST'
+    )!;
+    expect(action.state).toBe('CONFIRMED');
+    expect(action.observed).toBe(true);
+    expect(action.hash).toBe('0x' + 'ab'.repeat(32));
+    expect(signer.sign).not.toHaveBeenCalled();
+  });
   it('reconciles a confirmed batch atomically after a crash before signing the next batch', async () => {
     const source = {
       ...testSource,

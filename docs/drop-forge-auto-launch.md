@@ -10,7 +10,9 @@ EMMA exposes one durable **Process and Finalize** operation. Craft exposes
 The backend initializes immediately after Launch is accepted and continues phase
 transitions from per-drop one-time EventBridge Scheduler events. Both handlers default
 to disabled. Winner selection, craft publication, keys, gas funding, creator-admin
-grants, and Pay Artist remain operator responsibilities.
+grants and enabling optional artist payments remain operator responsibilities.
+
+Both hub settings start Off. With tracking enabled, due disabled actions still report skips to the operations wave. Research and optional Pay Artist run together at 18:00 Europe/Athens the following day.
 
 ## Configuration and authority
 
@@ -20,8 +22,8 @@ The API and worker need the same launch configuration; notification-producing
 services need the same `DROPS_6529_MENTION_PROFILE_IDS` configuration.
 
 | Setting                                 | Meaning                                                                                                                                  |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `DROP_FORGE_AUTOMATION_ENABLED`         | Exact `true` enables transaction work; otherwise disabled                                                                                |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `DROP_FORGE_AUTOMATION_ENABLED`  | Exact `true` enables launch tracking; the persisted Automatic launch switch separately permits execution                                 |
 | `DROP_FORGE_RECOVERY_ENABLED`           | Exact `true` permits exceptional replacement/cancellation and receipt recovery without enabling scheduled execution; disabled by default |
 | `DROP_FORGE_PREPARATION_ENABLED`        | Exact `true` enables queued EMMA preparation/finalization                                                                                |
 | `DROP_FORGE_CHAIN_ID`                   | Mainnet `1` or Sepolia `11155111`; defaults to Sepolia                                                                                   |
@@ -36,7 +38,7 @@ services need the same `DROPS_6529_MENTION_PROFILE_IDS` configuration.
 | `DROP_FORGE_CONFIRMATIONS`              | Confirmations before advancing, default 12, permitted range 2–64                                                                         |
 | `DROP_FORGE_MAX_FEE_PER_GAS_WEI`        | Required positive fee cap                                                                                                                |
 | `DROP_FORGE_MAX_GAS_PER_TX`             | Required positive gas-limit cap                                                                                                          |
-| `DROP_FORGE_MAX_TX_COST_ETH`            | Required positive total transaction cost cap                                                                                             |
+| `DROP_FORGE_MAX_TX_COST_ETH`     | Required positive gas cost cap (artist payment principal is separate)                                                                    |
 
 Dedicated execution and Scheduler delivery roles are referenced by versioned
 stage configuration, not GitHub variables. The API publishes targeted SQS work;
@@ -68,7 +70,7 @@ this scope.
 Unconfigured controls callers must pass `isAdmin` on the fixed configured
 creator. The operational wallet must independently pass that on-chain check.
 Admin grant/revocation remains creator-owner-only. Mint proceeds use the frozen
-payment receiver. Every worker transaction sends zero ETH; Pay Artist is excluded.
+payment receiver. Contract operations send zero ETH. Optional Pay Artist sends the frozen artist payment from the operational wallet, which must hold that amount plus gas.
 
 ## Process, craft and launch
 
@@ -143,7 +145,7 @@ per transaction, at most 20,000 phase-recipient entries per plan):
   inclusion; confirmation/reporting can follow later. It never replaces a live
   Phase 2 window. The cutover confirmation deadline is its due time plus one
   transaction's planning allowance, capped at the public end.
-- At 17:15 the next day: Research becomes eligible, fifteen minutes after the
+- At 18:00 the next day: Research becomes eligible, one hour after the
   calendar's public mint close. The target is `min(310, frozen Craft edition)`;
   the amount is `max(0, target - current on-chain total)`, counting paid mints
   and every earlier airdrop. Craft edition and on-chain `totalMax` must match.
@@ -151,13 +153,13 @@ per transaction, at most 20,000 phase-recipient entries per plan):
   wallet. An already-filled target completes without sending a transaction.
   Research uses a 24-hour execution/confirmation window after eligibility, with
   the same two-minute submission cutoff, gas limits and report gates. Scheduler
-  or network delays can delay inclusion; 17:15 is eligibility, not guaranteed
+  or network delays can delay inclusion; 18:00 is eligibility, not guaranteed
   block inclusion. Supply is captured before reservation and rechecked before
   signing. Confirmed manual Research receipts are reconciled separately from
   subscriber allocations, and their supply reduces any remaining top-up.
   Completion mirrors `RESEARCH_AIRDROP` into Launch and posts wave activity with
   transaction links; failures use the existing `@drops6529` alert path.
-  Pay Artist remains manual.
+  Optional Pay Artist is a separate action in the same post-mint group; an ordinary Research failure does not cancel its eligibility.
 
 For each initialization/transition, admission requires
 `transaction_count * (confirmations * 12 + 60) + 120` seconds: Ethereum slot
@@ -173,8 +175,8 @@ Phase updates snapshot the actual minted supply once the preceding window has
 closed. Subsequent batches validate that persisted baseline plus only the
 confirmed batches from that transition. Normal earlier-phase mints are therefore
 allowed; unexpected supply changes inside the transition and insufficient edition
-headroom block execution. Current plans use version 3 and include post-mint
-Research. Older plans (including version 2, which omitted Research) cannot
+headroom block execution. Current plans use version 4 and include the 18:00 post-mint
+Research/payment group. Older plans (including version 3 with the earlier Research time) cannot
 be armed, resumed, newly signed or rebroadcast; existing signed receipts remain
 reconcilable. Recreate an unstarted draft, or manually reconcile a started ledger.
 
@@ -338,3 +340,44 @@ minute. Reporting must commit before signing. Outstanding signed/unknown nonces,
 manual leases and noncanonical evidence continue to stop conflicting sends.
 Research waits for outstanding fixed airdrop allocations to be reconciled so its
 dynamic top-up cannot consume the edition supply still owed to them.
+
+## Launch Automation settings and artist payment
+
+The Drop Forge hub shows Launch Automation to every authorized Drop Forge user.
+Both database settings default Off, separately per chain/creator in each environment.
+Only the current creator owner or `CLAIMS_ADMIN_WALLETS` can edit them. Ordinary
+on-chain admins and `DISTRIBUTION_ADMIN_WALLETS` can view and fund the wallet.
+These permissions are checked by the API, independently of the UI.
+
+`DROP_FORGE_AUTOMATION_ENABLED` is the outer environment capability. Once provisioned,
+set it to true to accept tracked Launch requests and install one-time schedules.
+The hub's Automatic launch switch then controls new transactions. Off still allows
+scheduled handlers to report each due action as skipped, once per settings revision,
+without marking the action completed. Turning it on wakes active claims; only actions
+still within their windows execute. No historical claims are created or swept.
+Signed receipts continue reconciliation; Off stops fresh signing and rebroadcast,
+not transactions already accepted by the chain. EMMA preparation remains independent.
+
+Automatic artist payment defaults Off. At 18:00 Europe/Athens the following day,
+its independent action checks the current settings, exact manual payment evidence,
+completed fixed allocations and indexed supply against confirmed on-chain supply.
+It uses the existing 50% share of standard-price paid mints plus redeemed
+subscriptions, calculated with integer wei. The recipient comes from the claim's
+payment details, including designated payees. Recipient and amount freeze with the
+intent and are checked again before signing. Missing/incomplete accounting, a changed
+payee/amount or a manual completion checkbox without a transaction blocks payment.
+A zero amount completes without a transfer. The positive runtime
+`DROP_FORGE_MAX_ARTIST_PAYMENT_ETH` cap is required before enabling payments; existing
+transaction gas caps remain separate. Successful payment mirrors `PAY_ARTIST` into
+the manual Launch view. Signed payments use the same wallet reservation, crash-safe
+broadcast and canonical receipt/reorg checks as other actions. Speed-up preserves
+the exact recipient/value/nonce; cancellation sends zero ETH to the signer.
+
+The operational wallet panel shows its configured address, optional forward-verified
+ENS name, correct-chain explorer link and ETH balance. Top Up ETH uses the connected
+administrator's wallet; it does not ask KMS to sign. The user reviews the destination,
+network, amount and estimated maximum gas fee before approving their wallet.
+Funding is available while launch automation is Off. Submitted hashes are retained
+for retrying registration, not for sending a second transfer. The handler tracks
+same-nonce top-up replacements/cancellations and reports one confirmed outcome in
+the operations wave. Funding reports do not authorize launch execution.

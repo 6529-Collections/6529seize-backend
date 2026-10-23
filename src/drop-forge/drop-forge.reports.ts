@@ -1,3 +1,4 @@
+import { formatEther } from 'ethers';
 import {
   LaunchAction,
   LaunchData,
@@ -12,6 +13,8 @@ function actionLabel(action: LaunchAction): string {
 
 function operationName(data: LaunchData, action: LaunchAction): string {
   switch (action.kind) {
+    case 'PAY_ARTIST':
+      return 'artist payment';
     case 'INITIALIZE':
       return 'initialization';
     case 'METADATA':
@@ -25,6 +28,8 @@ function operationName(data: LaunchData, action: LaunchAction): string {
 
 function confirmedWording(data: LaunchData, action: LaunchAction): string {
   switch (action.kind) {
+    case 'PAY_ARTIST':
+      return 'artist payment completed';
     case 'INITIALIZE':
       return 'initialized';
     case 'METADATA':
@@ -65,6 +70,10 @@ function reportContent(
 }
 
 function actionDetails(data: LaunchData, action: LaunchAction): string {
+  if (action.kind === 'PAY_ARTIST')
+    return action.payment
+      ? `Artist payment: ${formatEther(action.payment.amount_wei)} ETH to ${action.payment.recipient}.`
+      : 'Artist payment uses the recorded payee and final mint/subscription accounting.';
   if (action.kind === 'AIRDROP') {
     const tokens = action.recipients.reduce(
       (sum, recipient) => sum + recipient.amount,

@@ -12,6 +12,8 @@ import {
 } from '@/drop-forge/drop-forge.wake';
 import { LaunchRecord, LaunchSafetyError } from '@/drop-forge/drop-forge.types';
 import { launchGroup } from '@/drop-forge/drop-forge.groups';
+import { disabledActionReason } from '@/drop-forge/drop-forge.settings';
+import { DropForgeSettingsEntity } from '@/entities/IDropForgeSettings';
 
 const scheduler = new SchedulerClient({});
 const sqs = new SQSClient({});
@@ -150,9 +152,26 @@ export function launchNeedsContinuation(
 export async function continueLaunch(
   record: LaunchRecord,
   now: number,
-  scheduled: boolean
+  scheduled: boolean,
+  settings?: DropForgeSettingsEntity
 ): Promise<void> {
-  if (launchNeedsContinuation(record, now, scheduled))
+  const actions = record.data.actions.filter(
+    (action) =>
+      !settings ||
+      !disabledActionReason(settings, action) ||
+      ['SIGNED', 'RESERVED'].includes(action.state)
+  );
+  const enabled = { ...record, data: { ...record.data, actions } };
+  const canContinue =
+    actions.some((action) => action.state !== 'CONFIRMED') ||
+    record.data.actions.every((action) => action.state === 'CONFIRMED');
+  if (
+    launchNeedsContinuation(
+      enabled,
+      now,
+      scheduled && canContinue && actions.length > 0
+    )
+  )
     await wakeDropForge(
       { id: record.id, revision: record.revision },
       false,

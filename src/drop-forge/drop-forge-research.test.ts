@@ -36,7 +36,7 @@ it('captures the late quantity once and refuses a changed supply or recipient be
   const action = data.actions.find(isResearchAirdrop)!;
   expect(() =>
     verifyResearchSupply(data, action, 287, action.due - 1, true)
-  ).toThrow('fifteen minutes');
+  ).toThrow('one hour');
   verifyResearchSupply(data, action, 287, action.due, true);
   expect(action.recipients).toEqual([
     { address: RESEARCH_AIRDROP_ADDRESS, amount: 18 }

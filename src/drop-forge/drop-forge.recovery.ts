@@ -23,6 +23,10 @@ import {
   validateRecoveryTransaction
 } from '@/drop-forge/drop-forge.recovery-chain';
 import { RequestContext } from '@/request.context';
+import {
+  disabledActionReason,
+  readForgeSettings
+} from '@/drop-forge/drop-forge.settings';
 
 type Reservation = { launch_id: string | null; action_id: string | null };
 export function originalRecovery(action: LaunchAction): RecoveryLedger {
@@ -185,7 +189,12 @@ export class DropForgeRecovery {
       throw new LaunchSafetyError('Transaction evidence is required');
     const raw = await this.chain.inspectRecovery(request.transaction_hash);
     const tx = Transaction.from(raw);
-    const operation = tx.data === '0x' ? 'CANCEL' : 'SPEED_UP';
+    const operation =
+      tx.data === '0x' &&
+      tx.value === BigInt(0) &&
+      tx.to?.toLowerCase() === record.data.signer.toLowerCase()
+        ? 'CANCEL'
+        : 'SPEED_UP';
     const attempt: RecoveryAttempt = {
       id: request.request_id,
       operation,
@@ -229,8 +238,18 @@ export class DropForgeRecovery {
   }
   private async verifySpeedUp(
     record: LaunchRecord,
-    action: LaunchAction
+    action: LaunchAction,
+    ctx: RequestContext = {}
   ): Promise<void> {
+    if (
+      disabledActionReason(
+        await readForgeSettings(this.config, ctx, !!ctx.connection),
+        action
+      )
+    )
+      throw new LaunchSafetyError(
+        'Launch settings disable new execution or speed-up; cancellation and receipt reconciliation remain available'
+      );
     if (['CANCELLED', 'COMPLETED'].includes(record.state))
       throw new LaunchSafetyError(
         'Cancelled or completed launch cannot speed up an action'
@@ -329,7 +348,7 @@ export class DropForgeRecovery {
             if (attempt.operation === 'ORIGINAL' || !this.chain.prepareRecovery)
               throw new LaunchSafetyError('Recovery signing is unavailable');
             if (attempt.operation === 'SPEED_UP')
-              await this.verifySpeedUp(record, action);
+              await this.verifySpeedUp(record, action, ctx);
             attempt.unsigned_tx ??= await this.chain.prepareRecovery(
               record.data,
               action,
@@ -389,7 +408,7 @@ export class DropForgeRecovery {
         if (!current || current.signed_tx || action.recovery?.outcome) return;
         if (current.operation === 'SPEED_UP') {
           if (action.recovery!.cancel_requested) return;
-          await this.verifySpeedUp(record, action);
+          await this.verifySpeedUp(record, action, ctx);
         }
         current.signed_tx = raw;
         current.hash = tx.hash!;
@@ -423,7 +442,7 @@ export class DropForgeRecovery {
           );
         if (!attempt) return null;
         if (attempt.operation !== 'CANCEL')
-          await this.verifySpeedUp(record, action);
+          await this.verifySpeedUp(record, action, ctx);
         const tx = validateRecoveryTransaction(record.data, action, attempt);
         const fee = tx.maxFeePerGas ?? tx.gasPrice ?? BigInt(0);
         if (

@@ -3,7 +3,8 @@ import { isResearchAirdrop } from '@/drop-forge/drop-forge.research';
 import { addLaunchEvent } from '@/drop-forge/drop-forge.repository';
 
 export function launchGroup(action: LaunchAction): string {
-  if (isResearchAirdrop(action)) return 'research';
+  if (action.kind === 'PAY_ARTIST') return 'post-mint';
+  if (isResearchAirdrop(action)) return 'post-mint';
   if (action.kind === 'METADATA') return 'metadata';
   return `phase-${action.phase}`;
 }
@@ -12,6 +13,7 @@ export function actionDescription(
   record: LaunchRecord,
   action: LaunchAction
 ): string {
+  if (action.kind === 'PAY_ARTIST') return 'Pay Artist';
   if (action.label === 'Airdrop - Artist') return 'Artist airdrops';
   if (action.label === 'Airdrop - Team') return 'Team airdrops';
   if (action.label) return action.label;

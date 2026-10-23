@@ -9,7 +9,7 @@ export const RESEARCH_AIRDROP_ADDRESS = getAddress(
   '0xc2ce4ccef11a8171f443745cea3bceeaadd750c7'
 );
 export const RESEARCH_TARGET_TOTAL = 310;
-export const RESEARCH_DELAY_SECONDS = 15 * 60;
+export const RESEARCH_DELAY_SECONDS = 60 * 60;
 export const isResearchAirdrop = (action: LaunchAction): boolean =>
   action.kind === 'AIRDROP' && action.id === 'research-airdrop';
 
@@ -37,7 +37,7 @@ export function assertResearchTiming(
     now < action.due
   )
     throw new LaunchSafetyError(
-      'Research airdrop is only eligible fifteen minutes after the final mint window closes'
+      'Research airdrop is only eligible one hour after the final mint window closes'
     );
 }
 

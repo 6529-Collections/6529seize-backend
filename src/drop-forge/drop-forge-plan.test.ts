@@ -18,7 +18,8 @@ describe('Drop Forge launch planning', () => {
       'INITIALIZE',
       'AIRDROP',
       'UPDATE',
-      'AIRDROP'
+      'AIRDROP',
+      'PAY_ARTIST'
     ]);
     expect(plan.actions[1].recipients[0].amount).toBe(1);
     const parameters = claimAbi.decodeFunctionData(
@@ -147,7 +148,8 @@ describe('Drop Forge launch planning', () => {
       ['UPDATE', 2],
       ['AIRDROP', 2],
       ['UPDATE', 3],
-      ['AIRDROP', 3]
+      ['AIRDROP', 3],
+      ['PAY_ARTIST', 3]
     ]);
     const batches = plan.actions.filter(
       (it) => it.kind === 'AIRDROP' && it.id !== 'research-airdrop'
@@ -163,7 +165,7 @@ describe('Drop Forge launch planning', () => {
     expect(publicUpdate.deadline).toBeGreaterThan(publicUpdate.due);
     expect(publicUpdate.deadline).toBeLessThan(input.phases[3].end);
     const research = plan.actions[7];
-    expect(research.due).toBe(input.phases[3].end + 900);
+    expect(research.due).toBe(input.phases[3].end + 3600);
     expect(research.recipients).toEqual([]);
   });
   it('rejects unmapped subscriber-only phases rather than airdropping them early', () => {

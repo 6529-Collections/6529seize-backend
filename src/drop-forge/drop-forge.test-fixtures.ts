@@ -19,6 +19,7 @@ export const testConfig: DropForgeConfig = {
   botId: 'test-bot',
   recipientIds: ['test-admin'],
   confirmations: 12,
+  maxArtistPayment: BigInt(1000000000000000000),
   maxFee: BigInt(100000000000),
   maxGas: BigInt(10000000),
   maxCost: BigInt(1000000000000000000)
