@@ -129,7 +129,8 @@ export class ReleaseNoteRecoveryService {
   private async runJob(
     job: ReleaseNoteRecoveryJobEntity,
     process: ProcessReleaseNote,
-    ctx: RequestContext
+    ctx: RequestContext,
+    resolvePredecessor = true
   ): Promise<void> {
     const request = JSON.parse(
       job.request_json
@@ -145,7 +146,8 @@ export class ReleaseNoteRecoveryService {
       );
       return;
     }
-    if (await this.resumePredecessor(job, process, ctx)) return;
+    if (resolvePredecessor && (await this.resumePredecessor(job, process, ctx)))
+      return;
     await this.publishPendingJob(job, request, process, ctx);
   }
 
@@ -158,6 +160,7 @@ export class ReleaseNoteRecoveryService {
       (job.status === 'FAILED' || job.status === 'NO_BASELINE') &&
       job.alerted_at === null;
     if (!needsAlert) {
+      // A permanent blocker must not wake its parked successors.
       if (job.status !== 'FAILED') await this.wakeNext(job, ctx);
       return;
     }
@@ -210,7 +213,9 @@ export class ReleaseNoteRecoveryService {
       this.now(),
       ctx
     );
-    await this.runJob(earlier, process, ctx);
+    // findEarlier selects the lowest run_number in this stream, so it cannot
+    // have another saved predecessor. Explicitly cap the in-process handoff.
+    await this.runJob(earlier, process, ctx, false);
     return true;
   }
 

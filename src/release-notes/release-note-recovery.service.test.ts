@@ -83,11 +83,12 @@ describe('ReleaseNoteRecoveryService', () => {
       run_number: 1948,
       request_json: JSON.stringify(laterRequest)
     });
-    repository.findEarlier.mockResolvedValueOnce(job).mockResolvedValue(null);
+    repository.findEarlier.mockResolvedValue(job);
     repository.findNextPending.mockResolvedValueOnce(saved);
     const process = jest.fn().mockResolvedValue(undefined);
     await service.process(laterRequest, process, {});
     expect(process).toHaveBeenCalledTimes(1);
+    expect(repository.findEarlier).toHaveBeenCalledTimes(1);
     expect(process).toHaveBeenCalledWith(request);
     expect(enqueueRetry).toHaveBeenCalledWith(laterRequest, 0);
     expect(repository.recordOutcome).toHaveBeenCalledWith(
@@ -105,7 +106,10 @@ describe('ReleaseNoteRecoveryService', () => {
   });
 
   it('parks successors behind a permanent blocker without queuing polling messages', async () => {
-    const { service, repository, enqueueRetry } = setup({ run_number: 1948 });
+    const { service, repository, enqueueRetry, saved } = setup({
+      run_number: 1948
+    });
+    repository.findNextPending.mockResolvedValue(saved);
     repository.findEarlier.mockResolvedValueOnce({
       ...job,
       status: 'FAILED',
@@ -115,6 +119,7 @@ describe('ReleaseNoteRecoveryService', () => {
     await service.process(request, process, {});
     expect(process).not.toHaveBeenCalled();
     expect(enqueueRetry).not.toHaveBeenCalled();
+    expect(repository.findNextPending).not.toHaveBeenCalled();
     expect(repository.recordOutcome).toHaveBeenCalledWith(
       job.publication_id,
       expect.objectContaining({ failures: 0, status: 'PENDING' }),
