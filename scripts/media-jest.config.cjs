@@ -15,6 +15,7 @@ module.exports = {
     '<rootDir>/scripts/c2pa-installer.test.ts',
     '<rootDir>/src/artwork-documentation/assets/artwork-assets-c2pa.test.ts',
     '<rootDir>/src/media/media-runtime.test.ts',
+    '<rootDir>/src/media/png-preview.test.ts',
     '<rootDir>/src/media/media-dependency-smoke.test.ts',
     '<rootDir>/src/mediaResizerLoop/*.test.ts',
     '<rootDir>/src/dropVideoConversionInvokerLoop/*.test.ts',

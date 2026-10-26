@@ -10,6 +10,7 @@ provider:
   name: aws
   runtime: nodejs22.x
   memorySize: 2048
+  ephemeralStorageSize: 1024
   timeout: 900
   architecture: x86_64
   logRetentionInDays: 60
