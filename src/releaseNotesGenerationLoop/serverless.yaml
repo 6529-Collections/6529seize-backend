@@ -26,10 +26,6 @@ functions:
           arn:
             Fn::GetAtt: [ReleaseNoteGenerationQueue, Arn]
           batchSize: 1
-      - schedule:
-          name: release-note-publication-recovery-${opt:stage, self:provider.stage}
-          rate: rate(5 minutes)
-          enabled: true
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
@@ -40,14 +36,6 @@ functions:
       API_GATEWAY_WS_ENDPOINT: ${env:API_GATEWAY_WS_ENDPOINT}
 
 resources:
-  Conditions:
-    ReleaseNoteRecoveryProduction:
-      Fn::Equals: ['${opt:stage, self:provider.stage}', 'prod']
-  extensions:
-    ReleaseNotesGenerationLoopEventsRuleSchedule1:
-      Condition: ReleaseNoteRecoveryProduction
-    ReleaseNotesGenerationLoopLambdaPermissionEventsRuleSchedule1:
-      Condition: ReleaseNoteRecoveryProduction
   Resources:
     ReleaseNotesGenerationLoopLogGroup:
       Type: AWS::Logs::LogGroup

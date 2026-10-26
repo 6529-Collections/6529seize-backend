@@ -515,12 +515,11 @@
     },
     {
       "service": "releaseNotesGenerationLoop",
-      "intervalSeconds": 300,
       "reservedConcurrency": 1,
-      "expectedOverlap": true,
+      "expectedOverlap": false,
       "delaySeconds": 600,
-      "stallSeconds": 900,
-      "freshSeconds": 600,
+      "stallSeconds": 480,
+      "freshSeconds": 300,
       "operations": [
         "processing"
       ]

@@ -14,6 +14,9 @@ import {
 } from '@/release-notes/release-note-publication.service';
 import {
   RELEASE_NOTE_DEPLOYED_AT_PATTERN,
+  RELEASE_NOTE_RETRY_HOPS_ATTRIBUTE,
+  parseReleaseNoteRetryHops,
+  releaseNoteGenerationQueue,
   ReleaseNoteGenerationRequest,
   ReleaseNoteRunReference
 } from '@/release-notes/release-note-generation-queue';
@@ -30,7 +33,7 @@ import {
   CiPipelineAlertRequest,
   ciPipelineAlertService
 } from '@/api-serverless/src/ci-pipeline-alerts/ci-pipeline-alert.service';
-import type { SQSHandler, Context, ScheduledEvent, SQSEvent } from 'aws-lambda';
+import type { SQSHandler, Context, SQSEvent } from 'aws-lambda';
 import { releaseNoteRecoveryDb } from '@/release-notes/release-note-recovery.db';
 import { ReleaseNoteRecoveryService } from '@/release-notes/release-note-recovery.service';
 import { randomUUID } from 'node:crypto';
@@ -806,13 +809,21 @@ async function postReleaseNoteRecoveryFailure(
   );
 }
 
-const releaseNoteRecoveryService = new ReleaseNoteRecoveryService(
-  releaseNoteRecoveryDb,
-  postReleaseNoteRecoveryFailure
-);
+function releaseNoteRecoveryService(retryHops = 0): ReleaseNoteRecoveryService {
+  return new ReleaseNoteRecoveryService(
+    releaseNoteRecoveryDb,
+    postReleaseNoteRecoveryFailure,
+    (request, delayMs) =>
+      releaseNoteGenerationQueue.enqueueRetry(request, delayMs, retryHops + 1)
+  );
+}
+
+type ReleaseNoteRecoveryEvent =
+  | { recover_publication_id: string }
+  | { recover_due: true };
 
 async function recoverReleaseNotes(
-  event: ScheduledEvent | { recover_publication_id: string },
+  event: ReleaseNoteRecoveryEvent,
   context: Context
 ): Promise<void> {
   if (process.env.RELEASE_NOTES_STAGE !== 'prod') return;
@@ -829,7 +840,7 @@ async function recoverReleaseNotes(
           aws_request_id: context.awsRequestId,
           invocation_source: 'operator'
         });
-        await releaseNoteRecoveryService.retry(
+        await releaseNoteRecoveryService().retry(
           event.recover_publication_id,
           (request) =>
             processRequest(request, {
@@ -839,7 +850,11 @@ async function recoverReleaseNotes(
         );
         return;
       }
-      await releaseNoteRecoveryService.recoverDue(
+      logger.info('Operator requested due release-note recovery', {
+        aws_request_id: context.awsRequestId,
+        invocation_source: 'operator'
+      });
+      await releaseNoteRecoveryService().recoverDue(
         (request) =>
           processRequest(request, {
             getRemainingTimeInMillis: () => context.getRemainingTimeInMillis()
@@ -873,7 +888,11 @@ const sqsHandler: SQSHandler = async (event, context) => {
             record.attributes.ApproximateReceiveCount
           );
           if (usesDurableReleaseNoteRecovery(request)) {
-            await releaseNoteRecoveryService.process(
+            const retryHops = parseReleaseNoteRetryHops(
+              record.messageAttributes?.[RELEASE_NOTE_RETRY_HOPS_ATTRIBUTE]
+                ?.stringValue
+            );
+            await releaseNoteRecoveryService(retryHops).process(
               request,
               (queuedRequest) =>
                 processRequest(queuedRequest, {
@@ -920,15 +939,14 @@ const sqsHandler: SQSHandler = async (event, context) => {
 };
 
 export async function routeReleaseNoteEvent(
-  event: SQSEvent | ScheduledEvent | { recover_publication_id: string },
+  event: SQSEvent | ReleaseNoteRecoveryEvent,
   context: Context
 ): Promise<void> {
   if ('Records' in event) {
     await sqsHandler(event, context, () => undefined);
   } else if (
     'recover_publication_id' in event ||
-    (event.source === 'aws.events' &&
-      event['detail-type'] === 'Scheduled Event')
+    ('recover_due' in event && event.recover_due === true)
   ) {
     await recoverReleaseNotes(event, context);
   } else {

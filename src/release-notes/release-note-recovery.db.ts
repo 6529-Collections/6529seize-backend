@@ -144,6 +144,25 @@ export class ReleaseNoteRecoveryDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async findNextPending(
+    job: ReleaseNoteRecoveryJobEntity,
+    ctx: RequestContext
+  ): Promise<ReleaseNoteRecoveryJobEntity | null> {
+    const timerName = `${this.constructor.name}->findNextPending`;
+    ctx.timer?.start(timerName);
+    try {
+      return await this.db.oneOrNull<ReleaseNoteRecoveryJobEntity>(
+        `select * from ${RELEASE_NOTE_RECOVERY_JOBS_TABLE}
+         where stream_key = :streamKey and status = 'PENDING' and run_number > :runNumber
+         order by run_number asc limit 1`,
+        { streamKey: job.stream_key, runNumber: job.run_number },
+        queryOptions(ctx)
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async recordOutcome(
     publicationId: string,
     outcome: {
@@ -161,7 +180,8 @@ export class ReleaseNoteRecoveryDb extends LazyDbAccessCompatibleService {
       await this.db.execute(
         `update ${RELEASE_NOTE_RECOVERY_JOBS_TABLE}
          set status = :status, failure_count = :failures,
-             next_attempt_at = :nextAttemptAt, last_error = :lastError, updated_at = :now
+             next_attempt_at = :nextAttemptAt, last_error = :lastError, updated_at = :now,
+             alerted_at = case when :status in ('FAILED', 'NO_BASELINE') then null else alerted_at end
          where publication_id = :publicationId and status = 'PENDING'`,
         { publicationId, ...outcome, now },
         queryOptions(ctx)
