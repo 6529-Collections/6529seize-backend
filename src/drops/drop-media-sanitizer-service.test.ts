@@ -639,7 +639,9 @@ describe('image format validation before publication', () => {
   it('rejects a non-stream SDK body as operational before publishing', async () => {
     const p = pipeline(fixture('png'), 'image/png');
     p.ingestSend.mockResolvedValueOnce({ ...p.object, Body: {} });
-    await expect(p.process()).rejects.toThrow('is not a Node stream');
+    const processing = p.process();
+    await expect(processing).rejects.toThrow(TypeError);
+    await expect(processing).rejects.toThrow('is not a Node stream');
     expect(p.publicSend).not.toHaveBeenCalled();
     expect(p.uploadsDb.transitionStatus).toHaveBeenCalledTimes(1);
   });

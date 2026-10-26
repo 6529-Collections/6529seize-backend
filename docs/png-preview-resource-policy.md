@@ -114,6 +114,12 @@ drop URL. Production generation is a separate authorized action; local output
 verification does not claim that existing production derivatives were repaired.
 
 When rollout is authorized, deploy `mediaResizerLoop`, then `dropMediaSanitizer`.
+The deployment catalog currently allows `mediaResizerLoop` only in production;
+`dropMediaSanitizer` supports staging and production. Staging can exercise new-upload
+preview generation through the sanitizer, but existing-drop on-demand recovery
+needs a separately isolated staging resizer. This change does not provision or
+allow a staging resizer, and deploying the sanitizer alone does not validate that
+on-demand path.
 The existing API/status contract is unchanged; no API deployment, schema change
 or new service is needed.
 Rollback must retain preview-capable processing for queued uploads and preserve

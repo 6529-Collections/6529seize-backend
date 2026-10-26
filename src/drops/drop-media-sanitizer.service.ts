@@ -194,7 +194,7 @@ export class DropMediaSanitizerService {
       })
     );
     if (!(rawObject.Body instanceof Readable)) {
-      throw new Error(
+      throw new TypeError(
         `Ingest object body is not a Node stream for ${upload.id}`
       );
     }
