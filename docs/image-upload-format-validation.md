@@ -65,7 +65,7 @@ Ordinary orientation, alpha, no-upscale and fit behavior is preserved; oversized
 results are reduced to fit the bounded output. See
 [PNG preview resource policy](png-preview-resource-policy.md).
 
-PNG sources are streamed to a task-owned directory. Privacy-disabled originals
+All image sources are streamed to a task-owned directory. Non-PNG sanitization and AVIF conversion also use files instead of retaining full source/output buffers in Node; original re-encoding must fit its full-decode budget. Privacy-disabled originals
 retain their exact bytes; privacy-enabled PNG stripping also runs in isolation.
 A 30-second deadline and sampled combined-RSS guard protect each child; native
 allocations are released on exit. This is not a hard allocation guarantee.

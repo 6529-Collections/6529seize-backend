@@ -1,4 +1,5 @@
 import { Readable } from 'node:stream';
+import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import Sharp from 'sharp';
 import {
   DropMediaSanitizerService,
@@ -270,17 +271,29 @@ describe('image format validation before publication', () => {
       )
     };
     const transformToByteArray = jest.fn().mockResolvedValue(input);
-    const body =
-      declaredMimeType === 'image/png'
-        ? Object.assign(Readable.from([input]), { transformToByteArray })
-        : { transformToByteArray };
+    const readError: { value?: Error } = {};
+    const makeBody = () =>
+      Object.assign(
+        Readable.from(
+          (async function* () {
+            if (readError.value) throw readError.value;
+            yield input;
+          })()
+        ),
+        { transformToByteArray }
+      );
+    const body = makeBody();
     const object = {
       Body: body,
       ContentLength: input.length,
       Metadata:
         policy === undefined ? {} : { 'sanitize-image-metadata': policy }
     };
-    const ingestSend = jest.fn().mockResolvedValue(object);
+    let reads = 0;
+    const ingestSend = jest.fn(async (command) => {
+      if (command instanceof DeleteObjectCommand) return {};
+      return { ...object, Body: reads++ === 0 ? object.Body : makeBody() };
+    });
     const publicSend = jest.fn(async (command) => {
       if (command.input.Body instanceof Readable) {
         const chunks: Buffer[] = [];
@@ -309,6 +322,7 @@ describe('image format validation before publication', () => {
       uploadsDb,
       object,
       body,
+      readError,
       notifier
     };
   }
@@ -328,9 +342,7 @@ describe('image format validation before publication', () => {
       expect(p.publicSend.mock.calls[0][0].input.Metadata).not.toHaveProperty(
         'privacy-sanitized'
       );
-      expect(p.body.transformToByteArray).toHaveBeenCalledTimes(
-        format === 'png' ? 0 : 1
-      );
+      expect(p.body.transformToByteArray).not.toHaveBeenCalled();
       expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
         expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
       );
@@ -438,13 +450,12 @@ describe('image format validation before publication', () => {
         .mockImplementation();
       const p = pipeline(fixture('jpeg'));
       const error = new Error('synthetic infrastructure failure');
-      if (failure === 'read')
-        p.body.transformToByteArray.mockRejectedValue(error);
+      if (failure === 'read') p.readError.value = error;
       if (failure === 'write') p.publicSend.mockRejectedValue(error);
       if (failure === 'short response') p.object.ContentLength++;
       const result = p.process();
       if (failure === 'short response')
-        await expect(result).rejects.toThrow('source length mismatch');
+        await expect(result).rejects.toThrow('RESIZE_SOURCE_LENGTH_MISMATCH');
       else await expect(result).rejects.toBe(error);
       expect(p.uploadsDb.transitionStatus.mock.calls).toHaveLength(1);
       expect(errorLog).not.toHaveBeenCalled();
@@ -603,5 +614,97 @@ describe('image format validation before publication', () => {
     expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
       expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
     );
+  });
+  it('retries private ingest cleanup on ready redelivery without rendering again', async () => {
+    const p = pipeline(fixture('jpeg'));
+    const send = p.ingestSend.getMockImplementation()!;
+    const errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    p.ingestSend
+      .mockImplementationOnce(send)
+      .mockRejectedValueOnce(new Error('delete unavailable'));
+    await p.process();
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to delete ingest'),
+      expect.any(Error)
+    );
+    const transitions = p.uploadsDb.transitionStatus.mock.calls.length;
+    await p.process();
+    expect(p.publicSend).toHaveBeenCalledTimes(3);
+    expect(p.uploadsDb.transitionStatus).toHaveBeenCalledTimes(transitions);
+    expect(p.ingestSend.mock.calls.at(-1)![0]).toBeInstanceOf(
+      DeleteObjectCommand
+    );
+  });
+
+  it('rejects a non-stream SDK body as operational before publishing', async () => {
+    const p = pipeline(fixture('png'), 'image/png');
+    p.ingestSend.mockResolvedValueOnce({ ...p.object, Body: {} });
+    await expect(p.process()).rejects.toThrow('is not a Node stream');
+    expect(p.publicSend).not.toHaveBeenCalled();
+    expect(p.uploadsDb.transitionStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves interlaced 16-bit PNG original bytes with privacy disabled', async () => {
+    const input = await Sharp({
+      create: { width: 80, height: 40, channels: 4, background: '#33669980' }
+    })
+      .toColourspace('rgb16')
+      .png({ progressive: true })
+      .toBuffer();
+    expect(await Sharp(input).metadata()).toMatchObject({
+      depth: 'ushort',
+      isProgressive: true
+    });
+    const p = pipeline(input, 'image/png');
+    await p.process();
+    expect(p.publicSend.mock.calls[0][0].input.Body).toEqual(input);
+    for (const [command] of p.publicSend.mock.calls.slice(1)) {
+      expect(await Sharp(command.input.Body).metadata()).toMatchObject({
+        format: 'png',
+        hasAlpha: true
+      });
+      expect(command.input.CacheControl).toBe('public, max-age=86400');
+    }
+  });
+  it.each(['jpeg', 'webp', 'gif'])(
+    'keeps file-based %s privacy sanitization equivalent to the previous encoder',
+    async (format) => {
+      const input = fixture(format);
+      const expected = await new DropMediaSanitizerService(
+        {} as any
+      ).sanitizeBuffer({ input, declaredMimeType: `image/${format}` });
+      const p = pipeline(input, `image/${format}`, 'true');
+      await p.process();
+      expect(p.publicSend.mock.calls[0][0].input.Body).toEqual(expected.buffer);
+      expect(p.body.transformToByteArray).not.toHaveBeenCalled();
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
+      );
+    }
+  );
+
+  it('retries worker memory failures and reports temporary processing failure after exhaustion', async () => {
+    const errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    jest.mocked(process.memoryUsage).mockReturnValue({
+      ...process.memoryUsage(),
+      rss: 2 * 1024 * 1024 * 1024
+    });
+    const p = pipeline(fixture('png'), 'image/png');
+    await expect(p.process()).rejects.toThrow(
+      'PNG_PREVIEW_MEMORY_BUDGET_EXCEEDED'
+    );
+    expect(p.uploadsDb.transitionStatus).toHaveBeenCalledTimes(1);
+    await p.process(3);
+    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        toStatus: DropMediaUploadStatus.FAILED,
+        patch: expect.objectContaining({
+          error_reason:
+            'Preview processing is temporarily unavailable. Please try uploading again later.'
+        })
+      })
+    );
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    expect(p.publicSend).not.toHaveBeenCalled();
   });
 });

@@ -17,9 +17,9 @@ const MAX_PROTOCOL_BYTES = 4096;
 
 // Paths/options are argv, never executable input. The same pure policy functions
 // run in both processes. Sharp/native allocations are reclaimed on child exit.
-export const PNG_PREVIEW_SCRIPT = `
+export const PNG_PREVIEW_SCRIPT = String.raw`
 const fs = require('node:fs');
-const heartbeat = () => fs.writeSync(3, String(process.memoryUsage().rss) + '\\n');
+const heartbeat = () => fs.writeSync(3, String(process.memoryUsage().rss) + '\n');
 heartbeat();
 const timer = setInterval(heartbeat, 10);
 timer.unref();
@@ -56,23 +56,36 @@ const reject = code => { throw Object.assign(new Error(code), { inputCode: code 
   }
   process.stdout.write(JSON.stringify({ ok: true }));
 })().catch(error => {
+  // Keep this narrow, version-specific whitelist covered by corrupt-file tests.
   const code = error.inputCode || (/Input (?:file contains unsupported image format|file has corrupt header|image exceeds pixel limit)|vipspng: libpng read error/i.test(error.message) ? 'INVALID_IMAGE' : null);
   if (code) process.stdout.write(JSON.stringify({ code }));
   else { process.stderr.write('PNG_PREVIEW_WORKER_FAILED'); process.exitCode = 1; }
 }).finally(() => clearInterval(timer));
 `;
 
-function parseWorkerResult(stdout: string): void {
-  const result = JSON.parse(stdout) as { ok?: boolean; code?: string };
-  switch (result.code) {
-    case 'INVALID_IMAGE':
-    case 'DECODED_IMAGE_TOO_LARGE':
-    case 'SOURCE_TOO_LARGE':
-    case 'OUTPUT_TOO_LARGE':
-      throw new UnprocessableResizeInput(result.code);
-    default:
-      if (result.ok !== true) throw new Error('PNG_PREVIEW_INVALID_RESPONSE');
+/** Only the bounded worker protocol can classify an input as permanently invalid. */
+export function parsePngWorkerResult(stdout: string): void {
+  let result: unknown;
+  try {
+    result = JSON.parse(stdout);
+  } catch {
+    throw new Error('PNG_PREVIEW_INVALID_RESPONSE');
   }
+  if (typeof result !== 'object' || result === null || Array.isArray(result))
+    throw new Error('PNG_PREVIEW_INVALID_RESPONSE');
+  const fields = Object.keys(result);
+  if (fields.length !== 1) throw new Error('PNG_PREVIEW_INVALID_RESPONSE');
+  if ('ok' in result && result.ok === true) return;
+  if ('code' in result) {
+    switch (result.code) {
+      case 'INVALID_IMAGE':
+      case 'DECODED_IMAGE_TOO_LARGE':
+      case 'SOURCE_TOO_LARGE':
+      case 'OUTPUT_TOO_LARGE':
+        throw new UnprocessableResizeInput(result.code);
+    }
+  }
+  throw new Error('PNG_PREVIEW_INVALID_RESPONSE');
 }
 
 /** The RSS watchdog is a sampled guard, not a hard native allocation limit. */
@@ -100,6 +113,10 @@ async function runPngWorker(
       stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
       env: {
         PATH: process.env.PATH,
+        // Keep native loader paths while withholding credentials and Node hooks.
+        LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH,
+        DYLD_LIBRARY_PATH: process.env.DYLD_LIBRARY_PATH,
+        DYLD_FALLBACK_LIBRARY_PATH: process.env.DYLD_FALLBACK_LIBRARY_PATH,
         SystemRoot: process.env.SystemRoot,
         TMPDIR: directory,
         TEMP: directory,
@@ -159,7 +176,7 @@ async function runPngWorker(
   }, 1000);
   try {
     await completion;
-    parseWorkerResult(stdout);
+    parsePngWorkerResult(stdout);
   } finally {
     clearTimeout(deadline);
     clearInterval(monitor);
@@ -198,7 +215,7 @@ export function preparePngPreview(
     (target.width === null && target.height === null) ||
     !['cover', 'inside', 'outside'].includes(target.fit)
   )
-    throw new Error('INVALID_PNG_PREVIEW_TARGET');
+    throw new UnprocessableResizeInput('INVALID_IMAGE');
   return preparePngFile(input, target, remainingTimeMs);
 }
 

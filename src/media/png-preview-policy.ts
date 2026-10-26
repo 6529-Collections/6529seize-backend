@@ -32,12 +32,9 @@ export function pngInputFailure(
     metadata.channels! > 4
   )
     return 'INVALID_IMAGE';
-  const cap =
-    metadata.depth === 'uchar'
-      ? limits.pixels8
-      : metadata.depth === 'ushort'
-        ? limits.pixels16
-        : 0;
+  let cap = 0;
+  if (metadata.depth === 'uchar') cap = limits.pixels8;
+  else if (metadata.depth === 'ushort') cap = limits.pixels16;
   if (
     !cap ||
     metadata.width! > limits.inputSide ||

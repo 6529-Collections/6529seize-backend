@@ -41,6 +41,7 @@ export async function prepareUploadImagePreviews(
           fastShrinkOnLoad: true
         })
         .rotate()
+        .toFormat(metadata.format!)
         .toFile(path);
     }
     previews.push({ path, option: `AUTOx${height}`, contentType });
@@ -48,6 +49,7 @@ export async function prepareUploadImagePreviews(
   return previews;
 }
 
+/** Insert next to the filename, including root-level object keys. */
 export function previewObjectKey(key: string, option: string): string {
   const slash = key.lastIndexOf('/');
   return `${key.slice(0, slash + 1)}${option}/${key.slice(slash + 1)}`;

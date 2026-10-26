@@ -7,7 +7,12 @@ import {
   boundPngPreview,
   PNG_PREVIEW_LIMITS
 } from '@/media/png-preview-policy';
-import { preparePngPreview, sanitizePngFile } from '@/media/png-preview';
+import {
+  preparePngPreview,
+  sanitizePngFile,
+  parsePngWorkerResult
+} from '@/media/png-preview';
+import { UnprocessableResizeInput } from '@/media/resize-input';
 
 let directory: string;
 beforeEach(async () => {
@@ -177,4 +182,47 @@ it('rejects corrupt PNG pixel data without returning a preview', async () => {
     preparePngPreview(source, { width: null, height: 50, fit: 'cover' })
   ).rejects.toThrow('INVALID_IMAGE');
   expect(await readdir(directory)).toEqual(['source.png']);
+});
+
+it.each([
+  '',
+  '{',
+  'null',
+  '[]',
+  'true',
+  '{}',
+  '{"ok":false}',
+  '{"ok":true,"code":"INVALID_IMAGE"}',
+  '{"code":"UNKNOWN"}'
+])('keeps malformed worker response %s operational', (response) => {
+  try {
+    parsePngWorkerResult(response);
+    throw new Error('Expected invalid worker response');
+  } catch (error) {
+    expect(error).toEqual(new Error('PNG_PREVIEW_INVALID_RESPONSE'));
+    expect(error).not.toBeInstanceOf(UnprocessableResizeInput);
+  }
+});
+it('accepts only explicit success and known permanent worker codes', () => {
+  expect(() => parsePngWorkerResult('{"ok":true}')).not.toThrow();
+  for (const code of [
+    'INVALID_IMAGE',
+    'SOURCE_TOO_LARGE',
+    'OUTPUT_TOO_LARGE',
+    'DECODED_IMAGE_TOO_LARGE'
+  ]) {
+    expect(() => parsePngWorkerResult(JSON.stringify({ code }))).toThrow(
+      UnprocessableResizeInput
+    );
+  }
+});
+it('rejects invalid PNG targets as controlled input failures before starting a worker', () => {
+  for (const target of [
+    { width: null, height: null, fit: 'cover' as const },
+    { width: 0, height: 10, fit: 'cover' as const },
+    { width: null, height: NaN, fit: 'cover' as const }
+  ])
+    expect(() => preparePngPreview('unused', target)).toThrow(
+      UnprocessableResizeInput
+    );
 });
