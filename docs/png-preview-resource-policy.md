@@ -74,7 +74,9 @@ failures and never marks an incomplete image ready.
 ## Publication and recovery
 
 Both standard legacy derivatives are generated before any public upload. The
-original and derivatives must all be stored before `ready` and ingest deletion.
+original and derivatives must all be stored before `ready`. Ingest deletion
+occurs only after the ready-state database write succeeds, so a failed state
+commit can retry from the private source.
 A storage failure may leave partial objects, but the upload remains processing
 and retryable; retry writes the same task-owned keys. No global cleanup deletes
 other requests' files. Metadata-disabled PNG originals retain their exact bytes.

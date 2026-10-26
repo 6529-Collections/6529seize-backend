@@ -550,4 +550,58 @@ describe('image format validation before publication', () => {
       expect.objectContaining({ toStatus: DropMediaUploadStatus.FAILED })
     );
   });
+  it.each(['true', 'false'])(
+    'preserves PNG privacy policy %s through original and preview publication',
+    async (policy) => {
+      const input = await Sharp({
+        create: { width: 40, height: 20, channels: 4, background: '#33669980' }
+      })
+        .png()
+        .withMetadata({ orientation: 6, exif: { IFD0: { Make: 'Synthetic' } } })
+        .toBuffer();
+      const p = pipeline(input, 'image/png', policy);
+      await p.process();
+      expect(p.publicSend).toHaveBeenCalledTimes(3);
+      const original = p.publicSend.mock.calls[0][0].input;
+      if (policy === 'false') expect(original.Body).toEqual(input);
+      else {
+        expect(await Sharp(original.Body).metadata()).toMatchObject({
+          width: 20,
+          height: 40
+        });
+        expect((await Sharp(original.Body).metadata()).exif).toBeUndefined();
+      }
+      for (const [command] of p.publicSend.mock.calls.slice(1)) {
+        expect(await Sharp(command.input.Body).metadata()).toMatchObject({
+          format: 'png',
+          hasAlpha: true,
+          width: 20,
+          height: 40
+        });
+        expect(
+          (await Sharp(command.input.Body).metadata()).exif
+        ).toBeUndefined();
+      }
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
+      );
+    }
+  );
+  it('retains ingest data when committing ready fails, allowing a safe retry', async () => {
+    const p = pipeline(fixture('jpeg'));
+    const error = new Error('ready status write unavailable');
+    p.uploadsDb.transitionStatus
+      .mockResolvedValueOnce(true)
+      .mockRejectedValueOnce(error);
+    await expect(p.process()).rejects.toBe(error);
+    expect(p.publicSend).toHaveBeenCalledTimes(3);
+    expect(p.ingestSend).toHaveBeenCalledTimes(1);
+    expect(p.notifier.notifyStatusTransition).not.toHaveBeenCalled();
+    await p.process();
+    expect(p.publicSend).toHaveBeenCalledTimes(6);
+    expect(p.ingestSend).toHaveBeenCalledTimes(3);
+    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
+    );
+  });
 });

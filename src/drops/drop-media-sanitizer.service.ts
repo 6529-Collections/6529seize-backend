@@ -110,6 +110,7 @@ export class DropMediaSanitizerService {
       if (!markedReady) {
         return;
       }
+      await this.deleteIngestObject(upload);
       await this.notifier.notifyStatusTransition(upload.id);
     } catch (error) {
       await this.handleProcessingError({
@@ -231,6 +232,11 @@ export class DropMediaSanitizerService {
         }
       );
     }
+  }
+
+  private async deleteIngestObject(
+    upload: DropMediaUploadEntity
+  ): Promise<void> {
     try {
       await this.ingestS3().send(
         new DeleteObjectCommand({
