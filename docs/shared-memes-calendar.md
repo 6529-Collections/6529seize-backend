@@ -68,3 +68,9 @@ next-day close. Internal query calculations retain the asynchronous consumer API
 and rejected-error behavior.
 Timezone rules come from the runtime's IANA data; keep deployed Node/ICU data
 current if governments change timezone law.
+
+Consecutive extra mint days are supported. The date-based model has at most one
+mint per day; each scheduled window closes at 17:00 Athens the next day, before
+that day's 17:40 opening. A live mint can therefore be the date-derived ordinal
+or its immediate predecessor, even with consecutive extras or skipped dates.
+Regression cases cover both adjacent extra days and the following regular day.
