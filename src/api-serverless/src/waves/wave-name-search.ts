@@ -17,7 +17,7 @@ export function buildWaveNameSearchSql(name: string): WaveNameSearchSql | null {
   }
 
   const escapeLike = (value: string) => value.replace(/[!%_]/g, '!$&');
-  const separators = /[^\p{L}\p{N}%_\\'’]+/u;
+  const separators = new RegExp(String.raw`[^\p{L}\p{N}%_\\'’]+`, 'u'); // NOSONAR -- The ES5 TypeScript target rejects Unicode regex literals.
   const terms = Array.from(
     new Set(query.split(separators).map(normalize).filter(Boolean))
   ).sort((left, right) => right.length - left.length);
