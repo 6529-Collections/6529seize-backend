@@ -180,7 +180,8 @@ export class ReleaseNoteRecoveryDb extends LazyDbAccessCompatibleService {
       await this.db.execute(
         `update ${RELEASE_NOTE_RECOVERY_JOBS_TABLE}
          set status = :status, failure_count = :failures,
-             next_attempt_at = :nextAttemptAt, last_error = :lastError, updated_at = :now
+             next_attempt_at = :nextAttemptAt, last_error = :lastError, updated_at = :now,
+             alerted_at = case when :status in ('FAILED', 'NO_BASELINE') then null else alerted_at end
          where publication_id = :publicationId and status = 'PENDING'`,
         { publicationId, ...outcome, now },
         queryOptions(ctx)

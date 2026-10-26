@@ -29,6 +29,29 @@ describeWithSeed(
   () => {
     const db = new ReleaseNoteRecoveryDb(() => sqlExecutor);
 
+    it('clears a transient-alert receipt when a pending job becomes a terminal blocker', async () => {
+      await db.enqueue('publication', request, 1000, {});
+      await db.markAlerted('publication', 2000, {});
+      await db.recordOutcome(
+        'publication',
+        {
+          status: 'FAILED',
+          failures: 6,
+          nextAttemptAt: 3000,
+          lastError: 'history error'
+        },
+        3000,
+        {}
+      );
+      const due = await db.findDue(3000, {});
+      expect(due).toHaveLength(1);
+      expect(due[0].status).toBe('FAILED');
+      expect(due[0].alerted_at).toBeNull();
+      await db.deferAlert('publication', 9000, 4000, {});
+      expect(await db.findDue(8999, {})).toEqual([]);
+      expect(await db.findDue(9000, {})).toHaveLength(1);
+    });
+
     it('selects only the next pending publication in the completed jobs stream', async () => {
       const first = await db.enqueue('first', request, 1000, {});
       await db.enqueue(

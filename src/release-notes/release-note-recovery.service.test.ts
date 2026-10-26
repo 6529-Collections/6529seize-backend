@@ -76,6 +76,48 @@ function setup(overrides: Partial<ReleaseNoteRecoveryJobEntity> = {}) {
 }
 
 describe('ReleaseNoteRecoveryService', () => {
+  it('posts a fresh terminal alert after an earlier transient recovery alert', async () => {
+    const { service, repository, postFailure, enqueueRetry } = setup({
+      failure_count: 5,
+      alerted_at: now - 60_000
+    });
+    const error = new NonRetryableReleaseNoteError(
+      'release history requires operator review'
+    );
+    await service.process(request, jest.fn().mockRejectedValue(error), {});
+    expect(repository.recordOutcome).toHaveBeenCalledWith(
+      job.publication_id,
+      expect.objectContaining({ status: 'FAILED', failures: 6 }),
+      now,
+      {}
+    );
+    expect(postFailure).toHaveBeenCalledWith(request, error, 6);
+    expect(repository.markAlerted).toHaveBeenCalled();
+    expect(enqueueRetry).not.toHaveBeenCalled();
+  });
+
+  it('retries an undelivered terminal alert even after an earlier transient alert succeeded', async () => {
+    const { service, repository, postFailure, enqueueRetry } = setup({
+      failure_count: 5,
+      alerted_at: now - 60_000
+    });
+    postFailure.mockRejectedValue(new Error('alert API unavailable'));
+    await service.process(
+      request,
+      jest
+        .fn()
+        .mockRejectedValue(new NonRetryableReleaseNoteError('history error')),
+      {}
+    );
+    expect(repository.deferAlert).toHaveBeenCalledWith(
+      job.publication_id,
+      now + 300_000,
+      now,
+      {}
+    );
+    expect(enqueueRetry).toHaveBeenCalledWith(request, 300_000);
+  });
+
   it('uses a later delivery to resume its predecessor and queues the parked successor after completion', async () => {
     const laterRequest = { ...request, run_id: 'next', run_number: '1948' };
     const { service, repository, enqueueRetry, saved } = setup({
@@ -110,16 +152,18 @@ describe('ReleaseNoteRecoveryService', () => {
       run_number: 1948
     });
     repository.findNextPending.mockResolvedValue(saved);
-    repository.findEarlier.mockResolvedValueOnce({
+    repository.findEarlier.mockResolvedValue({
       ...job,
       status: 'FAILED',
       alerted_at: now
     });
     const process = jest.fn();
     await service.process(request, process, {});
+    await service.process(request, process, {});
     expect(process).not.toHaveBeenCalled();
     expect(enqueueRetry).not.toHaveBeenCalled();
     expect(repository.findNextPending).not.toHaveBeenCalled();
+    expect(repository.recordOutcome).toHaveBeenCalledTimes(2);
     expect(repository.recordOutcome).toHaveBeenCalledWith(
       job.publication_id,
       expect.objectContaining({ failures: 0, status: 'PENDING' }),

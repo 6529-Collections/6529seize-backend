@@ -64,6 +64,8 @@ deliveries never deletes the saved recovery request; operator recovery may be
 required if the transport or handoff budget is exhausted. Permanent content/history errors
 remain `FAILED`, retain the original payload, and require operator review;
 their unfinished failure-alert delivery queues its own bounded delayed retry.
+Entering a terminal alertable state clears the earlier transient-alert receipt,
+so an automatic-retry alert cannot suppress a later operator-review alert.
 An alert-delivery failure does not abort explicit recovery of other saved jobs
 or unrelated streams. No recovery path deletes an
 unfinished publication, advances its cursor manually, or silently skips content.

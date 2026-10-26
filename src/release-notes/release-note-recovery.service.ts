@@ -345,8 +345,8 @@ export class ReleaseNoteRecoveryService {
       );
     }
     if (
-      (permanent || failures >= FAILURE_ALERT_THRESHOLD) &&
-      job.alerted_at === null
+      permanent ||
+      (failures >= FAILURE_ALERT_THRESHOLD && job.alerted_at === null)
     ) {
       sentryContext.captureException(error);
       const alerted = await this.tryPostFailure(
