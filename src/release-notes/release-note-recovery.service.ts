@@ -25,11 +25,16 @@ type PostRecoveryFailure = (
   error: unknown,
   failures: number
 ) => Promise<void>;
+type EnqueueRecoveryRetry = (
+  request: ReleaseNoteGenerationRequest,
+  delayMs: number
+) => Promise<void>;
 type RecoveryRepository = Pick<
   ReleaseNoteRecoveryDb,
   | 'enqueue'
   | 'findDue'
   | 'findEarlier'
+  | 'findNextPending'
   | 'recordOutcome'
   | 'markAlerted'
   | 'deferAlert'
@@ -62,6 +67,7 @@ export class ReleaseNoteRecoveryService {
   public constructor(
     private readonly repository: RecoveryRepository,
     private readonly postFailure: PostRecoveryFailure,
+    private readonly enqueueRetry: EnqueueRecoveryRetry,
     private readonly now: () => number = Date.now
   ) {}
 
@@ -70,8 +76,8 @@ export class ReleaseNoteRecoveryService {
     process: ProcessReleaseNote,
     ctx: RequestContext
   ): Promise<void> {
-    // A successful SQS delivery transfers ownership to this durable job. Never
-    // acknowledge an unsaved request, or replace its original identity on retry.
+    // Persist the envelope before processing. Pending work must enqueue its
+    // next delivery successfully before this SQS delivery can be acknowledged.
     const job = await this.repository.enqueue(
       buildReleaseNotePublicationId(request),
       request,
@@ -125,45 +131,96 @@ export class ReleaseNoteRecoveryService {
     process: ProcessReleaseNote,
     ctx: RequestContext
   ): Promise<void> {
-    if (Number(job.next_attempt_at) > this.now()) return;
     const request = JSON.parse(
       job.request_json
     ) as ReleaseNoteGenerationRequest;
-    if (
-      (job.status === 'FAILED' || job.status === 'NO_BASELINE') &&
-      job.alerted_at === null
-    ) {
-      const alertError =
-        job.status === 'NO_BASELINE'
-          ? new NoReleaseNoteBaselineError(
-              job.last_error ?? 'No earlier production baseline'
-            )
-          : new NonRetryableReleaseNoteError(
-              job.last_error ?? 'Release-note publication failed'
-            );
-      try {
-        await this.postFailure(request, alertError, job.failure_count);
-        await this.repository.markAlerted(job.publication_id, this.now(), ctx);
-      } catch (error) {
-        await this.repository.deferAlert(
-          job.publication_id,
-          this.now() + DEFER_DELAY_MS,
-          this.now(),
-          ctx
-        );
-        throw error;
-      }
+    if (job.status !== 'PENDING') {
+      await this.finishTerminalJob(job, request, ctx);
       return;
     }
-    if (job.status !== 'PENDING') return;
+    if (Number(job.next_attempt_at) > this.now()) {
+      await this.enqueueRetry(
+        request,
+        Number(job.next_attempt_at) - this.now()
+      );
+      return;
+    }
+    if (await this.resumePredecessor(job, process, ctx)) return;
+    await this.publishPendingJob(job, request, process, ctx);
+  }
+
+  private async finishTerminalJob(
+    job: ReleaseNoteRecoveryJobEntity,
+    request: ReleaseNoteGenerationRequest,
+    ctx: RequestContext
+  ): Promise<void> {
+    const needsAlert =
+      (job.status === 'FAILED' || job.status === 'NO_BASELINE') &&
+      job.alerted_at === null;
+    if (!needsAlert) {
+      if (job.status !== 'FAILED') await this.wakeNext(job, ctx);
+      return;
+    }
+    if (Number(job.next_attempt_at) > this.now()) {
+      await this.enqueueRetry(
+        request,
+        Number(job.next_attempt_at) - this.now()
+      );
+      return;
+    }
+    const alertError =
+      job.status === 'NO_BASELINE'
+        ? new NoReleaseNoteBaselineError(
+            job.last_error ?? 'No earlier production baseline'
+          )
+        : new NonRetryableReleaseNoteError(
+            job.last_error ?? 'Release-note publication failed'
+          );
+    if (
+      !(await this.tryPostFailure(
+        job,
+        request,
+        alertError,
+        job.failure_count,
+        ctx
+      ))
+    ) {
+      await this.deferFailureAlert(job, request, ctx);
+    }
+    if (job.status === 'NO_BASELINE') await this.wakeNext(job, ctx);
+  }
+
+  private async resumePredecessor(
+    job: ReleaseNoteRecoveryJobEntity,
+    process: ProcessReleaseNote,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const earlier = await this.repository.findEarlier(job, ctx);
+    if (!earlier) return false;
+    // Park successors rather than repeatedly waking them to check the blocker.
+    // Completing the predecessor queues the next saved run.
+    await this.repository.recordOutcome(
+      job.publication_id,
+      {
+        status: 'PENDING',
+        failures: job.failure_count,
+        nextAttemptAt: this.now(),
+        lastError: `Release-note run ${earlier.run_number} must complete before run ${job.run_number}; blocking publication ${earlier.publication_id}`
+      },
+      this.now(),
+      ctx
+    );
+    await this.runJob(earlier, process, ctx);
+    return true;
+  }
+
+  private async publishPendingJob(
+    job: ReleaseNoteRecoveryJobEntity,
+    request: ReleaseNoteGenerationRequest,
+    process: ProcessReleaseNote,
+    ctx: RequestContext
+  ): Promise<void> {
     try {
-      const earlier = await this.repository.findEarlier(job, ctx);
-      if (earlier) {
-        throw new DeferredReleaseNoteError(
-          'PUBLICATION_BLOCKED',
-          `Release-note run ${earlier.run_number} must complete before run ${job.run_number}; blocking publication ${earlier.publication_id}`
-        );
-      }
       await process(request);
       await this.repository.recordOutcome(
         job.publication_id,
@@ -183,7 +240,59 @@ export class ReleaseNoteRecoveryService {
       });
     } catch (error) {
       await this.handleFailure(job, request, error, ctx);
+      const status = recoveryStatus(error);
+      if (status === 'NO_BASELINE' || status === 'REJECTED')
+        await this.wakeNext(job, ctx);
+      return;
     }
+    // Keep the handoff outside the processing catch: a queue failure must not
+    // turn an already completed publication into another processing failure.
+    await this.wakeNext(job, ctx);
+  }
+
+  private async tryPostFailure(
+    job: ReleaseNoteRecoveryJobEntity,
+    request: ReleaseNoteGenerationRequest,
+    error: unknown,
+    failures: number,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    try {
+      if (!(error instanceof UntrustedReleaseNoteMetadataError)) {
+        await this.postFailure(request, error, failures);
+      }
+      await this.repository.markAlerted(job.publication_id, this.now(), ctx);
+      return true;
+    } catch (alertError) {
+      this.logger.warn('Release-note failure alert deferred', alertError);
+      return false;
+    }
+  }
+
+  private async deferFailureAlert(
+    job: ReleaseNoteRecoveryJobEntity,
+    request: ReleaseNoteGenerationRequest,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.repository.deferAlert(
+      job.publication_id,
+      this.now() + DEFER_DELAY_MS,
+      this.now(),
+      ctx
+    );
+    await this.enqueueRetry(request, DEFER_DELAY_MS);
+  }
+
+  private async wakeNext(
+    job: ReleaseNoteRecoveryJobEntity,
+    ctx: RequestContext
+  ): Promise<void> {
+    const next = await this.repository.findNextPending(job, ctx);
+    if (!next) return;
+    await this.enqueueRetry(
+      JSON.parse(next.request_json) as ReleaseNoteGenerationRequest,
+      Math.max(0, Number(next.next_attempt_at) - this.now())
+    );
   }
 
   private async handleFailure(
@@ -224,21 +333,29 @@ export class ReleaseNoteRecoveryService {
         'Release-note publication deferred; request retained for recovery',
         diagnostic
       );
-      return;
+    } else {
+      this.logger.warn(
+        'Release-note publication failed; durable recovery state saved',
+        diagnostic
+      );
     }
-    this.logger.warn(
-      'Release-note publication failed; durable recovery state saved',
-      diagnostic
-    );
     if (
       (permanent || failures >= FAILURE_ALERT_THRESHOLD) &&
       job.alerted_at === null
     ) {
       sentryContext.captureException(error);
-      if (!(error instanceof UntrustedReleaseNoteMetadataError)) {
-        await this.postFailure(request, error, failures);
+      const alerted = await this.tryPostFailure(
+        job,
+        request,
+        error,
+        failures,
+        ctx
+      );
+      if (!alerted && permanent) {
+        await this.deferFailureAlert(job, request, ctx);
+        return;
       }
-      await this.repository.markAlerted(job.publication_id, this.now(), ctx);
     }
+    if (!permanent) await this.enqueueRetry(request, delay);
   }
 }

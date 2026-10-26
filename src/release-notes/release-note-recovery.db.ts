@@ -144,6 +144,25 @@ export class ReleaseNoteRecoveryDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  public async findNextPending(
+    job: ReleaseNoteRecoveryJobEntity,
+    ctx: RequestContext
+  ): Promise<ReleaseNoteRecoveryJobEntity | null> {
+    const timerName = `${this.constructor.name}->findNextPending`;
+    ctx.timer?.start(timerName);
+    try {
+      return await this.db.oneOrNull<ReleaseNoteRecoveryJobEntity>(
+        `select * from ${RELEASE_NOTE_RECOVERY_JOBS_TABLE}
+         where stream_key = :streamKey and status = 'PENDING' and run_number > :runNumber
+         order by run_number asc limit 1`,
+        { streamKey: job.stream_key, runNumber: job.run_number },
+        queryOptions(ctx)
+      );
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
+  }
+
   public async recordOutcome(
     publicationId: string,
     outcome: {

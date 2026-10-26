@@ -29,6 +29,57 @@ describeWithSeed(
   () => {
     const db = new ReleaseNoteRecoveryDb(() => sqlExecutor);
 
+    it('selects only the next pending publication in the completed jobs stream', async () => {
+      const first = await db.enqueue('first', request, 1000, {});
+      await db.enqueue(
+        'third',
+        { ...request, run_number: '1949', run_id: 'third' },
+        2000,
+        {}
+      );
+      await db.enqueue(
+        'other-stream',
+        { ...request, workflow: 'Another workflow', run_number: '1948' },
+        2000,
+        {}
+      );
+      await db.enqueue(
+        'second',
+        { ...request, run_number: '1948', run_id: 'second' },
+        3000,
+        {}
+      );
+      expect((await db.findNextPending(first, {}))?.publication_id).toBe(
+        'second'
+      );
+      await db.recordOutcome(
+        'second',
+        {
+          status: 'COMPLETED',
+          failures: 0,
+          nextAttemptAt: 4000,
+          lastError: null
+        },
+        4000,
+        {}
+      );
+      expect((await db.findNextPending(first, {}))?.publication_id).toBe(
+        'third'
+      );
+      await db.recordOutcome(
+        'third',
+        {
+          status: 'COMPLETED',
+          failures: 0,
+          nextAttemptAt: 4000,
+          lastError: null
+        },
+        4000,
+        {}
+      );
+      expect(await db.findNextPending(first, {})).toBeNull();
+    });
+
     it('preserves the original envelope, retry deadline and attempts across duplicate deliveries', async () => {
       await db.enqueue('publication', request, 1000, {});
       await db.recordOutcome(

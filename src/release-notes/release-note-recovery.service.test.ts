@@ -45,6 +45,7 @@ type Repository = Pick<
   | 'enqueue'
   | 'findDue'
   | 'findEarlier'
+  | 'findNextPending'
   | 'recordOutcome'
   | 'markAlerted'
   | 'deferAlert'
@@ -57,21 +58,171 @@ function setup(overrides: Partial<ReleaseNoteRecoveryJobEntity> = {}) {
     enqueue: jest.fn().mockResolvedValue(saved),
     findDue: jest.fn().mockResolvedValue([saved]),
     findEarlier: jest.fn().mockResolvedValue(null),
+    findNextPending: jest.fn().mockResolvedValue(null),
     recordOutcome: jest.fn().mockResolvedValue(undefined),
     markAlerted: jest.fn().mockResolvedValue(undefined),
     deferAlert: jest.fn().mockResolvedValue(undefined),
     requestRetry: jest.fn().mockResolvedValue(saved)
   };
   const postFailure = jest.fn().mockResolvedValue(undefined);
+  const enqueueRetry = jest.fn().mockResolvedValue(undefined);
   const service = new ReleaseNoteRecoveryService(
     repository,
     postFailure,
+    enqueueRetry,
     () => now
   );
-  return { saved, repository, postFailure, service };
+  return { saved, repository, postFailure, enqueueRetry, service };
 }
 
 describe('ReleaseNoteRecoveryService', () => {
+  it('uses a later delivery to resume its predecessor and queues the parked successor after completion', async () => {
+    const laterRequest = { ...request, run_id: 'next', run_number: '1948' };
+    const { service, repository, enqueueRetry, saved } = setup({
+      publication_id: 'later',
+      run_number: 1948,
+      request_json: JSON.stringify(laterRequest)
+    });
+    repository.findEarlier.mockResolvedValueOnce(job).mockResolvedValue(null);
+    repository.findNextPending.mockResolvedValueOnce(saved);
+    const process = jest.fn().mockResolvedValue(undefined);
+    await service.process(laterRequest, process, {});
+    expect(process).toHaveBeenCalledTimes(1);
+    expect(process).toHaveBeenCalledWith(request);
+    expect(enqueueRetry).toHaveBeenCalledWith(laterRequest, 0);
+    expect(repository.recordOutcome).toHaveBeenCalledWith(
+      'later',
+      expect.objectContaining({ status: 'PENDING', failures: 0 }),
+      now,
+      {}
+    );
+    expect(repository.recordOutcome).toHaveBeenCalledWith(
+      job.publication_id,
+      expect.objectContaining({ status: 'COMPLETED' }),
+      now,
+      {}
+    );
+  });
+
+  it('parks successors behind a permanent blocker without queuing polling messages', async () => {
+    const { service, repository, enqueueRetry } = setup({ run_number: 1948 });
+    repository.findEarlier.mockResolvedValueOnce({
+      ...job,
+      status: 'FAILED',
+      alerted_at: now
+    });
+    const process = jest.fn();
+    await service.process(request, process, {});
+    expect(process).not.toHaveBeenCalled();
+    expect(enqueueRetry).not.toHaveBeenCalled();
+    expect(repository.recordOutcome).toHaveBeenCalledWith(
+      job.publication_id,
+      expect.objectContaining({ failures: 0, status: 'PENDING' }),
+      now,
+      {}
+    );
+  });
+
+  it('wakes the next saved publication when its predecessor completes', async () => {
+    const { service, repository, enqueueRetry } = setup();
+    const nextRequest = { ...request, run_id: 'next', run_number: '1948' };
+    repository.findNextPending.mockResolvedValue({
+      ...job,
+      run_number: 1948,
+      request_json: JSON.stringify(nextRequest)
+    });
+    await service.process(request, jest.fn().mockResolvedValue(undefined), {});
+    expect(enqueueRetry).toHaveBeenCalledWith(nextRequest, 0);
+  });
+
+  it('recovers a successor handoff failure on duplicate delivery without republishing the predecessor', async () => {
+    const { service, repository, enqueueRetry, saved } = setup();
+    const nextRequest = { ...request, run_id: 'next', run_number: '1948' };
+    repository.findNextPending.mockResolvedValue({
+      ...job,
+      run_number: 1948,
+      request_json: JSON.stringify(nextRequest)
+    });
+    const process = jest.fn().mockResolvedValue(undefined);
+    enqueueRetry.mockRejectedValueOnce(new Error('SQS unavailable'));
+    await expect(service.process(request, process, {})).rejects.toThrow(
+      'SQS unavailable'
+    );
+    repository.enqueue.mockResolvedValue({ ...saved, status: 'COMPLETED' });
+    await service.process(request, process, {});
+    expect(process).toHaveBeenCalledTimes(1);
+    expect(enqueueRetry).toHaveBeenLastCalledWith(nextRequest, 0);
+    expect(repository.recordOutcome).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves the retry deadline and hands off the original envelope before acknowledging a failure', async () => {
+    const { service, repository, enqueueRetry } = setup();
+    await service.process(
+      { ...request, triggered_by_github_login: 'different' },
+      jest.fn().mockRejectedValue(new Error('GitHub 500')),
+      {}
+    );
+    expect(enqueueRetry).toHaveBeenCalledWith(request, 60_000);
+    expect(repository.recordOutcome.mock.invocationCallOrder[0]).toBeLessThan(
+      enqueueRetry.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('retains SQS ownership when sending the delayed retry fails', async () => {
+    const { service, repository, enqueueRetry } = setup();
+    enqueueRetry.mockRejectedValue(new Error('SQS unavailable'));
+    await expect(
+      service.process(
+        request,
+        jest.fn().mockRejectedValue(new Error('GitHub 500')),
+        {}
+      )
+    ).rejects.toThrow('SQS unavailable');
+    expect(repository.recordOutcome).toHaveBeenCalledTimes(1);
+    expect(repository.recordOutcome).toHaveBeenCalledWith(
+      job.publication_id,
+      expect.objectContaining({ status: 'PENDING', failures: 1 }),
+      now,
+      {}
+    );
+  });
+
+  it('does not queue more work after successful publication', async () => {
+    const { service, enqueueRetry } = setup();
+    await service.process(request, jest.fn().mockResolvedValue(undefined), {});
+    expect(enqueueRetry).not.toHaveBeenCalled();
+  });
+
+  it.each(['COMPLETED', 'REJECTED', 'FAILED', 'NO_BASELINE'] as const)(
+    'does not queue more work for a settled %s job',
+    async (status) => {
+      const { service, enqueueRetry } = setup({
+        status,
+        alerted_at: now,
+        next_attempt_at: now + 60_000
+      });
+      await service.process(request, jest.fn(), {});
+      expect(enqueueRetry).not.toHaveBeenCalled();
+    }
+  );
+
+  it('recovers a failed retry handoff on redelivery without another publication attempt before its deadline', async () => {
+    const { service, repository, enqueueRetry, saved } = setup();
+    const process = jest.fn().mockRejectedValue(new Error('GitHub 500'));
+    enqueueRetry.mockRejectedValueOnce(new Error('SQS unavailable'));
+    await expect(service.process(request, process, {})).rejects.toThrow(
+      'SQS unavailable'
+    );
+    repository.enqueue.mockResolvedValue({
+      ...saved,
+      failure_count: 1,
+      next_attempt_at: now + 60_000
+    });
+    await service.process(request, process, {});
+    expect(process).toHaveBeenCalledTimes(1);
+    expect(enqueueRetry).toHaveBeenLastCalledWith(request, 60_000);
+  });
+
   it('never processes or acknowledges a request whose durable save failed', async () => {
     const { service, repository } = setup();
     repository.enqueue.mockRejectedValue(new Error('database unavailable'));
@@ -114,7 +265,11 @@ describe('ReleaseNoteRecoveryService', () => {
 
   it('does not overtake a saved earlier run, even before its publication was prepared', async () => {
     const { service, repository } = setup({ run_number: 1948 });
-    repository.findEarlier.mockResolvedValue(job);
+    repository.findEarlier.mockResolvedValueOnce({
+      ...job,
+      status: 'FAILED',
+      alerted_at: now
+    });
     const process = jest.fn();
     await service.recoverDue(process, () => 180_000, {});
     expect(process).not.toHaveBeenCalled();
@@ -219,11 +374,12 @@ describe('ReleaseNoteRecoveryService', () => {
     }
   );
 
-  it('does not retry before the saved deadline', async () => {
-    const { service } = setup({ next_attempt_at: now + 1000 });
+  it('hands off a delayed retry without processing before the saved deadline', async () => {
+    const { service, enqueueRetry } = setup({ next_attempt_at: now + 1000 });
     const process = jest.fn();
     await service.process(request, process, {});
     expect(process).not.toHaveBeenCalled();
+    expect(enqueueRetry).toHaveBeenCalledWith(request, 1000);
   });
 
   it('keeps permanent failures available for explicit operator retry', async () => {
@@ -289,15 +445,15 @@ describe('ReleaseNoteRecoveryService', () => {
     expect(repository.markAlerted).toHaveBeenCalled();
   });
 
-  it('retries a thrown permanent-failure alert on subsequent polls until delivery succeeds', async () => {
+  it('queues alert retries only while terminal alert delivery is unfinished', async () => {
     const { service, postFailure, repository, saved } = setup();
     const process = jest
       .fn()
       .mockRejectedValue(new NonRetryableReleaseNoteError('history error'));
     postFailure.mockRejectedValue(new Error('alert API unavailable'));
-    await expect(service.process(request, process, {})).rejects.toThrow(
-      'alert API unavailable'
-    );
+    await expect(
+      service.process(request, process, {})
+    ).resolves.toBeUndefined();
     expect(repository.recordOutcome).toHaveBeenCalledWith(
       job.publication_id,
       expect.objectContaining({ status: 'FAILED', failures: 1 }),
