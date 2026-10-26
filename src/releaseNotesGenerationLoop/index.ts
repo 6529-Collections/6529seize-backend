@@ -18,8 +18,10 @@ import {
   ReleaseNoteRunReference
 } from '@/release-notes/release-note-generation-queue';
 import {
+  DeferredReleaseNoteError,
   isNonRetryableReleaseNoteError,
   NonRetryableReleaseNoteError,
+  NoReleaseNoteBaselineError,
   UntrustedReleaseNoteMetadataError
 } from '@/release-notes/release-note-errors';
 import { doInDbContext } from '@/secrets';
@@ -28,7 +30,9 @@ import {
   CiPipelineAlertRequest,
   ciPipelineAlertService
 } from '@/api-serverless/src/ci-pipeline-alerts/ci-pipeline-alert.service';
-import type { SQSHandler } from 'aws-lambda';
+import type { SQSHandler, Context, ScheduledEvent, SQSEvent } from 'aws-lambda';
+import { releaseNoteRecoveryDb } from '@/release-notes/release-note-recovery.db';
+import { ReleaseNoteRecoveryService } from '@/release-notes/release-note-recovery.service';
 import { randomUUID } from 'node:crypto';
 
 const logger = Logger.get('RELEASE_NOTES_GENERATION_LOOP');
@@ -498,7 +502,7 @@ async function prepareDurablePublication(
     {}
   );
   if (!prepared) {
-    throw new NonRetryableReleaseNoteError(
+    throw new NoReleaseNoteBaselineError(
       `No previous successful production run was found for ${request.repo} run ${request.run_id}`
     );
   }
@@ -523,7 +527,8 @@ function buildGenerationOptions({
       remaining !== undefined &&
       remaining < RELEASE_NOTE_MINIMUM_PART_TIME_MS
     ) {
-      throw new Error(
+      throw new DeferredReleaseNoteError(
+        'PART_BUDGET_EXHAUSTED',
         `Deferring release-note part ${partNumber}/${totalParts} with ${remaining}ms remaining`
       );
     }
@@ -751,6 +756,102 @@ export async function processRequestWithRetryPolicy(
   }
 }
 
+/** Only per-run streams use ordering; PR groups retain their existing grouping policy. */
+export function usesDurableReleaseNoteRecovery(
+  request: ReleaseNoteGenerationRequest
+): boolean {
+  const runNumber = Number(request.run_number);
+  return (
+    !request.pull_request_number &&
+    request.release_group_services.length === 1 &&
+    Number.isSafeInteger(runNumber) &&
+    runNumber > 0 &&
+    runNumber <= 0xffffffff
+  );
+}
+
+export function buildReleaseNoteRecoveryFailureAlert(
+  request: ReleaseNoteGenerationRequest,
+  error: unknown,
+  failures: number
+): CiPipelineAlertRequest {
+  const permanent = isNonRetryableReleaseNoteError(error);
+  const alert = buildReleaseNoteFailureAlert(request, error, failures);
+  if (error instanceof NoReleaseNoteBaselineError) {
+    return {
+      ...alert,
+      title: `${getReleaseNoteSurface(request)} release-note baseline unavailable`,
+      description: `No publication range was created because this stream has no earlier successful production run. The request is retained; a later deployment can bootstrap from this run. ${getErrorMessage(error)}`
+    };
+  }
+  return {
+    ...alert,
+    title: `${getReleaseNoteSurface(request)} release-note recovery required`,
+    description: `Publication ${buildReleaseNotePublicationId(request)} failed ${failures} processing attempts. ${
+      permanent
+        ? 'The saved request requires operator review before retrying.'
+        : 'The request is saved durably and will retry automatically with backoff.'
+    } Earlier unfinished publications remain blocking; no content is skipped. ${getErrorMessage(error)}`
+  };
+}
+
+async function postReleaseNoteRecoveryFailure(
+  request: ReleaseNoteGenerationRequest,
+  error: unknown,
+  failures: number
+): Promise<void> {
+  await ciPipelineAlertService.postAlert(
+    buildReleaseNoteRecoveryFailureAlert(request, error, failures),
+    {}
+  );
+}
+
+const releaseNoteRecoveryService = new ReleaseNoteRecoveryService(
+  releaseNoteRecoveryDb,
+  postReleaseNoteRecoveryFailure
+);
+
+async function recoverReleaseNotes(
+  event: ScheduledEvent | { recover_publication_id: string },
+  context: Context
+): Promise<void> {
+  if (process.env.RELEASE_NOTES_STAGE !== 'prod') return;
+  await doInDbContext(
+    async () => {
+      if ('recover_publication_id' in event) {
+        if (!/^[a-f0-9]{64}$/.test(event.recover_publication_id)) {
+          throw new TypeError(
+            'recover_publication_id must be a release-note publication id'
+          );
+        }
+        logger.info('Operator requested release-note recovery', {
+          publication_id: event.recover_publication_id,
+          aws_request_id: context.awsRequestId,
+          invocation_source: 'operator'
+        });
+        await releaseNoteRecoveryService.retry(
+          event.recover_publication_id,
+          (request) =>
+            processRequest(request, {
+              getRemainingTimeInMillis: () => context.getRemainingTimeInMillis()
+            }),
+          {}
+        );
+        return;
+      }
+      await releaseNoteRecoveryService.recoverDue(
+        (request) =>
+          processRequest(request, {
+            getRemainingTimeInMillis: () => context.getRemainingTimeInMillis()
+          }),
+        () => context.getRemainingTimeInMillis(),
+        {}
+      );
+    },
+    { logger }
+  );
+}
+
 const sqsHandler: SQSHandler = async (event, context) => {
   // serverless.yaml fixes this event source at batchSize: 1.
   const firstReceiveCount = Number(
@@ -771,6 +872,18 @@ const sqsHandler: SQSHandler = async (event, context) => {
           const receiveCount = Number(
             record.attributes.ApproximateReceiveCount
           );
+          if (usesDurableReleaseNoteRecovery(request)) {
+            await releaseNoteRecoveryService.process(
+              request,
+              (queuedRequest) =>
+                processRequest(queuedRequest, {
+                  getRemainingTimeInMillis: () =>
+                    context.getRemainingTimeInMillis()
+                }),
+              {}
+            );
+            continue;
+          }
           await processRequestWithRetryPolicy(
             request,
             Number.isSafeInteger(receiveCount) && receiveCount > 0
@@ -806,6 +919,23 @@ const sqsHandler: SQSHandler = async (event, context) => {
   }
 };
 
-export const handler = sentryContext.wrapLambdaHandler(sqsHandler, {
+export async function routeReleaseNoteEvent(
+  event: SQSEvent | ScheduledEvent | { recover_publication_id: string },
+  context: Context
+): Promise<void> {
+  if ('Records' in event) {
+    await sqsHandler(event, context, () => undefined);
+  } else if (
+    'recover_publication_id' in event ||
+    (event.source === 'aws.events' &&
+      event['detail-type'] === 'Scheduled Event')
+  ) {
+    await recoverReleaseNotes(event, context);
+  } else {
+    throw new TypeError('Unsupported release-note event');
+  }
+}
+
+export const handler = sentryContext.wrapLambdaHandler(routeReleaseNoteEvent, {
   shouldCaptureException: shouldCaptureReleaseNoteError
 });

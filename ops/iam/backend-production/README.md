@@ -108,6 +108,17 @@ References:
 - [CloudFormation service roles](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-iam-servicerole.html)
 - [IAM policy quotas](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_iam-quotas.html)
 
+## Release-note publication recovery
+
+Before deploying the release-note recovery schedule, an administrative identity
+must install `ReleaseNoteRecoveryDeployment.json` as an additional inline policy
+on `gha-backend-deploy-production`. It permits management of only the named
+`release-note-publication-recovery-prod` EventBridge rule in `us-east-1`.
+The deployment role's existing function, stack, queue, and invoke-permission
+permissions cover the existing worker; no new runtime AWS permissions are needed.
+The GitHub role cannot install its own policy. Deploy `dbMigrationsLoop` to create
+`release_note_recovery_jobs` before deploying `releaseNotesGenerationLoop`.
+
 ## WebSocket recovery worker
 
 `WebSocketDeliveryDeployment.json` is an additional narrowly scoped inline policy for the existing deployment role. An administrative identity installs it before deploying `webSocketDeliveryLoop`; the GitHub role cannot modify its own permissions. It permits only the new worker function/versions, its environment-specific CloudFormation stack, deployment-bucket prefix, schedule, log group and alarms. Existing managed policies and their ten attachments are unchanged. The deployment-bucket prefix allows CloudFormation's truncated stack component and generated suffix (for example, `websocketdeliveryloop-sta-serverlessdeploymentbuck-...` on staging); it does not grant application-data access. Validate the document with Access Analyzer and simulate new-worker operations and unrelated denials before installation. Deploy through the ordinary GitHub workflow afterward.
