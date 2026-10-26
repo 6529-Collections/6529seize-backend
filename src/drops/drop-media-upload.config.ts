@@ -1,3 +1,4 @@
+import { MAX_SOURCE_BYTES } from '@/media/resize-input';
 import { S3Client } from '@aws-sdk/client-s3';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { IMMUTABLE_MEDIA_CACHE_CONTROL } from '@/media/media-cache-control';
@@ -10,7 +11,7 @@ export const DROP_MEDIA_SANITIZED_METADATA_VALUE = 'true';
 export const DROP_MEDIA_FORMAT_VALIDATED_METADATA_KEY = 'format-validated';
 export const DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY =
   'sanitize-image-metadata';
-export const DROP_MEDIA_MAX_IMAGE_BYTES = 500 * 1024 * 1024;
+export const DROP_MEDIA_MAX_IMAGE_BYTES = MAX_SOURCE_BYTES;
 export const DROP_MEDIA_CACHE_CONTROL = IMMUTABLE_MEDIA_CACHE_CONTROL;
 
 let ingestS3: S3Client | undefined;

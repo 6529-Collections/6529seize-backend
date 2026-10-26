@@ -787,7 +787,7 @@ The backend validates every new drop/wave image container before public
 publication, independently of optional privacy metadata stripping. HEIC uploads,
 including HEIC bytes renamed as JPEG, must be exported to real JPEG/PNG bytes.
 Changing a suffix is not conversion. Image media can be processing until the
-worker finishes; rejected old public image upload sessions need a fresh upload.
+worker finishes generating and storing both standard previews; `ready` promises both previews exist. Image uploads must be 256 MiB or smaller. PNG limits are 100 million pixels for 8-bit or 64 million pixels for 16-bit. If preview processing fails, reduce the dimensions or export a complete supported image and upload again. Rejected old public image upload sessions need a fresh upload.
 The existing media status/error fields communicate these outcomes.
 
 This policy is documented in `docs/image-upload-format-validation.md`. The

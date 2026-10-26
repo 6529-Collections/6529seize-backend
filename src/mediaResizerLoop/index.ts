@@ -1,3 +1,4 @@
+import { preparePngPreview } from '@/media/png-preview';
 import { reportUnsupportedResizeOnce } from '@/mediaResizerLoop/unsupported-resize-report';
 import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -127,6 +128,15 @@ const liveHandler = wrapLambdaHandler(async (event: any, context) => {
       originImage.ContentLength,
       animated,
       async (inputPath, resizeAnimated, metadata) => {
+        if (metadata.format === 'png') {
+          const outputPath = await preparePngPreview(
+            inputPath,
+            { width, height, fit },
+            context?.getRemainingTimeInMillis?.()
+          );
+          await uploadResizedFile(outputPath, path, 'image/png');
+          return;
+        }
         if (isHeic(metadata)) {
           const outputPath = await withHeicResizeRejection(
             s3Client,

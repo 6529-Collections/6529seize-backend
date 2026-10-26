@@ -104,6 +104,12 @@ afterAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  const memoryUsage = process.memoryUsage;
+  jest.spyOn(process, 'memoryUsage').mockImplementation(
+    Object.assign(() => ({ ...memoryUsage(), rss: 64 * 1024 * 1024 }), {
+      rss: memoryUsage.rss
+    })
+  );
   mockInput = readFileSync(
     join(__dirname, '../../scripts/media-fixtures/jpeg')
   );

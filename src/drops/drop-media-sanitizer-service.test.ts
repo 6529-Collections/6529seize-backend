@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import Sharp from 'sharp';
 import {
   DropMediaSanitizerService,
@@ -225,6 +226,12 @@ describe('image format validation before publication', () => {
   const originalEnv = { ...process.env };
   beforeEach(() => {
     process.env.S3_BUCKET = 'public-bucket';
+    const memoryUsage = process.memoryUsage;
+    jest.spyOn(process, 'memoryUsage').mockImplementation(
+      Object.assign(() => ({ ...memoryUsage(), rss: 64 * 1024 * 1024 }), {
+        rss: memoryUsage.rss
+      })
+    );
   });
   afterEach(() => {
     process.env = { ...originalEnv };
@@ -262,7 +269,11 @@ describe('image format validation before publication', () => {
         }
       )
     };
-    const body = { transformToByteArray: jest.fn().mockResolvedValue(input) };
+    const transformToByteArray = jest.fn().mockResolvedValue(input);
+    const body =
+      declaredMimeType === 'image/png'
+        ? Object.assign(Readable.from([input]), { transformToByteArray })
+        : { transformToByteArray };
     const object = {
       Body: body,
       ContentLength: input.length,
@@ -270,7 +281,15 @@ describe('image format validation before publication', () => {
         policy === undefined ? {} : { 'sanitize-image-metadata': policy }
     };
     const ingestSend = jest.fn().mockResolvedValue(object);
-    const publicSend = jest.fn().mockResolvedValue({});
+    const publicSend = jest.fn(async (command) => {
+      if (command.input.Body instanceof Readable) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of command.input.Body)
+          chunks.push(Buffer.from(chunk));
+        command.input.Body = Buffer.concat(chunks);
+      }
+      return {};
+    });
     const notifier = { notifyStatusTransition: jest.fn() };
     const service = new DropMediaSanitizerService(
       uploadsDb as any,
@@ -309,7 +328,9 @@ describe('image format validation before publication', () => {
       expect(p.publicSend.mock.calls[0][0].input.Metadata).not.toHaveProperty(
         'privacy-sanitized'
       );
-      expect(p.body.transformToByteArray).toHaveBeenCalledTimes(1);
+      expect(p.body.transformToByteArray).toHaveBeenCalledTimes(
+        format === 'png' ? 0 : 1
+      );
       expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
         expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
       );
@@ -443,6 +464,85 @@ describe('image format validation before publication', () => {
   it('rejects an oversized object before buffering its body', async () => {
     const p = pipeline(fixture('jpeg'));
     p.object.ContentLength = 500 * 1024 * 1024 + 1;
+    await p.process();
+    expect(p.body.transformToByteArray).not.toHaveBeenCalled();
+    expect(p.publicSend).not.toHaveBeenCalled();
+    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ toStatus: DropMediaUploadStatus.FAILED })
+    );
+  });
+  it('marks ready only after both verified previews have been stored', async () => {
+    const p = pipeline(fixture('jpeg'));
+    const write = p.publicSend.getMockImplementation()!;
+    let release!: () => void;
+    let reached!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    p.publicSend.mockImplementation(async (command) => {
+      const result = await write(command);
+      if (command.input.Key.includes('/AUTOx1080/')) {
+        reached();
+        await paused;
+      }
+      return result;
+    });
+    const processing = p.process();
+    await started;
+    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ toStatus: DropMediaUploadStatus.SANITIZING })
+    );
+    release();
+    await processing;
+    const keys = p.publicSend.mock.calls.map(([command]) => command.input.Key);
+    expect(keys).toEqual([
+      'drops/author/image.jpg',
+      'drops/author/AUTOx450/image.jpg',
+      'drops/author/AUTOx1080/image.jpg'
+    ]);
+    for (const [command] of p.publicSend.mock.calls.slice(1)) {
+      expect(await Sharp(command.input.Body).metadata()).toMatchObject({
+        format: 'jpeg'
+      });
+    }
+    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
+    );
+  });
+
+  it('keeps a partial derivative upload failure retryable without declaring ready', async () => {
+    const p = pipeline(fixture('jpeg'));
+    const write = p.publicSend.getMockImplementation()!;
+    const error = new Error('preview storage unavailable');
+    p.publicSend.mockImplementation(async (command) => {
+      if (command.input.Key.includes('/AUTOx1080/')) throw error;
+      return write(command);
+    });
+    await expect(p.process()).rejects.toBe(error);
+    expect(p.uploadsDb.transitionStatus).toHaveBeenCalledTimes(1);
+    expect(p.ingestSend).toHaveBeenCalledTimes(1);
+    expect(p.notifier.notifyStatusTransition).not.toHaveBeenCalled();
+  });
+
+  it('rejects corrupt PNG pixel data before publishing the original', async () => {
+    const valid = fixture('png');
+    const p = pipeline(
+      valid.subarray(0, Math.floor(valid.length / 2)),
+      'image/png'
+    );
+    await p.process();
+    expect(p.publicSend).not.toHaveBeenCalled();
+    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ toStatus: DropMediaUploadStatus.FAILED })
+    );
+  });
+
+  it('rejects images above the shared 256 MiB limit before buffering', async () => {
+    const p = pipeline(fixture('jpeg'));
+    p.object.ContentLength = 256 * 1024 * 1024 + 1;
     await p.process();
     expect(p.body.transformToByteArray).not.toHaveBeenCalled();
     expect(p.publicSend).not.toHaveBeenCalled();

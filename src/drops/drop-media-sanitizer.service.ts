@@ -1,3 +1,16 @@
+import { createReadStream } from 'node:fs';
+import { stat, open } from 'node:fs/promises';
+import {
+  withResizeSourceFile,
+  UnprocessableResizeInput
+} from '@/media/resize-input';
+import { isUnprocessableResizeInput } from '@/mediaResizerLoop/resize-resource-safety';
+import { sanitizePngFile } from '@/media/png-preview';
+import {
+  prepareUploadImagePreviews,
+  previewObjectKey,
+  UploadImagePreview
+} from '@/media/upload-image-previews';
 import {
   DeleteObjectCommand,
   GetObjectCommand,
@@ -173,45 +186,51 @@ export class DropMediaSanitizerService {
       throw new Error(`Ingest object body missing for ${upload.id}`);
     }
 
-    const rawBuffer = await readImageSource(
-      rawObject.Body,
-      rawObject.ContentLength
-    );
-    // Multipart object metadata is fixed by the API, not by uploaded part bytes.
-    // Missing policy belongs to an older in-flight upload: retain sanitization.
     const stripMetadata =
       rawObject.Metadata?.[DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY] !==
         'false' || upload.declared_mime_type.toLowerCase() === 'image/avif';
-    const imageToPublish = stripMetadata
-      ? await this.sanitizeBuffer({
-          input: rawBuffer,
-          declaredMimeType: upload.declared_mime_type
-        })
-      : {
-          buffer: rawBuffer,
-          contentType: (
-            await inspectImageFormat(rawBuffer, upload.declared_mime_type)
-          ).contentType
-        };
+    if (upload.declared_mime_type.toLowerCase() === 'image/png') {
+      await this.publishPngUpload(
+        upload,
+        rawObject.Body as Readable,
+        rawObject.ContentLength,
+        stripMetadata
+      );
+    } else {
+      const rawBuffer = await readImageSource(
+        rawObject.Body,
+        rawObject.ContentLength
+      );
+      const imageToPublish = stripMetadata
+        ? await this.sanitizeBuffer({
+            input: rawBuffer,
+            declaredMimeType: upload.declared_mime_type
+          })
+        : {
+            buffer: rawBuffer,
+            contentType: (
+              await inspectImageFormat(rawBuffer, upload.declared_mime_type)
+            ).contentType
+          };
 
-    await this.publicS3().send(
-      new PutObjectCommand({
-        Bucket: this.getPublicBucket(),
-        Key: upload.public_key,
-        Body: imageToPublish.buffer,
-        ContentType: imageToPublish.contentType,
-        CacheControl: DROP_MEDIA_CACHE_CONTROL,
-        Metadata: {
-          [DROP_MEDIA_FORMAT_VALIDATED_METADATA_KEY]: 'true',
-          ...(stripMetadata
-            ? {
-                [DROP_MEDIA_SANITIZED_METADATA_KEY]:
-                  DROP_MEDIA_SANITIZED_METADATA_VALUE
-              }
-            : {})
+      await withResizeSourceFile(
+        Readable.from([imageToPublish.buffer]),
+        imageToPublish.buffer.length,
+        async (path) => {
+          const previews = await prepareUploadImagePreviews(
+            path,
+            imageToPublish.contentType
+          );
+          await this.publishImageAndPreviews(
+            upload,
+            imageToPublish.buffer,
+            imageToPublish.contentType,
+            stripMetadata,
+            previews
+          );
         }
-      })
-    );
+      );
+    }
     try {
       await this.ingestS3().send(
         new DeleteObjectCommand({
@@ -227,6 +246,105 @@ export class DropMediaSanitizerService {
     }
   }
 
+  private async publishPngUpload(
+    upload: DropMediaUploadEntity,
+    source: Readable,
+    contentLength: number | undefined,
+    stripMetadata: boolean
+  ): Promise<void> {
+    if (!Number.isSafeInteger(contentLength) || contentLength! < 0) {
+      source.destroy();
+      throw new Error('Image ingest source length is unavailable');
+    }
+    await withResizeSourceFile(source, contentLength, async (path) => {
+      const file = await open(path, 'r');
+      const header = Buffer.alloc(8);
+      try {
+        await file.read(header, 0, 8, 0);
+      } finally {
+        await file.close();
+      }
+      if (!header.equals(Buffer.from('89504e470d0a1a0a', 'hex')))
+        throw new PermanentMediaSanitizationError(
+          'Declared PNG does not match the uploaded image. Export a complete PNG and try again.'
+        );
+      const original = stripMetadata ? await sanitizePngFile(path) : path;
+      const previews = await prepareUploadImagePreviews(original, 'image/png');
+      await this.publishImageAndPreviews(
+        upload,
+        original,
+        'image/png',
+        stripMetadata,
+        previews
+      );
+    });
+  }
+
+  private async putImageFile(
+    key: string,
+    path: string,
+    contentType: string,
+    metadata?: Record<string, string>
+  ): Promise<void> {
+    const contentLength = (await stat(path)).size;
+    const body = createReadStream(path);
+    // S3 can reject before attaching a reader; cleanup must not emit an
+    // unhandled source error after the owning directory has been removed.
+    body.on('error', () => undefined);
+    try {
+      await this.publicS3().send(
+        new PutObjectCommand({
+          Bucket: this.getPublicBucket(),
+          Key: key,
+          Body: body,
+          ContentLength: contentLength,
+          ContentType: contentType,
+          CacheControl: DROP_MEDIA_CACHE_CONTROL,
+          Metadata: metadata
+        })
+      );
+    } finally {
+      body.destroy();
+    }
+  }
+
+  private async publishImageAndPreviews(
+    upload: DropMediaUploadEntity,
+    body: Buffer | string,
+    contentType: string,
+    stripMetadata: boolean,
+    previews: UploadImagePreview[]
+  ): Promise<void> {
+    const metadata = {
+      [DROP_MEDIA_FORMAT_VALIDATED_METADATA_KEY]: 'true',
+      ...(stripMetadata
+        ? {
+            [DROP_MEDIA_SANITIZED_METADATA_KEY]:
+              DROP_MEDIA_SANITIZED_METADATA_VALUE
+          }
+        : {})
+    };
+    if (typeof body === 'string')
+      await this.putImageFile(upload.public_key, body, contentType, metadata);
+    else
+      await this.publicS3().send(
+        new PutObjectCommand({
+          Bucket: this.getPublicBucket(),
+          Key: upload.public_key,
+          Body: body,
+          ContentType: contentType,
+          CacheControl: DROP_MEDIA_CACHE_CONTROL,
+          Metadata: metadata
+        })
+      );
+    for (const preview of previews)
+      await this.putImageFile(
+        previewObjectKey(upload.public_key, preview.option),
+        preview.path,
+        preview.contentType
+      );
+  }
+
   private async handleProcessingError({
     upload,
     error,
@@ -237,10 +355,10 @@ export class DropMediaSanitizerService {
     approximateReceiveCount: number;
   }): Promise<void> {
     const isPermanentInputError =
-      error instanceof PermanentMediaSanitizationError;
+      error instanceof PermanentMediaSanitizationError ||
+      isUnprocessableResizeInput(error);
     if (isPermanentInputError || approximateReceiveCount >= 3) {
-      const errorReason =
-        error instanceof Error ? error.message : String(error);
+      const errorReason = imageProcessingErrorReason(error);
       await this.dropMediaUploadsDb.transitionStatus({
         id: upload.id,
         fromStatuses: [
@@ -360,7 +478,7 @@ async function readImageSource(
     }
     if (contentLength > DROP_MEDIA_MAX_IMAGE_BYTES) {
       throw new PermanentMediaSanitizationError(
-        'Image uploads must be 500 MB or smaller.'
+        'Image uploads must be 256 MiB or smaller.'
       );
     }
     const bytes = await body.transformToByteArray();
@@ -378,7 +496,7 @@ async function sanitizeAvif(
 ): Promise<{ buffer: Buffer; contentType: string }> {
   if (input.length > DROP_MEDIA_MAX_IMAGE_BYTES) {
     throw new PermanentMediaSanitizationError(
-      'AVIF uploads must be 500 MB or smaller.'
+      'Image uploads must be 256 MiB or smaller.'
     );
   }
   if (hasAvifSequenceBrand(input)) {
@@ -484,3 +602,16 @@ function formatSharpOutput(
 export const dropMediaSanitizerService = new DropMediaSanitizerService(
   dropMediaUploadsDb
 );
+
+function imageProcessingErrorReason(error: unknown): string {
+  if (error instanceof UnprocessableResizeInput) {
+    if (error.code === 'SOURCE_TOO_LARGE')
+      return 'Image uploads must be 256 MiB or smaller.';
+    return 'This image cannot produce a usable preview. Reduce its dimensions or export a complete supported image and upload again.';
+  }
+  if (isUnprocessableResizeInput(error))
+    return 'This image could not be decoded. Upload a complete supported image.';
+  if (error instanceof Error && error.message.startsWith('PNG_PREVIEW_'))
+    return 'The image could not be processed within its preview limit. Reduce its dimensions and upload again.';
+  return error instanceof Error ? error.message : String(error);
+}
