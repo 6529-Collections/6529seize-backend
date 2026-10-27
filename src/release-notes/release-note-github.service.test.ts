@@ -144,6 +144,86 @@ describe('ReleaseNoteGitHubService', () => {
     );
   });
 
+  it.each([500, 502, 503, 504])(
+    'retries a transient GitHub HTTP %i before giving up the publication attempt',
+    async (status) => {
+      (fetch as unknown as jest.Mock)
+        .mockReset()
+        .mockResolvedValueOnce({
+          ...response(null),
+          ok: false,
+          status,
+          statusText: 'Server Error'
+        })
+        .mockResolvedValueOnce(response(currentRun));
+      await expect(
+        new ReleaseNoteGitHubService().getValidatedReleaseRun(request)
+      ).resolves.toEqual(
+        expect.objectContaining({ id: request.run_id, run_number: 45 })
+      );
+      expect(fetch).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('retries a connection reset and stops after three failed HTTP requests with endpoint diagnostics', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockReset()
+      .mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValue({
+        ...response(null),
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error'
+      });
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun(request)
+    ).rejects.toThrow(
+      '500 Internal Server Error; path=/repos/6529-Collections/6529seize-frontend/actions/runs/123; request_id=unknown'
+    );
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry authorization failures within the same attempt', async () => {
+    (fetch as unknown as jest.Mock).mockReset().mockResolvedValue({
+      ...response(null),
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized'
+    });
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun(request)
+    ).rejects.toThrow('401 Unauthorized');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes long Retry-After values to durable recovery instead of sleeping in the invocation', async () => {
+    (fetch as unknown as jest.Mock).mockReset().mockResolvedValue({
+      ...response(null),
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      headers: {
+        get: jest.fn((key) => (key === 'retry-after' ? '3600' : null))
+      }
+    });
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun(request)
+    ).rejects.toEqual(expect.objectContaining({ retryAfterMs: 3_600_000 }));
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a forged run number before trusting it for recovery ordering', async () => {
+    (fetch as unknown as jest.Mock)
+      .mockReset()
+      .mockResolvedValue(response(currentRun));
+    await expect(
+      new ReleaseNoteGitHubService().getValidatedReleaseRun({
+        ...request,
+        run_number: '44'
+      })
+    ).rejects.toBeInstanceOf(UntrustedReleaseNoteMetadataError);
+  });
+
   it('rejects an unreviewed prompt path before calling GitHub', async () => {
     await expect(
       new ReleaseNoteGitHubService().getReleasePrompt({
