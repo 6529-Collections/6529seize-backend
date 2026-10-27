@@ -38,6 +38,8 @@ For #550, the required metadata Timeline is Mint at block 26004346, Edit at bloc
 
 Stop replay on any discrepancy. Preserve its receipts and checkpoint for investigation. Roll back the event reader/writer services together if necessary; keep the additive table and all legacy rows. Reverting to the old API temporarily hides event-backed edits but must not erase their records. Schema rollback must never drop the legacy table or rebuild its primary key.
 
+The legacy discovery pass completes before event ingestion begins; these phases cannot interleave in one invocation, and the Lambda retains reserved concurrency one. Direct `setTokenURI` writes now use the same position-aware event processor. An unprocessable event deliberately holds its window; the invocation throws through `wrapLambdaHandler` into operational error/Sentry reporting rather than silently advancing. Operators must monitor Lambda errors and checkpoint age and resolve the named event before progress can resume. No skip-ahead or lossy quarantine is implemented.
+
 ## Bounded replay invocation
 
 The same `nftHistoryLoop` Lambda accepts an explicit manual replay mode. No replay schedule or self-invocation is installed. Normal scheduled events continue ingestion. Replay never registers the normal checkpoint entity, never synchronizes entities, and skips Redis initialization.
