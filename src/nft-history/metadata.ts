@@ -60,10 +60,26 @@ function attributeDiff(before: unknown, after: unknown): HistoryChange[] {
     .sort((x, y) => x.localeCompare(y))
     .filter((key) => !sameValue(a.get(key), b.get(key)))
     .map((key) => ({
-      key: `attributes::${key}${!a.has(key) ? ' (Added)' : !b.has(key) ? ' (Removed)' : ''}`,
+      key: `attributes::${key}${attributeSuffix(a.has(key), b.has(key))}`,
       from: a.get(key) ?? '',
       to: b.get(key) ?? ''
     }));
+}
+
+function attributeSuffix(before: boolean, after: boolean): string {
+  if (!before) return ' (Added)';
+  return after ? '' : ' (Removed)';
+}
+
+function expandObject(before: unknown, after: unknown): boolean {
+  return (
+    (isPlainObject(before) && (isPlainObject(after) || after == null)) ||
+    (isPlainObject(after) && before == null)
+  );
+}
+
+function objectOrEmpty(value: unknown): MetadataPayload {
+  return isPlainObject(value) ? value : {};
 }
 
 export function diffHistoryMetadata(
@@ -78,13 +94,10 @@ export function diffHistoryMetadata(
       if (sameValue(a[key], b[key])) continue;
       if (!prefix && key === 'attributes')
         changes.push(...attributeDiff(a[key], b[key]));
-      else if (
-        (isPlainObject(a[key]) && (isPlainObject(b[key]) || b[key] == null)) ||
-        (isPlainObject(b[key]) && a[key] == null)
-      ) {
+      else if (expandObject(a[key], b[key])) {
         visit(
-          isPlainObject(a[key]) ? a[key] : {},
-          isPlainObject(b[key]) ? b[key] : {},
+          objectOrEmpty(a[key]),
+          objectOrEmpty(b[key]),
           `${prefix}${key}::`
         );
       } else

@@ -83,7 +83,7 @@ export function claimMetadataUri(protocol: number, location: string): string {
   if (!location) throw new Error('Empty claim metadata location');
   if (protocol === 2) return `https://arweave.net/${location}`;
   if (protocol === 3) return `ipfs://${location}`;
-  if (protocol === 1 && /^https:\/\//.test(location)) return location;
+  if (protocol === 1 && location.startsWith('https://')) return location;
   throw new Error(`Unsupported claim storage protocol: ${protocol}`);
 }
 
@@ -98,7 +98,7 @@ export async function decodeClaimUpdate(
     topics: [...log.topics],
     data: log.data
   });
-  if (!parsedLog || parsedLog.name !== 'ClaimUpdated')
+  if (parsedLog?.name !== 'ClaimUpdated')
     throw new Error('Invalid claim event');
   const contract = [MEMES_CONTRACT, MEMELAB_CONTRACT].find(
     (address) =>

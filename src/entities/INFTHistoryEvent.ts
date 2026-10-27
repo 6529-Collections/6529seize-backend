@@ -38,8 +38,8 @@ export class NFTHistoryEventEntity {
   @Column({ type: 'varchar', length: 42 })
   extension!: string;
 
-  @Column({ type: 'varchar', length: 78 })
-  claim_id!: string;
+  @Column({ type: 'varchar', length: 78, nullable: true })
+  claim_id!: string | null;
 
   @Column({ type: 'int' })
   block!: number;
