@@ -302,3 +302,4 @@ export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock'
 
 export * from './IVotingCreditRelease';
 export * from './ITransactionScanCheckpoint';
+export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
