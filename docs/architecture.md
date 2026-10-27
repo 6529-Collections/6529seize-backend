@@ -1681,15 +1681,14 @@ changes, clock boundaries, and missed dirty writes. It reads subscription
 balances as decimal strings, derives demonstrated intent only from normalized
 balance, mode, top-up, intended-subscription, final-subscription, and redeemed
 rows, and uses a coverage-specific eligibility read where zero is meaningful.
-The shared schedule provider consumes the canonical frontend Meme calendar API,
-uses `mint_start` as a projected instant, caches one bounded horizon in memory,
-and never treats `mint_start` as an operational top-up deadline. It selects the
-calendar host from the explicit coverage environment or the Secrets
-Manager-provided `NODE_ENV` and fails closed when neither is authoritative. A
-live `/next` response is backfilled to retain the configured number of future
-drops. Failure or malformed data for a later token truncates the forecast to the
-contiguous valid prefix; failures are cached briefly to bound retry load, while
-successful cache TTLs start only after the calendar fetch completes.
+The shared schedule provider calculates a bounded future horizon from the bundled,
+versioned Memes calendar. Mint dates use Europe/Athens timezone rules including
+DST; only strictly future drops enter the forecast. The in-memory cache expires
+at the earlier of its TTL or the first projected mint start, so a cached drop
+cannot remain upcoming after opening. The horizon remains projected and bounded,
+and mint start is never an operational top-up deadline. Calendar HTTP host,
+environment, timeout and failure-cache settings are no longer used. The horizon
+and successful cache TTL settings remain supported.
 
 Alert transitions are serialized through a row lock in
 `subscription_coverage_alert_states`. The current alert state and actorless
@@ -1774,7 +1773,7 @@ flowchart TD
   HelpBotWorker --> FrontendIndex["cached frontend /help-index.json"]
   HelpBotWorker --> StreamReviewIndex["frontend Stream review index"]
   StreamReviewIndex --> StreamKnowledge["validated catalog + selected evidence shards"]
-  HelpBotWorker --> FrontendCalendar["frontend meme calendar API"]
+  HelpBotWorker --> SharedCalendar["bundled shared Memes calendar"]
   HelpBotWorker --> PublicData["validated public DB query"]
   HelpBotWorker -. optional .-> Bedrock["Bedrock renderer"]
   HelpBotWorker --> BotReply["bot reply drop"]
@@ -1794,7 +1793,7 @@ Important details:
 - Stream questions take a dedicated path before generic FAQ matching. The worker discovers the active corpus from `/review-data/6529-stream/index.json`, validates its version, pinned commit, reference identity, knowledge identity, catalog checksum, and selected shard checksums, then caches by version/checksum for the same bounded refresh interval. A missing, withdrawn, or invalid active corpus clears stale Stream state and falls back to the concise generic Help index record.
 - Stream lookup combines exact names, signatures, selectors, topics, definition names, and source paths with weighted lexical retrieval over editorial, technical, readiness, risk, and release metadata. Bedrock receives only 4–10 deduplicated evidence records within an explicit character budget; full catalogs, shards, and raw source files are never prompt context.
 - Stream prompts treat structured declaration facts as authoritative, preserve protocol/script/test classifications, keep implementation/proposal/audit/deployment states distinct, and require ambiguity disclosure for unresolved overloads. Direct replies can retain Stream scope when the previous bot answer identifies the Stream review.
-- Meme Card drop timing uses the environment-matching frontend Memes calendar API (`/api/meme-calendar/next`, `/current`, and `/{id}`), which owns cadence, overrides, and mint-window calculations.
+- Meme Card drop timing uses the bundled shared Memes calendar for next/current/specific-mint lookups. The same pure queries back the frontend calendar API; no calendar HTTP request is made. Site URLs are used only for answer links. Invalid calendar inputs follow the existing failure path.
 - V1 also has a bounded public-data query-intent mode for aggregate backend data questions.
 - Bedrock selects a semantic public-data plan from a hardcoded catalog; Bedrock output never contains executable SQL, table names, columns, joins, or expressions.
 - The backend public-data compiler validates the selected entity, operation, metric, numeric filters, and limit, then emits parameterized SQL through the shared `SqlExecutor` with the read pool forced, hard row limits, and a MySQL execution-time hint injected by backend code.
@@ -2358,3 +2357,7 @@ receive links to the winning entry or, after deletion, its competition. API V1/V
 map the additive cause without hydrating deleted drops. The EventBridge schedule
 is disabled on deployment and activated only after the dependent frontend is
 ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.
+
+## Local Memes calendar
+
+Craft, subscription coverage and Help Bot calendar answers use the bundled, versioned Memes calendar instead of frontend HTTP calls. See [shared calendar maintenance](shared-memes-calendar.md) for canonical-source synchronization, rollout services and Athens/DST policy. Shared next/current/status queries also back the existing frontend API, preserving its routes and response shapes.
