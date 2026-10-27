@@ -11,6 +11,12 @@ describeWithSeed(
     rows: [
       { connection_id: 'expired', identity_id: 'old', jwt_expiry: 1 },
       {
+        connection_id: 'capable',
+        identity_id: 'one',
+        jwt_expiry: 4_000_000_000,
+        durable_updates: true
+      },
+      {
         connection_id: 'active',
         identity_id: 'one',
         jwt_expiry: 4_000_000_000
@@ -31,13 +37,23 @@ describeWithSeed(
     it('excludes expired clients and emits each active connection once, including anonymous clients', async () => {
       const db = new NftLinkRefreshNotifierDb(() => sqlExecutor);
       const recipients = await db.findActiveRecipients({});
-      expect(recipients).toHaveLength(2);
+      expect(recipients).toHaveLength(3);
       expect(recipients).toEqual(
         expect.arrayContaining([
           { connection_id: 'active', jwt_expiry: 4_000_000_001 },
           { connection_id: 'anonymous', jwt_expiry: 4_000_000_000 }
         ])
       );
+    });
+    it('selects only legacy connections for immediate production NFT fan-out', async () => {
+      const db = new NftLinkRefreshNotifierDb(() => sqlExecutor);
+      expect(await db.findActiveRecipients({}, true)).toEqual(
+        expect.arrayContaining([
+          { connection_id: 'active', jwt_expiry: 4_000_000_001 },
+          { connection_id: 'anonymous', jwt_expiry: 4_000_000_000 }
+        ])
+      );
+      expect(await db.findActiveRecipients({}, true)).toHaveLength(2);
     });
   }
 );

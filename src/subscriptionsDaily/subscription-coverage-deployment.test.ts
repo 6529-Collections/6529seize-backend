@@ -50,7 +50,8 @@ describe('subscription coverage deployment ownership', () => {
           'ownersBalancesLoop',
           'pushNotificationsHandler',
           'subscriptionsTopUpLoop',
-          'transactionsProcessingLoop'
+          'transactionsProcessingLoop',
+          'websocketOutboundHandler'
         ]
       })
     );
@@ -73,7 +74,7 @@ describe('subscription coverage deployment ownership', () => {
         deployConfig.services.find((service) => service.name === producerName)
       ).toEqual(
         expect.objectContaining({
-          default_dependencies: ['dbMigrationsLoop']
+          default_dependencies: expect.arrayContaining(['dbMigrationsLoop'])
         })
       );
     }

@@ -715,6 +715,18 @@
       ]
     },
     {
+      "service": "websocketOutboundHandler",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 20,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 330,
+      "freshSeconds": 150,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
       "service": "xTdhGrantsReviewerLoop",
       "intervalSeconds": 60,
       "reservedConcurrency": 1,
@@ -1392,6 +1404,18 @@
       "delaySeconds": 600,
       "stallSeconds": 390,
       "freshSeconds": 210,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "websocketOutboundHandler",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 20,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 330,
+      "freshSeconds": 150,
       "operations": [
         "processing"
       ]

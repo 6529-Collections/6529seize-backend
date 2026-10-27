@@ -1,14 +1,10 @@
-import {
-  ApiGatewayManagementApiClient,
-  PostToConnectionCommand
-} from '@aws-sdk/client-apigatewaymanagementapi';
-import { NodeHttpHandler } from '@smithy/node-http-handler';
+import { forEachConcurrent } from '@/for-each-concurrent';
+import { appWebSockets } from '@/api/ws/ws';
 import { setMaxListeners } from 'node:events';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { nftLinkUpdatedMessage } from '@/api/ws/ws-message';
 import { nftLinkRefreshNotifierDb } from '@/nftLinkRefresherLoop/nft-link-refresh-notifier.db';
 import { Logger } from '@/logging';
-import { webSocketDelivery } from '@/ws-delivery/ws-delivery';
 import {
   getNftLinkResolutionBudget,
   nftLinkResolutionStage
@@ -25,38 +21,31 @@ type Send = (
 ) => Promise<unknown>;
 
 export class NftLinkRefreshNotifier {
-  private client: ApiGatewayManagementApiClient | undefined;
-
   constructor(
     private readonly listRecipients = () =>
-      nftLinkRefreshNotifierDb.findActiveRecipients({}),
+      nftLinkRefreshNotifierDb.findActiveRecipients(
+        {},
+        !!this.wakeOutbox && process.env.NODE_ENV !== 'local'
+      ),
     private readonly send: Send = (connectionId, message, signal) =>
-      this.getClient().send(
-        new PostToConnectionCommand({
-          ConnectionId: connectionId,
-          Data: Buffer.from(message)
-        }),
-        { abortSignal: signal }
-      )
+      appWebSockets.send({
+        connectionId,
+        message,
+        abortSignal: signal,
+        ...(this.wakeOutbox && process.env.NODE_ENV !== 'local'
+          ? { legacyOnly: true }
+          : {})
+      }),
+    private readonly wakeOutbox?: () => Promise<void>
   ) {}
 
-  private getClient(): ApiGatewayManagementApiClient {
-    this.client ??= new ApiGatewayManagementApiClient({
-      endpoint: process.env.API_GATEWAY_WS_ENDPOINT,
-      maxAttempts: 1,
-      requestHandler: new NodeHttpHandler({
-        connectionTimeout: 2000,
-        requestTimeout: 5000,
-        throwOnRequestTimeout: true
-      })
-    });
-    return this.client;
-  }
-
+  /** Attempt post-persistence fan-out within its budget and always release cancellation resources. */
   async notifyAboutNftLinkUpdate(data: ApiNftLinkData): Promise<void> {
+    if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
+      await this.wakeOutbox();
     const budget = getNftLinkResolutionBudget();
     const controller = new AbortController();
-    // Each of the bounded SDK sends can attach transport cancellation listeners.
+    // Each bounded SQS enqueue can attach transport cancellation listeners.
     setMaxListeners(MAX_CONCURRENT_SENDS * 3, controller.signal);
     const abort = () => controller.abort();
     const timeoutMs = Math.min(
@@ -76,8 +65,8 @@ export class NftLinkRefreshNotifier {
           reject(new Error('NFT link notification deadline exceeded'));
         controller.signal.addEventListener('abort', onAbort, { once: true });
       });
-      // Only the read and cancellable sends are raced. No DB writes or stale
-      // connection deletion can resume after this best-effort stage returns.
+      // Only the read and cancellable sends are raced. The shared send path checks
+      // cancellation after reads, before enqueueing or stale-connection cleanup.
       await Promise.race([this.broadcast(data, controller.signal), aborted]);
     } catch {
       // Recipient lookup errors can contain connection details. Report only the
@@ -96,6 +85,7 @@ export class NftLinkRefreshNotifier {
     }
   }
 
+  /** Bound recipient enqueue concurrency and report failures while allowing other recipients to proceed. */
   private async broadcast(
     data: ApiNftLinkData,
     signal: AbortSignal
@@ -106,37 +96,40 @@ export class NftLinkRefreshNotifier {
     );
     if (signal.aborted) return;
     const message = JSON.stringify(nftLinkUpdatedMessage(data));
-    let next = 0;
+    let attempted = 0;
     let failed = 0;
-    const worker = async () => {
-      while (!signal.aborted && next < recipients.length) {
-        const recipient = recipients[next++];
-        if (Number(recipient.jwt_expiry) <= Date.now() / 1000) continue;
+    await forEachConcurrent(
+      recipients,
+      async (recipient) => {
+        attempted++;
+        if (Number(recipient.jwt_expiry) <= Date.now() / 1000) return;
         try {
-          const result = await webSocketDelivery.deliver({
-            connectionId: recipient.connection_id,
+          const result = await this.send(
+            recipient.connection_id,
             message,
-            signal,
-            send: () => this.send(recipient.connection_id, message, signal)
-          });
-          if (result.status === 'failed') failed++;
+            signal
+          );
+          if (
+            result &&
+            typeof result === 'object' &&
+            'status' in result &&
+            result.status === 'failed'
+          )
+            failed++;
         } catch {
-          // Gone/slow connections must not prevent delivery to other clients.
+          // Failed persistence must not prevent enqueueing for other recipients.
           failed++;
         }
-      }
-    };
-    await Promise.all(
-      Array.from(
-        { length: Math.min(MAX_CONCURRENT_SENDS, recipients.length) },
-        worker
-      )
+      },
+      { concurrency: MAX_CONCURRENT_SENDS, signal }
     );
-    logger.info({
+    const report = {
       event: 'notification_finished',
       recipients: recipients.length,
-      attempted: next,
+      attempted,
       failed
-    });
+    };
+    if (failed) logger.error(report);
+    else logger.info(report);
   }
 }

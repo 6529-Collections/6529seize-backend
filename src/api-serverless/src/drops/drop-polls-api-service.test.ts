@@ -1,3 +1,4 @@
+import * as websocketOutbox from '@/websocket-outbox/outbox.db';
 jest.mock('@/api/api-helpers', () => ({
   giveReadReplicaTimeToCatchUp: jest.fn().mockResolvedValue(undefined)
 }));
@@ -617,6 +618,91 @@ describe('DropPollsApiService', () => {
     ).resolves.toEqual({ id: 'drop-1' });
     expect(deps.dropPollsDb.replaceVoterVotes).toHaveBeenCalled();
   });
+
+  it.each(['changed', 'unchanged', 'capture-failure'] as const)(
+    'captures poll intent on the vote transaction before commit (%s)',
+    async (outcome) => {
+      jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);
+      const { service, deps } = createService();
+      const connection = { connection: {} };
+      let committed = false;
+      const capture = jest
+        .spyOn(websocketOutbox, 'recordWebSocketEvent')
+        .mockResolvedValue(undefined);
+      if (outcome === 'capture-failure')
+        capture.mockRejectedValue(new Error('outbox unavailable'));
+      deps.dropPollsDb.executeNativeQueriesInTransaction.mockImplementation(
+        async (work) => {
+          await work(connection);
+          committed = true;
+        }
+      );
+      deps.dropPollsDb.findPollByDropIdForUpdate.mockResolvedValue({
+        id: 'poll-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        closing_time: 2_000,
+        multichoice: false,
+        anonymous: true
+      });
+      deps.dropPollsDb.findOptionsByPollId.mockResolvedValue([
+        {
+          poll_id: 'poll-1',
+          wave_id: 'wave-1',
+          drop_id: 'drop-1',
+          option_no: 1,
+          option_string: 'First'
+        }
+      ]);
+      deps.dropPollsDb.replaceVoterVotes.mockResolvedValue(
+        outcome !== 'unchanged'
+      );
+      const vote = service.vote(
+        { dropId: 'drop-1', voterId: 'voter-1', options: [1] },
+        {
+          authenticationContext: AuthenticationContext.fromProfileId('voter-1')
+        }
+      );
+      if (outcome === 'capture-failure') {
+        await expect(vote).rejects.toThrow('outbox unavailable');
+        expect(committed).toBe(false);
+        expect(
+          deps.wsListenersNotifier.notifyAboutDropUpdate
+        ).not.toHaveBeenCalled();
+      } else {
+        await expect(vote).resolves.toEqual({ id: 'drop-1' });
+        expect(committed).toBe(true);
+      }
+      if (outcome === 'unchanged') {
+        expect(capture).not.toHaveBeenCalled();
+        expect(
+          deps.wsListenersNotifier.notifyAboutDropUpdate
+        ).not.toHaveBeenCalled();
+      } else {
+        expect(capture).toHaveBeenCalledTimes(1);
+        expect(capture).toHaveBeenCalledWith(
+          {
+            type: 'drop',
+            dropId: 'drop-1',
+            updateType: 'DROP_UPDATE',
+            reason: 'POLL_RESPONSE'
+          },
+          expect.objectContaining({ connection })
+        );
+        expect(capture.mock.calls[0][1]).toBe(
+          deps.dropPollsDb.replaceVoterVotes.mock.calls[0][1]
+        );
+        expect(
+          deps.dropPollsDb.replaceVoterVotes.mock.invocationCallOrder[0]
+        ).toBeLessThan(capture.mock.invocationCallOrder[0]);
+        if (outcome === 'changed')
+          expect(capture.mock.invocationCallOrder[0]).toBeLessThan(
+            deps.wsListenersNotifier.notifyAboutDropUpdate.mock
+              .invocationCallOrder[0]
+          );
+      }
+    }
+  );
 
   it('replaces previous poll votes with selected choices', async () => {
     jest.spyOn(Time, 'currentMillis').mockReturnValue(1_000);

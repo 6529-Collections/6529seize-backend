@@ -59,6 +59,37 @@ describe('SQS', () => {
     expect(sendMock).toHaveBeenCalledWith(expect.anything(), { abortSignal });
   });
 
+  it('forwards named-queue cancellation to the send transport', async () => {
+    sendMock.mockResolvedValueOnce({
+      QueueUrl: 'https://sqs.example/outbound.fifo'
+    });
+    const abortSignal = new AbortController().signal;
+    await new SQS().sendToQueueName({
+      queueName: 'outbound.fifo',
+      message: {},
+      abortSignal
+    });
+    expect(sendMock).toHaveBeenLastCalledWith(expect.anything(), {
+      abortSignal
+    });
+  });
+
+  it('does not enqueue after cancellation during shared queue URL discovery', async () => {
+    const controller = new AbortController();
+    sendMock.mockImplementationOnce(async () => {
+      controller.abort();
+      return { QueueUrl: 'https://sqs.example/outbound.fifo' };
+    });
+    await expect(
+      new SQS().sendToQueueName({
+        queueName: 'outbound.fifo',
+        message: {},
+        abortSignal: controller.signal
+      })
+    ).rejects.toThrow();
+    expect(SendMessageCommand).not.toHaveBeenCalled();
+  });
+
   it('uses provided message group id when supplied', async () => {
     const sqs = new SQS();
 
@@ -102,7 +133,7 @@ describe('SQS', () => {
     expect(sendMock).toHaveBeenCalledTimes(3);
   });
 
-  it('forwards health metadata as attributes while preserving the body used for FIFO deduplication', async () => {
+  it('forwards health metadata and cancellation while preserving the FIFO message body', async () => {
     sendMock
       .mockResolvedValueOnce({
         QueueUrl: 'https://sqs.us-east-1.amazonaws.com/123/refresh.fifo'
@@ -116,16 +147,21 @@ describe('SQS', () => {
     const messageAttributes = {
       LoopHealthStartedAt: { DataType: 'Number', StringValue: '2000000' }
     };
+    const abortSignal = new AbortController().signal;
     await new SQS().sendToQueueName({
       queueName: 'refresh.fifo',
       message,
-      messageAttributes
+      messageAttributes,
+      abortSignal
     });
     expect(SendMessageCommand).toHaveBeenCalledWith({
       QueueUrl: 'https://sqs.us-east-1.amazonaws.com/123/refresh.fifo',
       MessageBody: JSON.stringify(message),
       MessageGroupId: 'default',
       MessageAttributes: messageAttributes
+    });
+    expect(sendMock).toHaveBeenLastCalledWith(expect.anything(), {
+      abortSignal
     });
   });
 });

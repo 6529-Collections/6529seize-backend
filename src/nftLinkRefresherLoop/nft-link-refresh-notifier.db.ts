@@ -9,14 +9,15 @@ export interface NftLinkNotificationRecipient {
 
 export class NftLinkRefreshNotifierDb extends LazyDbAccessCompatibleService {
   async findActiveRecipients(
-    ctx: RequestContext
+    ctx: RequestContext,
+    legacyOnly = false
   ): Promise<NftLinkNotificationRecipient[]> {
     const timerName = `${this.constructor.name}->findActiveRecipients`;
     ctx.timer?.start(timerName);
     try {
       return await this.db.execute<NftLinkNotificationRecipient>(
         `select /*+ MAX_EXECUTION_TIME(3000) */ connection_id, max(jwt_expiry) as jwt_expiry
-         from ${WS_CONNECTIONS_TABLE} where jwt_expiry > unix_timestamp()
+         from ${WS_CONNECTIONS_TABLE} where jwt_expiry > unix_timestamp() ${legacyOnly ? 'and durable_updates = false' : ''}
          group by connection_id`,
         {},
         { wrappedConnection: ctx.connection }
