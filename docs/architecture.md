@@ -2448,3 +2448,13 @@ ready. See `ops/runbooks/voting-credit-returns.md` for activation and rollback.
 ## Local Memes calendar
 
 Craft, subscription coverage and Help Bot calendar answers use the bundled, versioned Memes calendar instead of frontend HTTP calls. See [shared calendar maintenance](shared-memes-calendar.md) for canonical-source synchronization, rollout services and Athens/DST policy. Shared next/current/status queries also back the existing frontend API, preserving its routes and response shapes.
+
+### Private drop bookmarks
+
+The API owns private bookmark writes, the paginated `/drops-bookmarked/` list,
+and `/drops-bookmarked/status` count and optional per-drop state. These resolve
+the authenticated owner independently of an active proxy, apply the owner's wave
+read eligibility, and reuse the existing drop bookmark table. Private state is
+not delegated or emitted as public activity. `ApiWaveMin.is_direct_message`
+allows saved-message links to select the correct conversation shell. This runs
+in `api`; no additional worker or schema deployment is required.

@@ -321,10 +321,12 @@ export class DropsMappers {
   private async getAllDropsRelatedData(
     {
       dropEntities,
-      contextProfileId
+      contextProfileId,
+      bookmarkProfileId
     }: {
       dropEntities: DropEntity[];
       contextProfileId?: string | null;
+      bookmarkProfileId?: string | null;
     },
     connection?: ConnectionWrapper<any>
   ) {
@@ -486,10 +488,10 @@ export class DropsMappers {
             }
           )
         : Promise.resolve(new Set<string>()),
-      contextProfileId
+      bookmarkProfileId
         ? this.dropBookmarksDb.findBookmarkedDropIds(
             {
-              identity_id: contextProfileId,
+              identity_id: bookmarkProfileId,
               drop_ids: allDropIds
             },
             connection
@@ -622,7 +624,9 @@ export class DropsMappers {
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
-        contextProfileId
+        contextProfileId,
+        bookmarkProfileId:
+          ctx.authenticationContext?.getLoggedInUsersProfileId()
       },
       ctx.connection
     );

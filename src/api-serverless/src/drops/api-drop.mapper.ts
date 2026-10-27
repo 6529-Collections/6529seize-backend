@@ -164,6 +164,8 @@ export class ApiDropMapper {
         return {};
       }
       const dropIds = entities.map((drop) => drop.id);
+      const bookmarkProfileId =
+        ctx.authenticationContext?.getLoggedInUsersProfileId();
       const contextProfileId = getWaveReadContextProfileId(
         ctx.authenticationContext
       );
@@ -303,10 +305,10 @@ export class ApiDropMapper {
               ctx
             )
           : Promise.resolve(new Set<string>()),
-        contextProfileId
+        bookmarkProfileId
           ? this.dropBookmarksDb.findBookmarkedDropIds(
               {
-                identity_id: contextProfileId,
+                identity_id: bookmarkProfileId,
                 drop_ids: dropIds
               },
               ctx.connection
