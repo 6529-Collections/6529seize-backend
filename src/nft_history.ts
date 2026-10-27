@@ -502,9 +502,14 @@ export const findNFTHistory = async (
   latestBlock?: number,
   pagKey?: string
 ) => {
+  if (force) {
+    throw new Error(
+      'NFT_HISTORY_RESET is unsupported; use reviewed bounded history replay'
+    );
+  }
   const storedBlock =
     startingBlock ?? (await fetchLatestNftHistoryBlockNumber());
-  let from = force ? 0 : Number(storedBlock ?? 0);
+  let from = Number(storedBlock ?? 0);
   const finalized = await getEthereumRpcClient().getBlock('finalized');
   const cutoff = Math.min(latestBlock ?? finalized.number, finalized.number);
   // Bound catch-up work. A later scheduled invocation resumes from the last

@@ -167,3 +167,42 @@ it('hides settings-only events and suppresses only matching legacy transactions'
     2
   );
 });
+
+it('round-trips raw inserts and native ORM successor JSON updates consistently', async () => {
+  const later = candidate('C', 3);
+  await db.apply(
+    await prepareHistoryWrite(
+      later,
+      await db.snapshot(contract, nft_id),
+      describe
+    )
+  );
+  const rawInserted = (await db.snapshot(contract, nft_id)).events[0];
+  expect(rawInserted.description).toEqual({
+    event: 'Edit',
+    changes: [{ key: 'uri', from: 'A', to: 'C' }]
+  });
+  await db.apply(
+    await prepareHistoryWrite(
+      candidate('B', 2),
+      await db.snapshot(contract, nft_id),
+      describe
+    )
+  );
+  const updated = (await db.snapshot(contract, nft_id)).events.find(
+    (row) => row.event_id === later.event_id
+  )!;
+  expect(updated.description).toEqual({
+    event: 'Edit',
+    changes: [{ key: 'uri', from: 'B', to: 'C' }]
+  });
+  expect(
+    (
+      await prepareHistoryWrite(
+        later,
+        await db.snapshot(contract, nft_id),
+        describe
+      )
+    ).inserts
+  ).toEqual([]);
+});
