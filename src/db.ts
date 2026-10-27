@@ -5,7 +5,6 @@ import {
   DataSource,
   EntityManager,
   IsNull,
-  LessThan,
   MoreThanOrEqual,
   Brackets,
   QueryRunner,
@@ -1650,7 +1649,11 @@ export async function persistNftClaims(claims: NFTHistoryClaim[]) {
   ]);
 }
 
-export async function findClaim(claimIndex: number, nftId?: number) {
+export async function findClaim(
+  claimIndex: number,
+  nftId?: number,
+  contract?: string
+) {
   let condition;
   if (nftId != undefined) {
     condition = { claimIndex: claimIndex, nft_id: nftId };
@@ -1658,7 +1661,7 @@ export async function findClaim(claimIndex: number, nftId?: number) {
     condition = { claimIndex: claimIndex };
   }
   const claims = await AppDataSource.getRepository(NFTHistoryClaim).find({
-    where: condition,
+    where: { ...condition, ...(contract ? { contract } : {}) },
     order: { created_at: 'desc' }
   });
   return claims;
@@ -1671,22 +1674,6 @@ export async function persistNftHistoryBlock(block: number) {
     },
     ['block']
   );
-}
-
-export async function fetchLatestNftUri(
-  tokenId: number,
-  contract: string,
-  block: number
-) {
-  const latestHistory = await AppDataSource.getRepository(NFTHistory).findOne({
-    where: {
-      nft_id: tokenId,
-      contract: contract,
-      block: LessThan(block)
-    },
-    order: { block: 'DESC' }
-  });
-  return latestHistory ? latestHistory.uri : null;
 }
 
 export async function fetchHasEns(wallets: string[]) {

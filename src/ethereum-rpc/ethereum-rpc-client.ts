@@ -181,7 +181,7 @@ export class EthereumRpcClient {
   }
 
   async getLogs(filter: {
-    address?: string;
+    address?: string | string[];
     fromBlock?: string;
     toBlock?: string;
     topics?: (string | string[] | null)[];
