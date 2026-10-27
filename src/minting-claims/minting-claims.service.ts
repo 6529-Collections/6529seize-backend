@@ -26,10 +26,9 @@ import {
 } from '@/minting-claims/media-inspector';
 import type { MintingClaimAnimationDetails } from '@/entities/IMintingClaim';
 import type { MintingClaimRowInput } from '@/minting-claims/minting-claim-from-drop.builder';
-import { fetchPublicUrlToBuffer } from '@/http/safe-fetch';
+import { getMintTimelineDetails } from '@/memes-calendar';
 import { Logger } from '@/logging';
 import { getMaxMemeId } from '@/nftsLoop/db.nfts';
-import { numbers } from '@/numbers';
 import {
   getMintingClaimSeasonWindow,
   isSeasonInMintingClaimCreationWindow
@@ -47,9 +46,6 @@ import {
   memeCardDropMappingsDb,
   MemeCardDropMappingsDb
 } from '@/minting-claims/meme-card-drop-mappings.db';
-
-const MEME_CALENDAR_API_BASE = 'https://6529.io/api/meme-calendar';
-const MEME_CALENDAR_TIMEOUT_MS = 10_000;
 
 async function resolveAnimationDetails(
   animationUrl: string,
@@ -271,30 +267,16 @@ export class MintingClaimsService {
     const maxSeasonId = await this.mintingClaimsDb.getMaxSeasonId(ctx);
     const { currentSeason, nextSeason } =
       getMintingClaimSeasonWindow(maxSeasonId);
-    const calendarUrl = `${MEME_CALENDAR_API_BASE}/${claimId}`;
     try {
-      const { buffer } = await fetchPublicUrlToBuffer(calendarUrl, {
-        timeoutMs: MEME_CALENDAR_TIMEOUT_MS,
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': '6529ClaimsBuilder/1.0'
-        }
-      });
-      const parsed = JSON.parse(buffer.toString('utf8')) as {
-        season?: unknown;
-      };
-      const season = numbers.parseIntOrNull(parsed?.season);
-      if (
-        season !== null &&
-        isSeasonInMintingClaimCreationWindow(season, maxSeasonId)
-      ) {
+      const season = getMintTimelineDetails(claimId).seasonNumber;
+      if (isSeasonInMintingClaimCreationWindow(season, maxSeasonId)) {
         this.logger.info(
           `Using meme-calendar season=${season} for claim_id=${claimId}`
         );
         return season;
       }
       this.logger.warn(
-        `Invalid season from meme-calendar for claim_id=${claimId}, value=${parsed?.season}; expected ${currentSeason} or ${nextSeason}, falling back to current season`
+        `Invalid season from meme-calendar for claim_id=${claimId}, value=${season}; expected ${currentSeason} or ${nextSeason}, falling back to current season`
       );
     } catch (error) {
       this.logger.warn(

@@ -10,7 +10,7 @@ export const DROP_MEDIA_SANITIZED_METADATA_VALUE = 'true';
 export const DROP_MEDIA_FORMAT_VALIDATED_METADATA_KEY = 'format-validated';
 export const DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY =
   'sanitize-image-metadata';
-export const DROP_MEDIA_MAX_IMAGE_BYTES = 500 * 1024 * 1024;
+export { MAX_SOURCE_BYTES as DROP_MEDIA_MAX_IMAGE_BYTES } from '@/media/resize-input';
 export const DROP_MEDIA_CACHE_CONTROL = IMMUTABLE_MEDIA_CACHE_CONTROL;
 
 let ingestS3: S3Client | undefined;

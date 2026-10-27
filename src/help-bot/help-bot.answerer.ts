@@ -722,10 +722,12 @@ function buildCalendarRecord(): HelpBotKnowledgeRecord {
     canonicalPath: '/meme-calendar',
     aliases: ['meme calendar', 'next drop', 'next mint'],
     keywords: ['memes', 'calendar', 'mint', 'drop', 'schedule'],
-    facts: ['This answer was generated from the public Memes calendar API.'],
+    facts: [
+      'This answer was calculated from the bundled shared Memes calendar.'
+    ],
     relatedPaths: ['/the-memes/mint'],
     tags: ['memes', 'calendar'],
-    sourceRefs: ['frontend meme calendar API']
+    sourceRefs: ['versioned shared Memes calendar']
   };
 }
 

@@ -264,7 +264,7 @@ describeWithSeed(
           },
           {}
         )
-      ).rejects.toThrow('run 1660 must complete before run 1661');
+      ).resolves.toEqual({ blockedByRunNumber: 1660 });
     });
   }
 );

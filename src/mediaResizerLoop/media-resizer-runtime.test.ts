@@ -12,6 +12,10 @@ import {
 import { Upload } from '@aws-sdk/lib-storage';
 import { Logger } from '@/logging';
 import {
+  prepareUploadImagePreviews,
+  previewObjectKey
+} from '@/media/upload-image-previews';
+import {
   classifyResizeDecoderError,
   assertDecodedWorkBudget,
   MAX_SOURCE_BYTES,
@@ -104,6 +108,12 @@ afterAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  const memoryUsage = process.memoryUsage;
+  jest.spyOn(process, 'memoryUsage').mockImplementation(
+    Object.assign(() => ({ ...memoryUsage(), rss: 64 * 1024 * 1024 }), {
+      rss: memoryUsage.rss
+    })
+  );
   mockInput = readFileSync(
     join(__dirname, '../../scripts/media-fixtures/jpeg')
   );
@@ -912,3 +922,63 @@ it.each([2500, 1999])(
     expect(Upload).not.toHaveBeenCalled();
   }
 );
+
+it('returns a controlled rejection for PNG AUTOxAUTO when no whitelist is configured', async () => {
+  mockInput = readFileSync(join(__dirname, '../../scripts/media-fixtures/png'));
+  mockContentType = 'image/png';
+  const errorLog = jest.spyOn(Logger.get('MEDIA_RESIZER_LOOP'), 'error');
+  const response = await handler(
+    { queryStringParameters: { path: 'synthetic/AUTOxAUTO/fixture.png' } },
+    {} as Context,
+    () => undefined
+  );
+  expect(response.statusCode).toBe(422);
+  expect(errorLog).not.toHaveBeenCalled();
+  expect(Upload).not.toHaveBeenCalled();
+});
+
+it.each(['jpeg', 'png', 'webp', 'gif'])(
+  'produces byte-identical upload and on-demand legacy previews for %s',
+  async (format) => {
+    mockInput = readFileSync(
+      join(__dirname, '../../scripts/media-fixtures', format)
+    );
+    mockContentType = `image/${format}`;
+    const directory = await fs.mkdtemp(
+      join(require('node:os').tmpdir(), 'preview-parity-')
+    );
+    try {
+      const source = join(directory, 'source');
+      await fs.writeFile(source, mockInput);
+      const previews = await prepareUploadImagePreviews(
+        source,
+        mockContentType
+      );
+      for (const preview of previews) {
+        expect(
+          (
+            await handler(
+              {
+                queryStringParameters: {
+                  path: `synthetic/${preview.option}/fixture`
+                }
+              },
+              {} as Context,
+              () => undefined
+            )
+          ).statusCode
+        ).toBe(302);
+        expect(mockUploaded).toEqual(await fs.readFile(preview.path));
+      }
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  }
+);
+
+it('inserts preview options next to the filename for both root and nested keys', () => {
+  expect(previewObjectKey('image.png', 'AUTOx450')).toBe('AUTOx450/image.png');
+  expect(previewObjectKey('drops/author/image.png', 'AUTOx1080')).toBe(
+    'drops/author/AUTOx1080/image.png'
+  );
+});
