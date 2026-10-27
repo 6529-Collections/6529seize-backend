@@ -91,8 +91,10 @@ visible index, and skips unrelated synchronization, migrations, and maintenance.
 If the table is busy or online DDL is unsupported, the deployment fails without
 trying a blocking algorithm. Retry after investigating the failure.
 
-The old scoring query and the new aggregation both work before and after index
-creation. Roll back scoring consumers while keeping `dbMigrationsLoop` at an
+The history aggregation uses a MySQL index optimizer hint to select the covering
+index when available. MySQL ignores the hint before index installation, so the
+old scoring query and the new aggregation both work before and after creation.
+Roll back scoring consumers while keeping `dbMigrationsLoop` at an
 index-aware revision and retaining the additive index. Full manual schema
 synchronization also ensures this index through the same online helper; the
 entity marks it `synchronize: false` so TypeORM does not create or drop it itself.

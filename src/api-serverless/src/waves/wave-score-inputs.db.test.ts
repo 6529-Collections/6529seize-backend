@@ -71,6 +71,18 @@ async function insertPosts(posts: readonly Post[]) {
   }
 }
 
+function hasCoveringHistoryScan(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasCoveringHistoryScan);
+  if (!value || typeof value !== 'object') return false;
+  const node = value as Record<string, unknown>;
+  return (
+    (node.table_name === 'd' &&
+      node.key === 'idx_drop_wave_author_created' &&
+      node.using_index === true) ||
+    Object.values(node).some(hasCoveringHistoryScan)
+  );
+}
+
 describeWithSeed(
   'Wave score author aggregation',
   [
@@ -172,6 +184,46 @@ describeWithSeed(
         ),
         { numRuns: 12 }
       );
+    });
+
+    it('works before index installation and chooses the covering scan once installed', async () => {
+      await insertPosts([
+        { wave: 0, author: 5, createdAt: now, dropType: DropType.CHAT }
+      ]);
+      await sqlExecutor.execute(
+        'ALTER TABLE drops DROP INDEX idx_drop_wave_author_created'
+      );
+      try {
+        await compareInputs();
+      } finally {
+        await sqlExecutor.execute(
+          'ALTER TABLE drops ADD INDEX idx_drop_wave_author_created (wave_id, author_id, created_at), ALGORITHM=INPLACE, LOCK=NONE'
+        );
+      }
+
+      const queryService = new WaveScoreService(() => sqlExecutor);
+      for (const waveIds of [[waves[0].id], waves.map((wave) => wave.id)]) {
+        const execute = jest.spyOn(sqlExecutor, 'execute');
+        let call: (typeof execute.mock.calls)[number] | undefined;
+        try {
+          await queryService['getScoreInputRows'](waveIds, {});
+          call = execute.mock.calls.find(([sql]) =>
+            sql.includes('creator_level_raw')
+          );
+        } finally {
+          execute.mockRestore();
+        }
+        expect(call).toBeDefined();
+        const [plan] = await sqlExecutor.execute<{ EXPLAIN: unknown }>(
+          `EXPLAIN FORMAT=JSON ${call![0]}`,
+          call![1]
+        );
+        const parsed =
+          typeof plan.EXPLAIN === 'string'
+            ? JSON.parse(plan.EXPLAIN)
+            : plan.EXPLAIN;
+        expect(hasCoveringHistoryScan(parsed)).toBe(true);
+      }
     });
 
     it('uses the caller transaction and persists the unchanged score model', async () => {

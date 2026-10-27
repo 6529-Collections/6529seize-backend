@@ -1598,7 +1598,9 @@ Scoring aggregates drop counts, latest timestamps, and recent counts by wave and
 author before joining current identity levels. The same author totals supply
 the concentration penalty, avoiding a second history scan. The covering index
 `drops(wave_id, author_id, created_at)` is declared on `DropEntity` and installed
-only through the online index helper in `dbMigrationsLoop`. Its explicit
+only through the online index helper in `dbMigrationsLoop`. An index optimizer
+hint selects this covering history scan when the index exists; MySQL ignores
+the hint when it is unavailable. Its explicit
 `wave-score-input-index` scope applies this additive index without general schema
 synchronization or unrelated maintenance. Score formulas, response fields, and
 refresh frequency remain unchanged.
