@@ -84,6 +84,7 @@ import {
   withWaveOverviewCandidateCache
 } from './wave-overview-candidate-cache';
 import { compareCacheStrings } from './wave-cache-key';
+import { buildWaveNameSearchSql } from '@/api/waves/wave-name-search';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 import { DbPoolName } from '@/db-query.options';
@@ -1448,6 +1449,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     groupsUserIsEligibleFor: string[],
     ctx: RequestContext
   ): Promise<WaveEntity[]> {
+    const nameSearch = searchParams.name
+      ? buildWaveNameSearchSql(searchParams.name)
+      : undefined;
+    if (nameSearch === null) return [];
     if (
       searchParams.group_id &&
       !groupsUserIsEligibleFor.includes(searchParams.group_id)
@@ -1464,14 +1469,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const serialNoLessThan =
       searchParams.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const offset = searchParams.offset ?? 0;
-    const sql = `${sqlAndParams.sql} select w.* from ${legacyGetView(WAVES_TABLE)} w
+    const fromAndWhere = `from ${legacyGetView(WAVES_TABLE)} w
            left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id
 	         join ${
              UserGroupsService.GENERATED_VIEW
            } cm on cm.profile_id = w.created_by
-         where ${searchParams.author ? ` w.created_by = :author and ` : ``} ${
-           searchParams.name ? ` w.name like :name and ` : ``
-         } ${
+         where ${searchParams.author ? ` w.created_by = :author and ` : ``}
+         ${nameSearch ? `${nameSearch.candidateFilter} and ` : ''} ${
            searchParams.direct_message !== undefined
              ? ` w.is_direct_message = :direct_message and `
              : ``
@@ -1480,15 +1484,35 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            'parent',
            groupsUserIsEligibleFor,
            'groupsUserIsEligibleFor'
-         )} and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
-           searchParams.limit
-         } offset :offset`;
-    const params: Record<string, any> = {
+         )} and w.serial_no < :serialNoLessThan`;
+    // Keep the materialized candidate rows small and normalize each name once.
+    // MySQL's unlimited LIMIT prevents merging/condition pushdown from repeating
+    // REGEXP_REPLACE. Fetch full wave details only after ranking and pagination.
+    const selection = nameSearch
+      ? `select w.* from (
+          select id, serial_no, ${nameSearch.rank} as name_rank,
+            CHAR_LENGTH(normalized_name) as name_length
+          from (
+            select w.id, w.name, w.serial_no,
+              REGEXP_REPLACE(w.name, :searchPunctuation, '') as normalized_name
+            ${fromAndWhere}
+            limit 18446744073709551615
+          ) candidates
+          where ${nameSearch.filter}
+          order by name_rank, name_length, serial_no desc
+          limit :limit offset :offset
+        ) search_matches
+        join ${legacyGetView(WAVES_TABLE)} w on w.id = search_matches.id
+        order by search_matches.name_rank, search_matches.name_length, w.serial_no desc`
+      : `select w.* ${fromAndWhere} order by w.serial_no desc limit :limit offset :offset`;
+    const sql = `${sqlAndParams.sql} ${selection}`;
+    const params: Record<string, unknown> = {
       ...sqlAndParams.params,
+      ...nameSearch?.params,
       groupsUserIsEligibleFor,
       serialNoLessThan,
       offset,
-      name: searchParams.name ? `%${searchParams.name}%` : undefined,
+      limit: searchParams.limit,
       author: searchParams.author,
       direct_message: searchParams.direct_message
     };
