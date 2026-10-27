@@ -666,7 +666,8 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
           from (
             -- Aggregate before joining identities so each author is looked up
             -- once per wave; these counts also supply author concentration.
-            select d.wave_id, d.author_id, count(*) as posts,
+            -- MySQL ignores this hint before the additive index is installed.
+            select /*+ INDEX(d idx_drop_wave_author_created) */ d.wave_id, d.author_id, count(*) as posts,
               max(d.created_at) as latest_created_at,
               sum(case when d.created_at >= :recentCutoff then 1 else 0 end) as recent_posts
             from ${DROPS_TABLE} d
