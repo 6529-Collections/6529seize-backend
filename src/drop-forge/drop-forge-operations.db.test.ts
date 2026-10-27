@@ -26,6 +26,7 @@ beforeEach(async () => {
   await clearDropForgeTestTables();
   process.env.DROP_FORGE_AUTOMATION_ENABLED = 'true';
   jest.spyOn(config, 'getDropForgeConfig').mockReturnValue(testConfig);
+  jest.spyOn(config, 'launchConfigured').mockReturnValue(true);
   jest
     .spyOn(rpc, 'getEthereumRpcProvider')
     .mockReturnValue({} as JsonRpcProvider);

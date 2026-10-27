@@ -26,6 +26,10 @@ describe('Drop Forge operator controls', () => {
   beforeEach(clearDropForgeTestTables);
   const id = launchId(testConfig.chainId, testConfig.creator, 1);
   beforeEach(async () => {
+    jest.replaceProperty(process, 'env', {
+      ...process.env,
+      DROP_FORGE_STAGE: 'staging'
+    });
     jest.spyOn(reporting, 'validateForgeReporting').mockResolvedValue('bot');
     jest
       .spyOn(rpc, 'getEthereumRpcProvider')

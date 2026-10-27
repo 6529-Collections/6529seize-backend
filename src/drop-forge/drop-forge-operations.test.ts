@@ -34,6 +34,7 @@ beforeEach(() => {
     action.state = 'CONFIRMED';
   });
   jest.spyOn(config, 'getDropForgeConfig').mockReturnValue(testConfig);
+  jest.spyOn(config, 'launchConfigured').mockReturnValue(true);
   jest
     .spyOn(rpc, 'getEthereumRpcProvider')
     .mockReturnValue({} as JsonRpcProvider);
@@ -101,6 +102,23 @@ it('does not replace a metadata transaction already signed or change allocation 
   await expect(requestMetadataUpdate(1, {})).rejects.toThrow(
     'Edition or distribution'
   );
+});
+
+it('leaves manual operations available without automation configuration', async () => {
+  jest.spyOn(config, 'launchConfigured').mockReturnValue(false);
+  await expect(
+    coordinateManual(
+      1,
+      testConfig.signer,
+      'BEGIN',
+      undefined,
+      undefined,
+      undefined,
+      {}
+    )
+  ).resolves.toBeNull();
+  expect(config.getDropForgeConfig).not.toHaveBeenCalled();
+  expect(dropForgeRepository.find).not.toHaveBeenCalled();
 });
 
 it('routes a manual artist payment hash to native-transfer validation and keeps its exact category', async () => {
