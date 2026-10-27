@@ -6,7 +6,7 @@ Meme #550 has confirmed missing URI edits at blocks 26254530 and 26276048. Both 
 
 The additive `nfts_history_events` entity preserves the legacy `nfts_history` table and its URI primary key. Transaction/log identity distinguishes separate visits to the same URI. Claim settings updates with an unchanged URI have a null description and do not appear in Timeline. Historical insertion also recalculates the immediate successor diff; snapshot reconciliation and history changes share a transaction.
 
-This change does not authorize any deployment or production replay. Never reset `nfts_history_blocks` or enable `NFT_HISTORY_RESET` to repair this incident.
+This change does not authorize any deployment or production replay. Never reset `nfts_history_blocks` or enable `NFT_HISTORY_RESET` to repair this incident. The legacy forced-reset option is rejected before reading or writing any history/checkpoint data; historical recovery must use reviewed bounded replay instead of an independent full-reset workflow.
 
 ## Service order
 

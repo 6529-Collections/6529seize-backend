@@ -150,3 +150,16 @@ it('filters live discovery by extension but audits all matching emitters', async
   expect(rpc.getLogs.mock.calls[1][0]).not.toHaveProperty('address');
   expect(claimEventId(log)).not.toBe(claimEventId({ ...log, logIndex: 53 }));
 });
+
+it('accepts word-aligned tuple returns and rejects a malformed ABI tail', async () => {
+  const { log, rpc } = fixture();
+  const firstWord = '0x' + (12345).toString(16).padStart(64, '0');
+  rpc.call.mockResolvedValue(firstWord + '0'.repeat(64));
+  await expect(decodeClaimUpdate(log, async () => [550])).resolves.toEqual(
+    expect.objectContaining({ nft_id: 550 })
+  );
+  rpc.call.mockResolvedValue(firstWord + '0');
+  await expect(decodeClaimUpdate(log, async () => [550])).rejects.toThrow(
+    'does not match extension'
+  );
+});

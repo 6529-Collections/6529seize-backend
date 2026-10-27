@@ -174,7 +174,8 @@ export async function decodeClaimUpdate(
     log.blockNumber
   );
   if (
-    !/^0x[0-9a-f]{64}/i.test(result) ||
+    !/^0x[0-9a-f]+$/i.test(result) ||
+    (result.length - 2) % 64 !== 0 ||
     BigInt(`0x${result.slice(2, 66)}`).toString() !== claimId
   )
     throw new Error('Stored claim mapping does not match extension');

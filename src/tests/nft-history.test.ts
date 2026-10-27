@@ -110,3 +110,15 @@ describe('nft_history high level functions', () => {
     expect(checkpoint).not.toHaveBeenCalled();
   });
 });
+
+it('rejects legacy forced resets before reading or changing any checkpoint', async () => {
+  const read = jest.spyOn(db, 'fetchLatestNftHistoryBlockNumber');
+  const write = jest.spyOn(db, 'persistNftHistoryBlock');
+  const discover = jest.spyOn(nftHistory, 'findDeployerTransactions');
+  await expect(findNFTHistory(true)).rejects.toThrow(
+    'NFT_HISTORY_RESET is unsupported'
+  );
+  expect(read).not.toHaveBeenCalled();
+  expect(write).not.toHaveBeenCalled();
+  expect(discover).not.toHaveBeenCalled();
+});
