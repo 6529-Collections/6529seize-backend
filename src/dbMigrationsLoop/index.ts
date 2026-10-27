@@ -26,6 +26,7 @@ import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competi
 import { dbSupplier } from '@/sql-executor';
 import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 const DBMigrate = require('db-migrate');
 
 const logger = Logger.get('DB_MIGRATIONS_LOOP');
@@ -87,7 +88,8 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'claims-media-upload' &&
       scope !== 'nft-link-page-retry' &&
       scope !== 'market-depth-publication-lock' &&
-      scope !== 'voting-credit-returns')
+      scope !== 'voting-credit-returns' &&
+      scope !== 'nft-history-events')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -98,6 +100,16 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'nft-history-events') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [NFTHistoryEventEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
+  }
+
   if (scope === 'voting-credit-returns') {
     await doInDbContext(() => Promise.resolve(), {
       logger,

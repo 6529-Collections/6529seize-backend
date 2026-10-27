@@ -23,13 +23,10 @@ import {
 } from './db';
 import { NFTHistory, NFTHistoryClaim } from './entities/INFTHistory';
 import { NFT_HISTORY_IFACE } from './abis/nft_history';
-import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { Logger } from './logging';
-import {
-  getPayloadPreview,
-  normalizeMetadataPayload
-} from '@/metadata-payload';
 import { equalIgnoreCase } from './strings';
+import { describeHistoryEdit } from '@/nft-history/metadata';
+import { ingestClaimUpdates } from '@/nft-history/ingest';
 
 const logger = Logger.get('NFT_HISTORY');
 
@@ -42,9 +39,6 @@ const INITIALIZE_CLAIM_METHOD_2 = '0xd670c080';
 const INITIALIZE_CLAIM_METHOD_3 = '0x809e7c37';
 const AIRDROP_METHOD = '0xbd04e411';
 const INITIALIZE_BURN_METHOD = '0x38ec8995';
-const UPDATE_CLAIM_METHOD_1 = '0xa310099c';
-const UPDATE_CLAIM_METHOD_2 = '0x0a6330b8';
-const UPDATE_CLAIM_METHOD_3 = '0xe505bb01';
 
 /* istanbul ignore next */
 async function getAllDeployerTransactions(
@@ -133,6 +127,7 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
       }
     } catch (e: any) {
       logger.error(`[ERROR PARSING TX ${tx.hash}] [${e}]`);
+      throw e;
     }
   }
   return null;
@@ -198,120 +193,8 @@ export const getEditDescription = async (
   newUri: string,
   blockNumber: number
 ) => {
-  const readResponsePayload = async (res: any): Promise<unknown> => {
-    if (typeof res?.text === 'function') {
-      return await res.text();
-    }
-    if (typeof res?.json === 'function') {
-      return await res.json();
-    }
-    throw new Error('Response body reader missing (expected text() or json())');
-  };
-
-  const fetchMetadataForDiff = async (uri: string) => {
-    return await withArweaveFallback(uri, async (u) => {
-      const res = await fetch(u);
-      const body = await readResponsePayload(res);
-
-      const hasOk = typeof res?.ok === 'boolean';
-      const hasErrorStatus =
-        typeof res?.status === 'number' && Number(res.status) >= 400;
-      if ((hasOk && !res.ok) || hasErrorStatus) {
-        throw new Error(
-          `Metadata fetch failed for ${u} with status ${res.status}`
-        );
-      }
-
-      const metadata = normalizeMetadataPayload(body);
-      if (!metadata) {
-        const contentType = res.headers.get('content-type') ?? 'unknown';
-        const preview = getPayloadPreview(body);
-        throw new Error(
-          `Invalid metadata payload for ${u} (content-type: ${contentType}, preview: ${preview})`
-        );
-      }
-
-      return metadata;
-    });
-  };
-
   const previousUri = await fetchLatestNftUri(tokenId, contract, blockNumber);
-  if (previousUri && !equalIgnoreCase(previousUri, newUri)) {
-    const previousMeta: any = await fetchMetadataForDiff(previousUri);
-    const newMeta: any = await fetchMetadataForDiff(newUri);
-
-    const changes: any[] = [];
-    for (const key in previousMeta) {
-      if (typeof previousMeta[key] != 'object') {
-        if (previousMeta[key] !== newMeta[key]) {
-          changes.push({ key: key, from: previousMeta[key], to: newMeta[key] });
-        }
-      } else {
-        if (key == 'attributes') {
-          const attributeChanges = getAttributeChanges(
-            previousMeta[key],
-            newMeta[key]
-          );
-          attributeChanges.forEach((change) => {
-            changes.push({
-              key: `${key}::${change.trait_type}`,
-              from: change.old_value,
-              to: change.new_value
-            });
-          });
-        } else {
-          for (const key2 in previousMeta[key]) {
-            if (
-              typeof previousMeta[key][key2] != 'object' &&
-              previousMeta[key][key2] !== newMeta[key][key2]
-            ) {
-              changes.push({
-                key: `${key}::${key2}`,
-                from: previousMeta[key][key2],
-                to: newMeta[key][key2]
-              });
-            }
-          }
-        }
-      }
-    }
-    for (const key in newMeta) {
-      if (!previousMeta[key]) {
-        if (typeof newMeta[key] != 'object') {
-          changes.push({ key: key, from: '', to: newMeta[key] });
-        } else {
-          if (key == 'attributes') {
-            const attributeChanges = getAttributeChanges(
-              previousMeta[key],
-              newMeta[key]
-            );
-            attributeChanges.forEach((change) => {
-              changes.push({
-                key: `${key}::${change.trait_type}`,
-                from: change.old_value,
-                to: change.new_value
-              });
-            });
-          } else {
-            for (const key2 in newMeta[key]) {
-              if (typeof newMeta[key][key2] != 'object') {
-                changes.push({
-                  key: `${key}::${key2}`,
-                  from: '',
-                  to: newMeta[key][key2]
-                });
-              }
-            }
-          }
-        }
-      }
-    }
-    return {
-      event: 'Edit',
-      changes: changes
-    };
-  }
-  return null;
+  return previousUri ? describeHistoryEdit(previousUri, newUri) : null;
 };
 
 /* istanbul ignore next */
@@ -349,14 +232,16 @@ export const getDeployerTransactions = async (
   await Promise.all(
     assetResponse.transfers.map(async (t) => {
       const tx = await getEthereumRpcClient().getTransaction(t.hash);
-      if (tx) transactionsResponse.push({ t, tx });
+      if (!tx) throw new Error(`Transaction unavailable: ${t.hash}`);
+      transactionsResponse.push({ t, tx });
     })
   );
 
   const sortedTransactionsResponse = transactionsResponse.sort((a, b) => {
-    const timestampA = new Date(a.t.metadata.blockTimestamp).getTime();
-    const timestampB = new Date(b.t.metadata.blockTimestamp).getTime();
-    return timestampA - timestampB;
+    return (
+      (a.tx.blockNumber ?? 0) - (b.tx.blockNumber ?? 0) ||
+      a.tx.index - b.tx.index
+    );
   });
 
   for (const tr of sortedTransactionsResponse) {
@@ -401,6 +286,7 @@ export const getDeployerTransactions = async (
         await persistNftClaims([claim]);
       } catch (e: any) {
         logger.info(`[ERROR PARSING TX ${tx.hash}] [${e.message}]`);
+        throw e;
       }
     } else if (tx?.data.startsWith(INITIALIZE_CLAIM_METHOD_2)) {
       const data = tx.data;
@@ -452,6 +338,7 @@ export const getDeployerTransactions = async (
         }
       } catch (e: any) {
         logger.error(`[ERROR PARSING TX ${tx.hash}] [${e}]`);
+        throw e;
       }
     } else if (tx?.data.startsWith(INITIALIZE_CLAIM_METHOD_3)) {
       const data = tx.data;
@@ -474,6 +361,7 @@ export const getDeployerTransactions = async (
         await persistNftClaims([claim]);
       } catch (e: any) {
         logger.info(`[ERROR PARSING TX ${tx.hash}] [${e.message}]`);
+        throw e;
       }
     } else if (tx?.data.startsWith(INITIALIZE_BURN_METHOD)) {
       const data = tx.data;
@@ -517,6 +405,7 @@ export const getDeployerTransactions = async (
         }
       } catch (e: any) {
         logger.error(`[ERROR PARSING TX ${tx.hash}] [${e}]`);
+        throw e;
       }
     } else if (tx?.data.startsWith(SET_TOKEN_URI_METHOD)) {
       const details = await findDetailsFromTransaction(tx);
@@ -545,6 +434,7 @@ export const getDeployerTransactions = async (
           logger.error(
             `[ERROR PROCESSING SET_TOKEN_URI TX ${tx.hash}] [CONTRACT ${details.contract}] [TOKEN ID ${details.tokenId}] [URI ${details.tokenUri}] [ERROR ${e?.message ?? String(e)}]`
           );
+          throw e;
         }
       }
     } else if (tx?.data.startsWith(AIRDROP_METHOD)) {
@@ -570,7 +460,11 @@ export const getDeployerTransactions = async (
           if (!parsedReceipt) {
             throw new Error('Failed to parse receipt');
           }
-          const claims = await findClaim(claimIndex, -1);
+          const claims = await findClaim(
+            claimIndex,
+            -1,
+            String(parsed.args.creatorContractAddress)
+          );
           for (const claim of claims) {
             const tokenId = Number(parsedReceipt.args.id);
             claim.nft_id = tokenId;
@@ -593,56 +487,7 @@ export const getDeployerTransactions = async (
         }
       } catch (e: any) {
         logger.error(`[ERROR PARSING TX ${tx.hash}] [${e}]`);
-      }
-    } else if (
-      tx?.data.startsWith(UPDATE_CLAIM_METHOD_1) ||
-      tx?.data.startsWith(UPDATE_CLAIM_METHOD_2) ||
-      tx?.data.startsWith(UPDATE_CLAIM_METHOD_3)
-    ) {
-      const data = tx.data;
-      try {
-        const parsed = NFT_HISTORY_IFACE.parseTransaction({
-          data,
-          value: 0
-        });
-        if (!parsed) {
-          throw new Error('Failed to parse transaction');
-        }
-        const claimIndex =
-          parsed.args.claimIndex != null
-            ? Number(parsed.args.claimIndex)
-            : Number(parsed.args.instanceId);
-        const location = parsed.args.claimParameters.location;
-        const contract = parsed.args.creatorContractAddress;
-        const existingClaims = await findClaim(claimIndex);
-        const nftId = existingClaims.find((c) => c.nft_id != -1)?.nft_id;
-        if (existingClaims.length > 0) {
-          if (nftId) {
-            if (!existingClaims.some((c) => c.location == location)) {
-              const editDescription = await getEditDescription(
-                nftId,
-                contract,
-                `https://arweave.net/${location}`,
-                tx.blockNumber!
-              );
-              if (editDescription) {
-                const nftEdit: NFTHistory = {
-                  created_at: new Date(),
-                  nft_id: nftId,
-                  contract: contract,
-                  uri: `https://arweave.net/${location}`,
-                  transaction_date: new Date(t.metadata.blockTimestamp),
-                  transaction_hash: t.hash,
-                  block: parseInt(t.blockNum, 16),
-                  description: editDescription
-                };
-                await persistNftHistory([nftEdit]);
-              }
-            }
-          }
-        }
-      } catch (e: any) {
-        logger.error(`[ERROR PARSING TX ${tx.hash}] [${e}]`);
+        throw e;
       }
     }
   }
@@ -681,26 +526,22 @@ export const findNFTHistory = async (
   latestBlock?: number,
   pagKey?: string
 ) => {
-  try {
-    let startingBlockResolved: number;
-    if (startingBlock == undefined) {
-      startingBlockResolved = await fetchLatestNftHistoryBlockNumber();
-      if (!startingBlockResolved || force) {
-        startingBlockResolved = 0;
-      }
-    } else {
-      startingBlockResolved = startingBlock;
-    }
-
-    const deployerTransactionsBlock = await findDeployerTransactions(
-      startingBlockResolved,
-      latestBlock,
-      pagKey
+  const storedBlock =
+    startingBlock ?? (await fetchLatestNftHistoryBlockNumber());
+  let from = force ? 0 : Number(storedBlock ?? 0);
+  const finalized = await getEthereumRpcClient().getBlock('finalized');
+  const cutoff = Math.min(latestBlock ?? finalized.number, finalized.number);
+  // Bound catch-up work. A later scheduled invocation resumes from the last
+  // fully committed window; inclusive overlap is safe with event identities.
+  for (let window = 0; window < 5 && from <= cutoff; window++) {
+    const end = Math.min(from + 1999, cutoff);
+    await findDeployerTransactions(
+      from,
+      end,
+      window === 0 ? pagKey : undefined
     );
-
-    await persistNftHistoryBlock(deployerTransactionsBlock);
-  } catch (e: any) {
-    logger.error(`[ETIMEDOUT!] [RETRYING PROCESS] [${e}]`);
-    await findNFTHistory(force, startingBlock, latestBlock, pagKey);
+    await ingestClaimUpdates(from, end);
+    await persistNftHistoryBlock(end);
+    from = end + 1;
   }
 };

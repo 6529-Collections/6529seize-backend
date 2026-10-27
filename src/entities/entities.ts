@@ -131,6 +131,7 @@ export {
 } from './INextGen';
 export { LabExtendedData, LabNFT, MemesExtendedData, NFT } from './INFT';
 export { NFTHistory, NFTHistoryBlock, NFTHistoryClaim } from './INFTHistory';
+export { NFTHistoryEventEntity } from './INFTHistoryEvent';
 export {
   ConsolidatedNFTOwner,
   NFTOwner,

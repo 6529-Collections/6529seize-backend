@@ -1,4 +1,8 @@
 import {
+  historyReadSource,
+  HISTORY_PUBLIC_FIELDS
+} from '@/nft-history/history-read';
+import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -1553,12 +1557,13 @@ export async function fetchNftHistory(
   };
 
   return fetchPaginated(
-    NFTS_HISTORY_TABLE,
+    historyReadSource(),
     params,
-    `transaction_date desc`,
+    `block desc, transaction_index desc, log_index desc, transaction_hash desc`,
     pageSize,
     page,
-    filter
+    filter,
+    HISTORY_PUBLIC_FIELDS
   );
 }
 

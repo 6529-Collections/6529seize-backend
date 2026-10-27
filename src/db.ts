@@ -1,3 +1,4 @@
+import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import 'reflect-metadata';
 import { enqueueTransfersWithManager } from './transactions/transfer-reconciliation.db';
@@ -1650,7 +1651,11 @@ export async function persistNftClaims(claims: NFTHistoryClaim[]) {
   ]);
 }
 
-export async function findClaim(claimIndex: number, nftId?: number) {
+export async function findClaim(
+  claimIndex: number,
+  nftId?: number,
+  contract?: string
+) {
   let condition;
   if (nftId != undefined) {
     condition = { claimIndex: claimIndex, nft_id: nftId };
@@ -1658,7 +1663,7 @@ export async function findClaim(claimIndex: number, nftId?: number) {
     condition = { claimIndex: claimIndex };
   }
   const claims = await AppDataSource.getRepository(NFTHistoryClaim).find({
-    where: condition,
+    where: { ...condition, ...(contract ? { contract } : {}) },
     order: { created_at: 'desc' }
   });
   return claims;
@@ -1686,7 +1691,16 @@ export async function fetchLatestNftUri(
     },
     order: { block: 'DESC' }
   });
-  return latestHistory ? latestHistory.uri : null;
+  const latestEvent = await AppDataSource.getRepository(
+    NFTHistoryEventEntity
+  ).findOne({
+    where: { contract, nft_id: tokenId, block: LessThan(block) },
+    order: { block: 'DESC', transaction_index: 'DESC', log_index: 'DESC' }
+  });
+  return latestEvent &&
+    (!latestHistory || latestEvent.block >= latestHistory.block)
+    ? latestEvent.uri
+    : (latestHistory?.uri ?? null);
 }
 
 export async function fetchHasEns(wallets: string[]) {
