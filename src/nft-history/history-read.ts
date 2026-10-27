@@ -19,7 +19,7 @@ export function historyReadSource(): string {
       AND NOT EXISTS (
         SELECT 1 FROM ${NFTS_HISTORY_EVENTS_TABLE} event
         WHERE event.contract=legacy.contract AND event.nft_id=legacy.nft_id
-          AND event.transaction_hash=legacy.transaction_hash
+          AND LOWER(event.transaction_hash)=LOWER(legacy.transaction_hash)
       )
   ) history`;
 }

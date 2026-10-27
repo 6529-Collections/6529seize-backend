@@ -16,6 +16,7 @@ export interface HistoryWritePlan {
   contract: string;
   nft_id: number;
   before: string;
+  previous_uri?: string;
   inserts: NFTHistoryEventEntity[];
   eventUpdates: { event_id: string; description: HistoryEdit | null }[];
   legacyUpdates: {
@@ -102,8 +103,18 @@ export class NftHistoryDb {
         throw new Error(
           'History changed since plan preparation; regenerate the plan'
         );
-      if (plan.inserts.length)
-        await manager.getRepository(NFTHistoryEventEntity).save(plan.inserts);
+      for (const { description, ...row } of plan.inserts) {
+        await manager
+          .getRepository(NFTHistoryEventEntity)
+          .createQueryBuilder()
+          .insert()
+          .values({ ...row, description: () => ':historyDescription' })
+          .setParameter(
+            'historyDescription',
+            description === null ? null : JSON.stringify(description)
+          )
+          .execute();
+      }
       for (const update of plan.eventUpdates) {
         await manager
           .getRepository(NFTHistoryEventEntity)

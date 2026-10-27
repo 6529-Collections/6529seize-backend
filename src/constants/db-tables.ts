@@ -65,6 +65,7 @@ export const DELEGATIONS_TABLE = 'delegations';
 export const DROP_RELATIONS_TABLE = 'drop_relations';
 export const NFTS_HISTORY_TABLE = 'nfts_history';
 export const NFTS_HISTORY_EVENTS_TABLE = 'nfts_history_events';
+export const NFTS_HISTORY_REPLAY_JOBS_TABLE = 'nfts_history_replay_jobs';
 export const NFTS_HISTORY_BLOCKS_TABLE = 'nfts_history_blocks';
 export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
 export const REMEMES_TABLE = 'rememes';

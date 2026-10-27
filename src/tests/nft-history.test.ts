@@ -1,16 +1,12 @@
 import { jest } from '@jest/globals';
 import * as nftHistory from '../nft_history';
 import * as db from '../db'; // helpers that nft_history imports
-import * as strings from '../strings';
+import { describeHistoryEdit } from '@/nft-history/metadata';
 import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
 import * as ingest from '@/nft-history/ingest';
 
-const {
-  getAttributeChanges,
-  getEditDescription,
-  findDeployerTransactions,
-  findNFTHistory
-} = nftHistory;
+const { getAttributeChanges, findDeployerTransactions, findNFTHistory } =
+  nftHistory;
 
 afterEach(() => {
   jest.restoreAllMocks();
@@ -36,13 +32,8 @@ describe('nft_history helpers', () => {
     ]);
   });
 
-  test('getEditDescription builds edit description from metadata differences', async () => {
+  test('describeHistoryEdit builds edit description from metadata differences', async () => {
     /* ─── mock dependencies that live outside nft_history ─── */
-    jest.spyOn(db, 'fetchLatestNftUri').mockResolvedValue('old');
-
-    jest
-      .spyOn(strings, 'equalIgnoreCase')
-      .mockImplementation((a: string, b: string) => a === b);
 
     /* ─── stub fetch returning old & new metadata ─── */
     type FakeResponse = { ok: boolean; text: () => Promise<string> };
@@ -76,7 +67,7 @@ describe('nft_history helpers', () => {
     (globalThis as any).fetch = fetchMock;
 
     /* ─── call unit under test ─── */
-    const desc = await getEditDescription(1, '0xABC', 'new', 123);
+    const desc = await describeHistoryEdit('old', 'new');
 
     expect(desc).toEqual({
       event: 'Edit',

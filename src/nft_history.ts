@@ -15,7 +15,6 @@ import {
 } from '@/constants';
 import {
   fetchLatestNftHistoryBlockNumber,
-  fetchLatestNftUri,
   findClaim,
   persistNftClaims,
   persistNftHistory,
@@ -25,7 +24,7 @@ import { NFTHistory, NFTHistoryClaim } from './entities/INFTHistory';
 import { NFT_HISTORY_IFACE } from './abis/nft_history';
 import { Logger } from './logging';
 import { equalIgnoreCase } from './strings';
-import { describeHistoryEdit } from '@/nft-history/metadata';
+import { ingestTokenUriUpdate } from '@/nft-history/token-uri';
 import { ingestClaimUpdates } from '@/nft-history/ingest';
 
 const logger = Logger.get('NFT_HISTORY');
@@ -186,16 +185,6 @@ export function getAttributeChanges(
 
   return changes;
 }
-
-export const getEditDescription = async (
-  tokenId: number,
-  contract: string,
-  newUri: string,
-  blockNumber: number
-) => {
-  const previousUri = await fetchLatestNftUri(tokenId, contract, blockNumber);
-  return previousUri ? describeHistoryEdit(previousUri, newUri) : null;
-};
 
 /* istanbul ignore next */
 export const getDeployerTransactions = async (
@@ -411,25 +400,12 @@ export const getDeployerTransactions = async (
       const details = await findDetailsFromTransaction(tx);
       if (details) {
         try {
-          const editDescription = await getEditDescription(
-            details.tokenId,
+          await ingestTokenUriUpdate(
+            tx.hash,
             details.contract,
-            details.tokenUri,
-            tx.blockNumber!
+            details.tokenId,
+            details.tokenUri
           );
-          if (editDescription) {
-            const nftEdit: NFTHistory = {
-              created_at: new Date(),
-              nft_id: details.tokenId,
-              contract: details.contract,
-              uri: details.tokenUri,
-              transaction_date: new Date(t.metadata.blockTimestamp),
-              transaction_hash: t.hash,
-              block: parseInt(t.blockNum, 16),
-              description: editDescription
-            };
-            await persistNftHistory([nftEdit]);
-          }
         } catch (e: any) {
           logger.error(
             `[ERROR PROCESSING SET_TOKEN_URI TX ${tx.hash}] [CONTRACT ${details.contract}] [TOKEN ID ${details.tokenId}] [URI ${details.tokenUri}] [ERROR ${e?.message ?? String(e)}]`
