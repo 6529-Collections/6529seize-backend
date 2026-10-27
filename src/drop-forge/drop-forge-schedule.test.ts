@@ -1,9 +1,5 @@
 import { standardLaunchPlan } from '@/drop-forge/drop-forge.schedule';
-import {
-  getMintNumberForMintDate,
-  getMintSchedule,
-  MEMES_CALENDAR_VERSION
-} from '@/memes-calendar';
+import { getMintNumberForMintDate, getMintSchedule } from '@/memes-calendar';
 import { testConfig, testSource } from '@/drop-forge/drop-forge.test-fixtures';
 import { buildLaunchPlan } from '@/drop-forge/drop-forge.plan';
 import { isResearchAirdrop } from '@/drop-forge/drop-forge.research';
@@ -34,7 +30,7 @@ it.each(['2026-10-23', '2026-10-26', '2026-03-27', '2026-03-30'])(
       [start + 6000, end]
     ]);
     expect(plan.calendar).toEqual({
-      version: MEMES_CALENDAR_VERSION,
+      version: calendar.version,
       time_zone: 'Europe/Athens'
     });
     expect(plan.actions.find(isResearchAirdrop)?.due).toBe(
