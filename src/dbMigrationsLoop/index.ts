@@ -27,6 +27,8 @@ import { dbSupplier } from '@/sql-executor';
 import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
 import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
+import { DropEntity } from '@/entities/IDrop';
+import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
 const DBMigrate = require('db-migrate');
 
 const logger = Logger.get('DB_MIGRATIONS_LOOP');
@@ -89,7 +91,8 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'nft-link-page-retry' &&
       scope !== 'market-depth-publication-lock' &&
       scope !== 'voting-credit-returns' &&
-      scope !== 'nft-history-events')
+      scope !== 'nft-history-events' &&
+      scope !== 'wave-score-input-index')
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -110,6 +113,18 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     return { schema_scope: scope };
   }
 
+  if (scope === 'wave-score-input-index') {
+    const addedIndexes = await doInDbContext(applyWaveScoreInputIndexSchema, {
+      logger,
+      entities: [DropEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    logger.info(
+      `[FINISHED WAVE SCORE INPUT INDEX] added_indexes=${addedIndexes}`
+    );
+    return { schema_scope: scope };
+  }
   if (scope === 'voting-credit-returns') {
     await doInDbContext(() => Promise.resolve(), {
       logger,
@@ -177,6 +192,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       if (!scheduledInvocation && scope === 'full') {
         await assertCompetitionSchemaSyncSafe(dbSupplier());
         await getDataSource().synchronize();
+        await applyWaveScoreInputIndexSchema();
       }
       if (
         !scheduledInvocation &&
