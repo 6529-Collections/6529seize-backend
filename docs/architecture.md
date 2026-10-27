@@ -1594,6 +1594,15 @@ Desktop notes publish to the public Releases wave `CI_RELEASES_WAVE_ID`. Backend
 
 Wave Score refreshes use a hybrid DB-backed/SQS pattern. Request-path mutations write `wave_score_refresh_requests` rows inside the same primary-DB transaction as the drop, rating, or subscription change, then publish a small wakeup message to `wave-score-refresh-dirty.fifo` after commit. `waveScoreRefreshLoop` drains dirty rows from the write pool, recalculates scores, and deletes a row only if its selected `(wave_id, dirty_at)` version still matches, so a wave dirtied again during processing remains queued. A one-minute EventBridge fallback invokes the same dirty drain in case enqueueing fails after the transaction commits.
 
+Scoring aggregates drop counts, latest timestamps, and recent counts by wave and
+author before joining current identity levels. The same author totals supply
+the concentration penalty, avoiding a second history scan. The covering index
+`drops(wave_id, author_id, created_at)` is declared on `DropEntity` and installed
+only through the online index helper in `dbMigrationsLoop`. Its explicit
+`wave-score-input-index` scope applies this additive index without general schema
+synchronization or unrelated maintenance. Score formulas, response fields, and
+refresh frequency remain unchanged.
+
 Wave drop metric repairs use the same DB-backed/SQS pattern. Drop deletes apply a bounded in-transaction counter decrement, write `wave_drop_metrics_refresh_requests`, and publish to `wave-drop-metrics-refresh-dirty.fifo` after commit. `waveDropMetricsRefreshLoop` drains from the write pool and runs the full wave/dropper metric reconciliation outside the API path, with an EventBridge fallback for missed wakeups.
 
 Help6529 daily activity credits use the same durable handoff shape. Drop creation inserts one `help_bot_daily_activity_credit_requests` row per profile and UTC date inside the drop transaction, then publishes a small wakeup to `help-bot-daily-activity-credits.fifo` only after commit. `helpBotDailyActivityCreditLoop` grants outside the request path, records retry state and errors on the durable row, prioritizes untouched requests over retrying failures, retains completed rows for 30 days to suppress repeated daily work, and parks repeatedly failing rows as `DEAD`. A single FIFO message group and reserved concurrency of one serialize credit processing in a Lambda isolated from normal bot replies. The queue DLQ surfaces unhandled worker failures and a dead-row log metric alarm surfaces exhausted durable retries; a one-minute EventBridge rule wakes the same queue after a recorded retry or when post-commit SQS publication fails. The existing unique `help_bot_credit_events` grant key remains the final idempotency barrier if processing is redelivered or crashes between granting and marking the request complete.
