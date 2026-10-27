@@ -107,6 +107,7 @@ import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDe
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
 import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
+import { ApiDropBookmarksStatus } from '@/api/generated/models/ApiDropBookmarksStatus';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
 import { ApiDropCompetitionContext } from '@/api/generated/models/ApiDropCompetitionContext';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
@@ -1428,6 +1429,22 @@ export type CreateProposalFrameRequest = Request<
   ApiResponse<CreateProposalFrameResponse>,
   ApiProposalFrameRequest,
   CreateProposalFrameQuery,
+  Record<string, never>
+>;
+
+export type GetDropBookmarksStatusPathParams = Record<string, never>;
+
+export interface GetDropBookmarksStatusQuery {
+  "drop_id"?: string;
+}
+
+export type GetDropBookmarksStatusResponse = ApiDropBookmarksStatus;
+
+export type GetDropBookmarksStatusRequest = Request<
+  GetDropBookmarksStatusPathParams,
+  ApiResponse<GetDropBookmarksStatusResponse>,
+  never,
+  GetDropBookmarksStatusQuery,
   Record<string, never>
 >;
 
