@@ -58,7 +58,8 @@ function applyNativeVoting(
   vote_summary: ApiCompetitionDropVoteSummary,
   canVote: boolean,
   viewer: string | null,
-  hasMetadata: boolean
+  hasMetadata: boolean,
+  additionalActionPromised: boolean | null | undefined
 ) {
   if (drop) {
     drop.submission_context = {
@@ -67,6 +68,9 @@ function applyNativeVoting(
           ? ApiSubmissionDropStatus.Winner
           : ApiSubmissionDropStatus.Active,
       has_metadata: hasMetadata,
+      ...(additionalActionPromised == null
+        ? {}
+        : { is_additional_action_promised: additionalActionPromised }),
       ...(entry.won_at === null ? {} : { won_at: entry.won_at }),
       ...(entry.meme_card_id == null
         ? {}
@@ -139,6 +143,12 @@ export async function readCompetitionEntryContexts(
   const apiCompetition = toApiCompetition(competition);
   if (!visible.length) return { competition: apiCompetition, data: [] };
   const visibleDropEntities = drops.filter((drop) => visibleDrops.has(drop.id));
+  const additionalActionByDrop = new Map(
+    visibleDropEntities.map((drop) => [
+      drop.id,
+      drop.is_additional_action_promised
+    ])
+  );
   const [summary, page, awards, displayDrops, metadata] = await Promise.all([
     competitionEntrySummaryDb.read(
       competition_id,
@@ -199,7 +209,8 @@ export async function readCompetitionEntryContexts(
         vote_summary,
         apiCompetition.permissions.vote,
         viewer,
-        dropMetadata.length > 0
+        dropMetadata.length > 0,
+        additionalActionByDrop.get(entry.drop_id)
       );
       return {
         entry,

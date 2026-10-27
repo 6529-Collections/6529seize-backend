@@ -1,17 +1,29 @@
-import { ReleaseNoteGenerationRequest } from '@/release-notes/release-note-generation-queue';
+import {
+  ReleaseNoteGenerationRequest,
+  releaseNoteGenerationQueue,
+  RELEASE_NOTE_RETRY_HOPS_ATTRIBUTE
+} from '@/release-notes/release-note-generation-queue';
+import { releaseNoteRecoveryDb } from '@/release-notes/release-note-recovery.db';
 import {
   NonRetryableReleaseNoteError,
+  NoReleaseNoteBaselineError,
   UntrustedReleaseNoteMetadataError
 } from '@/release-notes/release-note-errors';
 import {
   buildReleaseNoteFailureAlert,
+  buildReleaseNoteRecoveryFailureAlert,
   parseReleaseNoteMessage,
   prepareReleaseNoteErrorForRetry,
   processRequest,
   processRequestWithRetryPolicy,
   shouldCaptureReleaseNoteError,
-  shouldRetryReleaseNoteError
+  shouldRetryReleaseNoteError,
+  usesDurableReleaseNoteRecovery,
+  routeReleaseNoteEvent
 } from './index';
+import type { Context } from 'aws-lambda';
+import { ReleaseNoteRecoveryService } from '@/release-notes/release-note-recovery.service';
+import * as secrets from '@/secrets';
 
 const request: ReleaseNoteGenerationRequest = {
   repo: '6529seize-backend',
@@ -30,6 +42,233 @@ const request: ReleaseNoteGenerationRequest = {
   publish_release_note: false,
   deployed_at: '2026-07-13T11:38:00.000Z'
 };
+
+describe('durable release-note event routing', () => {
+  const context = { getRemainingTimeInMillis: () => 180_000 } as Context;
+  afterEach(() => jest.restoreAllMocks());
+
+  it('carries the retry chain budget from SQS into a pending jobs delayed handoff', async () => {
+    jest.spyOn(secrets, 'doInDbContext').mockImplementation(async (fn) => fn());
+    const queued = {
+      ...request,
+      repo: '6529seize-frontend',
+      pull_request_number: null,
+      service: 'web',
+      release_group_services: ['web']
+    };
+    jest.spyOn(releaseNoteRecoveryDb, 'enqueue').mockResolvedValue({
+      publication_id: 'saved-job',
+      stream_key: 'stream',
+      run_id: queued.run_id,
+      run_number: 45,
+      request_json: JSON.stringify(queued),
+      status: 'PENDING',
+      failure_count: 1,
+      next_attempt_at: Date.now() + 60_000,
+      last_error: 'waiting',
+      alerted_at: null,
+      created_at: Date.now(),
+      updated_at: Date.now()
+    });
+    const handoff = jest
+      .spyOn(releaseNoteGenerationQueue, 'enqueueRetry')
+      .mockResolvedValue(undefined);
+    await routeReleaseNoteEvent(
+      {
+        Records: [
+          {
+            messageId: 'retry-message',
+            receiptHandle: 'receipt',
+            md5OfBody: 'body-digest',
+            eventSource: 'aws:sqs',
+            eventSourceARN:
+              'arn:aws:sqs:us-east-1:987989283142:release-note-generation',
+            awsRegion: 'us-east-1',
+            body: JSON.stringify(queued),
+            attributes: {
+              ApproximateReceiveCount: '1',
+              SentTimestamp: String(Date.now()),
+              SenderId: 'sender',
+              ApproximateFirstReceiveTimestamp: String(Date.now())
+            },
+            messageAttributes: {
+              [RELEASE_NOTE_RETRY_HOPS_ATTRIBUTE]: {
+                stringValue: '7',
+                dataType: 'Number'
+              }
+            }
+          }
+        ]
+      } as import('aws-lambda').SQSEvent,
+      context
+    );
+    expect(handoff).toHaveBeenCalledWith(queued, expect.any(Number), 8);
+  });
+
+  it('rejects periodic events instead of polling for hypothetical work', async () => {
+    await expect(
+      routeReleaseNoteEvent(
+        {
+          source: 'aws.events',
+          'detail-type': 'Scheduled Event'
+        } as unknown as Parameters<typeof routeReleaseNoteEvent>[0],
+        context
+      )
+    ).rejects.toThrow('Unsupported release-note event');
+  });
+
+  it('hands a final SQS delivery to durable recovery instead of exhausting publication retries', async () => {
+    jest.spyOn(secrets, 'doInDbContext').mockImplementation(async (fn) => fn());
+    const recover = jest
+      .spyOn(ReleaseNoteRecoveryService.prototype, 'process')
+      .mockResolvedValue(undefined);
+    const queued = {
+      ...request,
+      repo: '6529seize-frontend',
+      workflow: 'Web Deploy - PROD',
+      pull_request_number: null,
+      service: 'web',
+      release_group_services: ['web']
+    };
+    await routeReleaseNoteEvent(
+      {
+        Records: [
+          {
+            body: JSON.stringify(queued),
+            attributes: { ApproximateReceiveCount: '5' }
+          }
+        ]
+      } as import('aws-lambda').SQSEvent,
+      context
+    );
+    expect(recover).toHaveBeenCalledWith(
+      expect.objectContaining({ run_id: request.run_id }),
+      expect.any(Function),
+      {}
+    );
+  });
+
+  it('does not acknowledge a final delivery when durable recovery could not save it', async () => {
+    jest.spyOn(secrets, 'doInDbContext').mockImplementation(async (fn) => fn());
+    jest
+      .spyOn(ReleaseNoteRecoveryService.prototype, 'process')
+      .mockRejectedValue(new Error('recovery store unavailable'));
+    const queued = {
+      ...request,
+      repo: '6529seize-frontend',
+      workflow: 'Web Deploy - PROD',
+      pull_request_number: null,
+      service: 'web',
+      release_group_services: ['web']
+    };
+    await expect(
+      routeReleaseNoteEvent(
+        {
+          Records: [
+            {
+              body: JSON.stringify(queued),
+              attributes: { ApproximateReceiveCount: '5' }
+            }
+          ]
+        } as import('aws-lambda').SQSEvent,
+        context
+      )
+    ).rejects.toThrow('recovery store unavailable');
+  });
+
+  it('runs recovery only on an explicit operator request and selects the requested publication', async () => {
+    const previous = process.env.RELEASE_NOTES_STAGE;
+    process.env.RELEASE_NOTES_STAGE = 'prod';
+    jest.spyOn(secrets, 'doInDbContext').mockImplementation(async (fn) => fn());
+    const recover = jest
+      .spyOn(ReleaseNoteRecoveryService.prototype, 'recoverDue')
+      .mockResolvedValue(undefined);
+    const retry = jest
+      .spyOn(ReleaseNoteRecoveryService.prototype, 'retry')
+      .mockResolvedValue(undefined);
+    try {
+      await routeReleaseNoteEvent({ recover_due: true }, context);
+      expect(recover).toHaveBeenCalledTimes(1);
+      const publicationId = 'a'.repeat(64);
+      await routeReleaseNoteEvent(
+        { recover_publication_id: publicationId },
+        context
+      );
+      expect(retry).toHaveBeenCalledWith(
+        publicationId,
+        expect.any(Function),
+        {}
+      );
+      expect(recover).toHaveBeenCalledTimes(1);
+      await expect(
+        routeReleaseNoteEvent({ recover_publication_id: 'not-an-id' }, context)
+      ).rejects.toThrow('must be a release-note publication id');
+    } finally {
+      if (previous === undefined) delete process.env.RELEASE_NOTES_STAGE;
+      else process.env.RELEASE_NOTES_STAGE = previous;
+    }
+  });
+
+  it('distinguishes automatic retry from a permanent operator-recovery requirement in failure alerts', () => {
+    const transient = buildReleaseNoteRecoveryFailureAlert(
+      request,
+      new Error('GitHub 500'),
+      5
+    );
+    expect(transient.title).toContain('recovery required');
+    expect(transient.description).toContain('will retry automatically');
+    expect(transient.description).toContain('failed 5 processing attempts');
+    const permanent = buildReleaseNoteRecoveryFailureAlert(
+      request,
+      new NonRetryableReleaseNoteError('history error'),
+      1
+    );
+    expect(permanent.description).toContain('operator review');
+    expect(permanent.description).not.toContain('will retry automatically');
+    const baseline = buildReleaseNoteRecoveryFailureAlert(
+      request,
+      new NoReleaseNoteBaselineError('No previous run'),
+      1
+    );
+    expect(baseline.title).toContain('baseline unavailable');
+    expect(baseline.description).toContain('later deployment can bootstrap');
+  });
+
+  it('uses durable recovery for ordered per-run jobs while preserving PR grouping and legacy metadata', () => {
+    const perRun = {
+      ...request,
+      pull_request_number: null,
+      release_group_services: ['web']
+    };
+    expect(usesDurableReleaseNoteRecovery(perRun)).toBe(true);
+    expect(usesDurableReleaseNoteRecovery(request)).toBe(false);
+    expect(
+      usesDurableReleaseNoteRecovery({ ...perRun, run_number: null })
+    ).toBe(false);
+    expect(
+      usesDurableReleaseNoteRecovery({ ...perRun, run_number: '-1' })
+    ).toBe(false);
+    expect(
+      usesDurableReleaseNoteRecovery({
+        ...perRun,
+        release_group_services: ['api', 'worker']
+      })
+    ).toBe(false);
+  });
+
+  it('does no operator recovery outside production', async () => {
+    const original = process.env.RELEASE_NOTES_STAGE;
+    process.env.RELEASE_NOTES_STAGE = 'staging';
+    try {
+      await expect(
+        routeReleaseNoteEvent({ recover_due: true }, {} as Context)
+      ).resolves.toBeUndefined();
+    } finally {
+      if (original === undefined) delete process.env.RELEASE_NOTES_STAGE;
+      else process.env.RELEASE_NOTES_STAGE = original;
+    }
+  });
+});
 
 describe('parseReleaseNoteMessage', () => {
   it('parses a valid message', () => {

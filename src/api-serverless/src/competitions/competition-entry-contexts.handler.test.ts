@@ -159,6 +159,60 @@ it('returns renderable content and native votes together without legacy vote enr
     { data_key: 'Artist', data_value: 'Artist name' }
   ]);
 });
+it.each(['ACTIVE', 'WINNER'])(
+  'preserves each %s card’s additional-action promise without legacy vote enrichment',
+  async (status) => {
+    const entries = [2, 3, 4].map((suffix) => ({
+      id: `10000000-0000-4000-8000-00000000000${suffix}`,
+      drop_id: `drop-${suffix}`,
+      status,
+      rank: null
+    }));
+    const drops = [null, false, true].map((promised, index) => ({
+      id: entries[index].drop_id,
+      wave_id: 'wave',
+      is_additional_action_promised: promised
+    }));
+    jest
+      .mocked(competitionRepository.findNativeEntriesByIds)
+      .mockResolvedValue(entries as never);
+    jest
+      .mocked(dropsDb.getDropsByIds)
+      .mockResolvedValue([...drops].reverse() as never);
+    jest
+      .mocked(apiDropMapper.mapDrops)
+      .mockResolvedValue(
+        Object.fromEntries(drops.map(({ id }) => [id, { id }])) as never
+      );
+    const req = request(entries.map(({ id }) => id).join(','));
+    req.query.include = 'cards';
+
+    const result = await handleGetCompetitionEntryContextsV3(req);
+
+    expect(result.data).toHaveLength(3);
+    expect(result.data[0].drop?.submission_context).toBeDefined();
+    expect(result.data[0].drop?.submission_context).not.toHaveProperty(
+      'is_additional_action_promised'
+    );
+    for (const index of [1, 2]) {
+      expect(result.data[index].drop).toMatchObject({
+        id: drops[index].id,
+        submission_context: {
+          status,
+          is_additional_action_promised:
+            drops[index].is_additional_action_promised
+        }
+      });
+    }
+    expect(apiDropMapper.mapDrops).toHaveBeenCalledWith(
+      [...drops].reverse(),
+      expect.anything(),
+      { includeSubmissionVoting: false }
+    );
+    expect(dropsDb.getDropsByIds).toHaveBeenCalledTimes(1);
+  }
+);
+
 it('refreshes summaries without loading card content', async () => {
   const result = await handleGetCompetitionEntryContextsV3(request());
   expect(result.data[0].drop).toBeUndefined();

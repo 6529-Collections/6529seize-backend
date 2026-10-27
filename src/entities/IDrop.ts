@@ -30,6 +30,10 @@ export enum DropType {
 
 @Entity(DROPS_TABLE)
 @Index('idx_drop_wave_author', ['wave_id', 'author_id'])
+// Installed explicitly with online DDL by dbMigrationsLoop.
+@Index('idx_drop_wave_author_created', ['wave_id', 'author_id', 'created_at'], {
+  synchronize: false
+})
 @Index('idx_drop_wave_serial_no', ['wave_id', 'serial_no'])
 @Index('idx_drop_wave_type_author', ['wave_id', 'drop_type', 'author_id'])
 @Index('idx_drop_wave_created_at', ['wave_id', 'created_at'])
