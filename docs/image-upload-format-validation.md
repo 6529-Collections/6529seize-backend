@@ -8,8 +8,7 @@ Supported JPEG, PNG, WebP and GIF containers must match their declared MIME type
 `image/jpg` is normalized to `image/jpeg`. HEIC/HEIF input is rejected with an
 instruction to export the image as JPEG or PNG. Renaming a HEIC file is not
 conversion. Still AVIF drop uploads retain their existing mandatory conversion to
-WebP and their strict decode limits. This PR does not add HEIC to accepted upload
-formats or change the on-demand resizer.
+WebP and their strict decode limits. HEIC is not an accepted upload format. PNG preview processing is shared with the on-demand resizer.
 
 ## Privacy behavior
 
@@ -43,7 +42,7 @@ decoded successfully. Full decoding still occurs when conversion or privacy
 sanitization requires it. Unsupported signatures such as SVG are rejected before
 handing their data to native format parsers.
 
-The worker enforces the existing 500 MiB image byte ceiling before buffering and
+The worker enforces the shared 256 MiB image byte ceiling before reading and
 checks that received length matches S3's declared length. Read/write/network
 failures, missing or inconsistent length and unmatched native failures remain
 operational. Detected invalid/unsupported formats mark the upload failed once;
@@ -53,6 +52,26 @@ Known permanent input rejections use warning logs and the upload's error/status
 fields; they do not emit an operational application-error alert. Unclassified,
 transport and storage failures retain operational error reporting, including when
 their processing retries are exhausted.
+
+## Preview readiness and PNG limits
+
+Image uploads become `ready` only after both standard `AUTOx450` and `AUTOx1080`
+previews are generated, verified and stored alongside the original. A failed
+preview or derivative write cannot report success; operational failures retry.
+PNG previews use disposable Sharp processes with measured limits: 100 million
+pixels for 8-bit and 64 million pixels for 16-bit, with a 100,000-pixel side limit.
+Output fits within 4096 pixels per side, two million pixels and 10 MiB encoded.
+Ordinary orientation, alpha, no-upscale and fit behavior is preserved; oversized
+results are reduced to fit the bounded output. See
+[PNG preview resource policy](png-preview-resource-policy.md).
+
+All image sources are streamed to a task-owned directory. Non-PNG sanitization and AVIF conversion also use files instead of retaining full source/output buffers in Node; original re-encoding must fit its full-decode budget. Privacy-disabled originals
+retain their exact bytes; privacy-enabled PNG stripping also runs in isolation.
+A 30-second deadline and sampled combined-RSS guard protect each child; native
+allocations are released on exit. This is not a hard allocation guarantee.
+The sanitizer needs 1 GiB ephemeral storage to own source, transformed original
+and previews until storage operations finish. Failed decoding stays private;
+a partial storage failure may leave objects but never marks the upload ready.
 
 ## Client and compatibility contract
 
@@ -77,27 +96,24 @@ defense in depth, not a retrospective audit of every historical public object.
 
 ## Service order and rollback
 
-Deploy `dropMediaSanitizer` before `api` when rollout is authorized. The worker
-must understand the captured privacy choice before the API routes ordinary images
-through it. The existing ingest storage, database table and queue are reused; no
-schema changes or resizer deployment are needed. API deployment already checks
-the ingest bucket and queue. All images now incur queue/publication latency;
-capacity and the existing worker concurrency need observation during rollout.
-Watch SQS oldest-message age and visible backlog, worker errors/throttles and DLQ
-messages. If backlog/age keeps growing while the two reserved worker slots are
-saturated, or uploads stop reaching ready, roll back API routing rather than
-bypassing validation or changing privacy policy. Choose an acceptable processing
-latency and backlog threshold from measured traffic before production rollout;
-this PR introduces no new alarm or automatic backpressure policy.
+When rollout is authorized, deploy `mediaResizerLoop` before
+`dropMediaSanitizer`. The existing API already routes images through private
+ingest and exposes processing/ready/failed; this change needs no API deployment,
+schema change or new queue. The sanitizer's byte ceiling and preview requirement
+are authoritative. Existing frontend generic multipart transport limits do not
+promise an image will pass server processing.
 
-Rollback the API first to stop creating the new ingest policy. Drain or retain a
-compatible worker for queued private uploads before rolling back the worker, so
-uploads captured with privacy stripping disabled are not unexpectedly re-encoded.
+The sanitizer's reserved concurrency is unchanged. Both previews now contribute
+to queue/publication latency. Observe SQS oldest-message age, backlog, errors,
+throttles and DLQ messages during an authorized rollout. Retain a compatible
+worker for queued uploads when rolling back; do not bypass preview readiness or
+change the captured privacy policy. Already stored originals and derivatives
+must be preserved.
 
 ## Help knowledge
 
 Backend-owned guidance for `@help6529`: a failed HEIC upload requires exporting
 real JPEG/PNG bytes, not changing the filename; newly uploaded images can remain
-processing until format validation finishes; a rejected old upload session should
+processing until format validation and both preview uploads finish; image files must be 256 MiB or smaller, and oversized PNGs need reduced dimensions; a rejected old upload session should
 be restarted. The frontend-owned published Help Bot corpus has not been changed
 in this backend-only PR and must incorporate this guidance in its next update.
