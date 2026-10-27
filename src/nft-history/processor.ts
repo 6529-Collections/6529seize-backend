@@ -137,6 +137,7 @@ export async function prepareHistoryWrite(
     throw new Error(
       'Missing predecessor metadata; mint baseline must be verified first'
     );
+  plan.previous_uri = previous.uri;
   event.description = await describe(previous.uri, candidate.uri);
   plan.inserts.push(event);
   // Only the next row changes predecessor; reconcile it in the same transaction.

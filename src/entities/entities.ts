@@ -300,3 +300,5 @@ export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock'
 
 export * from './IVotingCreditRelease';
 export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
+
+export { NFTHistoryReplayJobEntity } from './INFTHistoryReplayJob';

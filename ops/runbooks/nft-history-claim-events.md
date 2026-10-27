@@ -39,3 +39,63 @@ For #550, the required metadata Timeline is Mint at block 26004346, Edit at bloc
 Stop replay on any discrepancy. Preserve its receipts and checkpoint for investigation. Roll back the event reader/writer services together if necessary; keep the additive table and all legacy rows. Reverting to the old API temporarily hides event-backed edits but must not erase their records. Schema rollback must never drop the legacy table or rebuild its primary key.
 
 The legacy discovery pass completes before event ingestion begins; these phases cannot interleave in one invocation, and the Lambda retains reserved concurrency one. Direct `setTokenURI` writes now use the same position-aware event processor. An unprocessable event deliberately holds its window; the invocation throws through `wrapLambdaHandler` into operational error/Sentry reporting rather than silently advancing. Operators must monitor Lambda errors and checkpoint age and resolve the named event before progress can resume. No skip-ahead or lossy quarantine is implemented.
+
+## Bounded replay invocation
+
+The same `nftHistoryLoop` Lambda accepts an explicit manual replay mode. No replay schedule or self-invocation is installed. Normal scheduled events continue ingestion. Replay never registers the normal checkpoint entity, never synchronizes entities, and skips Redis initialization.
+
+After an authorized rollout of both changes, create the additional job table through `dbMigrationsLoop` with `{ "schema_scope": "nft-history-replay" }`. Both schema scopes must finish before using replay. Keep `NFT_HISTORY_REPLAY_APPLY_ENABLED=false` until the operator separately approves execution; `true` is required only for apply/resume and must be returned to `false` after the authorized repair.
+
+An audit request looks like this (use a real, recorded finalized cutoff consistently across every window in the campaign):
+
+```json
+{
+  "mode": "nft-history-replay",
+  "action": "dry-run",
+  "fromBlock": 26254530,
+  "toBlock": 26254530,
+  "cutoffBlock": 26276048
+}
+```
+
+These sample blocks are a regression slice, not the complete affected range. Determine and record the earliest relevant claim initialization/extension deployment block from on-chain evidence, then enumerate every block window through the selected cutoff for all supported creator contracts and emitters. Each request accepts at most 2,000 blocks and 25 claim-update events. Split dense windows or windows that exceed the time/response budget; never mark an unprocessed window complete. Audit also discovers unknown emitters sharing the claim event signature and reports them as unverified.
+
+Invoke synchronously through the normal AWS CLI/SDK with the target account and region explicitly selected. For example, save the JSON to `audit-request.json`, then run `aws lambda invoke --function-name nftHistoryLoop --region <target-region> --cli-binary-format raw-in-base64-out --payload file://audit-request.json audit-report.json`. Check the invocation's `FunctionError` as well as the JSON body; a transport-level success alone does not establish audit success. Do not use asynchronous invocation, which discards the reviewable result.
+
+Save every returned `manifest` and `approvalDigest` outside the source repository. The manifest lists exact source log references, creator/token mapping, predecessor URI, resulting URI, metadata diffs, successor corrections, existing-event matches, settings-only audit inserts, and failures. A dry-run writes no history, jobs, normal checkpoints, or replay checkpoints. `applicable=false` means the window is blocked; retain the failures and resolve them or narrow the range without dropping coverage. A window with zero events is still a required coverage receipt.
+
+## Apply and resume after separate authorization
+
+Review the complete audit, including mapping gaps and any successor changes. Re-run the audit after correcting mappings or changing code; an old digest must not be reused for a changed proposal. For one approved window, choose a new UUID v4 job ID and submit the same bounds with the reviewed digest:
+
+```json
+{
+  "mode": "nft-history-replay",
+  "action": "apply",
+  "fromBlock": 26254530,
+  "toBlock": 26254530,
+  "cutoffBlock": 26276048,
+  "jobId": "55000000-0000-4000-8000-000000000001",
+  "approvalDigest": "<64-character-digest-from-the-reviewed-dry-run>"
+}
+```
+
+Apply first re-audits the entire window, refuses unresolved failures or changed approval digests, and binds the job ID to the approved manifest. Job IDs are never upserted or rewound. Every event is revalidated against canonical receipts and historical mappings; current history and refetched metadata must reproduce the reviewed plan. Only then are the history changes and the job's `next_index` committed in one transaction. A change to history, metadata, mapping, or chain anchors stops the job for renewed review.
+
+If the result has `complete=false`, repeat the identical apply request to resume the saved manifest. The process yields before starting another event when less than 90 seconds remain. Retrying a completed job makes no additional history writes. `nextFromBlock` is returned only after the whole window completes; retain the completed job receipt and use a new dry-run/digest/job for the next window. The fixed cutoff and saved receipts provide campaign coverage across windows; each job supplies durable event-level resume progress within its window.
+
+Do not skip a stalled event, reuse a job ID with new bounds, force a stored cursor, delete old history, or change the normal checkpoint. If a stale plan cannot resume, retain that job as evidence, generate a fresh audit over its remaining range (including existing-event matches), and request approval for the new digest.
+
+## Meme #550 reconciliation
+
+Validate the three immutable metadata versions in order:
+
+1. Mint: `IFosq_ZN9_PrDSQmq65JTjeB2GnnfPSFoHxRazxC4PY`.
+2. October 23, block 26254530, transaction `0xcfccbfa73df78f66df944d4d0203bcd2e886fe3110c3e018ac812bcdb730bd05`: `WzsBy-SqOkS8Pr-jIL9J1LX4KLZmgzuqSu8ee79K234`; description and `Issuance Month` change.
+3. October 26, block 26276048, transaction `0x4ddb9f379e14a4103d9b09a571d9e569c30911f75335d3c26388d97f6d2b3acf`: `yEEVNbUIvVuF1Yb_rRUEmdrrGg3Lj7ZZa-4KBYqJsmg`; image references/details change and animation references/details are removed.
+
+After an authorized apply, confirm history API `count: 3`, an unchanged Mint transaction, both Edit transaction hashes/timestamps, and the exact sequential diffs. Wait for the one-minute API cache to expire or invalidate only affected request keys. Open `/the-memes/550?focus=timeline` and confirm three entries with the correct links and old/new values. Repeat the same job and reconcile counts again. Verify the normal loop checkpoint stayed unchanged throughout replay and that the next normal run still progresses. Staging proof and the production dry-run/approval receipts must be retained before considering recovery complete.
+
+Direct core `setTokenURI` edits share the same ordered processor. Manifold emits no URI event for that method, so its verified top-level calldata operation uses the transaction identity with reserved log index `-1` and a null claim ID. Real `ClaimUpdated` records always use their non-negative receipt log indexes. Unprocessable events hold the scan window and throw through operational error/Sentry reporting; monitor Lambda errors and checkpoint age and resolve the named event rather than skipping it. Legacy discovery completes before claim ingestion begins, and reserved concurrency remains one.
+
+`nextFromBlock` is an advisory coverage hint, not an executable request or permission to advance. Match it against the campaign's contiguous-window ledger and generate a fresh reviewed dry-run/digest/job for every next window. Reserved concurrency one serializes manual replay and scheduled invocations of this Lambda; neither can execute concurrently with the other. RPC and metadata preparation happen outside row locks. Any separate writer that changes history before the transactional snapshot check makes the plan stale and stops apply safely. Before rollout, run the MySQL integration tests to confirm native JSON reads after both event inserts and successor updates; the database-independent serialization check verifies that both paths bind the same JSON representation.

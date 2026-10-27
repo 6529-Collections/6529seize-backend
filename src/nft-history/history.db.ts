@@ -16,6 +16,7 @@ export interface HistoryWritePlan {
   contract: string;
   nft_id: number;
   before: string;
+  previous_uri?: string;
   inserts: NFTHistoryEventEntity[];
   eventUpdates: { event_id: string; description: HistoryEdit | null }[];
   legacyUpdates: {

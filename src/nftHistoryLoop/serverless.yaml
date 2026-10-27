@@ -30,6 +30,7 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'nftHistoryLoop_${opt:stage, self:provider.stage}'
       NFT_HISTORY_RESET: false
+      NFT_HISTORY_REPLAY_APPLY_ENABLED: false
 
 resources:
   Resources:

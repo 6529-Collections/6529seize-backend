@@ -389,3 +389,17 @@ it('syncs only the additive NFT history event table in its explicit scope', asyn
   );
   expect(getDataSource().synchronize).not.toHaveBeenCalled();
 });
+
+it('syncs only the replay job table in the explicit NFT history replay scope', async () => {
+  jest.clearAllMocks();
+  await invoke({ schema_scope: 'nft-history-replay' });
+  expect(doInDbContext).toHaveBeenCalledWith(
+    expect.any(Function),
+    expect.objectContaining({
+      entities: [Entities.NFTHistoryReplayJobEntity],
+      syncEntities: true,
+      skipRedis: true
+    })
+  );
+  expect(getDataSource().synchronize).not.toHaveBeenCalled();
+});
