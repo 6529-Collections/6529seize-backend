@@ -630,7 +630,7 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
         coalesce(part.level_weighted_posts, 0) as level_weighted_posts,
         coalesce(part.trusted_author_count, 0) as trusted_author_count,
         coalesce(part.low_trust_drop_count, 0) as low_trust_drop_count,
-        coalesce(author_pressure.top_author_drops, 0) as top_author_drops,
+        coalesce(part.top_author_drops, 0) as top_author_drops,
         coalesce(part.latest_trusted_drop_timestamp, 0) as latest_trusted_drop_timestamp,
         coalesce(part.recent_level_weighted_posts, 0) as recent_level_weighted_posts,
         coalesce(subs.trusted_subscriber_count, 0) as trusted_subscriber_count,
@@ -655,33 +655,27 @@ export class WaveScoreService extends LazyDbAccessCompatibleService {
         ) rep on rep.wave_id = w.id
         left join (
           select
-            d.wave_id,
-            count(*) as total_posts,
-            sum(least(100, 100 * log10(1 + greatest(coalesce(i.level_raw, 0), 0)) / log10(1 + :maxLevelRawForScore))) as level_weighted_posts,
-            count(distinct case when coalesce(i.level_raw, 0) >= :trustedLevelRaw then d.author_id end) as trusted_author_count,
-            sum(case when coalesce(i.level_raw, 0) < :lowTrustLevelRaw then 1 else 0 end) as low_trust_drop_count,
-            max(case when coalesce(i.level_raw, 0) >= :trustedLevelRaw then d.created_at else 0 end) as latest_trusted_drop_timestamp,
-            sum(
-              case when d.created_at >= :recentCutoff
-                then least(100, 100 * log10(1 + greatest(coalesce(i.level_raw, 0), 0)) / log10(1 + :maxLevelRawForScore))
-                else 0
-              end
-            ) as recent_level_weighted_posts
-          from ${DROPS_TABLE} d
-            left join ${IDENTITIES_TABLE} i on i.profile_id = d.author_id
-          where d.wave_id in (:waveIds)
-          group by 1
-        ) part on part.wave_id = w.id
-        left join (
-          select wave_id, max(author_drop_count) as top_author_drops
+            a.wave_id,
+            sum(a.posts) as total_posts,
+            sum(a.posts * least(100, 100 * log10(1 + greatest(coalesce(i.level_raw, 0), 0)) / log10(1 + :maxLevelRawForScore))) as level_weighted_posts,
+            count(distinct case when coalesce(i.level_raw, 0) >= :trustedLevelRaw then a.author_id end) as trusted_author_count,
+            sum(case when coalesce(i.level_raw, 0) < :lowTrustLevelRaw then a.posts else 0 end) as low_trust_drop_count,
+            max(case when coalesce(i.level_raw, 0) >= :trustedLevelRaw then a.latest_created_at else 0 end) as latest_trusted_drop_timestamp,
+            sum(a.recent_posts * least(100, 100 * log10(1 + greatest(coalesce(i.level_raw, 0), 0)) / log10(1 + :maxLevelRawForScore))) as recent_level_weighted_posts,
+            max(a.posts) as top_author_drops
           from (
-            select d.wave_id, d.author_id, count(*) as author_drop_count
+            -- Aggregate before joining identities so each author is looked up
+            -- once per wave; these counts also supply author concentration.
+            select d.wave_id, d.author_id, count(*) as posts,
+              max(d.created_at) as latest_created_at,
+              sum(case when d.created_at >= :recentCutoff then 1 else 0 end) as recent_posts
             from ${DROPS_TABLE} d
             where d.wave_id in (:waveIds)
             group by d.wave_id, d.author_id
-          ) by_author
-          group by wave_id
-        ) author_pressure on author_pressure.wave_id = w.id
+          ) a
+          left join ${IDENTITIES_TABLE} i on i.profile_id = a.author_id
+          group by a.wave_id
+        ) part on part.wave_id = w.id
         left join (
           select
             s.target_id as wave_id,

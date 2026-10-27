@@ -28,6 +28,11 @@ jest.mock('@/competitions/retired-competition-storage', () => ({
   assertCompetitionSchemaSyncSafe: jest.fn()
 }));
 import { handler } from './index';
+import { DropEntity } from '@/entities/IDrop';
+import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
+jest.mock('./wave-score-input-index-schema', () => ({
+  applyWaveScoreInputIndexSchema: jest.fn().mockResolvedValue(1)
+}));
 import { getDataSource } from '@/db';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
 import { applyClaimsMediaUploadSchema } from './claims-media-schema';
@@ -110,6 +115,34 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       'Unsupported database schema scope'
     );
     expect(doInDbContext).not.toHaveBeenCalled();
+  });
+
+  it('adds only the online wave score index without synchronization or maintenance', async () => {
+    await expect(
+      invoke({ schema_scope: 'wave-score-input-index' })
+    ).resolves.toEqual({
+      schema_scope: 'wave-score-input-index'
+    });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: [DropEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyWaveScoreInputIndexSchema).toHaveBeenCalledTimes(1);
+    expect(getDataSource().synchronize).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+  });
+
+  it('propagates an online index failure without acknowledging the schema scope', async () => {
+    jest
+      .mocked(applyWaveScoreInputIndexSchema)
+      .mockRejectedValueOnce(new Error('index busy'));
+    await expect(
+      invoke({ schema_scope: 'wave-score-input-index' })
+    ).rejects.toThrow('index busy');
+    expect(getDataSource().synchronize).not.toHaveBeenCalled();
   });
 
   it('executes only the inspected NFT retry schema and skips all unrelated work', async () => {
@@ -211,6 +244,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       });
       expect(assertCompetitionSchemaSyncSafe).toHaveBeenCalledTimes(1);
       expect(getDataSource().synchronize).toHaveBeenCalledTimes(1);
+      expect(applyWaveScoreInputIndexSchema).toHaveBeenCalledTimes(1);
       expect(
         compatibilityFacade.installLegacyCompetitionGetFacade
       ).toHaveBeenCalledTimes(1);
