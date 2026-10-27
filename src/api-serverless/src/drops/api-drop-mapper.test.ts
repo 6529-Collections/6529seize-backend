@@ -184,6 +184,30 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
   };
 }
 
+describe('private bookmark flags', () => {
+  beforeEach(() => {
+    jest.spyOn(memeCollaborationsDb, 'acceptedByDrops').mockResolvedValue({});
+    jest
+      .spyOn(memeCollaborationsDb, 'presentationByDrops')
+      .mockResolvedValue({});
+  });
+  afterEach(() => jest.restoreAllMocks());
+  it('looks up the authenticated owner independently of proxy wave read context', async () => {
+    const { mapper, deps } = createMapper();
+    const authenticationContext = new AuthenticationContext({
+      authenticatedWallet: 'wallet',
+      authenticatedProfileId: 'owner',
+      roleProfileId: 'proxy',
+      activeProxyActions: []
+    });
+    await mapper.mapDrops([makeDrop()], { authenticationContext });
+    expect(deps.dropBookmarksDb.findBookmarkedDropIds).toHaveBeenCalledWith(
+      { identity_id: 'owner', drop_ids: ['drop-1'] },
+      undefined
+    );
+  });
+});
+
 describe('ApiDropMapper', () => {
   describe('reply previews', () => {
     beforeEach(() => {
