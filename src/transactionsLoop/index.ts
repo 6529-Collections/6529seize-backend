@@ -4,6 +4,10 @@ import { Logger } from '../logging';
 import { transactionsDiscoveryService } from '../transactions/transactions-discovery.service';
 import { doInDbContext } from '../secrets';
 import { numbers } from '../numbers';
+import { getDropForgePolicy } from '@/drop-forge/drop-forge.policy';
+import { TransactionScanCheckpoint } from '@/entities/ITransactionScanCheckpoint';
+import { checkpointTransactionScan } from '@/transactions/transaction-scan-checkpoint';
+import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 
 const logger = Logger.get('TRANSACTIONS_LOOP');
 
@@ -28,7 +32,26 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         startingBlock,
         endBlock
       );
+      const policy = process.env.DROP_FORGE_STAGE ? getDropForgePolicy() : null;
+      if (
+        policy?.chainId === 1 &&
+        contract.toLowerCase() === policy.creator.toLowerCase() &&
+        startingBlock === null &&
+        endBlock === null
+      ) {
+        await checkpointTransactionScan(
+          policy.chainId,
+          contract,
+          getEthereumRpcProvider(policy.chainId),
+          (start, end) =>
+            transactionsDiscoveryService.getAndSaveTransactionsForContract(
+              contract,
+              start,
+              end
+            )
+        );
+      }
     },
-    { logger, entities: [Transaction] }
+    { logger, entities: [Transaction, TransactionScanCheckpoint] }
   );
 });

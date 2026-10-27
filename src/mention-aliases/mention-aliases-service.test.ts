@@ -69,22 +69,27 @@ describe('MentionAliasesService', () => {
     );
   });
 
-  it.each(['@ALL', 'Everyone', 'ADMINS', 'team', '6529DEVS', 'devs6529'])(
-    'rejects reserved shortcut %s',
-    async (alias) => {
-      const { db } = createDb();
-      const service = new MentionAliasesService(db as any);
+  it.each([
+    '@ALL',
+    'Everyone',
+    'ADMINS',
+    'team',
+    '6529DEVS',
+    'devs6529',
+    '@Drops6529'
+  ])('rejects reserved shortcut %s', async (alias) => {
+    const { db } = createDb();
+    const service = new MentionAliasesService(db as any);
 
-      await expect(
-        service.create('owner-1', {
-          alias,
-          member_profile_ids: ['profile-2']
-        })
-      ).rejects.toThrow(
-        `@${alias.replace(/^@/, '').toLowerCase()} is reserved. Try something a little more creative.`
-      );
-    }
-  );
+    await expect(
+      service.create('owner-1', {
+        alias,
+        member_profile_ids: ['profile-2']
+      })
+    ).rejects.toThrow(
+      `@${alias.replace(/^@/, '').toLowerCase()} is reserved. Try something a little more creative.`
+    );
+  });
 
   it('rejects a case-insensitive duplicate', async () => {
     const { db } = createDb();
