@@ -79,15 +79,15 @@ export function parseReplayRequest(event: unknown): ReplayRequest | null {
     !['dry-run', 'apply'].includes(String(input.action))
   )
     throw new Error('Invalid or scheduled replay invocation');
-  const allowed = [
+  const allowed = new Set([
     'mode',
     'action',
     'fromBlock',
     'toBlock',
     'cutoffBlock',
     ...(input.action === 'apply' ? ['jobId', 'approvalDigest'] : [])
-  ];
-  if (Object.keys(input).some((key) => !allowed.includes(key)))
+  ]);
+  if (Object.keys(input).some((key) => !allowed.has(key)))
     throw new Error('Unexpected replay request field');
   const range = parseRange(input);
   if (input.action === 'dry-run')

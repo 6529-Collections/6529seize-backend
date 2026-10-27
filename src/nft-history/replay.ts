@@ -45,19 +45,23 @@ async function loadApprovedJob(
 }
 
 function parseApprovedManifest(job: NFTHistoryReplayJobEntity): ReplayManifest {
-  const manifest = JSON.parse(job.manifest_json) as ReplayManifest;
-  if (
-    manifest.version !== 1 ||
-    canonicalJson(manifest.range) !== job.request_json ||
-    manifest.failures.length ||
-    manifestDigest(manifest) !== job.digest ||
-    !Number.isSafeInteger(job.next_index) ||
-    job.next_index < 0 ||
-    job.next_index > manifest.entries.length
-  ) {
+  try {
+    const manifest = JSON.parse(job.manifest_json) as ReplayManifest;
+    if (
+      manifest.version !== 1 ||
+      canonicalJson(manifest.range) !== job.request_json ||
+      manifest.failures.length ||
+      manifestDigest(manifest) !== job.digest ||
+      !Number.isSafeInteger(job.next_index) ||
+      job.next_index < 0 ||
+      job.next_index > manifest.entries.length
+    ) {
+      throw new Error('Invalid stored replay receipt');
+    }
+    return manifest;
+  } catch {
     throw new Error('Invalid stored replay receipt');
   }
-  return manifest;
 }
 
 async function applyApprovedReplay(

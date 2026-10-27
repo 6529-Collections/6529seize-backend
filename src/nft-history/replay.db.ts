@@ -6,7 +6,7 @@ import { ReplayManifest } from './replay-manifest';
 import { ReplayRange } from './replay-request';
 
 export class NftHistoryReplayDb {
-  async find(jobId: string): Promise<NFTHistoryReplayJobEntity | null> {
+  find(jobId: string): Promise<NFTHistoryReplayJobEntity | null> {
     return getDataSource()
       .getRepository(NFTHistoryReplayJobEntity)
       .findOneBy({ job_id: jobId });
@@ -41,7 +41,7 @@ export class NftHistoryReplayDb {
       where: { job_id: jobId },
       lock: { mode: 'pessimistic_write' }
     });
-    if (!job || job.next_index !== expectedIndex)
+    if (job?.next_index !== expectedIndex)
       throw new Error('Replay cursor changed; reload the job');
     await repo.update({ job_id: jobId }, { next_index: expectedIndex + 1 });
   }

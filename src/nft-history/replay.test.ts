@@ -284,3 +284,21 @@ it('reports unmapped or unsupported events instead of omitting them', async () =
   expect(report.manifest.failures).toHaveLength(2);
   expect(report.applicable).toBe(false);
 });
+
+it.each(['{', 'null', '{}'])(
+  'rejects a corrupt stored receipt without moving history or cursor: %s',
+  async (corrupt) => {
+    const report = await dryReport();
+    let calls = 0;
+    await runHistoryReplay(applyRequest(report.approvalDigest), () =>
+      ++calls <= 3 ? 900000 : 0
+    );
+    job!.manifest_json = corrupt;
+    await expect(
+      runHistoryReplay(applyRequest(report.approvalDigest), () => 900000)
+    ).rejects.toThrow('Invalid stored replay receipt');
+    expect(job!.next_index).toBe(1);
+    expect(state.events).toHaveLength(1);
+    expect(nftHistoryDb.apply).toHaveBeenCalledTimes(1);
+  }
+);
