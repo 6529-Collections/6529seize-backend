@@ -24,6 +24,32 @@ import {
   OutgoingIdentitySubscriptionsParams
 } from './identity-subscriptions.routes';
 import { Timer } from '../../../time';
+import { RequestContext } from '@/request.context';
+import {
+  GroupMembershipSql,
+  namespaceMembershipParams
+} from '@/user-groups/user-groups.db';
+
+export type SubscriberEligibility = readonly GroupMembershipSql[] | null;
+
+function subscriberEligibilitySql(eligibility: SubscriberEligibility): {
+  clause: string;
+  params: Record<string, unknown>;
+} {
+  if (eligibility === null) return { clause: 'and false', params: {} };
+  const params: Record<string, unknown> = {};
+  const clauses = eligibility.map((membership, index) => {
+    const namespace = `follower_group_${index}`;
+    const scoped = namespaceMembershipParams(membership, namespace);
+    Object.assign(params, scoped.params);
+    return `and exists (
+      select 1 from (${scoped.sql}
+        select profile_id from user_groups_view) ${namespace}
+      where ${namespace}.profile_id = s.subscriber_id
+    )`;
+  });
+  return { clause: clauses.join(' '), params };
+}
 
 function coerceDbBoolean(value: boolean | number | string | null): boolean {
   if (typeof value === 'boolean') {
@@ -40,6 +66,42 @@ function coerceDbBoolean(value: boolean | number | string | null): boolean {
 }
 
 export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
+  async findWaveFollowerReadGroups(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<string[] | null> {
+    const timerKey = `${this.constructor.name}->findWaveFollowerReadGroups`;
+    ctx.timer?.start(timerKey);
+    try {
+      const wave = await this.db.oneOrNull<{
+        visibility_group_id: string | null;
+        parent_visibility_group_id: string | null;
+      }>(
+        `select w.visibility_group_id,
+                p.visibility_group_id as parent_visibility_group_id
+         from ${WAVES_TABLE} w
+         left join ${WAVES_TABLE} p on p.id = w.parent_wave_id
+         where w.id = :waveId
+           and (w.parent_wave_id is null
+             or (p.id is not null and p.parent_wave_id is null))`,
+        { waveId },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      );
+      return wave
+        ? Array.from(
+            new Set(
+              [
+                wave.visibility_group_id,
+                wave.parent_visibility_group_id
+              ].filter((id): id is string => id !== null)
+            )
+          )
+        : null;
+    } finally {
+      ctx.timer?.stop(timerKey);
+    }
+  }
+
   async addIdentitySubscription(
     identitySubscription: Omit<IdentitySubscriptionEntity, 'id'>,
     connection: ConnectionWrapper<any>,
@@ -170,27 +232,33 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   }
 
   async findSubscriberIdsAndActionsForTarget(
-    params: IncomingIdentitySubscriptionsParams
+    params: IncomingIdentitySubscriptionsParams,
+    eligibility: SubscriberEligibility = [],
+    ctx: RequestContext = {}
   ): Promise<Record<string, ActivityEventAction[]>> {
+    const filter = subscriberEligibilitySql(eligibility);
     return this.db
       .execute<{ id: string; actions: string }>(
         `
-      with scr as (select s.subscriber_id as id, group_concat(target_action) as actions
+      with scr as (select s.subscriber_id as id, group_concat(distinct target_action) as actions,
+                    max(i.level_raw) as level_raw
              from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
+             join ${IDENTITIES_TABLE} i on i.profile_id = s.subscriber_id
              where s.target_id = :target_id
                and s.target_type = :target_type
+               ${filter.clause}
              group by 1)
-      select scr.*
-      from scr
-               join ${IDENTITIES_TABLE} i on scr.id = i.profile_id
-      order by i.level_raw desc
+      select scr.id, scr.actions from scr
+      order by scr.level_raw desc, scr.id asc
       limit :limit offset :offset
     `,
         {
           ...params,
+          ...filter.params,
           offset: (params.page - 1) * params.page_size,
           limit: params.page_size
-        }
+        },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       )
       .then((result) =>
         result.reduce(
@@ -249,14 +317,22 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   }
 
   async countDistinctSubscriberIdsForTarget(
-    params: Omit<IncomingIdentitySubscriptionsParams, 'page' | 'page_size'>
+    params: Omit<IncomingIdentitySubscriptionsParams, 'page' | 'page_size'>,
+    eligibility: SubscriberEligibility = [],
+    ctx: RequestContext = {}
   ): Promise<number> {
+    const filter = subscriberEligibilitySql(eligibility);
     return this.db
       .oneOrNull<{
         cnt: number;
       }>(
-        `select count(distinct subscriber_id) as cnt from ${IDENTITY_SUBSCRIPTIONS_TABLE} where target_id = :target_id and target_type = :target_type`,
-        params
+        `select count(distinct s.subscriber_id) as cnt
+         from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
+         join ${IDENTITIES_TABLE} i on i.profile_id = s.subscriber_id
+         where s.target_id = :target_id and s.target_type = :target_type
+         ${filter.clause}`,
+        { ...params, ...filter.params },
+        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
       )
       .then((it) => it?.cnt ?? 0);
   }

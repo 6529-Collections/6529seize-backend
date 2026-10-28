@@ -110,7 +110,7 @@ function readParameterKey(
   return { key: sql.slice(start + 1, nextIndex), nextIndex };
 }
 
-function namespaceMembershipParams(
+export function namespaceMembershipParams(
   membership: GroupMembershipSql,
   namespace: string
 ): { sql: string; params: Record<string, unknown> } {

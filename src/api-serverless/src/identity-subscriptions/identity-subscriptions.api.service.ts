@@ -25,6 +25,11 @@ import {
   IdentityFetcher
 } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
+import { RequestContext } from '@/request.context';
+import {
+  waveFollowerEligibilityService,
+  WaveFollowerEligibilityService
+} from '@/api/identity-subscriptions/wave-follower-eligibility';
 
 export class IdentitySubscriptionsApiService {
   constructor(
@@ -32,7 +37,8 @@ export class IdentitySubscriptionsApiService {
     private readonly wavesApiService: WaveApiService,
     private readonly dropsApiService: DropsApiService,
     private readonly identityFetcher: IdentityFetcher,
-    private readonly userGroupsService: UserGroupsService
+    private readonly userGroupsService: UserGroupsService,
+    private readonly followerEligibility: WaveFollowerEligibilityService = waveFollowerEligibilityService
   ) {}
 
   public async findOutgoingSubscriptionsOfType(
@@ -122,11 +128,18 @@ export class IdentitySubscriptionsApiService {
   }
 
   async findIncomingSubscriptionsOfType(
-    params: IncomingIdentitySubscriptionsParams
+    params: IncomingIdentitySubscriptionsParams,
+    ctx: RequestContext = {}
   ): Promise<ApiIncomingIdentitySubscriptionsPage> {
+    const eligibility =
+      params.target_type === ActivityEventTargetType.WAVE
+        ? await this.followerEligibility.resolve(params.target_id, ctx)
+        : [];
     const identityIdsAndActions =
       await this.identitySubscriptionsDb.findSubscriberIdsAndActionsForTarget(
-        params
+        params,
+        eligibility,
+        ctx
       );
     const identityIds = Object.keys(identityIdsAndActions);
     const profiles = await this.identityFetcher.getOverviewsByIds(
@@ -135,7 +148,9 @@ export class IdentitySubscriptionsApiService {
     );
     const count =
       await this.identitySubscriptionsDb.countDistinctSubscriberIdsForTarget(
-        params
+        params,
+        eligibility,
+        ctx
       );
     const data: ApiIdentityAndSubscriptionActions[] = Object.entries(
       identityIdsAndActions
