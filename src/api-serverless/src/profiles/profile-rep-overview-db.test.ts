@@ -127,10 +127,13 @@ for (const direction of ['incoming', 'outgoing'] as const) {
       );
 
       it('reorders on a fresh query after a rating changes', async () => {
+        const updatedRating = ratingFor('mixed', 'Small', -100000);
         await sqlExecutor.execute(
-          `update ${RATINGS_TABLE} set rating = -100000
-           where matter = 'REP' and matter_category = 'Small'`,
-          {}
+          `update ${RATINGS_TABLE} set rating = :rating
+           where matter = :matter and matter_category = :matter_category
+             and rater_profile_id = :rater_profile_id
+             and matter_target_id = :matter_target_id`,
+          updatedRating
         );
         const result = await db.getRepCategoriesPage(request);
         expect(result.data[0]).toMatchObject({
