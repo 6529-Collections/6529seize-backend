@@ -351,6 +351,8 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       // Materialize scoped scores with NO_MERGE at each consumer. Inlining the
       // compatibility views repeats their native joins for every ranked drop;
       // a shared materialization can instead index its projected drop_id.
+      // Winner-only waves need no live scores: their vote and place fields
+      // come from frozen decision history.
       const rows = await this.db.execute<DropSubmissionVotingSummaryRow>(
         `
         with target_submissions as (

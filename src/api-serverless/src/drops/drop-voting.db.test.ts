@@ -394,15 +394,61 @@ describeWithSeed(
       await insertWinner('mixed-winner', winnerWave.id, 7, 42);
       const ids = [
         `${realtimeWave.id}-mixed-0`,
+        `${realtimeWave.id}-mixed-1`,
+        `${realtimeWave.id}-mixed-2`,
         `${timeLockedWave.id}-mixed-0`,
+        `${timeLockedWave.id}-mixed-1`,
+        `${timeLockedWave.id}-mixed-2`,
         'mixed-winner'
       ];
       const summaries = await repo.getDropV2SubmissionVotingSummaries(ids, ctx);
-      expect(ids.map((id) => summaries[id].place)).toEqual([1, 2, 7]);
+      // Exact score/time ties share a rank, including the resulting rank gap.
+      expect(ids.map((id) => summaries[id].place)).toEqual([
+        1, 3, 1, 2, 1, 2, 7
+      ]);
       expect(summaries[ids[0]].current_calculated_vote).toBe(5);
-      expect(summaries[ids[1]].predicted_final_vote).toBe(6);
+      expect(summaries[ids[0]].predicted_final_vote).toBe(6);
+      expect(summaries[ids[3]].current_calculated_vote).toBe(5);
+      expect(summaries[ids[3]].predicted_final_vote).toBe(6);
       expect(summaries['mixed-winner'].current_calculated_vote).toBe(42);
     });
+
+    it.each([WaveType.RANK, WaveType.APPROVE])(
+      'uses creation-time ranks before a time-locked %s wave has a leaderboard',
+      async (waveType) => {
+        await sqlExecutor.execute(
+          `update ${COMPETITIONS_TABLE} set type = :waveType where id = :id`,
+          { waveType, id: legacyCompetitionId(timeLockedWave.id) }
+        );
+        const createdAt = [300, 100, 100];
+        const ids = createdAt.map(
+          (_, index) => `unpublished-weighted-${index}`
+        );
+        for (const [index, dropId] of Array.from(ids.entries())) {
+          await insertDrop({
+            id: dropId,
+            waveId: timeLockedWave.id,
+            dropType: DropType.PARTICIPATORY,
+            createdAt: createdAt[index]
+          });
+          // Live scores must not replace the absent weighted snapshot.
+          await insertDropRank({
+            dropId,
+            waveId: timeLockedWave.id,
+            vote: 100 - index,
+            lastIncreased: 1000 + index
+          });
+        }
+        const summaries = await repo.getDropV2SubmissionVotingSummaries(
+          ids,
+          ctx
+        );
+        expect(ids.map((id) => summaries[id].place)).toEqual([3, 1, 1]);
+        expect(ids.map((id) => summaries[id].current_calculated_vote)).toEqual([
+          0, 0, 0
+        ]);
+      }
+    );
 
     it.each([false, true])(
       'preserves numeric ranks, exact ties and missing scores (weighted=%s)',
