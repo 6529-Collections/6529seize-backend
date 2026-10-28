@@ -348,6 +348,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     );
     try {
       const now = Time.currentMillis();
+      // Materialize scoped scores with NO_MERGE at each consumer. Inlining the
+      // compatibility views repeats their native joins for every ranked drop;
+      // a shared materialization can instead index its projected drop_id.
       const rows = await this.db.execute<DropSubmissionVotingSummaryRow>(
         `
         with target_submissions as (
@@ -359,6 +362,24 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         target_waves as (
           select distinct wave_id
           from target_submissions
+        ),
+        rank_waves as (
+          select distinct t.wave_id,
+            (w.time_lock_ms is not null and w.time_lock_ms > 0) as weighted
+          from target_submissions t
+          join ${legacyGetView(WAVES_TABLE)} w on w.id = t.wave_id
+          where t.drop_type = '${DropType.PARTICIPATORY}'
+        ),
+        scoped_realtime_votes as (
+          select drop_id, vote, last_increased
+          from ${legacyGetView(DROP_RANK_TABLE)}
+          where wave_id in (select wave_id from rank_waves where weighted = 0)
+        ),
+        scoped_leaderboard as (
+          select drop_id, vote, vote_on_decision_time, timestamp,
+            over_threshold_since_ms
+          from ${legacyGetView(WAVE_LEADERBOARD_ENTRIES_TABLE)}
+          where wave_id in (select wave_id from rank_waves)
         ),
         vote_counts as (
           select
@@ -385,7 +406,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         realtime_ranks as (
           select drop_id, rnk
           from (
-            select
+            select /*+ NO_MERGE(r) */
               d.id as drop_id,
               rank() over (
                 partition by d.wave_id
@@ -393,16 +414,16 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
                   ifnull(r.last_increased, d.created_at) asc
               ) as rnk
             from ${legacyGetView(DROPS_TABLE)} d
-            left join ${legacyGetView(DROP_RANK_TABLE)} r on r.drop_id = d.id
+            left join scoped_realtime_votes r on r.drop_id = d.id
             where d.drop_type = '${DropType.PARTICIPATORY}'
-              and d.wave_id in (select wave_id from target_waves)
+              and d.wave_id in (select wave_id from rank_waves where weighted = 0)
           ) ranked
           where drop_id in (:dropIds)
         ),
         weighted_ranks as (
           select drop_id, rnk
           from (
-            select
+            select /*+ NO_MERGE(lb) */
               d.id as drop_id,
               rank() over (
                 partition by d.wave_id
@@ -410,16 +431,13 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
                   cast(ifnull(lb.timestamp, d.created_at) as signed) asc
               ) as rnk
             from ${legacyGetView(DROPS_TABLE)} d
-            join ${legacyGetView(WAVES_TABLE)} w on w.id = d.wave_id
-            left join ${legacyGetView(WAVE_LEADERBOARD_ENTRIES_TABLE)} lb on lb.drop_id = d.id
+            left join scoped_leaderboard lb on lb.drop_id = d.id
             where d.drop_type = '${DropType.PARTICIPATORY}'
-              and d.wave_id in (select wave_id from target_waves)
-              and w.time_lock_ms is not null
-              and w.time_lock_ms > 0
+              and d.wave_id in (select wave_id from rank_waves where weighted = 1)
           ) ranked
           where drop_id in (:dropIds)
         )
-        select
+        select /*+ NO_MERGE(lb) */
           t.id as drop_id,
           t.drop_type as status,
           w.type as wave_type,
@@ -475,7 +493,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         from target_submissions t
         join ${legacyGetView(WAVES_TABLE)} w on w.id = t.wave_id
         left join vote_counts vc on vc.drop_id = t.id
-        left join ${legacyGetView(WAVE_LEADERBOARD_ENTRIES_TABLE)} lb on lb.drop_id = t.id
+        left join scoped_leaderboard lb on lb.drop_id = t.id
         left join realtime_ranks rr on rr.drop_id = t.id
         left join weighted_ranks wr on wr.drop_id = t.id
         left join ${legacyGetView(WAVES_DECISION_WINNER_DROPS_TABLE)} wd on wd.drop_id = t.id

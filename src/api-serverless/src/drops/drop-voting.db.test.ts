@@ -16,6 +16,7 @@ import {
 } from '@/constants';
 import { CompetitionRepository } from '@/competitions/competition.repository';
 import 'reflect-metadata';
+import fc from 'fast-check';
 import {
   COMPETITIONS_TABLE,
   DROP_RANK_TABLE,
@@ -358,6 +359,128 @@ describeWithSeed(
       for (const wave of [realtimeWave, timeLockedWave, winnerWave])
         await seedNativeOriginalPrimaryFixture(wave);
     });
+    it('keeps ranks scoped to each wave in a mixed submission and winner batch', async () => {
+      for (const wave of [realtimeWave, timeLockedWave]) {
+        for (const [index, vote] of Array.from([5, 10, 5].entries())) {
+          const dropId = `${wave.id}-mixed-${index}`;
+          await insertDrop({
+            id: dropId,
+            waveId: wave.id,
+            dropType: DropType.PARTICIPATORY,
+            createdAt: 100 + index
+          });
+          // Realtime and weighted orders intentionally disagree.
+          await insertDropRank({
+            dropId,
+            waveId: wave.id,
+            vote: -vote,
+            lastIncreased: 1000
+          });
+          await insertLeaderboardEntry({
+            dropId,
+            waveId: wave.id,
+            vote,
+            timestamp: 1000,
+            voteOnDecisionTime: vote + 1
+          });
+        }
+      }
+      await insertDrop({
+        id: 'mixed-winner',
+        waveId: winnerWave.id,
+        dropType: DropType.WINNER,
+        createdAt: 100
+      });
+      await insertWinner('mixed-winner', winnerWave.id, 7, 42);
+      const ids = [
+        `${realtimeWave.id}-mixed-0`,
+        `${timeLockedWave.id}-mixed-0`,
+        'mixed-winner'
+      ];
+      const summaries = await repo.getDropV2SubmissionVotingSummaries(ids, ctx);
+      expect(ids.map((id) => summaries[id].place)).toEqual([1, 2, 7]);
+      expect(summaries[ids[0]].current_calculated_vote).toBe(5);
+      expect(summaries[ids[1]].predicted_final_vote).toBe(6);
+      expect(summaries['mixed-winner'].current_calculated_vote).toBe(42);
+    });
+
+    it.each([false, true])(
+      'preserves numeric ranks, exact ties and missing scores (weighted=%s)',
+      async (weighted) => {
+        const wave = weighted ? timeLockedWave : realtimeWave;
+        await fc.assert(
+          fc.asyncProperty(
+            fc.array(
+              fc.record({
+                vote: fc.integer({ min: -12, max: 12 }),
+                timestamp: fc.integer({ min: 100, max: 103 }),
+                scored: fc.boolean()
+              }),
+              { minLength: 2, maxLength: 8 }
+            ),
+            async (entries) => {
+              for (const table of [
+                COMPETITION_ENTRY_RUNTIME_TABLE,
+                COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+                COMPETITION_ENTRIES_TABLE,
+                DROPS_TABLE
+              ]) {
+                await sqlExecutor.execute(`delete from ${table}`);
+              }
+              for (const [index, entry] of Array.from(entries.entries())) {
+                const dropId = `generated-rank-${index}`;
+                await insertDrop({
+                  id: dropId,
+                  waveId: wave.id,
+                  dropType: DropType.PARTICIPATORY,
+                  createdAt: entry.timestamp
+                });
+                if (!entry.scored) continue;
+                await insertDropRank({
+                  dropId,
+                  waveId: wave.id,
+                  vote: entry.vote,
+                  lastIncreased: entry.timestamp
+                });
+                if (weighted) {
+                  await insertLeaderboardEntry({
+                    dropId,
+                    waveId: wave.id,
+                    vote: entry.vote,
+                    timestamp: entry.timestamp,
+                    voteOnDecisionTime: entry.vote
+                  });
+                }
+              }
+              // Request a subset: unrequested competitors must still affect rank.
+              const requested = [0, entries.length - 1];
+              const summaries = await repo.getDropV2SubmissionVotingSummaries(
+                requested.map((index) => `generated-rank-${index}`),
+                ctx
+              );
+              for (const index of requested) {
+                const entry = entries[index];
+                const vote = entry.scored ? entry.vote : 0;
+                const expectedRank =
+                  1 +
+                  entries.filter((other) => {
+                    const otherVote = other.scored ? other.vote : 0;
+                    return (
+                      otherVote > vote ||
+                      (otherVote === vote && other.timestamp < entry.timestamp)
+                    );
+                  }).length;
+                expect(summaries[`generated-rank-${index}`].place).toBe(
+                  expectedRank
+                );
+              }
+            }
+          ),
+          { numRuns: 12 }
+        );
+      }
+    );
+
     it('returns participatory realtime rank and voting summary', async () => {
       await insertDrop({
         id: 'realtime-drop-1',
