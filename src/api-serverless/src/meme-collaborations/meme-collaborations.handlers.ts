@@ -15,7 +15,9 @@ import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborat
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { Timer } from '@/time';
 import { Logger } from '@/logging';
-import { ForbiddenException } from '@/exceptions';
+
+const UNAVAILABLE_ARTWORK_MESSAGE =
+  'This artwork is not available for collaboration review';
 
 export async function getMemeCollaborationState(
   req: GetMemeCollaborationStateRequest
@@ -23,14 +25,13 @@ export async function getMemeCollaborationState(
   req.res?.setHeader('Cache-Control', 'private, no-store');
   const auth = await getAuthenticationContext(req);
   const ctx = { authenticationContext: auth, timer: Timer.getFromRequest(req) };
-  const drop = await dropsService.findDropByIdOrThrow(
-    { dropId: req.params.drop_id },
+  await dropsService.findViewableDropByIdOrThrow(
+    {
+      dropId: req.params.drop_id,
+      unavailableMessage: UNAVAILABLE_ARTWORK_MESSAGE
+    },
     ctx
   );
-  if (drop.moderation?.can_view === false)
-    throw new ForbiddenException(
-      'This artwork is not available for collaboration review'
-    );
   const state = await memeCollaborationsService.state(
     req.params.drop_id,
     auth.getActingAsId(),
@@ -54,14 +55,13 @@ export async function respondToMemeCollaboration(
   req.res?.setHeader('Cache-Control', 'private, no-store');
   const auth = await getAuthenticationContext(req);
   const ctx = { authenticationContext: auth, timer: Timer.getFromRequest(req) };
-  const visibleDrop = await dropsService.findDropByIdOrThrow(
-    { dropId: req.params.drop_id },
+  const visibleDrop = await dropsService.findViewableDropByIdOrThrow(
+    {
+      dropId: req.params.drop_id,
+      unavailableMessage: UNAVAILABLE_ARTWORK_MESSAGE
+    },
     ctx
   );
-  if (visibleDrop.moderation?.can_view === false)
-    throw new ForbiddenException(
-      'This artwork is not available for collaboration review'
-    );
   const body = getValidatedByJoiOrThrow(
     req.body,
     Joi.object({
@@ -105,7 +105,7 @@ export async function respondToMemeCollaboration(
     ctx
   );
   await wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
-    visibleDrop.author.id,
+    visibleDrop.author_id,
     auth.getActingAsId()!,
     ...state.invitations
       .filter((item) => item.id === req.params.invitation_id)
@@ -129,14 +129,13 @@ export async function inviteMemeCollaborators(
   req.res?.setHeader('Cache-Control', 'private, no-store');
   const auth = await getAuthenticationContext(req);
   const ctx = { authenticationContext: auth, timer: Timer.getFromRequest(req) };
-  const drop = await dropsService.findDropByIdOrThrow(
-    { dropId: req.params.drop_id },
+  const drop = await dropsService.findViewableDropByIdOrThrow(
+    {
+      dropId: req.params.drop_id,
+      unavailableMessage: UNAVAILABLE_ARTWORK_MESSAGE
+    },
     ctx
   );
-  if (drop.moderation?.can_view === false)
-    throw new ForbiddenException(
-      'This artwork is not available for collaboration review'
-    );
   const body = getValidatedByJoiOrThrow(
     req.body,
     Joi.object({
@@ -161,7 +160,7 @@ export async function inviteMemeCollaborators(
     ctx
   );
   await wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
-    drop.author.id,
+    drop.author_id,
     ...body.collaborator_ids
   ]);
   return {

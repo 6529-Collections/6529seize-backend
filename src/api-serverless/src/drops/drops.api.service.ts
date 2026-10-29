@@ -116,6 +116,47 @@ export class DropsApiService {
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
+    const dropEntity = await this.findDropEntityByIdOrThrow(
+      { dropId, skipEligibilityCheck },
+      ctx
+    );
+    return this.dropsMappers
+      .convertToDropFulls(
+        {
+          dropEntities: [dropEntity],
+          authenticationContext: ctx.authenticationContext
+        },
+        ctx.connection
+      )
+      .then((it) => it[0]);
+  }
+
+  public async findViewableDropByIdOrThrow(
+    {
+      dropId,
+      unavailableMessage
+    }: { dropId: string; unavailableMessage: string },
+    ctx: RequestContext
+  ): Promise<DropEntity> {
+    const drop = await this.findDropEntityByIdOrThrow({ dropId }, ctx);
+    const presentations = await this.moderationDb.getPresentations(
+      [drop],
+      getWaveReadContextProfileId(ctx.authenticationContext),
+      ctx.connection
+    );
+    if (presentations[drop.id]?.moderation.can_view === false) {
+      throw new ForbiddenException(unavailableMessage);
+    }
+    return drop;
+  }
+
+  private async findDropEntityByIdOrThrow(
+    {
+      dropId,
+      skipEligibilityCheck
+    }: { dropId: string; skipEligibilityCheck?: boolean },
+    ctx: RequestContext
+  ): Promise<DropEntity> {
     const contextProfileId = getWaveReadContextProfileId(
       ctx.authenticationContext
     );
@@ -139,15 +180,7 @@ export class DropsApiService {
 
       return drop;
     });
-    return this.dropsMappers
-      .convertToDropFulls(
-        {
-          dropEntities: [dropEntity],
-          authenticationContext: ctx.authenticationContext
-        },
-        ctx.connection
-      )
-      .then((it) => it[0]);
+    return dropEntity;
   }
 
   public async findLightDrops(
