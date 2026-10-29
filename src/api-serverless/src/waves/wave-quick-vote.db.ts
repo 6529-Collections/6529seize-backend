@@ -26,6 +26,8 @@ export class WaveQuickVoteDb extends LazyDbAccessCompatibleService {
     // Filter native status before reading shared chat/history. The second branch
     // preserves the compatibility view's retained participatory orphans without
     // including winners, withdrawn/disqualified entries, or sibling competitions.
+    // uq_competition_entry_drop guarantees one entry per original competition/drop;
+    // uq_competition_vote_actor_entry guarantees one current allocation per voter.
     return `WITH candidates AS (
       SELECT d.id, d.created_at, d.serial_no, e.id AS entry_id, c.id AS competition_id
       FROM ${COMPETITIONS_TABLE} c
@@ -103,6 +105,7 @@ export class WaveQuickVoteDb extends LazyDbAccessCompatibleService {
     skipped: boolean,
     ctx: RequestContext
   ): Promise<DropEntity[]> {
+    // serial_no is the physical drops primary key, so timestamp ties are stable.
     const drops = await this.read<DropEntity>(
       skipped ? 'findSkippedDrops' : 'findUndiscoveredDrops',
       `${this.getCandidatesSql()}

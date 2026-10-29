@@ -1365,8 +1365,10 @@ without a projected native status. Votes and skips remain scoped to the acting
 profile; zero allocations are unrated, and either sign of nonzero allocation is
 rated. A single aggregate computes total unrated and unskipped unrated counts.
 Counts and previews are separate replica reads and may reflect concurrent vote
-or skip changes. A short unskipped read fills the remaining preview slots from
-skipped drops rather than leaving holes. Preview windows place newest unskipped
+or skip changes. This best-effort ordering applies to both the batch window and
+legacy single-drop offsets; neither endpoint promises a cross-request snapshot.
+A short unskipped read fills available remaining slots from skipped drops, up to
+the requested limit; concurrently exhausted skipped rows can still shorten it. Preview windows place newest unskipped
 drops before skipped drops ordered by
 oldest skip time, then newest drop time and serial number. These native reads
 bypass compatibility SQL rewriting; full drop mapping still uses the ordinary

@@ -258,6 +258,47 @@ describeWithSeed(
       );
     });
 
+    it('enforces the uniqueness guarantees used for cardinality and stable ordering', async () => {
+      const original = await sqlExecutor.oneOrNull<{ serial_no: number }>(
+        `SELECT serial_no FROM ${tables.DROPS_TABLE} WHERE id='missing'`
+      );
+      await expect(
+        insert(tables.DROPS_TABLE, {
+          id: 'duplicate-serial',
+          serial_no: original!.serial_no,
+          wave_id: wave.id,
+          author_id: 'artist',
+          created_at: 300,
+          parts_count: 1,
+          drop_type: 'PARTICIPATORY'
+        })
+      ).rejects.toThrow('PRIMARY');
+      await expect(
+        insert(tables.COMPETITION_ENTRIES_TABLE, {
+          id: 'duplicate-entry',
+          competition_id: competitionId,
+          wave_id: wave.id,
+          drop_id: 'missing',
+          submitter_id: 'artist',
+          status: 'WITHDRAWN',
+          config_version: 1,
+          submitted_at: 300
+        })
+      ).rejects.toThrow('uq_competition_entry_drop');
+      await expect(
+        insert(tables.COMPETITION_VOTES_TABLE, {
+          id: 'duplicate-vote',
+          competition_id: competitionId,
+          entry_id: 'entry-zero',
+          voter_profile_id: 'viewer',
+          value: 0,
+          credit_spent: 0,
+          created_at: 0,
+          updated_at: 0
+        })
+      ).rejects.toThrow('uq_competition_vote_actor_entry');
+    });
+
     it('uses the supplied transaction for allocation and skip reads', async () => {
       await sqlExecutor.executeNativeQueriesInTransaction(
         async (connection) => {

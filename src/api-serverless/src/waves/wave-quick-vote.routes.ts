@@ -19,6 +19,7 @@ type GetUndiscoveredDropQuery = {
 };
 
 const GetUndiscoveredDropQuerySchema = Joi.object<GetUndiscoveredDropQuery>({
+  // Joi returns a coerced numeric offset for the shared native LIMIT/OFFSET path.
   skip: Joi.number().integer().min(0).optional()
 });
 
