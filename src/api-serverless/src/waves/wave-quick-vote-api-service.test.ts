@@ -8,6 +8,10 @@ import { when } from 'jest-when';
 import { WaveQuickVoteApiService } from './wave-quick-vote.api.service';
 import { WaveQuickVoteDb } from './wave-quick-vote.db';
 import { WavesApiDb } from './waves.api.db';
+import { AuthenticationContext } from '@/auth-context';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
+import { competitionAnonymityViewerId } from '@/competitions/competition-anonymity';
+import { ApiDrop } from '@/api/generated/models/ApiDrop';
 
 describe('WaveQuickVoteApiService', () => {
   let service: WaveQuickVoteApiService;
@@ -171,6 +175,78 @@ describe('WaveQuickVoteApiService', () => {
       total_count: 2
     });
   });
+
+  it.each([
+    { viewer: 'owner', action: null, privateOwnerId: 'identity-1' },
+    {
+      viewer: 'voting proxy',
+      action: ProfileProxyActionType.RATE_WAVE_DROP,
+      privateOwnerId: null
+    },
+    {
+      viewer: 'reading proxy',
+      action: ProfileProxyActionType.READ_WAVE,
+      privateOwnerId: 'identity-1'
+    }
+  ])(
+    'preserves the original $viewer context while hydrating a quick vote card',
+    async ({ action, privateOwnerId }) => {
+      const authenticationContext = action
+        ? new AuthenticationContext({
+            authenticatedWallet: null,
+            authenticatedProfileId: 'delegate',
+            roleProfileId: 'identity-1',
+            activeProxyActions: [
+              {
+                id: 'action',
+                type: action,
+                credit_amount: null,
+                credit_spent: null
+              }
+            ]
+          })
+        : AuthenticationContext.fromProfileId('identity-1');
+      const connection = { connection: {} };
+      const ctx = { authenticationContext, connection };
+      jest.mocked(wavesApiDb.findWaveById).mockResolvedValue(wave as never);
+      jest.mocked(wavesApiDb.countWaveDecisionsByWaveIds).mockResolvedValue({});
+      jest
+        .mocked(userGroupsService.getGroupsUserIsEligibleFor)
+        .mockResolvedValue([]);
+      jest.mocked(waveQuickVoteDb.countUnvotedDrops).mockResolvedValue(2);
+      jest.mocked(waveQuickVoteDb.countUndiscoveredDrops).mockResolvedValue(2);
+      jest
+        .mocked(waveQuickVoteDb.findNextUndiscoveredDrop)
+        .mockResolvedValue(drop);
+      jest
+        .mocked(dropsMappers.convertToDropFulls)
+        .mockResolvedValue([{ id: drop.id } as ApiDrop]);
+
+      const result = await service.findUndiscoveredDrop(
+        { waveId: wave.id, identityId: 'identity-1' },
+        ctx
+      );
+
+      expect(result.drop?.id).toBe(drop.id);
+      expect(dropsMappers.convertToDropFulls).toHaveBeenCalledWith(
+        {
+          dropEntities: [drop],
+          contextProfileId: 'identity-1',
+          authenticationContext
+        },
+        connection
+      );
+      const forwarded = jest.mocked(dropsMappers.convertToDropFulls).mock
+        .calls[0][0].authenticationContext;
+      expect(forwarded).toBe(authenticationContext);
+      expect(
+        competitionAnonymityViewerId({ authenticationContext: forwarded })
+      ).toBe(privateOwnerId);
+      expect(forwarded?.hasRightsTo(ProfileProxyActionType.READ_WAVE)).toBe(
+        privateOwnerId !== null
+      );
+    }
+  );
 
   it('falls back to the earliest skipped unvoted drop when everything is already skipped', async () => {
     when(wavesApiDb.findWaveById)
