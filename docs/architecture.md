@@ -51,6 +51,10 @@ Durable WebSocket drop-reference jobs apply the same public author policy
 before recipient messages are materialized; policy failures retain the intent
 for retry. Deploy `websocketOutboundHandler` with this guard before enabling
 anonymous submissions through the API.
+Author-signing proofs also contain wallet and device identifiers. The signed-event
+reader checks drop visibility first, then withholds events and grant proofs for
+unrevealed entries unless the viewer has private owner read access. Winning and
+ordinary entries retain their existing proofs; stored signatures stay intact.
 
 The existing API, push notifications, Help Bot reply worker and media sanitizer
 share the identity presentation policy, including nested quote/reply and

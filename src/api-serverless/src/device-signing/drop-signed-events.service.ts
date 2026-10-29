@@ -1,6 +1,10 @@
 import { ApiDropSignedEvents } from '@/api/generated/models/ApiDropSignedEvents';
 import { dropsService, DropsApiService } from '@/api/drops/drops.api.service';
 import { RequestContext } from '@/request.context';
+import {
+  CompetitionAnonymityService,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
 import { DeviceSigningDb, deviceSigningDb } from './device-signing.db';
 import {
   toApiDeviceGrantProof,
@@ -10,7 +14,11 @@ import {
 export class DropSignedEventsService {
   constructor(
     private readonly db: DeviceSigningDb,
-    private readonly drops: Pick<DropsApiService, 'findDropByIdOrThrow'>
+    private readonly drops: Pick<DropsApiService, 'findDropByIdOrThrow'>,
+    private readonly anonymity: Pick<
+      CompetitionAnonymityService,
+      'hiddenDropIds'
+    > = competitionAnonymityService
   ) {}
 
   /** 404s exactly like GET /drops/{dropId} when the caller cannot read it. */
@@ -19,6 +27,15 @@ export class DropSignedEventsService {
     ctx: RequestContext
   ): Promise<ApiDropSignedEvents> {
     await this.drops.findDropByIdOrThrow({ dropId }, ctx);
+    const hiddenDropIds = await this.anonymity.hiddenDropIds([dropId], ctx);
+    if (hiddenDropIds.has(dropId)) {
+      return {
+        drop_id: dropId,
+        current_event_id: null,
+        events: [],
+        grants: []
+      };
+    }
     const [events, currentEventId] = await Promise.all([
       this.db.findEventsByDropId(dropId, ctx),
       this.db.findDropAuthorSignatureEventId(dropId, ctx)
