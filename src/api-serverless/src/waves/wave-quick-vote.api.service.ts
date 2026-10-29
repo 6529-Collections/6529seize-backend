@@ -72,7 +72,9 @@ export class WaveQuickVoteApiService {
               ctx
             )
           : [];
-      const skippedLimit = param.limit - undiscoveredLimit;
+      // Votes or skips can change after the count read. Fill the remainder from
+      // the rows actually returned rather than leaving holes in the preview.
+      const skippedLimit = param.limit - drops.length;
       if (skippedLimit > 0) {
         drops.push(
           ...(await this.waveQuickVoteDb.findDrops(

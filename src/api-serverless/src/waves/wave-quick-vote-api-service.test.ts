@@ -98,7 +98,30 @@ describe('WaveQuickVoteApiService', () => {
     expect(mappers.convertToDropFulls).toHaveBeenCalledTimes(1);
   });
 
+  it('fills the window when concurrent votes shorten the unskipped tail', async () => {
+    db.findDrops
+      .mockResolvedValueOnce([drop('still-unskipped')])
+      .mockResolvedValueOnce([drop('skip-a'), drop('skip-b'), drop('skip-c')]);
+    const result = await service.findUndiscoveredDrops(
+      { ...param, limit: 4 },
+      {}
+    );
+    expect(result.drops.map(({ id }) => id)).toEqual([
+      'still-unskipped',
+      'skip-a',
+      'skip-b',
+      'skip-c'
+    ]);
+    expect(db.findDrops).toHaveBeenNthCalledWith(
+      2,
+      { ...dbParam, skip: 0, limit: 3 },
+      true,
+      {}
+    );
+  });
+
   it('does not fetch skipped drops when the window fits in undiscovered drops', async () => {
+    db.findDrops.mockResolvedValue(['a', 'b', 'c', 'd'].map(drop));
     db.countDrops.mockResolvedValue({
       total_count: 6,
       left_to_vote_in_current_round: 6

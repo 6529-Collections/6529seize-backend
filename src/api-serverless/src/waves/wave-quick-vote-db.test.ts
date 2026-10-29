@@ -137,14 +137,14 @@ describeWithSeed(
           skipped_at
         });
       }
-      for (const id of ['orphan', 'sibling-only']) {
+      for (const id of ['orphan', 'sibling-only', 'zero']) {
         await insert(tables.COMPETITION_ENTRIES_TABLE, {
           id: `sibling-${id}`,
           competition_id: sibling.id,
           wave_id: wave.id,
           drop_id: id,
           submitter_id: 'artist',
-          status: 'ACTIVE',
+          status: id === 'zero' ? 'WITHDRAWN' : 'ACTIVE',
           config_version: 1,
           submitted_at: 1
         });

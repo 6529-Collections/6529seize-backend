@@ -1364,7 +1364,10 @@ active native entries and an indexed fallback for retained participatory drops
 without a projected native status. Votes and skips remain scoped to the acting
 profile; zero allocations are unrated, and either sign of nonzero allocation is
 rated. A single aggregate computes total unrated and unskipped unrated counts.
-Preview windows place newest unskipped drops before skipped drops ordered by
+Counts and previews are separate replica reads and may reflect concurrent vote
+or skip changes. A short unskipped read fills the remaining preview slots from
+skipped drops rather than leaving holes. Preview windows place newest unskipped
+drops before skipped drops ordered by
 oldest skip time, then newest drop time and serial number. These native reads
 bypass compatibility SQL rewriting; full drop mapping still uses the ordinary
 visibility and voting projections. The frontend shares each completed window's
