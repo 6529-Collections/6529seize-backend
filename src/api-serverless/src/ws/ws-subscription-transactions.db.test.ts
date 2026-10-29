@@ -330,6 +330,10 @@ describeWithSeed(
     ])(
       'replays the captured empty-grant gap cycle with isolation=$isolation',
       async ({ isolation, attempts: expectedAttempts }) => {
+        // This gap-lock scenario needs an empty index, without the shared seed.
+        await sqlExecutor.execute(
+          `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+        );
         const ids = ['zz-ws-gap-a', 'zz-ws-gap-b'];
         await sqlExecutor.execute(
           `insert into ${WS_CONNECTIONS_TABLE}
