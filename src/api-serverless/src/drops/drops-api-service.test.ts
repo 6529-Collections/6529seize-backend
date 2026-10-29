@@ -191,57 +191,60 @@ describe('DropsApiService', () => {
   }
 
   describe('findLightDrops', () => {
-    it('keeps V1 authors as strings while concealing an unrevealed competition author', async () => {
-      const { service, dropsDb, ctx } = createService();
-      const ids = ['unrevealed-entry', 'revealed-entry'];
-      dropsDb.findLightDropIdsByWave.mockResolvedValue(
-        ids.map((id) => ({ id }))
-      );
-      dropsDb.findLightDropsByIds.mockResolvedValue(
-        ids.map((id, index) => ({
-          id,
-          wave_id: 'wave-1',
-          wave_name: 'Wave 1',
-          author: 'RealArtist',
-          created_at: 1,
-          serial_no: index + 1,
-          drop_type: DropType.COMPETITION,
-          title: 'Entry',
-          part_content: 'Submission',
-          medias_json: '[]'
-        }))
-      );
-      const hiddenDropIds = jest
-        .spyOn(competitionAnonymityService, 'hiddenDropIds')
-        .mockResolvedValue(new Set(['unrevealed-entry']));
+    it.each(Object.values(DropType))(
+      'keeps V1 authors as strings while concealing an unrevealed entry presented as %s',
+      async (dropType) => {
+        const { service, dropsDb, ctx } = createService();
+        const ids = ['unrevealed-entry', 'revealed-entry'];
+        dropsDb.findLightDropIdsByWave.mockResolvedValue(
+          ids.map((id) => ({ id }))
+        );
+        dropsDb.findLightDropsByIds.mockResolvedValue(
+          ids.map((id, index) => ({
+            id,
+            wave_id: 'wave-1',
+            wave_name: 'Wave 1',
+            author: 'RealArtist',
+            created_at: 1,
+            serial_no: index + 1,
+            drop_type: dropType,
+            title: 'Entry',
+            part_content: 'Submission',
+            medias_json: '[]'
+          }))
+        );
+        const hiddenDropIds = jest
+          .spyOn(competitionAnonymityService, 'hiddenDropIds')
+          .mockResolvedValue(new Set(['unrevealed-entry']));
 
-      const result: ApiLightDrop[] = await service.findLightDrops(
-        {
-          waveId: 'wave-1',
-          limit: 10,
-          max_serial_no: null,
-          min_serial_no: null,
-          older_first: false
-        },
-        ctx
-      );
+        const result: ApiLightDrop[] = await service.findLightDrops(
+          {
+            waveId: 'wave-1',
+            limit: 10,
+            max_serial_no: null,
+            min_serial_no: null,
+            older_first: false
+          },
+          ctx
+        );
 
-      expect(hiddenDropIds).toHaveBeenCalledWith(ids, ctx);
-      expect(result.map(({ author }) => author)).toEqual([
-        'Anonymous',
-        'RealArtist'
-      ]);
-      expect(result.every(({ author }) => typeof author === 'string')).toBe(
-        true
-      );
-      expect(JSON.parse(JSON.stringify(result))[0].author).toBe('Anonymous');
-      expect(ApiLightDrop.getAttributeTypeMap()).toContainEqual({
-        name: 'author',
-        baseName: 'author',
-        type: 'string',
-        format: ''
-      });
-    });
+        expect(hiddenDropIds).toHaveBeenCalledWith(ids, ctx);
+        expect(result.map(({ author }) => author)).toEqual([
+          'Anonymous',
+          'RealArtist'
+        ]);
+        expect(result.every(({ author }) => typeof author === 'string')).toBe(
+          true
+        );
+        expect(JSON.parse(JSON.stringify(result))[0].author).toBe('Anonymous');
+        expect(ApiLightDrop.getAttributeTypeMap()).toContainEqual({
+          name: 'author',
+          baseName: 'author',
+          type: 'string',
+          format: ''
+        });
+      }
+    );
   });
 
   describe('findViewableDropByIdOrThrow', () => {
