@@ -2263,6 +2263,13 @@ are retained for 14 days and have a visible-message CloudWatch alarm on the exis
 alarm topic. Repeated consolidation drift therefore cannot block the FIFO group
 until source retention expires. Deploying `xTdhLoop` also provisions these resources.
 
+Identity snapshot conflicts use a dedicated error type. For a single SQS record
+with a valid receive count, attempts one through four log a warning without a
+Sentry error. The invocation still fails, preserving rollback and SQS retry.
+Attempt five and later, missing/invalid retry metadata, and all other failures
+remain reportable. Conflict Sentry events include the receive count and retry
+limit; the existing dead-letter alarm remains the exhaustion backstop.
+
 ### Transfer reconciliation after late indexing
 
 Independent contract indexers atomically queue per-wallet `owners` and `activity`
