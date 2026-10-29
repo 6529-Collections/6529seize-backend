@@ -91,7 +91,11 @@ export class WaveQuickVoteApiService {
       const apiDrops =
         drops.length > 0
           ? await this.dropsMappers.convertToDropFulls(
-              { dropEntities: drops, contextProfileId: param.identityId },
+              {
+                dropEntities: drops,
+                contextProfileId: param.identityId,
+                authenticationContext: ctx.authenticationContext
+              },
               ctx.connection
             )
           : [];
