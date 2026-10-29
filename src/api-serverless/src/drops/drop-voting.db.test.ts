@@ -151,6 +151,11 @@ const winnerWave = aWave(
   { id: 'summary-winner-wave', serial_no: 3, name: 'Winner Summary' }
 );
 
+const otherTimeLockedWave = aWave(
+  { type: WaveType.RANK, time_lock_ms: 1000 },
+  { id: 'summary-other-weighted-wave', serial_no: 4, name: 'Other Weighted' }
+);
+
 async function insertDrop({
   id,
   waveId,
@@ -353,11 +358,46 @@ async function insertWinnerVoter(
 }
 describeWithSeed(
   'DropVotingDb.getDropV2SubmissionVotingSummaries',
-  withWaves([realtimeWave, timeLockedWave, winnerWave]),
+  withWaves([realtimeWave, timeLockedWave, winnerWave, otherTimeLockedWave]),
   () => {
     beforeEach(async () => {
-      for (const wave of [realtimeWave, timeLockedWave, winnerWave])
+      for (const wave of [
+        realtimeWave,
+        timeLockedWave,
+        winnerWave,
+        otherTimeLockedWave
+      ])
         await seedNativeOriginalPrimaryFixture(wave);
+    });
+
+    it('ranks subsets independently across multiple time-locked waves', async () => {
+      for (const wave of [timeLockedWave, otherTimeLockedWave]) {
+        for (const [index, vote] of Array.from([10, 5, 5].entries())) {
+          const dropId = `${wave.id}-peer-${index}`;
+          await insertDrop({
+            id: dropId,
+            waveId: wave.id,
+            dropType: DropType.PARTICIPATORY,
+            createdAt: 100
+          });
+          await insertLeaderboardEntry({
+            dropId,
+            waveId: wave.id,
+            vote,
+            timestamp: 1000,
+            voteOnDecisionTime: vote
+          });
+        }
+      }
+      const requested = [
+        `${timeLockedWave.id}-peer-1`,
+        `${otherTimeLockedWave.id}-peer-0`
+      ];
+      const result = await sqlExecutor.executeNativeQueriesInTransaction(
+        (connection) =>
+          repo.getTimeLockedDropsWeightedVotes(requested, { connection })
+      );
+      expect(result).toEqual({ [requested[0]]: 2, [requested[1]]: 1 });
     });
     it('keeps ranks scoped to each wave in a mixed submission and winner batch', async () => {
       for (const wave of [realtimeWave, timeLockedWave]) {
@@ -411,6 +451,11 @@ describeWithSeed(
       expect(summaries[ids[3]].current_calculated_vote).toBe(5);
       expect(summaries[ids[3]].predicted_final_vote).toBe(6);
       expect(summaries['mixed-winner'].current_calculated_vote).toBe(42);
+      const weightedRanks = await repo.getTimeLockedDropsWeightedVotes(
+        [ids[0], ids[3], ids[4], 'mixed-winner', 'missing-drop'],
+        ctx
+      );
+      expect(weightedRanks).toEqual({ [ids[3]]: 2, [ids[4]]: 1 });
     });
 
     it.each([WaveType.RANK, WaveType.APPROVE])(
@@ -444,6 +489,11 @@ describeWithSeed(
           ctx
         );
         expect(ids.map((id) => summaries[id].place)).toEqual([3, 1, 1]);
+        const weightedRanks = await repo.getTimeLockedDropsWeightedVotes(
+          ids,
+          ctx
+        );
+        expect(ids.map((id) => weightedRanks[id])).toEqual([3, 1, 1]);
         expect(ids.map((id) => summaries[id].current_calculated_vote)).toEqual([
           0, 0, 0
         ]);
@@ -504,6 +554,12 @@ describeWithSeed(
                 requested.map((index) => `generated-rank-${index}`),
                 ctx
               );
+              const weightedRanks = weighted
+                ? await repo.getTimeLockedDropsWeightedVotes(
+                    requested.map((index) => `generated-rank-${index}`),
+                    ctx
+                  )
+                : {};
               for (const index of requested) {
                 const entry = entries[index];
                 const vote = entry.scored ? entry.vote : 0;
@@ -519,6 +575,11 @@ describeWithSeed(
                 expect(summaries[`generated-rank-${index}`].place).toBe(
                   expectedRank
                 );
+                if (weighted) {
+                  expect(weightedRanks[`generated-rank-${index}`]).toBe(
+                    expectedRank
+                  );
+                }
               }
             }
           ),

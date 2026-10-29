@@ -846,23 +846,47 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
   async getTimeLockedDropsWeightedVotes(
     dropIds: string[],
     ctx: RequestContext
-  ) {
+  ): Promise<Record<string, number>> {
     if (!dropIds.length) {
       return {};
     }
     ctx.timer?.start(
       `${this.constructor.name}->getTimeLockedDropsWeightedVotes`
     );
+    // Keep every competitor in the requested waves, but materialize their
+    // leaderboard once so its compatibility joins are not repeated per drop.
     const sql = `
-    SELECT drop_id, rnk
-    FROM (select d.id as drop_id,
-                 rank() over (partition by d.wave_id order by cast(ifnull(r.vote, 0) as signed) desc , cast(ifnull(r.timestamp, d.created_at) as signed) asc) as rnk
-          from ${legacyGetView(DROPS_TABLE)} d
-                   join ${legacyGetView(WAVES_TABLE)} w on w.id = d.wave_id
-                   left join ${legacyGetView(WAVE_LEADERBOARD_ENTRIES_TABLE)} r on r.drop_id = d.id
-          where d.drop_type = '${DropType.PARTICIPATORY}' and w.time_lock_ms is not null and w.time_lock_ms > 0) drop_ranks
-    WHERE drop_id in (:dropIds)
-  `;
+      with needed_waves as (
+        select distinct wave_id
+        from ${legacyGetView(DROPS_TABLE)}
+        where id in (:dropIds)
+      ),
+      weighted_waves as (
+        select id as wave_id
+        from ${legacyGetView(WAVES_TABLE)}
+        where id in (select wave_id from needed_waves)
+          and time_lock_ms is not null and time_lock_ms > 0
+      ),
+      scoped_leaderboard as (
+        select drop_id, vote, timestamp
+        from ${legacyGetView(WAVE_LEADERBOARD_ENTRIES_TABLE)}
+        where wave_id in (select wave_id from weighted_waves)
+      )
+      select drop_id, rnk
+      from (
+        select /*+ NO_MERGE(r) */ d.id as drop_id,
+          rank() over (
+            partition by d.wave_id
+            order by cast(ifnull(r.vote, 0) as signed) desc,
+              cast(ifnull(r.timestamp, d.created_at) as signed) asc
+          ) as rnk
+        from ${legacyGetView(DROPS_TABLE)} d
+        left join scoped_leaderboard r on r.drop_id = d.id
+        where d.drop_type = '${DropType.PARTICIPATORY}'
+          and d.wave_id in (select wave_id from weighted_waves)
+      ) drop_ranks
+      where drop_id in (:dropIds)
+    `;
     const results = await this.db.execute<{ drop_id: string; rnk: number }>(
       sql,
       { dropIds },

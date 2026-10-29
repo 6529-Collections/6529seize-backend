@@ -4,7 +4,12 @@ jest.mock('@/api/api-helpers', () => ({
 
 import { AuthenticationContext } from '@/auth-context';
 import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
-import { BadRequestException, ForbiddenException } from '@/exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '@/exceptions';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { wavesApiDb } from '../waves/waves.api.db';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { DropsApiService } from './drops.api.service';
@@ -79,6 +84,12 @@ describe('DropsApiService', () => {
     wave?: Record<string, unknown> | null;
   } = {}) {
     const dropsDb = {
+      findDropByIdWithEligibilityCheck: jest.fn().mockResolvedValue({
+        id: 'drop-1',
+        author_id: 'author-1',
+        wave_id: 'wave-1'
+      }),
+      findDropByIdWithoutEligibilityCheck: jest.fn(),
       findLatestDrops: jest.fn().mockResolvedValue([]),
       findLatestDropsSimple: jest.fn().mockResolvedValue([]),
       findDropsByCurationPriorityOrder: jest
@@ -139,6 +150,9 @@ describe('DropsApiService', () => {
     const apiDropMapper = {
       mapDrops: jest.fn().mockResolvedValue({})
     };
+    const moderationDb = {
+      getPresentations: jest.fn().mockResolvedValue({})
+    };
 
     return {
       service: new DropsApiService(
@@ -150,11 +164,13 @@ describe('DropsApiService', () => {
         {} as any,
         metricsRecorder as any,
         wsListenersNotifier as any,
-        apiDropMapper as any
+        apiDropMapper as any,
+        moderationDb as any
       ),
       dropsDb,
       dropsMappers,
       apiDropMapper,
+      moderationDb,
       curationsDb,
       userGroupsService,
       metricsRecorder,
@@ -165,6 +181,128 @@ describe('DropsApiService', () => {
       } as any
     };
   }
+
+  describe('findViewableDropByIdOrThrow', () => {
+    const params = {
+      dropId: 'drop-1',
+      unavailableMessage: 'Artwork unavailable'
+    };
+
+    it('keeps the full-drop lookup available for internal broadcasts', async () => {
+      const { service, dropsDb, dropsMappers, ctx } = createService();
+      const entity = { id: 'drop-1', author_id: 'author-1', wave_id: 'wave-1' };
+      const apiDrop = makeApiDrop();
+      dropsDb.findDropByIdWithoutEligibilityCheck.mockResolvedValue(entity);
+      dropsMappers.convertToDropFulls.mockResolvedValue([apiDrop]);
+
+      await expect(
+        service.findDropByIdOrThrow(
+          { dropId: 'drop-1', skipEligibilityCheck: true },
+          ctx
+        )
+      ).resolves.toBe(apiDrop);
+      expect(dropsDb.findDropByIdWithEligibilityCheck).not.toHaveBeenCalled();
+      expect(dropsMappers.convertToDropFulls).toHaveBeenCalledWith(
+        {
+          dropEntities: [entity],
+          authenticationContext: ctx.authenticationContext
+        },
+        undefined
+      );
+    });
+
+    it('checks eligibility and moderation without mapping full drop data', async () => {
+      const {
+        service,
+        dropsDb,
+        dropsMappers,
+        userGroupsService,
+        moderationDb,
+        ctx
+      } = createService();
+      userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
+        'read-group'
+      ]);
+      ctx.connection = { connection: 'request-connection' };
+      const drop = await service.findViewableDropByIdOrThrow(params, ctx);
+
+      expect(dropsDb.findDropByIdWithEligibilityCheck).toHaveBeenCalledWith(
+        'drop-1',
+        ['read-group'],
+        ctx.connection
+      );
+      expect(
+        dropsDb.findDropByIdWithoutEligibilityCheck
+      ).not.toHaveBeenCalled();
+      expect(moderationDb.getPresentations).toHaveBeenCalledWith(
+        [drop],
+        'profile-1',
+        ctx.connection
+      );
+      expect(dropsMappers.convertToDropFulls).not.toHaveBeenCalled();
+    });
+
+    it('does not inspect moderation for missing drops or inaccessible waves', async () => {
+      const { service, dropsDb, moderationDb, ctx } = createService();
+      dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(null);
+
+      await expect(
+        service.findViewableDropByIdOrThrow(params, ctx)
+      ).rejects.toThrow(NotFoundException);
+      expect(moderationDb.getPresentations).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])(
+      'honors viewer-specific moderation access (can_view=%s)',
+      async (canView) => {
+        const { service, moderationDb, ctx } = createService();
+        moderationDb.getPresentations.mockResolvedValue({
+          'drop-1': { moderation: { can_view: canView } }
+        });
+        const result = service.findViewableDropByIdOrThrow(params, ctx);
+        if (canView) {
+          await expect(result).resolves.toMatchObject({ id: 'drop-1' });
+        } else {
+          await expect(result).rejects.toThrow(params.unavailableMessage);
+        }
+      }
+    );
+
+    it.each([false, true])(
+      'uses proxy read permission for eligibility and moderation (read=%s)',
+      async (canRead) => {
+        const { service, moderationDb, userGroupsService, ctx } =
+          createService();
+        ctx.authenticationContext = new AuthenticationContext({
+          authenticatedWallet: null,
+          authenticatedProfileId: 'profile-1',
+          roleProfileId: 'represented-profile',
+          activeProxyActions: canRead
+            ? [
+                {
+                  id: 'read',
+                  type: ProfileProxyActionType.READ_WAVE,
+                  credit_amount: null,
+                  credit_spent: null
+                }
+              ]
+            : []
+        });
+
+        await service.findViewableDropByIdOrThrow(params, ctx);
+
+        const viewerId = canRead ? 'represented-profile' : null;
+        expect(
+          userGroupsService.getGroupsUserIsEligibleFor
+        ).toHaveBeenCalledWith(viewerId);
+        expect(moderationDb.getPresentations).toHaveBeenCalledWith(
+          expect.any(Array),
+          viewerId,
+          undefined
+        );
+      }
+    );
+  });
 
   it('rejects self-boosts from non-admin wave participants', async () => {
     const { service, dropsDb, ctx } = createService({

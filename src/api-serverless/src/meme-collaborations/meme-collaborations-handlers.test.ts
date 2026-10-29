@@ -13,6 +13,8 @@ import type {
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { AuthenticationContext } from '@/auth-context';
+import { ForbiddenException } from '@/exceptions';
+import type { DropEntity } from '@/entities/IDrop';
 
 jest.mock('@/api/auth/auth', () => ({
   getAuthenticationContext: jest.fn(async () =>
@@ -20,7 +22,10 @@ jest.mock('@/api/auth/auth', () => ({
   )
 }));
 jest.mock('@/api/drops/drops.api.service', () => ({
-  dropsService: { findDropByIdOrThrow: jest.fn() }
+  dropsService: {
+    findDropByIdOrThrow: jest.fn(),
+    findViewableDropByIdOrThrow: jest.fn()
+  }
 }));
 jest.mock('@/meme-collaborations/meme-collaborations.service', () => ({
   memeCollaborationsService: {
@@ -51,15 +56,25 @@ const request = {
 } as unknown as RespondToMemeCollaborationRequest;
 const getRequest = request as unknown as GetMemeCollaborationStateRequest;
 
+beforeEach(() => {
+  jest.clearAllMocks();
+  jest.mocked(dropsService.findViewableDropByIdOrThrow).mockResolvedValue({
+    id: 'drop',
+    author_id: 'A'
+  } as DropEntity);
+});
+
 describe('Collaboration API visibility', () => {
   beforeEach(() => jest.clearAllMocks());
 
   it('does not reveal stored artwork behind moderation', async () => {
     jest
-      .mocked(dropsService.findDropByIdOrThrow)
-      .mockResolvedValue({ moderation: { can_view: false } } as Awaited<
-        ReturnType<typeof dropsService.findDropByIdOrThrow>
-      >);
+      .mocked(dropsService.findViewableDropByIdOrThrow)
+      .mockRejectedValue(
+        new ForbiddenException(
+          'This artwork is not available for collaboration review'
+        )
+      );
     await expect(getMemeCollaborationState(getRequest)).rejects.toThrow(
       'not available'
     );
@@ -72,7 +87,7 @@ describe('Collaboration API visibility', () => {
 
   it('requires access to the drop before reading or responding to an invitation', async () => {
     jest
-      .mocked(dropsService.findDropByIdOrThrow)
+      .mocked(dropsService.findViewableDropByIdOrThrow)
       .mockRejectedValue(new Error('Drop not accessible'));
     await expect(getMemeCollaborationState(getRequest)).rejects.toThrow(
       'not accessible'
@@ -156,10 +171,12 @@ it('appends invited IDs through the dedicated endpoint and returns viewer-scoped
 });
 it('rejects invitations before mutation when artwork cannot be viewed', async () => {
   jest
-    .mocked(dropsService.findDropByIdOrThrow)
-    .mockResolvedValue({ moderation: { can_view: false } } as Awaited<
-      ReturnType<typeof dropsService.findDropByIdOrThrow>
-    >);
+    .mocked(dropsService.findViewableDropByIdOrThrow)
+    .mockRejectedValue(
+      new ForbiddenException(
+        'This artwork is not available for collaboration review'
+      )
+    );
   const inviteMock = jest.mocked(memeCollaborationsService.inviteExisting);
   inviteMock.mockClear();
   await expect(
@@ -236,3 +253,32 @@ it.each(['ACCEPT', 'DECLINE', 'CANCEL'] as const)(
     );
   }
 );
+
+it('reads collaboration state without constructing a full drop', async () => {
+  jest.mocked(memeCollaborationsService.state).mockResolvedValue({
+    can_invite: false,
+    managed: false,
+    closed: false,
+    artwork_hash: '',
+    terms_version: '',
+    acceptance_copy: 'Final',
+    terms: null,
+    artwork: undefined,
+    collaborators: [],
+    invitations: []
+  });
+
+  await getMemeCollaborationState(getRequest);
+
+  expect(dropsService.findViewableDropByIdOrThrow).toHaveBeenCalledWith(
+    {
+      dropId: 'drop',
+      unavailableMessage:
+        'This artwork is not available for collaboration review'
+    },
+    expect.objectContaining({
+      authenticationContext: expect.any(AuthenticationContext)
+    })
+  );
+  expect(dropsService.findDropByIdOrThrow).not.toHaveBeenCalled();
+});
