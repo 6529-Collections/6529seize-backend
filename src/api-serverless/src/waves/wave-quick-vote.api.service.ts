@@ -1,5 +1,5 @@
 import { assertWaveAndParentVisibleOrThrow } from './wave-access.helpers';
-import { ApiDrop } from '@/api/generated/models/ApiDrop';
+import { ApiUndiscoveredDrops } from '@/api/generated/models/ApiUndiscoveredDrops';
 import { ApiUndiscoveredDrop } from '@/api/generated/models/ApiUndiscoveredDrop';
 import { DropsMappers, dropsMappers } from '@/api/drops/drops.mappers';
 import {
@@ -12,7 +12,6 @@ import {
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
-import { DropEntity } from '@/entities/IDrop';
 import { RequestContext } from '@/request.context';
 import {
   WaveQuickVoteDb,
@@ -33,53 +32,76 @@ export class WaveQuickVoteApiService {
     param: { waveId: string; identityId: string; skip?: number },
     ctx: RequestContext
   ): Promise<ApiUndiscoveredDrop> {
-    ctx.timer?.start(`${this.constructor.name}->findUndiscoveredDrop`);
+    const result = await this.findUndiscoveredDrops(
+      { ...param, limit: 1 },
+      ctx
+    );
+    return {
+      drop: result.drops[0] ?? null,
+      total_count: result.total_count,
+      left_to_vote_in_current_round: result.left_to_vote_in_current_round
+    };
+  }
+
+  async findUndiscoveredDrops(
+    param: { waveId: string; identityId: string; limit: number; skip?: number },
+    ctx: RequestContext
+  ): Promise<ApiUndiscoveredDrops> {
+    const timerName = `${this.constructor.name}->findUndiscoveredDrops`;
+    ctx.timer?.start(timerName);
     try {
       await this.assertQuickVoteEligibility(param, ctx);
       const quickVoteParams = {
         identity_id: param.identityId,
         wave_id: param.waveId
       };
+      const counts = await this.waveQuickVoteDb.countDrops(
+        quickVoteParams,
+        ctx
+      );
       const offset = param.skip ?? 0;
-      const [totalCount, undiscoveredCount] = await Promise.all([
-        this.waveQuickVoteDb.countUnvotedDrops(quickVoteParams, ctx),
-        this.waveQuickVoteDb.countUndiscoveredDrops(quickVoteParams, ctx)
-      ]);
-      const leftToVoteInCurrentRound = undiscoveredCount;
-      let drop: DropEntity | null;
-      if (offset < undiscoveredCount) {
-        drop =
-          offset === 0
-            ? await this.waveQuickVoteDb.findNextUndiscoveredDrop(
-                quickVoteParams,
-                ctx
-              )
-            : await this.waveQuickVoteDb.findUndiscoveredDropBySkip(
-                { ...quickVoteParams, skip: offset },
-                ctx
-              );
-      } else {
-        const skippedOffset = Math.max(offset - undiscoveredCount, 0);
-        drop = await this.waveQuickVoteDb.findSkippedUnvotedDropBySkip(
-          { ...quickVoteParams, skip: skippedOffset },
-          ctx
+      const undiscoveredLimit = Math.min(
+        param.limit,
+        Math.max(counts.left_to_vote_in_current_round - offset, 0)
+      );
+      const drops =
+        undiscoveredLimit > 0
+          ? await this.waveQuickVoteDb.findDrops(
+              { ...quickVoteParams, skip: offset, limit: undiscoveredLimit },
+              false,
+              ctx
+            )
+          : [];
+      // Votes or skips can change after the count read. Fill the remainder from
+      // the rows actually returned rather than leaving holes in the preview.
+      const skippedLimit = param.limit - drops.length;
+      if (skippedLimit > 0) {
+        drops.push(
+          ...(await this.waveQuickVoteDb.findDrops(
+            {
+              ...quickVoteParams,
+              skip: Math.max(offset - counts.left_to_vote_in_current_round, 0),
+              limit: skippedLimit
+            },
+            true,
+            ctx
+          ))
         );
       }
-      if (!drop) {
-        return {
-          drop: null,
-          total_count: totalCount,
-          left_to_vote_in_current_round: leftToVoteInCurrentRound
-        };
-      }
-      const apiDrop = await this.toApiDrop(drop, param.identityId, ctx);
-      return {
-        drop: apiDrop,
-        total_count: totalCount,
-        left_to_vote_in_current_round: leftToVoteInCurrentRound
-      };
+      const apiDrops =
+        drops.length > 0
+          ? await this.dropsMappers.convertToDropFulls(
+              {
+                dropEntities: drops,
+                contextProfileId: param.identityId,
+                authenticationContext: ctx.authenticationContext
+              },
+              ctx.connection
+            )
+          : [];
+      return { drops: apiDrops, ...counts };
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->findUndiscoveredDrop`);
+      ctx.timer?.stop(timerName);
     }
   }
 
@@ -127,23 +149,6 @@ export class WaveQuickVoteApiService {
         `Voter is not eligible to vote in this wave`
       );
     }
-  }
-
-  private async toApiDrop(
-    drop: DropEntity,
-    identityId: string,
-    ctx: RequestContext
-  ): Promise<ApiDrop> {
-    return this.dropsMappers
-      .convertToDropFulls(
-        {
-          dropEntities: [drop],
-          contextProfileId: identityId,
-          authenticationContext: ctx.authenticationContext
-        },
-        ctx.connection
-      )
-      .then((drops) => drops[0]!);
   }
 }
 

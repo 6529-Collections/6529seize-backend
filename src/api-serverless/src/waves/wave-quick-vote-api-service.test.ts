@@ -1,31 +1,30 @@
 import { DropsMappers } from '@/api/drops/drops.mappers';
 import { UserGroupsService } from '@/api/community-members/user-groups.service';
+import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { DropEntity, DropType } from '@/entities/IDrop';
-import { WaveCreditScope, WaveCreditType, WaveType } from '@/entities/IWave';
-import { BadRequestException, ForbiddenException } from '@/exceptions';
+import { WaveType } from '@/entities/IWave';
+import { aWave } from '@/tests/fixtures/wave.fixture';
 import { mock } from 'ts-jest-mocker';
-import { when } from 'jest-when';
 import { WaveQuickVoteApiService } from './wave-quick-vote.api.service';
 import { WaveQuickVoteDb } from './wave-quick-vote.db';
 import { WavesApiDb } from './waves.api.db';
 import { AuthenticationContext } from '@/auth-context';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { competitionAnonymityViewerId } from '@/competitions/competition-anonymity';
-import { ApiDrop } from '@/api/generated/models/ApiDrop';
 
 describe('WaveQuickVoteApiService', () => {
-  let service: WaveQuickVoteApiService;
-  let waveQuickVoteDb: WaveQuickVoteDb;
-  let wavesApiDb: WavesApiDb;
-  let userGroupsService: UserGroupsService;
-  let dropsMappers: DropsMappers;
-
-  const drop: DropEntity = {
+  const wave = {
+    ...aWave({ type: WaveType.RANK }, { id: 'wave-1', name: 'Wave' }),
+    last_drop_time: 0
+  };
+  const param = { waveId: wave.id, identityId: 'viewer' };
+  const dbParam = { wave_id: wave.id, identity_id: 'viewer' };
+  const drop = (id: string): DropEntity => ({
+    id,
     serial_no: 1,
-    id: 'drop-1',
-    wave_id: 'wave-1',
-    author_id: 'author-1',
-    created_at: 100,
+    wave_id: wave.id,
+    author_id: 'artist',
+    created_at: 1,
     updated_at: null,
     title: null,
     parts_count: 1,
@@ -33,151 +32,77 @@ describe('WaveQuickVoteApiService', () => {
     reply_to_part_id: null,
     drop_type: DropType.PARTICIPATORY,
     signature: null,
-    is_additional_action_promised: null,
-    hide_link_preview: false
-  };
-
-  const wave = {
-    id: 'wave-1',
-    name: 'Wave 1',
-    picture: null,
-    description_drop_id: 'description-drop-1',
-    last_drop_time: 0,
-    created_at: 0,
-    updated_at: null,
-    created_by: 'creator-1',
-    voting_group_id: null,
-    admin_group_id: null,
-    voting_credit_type: WaveCreditType.TDH,
-    voting_credit_scope: WaveCreditScope.WAVE,
-    voting_credit_category: null,
-    voting_credit_creditor: null,
-    voting_signature_required: false,
-    voting_period_start: null,
-    voting_period_end: null,
-    visibility_group_id: null,
-    chat_group_id: null,
-    chat_enabled: true,
-    participation_group_id: null,
-    participation_max_applications_per_participant: null,
-    participation_required_metadata: [],
-    participation_required_media: [],
-    participation_period_start: null,
-    participation_period_end: null,
-    participation_signature_required: false,
-    participation_terms: null,
-    type: WaveType.RANK,
-    winning_min_threshold: null,
-    winning_max_threshold: null,
-    winning_threshold_min_duration_ms: 0,
-    max_winners: null,
-    time_lock_ms: null,
-    decisions_strategy: null,
-    next_decision_time: null,
-    forbid_negative_votes: false,
-    admin_drop_deletion_enabled: false,
-    is_direct_message: false,
-    serial_no: 1
-  };
+    is_additional_action_promised: null
+  });
+  let db: jest.Mocked<WaveQuickVoteDb>;
+  let waves: jest.Mocked<WavesApiDb>;
+  let groups: jest.Mocked<UserGroupsService>;
+  let mappers: jest.Mocked<DropsMappers>;
+  let service: WaveQuickVoteApiService;
 
   beforeEach(() => {
-    waveQuickVoteDb = mock();
-    wavesApiDb = mock();
-    userGroupsService = mock();
-    dropsMappers = mock();
-    when(wavesApiDb.countWaveDecisionsByWaveIds)
-      .calledWith(['wave-1'], {})
-      .mockResolvedValue({});
-    service = new WaveQuickVoteApiService(
-      waveQuickVoteDb,
-      wavesApiDb,
-      userGroupsService,
-      dropsMappers
+    db = mock();
+    waves = mock();
+    groups = mock();
+    mappers = mock();
+    waves.findWaveById.mockResolvedValue(wave);
+    waves.countWaveDecisionsByWaveIds.mockResolvedValue({});
+    groups.getGroupsUserIsEligibleFor.mockResolvedValue([]);
+    db.countDrops.mockResolvedValue({
+      total_count: 6,
+      left_to_vote_in_current_round: 3
+    });
+    db.findDrops.mockResolvedValue([]);
+    mappers.convertToDropFulls.mockImplementation(async ({ dropEntities }) =>
+      dropEntities.map(({ id }) => ({ id }) as ApiDrop)
     );
+    service = new WaveQuickVoteApiService(db, waves, groups, mappers);
   });
 
-  it('rejects quick vote reads when a public child has a restricted parent', async () => {
-    jest
-      .mocked(wavesApiDb.findWaveById)
-      .mockResolvedValueOnce({ ...wave, parent_wave_id: 'parent' } as never)
-      .mockResolvedValueOnce({
-        ...wave,
-        id: 'parent',
-        visibility_group_id: 'parent-group'
-      } as never);
-    jest
-      .mocked(userGroupsService.getGroupsUserIsEligibleFor)
-      .mockResolvedValue([]);
-    await expect(
-      service.findUndiscoveredDrop(
-        { waveId: 'wave-1', identityId: 'viewer' },
-        {}
-      )
-    ).rejects.toThrow('Wave wave-1 not found');
-    expect(waveQuickVoteDb.countUnvotedDrops).not.toHaveBeenCalled();
-  });
-
-  it('returns the mapped drop when one undiscovered drop is available', async () => {
-    when(wavesApiDb.findWaveById)
-      .calledWith('wave-1', undefined)
-      .mockResolvedValue(wave as any);
-    when(userGroupsService.getGroupsUserIsEligibleFor)
-      .calledWith('identity-1', undefined)
-      .mockResolvedValue([]);
-    when(waveQuickVoteDb.findNextUndiscoveredDrop)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(drop);
-    when(waveQuickVoteDb.countUnvotedDrops)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(2);
-    when(waveQuickVoteDb.countUndiscoveredDrops)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(2);
-    when(dropsMappers.convertToDropFulls)
-      .calledWith(
-        {
-          dropEntities: [drop],
-          contextProfileId: 'identity-1'
-        },
-        undefined
-      )
-      .mockResolvedValue([{ id: drop.id } as any]);
-
-    const result = await service.findUndiscoveredDrop(
-      {
-        waveId: 'wave-1',
-        identityId: 'identity-1'
-      },
+  it('keeps the single-drop response and calculates both counts once', async () => {
+    db.findDrops.mockResolvedValue([drop('next')]);
+    await expect(service.findUndiscoveredDrop(param, {})).resolves.toEqual({
+      drop: { id: 'next' },
+      total_count: 6,
+      left_to_vote_in_current_round: 3
+    });
+    expect(db.countDrops).toHaveBeenCalledTimes(1);
+    expect(db.findDrops).toHaveBeenCalledWith(
+      { ...dbParam, skip: 0, limit: 1 },
+      false,
       {}
     );
+  });
 
-    expect(result).toEqual({
-      drop: { id: 'drop-1' },
-      left_to_vote_in_current_round: 2,
-      total_count: 2
+  it('maps a four-drop window together across the skipped boundary', async () => {
+    db.findDrops
+      .mockResolvedValueOnce([drop('a'), drop('b'), drop('c')])
+      .mockResolvedValueOnce([drop('skipped')]);
+    await expect(
+      service.findUndiscoveredDrops({ ...param, limit: 4 }, {})
+    ).resolves.toEqual({
+      drops: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'skipped' }],
+      total_count: 6,
+      left_to_vote_in_current_round: 3
     });
+    expect(db.countDrops).toHaveBeenCalledTimes(1);
+    expect(db.findDrops).toHaveBeenNthCalledWith(
+      1,
+      { ...dbParam, skip: 0, limit: 3 },
+      false,
+      {}
+    );
+    expect(db.findDrops).toHaveBeenNthCalledWith(
+      2,
+      { ...dbParam, skip: 0, limit: 1 },
+      true,
+      {}
+    );
+    expect(mappers.convertToDropFulls).toHaveBeenCalledTimes(1);
   });
 
   it.each([
-    { viewer: 'owner', action: null, privateOwnerId: 'identity-1' },
+    { viewer: 'owner', action: null, privateOwnerId: 'viewer' },
     {
       viewer: 'voting proxy',
       action: ProfileProxyActionType.RATE_WAVE_DROP,
@@ -186,16 +111,16 @@ describe('WaveQuickVoteApiService', () => {
     {
       viewer: 'reading proxy',
       action: ProfileProxyActionType.READ_WAVE,
-      privateOwnerId: 'identity-1'
+      privateOwnerId: 'viewer'
     }
   ])(
-    'preserves the original $viewer context while hydrating a quick vote card',
+    'preserves the original $viewer context while hydrating quick vote previews',
     async ({ action, privateOwnerId }) => {
       const authenticationContext = action
         ? new AuthenticationContext({
             authenticatedWallet: null,
             authenticatedProfileId: 'delegate',
-            roleProfileId: 'identity-1',
+            roleProfileId: 'viewer',
             activeProxyActions: [
               {
                 id: 'action',
@@ -205,39 +130,33 @@ describe('WaveQuickVoteApiService', () => {
               }
             ]
           })
-        : AuthenticationContext.fromProfileId('identity-1');
+        : AuthenticationContext.fromProfileId('viewer');
       const connection = { connection: {} };
       const ctx = { authenticationContext, connection };
-      jest.mocked(wavesApiDb.findWaveById).mockResolvedValue(wave as never);
-      jest.mocked(wavesApiDb.countWaveDecisionsByWaveIds).mockResolvedValue({});
-      jest
-        .mocked(userGroupsService.getGroupsUserIsEligibleFor)
-        .mockResolvedValue([]);
-      jest.mocked(waveQuickVoteDb.countUnvotedDrops).mockResolvedValue(2);
-      jest.mocked(waveQuickVoteDb.countUndiscoveredDrops).mockResolvedValue(2);
-      jest
-        .mocked(waveQuickVoteDb.findNextUndiscoveredDrop)
-        .mockResolvedValue(drop);
-      jest
-        .mocked(dropsMappers.convertToDropFulls)
-        .mockResolvedValue([{ id: drop.id } as ApiDrop]);
+      const previews = ['a', 'b', 'c', 'd'].map(drop);
+      db.countDrops.mockResolvedValue({
+        total_count: 4,
+        left_to_vote_in_current_round: 4
+      });
+      db.findDrops.mockResolvedValue(previews);
 
-      const result = await service.findUndiscoveredDrop(
-        { waveId: wave.id, identityId: 'identity-1' },
+      const result = await service.findUndiscoveredDrops(
+        { ...param, limit: 4 },
         ctx
       );
 
-      expect(result.drop?.id).toBe(drop.id);
-      expect(dropsMappers.convertToDropFulls).toHaveBeenCalledWith(
+      expect(result.drops.map(({ id }) => id)).toEqual(['a', 'b', 'c', 'd']);
+      expect(mappers.convertToDropFulls).toHaveBeenCalledTimes(1);
+      expect(mappers.convertToDropFulls).toHaveBeenCalledWith(
         {
-          dropEntities: [drop],
-          contextProfileId: 'identity-1',
+          dropEntities: previews,
+          contextProfileId: 'viewer',
           authenticationContext
         },
         connection
       );
-      const forwarded = jest.mocked(dropsMappers.convertToDropFulls).mock
-        .calls[0][0].authenticationContext;
+      const forwarded =
+        mappers.convertToDropFulls.mock.calls[0][0].authenticationContext;
       expect(forwarded).toBe(authenticationContext);
       expect(
         competitionAnonymityViewerId({ authenticationContext: forwarded })
@@ -248,325 +167,129 @@ describe('WaveQuickVoteApiService', () => {
     }
   );
 
-  it('falls back to the earliest skipped unvoted drop when everything is already skipped', async () => {
-    when(wavesApiDb.findWaveById)
-      .calledWith('wave-1', undefined)
-      .mockResolvedValue(wave as any);
-    when(userGroupsService.getGroupsUserIsEligibleFor)
-      .calledWith('identity-1', undefined)
-      .mockResolvedValue([]);
-    when(waveQuickVoteDb.findNextUndiscoveredDrop)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(null);
-    when(waveQuickVoteDb.countUnvotedDrops)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(2);
-    when(waveQuickVoteDb.countUndiscoveredDrops)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(0);
-    when(waveQuickVoteDb.findSkippedUnvotedDropBySkip)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1',
-          skip: 0
-        },
-        {}
-      )
-      .mockResolvedValue(drop);
-    when(dropsMappers.convertToDropFulls)
-      .calledWith(
-        {
-          dropEntities: [drop],
-          contextProfileId: 'identity-1'
-        },
-        undefined
-      )
-      .mockResolvedValue([{ id: drop.id } as any]);
-
-    const result = await service.findUndiscoveredDrop(
-      {
-        waveId: 'wave-1',
-        identityId: 'identity-1'
-      },
+  it('fills the window when concurrent votes shorten the unskipped tail', async () => {
+    db.findDrops
+      .mockResolvedValueOnce([drop('still-unskipped')])
+      .mockResolvedValueOnce([drop('skip-a'), drop('skip-b'), drop('skip-c')]);
+    const result = await service.findUndiscoveredDrops(
+      { ...param, limit: 4 },
       {}
     );
-
-    expect(result).toEqual({
-      drop: { id: 'drop-1' },
-      left_to_vote_in_current_round: 0,
-      total_count: 2
-    });
-  });
-
-  it('uses the skip offset when provided', async () => {
-    when(wavesApiDb.findWaveById)
-      .calledWith('wave-1', undefined)
-      .mockResolvedValue(wave as any);
-    when(userGroupsService.getGroupsUserIsEligibleFor)
-      .calledWith('identity-1', undefined)
-      .mockResolvedValue([]);
-    when(waveQuickVoteDb.findUndiscoveredDropBySkip)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1',
-          skip: 1
-        },
-        {}
-      )
-      .mockResolvedValue(drop);
-    when(waveQuickVoteDb.countUnvotedDrops)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(2);
-    when(waveQuickVoteDb.countUndiscoveredDrops)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(2);
-    when(dropsMappers.convertToDropFulls)
-      .calledWith(
-        {
-          dropEntities: [drop],
-          contextProfileId: 'identity-1'
-        },
-        undefined
-      )
-      .mockResolvedValue([{ id: drop.id } as any]);
-
-    const result = await service.findUndiscoveredDrop(
-      {
-        waveId: 'wave-1',
-        identityId: 'identity-1',
-        skip: 1
-      },
+    expect(result.drops.map(({ id }) => id)).toEqual([
+      'still-unskipped',
+      'skip-a',
+      'skip-b',
+      'skip-c'
+    ]);
+    expect(db.findDrops).toHaveBeenNthCalledWith(
+      2,
+      { ...dbParam, skip: 0, limit: 3 },
+      true,
       {}
     );
-
-    expect(result).toEqual({
-      drop: { id: 'drop-1' },
-      left_to_vote_in_current_round: 2,
-      total_count: 2
-    });
   });
 
-  it('continues into skipped drops when the offset goes past the remaining undiscovered drops', async () => {
-    when(wavesApiDb.findWaveById)
-      .calledWith('wave-1', undefined)
-      .mockResolvedValue(wave as any);
-    when(userGroupsService.getGroupsUserIsEligibleFor)
-      .calledWith('identity-1', undefined)
-      .mockResolvedValue([]);
-    when(waveQuickVoteDb.countUnvotedDrops)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(4);
-    when(waveQuickVoteDb.countUndiscoveredDrops)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(1);
-    when(waveQuickVoteDb.findSkippedUnvotedDropBySkip)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1',
-          skip: 1
-        },
-        {}
-      )
-      .mockResolvedValue(drop);
-    when(dropsMappers.convertToDropFulls)
-      .calledWith(
-        {
-          dropEntities: [drop],
-          contextProfileId: 'identity-1'
-        },
-        undefined
-      )
-      .mockResolvedValue([{ id: drop.id } as any]);
-
-    const result = await service.findUndiscoveredDrop(
-      {
-        waveId: 'wave-1',
-        identityId: 'identity-1',
-        skip: 2
-      },
+  it('does not fetch skipped drops when the window fits in undiscovered drops', async () => {
+    db.findDrops.mockResolvedValue(['a', 'b', 'c', 'd'].map(drop));
+    db.countDrops.mockResolvedValue({
+      total_count: 6,
+      left_to_vote_in_current_round: 6
+    });
+    await service.findUndiscoveredDrops({ ...param, limit: 4 }, {});
+    expect(db.findDrops).toHaveBeenCalledTimes(1);
+    expect(db.findDrops).toHaveBeenCalledWith(
+      { ...dbParam, skip: 0, limit: 4 },
+      false,
       {}
     );
-
-    expect(result).toEqual({
-      drop: { id: 'drop-1' },
-      left_to_vote_in_current_round: 1,
-      total_count: 4
-    });
   });
 
-  it('falls back to skipped drops when everything is already skipped', async () => {
-    when(wavesApiDb.findWaveById)
-      .calledWith('wave-1', undefined)
-      .mockResolvedValue(wave as any);
-    when(userGroupsService.getGroupsUserIsEligibleFor)
-      .calledWith('identity-1', undefined)
-      .mockResolvedValue([]);
-    when(waveQuickVoteDb.countUndiscoveredDrops)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(0);
-    when(waveQuickVoteDb.findSkippedUnvotedDropBySkip)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1',
-          skip: 1
-        },
-        {}
-      )
-      .mockResolvedValue(drop);
-    when(waveQuickVoteDb.countUnvotedDrops)
-      .calledWith(
-        {
-          identity_id: 'identity-1',
-          wave_id: 'wave-1'
-        },
-        {}
-      )
-      .mockResolvedValue(2);
-    when(dropsMappers.convertToDropFulls)
-      .calledWith(
-        {
-          dropEntities: [drop],
-          contextProfileId: 'identity-1'
-        },
-        undefined
-      )
-      .mockResolvedValue([{ id: drop.id } as any]);
-
-    const result = await service.findUndiscoveredDrop(
-      {
-        waveId: 'wave-1',
-        identityId: 'identity-1',
-        skip: 1
-      },
+  it('keeps single-drop offsets within the unskipped portion', async () => {
+    await service.findUndiscoveredDrop({ ...param, skip: 2 }, {});
+    expect(db.findDrops).toHaveBeenCalledWith(
+      { ...dbParam, skip: 2, limit: 1 },
+      false,
       {}
     );
-
-    expect(result).toEqual({
-      drop: { id: 'drop-1' },
-      left_to_vote_in_current_round: 0,
-      total_count: 2
-    });
   });
 
-  it('rejects when the identity is not eligible to vote in the wave', async () => {
-    when(wavesApiDb.findWaveById)
-      .calledWith('wave-1', undefined)
-      .mockResolvedValue({
+  it('continues single-drop offsets into skipped drops', async () => {
+    await service.findUndiscoveredDrop({ ...param, skip: 4 }, {});
+    expect(db.findDrops).toHaveBeenCalledWith(
+      { ...dbParam, skip: 1, limit: 1 },
+      true,
+      {}
+    );
+  });
+
+  it('starts with the earliest skipped drops when no undiscovered drops remain', async () => {
+    db.countDrops.mockResolvedValue({
+      total_count: 6,
+      left_to_vote_in_current_round: 0
+    });
+    await service.findUndiscoveredDrops({ ...param, limit: 4 }, {});
+    expect(db.findDrops).toHaveBeenCalledTimes(1);
+    expect(db.findDrops).toHaveBeenCalledWith(
+      { ...dbParam, skip: 0, limit: 4 },
+      true,
+      {}
+    );
+  });
+
+  it('returns null and zero counts for an exhausted single-drop request', async () => {
+    db.countDrops.mockResolvedValue({
+      total_count: 0,
+      left_to_vote_in_current_round: 0
+    });
+    await expect(service.findUndiscoveredDrop(param, {})).resolves.toEqual({
+      drop: null,
+      total_count: 0,
+      left_to_vote_in_current_round: 0
+    });
+    expect(mappers.convertToDropFulls).not.toHaveBeenCalled();
+  });
+
+  it('checks restricted parents before reading quick-vote data', async () => {
+    waves.findWaveById
+      .mockResolvedValueOnce({ ...wave, parent_wave_id: 'parent' })
+      .mockResolvedValueOnce({
         ...wave,
-        voting_group_id: 'group-1'
-      } as any);
-    when(userGroupsService.getGroupsUserIsEligibleFor)
-      .calledWith('identity-1', undefined)
-      .mockResolvedValue([]);
-
+        id: 'parent',
+        visibility_group_id: 'restricted'
+      });
     await expect(
-      service.findUndiscoveredDrop(
-        {
-          waveId: 'wave-1',
-          identityId: 'identity-1'
-        },
-        {}
-      )
-    ).rejects.toThrow(ForbiddenException);
+      service.findUndiscoveredDrops({ ...param, limit: 4 }, {})
+    ).rejects.toThrow(`Wave ${wave.id} not found`);
+    expect(db.countDrops).not.toHaveBeenCalled();
   });
 
-  it('rejects when the wave is a chat wave', async () => {
-    when(wavesApiDb.findWaveById)
-      .calledWith('wave-1', undefined)
-      .mockResolvedValue({
-        ...wave,
-        type: WaveType.CHAT
-      } as any);
-    when(userGroupsService.getGroupsUserIsEligibleFor)
-      .calledWith('identity-1', undefined)
-      .mockResolvedValue([]);
-
-    await expect(
-      service.findUndiscoveredDrop(
-        {
-          waveId: 'wave-1',
-          identityId: 'identity-1'
-        },
-        {}
-      )
-    ).rejects.toThrow(BadRequestException);
+  it('rejects ineligible voters', async () => {
+    waves.findWaveById.mockResolvedValue({
+      ...wave,
+      voting_group_id: 'voters'
+    });
+    await expect(service.findUndiscoveredDrop(param, {})).rejects.toThrow(
+      'Voter is not eligible'
+    );
+    expect(db.countDrops).not.toHaveBeenCalled();
   });
 
-  it('rejects when the approve wave is already closed', async () => {
-    when(wavesApiDb.findWaveById)
-      .calledWith('wave-1', undefined)
-      .mockResolvedValue({
-        ...wave,
-        type: WaveType.APPROVE,
-        max_winners: 1
-      } as any);
-    when(wavesApiDb.countWaveDecisionsByWaveIds)
-      .calledWith(['wave-1'], {})
-      .mockResolvedValue({ 'wave-1': 1 });
-    when(userGroupsService.getGroupsUserIsEligibleFor)
-      .calledWith('identity-1', undefined)
-      .mockResolvedValue([]);
+  it('rejects chat waves', async () => {
+    waves.findWaveById.mockResolvedValue({ ...wave, type: WaveType.CHAT });
+    await expect(service.findUndiscoveredDrop(param, {})).rejects.toThrow(
+      'Voting is not allowed'
+    );
+  });
 
-    await expect(
-      service.findUndiscoveredDrop(
-        {
-          waveId: 'wave-1',
-          identityId: 'identity-1'
-        },
-        {}
-      )
-    ).rejects.toThrow(`Voting is closed in this wave`);
+  it('rejects closed approve waves', async () => {
+    waves.findWaveById.mockResolvedValue({
+      ...wave,
+      type: WaveType.APPROVE,
+      max_winners: 1
+    });
+    waves.countWaveDecisionsByWaveIds.mockResolvedValue({ [wave.id]: 1 });
+    await expect(service.findUndiscoveredDrop(param, {})).rejects.toThrow(
+      'Voting is closed'
+    );
   });
 });

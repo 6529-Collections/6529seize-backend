@@ -1395,6 +1395,29 @@ flags remain intersected with View eligibility if group criteria later drift.
 
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
 
+Quick Vote's legacy `GET /waves/{id}/undiscovered-drop` remains compatible,
+while `GET /waves/{id}/undiscovered-drops` returns up to four ordered previews
+with one pair of exact counts. Both use the original legacy competition's
+active native entries and an indexed fallback for retained participatory drops
+without a projected native status. Votes and skips remain scoped to the acting
+profile; zero allocations are unrated, and either sign of nonzero allocation is
+rated. A single aggregate computes total unrated and unskipped unrated counts.
+Counts and previews are separate replica reads and may reflect concurrent vote
+or skip changes. This best-effort ordering applies to both the batch window and
+legacy single-drop offsets; neither endpoint promises a cross-request snapshot.
+A short unskipped read fills available remaining slots from skipped drops, up to
+the requested limit; concurrently exhausted skipped rows can still shorten it.
+Preview windows place newest unskipped drops before skipped drops ordered by
+oldest skip time, then newest drop time and serial number. These native reads
+bypass compatibility SQL rewriting; full drop mapping still uses the ordinary
+visibility and voting projections. The frontend keeps its primary request
+independent and reuses its footer cache,
+then batches the missing lookahead slots with a bounded offset. Ready primary
+candidates render before background previews; each cold window needs at most
+two count aggregates, or one when the primary is already cached. This adds no
+schema or worker;
+deploy only `api` before the dependent frontend in each environment.
+
 Current vote-allocation summaries use separate card and detail read paths.
 V2 rank-wave leaderboard responses can add an optional
 `submission_context.voting.largest_vote` to visible active participatory
