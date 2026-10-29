@@ -84,6 +84,11 @@ describe('DropsApiService', () => {
     wave?: Record<string, unknown> | null;
   } = {}) {
     const dropsDb = {
+      findDropById: jest.fn().mockResolvedValue({
+        id: 'drop-1',
+        author_id: 'author-1',
+        wave_id: 'wave-1'
+      }),
       findDropByIdWithEligibilityCheck: jest.fn().mockResolvedValue({
         id: 'drop-1',
         author_id: 'author-1',
@@ -304,6 +309,24 @@ describe('DropsApiService', () => {
         );
       }
     );
+  });
+
+  it('notifies the real submitter when another profile boosts an anonymous entry', async () => {
+    const { service, dropsDb, ctx } = createService();
+    const apiDrop = makeApiDrop({ authorId: 'anonymous-projection' });
+    apiDrop.author.is_anonymous = true;
+    jest.spyOn(service, 'findDropByIdOrThrow').mockResolvedValue(apiDrop);
+    await service.boostDrop('drop-1', ctx);
+    expect(dropsDb.findDropById).toHaveBeenCalledWith('drop-1', ctx.connection);
+    expect(userNotifier.notifyOfDropBoost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        drop_author_id: 'author-1',
+        booster_id: 'profile-1'
+      }),
+      null,
+      'tx-connection'
+    );
+    expect(apiDrop.author.id).toBe('anonymous-projection');
   });
 
   it('rejects self-boosts from non-admin wave participants', async () => {

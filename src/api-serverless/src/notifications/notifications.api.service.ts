@@ -1,3 +1,8 @@
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
+import { anonymousNotificationProfiles } from '@/api/notifications/notifications-competition-anonymity';
 import { ApiVotingCreditReleaseReason } from '@/api/generated/models/ApiVotingCreditReleaseReason';
 import { requestDeviceBadgeRefresh } from '@/api/push-notifications/push-notifications.service';
 import { assertUnreachable } from '../../../assertions';
@@ -70,6 +75,21 @@ import {
 } from '@/api/ws/ws-listeners-notifier';
 import { DbPoolName } from '@/db-query.options';
 import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+
+/** Related actor projections must follow the submission's public author policy. */
+function dropNotificationAuthor<T extends { id: string }>(
+  identity: T | undefined,
+  drop: { id: string; author: T } | undefined
+): T | null {
+  if (
+    drop &&
+    'is_anonymous' in drop.author &&
+    drop.author.is_anonymous === true
+  ) {
+    return anonymousCompetitionAuthor(drop.author, drop.id);
+  }
+  return identity ?? null;
+}
 
 interface DropReactedNotificationAdditionalContextV2 {
   reaction: string;
@@ -319,13 +339,14 @@ export class NotificationsApiService {
     );
     const reactorProfileIds =
       this.getAllReactorProfileIds(reactionRowsByDropId);
-    const [drops, profiles, waves] = await Promise.all([
+    const [drops, profiles, waves, hiddenDropIds] = await Promise.all([
       this.dropsService.findDropsV2ByIds(dropIds, ctx),
       this.identityFetcher.getApiIdentityOverviewsByIds(
         collections.distinct([...profileIds, ...reactorProfileIds]),
         ctx
       ),
-      this.findRelatedWaveOverviews(waveIds, eligibleGroupIds, ctx)
+      this.findRelatedWaveOverviews(waveIds, eligibleGroupIds, ctx),
+      competitionAnonymityService.hiddenDropIds(dropIds, ctx)
     ]);
     return notifications
       .filter((notification) => this.hasAllRelatedDropsV2(notification, drops))
@@ -333,7 +354,11 @@ export class NotificationsApiService {
         this.mapToApiNotificationV2({
           notification,
           drops,
-          profiles,
+          profiles: anonymousNotificationProfiles(
+            notification,
+            profiles,
+            hiddenDropIds
+          ),
           waves,
           reactionRowsByDropId
         })
@@ -397,9 +422,12 @@ export class NotificationsApiService {
     authenticationContext: AuthenticationContext
   ): Promise<ApiNotification[]> {
     const { profileIds, dropIds } = this.getAllRelatedIds(notifications);
-    const [drops, profiles] = await Promise.all([
+    const [drops, profiles, hiddenDropIds] = await Promise.all([
       this.dropsService.findDropsByIds(dropIds, authenticationContext),
       this.identityFetcher.getOverviewsByIds(profileIds, {
+        authenticationContext
+      }),
+      competitionAnonymityService.hiddenDropIds(dropIds, {
         authenticationContext
       })
     ]);
@@ -408,7 +436,15 @@ export class NotificationsApiService {
         this.hasAllRelatedDropsV1({ notification, drops })
       )
       .map((notification) =>
-        this.mapToApiNotification({ notification, drops, profiles })
+        this.mapToApiNotification({
+          notification,
+          drops,
+          profiles: anonymousNotificationProfiles(
+            notification,
+            profiles,
+            hiddenDropIds
+          )
+        })
       );
   }
 
@@ -676,7 +712,10 @@ export class NotificationsApiService {
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: profiles[data.mentioner_identity_id],
+          related_identity: dropNotificationAuthor(
+            profiles[data.mentioner_identity_id],
+            drops[data.drop_id]
+          ),
           related_drops: [drops[data.drop_id]],
           additional_context: {}
         };
@@ -765,7 +804,10 @@ export class NotificationsApiService {
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: profiles[data.quote_drop_author_id],
+          related_identity: dropNotificationAuthor(
+            profiles[data.quote_drop_author_id],
+            drops[data.quote_drop_id]
+          ),
           related_drops: [
             drops[data.quote_drop_id],
             drops[data.quoted_drop_id]
@@ -785,7 +827,10 @@ export class NotificationsApiService {
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: profiles[data.reply_drop_author_id],
+          related_identity: dropNotificationAuthor(
+            profiles[data.reply_drop_author_id],
+            drops[data.reply_drop_id]
+          ),
           related_drops: [
             drops[data.replied_drop_id],
             drops[data.reply_drop_id]
@@ -818,7 +863,10 @@ export class NotificationsApiService {
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: profiles[data.additional_identity_id],
+          related_identity: dropNotificationAuthor(
+            profiles[data.additional_identity_id],
+            drops[data.drop_id]
+          ),
           related_drops: [drops[data.drop_id]],
           additional_context: {
             vote: data.vote
@@ -832,7 +880,10 @@ export class NotificationsApiService {
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: profiles[data.additional_identity_id],
+          related_identity: dropNotificationAuthor(
+            profiles[data.additional_identity_id],
+            drops[data.drop_id]
+          ),
           related_drops: [drops[data.drop_id]],
           additional_context: {}
         };
@@ -994,7 +1045,10 @@ export class NotificationsApiService {
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: profiles[data.mentioner_identity_id],
+          related_identity: dropNotificationAuthor(
+            profiles[data.mentioner_identity_id],
+            drops[data.drop_id]
+          ),
           related_drops: [drops[data.drop_id]],
           additional_context: {}
         };
@@ -1080,7 +1134,10 @@ export class NotificationsApiService {
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: profiles[data.quote_drop_author_id],
+          related_identity: dropNotificationAuthor(
+            profiles[data.quote_drop_author_id],
+            drops[data.quote_drop_id]
+          ),
           related_drops: [
             drops[data.quote_drop_id],
             drops[data.quoted_drop_id]
@@ -1100,7 +1157,10 @@ export class NotificationsApiService {
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: profiles[data.reply_drop_author_id],
+          related_identity: dropNotificationAuthor(
+            profiles[data.reply_drop_author_id],
+            drops[data.reply_drop_id]
+          ),
           related_drops: [
             drops[data.replied_drop_id],
             drops[data.reply_drop_id]
@@ -1133,7 +1193,10 @@ export class NotificationsApiService {
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: profiles[data.additional_identity_id],
+          related_identity: dropNotificationAuthor(
+            profiles[data.additional_identity_id],
+            drops[data.drop_id]
+          ),
           related_drops: [drops[data.drop_id]],
           additional_context: {
             vote: data.vote
@@ -1147,7 +1210,10 @@ export class NotificationsApiService {
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: profiles[data.additional_identity_id],
+          related_identity: dropNotificationAuthor(
+            profiles[data.additional_identity_id],
+            drops[data.drop_id]
+          ),
           related_drops: [drops[data.drop_id]],
           additional_context: {}
         };

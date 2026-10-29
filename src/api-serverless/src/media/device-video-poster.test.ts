@@ -13,6 +13,7 @@ import {
 } from './device-video-poster';
 import { UploadMediaService } from './upload-media.service';
 import { DropMediaUploadsDb } from '@/drops/drop-media-uploads.db';
+import { DropMediaUploadEntity } from '@/entities/IDropMediaUpload';
 import {
   getDeviceVideoPosterKey,
   MAX_DEVICE_POSTER_BYTES
@@ -317,8 +318,13 @@ describe('video upload completion ordering', () => {
     process.env.S3_BUCKET = oldBucket;
   });
   function service(send: jest.Mock): UploadMediaService {
+    let record: DropMediaUploadEntity | null = null;
     const db = {
-      findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue(null)
+      createUpload: jest.fn(async (upload: DropMediaUploadEntity) => {
+        record = upload;
+      }),
+      findByPublicKeyAndS3UploadId: jest.fn(async () => record),
+      updateUpload: jest.fn().mockResolvedValue(undefined)
     } as unknown as DropMediaUploadsDb;
     return new UploadMediaService(() => client(send), undefined, db);
   }
@@ -337,9 +343,7 @@ describe('video upload completion ordering', () => {
       file_name: 'My holiday.MP4'
     });
     expect(send.mock.calls[0][0]).toBeInstanceOf(CreateMultipartUploadCommand);
-    expect(started.key).toMatch(
-      /^drops\/author_owner\/[0-9a-f-]{36}\/My-holiday\.MP4$/
-    );
+    expect(started.key).toMatch(/^drops\/[0-9a-f-]{36}\/My-holiday\.MP4$/);
     send.mockClear();
     send.mockResolvedValue({ Key: started.key });
     await uploads.completeMultipartUpload({

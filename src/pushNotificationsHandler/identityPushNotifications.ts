@@ -1,4 +1,5 @@
 import { buildVotingCreditReturnPushNotification } from '@/pushNotificationsHandler/voting-credit-return-push-notification';
+import { publicCompetitionNotificationActor } from '@/pushNotificationsHandler/anonymous-competition-notification';
 import { buildMemeCollaborationPushNotification } from './meme-collaboration-push-notification';
 import { handleMissingNotifications } from './missing-notifications';
 import { buildCompetitionLifecyclePushNotification } from './competition-lifecycle-push-notification';
@@ -352,6 +353,7 @@ async function findMutedNotificationIds(
     notification_id: Number(notification.id),
     identity_id: notification.identity_id,
     additional_identity_id: notification.additional_identity_id,
+    cause: notification.cause,
     related_drop_id: notification.related_drop_id,
     related_drop_2_id: notification.related_drop_2_id
   }));
@@ -591,7 +593,10 @@ async function generateNotificationData(
   targetProfile: ApiIdentity,
   wavePresentationResolver: WavePresentationResolver
 ) {
-  const getAdditionalEntity = () => getAdditionalIdOrThrow(notification);
+  const getAdditionalEntity = async () => {
+    const identity = await getAdditionalIdOrThrow(notification);
+    return publicCompetitionNotificationActor(notification, identity);
+  };
 
   switch (notification.cause) {
     case IdentityNotificationCause.IDENTITY_SUBSCRIBED:

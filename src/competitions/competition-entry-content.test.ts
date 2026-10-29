@@ -14,6 +14,7 @@ import {
 } from '@/entities/ICompetition';
 import * as mainStageMedia from '@/drops/main-stage-media-validator';
 import { ConnectionWrapper } from '@/sql-executor';
+import { CLOUDFRONT_LINK } from '@/constants';
 
 const model: CreateOrUpdateDropModel = {
   drop_id: null,
@@ -38,6 +39,54 @@ const competition = {
 
 describe('Native entry content invariants', () => {
   afterEach(() => jest.restoreAllMocks());
+
+  it('requires reuploading legacy platform media whose path exposes the uploader for anonymous entries', () => {
+    const anonymous = {
+      ...competition,
+      participation: {
+        ...competition.participation,
+        anonymous_submissions: true
+      }
+    };
+    const withUrl = (url: string): CreateOrUpdateDropModel => ({
+      ...model,
+      parts: [{ ...model.parts[0], media: [{ url, mime_type: 'image/png' }] }]
+    });
+    expect(() =>
+      assertCompetitionEntryContent(
+        anonymous,
+        withUrl(`${CLOUDFRONT_LINK}/drops/author_author/old/photo.png`)
+      )
+    ).toThrow('Reupload this media');
+    expect(() =>
+      assertCompetitionEntryContent(
+        anonymous,
+        withUrl(
+          `${CLOUDFRONT_LINK}/renditions/drops/author_author/old/photo.png`
+        )
+      )
+    ).toThrow('Reupload this media');
+    expect(() =>
+      assertCompetitionEntryContent(
+        anonymous,
+        withUrl(
+          `${CLOUDFRONT_LINK}/drops/9b89ed71-e722-4e7a-90b4-b637e5420231/photo.png`
+        )
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertCompetitionEntryContent(
+        competition,
+        withUrl(`${CLOUDFRONT_LINK}/drops/author_author/old/photo.png`)
+      )
+    ).not.toThrow();
+    expect(() =>
+      assertCompetitionEntryContent(
+        anonymous,
+        withUrl('https://example.test/author_author/photo.png')
+      )
+    ).not.toThrow();
+  });
 
   it('applies Main Stage media validation only to explicitly assigned competition capabilities', async () => {
     const validate = jest

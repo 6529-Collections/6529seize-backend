@@ -1,3 +1,4 @@
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import { AuthenticationContext } from '@/auth-context';
 import {
   AttachmentEntity,
@@ -13,6 +14,15 @@ import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClass
 import { ApiSubmissionDropStatus } from '@/api/generated/models/ApiSubmissionDropStatus';
 import { ApiDropMapper } from './api-drop.mapper';
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+
+beforeEach(() => {
+  jest.spyOn(memeCollaborationsDb, 'acceptedByDrops').mockResolvedValue({});
+  jest.spyOn(memeCollaborationsDb, 'presentationByDrops').mockResolvedValue({});
+  jest
+    .spyOn(competitionAnonymityService, 'hiddenDropIds')
+    .mockResolvedValue(new Set());
+});
+afterEach(() => jest.restoreAllMocks());
 
 function makeDrop(overrides: Partial<DropEntity> = {}): DropEntity {
   return {
@@ -1054,5 +1064,52 @@ describe('ApiDropMapper', () => {
     expect(result['drop-1'].content).toBe(
       'content can be revealed by the viewer'
     );
+  });
+});
+
+describe('anonymous competition authors', () => {
+  beforeEach(() => {
+    jest.spyOn(memeCollaborationsDb, 'acceptedByDrops').mockResolvedValue({});
+    jest
+      .spyOn(memeCollaborationsDb, 'presentationByDrops')
+      .mockResolvedValue({});
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('conceals a dedicated entry and compact reply without changing submitted content', async () => {
+    const { mapper, deps } = createMapper();
+    jest
+      .spyOn(competitionAnonymityService, 'hiddenDropIds')
+      .mockResolvedValue(new Set(['drop-1', 'parent-1']));
+    deps.dropsDb.getReplyPreviewsByDropIds.mockResolvedValue({
+      'parent-1': {
+        id: 'parent-1',
+        serial_no: 9,
+        content: 'submitted content',
+        author_handle: 'private-handle',
+        author_pfp: 'private-avatar'
+      }
+    });
+    const result = await mapper.mapDrops(
+      [
+        makeDrop({
+          drop_type: DropType.COMPETITION,
+          reply_to_drop_id: 'parent-1'
+        })
+      ],
+      {}
+    );
+    expect(result['drop-1'].author).toMatchObject({
+      handle: 'Anonymous',
+      primary_address: '',
+      is_anonymous: true
+    });
+    expect(result['drop-1'].author.id).not.toBe('author-1');
+    expect(result['drop-1'].reply_to_drop).toMatchObject({
+      content: 'submitted content',
+      author: { handle: 'Anonymous', is_anonymous: true }
+    });
+    expect(JSON.stringify(result)).not.toContain('private-handle');
+    expect(JSON.stringify(result)).not.toContain('author-1-wallet');
   });
 });

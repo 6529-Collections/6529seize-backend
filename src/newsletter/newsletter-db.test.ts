@@ -252,6 +252,85 @@ describeWithSeed(
     }
   ],
   () => {
+    it('keeps unrevealed submission authors out of all newsletter source reads until that entry wins', async () => {
+      const row = nativeOriginalPrimaryFixture(waves[0]);
+      const serialized = Object.fromEntries(
+        Object.entries({
+          ...row,
+          type: 'RANK',
+          participation_config: {
+            ...row.participation_config,
+            anonymous_submissions: true
+          }
+        }).map(([key, value]) => [
+          key,
+          value !== null && typeof value === 'object'
+            ? JSON.stringify(value)
+            : value
+        ])
+      );
+      await sqlExecutor.bulkInsert(
+        COMPETITIONS_TABLE,
+        [serialized],
+        Object.keys(serialized)
+      );
+      const entry = {
+        id: 'anonymous-newsletter-entry',
+        competition_id: row.id,
+        wave_id: waves[0].id,
+        drop_id: 'drop-public',
+        submitter_id: 'author',
+        status: 'ACTIVE',
+        config_version: 1,
+        submitted_at: window.start
+      };
+      await sqlExecutor.bulkInsert(
+        COMPETITION_ENTRIES_TABLE,
+        [entry],
+        Object.keys(entry)
+      );
+      const recent = () =>
+        db.recentDrops(
+          'public',
+          window,
+          { createdAt: window.start, serialNo: 0 },
+          'publisher',
+          {}
+        );
+      expect((await recent()).map((drop) => drop.id)).not.toContain(
+        'drop-public'
+      );
+      expect(
+        await db.contextDrops(
+          ['drop-public'],
+          window.end,
+          'destination',
+          'publisher',
+          {}
+        )
+      ).toEqual([]);
+      expect(await db.parts(['drop-public'], {})).toEqual([]);
+      expect(await db.media(['drop-public'], {})).toEqual([]);
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WINNER', won_at=:wonAt where id=:id`,
+        { id: entry.id, wonAt: window.start + 1 }
+      );
+      expect(
+        (await recent()).find((drop) => drop.id === 'drop-public')
+      ).toMatchObject({ author_handle: 'Ayla', author_id: 'author' });
+      expect(
+        await db.contextDrops(
+          ['drop-public'],
+          window.end,
+          'destination',
+          'publisher',
+          {}
+        )
+      ).toHaveLength(1);
+      expect(await db.parts(['drop-public'], {})).toHaveLength(1);
+      expect(await db.media(['drop-public'], {})).toHaveLength(1);
+    });
+
     it('collects epoch timestamps through the Lambda TypeORM executor', async () => {
       const previousExecutor = sqlExecutor;
       try {

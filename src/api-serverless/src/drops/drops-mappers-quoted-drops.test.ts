@@ -1,3 +1,5 @@
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
@@ -118,6 +120,13 @@ function createMapper(viewerGroups: string[]) {
 
 describe('DropsMappers quoted drop visibility', () => {
   beforeEach(() => {
+    jest.spyOn(memeCollaborationsDb, 'acceptedByDrops').mockResolvedValue({});
+    jest
+      .spyOn(memeCollaborationsDb, 'presentationByDrops')
+      .mockResolvedValue({});
+    jest
+      .spyOn(competitionAnonymityService, 'hiddenDropIds')
+      .mockResolvedValue(new Set());
     jest
       .spyOn(profileWavesDb, 'findSelectedWaveIdsByWaveIds')
       .mockResolvedValue(new Set());
@@ -146,6 +155,34 @@ describe('DropsMappers quoted drop visibility', () => {
     });
     return { drops, wavesApiDb };
   }
+
+  it('conceals the author of an embedded anonymous entry while preserving its content', async () => {
+    jest
+      .spyOn(competitionAnonymityService, 'hiddenDropIds')
+      .mockResolvedValue(new Set(['anonymous-entry']));
+    const entry = aDropEntity('anonymous-entry', 'public-wave');
+    entry.drop_type = DropType.COMPETITION;
+    const data = relatedData(
+      [aDropEntity('root-1', 'public-wave'), entry],
+      [
+        aPart('root-1', 'discussion', 'anonymous-entry'),
+        aPart('anonymous-entry', 'I chose this public text')
+      ]
+    );
+    const { drops } = await mapRootDrops(
+      [],
+      AuthenticationContext.notAuthenticated(),
+      data
+    );
+    const quoted = drops[0].parts[0].quoted_drop?.drop;
+    expect(quoted?.author).toMatchObject({
+      handle: 'Anonymous',
+      is_anonymous: true,
+      primary_address: ''
+    });
+    expect(quoted?.author.id).not.toBe('anonymous-entry-author');
+    expect(quoted?.parts[0].content).toBe('I chose this public text');
+  });
 
   it('embeds quotes from readable waves and keeps only the reference otherwise', async () => {
     const entities = [

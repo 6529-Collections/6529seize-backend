@@ -44,6 +44,12 @@ import { AuthenticationContext } from '@/auth-context';
 import { NotFoundException, UnauthorisedException } from '@/exceptions';
 import { isExpectedClientError } from '@/operational-errors';
 import { typingFailureDetails } from './ws-typing-failure';
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
+import {
+  anonymizeDropBroadcast,
+  getEmbeddedDropIds
+} from '@/api/ws/ws-competition-anonymity';
+import { dropsDb } from '@/drops/drops.db';
 
 const scalarForLog = (value: unknown): string =>
   typeof value === 'string' ||
@@ -107,7 +113,8 @@ const logDropNotificationFailure = (
 
 function applyGlobalModerationForRecipient(
   inputDrop: ApiDrop,
-  profileId: string | null
+  profileId: string | null,
+  authorIdsByDropId: ReadonlyMap<string, string>
 ): ApiDrop {
   const recipientDrop = structuredClone(inputDrop);
   const apply = (
@@ -117,7 +124,8 @@ function applyGlobalModerationForRecipient(
     const status = drop.moderation?.status ?? ApiDropModerationStatus.Visible;
     const canView =
       status === ApiDropModerationStatus.Visible ||
-      (profileId !== null && drop.author.id === profileId);
+      (profileId !== null &&
+        (authorIdsByDropId.get(drop.id) ?? drop.author.id) === profileId);
     drop.moderation = { status, can_view: canView };
     const shouldRecurse = !visited.has(drop.id);
     const nextVisited = shouldRecurse ? new Set(visited).add(drop.id) : visited;
@@ -524,6 +532,8 @@ export class WsListenersNotifier {
         inputDrop,
         ctx
       );
+      const { hiddenDropIds, authorIdsByDropId } =
+        await this.getBroadcastAnonymity(audienceDrop, ctx);
 
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
@@ -532,7 +542,8 @@ export class WsListenersNotifier {
       const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
         {
           dropId: inputDrop.id,
-          authorProfileId: inputDrop.author.id,
+          authorProfileId:
+            authorIdsByDropId.get(inputDrop.id) ?? inputDrop.author.id,
           viewerProfileIds: onlineProfiles
             .map(({ profileId }) => profileId)
             .filter((profileId): profileId is string => profileId !== null)
@@ -543,7 +554,8 @@ export class WsListenersNotifier {
         onlineProfiles.map(({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
             audienceDrop,
-            profileId
+            profileId,
+            authorIdsByDropId
           );
           recipientDrop.viewer_context =
             profileId === null
@@ -555,7 +567,7 @@ export class WsListenersNotifier {
           return this.appWebSockets.send({
             connectionId,
             message: serializeDropUpdateForRecipient(
-              recipientDrop,
+              anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
               profileId === null ? 0 : (creditLefts[profileId] ?? 0),
               reason
             )
@@ -584,6 +596,8 @@ export class WsListenersNotifier {
           ctx
         );
       const audienceDrop = await this.restrictQuotesToWaveAudience(drop, ctx);
+      const { hiddenDropIds, authorIdsByDropId } =
+        await this.getBroadcastAnonymity(audienceDrop, ctx);
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
         drop
@@ -591,7 +605,7 @@ export class WsListenersNotifier {
       const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
         {
           dropId: drop.id,
-          authorProfileId: drop.author.id,
+          authorProfileId: authorIdsByDropId.get(drop.id) ?? drop.author.id,
           viewerProfileIds: onlineProfiles
             .map(({ profileId }) => profileId)
             .filter((profileId): profileId is string => profileId !== null)
@@ -602,7 +616,8 @@ export class WsListenersNotifier {
         onlineProfiles.map(({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
             audienceDrop,
-            profileId
+            profileId,
+            authorIdsByDropId
           );
           recipientDrop.viewer_context =
             profileId === null
@@ -614,7 +629,7 @@ export class WsListenersNotifier {
           return this.appWebSockets.send({
             connectionId,
             message: serializeDropRatingUpdateForRecipient(
-              recipientDrop,
+              anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
               profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
           });
@@ -642,6 +657,8 @@ export class WsListenersNotifier {
           ctx
         );
       const audienceDrop = await this.restrictQuotesToWaveAudience(drop, ctx);
+      const { hiddenDropIds, authorIdsByDropId } =
+        await this.getBroadcastAnonymity(audienceDrop, ctx);
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
         drop
@@ -649,7 +666,7 @@ export class WsListenersNotifier {
       const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
         {
           dropId: drop.id,
-          authorProfileId: drop.author.id,
+          authorProfileId: authorIdsByDropId.get(drop.id) ?? drop.author.id,
           viewerProfileIds: onlineProfiles
             .map(({ profileId }) => profileId)
             .filter((profileId): profileId is string => profileId !== null)
@@ -660,7 +677,8 @@ export class WsListenersNotifier {
         onlineProfiles.map(({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
             audienceDrop,
-            profileId
+            profileId,
+            authorIdsByDropId
           );
           recipientDrop.viewer_context =
             profileId === null
@@ -672,7 +690,7 @@ export class WsListenersNotifier {
           return this.appWebSockets.send({
             connectionId,
             message: serializeDropReactionUpdateForRecipient(
-              recipientDrop,
+              anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
               profileId === null ? 0 : (creditLefts[profileId] ?? 0)
             )
           });
@@ -789,6 +807,25 @@ export class WsListenersNotifier {
       }
       throw error;
     }
+  }
+
+  private async getBroadcastAnonymity(drop: ApiDrop, ctx: RequestContext) {
+    const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+      getEmbeddedDropIds(drop),
+      ctx,
+      { includeOwner: true }
+    );
+    // API mappers may already have hidden an author's public projection. Keep
+    // real ownership in a separate map used only for moderation decisions.
+    const hiddenDrops = hiddenDropIds.size
+      ? await dropsDb.getDropsByIds(Array.from(hiddenDropIds), ctx.connection)
+      : [];
+    return {
+      hiddenDropIds,
+      authorIdsByDropId: new Map(
+        hiddenDrops.map((entity) => [entity.id, entity.author_id])
+      )
+    };
   }
 
   private async restrictQuotesToWaveAudience(
