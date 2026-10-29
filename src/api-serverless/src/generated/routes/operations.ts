@@ -3859,6 +3859,7 @@ export interface GetWaveUndiscoveredDropsPathParams {
 
 export interface GetWaveUndiscoveredDropsQuery {
   "limit"?: number;
+  "skip"?: number;
 }
 
 export type GetWaveUndiscoveredDropsResponse = ApiUndiscoveredDrops;

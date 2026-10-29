@@ -35,7 +35,7 @@ describe('quick vote window handler', () => {
   it('defaults to four previews for the acting identity', async () => {
     await handleGetWaveUndiscoveredDrops(request());
     expect(waveQuickVoteApiService.findUndiscoveredDrops).toHaveBeenCalledWith(
-      { waveId: 'wave', identityId: 'viewer', limit: 4 },
+      { waveId: 'wave', identityId: 'viewer', limit: 4, skip: 0 },
       expect.anything()
     );
   });
@@ -45,6 +45,26 @@ describe('quick vote window handler', () => {
     async (limit) => {
       await expect(
         handleGetWaveUndiscoveredDrops(request({ limit }))
+      ).rejects.toThrow();
+      expect(
+        waveQuickVoteApiService.findUndiscoveredDrops
+      ).not.toHaveBeenCalled();
+    }
+  );
+
+  it('supports a bounded offset for progressive lookahead', async () => {
+    await handleGetWaveUndiscoveredDrops(request({ skip: '1', limit: '3' }));
+    expect(waveQuickVoteApiService.findUndiscoveredDrops).toHaveBeenCalledWith(
+      { waveId: 'wave', identityId: 'viewer', limit: 3, skip: 1 },
+      expect.anything()
+    );
+  });
+
+  it.each(['-1', '4', '1.5', 'bad'])(
+    'rejects invalid batch offset %s',
+    async (skip) => {
+      await expect(
+        handleGetWaveUndiscoveredDrops(request({ skip }))
       ).rejects.toThrow();
       expect(
         waveQuickVoteApiService.findUndiscoveredDrops
@@ -88,7 +108,7 @@ describe('quick vote window handler', () => {
       expect(
         waveQuickVoteApiService.findUndiscoveredDrops
       ).toHaveBeenCalledWith(
-        { waveId: 'wave', identityId: 'viewer', limit: 1 },
+        { waveId: 'wave', identityId: 'viewer', limit: 1, skip: 0 },
         expect.anything()
       );
     } else {

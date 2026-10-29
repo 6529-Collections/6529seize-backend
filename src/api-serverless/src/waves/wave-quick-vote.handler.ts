@@ -10,10 +10,11 @@ import { Timer } from '@/time';
 export async function handleGetWaveUndiscoveredDrops(
   req: GetWaveUndiscoveredDropsRequest
 ): Promise<ApiUndiscoveredDrops> {
-  const { limit } = getValidatedByJoiOrThrow(
+  const { limit, skip } = getValidatedByJoiOrThrow(
     req.query,
-    Joi.object<{ limit: number }>({
-      limit: Joi.number().integer().min(1).max(4).default(4)
+    Joi.object<{ limit: number; skip: number }>({
+      limit: Joi.number().integer().min(1).max(4).default(4),
+      skip: Joi.number().integer().min(0).max(3).default(0)
     }).unknown(false)
   );
   const timer = Timer.getFromRequest(req);
@@ -22,7 +23,8 @@ export async function handleGetWaveUndiscoveredDrops(
     {
       waveId: req.params.id,
       identityId: getQuickVoteIdentity(authenticationContext),
-      limit
+      limit,
+      skip
     },
     { authenticationContext, timer }
   );
