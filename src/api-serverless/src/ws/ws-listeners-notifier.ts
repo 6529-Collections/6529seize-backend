@@ -46,6 +46,12 @@ import { NotFoundException, UnauthorisedException } from '@/exceptions';
 import { isExpectedClientError } from '@/operational-errors';
 import { typingFailureDetails } from './ws-typing-failure';
 import { forEachWebSocketRecipient } from '@/api/ws/ws-send-scheduler';
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
+import {
+  anonymizeDropBroadcast,
+  getEmbeddedDropIds
+} from '@/api/ws/ws-competition-anonymity';
+import { dropsDb } from '@/drops/drops.db';
 
 const scalarForLog = (value: unknown): string =>
   typeof value === 'string' ||
@@ -109,7 +115,8 @@ const logDropNotificationFailure = (
 
 function applyGlobalModerationForRecipient(
   inputDrop: ApiDrop,
-  profileId: string | null
+  profileId: string | null,
+  authorIdsByDropId: ReadonlyMap<string, string>
 ): ApiDrop {
   const recipientDrop = structuredClone(inputDrop);
   const apply = (
@@ -119,7 +126,8 @@ function applyGlobalModerationForRecipient(
     const status = drop.moderation?.status ?? ApiDropModerationStatus.Visible;
     const canView =
       status === ApiDropModerationStatus.Visible ||
-      (profileId !== null && drop.author.id === profileId);
+      (profileId !== null &&
+        (authorIdsByDropId.get(drop.id) ?? drop.author.id) === profileId);
     drop.moderation = { status, can_view: canView };
     const shouldRecurse = !visited.has(drop.id);
     const nextVisited = shouldRecurse ? new Set(visited).add(drop.id) : visited;
@@ -553,14 +561,52 @@ export class WsListenersNotifier {
   async notifyAboutDropUpdate(
     inputDrop: ApiDrop,
     ctx: RequestContext,
+    options: { reason?: string; useSystemBroadcastAudience?: boolean } = {}
+  ): Promise<void> {
+    await this.notifyDropMessage(
+      inputDrop,
+      ctx,
+      WsMessageType.DROP_UPDATE,
+      options
+    );
+  }
+
+  async notifyAboutDropRatingUpdate(
+    drop: ApiDrop,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.notifyDropMessage(drop, ctx, WsMessageType.DROP_RATING_UPDATE);
+  }
+
+  async notifyAboutDropReactionUpdate(
+    drop: ApiDrop,
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.notifyDropMessage(drop, ctx, WsMessageType.DROP_REACTION_UPDATE);
+  }
+
+  private async notifyDropMessage(
+    inputDrop: ApiDrop,
+    ctx: RequestContext,
+    updateType: DropMessageType,
     {
       reason,
       useSystemBroadcastAudience = false
-    }: { reason?: string; useSystemBroadcastAudience?: boolean } = {}
+    }: {
+      reason?: string;
+      useSystemBroadcastAudience?: boolean;
+    } = {}
   ): Promise<void> {
     if (this.usesOutbox) await this.wakeOutbox!();
 
-    ctx.timer?.start(`${this.constructor.name}->notifyAboutDrop`);
+    const timerName = `${this.constructor.name}->${
+      {
+        [WsMessageType.DROP_UPDATE]: 'notifyAboutDrop',
+        [WsMessageType.DROP_RATING_UPDATE]: 'notifyAboutDropRatingUpdate',
+        [WsMessageType.DROP_REACTION_UPDATE]: 'notifyAboutDropReactionUpdate'
+      }[updateType]
+    }`;
+    ctx.timer?.start(timerName);
     try {
       const onlineProfiles = await this.legacyRecipients(
         useSystemBroadcastAudience
@@ -585,7 +631,8 @@ export class WsListenersNotifier {
         inputDrop,
         ctx
       );
-
+      const { hiddenDropIds, authorIdsByDropId } =
+        await this.getBroadcastAnonymity(audienceDrop, ctx);
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
         inputDrop
@@ -593,7 +640,8 @@ export class WsListenersNotifier {
       const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
         {
           dropId: inputDrop.id,
-          authorProfileId: inputDrop.author.id,
+          authorProfileId:
+            authorIdsByDropId.get(inputDrop.id) ?? inputDrop.author.id,
           viewerProfileIds: onlineProfiles
             .map(({ profileId }) => profileId)
             .filter((profileId): profileId is string => profileId !== null)
@@ -605,7 +653,8 @@ export class WsListenersNotifier {
         ({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
             audienceDrop,
-            profileId
+            profileId,
+            authorIdsByDropId
           );
           recipientDrop.viewer_context =
             profileId === null
@@ -616,148 +665,19 @@ export class WsListenersNotifier {
                 });
           return this.sendLegacyNotification({
             connectionId,
-            message: serializeDropUpdateForRecipient(
-              recipientDrop,
+            message: serializeDropMessageForRecipient(
+              anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
               profileId === null ? 0 : (creditLefts[profileId] ?? 0),
+              updateType,
               reason
             )
           });
         }
       );
     } catch (e) {
-      logDropNotificationFailure(this.logger, 'DROP_UPDATE', inputDrop, e);
+      logDropNotificationFailure(this.logger, updateType, inputDrop, e);
     } finally {
-      ctx.timer?.stop(`${this.constructor.name}->notifyAboutDrop`);
-    }
-  }
-
-  async notifyAboutDropRatingUpdate(
-    drop: ApiDrop,
-    ctx: RequestContext
-  ): Promise<void> {
-    if (this.usesOutbox) await this.wakeOutbox!();
-
-    ctx.timer?.start(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
-    try {
-      const onlineProfiles = await this.legacyRecipients(
-        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
-          {
-            groupId: drop.wave.visibility_group_id,
-            waveId: drop.wave.id
-          },
-          ctx
-        ),
-        ctx
-      );
-      if (!onlineProfiles.length) return;
-      const audienceDrop = await this.restrictQuotesToWaveAudience(drop, ctx);
-      const creditLefts = await this.getCreditLeftsForOnlineProfiles(
-        onlineProfiles,
-        drop
-      );
-      const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
-        {
-          dropId: drop.id,
-          authorProfileId: drop.author.id,
-          viewerProfileIds: onlineProfiles
-            .map(({ profileId }) => profileId)
-            .filter((profileId): profileId is string => profileId !== null)
-        },
-        ctx.connection
-      );
-      await forEachWebSocketRecipient(
-        onlineProfiles,
-        ({ connectionId, profileId }) => {
-          const recipientDrop = applyGlobalModerationForRecipient(
-            audienceDrop,
-            profileId
-          );
-          recipientDrop.viewer_context =
-            profileId === null
-              ? { author_blocked: false, drop_hidden: false }
-              : (viewerContexts[profileId] ?? {
-                  author_blocked: false,
-                  drop_hidden: false
-                });
-          return this.sendLegacyNotification({
-            connectionId,
-            message: serializeDropRatingUpdateForRecipient(
-              recipientDrop,
-              profileId === null ? 0 : (creditLefts[profileId] ?? 0)
-            )
-          });
-        }
-      );
-    } catch (e) {
-      logDropNotificationFailure(this.logger, 'DROP_RATING_UPDATE', drop, e);
-    } finally {
-      ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
-    }
-  }
-
-  async notifyAboutDropReactionUpdate(
-    drop: ApiDrop,
-    ctx: RequestContext
-  ): Promise<void> {
-    if (this.usesOutbox) await this.wakeOutbox!();
-
-    ctx.timer?.start(`${this.constructor.name}->notifyAboutDropReactionUpdate`);
-    try {
-      const onlineProfiles = await this.legacyRecipients(
-        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
-          {
-            groupId: drop.wave.visibility_group_id,
-            waveId: drop.wave.id
-          },
-          ctx
-        ),
-        ctx
-      );
-      if (!onlineProfiles.length) return;
-      const audienceDrop = await this.restrictQuotesToWaveAudience(drop, ctx);
-      const creditLefts = await this.getCreditLeftsForOnlineProfiles(
-        onlineProfiles,
-        drop
-      );
-      const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
-        {
-          dropId: drop.id,
-          authorProfileId: drop.author.id,
-          viewerProfileIds: onlineProfiles
-            .map(({ profileId }) => profileId)
-            .filter((profileId): profileId is string => profileId !== null)
-        },
-        ctx.connection
-      );
-      await forEachWebSocketRecipient(
-        onlineProfiles,
-        ({ connectionId, profileId }) => {
-          const recipientDrop = applyGlobalModerationForRecipient(
-            audienceDrop,
-            profileId
-          );
-          recipientDrop.viewer_context =
-            profileId === null
-              ? { author_blocked: false, drop_hidden: false }
-              : (viewerContexts[profileId] ?? {
-                  author_blocked: false,
-                  drop_hidden: false
-                });
-          return this.sendLegacyNotification({
-            connectionId,
-            message: serializeDropReactionUpdateForRecipient(
-              recipientDrop,
-              profileId === null ? 0 : (creditLefts[profileId] ?? 0)
-            )
-          });
-        }
-      );
-    } catch (e) {
-      logDropNotificationFailure(this.logger, 'DROP_REACTION_UPDATE', drop, e);
-    } finally {
-      ctx.timer?.stop(
-        `${this.constructor.name}->notifyAboutDropReactionUpdate`
-      );
+      ctx.timer?.stop(timerName);
     }
   }
 
@@ -865,6 +785,25 @@ export class WsListenersNotifier {
       }
       throw error;
     }
+  }
+
+  private async getBroadcastAnonymity(drop: ApiDrop, ctx: RequestContext) {
+    const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+      getEmbeddedDropIds(drop),
+      ctx,
+      { includeOwner: true }
+    );
+    // API mappers may already have hidden an author's public projection. Keep
+    // real ownership in a separate map used only for moderation decisions.
+    const hiddenDrops = hiddenDropIds.size
+      ? await dropsDb.getDropsByIds(Array.from(hiddenDropIds), ctx.connection)
+      : [];
+    return {
+      hiddenDropIds,
+      authorIdsByDropId: new Map(
+        hiddenDrops.map((entity) => [entity.id, entity.author_id])
+      )
+    };
   }
 
   private async restrictQuotesToWaveAudience(

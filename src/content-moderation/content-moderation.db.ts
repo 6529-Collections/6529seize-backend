@@ -9,6 +9,8 @@ import {
   CONTENT_MODERATION_PROFILE_STATES_TABLE,
   CONTENT_MODERATION_REPORTS_TABLE,
   CONTENT_MODERATION_ROLES_TABLE,
+  COMPETITIONS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   DROP_ATTACHMENTS_TABLE,
@@ -37,6 +39,13 @@ import { randomUUID } from 'node:crypto';
 import { env } from '@/env';
 import { ActivityEventTargetType } from '@/entities/IActivityEvent';
 import type { ApiContentModerationBlockActivityItemActionEnum } from '@/api/generated/models/ApiContentModerationBlockActivityItem';
+import { anonymousCompetitionEntrySql } from '@/competitions/competition-anonymity';
+import { DbPoolName } from '@/db-query.options';
+import {
+  anonymousNotificationActorDropId,
+  findAnonymousNotificationActorPairs,
+  NotificationActorWriteOptions
+} from '@/notifications/anonymous-notification-actor';
 
 const REPORT_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const DEFAULT_REPORTS_PER_HOUR = 100;
@@ -602,6 +611,12 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     ]);
     const states = new Map(stateRows.map((row) => [row.drop_id, row.status]));
     const blocked = new Set(blockedRows.map((row) => row.blocked_profile_id));
+    const anonymousDropIds = await this.findUnrevealedAnonymousDropIds(
+      drops
+        .filter((drop) => blocked.has(drop.author_id))
+        .map((drop) => drop.id),
+      connection
+    );
     const hidden = new Set(hiddenRows.map((row) => row.drop_id));
     const latestReportStatuses = reportRows.reduce<
       Map<string, ContentReportStatus>
@@ -617,7 +632,8 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         const reportStatus = latestReportStatuses.get(drop.id);
         acc[drop.id] = {
           viewer: {
-            author_blocked: blocked.has(drop.author_id),
+            author_blocked:
+              blocked.has(drop.author_id) && !anonymousDropIds.has(drop.id),
             drop_hidden: hidden.has(drop.id),
             ...(reportStatus !== undefined &&
             reportStatus !== ContentReportStatus.WITHDRAWN
@@ -641,8 +657,14 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     T extends {
       readonly identity_id: string;
       readonly additional_identity_id: string | null;
+      readonly cause?: string;
+      readonly related_drop_id?: string | null;
     }
-  >(notifications: T[], connection?: ConnectionWrapper<any>): Promise<T[]> {
+  >(
+    notifications: T[],
+    connection?: ConnectionWrapper<any>,
+    options: NotificationActorWriteOptions = {}
+  ): Promise<T[]> {
     const blockerIds = Array.from(
       new Set(notifications.map((row) => row.identity_id))
     );
@@ -672,11 +694,26 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     const blockedPairs = new Set(
       rows.map((row) => `${row.blocker_profile_id}:${row.blocked_profile_id}`)
     );
+    const anonymousActorPairs = await findAnonymousNotificationActorPairs(
+      notifications.filter(
+        (notification) =>
+          notification.additional_identity_id !== null &&
+          blockedPairs.has(
+            `${notification.identity_id}:${notification.additional_identity_id}`
+          )
+      ),
+      this.db,
+      connection,
+      options
+    );
     return notifications.filter((notification) => {
       const actorId = notification.additional_identity_id;
+      const anonymousDropId = anonymousNotificationActorDropId(notification);
       return (
         actorId === null ||
-        !blockedPairs.has(`${notification.identity_id}:${actorId}`)
+        !blockedPairs.has(`${notification.identity_id}:${actorId}`) ||
+        (anonymousDropId !== null &&
+          anonymousActorPairs.has(`${anonymousDropId}:${actorId}`))
       );
     });
   }
@@ -717,16 +754,38 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     ]);
     const blockers = new Set(blockRows.map((row) => row.blocker_profile_id));
     const hiders = new Set(hiddenRows.map((row) => row.profile_id));
+    const anonymousDropIds = await this.findUnrevealedAnonymousDropIds(
+      blockers.size ? [input.dropId] : [],
+      connection
+    );
     return viewerProfileIds.reduce<Record<string, DropViewerModerationContext>>(
       (acc, profileId) => {
         acc[profileId] = {
-          author_blocked: blockers.has(profileId),
+          author_blocked:
+            blockers.has(profileId) && !anonymousDropIds.has(input.dropId),
           drop_hidden: hiders.has(profileId)
         };
         return acc;
       },
       {}
     );
+  }
+
+  /** Account blocks must not become an oracle for an unrevealed entry owner. */
+  private async findUnrevealedAnonymousDropIds(
+    dropIds: string[],
+    connection?: ConnectionWrapper<unknown>
+  ): Promise<Set<string>> {
+    if (!dropIds.length) return new Set();
+    const rows = await this.db.execute<{ drop_id: string }>(
+      `select distinct entry.drop_id from ${COMPETITION_ENTRIES_TABLE} entry
+       join ${COMPETITIONS_TABLE} competition on competition.id = entry.competition_id
+       where entry.drop_id in (:dropIds)
+         and ${anonymousCompetitionEntrySql('entry', 'competition')}`,
+      { dropIds },
+      { wrappedConnection: connection, forcePool: DbPoolName.WRITE }
+    );
+    return new Set(rows.map((row) => row.drop_id));
   }
 
   async filterUnavailableDropNotificationRows<

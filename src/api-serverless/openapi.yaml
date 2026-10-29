@@ -28154,6 +28154,13 @@ components:
         - ends_at
         - terms
       properties:
+        anonymous_submissions:
+          type: boolean
+          default: false
+          description: >-
+            Competition creation option. Conceal each submission author from
+            other users until that entry wins. Fixed when published; defaults to
+            false.
         group_id:
           type: string
           nullable: true
@@ -29845,6 +29852,13 @@ components:
         - required_media
         - terms
       properties:
+        anonymous_submissions:
+          type: boolean
+          default: false
+          description: >-
+            Competition creation option. Conceal each submission author from
+            other users until that entry wins. Fixed when published; defaults to
+            false.
         scope:
           $ref: "#/components/schemas/ApiCreateNewWaveScope"
         no_of_applications_allowed_per_participant:
@@ -33340,6 +33354,11 @@ components:
         - profile_wave_id
         - is_wave_creator
       properties:
+        is_anonymous:
+          type: boolean
+          description: >-
+            True for an anonymous competition author. Identity details and
+            profile links are unavailable.
         id:
           type: string
           nullable: true
@@ -33460,6 +33479,11 @@ components:
         - classification
         - badges
       properties:
+        is_anonymous:
+          type: boolean
+          description: >-
+            True for an anonymous competition author. Identity details and
+            profile links are unavailable.
         id:
           type: string
         handle:
@@ -37280,6 +37304,11 @@ components:
       required:
         - id
       properties:
+        is_anonymous:
+          type: boolean
+          description: >-
+            True for an anonymous competition author. Identity details and
+            profile links are unavailable.
         id:
           type: string
         handle:
@@ -38725,6 +38754,11 @@ components:
         - profile_wave_id
         - is_wave_creator
       properties:
+        is_anonymous:
+          type: boolean
+          description: >-
+            True for an anonymous competition author. Identity details and
+            profile links are unavailable.
         id:
           type: string
           format: uuid
@@ -39505,6 +39539,11 @@ components:
       required:
         - handle
       properties:
+        is_anonymous:
+          type: boolean
+          description: >-
+            True for an anonymous competition author. Identity details and
+            profile links are unavailable.
         handle:
           type: string
         pfp:

@@ -1,4 +1,7 @@
-jest.mock('@/sql-executor', () => ({ dbSupplier: () => mockDb }));
+jest.mock('@/sql-executor', () => ({
+  ...jest.requireActual('@/sql-executor'),
+  dbSupplier: () => mockDb
+}));
 jest.mock('@/api/ws/ws-connection.repository', () => ({
   wsConnectionRepository: {
     findWaveVisibilityGroupId: jest.fn(),
@@ -30,9 +33,20 @@ jest.mock('@/api/waves/waves.api.db', () => ({
 import { resolveWebSocketEvent } from './resolve';
 import { wsConnectionRepository as connections } from '@/api/ws/ws-connection.repository';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
+import { AuthenticationContext } from '@/auth-context';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
 const mockDb = { oneOrNull: jest.fn(), execute: jest.fn() };
 const ctx = { connection: { connection: {} } };
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  jest
+    .spyOn(competitionAnonymityService, 'hiddenDropIds')
+    .mockResolvedValue(new Set());
+});
+afterEach(() => jest.restoreAllMocks());
 
 function setDropAudience() {
   jest.mocked(connections.findWaveVisibilityGroupId).mockResolvedValue(null);
@@ -42,6 +56,101 @@ function setDropAudience() {
     )
     .mockResolvedValue([{ connectionId: 'c', profileId: 'p', wave_id: 'w' }]);
 }
+
+it.each([
+  { state: 'unrevealed', hidden: true },
+  { state: 'winner', hidden: false },
+  { state: 'ordinary', hidden: false }
+])(
+  'uses public attribution for $state entry references even with owner context',
+  async ({ hidden }) => {
+    setDropAudience();
+    mockDb.oneOrNull.mockResolvedValue({
+      id: 'd',
+      wave_id: 'w',
+      author_id: 'a',
+      serial_no: '9'
+    });
+    jest
+      .mocked(competitionAnonymityService.hiddenDropIds)
+      .mockResolvedValue(new Set(hidden ? ['d'] : []));
+    const ownerCtx = {
+      ...ctx,
+      authenticationContext: AuthenticationContext.fromProfileId('a')
+    };
+    for (const updateType of [
+      'DROP_UPDATE',
+      'DROP_RATING_UPDATE',
+      'DROP_REACTION_UPDATE'
+    ] as const) {
+      const [job] = await resolveWebSocketEvent(
+        { type: 'drop', dropId: 'd', updateType, reason: 'MEDIA_STATUS' },
+        ownerCtx
+      );
+      if (job.type !== 'delivery') throw new Error('Expected recipient job');
+      expect(JSON.parse(job.message)).toEqual({
+        type: 'DROP_UPDATE_REF',
+        data: {
+          drop_id: 'd',
+          wave_id: 'w',
+          author_id: hidden
+            ? anonymousCompetitionAuthor({ id: 'a' }, 'd').id
+            : 'a',
+          serial_no: 9,
+          update_type: updateType,
+          reason: 'MEDIA_STATUS'
+        }
+      });
+    }
+    expect(competitionAnonymityService.hiddenDropIds).toHaveBeenCalledTimes(3);
+    expect(competitionAnonymityService.hiddenDropIds).toHaveBeenCalledWith(
+      ['d'],
+      ownerCtx,
+      { includeOwner: true }
+    );
+  }
+);
+
+it('does not query anonymity when the wave has no recipients', async () => {
+  setDropAudience();
+  jest
+    .mocked(
+      connections.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast
+    )
+    .mockResolvedValue([]);
+  mockDb.oneOrNull.mockResolvedValue({
+    id: 'd',
+    wave_id: 'w',
+    author_id: 'a',
+    serial_no: 9
+  });
+  await expect(
+    resolveWebSocketEvent(
+      { type: 'drop', dropId: 'd', updateType: 'DROP_UPDATE' },
+      ctx
+    )
+  ).resolves.toEqual([]);
+  expect(competitionAnonymityService.hiddenDropIds).not.toHaveBeenCalled();
+});
+
+it('rejects materialization when anonymity cannot be resolved', async () => {
+  setDropAudience();
+  mockDb.oneOrNull.mockResolvedValue({
+    id: 'd',
+    wave_id: 'w',
+    author_id: 'a',
+    serial_no: 9
+  });
+  jest
+    .mocked(competitionAnonymityService.hiddenDropIds)
+    .mockRejectedValue(new Error('policy unavailable'));
+  await expect(
+    resolveWebSocketEvent(
+      { type: 'drop', dropId: 'd', updateType: 'DROP_UPDATE' },
+      ctx
+    )
+  ).rejects.toThrow('policy unavailable');
+});
 
 it.each(['DROP_UPDATE', 'DROP_RATING_UPDATE', 'DROP_REACTION_UPDATE'] as const)(
   'serializes TypeORM BIGINT strings as numeric cursors for %s',

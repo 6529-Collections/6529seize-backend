@@ -142,7 +142,8 @@ describe('IdentityNotificationsDb', () => {
 
     expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
       [row],
-      connection
+      connection,
+      { allowPendingCompetitionEntry: true }
     );
     expect(db.execute).not.toHaveBeenCalled();
     expect(sendIdentityPushNotification).not.toHaveBeenCalled();
@@ -163,7 +164,8 @@ describe('IdentityNotificationsDb', () => {
 
       expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
         [row],
-        connection
+        connection,
+        { allowPendingCompetitionEntry: true }
       );
       expect(db.execute).not.toHaveBeenCalled();
       expect(sendIdentityPushNotification).not.toHaveBeenCalled();
@@ -378,7 +380,8 @@ describe('IdentityNotificationsDb', () => {
 
     expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
       [row],
-      connection
+      connection,
+      { allowPendingCompetitionEntry: true }
     );
     expect(db.execute).toHaveBeenCalledWith(
       expect.stringContaining('insert into identity_notifications'),
@@ -548,7 +551,11 @@ describe('IdentityNotificationsDb', () => {
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain('OR n.visibility_group_id IN (:eligible_group_ids)');
     expect(sql).toContain('AND COALESCE(r.muted, FALSE) = FALSE');
-    expect(sql).toContain('AND m.id IS NULL');
+    expect(sql).toContain('AND (m.id IS NULL OR (n.cause in');
+    expect(sql).toContain(
+      'anonymous_notification_entry.submitter_id = n.additional_identity_id'
+    );
+    expect(sql).toContain('anonymous_notification_entry.won_at is null');
     expect(params).toEqual(
       expect.objectContaining({
         identity_id: 'phoebeumzz',

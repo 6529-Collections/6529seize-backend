@@ -19,6 +19,10 @@ import { mapNftLinkEntityToApiLink } from '@/nft-links/nft-link-api.mapper';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { DbPoolName } from '@/db-query.options';
 import { WebSocketOutboxEvent } from './events';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
 
 type Delivery = Extract<WebSocketOutboxEvent, { type: 'delivery' }>;
 type RawDrop = Pick<DropEntity, 'id' | 'wave_id' | 'author_id'> & {
@@ -64,12 +68,21 @@ async function resolveEvent(
       if (!drop) return [];
       const serialNo = dropSerialNumber(drop.serial_no);
       const recipients = await waveRecipients(drop.wave_id, ctx);
+      if (!recipients.length) return [];
+      const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+        [drop.id],
+        ctx,
+        { includeOwner: true }
+      );
+      const authorId = hiddenDropIds.has(drop.id)
+        ? anonymousCompetitionAuthor({ id: drop.author_id }, drop.id).id
+        : drop.author_id;
       return deliveries(
         recipients,
         dropUpdateRefMessage({
           drop_id: drop.id,
           wave_id: drop.wave_id,
-          author_id: drop.author_id,
+          author_id: authorId,
           serial_no: serialNo,
           update_type: event.updateType as DropUpdateRefType,
           reason: event.reason

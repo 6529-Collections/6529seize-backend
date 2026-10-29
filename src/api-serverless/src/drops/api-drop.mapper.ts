@@ -1,4 +1,8 @@
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
 import { collaborationMetadataValues } from '@/meme-collaborations/meme-collaboration-credit';
 import {
   ActivityEventAction,
@@ -176,6 +180,15 @@ export class ApiDropMapper {
         entities
           .map((drop) => drop.reply_to_drop_id)
           .filter((id): id is string => !!id)
+      );
+      const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+        [
+          ...entities
+            .filter((drop) => drop.drop_type === DropType.COMPETITION)
+            .map((drop) => drop.id),
+          ...replyDropIds
+        ],
+        ctx
       );
       const submissionEntities = entities.filter(
         (drop) =>
@@ -428,9 +441,26 @@ export class ApiDropMapper {
                 )
               : undefined
           });
-          acc[drop.id].collaborators = collaboratorsByDropId[drop.id] ?? [];
+          const anonymous = hiddenDropIds.has(drop.id);
+          if (anonymous) {
+            acc[drop.id].author = anonymousCompetitionAuthor(
+              acc[drop.id].author,
+              drop.id
+            );
+          }
+          const reply = acc[drop.id].reply_to_drop;
+          if (reply && hiddenDropIds.has(reply.id) && reply.author) {
+            reply.author = { handle: 'Anonymous', is_anonymous: true };
+          }
+          acc[drop.id].collaborators = anonymous
+            ? []
+            : (collaboratorsByDropId[drop.id] ?? []);
           const presentation = collaborationPresentation[drop.id];
-          if (presentation && acc[drop.id].moderation?.can_view !== false) {
+          if (
+            !anonymous &&
+            presentation &&
+            acc[drop.id].moderation?.can_view !== false
+          ) {
             acc[drop.id].submission_artist = presentation.submission_artist;
             const creditValues = collaborationMetadataValues(
               presentation.credit
