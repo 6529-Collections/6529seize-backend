@@ -399,6 +399,35 @@ describeWithSeed(
       );
       expect(result).toEqual({ [requested[0]]: 2, [requested[1]]: 1 });
     });
+
+    it('returns no weighted ranks when every requested wave has realtime voting', async () => {
+      await insertDrop({
+        id: 'realtime-only',
+        waveId: realtimeWave.id,
+        dropType: DropType.PARTICIPATORY,
+        createdAt: 100
+      });
+      await insertDrop({
+        id: 'unrequested-weighted',
+        waveId: timeLockedWave.id,
+        dropType: DropType.PARTICIPATORY,
+        createdAt: 100
+      });
+      await insertLeaderboardEntry({
+        dropId: 'unrequested-weighted',
+        waveId: timeLockedWave.id,
+        vote: 50,
+        timestamp: 1000,
+        voteOnDecisionTime: 50
+      });
+
+      await expect(
+        repo.getTimeLockedDropsWeightedVotes(
+          ['realtime-only', 'missing-drop'],
+          ctx
+        )
+      ).resolves.toEqual({});
+    });
     it('keeps ranks scoped to each wave in a mixed submission and winner batch', async () => {
       for (const wave of [realtimeWave, timeLockedWave]) {
         for (const [index, vote] of Array.from([5, 10, 5].entries())) {

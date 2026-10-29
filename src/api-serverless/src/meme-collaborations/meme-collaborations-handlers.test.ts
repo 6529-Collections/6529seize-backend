@@ -65,8 +65,6 @@ beforeEach(() => {
 });
 
 describe('Collaboration API visibility', () => {
-  beforeEach(() => jest.clearAllMocks());
-
   it('does not reveal stored artwork behind moderation', async () => {
     jest
       .mocked(dropsService.findViewableDropByIdOrThrow)
@@ -168,6 +166,10 @@ it('appends invited IDs through the dedicated endpoint and returns viewer-scoped
     expect.any(Object)
   );
   expect(sendIdentityPushNotifications).toHaveBeenCalledWith([44]);
+  expect(
+    wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+  ).toHaveBeenCalledWith(['A', 'C']);
+  expect(dropsService.findDropByIdOrThrow).not.toHaveBeenCalled();
 });
 it('rejects invitations before mutation when artwork cannot be viewed', async () => {
   jest

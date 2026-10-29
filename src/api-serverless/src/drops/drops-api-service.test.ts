@@ -226,6 +226,8 @@ describe('DropsApiService', () => {
       ctx.connection = { connection: 'request-connection' };
       const drop = await service.findViewableDropByIdOrThrow(params, ctx);
 
+      expect(drop).toMatchObject({ id: 'drop-1', author_id: 'author-1' });
+
       expect(dropsDb.findDropByIdWithEligibilityCheck).toHaveBeenCalledWith(
         'drop-1',
         ['read-group'],
