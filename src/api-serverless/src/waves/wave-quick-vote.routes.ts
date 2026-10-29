@@ -9,9 +9,8 @@ import {
 import { ApiUndiscoveredDrop } from '@/api/generated/models/ApiUndiscoveredDrop';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { waveQuickVoteApiService } from '@/api/waves/wave-quick-vote.api.service';
-import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
-import { ForbiddenException } from '@/exceptions';
 import { Timer } from '@/time';
+import { getQuickVoteIdentity } from '@/api/waves/wave-quick-vote-auth';
 
 const router = asyncRouter();
 
@@ -20,6 +19,7 @@ type GetUndiscoveredDropQuery = {
 };
 
 const GetUndiscoveredDropQuerySchema = Joi.object<GetUndiscoveredDropQuery>({
+  // Joi returns a coerced numeric offset for the shared native LIMIT/OFFSET path.
   skip: Joi.number().integer().min(0).optional()
 });
 
@@ -36,21 +36,7 @@ router.get(
       req.query,
       GetUndiscoveredDropQuerySchema
     );
-    const identityId = authenticationContext.getActingAsId();
-    if (!identityId) {
-      throw new ForbiddenException(`Please create a profile first`);
-    }
-    if (
-      authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.hasProxyAction(ProfileProxyActionType.READ_WAVE) &&
-      !authenticationContext.hasProxyAction(
-        ProfileProxyActionType.RATE_WAVE_DROP
-      )
-    ) {
-      throw new ForbiddenException(
-        `Proxy doesn't have permission to use quick vote`
-      );
-    }
+    const identityId = getQuickVoteIdentity(authenticationContext);
     const result = await waveQuickVoteApiService.findUndiscoveredDrop(
       {
         waveId: req.params.id,
