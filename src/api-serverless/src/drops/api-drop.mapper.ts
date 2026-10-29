@@ -182,12 +182,7 @@ export class ApiDropMapper {
           .filter((id): id is string => !!id)
       );
       const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
-        [
-          ...entities
-            .filter((drop) => drop.drop_type === DropType.COMPETITION)
-            .map((drop) => drop.id),
-          ...replyDropIds
-        ],
+        [...dropIds, ...replyDropIds],
         ctx
       );
       const submissionEntities = entities.filter(

@@ -867,9 +867,7 @@ export class DropsMappers {
         collaboratorsByDropId
       );
     const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
-      allEntities
-        .filter((entity) => entity.drop_type === DropType.COMPETITION)
-        .map((entity) => entity.id),
+      allEntities.map((entity) => entity.id),
       ctx
     );
     const publicCollaborators = Object.fromEntries(

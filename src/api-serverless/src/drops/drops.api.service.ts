@@ -238,9 +238,7 @@ export class DropsApiService {
       ctx
     );
     const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
-      entities
-        .filter((drop) => drop.drop_type === DropType.COMPETITION)
-        .map((drop) => drop.id),
+      entities.map((drop) => drop.id),
       ctx
     );
     const moderationPresentations = await this.moderationDb.getPresentations(

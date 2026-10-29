@@ -156,33 +156,66 @@ describe('DropsMappers quoted drop visibility', () => {
     return { drops, wavesApiDb };
   }
 
-  it('conceals the author of an embedded anonymous entry while preserving its content', async () => {
-    jest
-      .spyOn(competitionAnonymityService, 'hiddenDropIds')
-      .mockResolvedValue(new Set(['anonymous-entry']));
-    const entry = aDropEntity('anonymous-entry', 'public-wave');
-    entry.drop_type = DropType.COMPETITION;
-    const data = relatedData(
-      [aDropEntity('root-1', 'public-wave'), entry],
-      [
-        aPart('root-1', 'discussion', 'anonymous-entry'),
-        aPart('anonymous-entry', 'I chose this public text')
-      ]
-    );
-    const { drops } = await mapRootDrops(
-      [],
-      AuthenticationContext.notAuthenticated(),
-      data
-    );
-    const quoted = drops[0].parts[0].quoted_drop?.drop;
-    expect(quoted?.author).toMatchObject({
-      handle: 'Anonymous',
-      is_anonymous: true,
-      primary_address: ''
-    });
-    expect(quoted?.author.id).not.toBe('anonymous-entry-author');
-    expect(quoted?.parts[0].content).toBe('I chose this public text');
-  });
+  it.each([DropType.CHAT, DropType.PARTICIPATORY, DropType.COMPETITION])(
+    'conceals the author of an embedded anonymous entry presented as %s while preserving its content',
+    async (dropType) => {
+      jest
+        .spyOn(competitionAnonymityService, 'hiddenDropIds')
+        .mockImplementation(
+          async (ids) => new Set(ids.filter((id) => id === 'anonymous-entry'))
+        );
+      const entry = aDropEntity('anonymous-entry', 'public-wave');
+      entry.drop_type = dropType;
+      const data = relatedData(
+        [aDropEntity('root-1', 'public-wave'), entry],
+        [
+          aPart('root-1', 'discussion', 'anonymous-entry'),
+          aPart('anonymous-entry', 'I chose this public text')
+        ]
+      );
+      const { drops } = await mapRootDrops(
+        [],
+        AuthenticationContext.notAuthenticated(),
+        data
+      );
+      const quoted = drops[0].parts[0].quoted_drop?.drop;
+      expect(quoted?.author).toMatchObject({
+        handle: 'Anonymous',
+        is_anonymous: true,
+        primary_address: ''
+      });
+      expect(quoted?.author.id).not.toBe('anonymous-entry-author');
+      expect(quoted?.parts[0].content).toBe('I chose this public text');
+    }
+  );
+
+  it.each([DropType.CHAT, DropType.COMPETITION])(
+    'conceals a direct anonymous entry presented as %s',
+    async (dropType) => {
+      jest
+        .spyOn(competitionAnonymityService, 'hiddenDropIds')
+        .mockImplementation(
+          async (ids) => new Set(ids.filter((id) => id === 'root-entry'))
+        );
+      const entry = aDropEntity('root-entry', 'public-wave');
+      entry.drop_type = dropType;
+      const data = relatedData(
+        [entry],
+        [aPart(entry.id, 'A public submission')]
+      );
+      const { drops } = await mapRootDrops(
+        [],
+        AuthenticationContext.notAuthenticated(),
+        data
+      );
+      expect(drops[0].author).toMatchObject({
+        handle: 'Anonymous',
+        is_anonymous: true
+      });
+      expect(drops[0].author.id).not.toBe(entry.author_id);
+      expect(drops[0].parts[0].content).toBe('A public submission');
+    }
+  );
 
   it('embeds quotes from readable waves and keeps only the reference otherwise', async () => {
     const entities = [

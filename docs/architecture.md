@@ -65,7 +65,10 @@ upload records. Legacy owner-bearing upload paths remain compatible for public
 submissions; anonymous entries require a fresh upload instead. Privacy decisions read the writer database to
 avoid exposing identities while a read replica catches up. A missing freshly
 committed membership would otherwise be mistaken for a public entry, even on
-connectionless reads. Push delivery batches unique entry IDs once per recipient
+connectionless reads. Every drop reader checks membership for the entire batch,
+including ordinary-looking chat drops: the legacy GET facade presents native
+sibling competition content as chat, so its projected drop type cannot establish
+whether an author is public. Push delivery batches unique entry IDs once per recipient
 batch, and WebSocket delivery batches embedded entries once per broadcast,
 skipping empty audiences. Request-local deduplication never survives a transaction
 or crosses viewers. Competition vote activity is an uncached viewer-scoped REST

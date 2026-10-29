@@ -43,6 +43,7 @@ import { DropVotingDb } from '@/api/drops/drop-voting.db';
 import { DropsDb, LeaderboardSort } from '@/drops/drops.db';
 import { PageSortDirection } from '@/api/page-request';
 import { waveHubConfigurationFromWave } from '@/waves/wave-hub-configuration';
+import { competitionAnonymityService } from './competition-anonymity';
 
 const primaryWave = aWave(
   {
@@ -1241,6 +1242,26 @@ describeWithSeed(
           table,
           columns: await metadata(frozenNativeGetView(table))
         });
+    });
+
+    it('keeps membership privacy authoritative when the legacy facade presents a native entry as chat', async () => {
+      await sqlExecutor.execute(
+        `UPDATE ${tables.COMPETITIONS_TABLE} SET participation_config=JSON_SET(participation_config,'$.anonymous_submissions',JSON_EXTRACT('true','$')) WHERE id=:sibling`,
+        { sibling }
+      );
+      await withLegacyCompetitionGetFacade(async () => {
+        const projected = await new DropsDb(() => sqlExecutor).getDropsByIds([
+          drop('sibling')
+        ]);
+        expect(projected).toHaveLength(1);
+        expect(projected[0].drop_type).toBe('CHAT');
+        expect(
+          await competitionAnonymityService.hiddenDropIds(
+            projected.map((row) => row.id),
+            {}
+          )
+        ).toEqual(new Set([drop('sibling')]));
+      });
     });
 
     it('matches all twelve rich frozen projection rows, complete columns, primitive types and nulls while isolating siblings and preserving original ownership', async () => {
