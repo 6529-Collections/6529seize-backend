@@ -296,6 +296,8 @@ it.each([
   'drops/clip.mp4',
   'drops/author_owner/clip.mp4',
   'drops/author_owner/not-a-uuid/clip.mp4',
+  'drops/12345678-1234-1234-1234-123456789012/../clip.mp4',
+  'drops/12345678-1234-1234-1234-123456789012/nested/clip.mp4',
   key.replace('.MP4', '.jpg')
 ])('ignores posters for non-drop-video key %s', async (mediaKey) => {
   const send = jest.fn();
@@ -309,6 +311,13 @@ it.each([
   expect(send).not.toHaveBeenCalled();
 });
 
+it('confines a random-path video poster to the same upload rendition directory', () => {
+  const uploadDirectory = 'drops/12345678-1234-1234-1234-123456789012';
+  expect(getDeviceVideoPosterKey(`${uploadDirectory}/My-holiday.MP4`)).toBe(
+    `renditions/${uploadDirectory}/My-holiday/poster/My-holiday_device.jpg`
+  );
+});
+
 describe('video upload completion ordering', () => {
   const oldBucket = process.env.S3_BUCKET;
   beforeEach(() => {
@@ -317,16 +326,38 @@ describe('video upload completion ordering', () => {
   afterEach(() => {
     process.env.S3_BUCKET = oldBucket;
   });
-  function service(send: jest.Mock): UploadMediaService {
+  function service(send: jest.Mock) {
     let record: DropMediaUploadEntity | null = null;
     const db = {
       createUpload: jest.fn(async (upload: DropMediaUploadEntity) => {
         record = upload;
       }),
-      findByPublicKeyAndS3UploadId: jest.fn(async () => record),
-      updateUpload: jest.fn().mockResolvedValue(undefined)
+      findByPublicKeyAndS3UploadId: jest.fn(
+        async ({
+          publicKey,
+          s3UploadId
+        }: {
+          publicKey: string;
+          s3UploadId: string;
+        }) =>
+          record?.public_key === publicKey &&
+          record?.s3_upload_id === s3UploadId
+            ? record
+            : null
+      ),
+      updateUpload: jest.fn(
+        async ({
+          id,
+          patch
+        }: Parameters<DropMediaUploadsDb['updateUpload']>[0]) => {
+          if (record?.id === id) Object.assign(record, patch);
+        }
+      )
     } as unknown as DropMediaUploadsDb;
-    return new UploadMediaService(() => client(send), undefined, db);
+    return {
+      uploads: new UploadMediaService(() => client(send), undefined, db),
+      record: () => record
+    };
   }
   const request = {
     key,
@@ -336,7 +367,7 @@ describe('video upload completion ordering', () => {
   };
   it('publishes a device poster for the real drop-upload key and completes that upload', async () => {
     const send = jest.fn().mockResolvedValue({ UploadId: 'active-upload' });
-    const uploads = service(send);
+    const { uploads, record } = service(send);
     const started = await uploads.getDropMediaMultipartUploadKeyAndUploadId({
       author_id: 'owner',
       content_type: 'video/mp4',
@@ -368,6 +399,15 @@ describe('video upload completion ordering', () => {
       Key: started.key,
       UploadId: started.upload_id
     });
+    expect(record()).toMatchObject({ status: 'ready' });
+    send.mockClear();
+    await uploads.completeMultipartUpload({
+      ...request,
+      key: started.key,
+      upload_id: started.upload_id,
+      video_poster_base64: jpeg().toString('base64')
+    });
+    expect(send).not.toHaveBeenCalled();
   });
   it('stores the poster before completing the video and triggering conversion', async () => {
     let finishPoster!: () => void;
@@ -381,7 +421,7 @@ describe('video upload completion ordering', () => {
           ? posterStored
           : Promise.resolve({ Key: key })
       );
-    const completion = service(send).completeMultipartUpload({
+    const completion = service(send).uploads.completeMultipartUpload({
       ...request,
       video_poster_base64: jpeg().toString('base64')
     });
@@ -403,7 +443,7 @@ describe('video upload completion ordering', () => {
     async (bytes) => {
       const send = jest.fn().mockResolvedValue({ Key: key });
       await expect(
-        service(send).completeMultipartUpload({
+        service(send).uploads.completeMultipartUpload({
           ...request,
           video_poster_base64: bytes.toString('base64')
         })
@@ -432,7 +472,7 @@ describe('video upload completion ordering', () => {
           .mockResolvedValueOnce({})
           .mockRejectedValueOnce(new Error('S3 unavailable'));
       await expect(
-        service(send).completeMultipartUpload({
+        service(send).uploads.completeMultipartUpload({
           ...request,
           video_poster_base64:
             failure === 'invalid' ? 'invalid' : jpeg().toString('base64')
@@ -455,7 +495,7 @@ describe('video upload completion ordering', () => {
   it('checks ownership before any poster or video storage call', async () => {
     const send = jest.fn();
     await expect(
-      service(send).completeMultipartUpload({
+      service(send).uploads.completeMultipartUpload({
         ...request,
         authenticatedProfileId: 'other',
         video_poster_base64: jpeg().toString('base64')

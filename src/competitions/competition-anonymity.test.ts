@@ -151,6 +151,89 @@ describeWithSeed('Competition identity disclosure', seeds, () => {
     expect(page.data.map((entry) => entry.id)).not.toContain('unrevealed-one');
   });
 
+  it('holds the competition and entry locks through tombstone deletion until commit', async () => {
+    const assertWinnerCannotAcquireLocks = async () => {
+      for (const { table, id } of [
+        { table: COMPETITIONS_TABLE, id: competitionId },
+        { table: COMPETITION_ENTRIES_TABLE, id: 'unrevealed-one' }
+      ]) {
+        await expect(
+          sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+            sqlExecutor.execute(
+              `select id from ${table} where id=:id for update nowait`,
+              { id },
+              { wrappedConnection: connection }
+            )
+          )
+        ).rejects.toMatchObject({ errno: 3572 });
+      }
+    };
+
+    await expect(
+      competitionEntryRepository.deleteEntry('unrevealed-one', {})
+    ).rejects.toThrow('Entry deletion requires a transaction');
+    await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+      const ctx = { connection };
+      const memberships = await competitionEntryRepository.lockDropMemberships(
+        'unrevealed-one',
+        ctx
+      );
+      expect(memberships.map(({ id }) => id)).toEqual(['unrevealed-one']);
+      await assertWinnerCannotAcquireLocks();
+      await competitionEntryRepository.deleteEntry('unrevealed-one', ctx);
+      await assertWinnerCannotAcquireLocks();
+    });
+
+    const rows = await sqlExecutor.executeNativeQueriesInTransaction(
+      (connection) =>
+        sqlExecutor.execute<{ status: string; won_at: number | null }>(
+          `select status,won_at from ${COMPETITION_ENTRIES_TABLE} where id='unrevealed-one' for update nowait`,
+          {},
+          { wrappedConnection: connection }
+        )
+    );
+    expect(rows).toEqual([{ status: 'WITHDRAWN', won_at: null }]);
+  });
+
+  it.each([{}, { anonymous_submissions: false }])(
+    'hard-deletes public entries with participation config %p',
+    async (participationConfig) => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set participation_config=:participationConfig where id=:competitionId`,
+        {
+          competitionId,
+          participationConfig: JSON.stringify(participationConfig)
+        }
+      );
+
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        competitionEntryRepository.deleteEntry('unrevealed-one', { connection })
+      );
+
+      const rows = await sqlExecutor.execute<{ id: string }>(
+        `select id from ${COMPETITION_ENTRIES_TABLE} order by id`
+      );
+      expect(rows).toEqual([
+        { id: 'revealed-winner' },
+        { id: 'unrevealed-two' }
+      ]);
+    }
+  );
+
+  it('hard-deletes a revealed winner in an anonymous competition', async () => {
+    await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      competitionEntryRepository.deleteEntry('revealed-winner', { connection })
+    );
+
+    const rows = await sqlExecutor.execute<{ id: string }>(
+      `select id from ${COMPETITION_ENTRIES_TABLE} order by id`
+    );
+    expect(rows).toEqual([{ id: 'unrevealed-one' }, { id: 'unrevealed-two' }]);
+    expect(
+      await competitionAnonymityService.hiddenDropIds(entries, {})
+    ).toEqual(new Set(['unrevealed-one', 'unrevealed-two']));
+  });
+
   it('reveals only the winning entry and retains private owner access', async () => {
     expect(
       await competitionAnonymityService.hiddenDropIds(entries, {})

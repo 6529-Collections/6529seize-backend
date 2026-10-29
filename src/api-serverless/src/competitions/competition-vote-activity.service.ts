@@ -43,6 +43,8 @@ export async function listCompetitionVoteActivity(
     ),
     ctx
   );
+  // This REST response is viewer-scoped and has no shared response cache.
+  // Broadcasts use includeOwner instead; owners retain private attribution here.
   const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
     rows.map((row) => row.drop_id).filter((id): id is string => !!id),
     ctx

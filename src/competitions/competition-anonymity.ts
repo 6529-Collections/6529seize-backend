@@ -118,6 +118,8 @@ export class CompetitionAnonymityService extends LazyDbAccessCompatibleService {
         { ids, viewer },
         {
           wrappedConnection: ctx.connection,
+          // A replica can miss a freshly committed membership entirely and
+          // falsely classify its author as public, including outside a tx.
           forcePool: DbPoolName.WRITE
         }
       );

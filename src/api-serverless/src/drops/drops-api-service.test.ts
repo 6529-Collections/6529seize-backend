@@ -20,6 +20,9 @@ import { userNotifier } from '@/notifications/user.notifier';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { WaveType } from '@/entities/IWave';
+import { DropType } from '@/entities/IDrop';
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
+import { ApiLightDrop } from '@/api/generated/models/ApiLightDrop';
 
 afterEach(() => {
   jest.clearAllMocks();
@@ -187,6 +190,60 @@ describe('DropsApiService', () => {
     };
   }
 
+  describe('findLightDrops', () => {
+    it('keeps V1 authors as strings while concealing an unrevealed competition author', async () => {
+      const { service, dropsDb, ctx } = createService();
+      const ids = ['unrevealed-entry', 'revealed-entry'];
+      dropsDb.findLightDropIdsByWave.mockResolvedValue(
+        ids.map((id) => ({ id }))
+      );
+      dropsDb.findLightDropsByIds.mockResolvedValue(
+        ids.map((id, index) => ({
+          id,
+          wave_id: 'wave-1',
+          wave_name: 'Wave 1',
+          author: 'RealArtist',
+          created_at: 1,
+          serial_no: index + 1,
+          drop_type: DropType.COMPETITION,
+          title: 'Entry',
+          part_content: 'Submission',
+          medias_json: '[]'
+        }))
+      );
+      const hiddenDropIds = jest
+        .spyOn(competitionAnonymityService, 'hiddenDropIds')
+        .mockResolvedValue(new Set(['unrevealed-entry']));
+
+      const result: ApiLightDrop[] = await service.findLightDrops(
+        {
+          waveId: 'wave-1',
+          limit: 10,
+          max_serial_no: null,
+          min_serial_no: null,
+          older_first: false
+        },
+        ctx
+      );
+
+      expect(hiddenDropIds).toHaveBeenCalledWith(ids, ctx);
+      expect(result.map(({ author }) => author)).toEqual([
+        'Anonymous',
+        'RealArtist'
+      ]);
+      expect(result.every(({ author }) => typeof author === 'string')).toBe(
+        true
+      );
+      expect(JSON.parse(JSON.stringify(result))[0].author).toBe('Anonymous');
+      expect(ApiLightDrop.getAttributeTypeMap()).toContainEqual({
+        name: 'author',
+        baseName: 'author',
+        type: 'string',
+        format: ''
+      });
+    });
+  });
+
   describe('findViewableDropByIdOrThrow', () => {
     const params = {
       dropId: 'drop-1',
@@ -327,6 +384,10 @@ describe('DropsApiService', () => {
       'tx-connection'
     );
     expect(apiDrop.author.id).toBe('anonymous-projection');
+    expect(userNotifier.notifyOfDropBoost).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.stringify(jest.mocked(userNotifier.notifyOfDropBoost).mock.calls)
+    ).not.toContain('anonymous-projection');
   });
 
   it('rejects self-boosts from non-admin wave participants', async () => {

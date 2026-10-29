@@ -55,7 +55,14 @@ before exposing their author attribution to the publishing pipeline. New drop
 uploads use random public object paths and keep ownership in existing private
 upload records. Legacy owner-bearing upload paths remain compatible for public
 submissions; anonymous entries require a fresh upload instead. Privacy decisions read the writer database to
-avoid exposing identities while a read replica catches up. The feature uses
+avoid exposing identities while a read replica catches up. A missing freshly
+committed membership would otherwise be mistaken for a public entry, even on
+connectionless reads. Push delivery batches unique entry IDs once per recipient
+batch, and WebSocket delivery batches embedded entries once per broadcast,
+skipping empty audiences. Request-local deduplication never survives a transaction
+or crosses viewers. Competition vote activity is an uncached viewer-scoped REST
+response; its frontend query key includes the connected and proxy profiles.
+The feature uses
 existing JSON configuration and winner records, without a new schema, queue,
 Lambda or environment variable. Deploy affected backend delivery workers and
 the video conversion invoker's compatible media-path reader before the API

@@ -2,6 +2,9 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { UploadMediaService } from '@/api/media/upload-media.service';
 import { ApiDropMediaStatus } from '@/api/generated/models/ApiDropMediaStatus';
+import { S3Client } from '@aws-sdk/client-s3';
+import { DropMediaUploadsDb } from '@/drops/drop-media-uploads.db';
+import { DropMediaUploadEntity } from '@/entities/IDropMediaUpload';
 
 jest.mock('@aws-sdk/s3-request-presigner', () => ({
   getSignedUrl: jest.fn()
@@ -23,6 +26,53 @@ function makeImageUploadService() {
     { createUpload: jest.fn() } as any,
     jest.fn()
   );
+}
+
+function makePublicUploadService() {
+  const publicS3 = {
+    send: jest.fn().mockResolvedValue({ UploadId: 'private-video-session' })
+  };
+  const ingestS3 = { send: jest.fn() };
+  let record: DropMediaUploadEntity | null = null;
+  const uploadsDb = {
+    createUpload: jest.fn(async (value: DropMediaUploadEntity) => {
+      record = value;
+    }),
+    findByPublicKeyAndS3UploadId: jest.fn(
+      async ({
+        publicKey,
+        s3UploadId
+      }: {
+        publicKey: string;
+        s3UploadId: string;
+      }) =>
+        record?.public_key === publicKey && record?.s3_upload_id === s3UploadId
+          ? record
+          : null
+    ),
+    updateUpload: jest.fn(
+      async ({
+        id,
+        patch
+      }: Parameters<DropMediaUploadsDb['updateUpload']>[0]) => {
+        if (record?.id === id) Object.assign(record, patch);
+      }
+    )
+  };
+  const enqueue = jest.fn();
+  return {
+    service: new UploadMediaService(
+      () => publicS3 as unknown as S3Client,
+      () => ingestS3 as unknown as S3Client,
+      uploadsDb as unknown as DropMediaUploadsDb,
+      enqueue
+    ),
+    publicS3,
+    ingestS3,
+    uploadsDb,
+    enqueue,
+    record: () => record
+  };
 }
 
 describe('UploadMediaService', () => {
@@ -279,25 +329,8 @@ describe('UploadMediaService', () => {
   });
 
   it('keeps new video upload ownership private and uses public S3 without the image sanitizer', async () => {
-    const publicS3 = {
-      send: jest.fn().mockResolvedValue({ UploadId: 'private-video-session' })
-    };
-    const ingestS3 = { send: jest.fn() };
-    let record: Record<string, unknown> | null = null;
-    const uploadsDb = {
-      createUpload: jest.fn(async (value: Record<string, unknown>) => {
-        record = value;
-      }),
-      findByPublicKeyAndS3UploadId: jest.fn(async () => record),
-      updateUpload: jest.fn().mockResolvedValue(undefined)
-    };
-    const enqueue = jest.fn();
-    const service = new UploadMediaService(
-      () => publicS3 as any,
-      () => ingestS3 as any,
-      uploadsDb as any,
-      enqueue
-    );
+    const { service, publicS3, ingestS3, uploadsDb, enqueue, record } =
+      makePublicUploadService();
     const started = await service.getDropMediaMultipartUploadKeyAndUploadId({
       content_type: 'video/mp4',
       file_name: 'clip.mp4',
@@ -342,17 +375,22 @@ describe('UploadMediaService', () => {
         patch: expect.objectContaining({ status: 'ready' })
       })
     );
+    expect(record()).toMatchObject({ status: 'ready' });
+    publicS3.send.mockClear();
+    await expect(
+      service.completeMultipartUpload({
+        ...started,
+        parts: [{ etag: 'etag', part_no: 1 }],
+        authenticatedProfileId: 'private-owner'
+      })
+    ).resolves.toEqual(completed);
+    expect(publicS3.send).not.toHaveBeenCalled();
     expect(ingestS3.send).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
   });
 
   it('keeps single PUT drop media paths unlinkable while recording their owner privately', async () => {
-    const uploadsDb = { createUpload: jest.fn() };
-    const service = new UploadMediaService(
-      () => ({ send: jest.fn() }) as any,
-      undefined,
-      uploadsDb as any
-    );
+    const { service, uploadsDb, publicS3, record } = makePublicUploadService();
     const result = await service.createSingedDropMediaUploadUrl({
       content_type: 'audio/mpeg',
       file_name: 'sound.mp3',
@@ -367,7 +405,62 @@ describe('UploadMediaService', () => {
         status: 'ready'
       })
     );
+    expect(result).not.toHaveProperty('upload_id');
+    expect(result).not.toHaveProperty('media_upload_id');
+    expect(record()?.s3_upload_id).toMatch(/^single-put:/);
+    await expect(
+      service.completeMultipartUpload({
+        key: new URL(result.media_url).pathname.slice(1),
+        upload_id: 'guessed-multipart-session',
+        parts: [{ etag: 'etag', part_no: 1 }],
+        authenticatedProfileId: 'private-owner'
+      })
+    ).rejects.toThrow('Cannot write this media upload');
+    expect(publicS3.send).not.toHaveBeenCalled();
   });
+
+  it.each(['unknown key', 'wrong upload id'])(
+    'rejects signing and completion for a random-path upload with %s',
+    async (mismatch) => {
+      const { service, publicS3, ingestS3, uploadsDb } =
+        makePublicUploadService();
+      const started = await service.getDropMediaMultipartUploadKeyAndUploadId({
+        content_type: 'video/mp4',
+        file_name: 'clip.mp4',
+        author_id: 'private-owner'
+      });
+      publicS3.send.mockClear();
+      const request = {
+        key:
+          mismatch === 'unknown key'
+            ? 'drops/12345678-1234-1234-1234-123456789012/clip.mp4'
+            : started.key,
+        upload_id:
+          mismatch === 'wrong upload id' ? 'wrong-session' : started.upload_id,
+        authenticatedProfileId: 'private-owner'
+      };
+      const signaturesBefore = getSignedUrlMock.mock.calls.length;
+
+      await expect(
+        service.getSignedUrlForPartOfMultipartUpload({ ...request, part_no: 1 })
+      ).rejects.toThrow('Cannot write this media upload');
+      await expect(
+        service.completeMultipartUpload({
+          ...request,
+          parts: [{ etag: 'etag', part_no: 1 }]
+        })
+      ).rejects.toThrow('Cannot write this media upload');
+
+      expect(uploadsDb.findByPublicKeyAndS3UploadId).toHaveBeenCalledWith({
+        publicKey: request.key,
+        s3UploadId: request.upload_id
+      });
+      expect(getSignedUrlMock).toHaveBeenCalledTimes(signaturesBefore);
+      expect(publicS3.send).not.toHaveBeenCalled();
+      expect(ingestS3.send).not.toHaveBeenCalled();
+      expect(uploadsDb.updateUpload).not.toHaveBeenCalled();
+    }
+  );
 
   it('stores long-lived caching on public multipart uploads with unique keys', async () => {
     const publicS3 = {

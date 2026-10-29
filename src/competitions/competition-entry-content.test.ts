@@ -88,6 +88,42 @@ describe('Native entry content invariants', () => {
     ).not.toThrow();
   });
 
+  it('allows a submitter to reference public artwork and disclose credits in their own content', () => {
+    const submission = {
+      ...model,
+      author_id: 'anonymous-submitter',
+      parts: [
+        {
+          ...model.parts[0],
+          content: 'Artwork by @PublicArtist',
+          media: [
+            {
+              url: `${CLOUDFRONT_LINK}/drops/9b89ed71-e722-4e7a-90b4-b637e5420231/photo.png`,
+              mime_type: 'image/png'
+            }
+          ]
+        }
+      ],
+      metadata: [{ data_key: 'artist', data_value: 'PublicArtist' }]
+    };
+    expect(() =>
+      assertCompetitionEntryContent(
+        {
+          ...competition,
+          participation: {
+            ...competition.participation,
+            anonymous_submissions: true
+          }
+        },
+        submission
+      )
+    ).not.toThrow();
+    expect(submission.metadata).toEqual([
+      { data_key: 'artist', data_value: 'PublicArtist' }
+    ]);
+    expect(submission.parts[0].content).toBe('Artwork by @PublicArtist');
+  });
+
   it('applies Main Stage media validation only to explicitly assigned competition capabilities', async () => {
     const validate = jest
       .spyOn(mainStageMedia, 'validateMainStageMediaSize')

@@ -1,7 +1,10 @@
 import { ApiIdentity } from '@/api/generated/models/ApiIdentity';
 import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
-import { publicCompetitionNotificationActor } from '@/pushNotificationsHandler/anonymous-competition-notification';
+import {
+  createCompetitionNotificationActorResolver,
+  publicCompetitionNotificationActor
+} from '@/pushNotificationsHandler/anonymous-competition-notification';
 
 describe('anonymous competition push actor', () => {
   afterEach(() => jest.restoreAllMocks());
@@ -65,5 +68,31 @@ describe('anonymous competition push actor', () => {
         identity
       )
     ).resolves.toBe(identity);
+  });
+
+  it('loads one authoritative policy snapshot for all entry recipients in a batch', async () => {
+    const hidden = jest
+      .spyOn(competitionAnonymityService, 'hiddenDropIds')
+      .mockResolvedValue(new Set(['entry-drop', 'other-entry']));
+    const notifications = Array.from({ length: 100 }, (_, index) => ({
+      cause: IdentityNotificationCause.IDENTITY_MENTIONED,
+      related_drop_id: index % 2 ? 'entry-drop' : 'other-entry'
+    }));
+    const ctx = {};
+    const resolveActor = await createCompetitionNotificationActorResolver(
+      notifications,
+      ctx
+    );
+    const actors = notifications.map((notification) =>
+      resolveActor(notification, identity)
+    );
+
+    expect(hidden).toHaveBeenCalledTimes(1);
+    expect(hidden).toHaveBeenCalledWith(['other-entry', 'entry-drop'], ctx, {
+      includeOwner: true
+    });
+    expect(new Set(actors.map((actor) => actor.id)).size).toBe(2);
+    expect(JSON.stringify(actors)).not.toContain('real-');
+    expect(actors.every((actor) => actor.is_anonymous)).toBe(true);
   });
 });

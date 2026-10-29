@@ -3,33 +3,54 @@ import {
   anonymousCompetitionAuthor,
   competitionAnonymityService
 } from '@/competitions/competition-anonymity';
-import {
-  IdentityNotificationCause,
-  IdentityNotificationEntity
-} from '@/entities/IIdentityNotification';
+import { IdentityNotificationEntity } from '@/entities/IIdentityNotification';
+import { anonymousNotificationActorDropId } from '@/notifications/anonymous-notification-actor';
+import { RequestContext } from '@/request.context';
 
-const DROP_AUTHOR_CAUSES: readonly IdentityNotificationCause[] = [
-  IdentityNotificationCause.IDENTITY_MENTIONED,
-  IdentityNotificationCause.DROP_QUOTED,
-  IdentityNotificationCause.DROP_REPLIED,
-  IdentityNotificationCause.ALL_DROPS,
-  IdentityNotificationCause.PRIORITY_ALERT
-];
+type Notification = Pick<
+  IdentityNotificationEntity,
+  'cause' | 'related_drop_id'
+>;
+export type CompetitionNotificationActorResolver = (
+  notification: Notification,
+  identity: ApiIdentity
+) => ApiIdentity;
+
+/** One authoritative policy snapshot serves every recipient in a push batch. */
+export async function createCompetitionNotificationActorResolver(
+  notifications: readonly Notification[],
+  ctx: RequestContext
+): Promise<CompetitionNotificationActorResolver> {
+  const dropIds = Array.from(
+    new Set(
+      notifications.flatMap((notification) => {
+        const dropId = anonymousNotificationActorDropId(notification);
+        return dropId ? [dropId] : [];
+      })
+    )
+  );
+  const hiddenDropIds = dropIds.length
+    ? await competitionAnonymityService.hiddenDropIds(dropIds, ctx, {
+        includeOwner: true
+      })
+    : new Set<string>();
+  return (notification, identity) => {
+    const dropId = anonymousNotificationActorDropId(notification);
+    return dropId && hiddenDropIds.has(dropId)
+      ? anonymousCompetitionAuthor(identity, dropId)
+      : identity;
+  };
+}
 
 /** A notification actor can be a voter/reactor rather than the drop's author. */
 export async function publicCompetitionNotificationActor(
-  notification: Pick<IdentityNotificationEntity, 'cause' | 'related_drop_id'>,
-  identity: ApiIdentity
+  notification: Notification,
+  identity: ApiIdentity,
+  ctx: RequestContext = {}
 ): Promise<ApiIdentity> {
-  const dropId = notification.related_drop_id;
-  if (!dropId || !DROP_AUTHOR_CAUSES.includes(notification.cause))
-    return identity;
-  const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
-    [dropId],
-    {},
-    { includeOwner: true }
+  const resolveActor = await createCompetitionNotificationActorResolver(
+    [notification],
+    ctx
   );
-  return hiddenDropIds.has(dropId)
-    ? anonymousCompetitionAuthor(identity, dropId)
-    : identity;
+  return resolveActor(notification, identity);
 }

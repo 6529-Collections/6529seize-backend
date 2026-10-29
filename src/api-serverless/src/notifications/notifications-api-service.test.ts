@@ -104,44 +104,60 @@ describe('NotificationsApiService V2 notifications', () => {
     };
   }
 
-  it.each([
-    {
-      cause: IdentityNotificationCause.IDENTITY_MENTIONED,
-      data: {
-        mentioner_identity_id: 'author',
-        drop_id: 'entry',
-        wave_id: 'wave'
+  it.each(
+    [
+      {
+        cause: IdentityNotificationCause.IDENTITY_MENTIONED,
+        data: {
+          mentioner_identity_id: 'author',
+          drop_id: 'entry',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.DROP_QUOTED,
+        data: {
+          quote_drop_author_id: 'author',
+          quote_drop_id: 'entry',
+          quoted_drop_id: 'parent',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.DROP_REPLIED,
+        data: {
+          reply_drop_author_id: 'author',
+          reply_drop_id: 'entry',
+          replied_drop_id: 'parent',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.ALL_DROPS,
+        data: {
+          additional_identity_id: 'author',
+          drop_id: 'entry',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.PRIORITY_ALERT,
+        data: {
+          additional_identity_id: 'author',
+          drop_id: 'entry',
+          wave_id: 'wave'
+        }
       }
-    },
-    {
-      cause: IdentityNotificationCause.DROP_QUOTED,
-      data: {
-        quote_drop_author_id: 'author',
-        quote_drop_id: 'entry',
-        quoted_drop_id: 'parent',
-        wave_id: 'wave'
-      }
-    },
-    {
-      cause: IdentityNotificationCause.DROP_REPLIED,
-      data: {
-        reply_drop_author_id: 'author',
-        reply_drop_id: 'entry',
-        replied_drop_id: 'parent',
-        wave_id: 'wave'
-      }
-    },
-    {
-      cause: IdentityNotificationCause.ALL_DROPS,
-      data: {
-        additional_identity_id: 'author',
-        drop_id: 'entry',
-        wave_id: 'wave'
-      }
-    }
-  ])(
-    'redacts the related actor for an anonymous $cause submission',
-    async ({ cause, data }) => {
+    ].flatMap((notification) => [
+      { ...notification, hydratedAfterReveal: false },
+      { ...notification, hydratedAfterReveal: true }
+    ])
+  )(
+    'keeps the durable anonymous $cause actor when hydratedAfterReveal=$hydratedAfterReveal',
+    async ({ cause, data, hydratedAfterReveal }) => {
+      jest
+        .mocked(competitionAnonymityService.hiddenDropIds)
+        .mockResolvedValue(new Set(['entry']));
       const { service, notificationsReader, dropsService, identityFetcher } =
         createService();
       const author = makeIdentity(
@@ -159,7 +175,9 @@ describe('NotificationsApiService V2 notifications', () => {
       dropsService.findDropsV2ByIds.mockResolvedValue({
         entry: {
           id: 'entry',
-          author: anonymousCompetitionAuthor(author, 'entry')
+          author: hydratedAfterReveal
+            ? author
+            : anonymousCompetitionAuthor(author, 'entry')
         },
         parent: {
           id: 'parent',
@@ -188,7 +206,14 @@ describe('NotificationsApiService V2 notifications', () => {
         handle: 'Anonymous',
         is_anonymous: true
       });
-      expect(JSON.stringify(response.notifications)).not.toContain('private-');
+      expect(
+        JSON.stringify(response.notifications[0].related_identity)
+      ).not.toContain('private-');
+      if (!hydratedAfterReveal) {
+        expect(JSON.stringify(response.notifications)).not.toContain(
+          'private-'
+        );
+      }
     }
   );
 

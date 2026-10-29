@@ -85,6 +85,33 @@ describe('WsListenersNotifier', () => {
   afterEach(() => jest.restoreAllMocks());
 
   it.each(['update', 'rating', 'reaction'] as const)(
+    'skips %s policy reads when no websocket recipient exists',
+    async (kind) => {
+      const appWebSockets = { send: jest.fn() };
+      const connections = {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue([])
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        connections as never
+      );
+      const drop = createDrop('ordinary post');
+      if (kind === 'update') await notifier.notifyAboutDropUpdate(drop, {});
+      else if (kind === 'rating')
+        await notifier.notifyAboutDropRatingUpdate(drop, {});
+      else await notifier.notifyAboutDropReactionUpdate(drop, {});
+
+      expect(competitionAnonymityService.hiddenDropIds).not.toHaveBeenCalled();
+      expect(
+        contentModerationDb.getViewerContextsForDrop
+      ).not.toHaveBeenCalled();
+      expect(appWebSockets.send).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['update', 'rating', 'reaction'] as const)(
     'preserves real-owner moderation while sending anonymous %s authors',
     async (kind) => {
       jest
