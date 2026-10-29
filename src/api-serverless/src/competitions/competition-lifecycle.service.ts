@@ -70,6 +70,7 @@ function immutableRules(config: ApiCompetitionDraftInput): unknown {
     rules: { ...rules.rules, ...editableApprovalRules },
     participation: {
       ...rules.participation,
+      anonymous_submissions: rules.participation.anonymous_submissions ?? false,
       scope: { ...rules.participation.scope, group_id: null }
     },
     voting: {
@@ -220,6 +221,14 @@ export class CompetitionLifecycleService {
             'Clone a terminal competition to change its rules'
           );
         const previous = await this.commandConfiguration(record, tx);
+        if (
+          record.published_at !== null &&
+          (config.participation.anonymous_submissions ?? false) !==
+            (previous.participation.anonymous_submissions ?? false)
+        )
+          competitionConflict(
+            'Submission anonymity cannot change after publication'
+          );
         const originalPolicy =
           record.legacy_wave_id === record.wave_id
             ? await validateOriginalPrimaryRuleUpdate(

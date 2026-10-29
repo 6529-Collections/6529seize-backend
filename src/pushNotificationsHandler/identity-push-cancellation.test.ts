@@ -3,6 +3,9 @@ import { getDataSource } from '@/db';
 import { pushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { identityMutesDb } from '@/api/identity-mutes/identity-mutes.db';
 import { sendIdentityPushGroups } from './identity-push-delivery';
+import { contentModerationDb } from '@/content-moderation/content-moderation.db';
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
+import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 
 jest.mock('@/db', () => ({ getDataSource: jest.fn() }));
 jest.mock('@/notifications/push-notification-cancellations.db', () => ({
@@ -67,4 +70,42 @@ it('does not acknowledge missing IDs when visibility filtering fails first', asy
   expect(
     pushNotificationCancellationsDb.findCancelledIds
   ).not.toHaveBeenCalled();
+});
+
+it('preloads each anonymous entry once for a batch of many recipients', async () => {
+  const notifications = Array.from({ length: 100 }, (_, index) => ({
+    id: index + 1,
+    identity_id: `recipient-${index}`,
+    additional_identity_id: 'author',
+    cause: IdentityNotificationCause.IDENTITY_MENTIONED,
+    related_drop_id: 'entry',
+    read_at: null
+  }));
+  jest.mocked(getDataSource).mockReturnValue({
+    getRepository: () => ({
+      find: async () => notifications,
+      findBy: async () => []
+    })
+  } as unknown as ReturnType<typeof getDataSource>);
+  jest
+    .mocked(identityMutesDb.filterMutedNotificationRows)
+    .mockImplementation(async (rows) => rows);
+  jest
+    .mocked(contentModerationDb.filterBlockedNotificationRows)
+    .mockImplementation(async (rows) => rows);
+  jest
+    .mocked(contentModerationDb.filterUnavailableDropNotificationRows)
+    .mockImplementation(async (rows) => rows);
+  const policy = jest
+    .spyOn(competitionAnonymityService, 'hiddenDropIds')
+    .mockResolvedValue(new Set(['entry']));
+  try {
+    expect(
+      await sendIdentityNotificationsBatch(notifications.map(({ id }) => id))
+    ).toEqual([]);
+    expect(policy).toHaveBeenCalledTimes(1);
+    expect(policy).toHaveBeenCalledWith(['entry'], {}, { includeOwner: true });
+  } finally {
+    policy.mockRestore();
+  }
 });

@@ -8,6 +8,9 @@ import { mock } from 'ts-jest-mocker';
 import { WaveQuickVoteApiService } from './wave-quick-vote.api.service';
 import { WaveQuickVoteDb } from './wave-quick-vote.db';
 import { WavesApiDb } from './waves.api.db';
+import { AuthenticationContext } from '@/auth-context';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
+import { competitionAnonymityViewerId } from '@/competitions/competition-anonymity';
 
 describe('WaveQuickVoteApiService', () => {
   const wave = {
@@ -97,6 +100,72 @@ describe('WaveQuickVoteApiService', () => {
     );
     expect(mappers.convertToDropFulls).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    { viewer: 'owner', action: null, privateOwnerId: 'viewer' },
+    {
+      viewer: 'voting proxy',
+      action: ProfileProxyActionType.RATE_WAVE_DROP,
+      privateOwnerId: null
+    },
+    {
+      viewer: 'reading proxy',
+      action: ProfileProxyActionType.READ_WAVE,
+      privateOwnerId: 'viewer'
+    }
+  ])(
+    'preserves the original $viewer context while hydrating quick vote previews',
+    async ({ action, privateOwnerId }) => {
+      const authenticationContext = action
+        ? new AuthenticationContext({
+            authenticatedWallet: null,
+            authenticatedProfileId: 'delegate',
+            roleProfileId: 'viewer',
+            activeProxyActions: [
+              {
+                id: 'action',
+                type: action,
+                credit_amount: null,
+                credit_spent: null
+              }
+            ]
+          })
+        : AuthenticationContext.fromProfileId('viewer');
+      const connection = { connection: {} };
+      const ctx = { authenticationContext, connection };
+      const previews = ['a', 'b', 'c', 'd'].map(drop);
+      db.countDrops.mockResolvedValue({
+        total_count: 4,
+        left_to_vote_in_current_round: 4
+      });
+      db.findDrops.mockResolvedValue(previews);
+
+      const result = await service.findUndiscoveredDrops(
+        { ...param, limit: 4 },
+        ctx
+      );
+
+      expect(result.drops.map(({ id }) => id)).toEqual(['a', 'b', 'c', 'd']);
+      expect(mappers.convertToDropFulls).toHaveBeenCalledTimes(1);
+      expect(mappers.convertToDropFulls).toHaveBeenCalledWith(
+        {
+          dropEntities: previews,
+          contextProfileId: 'viewer',
+          authenticationContext
+        },
+        connection
+      );
+      const forwarded =
+        mappers.convertToDropFulls.mock.calls[0][0].authenticationContext;
+      expect(forwarded).toBe(authenticationContext);
+      expect(
+        competitionAnonymityViewerId({ authenticationContext: forwarded })
+      ).toBe(privateOwnerId);
+      expect(forwarded?.hasRightsTo(ProfileProxyActionType.READ_WAVE)).toBe(
+        privateOwnerId !== null
+      );
+    }
+  );
 
   it('fills the window when concurrent votes shorten the unskipped tail', async () => {
     db.findDrops

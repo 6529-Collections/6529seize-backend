@@ -83,6 +83,10 @@ import {
 } from '@/api/waves/wave-min.helpers';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiWaveMin } from '@/api/generated/models/ApiWaveMin';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
 import { apiDropMapper, ApiDropMapper } from '@/api/drops/api-drop.mapper';
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { isWaveMainFeedWithoutReplies } from '@/waves/wave-chat-replies.helpers';
@@ -233,6 +237,10 @@ export class DropsApiService {
       lightDropIds.map((it) => it.id),
       ctx
     );
+    const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+      entities.map((drop) => drop.id),
+      ctx
+    );
     const moderationPresentations = await this.moderationDb.getPresentations(
       entities,
       context_profile_id,
@@ -247,7 +255,7 @@ export class DropsApiService {
             id: it.id,
             wave_id: it.wave_id,
             wave_name: it.wave_name,
-            author: it.author,
+            author: hiddenDropIds.has(it.id) ? 'Anonymous' : it.author,
             created_at: it.created_at,
             serial_no: it.serial_no,
             drop_type:
@@ -1171,19 +1179,40 @@ export class DropsApiService {
       logEntities,
       ctx
     );
+    const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+      logEntities
+        .map((log) => log.target_id)
+        .filter((id): id is string => !!id),
+      ctx
+    );
     return logEntities.map<ApiWaveLog>((it) => ({
       id: it.id,
       action: it.type,
       wave_id: it.additional_data_2!,
       drop_id: it.target_id!,
-      drop_author: it.additional_data_1
-        ? relatedProfiles[it.additional_data_1]
-        : undefined,
+      drop_author:
+        it.additional_data_1 && relatedProfiles[it.additional_data_1]
+          ? this.presentLogAuthor(
+              relatedProfiles[it.additional_data_1],
+              it.target_id,
+              hiddenDropIds
+            )
+          : undefined,
       invoker_proxy: it.proxy_id ? relatedProfiles[it.proxy_id] : undefined,
       invoker: relatedProfiles[it.profile_id],
       created_at: it.created_at,
       contents: JSON.parse(it.contents)
     }));
+  }
+
+  private presentLogAuthor(
+    author: ApiProfileMin,
+    dropId: string | null,
+    hiddenDropIds: ReadonlySet<string>
+  ): ApiProfileMin {
+    return dropId && hiddenDropIds.has(dropId)
+      ? anonymousCompetitionAuthor(author, dropId)
+      : author;
   }
 
   private async assertViewingEligibilityForWave(
@@ -1400,7 +1429,17 @@ export class DropsApiService {
         );
       }
       const apiDrop = await this.findDropByIdOrThrow({ dropId }, ctx);
-      await this.assertSelfBoostAllowed({ apiDrop, boosterId, ctx });
+      const dropAuthorId = apiDrop.author.is_anonymous
+        ? (await this.dropsDb.findDropById(dropId, ctx.connection))?.author_id
+        : apiDrop.author.id;
+      if (!dropAuthorId)
+        throw new NotFoundException(`Drop ${dropId} not found`);
+      await this.assertSelfBoostAllowed({
+        apiDrop,
+        dropAuthorId,
+        boosterId,
+        ctx
+      });
       const updatedDrop = await this.dropsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           await this.dropsDb.boostDrop(
@@ -1415,7 +1454,7 @@ export class DropsApiService {
             {
               booster_id: boosterId,
               drop_id: dropId,
-              drop_author_id: apiDrop.author.id,
+              drop_author_id: dropAuthorId,
               wave_id: apiDrop.wave.id
             },
             apiDrop.wave.visibility_group_id,
@@ -1441,14 +1480,16 @@ export class DropsApiService {
 
   private async assertSelfBoostAllowed({
     apiDrop,
+    dropAuthorId,
     boosterId,
     ctx
   }: {
     readonly apiDrop: ApiDrop;
+    readonly dropAuthorId: string;
     readonly boosterId: string;
     readonly ctx: RequestContext;
   }): Promise<void> {
-    if (apiDrop.author.id !== boosterId) {
+    if (dropAuthorId !== boosterId) {
       return;
     }
 

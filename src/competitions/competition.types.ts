@@ -19,6 +19,7 @@ export enum CompetitionComputedPhase {
 }
 
 export type CompetitionParticipationConfig = {
+  readonly anonymous_submissions?: boolean;
   readonly group_id: string | null;
   readonly signature_required: boolean;
   readonly max_entries_per_participant: number | null;

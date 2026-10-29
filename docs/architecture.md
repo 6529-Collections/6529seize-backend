@@ -30,6 +30,47 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Anonymous competition submissions
+
+Native competition participation configuration can opt into
+`anonymous_submissions`, defaulting to false and fixed after publication. Real
+drop and entry ownership remains internal. Shared public read and delivery
+policies replace unrevealed authors with an entry-specific anonymous profile;
+author-filtered searches and profile activity exclude those entries before
+pagination. Authenticated owners retain private management access. A saved
+`won_at` reveals only that entry, including in rolling competitions; other
+entries by the same author remain anonymous. User-submitted content and metadata
+are retained as submitted. Unrevealed anonymous entries do not inherit account
+blocks, preventing block-and-check identification; explicit drop hiding and
+platform moderation remain effective. Related author notices bypass account
+blocks and identity mutes only while their submitter remains anonymous;
+ordinary actor, wave and notification-category filters remain effective.
+Deleting an unrevealed submission retains
+a withdrawn membership tombstone so historical author activity stays private.
+
+The existing API, push notifications, Help Bot reply worker and media sanitizer
+share the identity presentation policy, including nested quote/reply and
+WebSocket fallback payloads. Newsletter source queries omit unrevealed entries
+before exposing their author attribution to the publishing pipeline. New drop
+uploads use random public object paths and keep ownership in existing private
+upload records. Legacy owner-bearing upload paths remain compatible for public
+submissions; anonymous entries require a fresh upload instead. Privacy decisions read the writer database to
+avoid exposing identities while a read replica catches up. A missing freshly
+committed membership would otherwise be mistaken for a public entry, even on
+connectionless reads. Every drop reader checks membership for the entire batch,
+including ordinary-looking chat drops: the legacy GET facade presents native
+sibling competition content as chat, so its projected drop type cannot establish
+whether an author is public. Push delivery batches unique entry IDs once per recipient
+batch, and WebSocket delivery batches embedded entries once per broadcast,
+skipping empty audiences. Request-local deduplication never survives a transaction
+or crosses viewers. Competition vote activity is an uncached viewer-scoped REST
+response; its frontend query key includes the connected and proxy profiles.
+The feature uses
+existing JSON configuration and winner records, without a new schema, queue,
+Lambda or environment variable. Deploy affected backend delivery workers and
+the video conversion invoker's compatible media-path reader before the API
+accepts the new setting, then deploy the frontend creation control.
+
 ## Meme collaborator invitations
 
 Artwork submissions retain one author, voting result and minting claim. The API

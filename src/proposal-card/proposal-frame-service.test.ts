@@ -206,6 +206,28 @@ describe('ProposalFrameService', () => {
     expect(uploadDirectory).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts random drop media paths only when the private upload belongs to the caller', async () => {
+    const media_url = `${CLOUDFRONT_LINK}/drops/0b4b5183-8c7f-480d-9e22-060911901c79/art.png`;
+    await expect(
+      service.publish(request({ media_url }), PROFILE)
+    ).rejects.toThrow('Use artwork uploaded by your profile');
+    findByPublicUrl.mockResolvedValue({
+      profile_id: PROFILE,
+      status: DropMediaUploadStatus.READY,
+      declared_mime_type: Mime.ImagePng
+    });
+    await service.publish(request({ media_url }), PROFILE);
+    expect(uploadDirectory).toHaveBeenCalledTimes(1);
+    findByPublicUrl.mockResolvedValue({
+      profile_id: 'other',
+      status: DropMediaUploadStatus.READY,
+      declared_mime_type: Mime.ImagePng
+    });
+    await expect(
+      service.publish(request({ media_url }), PROFILE)
+    ).rejects.toThrow('Use artwork uploaded by your profile');
+  });
+
   it('rejects tracked MIME and owner mismatches', async () => {
     findByPublicUrl.mockResolvedValue({
       profile_id: 'other',

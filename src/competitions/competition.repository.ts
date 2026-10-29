@@ -1,6 +1,10 @@
 import { INDEFINITE_COMPETITION_PAUSE_END } from './competition-phase';
 import { competitionEntryVisibleSql } from '@/competitions/competition-entry-visibility';
 import {
+  anonymousCompetitionEntrySql,
+  competitionAnonymityViewerId
+} from '@/competitions/competition-anonymity';
+import {
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
   COMPETITION_DECISIONS_TABLE,
@@ -323,7 +327,13 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
   ): Promise<CompetitionPage<CompetitionEntry>> {
     const statusFilter = statuses?.length ? 'and ce.status in (:statuses)' : '';
     const submitterFilter = submitterId
-      ? 'and ce.submitter_id = :submitterId'
+      ? `and ce.submitter_id = :submitterId ${
+          submitterId === competitionAnonymityViewerId(ctx)
+            ? ''
+            : `and not exists (select 1 from ${COMPETITIONS_TABLE} anonymity_competition
+                where anonymity_competition.id=ce.competition_id
+                  and ${anonymousCompetitionEntrySql('ce', 'anonymity_competition')})`
+        }`
       : '';
     let order: string;
     if (request.sort === 'won_at') {

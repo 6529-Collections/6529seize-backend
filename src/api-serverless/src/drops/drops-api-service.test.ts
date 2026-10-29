@@ -20,6 +20,9 @@ import { userNotifier } from '@/notifications/user.notifier';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { WaveType } from '@/entities/IWave';
+import { DropType } from '@/entities/IDrop';
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
+import { ApiLightDrop } from '@/api/generated/models/ApiLightDrop';
 
 afterEach(() => {
   jest.clearAllMocks();
@@ -84,6 +87,11 @@ describe('DropsApiService', () => {
     wave?: Record<string, unknown> | null;
   } = {}) {
     const dropsDb = {
+      findDropById: jest.fn().mockResolvedValue({
+        id: 'drop-1',
+        author_id: 'author-1',
+        wave_id: 'wave-1'
+      }),
       findDropByIdWithEligibilityCheck: jest.fn().mockResolvedValue({
         id: 'drop-1',
         author_id: 'author-1',
@@ -181,6 +189,63 @@ describe('DropsApiService', () => {
       } as any
     };
   }
+
+  describe('findLightDrops', () => {
+    it.each(Object.values(DropType))(
+      'keeps V1 authors as strings while concealing an unrevealed entry presented as %s',
+      async (dropType) => {
+        const { service, dropsDb, ctx } = createService();
+        const ids = ['unrevealed-entry', 'revealed-entry'];
+        dropsDb.findLightDropIdsByWave.mockResolvedValue(
+          ids.map((id) => ({ id }))
+        );
+        dropsDb.findLightDropsByIds.mockResolvedValue(
+          ids.map((id, index) => ({
+            id,
+            wave_id: 'wave-1',
+            wave_name: 'Wave 1',
+            author: 'RealArtist',
+            created_at: 1,
+            serial_no: index + 1,
+            drop_type: dropType,
+            title: 'Entry',
+            part_content: 'Submission',
+            medias_json: '[]'
+          }))
+        );
+        const hiddenDropIds = jest
+          .spyOn(competitionAnonymityService, 'hiddenDropIds')
+          .mockResolvedValue(new Set(['unrevealed-entry']));
+
+        const result: ApiLightDrop[] = await service.findLightDrops(
+          {
+            waveId: 'wave-1',
+            limit: 10,
+            max_serial_no: null,
+            min_serial_no: null,
+            older_first: false
+          },
+          ctx
+        );
+
+        expect(hiddenDropIds).toHaveBeenCalledWith(ids, ctx);
+        expect(result.map(({ author }) => author)).toEqual([
+          'Anonymous',
+          'RealArtist'
+        ]);
+        expect(result.every(({ author }) => typeof author === 'string')).toBe(
+          true
+        );
+        expect(JSON.parse(JSON.stringify(result))[0].author).toBe('Anonymous');
+        expect(ApiLightDrop.getAttributeTypeMap()).toContainEqual({
+          name: 'author',
+          baseName: 'author',
+          type: 'string',
+          format: ''
+        });
+      }
+    );
+  });
 
   describe('findViewableDropByIdOrThrow', () => {
     const params = {
@@ -304,6 +369,28 @@ describe('DropsApiService', () => {
         );
       }
     );
+  });
+
+  it('notifies the real submitter when another profile boosts an anonymous entry', async () => {
+    const { service, dropsDb, ctx } = createService();
+    const apiDrop = makeApiDrop({ authorId: 'anonymous-projection' });
+    apiDrop.author.is_anonymous = true;
+    jest.spyOn(service, 'findDropByIdOrThrow').mockResolvedValue(apiDrop);
+    await service.boostDrop('drop-1', ctx);
+    expect(dropsDb.findDropById).toHaveBeenCalledWith('drop-1', ctx.connection);
+    expect(userNotifier.notifyOfDropBoost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        drop_author_id: 'author-1',
+        booster_id: 'profile-1'
+      }),
+      null,
+      'tx-connection'
+    );
+    expect(apiDrop.author.id).toBe('anonymous-projection');
+    expect(userNotifier.notifyOfDropBoost).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.stringify(jest.mocked(userNotifier.notifyOfDropBoost).mock.calls)
+    ).not.toContain('anonymous-projection');
   });
 
   it('rejects self-boosts from non-admin wave participants', async () => {
