@@ -6044,6 +6044,14 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: is_additional_action_promised
+          in: query
+          required: false
+          description: >-
+            Filter entries by the artist's Additional Action promise, including
+            promises without plan text. Omit to include all entries.
+          schema:
+            type: boolean
         - name: sort
           in: query
           required: false

@@ -97,6 +97,7 @@ export type CursorPageRequest<
     | 'price'
 > = {
   readonly cursor?: string;
+  readonly is_additional_action_promised?: boolean;
   readonly price_currency?: string;
   readonly min_price?: number;
   readonly max_price?: number;
@@ -498,6 +499,11 @@ export class CompetitionService {
   ): Promise<CompetitionPage<T>> {
     const resolved = await this.resolve(waveId, competitionId, ctx);
     const fingerprint = {
+      ...(request.is_additional_action_promised === undefined
+        ? {}
+        : {
+            is_additional_action_promised: request.is_additional_action_promised
+          }),
       filters,
       direction: request.direction,
       sort: request.sort ?? null,
@@ -514,7 +520,8 @@ export class CompetitionService {
       sort: request.sort,
       price_currency: request.price_currency,
       min_price: request.min_price,
-      max_price: request.max_price
+      max_price: request.max_price,
+      is_additional_action_promised: request.is_additional_action_promised
     });
     return {
       ...result,

@@ -255,6 +255,35 @@ it.each(['rating', 'real_time_rating', 'submitted_at', 'trend'])(
   }
 );
 
+it.each([
+  ['true', true],
+  ['false', false],
+  [undefined, undefined]
+])(
+  'accepts the optional Additional Action filter %s',
+  async (value, expected) => {
+    await handleListCompetitionLeaderboardV3({
+      params: { wave_id: 'wave-a', competition_id: competitionId },
+      query: value === undefined ? {} : { is_additional_action_promised: value }
+    } as never);
+    expect(competitionService.listLeaderboard).toHaveBeenLastCalledWith(
+      'wave-a',
+      competitionId,
+      expect.objectContaining({ is_additional_action_promised: expected }),
+      expect.anything()
+    );
+  }
+);
+
+it('rejects invalid Additional Action filters', async () => {
+  await expect(
+    handleListCompetitionLeaderboardV3({
+      params: { wave_id: 'wave-a', competition_id: competitionId },
+      query: { is_additional_action_promised: 'maybe' }
+    } as never)
+  ).rejects.toBeInstanceOf(BadRequestException);
+});
+
 it('preserves curation price ordering and bounds in the competition scope', async () => {
   await handleListCompetitionLeaderboardV3({
     params: { wave_id: 'wave-a', competition_id: competitionId },
