@@ -136,6 +136,55 @@ describeWithSeed(
       ).not.toBeNull();
     });
 
+    it('deletes a group spanning pages while preserving siblings and seeking past bigint and mixed-case text keys', async () => {
+      const repo = dataSource.getRepository(ConsolidatedNFTOwner);
+      expect(
+        new Set(
+          repo.metadata.primaryColumns.map((column) => column.propertyPath)
+        )
+      ).toEqual(new Set(['token_id', 'contract', 'consolidation_key']));
+      const base = BigInt('9007199254740993');
+      const contract = `0x${'a'.repeat(40)}`;
+      const rows = Array.from({ length: 1001 }, (_, i) => [
+        (base + BigInt(i)).toString(),
+        contract,
+        a,
+        1
+      ]);
+      rows.push([
+        (base + BigInt(1000)).toString(),
+        contract.toUpperCase(),
+        c,
+        1
+      ]);
+      rows.push([(base + BigInt(1500)).toString(), contract, e, 1]);
+      rows.push([(base + BigInt(2000)).toString(), contract, b, 1]);
+      await dataSource.query(
+        `INSERT INTO ${NFT_OWNERS_CONSOLIDATION_TABLE} (token_id, contract, consolidation_key, balance) VALUES ${rows.map(() => '(?, ?, ?, ?)').join(', ')}`,
+        rows.flat()
+      );
+      expect(
+        await repo
+          .createQueryBuilder('owners')
+          .select('owners.token_id', 'token_id')
+          .where('owners.token_id = :tokenId', { tokenId: base.toString() })
+          .getRawOne()
+      ).toEqual({ token_id: base.toString() });
+      expect(
+        await dataSource.transaction((manager) =>
+          deleteConsolidations(
+            manager.getRepository(ConsolidatedNFTOwner),
+            new Set([a, b])
+          )
+        )
+      ).toBe(1010);
+      expect(await repo.count()).toBe(6);
+      expect(await repo.countBy({ consolidation_key: a })).toBe(0);
+      expect(await repo.countBy({ consolidation_key: b })).toBe(0);
+      expect(await repo.countBy({ consolidation_key: c })).toBe(1);
+      expect(await repo.countBy({ consolidation_key: e })).toBe(1);
+    });
+
     it('leaves all persisted keys intact for empty or unmatched changes', async () => {
       const repo = dataSource.getRepository(ConsolidatedOwnerBalancesMemes);
       expect(await deleteMemeConsolidations(new Set())).toBe(0);

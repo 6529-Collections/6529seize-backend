@@ -75,6 +75,8 @@ async function fetchConsolidationPage<T extends ObjectLiteral>(
     query.addOrderBy(`cleanup.${column.propertyPath}`, 'ASC');
   });
   if (after) {
+    // Bind raw driver values back to the same columns: ORDER BY and seek use
+    // identical MySQL types/collations, including bigint strings and text PKs.
     const params: Record<string, string | number> = {};
     const alternatives = columns.map((column, index) => {
       params[`after_${index}`] = after[`cursor_${index}`];
