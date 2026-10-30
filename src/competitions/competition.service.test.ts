@@ -197,6 +197,39 @@ describe('CompetitionService', () => {
     }
   });
 
+  it('accepts unfiltered leaderboard cursors issued before the promise filter existed', async () => {
+    repository.listNativeLeaderboard.mockResolvedValue({
+      data: [],
+      has_more: false
+    });
+    const cursor = new CompetitionCursorCodec().encode(
+      `competition:${first.id}:leaderboard`,
+      {
+        filters: {},
+        direction: 'DESC',
+        sort: 'rating',
+        price_currency: null,
+        min_price: null,
+        max_price: null
+      },
+      50
+    );
+    await service.listLeaderboard(
+      wave.id,
+      first.id,
+      { cursor, limit: 50, direction: 'DESC', sort: 'rating' },
+      {}
+    );
+    expect(repository.listNativeLeaderboard).toHaveBeenLastCalledWith(
+      first.id,
+      expect.objectContaining({
+        offset: 50,
+        is_additional_action_promised: undefined
+      }),
+      {}
+    );
+  });
+
   it('resolves the default over every record without hydrating competitions or resolving action groups', async () => {
     const records: DefaultCompetitionRecord[] = Array.from(
       { length: 150 },

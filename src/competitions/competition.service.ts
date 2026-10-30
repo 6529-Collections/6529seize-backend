@@ -499,6 +499,7 @@ export class CompetitionService {
   ): Promise<CompetitionPage<T>> {
     const resolved = await this.resolve(waveId, competitionId, ctx);
     const fingerprint = {
+      // Keep existing unfiltered cursors valid across this additive API rollout.
       ...(request.is_additional_action_promised === undefined
         ? {}
         : {
