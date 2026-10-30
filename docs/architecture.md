@@ -706,9 +706,10 @@ successful rotation's `last_used_at`; repeated recovery does not reset it.
 Push installation logout persists its original revocation targets on the client.
 When logout precedes the first registration, the API requires a live native
 session before writing a fence scoped to that installation secret. An optional
-`reconciliation_session` supplies a fresh live proof when the original targets
-are missing or no longer live. It authorizes only this fence and is not revoked
-unless it also appears in `sessions`. Existing installation credentials, legacy
+`reconciliation_sessions` supplies connected-account proofs when the original
+targets are missing or no longer live; at least one must be live. These proofs
+authorize only this fence and are not revoked unless also present in `sessions`.
+Existing installation credentials, legacy
 token ownership checks, and revision ordering still apply. Replayed logout cannot
 delete profiles registered after the acknowledged revision.
 

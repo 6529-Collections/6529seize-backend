@@ -183,14 +183,14 @@ describe('push installation logout', () => {
           originalProof === 'missing'
             ? []
             : [{ address, native_refresh_token: 'old-proof' }],
-        reconciliation_session: {
-          address,
-          native_refresh_token: 'fresh-proof'
-        }
+        reconciliation_sessions: [
+          { address, native_refresh_token: 'unusable-peer-proof' },
+          { address, native_refresh_token: 'fresh-proof' }
+        ]
       };
       await expect(
         revokeInstallation(
-          { ...request, reconciliation_session: undefined },
+          { ...request, reconciliation_sessions: undefined },
           {}
         )
       ).rejects.toThrow('native session');
@@ -246,11 +246,13 @@ describe('push installation logout', () => {
         revision: 1,
         all_profiles: false,
         sessions: [],
-        reconciliation_session: {
-          address,
-          native_refresh_token:
-            invalidProof === 'wrong-token' ? 'wrong' : 'native-proof'
-        }
+        reconciliation_sessions: [
+          {
+            address,
+            native_refresh_token:
+              invalidProof === 'wrong-token' ? 'wrong' : 'native-proof'
+          }
+        ]
       };
       await expect(revokeInstallation(request, {})).rejects.toThrow(
         'native session'
@@ -680,7 +682,7 @@ describe('push installation logout', () => {
       for (const token of [undefined, 'attacker-fcm-token']) {
         for (const proofs of [
           { sessions: attack.sessions },
-          { sessions: [], reconciliation_session: attack.sessions[0] }
+          { sessions: [], reconciliation_sessions: attack.sessions }
         ]) {
           await expect(
             revokeInstallation({ ...attack, ...proofs, token }, {})

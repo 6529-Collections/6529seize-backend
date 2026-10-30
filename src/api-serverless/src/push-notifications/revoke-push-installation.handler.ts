@@ -27,7 +27,7 @@ const schema: Joi.ObjectSchema<ApiRevokePushInstallationRequest> = Joi.object({
   all_profiles: Joi.boolean().required(),
   token_scoped: Joi.boolean().optional(),
   sessions: Joi.array().max(50).items(sessionSchema).required(),
-  reconciliation_session: sessionSchema.optional()
+  reconciliation_sessions: Joi.array().max(50).items(sessionSchema).optional()
 });
 
 export async function handleRevokePushInstallation(

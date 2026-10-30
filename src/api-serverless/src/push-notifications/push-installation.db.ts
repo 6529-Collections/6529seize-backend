@@ -28,7 +28,7 @@ export interface InstallationRevocation extends InstallationProof {
   token_scoped?: boolean;
   profile_id?: string;
   sessions: { address: string; native_refresh_token: string }[];
-  reconciliation_session?: InstallationRevocation['sessions'][number];
+  reconciliation_sessions?: InstallationRevocation['sessions'];
 }
 // Clients generate high-entropy installation credentials from two UUIDv4s;
 // these are random bearer credentials, not user-chosen passwords.
@@ -283,9 +283,10 @@ async function revokeBeforeRegistration(
 ): Promise<Pick<PushInstallationEntity, 'device_id' | 'revision'>> {
   const fence = await getLogoutFence(request, ctx);
   if (!fence) {
-    const proofs = request.reconciliation_session
-      ? [request.reconciliation_session, ...request.sessions]
-      : request.sessions;
+    const proofs = [
+      ...(request.reconciliation_sessions ?? []),
+      ...request.sessions
+    ];
     await requireLiveNativeSession(proofs, ctx);
   }
   const currentRevision = fence?.revision ?? 0;

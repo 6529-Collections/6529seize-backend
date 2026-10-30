@@ -122,10 +122,12 @@ it('requires a token for migration cleanup before any mutation', async () => {
 it('validates a separate reconciliation proof without adding it to revocation targets', async () => {
   const recovery = {
     ...body,
-    reconciliation_session: {
-      address: '0x' + '1'.repeat(40),
-      native_refresh_token: 'fresh-proof'
-    }
+    reconciliation_sessions: [
+      {
+        address: '0x' + '1'.repeat(40),
+        native_refresh_token: 'fresh-proof'
+      }
+    ]
   };
   await handleRevokePushInstallation(request(recovery));
   expect(revokeInstallation).toHaveBeenCalledWith(recovery, {});
@@ -141,7 +143,7 @@ it.each([
     handleRevokePushInstallation(
       request({
         ...body,
-        reconciliation_session: proof
+        reconciliation_sessions: [proof]
       })
     )
   ).rejects.toThrow();
