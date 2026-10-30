@@ -349,6 +349,25 @@ describeWithSeed(
       expect(next.data.map((entry) => entry.entry_id)).toEqual([secondEntryId]);
     });
 
+    it('includes legacy unset flags when filtering for unmarked entries', async () => {
+      await sqlExecutor.execute(
+        `update ${DROPS_TABLE} set is_additional_action_promised = null where id = :dropId`,
+        { dropId: 'drop-native' }
+      );
+      const unmarked = await reader.listLeaderboard(routingRecord, {
+        ...page,
+        is_additional_action_promised: false
+      });
+      expect(unmarked.data.map((entry) => entry.entry_id)).toEqual([entryId]);
+      const marked = await reader.listLeaderboard(routingRecord, {
+        ...page,
+        is_additional_action_promised: true
+      });
+      expect(marked.data.map((entry) => entry.entry_id)).toEqual([
+        secondEntryId
+      ]);
+    });
+
     it('orders native entries by each approved stable sort', async () => {
       const byRating = await reader.listEntries(routingRecord, {
         ...page,
