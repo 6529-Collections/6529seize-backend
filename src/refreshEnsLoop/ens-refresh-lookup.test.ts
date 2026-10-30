@@ -8,6 +8,12 @@ import {
 import { lookupPrimaryEnsNameResult } from '@/ens-lookup';
 
 jest.mock('@/ens-lookup', () => ({ lookupPrimaryEnsNameResult: jest.fn() }));
+// Socket fixtures use loopback. The production public-address policy has its
+// own tests, including private literals and the DNS answers used by connect.
+jest.mock('@/refreshEnsLoop/ens-refresh-public-network', () => ({
+  assertPublicEnsUrl: jest.fn(),
+  publicEnsLookup: undefined
+}));
 const originalUrl = process.env.ETHEREUM_RPC_URL;
 let server: Server | undefined;
 const sockets = new Set<Socket>();
@@ -50,6 +56,46 @@ it('returns a successful lookup and disposes the provider immediately', async ()
     jest.mocked(lookupPrimaryEnsNameResult).mock.calls[0][1].destroyed
   ).toBe(true);
 });
+
+it('handles a lookup that rejects after its deadline without an unhandled rejection', async () => {
+  let rejectLookup!: (error: Error) => void;
+  jest.mocked(lookupPrimaryEnsNameResult).mockImplementation(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectLookup = reject;
+      })
+  );
+  await expect(findEnsForRefresh('0xaddress', 20)).resolves.toEqual({
+    status: 'unavailable'
+  });
+  const provider = jest.mocked(lookupPrimaryEnsNameResult).mock.calls[0][1];
+  expect(() => provider._getConnection()).toThrow();
+  rejectLookup(new Error('Late resolver failure'));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
+it.each(['0x', '', 'not-json'])(
+  'preserves the CCIP data contract for %j',
+  async (data) => {
+    jest
+      .spyOn(FetchRequest.prototype, 'send')
+      .mockImplementation(async function (this: FetchRequest) {
+        const body = data === 'not-json' ? data : JSON.stringify({ data });
+        return new FetchResponse(200, 'OK', {}, Buffer.from(body), this);
+      });
+    const provider = createEnsRefreshProvider(1000);
+    try {
+      const result = provider.ccipReadFetch({ to: '0xabc' }, '0x1234', [
+        'https://gateway.test'
+      ]);
+      if (data === '0x') await expect(result).resolves.toBe('0x');
+      else
+        await expect(result).rejects.toMatchObject({ code: 'OFFCHAIN_FAULT' });
+    } finally {
+      provider.destroy();
+    }
+  }
+);
 
 it('fails visibly when the RPC endpoint is not configured', async () => {
   delete process.env.ETHEREUM_RPC_URL;

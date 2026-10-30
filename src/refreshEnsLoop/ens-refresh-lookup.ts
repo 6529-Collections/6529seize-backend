@@ -8,7 +8,10 @@ import { performance } from 'node:perf_hooks';
 import { getEthereumRpcUrl } from '@/ethereum-rpc/ethereum-rpc.config';
 import { EnsLookupResult, lookupPrimaryEnsNameResult } from '@/ens-lookup';
 import { text } from '@/text';
-import { abortableEnsGetUrl } from '@/refreshEnsLoop/ens-refresh-transport';
+import {
+  abortableEnsGetUrl,
+  publicEnsGetUrl
+} from '@/refreshEnsLoop/ens-refresh-transport';
 
 function gatewayFailure() {
   return makeError('ENS gateway unavailable', 'OFFCHAIN_FAULT', {
@@ -53,12 +56,12 @@ export function createEnsRefreshProvider(timeoutMs: number): JsonRpcProvider {
   const getConnection = provider._getConnection.bind(provider);
   const destroy = provider.destroy.bind(provider);
 
-  function track(request: FetchRequest): FetchRequest {
+  function track(request: FetchRequest, publicOnly = false): FetchRequest {
     const remainingMs = deadline - performance.now();
     if (provider.destroyed || remainingMs <= 0) throw gatewayFailure();
     request.timeout = Math.max(1, Math.ceil(remainingMs));
     request.setThrottleParams({ maxAttempts: 1 });
-    request.getUrlFunc = abortableEnsGetUrl;
+    request.getUrlFunc = publicOnly ? publicEnsGetUrl : abortableEnsGetUrl;
     requests.add(request);
     return request;
   }
@@ -77,7 +80,7 @@ export function createEnsRefreshProvider(timeoutMs: number): JsonRpcProvider {
     const data = calldata.toLowerCase();
     for (const url of urls) {
       const href = url.replace('{sender}', sender).replace('{data}', data);
-      const request = track(new FetchRequest(href));
+      const request = track(new FetchRequest(href), true);
       if (!url.includes('{data}')) request.body = { data, sender };
       const result = await readGateway(request);
       if (result) return result;
@@ -115,6 +118,8 @@ export async function findEnsForRefresh(
       }, timeoutMs);
     });
     const result = await Promise.race([
+      // Promise.race installs rejection handlers on every input, including after
+      // timeout. The destroyed provider rejects any subsequent transport work.
       lookupPrimaryEnsNameResult(address, provider),
       timeout
     ]);

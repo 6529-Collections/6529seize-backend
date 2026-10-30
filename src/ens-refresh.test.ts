@@ -64,6 +64,19 @@ it('caps each lookup at ten seconds', async () => {
   expect(findEnsForRefresh).toHaveBeenCalledWith(wallet(1).wallet, 10_000);
 });
 
+it('caps failed-wallet exclusions during an extended provider outage', async () => {
+  let batch = 0;
+  jest.mocked(fetchEnsRefresh).mockImplementation(async () => {
+    const start = batch++ * 100;
+    return Array.from({ length: 100 }, (_, i) => wallet(start + i));
+  });
+  await refreshEns(() => 900_000);
+  expect(findEnsForRefresh).toHaveBeenCalledTimes(500);
+  expect(fetchEnsRefresh).toHaveBeenCalledTimes(5);
+  expect(jest.mocked(fetchEnsRefresh).mock.calls[4][0]).toHaveLength(400);
+  expect(persistENS).not.toHaveBeenCalled();
+});
+
 it('shortens the last lookup and saves completed work before the shutdown reserve', async () => {
   let remaining = 65_000;
   jest.mocked(fetchEnsRefresh).mockResolvedValueOnce([wallet(1), wallet(2)]);
@@ -90,4 +103,15 @@ it('does not reduce the one-minute shutdown reserve through configuration', asyn
   await refreshEns(() => 59_000);
   expect(fetchEnsRefresh).not.toHaveBeenCalled();
   expect(findEnsForRefresh).not.toHaveBeenCalled();
+});
+
+it('does not mark a wallet unavailable when too little lookup budget remains', async () => {
+  let remaining = 65_000;
+  jest.mocked(fetchEnsRefresh).mockImplementationOnce(async () => {
+    remaining = 60_500;
+    return [wallet(1)];
+  });
+  await refreshEns(() => remaining);
+  expect(findEnsForRefresh).not.toHaveBeenCalled();
+  expect(persistENS).not.toHaveBeenCalled();
 });

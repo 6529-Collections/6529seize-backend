@@ -23,6 +23,8 @@ const logger = Logger.get('ENS');
 const ENS_DISCOVERY_MAX_RETRIES = 5;
 const ENS_DISCOVERY_RETRY_BASE_DELAY_MS = 250;
 const ENS_LOOKUP_CONCURRENCY = 10;
+const ENS_REFRESH_MAX_FAILURES = 500;
+const ENS_REFRESH_MIN_LOOKUP_MS = 1000;
 
 export async function getPrediscoveredEnsNames(
   walletAddresses: string[]
@@ -60,7 +62,7 @@ async function refreshExistingEnsBatch(
   let processed = 0;
 
   for (const w of ens) {
-    if (remainingWorkMs() <= 0) {
+    if (remainingWorkMs() <= ENS_REFRESH_MIN_LOOKUP_MS) {
       logger.info(
         `[REFRESH ENS STOPPING EARLY] [PROCESSED ${processed}] [TOTAL ${ens.length}]`
       );
@@ -73,6 +75,12 @@ async function refreshExistingEnsBatch(
     if (result.status === 'unavailable') {
       excludedWallets.add(w.wallet);
       logger.warn('[REFRESH ENS LOOKUP UNAVAILABLE] [RETRY NEXT INVOCATION]');
+      if (excludedWallets.size >= ENS_REFRESH_MAX_FAILURES) {
+        logger.warn(
+          '[REFRESH ENS FAILURE LIMIT REACHED] [RETRY NEXT INVOCATION]'
+        );
+        break;
+      }
       continue;
     }
     const newEns: ENS = {
@@ -233,7 +241,7 @@ async function refreshEnsLoop(
   remainingWorkMs: () => number,
   excludedWallets: Set<string>
 ) {
-  if (remainingWorkMs() <= 0) {
+  if (remainingWorkMs() <= ENS_REFRESH_MIN_LOOKUP_MS) {
     return false;
   }
   const batch = await fetchEnsRefresh(Array.from(excludedWallets));
@@ -260,7 +268,11 @@ export async function refreshEns(getRemainingTimeInMillis?: () => number) {
       (getRemainingTimeInMillis?.() ?? Infinity) -
         Math.max(60_000, minRemainingMs)
     );
-  while (processing && remainingWorkMs() > 0) {
+  while (
+    processing &&
+    remainingWorkMs() > ENS_REFRESH_MIN_LOOKUP_MS &&
+    excludedWallets.size < ENS_REFRESH_MAX_FAILURES
+  ) {
     processing = await refreshEnsLoop(remainingWorkMs, excludedWallets);
   }
 }

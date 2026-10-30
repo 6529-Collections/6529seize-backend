@@ -857,7 +857,10 @@ export async function fetchEnsRefresh(excludedWallets: string[] = []) {
     ? ' AND wallet NOT IN (:excludedWallets)'
     : '';
   const sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)${exclusion} ORDER BY created_at ASC LIMIT :batchSize`;
-  return sqlExecutor.execute<ENS>(sql, { batchSize, excludedWallets });
+  return sqlExecutor.execute<ENS>(
+    sql,
+    excludedWallets.length ? { batchSize, excludedWallets } : { batchSize }
+  );
 }
 
 export async function fetchMissingEns(datetime?: Date) {

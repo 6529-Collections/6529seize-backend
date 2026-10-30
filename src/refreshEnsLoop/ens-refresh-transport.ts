@@ -2,23 +2,40 @@ import type { FetchRequest } from 'ethers';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { gunzipSync } from 'node:zlib';
+import {
+  assertPublicEnsUrl,
+  publicEnsLookup
+} from '@/refreshEnsLoop/ens-refresh-public-network';
 
 type TransportResponse = Awaited<ReturnType<FetchRequest['getUrlFunc']>>;
+const MAX_RESPONSE_BYTES = 1024 * 1024;
 
 function readResponse(
   url: string,
   input: FetchRequest,
   headers: Record<string, string>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  publicOnly: boolean
 ): Promise<TransportResponse> {
   return new Promise((resolve, reject) => {
     const send = url.startsWith('https:') ? httpsRequest : httpRequest;
     const request = send(
       url,
-      { method: input.method, headers, signal },
+      {
+        method: input.method,
+        headers,
+        signal,
+        lookup: publicOnly ? publicEnsLookup : undefined
+      },
       (response) => {
         const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        let bytes = 0;
+        response.on('data', (chunk: Buffer) => {
+          bytes += chunk.length;
+          if (bytes > MAX_RESPONSE_BYTES)
+            request.destroy(new Error('ENS response too large'));
+          else chunks.push(chunk);
+        });
         response.once('aborted', () =>
           reject(new Error('ENS HTTP response aborted'))
         );
@@ -38,7 +55,7 @@ function readResponse(
               headers: responseHeaders,
               body:
                 responseHeaders['content-encoding'] === 'gzip'
-                  ? gunzipSync(body)
+                  ? gunzipSync(body, { maxOutputLength: MAX_RESPONSE_BYTES })
                   : body
             });
           } catch (error) {
@@ -55,41 +72,52 @@ function readResponse(
 
 async function followRedirects(
   input: FetchRequest,
-  signal: AbortSignal
+  signal: AbortSignal,
+  publicOnly: boolean
 ): Promise<TransportResponse> {
   let url = input.url;
   const headers = { ...input.headers };
   for (let attempt = 0; attempt < 10; attempt++) {
-    const response = await readResponse(url, input, headers, signal);
+    if (publicOnly) assertPublicEnsUrl(url);
+    const response = await readResponse(
+      url,
+      input,
+      headers,
+      signal,
+      publicOnly
+    );
     const location = response.headers.location;
     if (![301, 302].includes(response.statusCode) || !location) return response;
-    // Keep ethers' HTTP-only redirect and HTTPS downgrade protections.
+    const target = new URL(location, url);
+    // Keep HTTP-only redirects and HTTPS downgrade protections.
     if (
-      !/^https?:/.test(location) ||
-      (url.startsWith('https:') && !location.startsWith('https:'))
+      !['http:', 'https:'].includes(target.protocol) ||
+      (new URL(url).protocol === 'https:' && target.protocol !== 'https:')
     ) {
       throw new Error('Unsupported ENS HTTP redirect');
     }
-    if (new URL(location).host !== new URL(url).host) {
+    if (target.origin !== new URL(url).origin) {
       delete headers.authorization;
       delete headers.cookie;
     }
-    url = location;
+    url = target.href;
   }
   throw new Error('Too many ENS HTTP redirects');
 }
 
 /** Unlike the installed ethers adapter, abort the actual Node HTTP request. */
-export const abortableEnsGetUrl: FetchRequest['getUrlFunc'] = async (
-  request,
-  signal
-) => {
-  const abort = new AbortController();
-  signal?.addListener(() => abort.abort());
-  const timer = setTimeout(() => abort.abort(), request.timeout);
-  try {
-    return await followRedirects(request, abort.signal);
-  } finally {
-    clearTimeout(timer);
-  }
-};
+function createTransport(publicOnly: boolean): FetchRequest['getUrlFunc'] {
+  return async (request, signal) => {
+    const abort = new AbortController();
+    signal?.addListener(() => abort.abort());
+    const timer = setTimeout(() => abort.abort(), request.timeout);
+    try {
+      return await followRedirects(request, abort.signal, publicOnly);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
+export const abortableEnsGetUrl = createTransport(false);
+export const publicEnsGetUrl = createTransport(true);
