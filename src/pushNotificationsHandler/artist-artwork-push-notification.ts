@@ -5,9 +5,10 @@ export function buildArtistArtworkPushNotification(
   artist: { handle: string | null }
 ) {
   const artwork = data.artwork_title?.trim();
+  const artworkLabel = artwork ? `“${artwork}”` : 'new artwork';
   return {
     title: 'New artwork',
-    body: `${artist.handle ?? 'An artist'} submitted ${artwork ? `“${artwork}”` : 'new artwork'} to ${data.competition_title}.`,
+    body: `${artist.handle ?? 'An artist'} submitted ${artworkLabel} to ${data.competition_title}.`,
     data: {
       redirect: 'waves',
       wave_id: data.wave_id,

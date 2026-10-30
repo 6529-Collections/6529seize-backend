@@ -124,6 +124,28 @@ describe('Artist artwork delivery', () => {
       200
     );
   });
+  it('reuses original IDs across pages when a later push enqueue fails', async () => {
+    const deps = setup();
+    deps.preferences.listRecipients.mockImplementation(
+      async (_artist, _time, after) => {
+        if (!after) return ['viewer-a'];
+        return after === 'viewer-a' ? ['viewer-b'] : [];
+      }
+    );
+    deps.notifier.notifyOfArtistArtwork
+      .mockResolvedValueOnce([41])
+      .mockResolvedValueOnce([42]);
+    deps.push
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('queue unavailable'));
+    await expect(deps.service.deliver(event, {})).rejects.toThrow(
+      'queue unavailable'
+    );
+    await deps.service.deliver(event, {});
+    expect(deps.notifier.notifyOfArtistArtwork).toHaveBeenCalledTimes(2);
+    // Re-enqueue is safe: the shared push transport deduplicates these stable IDs per device.
+    expect(deps.push.mock.calls).toEqual([[[41]], [[42]], [[41]], [[42]]]);
+  });
   it('rechecks a disabled preference before writing', async () => {
     const deps = setup();
     deps.preferences.isEnabled.mockResolvedValue(false);

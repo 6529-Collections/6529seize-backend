@@ -13,6 +13,8 @@ const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
   // Collaboration and returned-credit notifications deliberately extend both inbox versions.
   'schema ApiNotificationCause.enum': [
     'SUBSCRIPTION_COVERAGE',
+    // Explicit artist opt-in extends both inbox versions; existing causes stay unchanged.
+    'ARTIST_ARTWORK_SUBMITTED',
     'COMPETITION_LIFECYCLE',
     'MEME_COLLABORATION',
     'VOTING_CREDITS_RETURNED'

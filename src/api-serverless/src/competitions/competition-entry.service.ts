@@ -308,12 +308,10 @@ export class CompetitionEntryService {
       Date.now(),
       tx
     );
-    await this.event(
+    await this.enqueueCreatedEvent(
       entry,
-      'COMPETITION_ENTRY_CREATED',
       request.idempotency_key,
       actor,
-      null,
       tx,
       pendingPushIds,
       competition.capabilities.includes(CompetitionCapability.MAIN_STAGE) &&
@@ -471,20 +469,18 @@ export class CompetitionEntryService {
       throw new NotFoundException('Entry content is unavailable');
   }
 
-  private async event(
+  private async enqueueCreatedEvent(
     entry: CompetitionEntry,
-    eventType: string,
     key: string,
     actor: string,
-    reason: string | null,
     ctx: RequestContext,
-    pendingPushIds?: number[],
-    artworkAlertEligible = false
+    pendingPushIds: number[],
+    artworkAlertEligible: boolean
   ): Promise<void> {
     await nativeCompetitionRuntimeRepository.enqueueEvent(
       {
         key: `entry:${key}`,
-        event_type: eventType,
+        event_type: 'COMPETITION_ENTRY_CREATED',
         wave_id: entry.wave_id,
         competition_id: entry.competition_id,
         competition_entry_id: entry.id,
@@ -495,8 +491,8 @@ export class CompetitionEntryService {
           submitter_id: entry.submitter_id,
           actor_id: actor,
           status: entry.status,
-          reason,
-          ...(pendingPushIds?.length
+          reason: null,
+          ...(pendingPushIds.length
             ? { pending_push_notification_ids: pendingPushIds }
             : {})
         }

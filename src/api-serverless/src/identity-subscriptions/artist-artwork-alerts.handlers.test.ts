@@ -26,16 +26,14 @@ const request = {
 } as Operations.GetArtistArtworkAlertRequest;
 
 function auth(profileId: string | null, role: string | null = null) {
-  jest
-    .mocked(getAuthenticationContext)
-    .mockResolvedValue(
-      new AuthenticationContext({
-        authenticatedWallet: 'wallet',
-        authenticatedProfileId: profileId,
-        roleProfileId: role,
-        activeProxyActions: []
-      })
-    );
+  jest.mocked(getAuthenticationContext).mockResolvedValue(
+    new AuthenticationContext({
+      authenticatedWallet: 'wallet',
+      authenticatedProfileId: profileId,
+      roleProfileId: role,
+      activeProxyActions: []
+    })
+  );
 }
 beforeEach(() => {
   jest.clearAllMocks();
