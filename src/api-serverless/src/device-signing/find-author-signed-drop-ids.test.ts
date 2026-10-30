@@ -105,6 +105,15 @@ describe('DeviceSigningDb.findAuthorSignedDropIds', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('reads as unsigned when the lookup fails', async () => {
+    const { db, execute } = inMemoryAuthorSignatures();
+    execute.mockRejectedValueOnce(new Error('ER_NO_SUCH_TABLE'));
+
+    await expect(db.findAuthorSignedDropIds([DROP_ID], {})).resolves.toEqual(
+      new Set()
+    );
+  });
+
   it('uses the caller connection or the requested pool', async () => {
     const { db, queries } = inMemoryAuthorSignatures();
     const connection = { connection: 'tx' };

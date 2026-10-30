@@ -8,12 +8,15 @@ import {
 import { DbPoolName } from '@/db-query.options';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
+import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 
 export const DEVICE_GRANTS_LIST_LIMIT = 100;
 
 export class DeviceSigningDb extends LazyDbAccessCompatibleService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   /** Idempotent on id. Returns false when the grant already existed. */
   async insertGrant(
     grant: DeviceGrantEntity,
@@ -233,7 +236,9 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
   /**
    * Which of the given drops show author signed content right now. Same rule
    * as current_event_id (a drop_author_signatures row exists), answered for a
-   * whole page with one primary key lookup.
+   * whole page with one primary key lookup. The answer is display metadata on
+   * every drop read, so a failed lookup reads as unsigned instead of failing
+   * the read.
    */
   async findAuthorSignedDropIds(
     dropIds: readonly string[],
@@ -244,14 +249,22 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
     if (!distinctDropIds.length) {
       return new Set();
     }
-    const rows = await this.timedExecute<{ drop_id: string }>(
-      'findAuthorSignedDropIds',
-      `select drop_id from ${DROP_AUTHOR_SIGNATURES_TABLE} where drop_id in (:dropIds)`,
-      { dropIds: distinctDropIds },
-      ctx,
-      forcePool
-    );
-    return new Set(rows.map((row) => row.drop_id));
+    try {
+      const rows = await this.timedExecute<{ drop_id: string }>(
+        'findAuthorSignedDropIds',
+        `select drop_id from ${DROP_AUTHOR_SIGNATURES_TABLE} where drop_id in (:dropIds)`,
+        { dropIds: distinctDropIds },
+        ctx,
+        forcePool
+      );
+      return new Set(rows.map((row) => row.drop_id));
+    } catch (error) {
+      this.logger.error(
+        `Failed to read the author signature status of ${distinctDropIds.length} drops`,
+        error
+      );
+      return new Set();
+    }
   }
 
   async findEventsByDropId(
