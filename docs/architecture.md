@@ -741,6 +741,21 @@ ENS records. Fallback errors retain their null result and emit only allowlisted
 categories, separating resolver reverts from transport and off-chain failures
 without logging raw errors or revert arguments.
 
+ENS refresh uses an isolated provider per wallet with a ten-second total lookup
+deadline, shortened to the remaining work budget. It owns and cancels both RPC
+and CCIP gateway HTTP requests, retaining mainnet verification and CCIP callback
+handling. Refresh reserves at least one minute for persistence and teardown.
+Resolver-controlled CCIP gateway requests require public IP literals and public
+DNS answers pinned to the connection, including on redirects. The configured RPC
+endpoint retains its trusted network policy. Redirects strip credentials across
+origins, and HTTP responses and decoded gzip output are limited to one MiB.
+Provider failures preserve the cached name and timestamp; failed wallets are
+excluded from subsequent batches in that invocation and retried on the next
+schedule. Successful lookups, including authoritative resolver absence, retain
+the existing persistence behavior. Refresh stops after 500 unavailable lookups
+per invocation to bound retry-exclusion query size during an outage. Discovery and other ENS callers keep their
+existing lookup contract.
+
 `NFT_INDEXER_RPC` remains the independently configured external-indexing/NFT-link
 capacity boundary. The unused API-root AWS Managed Blockchain `/rpc` proxy,
 including `/rpc/test` and all sub-paths, has been removed; requests fall through
