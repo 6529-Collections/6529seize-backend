@@ -58,6 +58,41 @@ it('retries failed wallets in the next invocation without marking them refreshed
   expect(fetchEnsRefresh).toHaveBeenCalledWith([]);
 });
 
+it('advances healthy wallets across invocations while an old wallet stays unavailable', async () => {
+  let stale = [wallet(1), wallet(2)];
+  jest
+    .mocked(fetchEnsRefresh)
+    .mockImplementation(async (excluded = []) =>
+      stale.filter((row) => !excluded.includes(row.wallet))
+    );
+  jest
+    .mocked(findEnsForRefresh)
+    .mockImplementation(async (address) =>
+      address === wallet(1).wallet
+        ? { status: 'unavailable' }
+        : { status: 'resolved', name: 'healthy.eth' }
+    );
+  jest.mocked(persistENS).mockImplementation(async (rows) => {
+    stale = stale.filter(
+      (row) => !rows.some((saved) => saved.wallet === row.wallet)
+    );
+  });
+  await refreshEns(() => 900_000);
+  expect(stale).toEqual([wallet(1)]);
+  stale.push(wallet(3));
+  await refreshEns(() => 900_000);
+  expect(stale).toEqual([wallet(1)]);
+  const saved = jest
+    .mocked(persistENS)
+    .mock.calls.flatMap(([rows]) => rows.map((row) => row.wallet));
+  expect(saved).toEqual([wallet(2).wallet, wallet(3).wallet]);
+  expect(
+    jest
+      .mocked(findEnsForRefresh)
+      .mock.calls.filter(([address]) => address === wallet(1).wallet)
+  ).toHaveLength(2);
+});
+
 it('caps each lookup at ten seconds', async () => {
   jest.mocked(fetchEnsRefresh).mockResolvedValueOnce([wallet(1)]);
   await refreshEns(() => 900_000);

@@ -1,4 +1,5 @@
 import { promises as dns } from 'node:dns';
+import type { LookupOptions } from 'node:dns';
 import { BlockList, isIP, LookupFunction } from 'node:net';
 import { isPrivateIp, parseAndValidatePublicHttpUrl } from '@/http/safe-fetch';
 
@@ -24,6 +25,12 @@ export function assertPublicEnsUrl(value: string): void {
   }
 }
 
+function requestedAddressFamily(family: LookupOptions['family']): number {
+  if (family === 4 || family === 'IPv4') return 4;
+  if (family === 6 || family === 'IPv6') return 6;
+  return 0;
+}
+
 /** Validate the very DNS answers used by connect, without a second lookup. */
 export const publicEnsLookup: LookupFunction = (
   hostname,
@@ -32,15 +39,19 @@ export const publicEnsLookup: LookupFunction = (
 ) => {
   void dns.lookup(hostname, { ...options, all: true }).then(
     (addresses) => {
+      const family = requestedAddressFamily(options.family);
+      const matching = family
+        ? addresses.filter((entry) => entry.family === family)
+        : addresses;
       if (
-        !addresses.length ||
+        !matching.length ||
         addresses.some(({ address }) => !isPublicAddress(address))
       ) {
         callback(new Error('ENS gateway requires public DNS answers'), []);
       } else if (options.all) {
-        callback(null, addresses);
+        callback(null, matching);
       } else {
-        callback(null, addresses[0].address, addresses[0].family);
+        callback(null, matching[0].address, matching[0].family);
       }
     },
     () => callback(new Error('ENS gateway DNS unavailable'), [])

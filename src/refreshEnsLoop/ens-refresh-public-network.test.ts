@@ -14,15 +14,19 @@ const lookupAll = dns.lookup as (
   options: { all: true }
 ) => Promise<LookupAddress[]>;
 
-function lookup(all = true) {
+function lookup(all = true, family?: number) {
   return new Promise<{
     address: string | import('node:dns').LookupAddress[];
     family?: number;
   }>((resolve, reject) => {
-    publicEnsLookup('gateway.test', { all }, (error, address, family) => {
-      if (error) reject(error);
-      else resolve({ address, family });
-    });
+    publicEnsLookup(
+      'gateway.test',
+      family ? { all, family } : { all },
+      (error, address, family) => {
+        if (error) reject(error);
+        else resolve({ address, family });
+      }
+    );
   });
 }
 
@@ -92,3 +96,19 @@ it('fails closed on empty DNS results or lookup failure', async () => {
   await expect(lookup()).rejects.toThrow();
   await expect(lookup()).rejects.toThrow('DNS unavailable');
 });
+
+it.each([4, 6])(
+  'honors requested address family %s in the pinned connect result',
+  async (family) => {
+    const ipv6 = { address: '2606:4700:4700::1111', family: 6 };
+    const ipv4 = { address: '1.1.1.1', family: 4 };
+    jest.mocked(lookupAll).mockResolvedValue([ipv6, ipv4]);
+    await expect(lookup(false, family)).resolves.toEqual(
+      family === 4 ? ipv4 : ipv6
+    );
+    expect(dns.lookup).toHaveBeenCalledWith('gateway.test', {
+      family,
+      all: true
+    });
+  }
+);
