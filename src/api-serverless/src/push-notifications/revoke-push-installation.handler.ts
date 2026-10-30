@@ -7,6 +7,13 @@ import { withDeviceBadgeLock } from '@/pushNotificationsHandler/device-badge';
 import { revokeInstallation } from './push-installation.db';
 import { requestInstallationBadgeRefresh } from './push-notifications.service';
 
+const sessionSchema = Joi.object({
+  address: Joi.string()
+    .pattern(/^0x[0-9a-fA-F]{40}$/)
+    .required(),
+  native_refresh_token: Joi.string().max(1024).required()
+});
+
 const schema: Joi.ObjectSchema<ApiRevokePushInstallationRequest> = Joi.object({
   device_id: Joi.string().max(100).required(),
   installation_secret: Joi.string().hex().length(64).required(),
@@ -19,17 +26,8 @@ const schema: Joi.ObjectSchema<ApiRevokePushInstallationRequest> = Joi.object({
   profile_id: Joi.string().max(100).optional(),
   all_profiles: Joi.boolean().required(),
   token_scoped: Joi.boolean().optional(),
-  sessions: Joi.array()
-    .max(50)
-    .items(
-      Joi.object({
-        address: Joi.string()
-          .pattern(/^0x[0-9a-fA-F]{40}$/)
-          .required(),
-        native_refresh_token: Joi.string().max(1024).required()
-      })
-    )
-    .required()
+  sessions: Joi.array().max(50).items(sessionSchema).required(),
+  reconciliation_session: sessionSchema.optional()
 });
 
 export async function handleRevokePushInstallation(

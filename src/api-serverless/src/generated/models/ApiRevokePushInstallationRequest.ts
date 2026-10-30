@@ -34,6 +34,7 @@ export class ApiRevokePushInstallationRequest {
     */
     'profile_id'?: string;
     'sessions': Array<ApiPushLogoutSession>;
+    'reconciliation_session'?: ApiPushLogoutSession;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -86,6 +87,12 @@ export class ApiRevokePushInstallationRequest {
             "name": "sessions",
             "baseName": "sessions",
             "type": "Array<ApiPushLogoutSession>",
+            "format": ""
+        },
+        {
+            "name": "reconciliation_session",
+            "baseName": "reconciliation_session",
+            "type": "ApiPushLogoutSession",
             "format": ""
         }    ];
 

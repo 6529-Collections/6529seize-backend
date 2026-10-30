@@ -37212,6 +37212,14 @@ components:
           maxItems: 50
           items:
             $ref: "#/components/schemas/ApiPushLogoutSession"
+        reconciliation_session:
+          $ref: "#/components/schemas/ApiPushLogoutSession"
+          description: >-
+            Optional live native session authorizing a credential-scoped fence
+            when logout preceded the first push registration and its original
+            sessions are missing or no longer live. This session is not revoked
+            unless also listed in sessions. It never proves installation
+            ownership or bypasses an existing installation credential.
     ApiRevokePushInstallationResponse:
       type: object
       required:
