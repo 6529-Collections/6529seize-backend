@@ -142,6 +142,48 @@ nonce is then consumed as a separate final atomic operation using Redis
 `SET NX EX`; repeated or concurrent use is rejected. Local/test can use the
 in-memory fallback, while production fails closed when Redis is unavailable.
 
+## Device Signing Grants
+
+Web SIWE logins can also grant a browser-held, non-extractable Ed25519 device
+key the right to sign drop writes for 180 days. Unsigned writes and logins
+without device parameters are unchanged.
+
+- `GET /api/auth/session-nonce` accepts optional `device_key` (`0x` + 64
+  lowercase hex), `device_key_type=ed25519` (required with a key) and
+  `device_scopes` (comma list from `post,edit,delete,react,vote`, default
+  `post,edit,delete,react`, must include `post`). Any device parameter with a
+  native or desktop client type returns 400.
+- The SIWE message then carries exactly one resource
+  `urn:6529:device-grant:v1:ed25519:{key hex}:{scopes joined by .}:{expiry}`
+  and a statement rendered from it that names the expiry minute (UTC), the key
+  and the scopes. The expiry is the issuing minute plus 180 days. The parser
+  accepts only the plain sign-in message or this exact grant shape (one URN,
+  canonical scopes, minute-aligned expiry at most 181 days after Issued At).
+- `POST /api/auth/session-login` stores the grant in `device_grants` only
+  after the wallet signature verified and the nonce was consumed, keyed by the
+  EIP-191 hash of the exact signed message. The response gains `device_grant`.
+  A storage failure is logged and the login still succeeds without it.
+  Optional `device_label` is reduced to letters, digits, spaces and `._()-`,
+  at most 48 characters, defaulting to `Browser`.
+- `GET /api/device-grants` lists the grants of every wallet of the caller's
+  profile; `POST /api/device-grants/{grantId}/revoke` revokes one. Neither is
+  available to proxies.
+- `POST /drops`, `POST /drops/{id}`, `DELETE /drops/{id}` and
+  `POST|DELETE /drops/{id}/reaction` accept an optional `device_signature`
+  (`grant_id`, `seq`, `claimed_time`, `signature`). The server strips it from
+  the body, rebuilds the EIP-712 interim event (kind, stored wave, refs,
+  canonical-JSON body hash), checks the grant (scope, expiry, revocation,
+  wallet of the acting non-proxy profile), the 10-minute clock window and the
+  Ed25519 signature, and reserves the event in `device_signed_events` (unique
+  on event id and on device key plus `seq`) before performing the write. A
+  failed write releases the reservation. Any check failure returns 400 with a
+  message starting `Invalid device signature:` and code
+  `INVALID_DEVICE_SIGNATURE`.
+- `drop_author_signatures` records which event's body is a drop's current
+  content: signed creates and edits set it, unsigned edits and deletes clear
+  it. `GET /api/drops/{dropId}/signed-events` returns a readable drop's
+  events, the grant proofs they reference and the current event id.
+
 ## Session V2 Refresh And Logout
 
 `POST /api/auth/session-refresh` rotates the session refresh material and returns a fresh JWT access token.
@@ -252,6 +294,16 @@ There is intentionally no `AUTH_LEGACY_REFRESH_ENABLED` flag. Legacy refresh red
 - Web sessions store a hashed cookie secret plus signed domain/client-origin metadata.
 - Native sessions store a hashed native refresh token.
 - Both session types store wallet address, optional role, expiry, last-use time, and revocation time.
+
+`device_grants` stores wallet-signed device signing grants: the exact SIWE
+message and wallet signature, wallet, Ed25519 key, scopes, label, domain,
+chain, issue, expiry, revocation and last-use times.
+
+`device_signed_events` stores every device-signed drop write: the signed event
+fields, the canonical body exactly as hashed, the Ed25519 signature, the drop it
+applied to (set only after the write succeeded) and the server receive time.
+`drop_author_signatures` maps a drop to the event whose body is its current
+content.
 
 `wallet_connection_shares` stores one-time connection share state:
 

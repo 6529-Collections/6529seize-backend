@@ -104,6 +104,7 @@ import { ApiDefaultCompetition } from '@/api/generated/models/ApiDefaultCompetit
 import { ApiDeleteEulaConsentRequest } from '@/api/generated/models/ApiDeleteEulaConsentRequest';
 import { ApiDeleteEulaConsentResponse } from '@/api/generated/models/ApiDeleteEulaConsentResponse';
 import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDeleteMyWaveChatHistoryResponse';
+import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
 import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
@@ -117,6 +118,7 @@ import { ApiDropPollVoteRequest } from '@/api/generated/models/ApiDropPollVoteRe
 import { ApiDropPollVotersPage } from '@/api/generated/models/ApiDropPollVotersPage';
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
 import { ApiDropSearchPage } from '@/api/generated/models/ApiDropSearchPage';
+import { ApiDropSignedEvents } from '@/api/generated/models/ApiDropSignedEvents';
 import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeaderboardPageV2';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
@@ -1372,6 +1374,36 @@ export type GetPublicContentModerationProfileStatusRequest = Request<
   Record<string, never>
 >;
 
+export type GetDeviceGrantsPathParams = Record<string, never>;
+
+export type GetDeviceGrantsQuery = Record<string, never>;
+
+export type GetDeviceGrantsResponse = ApiDeviceGrant[];
+
+export type GetDeviceGrantsRequest = Request<
+  GetDeviceGrantsPathParams,
+  ApiResponse<GetDeviceGrantsResponse>,
+  never,
+  GetDeviceGrantsQuery,
+  Record<string, never>
+>;
+
+export interface RevokeDeviceGrantPathParams {
+  "grantId": string;
+}
+
+export type RevokeDeviceGrantQuery = Record<string, never>;
+
+export type RevokeDeviceGrantResponse = ApiDeviceGrant;
+
+export type RevokeDeviceGrantRequest = Request<
+  RevokeDeviceGrantPathParams,
+  ApiResponse<RevokeDeviceGrantResponse>,
+  never,
+  RevokeDeviceGrantQuery,
+  Record<string, never>
+>;
+
 export interface GetWalletDistributionAllocationsPathParams {
   "contract": string;
   "card_id": number;
@@ -1495,6 +1527,22 @@ export type RespondToMemeCollaborationRequest = Request<
   ApiResponse<RespondToMemeCollaborationResponse>,
   ApiMemeCollaborationResponseRequest,
   RespondToMemeCollaborationQuery,
+  Record<string, never>
+>;
+
+export interface GetDropSignedEventsPathParams {
+  "dropId": string;
+}
+
+export type GetDropSignedEventsQuery = Record<string, never>;
+
+export type GetDropSignedEventsResponse = ApiDropSignedEvents;
+
+export type GetDropSignedEventsRequest = Request<
+  GetDropSignedEventsPathParams,
+  ApiResponse<GetDropSignedEventsResponse>,
+  never,
+  GetDropSignedEventsQuery,
   Record<string, never>
 >;
 
