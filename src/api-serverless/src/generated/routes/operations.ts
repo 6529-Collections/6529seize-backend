@@ -197,6 +197,7 @@ import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompe
 import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
+import { ApiUndiscoveredDrops } from '@/api/generated/models/ApiUndiscoveredDrops';
 import { ApiUnpublishProfileCmsPackageRequest } from '@/api/generated/models/ApiUnpublishProfileCmsPackageRequest';
 import { ApiUpdateCompetitionRequest } from '@/api/generated/models/ApiUpdateCompetitionRequest';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
@@ -3629,6 +3630,7 @@ export interface ListCompetitionLeaderboardV3PathParams {
 }
 
 export interface ListCompetitionLeaderboardV3Query {
+  "is_additional_action_promised"?: boolean;
   "sort"?: "rating" | "real_time_rating" | "submitted_at" | "trend" | "price";
   "price_currency"?: string;
   "min_price"?: number;
@@ -3897,5 +3899,24 @@ export type ListWaveSubwavesRequest = Request<
   ApiResponse<ListWaveSubwavesResponse>,
   never,
   ListWaveSubwavesQuery,
+  Record<string, never>
+>;
+
+export interface GetWaveUndiscoveredDropsPathParams {
+  "id": string;
+}
+
+export interface GetWaveUndiscoveredDropsQuery {
+  "limit"?: number;
+  "skip"?: number;
+}
+
+export type GetWaveUndiscoveredDropsResponse = ApiUndiscoveredDrops;
+
+export type GetWaveUndiscoveredDropsRequest = Request<
+  GetWaveUndiscoveredDropsPathParams,
+  ApiResponse<GetWaveUndiscoveredDropsResponse>,
+  never,
+  GetWaveUndiscoveredDropsQuery,
   Record<string, never>
 >;

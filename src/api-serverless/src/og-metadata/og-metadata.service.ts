@@ -2,6 +2,10 @@ import {
   apiDropV2Service,
   ApiDropWithWave
 } from '@/api/drops/api-drop-v2.service';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
 import { ApiAttachment } from '@/api/generated/models/ApiAttachment';
 import { ApiAttachmentStatus } from '@/api/generated/models/ApiAttachmentStatus';
 import { ApiDropMedia } from '@/api/generated/models/ApiDropMedia';
@@ -150,7 +154,19 @@ export class OgMetadataService {
   ): Promise<ApiOgMetadata> {
     const dropWithWave = await this.findDrop(dropIdentifier, ctx);
     const { drop, wave } = dropWithWave;
-    const author = await this.findLightProfile(drop.author.id, ctx);
+    const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+      [drop.id],
+      ctx,
+      { includeOwner: true }
+    );
+    const author = hiddenDropIds.has(drop.id)
+      ? {
+          id: anonymousCompetitionAuthor(drop.author, drop.id).id,
+          handle: 'Anonymous',
+          is_anonymous: true,
+          media: []
+        }
+      : await this.findLightProfile(drop.author.id, ctx);
     const descriptionDrop = wave.description_drop;
     const apiWave = this.mapWave(
       wave,

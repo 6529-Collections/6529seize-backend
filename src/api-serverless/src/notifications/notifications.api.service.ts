@@ -1,3 +1,5 @@
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
+import { anonymousNotificationProfiles } from '@/api/notifications/notifications-competition-anonymity';
 import { ApiVotingCreditReleaseReason } from '@/api/generated/models/ApiVotingCreditReleaseReason';
 import { requestDeviceBadgeRefresh } from '@/api/push-notifications/push-notifications.service';
 import { assertUnreachable } from '../../../assertions';
@@ -319,13 +321,14 @@ export class NotificationsApiService {
     );
     const reactorProfileIds =
       this.getAllReactorProfileIds(reactionRowsByDropId);
-    const [drops, profiles, waves] = await Promise.all([
+    const [drops, profiles, waves, hiddenDropIds] = await Promise.all([
       this.dropsService.findDropsV2ByIds(dropIds, ctx),
       this.identityFetcher.getApiIdentityOverviewsByIds(
         collections.distinct([...profileIds, ...reactorProfileIds]),
         ctx
       ),
-      this.findRelatedWaveOverviews(waveIds, eligibleGroupIds, ctx)
+      this.findRelatedWaveOverviews(waveIds, eligibleGroupIds, ctx),
+      competitionAnonymityService.hiddenDropIds(dropIds, ctx)
     ]);
     return notifications
       .filter((notification) => this.hasAllRelatedDropsV2(notification, drops))
@@ -333,7 +336,11 @@ export class NotificationsApiService {
         this.mapToApiNotificationV2({
           notification,
           drops,
-          profiles,
+          profiles: anonymousNotificationProfiles(
+            notification,
+            profiles,
+            hiddenDropIds
+          ),
           waves,
           reactionRowsByDropId
         })
@@ -397,9 +404,12 @@ export class NotificationsApiService {
     authenticationContext: AuthenticationContext
   ): Promise<ApiNotification[]> {
     const { profileIds, dropIds } = this.getAllRelatedIds(notifications);
-    const [drops, profiles] = await Promise.all([
+    const [drops, profiles, hiddenDropIds] = await Promise.all([
       this.dropsService.findDropsByIds(dropIds, authenticationContext),
       this.identityFetcher.getOverviewsByIds(profileIds, {
+        authenticationContext
+      }),
+      competitionAnonymityService.hiddenDropIds(dropIds, {
         authenticationContext
       })
     ]);
@@ -408,7 +418,15 @@ export class NotificationsApiService {
         this.hasAllRelatedDropsV1({ notification, drops })
       )
       .map((notification) =>
-        this.mapToApiNotification({ notification, drops, profiles })
+        this.mapToApiNotification({
+          notification,
+          drops,
+          profiles: anonymousNotificationProfiles(
+            notification,
+            profiles,
+            hiddenDropIds
+          )
+        })
       );
   }
 

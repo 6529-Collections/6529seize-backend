@@ -1,4 +1,9 @@
 import {
+  anonymousNotificationActorDropId,
+  findAnonymousNotificationActorPairs,
+  NotificationActorWriteOptions
+} from '@/notifications/anonymous-notification-actor';
+import {
   IDENTITY_MUTES_TABLE,
   DROPS_TABLE,
   WAVE_READER_METRICS_TABLE
@@ -120,8 +125,14 @@ export class IdentityMutesDb extends LazyDbAccessCompatibleService {
     T extends {
       readonly identity_id: string;
       readonly additional_identity_id: string | null;
+      readonly cause?: string;
+      readonly related_drop_id?: string | null;
     }
-  >(notifications: T[], connection?: ConnectionWrapper<any>): Promise<T[]> {
+  >(
+    notifications: T[],
+    connection?: ConnectionWrapper<any>,
+    options: NotificationActorWriteOptions = {}
+  ): Promise<T[]> {
     const muterIds = new Set<string>();
     const mutedIdentityIds = new Set<string>();
     notifications.forEach((notification) => {
@@ -155,11 +166,27 @@ export class IdentityMutesDb extends LazyDbAccessCompatibleService {
     const mutedPairSet = new Set(
       mutedPairs.map((pair) => `${pair.muter_id}:${pair.muted_identity_id}`)
     );
+    const anonymousActorPairs = await findAnonymousNotificationActorPairs(
+      notifications.filter(
+        (notification) =>
+          notification.additional_identity_id !== null &&
+          mutedPairSet.has(
+            `${notification.identity_id}:${notification.additional_identity_id}`
+          )
+      ),
+      this.db,
+      connection,
+      options
+    );
     return notifications.filter((notification) => {
       const actorId = notification.additional_identity_id;
-      return actorId === null
-        ? true
-        : !mutedPairSet.has(`${notification.identity_id}:${actorId}`);
+      const anonymousDropId = anonymousNotificationActorDropId(notification);
+      return (
+        actorId === null ||
+        !mutedPairSet.has(`${notification.identity_id}:${actorId}`) ||
+        (anonymousDropId !== null &&
+          anonymousActorPairs.has(`${anonymousDropId}:${actorId}`))
+      );
     });
   }
 

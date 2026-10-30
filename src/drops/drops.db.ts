@@ -1,4 +1,8 @@
 import {
+  publicCompetitionDropSql,
+  competitionAnonymityViewerId
+} from '@/competitions/competition-anonymity';
+import {
   DropSearchCursor,
   GLOBAL_SEARCH_QUERY_BUDGET_MS
 } from './drop-search-cursor';
@@ -261,14 +265,22 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       return await this.db.execute<DropEntity>(
         `
           select *
-          from ${DROPS_TABLE}
+          from ${DROPS_TABLE} d
           where wave_id = :wave_id
             and author_id = :author_id
+            and ${publicCompetitionDropSql('d', 'anonymityViewerId')}
             and drop_type = :drop_type
           order by created_at asc, serial_no asc, id asc
           limit :limit offset :offset
         `,
-        { wave_id, author_id, drop_type, limit, offset },
+        {
+          wave_id,
+          author_id,
+          drop_type,
+          limit,
+          offset,
+          anonymityViewerId: competitionAnonymityViewerId(ctx) ?? null
+        },
         { wrappedConnection: ctx.connection }
       );
     } finally {
@@ -898,16 +910,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
            !include_replies && !serial_nos?.length
              ? `and reply_to_drop_id is null`
              : ``
-         } ${author_id ? ` and d.author_id = :author_id ` : ``}${
+         } ${author_id ? ` and d.author_id = :author_id and ${publicCompetitionDropSql('d', 'anonymityViewerId')} ` : ``}${
            ids?.length ? ` and d.id in (:ids) ` : ``
          }${serial_nos?.length ? ` and d.serial_no in (:serial_nos) ` : ``}${
            contains_media
              ? ` and exists (select 1 from ${DROP_MEDIA_TABLE} dm where dm.drop_id = d.id) `
              : ``
-         } ${curationFilter} order by d.serial_no desc limit ${amount}`;
+         } ${group_id ? `and ${publicCompetitionDropSql('d', 'anonymityViewerId')}` : ''} ${curationFilter} order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       serialNoLessThan,
+      anonymityViewerId: competitionAnonymityViewerId(ctx) ?? null,
       groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
       author_id,
       wave_id,
@@ -3352,7 +3365,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
       if (param.author_id) {
         filters.push('d.author_id = :author_id');
+        filters.push(publicCompetitionDropSql('d', 'anonymityViewerId'));
         queryParams.author_id = param.author_id;
+        queryParams.anonymityViewerId = competitionAnonymityViewerId(ctx) ?? '';
       }
       if (param.after !== undefined) {
         filters.push('d.created_at >= :after');
@@ -3408,13 +3423,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
        FROM ${PROFILES_TABLE} p
        INNER JOIN ${DROPS_TABLE} d ON d.author_id = p.external_id
        WHERE d.wave_id = :wave_id
+         AND ${publicCompetitionDropSql('d', 'anonymityViewerId')}
          AND p.normalised_handle LIKE CONCAT(:handle, '%') ESCAPE '\\'
        ORDER BY handle ASC
        LIMIT :limit`,
       {
         wave_id: param.wave_id,
         handle: normalizedHandle,
-        limit: param.limit
+        limit: param.limit,
+        anonymityViewerId: competitionAnonymityViewerId(ctx) ?? null
       },
       { wrappedConnection: ctx.connection }
     );
@@ -3560,7 +3577,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         join ${legacyGetView(WAVES_TABLE)} w on w.id = d.wave_id
         where p.boosted_at > :count_only_boosts_after
         and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups')}
-        ${author_id ? ` and d.author_id = :author_id ` : ''}
+        ${author_id ? ` and d.author_id = :author_id and ${publicCompetitionDropSql('d', 'anonymityViewerId')} ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2
       `;
@@ -3580,6 +3597,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           offset,
           booster_id,
           author_id,
+          anonymityViewerId: competitionAnonymityViewerId(ctx) ?? null,
           min_boosts,
           order_by,
           count_only_boosts_after,
@@ -3625,7 +3643,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         join ${legacyGetView(WAVES_TABLE)} w on w.id = d.wave_id
         where p.boosted_at > :count_only_boosts_after
         and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups')}
-        ${author_id ? ` and d.author_id = :author_id ` : ''}
+        ${author_id ? ` and d.author_id = :author_id and ${publicCompetitionDropSql('d', 'anonymityViewerId')} ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2
       `;
@@ -3640,6 +3658,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           wave_id,
           booster_id,
           author_id,
+          anonymityViewerId: competitionAnonymityViewerId(ctx) ?? null,
           min_boosts,
           eligibile_groups,
           count_only_boosts_after

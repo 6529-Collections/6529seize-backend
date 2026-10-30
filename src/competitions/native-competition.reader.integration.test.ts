@@ -8,7 +8,8 @@ import {
   COMPETITION_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   COMPETITION_PAUSES_TABLE,
   COMPETITION_VOTES_TABLE,
-  COMPETITIONS_TABLE
+  COMPETITIONS_TABLE,
+  DROPS_TABLE
 } from '@/constants';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 import { CompetitionRepository } from '@/competitions/competition.repository';
@@ -45,6 +46,28 @@ const routingRecord = {
 describeWithSeed(
   'NativeCompetitionReader read model',
   [
+    withRows(DROPS_TABLE, [
+      {
+        id: 'drop-native',
+        wave_id: 'wave-native',
+        serial_no: 1,
+        author_id: 'profile-submitter',
+        drop_type: 'CHAT',
+        created_at: 1,
+        parts_count: 1,
+        is_additional_action_promised: false
+      },
+      {
+        id: 'drop-native-second',
+        wave_id: 'wave-native',
+        serial_no: 2,
+        author_id: 'profile-submitter-second',
+        drop_type: 'CHAT',
+        created_at: 2,
+        parts_count: 1,
+        is_additional_action_promised: true
+      }
+    ]),
     withRows(COMPETITIONS_TABLE, [
       {
         ...routingRecord,
@@ -295,6 +318,54 @@ describeWithSeed(
         page
       );
       expect(distribution.data[0]?.id).toBe(distributionId);
+    });
+
+    it('filters before pagination and includes promises without plan metadata', async () => {
+      const filtered = await reader.listLeaderboard(routingRecord, {
+        ...page,
+        limit: 1,
+        is_additional_action_promised: true
+      });
+      expect(filtered.data.map((entry) => entry.entry_id)).toEqual([
+        secondEntryId
+      ]);
+      expect(filtered.has_more).toBe(false);
+      const unmarked = await reader.listLeaderboard(routingRecord, {
+        ...page,
+        is_additional_action_promised: false
+      });
+      expect(unmarked.data.map((entry) => entry.entry_id)).toEqual([entryId]);
+      const all = await reader.listLeaderboard(routingRecord, {
+        ...page,
+        limit: 1
+      });
+      expect(all.data.map((entry) => entry.entry_id)).toEqual([entryId]);
+      expect(all.has_more).toBe(true);
+      const next = await reader.listLeaderboard(routingRecord, {
+        ...page,
+        limit: 1,
+        offset: 1
+      });
+      expect(next.data.map((entry) => entry.entry_id)).toEqual([secondEntryId]);
+    });
+
+    it('includes legacy unset flags when filtering for unmarked entries', async () => {
+      await sqlExecutor.execute(
+        `update ${DROPS_TABLE} set is_additional_action_promised = null where id = :dropId`,
+        { dropId: 'drop-native' }
+      );
+      const unmarked = await reader.listLeaderboard(routingRecord, {
+        ...page,
+        is_additional_action_promised: false
+      });
+      expect(unmarked.data.map((entry) => entry.entry_id)).toEqual([entryId]);
+      const marked = await reader.listLeaderboard(routingRecord, {
+        ...page,
+        is_additional_action_promised: true
+      });
+      expect(marked.data.map((entry) => entry.entry_id)).toEqual([
+        secondEntryId
+      ]);
     });
 
     it('orders native entries by each approved stable sort', async () => {

@@ -14,6 +14,8 @@ import {
 import {
   PROFILE_LATEST_LOG_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
+  COMPETITIONS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
   WAVES_TABLE
 } from '@/constants';
 import { PageRequest } from '../api-serverless/src/page-request';
@@ -26,6 +28,10 @@ import { Time, Timer } from '../time';
 import { RequestContext } from '../request.context';
 import { ids } from '../ids';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
+import {
+  anonymousCompetitionEntrySql,
+  competitionAnonymityViewerId
+} from '@/competitions/competition-anonymity';
 
 const mysql = require('mysql');
 
@@ -335,6 +341,25 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       types: params.type,
       eligibleGroupIds: params.viewer_eligible_group_ids
     });
+    // Profile-scoped drop logs expose their actor and raw author IDs. Keep
+    // anonymous entries out of this surface before every branch's page limit.
+    if (
+      !params.type?.length ||
+      params.type.some((type) => WAVE_SCOPED_DROP_LOG_TYPES.includes(type))
+    ) {
+      waveAccess.conditions.push(`(pa_logs.type not in (:anonymityDropLogTypes)
+        or not exists (
+          select 1 from ${COMPETITION_ENTRIES_TABLE} anonymous_log_entry
+          join ${COMPETITIONS_TABLE} anonymous_log_competition
+            on anonymous_log_competition.id = anonymous_log_entry.competition_id
+          where anonymous_log_entry.drop_id = pa_logs.target_id
+            and ${anonymousCompetitionEntrySql('anonymous_log_entry', 'anonymous_log_competition')}
+            and anonymous_log_entry.submitter_id <> coalesce(:anonymityViewerId, '')
+        ))`);
+      waveAccess.params.anonymityDropLogTypes = [...WAVE_SCOPED_DROP_LOG_TYPES];
+      waveAccess.params.anonymityViewerId =
+        competitionAnonymityViewerId(ctx) ?? null;
+    }
 
     // Build one branch that returns only (id, created_at)
     const buildIdsBranch = (

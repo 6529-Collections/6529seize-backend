@@ -183,6 +183,7 @@ const EntryListQuerySchema = Joi.object<{
   .required();
 
 type LeaderboardQuery = CursorQuery & {
+  readonly is_additional_action_promised?: boolean;
   readonly include?: 'cards';
   readonly sort:
     | 'rating'
@@ -196,6 +197,7 @@ type LeaderboardQuery = CursorQuery & {
 };
 const LeaderboardQuerySchema: Joi.ObjectSchema<LeaderboardQuery> =
   Joi.object<LeaderboardQuery>({
+    is_additional_action_promised: Joi.boolean().optional(),
     direction: Joi.string().valid('ASC', 'DESC').default('DESC'),
     cursor: Joi.string().min(1).max(1000).optional(),
     limit: Joi.number().integer().min(1).max(100).default(50),
@@ -389,7 +391,8 @@ export async function handleListCompetitionLeaderboardV3(
       sort: query.sort,
       price_currency: query.price_currency,
       min_price: query.min_price,
-      max_price: query.max_price
+      max_price: query.max_price,
+      is_additional_action_promised: query.is_additional_action_promised
     },
     ctx
   )) as unknown as ApiCompetitionLeaderboardPage;

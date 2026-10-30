@@ -6146,6 +6146,15 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: is_additional_action_promised
+          in: query
+          required: false
+          description: >-
+            Filter entries by the artist's Additional Action promise, including
+            promises without plan text. False returns entries without a promise
+            (including unset flags). Omit to include all entries.
+          schema:
+            type: boolean
         - name: sort
           in: query
           required: false
@@ -17857,6 +17866,51 @@ paths:
           description: User is not eligible to quick vote in this wave
         "404":
           description: Wave not found
+  /waves/{id}/undiscovered-drops:
+    get:
+      tags:
+        - Waves
+      summary: Get an ordered quick vote preview window with shared counts
+      operationId: getWaveUndiscoveredDrops
+      x-6529-router:
+        enabled: true
+        auth: required
+        handler:
+          import: "@/api/waves/wave-quick-vote.handler"
+          name: handleGetWaveUndiscoveredDrops
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum number of previews, ordered by unskipped then skipped drops.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 4
+            default: 4
+        - name: skip
+          in: query
+          description: Zero-based offset within the four-preview quick vote window.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 3
+            default: 0
+      responses:
+        "200":
+          description: Ordered previews and exact counts for the acting profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiUndiscoveredDrops"
+        "403":
+          description: User is not eligible to quick vote in this wave
+        "404":
+          description: Wave not found
   /waves/{id}/pinned-drop:
     post:
       tags:
@@ -26779,6 +26833,13 @@ components:
         - ends_at
         - terms
       properties:
+        anonymous_submissions:
+          type: boolean
+          default: false
+          description: >-
+            Competition creation option. Conceal each submission author from
+            other users until that entry wins. Fixed when published; defaults to
+            false.
         group_id:
           type: string
           nullable: true
@@ -28470,6 +28531,13 @@ components:
         - required_media
         - terms
       properties:
+        anonymous_submissions:
+          type: boolean
+          default: false
+          description: >-
+            Competition creation option. Conceal each submission author from
+            other users until that entry wins. Fixed when published; defaults to
+            false.
         scope:
           $ref: "#/components/schemas/ApiCreateNewWaveScope"
         no_of_applications_allowed_per_participant:
@@ -31174,6 +31242,11 @@ components:
         - profile_wave_id
         - is_wave_creator
       properties:
+        is_anonymous:
+          type: boolean
+          description: >-
+            True for an anonymous competition author. Identity details and
+            profile links are unavailable.
         id:
           type: string
           nullable: true
@@ -31294,6 +31367,11 @@ components:
         - classification
         - badges
       properties:
+        is_anonymous:
+          type: boolean
+          description: >-
+            True for an anonymous competition author. Identity details and
+            profile links are unavailable.
         id:
           type: string
         handle:
@@ -35114,6 +35192,11 @@ components:
       required:
         - id
       properties:
+        is_anonymous:
+          type: boolean
+          description: >-
+            True for an anonymous competition author. Identity details and
+            profile links are unavailable.
         id:
           type: string
         handle:
@@ -36559,6 +36642,11 @@ components:
         - profile_wave_id
         - is_wave_creator
       properties:
+        is_anonymous:
+          type: boolean
+          description: >-
+            True for an anonymous competition author. Identity details and
+            profile links are unavailable.
         id:
           type: string
           format: uuid
@@ -37339,6 +37427,11 @@ components:
       required:
         - handle
       properties:
+        is_anonymous:
+          type: boolean
+          description: >-
+            True for an anonymous competition author. Identity details and
+            profile links are unavailable.
         handle:
           type: string
         pfp:
@@ -37484,6 +37577,18 @@ components:
           maxItems: 50
           items:
             $ref: "#/components/schemas/ApiPushLogoutSession"
+        reconciliation_sessions:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/ApiPushLogoutSession"
+          description: >-
+            Optional native session proofs authorizing a credential-scoped fence
+            when logout preceded the first push registration and its original
+            sessions are missing or no longer live. At least one must be live.
+            These sessions are not revoked unless also listed in sessions. They
+            never prove installation ownership or bypasses an existing
+            installation credential.
     ApiRevokePushInstallationResponse:
       type: object
       required:
@@ -38670,6 +38775,24 @@ components:
           anyOf:
             - type: "null"
             - $ref: "#/components/schemas/ApiDrop"
+        left_to_vote_in_current_round:
+          type: integer
+          format: int64
+        total_count:
+          type: integer
+          format: int64
+    ApiUndiscoveredDrops:
+      type: object
+      required:
+        - drops
+        - left_to_vote_in_current_round
+        - total_count
+      properties:
+        drops:
+          type: array
+          maxItems: 4
+          items:
+            $ref: "#/components/schemas/ApiDrop"
         left_to_vote_in_current_round:
           type: integer
           format: int64

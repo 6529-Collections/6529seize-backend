@@ -16,6 +16,10 @@ import {
 import { RequestContext } from '@/request.context';
 import { NotFoundException } from '@/exceptions';
 import { enums } from '@/enums';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
 
 export function toApiCompetition(
   competition: PublicCompetition
@@ -67,6 +71,10 @@ export async function toApiEntry(
     throw new NotFoundException(`Entry submitter not found`);
   }
   const { submitter_id: _submitterId, ...data } = entry;
+  const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+    [entry.drop_id],
+    ctx
+  );
   const memeCardIds = await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
     entry.competition_id,
     [entry.id],
@@ -74,7 +82,9 @@ export async function toApiEntry(
   );
   return {
     ...data,
-    submitter,
+    submitter: hiddenDropIds.has(entry.drop_id)
+      ? anonymousCompetitionAuthor(submitter, entry.drop_id)
+      : submitter,
     meme_card_id: memeCardIds[entry.id] ?? null
   } as unknown as ApiCompetitionEntry;
 }
@@ -87,6 +97,10 @@ export async function toApiEntryPage(
     new Set(page.data.map((it) => it.submitter_id))
   );
   const submitters = await identityFetcher.getOverviewsByIds(profileIds, ctx);
+  const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+    page.data.map((entry) => entry.drop_id),
+    ctx
+  );
   const memeCardIds = page.data.length
     ? await memeCardDropMappingsDb.findMemeCardIdsByEntryIds(
         page.data[0].competition_id,
@@ -102,7 +116,9 @@ export async function toApiEntryPage(
       const { submitter_id: _submitterId, ...data } = entry;
       return {
         ...data,
-        submitter,
+        submitter: hiddenDropIds.has(entry.drop_id)
+          ? anonymousCompetitionAuthor(submitter, entry.drop_id)
+          : submitter,
         meme_card_id: memeCardIds[entry.id] ?? null
       } as unknown as ApiCompetitionEntry;
     })

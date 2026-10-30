@@ -4,6 +4,12 @@ import { doInDbContext } from '../secrets';
 import { RequestContext } from '../request.context';
 import { Timer } from '../time';
 import { recalculateXTdhUseCase } from '../xtdh/recalculate-xtdh.use-case';
+import { XTdhIdentitySnapshotChangedError } from '@/xtdh/xtdh-identity-snapshot-changed-error';
+import {
+  enrichXTdhSentryEvent,
+  getXTdhReceiveCount,
+  shouldCaptureXTdhError
+} from '@/xTdhLoop/xtdh-retry-reporting';
 import {
   isXTdhLoopPhase,
   XTDH_LOOP_PHASE,
@@ -123,32 +129,50 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export const handler = sentryContext.wrapLambdaHandler(
   async (event, lambdaContext) => {
-    await doInDbContext(
-      async () => {
-        const work = resolveXTdhLoopWork(event);
-        const getRemainingTimeInMillis =
-          typeof lambdaContext?.getRemainingTimeInMillis === 'function'
-            ? () => lambdaContext.getRemainingTimeInMillis()
-            : undefined;
-        const ctx: RequestContext = {
-          timer: new Timer('XTDH_LOOP')
-        };
-        logger.info(`Loop phase ${work.phase} started`);
-        if (work.phase === XTDH_LOOP_PHASE.STATS) {
-          await recalculateXTdhUseCase.handleStatsPhase(ctx);
-        } else {
-          await recalculateXTdhUseCase.handleUniversePhase(ctx, {
-            messageGroupId: work.messageGroupId,
-            ...(getRemainingTimeInMillis ? { getRemainingTimeInMillis } : {})
+    try {
+      await doInDbContext(
+        async () => {
+          const work = resolveXTdhLoopWork(event);
+          const getRemainingTimeInMillis =
+            typeof lambdaContext?.getRemainingTimeInMillis === 'function'
+              ? () => lambdaContext.getRemainingTimeInMillis()
+              : undefined;
+          const ctx: RequestContext = {
+            timer: new Timer('XTDH_LOOP')
+          };
+          logger.info(`Loop phase ${work.phase} started`);
+          if (work.phase === XTDH_LOOP_PHASE.STATS) {
+            await recalculateXTdhUseCase.handleStatsPhase(ctx);
+          } else {
+            await recalculateXTdhUseCase.handleUniversePhase(ctx, {
+              messageGroupId: work.messageGroupId,
+              ...(getRemainingTimeInMillis ? { getRemainingTimeInMillis } : {})
+            });
+          }
+          logger.info(
+            `Loop phase ${work.phase} finished ${JSON.stringify(ctx?.timer)}`
+          );
+        },
+        {
+          logger
+        }
+      );
+    } catch (error) {
+      if (error instanceof XTdhIdentitySnapshotChangedError) {
+        error.receiveCount = getXTdhReceiveCount(event);
+        if (!shouldCaptureXTdhError(error)) {
+          logger.warn('xTDH identity snapshot changed; SQS will retry', {
+            aws_request_id: lambdaContext?.awsRequestId,
+            receive_count: error.receiveCount
           });
         }
-        logger.info(
-          `Loop phase ${work.phase} finished ${JSON.stringify(ctx?.timer)}`
-        );
-      },
-      {
-        logger
       }
-    );
+      // Reject the invocation so SQS retains the work and retries normally.
+      throw error;
+    }
+  },
+  {
+    shouldCaptureException: shouldCaptureXTdhError,
+    enrichEvent: enrichXTdhSentryEvent
   }
 );
