@@ -230,6 +230,30 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
     return rows[0]?.event_id ?? null;
   }
 
+  /**
+   * Which of the given drops show author signed content right now. Same rule
+   * as current_event_id (a drop_author_signatures row exists), answered for a
+   * whole page with one primary key lookup.
+   */
+  async findAuthorSignedDropIds(
+    dropIds: readonly string[],
+    ctx: RequestContext,
+    forcePool?: DbPoolName
+  ): Promise<Set<string>> {
+    const distinctDropIds = Array.from(new Set(dropIds));
+    if (!distinctDropIds.length) {
+      return new Set();
+    }
+    const rows = await this.timedExecute<{ drop_id: string }>(
+      'findAuthorSignedDropIds',
+      `select drop_id from ${DROP_AUTHOR_SIGNATURES_TABLE} where drop_id in (:dropIds)`,
+      { dropIds: distinctDropIds },
+      ctx,
+      forcePool
+    );
+    return new Set(rows.map((row) => row.drop_id));
+  }
+
   async findEventsByDropId(
     dropId: string,
     ctx: RequestContext

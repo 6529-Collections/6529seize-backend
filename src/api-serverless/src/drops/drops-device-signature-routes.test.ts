@@ -8,6 +8,7 @@ import { dropCreationService } from '@/api/drops/drop-creation.api.service';
 import { deviceSigningDb } from '@/api/device-signing/device-signing.db';
 import { identitiesDb } from '@/identities/identities.db';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
+import { DbPoolName } from '@/db-query.options';
 import router from './drops.routes';
 
 jest.mock('passport', () => ({
@@ -149,6 +150,9 @@ describe('POST /drops device signatures', () => {
     jest
       .spyOn(deviceSigningDb, 'executeNativeQueriesInTransaction')
       .mockImplementation(async (fn) => fn({ connection: 'tx' }));
+    jest
+      .spyOn(deviceSigningDb, 'findAuthorSignedDropIds')
+      .mockResolvedValue(new Set(['created-drop']));
   });
 
   afterEach(() => {
@@ -217,6 +221,7 @@ describe('POST /drops device signatures', () => {
     expect(
       deviceSigningDb.executeNativeQueriesInTransaction
     ).not.toHaveBeenCalled();
+    expect(deviceSigningDb.findAuthorSignedDropIds).not.toHaveBeenCalled();
   });
 
   it('verifies, stores and links a device signed drop (contract vector)', async () => {
@@ -226,7 +231,16 @@ describe('POST /drops device signatures', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.json()).toEqual(createdDrop);
+    // The response was mapped before finalize stored the author signature.
+    expect(response.json()).toEqual({
+      ...createdDrop,
+      is_author_signed: true
+    });
+    expect(deviceSigningDb.findAuthorSignedDropIds).toHaveBeenCalledWith(
+      ['created-drop'],
+      expect.anything(),
+      DbPoolName.WRITE
+    );
     expect(dropCreationService.createDrop).toHaveBeenCalledWith(
       expectedCreateRequest(),
       expect.any(Object)

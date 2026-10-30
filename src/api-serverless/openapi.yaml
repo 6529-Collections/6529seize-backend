@@ -29521,6 +29521,14 @@ components:
             $ref: "#/components/schemas/ApiDropSubscriptionTargetAction"
         is_signed:
           type: boolean
+        is_author_signed:
+          type: boolean
+          description: >-
+            True when the drop's current content is the body of an author's
+            device signed create or edit event, the same state as a non-null
+            current_event_id from GET /drops/{dropId}/signed-events. Absent or
+            false otherwise, and always false or absent when the viewer cannot
+            see the drop's content or author.
         reactions:
           type: array
           items:
@@ -30252,6 +30260,14 @@ components:
           format: int64
         is_signed:
           type: boolean
+        is_author_signed:
+          type: boolean
+          description: >-
+            True when the drop's current content is the body of an author's
+            device signed create or edit event, the same state as a non-null
+            current_event_id from GET /drops/{dropId}/signed-events. Absent or
+            false otherwise, and always false or absent when the viewer cannot
+            see the drop's content or author.
         hide_link_preview:
           type: boolean
         title:
@@ -30639,6 +30655,14 @@ components:
             $ref: "#/components/schemas/ApiDropSubscriptionTargetAction"
         is_signed:
           type: boolean
+        is_author_signed:
+          type: boolean
+          description: >-
+            True when the drop's current content is the body of an author's
+            device signed create or edit event, the same state as a non-null
+            current_event_id from GET /drops/{dropId}/signed-events. Absent or
+            false otherwise, and always false or absent when the viewer cannot
+            see the drop's content or author.
         reactions:
           type: array
           items:

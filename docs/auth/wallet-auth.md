@@ -183,6 +183,16 @@ without device parameters are unchanged.
   content: signed creates and edits set it, unsigned edits and deletes clear
   it. `GET /api/drops/{dropId}/signed-events` returns a readable drop's
   events, the grant proofs they reference and the current event id.
+- Every drop the API serializes (`ApiDrop`, `ApiDropWithoutWave` and
+  `ApiDropV2`, including websocket drop updates) carries the optional
+  `is_author_signed`: true exactly when that drop has a
+  `drop_author_signatures` row, the same state as a non-null current event id.
+  The mappers read it for a whole page with one primary key lookup. It is
+  false or absent when the viewer cannot see the drop's content or its author
+  is anonymous. A signed create or edit maps its response before the signature
+  is stored, so the route re-reads the status from the primary for its
+  response; the websocket update sent during that write still reports the
+  earlier state.
 
 ## Session V2 Refresh And Logout
 
