@@ -52,6 +52,8 @@ export async function deleteWallet<T extends ObjectLiteral>(
   return deleted.affected ?? 0;
 }
 
+const CONSOLIDATION_DELETE_BATCH_SIZE = 500;
+
 export async function deleteConsolidations<T extends ObjectLiteral>(
   repo: Repository<T>,
   deleteDelta: Set<string>
@@ -60,30 +62,42 @@ export async function deleteConsolidations<T extends ObjectLiteral>(
     return 0;
   }
 
-  // Build the WHERE clause for LIKE
-  const whereClause = Array.from(deleteDelta)
-    .map((wallet) => `consolidation_key LIKE '%${wallet}%'`)
-    .join(' OR ');
-
-  // Step 1 → SELECT consolidation keys matching the LIKEs
+  // Read each persisted key once, including former consolidations. A growing
+  // OR of LIKE '%wallet%' evaluates every wallet against every stored row.
   const rows = await repo
     .createQueryBuilder()
     .select('consolidation_key')
-    .where(whereClause)
+    .distinct(true)
     .getRawMany<{ consolidation_key: string }>();
 
-  const keysToDelete = rows.map((r) => r.consolidation_key);
+  const wallets = new Set(
+    Array.from(deleteDelta, (wallet) => wallet.toLowerCase())
+  );
+  const keysToDelete = rows
+    .filter((row) =>
+      row.consolidation_key
+        .toLowerCase()
+        .split('-')
+        .some((wallet) => wallets.has(wallet))
+    )
+    .map((row) => row.consolidation_key);
 
-  if (keysToDelete.length === 0) {
-    return 0;
+  let affected = 0;
+  for (
+    let offset = 0;
+    offset < keysToDelete.length;
+    offset += CONSOLIDATION_DELETE_BATCH_SIZE
+  ) {
+    const keys = keysToDelete.slice(
+      offset,
+      offset + CONSOLIDATION_DELETE_BATCH_SIZE
+    );
+    const deleted = await repo
+      .createQueryBuilder()
+      .delete()
+      .where('consolidation_key IN (:...keys)', { keys })
+      .execute();
+    affected += deleted.affected ?? 0;
   }
-
-  // Step 2 → DELETE using IN
-  const deleted = await repo
-    .createQueryBuilder()
-    .delete()
-    .where('consolidation_key IN (:...keys)', { keys: keysToDelete })
-    .execute();
-
-  return deleted.affected ?? 0;
+  return affected;
 }
