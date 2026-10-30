@@ -16,6 +16,8 @@ import { env } from '@/env';
 import { Logger } from '@/logging';
 import { sqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
+import { performance } from 'node:perf_hooks';
+import { findEnsForRefresh } from '@/refreshEnsLoop/ens-refresh-lookup';
 
 const logger = Logger.get('ENS');
 const ENS_DISCOVERY_MAX_RETRIES = 5;
@@ -47,7 +49,8 @@ export async function getPrediscoveredEnsNames(
 
 async function refreshExistingEnsBatch(
   ens: ENS[],
-  shouldStop: () => boolean
+  remainingWorkMs: () => number,
+  excludedWallets: Set<string>
 ): Promise<number> {
   logger.info(`[PROCESSING EXISTING ENS FOR ${ens.length} WALLETS]`);
 
@@ -57,29 +60,27 @@ async function refreshExistingEnsBatch(
   let processed = 0;
 
   for (const w of ens) {
-    if (shouldStop()) {
+    if (remainingWorkMs() <= 0) {
       logger.info(
         `[REFRESH ENS STOPPING EARLY] [PROCESSED ${processed}] [TOTAL ${ens.length}]`
       );
       break;
     }
-    try {
-      const display = await findEnsForAddress(w.wallet);
-      const newEns: ENS = {
-        created_at: new Date(),
-        wallet: w.wallet,
-        display: display
-      };
-      deltaEns.push(newEns);
-    } catch (e: any) {
-      logger.error(`[ERROR FOR WALLET ${w.wallet}] [${e}]`);
-      const newEns: ENS = {
-        created_at: new Date(),
-        wallet: w.wallet,
-        display: null
-      };
-      deltaEns.push(newEns);
+    const result = await findEnsForRefresh(
+      w.wallet,
+      Math.min(10_000, remainingWorkMs())
+    );
+    if (result.status === 'unavailable') {
+      excludedWallets.add(w.wallet);
+      logger.warn('[REFRESH ENS LOOKUP UNAVAILABLE] [RETRY NEXT INVOCATION]');
+      continue;
     }
+    const newEns: ENS = {
+      created_at: new Date(),
+      wallet: w.wallet,
+      display: result.name
+    };
+    deltaEns.push(newEns);
 
     processed++;
 
@@ -228,14 +229,17 @@ async function discoverEnsNFTDelegation(table: string) {
   }
 }
 
-async function refreshEnsLoop(shouldStop: () => boolean) {
-  if (shouldStop()) {
+async function refreshEnsLoop(
+  remainingWorkMs: () => number,
+  excludedWallets: Set<string>
+) {
+  if (remainingWorkMs() <= 0) {
     return false;
   }
-  const batch = await fetchEnsRefresh();
+  const batch = await fetchEnsRefresh(Array.from(excludedWallets));
 
   if (batch.length > 0) {
-    await refreshExistingEnsBatch(batch, shouldStop);
+    await refreshExistingEnsBatch(batch, remainingWorkMs, excludedWallets);
     return true;
   } else {
     return false;
@@ -244,21 +248,19 @@ async function refreshEnsLoop(shouldStop: () => boolean) {
 
 export async function refreshEns(getRemainingTimeInMillis?: () => number) {
   let processing = true;
-  const time = Time.now();
+  const startedAt = performance.now();
+  const excludedWallets = new Set<string>();
   const minRemainingMs =
     env.getIntOrNull('REFRESH_ENS_MIN_REMAINING_MS') ?? 60000;
   const voluntaryQuitMinutes =
     env.getIntOrNull('REFRESH_ENS_VOLUNTARY_QUIT_MINUTES') ?? 14;
-  const shouldStop = () => {
-    if (
-      getRemainingTimeInMillis &&
-      getRemainingTimeInMillis() <= minRemainingMs
-    ) {
-      return true;
-    }
-    return time.diffFromNow().gte(Time.minutes(voluntaryQuitMinutes));
-  };
-  while (processing && !shouldStop()) {
-    processing = await refreshEnsLoop(shouldStop);
+  const remainingWorkMs = () =>
+    Math.min(
+      voluntaryQuitMinutes * 60_000 - (performance.now() - startedAt),
+      (getRemainingTimeInMillis?.() ?? Infinity) -
+        Math.max(60_000, minRemainingMs)
+    );
+  while (processing && remainingWorkMs() > 0) {
+    processing = await refreshEnsLoop(remainingWorkMs, excludedWallets);
   }
 }

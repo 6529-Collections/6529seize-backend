@@ -851,10 +851,13 @@ export async function fetchWalletTransactions(
   return await sqlExecutor.execute(fullSql, params, options);
 }
 
-export async function fetchEnsRefresh() {
+export async function fetchEnsRefresh(excludedWallets: string[] = []) {
   const batchSize = env.getIntOrNull('ENS_LOOP_MAX_BATCH_SIZE') ?? 100;
-  const sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY created_at ASC LIMIT :batchSize`;
-  return sqlExecutor.execute<ENS>(sql, { batchSize });
+  const exclusion = excludedWallets.length
+    ? ' AND wallet NOT IN (:excludedWallets)'
+    : '';
+  const sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)${exclusion} ORDER BY created_at ASC LIMIT :batchSize`;
+  return sqlExecutor.execute<ENS>(sql, { batchSize, excludedWallets });
 }
 
 export async function fetchMissingEns(datetime?: Date) {

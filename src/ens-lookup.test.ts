@@ -1,5 +1,5 @@
 import { getRpcProvider } from '@/rpc-provider';
-import { lookupPrimaryEnsName } from '@/ens-lookup';
+import { lookupPrimaryEnsName, lookupPrimaryEnsNameResult } from '@/ens-lookup';
 import { Logger } from '@/logging';
 const mockReverse = jest.fn();
 jest.mock('@/logging', () => {
@@ -110,6 +110,26 @@ describe('ENS uses one configured RPC endpoint', () => {
       ['[ENS_UNIVERSAL_RESOLVER] [OUTCOME=miss]']
     ]);
   });
+  it.each(['TIMEOUT', 'NETWORK_ERROR', 'SERVER_ERROR', 'OFFCHAIN_FAULT'])(
+    'distinguishes %s from an authoritative absence for refresh callers',
+    async (code) => {
+      lookupAddress.mockResolvedValue(null);
+      mockReverse.mockRejectedValue({ code });
+      await expect(
+        lookupPrimaryEnsNameResult('0xaddress', provider as never)
+      ).resolves.toEqual({ status: 'unavailable' });
+    }
+  );
+  it.each(['0x77209fe8', '0x1e9535f2', '0x7b1c461b', '0xef9c03ce'])(
+    'treats stable resolver absence %s as a resolved null',
+    async (data) => {
+      lookupAddress.mockResolvedValue(null);
+      mockReverse.mockRejectedValue({ code: 'CALL_EXCEPTION', data });
+      await expect(
+        lookupPrimaryEnsNameResult('0xaddress', provider as never)
+      ).resolves.toEqual({ status: 'resolved', name: null });
+    }
+  );
   it('fails explicitly when configuration is missing instead of silently using another endpoint', async () => {
     jest.mocked(getRpcProvider).mockImplementation(() => {
       throw new Error('ETHEREUM_RPC_URL is required');
