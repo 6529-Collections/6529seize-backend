@@ -7,6 +7,7 @@ import {
   handleListWaveCompetitionsV3
 } from '@/api/competitions/competitions-v3.handlers';
 import { getAuthenticationContext } from '@/api/auth/auth';
+import { identityFetcher } from '@/api/identities/identity.fetcher';
 import {
   competitionService,
   PublicCompetition
@@ -30,6 +31,9 @@ jest.mock('./competition-entry-context.reader', () => ({
 
 jest.mock('@/api/auth/auth', () => ({
   getAuthenticationContext: jest.fn()
+}));
+jest.mock('@/api/identities/identity.fetcher', () => ({
+  identityFetcher: { getOverviewsByIds: jest.fn() }
 }));
 jest.mock('@/competitions/competition.service', () => ({
   competitionService: {
@@ -236,6 +240,69 @@ describe('competition v3 handlers', () => {
       } as never)
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(competitionService.listVoters).not.toHaveBeenCalled();
+  });
+
+  it('embeds voter profiles from one batched lookup and omits unresolved ones', async () => {
+    const page = {
+      data: [
+        { profile_id: 'p1', votes: 5, credit_spent: 7 },
+        { profile_id: 'p2', votes: -3, credit_spent: 3 },
+        { profile_id: 'p1', votes: 1, credit_spent: 1 },
+        { profile_id: 'gone', votes: 1, credit_spent: 1 }
+      ],
+      next_cursor: 'next',
+      has_more: true
+    };
+    const p1 = { id: 'p1', handle: 'alice', pfp: null, primary_address: '0x1' };
+    const p2 = {
+      id: 'p2',
+      handle: null,
+      pfp: 'ipfs://p2',
+      primary_address: '0x2'
+    };
+    (competitionService.listVoters as jest.Mock).mockResolvedValue(page);
+    (identityFetcher.getOverviewsByIds as jest.Mock).mockResolvedValue({
+      p1,
+      p2
+    });
+
+    const response = await handleListCompetitionVotersV3({
+      params: { wave_id: 'wave-a', competition_id: competitionId },
+      query: {}
+    } as never);
+
+    expect(identityFetcher.getOverviewsByIds).toHaveBeenCalledTimes(1);
+    expect(identityFetcher.getOverviewsByIds).toHaveBeenCalledWith(
+      ['p1', 'p2', 'gone'],
+      { authenticationContext, timer: undefined }
+    );
+    expect(response).toEqual({
+      data: [
+        { profile_id: 'p1', votes: 5, credit_spent: 7, voter: p1 },
+        { profile_id: 'p2', votes: -3, credit_spent: 3, voter: p2 },
+        { profile_id: 'p1', votes: 1, credit_spent: 1, voter: p1 },
+        { profile_id: 'gone', votes: 1, credit_spent: 1 }
+      ],
+      next_cursor: 'next',
+      has_more: true
+    });
+    expect(response.data[3]).not.toHaveProperty('voter');
+  });
+
+  it('skips the identity lookup for an empty voter page', async () => {
+    (competitionService.listVoters as jest.Mock).mockResolvedValue({
+      data: [],
+      next_cursor: null,
+      has_more: false
+    });
+
+    await expect(
+      handleListCompetitionVotersV3({
+        params: { wave_id: 'wave-a', competition_id: competitionId },
+        query: {}
+      } as never)
+    ).resolves.toEqual({ data: [], next_cursor: null, has_more: false });
+    expect(identityFetcher.getOverviewsByIds).not.toHaveBeenCalled();
   });
 });
 
