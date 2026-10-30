@@ -708,6 +708,22 @@ not part of this release. Recovery deliberately stops at the rotated session's
 expiry and never extends it. The legacy 30-second allowance starts at the
 successful rotation's `last_used_at`; repeated recovery does not reset it.
 
+### Native push logout reconciliation
+
+Push installation logout persists its original revocation targets on the client.
+When logout precedes the first registration, the API requires a live native
+session before writing a fence scoped to that installation secret. An optional
+`reconciliation_sessions` supplies connected-account proofs when the original
+targets are missing or no longer live; at least one must be live. These proofs
+authorize only this fence and are not revoked unless also present in `sessions`.
+Existing installation credentials, legacy
+token ownership checks, and revision ordering still apply. Replayed logout cannot
+delete profiles registered after the acknowledged revision.
+
+Deploy `api` before the frontend uses the optional proof. Existing clients remain
+compatible, and no schema or notification-worker deployment is needed. Retain
+this API support while new clients are deployed; roll back the frontend first.
+
 ## Main Data Flows
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.
