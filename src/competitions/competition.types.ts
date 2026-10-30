@@ -192,6 +192,7 @@ export type CompetitionPage<T> = {
 };
 
 export type CompetitionPageRequest = {
+  readonly is_additional_action_promised?: boolean;
   readonly offset: number;
   readonly limit: number;
   readonly direction: 'ASC' | 'DESC';

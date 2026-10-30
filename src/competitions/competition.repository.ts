@@ -425,12 +425,14 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
        join ${COMPETITIONS_TABLE} c on c.id=lb.competition_id
        ${priceSelect}
        where lb.competition_id = :competitionId and ${competitionEntryVisibleSql('e')}
+       ${request.is_additional_action_promised === undefined ? '' : `and exists (select 1 from ${DROPS_TABLE} action_drop where action_drop.id=e.drop_id and coalesce(action_drop.is_additional_action_promised,0)=:additionalActionPromised)`}
        ${priceRequested ? 'and (:minPrice is null or prices.price>=:minPrice) and (:maxPrice is null or prices.price<=:maxPrice)' : ''}
        order by ${order}
        limit :offset, :rowLimit`,
       {
         competitionId,
         priceCurrency: request.price_currency ?? null,
+        additionalActionPromised: request.is_additional_action_promised ?? null,
         minPrice: request.min_price ?? null,
         maxPrice: request.max_price ?? null,
         offset: request.offset,

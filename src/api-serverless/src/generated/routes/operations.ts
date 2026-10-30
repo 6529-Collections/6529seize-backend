@@ -3582,6 +3582,7 @@ export interface ListCompetitionLeaderboardV3PathParams {
 }
 
 export interface ListCompetitionLeaderboardV3Query {
+  "is_additional_action_promised"?: boolean;
   "sort"?: "rating" | "real_time_rating" | "submitted_at" | "trend" | "price";
   "price_currency"?: string;
   "min_price"?: number;
