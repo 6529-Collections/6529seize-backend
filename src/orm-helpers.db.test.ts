@@ -152,7 +152,7 @@ describeWithSeed(
         1
       ]);
       rows.push([
-        (base + BigInt(1000)).toString(),
+        (base + BigInt(987)).toString(),
         contract.toUpperCase(),
         c,
         1
@@ -170,6 +170,15 @@ describeWithSeed(
           .where('owners.token_id = :tokenId', { tokenId: base.toString() })
           .getRawOne()
       ).toEqual({ token_id: base.toString() });
+      const boundary = await repo
+        .createQueryBuilder('owners')
+        .select('owners.consolidation_key', 'key')
+        .orderBy('owners.token_id', 'ASC')
+        .addOrderBy('owners.contract', 'ASC')
+        .addOrderBy('owners.consolidation_key', 'ASC')
+        .limit(1001)
+        .getRawMany<{ key: string }>();
+      expect(boundary.slice(-2)).toEqual([{ key: a }, { key: c }]);
       expect(
         await dataSource.transaction((manager) =>
           deleteConsolidations(

@@ -3,6 +3,8 @@ import * as fc from 'fast-check';
 import { deleteConsolidations } from '@/orm_helpers';
 
 function mockRepository(keys: string[]) {
+  // Fixed pages verify query/batch contracts; DB tests cover deleting rows
+  // between pages and seeking from a cursor row that no longer exists.
   const page = {
     select: jest.fn().mockReturnThis(),
     addSelect: jest.fn().mockReturnThis(),
