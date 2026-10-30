@@ -8,6 +8,8 @@ import { Time } from '../../time';
 import { randomUUID } from 'node:crypto';
 import { Seed } from '../_setup/seed';
 import { WAVES_TABLE } from '@/constants';
+import { RETIRED_WAVE_COMPETITION_COLUMNS } from '@/competitions/legacy-competition-get-facade';
+import { serializeWaveHubConfiguration } from '@/waves/wave-hub-configuration';
 
 type BaseWave = Omit<WaveEntity, 'serial_no' | 'id' | 'name'>;
 const aBaseWave: BaseWave = {
@@ -70,10 +72,25 @@ export function aWave(
     id: randomUUID(),
     name: randomUUID()
   };
+  const properties = { ...aBaseWave, ...waveProps };
+  const configuration =
+    properties.type === WaveType.CHAT
+      ? (serializeWaveHubConfiguration(properties) as unknown as Pick<
+          WaveEntity,
+          'hub_participation_config' | 'hub_voting_config'
+        >)
+      : {};
   return {
     ...aBaseWave,
     ...key,
     ...waveProps,
+    ...configuration,
+    ...(waveProps.hub_participation_config !== undefined
+      ? { hub_participation_config: waveProps.hub_participation_config }
+      : {}),
+    ...(waveProps.hub_voting_config !== undefined
+      ? { hub_voting_config: waveProps.hub_voting_config }
+      : {}),
     participation_required_media: JSON.stringify(
       waveProps.participation_required_media ??
         aBaseWave.participation_required_media
@@ -86,9 +103,17 @@ export function aWave(
   };
 }
 
-export function withWaves(entities: WaveEntity[]): Seed {
+export function withWaves(entities: WaveEntity[], historical = false): Seed {
   return {
     table: WAVES_TABLE,
-    rows: entities
+    rows: historical
+      ? entities
+      : entities.map((wave) =>
+          Object.fromEntries(
+            Object.entries(wave).filter(
+              ([column]) => !RETIRED_WAVE_COMPETITION_COLUMNS.includes(column)
+            )
+          )
+        )
   };
 }

@@ -1,5 +1,22 @@
+import {
+  legacyCompetitionId,
+  legacyCompetitionEntryId,
+  legacyCompetitionDecisionId
+} from '@/competitions/competition-id';
+import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
+import {
+  COMPETITION_ENTRIES_TABLE,
+  COMPETITION_ENTRY_RUNTIME_TABLE,
+  COMPETITION_VOTES_TABLE,
+  COMPETITION_SCORE_HISTORY_TABLE,
+  COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+  COMPETITION_DECISIONS_TABLE,
+  COMPETITION_DECISION_WINNERS_TABLE,
+  COMPETITION_WINNER_VOTES_TABLE
+} from '@/constants';
 import { CompetitionRepository } from '@/competitions/competition.repository';
 import 'reflect-metadata';
+import fc from 'fast-check';
 import {
   COMPETITIONS_TABLE,
   DROP_RANK_TABLE,
@@ -17,240 +34,7 @@ import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
-import {
-  DropVotingDb,
-  buildMergedDropRealVoteHistoryStates
-} from './drop-voting.db';
-
-describe('buildMergedDropRealVoteHistoryStates', () => {
-  it('sums overlapping voters across both merged nominations', () => {
-    expect(
-      buildMergedDropRealVoteHistoryStates({
-        targetDropId: 'target-drop',
-        waveId: 'wave-1',
-        voteChanges: [
-          {
-            id: 1,
-            original_drop_id: 'target-drop',
-            voter_id: 'voter-1',
-            vote: 5,
-            timestamp: 100
-          },
-          {
-            id: 2,
-            original_drop_id: 'source-drop',
-            voter_id: 'voter-1',
-            vote: 3,
-            timestamp: 200
-          },
-          {
-            id: 3,
-            original_drop_id: 'target-drop',
-            voter_id: 'voter-1',
-            vote: 6,
-            timestamp: 300
-          }
-        ]
-      })
-    ).toEqual([
-      {
-        drop_id: 'target-drop',
-        wave_id: 'wave-1',
-        timestamp: 100,
-        vote: 5
-      },
-      {
-        drop_id: 'target-drop',
-        wave_id: 'wave-1',
-        timestamp: 200,
-        vote: 8
-      },
-      {
-        drop_id: 'target-drop',
-        wave_id: 'wave-1',
-        timestamp: 300,
-        vote: 9
-      }
-    ]);
-  });
-
-  it('collapses same-timestamp changes to the final total at that timestamp', () => {
-    expect(
-      buildMergedDropRealVoteHistoryStates({
-        targetDropId: 'target-drop',
-        waveId: 'wave-1',
-        voteChanges: [
-          {
-            id: 1,
-            original_drop_id: 'target-drop',
-            voter_id: 'voter-1',
-            vote: 5,
-            timestamp: 100
-          },
-          {
-            id: 2,
-            original_drop_id: 'source-drop',
-            voter_id: 'voter-1',
-            vote: 3,
-            timestamp: 100
-          }
-        ]
-      })
-    ).toEqual([
-      {
-        drop_id: 'target-drop',
-        wave_id: 'wave-1',
-        timestamp: 100,
-        vote: 8
-      }
-    ]);
-  });
-});
-
-describe('DropVotingDb leaderboard threshold clears', () => {
-  it('invalidates the snapshot timestamp when clearing one drop threshold state', async () => {
-    const execute = jest.fn().mockResolvedValue(undefined);
-    const db = new DropVotingDb(
-      () =>
-        ({
-          execute
-        }) as any
-    );
-
-    await db.clearWaveLeaderboardEntryOverThresholdSince('drop-id', {});
-
-    expect(execute).toHaveBeenCalledWith(
-      expect.stringContaining('timestamp = 0'),
-      { dropId: 'drop-id' },
-      { wrappedConnection: undefined }
-    );
-  });
-
-  it('invalidates snapshot timestamps when clearing wave threshold state', async () => {
-    const execute = jest.fn().mockResolvedValue(undefined);
-    const db = new DropVotingDb(
-      () =>
-        ({
-          execute
-        }) as any
-    );
-
-    await db.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
-      'wave-id',
-      {}
-    );
-
-    expect(execute).toHaveBeenCalledWith(
-      expect.stringContaining('timestamp = 0'),
-      { waveId: 'wave-id' },
-      { wrappedConnection: undefined }
-    );
-  });
-
-  it('locks and reads the live leaderboard threshold state', async () => {
-    const connection = { id: 'connection' };
-    const oneOrNull = jest.fn().mockResolvedValue({
-      leaderboard_timestamp: 1_234,
-      over_threshold_since_ms: 567
-    });
-    const db = new DropVotingDb(
-      () =>
-        ({
-          oneOrNull
-        }) as any
-    );
-
-    const result = await db.getWaveLeaderboardEntryThresholdStateForUpdate(
-      {
-        dropId: 'drop-id',
-        waveId: 'wave-id'
-      },
-      { connection: connection as any }
-    );
-
-    expect(result).toEqual({
-      leaderboard_timestamp: 1_234,
-      over_threshold_since_ms: 567
-    });
-    expect(oneOrNull).toHaveBeenCalledWith(
-      expect.stringContaining('for update'),
-      {
-        dropId: 'drop-id',
-        waveId: 'wave-id'
-      },
-      { wrappedConnection: connection }
-    );
-  });
-});
-
-describe('DropVotingDb.mergeDropVoteState', () => {
-  function createDb() {
-    const execute = jest.fn().mockResolvedValue([]);
-    const oneOrNull = jest.fn().mockResolvedValue(null);
-    const transactionalConnection = { connection: { id: 'tx' } };
-    const executeNativeQueriesInTransaction = jest.fn(async (fn) =>
-      fn(transactionalConnection)
-    );
-    const db = {
-      execute,
-      oneOrNull,
-      executeNativeQueriesInTransaction
-    };
-    return {
-      service: new DropVotingDb(() => db as any),
-      execute,
-      oneOrNull,
-      executeNativeQueriesInTransaction,
-      transactionalConnection
-    };
-  }
-
-  it('wraps merge in a transaction when no connection is provided', async () => {
-    const {
-      service,
-      execute,
-      oneOrNull,
-      executeNativeQueriesInTransaction,
-      transactionalConnection
-    } = createDb();
-
-    await service.mergeDropVoteState(
-      {
-        sourceDropId: 'source-drop',
-        targetDropId: 'target-drop',
-        waveId: 'wave-1'
-      },
-      {}
-    );
-
-    expect(executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
-    expect(oneOrNull).toHaveBeenCalled();
-    for (const call of [...execute.mock.calls, ...oneOrNull.mock.calls]) {
-      expect(call[2]).toEqual({ wrappedConnection: transactionalConnection });
-    }
-  });
-
-  it('reuses the caller connection when one is already provided', async () => {
-    const { service, execute, oneOrNull, executeNativeQueriesInTransaction } =
-      createDb();
-    const existingConnection = { connection: { id: 'existing' } };
-
-    await service.mergeDropVoteState(
-      {
-        sourceDropId: 'source-drop',
-        targetDropId: 'target-drop',
-        waveId: 'wave-1'
-      },
-      { connection: existingConnection }
-    );
-
-    expect(executeNativeQueriesInTransaction).not.toHaveBeenCalled();
-    expect(oneOrNull).toHaveBeenCalled();
-    for (const call of [...execute.mock.calls, ...oneOrNull.mock.calls]) {
-      expect(call[2]).toEqual({ wrappedConnection: existingConnection });
-    }
-  });
-});
+import { DropVotingDb } from './drop-voting.db';
 
 describe('DropVotingDb.getDropV2SubmissionVotingSummaries', () => {
   function createSummaryRow(overrides: Record<string, unknown>) {
@@ -337,125 +121,6 @@ describe('DropVotingDb.getDropV2SubmissionVotingSummaries', () => {
 const repo = new DropVotingDb(() => sqlExecutor);
 const ctx: RequestContext = { timer: undefined };
 
-describeWithSeed('Leaderboard snapshot ordering', [], () => {
-  it.each([
-    { name: 'older', timestamp: 1000, shouldUpdate: false },
-    { name: 'equal-time', timestamp: 2000, shouldUpdate: true },
-    { name: 'newer', timestamp: 3000, shouldUpdate: true }
-  ])(
-    'handles the $name refresh finishing last',
-    async ({ timestamp, shouldUpdate }) => {
-      const snapshotDb = new DropVotingDb(() => sqlExecutor);
-      const current = {
-        drop_id: 'overlapping-refresh-drop',
-        wave_id: 'overlapping-refresh-wave',
-        timestamp: 2000,
-        vote: 20,
-        vote_on_decision_time: 30,
-        over_threshold_since_ms: 1500
-      };
-      const finishingLast = {
-        ...current,
-        timestamp,
-        vote: 5,
-        vote_on_decision_time: 7,
-        over_threshold_since_ms: null
-      };
-      await snapshotDb.upsertWaveLeaderboardEntryIfNotOlder(current, ctx);
-      await snapshotDb.upsertWaveLeaderboardEntryIfNotOlder(finishingLast, ctx);
-
-      expect(
-        await sqlExecutor.execute(
-          `select drop_id, wave_id, timestamp, vote, vote_on_decision_time,
-                over_threshold_since_ms
-         from ${WAVE_LEADERBOARD_ENTRIES_TABLE}
-         where drop_id = :dropId`,
-          { dropId: current.drop_id }
-        )
-      ).toEqual([shouldUpdate ? finishingLast : current]);
-    }
-  );
-  it.each(['drop', 'wave'] as const)(
-    'refreshes a snapshot after %s invalidation, including an earlier evaluation time',
-    async (scope) => {
-      const snapshotDb = new DropVotingDb(() => sqlExecutor);
-      const current = {
-        drop_id: 'invalidated-refresh-drop',
-        wave_id: 'invalidated-refresh-wave',
-        timestamp: 2000,
-        vote: 20,
-        vote_on_decision_time: 30,
-        over_threshold_since_ms: 1500
-      };
-      await snapshotDb.upsertWaveLeaderboardEntry(current, ctx);
-      if (scope === 'drop') {
-        await snapshotDb.clearWaveLeaderboardEntryOverThresholdSince(
-          current.drop_id,
-          ctx
-        );
-      } else {
-        await snapshotDb.clearWaveLeaderboardEntriesOverThresholdSinceByWaveId(
-          current.wave_id,
-          ctx
-        );
-      }
-      expect(
-        await sqlExecutor.execute(
-          `select timestamp, over_threshold_since_ms
-           from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where drop_id = :dropId`,
-          { dropId: current.drop_id }
-        )
-      ).toEqual([{ timestamp: 0, over_threshold_since_ms: null }]);
-
-      const refreshed = {
-        ...current,
-        timestamp: 1000,
-        vote: 5,
-        vote_on_decision_time: 7,
-        over_threshold_since_ms: 900
-      };
-      await snapshotDb.upsertWaveLeaderboardEntryIfNotOlder(refreshed, ctx);
-      expect(
-        await sqlExecutor.execute(
-          `select drop_id, wave_id, timestamp, vote, vote_on_decision_time,
-                  over_threshold_since_ms
-           from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where drop_id = :dropId`,
-          { dropId: current.drop_id }
-        )
-      ).toEqual([refreshed]);
-    }
-  );
-
-  it('preserves authoritative historical corrections outside background refreshes', async () => {
-    const snapshotDb = new DropVotingDb(() => sqlExecutor);
-    const current = {
-      drop_id: 'historical-correction-drop',
-      wave_id: 'historical-correction-wave',
-      timestamp: 2000,
-      vote: 20,
-      vote_on_decision_time: 30,
-      over_threshold_since_ms: 1500
-    };
-    await snapshotDb.upsertWaveLeaderboardEntryIfNotOlder(current, ctx);
-    const correction = {
-      ...current,
-      timestamp: 1000,
-      vote: 5,
-      vote_on_decision_time: 7,
-      over_threshold_since_ms: null
-    };
-    await snapshotDb.upsertWaveLeaderboardEntry(correction, ctx);
-    expect(
-      await sqlExecutor.execute(
-        `select drop_id, wave_id, timestamp, vote, vote_on_decision_time,
-                over_threshold_since_ms
-         from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where drop_id = :dropId`,
-        { dropId: current.drop_id }
-      )
-    ).toEqual([correction]);
-  });
-});
-
 const realtimeWave = aWave(
   {
     type: WaveType.APPROVE,
@@ -484,6 +149,11 @@ const winnerWave = aWave(
     voting_period_end: 9999999999999
   },
   { id: 'summary-winner-wave', serial_no: 3, name: 'Winner Summary' }
+);
+
+const otherTimeLockedWave = aWave(
+  { type: WaveType.RANK, time_lock_ms: 1000 },
+  { id: 'summary-other-weighted-wave', serial_no: 4, name: 'Other Weighted' }
 );
 
 async function insertDrop({
@@ -530,6 +200,18 @@ async function insertDrop({
     `,
     { id, waveId, createdAt, dropType }
   );
+  const competitionId = legacyCompetitionId(waveId);
+  await sqlExecutor.execute(
+    `insert into ${COMPETITION_ENTRIES_TABLE} (id,competition_id,wave_id,drop_id,submitter_id,status,config_version,submitted_at) values (:entryId,:competitionId,:waveId,:id,'summary-author',:status,1,:createdAt)`,
+    {
+      entryId: legacyCompetitionEntryId(competitionId, id),
+      competitionId,
+      waveId,
+      id,
+      createdAt,
+      status: dropType === DropType.WINNER ? 'WINNER' : 'ACTIVE'
+    }
+  );
 }
 
 async function insertDropRank({
@@ -543,17 +225,15 @@ async function insertDropRank({
   vote: number;
   lastIncreased: number;
 }) {
+  const competitionId = legacyCompetitionId(waveId);
   await sqlExecutor.execute(
-    `
-      insert into ${DROP_RANK_TABLE} (
-        drop_id,
-        wave_id,
-        vote,
-        last_increased
-      )
-      values (:dropId, :waveId, :vote, :lastIncreased)
-    `,
-    { dropId, waveId, vote, lastIncreased }
+    `insert into ${COMPETITION_ENTRY_RUNTIME_TABLE} (competition_id,entry_id,real_time_rating,last_increased_at,updated_at) values (:competitionId,:entryId,:vote,:lastIncreased,:lastIncreased)`,
+    {
+      competitionId,
+      entryId: legacyCompetitionEntryId(competitionId, dropId),
+      vote,
+      lastIncreased
+    }
   );
 }
 
@@ -568,17 +248,15 @@ async function insertVoteState({
   waveId: string;
   votes: number;
 }) {
+  const competitionId = legacyCompetitionId(waveId);
   await sqlExecutor.execute(
-    `
-      insert into ${DROP_VOTER_STATE_TABLE} (
-        voter_id,
-        drop_id,
-        wave_id,
-        votes
-      )
-      values (:voterId, :dropId, :waveId, :votes)
-    `,
-    { voterId, dropId, waveId, votes }
+    `insert into ${COMPETITION_VOTES_TABLE} (id,competition_id,entry_id,voter_profile_id,value,credit_spent,created_at,updated_at) values (uuid(),:competitionId,:entryId,:voterId,:votes,abs(:votes),1,1)`,
+    {
+      competitionId,
+      entryId: legacyCompetitionEntryId(competitionId, dropId),
+      voterId,
+      votes
+    }
   );
 }
 
@@ -593,17 +271,21 @@ async function insertRealVote({
   timestamp: number;
   vote: number;
 }) {
+  const competitionId = legacyCompetitionId(waveId);
+  const [row] = await sqlExecutor.execute<{ sequence: number }>(
+    `select coalesce(max(sequence),0)+1 as sequence from ${COMPETITION_SCORE_HISTORY_TABLE} where competition_id=:competitionId and kind='AGGREGATE'`,
+    { competitionId }
+  );
   await sqlExecutor.execute(
-    `
-      insert into ${DROP_REAL_VOTE_IN_TIME_TABLE} (
-        drop_id,
-        wave_id,
-        timestamp,
-        vote
-      )
-      values (:dropId, :waveId, :timestamp, :vote)
-    `,
-    { dropId, waveId, timestamp, vote }
+    `insert into ${COMPETITION_SCORE_HISTORY_TABLE} (competition_id,kind,sequence,entry_id,drop_id,voter_profile_id,value,occurred_at) values (:competitionId,'AGGREGATE',:sequence,:entryId,:dropId,'',:vote,:timestamp)`,
+    {
+      competitionId,
+      sequence: row.sequence,
+      entryId: legacyCompetitionEntryId(competitionId, dropId),
+      dropId,
+      vote,
+      timestamp
+    }
   );
 }
 
@@ -620,247 +302,321 @@ async function insertLeaderboardEntry({
   timestamp: number;
   voteOnDecisionTime: number;
 }) {
+  const competitionId = legacyCompetitionId(waveId);
   await sqlExecutor.execute(
-    `
-      insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (
-        drop_id,
-        wave_id,
-        vote,
-        timestamp,
-        vote_on_decision_time
-      )
-      values (:dropId, :waveId, :vote, :timestamp, :voteOnDecisionTime)
-    `,
-    { dropId, waveId, vote, timestamp, voteOnDecisionTime }
+    `insert into ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} (competition_id,entry_id,drop_id,rating,real_time_rating,submitted_at,updated_at,ordering_time,decision_rating,published_at) values (:competitionId,:entryId,:dropId,:vote,0,1,:timestamp,:timestamp,:voteOnDecisionTime,:timestamp)`,
+    {
+      competitionId,
+      entryId: legacyCompetitionEntryId(competitionId, dropId),
+      dropId,
+      vote,
+      timestamp,
+      voteOnDecisionTime
+    }
   );
 }
 
-const snapshotWaveCases = [
-  {
-    name: 'completed-voting',
-    participationEnd: null,
-    votingEnd: 1,
-    decision: null,
-    ongoing: false
-  },
-  {
-    name: 'completed-participation',
-    participationEnd: 1,
-    votingEnd: null,
-    decision: null,
-    ongoing: false
-  },
-  {
-    name: 'completed-both',
-    participationEnd: 1,
-    votingEnd: 1,
-    decision: null,
-    ongoing: false
-  },
-  {
-    name: 'completion-boundary',
-    participationEnd: null,
-    votingEnd: 2000,
-    decision: null,
-    ongoing: false
-  },
-  {
-    name: 'voting-open',
-    participationEnd: 1,
-    votingEnd: 3000,
-    decision: null,
-    ongoing: true
-  },
-  {
-    name: 'participation-open',
-    participationEnd: 3000,
-    votingEnd: 1,
-    decision: null,
-    ongoing: true
-  },
-  {
-    name: 'open-ended',
-    participationEnd: null,
-    votingEnd: null,
-    decision: null,
-    ongoing: true
-  },
-  {
-    name: 'pending-final-decision',
-    participationEnd: 1,
-    votingEnd: 1,
-    decision: 1,
-    ongoing: true
-  }
-];
-const snapshotWaves = snapshotWaveCases.map((testCase, index) =>
-  aWave(
+async function insertWinner(
+  dropId: string,
+  waveId: string,
+  rank: number,
+  value: number
+) {
+  const competitionId = legacyCompetitionId(waveId),
+    entryId = legacyCompetitionEntryId(competitionId, dropId),
+    decisionId = legacyCompetitionDecisionId(competitionId, 1000);
+  await sqlExecutor.execute(
+    `insert ignore into ${COMPETITION_DECISIONS_TABLE} (id,competition_id,scheduled_at,decided_at,status,execution_key,created_at) values (:decisionId,:competitionId,1000,1000,'COMPLETED',:decisionId,1000)`,
+    { decisionId, competitionId }
+  );
+  await sqlExecutor.execute(
+    `insert into ${COMPETITION_DECISION_WINNERS_TABLE} (decision_id,entry_id,competition_id,\`rank\`,final_rating,created_at) values (:decisionId,:entryId,:competitionId,:rank,:value,1000)`,
+    { decisionId, entryId, competitionId, rank, value }
+  );
+  await sqlExecutor.execute(
+    `update ${COMPETITION_ENTRIES_TABLE} set status='WINNER',won_at=1000,decision_id=:decisionId,\`rank\`=:rank where id=:entryId`,
+    { decisionId, rank, entryId }
+  );
+}
+async function insertWinnerVoter(
+  dropId: string,
+  waveId: string,
+  voter: string,
+  value: number
+) {
+  const competitionId = legacyCompetitionId(waveId);
+  await sqlExecutor.execute(
+    `insert into ${COMPETITION_WINNER_VOTES_TABLE} (competition_id,decision_id,entry_id,voter_profile_id,value) values (:competitionId,:decisionId,:entryId,:voter,:value)`,
     {
-      type: WaveType.RANK,
-      time_lock_ms: 1000,
-      participation_period_end: testCase.participationEnd,
-      voting_period_end: testCase.votingEnd,
-      next_decision_time: testCase.decision
-    },
-    { id: `snapshot-wave-${index}`, serial_no: index + 1, name: testCase.name }
-  )
-);
-
-describeWithSeed(
-  'Legacy leaderboard completion fencing',
-  withWaves(snapshotWaves),
-  () => {
-    beforeEach(() =>
-      jest.spyOn(Time, 'now').mockReturnValue(Time.millis(2000))
-    );
-    afterEach(() => jest.restoreAllMocks());
-
-    it('discovers active/open-ended and pending decisions, preserving completed snapshots', async () => {
-      for (let index = 0; index < snapshotWaves.length; index++) {
-        const wave = snapshotWaves[index];
-        await insertDrop({
-          id: `snapshot-drop-${index}`,
-          waveId: wave.id,
-          dropType: DropType.PARTICIPATORY,
-          createdAt: 1
-        });
-        await insertRealVote({
-          dropId: `snapshot-drop-${index}`,
-          waveId: wave.id,
-          timestamp: 2000,
-          vote: 7
-        });
-        expect(await repo.isLegacyLeaderboardWaveOngoing(wave.id, ctx)).toBe(
-          snapshotWaveCases[index].ongoing
-        );
-      }
-      const discovered = await repo.getDropsInNeedOfLeaderboardUpdate(ctx);
-      expect(
-        discovered.map((row) => row.wave_id).sort((a, b) => a.localeCompare(b))
-      ).toEqual(
-        snapshotWaves
-          .filter((_wave, index) => snapshotWaveCases[index].ongoing)
-          .map((wave) => wave.id)
-          .sort((a, b) => a.localeCompare(b))
-      );
-    });
-
-    it('global cleanup retains completed snapshots and cleans an ongoing wave', async () => {
-      for (const index of [0, 4]) {
-        const wave = snapshotWaves[index];
-        await insertDrop({
-          id: `cleanup-drop-${index}`,
-          waveId: wave.id,
-          dropType: DropType.WINNER,
-          createdAt: 1
-        });
-        await insertLeaderboardEntry({
-          dropId: `cleanup-drop-${index}`,
-          waveId: wave.id,
-          vote: 9,
-          timestamp: 2000,
-          voteOnDecisionTime: 9
-        });
-      }
-      await repo.deleteStaleLeaderboardEntries(ctx);
-      expect(
-        await sqlExecutor.execute(
-          `select drop_id,vote,timestamp,vote_on_decision_time from ${WAVE_LEADERBOARD_ENTRIES_TABLE}`
-        )
-      ).toEqual([
-        {
-          drop_id: 'cleanup-drop-0',
-          vote: 9,
-          timestamp: 2000,
-          vote_on_decision_time: 9
-        }
-      ]);
-    });
-
-    it('retains explicit wave-scoped decision cleanup after completion', async () => {
-      const wave = snapshotWaves[0];
-      await insertDrop({
-        id: 'scoped-cleanup-drop',
-        waveId: wave.id,
-        dropType: DropType.WINNER,
-        createdAt: 1
-      });
-      await insertLeaderboardEntry({
-        dropId: 'scoped-cleanup-drop',
-        waveId: wave.id,
-        vote: 9,
-        timestamp: 2000,
-        voteOnDecisionTime: 9
-      });
-      await repo.deleteStaleLeaderboardEntriesForWave(wave.id, ctx);
-      expect(
-        await sqlExecutor.execute(
-          `select * from ${WAVE_LEADERBOARD_ENTRIES_TABLE}`
-        )
-      ).toEqual([]);
-    });
-
-    it('rechecks completion before global cleanup writes after discovery', async () => {
-      const wave = snapshotWaves[4];
-      await insertDrop({
-        id: 'cleanup-closing-drop',
-        waveId: wave.id,
-        dropType: DropType.WINNER,
-        createdAt: 1
-      });
-      await insertLeaderboardEntry({
-        dropId: 'cleanup-closing-drop',
-        waveId: wave.id,
-        vote: 9,
-        timestamp: 2000,
-        voteOnDecisionTime: 9
-      });
-      jest
-        .spyOn(Time, 'now')
-        .mockReturnValueOnce(Time.millis(2000))
-        .mockReturnValue(Time.millis(3000));
-      await repo.deleteStaleLeaderboardEntries(ctx);
-      expect(
-        await sqlExecutor.execute(
-          `select drop_id,vote from ${WAVE_LEADERBOARD_ENTRIES_TABLE}`
-        )
-      ).toEqual([{ drop_id: 'cleanup-closing-drop', vote: 9 }]);
-    });
-
-    it('retains a wave that completes between the fenced check and delete', async () => {
-      const wave = snapshotWaves[4];
-      await insertDrop({
-        id: 'cleanup-delete-boundary-drop',
-        waveId: wave.id,
-        dropType: DropType.WINNER,
-        createdAt: 1
-      });
-      await insertLeaderboardEntry({
-        dropId: 'cleanup-delete-boundary-drop',
-        waveId: wave.id,
-        vote: 9,
-        timestamp: 2000,
-        voteOnDecisionTime: 9
-      });
-      jest
-        .spyOn(Time, 'now')
-        .mockReturnValueOnce(Time.millis(2000))
-        .mockReturnValueOnce(Time.millis(2000))
-        .mockReturnValue(Time.millis(3000));
-      await repo.deleteStaleLeaderboardEntries(ctx);
-      expect(
-        await sqlExecutor.execute(
-          `select drop_id,vote from ${WAVE_LEADERBOARD_ENTRIES_TABLE}`
-        )
-      ).toEqual([{ drop_id: 'cleanup-delete-boundary-drop', vote: 9 }]);
-    });
-  }
-);
-
+      competitionId,
+      decisionId: legacyCompetitionDecisionId(competitionId, 1000),
+      entryId: legacyCompetitionEntryId(competitionId, dropId),
+      voter,
+      value
+    }
+  );
+}
 describeWithSeed(
   'DropVotingDb.getDropV2SubmissionVotingSummaries',
-  withWaves([realtimeWave, timeLockedWave, winnerWave]),
+  withWaves([realtimeWave, timeLockedWave, winnerWave, otherTimeLockedWave]),
   () => {
+    beforeEach(async () => {
+      for (const wave of [
+        realtimeWave,
+        timeLockedWave,
+        winnerWave,
+        otherTimeLockedWave
+      ])
+        await seedNativeOriginalPrimaryFixture(wave);
+    });
+
+    it('ranks subsets independently across multiple time-locked waves', async () => {
+      for (const wave of [timeLockedWave, otherTimeLockedWave]) {
+        for (const [index, vote] of Array.from([10, 5, 5].entries())) {
+          const dropId = `${wave.id}-peer-${index}`;
+          await insertDrop({
+            id: dropId,
+            waveId: wave.id,
+            dropType: DropType.PARTICIPATORY,
+            createdAt: 100
+          });
+          await insertLeaderboardEntry({
+            dropId,
+            waveId: wave.id,
+            vote,
+            timestamp: 1000,
+            voteOnDecisionTime: vote
+          });
+        }
+      }
+      const requested = [
+        `${timeLockedWave.id}-peer-1`,
+        `${otherTimeLockedWave.id}-peer-0`
+      ];
+      const result = await sqlExecutor.executeNativeQueriesInTransaction(
+        (connection) =>
+          repo.getTimeLockedDropsWeightedVotes(requested, { connection })
+      );
+      expect(result).toEqual({ [requested[0]]: 2, [requested[1]]: 1 });
+    });
+
+    it('returns no weighted ranks when every requested wave has realtime voting', async () => {
+      await insertDrop({
+        id: 'realtime-only',
+        waveId: realtimeWave.id,
+        dropType: DropType.PARTICIPATORY,
+        createdAt: 100
+      });
+      await insertDrop({
+        id: 'unrequested-weighted',
+        waveId: timeLockedWave.id,
+        dropType: DropType.PARTICIPATORY,
+        createdAt: 100
+      });
+      await insertLeaderboardEntry({
+        dropId: 'unrequested-weighted',
+        waveId: timeLockedWave.id,
+        vote: 50,
+        timestamp: 1000,
+        voteOnDecisionTime: 50
+      });
+
+      await expect(
+        repo.getTimeLockedDropsWeightedVotes(
+          ['realtime-only', 'missing-drop'],
+          ctx
+        )
+      ).resolves.toEqual({});
+    });
+    it('keeps ranks scoped to each wave in a mixed submission and winner batch', async () => {
+      for (const wave of [realtimeWave, timeLockedWave]) {
+        for (const [index, vote] of Array.from([5, 10, 5].entries())) {
+          const dropId = `${wave.id}-mixed-${index}`;
+          await insertDrop({
+            id: dropId,
+            waveId: wave.id,
+            dropType: DropType.PARTICIPATORY,
+            createdAt: 100 + index
+          });
+          // Realtime and weighted orders intentionally disagree.
+          await insertDropRank({
+            dropId,
+            waveId: wave.id,
+            vote: -vote,
+            lastIncreased: 1000
+          });
+          await insertLeaderboardEntry({
+            dropId,
+            waveId: wave.id,
+            vote,
+            timestamp: 1000,
+            voteOnDecisionTime: vote + 1
+          });
+        }
+      }
+      await insertDrop({
+        id: 'mixed-winner',
+        waveId: winnerWave.id,
+        dropType: DropType.WINNER,
+        createdAt: 100
+      });
+      await insertWinner('mixed-winner', winnerWave.id, 7, 42);
+      const ids = [
+        `${realtimeWave.id}-mixed-0`,
+        `${realtimeWave.id}-mixed-1`,
+        `${realtimeWave.id}-mixed-2`,
+        `${timeLockedWave.id}-mixed-0`,
+        `${timeLockedWave.id}-mixed-1`,
+        `${timeLockedWave.id}-mixed-2`,
+        'mixed-winner'
+      ];
+      const summaries = await repo.getDropV2SubmissionVotingSummaries(ids, ctx);
+      // Exact score/time ties share a rank, including the resulting rank gap.
+      expect(ids.map((id) => summaries[id].place)).toEqual([
+        1, 3, 1, 2, 1, 2, 7
+      ]);
+      expect(summaries[ids[0]].current_calculated_vote).toBe(5);
+      expect(summaries[ids[0]].predicted_final_vote).toBe(6);
+      expect(summaries[ids[3]].current_calculated_vote).toBe(5);
+      expect(summaries[ids[3]].predicted_final_vote).toBe(6);
+      expect(summaries['mixed-winner'].current_calculated_vote).toBe(42);
+      const weightedRanks = await repo.getTimeLockedDropsWeightedVotes(
+        [ids[0], ids[3], ids[4], 'mixed-winner', 'missing-drop'],
+        ctx
+      );
+      expect(weightedRanks).toEqual({ [ids[3]]: 2, [ids[4]]: 1 });
+    });
+
+    it.each([WaveType.RANK, WaveType.APPROVE])(
+      'uses creation-time ranks before a time-locked %s wave has a leaderboard',
+      async (waveType) => {
+        await sqlExecutor.execute(
+          `update ${COMPETITIONS_TABLE} set type = :waveType where id = :id`,
+          { waveType, id: legacyCompetitionId(timeLockedWave.id) }
+        );
+        const createdAt = [300, 100, 100];
+        const ids = createdAt.map(
+          (_, index) => `unpublished-weighted-${index}`
+        );
+        for (const [index, dropId] of Array.from(ids.entries())) {
+          await insertDrop({
+            id: dropId,
+            waveId: timeLockedWave.id,
+            dropType: DropType.PARTICIPATORY,
+            createdAt: createdAt[index]
+          });
+          // Live scores must not replace the absent weighted snapshot.
+          await insertDropRank({
+            dropId,
+            waveId: timeLockedWave.id,
+            vote: 100 - index,
+            lastIncreased: 1000 + index
+          });
+        }
+        const summaries = await repo.getDropV2SubmissionVotingSummaries(
+          ids,
+          ctx
+        );
+        expect(ids.map((id) => summaries[id].place)).toEqual([3, 1, 1]);
+        const weightedRanks = await repo.getTimeLockedDropsWeightedVotes(
+          ids,
+          ctx
+        );
+        expect(ids.map((id) => weightedRanks[id])).toEqual([3, 1, 1]);
+        expect(ids.map((id) => summaries[id].current_calculated_vote)).toEqual([
+          0, 0, 0
+        ]);
+      }
+    );
+
+    it.each([false, true])(
+      'preserves numeric ranks, exact ties and missing scores (weighted=%s)',
+      async (weighted) => {
+        const wave = weighted ? timeLockedWave : realtimeWave;
+        await fc.assert(
+          fc.asyncProperty(
+            fc.array(
+              fc.record({
+                vote: fc.integer({ min: -12, max: 12 }),
+                timestamp: fc.integer({ min: 100, max: 103 }),
+                scored: fc.boolean()
+              }),
+              { minLength: 2, maxLength: 8 }
+            ),
+            async (entries) => {
+              for (const table of [
+                COMPETITION_ENTRY_RUNTIME_TABLE,
+                COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+                COMPETITION_ENTRIES_TABLE,
+                DROPS_TABLE
+              ]) {
+                await sqlExecutor.execute(`delete from ${table}`);
+              }
+              for (const [index, entry] of Array.from(entries.entries())) {
+                const dropId = `generated-rank-${index}`;
+                await insertDrop({
+                  id: dropId,
+                  waveId: wave.id,
+                  dropType: DropType.PARTICIPATORY,
+                  createdAt: entry.timestamp
+                });
+                if (!entry.scored) continue;
+                await insertDropRank({
+                  dropId,
+                  waveId: wave.id,
+                  vote: entry.vote,
+                  lastIncreased: entry.timestamp
+                });
+                if (weighted) {
+                  await insertLeaderboardEntry({
+                    dropId,
+                    waveId: wave.id,
+                    vote: entry.vote,
+                    timestamp: entry.timestamp,
+                    voteOnDecisionTime: entry.vote
+                  });
+                }
+              }
+              // Request a subset: unrequested competitors must still affect rank.
+              const requested = [0, entries.length - 1];
+              const summaries = await repo.getDropV2SubmissionVotingSummaries(
+                requested.map((index) => `generated-rank-${index}`),
+                ctx
+              );
+              const weightedRanks = weighted
+                ? await repo.getTimeLockedDropsWeightedVotes(
+                    requested.map((index) => `generated-rank-${index}`),
+                    ctx
+                  )
+                : {};
+              for (const index of requested) {
+                const entry = entries[index];
+                const vote = entry.scored ? entry.vote : 0;
+                const expectedRank =
+                  1 +
+                  entries.filter((other) => {
+                    const otherVote = other.scored ? other.vote : 0;
+                    return (
+                      otherVote > vote ||
+                      (otherVote === vote && other.timestamp < entry.timestamp)
+                    );
+                  }).length;
+                expect(summaries[`generated-rank-${index}`].place).toBe(
+                  expectedRank
+                );
+                if (weighted) {
+                  expect(weightedRanks[`generated-rank-${index}`]).toBe(
+                    expectedRank
+                  );
+                }
+              }
+            }
+          ),
+          { numRuns: 12 }
+        );
+      }
+    );
+
     it('returns participatory realtime rank and voting summary', async () => {
       await insertDrop({
         id: 'realtime-drop-1',
@@ -1086,27 +842,7 @@ describeWithSeed(
         timestamp: 1_000,
         vote: 99
       });
-      await sqlExecutor.execute(
-        `
-          insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (
-            decision_time,
-            drop_id,
-            wave_id,
-            ranking,
-            final_vote,
-            prizes
-          )
-          values (
-            1000,
-            'winner-threshold-drop',
-            :waveId,
-            1,
-            150,
-            '[]'
-          )
-        `,
-        { waveId: realtimeWave.id }
-      );
+      await insertWinner('winner-threshold-drop', realtimeWave.id, 1, 150);
 
       const result = await repo.getDropV2SubmissionVotingSummaries(
         [
@@ -1134,10 +870,7 @@ describeWithSeed(
           dropType: DropType.WINNER,
           createdAt: 100
         });
-        await sqlExecutor.execute(
-          `insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (decision_time,drop_id,wave_id,ranking,final_vote,prizes) values (1000,:dropId,:waveId,1,42,'[]')`,
-          { dropId, waveId: winnerWave.id }
-        );
+        await insertWinner(dropId, winnerWave.id, 1, 42);
         // Current allocations must not be presented as the missing frozen decision snapshot.
         await insertVoteState({
           voterId: 'current-voter',
@@ -1146,10 +879,7 @@ describeWithSeed(
           votes: 42
         });
         if (saved)
-          await sqlExecutor.execute(
-            `insert into ${WINNER_DROP_VOTER_VOTES_TABLE} (voter_id,drop_id,wave_id,votes) values ('saved-voter',:dropId,:waveId,0)`,
-            { dropId, waveId: winnerWave.id }
-          );
+          await insertWinnerVoter(dropId, winnerWave.id, 'saved-voter', 0);
         const result = await repo.getDropV2SubmissionVotingSummaries(
           [dropId],
           ctx
@@ -1171,40 +901,18 @@ describeWithSeed(
         dropType: DropType.WINNER,
         createdAt: 100
       });
-      await sqlExecutor.execute(
-        `
-          insert into ${WAVES_DECISION_WINNER_DROPS_TABLE} (
-            decision_time,
-            drop_id,
-            wave_id,
-            ranking,
-            final_vote,
-            prizes
-          )
-          values (
-            1000,
-            'winner-drop-1',
-            :waveId,
-            2,
-            25,
-            '[]'
-          )
-        `,
-        { waveId: winnerWave.id }
+      await insertWinner('winner-drop-1', winnerWave.id, 2, 25);
+      await insertWinnerVoter(
+        'winner-drop-1',
+        winnerWave.id,
+        'winner-voter-1',
+        10
       );
-      await sqlExecutor.execute(
-        `
-          insert into ${WINNER_DROP_VOTER_VOTES_TABLE} (
-            voter_id,
-            drop_id,
-            wave_id,
-            votes
-          )
-          values
-            ('winner-voter-1', 'winner-drop-1', :waveId, 10),
-            ('winner-voter-2', 'winner-drop-1', :waveId, 15)
-        `,
-        { waveId: winnerWave.id }
+      await insertWinnerVoter(
+        'winner-drop-1',
+        winnerWave.id,
+        'winner-voter-2',
+        15
       );
 
       const result = await repo.getDropV2SubmissionVotingSummaries(
@@ -1223,106 +931,6 @@ describeWithSeed(
         voters_count_available: true,
         place: 2
       });
-    });
-  }
-);
-
-const cleanupWaves = Array.from({ length: 101 }, (_, index) =>
-  aWave(
-    { type: WaveType.RANK, time_lock_ms: 300000 },
-    {
-      id: `migration-cleanup-${String(index).padStart(3, '0')}`,
-      name: `Disposable cleanup ${index}`,
-      serial_no: index + 1
-    }
-  )
-);
-const nativeCleanupWave = aWave(
-  { type: WaveType.RANK, time_lock_ms: 300000 },
-  {
-    id: 'migration-cleanup-native',
-    name: 'Disposable native cleanup owner',
-    serial_no: 102
-  }
-);
-const allCleanupWaves = [...cleanupWaves, nativeCleanupWave];
-
-describeWithSeed(
-  'owner-aware stale leaderboard maintenance',
-  [
-    withWaves(allCleanupWaves),
-    {
-      table: DROPS_TABLE,
-      rows: allCleanupWaves.map((wave) => ({
-        id: `${wave.id}-drop`,
-        wave_id: wave.id,
-        author_id: 'cleanup-author',
-        created_at: 10,
-        parts_count: 1,
-        drop_type: DropType.CHAT,
-        hide_link_preview: false
-      }))
-    },
-    {
-      table: WAVE_LEADERBOARD_ENTRIES_TABLE,
-      rows: allCleanupWaves.map((wave) => ({
-        drop_id: `${wave.id}-drop`,
-        wave_id: wave.id,
-        vote: 1,
-        timestamp: 100,
-        vote_on_decision_time: 1
-      }))
-    }
-  ],
-  () => {
-    const competitions = new CompetitionRepository();
-    beforeEach(async () => {
-      await competitions.ensureLegacyMappingForWave(nativeCleanupWave, {});
-      await sqlExecutor.execute(
-        `update ${COMPETITIONS_TABLE} set storage_mode='NATIVE', execution_mode='ACTIVE' where legacy_wave_id=:waveId`,
-        { waveId: nativeCleanupWave.id }
-      );
-    });
-
-    const remainingWaves = async () =>
-      (
-        await sqlExecutor.execute<{ wave_id: string }>(
-          `select wave_id from ${WAVE_LEADERBOARD_ENTRIES_TABLE} order by wave_id`
-        )
-      ).map((row) => row.wave_id);
-
-    it('drains at most 100 legacy waves and preserves native-owned rows across batches', async () => {
-      await repo.deleteStaleLeaderboardEntries({});
-      expect(await remainingWaves()).toEqual([
-        cleanupWaves[100].id,
-        nativeCleanupWave.id
-      ]);
-      await repo.deleteStaleLeaderboardEntries({});
-      expect(await remainingWaves()).toEqual([nativeCleanupWave.id]);
-    });
-
-    it('cleans only its locked wave while retaining every other legacy/native wave', async () => {
-      const target = cleanupWaves[50];
-      await competitions.ensureLegacyMappingForWave(target, {});
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (connection) => {
-          const locked = await competitions.lockLegacyExecutionOwner(
-            target.id,
-            {
-              connection
-            }
-          );
-          expect(locked?.legacy_wave_id).toBe(target.id);
-          await repo.deleteStaleLeaderboardEntriesForWave(target.id, {
-            connection
-          });
-        }
-      );
-      expect(await remainingWaves()).toEqual(
-        allCleanupWaves
-          .filter((wave) => wave.id !== target.id)
-          .map((wave) => wave.id)
-      );
     });
   }
 );

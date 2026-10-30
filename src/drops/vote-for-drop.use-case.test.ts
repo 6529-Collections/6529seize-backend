@@ -1,371 +1,53 @@
-import { MEMES_CONTRACT } from '@/constants';
-import { mock } from 'ts-jest-mocker';
-import { DropVotingDb } from '@/api-serverless/src/drops/drop-voting.db';
-import { UserGroupsService } from '@/api-serverless/src/community-members/user-groups.service';
-import { WavesApiDb } from '@/api-serverless/src/waves/waves.api.db';
-import { DropType } from '@/entities/IDrop';
-import { WaveCreditScope, WaveCreditType, WaveType } from '@/entities/IWave';
-import { IdentitiesDb } from '@/identities/identities.db';
-import { MetricsRecorder } from '@/metrics/MetricsRecorder';
-import { UserNotifier } from '@/notifications/user.notifier';
-import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
-import { RatingsDb } from '@/rates/ratings.db';
-import { DropsDb } from './drops.db';
+jest.mock('@/competitions/competition.repository', () => ({
+  competitionRepository: { lockOriginalPrimary: jest.fn() }
+}));
+jest.mock('@/competitions/legacy-competition-vote.service', () => ({
+  voteForMigratedLegacyEntry: jest.fn()
+}));
 import { VoteForDropUseCase } from './vote-for-drop.use-case';
+import { competitionRepository } from '@/competitions/competition.repository';
+import { voteForMigratedLegacyEntry } from '@/competitions/legacy-competition-vote.service';
 
-describe('VoteForDropUseCase', () => {
-  let votingDb: DropVotingDb;
-  let identitiesDb: IdentitiesDb;
-  let wavesDb: WavesApiDb;
-  let dropsDb: DropsDb;
-  let ratingsDb: RatingsDb;
-  let userGroupsService: UserGroupsService;
-  let userNotifier: UserNotifier;
-  let metricsRecorder: MetricsRecorder;
-  let useCase: VoteForDropUseCase;
+const service = new VoteForDropUseCase(
+  {} as never,
+  {} as never,
+  {} as never,
+  {} as never,
+  {} as never,
+  {} as never,
+  {} as never,
+  {} as never
+);
+const model = {
+  voter_id: 'voter',
+  drop_id: 'drop',
+  wave_id: 'wave',
+  votes: 42,
+  proxy_id: 'proxy'
+};
+const ctx = { connection: {} as never };
 
-  const connection = {} as any;
-  const wave = {
-    id: 'wave-1',
-    voting_credit_type: WaveCreditType.TDH,
-    voting_credit_scope: WaveCreditScope.WAVE,
-    voting_credit_category: null,
-    voting_credit_creditor: null,
-    voting_group_id: null,
-    voting_period_start: null,
-    voting_period_end: null,
-    next_decision_time: null,
-    forbid_negative_votes: false,
-    visibility_group_id: null,
-    type: WaveType.RANK,
-    max_winners: null,
-    max_votes_per_identity_to_drop: null
-  } as any;
-  const drop = {
-    id: 'drop-1',
-    wave_id: 'wave-1',
-    author_id: 'author-1',
-    drop_type: DropType.PARTICIPATORY
-  } as any;
+beforeEach(() => jest.resetAllMocks());
 
-  beforeEach(() => {
-    votingDb = mock();
-    identitiesDb = mock();
-    wavesDb = mock();
-    dropsDb = mock();
-    ratingsDb = mock();
-    userGroupsService = mock();
-    userNotifier = mock();
-    metricsRecorder = mock();
-
-    useCase = new VoteForDropUseCase(
-      votingDb,
-      identitiesDb,
-      wavesDb,
-      dropsDb,
-      ratingsDb,
-      userGroupsService,
-      userNotifier,
-      metricsRecorder
-    );
-
-    jest.spyOn(profileActivityLogsDb, 'insert').mockResolvedValue(undefined);
-    (votingDb.lockDropsCurrentRealVote as jest.Mock).mockResolvedValue(
-      undefined
-    );
-    (wavesDb.findById as jest.Mock).mockResolvedValue(wave);
-    (wavesDb.findWaveVotingCreditNftsByWaveIds as jest.Mock).mockResolvedValue(
-      {}
-    );
-    (wavesDb.countWaveDecisionsByWaveIds as jest.Mock).mockResolvedValue({});
-    (dropsDb.findDropById as jest.Mock).mockResolvedValue(drop);
-    (
-      userGroupsService.getGroupsUserIsEligibleFor as jest.Mock
-    ).mockResolvedValue([]);
-    (votingDb.getDropVoterStateForDrop as jest.Mock).mockResolvedValue(2);
-    (
-      votingDb.getVotingCreditLockedInWaveForVoter as jest.Mock
-    ).mockResolvedValue(10);
-    (identitiesDb.getIdentityByProfileId as jest.Mock).mockResolvedValue({
-      tdh: 10,
-      xtdh: 0
-    });
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
-  it('returns false and skips side effects when the vote is unchanged', async () => {
-    const result = await useCase.execute(
-      {
-        voter_id: 'voter-1',
-        drop_id: 'drop-1',
-        wave_id: 'wave-1',
-        votes: 2,
-        proxy_id: null
-      },
-      { connection }
-    );
-
-    expect(result).toBe(false);
-    expect(votingDb.upsertState).not.toHaveBeenCalled();
-    expect(votingDb.upsertAggregateDropRank).not.toHaveBeenCalled();
-    expect(metricsRecorder.recordVote).not.toHaveBeenCalled();
-    expect(metricsRecorder.recordActiveIdentity).not.toHaveBeenCalled();
-    expect(
-      votingDb.snapShotDropsRealVoteInTimeBasedOnRank
-    ).not.toHaveBeenCalled();
-    expect(
-      votingDb.snapshotDropVotersRealVoteInTimeBasedOnVoterState
-    ).not.toHaveBeenCalled();
-    expect(votingDb.insertCreditSpending).not.toHaveBeenCalled();
-    expect(profileActivityLogsDb.insert).not.toHaveBeenCalled();
-    expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
-  });
-
-  it('skips notification total lookup for self-votes', async () => {
-    (dropsDb.findDropById as jest.Mock).mockResolvedValue({
-      ...drop,
-      author_id: 'voter-1'
-    });
-    (
-      votingDb.getVotingCreditLockedInWaveForVoter as jest.Mock
-    ).mockResolvedValue(0);
-
-    await useCase.execute(
-      {
-        voter_id: 'voter-1',
-        drop_id: 'drop-1',
-        wave_id: 'wave-1',
-        votes: 3,
-        proxy_id: null
-      },
-      { connection }
-    );
-
-    expect(votingDb.getAggregateDropRankVote).not.toHaveBeenCalled();
-    expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
-  });
-
-  it('does not count wave decisions for waves that cannot be approve-closed', async () => {
-    await useCase.execute(
-      {
-        voter_id: 'voter-1',
-        drop_id: 'drop-1',
-        wave_id: 'wave-1',
-        votes: 2,
-        proxy_id: null
-      },
-      { connection }
-    );
-
-    expect(wavesDb.countWaveDecisionsByWaveIds).not.toHaveBeenCalled();
-  });
-
-  it('rejects voting in closed approve waves', async () => {
-    (wavesDb.findById as jest.Mock).mockResolvedValue({
-      ...wave,
-      type: WaveType.APPROVE,
-      max_winners: 1
-    });
-    (wavesDb.countWaveDecisionsByWaveIds as jest.Mock).mockResolvedValue({
-      'wave-1': 1
-    });
-
-    await expect(
-      useCase.execute(
-        {
-          voter_id: 'voter-1',
-          drop_id: 'drop-1',
-          wave_id: 'wave-1',
-          votes: 3,
-          proxy_id: null
-        },
-        { connection }
-      )
-    ).rejects.toThrow(`Voting is closed in this wave`);
-  });
-
-  it('rejects votes above max_votes_per_identity_to_drop', async () => {
-    (wavesDb.findById as jest.Mock).mockResolvedValue({
-      ...wave,
-      max_votes_per_identity_to_drop: 3
-    });
-
-    await expect(
-      useCase.execute(
-        {
-          voter_id: 'voter-1',
-          drop_id: 'drop-1',
-          wave_id: 'wave-1',
-          votes: 4,
-          proxy_id: null
-        },
-        { connection }
-      )
-    ).rejects.toThrow(`max_votes_per_identity_to_drop exceeded for this drop`);
-  });
-
-  it('allows full credit to be spent on each drop when credit scope is DROP', async () => {
-    (wavesDb.findById as jest.Mock).mockResolvedValue({
-      ...wave,
-      voting_credit_scope: WaveCreditScope.DROP
-    });
-    (votingDb.getDropVoterStateForDrop as jest.Mock).mockResolvedValue(0);
-    (
-      votingDb.getVotingCreditLockedInWaveForVoter as jest.Mock
-    ).mockResolvedValue(10);
-
-    const result = await useCase.execute(
-      {
-        voter_id: 'voter-1',
-        drop_id: 'drop-1',
-        wave_id: 'wave-1',
-        votes: 10,
-        proxy_id: null
-      },
-      { connection }
-    );
-
-    expect(result).toBe(true);
-    expect(votingDb.getVotingCreditLockedInWaveForVoter).not.toHaveBeenCalled();
-    expect(votingDb.upsertState).toHaveBeenCalledWith(
-      expect.objectContaining({
-        voter_id: 'voter-1',
-        drop_id: 'drop-1',
-        wave_id: 'wave-1',
-        votes: 10
-      }),
-      expect.anything()
-    );
-  });
-
-  it('rejects single-drop votes above total credit when credit scope is DROP', async () => {
-    (wavesDb.findById as jest.Mock).mockResolvedValue({
-      ...wave,
-      voting_credit_scope: WaveCreditScope.DROP
-    });
-    (votingDb.getDropVoterStateForDrop as jest.Mock).mockResolvedValue(0);
-
-    await expect(
-      useCase.execute(
-        {
-          voter_id: 'voter-1',
-          drop_id: 'drop-1',
-          wave_id: 'wave-1',
-          votes: 11,
-          proxy_id: null
-        },
-        { connection }
-      )
-    ).rejects.toThrow('Not enough credit to vote');
-  });
-
-  it('rejects negative votes beyond max_votes_per_identity_to_drop', async () => {
-    (wavesDb.findById as jest.Mock).mockResolvedValue({
-      ...wave,
-      max_votes_per_identity_to_drop: 3
-    });
-    (votingDb.getDropVoterStateForDrop as jest.Mock).mockResolvedValue(-2);
-
-    await expect(
-      useCase.execute(
-        {
-          voter_id: 'voter-1',
-          drop_id: 'drop-1',
-          wave_id: 'wave-1',
-          votes: -4,
-          proxy_id: null
-        },
-        { connection }
-      )
-    ).rejects.toThrow(`max_votes_per_identity_to_drop exceeded for this drop`);
-  });
-
-  it('uses combined CARD_SET_TDH credit when configured on the wave', async () => {
-    (wavesDb.findById as jest.Mock).mockResolvedValue({
-      ...wave,
-      voting_credit_type: WaveCreditType.CARD_SET_TDH
-    });
-    (wavesDb.findWaveVotingCreditNftsByWaveIds as jest.Mock).mockResolvedValue({
-      'wave-1': [
-        {
-          contract: MEMES_CONTRACT.toLowerCase(),
-          tokenId: 1
-        },
-        {
-          contract: MEMES_CONTRACT.toLowerCase(),
-          tokenId: 2
-        }
-      ]
-    });
-    (
-      identitiesDb.getSingleNftVotingCreditsByProfileId as jest.Mock
-    ).mockResolvedValue({
-      [`${MEMES_CONTRACT.toLowerCase()}:1`]: 3,
-      [`${MEMES_CONTRACT.toLowerCase()}:2`]: 2
-    });
-    (
-      votingDb.getVotingCreditLockedInWaveForVoter as jest.Mock
-    ).mockResolvedValue(2);
-
-    await expect(
-      useCase.execute(
-        {
-          voter_id: 'voter-1',
-          drop_id: 'drop-1',
-          wave_id: 'wave-1',
-          votes: 6,
-          proxy_id: null
-        },
-        { connection }
-      )
-    ).rejects.toThrow('Not enough credit to vote');
-
-    expect(
-      identitiesDb.getSingleNftVotingCreditsByProfileId
-    ).toHaveBeenCalledWith(
-      'voter-1',
-      [
-        {
-          contract: MEMES_CONTRACT.toLowerCase(),
-          tokenId: 1
-        },
-        {
-          contract: MEMES_CONTRACT.toLowerCase(),
-          tokenId: 2
-        }
-      ],
-      { connection }
-    );
-    expect(identitiesDb.getIdentityByProfileId).not.toHaveBeenCalled();
-  });
-
-  it('fails loudly when CARD_SET_TDH wave config has no configured NFTs', async () => {
-    (wavesDb.findById as jest.Mock).mockResolvedValue({
-      ...wave,
-      id: 'wave-bad',
-      voting_credit_type: WaveCreditType.CARD_SET_TDH
-    });
-
-    await expect(
-      useCase.execute(
-        {
-          voter_id: 'voter-1',
-          drop_id: 'drop-1',
-          wave_id: 'wave-bad',
-          votes: 6,
-          proxy_id: null
-        },
-        { connection }
-      )
-    ).rejects.toThrow(
-      `Wave wave-bad is misconfigured: CARD_SET_TDH requires voting credit nfts`
-    );
-
-    expect(
-      identitiesDb.getSingleNftVotingCreditsByProfileId
-    ).not.toHaveBeenCalled();
-  });
+it('dispatches the permanent old vote command to its immutable native primary with proxy attribution', async () => {
+  const record = { id: 'original-primary' };
+  jest
+    .mocked(competitionRepository.lockOriginalPrimary)
+    .mockResolvedValue(record as never);
+  jest.mocked(voteForMigratedLegacyEntry).mockResolvedValue(true);
+  await expect(service.execute(model, ctx)).resolves.toBe(true);
+  expect(voteForMigratedLegacyEntry).toHaveBeenCalledWith(record, model, ctx);
 });
+
+it.each([null])(
+  'does not write retired vote storage for %j',
+  async (record) => {
+    jest
+      .mocked(competitionRepository.lockOriginalPrimary)
+      .mockResolvedValue(record as never);
+    await expect(service.execute(model, ctx)).rejects.toThrow(
+      'This drop does not belong to a competition'
+    );
+    expect(voteForMigratedLegacyEntry).not.toHaveBeenCalled();
+  }
+);

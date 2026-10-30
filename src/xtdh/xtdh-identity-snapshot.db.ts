@@ -1,6 +1,7 @@
 import { IDENTITIES_TABLE } from '@/constants';
 import { RequestContext } from '@/request.context';
 import { LazyDbAccessCompatibleService } from '@/sql-executor';
+import { XTdhIdentitySnapshotChangedError } from '@/xtdh/xtdh-identity-snapshot-changed-error';
 
 const WORK_TABLE = 'xtdh_identity_work';
 type IdentityKey = { consolidation_key: string; profile_id: string | null };
@@ -110,9 +111,7 @@ export class XTdhIdentitySnapshotDb extends LazyDbAccessCompatibleService {
             profiles.get(row.consolidation_key) !== row.profile_id
         )
       ) {
-        throw new Error(
-          'Identity consolidation changed during xTDH calculation; retry the universe'
-        );
+        throw new XTdhIdentitySnapshotChangedError();
       }
       await this.db.execute(
         `UPDATE ${IDENTITIES_TABLE} i JOIN ${WORK_TABLE} w

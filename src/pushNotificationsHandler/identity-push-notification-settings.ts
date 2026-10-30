@@ -10,11 +10,13 @@ const CAUSE_TO_SETTING_KEY: Partial<
   [IdentityNotificationCause.IDENTITY_NIC]: 'identity_nic',
   [IdentityNotificationCause.DROP_QUOTED]: 'drop_quoted',
   [IdentityNotificationCause.DROP_REPLIED]: 'drop_replied',
+  [IdentityNotificationCause.VOTING_CREDITS_RETURNED]: 'drop_voted',
   [IdentityNotificationCause.DROP_VOTED]: 'drop_voted',
   [IdentityNotificationCause.DROP_POLL_VOTED]: 'drop_voted',
   [IdentityNotificationCause.DROP_REACTED]: 'drop_reacted',
   [IdentityNotificationCause.DROP_BOOSTED]: 'drop_boosted',
   [IdentityNotificationCause.WAVE_CREATED]: 'wave_created',
+  [IdentityNotificationCause.MEME_COLLABORATION]: 'identity_mentioned',
   [IdentityNotificationCause.COMPETITION_LIFECYCLE]: 'wave_created',
   [IdentityNotificationCause.SUBSCRIPTION_COVERAGE]: 'subscription_coverage'
 };
@@ -25,7 +27,8 @@ export function isNotificationEnabledForDevice(
   includeCompetitions = false
 ): boolean {
   if (
-    cause === IdentityNotificationCause.COMPETITION_LIFECYCLE &&
+    (cause === IdentityNotificationCause.COMPETITION_LIFECYCLE ||
+      cause === IdentityNotificationCause.VOTING_CREDITS_RETURNED) &&
     !includeCompetitions
   )
     return false;

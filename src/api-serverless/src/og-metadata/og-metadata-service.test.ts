@@ -19,6 +19,7 @@ import { ApiWaveOverviewMapper } from '@/api/waves/api-wave-overview.mapper';
 import { WavesApiDb } from '@/api/waves/waves.api.db';
 import { BadRequestException, NotFoundException } from '@/exceptions';
 import { Profile } from '@/entities/IProfile';
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import { ProfilesDb } from '@/profiles/profiles.db';
 
 const IPFS_CID = 'QmYwAPJzv5CZsnAzt8auVTL6rQJ8K8Y1YwecqHHU1Q6iCk';
@@ -293,6 +294,37 @@ function mockAuthorProfile(
 }
 
 describe('OgMetadataService', () => {
+  beforeEach(() => {
+    jest
+      .spyOn(competitionAnonymityService, 'hiddenDropIds')
+      .mockResolvedValue(new Set());
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('uses an anonymous sharing author without resolving the real profile, even for owner previews', async () => {
+    const { service, identityFetcher, dropV2Service, profilesDb } =
+      makeService();
+    dropV2Service.findWithWaveByIdOrThrow.mockResolvedValue(
+      makeDropWithWave(UUID_DROP_ID, 42)
+    );
+    jest
+      .mocked(competitionAnonymityService.hiddenDropIds)
+      .mockResolvedValue(new Set([UUID_DROP_ID]));
+    const result = await service.getDropMetadata(UUID_DROP_ID, {});
+    expect(result.author).toMatchObject({ handle: 'Anonymous', media: [] });
+    expect(result.author?.id).not.toBe('author-1');
+    expect(identityFetcher.getOverviewsByIds).not.toHaveBeenCalled();
+    expect(
+      identityFetcher.getDropResolvedIdentityProfilesV2ByIds
+    ).not.toHaveBeenCalled();
+    expect(profilesDb.getProfileById).not.toHaveBeenCalled();
+    expect(competitionAnonymityService.hiddenDropIds).toHaveBeenCalledWith(
+      [UUID_DROP_ID],
+      {},
+      { includeOwner: true }
+    );
+  });
+
   it('returns rich profile metadata for resolved identity keys', async () => {
     const { service, identityFetcher, profilesDb, identitySubscriptionsDb } =
       makeService();

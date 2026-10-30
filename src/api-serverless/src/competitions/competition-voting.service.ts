@@ -10,20 +10,18 @@ import {
   CompetitionCreditBudget
 } from '@/competitions/competition-credit.service';
 import { competitionInteractionRepository } from '@/competitions/competition-interaction.repository';
+import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionService } from '@/competitions/competition.service';
 import { Competition } from '@/competitions/competition.types';
-import { LegacyCompetitionAdapter } from '@/competitions/legacy-competition.adapter';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
 import { nativeCompetitionRuntimeRepository } from '@/competitions/native-competition-runtime.repository';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
-import {
-  CompetitionEntryStatus,
-  CompetitionStorageMode
-} from '@/entities/ICompetition';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
+import { userNotifier } from '@/notifications/user.notifier';
 import { sqlExecutor } from '@/sql-executor';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import {
@@ -31,7 +29,6 @@ import {
   assertCompetitionOpen,
   competitionActor,
   lockNativeCompetition,
-  requireNativeWrites,
   visibleCompetitionWave
 } from './competition-command-access';
 import { verifyCompetitionSignature } from './competition-signature';
@@ -66,7 +63,6 @@ export class CompetitionVotingService {
     request: ApiSetCompetitionVoteRequest,
     ctx: RequestContext
   ) {
-    requireNativeWrites();
     await visibleCompetitionWave(waveId, ctx);
     const actor = competitionActor(ctx);
     return competitionCommandRepository.command(
@@ -80,7 +76,7 @@ export class CompetitionVotingService {
           request.config_version,
           tx
         );
-        await visibleCompetitionWave(waveId, tx);
+        const { wave } = await visibleCompetitionWave(waveId, tx);
         await assertCompetitionGroup(
           competition.voting.group_id,
           ProfileProxyActionType.RATE_WAVE_DROP,
@@ -168,12 +164,23 @@ export class CompetitionVotingService {
             },
             tx
           );
+          if (entry.submitter_id !== actor) {
+            const totals = await competitionDropVotesDb.totals(entry, null, tx);
+            await userNotifier.notifyOfDropVote(
+              {
+                voter_id: actor,
+                drop_id: entry.drop_id,
+                drop_author_id: entry.submitter_id,
+                vote: request.value,
+                vote_change: request.value - (budget.current_vote ?? 0),
+                total_vote: totals.total,
+                wave_id: waveId
+              },
+              wave.visibility_group_id,
+              tx.connection
+            );
+          }
         }
-        await nativeCompetitionRuntimeService.refreshCompetition(
-          competitionId,
-          now,
-          tx
-        );
         return competitionCreditService.getBudget(
           competition,
           actor,
@@ -194,10 +201,7 @@ export class CompetitionVotingService {
       ctx
     );
     if (!record) throw new NotFoundException('Competition not found');
-    const reader =
-      record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER
-        ? new LegacyCompetitionAdapter(competitionRepository, wavesApiDb, ctx)
-        : new NativeCompetitionReader(competitionRepository, ctx);
+    const reader = new NativeCompetitionReader(competitionRepository, ctx);
     return reader.getCompetition(record, Date.now());
   }
 }

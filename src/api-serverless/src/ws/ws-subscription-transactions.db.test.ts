@@ -288,18 +288,30 @@ describeWithSeed(
     ])(
       'replays the captured empty-grant gap cycle with isolation=$isolation',
       async ({ isolation, attempts: expectedAttempts }) => {
+        // Start from a physically empty grant index, without delete-marked seed
+        // records whose purge timing could change the ranges locked below.
+        await sqlExecutor.execute(
+          `truncate table ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`
+        );
         const ids = ['zz-ws-gap-a', 'zz-ws-gap-b'];
         await sqlExecutor.execute(
           `insert into ${WS_CONNECTIONS_TABLE}
            (connection_id, identity_id, jwt_expiry)
-           values (:first, 'anon', :expiry), (:second, 'anon', :expiry)`,
-          { first: ids[0], second: ids[1], expiry }
+           values (:first, :firstIdentity, :expiry), (:second, :secondIdentity, :expiry)`,
+          {
+            first: ids[0],
+            firstIdentity: `identity-${ids[0]}`,
+            second: ids[1],
+            secondIdentity: `identity-${ids[1]}`,
+            expiry
+          }
         );
         const { observed, sockets } = fixture();
         observed.forcedIsolation = isolation;
         let attempts = 0;
         observed.transactionRequested = () => attempts++;
         let arrivals = 0;
+        const firstDelete = deferred();
         const ready = deferred();
         const release = deferred();
         observed.beforeQuery = async (sql) => {
@@ -308,6 +320,7 @@ describeWithSeed(
             arrivals < 2
           ) {
             arrivals++;
+            if (arrivals === 1) firstDelete.resolve();
             if (arrivals === 2) ready.resolve();
             await release.promise;
           }
@@ -315,18 +328,23 @@ describeWithSeed(
         // Both sockets delete a missing grant range before either can insert.
         // Under RR they hold compatible supremum gap locks, then deadlock on
         // each other's insert intention. The repository must retry the victim.
-        const completion = Promise.allSettled(
-          ids.map((id) =>
-            sockets.authenticateConnection(
-              {
-                connectionId: id,
-                identityId: `identity-${id}`,
-                jwtExpiry: expiry
-              },
-              {}
-            )
-          )
-        );
+        // Keep connection identities unchanged: moving their composite primary
+        // keys could block on a peer's connection gap before this grant cycle.
+        const authenticate = (id: string) =>
+          sockets.authenticateConnection(
+            {
+              connectionId: id,
+              identityId: `identity-${id}`,
+              jwtExpiry: expiry
+            },
+            {}
+          );
+        const completion = Promise.allSettled([
+          authenticate(ids[1]),
+          // Fix the lock order so the grant gap cycle is repeatable, including
+          // when the peer connection range is already locked under RR.
+          firstDelete.promise.then(() => authenticate(ids[0]))
+        ]);
         let timeout: ReturnType<typeof setTimeout> | undefined;
         try {
           await Promise.race([
@@ -343,6 +361,7 @@ describeWithSeed(
           ]);
         } finally {
           clearTimeout(timeout);
+          firstDelete.resolve();
           release.resolve();
           await completion;
         }

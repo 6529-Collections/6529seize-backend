@@ -1,10 +1,43 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { loopPolicies } from './loop-policies.mjs';
 
 const base = new URL('../', import.meta.url);
 const catalog = JSON.parse(
   await readFile(new URL('../../src/config/deploy-services.json', base), 'utf8')
 );
+const loopInventory = Object.fromEntries(
+  await Promise.all(
+    ['prod', 'staging'].map(async (env) => [
+      env,
+      await loopPolicies(catalog, env)
+    ])
+  )
+);
+const inventoryPath = new URL('src/loop-policies.generated.json', base);
+const inventorySource = `${JSON.stringify(loopInventory, null, 2)}\n`;
+if (process.argv.includes('--check')) {
+  if ((await readFile(inventoryPath, 'utf8')) !== inventorySource)
+    throw new Error('Stale loop policies');
+} else await writeFile(inventoryPath, inventorySource);
+const retained = JSON.parse(
+  await readFile(new URL('retained-producers.json', base), 'utf8')
+);
+const retainedFunctions = new Set(
+  retained.services.flatMap((service) => service.verification_targets)
+);
+const observedServices = [...catalog.services];
+for (const producer of retained.services) {
+  // Preserve the catalog's established order and existing generated resources.
+  const next = observedServices.findIndex(
+    (service) => service.name > producer.name
+  );
+  observedServices.splice(
+    next < 0 ? observedServices.length : next,
+    0,
+    producer
+  );
+}
 const ref = (name) => ({ Ref: name });
 const supplemental = JSON.parse(
   await readFile(new URL('platform-functions.json', base), 'utf8')
@@ -221,6 +254,7 @@ function processingLane(r, lane, common, collectorEnv, permissions) {
     normal
       ? [db, archiveWrite, sendNormal]
       : [
+          db,
           sendCritical,
           statement(['s3:PutObject'], sub('${Archive.Arn}/controls/v1/*'))
         ],
@@ -235,9 +269,9 @@ function processingLane(r, lane, common, collectorEnv, permissions) {
         account: [ref('SourceAccountId')],
         source: [normal ? '6529.ops' : 'aws.cloudwatch'],
         ...(normal ? {} : { region: [ref('SourceRegion')] }),
-        'detail-type': [
-          normal ? '6529.ops.error.v1' : 'CloudWatch Alarm State Change'
-        ]
+        'detail-type': normal
+          ? ['6529.ops.error.v1', '6529.ops.loop-health.v1']
+          : ['CloudWatch Alarm State Change']
       },
       Targets: [
         {
@@ -351,7 +385,7 @@ function processingLane(r, lane, common, collectorEnv, permissions) {
 }
 
 function monitoringTemplate(environment) {
-  const functions = catalog.services
+  const functions = observedServices
     .filter((s) => s.allowed_environments.includes(environment))
     .flatMap((s) => s.verification_targets);
   const doc = document(
@@ -954,8 +988,43 @@ function addNftRefreshAlarms(resources) {
   };
 }
 
+function platformAlarm(name, metric, environment) {
+  const sustainedThrottling =
+    [
+      'nftLinkRefresherLoop',
+      'waveScoreRefreshLoop',
+      'subscriptionCoverageReconciliationLoop',
+      'nftsLoop',
+      'releaseNotesGenerationLoop',
+      'transactionsProcessingLoop'
+    ].includes(name) && metric === 'Throttles';
+  const breachingMinutes = name === 'transactionsProcessingLoop' ? 5 : 3;
+  return {
+    Type: 'AWS::CloudWatch::Alarm',
+    Properties: {
+      AlarmName: sub('seize-monitoring-${Environment}-' + name + '-' + metric),
+      Namespace: 'AWS/Lambda',
+      MetricName: metric,
+      Dimensions: [{ Name: 'FunctionName', Value: name }],
+      Statistic: 'Sum',
+      Period: 60,
+      // These queue/scheduled workers can briefly contend for reserved concurrency.
+      EvaluationPeriods: sustainedThrottling ? 5 : 1,
+      ...(sustainedThrottling ? { DatapointsToAlarm: breachingMinutes } : {}),
+      Threshold: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+      TreatMissingData: 'notBreaching',
+      AlarmActions:
+        metric === 'Throttles' &&
+        loopInventory[environment].some((p) => p.service === name)
+          ? []
+          : when('HasAlarmTopic', [ref('ExistingAlarmTopicArn')], [])
+    }
+  };
+}
+
 function sourceTemplate(environment) {
-  const services = catalog.services.filter((service) =>
+  const services = observedServices.filter((service) =>
     service.allowed_environments.includes(environment)
   );
   const functions = services.flatMap((service) => service.verification_targets);
@@ -1165,49 +1234,16 @@ function sourceTemplate(environment) {
       Properties: {
         DestinationArn: attr('LogRelay'),
         LogGroupName: `/aws/lambda/${name}`,
-        FilterPattern: '"6529.ops.error.v1"'
+        FilterPattern: retainedFunctions.has(name)
+          ? '"6529.ops.error.v1"'
+          : '?"6529.ops.error.v1" ?"6529.ops.loop-health.v1"'
       }
     };
   }
   for (const name of platformFunctions) {
     const id = name.replace(/[^a-zA-Z0-9]/g, '');
     for (const metric of ['Errors', 'Throttles']) {
-      const sustainedThrottling =
-        [
-          'nftLinkRefresherLoop',
-          'waveScoreRefreshLoop',
-          'subscriptionCoverageReconciliationLoop',
-          'nftsLoop',
-          'releaseNotesGenerationLoop',
-          'transactionsProcessingLoop'
-        ].includes(name) && metric === 'Throttles';
-      const breachingMinutes = name === 'transactionsProcessingLoop' ? 5 : 3;
-      r[`${id}${metric}`] = {
-        Type: 'AWS::CloudWatch::Alarm',
-        Properties: {
-          AlarmName: sub(
-            'seize-monitoring-${Environment}-' + name + '-' + metric
-          ),
-          Namespace: 'AWS/Lambda',
-          MetricName: metric,
-          Dimensions: [{ Name: 'FunctionName', Value: name }],
-          Statistic: 'Sum',
-          Period: 60,
-          // These queue/scheduled workers can briefly contend for reserved concurrency.
-          EvaluationPeriods: sustainedThrottling ? 5 : 1,
-          ...(sustainedThrottling
-            ? { DatapointsToAlarm: breachingMinutes }
-            : {}),
-          Threshold: 1,
-          ComparisonOperator: 'GreaterThanOrEqualToThreshold',
-          TreatMissingData: 'notBreaching',
-          AlarmActions: when(
-            'HasAlarmTopic',
-            [ref('ExistingAlarmTopicArn')],
-            []
-          )
-        }
-      };
+      r[`${id}${metric}`] = platformAlarm(name, metric, environment);
     }
   }
   addWorkerQueueAlarms(r);
@@ -1244,6 +1280,7 @@ for (const environment of ['prod', 'staging']) {
   outputs[`coverage-${environment}.json`] = {
     environment,
     source: 'src/config/deploy-services.json',
+    retainedSource: 'ops/monitoring/retained-producers.json',
     services: source.coverage,
     supplementalSource: 'ops/monitoring/platform-functions.json',
     platformOnly: source.platformOnly

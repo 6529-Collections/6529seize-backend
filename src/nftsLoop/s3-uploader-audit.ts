@@ -55,7 +55,8 @@ export async function publishMissingS3UploaderAuditJobs({
   bucket,
   concurrency,
   s3ObjectExistsFn = s3ObjectExists,
-  modeLabel = 'AUDIT'
+  modeLabel = 'AUDIT',
+  onVerified
 }: {
   nfts: QueueableNft[];
   collectionType: S3UploaderCollectionType;
@@ -63,6 +64,7 @@ export async function publishMissingS3UploaderAuditJobs({
   concurrency: number;
   s3ObjectExistsFn?: S3ObjectExistsFn;
   modeLabel?: string;
+  onVerified?: () => void;
 }) {
   const limit = pLimit(concurrency);
   const nftResults = await Promise.all(
@@ -83,6 +85,8 @@ export async function publishMissingS3UploaderAuditJobs({
           });
         }
 
+        // All S3 checks and required handoffs for this NFT have completed.
+        onVerified?.();
         const enqueuedJobs = jobsToEnqueue.length;
         const skippedJobs = totalJobs - enqueuedJobs;
         const collection = resolveCollectionLabel(nft);

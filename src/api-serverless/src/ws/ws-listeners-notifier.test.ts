@@ -1,4 +1,5 @@
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
+import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { ApiWaveCreditScope } from '@/api/generated/models/ApiWaveCreditScope';
 import { ApiWaveCreditType } from '@/api/generated/models/ApiWaveCreditType';
 import {
@@ -15,6 +16,11 @@ import {
 } from '@/api/ws/ws-message';
 import { Logger } from '@/logging';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
+import { dropsDb } from '@/drops/drops.db';
 
 function createDrop(content: string, dropType = ApiDropType.Chat) {
   return {
@@ -69,11 +75,92 @@ function findMaximumSafeAsciiContentLength(
 describe('WsListenersNotifier', () => {
   beforeEach(() => {
     jest
+      .spyOn(competitionAnonymityService, 'hiddenDropIds')
+      .mockResolvedValue(new Set());
+    jest
       .spyOn(contentModerationDb, 'getViewerContextsForDrop')
       .mockResolvedValue({});
   });
 
   afterEach(() => jest.restoreAllMocks());
+
+  it.each(['update', 'rating', 'reaction'] as const)(
+    'skips %s policy reads when no websocket recipient exists',
+    async (kind) => {
+      const appWebSockets = { send: jest.fn() };
+      const connections = {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue([])
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        connections as never
+      );
+      const drop = createDrop('ordinary post');
+      if (kind === 'update') await notifier.notifyAboutDropUpdate(drop, {});
+      else if (kind === 'rating')
+        await notifier.notifyAboutDropRatingUpdate(drop, {});
+      else await notifier.notifyAboutDropReactionUpdate(drop, {});
+
+      expect(competitionAnonymityService.hiddenDropIds).not.toHaveBeenCalled();
+      expect(
+        contentModerationDb.getViewerContextsForDrop
+      ).not.toHaveBeenCalled();
+      expect(appWebSockets.send).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['update', 'rating', 'reaction'] as const)(
+    'preserves real-owner moderation while sending anonymous %s authors',
+    async (kind) => {
+      jest
+        .mocked(competitionAnonymityService.hiddenDropIds)
+        .mockResolvedValue(new Set(['drop-1']));
+      jest
+        .spyOn(dropsDb, 'getDropsByIds')
+        .mockResolvedValue([{ id: 'drop-1', author_id: 'author-1' }] as never);
+      const appWebSockets = { send: jest.fn().mockResolvedValue(undefined) };
+      const connections = {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue([
+            { connectionId: 'owner', profileId: 'author-1' },
+            { connectionId: 'reader', profileId: 'reader-1' }
+          ])
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        connections as never
+      );
+      const drop = createDrop('private quarantined artwork');
+      drop.author = anonymousCompetitionAuthor(drop.author, drop.id);
+      drop.moderation = { status: 'AI_QUARANTINED', can_view: false };
+      if (kind === 'update') await notifier.notifyAboutDropUpdate(drop, {});
+      else if (kind === 'rating')
+        await notifier.notifyAboutDropRatingUpdate(drop, {});
+      else await notifier.notifyAboutDropReactionUpdate(drop, {});
+
+      expect(contentModerationDb.getViewerContextsForDrop).toHaveBeenCalledWith(
+        expect.objectContaining({ authorProfileId: 'author-1' }),
+        undefined
+      );
+      const messages = Object.fromEntries<ApiDrop>(
+        appWebSockets.send.mock.calls.map(([sent]) => [
+          sent.connectionId,
+          JSON.parse(sent.message).data
+        ])
+      );
+      expect(messages.owner.parts[0].content).toBe(
+        'private quarantined artwork'
+      );
+      expect(messages.reader.parts[0].content).toBeNull();
+      for (const sent of Object.values(messages)) {
+        expect(sent.author.handle).toBe('Anonymous');
+        expect(sent.author.id).not.toBe('author-1');
+      }
+    }
+  );
 
   it('resolves wave listeners once and sends every bulk drop deletion in order', async () => {
     const appWebSockets = {

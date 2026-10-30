@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { Wallet } from 'ethers';
 import * as tables from '@/constants';
-import { appFeatures } from '@/app-features';
 import { AuthenticationContext } from '@/auth-context';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
-import { migrationFixtureOperator as operator } from '@/tests/fixtures/competition-migration.fixture';
+import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
 import { WaveType } from '@/entities/IWave';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
@@ -32,18 +31,18 @@ import {
   competitionPayloadHash
 } from './competition-command-identity';
 import { CompetitionRepository } from './competition.repository';
-import { CompetitionMigrationService } from './competition-migration.service';
-import { installMigrationCapture } from './competition-migration-capture';
 import {
   legacyCompetitionId,
-  legacyCompetitionEntryId
+  legacyCompetitionEntryId,
+  stableUuid
 } from './competition-id';
-import { migrateWave } from './wave-migration';
 import { CompetitionEventDispatcher } from './competition-event-dispatcher';
 import { competitionEventRepository } from './competition-event.repository';
 import { nativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
 import { nativeCompetitionRuntimeService } from './native-competition-runtime.service';
-import { mirrorNativeLegacyVoteActivity } from './legacy-competition-mirror';
+import { recordNativePrimaryVoteActivity } from './competition-vote-activity.writer';
+import { competitionCreditService } from './competition-credit.service';
+import { Timer } from '@/time';
 
 const day = 86_400_000;
 const start = Date.UTC(2026, 9, 1, 12);
@@ -119,33 +118,6 @@ describeWithSeed(
   [
     withWaves([wave]),
     {
-      table: tables.WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
-      rows: [
-        {
-          wave_id: wave.id,
-          wave_outcome_position: 1,
-          wave_outcome_distribution_item_position: 1,
-          description: 'First',
-          amount: null
-        }
-      ]
-    },
-    {
-      table: tables.WAVE_OUTCOMES_TABLE,
-      rows: [
-        {
-          wave_id: wave.id,
-          wave_outcome_position: 1,
-          type: 'MANUAL',
-          subtype: null,
-          description: 'Synthetic winner',
-          credit: null,
-          rep_category: null,
-          amount: null
-        }
-      ]
-    },
-    {
       table: tables.IDENTITY_SUBSCRIPTIONS_TABLE,
       rows: [
         {
@@ -184,64 +156,6 @@ describeWithSeed(
       ]
     },
     {
-      table: tables.DROP_RANK_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          vote: 7,
-          last_increased: start - day
-        }
-      ]
-    },
-    {
-      table: tables.DROP_VOTER_STATE_TABLE,
-      rows: [{ drop_id: dropId, wave_id: wave.id, voter_id: actor, votes: 7 }]
-    },
-    {
-      table: tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          voter_id: actor,
-          credit_spent: 7,
-          created_at: start - day
-        }
-      ]
-    },
-    {
-      table: tables.DROP_REAL_VOTE_IN_TIME_TABLE,
-      rows: [
-        { drop_id: dropId, wave_id: wave.id, timestamp: start - day, vote: 7 }
-      ]
-    },
-    {
-      table: tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          voter_id: actor,
-          timestamp: start - day,
-          vote: 7
-        }
-      ]
-    },
-    {
-      table: tables.WAVE_LEADERBOARD_ENTRIES_TABLE,
-      rows: [
-        {
-          drop_id: dropId,
-          wave_id: wave.id,
-          timestamp: start,
-          vote: 7,
-          vote_on_decision_time: 7,
-          over_threshold_since_ms: null
-        }
-      ]
-    },
-    {
       table: tables.PROFILES_ACTIVITY_LOGS_TABLE,
       rows: [
         {
@@ -260,18 +174,11 @@ describeWithSeed(
   ],
   () => {
     let clock: { value: number };
-    let service: CompetitionMigrationService;
     const originalApiBase = process.env.API_BASE_URL;
     const originalMainStage = process.env.MAIN_STAGE_WAVE_ID;
     beforeEach(async () => {
       clock = { value: start + 100 };
       jest.spyOn(Date, 'now').mockImplementation(() => clock.value);
-      for (const name of [
-        'isUnifiedCompetitionReadsEnabled',
-        'isNativeCompetitionWritesEnabled',
-        'isNativeCompetitionExecutionEnabled'
-      ] as const)
-        jest.spyOn(appFeatures, name).mockReturnValue(true);
       jest
         .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
         .mockResolvedValue([]);
@@ -284,15 +191,143 @@ describeWithSeed(
         .mockResolvedValue(undefined);
       process.env.API_BASE_URL = 'https://example.test/api';
       process.env.MAIN_STAGE_WAVE_ID = wave.id;
-      await new CompetitionRepository().ensureLegacyMappingForWave(wave, {});
-      await installMigrationCapture(sqlExecutor);
-      service = new CompetitionMigrationService(
-        () => sqlExecutor,
-        () => clock.value,
-        0,
-        'local'
+      await seedNativeOriginalPrimaryFixture(wave);
+      await sqlExecutor.execute(
+        `UPDATE ${tables.COMPETITIONS_TABLE} SET outcome_config=:outcomes WHERE id=:id`,
+        {
+          id,
+          outcomes: JSON.stringify([
+            {
+              type: 'MANUAL',
+              description: 'Synthetic winner',
+              distribution: [{ description: 'First', amount: null }]
+            }
+          ])
+        }
       );
-      await migrate();
+      await sqlExecutor.execute(
+        `UPDATE ${tables.COMPETITION_CONFIG_VERSIONS_TABLE} SET created_at=:now WHERE competition_id=:id`,
+        { id, now: clock.value }
+      );
+      const nativeRows = [
+        {
+          table: tables.COMPETITION_ENTRIES_TABLE,
+          row: {
+            id: entryId,
+            competition_id: id,
+            wave_id: wave.id,
+            drop_id: dropId,
+            submitter_id: actor,
+            status: 'ACTIVE',
+            config_version: 1,
+            submitted_at: start - day
+          }
+        },
+        {
+          table: tables.COMPETITION_VOTES_TABLE,
+          row: {
+            id: randomUUID(),
+            competition_id: id,
+            entry_id: entryId,
+            voter_profile_id: actor,
+            value: 7,
+            credit_spent: 7,
+            created_at: start - day,
+            updated_at: start - day
+          }
+        },
+        {
+          table: tables.COMPETITION_ENTRY_RUNTIME_TABLE,
+          row: {
+            competition_id: id,
+            entry_id: entryId,
+            real_time_rating: 7,
+            last_increased_at: start - day,
+            over_threshold_since: null,
+            updated_at: start - day
+          }
+        },
+        {
+          table: tables.COMPETITION_SCORE_HISTORY_TABLE,
+          row: {
+            competition_id: id,
+            entry_id: entryId,
+            drop_id: dropId,
+            kind: 'AGGREGATE',
+            sequence: 1,
+            voter_profile_id: '',
+            value: 7,
+            occurred_at: start - day
+          }
+        },
+        {
+          table: tables.COMPETITION_SCORE_HISTORY_TABLE,
+          row: {
+            competition_id: id,
+            entry_id: entryId,
+            drop_id: dropId,
+            kind: 'VOTER',
+            sequence: 1,
+            voter_profile_id: actor,
+            value: 7,
+            occurred_at: start - day
+          }
+        },
+        {
+          table: tables.COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+          row: {
+            competition_id: id,
+            entry_id: entryId,
+            drop_id: dropId,
+            rating: 7,
+            real_time_rating: 7,
+            rank: 1,
+            submitted_at: start - day,
+            updated_at: start,
+            ordering_time: start,
+            decision_rating: 7,
+            published_at: start
+          }
+        },
+        {
+          table: tables.COMPETITION_CAPABILITIES_TABLE,
+          row: {
+            competition_id: id,
+            wave_id: wave.id,
+            capability: 'MAIN_STAGE',
+            assigned_by: null,
+            legacy_source_wave_id: wave.id,
+            assigned_at: start
+          }
+        }
+      ];
+      for (const { table, row } of nativeRows)
+        await sqlExecutor.bulkInsert(table, [row], Object.keys(row), {});
+      await sqlExecutor.execute(
+        `UPDATE ${tables.PROFILES_ACTIVITY_LOGS_TABLE} SET competition_id=:id WHERE id='recovery-original-log'`,
+        { id }
+      );
+      const eventId = stableUuid(id, 'event:started');
+      await sqlExecutor.execute(
+        `INSERT INTO ${tables.COMPETITION_OUTBOX_TABLE} (id,competition_id,wave_id,semantic_key,event,created_at,next_attempt_at,attempts,delivered_at) VALUES(:eventId,:id,:waveId,:key,:event,:time,:time,0,:now)`,
+        {
+          eventId,
+          id,
+          waveId: wave.id,
+          key: `${id}:started`,
+          event: JSON.stringify({
+            event_id: eventId,
+            event_version: 1,
+            event_type: 'COMPETITION_STARTED',
+            competition_id: id,
+            wave_id: wave.id,
+            occurred_at: start - day,
+            data: {}
+          }),
+          time: start - day,
+          now: clock.value
+        }
+      );
     });
     afterEach(() => {
       jest.restoreAllMocks();
@@ -303,27 +338,6 @@ describeWithSeed(
       else process.env.MAIN_STAGE_WAVE_ID = originalMainStage;
     });
 
-    async function migrate() {
-      const result = await migrateWave(
-        {
-          waveId: wave.id,
-          environment: 'local',
-          operator,
-          dryRun: false,
-          batch: 10,
-          timeoutMs: 60_000
-        },
-        service,
-        {
-          now: () => clock.value,
-          wait: async (ms) => {
-            clock.value += ms;
-          },
-          progress: () => undefined
-        }
-      );
-      expect(result.status.storageMode).toBe('NATIVE');
-    }
     async function vote(
       value: number,
       key = randomUUID(),
@@ -372,6 +386,109 @@ describeWithSeed(
         `SELECT value,credit_spent FROM ${tables.COMPETITION_VOTES_TABLE} WHERE competition_id=:id AND entry_id=:entryId`,
         { id, entryId }
       );
+
+    it.each(['native', 'legacy'] as const)(
+      'saves a %s vote without competition-wide work and lets the worker refresh standings',
+      async (endpoint) => {
+        const budgets = jest.spyOn(competitionCreditService, 'getBudget');
+        const voters = jest.spyOn(
+          nativeCompetitionRuntimeRepository,
+          'listActiveVoters'
+        );
+        const standings = jest.spyOn(
+          nativeCompetitionRuntimeRepository,
+          'saveLeaderboard'
+        );
+        const before = await sqlExecutor.execute(
+          `select * from ${tables.COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id`,
+          { id }
+        );
+        if (endpoint === 'native') {
+          await expect(vote(29)).resolves.toMatchObject({
+            current_vote: 29,
+            spent: 29,
+            remaining: 71
+          });
+        } else {
+          await expect(legacyVote(29)).resolves.toBe(true);
+        }
+        expect(await acceptedVote()).toEqual([{ value: 29, credit_spent: 29 }]);
+        expect(
+          budgets.mock.calls.every(
+            (call) => call[1] === actor && call[3].connection
+          )
+        ).toBe(true);
+        expect(voters).not.toHaveBeenCalled();
+        expect(standings).not.toHaveBeenCalled();
+        expect(
+          await sqlExecutor.execute(
+            `select * from ${tables.COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id`,
+            { id }
+          )
+        ).toEqual(before);
+        expect(
+          await sqlExecutor.execute(
+            `select real_time_rating from ${tables.COMPETITION_ENTRY_RUNTIME_TABLE} where competition_id=:id and entry_id=:entryId`,
+            { id, entryId }
+          )
+        ).toEqual([{ real_time_rating: 29 }]);
+        await nativeCompetitionRuntimeService.refreshNativeLeaderboards(
+          new Timer('vote-background-refresh'),
+          clock.value
+        );
+        expect(voters).toHaveBeenCalledWith(id, expect.anything());
+        expect(standings).toHaveBeenCalled();
+        expect(
+          await sqlExecutor.execute(
+            `select real_time_rating,updated_at from ${tables.COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:id and entry_id=:entryId`,
+            { id, entryId }
+          )
+        ).toEqual([{ real_time_rating: 29, updated_at: clock.value }]);
+      }
+    );
+
+    it.each(['native', 'legacy'] as const)(
+      'reconciles reduced credit for the %s voter before validating the replacement',
+      async (endpoint) => {
+        await sqlExecutor.execute(
+          `update ${tables.IDENTITIES_TABLE} set tdh=3 where profile_id=:actor`,
+          { actor }
+        );
+        if (endpoint === 'native') {
+          await expect(vote(-2)).resolves.toMatchObject({
+            current_vote: -2,
+            spent: 2,
+            remaining: 1
+          });
+        } else {
+          await expect(legacyVote(-2)).resolves.toBe(true);
+        }
+        expect(await acceptedVote()).toEqual([{ value: -2, credit_spent: 2 }]);
+        expect(await activity()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              contents: { oldVote: 7, newVote: 3, reason: 'CREDIT_OVERSPENT' }
+            }),
+            expect.objectContaining({ contents: { oldVote: 3, newVote: -2 } })
+          ])
+        );
+      }
+    );
+
+    it.each(['native', 'legacy'] as const)(
+      'rejects an unaffordable %s vote and rolls back its credit reconciliation',
+      async (endpoint) => {
+        await sqlExecutor.execute(
+          `update ${tables.IDENTITIES_TABLE} set tdh=3 where profile_id=:actor`,
+          { actor }
+        );
+        await expect(
+          endpoint === 'native' ? vote(4) : legacyVote(4)
+        ).rejects.toThrow();
+        expect(await acceptedVote()).toEqual([{ value: 7, credit_spent: 7 }]);
+        expect(await history()).toEqual([]);
+      }
+    );
     async function durableNativeData() {
       const snapshots = [];
       for (const [table, order] of [
@@ -430,14 +547,6 @@ describeWithSeed(
         sockets
       };
     }
-    async function reverse(between?: () => Promise<void>) {
-      for (let batch = 0; batch < 300; batch++) {
-        const status = await service.reverseReconcile(id, operator, 1);
-        if (batch === 3) await between?.();
-        if (status.migration?.reverse_ready) return;
-      }
-      throw new Error('Reverse reconciliation did not finish');
-    }
     async function submit() {
       const record =
         (await new CompetitionRepository().findCompetitionRecordById(id, {}))!;
@@ -489,7 +598,7 @@ describeWithSeed(
       return competitionEntryService.create(wave.id, id, request, actorContext);
     }
 
-    it('retains replacement votes, exact native Activity and original legacy attribution through rollback and another migration', async () => {
+    it('retains replacement votes, exact native Activity and original shared attribution across worker refreshes', async () => {
       for (const value of [29, 17, -5, 0, -29]) {
         clock.value += 100;
         const key = randomUUID();
@@ -501,12 +610,6 @@ describeWithSeed(
       expect(await legacyVote(-17)).toBe(false);
       const original = await activity();
       expect(original).toHaveLength(7);
-      expect(
-        await sqlExecutor.execute(
-          `SELECT id FROM ${tables.PROFILES_ACTIVITY_LOGS_TABLE} WHERE additional_data_2=:waveId`,
-          { waveId: wave.id }
-        )
-      ).toHaveLength(7);
       expect(new Set(original.map((log) => log.id)).size).toBe(7);
       expect(original.every((log) => log.invoker_proxy?.id === proxy)).toBe(
         true
@@ -517,77 +620,24 @@ describeWithSeed(
       });
       const stored = await history();
       const local = sinks();
+      await nativeCompetitionRuntimeService.refreshNativeLeaderboards(
+        new Timer('recovery-standings'),
+        clock.value
+      );
       await local.dispatcher.dispatchPending({}, clock.value);
-      await reverse(async () => {
-        clock.value += 10;
-        await vote(-5);
-        await local.dispatcher.dispatchPending({}, clock.value);
-      });
-      expect(await service.rollback(id, operator, false)).toEqual({
-        changed: true,
-        repairRequired: false
-      });
-      expect((await service.status(id)).storageMode).toBe('LEGACY_ADAPTER');
-      expect(await acceptedVote()).toEqual([{ value: -5, credit_spent: 5 }]);
-      expect((await history()).slice(0, stored.length)).toEqual(stored);
+      expect(await history()).toEqual(stored);
+      expect(await activity()).toEqual(original);
+      // Distinct edits within one second retain their own permanent identities.
+      clock.value += 1;
+      await legacyVote(11);
       const after = await activity();
       expect(after.slice(1)).toEqual(original);
-      const afterHistory = await history();
-      // Deliberately stay in the rollback's second. A timestamp-only filter loses this log.
-      clock.value += 1;
-      expect(await legacyVote(11)).toBe(true);
-      const legacy = await activity();
-      expect(legacy).toHaveLength(after.length + 1);
-      expect(
-        legacy.find((log) => !after.some((old) => old.id === log.id))
-      ).toMatchObject({
-        contents: { oldVote: -5, newVote: 11 },
-        invoker_proxy: { id: proxy }
-      });
-      expect(await history()).toEqual(afterHistory);
-      clock.value += 1;
-      await service.enroll(id, operator, 'PRIVILEGED');
-      let sawShadowReset = false;
-      for (let batch = 0; batch < 50; batch++) {
-        await service.backfill(id, operator, 100);
-        const entries = await sqlExecutor.execute(
-          `SELECT id FROM ${tables.COMPETITION_ENTRIES_TABLE} WHERE competition_id=:id`,
-          { id }
-        );
-        if (!entries.length) {
-          sawShadowReset = true;
-          expect(await activity()).toEqual(legacy);
-          break;
-        }
-      }
-      expect(sawShadowReset).toBe(true);
-      await migrate();
-      expect(await history()).toEqual(afterHistory);
-      expect(await activity()).toEqual(legacy);
       const pages = [];
-      for (let offset = 0; offset < legacy.length; offset += 2)
+      for (let offset = 0; offset < after.length; offset += 2)
         pages.push(...(await activity(offset, 2)));
-      expect(pages).toEqual(legacy);
-      clock.value += 100;
-      await vote(17);
-      const remigratedHistory = await history();
-      expect(remigratedHistory.slice(0, afterHistory.length)).toEqual(
-        afterHistory
-      );
-      expect(Number(remigratedHistory.at(-1)!.sequence)).toBeGreaterThan(
-        Number(afterHistory.at(-1)!.sequence)
-      );
-      const resumed = await activity();
-      const resumedId = `${id}:${remigratedHistory.at(-1)!.sequence}`;
-      expect(resumed.filter((log) => log.id !== resumedId)).toEqual(legacy);
-      expect(resumed.filter((log) => log.id === resumedId)).toEqual([
-        expect.objectContaining({
-          id: resumedId,
-          contents: { oldVote: 11, newVote: 17 }
-        })
-      ]);
-      expect((await service.verifyNative(id)).failures).toEqual([]);
-    }, 120_000);
+      expect(pages).toEqual(after);
+      expect((await history()).slice(0, stored.length)).toEqual(stored);
+    });
 
     it('rolls the entire vote transaction back on an Activity identity collision without overwriting the existing log', async () => {
       await vote(17);
@@ -615,12 +665,6 @@ describeWithSeed(
           tables.COMPETITION_ENTRY_RUNTIME_TABLE,
           tables.COMPETITION_COMMANDS_TABLE,
           tables.COMPETITION_OUTBOX_TABLE,
-          tables.COMPETITION_LEGACY_MIRROR_PERMITS_TABLE,
-          tables.DROP_VOTER_STATE_TABLE,
-          tables.DROP_RANK_TABLE,
-          tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-          tables.DROP_REAL_VOTE_IN_TIME_TABLE,
-          tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
           tables.PROFILES_ACTIVITY_LOGS_TABLE,
           tables.PROFILE_LATEST_LOG_TABLE
         ])
@@ -648,53 +692,20 @@ describeWithSeed(
         occurredAt: clock.value
       };
       await expect(
-        mirrorNativeLegacyVoteActivity(sqlExecutor, params, 1, {})
+        recordNativePrimaryVoteActivity(sqlExecutor, params, 1, {})
       ).rejects.toThrow('requires a transaction');
       await expect(
         sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-          mirrorNativeLegacyVoteActivity(sqlExecutor, params, 1, { connection })
+          recordNativePrimaryVoteActivity(sqlExecutor, params, 1, {
+            connection
+          })
         )
       ).rejects.toThrow('requires exactly one Activity log');
       expect(await history()).toEqual([]);
       expect(await acceptedVote()).toEqual([{ value: 7, credit_spent: 7 }]);
     });
 
-    it('requires pending delivery recovery before reversal and rejects a stale reverse snapshot after another accepted vote', async () => {
-      await vote(29);
-      expect(await service.rollback(id, operator, false)).toMatchObject({
-        changed: false,
-        repairRequired: true
-      });
-      await expect(
-        service.reviewRepair(
-          id,
-          operator,
-          'https://example.test/synthetic/pending'
-        )
-      ).rejects.toThrow('Drain pending');
-      const local = sinks();
-      await local.dispatcher.dispatchPending({}, clock.value);
-      await service.reviewRepair(
-        id,
-        operator,
-        'https://example.test/synthetic/drained'
-      );
-      await reverse();
-      clock.value += 10;
-      await vote(-17);
-      await local.dispatcher.dispatchPending({}, clock.value);
-      const result = await service.rollback(id, operator, false);
-      expect(result).toMatchObject({ changed: false, repairRequired: false });
-      expect('failures' in result && result.failures?.length).toBeGreaterThan(
-        0
-      );
-      expect((await service.status(id)).storageMode).toBe('NATIVE');
-      await reverse();
-      expect((await service.rollback(id, operator, false)).changed).toBe(true);
-      expect(await acceptedVote()).toEqual([{ value: -17, credit_spent: 17 }]);
-    }, 120_000);
-
-    it('keeps a TDH reduction, its adjustment reason and spending through rollback', async () => {
+    it('keeps a TDH reduction, its adjustment reason and spending across repeated native recovery', async () => {
       await vote(-29);
       clock.value += 50;
       await sqlExecutor.execute(
@@ -720,25 +731,28 @@ describeWithSeed(
       });
       const stored = await history();
       await sinks().dispatcher.dispatchPending({}, clock.value);
-      await reverse();
-      expect((await service.rollback(id, operator, false)).changed).toBe(true);
+      await nativeCompetitionRuntimeService.refreshNativeLeaderboards(
+        new Timer('recovery-tdh'),
+        clock.value
+      );
+      await sinks().dispatcher.dispatchPending({}, clock.value);
       expect(await history()).toEqual(stored);
       expect(await activity()).toEqual(before);
       expect(
         await sqlExecutor.execute(
-          `SELECT votes FROM ${tables.DROP_VOTER_STATE_TABLE} WHERE wave_id=:waveId`,
-          { waveId: wave.id }
+          `SELECT value AS votes FROM ${tables.COMPETITION_VOTES_TABLE} WHERE competition_id=:competitionId`,
+          { competitionId: id }
         )
       ).toEqual([{ votes: -3 }]);
       expect(
         await sqlExecutor.execute(
-          `SELECT SUM(credit_spent) AS spent FROM ${tables.DROPS_VOTES_CREDIT_SPENDINGS_TABLE} WHERE wave_id=:waveId AND voter_id=:actor`,
-          { waveId: wave.id, actor }
+          `SELECT SUM(credit_spent) AS spent FROM ${tables.COMPETITION_VOTES_TABLE} WHERE competition_id=:competitionId AND voter_profile_id=:actor`,
+          { competitionId: id, actor }
         )
       ).toEqual([{ spent: 3 }]);
     }, 120_000);
 
-    it('refuses reversal of an accepted signed native submission and records reviewed forward recovery without rewriting it', async () => {
+    it('retains an accepted signed native submission through repeated worker delivery', async () => {
       const entry = await submit();
       expect((await dropsDb.findDropById(entry.drop_id))?.drop_type).toBe(
         'COMPETITION'
@@ -746,35 +760,15 @@ describeWithSeed(
       await vote(29, randomUUID(), entry.id);
       const saved = await history();
       const accepted = await durableNativeData();
-      await sinks().dispatcher.dispatchPending({}, clock.value);
-      await expect(reverse()).rejects.toThrow(
-        'cannot change native-created primary drop types'
-      );
-      await service.recordException(
-        id,
-        operator,
-        'NATIVE_SUBMISSION_REVERSE_REFUSED'
-      );
-      expect(
-        await service.reviewRepair(
-          id,
-          operator,
-          'https://example.test/synthetic/submission-recovery'
-        )
-      ).toMatchObject({
-        ownershipRetained: 'NATIVE',
-        rollbackStillGuarded: true
-      });
-      expect((await service.status(id)).storageMode).toBe('NATIVE');
+      const local = sinks();
+      await local.dispatcher.dispatchPending({}, clock.value);
+      await local.dispatcher.dispatchPending({}, clock.value);
+      expect(await history()).toEqual(saved);
+      expect(await durableNativeData()).toEqual(accepted);
       expect((await dropsDb.findDropById(entry.drop_id))?.drop_type).toBe(
         'COMPETITION'
       );
-      expect(await history()).toEqual(saved);
-      expect(await durableNativeData()).toEqual(accepted);
-      await expect(reverse()).rejects.toThrow(
-        'cannot change native-created primary drop types'
-      );
-    }, 120_000);
+    });
 
     it('repairs a failed delivery forward after a native decision, with durable effects and a real idempotent local claim consumer', async () => {
       const entry = await submit();
@@ -807,29 +801,21 @@ describeWithSeed(
           throw new Error('isolated publication sink outage');
         }
       });
-      expect(await service.rollback(id, operator, false)).toMatchObject({
-        changed: false,
-        repairRequired: true
-      });
+      const pendingEffects = async () =>
+        Number(
+          (
+            await sqlExecutor.execute<{ count: number }>(
+              `SELECT COUNT(*) AS count FROM ${tables.COMPETITION_OUTBOX_TABLE} WHERE competition_id=:id AND delivered_at IS NULL`,
+              { id }
+            )
+          )[0].count
+        );
       await local.dispatcher.dispatchPending({}, clock.value);
-      const pending = (await service.verifyNative(id)).pendingEffects;
-      expect(pending).toBeGreaterThan(0);
-      await expect(
-        service.reviewRepair(
-          id,
-          operator,
-          'https://example.test/synthetic/too-early'
-        )
-      ).rejects.toThrow('Drain pending');
+      expect(await pendingEffects()).toBeGreaterThan(0);
       // Restore the sink, honor normal backoff, and use the real outbox retry path.
       clock.value += 3_600_001;
       await local.dispatcher.dispatchPending({}, clock.value);
-      expect((await service.verifyNative(id)).pendingEffects).toBe(0);
-      await service.reviewRepair(
-        id,
-        operator,
-        'https://example.test/synthetic/forward-delivery-recovery'
-      );
+      expect(await pendingEffects()).toBe(0);
       await nativeCompetitionRuntimeService.processCompetition(id, clock.value);
       await local.dispatcher.dispatchPending({}, clock.value);
       expect(
@@ -846,7 +832,6 @@ describeWithSeed(
       ).toEqual(winners);
       expect(await history()).toEqual(savedHistory);
       expect(await durableNativeData()).toEqual(accepted);
-      expect((await service.status(id)).storageMode).toBe('NATIVE');
       expect(local.announcements.drop).toHaveBeenCalledTimes(1);
       expect(local.notifier.notifyOfCompetitionLifecycle).toHaveBeenCalledTimes(
         1
@@ -865,11 +850,7 @@ describeWithSeed(
           `SELECT drop_id FROM ${tables.MINTING_CLAIMS_TABLE}`
         )
       ).toEqual([{ drop_id: entry.drop_id }]);
-      expect((await service.verifyNative(id)).failures).toEqual([]);
-      expect(await service.rollback(id, operator, false)).toMatchObject({
-        changed: false,
-        repairRequired: true
-      });
+      expect(await pendingEffects()).toBe(0);
     }, 120_000);
   }
 );

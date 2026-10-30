@@ -1,5 +1,6 @@
 import { XTdhIdentitySnapshotDb } from './xtdh-identity-snapshot.db';
 import { SqlExecutor } from '@/sql-executor';
+import { XTdhIdentitySnapshotChangedError } from '@/xtdh/xtdh-identity-snapshot-changed-error';
 
 const connection = { connection: null };
 const rows = [{ consolidation_key: 'key', profile_id: 'profile' }];
@@ -42,7 +43,7 @@ it.each(
   async ({ current }) => {
     const { repo, execute } = fixture(current);
     await expect(repo.publish({ connection })).rejects.toThrow(
-      'Identity consolidation changed'
+      XTdhIdentitySnapshotChangedError
     );
     expect(execute).toHaveBeenCalledTimes(2);
   }

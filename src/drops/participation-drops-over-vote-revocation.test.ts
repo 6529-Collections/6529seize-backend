@@ -1,146 +1,206 @@
-jest.mock('@/competitions/legacy-competition-mutation', () => ({
-  withLegacyPrimaryMutation: jest.fn(
-    (_wave: string, _ctx: unknown, action: (owner: null) => unknown) =>
-      action(null)
-  ),
-  readLegacyMutationSource: (action: () => unknown) => action()
+jest.mock('@/competitions/competition-tdh-overvotes.db', () => ({
+  competitionTdhOvervotesDb: { findOvervoters: jest.fn() }
 }));
-import { dropVotingDb } from '@/api-serverless/src/drops/drop-voting.db';
+jest.mock('@/competitions/native-competition-runtime.repository', () => ({
+  nativeCompetitionRuntimeRepository: {
+    discoverCompetitions: jest.fn(),
+    lockCompetition: jest.fn(),
+    listActiveVoters: jest.fn(),
+    getVoterActiveVotes: jest.fn()
+  }
+}));
+jest.mock('@/competitions/native-competition-runtime.service', () => ({
+  nativeCompetitionRuntimeService: {
+    reconcileVoterCredit: jest.fn(),
+    refreshCompetition: jest.fn(),
+    enqueueDueTransitions: jest.fn(),
+    refreshLeaderboardAfterCreditReconciliation: jest.fn()
+  }
+}));
+jest.mock('@/competitions/competition-credit.service', () => ({
+  competitionCreditService: { getBudget: jest.fn() }
+}));
+jest.mock('@/competitions/competition.repository', () => ({
+  competitionRepository: { findNativeEntry: jest.fn() }
+}));
+jest.mock('@/competitions/competition-drop-votes.db', () => ({
+  competitionDropVotesDb: { totals: jest.fn() }
+}));
+jest.mock('@/api/waves/waves.api.db', () => ({
+  wavesApiDb: { findById: jest.fn() }
+}));
+jest.mock('@/notifications/user.notifier', () => ({
+  userNotifier: { notifyOfDropVote: jest.fn() }
+}));
+jest.mock('@/app-features', () => ({
+  appFeatures: { isDropOvervoteRevocationEnabled: () => true }
+}));
+
+import {
+  revokeRepBasedDropOverVotes,
+  revokeTdhBasedDropWavesOverVotes
+} from './participation-drops-over-vote-revocation';
+import { nativeCompetitionRuntimeRepository as runtime } from '@/competitions/native-competition-runtime.repository';
+import { nativeCompetitionRuntimeService as service } from '@/competitions/native-competition-runtime.service';
+import { competitionCreditService as credits } from '@/competitions/competition-credit.service';
+import { competitionRepository as repository } from '@/competitions/competition.repository';
+import { competitionDropVotesDb as votes } from '@/competitions/competition-drop-votes.db';
+import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { userNotifier } from '@/notifications/user.notifier';
-import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-logs.db';
-import { dropsDb } from '@/drops/drops.db';
-import { revokeTdhBasedDropWavesOverVotes } from '@/drops/participation-drops-over-vote-revocation';
-import { WaveCreditScope } from '@/entities/IWave';
+import { competitionTdhOvervotesDb } from '@/competitions/competition-tdh-overvotes.db';
 
-describe('revokeTdhBasedDropWavesOverVotes', () => {
-  const connection = {} as any;
+const connection = {} as never;
+const competition = {
+  id: 'native-competition',
+  wave_id: 'hub',
+  execution_mode: 'ACTIVE',
+  lifecycle: 'PUBLISHED',
+  voting: {
+    credit_type: 'TDH',
+    credit_scope: 'WAVE',
+    credit_category: null,
+    credit_creditor: null
+  }
+};
 
-  beforeEach(() => {
-    jest
-      .spyOn(dropsDb, 'findTdhBasedSubmissionDropOvervotersWithOvervoteAmounts')
-      .mockResolvedValue([
-        {
-          profile_id: 'voter-1',
-          wave_id: 'wave-1',
-          credit_limit: 1,
-          total_given_votes: 2
-        } as any
-      ]);
-    jest.spyOn(dropsDb, 'findDropVotesForWaves').mockResolvedValue([
-      {
-        drop_id: 'drop-1',
-        votes: -1,
-        author_id: 'author-1',
-        visibility_group_id: null
-      } as any
-    ]);
-    jest
-      .spyOn(dropVotingDb, 'lockDropsCurrentRealVote')
-      .mockResolvedValue(undefined);
-    jest
-      .spyOn(dropVotingDb, 'getDropVoterStateForDrop')
-      .mockResolvedValue({ votes: -1 } as any);
-    jest.spyOn(dropVotingDb, 'upsertState').mockResolvedValue(undefined);
-    jest
-      .spyOn(dropVotingDb, 'upsertAggregateDropRank')
-      .mockResolvedValue(undefined);
-    jest.spyOn(dropVotingDb, 'getAggregateDropRankVote').mockResolvedValue(123);
-    jest
-      .spyOn(dropVotingDb, 'snapShotDropsRealVoteInTimeBasedOnRank')
-      .mockResolvedValue(undefined);
-    jest
-      .spyOn(dropVotingDb, 'snapshotDropVotersRealVoteInTimeBasedOnVoterState')
-      .mockResolvedValue(undefined);
-    jest.spyOn(profileActivityLogsDb, 'insert').mockResolvedValue(undefined);
-    jest.spyOn(userNotifier, 'notifyOfDropVote').mockResolvedValue(undefined);
-  });
+beforeEach(() => {
+  jest.resetAllMocks();
+  jest
+    .mocked(runtime.discoverCompetitions)
+    .mockResolvedValueOnce([competition.id])
+    .mockResolvedValue([]);
+  jest.mocked(runtime.lockCompetition).mockResolvedValue(competition as never);
+  jest
+    .mocked(competitionTdhOvervotesDb.findOvervoters)
+    .mockResolvedValue(['voter']);
+  jest
+    .mocked(runtime.getVoterActiveVotes)
+    .mockResolvedValueOnce([{ entryId: 'entry', value: -10 }])
+    .mockResolvedValue([{ entryId: 'entry', value: -5 }]);
+  jest.mocked(credits.getBudget).mockResolvedValue({ available: 5 } as never);
+  jest.mocked(repository.findNativeEntry).mockResolvedValue({
+    id: 'entry',
+    drop_id: 'drop',
+    submitter_id: 'author'
+  } as never);
+  jest.mocked(votes.totals).mockResolvedValue({ total: -5 } as never);
+  jest
+    .mocked(wavesApiDb.findById)
+    .mockResolvedValue({ visibility_group_id: 'visible' } as never);
+});
 
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
+it('reconciles native TDH votes in the existing transaction and preserves notification values', async () => {
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(service.reconcileVoterCredit).toHaveBeenCalledWith(
+    expect.objectContaining({
+      competitionId: competition.id,
+      voterProfileId: 'voter',
+      availableCredit: 5,
+      creditScope: 'WAVE'
+    }),
+    expect.objectContaining({ connection })
+  );
+  expect(userNotifier.notifyOfDropVote).toHaveBeenCalledWith(
+    expect.objectContaining({
+      drop_id: 'drop',
+      vote: -5,
+      vote_change: 5,
+      total_vote: -5
+    }),
+    'visible',
+    connection
+  );
+  expect(
+    service.refreshLeaderboardAfterCreditReconciliation
+  ).toHaveBeenCalledWith(
+    competition,
+    expect.any(Number),
+    expect.objectContaining({ connection })
+  );
+});
 
-  it('skips drop vote side effects when revocation leaves the vote unchanged', async () => {
-    await revokeTdhBasedDropWavesOverVotes(connection);
+it('does not execute disabled competitions', async () => {
+  jest
+    .mocked(runtime.lockCompetition)
+    .mockResolvedValue({ ...competition, execution_mode: 'DISABLED' } as never);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
+});
 
-    expect(dropVotingDb.upsertState).not.toHaveBeenCalled();
-    expect(dropVotingDb.upsertAggregateDropRank).not.toHaveBeenCalled();
-    expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
-    expect(dropVotingDb.getAggregateDropRankVote).not.toHaveBeenCalled();
-    expect(profileActivityLogsDb.insert).not.toHaveBeenCalled();
-    expect(
-      dropVotingDb.snapShotDropsRealVoteInTimeBasedOnRank
-    ).not.toHaveBeenCalled();
-    expect(
-      dropVotingDb.snapshotDropVotersRealVoteInTimeBasedOnVoterState
-    ).not.toHaveBeenCalled();
-  });
+it('limits REP reconciliation to affected native credit namespaces', async () => {
+  jest.mocked(runtime.lockCompetition).mockResolvedValue({
+    ...competition,
+    voting: {
+      ...competition.voting,
+      credit_type: 'REP',
+      credit_category: 'art',
+      credit_creditor: 'creditor'
+    }
+  } as never);
+  await revokeRepBasedDropOverVotes(
+    {
+      rep_recipient_id: 'voter',
+      rep_giver_id: 'different-creditor',
+      credit_category: 'art'
+    },
+    connection
+  );
+  expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
+});
 
-  it('skips notification total lookup for self-vote revocations', async () => {
-    jest.spyOn(dropsDb, 'findDropVotesForWaves').mockResolvedValue([
-      {
-        drop_id: 'drop-1',
-        votes: 2,
-        author_id: 'voter-1',
-        visibility_group_id: null
-      } as any
-    ]);
+it('does not read voters or rebuild a fully funded competition', async () => {
+  jest.mocked(competitionTdhOvervotesDb.findOvervoters).mockResolvedValue([]);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(runtime.listActiveVoters).not.toHaveBeenCalled();
+  expect(runtime.getVoterActiveVotes).not.toHaveBeenCalled();
+  expect(credits.getBudget).not.toHaveBeenCalled();
+  expect(service.refreshCompetition).not.toHaveBeenCalled();
+  expect(
+    service.refreshLeaderboardAfterCreditReconciliation
+  ).not.toHaveBeenCalled();
+});
 
-    await revokeTdhBasedDropWavesOverVotes(connection);
+it('notifies every reduced voter before one leaderboard refresh without reconciling the whole competition again', async () => {
+  jest
+    .mocked(competitionTdhOvervotesDb.findOvervoters)
+    .mockResolvedValue(['first', 'second']);
+  jest.mocked(runtime.getVoterActiveVotes).mockReset();
+  jest
+    .mocked(runtime.getVoterActiveVotes)
+    .mockResolvedValueOnce([{ entryId: 'entry', value: -10 }])
+    .mockResolvedValueOnce([{ entryId: 'entry', value: -5 }])
+    .mockResolvedValueOnce([{ entryId: 'entry', value: 20 }])
+    .mockResolvedValueOnce([{ entryId: 'entry', value: 5 }]);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(service.reconcileVoterCredit).toHaveBeenCalledTimes(2);
+  expect(userNotifier.notifyOfDropVote).toHaveBeenCalledTimes(2);
+  expect(userNotifier.notifyOfDropVote).toHaveBeenNthCalledWith(
+    2,
+    expect.objectContaining({ voter_id: 'second', vote: 5, vote_change: -15 }),
+    'visible',
+    connection
+  );
+  expect(service.refreshCompetition).not.toHaveBeenCalled();
+  expect(
+    service.refreshLeaderboardAfterCreditReconciliation
+  ).toHaveBeenCalledTimes(1);
+  expect(service.enqueueDueTransitions).toHaveBeenCalledTimes(1);
+  expect(
+    jest.mocked(service.refreshLeaderboardAfterCreditReconciliation).mock
+      .invocationCallOrder[0]
+  ).toBeGreaterThan(
+    jest.mocked(userNotifier.notifyOfDropVote).mock.invocationCallOrder[1]
+  );
+});
 
-    expect(dropVotingDb.upsertState).toHaveBeenCalled();
-    expect(dropVotingDb.upsertAggregateDropRank).toHaveBeenCalledWith(
-      expect.objectContaining({
-        drop_id: 'drop-1',
-        change: -1,
-        wave_id: 'wave-1'
-      }),
-      expect.anything()
-    );
-    expect(dropVotingDb.getAggregateDropRankVote).not.toHaveBeenCalled();
-    expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
-    expect(profileActivityLogsDb.insert).toHaveBeenCalled();
-  });
-
-  it('caps only the offending drop when credit scope is DROP', async () => {
-    jest
-      .spyOn(dropsDb, 'findTdhBasedSubmissionDropOvervotersWithOvervoteAmounts')
-      .mockResolvedValue([
-        {
-          profile_id: 'voter-1',
-          wave_id: 'wave-1',
-          drop_id: 'drop-1',
-          credit_scope: WaveCreditScope.DROP,
-          credit_limit: 5,
-          total_given_votes: 10
-        } as any
-      ]);
-    jest.spyOn(dropsDb, 'findDropVotesForWaves').mockResolvedValue([
-      {
-        drop_id: 'drop-1',
-        votes: 10,
-        author_id: 'author-1',
-        visibility_group_id: null
-      } as any
-    ]);
-
-    await revokeTdhBasedDropWavesOverVotes(connection);
-
-    expect(dropsDb.findDropVotesForWaves).toHaveBeenCalledWith(
-      {
-        profile_id: 'voter-1',
-        wave_id: 'wave-1',
-        drop_id: 'drop-1'
-      },
-      expect.anything()
-    );
-    expect(dropVotingDb.upsertState).toHaveBeenCalledWith(
-      expect.objectContaining({
-        voter_id: 'voter-1',
-        drop_id: 'drop-1',
-        wave_id: 'wave-1',
-        votes: 5
-      }),
-      expect.anything()
-    );
-  });
+it('does not refresh a candidate whose authoritative budget no longer needs a reduction', async () => {
+  jest.mocked(runtime.getVoterActiveVotes).mockReset();
+  jest
+    .mocked(runtime.getVoterActiveVotes)
+    .mockResolvedValue([{ entryId: 'entry', value: 5 }]);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(userNotifier.notifyOfDropVote).not.toHaveBeenCalled();
+  expect(
+    service.refreshLeaderboardAfterCreditReconciliation
+  ).not.toHaveBeenCalled();
 });

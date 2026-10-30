@@ -19,13 +19,80 @@ import {
   IdentityRepNotificationData,
   IdentitySubscriptionNotificationData,
   SubscriptionCoverageNotificationData,
-  CompetitionLifecycleNotificationData
+  MemeCollaborationNotificationData,
+  CompetitionLifecycleNotificationData,
+  VotingCreditsReturnedNotificationData
 } from './user-notification.types';
 
 export class UserNotifier {
   constructor(
     private readonly identityNotificationsDb: IdentityNotificationsDb
   ) {}
+
+  public async notifyOfMemeCollaboration(
+    recipientId: string,
+    data: MemeCollaborationNotificationData,
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<number[]> {
+    return this.notifyOfMemeCollaborations(
+      [{ recipientId, data }],
+      visibilityGroupId,
+      ctx
+    );
+  }
+
+  public async notifyOfMemeCollaborations(
+    notifications: readonly {
+      recipientId: string;
+      data: MemeCollaborationNotificationData;
+    }[],
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<number[]> {
+    return this.identityNotificationsDb.insertManyNotifications(
+      notifications.map(({ recipientId, data }) => ({
+        identity_id: recipientId,
+        additional_identity_id: data.actor_id,
+        related_drop_id: data.drop_id,
+        related_drop_part_no: 1,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        cause: IdentityNotificationCause.MEME_COLLABORATION,
+        additional_data: { ...data },
+        wave_id: data.wave_id,
+        visibility_group_id: visibilityGroupId
+      })),
+      ctx.connection
+    );
+  }
+
+  public async notifyOfVotingCreditReturns(
+    notifications: readonly {
+      recipientId: string;
+      data: VotingCreditsReturnedNotificationData;
+    }[],
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<number[]> {
+    if (!ctx.connection)
+      throw new Error('Credit return notifications require a transaction');
+    return this.identityNotificationsDb.insertManyNotifications(
+      notifications.map(({ recipientId, data }) => ({
+        identity_id: recipientId,
+        additional_identity_id: null,
+        related_drop_id: null,
+        related_drop_part_no: null,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        cause: IdentityNotificationCause.VOTING_CREDITS_RETURNED,
+        additional_data: { ...data },
+        wave_id: data.wave_id,
+        visibility_group_id: visibilityGroupId
+      })),
+      ctx.connection
+    );
+  }
 
   public async notifyOfCompetitionLifecycle(
     recipientId: string,

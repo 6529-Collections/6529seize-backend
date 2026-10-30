@@ -55,7 +55,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
 
     const mc = new MediaConvertClient({ region: bucketRegion, endpoint });
     const fileInput = `s3://${bucket}/${key}`;
-    // UploadMediaService generates the author/upload UUID path and slugged name.
+    // UploadMediaService generates a random upload UUID path and slugged name.
     // S3 keys are opaque; do not normalize or decode them into a different key.
     const clientRequestToken =
       typeof event.id === 'string'

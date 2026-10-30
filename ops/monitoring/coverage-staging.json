@@ -1,6 +1,7 @@
 {
   "environment": "staging",
   "source": "src/config/deploy-services.json",
+  "retainedSource": "ops/monitoring/retained-producers.json",
   "services": [
     {
       "service": "api",
@@ -79,18 +80,6 @@
       "region": "eu-west-1",
       "functions": [
         "claimsMediaArweaveUploader"
-      ],
-      "coverage": [
-        "structured-error-logs",
-        "lambda-errors",
-        "lambda-throttles"
-      ]
-    },
-    {
-      "service": "competitionMigrationLoop",
-      "region": "eu-west-1",
-      "functions": [
-        "competitionMigrationLoop"
       ],
       "coverage": [
         "structured-error-logs",
@@ -564,6 +553,18 @@
       "region": "eu-west-1",
       "functions": [
         "transactionsProcessingLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
+    },
+    {
+      "service": "votingCreditReturnNotificationsLoop",
+      "region": "eu-west-1",
+      "functions": [
+        "votingCreditReturnNotificationsLoop"
       ],
       "coverage": [
         "structured-error-logs",

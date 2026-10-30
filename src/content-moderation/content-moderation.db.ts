@@ -8,6 +8,8 @@ import {
   CONTENT_MODERATION_PROFILE_STATES_TABLE,
   CONTENT_MODERATION_REPORTS_TABLE,
   CONTENT_MODERATION_ROLES_TABLE,
+  COMPETITIONS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   DROP_ATTACHMENTS_TABLE,
@@ -36,6 +38,13 @@ import { randomUUID } from 'node:crypto';
 import { env } from '@/env';
 import { ActivityEventTargetType } from '@/entities/IActivityEvent';
 import type { ApiContentModerationBlockActivityItemActionEnum } from '@/api/generated/models/ApiContentModerationBlockActivityItem';
+import { anonymousCompetitionEntrySql } from '@/competitions/competition-anonymity';
+import { DbPoolName } from '@/db-query.options';
+import {
+  anonymousNotificationActorDropId,
+  findAnonymousNotificationActorPairs,
+  NotificationActorWriteOptions
+} from '@/notifications/anonymous-notification-actor';
 
 const REPORT_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const DEFAULT_REPORTS_PER_HOUR = 100;
@@ -79,6 +88,7 @@ export interface ModerationReportRow {
 }
 
 type ModerationQueueReportRow = ModerationReportRow & {
+  readonly drop_deleted: number;
   readonly author_handle: string | null;
   readonly author_pfp: string | null;
   readonly reporter_handle: string | null;
@@ -89,6 +99,7 @@ type ModerationQueueReportRow = ModerationReportRow & {
 };
 
 export type ModerationQueueItemRow = ModerationReportRow & {
+  readonly drop_deleted: boolean;
   readonly author_handle: string | null;
   readonly author_pfp: string | null;
   readonly reporter_handle: string | null;
@@ -599,6 +610,12 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     ]);
     const states = new Map(stateRows.map((row) => [row.drop_id, row.status]));
     const blocked = new Set(blockedRows.map((row) => row.blocked_profile_id));
+    const anonymousDropIds = await this.findUnrevealedAnonymousDropIds(
+      drops
+        .filter((drop) => blocked.has(drop.author_id))
+        .map((drop) => drop.id),
+      connection
+    );
     const hidden = new Set(hiddenRows.map((row) => row.drop_id));
     const latestReportStatuses = reportRows.reduce<
       Map<string, ContentReportStatus>
@@ -614,7 +631,8 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         const reportStatus = latestReportStatuses.get(drop.id);
         acc[drop.id] = {
           viewer: {
-            author_blocked: blocked.has(drop.author_id),
+            author_blocked:
+              blocked.has(drop.author_id) && !anonymousDropIds.has(drop.id),
             drop_hidden: hidden.has(drop.id),
             ...(reportStatus !== undefined &&
             reportStatus !== ContentReportStatus.WITHDRAWN
@@ -638,8 +656,14 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     T extends {
       readonly identity_id: string;
       readonly additional_identity_id: string | null;
+      readonly cause?: string;
+      readonly related_drop_id?: string | null;
     }
-  >(notifications: T[], connection?: ConnectionWrapper<any>): Promise<T[]> {
+  >(
+    notifications: T[],
+    connection?: ConnectionWrapper<any>,
+    options: NotificationActorWriteOptions = {}
+  ): Promise<T[]> {
     const blockerIds = Array.from(
       new Set(notifications.map((row) => row.identity_id))
     );
@@ -669,11 +693,26 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     const blockedPairs = new Set(
       rows.map((row) => `${row.blocker_profile_id}:${row.blocked_profile_id}`)
     );
+    const anonymousActorPairs = await findAnonymousNotificationActorPairs(
+      notifications.filter(
+        (notification) =>
+          notification.additional_identity_id !== null &&
+          blockedPairs.has(
+            `${notification.identity_id}:${notification.additional_identity_id}`
+          )
+      ),
+      this.db,
+      connection,
+      options
+    );
     return notifications.filter((notification) => {
       const actorId = notification.additional_identity_id;
+      const anonymousDropId = anonymousNotificationActorDropId(notification);
       return (
         actorId === null ||
-        !blockedPairs.has(`${notification.identity_id}:${actorId}`)
+        !blockedPairs.has(`${notification.identity_id}:${actorId}`) ||
+        (anonymousDropId !== null &&
+          anonymousActorPairs.has(`${anonymousDropId}:${actorId}`))
       );
     });
   }
@@ -714,16 +753,38 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     ]);
     const blockers = new Set(blockRows.map((row) => row.blocker_profile_id));
     const hiders = new Set(hiddenRows.map((row) => row.profile_id));
+    const anonymousDropIds = await this.findUnrevealedAnonymousDropIds(
+      blockers.size ? [input.dropId] : [],
+      connection
+    );
     return viewerProfileIds.reduce<Record<string, DropViewerModerationContext>>(
       (acc, profileId) => {
         acc[profileId] = {
-          author_blocked: blockers.has(profileId),
+          author_blocked:
+            blockers.has(profileId) && !anonymousDropIds.has(input.dropId),
           drop_hidden: hiders.has(profileId)
         };
         return acc;
       },
       {}
     );
+  }
+
+  /** Account blocks must not become an oracle for an unrevealed entry owner. */
+  private async findUnrevealedAnonymousDropIds(
+    dropIds: string[],
+    connection?: ConnectionWrapper<unknown>
+  ): Promise<Set<string>> {
+    if (!dropIds.length) return new Set();
+    const rows = await this.db.execute<{ drop_id: string }>(
+      `select distinct entry.drop_id from ${COMPETITION_ENTRIES_TABLE} entry
+       join ${COMPETITIONS_TABLE} competition on competition.id = entry.competition_id
+       where entry.drop_id in (:dropIds)
+         and ${anonymousCompetitionEntrySql('entry', 'competition')}`,
+      { dropIds },
+      { wrappedConnection: connection, forcePool: DbPoolName.WRITE }
+    );
+    return new Set(rows.map((row) => row.drop_id));
   }
 
   async filterUnavailableDropNotificationRows<
@@ -870,6 +931,10 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     return this.withTransaction(ctx.connection, async (connection) => {
       const transactionContext: RequestContext = { ...ctx, connection };
       await this.assertReportAllowed(input, connection);
+      // Recheck the earlier snapshot under a live-post lock: deletion must wait
+      // for this report to commit, and an already-deleted post cannot receive
+      // a late report after its existing reports have been resolved.
+      await this.assertDropExists(input.dropId, connection, true);
       const report = await this.createReport(input, transactionContext);
       if (input.blockAuthor) {
         await this.blockProfile(
@@ -1005,14 +1070,18 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     {
       limit,
       before,
-      view = 'OPEN'
+      view = 'OPEN',
+      case_id
     }: {
       limit: number;
       before?: string | null;
       view?: ModerationReportsView;
+      case_id?: string;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<ModerationQueueItemRow[]> {
+    if (case_id !== undefined && !/^[a-f0-9]{64}$/.test(case_id))
+      throw new BadRequestException('Invalid review case');
     const cursor = before ? this.decodeModerationQueueCursor(before) : null;
     const isResolved = view === 'RESOLVED';
     const recommendationRankSql = isResolved
@@ -1028,12 +1097,13 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       ? 'coalesce(r.resolved_at, r.created_at)'
       : 'r.created_at';
     const reportStatusSql = isResolved
-      ? `r.status in ('${ContentReportStatus.RESOLVED_ALLOWED}', '${ContentReportStatus.RESOLVED_REMOVED}')`
+      ? `r.status in ('${ContentReportStatus.RESOLVED_ALLOWED}', '${ContentReportStatus.RESOLVED_REMOVED}', '${ContentReportStatus.RESOLVED_DELETED}')`
       : `r.status = '${ContentReportStatus.OPEN}'`;
     const rows = await this.db.execute<ModerationQueueReportRow>(
       `
         select
           r.*,
+          not exists(select 1 from ${DROPS_TABLE} d where d.id = r.drop_id) as drop_deleted,
           p.handle as author_handle,
           p.pfp_url as author_pfp,
           reporter.handle as reporter_handle,
@@ -1049,6 +1119,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         left join ${CONTENT_MODERATION_PROFILE_STATES_TABLE} ps
           on ps.profile_id = r.author_profile_id
         where ${reportStatusSql}
+          ${case_id ? "and sha2(concat('DROP:',r.drop_id),256)=:caseId" : ''}
           and (
             :beforeRank is null
             or ${recommendationRankSql} > :beforeRank
@@ -1070,6 +1141,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       `,
       {
         limit,
+        ...(case_id ? { caseId: case_id } : {}),
         beforeRank: cursor?.recommendationRank ?? null,
         beforeCreatedAt: cursor?.createdAt ?? null,
         beforeReportId: cursor?.reportId ?? null
@@ -1106,6 +1178,7 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
       } = parsed;
       return {
         ...report,
+        drop_deleted: Boolean(report.drop_deleted),
         report_count: reportCounts.get(report.drop_id) ?? 0,
         cursor: this.encodeModerationQueueCursor({
           recommendationRank,
@@ -1551,7 +1624,8 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
             sum(case when status = '${ContentReportStatus.OPEN}' then 1 else 0 end) as open_report_count,
             sum(case when status in (
               '${ContentReportStatus.RESOLVED_ALLOWED}',
-              '${ContentReportStatus.RESOLVED_REMOVED}'
+              '${ContentReportStatus.RESOLVED_REMOVED}',
+              '${ContentReportStatus.RESOLVED_DELETED}'
             ) then 1 else 0 end) as resolved_report_count
           from ${CONTENT_MODERATION_REPORTS_TABLE}
         `,

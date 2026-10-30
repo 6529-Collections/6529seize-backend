@@ -27,7 +27,7 @@ describe('competition v3 OpenAPI contract', () => {
     // Default navigation and vote activity add two foundation reads.
     // Write-only paths are deliberately excluded, while every GET retains the
     // validation and masked-not-found response guarantees.
-    expect(operations).toHaveLength(22);
+    expect(operations).toHaveLength(23);
     for (const { route, operation } of operations) {
       expect({ route, responses: operation.responses }).toMatchObject({
         route,
@@ -77,7 +77,8 @@ describe('competition v3 OpenAPI contract', () => {
   it('uses one direction type with operation-specific defaults', () => {
     const descOperations = new Set([
       'listCompetitionLeaderboardV3',
-      'listCompetitionVotersV3'
+      'listCompetitionVotersV3',
+      'listCompetitionWinnersV3'
     ]);
     const operationsWithDirection = operations.filter(({ operation }) =>
       operation.parameters?.some(

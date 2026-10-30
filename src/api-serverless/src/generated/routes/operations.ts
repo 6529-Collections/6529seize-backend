@@ -81,6 +81,7 @@ import { ApiCompetitionDecisionPage } from '@/api/generated/models/ApiCompetitio
 import { ApiCompetitionDistributionItemPage } from '@/api/generated/models/ApiCompetitionDistributionItemPage';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
 import { ApiCompetitionEntry } from '@/api/generated/models/ApiCompetitionEntry';
+import { ApiCompetitionEntryContextPage } from '@/api/generated/models/ApiCompetitionEntryContextPage';
 import { ApiCompetitionEntryPage } from '@/api/generated/models/ApiCompetitionEntryPage';
 import { ApiCompetitionEntryVotePage } from '@/api/generated/models/ApiCompetitionEntryVotePage';
 import { ApiCompetitionLeaderboardPage } from '@/api/generated/models/ApiCompetitionLeaderboardPage';
@@ -106,6 +107,7 @@ import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDe
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
 import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
+import { ApiDropBookmarksStatus } from '@/api/generated/models/ApiDropBookmarksStatus';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
 import { ApiDropCompetitionContext } from '@/api/generated/models/ApiDropCompetitionContext';
 import { ApiDropMetadataV2 } from '@/api/generated/models/ApiDropMetadataV2';
@@ -114,6 +116,7 @@ import { ApiDropPollsPage } from '@/api/generated/models/ApiDropPollsPage';
 import { ApiDropPollVoteRequest } from '@/api/generated/models/ApiDropPollVoteRequest';
 import { ApiDropPollVotersPage } from '@/api/generated/models/ApiDropPollVotersPage';
 import { ApiDropReactionV2 } from '@/api/generated/models/ApiDropReactionV2';
+import { ApiDropSearchPage } from '@/api/generated/models/ApiDropSearchPage';
 import { ApiDropsLeaderboardPageV2 } from '@/api/generated/models/ApiDropsLeaderboardPageV2';
 import { ApiDropV2 } from '@/api/generated/models/ApiDropV2';
 import { ApiDropV2Page } from '@/api/generated/models/ApiDropV2Page';
@@ -130,6 +133,7 @@ import { ApiGlobalRepCategoryWaveContributorsPage } from '@/api/generated/models
 import { ApiGlobalRepCategoryWaveOverview } from '@/api/generated/models/ApiGlobalRepCategoryWaveOverview';
 import { ApiGlobalRepCategoryWavesPage } from '@/api/generated/models/ApiGlobalRepCategoryWavesPage';
 import { ApiGroupMembersPreviewRequest } from '@/api/generated/models/ApiGroupMembersPreviewRequest';
+import { ApiJoinedWavesPage } from '@/api/generated/models/ApiJoinedWavesPage';
 import { ApiMarketBatchCapabilities } from '@/api/generated/models/ApiMarketBatchCapabilities';
 import { ApiMarketBatchPreflight } from '@/api/generated/models/ApiMarketBatchPreflight';
 import { ApiMarketBatchPreflightRequest } from '@/api/generated/models/ApiMarketBatchPreflightRequest';
@@ -147,11 +151,15 @@ import { ApiMarketTradeOrder } from '@/api/generated/models/ApiMarketTradeOrder'
 import { ApiMediaResolveRequest } from '@/api/generated/models/ApiMediaResolveRequest';
 import { ApiMediaResolveResponse } from '@/api/generated/models/ApiMediaResolveResponse';
 import { ApiMemeCardDropMapping } from '@/api/generated/models/ApiMemeCardDropMapping';
+import { ApiMemeCollaborationInviteRequest } from '@/api/generated/models/ApiMemeCollaborationInviteRequest';
+import { ApiMemeCollaborationResponseRequest } from '@/api/generated/models/ApiMemeCollaborationResponseRequest';
+import { ApiMemeCollaborationState } from '@/api/generated/models/ApiMemeCollaborationState';
 import { ApiModerationAccess } from '@/api/generated/models/ApiModerationAccess';
 import { ApiModerationActionRequest } from '@/api/generated/models/ApiModerationActionRequest';
 import { ApiModerationCheckDetail } from '@/api/generated/models/ApiModerationCheckDetail';
 import { ApiModerationCheckPage } from '@/api/generated/models/ApiModerationCheckPage';
 import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts';
+import { ApiModerationReviewCasePage } from '@/api/generated/models/ApiModerationReviewCasePage';
 import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
@@ -187,6 +195,7 @@ import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompe
 import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
+import { ApiUndiscoveredDrops } from '@/api/generated/models/ApiUndiscoveredDrops';
 import { ApiUnpublishProfileCmsPackageRequest } from '@/api/generated/models/ApiUnpublishProfileCmsPackageRequest';
 import { ApiUpdateCompetitionRequest } from '@/api/generated/models/ApiUpdateCompetitionRequest';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
@@ -1214,6 +1223,7 @@ export type GetContentModerationBlockActivityRequest = Request<
 export type GetModerationChecksPathParams = Record<string, never>;
 
 export interface GetModerationChecksQuery {
+  "case_id"?: string;
   "subject_type"?: "REP_CATEGORY" | "PROFILE_BIO" | "GROUP_NAME" | "DROP";
   "outcome"?: "ALLOW" | "REJECT" | "ERROR" | "PENDING";
   "policy_family"?: "PUBLIC_FIELDS" | "WAVE_CONTENT";
@@ -1280,6 +1290,23 @@ export type GetModerationAccessRequest = Request<
   ApiResponse<GetModerationAccessResponse>,
   never,
   GetModerationAccessQuery,
+  Record<string, never>
+>;
+
+export type GetModerationReviewCasesPathParams = Record<string, never>;
+
+export interface GetModerationReviewCasesQuery {
+  "before"?: string;
+  "limit"?: number;
+}
+
+export type GetModerationReviewCasesResponse = ApiModerationReviewCasePage;
+
+export type GetModerationReviewCasesRequest = Request<
+  GetModerationReviewCasesPathParams,
+  ApiResponse<GetModerationReviewCasesResponse>,
+  never,
+  GetModerationReviewCasesQuery,
   Record<string, never>
 >;
 
@@ -1403,6 +1430,71 @@ export type CreateProposalFrameRequest = Request<
   ApiResponse<CreateProposalFrameResponse>,
   ApiProposalFrameRequest,
   CreateProposalFrameQuery,
+  Record<string, never>
+>;
+
+export type GetDropBookmarksStatusPathParams = Record<string, never>;
+
+export interface GetDropBookmarksStatusQuery {
+  "drop_id"?: string;
+}
+
+export type GetDropBookmarksStatusResponse = ApiDropBookmarksStatus;
+
+export type GetDropBookmarksStatusRequest = Request<
+  GetDropBookmarksStatusPathParams,
+  ApiResponse<GetDropBookmarksStatusResponse>,
+  never,
+  GetDropBookmarksStatusQuery,
+  Record<string, never>
+>;
+
+export interface GetMemeCollaborationStatePathParams {
+  "drop_id": string;
+}
+
+export type GetMemeCollaborationStateQuery = Record<string, never>;
+
+export type GetMemeCollaborationStateResponse = ApiMemeCollaborationState;
+
+export type GetMemeCollaborationStateRequest = Request<
+  GetMemeCollaborationStatePathParams,
+  ApiResponse<GetMemeCollaborationStateResponse>,
+  never,
+  GetMemeCollaborationStateQuery,
+  Record<string, never>
+>;
+
+export interface InviteMemeCollaboratorsPathParams {
+  "drop_id": string;
+}
+
+export type InviteMemeCollaboratorsQuery = Record<string, never>;
+
+export type InviteMemeCollaboratorsResponse = ApiMemeCollaborationState;
+
+export type InviteMemeCollaboratorsRequest = Request<
+  InviteMemeCollaboratorsPathParams,
+  ApiResponse<InviteMemeCollaboratorsResponse>,
+  ApiMemeCollaborationInviteRequest,
+  InviteMemeCollaboratorsQuery,
+  Record<string, never>
+>;
+
+export interface RespondToMemeCollaborationPathParams {
+  "drop_id": string;
+  "invitation_id": string;
+}
+
+export type RespondToMemeCollaborationQuery = Record<string, never>;
+
+export type RespondToMemeCollaborationResponse = ApiMemeCollaborationState;
+
+export type RespondToMemeCollaborationRequest = Request<
+  RespondToMemeCollaborationPathParams,
+  ApiResponse<RespondToMemeCollaborationResponse>,
+  ApiMemeCollaborationResponseRequest,
+  RespondToMemeCollaborationQuery,
   Record<string, never>
 >;
 
@@ -2725,6 +2817,26 @@ export type GetDropV2VoteEditLogsByIdRequest = Request<
   Record<string, never>
 >;
 
+export type SearchDropsV2PathParams = Record<string, never>;
+
+export interface SearchDropsV2Query {
+  "term"?: string;
+  "author_id"?: string;
+  "cursor"?: string;
+  "page"?: number;
+  "size"?: number;
+}
+
+export type SearchDropsV2Response = ApiDropSearchPage;
+
+export type SearchDropsV2Request = Request<
+  SearchDropsV2PathParams,
+  ApiResponse<SearchDropsV2Response>,
+  never,
+  SearchDropsV2Query,
+  Record<string, never>
+>;
+
 export type GetNotificationsV2PathParams = Record<string, never>;
 
 export interface GetNotificationsV2Query {
@@ -3051,6 +3163,23 @@ export type GetActiveWaveVotesRequest = Request<
   ApiResponse<GetActiveWaveVotesResponse>,
   never,
   GetActiveWaveVotesQuery,
+  Record<string, never>
+>;
+
+export type GetJoinedWavesPathParams = Record<string, never>;
+
+export interface GetJoinedWavesQuery {
+  "page_size"?: number;
+  "cursor"?: string;
+}
+
+export type GetJoinedWavesResponse = ApiJoinedWavesPage;
+
+export type GetJoinedWavesRequest = Request<
+  GetJoinedWavesPathParams,
+  ApiResponse<GetJoinedWavesResponse>,
+  never,
+  GetJoinedWavesQuery,
   Record<string, never>
 >;
 
@@ -3427,16 +3556,41 @@ export type SetCompetitionVoteV3Request = Request<
   Record<string, never>
 >;
 
+export interface GetCompetitionEntryContextsV3PathParams {
+  "wave_id": string;
+  "competition_id": string;
+}
+
+export interface GetCompetitionEntryContextsV3Query {
+  "entry_ids": string;
+  "include"?: "cards";
+}
+
+export type GetCompetitionEntryContextsV3Response = ApiCompetitionEntryContextPage;
+
+export type GetCompetitionEntryContextsV3Request = Request<
+  GetCompetitionEntryContextsV3PathParams,
+  ApiResponse<GetCompetitionEntryContextsV3Response>,
+  never,
+  GetCompetitionEntryContextsV3Query,
+  Record<string, never>
+>;
+
 export interface ListCompetitionLeaderboardV3PathParams {
   "wave_id": string;
   "competition_id": string;
 }
 
 export interface ListCompetitionLeaderboardV3Query {
-  "sort"?: "rating" | "real_time_rating" | "submitted_at" | "trend";
+  "is_additional_action_promised"?: boolean;
+  "sort"?: "rating" | "real_time_rating" | "submitted_at" | "trend" | "price";
+  "price_currency"?: string;
+  "min_price"?: number;
+  "max_price"?: number;
   "direction"?: string;
   "cursor"?: string;
   "limit"?: number;
+  "include"?: "cards";
 }
 
 export type ListCompetitionLeaderboardV3Response = ApiCompetitionLeaderboardPage;
@@ -3563,6 +3717,7 @@ export interface ListCompetitionMyVotesV3PathParams {
 
 export interface ListCompetitionMyVotesV3Query {
   "cursor"?: string;
+  "include"?: "cards";
   "limit"?: number;
 }
 
@@ -3585,6 +3740,7 @@ export interface ListCompetitionWinnersV3Query {
   "direction"?: string;
   "cursor"?: string;
   "limit"?: number;
+  "include"?: "cards";
 }
 
 export type ListCompetitionWinnersV3Response = ApiCompetitionEntryPage;
@@ -3695,5 +3851,24 @@ export type ListWaveSubwavesRequest = Request<
   ApiResponse<ListWaveSubwavesResponse>,
   never,
   ListWaveSubwavesQuery,
+  Record<string, never>
+>;
+
+export interface GetWaveUndiscoveredDropsPathParams {
+  "id": string;
+}
+
+export interface GetWaveUndiscoveredDropsQuery {
+  "limit"?: number;
+  "skip"?: number;
+}
+
+export type GetWaveUndiscoveredDropsResponse = ApiUndiscoveredDrops;
+
+export type GetWaveUndiscoveredDropsRequest = Request<
+  GetWaveUndiscoveredDropsPathParams,
+  ApiResponse<GetWaveUndiscoveredDropsResponse>,
+  never,
+  GetWaveUndiscoveredDropsQuery,
   Record<string, never>
 >;

@@ -1,5 +1,6 @@
 import {
   GetQueueUrlCommand,
+  type MessageAttributeValue,
   SendMessageCommand,
   type SendMessageCommandOutput,
   SQSClient
@@ -29,12 +30,14 @@ export class SQS {
     queue,
     messageGroupId,
     delaySeconds,
+    messageAttributes,
     abortSignal
   }: {
     message: any;
     queue: string;
     messageGroupId?: string;
     delaySeconds?: number;
+    messageAttributes?: Record<string, MessageAttributeValue>;
     abortSignal?: AbortSignal;
   }): Promise<SendMessageCommandOutput> {
     const needsMessageGroupId = queue.endsWith('.fifo');
@@ -44,6 +47,7 @@ export class SQS {
       new SendMessageCommand({
         QueueUrl: queue,
         MessageBody: JSON.stringify(message),
+        ...(messageAttributes ? { MessageAttributes: messageAttributes } : {}),
         ...(typeof delaySeconds === 'number'
           ? { DelaySeconds: delaySeconds }
           : {}),
@@ -63,15 +67,23 @@ export class SQS {
     message,
     queueName,
     messageGroupId,
-    delaySeconds
+    delaySeconds,
+    messageAttributes
   }: {
     message: any;
     queueName: string;
     messageGroupId?: string;
     delaySeconds?: number;
+    messageAttributes?: Record<string, MessageAttributeValue>;
   }) {
     const queueUrl = await this.getQueueUrl(queueName);
-    await this.send({ message, queue: queueUrl, messageGroupId, delaySeconds });
+    await this.send({
+      message,
+      queue: queueUrl,
+      messageGroupId,
+      delaySeconds,
+      messageAttributes
+    });
   }
 
   private async getQueueUrl(queueName: string): Promise<string> {

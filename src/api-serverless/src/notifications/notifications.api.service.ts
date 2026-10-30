@@ -1,3 +1,6 @@
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
+import { anonymousNotificationProfiles } from '@/api/notifications/notifications-competition-anonymity';
+import { ApiVotingCreditReleaseReason } from '@/api/generated/models/ApiVotingCreditReleaseReason';
 import { requestDeviceBadgeRefresh } from '@/api/push-notifications/push-notifications.service';
 import { assertUnreachable } from '../../../assertions';
 import { AuthenticationContext } from '../../../auth-context';
@@ -8,7 +11,10 @@ import {
   identityNotificationsDb,
   IdentityNotificationsDb
 } from '../../../notifications/identity-notifications.db';
-import { UserNotification } from '../../../notifications/user-notification.types';
+import {
+  VotingCreditsReturnedNotificationData,
+  UserNotification
+} from '../../../notifications/user-notification.types';
 import {
   userNotificationReader,
   UserNotificationsReader
@@ -315,13 +321,14 @@ export class NotificationsApiService {
     );
     const reactorProfileIds =
       this.getAllReactorProfileIds(reactionRowsByDropId);
-    const [drops, profiles, waves] = await Promise.all([
+    const [drops, profiles, waves, hiddenDropIds] = await Promise.all([
       this.dropsService.findDropsV2ByIds(dropIds, ctx),
       this.identityFetcher.getApiIdentityOverviewsByIds(
         collections.distinct([...profileIds, ...reactorProfileIds]),
         ctx
       ),
-      this.findRelatedWaveOverviews(waveIds, eligibleGroupIds, ctx)
+      this.findRelatedWaveOverviews(waveIds, eligibleGroupIds, ctx),
+      competitionAnonymityService.hiddenDropIds(dropIds, ctx)
     ]);
     return notifications
       .filter((notification) => this.hasAllRelatedDropsV2(notification, drops))
@@ -329,7 +336,11 @@ export class NotificationsApiService {
         this.mapToApiNotificationV2({
           notification,
           drops,
-          profiles,
+          profiles: anonymousNotificationProfiles(
+            notification,
+            profiles,
+            hiddenDropIds
+          ),
           waves,
           reactionRowsByDropId
         })
@@ -393,9 +404,12 @@ export class NotificationsApiService {
     authenticationContext: AuthenticationContext
   ): Promise<ApiNotification[]> {
     const { profileIds, dropIds } = this.getAllRelatedIds(notifications);
-    const [drops, profiles] = await Promise.all([
+    const [drops, profiles, hiddenDropIds] = await Promise.all([
       this.dropsService.findDropsByIds(dropIds, authenticationContext),
       this.identityFetcher.getOverviewsByIds(profileIds, {
+        authenticationContext
+      }),
+      competitionAnonymityService.hiddenDropIds(dropIds, {
         authenticationContext
       })
     ]);
@@ -404,7 +418,15 @@ export class NotificationsApiService {
         this.hasAllRelatedDropsV1({ notification, drops })
       )
       .map((notification) =>
-        this.mapToApiNotification({ notification, drops, profiles })
+        this.mapToApiNotification({
+          notification,
+          drops,
+          profiles: anonymousNotificationProfiles(
+            notification,
+            profiles,
+            hiddenDropIds
+          )
+        })
       );
   }
 
@@ -418,6 +440,15 @@ export class NotificationsApiService {
     return this.getAllRelatedIds([notification]).dropIds.every(
       (dropId) => !!drops[dropId]
     );
+  }
+
+  private getVotingCreditsReturnedContext(
+    data: VotingCreditsReturnedNotificationData
+  ): ApiNotificationAdditionalContextV2 {
+    return {
+      ...data,
+      reason: enums.resolveOrThrow(ApiVotingCreditReleaseReason, data.reason)
+    };
   }
 
   private getAllRelatedIds(notifications: UserNotification[]): {
@@ -496,6 +527,12 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.MEME_COLLABORATION: {
+          if (notification.data.actor_id)
+            profileIds.push(notification.data.actor_id);
+          break;
+        }
+        case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
         case IdentityNotificationCause.COMPETITION_LIFECYCLE:
         case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
           break;
@@ -545,6 +582,8 @@ export class NotificationsApiService {
       case IdentityNotificationCause.DROP_BOOSTED:
       case IdentityNotificationCause.DROP_QUOTED:
       case IdentityNotificationCause.DROP_REPLIED:
+      case IdentityNotificationCause.MEME_COLLABORATION:
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
       case IdentityNotificationCause.ALL_DROPS:
@@ -563,6 +602,8 @@ export class NotificationsApiService {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
       case IdentityNotificationCause.IDENTITY_NIC:
+      case IdentityNotificationCause.MEME_COLLABORATION:
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
@@ -814,13 +855,29 @@ export class NotificationsApiService {
           additional_context: {}
         };
       }
-      case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
         return {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: null,
+          related_drops: [],
+          additional_context: this.getVotingCreditsReturnedContext(
+            notification.data
+          )
+        };
+      case IdentityNotificationCause.MEME_COLLABORATION:
+      case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity:
+            notification.cause === IdentityNotificationCause.MEME_COLLABORATION
+              ? (profiles[notification.data.actor_id] ?? null)
+              : null,
           related_drops: [],
           additional_context: { ...notification.data }
         };
@@ -1113,13 +1170,29 @@ export class NotificationsApiService {
           additional_context: {}
         };
       }
-      case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
+      case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
         return {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
           cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
           related_identity: null,
+          related_drops: [],
+          additional_context: this.getVotingCreditsReturnedContext(
+            notification.data
+          )
+        };
+      case IdentityNotificationCause.MEME_COLLABORATION:
+      case IdentityNotificationCause.COMPETITION_LIFECYCLE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity:
+            notification.cause === IdentityNotificationCause.MEME_COLLABORATION
+              ? (profiles[notification.data.actor_id] ?? null)
+              : null,
           related_drops: [],
           additional_context: { ...notification.data }
         };
