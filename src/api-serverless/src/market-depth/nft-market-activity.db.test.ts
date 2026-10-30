@@ -4,6 +4,7 @@ import { dbSupplier, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { resolveEns } from '@/db-api';
 import { GetNftMarketActivityQuery } from '@/api/generated/routes/operations';
+import { marketDepthEventRetentionCutoff } from '@/market-depth/market-depth-retention';
 import { marketDepthApiDb } from './market-depth-api.db';
 import { NftMarketActivityService } from './nft-market-activity.service';
 
@@ -14,7 +15,10 @@ const wallet = '0x1111111111111111111111111111111111111111';
 const otherWallet = '0x2222222222222222222222222222222222222222';
 const slugs = ['thememes6529', 'other-memes-partition'];
 const at = new Date('2026-09-10T12:00:00.000Z');
-const rows = Array.from({ length: 120 }, (_, index) => ({
+const now = () => new Date('2026-09-11T00:00:00.000Z');
+const cutoff = marketDepthEventRetentionCutoff(now());
+const expiredEventId = 'f'.repeat(64);
+const recentRows = Array.from({ length: 120 }, (_, index) => ({
   event_id: index.toString(16).padStart(64, '0'),
   kind:
     index % 7 === 0
@@ -35,6 +39,23 @@ const rows = Array.from({ length: 120 }, (_, index) => ({
   taker: index % 9 === 0 ? wallet : null,
   raw: { private: 'must not be returned' }
 }));
+const expiredAt = new Date(cutoff.getTime() - 1000);
+const rows = [
+  ...recentRows,
+  {
+    event_id: expiredEventId,
+    kind: 'item_listed',
+    source: 'opensea_stream',
+    contract,
+    collection_slug: slugs[0],
+    token_id: '1',
+    provider_at: expiredAt,
+    observed_at: expiredAt,
+    maker: wallet,
+    taker: null,
+    raw: { private: 'must not be returned' }
+  }
+];
 
 describeWithSeed(
   'NFT token activity query equivalence',
@@ -83,10 +104,11 @@ describeWithSeed(
            AND LOWER(e.kind) NOT IN ('sale','sold','item_sold','transfer','item_transferred','mint')
            ${kindPredicate}
            ${query.wallet ? 'AND (e.maker=:wallet OR e.taker=:wallet)' : ''}
+           AND e.occurred_at >= :cutoff
          ORDER BY e.occurred_at DESC, e.event_id DESC`,
-          { contract, slugs, wallet }
+          { contract, slugs, wallet, cutoff }
         );
-        const service = new NftMarketActivityService(dbSupplier);
+        const service = new NftMarketActivityService(dbSupplier, now);
         const actual: string[] = [];
         let cursor: string | undefined;
         for (let page = 0; page <= expected.length; page++) {
@@ -112,16 +134,32 @@ describeWithSeed(
 
     it('selects only token events when no collection partition is available', async () => {
       jest.mocked(marketDepthApiDb.getActivityPartitions).mockResolvedValue([]);
-      const result = await new NftMarketActivityService(dbSupplier).getActivity(
-        {
-          contract,
-          token_id: '1',
-          page_size: 100
-        }
-      );
+      const result = await new NftMarketActivityService(
+        dbSupplier,
+        now
+      ).getActivity({
+        contract,
+        token_id: '1',
+        page_size: 100
+      });
       expect(result.data.length).toBeGreaterThan(0);
       expect(result.data.every((event) => event.token_id === '1')).toBe(true);
       expect(result.next).toBeNull();
+    });
+
+    it('hides order-book history older than the retention window', async () => {
+      const result = await new NftMarketActivityService(
+        dbSupplier,
+        now
+      ).getActivity({
+        contract,
+        token_id: '1',
+        page_size: 100
+      });
+      expect(result.data.map((event) => event.event_id)).not.toContain(
+        `m:${expiredEventId}`
+      );
+      expect(result.market_history_started_at).toEqual(cutoff);
     });
   }
 );
