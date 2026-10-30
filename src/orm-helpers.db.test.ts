@@ -39,6 +39,15 @@ afterAll(async () => {
   if (dataSource.isInitialized) await dataSource.destroy();
 });
 
+function deleteMemeConsolidations(wallets: Set<string>) {
+  return dataSource.transaction((manager) =>
+    deleteConsolidations(
+      manager.getRepository(ConsolidatedOwnerBalancesMemes),
+      wallets
+    )
+  );
+}
+
 describeWithSeed(
   'persisted consolidation cleanup',
   [
@@ -86,7 +95,14 @@ describeWithSeed(
 
     it('cleans every token row using the same shared helper', async () => {
       const repo = dataSource.getRepository(ConsolidatedNFTOwner);
-      expect(await deleteConsolidations(repo, new Set([a]))).toBe(8);
+      expect(
+        await dataSource.transaction((manager) =>
+          deleteConsolidations(
+            manager.getRepository(ConsolidatedNFTOwner),
+            new Set([a])
+          )
+        )
+      ).toBe(8);
       expect(await repo.count()).toBe(4);
     });
 
@@ -122,8 +138,8 @@ describeWithSeed(
 
     it('leaves all persisted keys intact for empty or unmatched changes', async () => {
       const repo = dataSource.getRepository(ConsolidatedOwnerBalancesMemes);
-      expect(await deleteConsolidations(repo, new Set())).toBe(0);
-      expect(await deleteConsolidations(repo, new Set([address(999)]))).toBe(0);
+      expect(await deleteMemeConsolidations(new Set())).toBe(0);
+      expect(await deleteMemeConsolidations(new Set([address(999)]))).toBe(0);
       expect(await repo.count()).toBe(12);
     });
 
@@ -143,8 +159,45 @@ describeWithSeed(
           }))
         )
       );
-      expect(await deleteConsolidations(repo, new Set(extraKeys))).toBe(2002);
+      await expect(
+        dataSource.transaction(async (manager) => {
+          expect(
+            await deleteConsolidations(
+              manager.getRepository(ConsolidatedOwnerBalancesMemes),
+              new Set(extraKeys)
+            )
+          ).toBe(2002);
+          throw new Error('later replacement failed');
+        })
+      ).rejects.toThrow('later replacement failed');
+      expect(await repo.count()).toBe(2014);
+      expect(await deleteMemeConsolidations(new Set(extraKeys))).toBe(2002);
       expect(await repo.count()).toBe(12);
+    });
+
+    it('finds a late match across composite primary-key pages without deleting other rows', async () => {
+      const repo = dataSource.getRepository(ConsolidatedOwnerBalancesMemes);
+      const extraKeys = Array.from({ length: 1001 }, (_, i) =>
+        address(i + 1000)
+      );
+      await repo.insert(
+        extraKeys.flatMap((consolidation_key) =>
+          [1, 2].map((season) => ({
+            consolidation_key,
+            season,
+            balance: 1,
+            unique: 1,
+            sets: 0
+          }))
+        )
+      );
+      expect(await deleteMemeConsolidations(new Set([extraKeys[1000]]))).toBe(
+        2
+      );
+      expect(await repo.count()).toBe(2012);
+      expect(await repo.findBy({ consolidation_key: extraKeys[1000] })).toEqual(
+        []
+      );
     });
   }
 );
