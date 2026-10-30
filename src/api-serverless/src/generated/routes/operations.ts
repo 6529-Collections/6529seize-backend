@@ -3,6 +3,7 @@ import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiActiveWaveVotesPage } from '@/api/generated/models/ApiActiveWaveVotesPage';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
+import { ApiArtistArtworkAlert } from '@/api/generated/models/ApiArtistArtworkAlert';
 import { ApiArtworkDocumentationAssetLinkRequest } from '@/api/generated/models/ApiArtworkDocumentationAssetLinkRequest';
 import { ApiArtworkDocumentationAssetResponse } from '@/api/generated/models/ApiArtworkDocumentationAssetResponse';
 import { ApiArtworkDocumentationAvailableArtistRecord } from '@/api/generated/models/ApiArtworkDocumentationAvailableArtistRecord';
@@ -1515,6 +1516,54 @@ export type PreviewGroupMembersRequest = Request<
   ApiResponse<PreviewGroupMembersResponse>,
   ApiGroupMembersPreviewRequest,
   PreviewGroupMembersQuery,
+  Record<string, never>
+>;
+
+export interface DisableArtistArtworkAlertPathParams {
+  "id": string;
+}
+
+export type DisableArtistArtworkAlertQuery = Record<string, never>;
+
+export type DisableArtistArtworkAlertResponse = ApiArtistArtworkAlert;
+
+export type DisableArtistArtworkAlertRequest = Request<
+  DisableArtistArtworkAlertPathParams,
+  ApiResponse<DisableArtistArtworkAlertResponse>,
+  never,
+  DisableArtistArtworkAlertQuery,
+  Record<string, never>
+>;
+
+export interface GetArtistArtworkAlertPathParams {
+  "id": string;
+}
+
+export type GetArtistArtworkAlertQuery = Record<string, never>;
+
+export type GetArtistArtworkAlertResponse = ApiArtistArtworkAlert;
+
+export type GetArtistArtworkAlertRequest = Request<
+  GetArtistArtworkAlertPathParams,
+  ApiResponse<GetArtistArtworkAlertResponse>,
+  never,
+  GetArtistArtworkAlertQuery,
+  Record<string, never>
+>;
+
+export interface EnableArtistArtworkAlertPathParams {
+  "id": string;
+}
+
+export type EnableArtistArtworkAlertQuery = Record<string, never>;
+
+export type EnableArtistArtworkAlertResponse = ApiArtistArtworkAlert;
+
+export type EnableArtistArtworkAlertRequest = Request<
+  EnableArtistArtworkAlertPathParams,
+  ApiResponse<EnableArtistArtworkAlertResponse>,
+  never,
+  EnableArtistArtworkAlertQuery,
   Record<string, never>
 >;
 

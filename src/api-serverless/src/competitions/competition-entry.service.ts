@@ -40,7 +40,10 @@ import {
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { dropsDb } from '@/drops/drops.db';
 import { DropEntity, DropType } from '@/entities/IDrop';
-import { CompetitionEntryStatus } from '@/entities/ICompetition';
+import {
+  CompetitionCapability,
+  CompetitionEntryStatus
+} from '@/entities/ICompetition';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { RequestContext } from '@/request.context';
 import {
@@ -312,7 +315,9 @@ export class CompetitionEntryService {
       actor,
       null,
       tx,
-      pendingPushIds
+      pendingPushIds,
+      competition.capabilities.includes(CompetitionCapability.MAIN_STAGE) &&
+        !competition.participation.anonymous_submissions
     );
     return { entry, pendingPushIds, createdDropId };
   }
@@ -473,7 +478,8 @@ export class CompetitionEntryService {
     actor: string,
     reason: string | null,
     ctx: RequestContext,
-    pendingPushIds?: number[]
+    pendingPushIds?: number[],
+    artworkAlertEligible = false
   ): Promise<void> {
     await nativeCompetitionRuntimeRepository.enqueueEvent(
       {
@@ -485,6 +491,7 @@ export class CompetitionEntryService {
         drop_id: entry.drop_id,
         occurred_at: Date.now(),
         data: {
+          artwork_alert_eligible: artworkAlertEligible,
           submitter_id: entry.submitter_id,
           actor_id: actor,
           status: entry.status,

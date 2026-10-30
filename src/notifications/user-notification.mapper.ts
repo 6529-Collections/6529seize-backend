@@ -80,6 +80,19 @@ export class UserNotificationMapper {
           cause: IdentityNotificationCause.VOTING_CREDITS_RETURNED,
           data: { ...entity.additional_data, wave_id: entity.wave_id! }
         };
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
+        return {
+          id: entity.id,
+          created_at: entity.created_at,
+          read_at: entity.read_at,
+          cause: IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED,
+          data: {
+            ...entity.additional_data,
+            artist_id: entity.additional_identity_id!,
+            drop_id: entity.related_drop_id!,
+            wave_id: entity.wave_id!
+          }
+        };
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
         return {
           id: entity.id,
