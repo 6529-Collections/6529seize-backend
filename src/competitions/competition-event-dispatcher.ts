@@ -1,4 +1,8 @@
 import {
+  artistArtworkNotifications,
+  ArtistArtworkNotifications
+} from '@/notifications/artist-artwork-notifications';
+import {
   nativeCompetitionRuntimeRepository,
   NativeCompetitionRuntimeRepository,
   NativeCompetitionEvent
@@ -51,7 +55,11 @@ export class CompetitionEventDispatcher {
       context?: NativeClaimContext
     ) => Promise<void>,
     private readonly push: typeof sendIdentityPushNotificationsStrict,
-    private readonly announcementWaves: () => string[]
+    private readonly announcementWaves: () => string[],
+    private readonly artworkAlerts: Pick<
+      ArtistArtworkNotifications,
+      'deliver'
+    > = artistArtworkNotifications
   ) {}
 
   public async dispatchPending(
@@ -130,6 +138,7 @@ export class CompetitionEventDispatcher {
         await this.push(ids);
       }
     }
+    await this.artworkAlerts.deliver(event, ctx);
     await this.notifyFollowers(event, context, ctx);
     if (event.event_type === 'COMPETITION_DECISION_COMPLETED')
       await this.deliverPrivilegedWinnerEffects(event, ctx);

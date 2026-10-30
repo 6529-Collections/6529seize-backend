@@ -1,3 +1,6 @@
+import { artistArtworkAlertsDb } from '@/notifications/artist-artwork-alerts.db';
+import { artistArtworkSubmissionDb } from '@/notifications/artist-artwork-submission.db';
+import { ArtistArtworkNotificationData } from '@/notifications/user-notification.types';
 import { In, type DataSource } from 'typeorm';
 import {
   userGroupsService,
@@ -6,7 +9,10 @@ import {
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { getDataSource } from '@/db';
 import { DropEntity } from '@/entities/IDrop';
-import { IdentityNotificationEntity } from '@/entities/IIdentityNotification';
+import {
+  IdentityNotificationCause,
+  IdentityNotificationEntity
+} from '@/entities/IIdentityNotification';
 
 export class IdentityPushNotificationAccess {
   constructor(
@@ -35,6 +41,33 @@ export class IdentityPushNotificationAccess {
     notification: IdentityNotificationEntity,
     waveAccessCache?: Map<string, Promise<boolean>>
   ): Promise<boolean> {
+    if (
+      notification.cause === IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED
+    ) {
+      const data =
+        notification.additional_data as unknown as ArtistArtworkNotificationData;
+      const current = await artistArtworkSubmissionDb.find(
+        {
+          competition_id: data.competition_id,
+          competition_entry_id: data.entry_id,
+          drop_id: notification.related_drop_id ?? undefined,
+          wave_id: notification.wave_id ?? ''
+        },
+        {}
+      );
+      if (
+        !current ||
+        !(await artistArtworkAlertsDb.isEnabled(
+          {
+            subscriberId: notification.identity_id,
+            artistId: current.artist_id
+          },
+          {},
+          current.submitted_at
+        ))
+      )
+        return false;
+    }
     const waveId = notification.wave_id;
     if (!waveId) {
       return true;

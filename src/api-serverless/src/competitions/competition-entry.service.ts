@@ -40,7 +40,10 @@ import {
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { dropsDb } from '@/drops/drops.db';
 import { DropEntity, DropType } from '@/entities/IDrop';
-import { CompetitionEntryStatus } from '@/entities/ICompetition';
+import {
+  CompetitionCapability,
+  CompetitionEntryStatus
+} from '@/entities/ICompetition';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { RequestContext } from '@/request.context';
 import {
@@ -305,14 +308,14 @@ export class CompetitionEntryService {
       Date.now(),
       tx
     );
-    await this.event(
+    await this.enqueueCreatedEvent(
       entry,
-      'COMPETITION_ENTRY_CREATED',
       request.idempotency_key,
       actor,
-      null,
       tx,
-      pendingPushIds
+      pendingPushIds,
+      competition.capabilities.includes(CompetitionCapability.MAIN_STAGE) &&
+        !competition.participation.anonymous_submissions
     );
     return { entry, pendingPushIds, createdDropId };
   }
@@ -466,30 +469,30 @@ export class CompetitionEntryService {
       throw new NotFoundException('Entry content is unavailable');
   }
 
-  private async event(
+  private async enqueueCreatedEvent(
     entry: CompetitionEntry,
-    eventType: string,
     key: string,
     actor: string,
-    reason: string | null,
     ctx: RequestContext,
-    pendingPushIds?: number[]
+    pendingPushIds: number[],
+    artworkAlertEligible: boolean
   ): Promise<void> {
     await nativeCompetitionRuntimeRepository.enqueueEvent(
       {
         key: `entry:${key}`,
-        event_type: eventType,
+        event_type: 'COMPETITION_ENTRY_CREATED',
         wave_id: entry.wave_id,
         competition_id: entry.competition_id,
         competition_entry_id: entry.id,
         drop_id: entry.drop_id,
         occurred_at: Date.now(),
         data: {
+          artwork_alert_eligible: artworkAlertEligible,
           submitter_id: entry.submitter_id,
           actor_id: actor,
           status: entry.status,
-          reason,
-          ...(pendingPushIds?.length
+          reason: null,
+          ...(pendingPushIds.length
             ? { pending_push_notification_ids: pendingPushIds }
             : {})
         }

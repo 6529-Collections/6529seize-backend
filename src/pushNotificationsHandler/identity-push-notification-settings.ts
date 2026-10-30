@@ -17,6 +17,7 @@ const CAUSE_TO_SETTING_KEY: Partial<
   [IdentityNotificationCause.DROP_BOOSTED]: 'drop_boosted',
   [IdentityNotificationCause.WAVE_CREATED]: 'wave_created',
   [IdentityNotificationCause.MEME_COLLABORATION]: 'identity_mentioned',
+  [IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED]: 'wave_created',
   [IdentityNotificationCause.COMPETITION_LIFECYCLE]: 'wave_created',
   [IdentityNotificationCause.SUBSCRIPTION_COVERAGE]: 'subscription_coverage'
 };
@@ -27,7 +28,8 @@ export function isNotificationEnabledForDevice(
   includeCompetitions = false
 ): boolean {
   if (
-    (cause === IdentityNotificationCause.COMPETITION_LIFECYCLE ||
+    (cause === IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED ||
+      cause === IdentityNotificationCause.COMPETITION_LIFECYCLE ||
       cause === IdentityNotificationCause.VOTING_CREDITS_RETURNED) &&
     !includeCompetitions
   )

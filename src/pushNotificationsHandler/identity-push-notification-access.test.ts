@@ -1,3 +1,5 @@
+import { artistArtworkAlertsDb } from '@/notifications/artist-artwork-alerts.db';
+import { artistArtworkSubmissionDb } from '@/notifications/artist-artwork-submission.db';
 import {
   IdentityNotificationCause,
   IdentityNotificationEntity
@@ -67,6 +69,54 @@ describe('IdentityPushNotificationAccess', () => {
       dataSourceSupplier
     };
   }
+
+  it.each([
+    { available: true, enabled: true, expected: true },
+    { available: true, enabled: false, expected: false },
+    { available: false, enabled: true, expected: false }
+  ])(
+    'rechecks artist opt-in and current attribution immediately before push: %j',
+    async ({ available, enabled, expected }) => {
+      const data = {
+        artist_id: 'actor-1',
+        wave_id: 'wave-1',
+        drop_id: 'drop-1',
+        competition_id: 'competition',
+        entry_id: 'entry',
+        competition_title: 'Main Stage',
+        artwork_title: null,
+        submitted_at: 200
+      };
+      const find = jest
+        .spyOn(artistArtworkSubmissionDb, 'find')
+        .mockResolvedValue(
+          available ? { ...data, visibility_group_id: 'private-group' } : null
+        );
+      const preference = jest
+        .spyOn(artistArtworkAlertsDb, 'isEnabled')
+        .mockResolvedValue(enabled);
+      try {
+        const { access } = createAccess();
+        expect(
+          await access.canRecipientReadRelatedContent(
+            createNotification({
+              cause: IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED,
+              additional_data: data as unknown as string
+            })
+          )
+        ).toBe(expected);
+        if (available)
+          expect(preference).toHaveBeenCalledWith(
+            { subscriberId: 'recipient-1', artistId: 'actor-1' },
+            {},
+            200
+          );
+      } finally {
+        find.mockRestore();
+        preference.mockRestore();
+      }
+    }
+  );
 
   it('allows notifications without wave-scoped content', async () => {
     const { access, groupsService, wavesDb, dataSourceSupplier } =
