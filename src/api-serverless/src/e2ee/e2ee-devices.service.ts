@@ -9,6 +9,7 @@ import {
 } from '@/api/e2ee/e2ee-context';
 import {
   toApiE2eeDevice,
+  toApiEligibilityReason,
   toApiEligibilityStatus
 } from '@/api/e2ee/e2ee.mappers';
 import { ApiE2eeClaimedKeyPackage } from '@/api/generated/models/ApiE2eeClaimedKeyPackage';
@@ -46,7 +47,10 @@ import {
 } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { verifyE2eeDeviceGrant } from '@/e2ee/e2ee-grant';
-import { decideE2eePolicy, E2eeEligibilityStatus } from '@/e2ee/e2ee-policy';
+import {
+  decideE2eeEligibility,
+  E2eeEligibilityStatus
+} from '@/e2ee/e2ee-policy';
 
 export class E2eeDevicesService {
   constructor(private readonly deps: E2eeServiceDeps) {}
@@ -408,28 +412,34 @@ export class E2eeDevicesService {
     return new Set(roster.map((row) => row.profile_id));
   }
 
+  /**
+   * Shared DM admission (blocks, DM policy, group membership) for every
+   * profile outside `bypass`, then device availability. Profiles that already
+   * share the group with the claimer device bypass admission.
+   */
   private async evaluate(
     callerProfileId: string,
     profileIds: string[],
     bypass: Set<string>
   ) {
-    const facts = await this.db.getPolicyFacts(
-      callerProfileId,
-      profileIds,
-      nowSeconds(this.deps)
-    );
+    const [admissions, deviceCounts] = await Promise.all([
+      this.deps.admission.evaluate(
+        callerProfileId,
+        profileIds.filter((profileId) => !bypass.has(profileId))
+      ),
+      this.db.getActiveDeviceCounts(profileIds, nowSeconds(this.deps))
+    ]);
     return new Map(
       profileIds.map((profileId) => {
-        const profileFacts = facts.get(profileId)!;
+        const activeDevices = deviceCounts.get(profileId) ?? 0;
         return [
           profileId,
           {
-            status: decideE2eePolicy({
-              callerProfileId,
-              facts: profileFacts,
-              bypass: bypass.has(profileId)
+            ...decideE2eeEligibility({
+              admission: admissions.get(profileId) ?? null,
+              activeDevices
             }),
-            activeDevices: profileFacts.activeDevices
+            activeDevices
           }
         ];
       })
@@ -457,7 +467,10 @@ export class E2eeDevicesService {
         return {
           profile_id: profileId,
           status: toApiEligibilityStatus(decision.status),
-          active_devices: decision.activeDevices
+          active_devices: decision.activeDevices,
+          ...(decision.reason
+            ? { reason: toApiEligibilityReason(decision.reason) }
+            : {})
         };
       })
     };

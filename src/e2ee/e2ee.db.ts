@@ -1,5 +1,4 @@
 import {
-  CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
   E2EE_BLOBS_TABLE,
   E2EE_DEVICES_TABLE,
@@ -14,15 +13,11 @@ import {
   E2EE_REPORTS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
   E2EE_WELCOMES_TABLE,
-  IDENTITY_SUBSCRIPTIONS_TABLE,
-  PROFILE_PREFERENCES_TABLE,
   PROFILES_TABLE
 } from '@/constants/db-tables';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { E2EE_PUSH_THROTTLE_MS, E2EE_RETENTION } from '@/e2ee/e2ee.constants';
 import { fromMysqlBase64 } from '@/e2ee/e2ee-encoding';
-import { E2eePolicyFacts } from '@/e2ee/e2ee-policy';
-import { ActivityEventTargetType } from '@/entities/IActivityEvent';
 import {
   E2eeBlobEntity,
   E2eeDeviceEntity,
@@ -33,7 +28,6 @@ import {
   E2eeReportEntity,
   E2eeWelcomeEntity
 } from '@/entities/IE2ee';
-import { ProfileDirectMessagePolicy } from '@/entities/IProfilePreferences';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -551,83 +545,29 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  // ----------------------------------------------------------------- policy
+  // ----------------------------------------------------------------- devices
 
-  /** Facts for section 7.1 in four set-based queries (no per-target query). */
-  async getPolicyFacts(
-    callerProfileId: string,
-    targetProfileIds: readonly string[],
+  /**
+   * Active (not revoked, not expired) device counts per profile, in one
+   * set-based query. Profiles without active devices are omitted. Admission
+   * itself (blocks, DM policy, group membership) is DirectMessageAdmissionService.
+   */
+  async getActiveDeviceCounts(
+    profileIds: readonly string[],
     nowSeconds: number,
     connection?: Conn
-  ): Promise<Map<string, E2eePolicyFacts>> {
-    const targets = inList(targetProfileIds);
+  ): Promise<Map<string, number>> {
+    const targets = inList(profileIds);
     if (!targets.length) return new Map();
-    const [preferences, follows, blocks, devices] = await Promise.all([
-      this.many<{
-        profile_id: string;
-        direct_message_policy: ProfileDirectMessagePolicy;
-      }>(
-        `select profile_id, direct_message_policy from ${PROFILE_PREFERENCES_TABLE}
-         where profile_id in (:targets)`,
-        { targets },
-        connection
-      ),
-      this.many<{ subscriber_id: string }>(
-        `select distinct subscriber_id from ${IDENTITY_SUBSCRIPTIONS_TABLE}
-         where subscriber_id in (:targets) and target_id = :callerProfileId
-           and target_type = :targetType`,
-        {
-          targets,
-          callerProfileId,
-          targetType: ActivityEventTargetType.IDENTITY
-        },
-        connection
-      ),
-      this.many<{ blocker_profile_id: string; blocked_profile_id: string }>(
-        `select blocker_profile_id, blocked_profile_id
-         from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE}
-         where (blocker_profile_id = :callerProfileId and blocked_profile_id in (:targets))
-            or (blocked_profile_id = :callerProfileId and blocker_profile_id in (:targets))`,
-        { targets, callerProfileId },
-        connection
-      ),
-      this.many<{ profile_id: string; cnt: number }>(
-        `select profile_id, count(*) as cnt from ${E2EE_DEVICES_TABLE}
-         where profile_id in (:targets) and revoked_at is null
-           and expires_at_seconds > :nowSeconds
-         group by profile_id`,
-        { targets, nowSeconds },
-        connection
-      )
-    ]);
-    const policyByProfile = new Map(
-      preferences.map((row) => [row.profile_id, row.direct_message_policy])
+    const rows = await this.many<{ profile_id: string; cnt: number }>(
+      `select profile_id, count(*) as cnt from ${E2EE_DEVICES_TABLE}
+       where profile_id in (:targets) and revoked_at is null
+         and expires_at_seconds > :nowSeconds
+       group by profile_id`,
+      { targets, nowSeconds },
+      connection
     );
-    const followers = new Set(follows.map((row) => row.subscriber_id));
-    const blocked = new Set(
-      blocks.map((row) =>
-        row.blocker_profile_id === callerProfileId
-          ? row.blocked_profile_id
-          : row.blocker_profile_id
-      )
-    );
-    const deviceCounts = new Map(
-      devices.map((row) => [row.profile_id, Number(row.cnt)])
-    );
-    return new Map(
-      targets.map((profileId) => [
-        profileId,
-        {
-          profileId,
-          directMessagePolicy:
-            policyByProfile.get(profileId) ??
-            ProfileDirectMessagePolicy.EVERYONE,
-          followsCaller: followers.has(profileId),
-          blocked: blocked.has(profileId),
-          activeDevices: deviceCounts.get(profileId) ?? 0
-        }
-      ])
-    );
+    return new Map(rows.map((row) => [row.profile_id, Number(row.cnt)]));
   }
 
   // ----------------------------------------------------------------- groups
