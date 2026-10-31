@@ -134,11 +134,12 @@ async function assertDirectMessageGroupSelectable(
 }
 
 /**
- * GROUP_MEMBERS always needs a group: from this request or already saved.
- * Clearing the group while GROUP_MEMBERS stays selected is rejected.
+ * A selected group must be one the profile can see. That GROUP_MEMBERS always
+ * has a group (from this request or already saved) is enforced by
+ * ProfilePreferencesDb.upsert under the profile-row lock, so concurrent
+ * updates cannot race past it.
  */
 async function assertDirectMessageGroupUpdate(
-  profileId: string,
   update: ProfilePreferencesUpdate,
   ctx: RequestContext
 ): Promise<void> {
@@ -146,22 +147,6 @@ async function assertDirectMessageGroupUpdate(
     await assertDirectMessageGroupSelectable(
       update.direct_message_group_id,
       ctx
-    );
-  }
-  const changesGroupRequirement =
-    update.direct_message_policy !== undefined ||
-    update.direct_message_group_id === null;
-  if (!changesGroupRequirement) return;
-  const stored = await profilePreferencesDb.get(profileId);
-  const policy = update.direct_message_policy ?? stored.direct_message_policy;
-  // null is meaningful here (it clears the group), so `??` would be wrong.
-  const groupId =
-    'direct_message_group_id' in update
-      ? update.direct_message_group_id
-      : stored.direct_message_group_id;
-  if (policy === ProfileDirectMessagePolicy.GROUP_MEMBERS && !groupId) {
-    throw new BadRequestException(
-      'Choose a group to limit who can message you.'
     );
   }
 }
@@ -181,7 +166,7 @@ export async function handlePutProfilePreferences(
     updateSchema
   ) as ProfilePreferencesUpdate;
   const { profileId, ctx } = await getProfileContext(req);
-  await assertDirectMessageGroupUpdate(profileId, update, ctx);
+  await assertDirectMessageGroupUpdate(update, ctx);
   return toApiPreferences(
     await profilePreferencesDb.upsert(profileId, update),
     ctx

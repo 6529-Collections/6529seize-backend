@@ -3,6 +3,7 @@ import {
   ProfileDirectMessagePolicy,
   ProfileNotificationLevel
 } from '@/entities/IProfilePreferences';
+import { BadRequestException } from '@/exceptions';
 import { ProfilePreferencesDb } from './profile-preferences.db';
 
 const storedRow = {
@@ -170,6 +171,86 @@ describe('ProfilePreferencesDb', () => {
     const plainUpdate = plainSql.split('on duplicate key update')[1];
     expect(plainUpdate).not.toContain('direct_message_group_id');
     expect(plainUpdate).not.toContain('direct_message_allow_people_i_follow');
+  });
+
+  describe('GROUP_MEMBERS needs a group, checked under the profile lock', () => {
+    function storedGroupRow(
+      policy: ProfileDirectMessagePolicy,
+      groupId: string | null
+    ) {
+      return {
+        direct_message_policy: policy,
+        direct_message_group_id: groupId
+      };
+    }
+
+    it.each([
+      [
+        'without any saved group',
+        storedGroupRow(ProfileDirectMessagePolicy.EVERYONE, null),
+        { direct_message_policy: ProfileDirectMessagePolicy.GROUP_MEMBERS }
+      ],
+      [
+        'while clearing the group',
+        storedGroupRow(ProfileDirectMessagePolicy.EVERYONE, 'group-1'),
+        {
+          direct_message_policy: ProfileDirectMessagePolicy.GROUP_MEMBERS,
+          direct_message_group_id: null
+        }
+      ],
+      [
+        'when clearing the group of a saved group policy',
+        storedGroupRow(ProfileDirectMessagePolicy.GROUP_MEMBERS, 'group-1'),
+        { direct_message_group_id: null }
+      ],
+      [
+        'for a profile without a preferences row',
+        null,
+        { direct_message_policy: ProfileDirectMessagePolicy.GROUP_MEMBERS }
+      ]
+    ])('rejects the group policy %s', async (_name, row, update) => {
+      const { connection, db, repository } = createRepository();
+      db.oneOrNull.mockResolvedValueOnce(row);
+
+      await expect(repository.upsert('profile-1', update)).rejects.toThrow(
+        BadRequestException
+      );
+
+      // Only the profile lock ran; nothing was written.
+      expect(db.execute).toHaveBeenCalledTimes(1);
+      expect(db.execute.mock.calls[0]![0]).toContain('for update');
+      const [sql, params, options] = db.oneOrNull.mock.calls[0]!;
+      expect(sql).toContain('from profile_preferences');
+      expect(sql).toContain('for update');
+      expect(params).toEqual({ profileId: 'profile-1' });
+      expect(options).toEqual({ wrappedConnection: connection });
+    });
+
+    it('accepts the group policy with an already saved group', async () => {
+      const { db, repository } = createRepository();
+      db.oneOrNull.mockResolvedValueOnce(
+        storedGroupRow(ProfileDirectMessagePolicy.EVERYONE, 'group-1')
+      );
+
+      await repository.upsert('profile-1', {
+        direct_message_policy: ProfileDirectMessagePolicy.GROUP_MEMBERS
+      });
+
+      expect(db.execute.mock.calls[1]![0]).toContain(
+        'insert into profile_preferences'
+      );
+    });
+
+    it('skips the check for updates that cannot break it', async () => {
+      const { db, repository } = createRepository();
+
+      await repository.upsert('profile-1', {
+        direct_message_allow_people_i_follow: false
+      });
+
+      expect(db.oneOrNull).toHaveBeenCalledTimes(1); // the final read only
+      expect(db.oneOrNull.mock.calls[0]![0]).not.toContain('for update');
+    });
   });
 
   it('reads blocks in both directions without disclosing them in the row shape', async () => {

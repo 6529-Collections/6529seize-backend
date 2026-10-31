@@ -7,7 +7,7 @@ import { UserGroupEntity } from '@/entities/IUserGroup';
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper } from '@/sql-executor';
 import { DirectMessageRecipientPreference } from '@/profile-preferences/profile-preferences.db';
-import { DirectMessageAdmissionService } from '../direct-messages/direct-message-admission.service';
+import { DirectMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.service';
 
 const creator = {
   id: 'creator-profile',
