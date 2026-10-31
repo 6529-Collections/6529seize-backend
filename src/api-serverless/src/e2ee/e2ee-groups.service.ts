@@ -62,6 +62,7 @@ import { ConnectionWrapper } from '@/sql-executor';
 type Conn = ConnectionWrapper<unknown>;
 
 const CREATE_GROUP_ATTEMPTS = 3;
+const ACK_WELCOME_ATTEMPTS = 3;
 
 interface DecodedWelcome {
   readonly data: Buffer;
@@ -1057,9 +1058,19 @@ export class E2eeGroupsService {
     welcomeId: string
   ): Promise<Record<string, never>> {
     await requireOwnActiveDevice(this.deps, callerProfileId, deviceKey);
-    await this.db.executeNativeQueriesInTransaction((connection) =>
-      this.db.deleteWelcomeDelivery(welcomeId, deviceKey, connection)
-    );
-    return {};
+    // Two devices acknowledging the same Welcome at once can deadlock on the
+    // orphan cleanup; the loser retries (the delete is idempotent).
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.db.executeNativeQueriesInTransaction((connection) =>
+          this.db.deleteWelcomeDelivery(welcomeId, deviceKey, connection)
+        );
+        return {};
+      } catch (error) {
+        if (!isDeadlockError(error) || attempt >= ACK_WELCOME_ATTEMPTS) {
+          throw error;
+        }
+      }
+    }
   }
 }
