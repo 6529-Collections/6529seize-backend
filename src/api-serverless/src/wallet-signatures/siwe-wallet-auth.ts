@@ -11,6 +11,7 @@ import {
   DEVICE_GRANT_KEY_TYPE,
   DeviceGrantScope,
   DeviceGrantTerms,
+  isDeviceGrantStatement,
   isGrantLifetimeValid,
   parseDeviceGrantUrn,
   renderDeviceGrantStatement
@@ -408,8 +409,8 @@ export function parseSiweWebAuthMessage(
 
 /**
  * Accepts exactly two shapes: the plain login (constant statement, no
- * resources) or a device grant (one valid grant URN and the statement
- * rendered from it). Everything else fails closed.
+ * resources) or a device grant (one valid grant URN and the current or the
+ * legacy statement rendered from it). Everything else fails closed.
  */
 function parseStatementVariant(
   statement: string | undefined,
@@ -428,7 +429,7 @@ function parseStatementVariant(
   if (
     !grant ||
     !isGrantLifetimeValid(grant.expiresAtSeconds, issuedAt) ||
-    statement !== renderDeviceGrantStatement(grant)
+    !isDeviceGrantStatement(statement, grant)
   ) {
     return null;
   }
