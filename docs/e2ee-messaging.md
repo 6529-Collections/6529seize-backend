@@ -188,7 +188,7 @@ A device reads log items whose epoch lies in one of its roster windows
 `[joined_epoch, removed_epoch)`. A commit that adds a device sets
 `joined_epoch = n + 1`, so the adding commit itself is excluded; a removing
 commit sets `removed_epoch = n + 1`, so the removed device still sees the
-commit that removed it but nothing later. A device that never was in the
+commit that removed it but nothing later. A device that was never in the
 roster gets `404 E2EE_NOT_MEMBER`, whether or not the group exists.
 
 ## Policy
