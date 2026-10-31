@@ -9,6 +9,7 @@ import {
 } from '@/e2ee/e2ee.constants';
 import { E2eeDb, e2eeDb, E2eeDeviceRow } from '@/e2ee/e2ee.db';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
+import { isE2eeAttachmentsEnabled } from '@/e2ee/e2ee-flag';
 import { E2eeContractWalletVerifier } from '@/e2ee/e2ee-grant';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { identitiesDb } from '@/identities/identities.db';
@@ -25,6 +26,8 @@ export interface E2eeServiceDeps {
   readonly now: () => number;
   readonly random: () => number;
   readonly randomHex: (bytes: number) => string;
+  /** E2EE_ATTACHMENTS_ENABLED: whether blob routes accept or serve chunks. */
+  readonly attachmentsEnabled: () => boolean;
 }
 
 /** Ethereum mainnet EIP-1271 checks (contract section 2.2 step 3). */
@@ -53,7 +56,8 @@ export const defaultE2eeServiceDeps: E2eeServiceDeps = {
   now: () => Date.now(),
   // Uniform [0, 1) from the CSPRNG (used for pruning odds and jitter).
   random: () => randomInt(0, 0x100000000) / 0x100000000,
-  randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`
+  randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`,
+  attachmentsEnabled: () => isE2eeAttachmentsEnabled()
 };
 
 export function nowSeconds(deps: E2eeServiceDeps): number {

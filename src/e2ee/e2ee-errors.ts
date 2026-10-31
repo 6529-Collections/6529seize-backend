@@ -110,6 +110,12 @@ export const e2eeErrors = {
       E2EE_ERROR_CODES.RATE_LIMITED,
       'Too many encrypted-messaging requests; try again later'
     ),
+  attachmentsDisabled: () =>
+    new E2eeApiException(
+      404,
+      E2EE_ERROR_CODES.ATTACHMENTS_DISABLED,
+      'Encrypted attachments are not available'
+    ),
   notFound: (what: string) =>
     new E2eeApiException(404, E2EE_ERROR_CODES.NOT_FOUND, `${what} not found`)
 };

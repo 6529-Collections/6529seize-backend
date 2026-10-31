@@ -337,3 +337,7 @@ export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';
 export const VOTING_CREDIT_RELEASES_TABLE = 'voting_credit_releases';
 export const VOTING_CREDIT_RELEASE_RECIPIENTS_TABLE =
   'voting_credit_release_recipients';
+
+// Who read or changed reported encrypted messages (trust and safety audit,
+// D109). Kept apart from the E2EE block above.
+export const E2EE_REPORT_ACCESS_LOG_TABLE = 'e2ee_report_access_log';

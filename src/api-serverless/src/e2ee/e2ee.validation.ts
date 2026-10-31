@@ -21,7 +21,7 @@ import {
   E2EE_WALLET_SIGNATURE_PATTERN
 } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
-import { ContentReportReason } from '@/entities/IContentModeration';
+import { ApiE2eeReportCategory } from '@/api/generated/models/ApiE2eeReportCategory';
 
 const UINT32_MAX = 4294967295;
 
@@ -206,7 +206,7 @@ export const e2eeReportSchema = Joi.object({
   sender_device_key: hex32().required(),
   reporter_device_key: hex32().required(),
   reason: Joi.string()
-    .valid(...Object.values(ContentReportReason))
+    .valid(...Object.values(ApiE2eeReportCategory))
     .required(),
   notes: Joi.string().allow('').max(E2EE_MAX_REPORT_NOTES_LENGTH).optional()
 });

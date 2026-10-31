@@ -78,6 +78,8 @@ export const E2EE_RETENTION = {
   blobsMs: 365 * 24 * 60 * 60 * 1000,
   incompleteBlobsMs: 24 * 60 * 60 * 1000,
   revokedDevicesMs: 365 * 24 * 60 * 60 * 1000,
+  /** Reports not placed on hold by trust and safety. */
+  reportsMs: 180 * 24 * 60 * 60 * 1000,
   rateCountersMs: 2 * 24 * 60 * 60 * 1000,
   pushThrottleMs: 24 * 60 * 60 * 1000,
   batchSize: 100,
@@ -99,7 +101,8 @@ const DAY = 24 * HOUR;
 
 export const E2EE_RATE_LIMITS = {
   messagesPerDevice: { scope: 'msg', limit: 120, windowMs: MINUTE },
-  entriesPerGroup: { scope: 'entry', limit: 30, windowMs: HOUR },
+  /** The limit is resolved per request by e2eeEntriesPerGroupPerHour(). */
+  entriesPerGroup: { scope: 'entry', limit: 12, windowMs: HOUR },
   rosterRepairsPerGroup: { scope: 'roster', limit: 60, windowMs: HOUR },
   claimsPerProfile: { scope: 'claim', limit: 120, windowMs: HOUR },
   claimsPerTargetDevice: { scope: 'claimed', limit: 30, windowMs: HOUR },
@@ -128,5 +131,6 @@ export const E2EE_ERROR_CODES = {
   TOO_LARGE: 'E2EE_TOO_LARGE',
   RATE_LIMITED: 'E2EE_RATE_LIMITED',
   NOT_FOUND: 'E2EE_NOT_FOUND',
-  FORBIDDEN: 'E2EE_FORBIDDEN'
+  FORBIDDEN: 'E2EE_FORBIDDEN',
+  ATTACHMENTS_DISABLED: 'E2EE_ATTACHMENTS_DISABLED'
 } as const;

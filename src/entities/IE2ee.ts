@@ -16,6 +16,7 @@ import {
   E2EE_LOG_TABLE,
   E2EE_PUSH_THROTTLE_TABLE,
   E2EE_RATE_COUNTERS_TABLE,
+  E2EE_REPORT_ACCESS_LOG_TABLE,
   E2EE_REPORTS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
   E2EE_WELCOMES_TABLE
@@ -362,9 +363,11 @@ export class E2eeBlobChunkEntity {
 }
 
 /**
- * A recipient's report of a decrypted message. The reporter discloses the
- * exact body and the sender's inner signature; nothing else is decrypted.
- * These rows never enter the AI moderation pipeline.
+ * A recipient's report of a decrypted message (severe or illegal harm only).
+ * The reporter discloses the exact body and the sender's inner signature;
+ * nothing else is decrypted. Only the trust and safety group reads these
+ * rows; they never enter the AI moderation pipeline or the wave moderation
+ * queue, and retention deletes them after 180 days unless `on_hold`.
  */
 @Entity(E2EE_REPORTS_TABLE)
 @Index('e2ee_reports_created_idx', ['created_at'])
@@ -405,6 +408,35 @@ export class E2eeReportEntity {
 
   @Column({ type: 'boolean' })
   readonly verified!: boolean;
+
+  @Column({ type: 'bigint' })
+  readonly created_at!: number;
+
+  /** Set by trust and safety to keep the report past retention. */
+  @Column({ type: 'boolean', default: false })
+  readonly on_hold!: boolean;
+}
+
+/**
+ * One trust-and-safety read or change of reported messages. Holds ids only,
+ * never message content.
+ */
+@Entity(E2EE_REPORT_ACCESS_LOG_TABLE)
+@Index('e2ee_report_access_viewer_idx', ['viewer_profile_id', 'created_at'])
+export class E2eeReportAccessEntity {
+  @PrimaryGeneratedColumn({ type: 'bigint' })
+  readonly id!: number;
+
+  @Column({ type: 'varchar', length: 100 })
+  readonly viewer_profile_id!: string;
+
+  /** `list`, `read`, `hold` or `release`. */
+  @Column({ type: 'varchar', length: 16 })
+  readonly action!: string;
+
+  /** Comma-separated report ids the action returned or changed. */
+  @Column({ type: 'text' })
+  readonly report_ids!: string;
 
   @Column({ type: 'bigint' })
   readonly created_at!: number;

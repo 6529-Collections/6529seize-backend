@@ -4,6 +4,7 @@ import {
   e2eeDeviceLookupSchema,
   e2eeLogQuerySchema,
   e2eeRegisterDeviceSchema,
+  e2eeReportSchema,
   e2eeSendMessageSchema,
   e2eeSubmitEntrySchema,
   validateE2ee
@@ -131,5 +132,31 @@ describe('E2EE request validation', () => {
       { profile_ids: Array.from({ length: 201 }, (_, i) => `p${i}`) },
       e2eeDeviceLookupSchema
     );
+  });
+
+  it('accepts only the severe-harm report categories', () => {
+    const report = {
+      group: HEX32,
+      epoch: 1,
+      body: 'AAAA',
+      signature: SIG,
+      sender_device_key: HEX32,
+      reporter_device_key: HEX32
+    };
+    for (const reason of [
+      'CHILD_SEXUAL_ABUSE_MATERIAL',
+      'CREDIBLE_THREAT_OF_VIOLENCE',
+      'NON_CONSENSUAL_INTIMATE_IMAGERY',
+      'DOXXING'
+    ]) {
+      expect(validateE2ee({ ...report, reason }, e2eeReportSchema)).toEqual({
+        ...report,
+        reason
+      });
+    }
+    for (const reason of ['SPAM', 'OTHER', 'HATE_OR_DISCRIMINATION', '']) {
+      rejects({ ...report, reason }, e2eeReportSchema);
+    }
+    rejects(report, e2eeReportSchema);
   });
 });

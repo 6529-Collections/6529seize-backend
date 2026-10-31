@@ -24,6 +24,14 @@ after the JWT check and before any proxy, profile or database check (a request
 without a valid token still gets the usual 401). Production stays off; nothing
 here authorizes enabling it there.
 
+Other settings, read per request:
+
+| Variable | Effect | Default |
+| --- | --- | --- |
+| `E2EE_ATTACHMENTS_ENABLED` | `true` lets the attachment (blob) routes accept and serve chunks; `false` makes them answer `404 E2EE_ATTACHMENTS_DISABLED` before any database read or write. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On for `local` and `development`; off otherwise, so production launches text-only until attachments leave MySQL |
+| `E2EE_ENTRIES_PER_GROUP_PER_HOUR` | Commits and proposals one group may sequence per hour (an integer from 1 to 1000) | 12 (P35's value); 30 for `local` and `development`, so automated tests can churn groups |
+| `E2EE_TRUST_AND_SAFETY_GROUP_ID` | The user group whose members may read reported encrypted messages (see Reports and trust and safety) | Unset: reports are stored, nobody can read them |
+
 ## API
 
 All routes are generated `x-6529-router` routes under `/api/e2ee/...` (see
@@ -47,6 +55,7 @@ Errors use `CustomApiCompliantException` and the body
 | Welcomes | `GET /e2ee/devices/{device_key}/welcomes`, `POST /e2ee/devices/{device_key}/welcomes/{welcome_id}/ack` |
 | Attachments | `POST /e2ee/blobs`, `PUT /e2ee/blobs/{blob_id}/chunks/{index}`, `POST /e2ee/blobs/{blob_id}/complete`, `GET /e2ee/blobs/{blob_id}/chunks/{index}` |
 | Reports | `POST /e2ee/reports` |
+| Trust and safety | `GET /e2ee/trust-and-safety/reports`, `GET /e2ee/trust-and-safety/reports/{report_id}`, `POST /e2ee/trust-and-safety/reports/{report_id}/hold` (not gated by `E2EE_DMS_ENABLED`, so stored reports stay reviewable) |
 
 ## What the server stores
 
@@ -58,12 +67,13 @@ synchronization, without foreign keys.
 | `e2ee_devices` | Device key, owner profile, the signed grant fields, `grant_id`, wallet signature, `verified_via`, label, platform, timestamps, revocation (revoker key, signed time, Ed25519 signature) |
 | `e2ee_key_packages` | Opaque KeyPackage bytes per device, last-resort flag, expiry |
 | `e2ee_groups` | Random group handle `g`, current epoch, current commit key `pub(K_epoch)`, last sequence number |
+| `e2ee_report_access_log` | Trust-and-safety audit: viewer profile, action (`list`, `read`, `hold`, `release`), report ids, time. No message content |
 | `e2ee_group_epochs` | `pub(K_n)` for every epoch n (immutable per epoch) |
 | `e2ee_group_roster` | Delivery windows: device key, profile, `joined_epoch`, `removed_epoch` |
 | `e2ee_log` | The ordered log: wrapped (encrypted) entries and messages, their declared hashes, commit keys, signatures, roster deltas, epoch fingerprints |
 | `e2ee_welcomes`, `e2ee_welcome_deliveries` | MLS Welcome bytes stored once, one pending delivery per target device |
 | `e2ee_blobs`, `e2ee_blob_chunks` | Encrypted attachment chunks and their sizes |
-| `e2ee_reports` | Message bodies a recipient chose to disclose, with the sender's inner signature |
+| `e2ee_reports` | Message bodies a recipient chose to disclose (severe-harm categories only), the sender's inner signature, `verified`, `on_hold` |
 | `e2ee_push_throttle`, `e2ee_rate_counters` | Wake throttle and fixed-window rate counters |
 
 The server never receives plaintext message content, group names, the MLS
@@ -170,7 +180,7 @@ too; the caller's own profile always skips them.
 | Attachment storage per uploading profile | 200 MiB declared bytes per rolling 24 h (`429 E2EE_RATE_LIMITED`), 1 GiB live (`413 E2EE_TOO_LARGE`) |
 | Log and welcome ciphertext per profile | 256 MiB per UTC day (`429`) |
 | Messages | 120 per minute per device |
-| Entries | 30 per hour per group (counted after the commit-key signature verifies) |
+| Entries | 12 per hour per group in production, 30 on staging, or `E2EE_ENTRIES_PER_GROUP_PER_HOUR` (counted after the commit-key signature verifies) |
 | Roster repairs | 60 per hour per group |
 | Claims | 120 per hour per caller profile; 30 per hour per target device (over the device limit, only its last-resort KeyPackage is returned) |
 | Group creations | 200 per day per profile |
@@ -191,7 +201,9 @@ abandoned blobs per pass, chunks and row deleted together) in addition to the
 general opportunistic pruning.
 
 Moving ciphertext blobs to a private S3 bucket (or to content-addressed
-pinning, P51 DN9) is the first storage follow-up before production.
+pinning, P51 DN9) is the first storage follow-up. Until then production runs
+with `E2EE_ATTACHMENTS_ENABLED` off: the attachment routes refuse before
+touching the database, and clients hide attaching.
 
 ## Retention
 
@@ -200,8 +212,34 @@ most 100 rows), with no new Lambda: messages after 90 days, entries after 180
 days, welcome deliveries after 30 days (and the welcome once no delivery
 remains), complete attachments after 365 days and incomplete uploads after
 24 hours, KeyPackages at expiry, revoked devices 365 days after revocation,
-rate counters after 2 days and wake throttle rows after 1 day. Group, epoch
-key and roster rows (small delivery metadata) are kept.
+rate counters after 2 days, wake throttle rows after 1 day, and reports
+after 180 days unless trust and safety placed them on hold. Group, epoch
+key and roster rows (small delivery metadata) are kept, and so is the report
+access log, which holds ids only.
+
+## Reports and trust and safety
+
+Reports are for severe or illegal harm only. `reason` must be one of
+`CHILD_SEXUAL_ABUSE_MATERIAL`, `CREDIBLE_THREAT_OF_VIOLENCE`,
+`NON_CONSENSUAL_INTIMATE_IMAGERY` or `DOXXING`. Ordinary moderation of
+encrypted conversations is out of scope by design: there is no scanning and
+no moderator key. Blocking people, leaving or muting chats and the "Who can
+message you" setting are the everyday tools.
+
+- A report carries only the one message the reporter selected, its body as
+  they decrypted it, and the sender's inner device signature, which the API
+  verifies (`verified`). Nothing else in the conversation is revealed.
+- Reports are stored in `e2ee_reports`. They never reach wave moderators, the
+  general moderation queue or an AI provider, and no log, wave or
+  notification carries their content.
+- Members of the group named by `E2EE_TRUST_AND_SAFETY_GROUP_ID` read them
+  through the trust-and-safety routes (newest first, with `before` paging) and
+  can place a report on hold so retention keeps it. Every list, read, hold and
+  release is written to `e2ee_report_access_log` (viewer, action, report ids,
+  time) before the response is sent. Proxies are rejected.
+- While the group id is unset, the routes answer `403 E2EE_FORBIDDEN` ("Trust
+  and safety review is not configured"); reports are still stored and become
+  readable once it is set.
 
 ## WebSocket hints and push wakes
 
