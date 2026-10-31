@@ -386,13 +386,15 @@ export class E2eeDevicesService {
     if (target.profile_id !== callerProfileId) {
       throw e2eeErrors.notYourDevice();
     }
-    if (target.revoked_at !== null) {
+    if (target.revocation_signature !== null) {
       // Idempotent; also completes a sign-in grant revocation that failed.
       if (target.grant_message !== null) {
         await this.revokeLoginGrantOf(target, this.deps.now());
       }
       return toApiE2eeDevice(target);
     }
+    // A device revoked by its sign-in grant (no signature yet) still takes a
+    // signed revocation, so members can verify it; it stays revoked.
     if (
       Math.abs(request.revoked_at - nowSeconds(this.deps)) >
       E2EE_REVOCATION_MAX_SKEW_SECONDS
@@ -424,7 +426,7 @@ export class E2eeDevicesService {
     const revoked = await this.db.executeNativeQueriesInTransaction(
       async (connection) => {
         const locked = await this.db.lockDevice(deviceKey, connection);
-        if (locked?.revoked_at === null) {
+        if (locked?.revocation_signature === null) {
           await this.db.markDeviceRevoked(
             {
               deviceKey,
@@ -435,7 +437,9 @@ export class E2eeDevicesService {
             },
             connection
           );
-          await this.stopDelivery(deviceKey, now, connection);
+          if (locked.revoked_at === null) {
+            await this.stopDelivery(deviceKey, now, connection);
+          }
         }
         return (await this.db.getDevice(deviceKey, connection))!;
       }

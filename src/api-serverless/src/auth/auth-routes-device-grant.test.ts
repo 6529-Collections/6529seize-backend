@@ -207,7 +207,7 @@ describe('wallet auth device grants', () => {
           `urn:6529:mls-device-grant:v1:${E2EE_CIPHERSUITE}:${MLS_DEVICE_KEY.slice(2)}:${expiresAt}`
         );
         expect(parsed.statement).toContain(
-          'It will also send and read your end-to-end encrypted messages, which 6529 cannot read.'
+          'It will also encrypt (send) and decrypt (read) your end-to-end encrypted messages, which 6529.io cannot read.'
         );
         expect(parsed.statement).toMatch(
           /\(Device key d75a9801\.\.\.f707511a, encrypted messages key 3d4017c3\.\.\.2af4660c\)$/

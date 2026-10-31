@@ -87,9 +87,10 @@ class FakeE2eeDb {
     signature: string;
   }) {
     const row = this.devices.get(input.deviceKey)!;
+    if (row.revocation_signature !== null) return;
     this.devices.set(input.deviceKey, {
       ...row,
-      revoked_at: input.revokedAtMs,
+      revoked_at: row.revoked_at ?? input.revokedAtMs,
       revoker_device_key: input.revokerDeviceKey,
       revocation_signed_at_seconds: input.signedAtSeconds,
       revocation_signature: input.signature
@@ -434,6 +435,50 @@ describe('E2EE devices from combined sign-in grants (NC8)', () => {
     // And the revoked grant can no longer enroll it again.
     grants.set(id, { ...grants.get(id)!, revoked_at: now });
     await expectBadGrant(register(id), 'login_grant_revoked');
+  });
+
+  it('stores a signed revocation for a device its sign-in grant revoked', async () => {
+    const { id, mlsKey } = await storeLoginGrant();
+    await register(id);
+    now += 1000;
+    await service.revokeDeviceOfLoginGrant(id);
+    const revokedByGrantAt = now;
+    now += 1000;
+    const revokedAt = Math.floor(now / 1000);
+    const signature = mlsKey.sign(
+      e2eeRevokeDigest({
+        targetDeviceKey: mlsKey.publicKey,
+        revokerDeviceKey: mlsKey.publicKey,
+        revokedAtSeconds: revokedAt
+      })
+    );
+    const request = {
+      revoker_device_key: mlsKey.publicKey,
+      revoked_at: revokedAt,
+      signature
+    };
+
+    const signed = await service.revokeDevice(
+      PROFILE,
+      mlsKey.publicKey,
+      request
+    );
+
+    // Still revoked since the grant revocation; now verifiable by members.
+    expect(signed.revoked_at).toBe(revokedByGrantAt);
+    expect(signed.revocation).toEqual({
+      revoker_device_key: mlsKey.publicKey,
+      revoked_at: revokedAt,
+      signature
+    });
+    expect(db.rosterRemovals).toEqual([mlsKey.publicKey]);
+    // A second signed revocation never replaces the stored one.
+    now += 1000;
+    const again = await service.revokeDevice(PROFILE, mlsKey.publicKey, {
+      ...request,
+      revoked_at: revokedAt + 1
+    });
+    expect(again.revocation?.revoked_at).toBe(revokedAt);
   });
 
   it('ignores sign-in grants that enrolled no device', async () => {

@@ -390,6 +390,11 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Stores a signed revocation. A device 6529.io already revoked with its
+   * sign-in grant keeps its revocation time and gains the signature, so
+   * members can verify it; a stored signature is never replaced.
+   */
   async markDeviceRevoked(
     input: {
       readonly deviceKey: string;
@@ -402,10 +407,11 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   ): Promise<void> {
     await this.write(
       `update ${E2EE_DEVICES_TABLE} set
-        revoked_at = :revokedAtMs, revoker_device_key = :revokerDeviceKey,
+        revoked_at = coalesce(revoked_at, :revokedAtMs),
+        revoker_device_key = :revokerDeviceKey,
         revocation_signed_at_seconds = :signedAtSeconds,
         revocation_signature = :signature, updated_at = :revokedAtMs
-       where device_key = :deviceKey and revoked_at is null`,
+       where device_key = :deviceKey and revocation_signature is null`,
       { ...input },
       connection
     );

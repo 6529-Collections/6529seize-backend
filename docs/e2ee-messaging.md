@@ -151,7 +151,10 @@ grant, and revoking the sign-in grant through `/device-grants` revokes the
 device. That last revocation is 6529.io's: the row has `revoked_at` but no
 device signature, delivery stops at once (rosters, KeyPackages, welcomes)
 and other members see an unverified revocation until the device's own
-signed revocation or expiry.
+signed revocation or expiry. That signed revocation (by the device itself or another
+active device of the profile) is still accepted for such a device: it keeps
+its revocation time and gains the signature; a stored signature is never
+replaced.
 
 A revocation is an Ed25519 signature over
 `H("6529.MlsDeviceRevoke.v1", target, revoker, uint64 revoked_at)` by the

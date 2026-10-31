@@ -185,10 +185,10 @@ without device parameters are unchanged.
   the same expiry, and a combined statement that adds one clause and the
   second key to the signed-messages statement:
 
-  > ... so anyone can verify they came from your wallet. It will also send
-  > and read your end-to-end encrypted messages, which 6529 cannot read. It
-  > can't move funds, ... (Device key d75a9801...f707511a, encrypted messages
-  > key 3d4017c3...2af4660c)
+  > ... so anyone can verify they came from your wallet. It will also
+  > encrypt (send) and decrypt (read) your end-to-end encrypted messages,
+  > which 6529.io cannot read. It can't move funds, ... (Device key
+  > d75a9801...f707511a, encrypted messages key 3d4017c3...2af4660c)
 
   The server issues it only while encrypted messages are on and the
   ciphersuite is its own (`E2EE_CIPHERSUITE`); otherwise it ignores the MLS
@@ -197,7 +197,7 @@ without device parameters are unchanged.
   statement) and this two-resource shape with a combined statement from the
   list in `combined-device-grant.ts`; resources out of order, a third
   resource, a different MLS expiry, the signing key reused as the MLS key or
-  a mismatched statement fail closed. The wording is pending owner approval;
+  a mismatched statement fail closed. The wording is owner-approved;
   to change it, add a renderer at the front of that list (keep the old ones)
   and ship a frontend that accepts it first.
 - `POST /api/auth/session-login` stores the grant in `device_grants` only

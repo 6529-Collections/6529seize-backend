@@ -145,8 +145,8 @@ describe('SIWE combined sign-in grants (NC8)', () => {
       'an edited encrypted-messages clause',
       {
         statement: renderCombinedGrantStatement(SIGNING, MLS).replace(
-          'which 6529 cannot read',
-          'which 6529 can read'
+          'which 6529.io cannot read',
+          'which 6529.io can read'
         )
       }
     ],

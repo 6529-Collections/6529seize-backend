@@ -565,6 +565,33 @@ describeWithSeed('E2EE delivery service', [], () => {
       expect(events.map((event) => event.method)).toEqual(['deviceRevoked']);
       await services.devices.revokeDeviceOfLoginGrant(grantId);
       expect(events).toHaveLength(1);
+
+      // The device's own signed revocation can still be stored afterwards.
+      const revokedByGrantAt = now;
+      now += 1000;
+      const revokedAt = nowSeconds();
+      const signature = bobDevice.sign(
+        e2eeRevokeDigest({
+          targetDeviceKey: bobDevice.publicKey,
+          revokerDeviceKey: bobDevice.publicKey,
+          revokedAtSeconds: revokedAt
+        })
+      );
+      const signed = await services.devices.revokeDevice(
+        bob.id,
+        bobDevice.publicKey,
+        {
+          revoker_device_key: bobDevice.publicKey,
+          revoked_at: revokedAt,
+          signature
+        }
+      );
+      expect(signed.revoked_at).toBe(revokedByGrantAt);
+      expect(signed.revocation).toEqual({
+        revoker_device_key: bobDevice.publicKey,
+        revoked_at: revokedAt,
+        signature
+      });
     });
 
     it('revoking the device revokes its sign-in grant', async () => {
