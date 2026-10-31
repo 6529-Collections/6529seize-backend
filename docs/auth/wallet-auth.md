@@ -182,7 +182,11 @@ without device parameters are unchanged.
 - `drop_author_signatures` records which event's body is a drop's current
   content: signed creates and edits set it, unsigned edits and deletes clear
   it. `GET /api/drops/{dropId}/signed-events` returns a readable drop's
-  events, the grant proofs they reference and the current event id.
+  events, the grant proofs they reference and the current event id. When the
+  drop read path hides the drop's content from the caller (moderation) or
+  shows its author as anonymous (anonymous competition entries), it returns
+  the empty result of an unsigned drop instead: signed bodies are the content
+  and grant proofs name the author's wallet.
 - Every drop the API serializes (`ApiDrop`, `ApiDropWithoutWave` and
   `ApiDropV2`, including websocket drop updates) carries the optional
   `is_author_signed`: true exactly when that drop has a

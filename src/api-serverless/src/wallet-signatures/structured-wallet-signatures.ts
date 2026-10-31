@@ -545,7 +545,15 @@ function isLocalhostSignatureHostAllowed(host: string): boolean {
   }
 }
 
+/**
+ * Callers pass parsed hosts today; a suffix test on anything else (for example
+ * 'evil.example/x.6529.io') would accept another host, so only an exact,
+ * already normalized host is compared.
+ */
 function isDomainUnderSuffix(domain: string, suffix: string): boolean {
+  if (normalizeDomain(domain) !== domain) {
+    return false;
+  }
   return domain === suffix || domain.endsWith(`.${suffix}`);
 }
 
