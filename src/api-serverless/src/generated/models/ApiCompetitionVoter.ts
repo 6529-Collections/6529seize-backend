@@ -10,12 +10,17 @@
  * Do not edit the class manually.
  */
 
+import { ApiProfileMin } from '../models/ApiProfileMin';
 import { HttpFile } from '../http/http';
 
 export class ApiCompetitionVoter {
     'profile_id': string;
     'votes': number;
     'credit_spent': number;
+    /**
+    * Public profile summary of the voter, resolved for the whole page in one batched lookup. Omitted when the profile cannot be resolved; clients can then look up the identity by profile_id.
+    */
+    'voter'?: ApiProfileMin;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -39,6 +44,12 @@ export class ApiCompetitionVoter {
             "baseName": "credit_spent",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "voter",
+            "baseName": "voter",
+            "type": "ApiProfileMin",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {

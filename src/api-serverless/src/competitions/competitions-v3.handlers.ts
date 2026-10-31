@@ -8,6 +8,7 @@ export {
   toApiEntry,
   toApiEntryPage
 } from './competition-api.mapper';
+import { identityFetcher } from '@/api/identities/identity.fetcher';
 import { readCompetitionEntryContexts } from './competition-entry-context.reader';
 import { listCompetitionVoteActivity } from './competition-vote-activity.service';
 import { ApiWaveLog } from '@/api/generated/models/ApiWaveLog';
@@ -54,6 +55,10 @@ import {
   CursorPageRequest,
   PublicCompetition
 } from '@/competitions/competition.service';
+import {
+  CompetitionPage,
+  CompetitionVoter
+} from '@/competitions/competition.types';
 import { RequestContext } from '@/request.context';
 import { Timer } from '@/time';
 import * as Joi from 'joi';
@@ -415,13 +420,34 @@ export async function handleListCompetitionVotersV3(
     CompetitionPathSchema
   );
   const query = getValidatedByJoiOrThrow(req.query, VotersQuerySchema);
-  return (await competitionService.listVoters(
+  const ctx = await getContext(req);
+  const page = await competitionService.listVoters(
     wave_id,
     competition_id,
     toCursorRequest(query),
     query.entry_id,
-    await getContext(req)
-  )) as unknown as ApiCompetitionVoterPage;
+    ctx
+  );
+  return await toApiVoterPage(page, ctx);
+}
+
+async function toApiVoterPage(
+  page: CompetitionPage<CompetitionVoter>,
+  ctx: RequestContext
+): Promise<ApiCompetitionVoterPage> {
+  const profileIds = Array.from(
+    new Set(page.data.map((voter) => voter.profile_id))
+  );
+  const profiles = profileIds.length
+    ? await identityFetcher.getOverviewsByIds(profileIds, ctx)
+    : {};
+  return {
+    ...page,
+    data: page.data.map((voter) => {
+      const profile = profiles[voter.profile_id];
+      return profile ? { ...voter, voter: profile } : { ...voter };
+    })
+  };
 }
 
 export async function handleListCompetitionDecisionsV3(
