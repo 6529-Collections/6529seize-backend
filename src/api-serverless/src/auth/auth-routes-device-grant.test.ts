@@ -68,10 +68,13 @@ import { ethers } from 'ethers';
 import { SiweMessage } from 'siwe';
 import { clearSiweWalletAuthReplayCacheForTests } from '../wallet-signatures/siwe-wallet-auth';
 import { clearStructuredWalletSignatureReplayCacheForTests } from '../wallet-signatures/structured-wallet-signatures';
+import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
 import './auth.routes';
 
 const DEVICE_KEY =
   '0xd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a';
+const MLS_DEVICE_KEY =
+  '0x3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c';
 const wallet = new ethers.Wallet(
   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 );
@@ -94,6 +97,7 @@ describe('wallet auth device grants', () => {
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS;
     delete process.env.WEB_APP_ORIGIN;
     delete process.env.WEB_APP_ADDITIONAL_ORIGINS;
+    process.env.E2EE_DMS_ENABLED = 'true';
     clearSiweWalletAuthReplayCacheForTests();
     clearStructuredWalletSignatureReplayCacheForTests();
     createWebSessionMock.mockResolvedValue({
@@ -179,6 +183,107 @@ describe('wallet auth device grants', () => {
         device_key_type: 'ed25519'
       });
       expect(payload.signable_message).toContain(':post.edit.delete.react:');
+    });
+
+    describe('combined grant (NC8)', () => {
+      const combinedQuery = {
+        client_type: 'web',
+        device_key: DEVICE_KEY,
+        device_key_type: 'ed25519',
+        mls_device_key: MLS_DEVICE_KEY,
+        mls_ciphersuite: E2EE_CIPHERSUITE
+      };
+
+      it('also grants the MLS device key in the same message', () => {
+        const parsed = new SiweMessage(
+          requestNonce(combinedQuery).signable_message
+        );
+        expect(parsed.resources).toHaveLength(2);
+        expect(parsed.resources?.[0]).toMatch(
+          /^urn:6529:device-grant:v1:ed25519:d75a9801/
+        );
+        const expiresAt = parsed.resources?.[0].split(':').at(-1);
+        expect(parsed.resources?.[1]).toBe(
+          `urn:6529:mls-device-grant:v1:${E2EE_CIPHERSUITE}:${MLS_DEVICE_KEY.slice(2)}:${expiresAt}`
+        );
+        expect(parsed.statement).toContain(
+          'It will also encrypt (send) and decrypt (read) your end-to-end encrypted messages, which 6529.io cannot read.'
+        );
+        expect(parsed.statement).toMatch(
+          /\(Device key d75a9801\.\.\.f707511a, encrypted messages key 3d4017c3\.\.\.2af4660c\)$/
+        );
+      });
+
+      it.each([
+        ['encrypted messages are off', { E2EE_DMS_ENABLED: 'false' }, {}],
+        [
+          'the ciphersuite is not the server one',
+          {},
+          { mls_ciphersuite: E2EE_CIPHERSUITE + 1 }
+        ]
+      ])(
+        'issues the signing grant alone when %s',
+        (_name, env: Record<string, string>, query) => {
+          Object.assign(process.env, env);
+          const parsed = new SiweMessage(
+            requestNonce({ ...combinedQuery, ...query }).signable_message
+          );
+          expect(parsed.resources).toHaveLength(1);
+          expect(parsed.statement).not.toContain('encrypted');
+        }
+      );
+
+      it.each([
+        [
+          'the signing key as the MLS key',
+          { mls_device_key: DEVICE_KEY },
+          'The MLS device key must differ from the signing device key'
+        ],
+        [
+          'an MLS key without a ciphersuite',
+          { mls_ciphersuite: undefined },
+          null
+        ],
+        [
+          'a ciphersuite without an MLS key',
+          { mls_device_key: undefined },
+          null
+        ],
+        [
+          'an MLS key without a signing key',
+          { device_key: undefined, device_key_type: undefined },
+          null
+        ],
+        [
+          'an uppercase MLS key',
+          { mls_device_key: MLS_DEVICE_KEY.toUpperCase() },
+          null
+        ],
+        ['ciphersuite 0', { mls_ciphersuite: 0 }, null]
+      ])('rejects %s', (_name, overrides, message: string | null) => {
+        const query: Record<string, unknown> = {
+          signer_address: wallet.address,
+          ...combinedQuery,
+          ...overrides
+        };
+        for (const key of Object.keys(query)) {
+          if (query[key] === undefined) delete query[key];
+        }
+        const run = () =>
+          sessionNonceHandler(
+            makeRequest({
+              query,
+              origin: 'https://6529.io',
+              host: 'api.6529.io'
+            }),
+            makeResponse()
+          );
+        if (message) {
+          expect(run).toThrow(message);
+        } else {
+          expect(run).toThrow();
+        }
+      });
     });
 
     it('keeps the plain challenge without device params', () => {
@@ -292,6 +397,31 @@ describe('wallet auth device grants', () => {
       );
       expect(storeLoginGrantMock.mock.invocationCallOrder[0]).toBeGreaterThan(
         createWebSessionMock.mock.invocationCallOrder[0]
+      );
+      expect(response.status).toHaveBeenCalledWith(201);
+      expect(response.send).toHaveBeenCalledWith({
+        ...webSessionResponse,
+        device_grant: storedGrant
+      });
+    });
+
+    it('stores one grant for a combined sign-in, MLS resource included', async () => {
+      const nonce = requestNonce({
+        device_key: DEVICE_KEY,
+        device_key_type: 'ed25519',
+        mls_device_key: MLS_DEVICE_KEY,
+        mls_ciphersuite: E2EE_CIPHERSUITE
+      });
+
+      const response = await login(nonce);
+
+      expect(storeLoginGrantMock).toHaveBeenCalledTimes(1);
+      expect(storeLoginGrantMock.mock.calls[0][0]).toMatchObject({
+        terms: { deviceKey: DEVICE_KEY },
+        message: nonce.signable_message
+      });
+      expect(nonce.signable_message).toContain(
+        `- urn:6529:mls-device-grant:v1:${E2EE_CIPHERSUITE}:${MLS_DEVICE_KEY.slice(2)}:`
       );
       expect(response.status).toHaveBeenCalledWith(201);
       expect(response.send).toHaveBeenCalledWith({

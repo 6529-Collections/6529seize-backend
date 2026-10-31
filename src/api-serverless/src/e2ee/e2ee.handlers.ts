@@ -32,6 +32,7 @@ import {
   e2eeLogQuerySchema,
   e2eeProfileIdParamSchema,
   e2eeRegisterDeviceSchema,
+  e2eeRegisterLoginGrantDeviceSchema,
   e2eeReportSchema,
   e2eeRevokeDeviceSchema,
   e2eeRosterRepairSchema,
@@ -67,6 +68,7 @@ import { ApiE2eeLogItem } from '@/api/generated/models/ApiE2eeLogItem';
 import { ApiE2eeLogPage } from '@/api/generated/models/ApiE2eeLogPage';
 import { ApiE2eeMe } from '@/api/generated/models/ApiE2eeMe';
 import { ApiE2eeRegisterDeviceRequest } from '@/api/generated/models/ApiE2eeRegisterDeviceRequest';
+import { ApiE2eeRegisterLoginGrantDeviceRequest } from '@/api/generated/models/ApiE2eeRegisterLoginGrantDeviceRequest';
 import { ApiE2eeReport } from '@/api/generated/models/ApiE2eeReport';
 import { ApiE2eeReportRequest } from '@/api/generated/models/ApiE2eeReportRequest';
 import { ApiE2eeRevokeDeviceRequest } from '@/api/generated/models/ApiE2eeRevokeDeviceRequest';
@@ -103,6 +105,7 @@ import {
   E2eeLookupDevicesRequest,
   E2eePutBlobChunkRequest,
   E2eeRegisterDeviceRequest,
+  E2eeRegisterLoginGrantDeviceRequest,
   E2eeRepairRosterRequest,
   E2eeReportMessageRequest,
   E2eeRevokeDeviceRequest,
@@ -187,6 +190,31 @@ export async function handleE2eeRegisterDevice(
     caller,
     body<ApiE2eeRegisterDeviceRequest>(req.body, e2eeRegisterDeviceSchema)
   );
+}
+
+export async function handleE2eeRegisterLoginGrantDevice(
+  req: E2eeRegisterLoginGrantDeviceRequest
+): Promise<ApiE2eeDevice> {
+  const caller = await e2eeCaller(req);
+  return services.devices.registerLoginGrantDevice(
+    caller,
+    body<ApiE2eeRegisterLoginGrantDeviceRequest>(
+      req.body,
+      e2eeRegisterLoginGrantDeviceSchema
+    )
+  );
+}
+
+/**
+ * The wallet's session revoked a signed-messages grant: a device that grant
+ * enrolled for encrypted messages (combined grant) stops with it. Runs even
+ * while encrypted messages are off, so turning them back on never revives a
+ * device behind a revoked grant.
+ */
+export async function revokeE2eeDeviceOfLoginGrant(
+  grantId: string
+): Promise<void> {
+  await services.devices.revokeDeviceOfLoginGrant(grantId);
 }
 
 export async function handleE2eeGetDevice(

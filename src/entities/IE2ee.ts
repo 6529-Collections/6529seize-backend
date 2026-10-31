@@ -35,6 +35,7 @@ import {
 @Entity(E2EE_DEVICES_TABLE)
 @Index('e2ee_devices_profile_idx', ['profile_id', 'revoked_at'])
 @Index('e2ee_devices_revoked_idx', ['revoked_at'])
+@Index('e2ee_devices_grant_idx', ['grant_id'])
 export class E2eeDeviceEntity {
   @PrimaryColumn({ type: 'varchar', length: 66 })
   readonly device_key!: string;
@@ -92,6 +93,12 @@ export class E2eeDeviceEntity {
 
   @Column({ type: 'varchar', length: 130, nullable: true, default: null })
   readonly revocation_signature!: string | null;
+
+  // Combined sign-in grant (NC8): the exact SIWE message the wallet signed;
+  // then grant_id is its EIP-191 hash and wallet_signature signs it. Null
+  // for EIP-712 MlsDeviceGrant grants.
+  @Column({ type: 'text', nullable: true, default: null })
+  readonly grant_message!: string | null;
 }
 
 /** Uploaded MLS KeyPackages. One-time rows are deleted when claimed. */

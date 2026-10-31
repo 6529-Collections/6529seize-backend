@@ -154,6 +154,7 @@ import { ApiE2eeLogItem } from '@/api/generated/models/ApiE2eeLogItem';
 import { ApiE2eeLogPage } from '@/api/generated/models/ApiE2eeLogPage';
 import { ApiE2eeMe } from '@/api/generated/models/ApiE2eeMe';
 import { ApiE2eeRegisterDeviceRequest } from '@/api/generated/models/ApiE2eeRegisterDeviceRequest';
+import { ApiE2eeRegisterLoginGrantDeviceRequest } from '@/api/generated/models/ApiE2eeRegisterLoginGrantDeviceRequest';
 import { ApiE2eeReport } from '@/api/generated/models/ApiE2eeReport';
 import { ApiE2eeReportHoldRequest } from '@/api/generated/models/ApiE2eeReportHoldRequest';
 import { ApiE2eeReportRequest } from '@/api/generated/models/ApiE2eeReportRequest';
@@ -1902,6 +1903,20 @@ export type E2eeAckWelcomeRequest = Request<
   ApiResponse<E2eeAckWelcomeResponse>,
   never,
   E2eeAckWelcomeQuery,
+  Record<string, never>
+>;
+
+export type E2eeRegisterLoginGrantDevicePathParams = Record<string, never>;
+
+export type E2eeRegisterLoginGrantDeviceQuery = Record<string, never>;
+
+export type E2eeRegisterLoginGrantDeviceResponse = ApiE2eeDevice;
+
+export type E2eeRegisterLoginGrantDeviceRequest = Request<
+  E2eeRegisterLoginGrantDevicePathParams,
+  ApiResponse<E2eeRegisterLoginGrantDeviceResponse>,
+  ApiE2eeRegisterLoginGrantDeviceRequest,
+  E2eeRegisterLoginGrantDeviceQuery,
   Record<string, never>
 >;
 

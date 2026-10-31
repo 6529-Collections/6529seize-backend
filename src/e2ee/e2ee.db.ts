@@ -1,4 +1,5 @@
 import {
+  DEVICE_GRANTS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
   E2EE_BLOBS_TABLE,
   E2EE_DEVICES_TABLE,
@@ -316,12 +317,13 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
         device_key, profile_id, wallet, ciphersuite, issued_at_seconds,
         expires_at_seconds, origin, grant_id, wallet_signature, verified_via,
         label, platform, created_at, updated_at, last_seen_at, revoked_at,
-        revoker_device_key, revocation_signed_at_seconds, revocation_signature
+        revoker_device_key, revocation_signed_at_seconds, revocation_signature,
+        grant_message
       ) values (
         :device_key, :profile_id, :wallet, :ciphersuite, :issued_at_seconds,
         :expires_at_seconds, :origin, :grant_id, :wallet_signature,
         :verified_via, :label, :platform, :created_at, :updated_at,
-        :last_seen_at, null, null, null, null
+        :last_seen_at, null, null, null, null, :grant_message
       )`,
       { ...device },
       connection
@@ -343,6 +345,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       | 'label'
       | 'platform'
       | 'updated_at'
+      | 'grant_message'
     >,
     connection: Conn
   ): Promise<void> {
@@ -352,6 +355,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
         issued_at_seconds = :issued_at_seconds,
         expires_at_seconds = :expires_at_seconds, origin = :origin,
         grant_id = :grant_id, wallet_signature = :wallet_signature,
+        grant_message = :grant_message,
         verified_via = :verified_via, label = :label, platform = :platform,
         updated_at = :updated_at, last_seen_at = :updated_at
        where device_key = :device_key and revoked_at is null`,
@@ -369,6 +373,65 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Locks a stored sign-in grant row for the rest of the transaction and
+   * says whether it is still unrevoked (false when it is gone). Registration
+   * through a combined grant checks it here, so a revocation either lands
+   * first and blocks the device, or lands after and finds the device.
+   */
+  async lockUnrevokedLoginGrant(
+    grantId: string,
+    connection: Conn
+  ): Promise<boolean> {
+    const row = await this.one<{ revoked_at: number | string | null }>(
+      `select revoked_at from ${DEVICE_GRANTS_TABLE} where id = :grantId for update`,
+      { grantId },
+      connection
+    );
+    return row !== null && row.revoked_at === null;
+  }
+
+  /**
+   * The active device a combined sign-in grant registered, if any (for
+   * revoking it together with that grant).
+   */
+  async getUnrevokedDeviceOfLoginGrant(
+    grantId: string,
+    connection?: Conn
+  ): Promise<E2eeDeviceRow | null> {
+    return this.one<E2eeDeviceRow>(
+      `select * from ${E2EE_DEVICES_TABLE}
+       where grant_id = :grantId and grant_message is not null
+         and revoked_at is null
+       limit 1`,
+      { grantId },
+      connection
+    );
+  }
+
+  /**
+   * Revocation by 6529.io when the wallet's session revoked the combined
+   * sign-in grant behind this device. It carries no device signature, so
+   * other members treat it as unverified (D109 2.4); delivery stops at once.
+   */
+  async markDeviceRevokedByGrant(
+    input: { readonly deviceKey: string; readonly revokedAtMs: number },
+    connection: Conn
+  ): Promise<void> {
+    await this.write(
+      `update ${E2EE_DEVICES_TABLE} set
+        revoked_at = :revokedAtMs, updated_at = :revokedAtMs
+       where device_key = :deviceKey and revoked_at is null`,
+      { ...input },
+      connection
+    );
+  }
+
+  /**
+   * Stores a signed revocation. A device 6529.io already revoked with its
+   * sign-in grant keeps its revocation time and gains the signature, so
+   * members can verify it; a stored signature is never replaced.
+   */
   async markDeviceRevoked(
     input: {
       readonly deviceKey: string;
@@ -381,10 +444,11 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   ): Promise<void> {
     await this.write(
       `update ${E2EE_DEVICES_TABLE} set
-        revoked_at = :revokedAtMs, revoker_device_key = :revokerDeviceKey,
+        revoked_at = coalesce(revoked_at, :revokedAtMs),
+        revoker_device_key = :revokerDeviceKey,
         revocation_signed_at_seconds = :signedAtSeconds,
         revocation_signature = :signature, updated_at = :revokedAtMs
-       where device_key = :deviceKey and revoked_at is null`,
+       where device_key = :deviceKey and revocation_signature is null`,
       { ...input },
       connection
     );

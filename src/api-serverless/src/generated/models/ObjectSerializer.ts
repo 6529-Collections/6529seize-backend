@@ -466,6 +466,7 @@ export * from '../models/ApiE2eeLogPage';
 export * from '../models/ApiE2eeMe';
 export * from '../models/ApiE2eeNotifyHint';
 export * from '../models/ApiE2eeRegisterDeviceRequest';
+export * from '../models/ApiE2eeRegisterLoginGrantDeviceRequest';
 export * from '../models/ApiE2eeReport';
 export * from '../models/ApiE2eeReportCategory';
 export * from '../models/ApiE2eeReportHoldRequest';
@@ -1422,7 +1423,7 @@ import { ApiE2eeCompactBackupRequest } from '../models/ApiE2eeCompactBackupReque
 import { ApiE2eeCreateBackupRequest } from '../models/ApiE2eeCreateBackupRequest';
 import { ApiE2eeCreateBlobRequest } from '../models/ApiE2eeCreateBlobRequest';
 import { ApiE2eeCreateGroupRequest } from '../models/ApiE2eeCreateGroupRequest';
-import { ApiE2eeDevice     , ApiE2eeDeviceVerifiedViaEnum         } from '../models/ApiE2eeDevice';
+import { ApiE2eeDevice     , ApiE2eeDeviceVerifiedViaEnum          } from '../models/ApiE2eeDevice';
 import { ApiE2eeDeviceGrant } from '../models/ApiE2eeDeviceGrant';
 import { ApiE2eeDeviceGroup } from '../models/ApiE2eeDeviceGroup';
 import { ApiE2eeDeviceLookupRequest } from '../models/ApiE2eeDeviceLookupRequest';
@@ -1441,6 +1442,7 @@ import { ApiE2eeLogPage } from '../models/ApiE2eeLogPage';
 import { ApiE2eeMe } from '../models/ApiE2eeMe';
 import { ApiE2eeNotifyHint , ApiE2eeNotifyHintKindEnum   } from '../models/ApiE2eeNotifyHint';
 import { ApiE2eeRegisterDeviceRequest     } from '../models/ApiE2eeRegisterDeviceRequest';
+import { ApiE2eeRegisterLoginGrantDeviceRequest    } from '../models/ApiE2eeRegisterLoginGrantDeviceRequest';
 import { ApiE2eeReport } from '../models/ApiE2eeReport';
 import { ApiE2eeReportCategory } from '../models/ApiE2eeReportCategory';
 import { ApiE2eeReportHoldRequest } from '../models/ApiE2eeReportHoldRequest';
@@ -1722,7 +1724,7 @@ import { ApiSessionLoginRequest, ApiSessionLoginRequestClientTypeEnum      , Api
 import { ApiSessionLogoutNativeRequest, ApiSessionLogoutNativeRequestClientTypeEnum      } from '../models/ApiSessionLogoutNativeRequest';
 import { ApiSessionLogoutWebRequest, ApiSessionLogoutWebRequestClientTypeEnum     } from '../models/ApiSessionLogoutWebRequest';
 import { ApiSessionNativeResponse    , ApiSessionNativeResponseClientTypeEnum     } from '../models/ApiSessionNativeResponse';
-import { ApiSessionNonceQuery , ApiSessionNonceQueryClientTypeEnum    , ApiSessionNonceQueryDeviceKeyTypeEnum    } from '../models/ApiSessionNonceQuery';
+import { ApiSessionNonceQuery , ApiSessionNonceQueryClientTypeEnum    , ApiSessionNonceQueryDeviceKeyTypeEnum      } from '../models/ApiSessionNonceQuery';
 import { ApiSessionNonceResponse } from '../models/ApiSessionNonceResponse';
 import { ApiSessionRefreshNativeRequest, ApiSessionRefreshNativeRequestClientTypeEnum      } from '../models/ApiSessionRefreshNativeRequest';
 import { ApiSessionRefreshWebRequest, ApiSessionRefreshWebRequestClientTypeEnum    } from '../models/ApiSessionRefreshWebRequest';
@@ -2684,6 +2686,7 @@ let typeMap: {[index: string]: any} = {
     "ApiE2eeMe": ApiE2eeMe,
     "ApiE2eeNotifyHint": ApiE2eeNotifyHint,
     "ApiE2eeRegisterDeviceRequest": ApiE2eeRegisterDeviceRequest,
+    "ApiE2eeRegisterLoginGrantDeviceRequest": ApiE2eeRegisterLoginGrantDeviceRequest,
     "ApiE2eeReport": ApiE2eeReport,
     "ApiE2eeReportHoldRequest": ApiE2eeReportHoldRequest,
     "ApiE2eeReportRequest": ApiE2eeReportRequest,
