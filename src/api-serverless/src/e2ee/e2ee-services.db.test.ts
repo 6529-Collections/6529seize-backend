@@ -1,23 +1,38 @@
 import 'reflect-metadata';
 import { randomBytes } from 'node:crypto';
 import { HDNodeWallet, keccak256, Wallet } from 'ethers';
-import { E2eeServiceDeps } from '@/api/e2ee/e2ee-context';
+import {
+  E2eeLoginGrantRecord,
+  E2eeServiceDeps,
+  pruneE2eeBlobs
+} from '@/api/e2ee/e2ee-context';
+import { directMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.instance';
+import { computeDeviceGrantId } from '@/api/device-signing/device-grant-message';
+import { createSiweWebAuthChallenge } from '@/api/wallet-signatures/siwe-wallet-auth';
 import { E2eeEventPublisher } from '@/api/e2ee/e2ee-events';
 import { createE2eeServices } from '@/api/e2ee/e2ee.handlers';
 import { ApiE2eeReportCategory } from '@/api/generated/models/ApiE2eeReportCategory';
 import { E2eeTrustAndSafetyService } from '@/api/e2ee/e2ee-trust-and-safety.service';
 import {
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
+  DEVICE_GRANTS_TABLE,
   E2EE_LOG_TABLE,
+  IDENTITIES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
-  PROFILE_PREFERENCES_TABLE
+  PROFILE_PREFERENCES_TABLE,
+  PROFILES_TABLE
 } from '@/constants/db-tables';
+import { anIdentity } from '@/tests/fixtures/identity.fixture';
+import { aProfile as aProfileRow } from '@/tests/fixtures/profile.fixture';
 import {
   E2EE_CIPHERSUITE,
   E2EE_ENTRY_BUCKETS,
   E2EE_MAX_ENTRY_AND_WELCOME_BYTES
 } from '@/e2ee/e2ee.constants';
 import { E2eeDb } from '@/e2ee/e2ee.db';
+import { migrateE2eeBlobsToS3 } from '@/e2ee/e2ee-blob-migration';
+import { S3E2eeBlobStore } from '@/e2ee/e2ee-blob-store.s3';
+import { createE2eeBlobStores } from '@/e2ee/e2ee-blob-stores';
 import {
   E2EE_ZERO_32,
   E2eeEntryKind,
@@ -35,9 +50,18 @@ import {
   randomE2eeGroupHandle,
   randomE2eeKey
 } from '@/tests/fixtures/e2ee.fixture';
+import { InMemoryE2eeBlobS3 } from '@/tests/fixtures/e2ee-blob-s3.fixture';
 
 const START = Date.UTC(2026, 9, 12, 12, 0, 0);
 const DAY = 24 * 60 * 60 * 1000;
+const BLOB_BUCKET = 'private-e2ee-test-bucket';
+const BLOB_PREFIX = 'test/e2ee-blobs';
+const S3_BLOB_ENV = {
+  E2EE_BLOB_STORE: 's3',
+  E2EE_BLOB_S3_BUCKET: BLOB_BUCKET,
+  E2EE_BLOB_S3_PREFIX: BLOB_PREFIX,
+  E2EE_BLOB_S3_REGION: 'eu-west-1'
+};
 
 interface Profile {
   readonly id: string;
@@ -84,6 +108,31 @@ async function insertRow(table: string, row: Record<string, unknown>) {
   );
 }
 
+/**
+ * DM admission (shared with legacy DMs) reads the recipient's identity and
+ * profile rows, so every profile a test sends to must exist in the database.
+ */
+async function persistProfile(profile: Profile, persisted: Set<string>) {
+  if (persisted.has(profile.id)) return;
+  persisted.add(profile.id);
+  const wallet = profile.wallet.address.toLowerCase();
+  const handle = `h${profile.id.replace(/-/g, '')}`;
+  await insertRow(PROFILES_TABLE, {
+    ...aProfileRow({ external_id: profile.id, handle, primary_wallet: wallet })
+  });
+  await insertRow(IDENTITIES_TABLE, {
+    ...anIdentity(
+      {},
+      {
+        consolidation_key: wallet,
+        profile_id: profile.id,
+        primary_address: wallet,
+        handle
+      }
+    )
+  });
+}
+
 async function setDmPolicy(profileId: string, policy: string) {
   await insertRow(PROFILE_PREFERENCES_TABLE, {
     profile_id: profileId,
@@ -123,20 +172,29 @@ describeWithSeed('E2EE delivery service', [], () => {
   let services: ReturnType<typeof createE2eeServices>;
   let randomValue: number;
   let attachmentsEnabled: boolean;
+  let loginGrants: Map<string, E2eeLoginGrantRecord>;
+  let persistedProfiles: Set<string>;
+  let blobEnv: Record<string, string | undefined>;
+  let s3: InMemoryE2eeBlobS3;
+  let deps: E2eeServiceDeps;
 
   beforeEach(() => {
     now = START;
     events = [];
     walletProfiles = new Map();
+    loginGrants = new Map();
     randomValue = 1;
     attachmentsEnabled = true;
+    persistedProfiles = new Set();
+    blobEnv = {};
+    s3 = new InMemoryE2eeBlobS3(BLOB_BUCKET);
     db = new E2eeDb(() => sqlExecutor);
     const record =
       (method: keyof E2eeEventPublisher) =>
       async (...args: unknown[]) => {
         events.push({ method, args });
       };
-    const deps: E2eeServiceDeps = {
+    deps = {
       db,
       events: {
         groupEvent: record('groupEvent'),
@@ -155,7 +213,22 @@ describeWithSeed('E2EE delivery service', [], () => {
       now: () => now,
       random: () => randomValue,
       randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`,
-      attachmentsEnabled: () => attachmentsEnabled
+      attachmentsEnabled: () => attachmentsEnabled,
+      admission: directMessageAdmissionService,
+      loginGrants: {
+        findGrant: async (id) => loginGrants.get(id) ?? null,
+        revokeGrant: async (id, revokedAtMs) => {
+          const grant = loginGrants.get(id);
+          if (grant?.revoked_at === null) {
+            loginGrants.set(id, { ...grant, revoked_at: revokedAtMs });
+          }
+        }
+      },
+      blobStores: createE2eeBlobStores({
+        rows: db,
+        env: () => blobEnv,
+        s3Client: () => s3
+      })
     };
     services = createE2eeServices(deps);
   });
@@ -188,6 +261,7 @@ describeWithSeed('E2EE delivery service', [], () => {
     key: E2eeTestKey = randomE2eeKey()
   ): Promise<E2eeTestKey> {
     walletProfiles.set(profile.wallet.address.toLowerCase(), profile.id);
+    await persistProfile(profile, persistedProfiles);
     const grant = grantFor(profile, key);
     await services.devices.registerDevice(profile.id, {
       grant,
@@ -195,6 +269,58 @@ describeWithSeed('E2EE delivery service', [], () => {
       platform: 'web' as never
     });
     return key;
+  }
+
+  /** A combined sign-in grant the login stored, then its E2EE device. */
+  async function registerLoginGrantDevice(
+    profile: Profile,
+    key: E2eeTestKey = randomE2eeKey()
+  ): Promise<{ key: E2eeTestKey; grantId: string; message: string }> {
+    walletProfiles.set(profile.wallet.address.toLowerCase(), profile.id);
+    await persistProfile(profile, persistedProfiles);
+    const challenge = createSiweWebAuthChallenge({
+      address: profile.wallet.address,
+      clientOrigin: 'https://staging.6529.io',
+      chainId: 1,
+      issuedAt: new Date(now),
+      deviceGrant: {
+        deviceKey: randomE2eeKey().publicKey,
+        scopes: ['post', 'edit', 'delete', 'react'],
+        mlsDevice: { deviceKey: key.publicKey, ciphersuite: E2EE_CIPHERSUITE }
+      }
+    });
+    const grantId = computeDeviceGrantId(challenge.message);
+    const walletSignature = await profile.wallet.signMessage(challenge.message);
+    loginGrants.set(grantId, {
+      id: grantId,
+      wallet: profile.wallet.address.toLowerCase(),
+      message: challenge.message,
+      wallet_signature: walletSignature,
+      revoked_at: null
+    });
+    // What session-login stored; registration locks this row.
+    await insertRow(DEVICE_GRANTS_TABLE, {
+      id: grantId,
+      wallet: profile.wallet.address.toLowerCase(),
+      key_type: 'ed25519',
+      device_key: challenge.deviceGrant!.deviceKey,
+      scopes: 'post,edit,delete,react',
+      device_label: 'Browser',
+      domain: 'staging.6529.io',
+      message: challenge.message,
+      wallet_signature: walletSignature,
+      chain_id: 1,
+      issued_at: now,
+      expires_at: challenge.deviceGrant!.expiresAtSeconds * 1000,
+      created_at: now,
+      revoked_at: null,
+      last_used_at: null
+    });
+    await services.devices.registerLoginGrantDevice(profile.id, {
+      grant_id: grantId,
+      platform: 'web' as never
+    });
+    return { key, grantId, message: challenge.message };
   }
 
   interface TestGroup {
@@ -447,6 +573,104 @@ describeWithSeed('E2EE delivery service', [], () => {
       await expectE2eeError(registerDevice(alice), 'E2EE_DEVICE_LIMIT');
       const bob = aProfile();
       await expectE2eeError(registerDevice(bob, keys[0]), 'E2EE_DEVICE_EXISTS');
+    });
+  });
+
+  describe('combined sign-in grants (NC8)', () => {
+    it('stores and serves the signed sign-in message of the device', async () => {
+      const alice = aProfile();
+      const { key, grantId, message } = await registerLoginGrantDevice(alice);
+      const me = await services.devices.getMe(alice.id);
+      expect(me.devices).toHaveLength(1);
+      expect(me.devices[0]).toMatchObject({
+        device_key: key.publicKey,
+        grant_id: grantId,
+        grant_message: message,
+        verified_via: 'eoa',
+        grant: { device_key: key.publicKey, origin: 'staging.6529.io' }
+      });
+      const eip712 = await registerDevice(alice);
+      expect(
+        (await services.devices.getDevice(eip712.publicKey)).grant_message
+      ).toBeNull();
+    });
+
+    it('revoking the sign-in grant removes its device from every roster', async () => {
+      const alice = aProfile();
+      const bob = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const { key: bobDevice, grantId } = await registerLoginGrantDevice(bob);
+      await uploadKeyPackages(bob, bobDevice, 2);
+      const group = await createGroup(alice, aliceDevice);
+      await commit(alice, group, aliceDevice, {
+        rosterAdd: [bobDevice.publicKey]
+      });
+      events = [];
+
+      await services.devices.revokeDeviceOfLoginGrant(grantId);
+
+      const revoked = await services.devices.getDevice(bobDevice.publicKey);
+      expect(revoked.revoked_at).toBe(now);
+      expect(revoked.revocation).toBeNull();
+      const roster = await services.groups.getGroup(
+        alice.id,
+        group.g,
+        aliceDevice.publicKey
+      );
+      expect(roster.roster.map((row) => row.device_key)).toEqual([
+        aliceDevice.publicKey
+      ]);
+      expect(
+        await db.countOneTimeKeyPackages(bobDevice.publicKey, nowSeconds())
+      ).toBe(0);
+      expect(events.map((event) => event.method)).toEqual(['deviceRevoked']);
+      await services.devices.revokeDeviceOfLoginGrant(grantId);
+      expect(events).toHaveLength(1);
+
+      // The device's own signed revocation can still be stored afterwards.
+      const revokedByGrantAt = now;
+      now += 1000;
+      const revokedAt = nowSeconds();
+      const signature = bobDevice.sign(
+        e2eeRevokeDigest({
+          targetDeviceKey: bobDevice.publicKey,
+          revokerDeviceKey: bobDevice.publicKey,
+          revokedAtSeconds: revokedAt
+        })
+      );
+      const signed = await services.devices.revokeDevice(
+        bob.id,
+        bobDevice.publicKey,
+        {
+          revoker_device_key: bobDevice.publicKey,
+          revoked_at: revokedAt,
+          signature
+        }
+      );
+      expect(signed.revoked_at).toBe(revokedByGrantAt);
+      expect(signed.revocation).toEqual({
+        revoker_device_key: bobDevice.publicKey,
+        revoked_at: revokedAt,
+        signature
+      });
+    });
+
+    it('revoking the device revokes its sign-in grant', async () => {
+      const alice = aProfile();
+      const { key, grantId } = await registerLoginGrantDevice(alice);
+      const revokedAt = nowSeconds();
+      await services.devices.revokeDevice(alice.id, key.publicKey, {
+        revoker_device_key: key.publicKey,
+        revoked_at: revokedAt,
+        signature: key.sign(
+          e2eeRevokeDigest({
+            targetDeviceKey: key.publicKey,
+            revokerDeviceKey: key.publicKey,
+            revokedAtSeconds: revokedAt
+          })
+        )
+      });
+      expect(loginGrants.get(grantId)?.revoked_at).toBe(now);
     });
   });
 
@@ -804,6 +1028,7 @@ describeWithSeed('E2EE delivery service', [], () => {
       for (const profile of [open, picky, friend, closed, blocker, blocked]) {
         await uploadKeyPackages(profile, await registerDevice(profile), 2);
       }
+      await persistProfile(empty, persistedProfiles);
       await setDmPolicy(picky.id, 'PEOPLE_I_FOLLOW');
       await setDmPolicy(friend.id, 'PEOPLE_I_FOLLOW');
       await follow(friend.id, alice.id);
@@ -831,7 +1056,9 @@ describeWithSeed('E2EE delivery service', [], () => {
         [picky.id]: 'POLICY',
         [friend.id]: 'OK',
         [closed.id]: 'POLICY',
-        [blocker.id]: 'BLOCKED',
+        // The target's block of the caller looks like a closed inbox; only the
+        // caller's own block is reported as BLOCKED.
+        [blocker.id]: 'POLICY',
         [blocked.id]: 'BLOCKED',
         [empty.id]: 'NO_DEVICES'
       });
@@ -840,7 +1067,12 @@ describeWithSeed('E2EE delivery service', [], () => {
       });
       expect(eligibility.results).toEqual([
         { profile_id: open.id, status: 'OK', active_devices: 1 },
-        { profile_id: closed.id, status: 'POLICY', active_devices: 1 },
+        {
+          profile_id: closed.id,
+          status: 'POLICY',
+          active_devices: 1,
+          reason: 'DM_RECIPIENT_NOT_ACCEPTING'
+        },
         { profile_id: alice.id, status: 'OK', active_devices: 1 }
       ]);
     });
@@ -883,7 +1115,18 @@ describeWithSeed('E2EE delivery service', [], () => {
         commit(alice, group, aliceDevice, {
           rosterAdd: [daveDevice.publicKey]
         }),
-        'E2EE_BLOCKED'
+        'E2EE_POLICY',
+        { reason: 'DM_RECIPIENT_NOT_ACCEPTING' }
+      );
+      const erin = aProfile();
+      const erinDevice = await registerDevice(erin);
+      await block(alice.id, erin.id);
+      await expectE2eeError(
+        commit(alice, group, aliceDevice, {
+          rosterAdd: [erinDevice.publicKey]
+        }),
+        'E2EE_BLOCKED',
+        { reason: 'DM_SENDER_BLOCKED_RECIPIENT' }
       );
     });
   });
@@ -1206,6 +1449,220 @@ describeWithSeed('E2EE delivery service', [], () => {
       expect(Buffer.from(afterRemoval.data, 'base64').equals(chunk0)).toBe(
         true
       );
+    });
+
+    it('keeps S3 attachment bytes out of MySQL and deletes them at retention', async () => {
+      blobEnv = S3_BLOB_ENV;
+      const alice = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const group = await createGroup(alice, aliceDevice);
+      const blob = await services.blobs.createBlob(alice.id, {
+        group: group.g,
+        uploader_device_key: aliceDevice.publicKey,
+        size: 30,
+        chunk_count: 2
+      });
+      const chunk0 = randomBytes(20);
+      const chunk1 = randomBytes(10);
+      await services.blobs.putChunk(alice.id, blob.blob_id, 0, {
+        data: chunk0.toString('base64')
+      });
+      await services.blobs.putChunk(alice.id, blob.blob_id, 1, {
+        data: chunk1.toString('base64')
+      });
+      await services.blobs.completeBlob(alice.id, blob.blob_id);
+      const stored = s3.objects.get(`${BLOB_PREFIX}/${blob.blob_id}/0`);
+      expect(stored?.body.equals(chunk0)).toBe(true);
+      expect(stored?.input.ServerSideEncryption).toBe('AES256');
+      expect(stored?.input.ACL).toBeUndefined();
+      const rows = await sqlExecutor.execute<{
+        storage: string;
+        size: number;
+        bytes: number;
+      }>(
+        `select b.storage, c.size, length(c.data) as bytes
+         from e2ee_blobs b join e2ee_blob_chunks c on c.blob_id = b.blob_id
+         where b.blob_id = :blobId order by c.chunk_index`,
+        { blobId: blob.blob_id }
+      );
+      expect(
+        rows.map((row) => [row.storage, Number(row.size), Number(row.bytes)])
+      ).toEqual([
+        ['s3', 20, 0],
+        ['s3', 10, 0]
+      ]);
+      const downloaded = await services.blobs.getChunk(
+        alice.id,
+        blob.blob_id,
+        1,
+        aliceDevice.publicKey
+      );
+      expect(Buffer.from(downloaded.data, 'base64').equals(chunk1)).toBe(true);
+
+      // Switching back to MySQL changes new blobs only.
+      blobEnv = { ...S3_BLOB_ENV, E2EE_BLOB_STORE: 'mysql' };
+      const again = await services.blobs.getChunk(
+        alice.id,
+        blob.blob_id,
+        0,
+        aliceDevice.publicKey
+      );
+      expect(Buffer.from(again.data, 'base64').equals(chunk0)).toBe(true);
+
+      // A missing object is a missing chunk, not a server error.
+      s3.objects.delete(`${BLOB_PREFIX}/${blob.blob_id}/0`);
+      await expectE2eeError(
+        services.blobs.getChunk(
+          alice.id,
+          blob.blob_id,
+          0,
+          aliceDevice.publicKey
+        ),
+        'E2EE_NOT_FOUND'
+      );
+
+      // Without its S3 settings an S3 blob fails closed.
+      blobEnv = {};
+      await expectE2eeError(
+        services.blobs.getChunk(
+          alice.id,
+          blob.blob_id,
+          1,
+          aliceDevice.publicKey
+        ),
+        'E2EE_STORAGE_UNAVAILABLE'
+      );
+
+      // While S3 is unavailable, retention keeps the rows (no orphans).
+      now += 366 * DAY;
+      await pruneE2eeBlobs(deps);
+      expect(s3.objects.size).toBe(1);
+      const countRows = async () => {
+        const [{ blobs }] = await sqlExecutor.execute<{ blobs: number }>(
+          `select count(*) as blobs from e2ee_blobs where blob_id = :blobId`,
+          { blobId: blob.blob_id }
+        );
+        return Number(blobs);
+      };
+      expect(await countRows()).toBe(1);
+
+      // Retention deletes the objects first, then the rows.
+      blobEnv = S3_BLOB_ENV;
+      await pruneE2eeBlobs(deps);
+      expect(s3.objects.size).toBe(0);
+      expect(await countRows()).toBe(0);
+    });
+
+    it('keeps the row of a blob the migration moved while retention ran', async () => {
+      const alice = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const group = await createGroup(alice, aliceDevice);
+      const blob = await services.blobs.createBlob(alice.id, {
+        group: group.g,
+        uploader_device_key: aliceDevice.publicKey,
+        size: 4,
+        chunk_count: 1
+      });
+      await services.blobs.putChunk(alice.id, blob.blob_id, 0, {
+        data: randomBytes(4).toString('base64')
+      });
+      await services.blobs.completeBlob(alice.id, blob.blob_id);
+      now += 366 * DAY;
+      let passes = 0;
+      const deleted = await db.pruneExpiredBlobs(now, 5, async (expired) => {
+        if (passes++ > 0) return []; // the S3 pass cannot delete here
+        // The migration switches the blob between retention's select and
+        // its row delete: the row now names objects that must survive.
+        await sqlExecutor.execute(
+          `update e2ee_blobs set storage = 's3', storage_location = :location
+           where blob_id = :blobId`,
+          {
+            location: `s3://${BLOB_BUCKET}/${BLOB_PREFIX}`,
+            blobId: blob.blob_id
+          }
+        );
+        return expired.map((row) => row.blob_id);
+      });
+      expect(deleted).toBe(0);
+      const [{ blobs }] = await sqlExecutor.execute<{ blobs: number }>(
+        `select count(*) as blobs from e2ee_blobs where blob_id = :blobId`,
+        { blobId: blob.blob_id }
+      );
+      expect(Number(blobs)).toBe(1);
+    });
+
+    it('migrates complete MySQL blobs to S3 after verifying them', async () => {
+      const alice = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const group = await createGroup(alice, aliceDevice);
+      const blob = await services.blobs.createBlob(alice.id, {
+        group: group.g,
+        uploader_device_key: aliceDevice.publicKey,
+        size: 15,
+        chunk_count: 2
+      });
+      const chunks = [randomBytes(9), randomBytes(6)];
+      for (let index = 0; index < chunks.length; index++) {
+        await services.blobs.putChunk(alice.id, blob.blob_id, index, {
+          data: chunks[index].toString('base64')
+        });
+      }
+      await services.blobs.completeBlob(alice.id, blob.blob_id);
+      const target = new S3E2eeBlobStore(
+        { bucket: BLOB_BUCKET, prefix: BLOB_PREFIX, region: 'eu-west-1' },
+        s3,
+        db
+      );
+      const dryRun = await migrateE2eeBlobsToS3(
+        { db, target },
+        { live: false, limit: 1000, now: () => now }
+      );
+      expect(dryRun.mode).toBe('dry-run');
+      expect(dryRun.migrated).toBeGreaterThanOrEqual(1);
+      expect(s3.objects.size).toBe(0);
+      const live = await migrateE2eeBlobsToS3(
+        { db, target },
+        { live: true, limit: 1000, now: () => now }
+      );
+      expect(live.failures).toEqual([]);
+      expect(
+        s3.objects
+          .get(`${BLOB_PREFIX}/${blob.blob_id}/1`)
+          ?.body.equals(chunks[1])
+      ).toBe(true);
+      const [row] = await sqlExecutor.execute<{
+        storage: string;
+        bytes: number;
+      }>(
+        `select b.storage, coalesce(sum(length(c.data)), 0) as bytes
+         from e2ee_blobs b join e2ee_blob_chunks c on c.blob_id = b.blob_id
+         where b.blob_id = :blobId group by b.storage`,
+        { blobId: blob.blob_id }
+      );
+      expect([row.storage, Number(row.bytes)]).toEqual(['s3', 0]);
+      const [located] = await sqlExecutor.execute<{
+        storage_location: string;
+      }>(`select storage_location from e2ee_blobs where blob_id = :blobId`, {
+        blobId: blob.blob_id
+      });
+      expect(located.storage_location).toBe(
+        `s3://${BLOB_BUCKET}/${BLOB_PREFIX}`
+      );
+      blobEnv = S3_BLOB_ENV;
+      const downloaded = await services.blobs.getChunk(
+        alice.id,
+        blob.blob_id,
+        0,
+        aliceDevice.publicKey
+      );
+      expect(Buffer.from(downloaded.data, 'base64').equals(chunks[0])).toBe(
+        true
+      );
+      const rerun = await migrateE2eeBlobsToS3(
+        { db, target },
+        { live: true, limit: 1000, now: () => now }
+      );
+      expect(rerun.examined).toBe(0);
     });
 
     it('bounds attachment storage per profile and prunes abandoned uploads', async () => {

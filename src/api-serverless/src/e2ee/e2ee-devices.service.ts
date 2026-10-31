@@ -9,6 +9,7 @@ import {
 } from '@/api/e2ee/e2ee-context';
 import {
   toApiE2eeDevice,
+  toApiEligibilityReason,
   toApiEligibilityStatus
 } from '@/api/e2ee/e2ee.mappers';
 import { ApiE2eeClaimedKeyPackage } from '@/api/generated/models/ApiE2eeClaimedKeyPackage';
@@ -22,6 +23,7 @@ import { ApiE2eeEligibilityResponse } from '@/api/generated/models/ApiE2eeEligib
 import { ApiE2eeKeyPackageStatus } from '@/api/generated/models/ApiE2eeKeyPackageStatus';
 import { ApiE2eeMe } from '@/api/generated/models/ApiE2eeMe';
 import { ApiE2eeRegisterDeviceRequest } from '@/api/generated/models/ApiE2eeRegisterDeviceRequest';
+import { ApiE2eeRegisterLoginGrantDeviceRequest } from '@/api/generated/models/ApiE2eeRegisterLoginGrantDeviceRequest';
 import { ApiE2eeRevokeDeviceRequest } from '@/api/generated/models/ApiE2eeRevokeDeviceRequest';
 import { ApiE2eeUploadKeyPackagesRequest } from '@/api/generated/models/ApiE2eeUploadKeyPackagesRequest';
 import {
@@ -45,8 +47,46 @@ import {
   sanitizeE2eeDeviceLabel
 } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
-import { verifyE2eeDeviceGrant } from '@/e2ee/e2ee-grant';
-import { decideE2eePolicy, E2eeEligibilityStatus } from '@/e2ee/e2ee-policy';
+import {
+  E2eeDeviceGrant,
+  E2eeGrantVerifiedVia,
+  findE2eeGrantProblem,
+  verifyE2eeDeviceGrant
+} from '@/e2ee/e2ee-grant';
+import {
+  decideE2eeEligibility,
+  E2eeEligibilityStatus
+} from '@/e2ee/e2ee-policy';
+import { computeDeviceGrantId } from '@/api/device-signing/device-grant-message';
+import { parseSiweWebAuthMessage } from '@/api/wallet-signatures/siwe-wallet-auth';
+import { Logger } from '@/logging';
+import { ConnectionWrapper } from '@/sql-executor';
+import { verifyMessage } from 'ethers';
+
+const logger = Logger.get('E2EE_DEVICES');
+
+const GRANT_ID_PATTERN = /^0x[0-9a-f]{64}$/;
+
+/** A verified grant ready to be stored on a device row. */
+interface VerifiedDeviceGrant {
+  readonly grant: E2eeDeviceGrant;
+  readonly grantId: string;
+  readonly signature: string;
+  readonly verifiedVia: E2eeGrantVerifiedVia;
+  // The combined sign-in message, or null for an EIP-712 grant.
+  readonly grantMessage: string | null;
+}
+
+function recoverMessageSigner(
+  message: string,
+  signature: string
+): string | null {
+  try {
+    return verifyMessage(message, signature).toLowerCase();
+  } catch {
+    return null;
+  }
+}
 
 export class E2eeDevicesService {
   constructor(private readonly deps: E2eeServiceDeps) {}
@@ -148,23 +188,104 @@ export class E2eeDevicesService {
       contractWalletVerifier: this.deps.contractWalletVerifier
     });
     if (!verification.ok) throw e2eeErrors.badGrant(verification.reason);
-    const walletProfileId = await this.deps.resolveWalletProfileId(
-      grant.wallet
-    );
+    await this.requireWalletOfCaller(callerProfileId, grant.wallet);
+    return {
+      grant,
+      grantId: verification.grantId,
+      signature,
+      verifiedVia: verification.verifiedVia,
+      grantMessage: null
+    };
+  }
+
+  private async requireWalletOfCaller(
+    callerProfileId: string,
+    wallet: string
+  ): Promise<void> {
+    const walletProfileId = await this.deps.resolveWalletProfileId(wallet);
     if (walletProfileId !== callerProfileId) {
       throw e2eeErrors.badGrant('wallet_not_in_profile');
     }
-    return { grant, signature, verification };
+  }
+
+  /**
+   * NC8: the MLS half of a combined sign-in grant this server stored when
+   * the login signature verified (EOA or EIP-1271) and its nonce was
+   * consumed. The grant is re-read from the signed message, never trusted
+   * from the request, and must still be unrevoked and unexpired.
+   */
+  private async verifyLoginGrantRegistration(
+    callerProfileId: string,
+    request: ApiE2eeRegisterLoginGrantDeviceRequest
+  ): Promise<VerifiedDeviceGrant> {
+    const grantId = request.grant_id.toLowerCase();
+    const stored = GRANT_ID_PATTERN.test(grantId)
+      ? await this.deps.loginGrants.findGrant(grantId)
+      : null;
+    if (!stored) throw e2eeErrors.badGrant('login_grant_not_found');
+    const wallet = stored.wallet.toLowerCase();
+    await this.requireWalletOfCaller(callerProfileId, wallet);
+    if (stored.revoked_at !== null) {
+      throw e2eeErrors.badGrant('login_grant_revoked');
+    }
+    const parsed = parseSiweWebAuthMessage(stored.message);
+    if (
+      !parsed?.mlsDeviceGrant ||
+      computeDeviceGrantId(stored.message) !== grantId ||
+      parsed.address.toLowerCase() !== wallet
+    ) {
+      throw e2eeErrors.badGrant('login_grant_without_e2ee');
+    }
+    const grant: E2eeDeviceGrant = {
+      wallet,
+      device_key: parsed.mlsDeviceGrant.deviceKey,
+      ciphersuite: parsed.mlsDeviceGrant.ciphersuite,
+      issued_at: Math.floor(parsed.issuedAt.getTime() / 1000),
+      expires_at: parsed.mlsDeviceGrant.expiresAtSeconds,
+      origin: parsed.domain
+    };
+    const problem = findE2eeGrantProblem(grant, nowSeconds(this.deps));
+    if (problem) throw e2eeErrors.badGrant(problem);
+    const signature = stored.wallet_signature.toLowerCase();
+    return {
+      grant,
+      grantId,
+      signature,
+      // The login verified it; an EOA recovers, anything else was EIP-1271.
+      verifiedVia:
+        recoverMessageSigner(stored.message, signature) === wallet
+          ? 'eoa'
+          : 'eip1271',
+      grantMessage: stored.message
+    };
   }
 
   async registerDevice(
     callerProfileId: string,
     request: ApiE2eeRegisterDeviceRequest
   ): Promise<ApiE2eeDevice> {
-    const { grant, signature, verification } = await this.verifyRegistration(
+    const verified = await this.verifyRegistration(callerProfileId, request);
+    return this.storeDevice(callerProfileId, verified, request);
+  }
+
+  /** NC8: registration through a combined sign-in grant, no new signature. */
+  async registerLoginGrantDevice(
+    callerProfileId: string,
+    request: ApiE2eeRegisterLoginGrantDeviceRequest
+  ): Promise<ApiE2eeDevice> {
+    const verified = await this.verifyLoginGrantRegistration(
       callerProfileId,
       request
     );
+    return this.storeDevice(callerProfileId, verified, request);
+  }
+
+  private async storeDevice(
+    callerProfileId: string,
+    verified: VerifiedDeviceGrant,
+    request: { readonly label?: string; readonly platform: unknown }
+  ): Promise<ApiE2eeDevice> {
+    const { grant } = verified;
     const now = this.deps.now();
     const atSeconds = nowSeconds(this.deps);
     const fields = {
@@ -174,9 +295,10 @@ export class E2eeDevicesService {
       issued_at_seconds: grant.issued_at,
       expires_at_seconds: grant.expires_at,
       origin: grant.origin,
-      grant_id: verification.grantId,
-      wallet_signature: signature,
-      verified_via: verification.verifiedVia,
+      grant_id: verified.grantId,
+      wallet_signature: verified.signature,
+      verified_via: verified.verifiedVia,
+      grant_message: verified.grantMessage,
       label: sanitizeE2eeDeviceLabel(request.label),
       platform: String(request.platform),
       updated_at: now
@@ -184,6 +306,12 @@ export class E2eeDevicesService {
     const device = await this.db.executeNativeQueriesInTransaction(
       async (connection) => {
         await this.db.lockProfile(callerProfileId, connection);
+        if (
+          verified.grantMessage !== null &&
+          !(await this.db.lockUnrevokedLoginGrant(verified.grantId, connection))
+        ) {
+          throw e2eeErrors.badGrant('login_grant_revoked');
+        }
         const existing = await this.db.lockDevice(grant.device_key, connection);
         if (
           existing &&
@@ -262,7 +390,15 @@ export class E2eeDevicesService {
     if (target.profile_id !== callerProfileId) {
       throw e2eeErrors.notYourDevice();
     }
-    if (target.revoked_at !== null) return toApiE2eeDevice(target);
+    if (target.revocation_signature !== null) {
+      // Idempotent; also completes a sign-in grant revocation that failed.
+      if (target.grant_message !== null) {
+        await this.revokeLoginGrantOf(target, this.deps.now());
+      }
+      return toApiE2eeDevice(target);
+    }
+    // A device revoked by its sign-in grant (no signature yet) still takes a
+    // signed revocation, so members can verify it; it stays revoked.
     if (
       Math.abs(request.revoked_at - nowSeconds(this.deps)) >
       E2EE_REVOCATION_MAX_SKEW_SECONDS
@@ -294,7 +430,7 @@ export class E2eeDevicesService {
     const revoked = await this.db.executeNativeQueriesInTransaction(
       async (connection) => {
         const locked = await this.db.lockDevice(deviceKey, connection);
-        if (locked?.revoked_at === null) {
+        if (locked?.revocation_signature === null) {
           await this.db.markDeviceRevoked(
             {
               deviceKey,
@@ -305,9 +441,9 @@ export class E2eeDevicesService {
             },
             connection
           );
-          await this.db.removeDeviceFromAllRosters(deviceKey, now, connection);
-          await this.db.deleteKeyPackagesOfDevice(deviceKey, connection);
-          await this.db.deleteWelcomeDeliveriesOfDevice(deviceKey, connection);
+          if (locked.revoked_at === null) {
+            await this.stopDelivery(deviceKey, now, connection);
+          }
         }
         return (await this.db.getDevice(deviceKey, connection))!;
       }
@@ -316,8 +452,76 @@ export class E2eeDevicesService {
       profile_id: callerProfileId,
       device_key: deviceKey
     });
+    if (target.grant_message !== null) {
+      await this.revokeLoginGrantOf(target, now);
+    }
     await maybePruneE2ee(this.deps);
     return toApiE2eeDevice(revoked);
+  }
+
+  private async stopDelivery(
+    deviceKey: string,
+    now: number,
+    connection: ConnectionWrapper<unknown>
+  ): Promise<void> {
+    await this.db.removeDeviceFromAllRosters(deviceKey, now, connection);
+    await this.db.deleteKeyPackagesOfDevice(deviceKey, connection);
+    await this.db.deleteWelcomeDeliveriesOfDevice(deviceKey, connection);
+  }
+
+  /**
+   * A device enrolled by a combined sign-in grant was revoked: the same grant
+   * also stops signing drops (one grant, one revocation). Best effort.
+   */
+  private async revokeLoginGrantOf(
+    device: E2eeDeviceRow,
+    now: number
+  ): Promise<void> {
+    try {
+      await this.deps.loginGrants.revokeGrant(device.grant_id, now);
+    } catch (error) {
+      logger.error(
+        `Failed to revoke the sign-in grant of E2EE device ${device.device_key}`,
+        error
+      );
+    }
+  }
+
+  /**
+   * The wallet's session revoked a combined sign-in grant (DN1 device list):
+   * the encrypted-messages device it enrolled is revoked too. 6529.io stops
+   * delivery at once; the record carries no device signature, so other
+   * members see an unverified revocation (D109 2.4) until the device's own
+   * signed revocation or expiry. Idempotent.
+   */
+  async revokeDeviceOfLoginGrant(grantId: string): Promise<void> {
+    const device = await this.db.getUnrevokedDeviceOfLoginGrant(grantId);
+    if (!device) return;
+    const deviceKey = device.device_key;
+    const recipients = await this.db.getProfilesSharingRosters(
+      { deviceKey },
+      E2EE_MAX_DEVICE_GROUPS
+    );
+    const now = this.deps.now();
+    const revokedNow = await this.db.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const locked = await this.db.lockDevice(deviceKey, connection);
+        if (locked?.revoked_at !== null || locked.grant_id !== grantId) {
+          return false;
+        }
+        await this.db.markDeviceRevokedByGrant(
+          { deviceKey, revokedAtMs: now },
+          connection
+        );
+        await this.stopDelivery(deviceKey, now, connection);
+        return true;
+      }
+    );
+    if (!revokedNow) return;
+    await this.deps.events.deviceRevoked([device.profile_id, ...recipients], {
+      profile_id: device.profile_id,
+      device_key: deviceKey
+    });
   }
 
   private decodeKeyPackages(
@@ -408,28 +612,34 @@ export class E2eeDevicesService {
     return new Set(roster.map((row) => row.profile_id));
   }
 
+  /**
+   * Shared DM admission (blocks, DM policy, group membership) for every
+   * profile outside `bypass`, then device availability. Profiles that already
+   * share the group with the claimer device bypass admission.
+   */
   private async evaluate(
     callerProfileId: string,
     profileIds: string[],
     bypass: Set<string>
   ) {
-    const facts = await this.db.getPolicyFacts(
-      callerProfileId,
-      profileIds,
-      nowSeconds(this.deps)
-    );
+    const [admissions, deviceCounts] = await Promise.all([
+      this.deps.admission.evaluate(
+        callerProfileId,
+        profileIds.filter((profileId) => !bypass.has(profileId))
+      ),
+      this.db.getActiveDeviceCounts(profileIds, nowSeconds(this.deps))
+    ]);
     return new Map(
       profileIds.map((profileId) => {
-        const profileFacts = facts.get(profileId)!;
+        const activeDevices = deviceCounts.get(profileId) ?? 0;
         return [
           profileId,
           {
-            status: decideE2eePolicy({
-              callerProfileId,
-              facts: profileFacts,
-              bypass: bypass.has(profileId)
+            ...decideE2eeEligibility({
+              admission: admissions.get(profileId) ?? null,
+              activeDevices
             }),
-            activeDevices: profileFacts.activeDevices
+            activeDevices
           }
         ];
       })
@@ -457,7 +667,10 @@ export class E2eeDevicesService {
         return {
           profile_id: profileId,
           status: toApiEligibilityStatus(decision.status),
-          active_devices: decision.activeDevices
+          active_devices: decision.activeDevices,
+          ...(decision.reason
+            ? { reason: toApiEligibilityReason(decision.reason) }
+            : {})
         };
       })
     };

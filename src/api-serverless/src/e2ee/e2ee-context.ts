@@ -1,6 +1,8 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import { ethers } from 'ethers';
 import { E2eeEventPublisher, e2eeEventPublisher } from '@/api/e2ee/e2ee-events';
+import type { DirectMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.service';
+import { directMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.instance';
 import { verifyContractWalletSignatureHash } from '@/api/wallet-signatures/structured-wallet-signatures';
 import {
   E2EE_LAST_SEEN_UPDATE_INTERVAL_MS,
@@ -8,15 +10,42 @@ import {
   E2eeRateLimit
 } from '@/e2ee/e2ee.constants';
 import { E2eeDb, e2eeDb, E2eeDeviceRow } from '@/e2ee/e2ee.db';
+import {
+  createE2eeBlobStores,
+  deleteStoredE2eeBlobs,
+  E2eeBlobStores
+} from '@/e2ee/e2ee-blob-stores';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { isE2eeAttachmentsEnabled } from '@/e2ee/e2ee-flag';
 import { E2eeContractWalletVerifier } from '@/e2ee/e2ee-grant';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { identitiesDb } from '@/identities/identities.db';
+import { deviceSigningDb } from '@/api/device-signing/device-signing.db';
 import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
 
 const logger = Logger.get('E2EE');
+
+/** The signed-messages grant a combined sign-in stored (NC8). */
+export interface E2eeLoginGrantRecord {
+  readonly id: string;
+  readonly wallet: string;
+  readonly message: string;
+  readonly wallet_signature: string;
+  readonly revoked_at: number | string | null;
+}
+
+/** Combined sign-in grants, stored by the DN1 login (device_grants). */
+export interface E2eeLoginGrantStore {
+  findGrant(grantId: string): Promise<E2eeLoginGrantRecord | null>;
+  revokeGrant(grantId: string, revokedAtMs: number): Promise<void>;
+}
+
+export const deviceGrantsLoginGrantStore: E2eeLoginGrantStore = {
+  findGrant: (grantId) => deviceSigningDb.findGrantById(grantId, {}),
+  revokeGrant: (grantId, revokedAtMs) =>
+    deviceSigningDb.revokeGrant(grantId, revokedAtMs, {})
+};
 
 export interface E2eeServiceDeps {
   readonly db: E2eeDb;
@@ -28,6 +57,14 @@ export interface E2eeServiceDeps {
   readonly randomHex: (bytes: number) => string;
   /** E2EE_ATTACHMENTS_ENABLED: whether blob routes accept or serve chunks. */
   readonly attachmentsEnabled: () => boolean;
+  /**
+   * The platform's shared inbound DM admission (blocks, DM policy, group
+   * membership), the same rules legacy DMs use.
+   */
+  readonly admission: Pick<DirectMessageAdmissionService, 'evaluate'>;
+  readonly loginGrants: E2eeLoginGrantStore;
+  /** Attachment chunk storage (E2EE_BLOB_STORE: MySQL or S3). */
+  readonly blobStores: E2eeBlobStores;
 }
 
 /** Ethereum mainnet EIP-1271 checks (contract section 2.2 step 3). */
@@ -57,7 +94,10 @@ export const defaultE2eeServiceDeps: E2eeServiceDeps = {
   // Uniform [0, 1) from the CSPRNG (used for pruning odds and jitter).
   random: () => randomInt(0, 0x100000000) / 0x100000000,
   randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`,
-  attachmentsEnabled: () => isE2eeAttachmentsEnabled()
+  attachmentsEnabled: () => isE2eeAttachmentsEnabled(),
+  admission: directMessageAdmissionService,
+  loginGrants: deviceGrantsLoginGrantStore,
+  blobStores: createE2eeBlobStores({ rows: e2eeDb })
 };
 
 export function nowSeconds(deps: E2eeServiceDeps): number {
@@ -159,7 +199,11 @@ export async function filterByE2eeRateLimit(
 /** Blob retention runs on every blob upload so storage stays bounded. */
 export async function pruneE2eeBlobs(deps: E2eeServiceDeps): Promise<void> {
   try {
-    await deps.db.pruneExpiredBlobs(deps.now(), E2EE_RETENTION.blobBatchSize);
+    await deps.db.pruneExpiredBlobs(
+      deps.now(),
+      E2EE_RETENTION.blobBatchSize,
+      (blobs) => deleteStoredE2eeBlobs(deps.blobStores, blobs)
+    );
   } catch (error) {
     logger.warn(
       `E2EE blob pruning failed: ${(error as Error)?.message ?? 'unknown'}`
@@ -171,7 +215,9 @@ export async function pruneE2eeBlobs(deps: E2eeServiceDeps): Promise<void> {
 export async function maybePruneE2ee(deps: E2eeServiceDeps): Promise<void> {
   if (deps.random() >= E2EE_RETENTION.probability) return;
   try {
-    await deps.db.pruneExpired(deps.now());
+    await deps.db.pruneExpired(deps.now(), (blobs) =>
+      deleteStoredE2eeBlobs(deps.blobStores, blobs)
+    );
   } catch (error) {
     logger.warn(
       `E2EE retention pruning failed: ${(error as Error)?.message ?? 'unknown'}`

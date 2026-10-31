@@ -6,8 +6,11 @@ import {
   PrimaryGeneratedColumn
 } from 'typeorm';
 import {
+  E2EE_BACKUP_CHUNKS_TABLE,
+  E2EE_BACKUPS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
   E2EE_BLOBS_TABLE,
+  E2EE_CIPHERTEXT_OBJECTS_TABLE,
   E2EE_DEVICES_TABLE,
   E2EE_GROUP_EPOCHS_TABLE,
   E2EE_GROUP_ROSTER_TABLE,
@@ -32,6 +35,7 @@ import {
 @Entity(E2EE_DEVICES_TABLE)
 @Index('e2ee_devices_profile_idx', ['profile_id', 'revoked_at'])
 @Index('e2ee_devices_revoked_idx', ['revoked_at'])
+@Index('e2ee_devices_grant_idx', ['grant_id'])
 export class E2eeDeviceEntity {
   @PrimaryColumn({ type: 'varchar', length: 66 })
   readonly device_key!: string;
@@ -89,6 +93,12 @@ export class E2eeDeviceEntity {
 
   @Column({ type: 'varchar', length: 130, nullable: true, default: null })
   readonly revocation_signature!: string | null;
+
+  // Combined sign-in grant (NC8): the exact SIWE message the wallet signed;
+  // then grant_id is its EIP-191 hash and wallet_signature signs it. Null
+  // for EIP-712 MlsDeviceGrant grants.
+  @Column({ type: 'text', nullable: true, default: null })
+  readonly grant_message!: string | null;
 }
 
 /** Uploaded MLS KeyPackages. One-time rows are deleted when claimed. */
@@ -341,9 +351,27 @@ export class E2eeBlobEntity {
 
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly completed_at!: number | null;
+
+  /**
+   * Where the chunk bytes live (`mysql` or `s3`), fixed at creation and
+   * changed only by the S3 migration. Rows from before S3 storage are MySQL.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'mysql' })
+  readonly storage!: string;
+
+  /**
+   * The exact place the bytes were written (`s3://<bucket>/<prefix>` for
+   * S3, null for MySQL). The API reads and deletes a blob only at this
+   * location, so a settings change can never point it at the wrong objects.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  readonly storage_location!: string | null;
 }
 
-/** Ciphertext chunks of an encrypted attachment. */
+/**
+ * Chunk sizes of an encrypted attachment, plus the ciphertext bytes when the
+ * blob's storage is MySQL (empty for blobs stored in S3).
+ */
 @Entity(E2EE_BLOB_CHUNKS_TABLE)
 export class E2eeBlobChunkEntity {
   @PrimaryColumn({ type: 'varchar', length: 34 })
@@ -468,4 +496,94 @@ export class E2eeRateCounterEntity {
 
   @Column({ type: 'int', unsigned: true })
   readonly hits!: number;
+}
+
+/**
+ * One generation of a profile's encrypted message-history backup. The client
+ * encrypts everything under a random backup key; `envelope` holds that key
+ * wrapped by the user's recovery method and is opaque to the server. A
+ * profile has at most one active generation and at most one pending one
+ * (being uploaded before it replaces the active one).
+ */
+@Entity(E2EE_BACKUPS_TABLE)
+@Index('e2ee_backups_profile_idx', ['profile_id', 'active'])
+@Index('e2ee_backups_pending_idx', ['active', 'created_at'])
+export class E2eeBackupEntity {
+  @PrimaryColumn({ type: 'varchar', length: 34 })
+  readonly backup_id!: string;
+
+  @Column({ type: 'varchar', length: 100 })
+  readonly profile_id!: string;
+
+  @Column({ type: 'blob' })
+  readonly envelope!: Buffer;
+
+  @Column({ type: 'boolean', default: false })
+  readonly active!: boolean;
+
+  /** Next chunk sequence number (server assigned, starts at 1). */
+  @Column({ type: 'int', unsigned: true })
+  readonly next_seq!: number;
+
+  @Column({ type: 'int', unsigned: true })
+  readonly chunk_count!: number;
+
+  /** Ciphertext bytes of the generation's chunks. */
+  @Column({ type: 'bigint' })
+  readonly size!: number;
+
+  @Column({ type: 'varchar', length: 66 })
+  readonly created_by_device_key!: string;
+
+  @Column({ type: 'bigint' })
+  readonly created_at!: number;
+
+  @Column({ type: 'bigint' })
+  readonly updated_at!: number;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly activated_at!: number | null;
+}
+
+/** Metadata of one backup ciphertext chunk; bytes live in the object store. */
+@Entity(E2EE_BACKUP_CHUNKS_TABLE)
+@Index('e2ee_backup_chunks_profile_idx', ['profile_id'])
+export class E2eeBackupChunkEntity {
+  @PrimaryColumn({ type: 'varchar', length: 34 })
+  readonly backup_id!: string;
+
+  @PrimaryColumn({ type: 'int', unsigned: true })
+  readonly seq!: number;
+
+  @Column({ type: 'varchar', length: 100 })
+  readonly profile_id!: string;
+
+  @Column({ type: 'int', unsigned: true })
+  readonly size!: number;
+
+  @Column({ type: 'varchar', length: 200 })
+  readonly object_key!: string;
+
+  @Column({ type: 'varchar', length: 66 })
+  readonly uploader_device_key!: string;
+
+  @Column({ type: 'bigint' })
+  readonly created_at!: number;
+}
+
+/**
+ * MySQL implementation of the E2EE ciphertext object store: opaque client
+ * ciphertext addressed by key. An S3 implementation can replace it behind
+ * the same interface without changing the API.
+ */
+@Entity(E2EE_CIPHERTEXT_OBJECTS_TABLE)
+export class E2eeCiphertextObjectEntity {
+  @PrimaryColumn({ type: 'varchar', length: 200 })
+  readonly object_key!: string;
+
+  @Column({ type: 'mediumblob' })
+  readonly data!: Buffer;
+
+  @Column({ type: 'bigint' })
+  readonly created_at!: number;
 }

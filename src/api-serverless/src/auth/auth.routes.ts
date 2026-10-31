@@ -92,6 +92,9 @@ import {
   parseDeviceScopesParam
 } from '@/api/device-signing/device-grant-message';
 import { deviceGrantsService } from '@/api/device-signing/device-grants.service';
+import { MlsDeviceGrantRequest } from '@/api/device-signing/combined-device-grant';
+import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
+import { isE2eeEnabled } from '@/e2ee/e2ee-flag';
 
 const router = asyncRouter();
 const logger = Logger.get('AUTH_ROUTES');
@@ -110,6 +113,9 @@ interface SessionNonceQueryRequest {
   device_key?: string;
   device_key_type?: typeof DEVICE_GRANT_KEY_TYPE;
   device_scopes?: string;
+  // Combined grant: also grant this MLS device key for encrypted messages.
+  mls_device_key?: string;
+  mls_ciphersuite?: number;
 }
 
 interface ResolvedSessionNonceContext {
@@ -252,7 +258,35 @@ function resolveRequestedDeviceGrant(
   if (!nonceRequest.device_key || !scopes) {
     throw new BadRequestException('Invalid device grant request');
   }
-  return { deviceKey: nonceRequest.device_key, scopes };
+  return {
+    deviceKey: nonceRequest.device_key,
+    scopes,
+    mlsDevice: resolveRequestedMlsDevice(nonceRequest)
+  };
+}
+
+/**
+ * The MLS half of a combined grant request. A server with encrypted
+ * messages off, or on another ciphersuite, issues the signing grant alone;
+ * the client then enrolls encrypted messages with its own grant prompt.
+ */
+function resolveRequestedMlsDevice(
+  nonceRequest: SessionNonceQueryRequest
+): MlsDeviceGrantRequest | null {
+  const deviceKey = nonceRequest.mls_device_key;
+  const ciphersuite = nonceRequest.mls_ciphersuite;
+  if (deviceKey === undefined || ciphersuite === undefined) {
+    return null;
+  }
+  if (deviceKey === nonceRequest.device_key) {
+    throw new BadRequestException(
+      'The MLS device key must differ from the signing device key'
+    );
+  }
+  if (!isE2eeEnabled() || ciphersuite !== E2EE_CIPHERSUITE) {
+    return null;
+  }
+  return { deviceKey, ciphersuite };
 }
 
 router.post(
@@ -1283,11 +1317,17 @@ const SessionNonceQueryRequestSchema: Joi.ObjectSchema<SessionNonceQueryRequest>
       .pattern(/^0x[0-9a-f]{64}$/)
       .optional(),
     device_key_type: Joi.string().valid(DEVICE_GRANT_KEY_TYPE).optional(),
-    device_scopes: Joi.string().max(64).optional()
+    device_scopes: Joi.string().max(64).optional(),
+    mls_device_key: Joi.string()
+      .pattern(/^0x[0-9a-f]{64}$/)
+      .optional(),
+    mls_ciphersuite: Joi.number().integer().min(1).max(0xffff).optional()
   })
     .with('device_key', 'device_key_type')
     .with('device_key_type', 'device_key')
     .with('device_scopes', 'device_key')
+    .with('mls_device_key', ['device_key', 'mls_ciphersuite'])
+    .with('mls_ciphersuite', 'mls_device_key')
     .unknown(false);
 
 const ClientTypeSchema = Joi.string().valid('web', 'native', 'desktop');

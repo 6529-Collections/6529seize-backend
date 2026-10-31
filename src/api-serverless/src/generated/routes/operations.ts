@@ -127,10 +127,19 @@ import { ApiDropVoteEditLog } from '@/api/generated/models/ApiDropVoteEditLog';
 import { ApiDropVotersPage } from '@/api/generated/models/ApiDropVotersPage';
 import { ApiDropVoteSummary } from '@/api/generated/models/ApiDropVoteSummary';
 import { ApiE2eeAck } from '@/api/generated/models/ApiE2eeAck';
+import { ApiE2eeBackup } from '@/api/generated/models/ApiE2eeBackup';
+import { ApiE2eeBackupChunk } from '@/api/generated/models/ApiE2eeBackupChunk';
+import { ApiE2eeBackupChunkData } from '@/api/generated/models/ApiE2eeBackupChunkData';
+import { ApiE2eeBackupChunkPage } from '@/api/generated/models/ApiE2eeBackupChunkPage';
+import { ApiE2eeBackupChunkUpload } from '@/api/generated/models/ApiE2eeBackupChunkUpload';
+import { ApiE2eeBackupDeviceRequest } from '@/api/generated/models/ApiE2eeBackupDeviceRequest';
+import { ApiE2eeBackupStatus } from '@/api/generated/models/ApiE2eeBackupStatus';
 import { ApiE2eeBlob } from '@/api/generated/models/ApiE2eeBlob';
 import { ApiE2eeBlobChunk } from '@/api/generated/models/ApiE2eeBlobChunk';
 import { ApiE2eeClaimKeyPackagesRequest } from '@/api/generated/models/ApiE2eeClaimKeyPackagesRequest';
 import { ApiE2eeClaimKeyPackagesResponse } from '@/api/generated/models/ApiE2eeClaimKeyPackagesResponse';
+import { ApiE2eeCompactBackupRequest } from '@/api/generated/models/ApiE2eeCompactBackupRequest';
+import { ApiE2eeCreateBackupRequest } from '@/api/generated/models/ApiE2eeCreateBackupRequest';
 import { ApiE2eeCreateBlobRequest } from '@/api/generated/models/ApiE2eeCreateBlobRequest';
 import { ApiE2eeCreateGroupRequest } from '@/api/generated/models/ApiE2eeCreateGroupRequest';
 import { ApiE2eeDevice } from '@/api/generated/models/ApiE2eeDevice';
@@ -145,6 +154,7 @@ import { ApiE2eeLogItem } from '@/api/generated/models/ApiE2eeLogItem';
 import { ApiE2eeLogPage } from '@/api/generated/models/ApiE2eeLogPage';
 import { ApiE2eeMe } from '@/api/generated/models/ApiE2eeMe';
 import { ApiE2eeRegisterDeviceRequest } from '@/api/generated/models/ApiE2eeRegisterDeviceRequest';
+import { ApiE2eeRegisterLoginGrantDeviceRequest } from '@/api/generated/models/ApiE2eeRegisterLoginGrantDeviceRequest';
 import { ApiE2eeReport } from '@/api/generated/models/ApiE2eeReport';
 import { ApiE2eeReportHoldRequest } from '@/api/generated/models/ApiE2eeReportHoldRequest';
 import { ApiE2eeReportRequest } from '@/api/generated/models/ApiE2eeReportRequest';
@@ -1577,6 +1587,148 @@ export type GetDropSignedEventsRequest = Request<
   Record<string, never>
 >;
 
+export type E2eeDeleteBackupsPathParams = Record<string, never>;
+
+export type E2eeDeleteBackupsQuery = Record<string, never>;
+
+export type E2eeDeleteBackupsResponse = ApiE2eeAck;
+
+export type E2eeDeleteBackupsRequest = Request<
+  E2eeDeleteBackupsPathParams,
+  ApiResponse<E2eeDeleteBackupsResponse>,
+  never,
+  E2eeDeleteBackupsQuery,
+  Record<string, never>
+>;
+
+export type E2eeGetBackupStatusPathParams = Record<string, never>;
+
+export type E2eeGetBackupStatusQuery = Record<string, never>;
+
+export type E2eeGetBackupStatusResponse = ApiE2eeBackupStatus;
+
+export type E2eeGetBackupStatusRequest = Request<
+  E2eeGetBackupStatusPathParams,
+  ApiResponse<E2eeGetBackupStatusResponse>,
+  never,
+  E2eeGetBackupStatusQuery,
+  Record<string, never>
+>;
+
+export type E2eeCreateBackupPathParams = Record<string, never>;
+
+export type E2eeCreateBackupQuery = Record<string, never>;
+
+export type E2eeCreateBackupResponse = ApiE2eeBackup;
+
+export type E2eeCreateBackupRequest = Request<
+  E2eeCreateBackupPathParams,
+  ApiResponse<E2eeCreateBackupResponse>,
+  ApiE2eeCreateBackupRequest,
+  E2eeCreateBackupQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetBackupPathParams {
+  "backup_id": string;
+}
+
+export type E2eeGetBackupQuery = Record<string, never>;
+
+export type E2eeGetBackupResponse = ApiE2eeBackup;
+
+export type E2eeGetBackupRequest = Request<
+  E2eeGetBackupPathParams,
+  ApiResponse<E2eeGetBackupResponse>,
+  never,
+  E2eeGetBackupQuery,
+  Record<string, never>
+>;
+
+export interface E2eeActivateBackupPathParams {
+  "backup_id": string;
+}
+
+export type E2eeActivateBackupQuery = Record<string, never>;
+
+export type E2eeActivateBackupResponse = ApiE2eeBackup;
+
+export type E2eeActivateBackupRequest = Request<
+  E2eeActivateBackupPathParams,
+  ApiResponse<E2eeActivateBackupResponse>,
+  ApiE2eeBackupDeviceRequest,
+  E2eeActivateBackupQuery,
+  Record<string, never>
+>;
+
+export interface E2eeListBackupChunksPathParams {
+  "backup_id": string;
+}
+
+export interface E2eeListBackupChunksQuery {
+  "after_seq"?: number;
+  "limit"?: number;
+}
+
+export type E2eeListBackupChunksResponse = ApiE2eeBackupChunkPage;
+
+export type E2eeListBackupChunksRequest = Request<
+  E2eeListBackupChunksPathParams,
+  ApiResponse<E2eeListBackupChunksResponse>,
+  never,
+  E2eeListBackupChunksQuery,
+  Record<string, never>
+>;
+
+export interface E2eeAppendBackupChunkPathParams {
+  "backup_id": string;
+}
+
+export type E2eeAppendBackupChunkQuery = Record<string, never>;
+
+export type E2eeAppendBackupChunkResponse = ApiE2eeBackupChunk;
+
+export type E2eeAppendBackupChunkRequest = Request<
+  E2eeAppendBackupChunkPathParams,
+  ApiResponse<E2eeAppendBackupChunkResponse>,
+  ApiE2eeBackupChunkUpload,
+  E2eeAppendBackupChunkQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetBackupChunkPathParams {
+  "backup_id": string;
+  "seq": number;
+}
+
+export type E2eeGetBackupChunkQuery = Record<string, never>;
+
+export type E2eeGetBackupChunkResponse = ApiE2eeBackupChunkData;
+
+export type E2eeGetBackupChunkRequest = Request<
+  E2eeGetBackupChunkPathParams,
+  ApiResponse<E2eeGetBackupChunkResponse>,
+  never,
+  E2eeGetBackupChunkQuery,
+  Record<string, never>
+>;
+
+export interface E2eeCompactBackupPathParams {
+  "backup_id": string;
+}
+
+export type E2eeCompactBackupQuery = Record<string, never>;
+
+export type E2eeCompactBackupResponse = ApiE2eeBackup;
+
+export type E2eeCompactBackupRequest = Request<
+  E2eeCompactBackupPathParams,
+  ApiResponse<E2eeCompactBackupResponse>,
+  ApiE2eeCompactBackupRequest,
+  E2eeCompactBackupQuery,
+  Record<string, never>
+>;
+
 export type E2eeCreateBlobPathParams = Record<string, never>;
 
 export type E2eeCreateBlobQuery = Record<string, never>;
@@ -1751,6 +1903,20 @@ export type E2eeAckWelcomeRequest = Request<
   ApiResponse<E2eeAckWelcomeResponse>,
   never,
   E2eeAckWelcomeQuery,
+  Record<string, never>
+>;
+
+export type E2eeRegisterLoginGrantDevicePathParams = Record<string, never>;
+
+export type E2eeRegisterLoginGrantDeviceQuery = Record<string, never>;
+
+export type E2eeRegisterLoginGrantDeviceResponse = ApiE2eeDevice;
+
+export type E2eeRegisterLoginGrantDeviceRequest = Request<
+  E2eeRegisterLoginGrantDevicePathParams,
+  ApiResponse<E2eeRegisterLoginGrantDeviceResponse>,
+  ApiE2eeRegisterLoginGrantDeviceRequest,
+  E2eeRegisterLoginGrantDeviceQuery,
   Record<string, never>
 >;
 

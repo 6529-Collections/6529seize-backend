@@ -1657,10 +1657,34 @@ delivery fails open and the unfiltered notifications are inserted. The
 combined user-facing “Direct messages and wave activity” category, including
 new-wave, all-drops subscription, and priority-alert causes.
 
+Inbound direct-message admission has one decision point:
+`DirectMessageAdmissionService`
+(`src/api-serverless/src/direct-messages/direct-message-admission.service.ts`,
+pure rules in `src/direct-messages/direct-message-admission.ts`). It reads each
+recipient's policy, chosen group, follow relationship, and blocks in both
+directions in one set-based query, then decides in this order: a sender who
+blocked the recipient is told so; a recipient's block refuses with the generic
+"doesn't accept new messages" reason and is never disclosed; then `EVERYONE`,
+`PEOPLE_I_FOLLOW`, `NOBODY`, or `GROUP_MEMBERS`. `GROUP_MEMBERS` admits members
+of `direct_message_group_id`, evaluated with the platform group eligibility
+rules when the conversation starts (always fresh inside the creation
+transaction; non-transactional checks may reuse a result for 30 seconds per
+sender and group), and, while `direct_message_allow_people_i_follow` is on,
+people the recipient follows. A missing, hidden, or direct-message group fails
+closed to `PEOPLE_I_FOLLOW`, and the preferences API reports
+`direct_message_group_unavailable` so settings can warn. Refusals are 403s with
+stable `DM_*` codes plus the recipient handle; a group is named only when it is
+public. Legacy DM creation calls the service inside the group-creation
+transaction. E2EE eligibility, key-package claims and roster additions call the
+shared instance in `direct-message-admission.instance.ts` (roster additions
+inside the roster transaction with recipient rows locked); a target's block
+maps to `POLICY` there and only the caller's own block to `BLOCKED`.
+
 Roll out this table and its dependent workloads in this order:
 
 1. `dbMigrationsLoop` creates `profile_preferences` with legacy-compatible
-   defaults.
+   defaults (including the nullable `direct_message_group_id` and
+   `direct_message_allow_people_i_follow`, default true).
 2. Deploy `api` for preference endpoints, direct-message admission, and API
    notification writers.
 3. Deploy the `subscriptionsDaily` stack (including
@@ -2041,7 +2065,7 @@ For a documentation-only change, no Lambda redeploy is required.
 
 ### End-to-end encrypted messaging (D109)
 
-The API serves 26 generated `x-6529-router` routes under `/e2ee/...`
+The API serves 35 generated `x-6529-router` routes under `/e2ee/...`
 (handlers in `src/api-serverless/src/e2ee/`, database and pure helpers in
 `src/e2ee/`). They are on only when `E2EE_DMS_ENABLED` is `true`, or when it is
 unset and `NODE_ENV` is `local` or `development`; otherwise they return 404
@@ -2058,13 +2082,25 @@ New tables, created by `dbMigrationsLoop` entity sync: `e2ee_devices`,
 `e2ee_key_packages`, `e2ee_groups`, `e2ee_group_epochs`, `e2ee_group_roster`,
 `e2ee_log`, `e2ee_welcomes`, `e2ee_welcome_deliveries`, `e2ee_blobs`,
 `e2ee_blob_chunks`, `e2ee_reports`, `e2ee_report_access_log`,
-`e2ee_push_throttle` and `e2ee_rate_counters`. Their SQL is a private query
+`e2ee_push_throttle`, `e2ee_rate_counters`, and for encrypted message-history
+backups `e2ee_backups`, `e2ee_backup_chunks` and `e2ee_ciphertext_objects`
+(the MySQL implementation of the `E2eeCiphertextStore` object-store interface,
+which an S3 store can replace). Their SQL is a private query
 family: statements and bound values never reach logs. Encrypted attachment
-chunks live in MySQL in v1 with per-profile quotas (200 MiB per rolling 24 h,
-1 GiB live) and pruning on every upload, until they move to a private S3
-bucket or content-addressed pinning behind the same routes;
+chunk bytes sit behind `E2eeBlobStore`: MySQL (`e2ee_blob_chunks.data`, the
+default) or private S3 objects at `<E2EE_BLOB_S3_PREFIX>/<blob_id>/<index>`
+(`E2EE_BLOB_STORE=s3`; SSE-S3, no ACL, no CDN, streamed through the API after
+its membership checks). Each blob records its `storage` and exact S3
+location and is only read or deleted there; sizes stay in MySQL for the
+per-profile quotas (200 MiB per rolling 24 h, 1 GiB live), and pruning on
+every upload deletes S3 objects before rows. Misconfigured storage
+fails closed with 503 `E2EE_STORAGE_UNAVAILABLE`. The operator-only
+`dbMigrationsLoop` scope `e2ee-blobs-to-s3` copies MySQL blobs to S3 with
+read-back hash checks (dry run by default).
 `E2EE_ATTACHMENTS_ENABLED=false` (on by default) is a kill switch that makes
-the blob routes refuse before any database access. Reports (severe-harm categories only) are read
+the blob routes refuse before any database access. History backups
+(`/e2ee/backup`, `/e2ee/backups/...`) store only client ciphertext per profile
+(256 MiB quota) and have their own kill switch, `E2EE_BACKUPS_ENABLED=false`. Reports (severe-harm categories only) are read
 only by the group named in `E2EE_TRUST_AND_SAFETY_GROUP_ID` through
 `/e2ee/trust-and-safety/...`, with every read written to
 `e2ee_report_access_log`, and are deleted after 180 days unless on hold. Rate limits are
@@ -2082,6 +2118,25 @@ on the existing `firebase-push-notifications` queue.
 every registered device of profiles whose "Direct messages" notifications are
 on. No AI or moderation pipeline reads E2EE data. Deployment order:
 `dbMigrationsLoop`, then `pushNotificationsHandler`, then `api`.
+
+### Unencrypted DM retention (D146)
+
+Unencrypted ("legacy") DMs are waves with `is_direct_message` whose chat
+group is a DM group. From `LEGACY_DM_DELETION_CUTOFF` (default
+2026-12-01T00:00Z, `src/legacy-dm/legacy-dm-retention.ts`) the API refuses
+new drops in them and new DMs with `403 LEGACY_DM_CLOSED`. Their content is
+then deleted, except conversations under a legal hold (the CLI's `execute`
+requires `LEGACY_DM_HELD_WAVES` and never selects a held wave), by an
+explicit operator CLI, not a Lambda:
+`ops/scripts/legacy-dm-purge/cli.ts` (`plan` dry run, `execute`,
+`media-plan`, `media-execute`) over the table inventory in
+`src/legacy-dm/legacy-dm-purge.inventory.ts`, whose test fails when a new
+table references drops or waves without being listed. Media bytes in the
+images, ingest and attachments buckets are deleted from a write-ahead
+manifest. Backups and the rest of the procedure:
+[legacy-dm-deletion-runbook.md](./legacy-dm-deletion-runbook.md).
+`dbDumpsDaily` dumps a reviewed allowlist of public chain tables
+(`src/dbDumpsDaily/db-dumps-daily-tables.ts`).
 
 ### Private artwork documentation archive
 

@@ -14,6 +14,7 @@ import { ApiE2eeReport } from '@/api/generated/models/ApiE2eeReport';
 import { ApiE2eeReportRequest } from '@/api/generated/models/ApiE2eeReportRequest';
 import {
   E2EE_BLOB_QUOTA,
+  E2EE_RETENTION,
   E2EE_MAX_BLOB_BYTES,
   E2EE_MAX_BLOB_CHUNK_BYTES,
   E2EE_MAX_BLOB_CHUNKS,
@@ -21,10 +22,21 @@ import {
   E2EE_RATE_LIMITS
 } from '@/e2ee/e2ee.constants';
 import { E2eeBlobRow } from '@/e2ee/e2ee.db';
+import { E2eeBlobStorageError, E2eeBlobStore } from '@/e2ee/e2ee-blob-store';
 import { e2eeMessageDigest, verifyE2eeEd25519 } from '@/e2ee/e2ee-digests';
 import { decodeE2eeBase64 } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
+import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
+
+const logger = Logger.get('E2EE_BLOBS');
+
+/**
+ * Incomplete uploads stop accepting writes this long before retention may
+ * delete them, so a late chunk can never land after retention deleted the
+ * blob's objects (which would orphan it).
+ */
+const EXPIRING_UPLOAD_MARGIN_MS = 10 * 60 * 1000;
 
 export class E2eeBlobsService {
   constructor(private readonly deps: E2eeServiceDeps) {}
@@ -66,6 +78,8 @@ export class E2eeBlobsService {
     if (!roster.some((row) => row.device_key === request.uploader_device_key)) {
       throw e2eeErrors.notMember();
     }
+    // Misconfigured storage refuses here, before the upload counts.
+    const store = this.deps.blobStores.forNewBlob();
     await enforceE2eeRateLimit(
       this.deps,
       E2EE_RATE_LIMITS.blobUploadsPerProfile,
@@ -80,7 +94,9 @@ export class E2eeBlobsService {
       chunk_count: request.chunk_count,
       complete: false,
       created_at: this.deps.now(),
-      completed_at: null
+      completed_at: null,
+      storage: store.storage,
+      storage_location: store.location
     };
     await pruneE2eeBlobs(this.deps);
     await this.db.executeNativeQueriesInTransaction(async (connection) => {
@@ -110,6 +126,13 @@ export class E2eeBlobsService {
   ): Promise<E2eeBlobRow> {
     const blob = await this.db.lockBlob(blobId, connection);
     if (!blob) throw e2eeErrors.notFound('Attachment');
+    const expiresAt =
+      Number(blob.created_at) +
+      E2EE_RETENTION.incompleteBlobsMs -
+      EXPIRING_UPLOAD_MARGIN_MS;
+    if (!blob.complete && this.deps.now() >= expiresAt) {
+      throw e2eeErrors.notFound('Attachment');
+    }
     if (blob.uploader_profile_id !== callerProfileId) {
       throw e2eeErrors.forbidden('Only the uploader can change an attachment');
     }
@@ -155,9 +178,11 @@ export class E2eeBlobsService {
         if (others + data.length > Number(locked.size)) {
           throw e2eeErrors.tooLarge('Chunks beyond the declared size');
         }
-        await this.db.upsertBlobChunk(
-          { blobId, index, data, createdAt: this.deps.now() },
-          connection
+        await this.storeCall(locked, (store) =>
+          store.putChunk(
+            { blobId, index, data, createdAt: this.deps.now() },
+            connection
+          )
         );
         return locked;
       }
@@ -213,9 +238,52 @@ export class E2eeBlobsService {
     if (!(await this.db.hasRosterHistory(blob.group_handle, deviceKey))) {
       throw e2eeErrors.notMember();
     }
-    const data = await this.db.getBlobChunkData(blobId, index);
-    if (data === null) throw e2eeErrors.notFound('Attachment chunk');
-    return { data };
+    if (index >= Number(blob.chunk_count)) {
+      throw e2eeErrors.notFound('Attachment chunk');
+    }
+    let data = await this.storeCall(blob, (store) =>
+      store.getChunk(blobId, index)
+    );
+    if (data === null && blob.storage === 'mysql') {
+      // The S3 migration may have moved the blob between the two reads.
+      const current = await this.db.getBlob(blobId);
+      if (current?.complete && current.storage !== blob.storage) {
+        data = await this.storeCall(current, (store) =>
+          store.getChunk(blobId, index)
+        );
+      }
+    }
+    if (data === null) {
+      if (blob.storage !== 'mysql') {
+        logger.warn(
+          `[E2EE BLOB CHUNK MISSING] [STORAGE ${blob.storage}] [BLOB ${blobId}] [INDEX ${index}]`
+        );
+      }
+      throw e2eeErrors.notFound('Attachment chunk');
+    }
+    return { data: data.toString('base64') };
+  }
+
+  /**
+   * Runs a store operation for the blob's storage. External store failures
+   * (S3 unreachable, access denied, bucket missing) become 503
+   * E2EE_STORAGE_UNAVAILABLE and are logged without any chunk bytes; database
+   * errors propagate unchanged.
+   */
+  private async storeCall<T>(
+    blob: Pick<E2eeBlobRow, 'blob_id' | 'storage' | 'storage_location'>,
+    operation: (store: E2eeBlobStore) => Promise<T>
+  ): Promise<T> {
+    const store = this.deps.blobStores.forBlob(blob);
+    try {
+      return await operation(store);
+    } catch (error) {
+      if (!(error instanceof E2eeBlobStorageError)) throw error;
+      logger.error(
+        `[E2EE BLOB STORAGE ERROR] [STORAGE ${store.storage}] [BLOB ${blob.blob_id}] ${error.message}`
+      );
+      throw e2eeErrors.storageUnavailable();
+    }
   }
 
   async report(

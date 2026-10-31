@@ -190,7 +190,8 @@ describe('SIWE device grant messages', () => {
         nonce: 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
         issuedAt,
         expirationTime: new Date(issuedAt.getTime() + 5 * 60 * 1000),
-        deviceGrant: parseDeviceGrantUrn(VECTOR_URN)
+        deviceGrant: parseDeviceGrantUrn(VECTOR_URN),
+        mlsDeviceGrant: null
       },
       apiAudience: 'api.6529.io',
       jwtSecret: JWT_SECRET

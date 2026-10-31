@@ -429,6 +429,13 @@ export * from '../models/ApiDropsLeaderboardPage';
 export * from '../models/ApiDropsLeaderboardPageV2';
 export * from '../models/ApiDropsPage';
 export * from '../models/ApiE2eeAck';
+export * from '../models/ApiE2eeBackup';
+export * from '../models/ApiE2eeBackupChunk';
+export * from '../models/ApiE2eeBackupChunkData';
+export * from '../models/ApiE2eeBackupChunkPage';
+export * from '../models/ApiE2eeBackupChunkUpload';
+export * from '../models/ApiE2eeBackupDeviceRequest';
+export * from '../models/ApiE2eeBackupStatus';
 export * from '../models/ApiE2eeBlob';
 export * from '../models/ApiE2eeBlobChunk';
 export * from '../models/ApiE2eeClaimKeyPackagesRequest';
@@ -436,6 +443,8 @@ export * from '../models/ApiE2eeClaimKeyPackagesResponse';
 export * from '../models/ApiE2eeClaimResult';
 export * from '../models/ApiE2eeClaimTarget';
 export * from '../models/ApiE2eeClaimedKeyPackage';
+export * from '../models/ApiE2eeCompactBackupRequest';
+export * from '../models/ApiE2eeCreateBackupRequest';
 export * from '../models/ApiE2eeCreateBlobRequest';
 export * from '../models/ApiE2eeCreateGroupRequest';
 export * from '../models/ApiE2eeDevice';
@@ -457,6 +466,7 @@ export * from '../models/ApiE2eeLogPage';
 export * from '../models/ApiE2eeMe';
 export * from '../models/ApiE2eeNotifyHint';
 export * from '../models/ApiE2eeRegisterDeviceRequest';
+export * from '../models/ApiE2eeRegisterLoginGrantDeviceRequest';
 export * from '../models/ApiE2eeReport';
 export * from '../models/ApiE2eeReportCategory';
 export * from '../models/ApiE2eeReportHoldRequest';
@@ -1395,6 +1405,13 @@ import { ApiDropsLeaderboardPage } from '../models/ApiDropsLeaderboardPage';
 import { ApiDropsLeaderboardPageV2 } from '../models/ApiDropsLeaderboardPageV2';
 import { ApiDropsPage } from '../models/ApiDropsPage';
 import { ApiE2eeAck } from '../models/ApiE2eeAck';
+import { ApiE2eeBackup } from '../models/ApiE2eeBackup';
+import { ApiE2eeBackupChunk } from '../models/ApiE2eeBackupChunk';
+import { ApiE2eeBackupChunkData } from '../models/ApiE2eeBackupChunkData';
+import { ApiE2eeBackupChunkPage } from '../models/ApiE2eeBackupChunkPage';
+import { ApiE2eeBackupChunkUpload } from '../models/ApiE2eeBackupChunkUpload';
+import { ApiE2eeBackupDeviceRequest } from '../models/ApiE2eeBackupDeviceRequest';
+import { ApiE2eeBackupStatus } from '../models/ApiE2eeBackupStatus';
 import { ApiE2eeBlob } from '../models/ApiE2eeBlob';
 import { ApiE2eeBlobChunk } from '../models/ApiE2eeBlobChunk';
 import { ApiE2eeClaimKeyPackagesRequest } from '../models/ApiE2eeClaimKeyPackagesRequest';
@@ -1402,16 +1419,18 @@ import { ApiE2eeClaimKeyPackagesResponse } from '../models/ApiE2eeClaimKeyPackag
 import { ApiE2eeClaimResult    } from '../models/ApiE2eeClaimResult';
 import { ApiE2eeClaimTarget } from '../models/ApiE2eeClaimTarget';
 import { ApiE2eeClaimedKeyPackage } from '../models/ApiE2eeClaimedKeyPackage';
+import { ApiE2eeCompactBackupRequest } from '../models/ApiE2eeCompactBackupRequest';
+import { ApiE2eeCreateBackupRequest } from '../models/ApiE2eeCreateBackupRequest';
 import { ApiE2eeCreateBlobRequest } from '../models/ApiE2eeCreateBlobRequest';
 import { ApiE2eeCreateGroupRequest } from '../models/ApiE2eeCreateGroupRequest';
-import { ApiE2eeDevice     , ApiE2eeDeviceVerifiedViaEnum         } from '../models/ApiE2eeDevice';
+import { ApiE2eeDevice     , ApiE2eeDeviceVerifiedViaEnum          } from '../models/ApiE2eeDevice';
 import { ApiE2eeDeviceGrant } from '../models/ApiE2eeDeviceGrant';
 import { ApiE2eeDeviceGroup } from '../models/ApiE2eeDeviceGroup';
 import { ApiE2eeDeviceLookupRequest } from '../models/ApiE2eeDeviceLookupRequest';
 import { ApiE2eeDeviceLookupResponse } from '../models/ApiE2eeDeviceLookupResponse';
 import { ApiE2eeDevicePlatform } from '../models/ApiE2eeDevicePlatform';
 import { ApiE2eeDeviceRevocation } from '../models/ApiE2eeDeviceRevocation';
-import { ApiE2eeEligibility    } from '../models/ApiE2eeEligibility';
+import { ApiE2eeEligibility   , ApiE2eeEligibilityReasonEnum   } from '../models/ApiE2eeEligibility';
 import { ApiE2eeEligibilityRequest } from '../models/ApiE2eeEligibilityRequest';
 import { ApiE2eeEligibilityResponse } from '../models/ApiE2eeEligibilityResponse';
 import { ApiE2eeEligibilityStatus } from '../models/ApiE2eeEligibilityStatus';
@@ -1423,6 +1442,7 @@ import { ApiE2eeLogPage } from '../models/ApiE2eeLogPage';
 import { ApiE2eeMe } from '../models/ApiE2eeMe';
 import { ApiE2eeNotifyHint , ApiE2eeNotifyHintKindEnum   } from '../models/ApiE2eeNotifyHint';
 import { ApiE2eeRegisterDeviceRequest     } from '../models/ApiE2eeRegisterDeviceRequest';
+import { ApiE2eeRegisterLoginGrantDeviceRequest    } from '../models/ApiE2eeRegisterLoginGrantDeviceRequest';
 import { ApiE2eeReport } from '../models/ApiE2eeReport';
 import { ApiE2eeReportCategory } from '../models/ApiE2eeReportCategory';
 import { ApiE2eeReportHoldRequest } from '../models/ApiE2eeReportHoldRequest';
@@ -1653,7 +1673,7 @@ import { ApiProfileCmsWalletGalleryWallet    , ApiProfileCmsWalletGalleryWalletS
 import { ApiProfileMin                        } from '../models/ApiProfileMin';
 import { ApiProfileMinsPage } from '../models/ApiProfileMinsPage';
 import { ApiProfileNotificationCategories } from '../models/ApiProfileNotificationCategories';
-import { ApiProfilePreferences, ApiProfilePreferencesDirectMessagePolicyEnum  , ApiProfilePreferencesNotificationLevelEnum    } from '../models/ApiProfilePreferences';
+import { ApiProfilePreferences, ApiProfilePreferencesDirectMessagePolicyEnum     , ApiProfilePreferencesNotificationLevelEnum    } from '../models/ApiProfilePreferences';
 import { ApiProfileProxy } from '../models/ApiProfileProxy';
 import { ApiProfileProxyAction             } from '../models/ApiProfileProxyAction';
 import { ApiProfileProxyActionType } from '../models/ApiProfileProxyActionType';
@@ -1704,7 +1724,7 @@ import { ApiSessionLoginRequest, ApiSessionLoginRequestClientTypeEnum      , Api
 import { ApiSessionLogoutNativeRequest, ApiSessionLogoutNativeRequestClientTypeEnum      } from '../models/ApiSessionLogoutNativeRequest';
 import { ApiSessionLogoutWebRequest, ApiSessionLogoutWebRequestClientTypeEnum     } from '../models/ApiSessionLogoutWebRequest';
 import { ApiSessionNativeResponse    , ApiSessionNativeResponseClientTypeEnum     } from '../models/ApiSessionNativeResponse';
-import { ApiSessionNonceQuery , ApiSessionNonceQueryClientTypeEnum    , ApiSessionNonceQueryDeviceKeyTypeEnum    } from '../models/ApiSessionNonceQuery';
+import { ApiSessionNonceQuery , ApiSessionNonceQueryClientTypeEnum    , ApiSessionNonceQueryDeviceKeyTypeEnum      } from '../models/ApiSessionNonceQuery';
 import { ApiSessionNonceResponse } from '../models/ApiSessionNonceResponse';
 import { ApiSessionRefreshNativeRequest, ApiSessionRefreshNativeRequestClientTypeEnum      } from '../models/ApiSessionRefreshNativeRequest';
 import { ApiSessionRefreshWebRequest, ApiSessionRefreshWebRequestClientTypeEnum    } from '../models/ApiSessionRefreshWebRequest';
@@ -1757,7 +1777,7 @@ import { ApiUpcomingMemeSubscriptionStatus   , ApiUpcomingMemeSubscriptionStatus
 import { ApiUpdateCompetitionRequest } from '../models/ApiUpdateCompetitionRequest';
 import { ApiUpdateDropRequest } from '../models/ApiUpdateDropRequest';
 import { ApiUpdateProfileNotificationCategories } from '../models/ApiUpdateProfileNotificationCategories';
-import { ApiUpdateProfilePreferences, ApiUpdateProfilePreferencesDirectMessagePolicyEnum  , ApiUpdateProfilePreferencesNotificationLevelEnum    } from '../models/ApiUpdateProfilePreferences';
+import { ApiUpdateProfilePreferences, ApiUpdateProfilePreferencesDirectMessagePolicyEnum    , ApiUpdateProfilePreferencesNotificationLevelEnum    } from '../models/ApiUpdateProfilePreferences';
 import { ApiUpdateProxyActionRequest } from '../models/ApiUpdateProxyActionRequest';
 import { ApiUpdateWaveDecisionPause } from '../models/ApiUpdateWaveDecisionPause';
 import { ApiUpdateWaveNotificationPreferencesRequest } from '../models/ApiUpdateWaveNotificationPreferencesRequest';
@@ -2060,6 +2080,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiDropType",
     "ApiE2eeDeviceVerifiedViaEnum",
     "ApiE2eeDevicePlatform",
+    "ApiE2eeEligibilityReasonEnum",
     "ApiE2eeEligibilityStatus",
     "ApiE2eeLogItemTypeEnum",
     "ApiE2eeLogItemKindEnum",
@@ -2630,6 +2651,13 @@ let typeMap: {[index: string]: any} = {
     "ApiDropsLeaderboardPageV2": ApiDropsLeaderboardPageV2,
     "ApiDropsPage": ApiDropsPage,
     "ApiE2eeAck": ApiE2eeAck,
+    "ApiE2eeBackup": ApiE2eeBackup,
+    "ApiE2eeBackupChunk": ApiE2eeBackupChunk,
+    "ApiE2eeBackupChunkData": ApiE2eeBackupChunkData,
+    "ApiE2eeBackupChunkPage": ApiE2eeBackupChunkPage,
+    "ApiE2eeBackupChunkUpload": ApiE2eeBackupChunkUpload,
+    "ApiE2eeBackupDeviceRequest": ApiE2eeBackupDeviceRequest,
+    "ApiE2eeBackupStatus": ApiE2eeBackupStatus,
     "ApiE2eeBlob": ApiE2eeBlob,
     "ApiE2eeBlobChunk": ApiE2eeBlobChunk,
     "ApiE2eeClaimKeyPackagesRequest": ApiE2eeClaimKeyPackagesRequest,
@@ -2637,6 +2665,8 @@ let typeMap: {[index: string]: any} = {
     "ApiE2eeClaimResult": ApiE2eeClaimResult,
     "ApiE2eeClaimTarget": ApiE2eeClaimTarget,
     "ApiE2eeClaimedKeyPackage": ApiE2eeClaimedKeyPackage,
+    "ApiE2eeCompactBackupRequest": ApiE2eeCompactBackupRequest,
+    "ApiE2eeCreateBackupRequest": ApiE2eeCreateBackupRequest,
     "ApiE2eeCreateBlobRequest": ApiE2eeCreateBlobRequest,
     "ApiE2eeCreateGroupRequest": ApiE2eeCreateGroupRequest,
     "ApiE2eeDevice": ApiE2eeDevice,
@@ -2656,6 +2686,7 @@ let typeMap: {[index: string]: any} = {
     "ApiE2eeMe": ApiE2eeMe,
     "ApiE2eeNotifyHint": ApiE2eeNotifyHint,
     "ApiE2eeRegisterDeviceRequest": ApiE2eeRegisterDeviceRequest,
+    "ApiE2eeRegisterLoginGrantDeviceRequest": ApiE2eeRegisterLoginGrantDeviceRequest,
     "ApiE2eeReport": ApiE2eeReport,
     "ApiE2eeReportHoldRequest": ApiE2eeReportHoldRequest,
     "ApiE2eeReportRequest": ApiE2eeReportRequest,

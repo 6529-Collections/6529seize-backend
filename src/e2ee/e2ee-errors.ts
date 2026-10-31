@@ -1,5 +1,16 @@
 import { ApiErrorDetails, CustomApiCompliantException } from '@/exceptions';
 import { E2EE_ERROR_CODES } from '@/e2ee/e2ee.constants';
+import {
+  DIRECT_MESSAGE_ADMISSION_ERROR_CODES,
+  DirectMessageRefusalReason
+} from '@/direct-messages/direct-message-admission';
+
+/** The shared DM admission code (DM_*) as error details, when known. */
+function admissionDetails(reason?: DirectMessageRefusalReason) {
+  return reason
+    ? { reason: DIRECT_MESSAGE_ADMISSION_ERROR_CODES[reason] }
+    : undefined;
+}
 
 export type E2eeErrorCode =
   (typeof E2EE_ERROR_CODES)[keyof typeof E2EE_ERROR_CODES];
@@ -82,21 +93,29 @@ export const e2eeErrors = {
       E2EE_ERROR_CODES.NOT_MEMBER,
       'The device is not a member of this group'
     ),
-  policy: (profileId?: string) =>
+  /**
+   * The target does not admit the caller. A target's block of the caller is
+   * reported here too, with the same copy as a NOBODY policy, so it is never
+   * disclosed.
+   */
+  policy: (profileId?: string, reason?: DirectMessageRefusalReason) =>
     new E2eeApiException(
       403,
       E2EE_ERROR_CODES.POLICY,
       profileId
         ? `Profile ${profileId} does not accept encrypted messages from you`
-        : 'The recipient does not accept encrypted messages from you'
+        : 'The recipient does not accept encrypted messages from you',
+      admissionDetails(reason)
     ),
+  /** Only the caller's own block of the target, which the caller can undo. */
   blocked: (profileId?: string) =>
     new E2eeApiException(
       403,
       E2EE_ERROR_CODES.BLOCKED,
       profileId
-        ? `You and profile ${profileId} cannot message each other`
-        : 'You and the recipient cannot message each other'
+        ? `You have blocked profile ${profileId}. Unblock them to message them`
+        : 'You have blocked the recipient. Unblock them to message them',
+      admissionDetails(DirectMessageRefusalReason.SENDER_BLOCKED_RECIPIENT)
     ),
   tooLarge: (what: string) =>
     new E2eeApiException(
@@ -116,6 +135,26 @@ export const e2eeErrors = {
       E2EE_ERROR_CODES.ATTACHMENTS_DISABLED,
       'Encrypted attachments are not available'
     ),
+  backupsDisabled: () =>
+    new E2eeApiException(
+      404,
+      E2EE_ERROR_CODES.BACKUPS_DISABLED,
+      'Encrypted message backups are not available'
+    ),
+  backupQuota: (quotaBytes: number) =>
+    new E2eeApiException(
+      413,
+      E2EE_ERROR_CODES.BACKUP_QUOTA,
+      'The encrypted backup storage quota is used up',
+      { quota_bytes: quotaBytes }
+    ),
   notFound: (what: string) =>
-    new E2eeApiException(404, E2EE_ERROR_CODES.NOT_FOUND, `${what} not found`)
+    new E2eeApiException(404, E2EE_ERROR_CODES.NOT_FOUND, `${what} not found`),
+  /** Attachment storage is misconfigured or unreachable (fails closed). */
+  storageUnavailable: () =>
+    new E2eeApiException(
+      503,
+      E2EE_ERROR_CODES.STORAGE_UNAVAILABLE,
+      'Encrypted attachment storage is unavailable; try again later'
+    )
 };

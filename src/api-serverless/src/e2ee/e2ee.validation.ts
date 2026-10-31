@@ -1,5 +1,6 @@
 import * as Joi from 'joi';
 import {
+  E2EE_BACKUP_LIST_MAX_LIMIT,
   E2EE_CIPHERSUITE,
   E2EE_DEVICE_PLATFORMS,
   E2EE_GRANT_ORIGIN_MAX_LENGTH,
@@ -78,6 +79,14 @@ export const e2eeRegisterDeviceSchema = Joi.object({
     .pattern(E2EE_WALLET_SIGNATURE_PATTERN)
     .max(20002)
     .required(),
+  label: Joi.string().allow('').max(200).optional(),
+  platform: Joi.string()
+    .valid(...E2EE_DEVICE_PLATFORMS)
+    .required()
+});
+
+export const e2eeRegisterLoginGrantDeviceSchema = Joi.object({
+  grant_id: hex32().required(),
   label: Joi.string().allow('').max(200).optional(),
   platform: Joi.string()
     .valid(...E2EE_DEVICE_PLATFORMS)
@@ -210,4 +219,42 @@ export const e2eeReportSchema = Joi.object({
     .valid(...Object.values(ApiE2eeReportCategory))
     .required(),
   notes: Joi.string().allow('').max(E2EE_MAX_REPORT_NOTES_LENGTH).optional()
+});
+
+export const e2eeBackupIdParamSchema = Joi.string()
+  .pattern(E2EE_BLOB_ID_PATTERN)
+  .required();
+export const e2eeBackupSeqParamSchema = Joi.number()
+  .integer()
+  .min(1)
+  .max(UINT32_MAX)
+  .required();
+
+export const e2eeCreateBackupSchema = Joi.object({
+  backup_id: Joi.string().pattern(E2EE_BLOB_ID_PATTERN).required(),
+  envelope: base64().required(),
+  device_key: hex32().required()
+});
+
+export const e2eeBackupChunkUploadSchema = Joi.object({
+  device_key: hex32().required(),
+  data: base64().required()
+});
+
+export const e2eeBackupDeviceSchema = Joi.object({
+  device_key: hex32().required()
+});
+
+export const e2eeCompactBackupSchema = Joi.object({
+  device_key: hex32().required(),
+  through_seq: Joi.number().integer().min(1).max(UINT32_MAX).required()
+});
+
+export const e2eeBackupChunkListQuerySchema = Joi.object({
+  after_seq: Joi.number().integer().min(0).max(UINT32_MAX).default(0),
+  limit: Joi.number()
+    .integer()
+    .min(1)
+    .max(E2EE_BACKUP_LIST_MAX_LIMIT)
+    .optional()
 });
