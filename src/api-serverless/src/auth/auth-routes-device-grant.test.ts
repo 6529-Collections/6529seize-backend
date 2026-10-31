@@ -162,8 +162,15 @@ describe('wallet auth device grants', () => {
           `^urn:6529:device-grant:v1:ed25519:${DEVICE_KEY.slice(2)}:post\\.react:\\d+$`
         )
       );
-      expect(parsed.statement).toContain('It may post and react.');
-      expect(parsed.statement).toContain('(device key d75a9801...f707511a)');
+      expect(parsed.statement).toMatch(
+        /^Sign in to 6529 and turn on signed messages on this device until \d{1,2} [A-Z][a-z]{2} \d{4}\. /
+      );
+      expect(parsed.statement).toContain(
+        'This device will sign your posts and reactions so anyone can verify they came from your wallet.'
+      );
+      expect(parsed.statement).toMatch(
+        /\(Device key d75a9801\.\.\.f707511a\)$/
+      );
     });
 
     it('uses the default scopes', () => {
