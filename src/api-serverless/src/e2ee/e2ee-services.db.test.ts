@@ -16,6 +16,11 @@ import {
   IDENTITY_SUBSCRIPTIONS_TABLE,
   PROFILE_PREFERENCES_TABLE
 } from '@/constants/db-tables';
+import {
+  E2EE_CIPHERSUITE,
+  E2EE_ENTRY_BUCKETS,
+  E2EE_MAX_ENTRY_AND_WELCOME_BYTES
+} from '@/e2ee/e2ee.constants';
 import { E2eeDb } from '@/e2ee/e2ee.db';
 import {
   E2EE_ZERO_32,
@@ -177,7 +182,7 @@ describeWithSeed('E2EE delivery service', [], () => {
     return {
       wallet: profile.wallet.address.toLowerCase(),
       device_key: key.publicKey,
-      ciphersuite: 1,
+      ciphersuite: E2EE_CIPHERSUITE,
       issued_at: issuedAt,
       expires_at: Math.floor(issuedAt / 60) * 60 + 180 * 86400,
       origin: 'staging.6529.io'
@@ -287,9 +292,11 @@ describeWithSeed('E2EE delivery service', [], () => {
     rosterAdd?: string[];
     rosterRemove?: string[];
     welcomeTargets?: string[];
+    entryBytes?: number;
+    welcomeBytes?: number;
   }) {
     const kind = input.kind ?? E2eeEntryKind.COMMIT;
-    const data = randomBytes(2048);
+    const data = randomBytes(input.entryBytes ?? 2048);
     const entryHash = keccak256(data);
     const isCommit = kind === E2eeEntryKind.COMMIT;
     const epochCommitment = isCommit
@@ -323,7 +330,7 @@ describeWithSeed('E2EE delivery service', [], () => {
       roster_remove: input.rosterRemove,
       welcome: input.welcomeTargets
         ? {
-            data: randomBytes(300).toString('base64'),
+            data: randomBytes(input.welcomeBytes ?? 300).toString('base64'),
             targets: input.welcomeTargets
           }
         : undefined
@@ -339,6 +346,8 @@ describeWithSeed('E2EE delivery service', [], () => {
       rosterAdd?: string[];
       rosterRemove?: string[];
       welcomeTargets?: string[];
+      entryBytes?: number;
+      welcomeBytes?: number;
     } = {}
   ) {
     const epoch = group.keys.length - 1;
@@ -1126,6 +1135,46 @@ describeWithSeed('E2EE delivery service', [], () => {
       expect(leftover).toEqual([]);
     });
 
+    it('gives a welcome what the entry leaves of the shared budget', async () => {
+      const alice = aProfile();
+      const bob = aProfile();
+      const carol = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const bobDevice = await registerDevice(bob);
+      const carolDevice = await registerDevice(carol);
+      const group = await createGroup(alice, aliceDevice);
+      // Beside a 2 MiB entry the welcome keeps 1.25 MiB.
+      const maxEntry = E2EE_ENTRY_BUCKETS.at(-1)!;
+      await expectE2eeError(
+        commit(alice, group, aliceDevice, {
+          rosterAdd: [bobDevice.publicKey],
+          welcomeTargets: [bobDevice.publicKey],
+          entryBytes: maxEntry,
+          welcomeBytes: E2EE_MAX_ENTRY_AND_WELCOME_BYTES - maxEntry + 1
+        }),
+        'E2EE_TOO_LARGE'
+      );
+      await commit(alice, group, aliceDevice, {
+        rosterAdd: [bobDevice.publicKey],
+        welcomeTargets: [bobDevice.publicKey],
+        entryBytes: maxEntry,
+        welcomeBytes: E2EE_MAX_ENTRY_AND_WELCOME_BYTES - maxEntry
+      });
+      // Beside a small entry an X-Wing welcome of 3 MiB fits.
+      await commit(alice, group, aliceDevice, {
+        rosterAdd: [carolDevice.publicKey],
+        welcomeTargets: [carolDevice.publicKey],
+        welcomeBytes: E2EE_MAX_ENTRY_AND_WELCOME_BYTES - 2048
+      });
+      const [welcome] = await services.groups.getWelcomes(
+        carol.id,
+        carolDevice.publicKey
+      );
+      expect(Buffer.from(welcome.data, 'base64')).toHaveLength(
+        E2EE_MAX_ENTRY_AND_WELCOME_BYTES - 2048
+      );
+    });
+
     it('revokes a device everywhere with a verified signature', async () => {
       const alice = aProfile();
       const bob = aProfile();
@@ -1530,6 +1579,69 @@ describeWithSeed('E2EE delivery service', [], () => {
         { viewer: 'reviewer', action: 'list', ids: id },
         { viewer: 'reviewer', action: 'read', ids: id }
       ]);
+    });
+
+    it('pages reports that share a timestamp without skipping or repeating any', async () => {
+      const ids: string[] = [];
+      for (let index = 0; index < 5; index += 1) {
+        ids.push((await fileReport()).id);
+      }
+      const review = reviewService('ts-group', ['reviewer']);
+      const all = await review.listReports('reviewer', { limit: 100 });
+      expect(new Set(all.items.map((item) => item.created_at)).size).toBe(1);
+      const expected = all.items.map((item) => item.id);
+      expect([...expected].sort()).toEqual([...ids].sort());
+
+      const seen: string[] = [];
+      let cursor: { before?: number; before_id?: string } = {};
+      for (let pageNo = 0; pageNo < 10; pageNo += 1) {
+        const page = await review.listReports('reviewer', {
+          ...cursor,
+          limit: 2
+        });
+        seen.push(...page.items.map((item) => item.id));
+        if (page.next_before === null) {
+          expect(page.next_before_id).toBeNull();
+          break;
+        }
+        cursor = {
+          before: page.next_before,
+          before_id: page.next_before_id!
+        };
+      }
+      expect(seen).toEqual(expected);
+    });
+
+    it('commits a hold change only together with its audit row', async () => {
+      const { id } = await fileReport();
+      const failingAudit = new E2eeTrustAndSafetyService({
+        db: {
+          listReportsForReview: db.listReportsForReview.bind(db),
+          getReportForReview: db.getReportForReview.bind(db),
+          setReportHold: db.setReportHold.bind(db),
+          executeNativeQueriesInTransaction:
+            db.executeNativeQueriesInTransaction.bind(db),
+          insertReportAccess: async () => {
+            throw new Error('audit log unavailable');
+          }
+        },
+        now: () => now,
+        groupId: () => 'ts-group',
+        isGroupMember: async () => true
+      });
+      await expect(failingAudit.setHold('reviewer', id, true)).rejects.toThrow(
+        'audit log unavailable'
+      );
+      expect((await db.getReportForReview(id))?.on_hold).toBeFalsy();
+      await expectE2eeError(
+        reviewService('ts-group', ['reviewer']).setHold(
+          'reviewer',
+          `0x${'0'.repeat(32)}`,
+          true
+        ),
+        'E2EE_NOT_FOUND'
+      );
+      expect(await db.listReportAccess()).toEqual([]);
     });
 
     it('deletes reports after 180 days unless they are on hold', async () => {

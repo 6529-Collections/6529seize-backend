@@ -38,12 +38,13 @@ const service = new E2eeTrustAndSafetyService({
 
 const listQuerySchema = Joi.object({
   before: Joi.number().integer().min(0).optional(),
+  before_id: Joi.string().pattern(E2EE_BLOB_ID_PATTERN).optional(),
   limit: Joi.number()
     .integer()
     .min(1)
     .max(100)
     .default(E2EE_TRUST_AND_SAFETY_DEFAULT_PAGE)
-});
+}).with('before_id', 'before');
 const reportIdSchema = Joi.string().pattern(E2EE_BLOB_ID_PATTERN).required();
 const holdSchema = Joi.object({ on_hold: Joi.boolean().required() });
 
@@ -70,10 +71,11 @@ export async function handleE2eeListTrustAndSafetyReports(
   req: E2eeListTrustAndSafetyReportsRequest
 ): Promise<ApiE2eeTrustAndSafetyReportPage> {
   const viewer = await reviewer(req);
-  const query = validateE2ee<{ before?: number; limit: number }>(
-    req.query,
-    listQuerySchema
-  );
+  const query = validateE2ee<{
+    before?: number;
+    before_id?: string;
+    limit: number;
+  }>(req.query, listQuerySchema);
   return service.listReports(viewer, query);
 }
 

@@ -5,7 +5,14 @@
 const KIB = 1024;
 const MIB = 1024 * KIB;
 
-export const E2EE_CIPHERSUITE = 1;
+/**
+ * MLS_128_MLKEM768X25519_AES128GCM_SHA256_Ed25519 (0x004F): X-Wing hybrid
+ * ML-KEM-768 + X25519 key exchange, AES-128-GCM, SHA-256, Ed25519
+ * signatures. The only suite accepted; there is no fallback. 0x004F is a
+ * draft code point (draft-ietf-mls-pq-ciphersuites): if it changes, every
+ * device re-enrolls and every group is re-created.
+ */
+export const E2EE_CIPHERSUITE = 0x004f;
 
 export const E2EE_MAX_ACTIVE_DEVICES = 10;
 export const E2EE_GRANT_MAX_LIFETIME_SECONDS = 181 * 24 * 60 * 60;
@@ -22,7 +29,8 @@ export const E2EE_LAST_SEEN_UPDATE_INTERVAL_MS = 5 * 60 * 1000;
 
 export const E2EE_MAX_ONE_TIME_KEY_PACKAGES = 100;
 export const E2EE_MAX_KEY_PACKAGES_PER_UPLOAD = 100;
-export const E2EE_MAX_KEY_PACKAGE_BYTES = 4 * KIB;
+/** An X-Wing KeyPackage is about 2.7 KiB (two 1216-byte public keys). */
+export const E2EE_MAX_KEY_PACKAGE_BYTES = 8 * KIB;
 /** Last-resort lifetime (90 days) plus a day of clock slack. */
 export const E2EE_MAX_KEY_PACKAGE_LIFETIME_SECONDS = 91 * 24 * 60 * 60;
 
@@ -34,8 +42,15 @@ export const E2EE_MESSAGE_BUCKETS: readonly number[] = [
 ];
 export const E2EE_MAX_ENTRY_BYTES = 2 * MIB;
 export const E2EE_MAX_MESSAGE_BYTES = 64 * KIB;
-/** Welcome plus optional ratchet tree, raw bytes (keeps base64 under 5 MB). */
-export const E2EE_MAX_WELCOME_BYTES = 1.25 * MIB;
+/**
+ * Entry data plus Welcome plus optional ratchet tree in one commit, raw
+ * bytes. Base64 of 3.25 MiB plus the JSON around it stays under the 5 MB
+ * body limit. A Welcome may use what the entry leaves: 1.25 MiB beside a
+ * 2 MiB entry, about 3 MiB beside a normal entry of 256 KiB or less. X-Wing
+ * trees cost about 2.7 KiB per leaf, so the 1.25 MiB floor still covers a
+ * fully populated tree of about 450 devices.
+ */
+export const E2EE_MAX_ENTRY_AND_WELCOME_BYTES = 3.25 * MIB;
 export const E2EE_MAX_PROPOSALS_PER_EPOCH = 64;
 export const E2EE_MAX_ROSTER_DEVICES = 2048;
 export const E2EE_MAX_ROSTER_DELTA = 2048;
