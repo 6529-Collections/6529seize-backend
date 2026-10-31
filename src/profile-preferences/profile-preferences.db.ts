@@ -1,4 +1,5 @@
 import {
+  CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   PROFILE_PREFERENCES_TABLE,
@@ -21,6 +22,8 @@ import {
 type ProfilePreferencesRow = {
   profile_id: string;
   direct_message_policy: ProfileDirectMessagePolicy;
+  direct_message_group_id?: string | null;
+  direct_message_allow_people_i_follow?: boolean | number | string | null;
   notification_level: ProfileNotificationLevel;
   notify_direct_messages: boolean | number | string;
   notify_mentions_replies_quotes: boolean | number | string;
@@ -30,21 +33,63 @@ type ProfilePreferencesRow = {
   notify_subscription_coverage: boolean | number | string;
 };
 
+/**
+ * Everything direct-message admission needs to know about one recipient,
+ * relative to the profile that is starting the conversation (the creator).
+ */
 export interface DirectMessageRecipientPreference {
   readonly profile_id: string;
   readonly primary_address: string;
   readonly handle: string;
   readonly direct_message_policy: ProfileDirectMessagePolicy;
+  readonly direct_message_group_id: string | null;
+  readonly direct_message_allow_people_i_follow: boolean;
+  /** The recipient follows the creator. */
   readonly follows_creator: boolean;
+  /** The recipient has blocked the creator. Never disclosed to the creator. */
+  readonly recipient_blocked_creator: boolean;
+  /** The creator has blocked the recipient. */
+  readonly creator_blocked_recipient: boolean;
 }
+
+type DirectMessageRecipientSelector =
+  | { readonly addresses: string[] }
+  | { readonly profileIds: string[] };
+
+type DirectMessageRecipientRow = Omit<
+  DirectMessageRecipientPreference,
+  | 'direct_message_group_id'
+  | 'direct_message_allow_people_i_follow'
+  | 'follows_creator'
+  | 'recipient_blocked_creator'
+  | 'creator_blocked_recipient'
+> & {
+  direct_message_group_id?: string | null;
+  direct_message_allow_people_i_follow?: boolean | number | string | null;
+  follows_creator: boolean | number | string;
+  recipient_blocked_creator?: boolean | number | string | null;
+  creator_blocked_recipient?: boolean | number | string | null;
+};
 
 function toBoolean(value: boolean | number | string): boolean {
   return value === true || value === 1 || value === '1' || value === 'true';
 }
 
+function toBooleanOr(
+  value: boolean | number | string | null | undefined,
+  fallback: boolean
+): boolean {
+  return value === null || value === undefined ? fallback : toBoolean(value);
+}
+
 function mapRow(row: ProfilePreferencesRow): ProfilePreferencesData {
   return {
     direct_message_policy: row.direct_message_policy,
+    direct_message_group_id: row.direct_message_group_id ?? null,
+    direct_message_allow_people_i_follow: toBooleanOr(
+      row.direct_message_allow_people_i_follow,
+      DEFAULT_PROFILE_PREFERENCES.direct_message_allow_people_i_follow
+    ),
     notification_level: row.notification_level,
     notifications: {
       direct_messages: toBoolean(row.notify_direct_messages),
@@ -92,6 +137,14 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
     if (update.direct_message_policy !== undefined) {
       assignments.push('direct_message_policy = :directMessagePolicy');
     }
+    if (update.direct_message_group_id !== undefined) {
+      assignments.push('direct_message_group_id = :directMessageGroupId');
+    }
+    if (update.direct_message_allow_people_i_follow !== undefined) {
+      assignments.push(
+        'direct_message_allow_people_i_follow = :directMessageAllowPeopleIFollow'
+      );
+    }
     if (update.notification_level !== undefined) {
       assignments.push('notification_level = :notificationLevel');
     }
@@ -124,6 +177,12 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
       directMessagePolicy:
         update.direct_message_policy ??
         DEFAULT_PROFILE_PREFERENCES.direct_message_policy,
+      directMessageGroupId:
+        update.direct_message_group_id ??
+        DEFAULT_PROFILE_PREFERENCES.direct_message_group_id,
+      directMessageAllowPeopleIFollow:
+        update.direct_message_allow_people_i_follow ??
+        DEFAULT_PROFILE_PREFERENCES.direct_message_allow_people_i_follow,
       notificationLevel:
         update.notification_level ??
         DEFAULT_PROFILE_PREFERENCES.notification_level,
@@ -156,12 +215,14 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
       );
       await this.db.execute(
         `insert into ${PROFILE_PREFERENCES_TABLE} (
-          profile_id, direct_message_policy, notification_level,
+          profile_id, direct_message_policy, direct_message_group_id,
+          direct_message_allow_people_i_follow, notification_level,
           notify_direct_messages, notify_mentions_replies_quotes,
           notify_reactions_votes_boosts, notify_new_followers,
           notify_rep_and_nic, notify_subscription_coverage
         ) values (
-          :profileId, :directMessagePolicy, :notificationLevel,
+          :profileId, :directMessagePolicy, :directMessageGroupId,
+          :directMessageAllowPeopleIFollow, :notificationLevel,
           :directMessages, :mentionsRepliesQuotes,
           :reactionsVotesBoosts, :newFollowers,
           :repAndNic, :subscriptionCoverage
@@ -194,26 +255,67 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
     lockForUpdate = false
   ): Promise<DirectMessageRecipientPreference[]> {
     if (!addresses.length) return [];
-    const rows = await this.db.execute<
-      DirectMessageRecipientPreference & {
-        follows_creator: boolean | number | string;
-      }
-    >(
+    return this.findDirectMessageRecipients(
+      { addresses },
+      creatorProfileId,
+      connection,
+      lockForUpdate
+    );
+  }
+
+  /**
+   * Admission facts for recipients identified by profile id (the shape an
+   * E2EE group roster uses). Ids without an identity and profile are omitted.
+   */
+  async getDirectMessageRecipientsByProfileIds(
+    profileIds: string[],
+    creatorProfileId: string,
+    connection?: ConnectionWrapper<unknown>,
+    lockForUpdate = false
+  ): Promise<DirectMessageRecipientPreference[]> {
+    if (!profileIds.length) return [];
+    return this.findDirectMessageRecipients(
+      { profileIds },
+      creatorProfileId,
+      connection,
+      lockForUpdate
+    );
+  }
+
+  private async findDirectMessageRecipients(
+    selector: DirectMessageRecipientSelector,
+    creatorProfileId: string,
+    connection: ConnectionWrapper<unknown> | undefined,
+    lockForUpdate: boolean
+  ): Promise<DirectMessageRecipientPreference[]> {
+    const recipientFilter =
+      'addresses' in selector
+        ? 'i.primary_address in (:addresses)'
+        : 'i.profile_id in (:profileIds)';
+    const rows = await this.db.execute<DirectMessageRecipientRow>(
       `select i.profile_id, i.primary_address, i.handle,
         coalesce(p.direct_message_policy, :defaultPolicy) as direct_message_policy,
+        p.direct_message_group_id as direct_message_group_id,
+        p.direct_message_allow_people_i_follow as direct_message_allow_people_i_follow,
         exists(select 1 from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
           where s.subscriber_id = i.profile_id
             and s.target_id = :creatorProfileId
-            and s.target_type = :targetType) as follows_creator
+            and s.target_type = :targetType) as follows_creator,
+        exists(select 1 from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} rb
+          where rb.blocker_profile_id = i.profile_id
+            and rb.blocked_profile_id = :creatorProfileId) as recipient_blocked_creator,
+        exists(select 1 from ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} cb
+          where cb.blocker_profile_id = :creatorProfileId
+            and cb.blocked_profile_id = i.profile_id) as creator_blocked_recipient
       from ${IDENTITIES_TABLE} i
       join ${PROFILES_TABLE} profile_lock
         on profile_lock.external_id = i.profile_id
       left join ${PROFILE_PREFERENCES_TABLE} p on p.profile_id = i.profile_id
-      where i.primary_address in (:addresses) and i.profile_id is not null
+      where ${recipientFilter} and i.profile_id is not null
       order by i.profile_id
       ${lockForUpdate ? 'for update' : ''}`,
       {
-        addresses,
+        ...selector,
         creatorProfileId,
         targetType: ActivityEventTargetType.IDENTITY,
         defaultPolicy: ProfileDirectMessagePolicy.EVERYONE
@@ -222,7 +324,20 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
     );
     return rows.map((row) => ({
       ...row,
-      follows_creator: toBoolean(row.follows_creator)
+      direct_message_group_id: row.direct_message_group_id ?? null,
+      direct_message_allow_people_i_follow: toBooleanOr(
+        row.direct_message_allow_people_i_follow,
+        DEFAULT_PROFILE_PREFERENCES.direct_message_allow_people_i_follow
+      ),
+      follows_creator: toBoolean(row.follows_creator),
+      recipient_blocked_creator: toBooleanOr(
+        row.recipient_blocked_creator,
+        false
+      ),
+      creator_blocked_recipient: toBooleanOr(
+        row.creator_blocked_recipient,
+        false
+      )
     }));
   }
 }
