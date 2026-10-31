@@ -3,7 +3,15 @@
 Owner decision 2026-10-31 (6529chain D146, P48 MG7 option (b)): members may
 move their own unencrypted ("legacy") DM history into the new end-to-end
 encrypted chat or export it. Then every server copy of unencrypted DM
-content, backups included, is deleted on **2026-12-01**.
+content, backups included, is deleted on **2026-12-01**, except anything
+6529 is legally required to keep. Users are told this exception in the DM
+notice and the announcement.
+
+**Legal holds.** Content under a legal hold or preservation request (law
+enforcement, a child-safety report, litigation, a regulator) is not
+deleted while the hold lasts. Holds are checked before any deletion
+(§3.3), held conversations are excluded from the run, and they are purged
+by the same tools once the hold is released.
 
 This runbook is a plan. Nothing in it runs on a schedule, and the deletion
 steps run only after the owner confirms them on the day. Scope: waves with
@@ -85,6 +93,9 @@ counts them (`documentationImports`).
    default afterwards.
 5. **Production dry run** on the reader endpoint on 2026-11-30 (§3.2). Share
    the counts with the owner when asking for the go-ahead.
+6. **Legal holds request.** By 2026-11-30, ask counsel and trust and safety
+   in writing for every legal hold or preservation request that covers DM
+   content, as DM wave ids (§3.3).
 
 ## 3. The purge (2026-12-01, after the owner confirms)
 
@@ -116,14 +127,29 @@ $RUN plan ~/legacy-dm/prod-plan.json
 
 Read-only transaction. Check: `blockers` all zero, `inconsistentWaves`
 explained, `dmWaves` near 8,950. Rows in `(by wave)` overlap the
-drop-based counts.
+drop-based counts. `wavesWithOpenReports` counts DM waves with an open
+moderation report: a signal for the holds check, not a hold.
 
-### 3.3 Delete rows
+### 3.3 Check legal holds, then delete rows
+
+1. Get the written answer to the holds request (§2, step 6) from counsel
+   and trust and safety on the day. Cross-check it against
+   `wavesWithOpenReports` and any open child-safety reports. Record the held
+   DM wave ids privately.
+2. Pass them, or the word `none`, in `LEGACY_DM_HELD_WAVES`. `execute`
+   refuses to start until that variable is set, and it never selects a held
+   wave. Held waves keep all their rows and media; leave their media out of
+   §3.5, and keep the backups they need (§4) until the hold is released.
 
 ```bash
+export LEGACY_DM_HELD_WAVES=none        # or: <wave id>,<wave id>
 $RUN execute ~/legacy-dm/prod-media.jsonl \
   "prod:<database>:2026-12-01T00:00:00.000Z:execute"
 ```
+
+3. When a hold is released, purge that conversation with
+   `LEGACY_DM_PURGE_WAVES=<wave id>` (and `LEGACY_DM_HELD_WAVES=none`), then
+   run §3.5 for its media.
 
 One DM wave at a time, transactions of at most 100 drops
 (`LEGACY_DM_PURGE_BATCH`, up to 500). Each batch appends the media it
@@ -223,9 +249,11 @@ retention on 2026-12-03. Do the same for staging.
 ### 4.3 Manual snapshots, copies, exports, clones
 
 1. Take a fresh manual snapshot after the purge and check it restores.
+   It still holds any held conversations, so it is the copy that serves a
+   hold.
 2. Delete every manual snapshot, cross-region copy and AWS Backup recovery
    point taken before the purge (`delete-db-cluster-snapshot`,
-   `delete-recovery-point`).
+   `delete-recovery-point`), unless counsel says a hold needs that copy.
 3. Delete snapshot exports in S3 and retained automated backups
    (`delete-db-cluster-automated-backup`).
 4. Delete clones and restored clusters created before the purge, for

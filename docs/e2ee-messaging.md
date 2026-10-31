@@ -412,7 +412,8 @@ access log, which holds ids only.
 Plaintext DM waves are not part of this service. Members can export their
 own history, and will be able to move it into an encrypted chat as messages
 labelled imported and unauthenticated; on 2026-12-01 the plaintext copies
-are deleted from 6529.io, backups included. See
+are deleted from 6529.io, backups included, except anything 6529 is legally
+required to keep. See
 [legacy-dm-deletion-runbook.md](./legacy-dm-deletion-runbook.md).
 
 ## Reports and trust and safety

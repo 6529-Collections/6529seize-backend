@@ -16,6 +16,7 @@ import {
   DM_DESCRIPTION_DEFAULT_CONTENT,
   DM_WAVES_SQL,
   DOCUMENTATION_IMPORTS_SQL,
+  WAVES_WITH_OPEN_REPORTS_SQL,
   INCONSISTENT_DM_WAVES_SQL,
   LEGACY_DM_BLOCKERS,
   LEGACY_DM_DROP_ID_TABLES,
@@ -80,6 +81,11 @@ export interface LegacyDmPlan {
   readonly descriptionDropsToReset: number;
   /** Authors' own imports of DM drops into artwork documentation (kept). */
   readonly documentationImports: number;
+  /**
+   * DM waves with an open moderation report: a signal, not a hold. Trust
+   * and safety confirm whether any of them is under a legal hold.
+   */
+  readonly wavesWithOpenReports: number;
   readonly blockers: Record<string, number>;
   readonly rows: Record<string, number>;
   readonly media: {
@@ -96,6 +102,11 @@ export interface LegacyDmPurgeOptions {
   readonly batchSize?: number;
   /** Only these waves (rehearsal on a few conversations first). */
   readonly waveIds?: readonly string[];
+  /**
+   * Waves under a legal hold or preservation request: never touched by this
+   * run. Purge them later, with `waveIds`, once the hold is released.
+   */
+  readonly heldWaveIds?: readonly string[];
   readonly maxWaves?: number;
   readonly onMedia?: (entries: LegacyDmMediaEntry[]) => void;
   readonly log?: (line: string) => void;
@@ -187,6 +198,7 @@ export async function planLegacyDmPurge(
       [DM_DESCRIPTION_DEFAULT_CONTENT]
     ),
     documentationImports: await count(DOCUMENTATION_IMPORTS_SQL),
+    wavesWithOpenReports: await count(WAVES_WITH_OPEN_REPORTS_SQL),
     blockers,
     rows,
     media: {
@@ -255,7 +267,12 @@ export async function executeLegacyDmPurge(
   const limitReached = () =>
     options.maxWaves !== undefined && waves >= options.maxWaves;
   while (!limitReached()) {
-    const page = await loadDmWavePage(db, after, options.waveIds);
+    const page = await loadDmWavePage(
+      db,
+      after,
+      options.waveIds,
+      options.heldWaveIds
+    );
     for (const wave of page) {
       if (limitReached()) break;
       after = wave.serialNo;
@@ -291,9 +308,14 @@ const WAVE_PAGE = 100;
 async function loadDmWavePage(
   db: LegacyDmSql,
   after: number,
-  waveIds: readonly string[] | undefined
+  waveIds: readonly string[] | undefined,
+  heldWaveIds: readonly string[] | undefined
 ): Promise<DmWave[]> {
   const only = waveIds?.length ? waveIds : null;
+  const held = heldWaveIds?.length ? heldWaveIds : null;
+  const params: unknown[] = [after];
+  if (only) params.push(only);
+  if (held) params.push(held);
   const page = await db.query<{
     id: string;
     serial_no: unknown;
@@ -302,8 +324,9 @@ async function loadDmWavePage(
     `select w.id, w.serial_no, w.description_drop_id from ${WAVES_TABLE} w
      where w.id in (${DM_WAVES_SQL}) and w.serial_no > ?
      ${only ? 'and w.id in (?)' : ''}
+     ${held ? 'and w.id not in (?)' : ''}
      order by w.serial_no asc limit ${WAVE_PAGE}`,
-    only ? [after, only] : [after]
+    params
   );
   return page.map((row) => ({
     id: row.id,
