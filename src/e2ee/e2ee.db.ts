@@ -45,14 +45,19 @@ export type E2eeDeviceRow = E2eeDeviceEntity;
 export type E2eeGroupRow = E2eeGroupEntity;
 export type E2eeRosterRow = E2eeGroupRosterEntity;
 export type E2eeBlobRow = E2eeBlobEntity;
-/** `storage` (an E2eeBlobStorage) defaults to `mysql`. */
-export type E2eeBlobInsert = Omit<E2eeBlobRow, 'storage'> & {
+/** `storage` (an E2eeBlobStorage) defaults to `mysql`, with no location. */
+export type E2eeBlobInsert = Omit<
+  E2eeBlobRow,
+  'storage' | 'storage_location'
+> & {
   readonly storage?: string;
+  readonly storage_location?: string | null;
 };
 
 /** An expired blob as retention sees it. */
 export type E2eeExpiredBlobRow = E2eeStoredBlobRef & {
   readonly storage: string;
+  readonly storage_location: string | null;
 };
 
 /**
@@ -1136,12 +1141,18 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     await this.write(
       `insert into ${E2EE_BLOBS_TABLE} (
         blob_id, group_handle, uploader_device_key, uploader_profile_id, size,
-        chunk_count, complete, created_at, completed_at, storage
+        chunk_count, complete, created_at, completed_at, storage,
+        storage_location
       ) values (
         :blob_id, :group_handle, :uploader_device_key, :uploader_profile_id,
-        :size, :chunk_count, :complete, :created_at, :completed_at, :storage
+        :size, :chunk_count, :complete, :created_at, :completed_at, :storage,
+        :storage_location
       )`,
-      { ...row, storage: row.storage ?? 'mysql' },
+      {
+        ...row,
+        storage: row.storage ?? 'mysql',
+        storage_location: row.storage_location ?? null
+      },
       connection
     );
   }
@@ -1417,42 +1428,67 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
 
   // -------------------------------------------------------------- retention
 
-  /** Chunks and blob rows go together, a few blobs per transaction. */
-  async deleteBlobsByIds(ids: readonly string[]): Promise<void> {
-    if (!ids.length) return;
-    await this.executeNativeQueriesInTransaction(async (connection) => {
+  /**
+   * Deletes the rows of blobs whose bytes are gone, in one transaction, but
+   * only while each row still names the storage and location the bytes were
+   * deleted from (the S3 migration may have moved a blob meanwhile; its new
+   * copy must not lose its row).
+   */
+  private async deleteBlobRowsStoredAt(
+    blobs: readonly E2eeExpiredBlobRow[]
+  ): Promise<number> {
+    if (!blobs.length) return 0;
+    const placeOf = (row: {
+      storage: string;
+      storage_location: string | null;
+    }) => `${row.storage}|${row.storage_location ?? ''}`;
+    const expected = new Map(blobs.map((row) => [row.blob_id, placeOf(row)]));
+    return this.executeNativeQueriesInTransaction(async (connection) => {
+      const current = await this.many<E2eeExpiredBlobRow>(
+        `select blob_id, chunk_count, storage, storage_location
+         from ${E2EE_BLOBS_TABLE} where blob_id in (:ids) for update`,
+        { ids: Array.from(expected.keys()) },
+        connection
+      );
+      const ids = current
+        .filter((row) => expected.get(row.blob_id) === placeOf(row))
+        .map((row) => row.blob_id);
+      if (!ids.length) return 0;
       await this.write(
         `delete from ${E2EE_BLOB_CHUNKS_TABLE} where blob_id in (:ids)`,
-        { ids: [...ids] },
+        { ids },
         connection
       );
       await this.write(
         `delete from ${E2EE_BLOBS_TABLE} where blob_id in (:ids)`,
-        { ids: [...ids] },
+        { ids },
         connection
       );
+      return ids.length;
     });
   }
 
-  /**
-   * Deletes blobs past retention (complete: 365 days) and abandoned uploads
-   * (incomplete after 24 h), oldest first, `limit` blobs at a time. Stored
-   * bytes go first (`deleteBytes`, e.g. S3 objects); only the blobs whose
-   * bytes are gone lose their rows, so nothing is orphaned in a store.
-   */
-  async pruneExpiredBlobs(
+  /** Expired blobs (complete after 365 days, incomplete after 24 h). */
+  private async selectExpiredBlobs(
     nowMs: number,
     limit: number,
-    deleteBytes: E2eeBlobBytesDeleter
-  ): Promise<number> {
-    const rows = await this.many<E2eeExpiredBlobRow>(
-      `select blob_id, chunk_count, storage from (
-         (select blob_id, chunk_count, storage, created_at from ${E2EE_BLOBS_TABLE}
+    mysqlStorage: boolean
+  ): Promise<E2eeExpiredBlobRow[]> {
+    const storageCondition = mysqlStorage
+      ? `storage = 'mysql'`
+      : `storage <> 'mysql'`;
+    return this.many<E2eeExpiredBlobRow>(
+      `select blob_id, chunk_count, storage, storage_location from (
+         (select blob_id, chunk_count, storage, storage_location, created_at
+          from ${E2EE_BLOBS_TABLE}
           where complete = true and created_at < :completeCutoff
+            and ${storageCondition}
           order by created_at limit :limit)
          union all
-         (select blob_id, chunk_count, storage, created_at from ${E2EE_BLOBS_TABLE}
+         (select blob_id, chunk_count, storage, storage_location, created_at
+          from ${E2EE_BLOBS_TABLE}
           where complete = false and created_at < :incompleteCutoff
+            and ${storageCondition}
           order by created_at limit :limit)
        ) expired
        order by created_at
@@ -1463,13 +1499,31 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
         limit
       }
     );
-    if (!rows.length) return 0;
-    const gone = new Set(await deleteBytes(rows));
-    const ids = rows
-      .map((row) => row.blob_id)
-      .filter((blobId) => gone.has(blobId));
-    await this.deleteBlobsByIds(ids);
-    return ids.length;
+  }
+
+  /**
+   * Deletes blobs past retention (complete: 365 days) and abandoned uploads
+   * (incomplete after 24 h), oldest first, up to `limit` MySQL blobs and
+   * `limit` blobs in external stores per pass (so a failing store cannot
+   * stall MySQL retention). Stored bytes go first (`deleteBytes`, e.g. S3
+   * objects); only blobs whose bytes are gone, and whose row still names the
+   * same place, lose their rows, so nothing is orphaned in a store.
+   */
+  async pruneExpiredBlobs(
+    nowMs: number,
+    limit: number,
+    deleteBytes: E2eeBlobBytesDeleter
+  ): Promise<number> {
+    let deleted = 0;
+    for (const mysqlStorage of [true, false]) {
+      const rows = await this.selectExpiredBlobs(nowMs, limit, mysqlStorage);
+      if (!rows.length) continue;
+      const gone = new Set(await deleteBytes(rows));
+      deleted += await this.deleteBlobRowsStoredAt(
+        rows.filter((row) => gone.has(row.blob_id))
+      );
+    }
+    return deleted;
   }
 
   // ------------------------------------------------------ storage migration
@@ -1492,17 +1546,23 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     }));
   }
 
-  /** Complete MySQL blobs after `afterBlobId`, in id order. */
+  /**
+   * Complete MySQL blobs after `afterBlobId`, in id order, created after
+   * `minCreatedAt` (blobs close to their retention cutoff are left to
+   * retention instead of being copied).
+   */
   async getMigratableBlobs(
     afterBlobId: string,
-    limit: number
+    limit: number,
+    minCreatedAt: number
   ): Promise<E2eeMigratableBlobRow[]> {
     const rows = await this.many<E2eeMigratableBlobRow>(
       `select blob_id, size, chunk_count from ${E2EE_BLOBS_TABLE}
        where storage = 'mysql' and complete = true and blob_id > :afterBlobId
+         and created_at > :minCreatedAt
        order by blob_id
        limit :limit`,
-      { afterBlobId, limit }
+      { afterBlobId, limit, minCreatedAt }
     );
     return rows.map((row) => ({
       blob_id: row.blob_id,
@@ -1527,19 +1587,22 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Marks a copied blob as stored in S3 and drops its MySQL bytes, in one
-   * transaction. `expectedSizes` are the verified chunk sizes by index: the
-   * switch happens only if the blob is still a complete MySQL blob with
-   * exactly those chunks. Returns `gone` when the blob was deleted
-   * meanwhile and `changed` when it no longer matches.
+   * Marks a copied blob as stored at the S3 `location` and drops its MySQL
+   * bytes, in one transaction. `expectedSizes` are the verified chunk sizes
+   * by index: the switch happens only if the blob is still a complete MySQL
+   * blob created after `minCreatedAt` with exactly those chunks. Returns
+   * `gone` when the blob was deleted or is about to expire, and `changed`
+   * when it no longer matches.
    */
   async switchBlobToS3(
     blobId: string,
-    expectedSizes: readonly number[]
+    expectedSizes: readonly number[],
+    location: string,
+    minCreatedAt: number
   ): Promise<'switched' | 'gone' | 'changed'> {
     return this.executeNativeQueriesInTransaction(async (connection) => {
       const blob = await this.lockBlob(blobId, connection);
-      if (!blob) return 'gone';
+      if (!blob || Number(blob.created_at) <= minCreatedAt) return 'gone';
       if (blob.storage !== 'mysql' || !blob.complete) return 'changed';
       const chunks = await this.getBlobChunkSizes(blobId, connection);
       const matches =
@@ -1556,9 +1619,9 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
         connection
       );
       await this.write(
-        `update ${E2EE_BLOBS_TABLE} set storage = 's3'
+        `update ${E2EE_BLOBS_TABLE} set storage = 's3', storage_location = :location
          where blob_id = :blobId and storage = 'mysql'`,
-        { blobId },
+        { blobId, location },
         connection
       );
       return 'switched';

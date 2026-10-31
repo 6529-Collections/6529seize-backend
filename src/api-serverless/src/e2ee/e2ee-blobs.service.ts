@@ -14,6 +14,7 @@ import { ApiE2eeReport } from '@/api/generated/models/ApiE2eeReport';
 import { ApiE2eeReportRequest } from '@/api/generated/models/ApiE2eeReportRequest';
 import {
   E2EE_BLOB_QUOTA,
+  E2EE_RETENTION,
   E2EE_MAX_BLOB_BYTES,
   E2EE_MAX_BLOB_CHUNK_BYTES,
   E2EE_MAX_BLOB_CHUNKS,
@@ -21,14 +22,21 @@ import {
   E2EE_RATE_LIMITS
 } from '@/e2ee/e2ee.constants';
 import { E2eeBlobRow } from '@/e2ee/e2ee.db';
-import { E2eeBlobStore } from '@/e2ee/e2ee-blob-store';
+import { E2eeBlobStorageError, E2eeBlobStore } from '@/e2ee/e2ee-blob-store';
 import { e2eeMessageDigest, verifyE2eeEd25519 } from '@/e2ee/e2ee-digests';
 import { decodeE2eeBase64 } from '@/e2ee/e2ee-encoding';
-import { E2eeApiException, e2eeErrors } from '@/e2ee/e2ee-errors';
+import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
 
 const logger = Logger.get('E2EE_BLOBS');
+
+/**
+ * Incomplete uploads stop accepting writes this long before retention may
+ * delete them, so a late chunk can never land after retention deleted the
+ * blob's objects (which would orphan it).
+ */
+const EXPIRING_UPLOAD_MARGIN_MS = 10 * 60 * 1000;
 
 export class E2eeBlobsService {
   constructor(private readonly deps: E2eeServiceDeps) {}
@@ -87,7 +95,8 @@ export class E2eeBlobsService {
       complete: false,
       created_at: this.deps.now(),
       completed_at: null,
-      storage: store.storage
+      storage: store.storage,
+      storage_location: store.location
     };
     await pruneE2eeBlobs(this.deps);
     await this.db.executeNativeQueriesInTransaction(async (connection) => {
@@ -117,6 +126,13 @@ export class E2eeBlobsService {
   ): Promise<E2eeBlobRow> {
     const blob = await this.db.lockBlob(blobId, connection);
     if (!blob) throw e2eeErrors.notFound('Attachment');
+    const expiresAt =
+      Number(blob.created_at) +
+      E2EE_RETENTION.incompleteBlobsMs -
+      EXPIRING_UPLOAD_MARGIN_MS;
+    if (!blob.complete && this.deps.now() >= expiresAt) {
+      throw e2eeErrors.notFound('Attachment');
+    }
     if (blob.uploader_profile_id !== callerProfileId) {
       throw e2eeErrors.forbidden('Only the uploader can change an attachment');
     }
@@ -250,24 +266,21 @@ export class E2eeBlobsService {
 
   /**
    * Runs a store operation for the blob's storage. External store failures
-   * (S3 unreachable, access denied) become 503 E2EE_STORAGE_UNAVAILABLE and
-   * are logged without any chunk bytes; MySQL errors propagate unchanged.
+   * (S3 unreachable, access denied, bucket missing) become 503
+   * E2EE_STORAGE_UNAVAILABLE and are logged without any chunk bytes; database
+   * errors propagate unchanged.
    */
   private async storeCall<T>(
-    blob: Pick<E2eeBlobRow, 'blob_id' | 'storage'>,
+    blob: Pick<E2eeBlobRow, 'blob_id' | 'storage' | 'storage_location'>,
     operation: (store: E2eeBlobStore) => Promise<T>
   ): Promise<T> {
     const store = this.deps.blobStores.forBlob(blob);
     try {
       return await operation(store);
     } catch (error) {
-      if (error instanceof E2eeApiException || store.storage === 'mysql') {
-        throw error;
-      }
+      if (!(error instanceof E2eeBlobStorageError)) throw error;
       logger.error(
-        `[E2EE BLOB STORAGE ERROR] [STORAGE ${store.storage}] [BLOB ${blob.blob_id}] ${
-          (error as Error)?.name ?? 'Error'
-        }: ${(error as Error)?.message ?? 'unknown'}`
+        `[E2EE BLOB STORAGE ERROR] [STORAGE ${store.storage}] [BLOB ${blob.blob_id}] ${error.message}`
       );
       throw e2eeErrors.storageUnavailable();
     }

@@ -10,10 +10,14 @@ import { NodeHttpHandler } from '@smithy/node-http-handler';
 import {
   E2eeBlobChunkRows,
   E2eeBlobChunkWrite,
+  E2eeBlobStorageError,
   E2eeBlobStore,
   E2eeStoredBlobRef
 } from '@/e2ee/e2ee-blob-store';
-import { E2eeBlobS3Config } from '@/e2ee/e2ee-blob-store.config';
+import {
+  E2eeBlobS3Config,
+  e2eeBlobS3Location
+} from '@/e2ee/e2ee-blob-store.config';
 import { E2EE_BLOB_ID_PATTERN } from '@/e2ee/e2ee-encoding';
 import { ConnectionWrapper } from '@/sql-executor';
 
@@ -62,19 +66,22 @@ function sha256Base64(data: Buffer): string {
   return createHash('sha256').update(data).digest('base64');
 }
 
-/** GetObject on a missing key: 404 NoSuchKey (the role may list the bucket). */
+/**
+ * GetObject on a missing key: NoSuchKey (the role may list the bucket, so
+ * S3 does not answer 403). Any other 404, such as NoSuchBucket, is a storage
+ * failure, not a missing chunk.
+ */
 export function isMissingS3Object(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
-  const candidate = error as {
-    name?: unknown;
-    Code?: unknown;
-    $metadata?: { httpStatusCode?: unknown };
-  };
-  return (
-    candidate.name === 'NoSuchKey' ||
-    candidate.Code === 'NoSuchKey' ||
-    candidate.name === 'NotFound' ||
-    candidate.$metadata?.httpStatusCode === 404
+  const candidate = error as { name?: unknown; Code?: unknown };
+  return candidate.name === 'NoSuchKey' || candidate.Code === 'NoSuchKey';
+}
+
+function storageError(operation: string, error: unknown): E2eeBlobStorageError {
+  const name = (error as Error)?.name ?? 'Error';
+  const message = (error as Error)?.message ?? 'unknown';
+  return new E2eeBlobStorageError(
+    `S3 ${operation} failed: ${name}: ${message}`
   );
 }
 
@@ -87,12 +94,15 @@ export function isMissingS3Object(error: unknown): boolean {
  */
 export class S3E2eeBlobStore implements E2eeBlobStore {
   readonly storage = 's3' as const;
+  readonly location: string;
 
   constructor(
     readonly config: E2eeBlobS3Config,
     private readonly s3: E2eeBlobS3Client,
     private readonly rows: E2eeBlobChunkRows
-  ) {}
+  ) {
+    this.location = e2eeBlobS3Location(config);
+  }
 
   objectKey(blobId: string, index: number): string {
     return e2eeBlobObjectKey(this.config.prefix, blobId, index);
@@ -100,39 +110,45 @@ export class S3E2eeBlobStore implements E2eeBlobStore {
 
   /** Read-only reachability check for the bucket (used by the migration). */
   async checkBucket(): Promise<void> {
-    await this.s3.send(new HeadBucketCommand({ Bucket: this.config.bucket }));
+    try {
+      await this.s3.send(new HeadBucketCommand({ Bucket: this.config.bucket }));
+    } catch (error) {
+      throw storageError('HeadBucket', error);
+    }
   }
 
   async putObject(blobId: string, index: number, data: Buffer): Promise<void> {
-    await this.s3.send(
-      new PutObjectCommand({
-        Bucket: this.config.bucket,
-        Key: this.objectKey(blobId, index),
-        Body: data,
-        ContentLength: data.length,
-        ContentType: 'application/octet-stream',
-        CacheControl: 'private, no-store',
-        ServerSideEncryption: 'AES256',
-        ChecksumSHA256: sha256Base64(data)
-      })
-    );
+    const command = new PutObjectCommand({
+      Bucket: this.config.bucket,
+      Key: this.objectKey(blobId, index),
+      Body: data,
+      ContentLength: data.length,
+      ContentType: 'application/octet-stream',
+      CacheControl: 'private, no-store',
+      ServerSideEncryption: 'AES256',
+      ChecksumSHA256: sha256Base64(data)
+    });
+    try {
+      await this.s3.send(command);
+    } catch (error) {
+      throw storageError('PutObject', error);
+    }
   }
 
   /** The object's bytes, or null when it does not exist. */
   async getObject(blobId: string, index: number): Promise<Buffer | null> {
+    const command = new GetObjectCommand({
+      Bucket: this.config.bucket,
+      Key: this.objectKey(blobId, index),
+      ChecksumMode: 'ENABLED'
+    });
     try {
-      const response = await this.s3.send(
-        new GetObjectCommand({
-          Bucket: this.config.bucket,
-          Key: this.objectKey(blobId, index),
-          ChecksumMode: 'ENABLED'
-        })
-      );
+      const response = await this.s3.send(command);
       if (!response.Body) return null;
       return Buffer.from(await response.Body.transformToByteArray());
     } catch (error) {
       if (isMissingS3Object(error)) return null;
-      throw error;
+      throw storageError('GetObject', error);
     }
   }
 
@@ -174,17 +190,21 @@ export class S3E2eeBlobStore implements E2eeBlobStore {
     );
     for (let start = 0; start < keys.length; start += MAX_DELETE_KEYS) {
       const batch = keys.slice(start, start + MAX_DELETE_KEYS);
-      const response = await this.s3.send(
-        new DeleteObjectsCommand({
-          Bucket: this.config.bucket,
-          Delete: { Objects: batch.map((Key) => ({ Key })), Quiet: true }
-        })
-      );
+      const command = new DeleteObjectsCommand({
+        Bucket: this.config.bucket,
+        Delete: { Objects: batch.map((Key) => ({ Key })), Quiet: true }
+      });
+      let response;
+      try {
+        response = await this.s3.send(command);
+      } catch (error) {
+        throw storageError('DeleteObjects', error);
+      }
       const failed = (response.Errors ?? []).filter(
         (error) => error.Code !== 'NoSuchKey'
       );
       if (failed.length) {
-        throw new Error(
+        throw new E2eeBlobStorageError(
           `S3 did not delete ${failed.length} encrypted attachment objects (${failed[0].Code ?? 'unknown error'})`
         );
       }

@@ -9,6 +9,7 @@ import { ConnectionWrapper } from '@/sql-executor';
 /** v1 storage: chunk bytes in the `data` column of `e2ee_blob_chunks`. */
 export class MysqlE2eeBlobStore implements E2eeBlobStore {
   readonly storage = 'mysql' as const;
+  readonly location = null;
 
   constructor(private readonly rows: E2eeBlobChunkRows) {}
 

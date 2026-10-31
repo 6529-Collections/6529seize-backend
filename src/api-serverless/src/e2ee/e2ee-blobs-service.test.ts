@@ -240,6 +240,85 @@ describe('E2eeBlobsService with S3 storage', () => {
     expect(chunks.size).toBe(0);
   });
 
+  it('records where each blob was written', async () => {
+    const { service, blobs } = setup();
+    const blob = await uploadComplete(service, [randomBytes(3)]);
+    expect(blobs.get(blob.blob_id)?.storage_location).toBe(
+      `s3://${BUCKET}/${PREFIX}`
+    );
+  });
+
+  it('fails closed for a blob written under another prefix', async () => {
+    const { service, s3, setEnv } = setup();
+    const blob = await uploadComplete(service, [randomBytes(3)]);
+    setEnv({ ...S3_ENV, E2EE_BLOB_S3_PREFIX: 'test/elsewhere' });
+    const reads = s3.commands.length;
+
+    await expectCode(
+      service.getChunk(PROFILE, blob.blob_id, 0, DEVICE),
+      'E2EE_STORAGE_UNAVAILABLE'
+    );
+    expect(s3.commands.length).toBe(reads);
+  });
+
+  it('answers 503, not 404, when the bucket itself is missing', async () => {
+    const { service, s3 } = setup();
+    const blob = await uploadComplete(service, [randomBytes(3)]);
+    s3.failNext = {
+      command: 'GetObject',
+      error: Object.assign(new Error('NoSuchBucket'), {
+        name: 'NoSuchBucket',
+        $metadata: { httpStatusCode: 404 }
+      })
+    };
+
+    await expectCode(
+      service.getChunk(PROFILE, blob.blob_id, 0, DEVICE),
+      'E2EE_STORAGE_UNAVAILABLE'
+    );
+  });
+
+  it('lets database errors after the S3 write through as they are', async () => {
+    const { service, db } = setup();
+    const blob = await service.createBlob(PROFILE, {
+      group: GROUP,
+      uploader_device_key: DEVICE,
+      size: 4,
+      chunk_count: 1
+    });
+    db.upsertBlobChunk.mockRejectedValueOnce(
+      Object.assign(new Error('Deadlock found'), { code: 'ER_LOCK_DEADLOCK' })
+    );
+
+    await expect(
+      service.putChunk(PROFILE, blob.blob_id, 0, {
+        data: randomBytes(4).toString('base64')
+      })
+    ).rejects.toMatchObject({ code: 'ER_LOCK_DEADLOCK' });
+  });
+
+  it('stops accepting chunks for an upload about to expire', async () => {
+    const { service, blobs } = setup();
+    const blob = await service.createBlob(PROFILE, {
+      group: GROUP,
+      uploader_device_key: DEVICE,
+      size: 4,
+      chunk_count: 1
+    });
+    const row = blobs.get(blob.blob_id)!;
+    blobs.set(blob.blob_id, {
+      ...row,
+      created_at: NOW - 24 * 60 * 60 * 1000 + 5 * 60 * 1000
+    });
+
+    await expectCode(
+      service.putChunk(PROFILE, blob.blob_id, 0, {
+        data: randomBytes(4).toString('base64')
+      }),
+      'E2EE_NOT_FOUND'
+    );
+  });
+
   it('keeps existing MySQL blobs on MySQL after the switch', async () => {
     const { service, s3, setEnv } = setup({});
     const part = randomBytes(12);
@@ -263,7 +342,11 @@ describe('E2eeBlobsService with S3 storage', () => {
       s3,
       db
     ).putObject(blob.blob_id, 0, part);
-    blobs.set(blob.blob_id, { ...stale, storage: 's3' });
+    blobs.set(blob.blob_id, {
+      ...stale,
+      storage: 's3',
+      storage_location: `s3://${BUCKET}/${PREFIX}`
+    });
     chunks.set(`${blob.blob_id}/0`, { size: 12, data: Buffer.alloc(0) });
     db.getBlob.mockResolvedValueOnce(stale);
     setEnv(S3_ENV);

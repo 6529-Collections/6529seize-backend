@@ -75,7 +75,7 @@ synchronization, without foreign keys.
 | `e2ee_group_roster` | Delivery windows: device key, profile, `joined_epoch`, `removed_epoch` |
 | `e2ee_log` | The ordered log: wrapped (encrypted) entries and messages, their declared hashes, commit keys, signatures, roster deltas, epoch fingerprints |
 | `e2ee_welcomes`, `e2ee_welcome_deliveries` | MLS Welcome bytes stored once, one pending delivery per target device |
-| `e2ee_blobs`, `e2ee_blob_chunks` | Encrypted attachment metadata (`storage`: `mysql` or `s3`) and chunk sizes; the chunk ciphertext too for MySQL storage (empty for S3) |
+| `e2ee_blobs`, `e2ee_blob_chunks` | Encrypted attachment metadata (`storage`: `mysql` or `s3`, and for S3 the exact `storage_location`) and chunk sizes; the chunk ciphertext too for MySQL storage (empty for S3) |
 | `e2ee_reports` | Message bodies a recipient chose to disclose (severe-harm categories only), the sender's inner signature, `verified`, `on_hold` |
 | `e2ee_push_throttle`, `e2ee_rate_counters` | Wake throttle and fixed-window rate counters |
 
@@ -201,9 +201,15 @@ Chunk bytes sit behind one interface, `E2eeBlobStore`
 (`src/e2ee/e2ee-blob-store.ts`), with a MySQL and an S3 implementation; a
 content-addressed store (P51 DN9) would be a third. Blob rows and chunk sizes
 always stay in MySQL, because quotas, completion and retention read them
-under row locks. Each blob records its `storage` when it is created, so
+under row locks. Each blob records its `storage` when it is created, and for
+S3 the exact `storage_location` (`s3://<bucket>/<prefix>`), so
 `E2EE_BLOB_STORE` decides where new blobs go and existing blobs keep being
-served from where they are. The API does not change: clients upload and
+served from where they are. A blob is read or deleted only when the
+configured S3 location equals its recorded one; otherwise it answers `503
+E2EE_STORAGE_UNAVAILABLE` and its objects are left untouched. Changing the
+bucket or prefix of an environment with S3 blobs therefore makes them
+unavailable until the old settings are restored; it never points the API
+at the wrong objects. The API does not change: clients upload and
 download the same opaque ciphertext chunks through `/e2ee/blobs/...`.
 
 - **MySQL** (`mysql`, the default): chunk bytes in `e2ee_blob_chunks.data`.
@@ -223,21 +229,28 @@ are at most 1 MiB, well inside the Lambda payload limit.
 
 The chunk upload writes the object while holding the blob row lock and then
 records the size; if S3 fails nothing is recorded, and if the transaction
-fails the same key is overwritten on retry. A missing object answers `404
+fails the same key is overwritten on retry. Incomplete uploads stop
+accepting chunks (`404`) ten minutes before retention may delete them, so a
+late chunk can never land after retention removed the blob's objects. A missing object answers `404
 E2EE_NOT_FOUND` (logged as a warning). Storage that is misconfigured or
 unreachable answers `503 E2EE_STORAGE_UNAVAILABLE` and is logged without any
 chunk bytes: an invalid `E2EE_BLOB_STORE`, `s3` without a valid bucket and
-prefix, or an S3 blob while the S3 settings are missing. New uploads are
+prefix, an S3 blob while the S3 settings are missing or name another
+location, or an S3 error other than a missing key (a missing bucket
+included). Database errors are never turned into this code. New uploads are
 refused before they count against the daily upload limit; they never fall
 back to MySQL. MySQL blobs keep working while only the S3 settings are
 broken.
 
 The quotas above apply to declared bytes whatever the storage. Blob
 retention runs on every attachment upload (five expired or abandoned blobs
-per pass) and in the general opportunistic pruning: the stored bytes go
-first (S3 objects deleted by key, which needs no listing because chunk
-indexes are always below `chunk_count`), then the rows. If S3 cannot delete,
-the rows stay for the next pass, so no object is ever orphaned.
+per pass, MySQL and S3 blobs selected separately so a failing store cannot
+stall MySQL retention) and in the general opportunistic pruning: the stored
+bytes go first (S3 objects deleted by key, which needs no listing because
+chunk indexes are always below `chunk_count`), then the rows, which are
+re-read under a row lock and deleted only if they still name the place the
+bytes were deleted from. If S3 cannot delete, the rows stay for the next
+pass (logged as an error), so no object is ever orphaned.
 `E2EE_ATTACHMENTS_ENABLED=false` remains the kill switch.
 
 ### Moving existing blobs to S3
@@ -264,9 +277,13 @@ including the stage segment.
 For each blob it checks the chunk rows against the blob row, uploads every
 chunk with a SHA-256 checksum, reads every chunk back and compares hashes,
 then in one transaction (re-checked under the row lock) marks the blob `s3`
-and empties its MySQL chunk bytes. A blob whose copy does not verify is
-reported and left on MySQL; a blob that retention deleted meanwhile has its
-copies removed. The run is idempotent: switched blobs are never selected
+at the target location and empties its MySQL chunk bytes. A blob whose copy
+does not verify is reported, left on MySQL, and its copies are removed; a
+blob that retention deleted meanwhile has its copies removed. Blobs within a
+day of their 365-day retention are left to retention. A run stops starting
+new blobs after ten minutes (inside the 900-second Lambda timeout) and
+reports `more`. `dbMigrationsLoop` runs one invocation at a time, so do not
+run the migration while a `dbMigrationsLoop` deployment is in progress. The run is idempotent: switched blobs are never selected
 again and a blob that failed midway is copied again to the same keys.
 Incomplete uploads are left alone (they complete on MySQL and move on a
 later run, or expire after 24 hours). The response reports the inventory

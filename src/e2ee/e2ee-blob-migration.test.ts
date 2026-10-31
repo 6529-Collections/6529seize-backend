@@ -30,17 +30,24 @@ function fakeDb(blobs: Map<string, FakeBlob>) {
         bytes: Array.from(blobs.values()).reduce((sum, b) => sum + b.size, 0)
       }
     ]),
-    getMigratableBlobs: jest.fn(async (after: string, limit: number) =>
-      Array.from(blobs.entries())
-        .filter(([id, blob]) => blob.storage === 'mysql' && id > after)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .slice(0, limit)
-        .map(([id, blob]) => ({
-          blob_id: id,
-          size: blob.size,
-          chunk_count: blob.chunks.length
-        }))
+    getMigratableBlobs: jest.fn(
+      async (after: string, limit: number, _minCreatedAt: number) =>
+        Array.from(blobs.entries())
+          .filter(([id, blob]) => blob.storage === 'mysql' && id > after)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .slice(0, limit)
+          .map(([id, blob]) => ({
+            blob_id: id,
+            size: blob.size,
+            chunk_count: blob.chunks.length
+          }))
     ),
+    getBlob: jest.fn(async (id: string) => {
+      const blob = blobs.get(id);
+      return blob && !blob.deleted
+        ? ({ blob_id: id, storage: blob.storage } as never)
+        : null;
+    }),
     getBlobChunkBytes: jest.fn(async (id: string) =>
       (blobs.get(id)?.chunks ?? []).map((chunk, index) => ({
         chunk_index: index,
@@ -51,7 +58,9 @@ function fakeDb(blobs: Map<string, FakeBlob>) {
     switchBlobToS3: jest.fn(
       async (
         id: string,
-        _sizes: readonly number[]
+        _sizes: readonly number[],
+        _location: string,
+        _minCreatedAt: number
       ): Promise<'switched' | 'gone' | 'changed'> => {
         const blob = blobs.get(id);
         if (!blob || blob.deleted) return 'gone';
@@ -115,7 +124,12 @@ describe('migrateE2eeBlobsToS3', () => {
     expect(s3.objects.get(`${PREFIX}/${blobId(1)}/0`)?.body).toEqual(
       original[0]
     );
-    expect(db.switchBlobToS3).toHaveBeenCalledWith(blobId(1), [16, 5]);
+    expect(db.switchBlobToS3).toHaveBeenCalledWith(
+      blobId(1),
+      [16, 5],
+      `s3://${BUCKET}/${PREFIX}`,
+      expect.any(Number)
+    );
     expect(blobs.get(blobId(2))!.storage).toBe('s3');
 
     const second = await migrateE2eeBlobsToS3(
@@ -149,6 +163,8 @@ describe('migrateE2eeBlobsToS3', () => {
     ]);
     expect(db.switchBlobToS3).not.toHaveBeenCalled();
     expect(blobs.get(blobId(1))!.storage).toBe('mysql');
+    // The unverified copies are removed.
+    expect(s3.objects.size).toBe(0);
   });
 
   it('skips blobs whose chunks do not match their row', async () => {
@@ -179,6 +195,43 @@ describe('migrateE2eeBlobsToS3', () => {
 
     expect(report).toMatchObject({ migrated: 0, vanished: 1, failures: [] });
     expect(s3.objects.size).toBe(0);
+  });
+
+  it('stops starting blobs once the time budget is spent', async () => {
+    const { target, db } = setup(3);
+    let clock = 0;
+
+    const report = await migrateE2eeBlobsToS3(
+      { db, target },
+      {
+        live: true,
+        limit: 100,
+        timeBudgetMs: 1000,
+        now: () => {
+          clock += 400;
+          return clock;
+        }
+      }
+    );
+
+    expect(report.examined).toBeLessThan(3);
+    expect(report.more).toBe(true);
+  });
+
+  it('leaves blobs near their retention cutoff to retention', async () => {
+    const { target, db } = setup(1);
+    const now = 2_000_000_000_000;
+
+    await migrateE2eeBlobsToS3(
+      { db, target },
+      { live: false, limit: 10, now: () => now }
+    );
+
+    expect(db.getMigratableBlobs).toHaveBeenCalledWith(
+      '',
+      10,
+      now - 364 * 24 * 60 * 60 * 1000
+    );
   });
 
   it('stops at the limit and says more remain', async () => {

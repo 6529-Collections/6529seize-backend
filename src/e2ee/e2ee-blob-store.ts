@@ -44,6 +44,25 @@ export interface E2eeBlobChunkRows {
   getBlobChunkData(blobId: string, index: number): Promise<string | null>;
 }
 
+/** Where a blob's bytes are, as recorded on its row. */
+export interface E2eeBlobLocationRef {
+  readonly storage?: string | null;
+  /** E.g. `s3://<bucket>/<prefix>`; null for MySQL. */
+  readonly storage_location?: string | null;
+}
+
+/**
+ * An external store failed (unreachable, access denied, bucket missing).
+ * The API answers 503 for these; database errors are never wrapped in it.
+ */
+export class E2eeBlobStorageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'E2eeBlobStorageError';
+    Object.setPrototypeOf(this, E2eeBlobStorageError.prototype);
+  }
+}
+
 /**
  * A backend for attachment chunk bytes. Swapping MySQL for S3 (or IPFS
  * later) only needs a new implementation; the routes, quota and retention
@@ -51,6 +70,11 @@ export interface E2eeBlobChunkRows {
  */
 export interface E2eeBlobStore {
   readonly storage: E2eeBlobStorage;
+  /**
+   * The exact place this store writes, recorded on each blob row so a blob
+   * is only ever read or deleted at the place it was written. Null for MySQL.
+   */
+  readonly location: string | null;
   /**
    * Stores (or replaces) one chunk and records its size row. Called inside
    * the transaction that holds the blob row lock, so concurrent uploads of

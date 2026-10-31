@@ -87,6 +87,11 @@ function prefixProblem(prefix: string, nodeEnv: string | undefined) {
   return null;
 }
 
+/** The location recorded on S3 blob rows: `s3://<bucket>/<prefix>`. */
+export function e2eeBlobS3Location(config: E2eeBlobS3Config): string {
+  return `s3://${config.bucket}/${config.prefix}`;
+}
+
 /**
  * Validates an S3 location. Used for the API settings and for the migration
  * job, so both write exactly the same keys.

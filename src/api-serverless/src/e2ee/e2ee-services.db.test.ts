@@ -1283,6 +1283,44 @@ describeWithSeed('E2EE delivery service', [], () => {
       expect(await countRows()).toBe(0);
     });
 
+    it('keeps the row of a blob the migration moved while retention ran', async () => {
+      const alice = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const group = await createGroup(alice, aliceDevice);
+      const blob = await services.blobs.createBlob(alice.id, {
+        group: group.g,
+        uploader_device_key: aliceDevice.publicKey,
+        size: 4,
+        chunk_count: 1
+      });
+      await services.blobs.putChunk(alice.id, blob.blob_id, 0, {
+        data: randomBytes(4).toString('base64')
+      });
+      await services.blobs.completeBlob(alice.id, blob.blob_id);
+      now += 366 * DAY;
+      let passes = 0;
+      const deleted = await db.pruneExpiredBlobs(now, 5, async (expired) => {
+        if (passes++ > 0) return []; // the S3 pass cannot delete here
+        // The migration switches the blob between retention's select and
+        // its row delete: the row now names objects that must survive.
+        await sqlExecutor.execute(
+          `update e2ee_blobs set storage = 's3', storage_location = :location
+           where blob_id = :blobId`,
+          {
+            location: `s3://${BLOB_BUCKET}/${BLOB_PREFIX}`,
+            blobId: blob.blob_id
+          }
+        );
+        return expired.map((row) => row.blob_id);
+      });
+      expect(deleted).toBe(0);
+      const [{ blobs }] = await sqlExecutor.execute<{ blobs: number }>(
+        `select count(*) as blobs from e2ee_blobs where blob_id = :blobId`,
+        { blobId: blob.blob_id }
+      );
+      expect(Number(blobs)).toBe(1);
+    });
+
     it('migrates complete MySQL blobs to S3 after verifying them', async () => {
       const alice = aProfile();
       const aliceDevice = await registerDevice(alice);
@@ -1307,14 +1345,14 @@ describeWithSeed('E2EE delivery service', [], () => {
       );
       const dryRun = await migrateE2eeBlobsToS3(
         { db, target },
-        { live: false, limit: 1000 }
+        { live: false, limit: 1000, now: () => now }
       );
       expect(dryRun.mode).toBe('dry-run');
       expect(dryRun.migrated).toBeGreaterThanOrEqual(1);
       expect(s3.objects.size).toBe(0);
       const live = await migrateE2eeBlobsToS3(
         { db, target },
-        { live: true, limit: 1000 }
+        { live: true, limit: 1000, now: () => now }
       );
       expect(live.failures).toEqual([]);
       expect(
@@ -1332,6 +1370,14 @@ describeWithSeed('E2EE delivery service', [], () => {
         { blobId: blob.blob_id }
       );
       expect([row.storage, Number(row.bytes)]).toEqual(['s3', 0]);
+      const [located] = await sqlExecutor.execute<{
+        storage_location: string;
+      }>(`select storage_location from e2ee_blobs where blob_id = :blobId`, {
+        blobId: blob.blob_id
+      });
+      expect(located.storage_location).toBe(
+        `s3://${BLOB_BUCKET}/${BLOB_PREFIX}`
+      );
       blobEnv = S3_BLOB_ENV;
       const downloaded = await services.blobs.getChunk(
         alice.id,
@@ -1344,7 +1390,7 @@ describeWithSeed('E2EE delivery service', [], () => {
       );
       const rerun = await migrateE2eeBlobsToS3(
         { db, target },
-        { live: true, limit: 1000 }
+        { live: true, limit: 1000, now: () => now }
       );
       expect(rerun.examined).toBe(0);
     });

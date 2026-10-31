@@ -9,7 +9,10 @@ import {
   isMissingS3Object,
   S3E2eeBlobStore
 } from '@/e2ee/e2ee-blob-store.s3';
-import { E2eeBlobChunkRows } from '@/e2ee/e2ee-blob-store';
+import {
+  E2eeBlobChunkRows,
+  E2eeBlobStorageError
+} from '@/e2ee/e2ee-blob-store';
 import { InMemoryE2eeBlobS3 } from '@/tests/fixtures/e2ee-blob-s3.fixture';
 
 const BUCKET = 'private-bucket';
@@ -83,7 +86,7 @@ describe('S3E2eeBlobStore', () => {
         { blobId: BLOB_ID, index: 0, data: randomBytes(8), createdAt: 1 },
         CONNECTION
       )
-    ).rejects.toThrow('AccessDenied');
+    ).rejects.toThrow(E2eeBlobStorageError);
     expect(rows.upsertBlobChunk).not.toHaveBeenCalled();
   });
 
@@ -114,7 +117,55 @@ describe('S3E2eeBlobStore', () => {
     };
     const store = new S3E2eeBlobStore(CONFIG, s3, rowsFake().rows);
 
-    await expect(store.getChunk(BLOB_ID, 0)).rejects.toThrow('Access Denied');
+    await expect(store.getChunk(BLOB_ID, 0)).rejects.toThrow(
+      'S3 GetObject failed: AccessDenied: Access Denied'
+    );
+  });
+
+  it('treats a missing bucket as a storage failure, not a missing chunk', async () => {
+    const store = new S3E2eeBlobStore(
+      { ...CONFIG, bucket: 'deleted-bucket' },
+      new InMemoryE2eeBlobS3(BUCKET),
+      rowsFake().rows
+    );
+
+    await expect(store.getChunk(BLOB_ID, 0)).rejects.toThrow(
+      E2eeBlobStorageError
+    );
+  });
+
+  it('lets database errors from the size row through unwrapped', async () => {
+    const { rows } = rowsFake();
+    jest
+      .mocked(rows.upsertBlobChunk)
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Deadlock'), { code: 'ER_LOCK_DEADLOCK' })
+      );
+    const store = new S3E2eeBlobStore(
+      CONFIG,
+      new InMemoryE2eeBlobS3(BUCKET),
+      rows
+    );
+
+    const failure = await store
+      .putChunk(
+        { blobId: BLOB_ID, index: 0, data: randomBytes(8), createdAt: 1 },
+        CONNECTION
+      )
+      .catch((error: unknown) => error);
+
+    expect(failure).not.toBeInstanceOf(E2eeBlobStorageError);
+    expect((failure as { code?: string }).code).toBe('ER_LOCK_DEADLOCK');
+  });
+
+  it('names its location as bucket plus prefix', () => {
+    expect(
+      new S3E2eeBlobStore(
+        CONFIG,
+        new InMemoryE2eeBlobS3(BUCKET),
+        rowsFake().rows
+      ).location
+    ).toBe('s3://private-bucket/staging/e2ee-blobs');
   });
 
   it('deletes every chunk key of each blob in batches of 1000', async () => {
@@ -168,9 +219,13 @@ describe('S3E2eeBlobStore', () => {
 
   it('recognizes missing-object errors', () => {
     expect(isMissingS3Object({ name: 'NoSuchKey' })).toBe(true);
-    expect(isMissingS3Object({ $metadata: { httpStatusCode: 404 } })).toBe(
-      true
-    );
+    expect(isMissingS3Object({ Code: 'NoSuchKey' })).toBe(true);
+    expect(
+      isMissingS3Object({
+        name: 'NoSuchBucket',
+        $metadata: { httpStatusCode: 404 }
+      })
+    ).toBe(false);
     expect(isMissingS3Object({ name: 'AccessDenied' })).toBe(false);
     expect(isMissingS3Object(undefined)).toBe(false);
   });

@@ -1,5 +1,6 @@
 import {
   E2eeBlobChunkRows,
+  E2eeBlobLocationRef,
   E2eeBlobStore,
   E2eeStoredBlobRef
 } from '@/e2ee/e2ee-blob-store';
@@ -24,8 +25,12 @@ const logger = Logger.get('E2EE_BLOB_STORES');
 export interface E2eeBlobStores {
   /** The store new blobs use; 503 when the configuration is invalid. */
   forNewBlob(): E2eeBlobStore;
-  /** The store that holds this blob's chunks; 503 when it is unavailable. */
-  forBlob(blob: { readonly storage?: string | null }): E2eeBlobStore;
+  /**
+   * The store that holds this blob's chunks. 503 when that storage is not
+   * configured, or when the blob was written to another location than the
+   * configured one (its bytes are then neither read nor deleted).
+   */
+  forBlob(blob: E2eeBlobLocationRef): E2eeBlobStore;
 }
 
 export interface E2eeBlobStoresDeps {
@@ -84,34 +89,43 @@ export function createE2eeBlobStores(deps: E2eeBlobStoresDeps): E2eeBlobStores {
       return byStorage(storage);
     },
     forBlob(blob) {
-      return byStorage(blob.storage ?? 'mysql');
+      const store = byStorage(blob.storage ?? 'mysql');
+      if (store.location !== (blob.storage_location ?? null)) {
+        logger.error(
+          `[E2EE BLOB LOCATION MISMATCH] [STORED ${blob.storage_location ?? 'none'}] [CONFIGURED ${store.location ?? 'none'}]`
+        );
+        throw e2eeErrors.storageUnavailable();
+      }
+      return store;
     }
   };
 }
 
+type StoredBlob = E2eeStoredBlobRef & E2eeBlobLocationRef;
+
 /**
- * Deletes the stored bytes of expired blobs, store by store. Returns the ids
- * whose bytes are gone, so only their rows are deleted; a store that fails
- * keeps its blobs' rows for the next retention pass instead of orphaning
- * objects.
+ * Deletes the stored bytes of expired blobs, location by location. Returns
+ * the ids whose bytes are gone, so only their rows are deleted; a location
+ * that fails keeps its blobs' rows for the next retention pass instead of
+ * orphaning objects.
  */
 export async function deleteStoredE2eeBlobs(
   stores: E2eeBlobStores,
-  blobs: readonly (E2eeStoredBlobRef & { readonly storage?: string | null })[]
+  blobs: readonly StoredBlob[]
 ): Promise<string[]> {
-  const byStorage = new Map<string, (typeof blobs)[number][]>();
+  const groups = new Map<string, StoredBlob[]>();
   for (const blob of blobs) {
-    const storage = blob.storage ?? 'mysql';
-    byStorage.set(storage, [...(byStorage.get(storage) ?? []), blob]);
+    const key = `${blob.storage ?? 'mysql'}|${blob.storage_location ?? ''}`;
+    groups.set(key, [...(groups.get(key) ?? []), blob]);
   }
   const deleted: string[] = [];
-  for (const [storage, group] of Array.from(byStorage.entries())) {
+  for (const group of Array.from(groups.values())) {
     try {
-      await stores.forBlob({ storage }).deleteBlobs(group);
+      await stores.forBlob(group[0]).deleteBlobs(group);
       deleted.push(...group.map((blob) => blob.blob_id));
     } catch (error) {
-      logger.warn(
-        `[E2EE BLOB DELETE FAILED] [STORAGE ${storage}] [BLOBS ${group.length}] ${
+      logger.error(
+        `[E2EE BLOB DELETE FAILED] [STORAGE ${group[0].storage ?? 'mysql'}] [BLOBS ${group.length}] ${
           (error as Error)?.message ?? 'unknown'
         }`
       );

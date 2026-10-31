@@ -2063,9 +2063,10 @@ family: statements and bound values never reach logs. Encrypted attachment
 chunk bytes sit behind `E2eeBlobStore`: MySQL (`e2ee_blob_chunks.data`, the
 default) or private S3 objects at `<E2EE_BLOB_S3_PREFIX>/<blob_id>/<index>`
 (`E2EE_BLOB_STORE=s3`; SSE-S3, no ACL, no CDN, streamed through the API after
-its membership checks). Each blob records its `storage`; sizes stay in MySQL
-for the per-profile quotas (200 MiB per rolling 24 h, 1 GiB live), and
-pruning on every upload deletes S3 objects before rows. Misconfigured storage
+its membership checks). Each blob records its `storage` and exact S3
+location and is only read or deleted there; sizes stay in MySQL for the
+per-profile quotas (200 MiB per rolling 24 h, 1 GiB live), and pruning on
+every upload deletes S3 objects before rows. Misconfigured storage
 fails closed with 503 `E2EE_STORAGE_UNAVAILABLE`. The operator-only
 `dbMigrationsLoop` scope `e2ee-blobs-to-s3` copies MySQL blobs to S3 with
 read-back hash checks (dry run by default).

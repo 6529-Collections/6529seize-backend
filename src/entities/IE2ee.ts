@@ -348,6 +348,14 @@ export class E2eeBlobEntity {
    */
   @Column({ type: 'varchar', length: 16, default: 'mysql' })
   readonly storage!: string;
+
+  /**
+   * The exact place the bytes were written (`s3://<bucket>/<prefix>` for
+   * S3, null for MySQL). The API reads and deletes a blob only at this
+   * location, so a settings change can never point it at the wrong objects.
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  readonly storage_location!: string | null;
 }
 
 /**

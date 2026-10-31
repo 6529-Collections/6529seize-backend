@@ -14,6 +14,8 @@ const S3_ENV = {
   E2EE_BLOB_S3_BUCKET: BUCKET,
   E2EE_BLOB_S3_PREFIX: 'test/e2ee-blobs'
 };
+const LOCATION = 's3://private-bucket/test/e2ee-blobs';
+const S3_BLOB = { storage: 's3', storage_location: LOCATION };
 
 function rows(): E2eeBlobChunkRows {
   return {
@@ -54,7 +56,8 @@ describe('createE2eeBlobStores', () => {
     expect(stores.forNewBlob().storage).toBe('mysql');
     env = S3_ENV;
     expect(stores.forNewBlob().storage).toBe('s3');
-    expect(stores.forBlob({ storage: 's3' })).toBe(stores.forNewBlob());
+    expect(stores.forNewBlob().location).toBe(LOCATION);
+    expect(stores.forBlob(S3_BLOB)).toBe(stores.forNewBlob());
     expect(s3Client).toHaveBeenCalledTimes(1);
     expect(s3Client).toHaveBeenCalledWith('eu-west-1');
   });
@@ -78,8 +81,23 @@ describe('createE2eeBlobStores', () => {
   it('keeps serving MySQL blobs but fails S3 blobs closed without S3 settings', () => {
     const stores = createE2eeBlobStores({ rows: rows(), env: () => ({}) });
     expect(stores.forBlob({ storage: 'mysql' }).storage).toBe('mysql');
-    expectStorageUnavailable(() => stores.forBlob({ storage: 's3' }));
+    expectStorageUnavailable(() => stores.forBlob(S3_BLOB));
     expectStorageUnavailable(() => stores.forBlob({ storage: 'ipfs' }));
+  });
+
+  it('never reads or deletes an S3 blob written to another location', () => {
+    const stores = createE2eeBlobStores({
+      rows: rows(),
+      env: () => ({ ...S3_ENV, E2EE_BLOB_S3_PREFIX: 'test/moved' }),
+      s3Client: () => new InMemoryE2eeBlobS3(BUCKET)
+    });
+    expectStorageUnavailable(() => stores.forBlob(S3_BLOB));
+    expectStorageUnavailable(() =>
+      stores.forBlob({ storage: 's3', storage_location: null })
+    );
+    expectStorageUnavailable(() =>
+      stores.forBlob({ storage: 'mysql', storage_location: LOCATION })
+    );
   });
 });
 
@@ -93,14 +111,14 @@ describe('deleteStoredE2eeBlobs', () => {
     });
     const s3Blob = `0x${'01'.repeat(16)}`;
     await stores
-      .forBlob({ storage: 's3' })
+      .forBlob(S3_BLOB)
       .putChunk(
         { blobId: s3Blob, index: 0, data: randomBytes(4), createdAt: 1 },
         {} as never
       );
 
     const deleted = await deleteStoredE2eeBlobs(stores, [
-      { blob_id: s3Blob, chunk_count: 1, storage: 's3' },
+      { blob_id: s3Blob, chunk_count: 1, ...S3_BLOB },
       { blob_id: `0x${'02'.repeat(16)}`, chunk_count: 3, storage: 'mysql' }
     ]);
 
@@ -116,6 +134,7 @@ describe('deleteStoredE2eeBlobs', () => {
       forNewBlob: jest.fn(),
       forBlob: ({ storage }) => ({
         storage: storage === 's3' ? 's3' : 'mysql',
+        location: null,
         putChunk: jest.fn(),
         getChunk: jest.fn(),
         deleteBlobs: async () => {
