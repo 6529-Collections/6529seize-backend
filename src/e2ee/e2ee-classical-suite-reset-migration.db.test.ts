@@ -316,10 +316,17 @@ describeWithSeed(
     });
 
     it('keeps classical blobs stored in S3 for retention to delete with their objects', async () => {
-      // The S3 storage column, as the blob storage change adds it.
-      await sqlExecutor.execute(
-        `ALTER TABLE ${E2EE_BLOBS_TABLE} ADD COLUMN storage varchar(16) NOT NULL DEFAULT 'mysql'`
+      // The S3 storage column, as the blob storage change adds it (added
+      // here only when the schema does not have it yet).
+      const [{ n }] = await sqlExecutor.execute<{ n: number }>(
+        loadMigration().STORAGE_COLUMN_QUERY
       );
+      const addedColumn = Number(n) === 0;
+      if (addedColumn) {
+        await sqlExecutor.execute(
+          `ALTER TABLE ${E2EE_BLOBS_TABLE} ADD COLUMN storage varchar(16) NOT NULL DEFAULT 'mysql'`
+        );
+      }
       try {
         await sqlExecutor.execute(
           `UPDATE ${E2EE_BLOBS_TABLE} SET storage = 's3' WHERE blob_id = :id`,
@@ -336,9 +343,11 @@ describeWithSeed(
         await expect(count(E2EE_DEVICES_TABLE)).resolves.toBe(1);
         await expect(count(E2EE_GROUPS_TABLE)).resolves.toBe(1);
       } finally {
-        await sqlExecutor.execute(
-          `ALTER TABLE ${E2EE_BLOBS_TABLE} DROP COLUMN storage`
-        );
+        if (addedColumn) {
+          await sqlExecutor.execute(
+            `ALTER TABLE ${E2EE_BLOBS_TABLE} DROP COLUMN storage`
+          );
+        }
       }
     });
   }
