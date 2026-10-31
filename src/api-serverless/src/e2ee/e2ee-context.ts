@@ -8,6 +8,11 @@ import {
   E2eeRateLimit
 } from '@/e2ee/e2ee.constants';
 import { E2eeDb, e2eeDb, E2eeDeviceRow } from '@/e2ee/e2ee.db';
+import {
+  createE2eeBlobStores,
+  deleteStoredE2eeBlobs,
+  E2eeBlobStores
+} from '@/e2ee/e2ee-blob-stores';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { isE2eeAttachmentsEnabled } from '@/e2ee/e2ee-flag';
 import { E2eeContractWalletVerifier } from '@/e2ee/e2ee-grant';
@@ -28,6 +33,8 @@ export interface E2eeServiceDeps {
   readonly randomHex: (bytes: number) => string;
   /** E2EE_ATTACHMENTS_ENABLED: whether blob routes accept or serve chunks. */
   readonly attachmentsEnabled: () => boolean;
+  /** Attachment chunk storage (E2EE_BLOB_STORE: MySQL or S3). */
+  readonly blobStores: E2eeBlobStores;
 }
 
 /** Ethereum mainnet EIP-1271 checks (contract section 2.2 step 3). */
@@ -57,7 +64,8 @@ export const defaultE2eeServiceDeps: E2eeServiceDeps = {
   // Uniform [0, 1) from the CSPRNG (used for pruning odds and jitter).
   random: () => randomInt(0, 0x100000000) / 0x100000000,
   randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`,
-  attachmentsEnabled: () => isE2eeAttachmentsEnabled()
+  attachmentsEnabled: () => isE2eeAttachmentsEnabled(),
+  blobStores: createE2eeBlobStores({ rows: e2eeDb })
 };
 
 export function nowSeconds(deps: E2eeServiceDeps): number {
@@ -159,7 +167,11 @@ export async function filterByE2eeRateLimit(
 /** Blob retention runs on every blob upload so storage stays bounded. */
 export async function pruneE2eeBlobs(deps: E2eeServiceDeps): Promise<void> {
   try {
-    await deps.db.pruneExpiredBlobs(deps.now(), E2EE_RETENTION.blobBatchSize);
+    await deps.db.pruneExpiredBlobs(
+      deps.now(),
+      E2EE_RETENTION.blobBatchSize,
+      (blobs) => deleteStoredE2eeBlobs(deps.blobStores, blobs)
+    );
   } catch (error) {
     logger.warn(
       `E2EE blob pruning failed: ${(error as Error)?.message ?? 'unknown'}`
@@ -171,7 +183,9 @@ export async function pruneE2eeBlobs(deps: E2eeServiceDeps): Promise<void> {
 export async function maybePruneE2ee(deps: E2eeServiceDeps): Promise<void> {
   if (deps.random() >= E2EE_RETENTION.probability) return;
   try {
-    await deps.db.pruneExpired(deps.now());
+    await deps.db.pruneExpired(deps.now(), (blobs) =>
+      deleteStoredE2eeBlobs(deps.blobStores, blobs)
+    );
   } catch (error) {
     logger.warn(
       `E2EE retention pruning failed: ${(error as Error)?.message ?? 'unknown'}`
