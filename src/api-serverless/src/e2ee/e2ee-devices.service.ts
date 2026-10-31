@@ -8,6 +8,10 @@ import {
   requireOwnActiveDevice
 } from '@/api/e2ee/e2ee-context';
 import {
+  e2eeDeviceActivityWindow,
+  isInactiveDevice
+} from '@/api/e2ee/e2ee-device-activity';
+import {
   toApiE2eeDevice,
   toApiEligibilityStatus
 } from '@/api/e2ee/e2ee.mappers';
@@ -55,6 +59,11 @@ export class E2eeDevicesService {
     return this.deps.db;
   }
 
+  /** Inactive devices (unused for E2EE_DEVICE_INACTIVE_DAYS), judged now. */
+  private activityWindow() {
+    return e2eeDeviceActivityWindow(this.deps.now());
+  }
+
   async getMe(callerProfileId: string): Promise<ApiE2eeMe> {
     const devices = await this.db.getListableDevicesOfProfile(
       callerProfileId,
@@ -68,9 +77,10 @@ export class E2eeDevicesService {
     const statuses = await this.getKeyPackageStatuses(
       active.map((device) => device.device_key)
     );
+    const activity = this.activityWindow();
     return {
       profile_id: callerProfileId,
-      devices: devices.map(toApiE2eeDevice),
+      devices: devices.map((device) => toApiE2eeDevice(device, activity)),
       key_packages: statuses,
       max_devices: E2EE_MAX_ACTIVE_DEVICES,
       attachments_enabled: this.deps.attachmentsEnabled()
@@ -102,7 +112,7 @@ export class E2eeDevicesService {
   async getDevice(deviceKey: string): Promise<ApiE2eeDevice> {
     const device = await this.db.getDevice(deviceKey);
     if (!device) throw e2eeErrors.notFound('Device');
-    return toApiE2eeDevice(device);
+    return toApiE2eeDevice(device, this.activityWindow());
   }
 
   async getProfileDevices(profileId: string): Promise<ApiE2eeDevice[]> {
@@ -111,7 +121,8 @@ export class E2eeDevicesService {
       this.deps.now(),
       E2EE_DEVICE_LISTING_WINDOW_MS
     );
-    return devices.map(toApiE2eeDevice);
+    const activity = this.activityWindow();
+    return devices.map((device) => toApiE2eeDevice(device, activity));
   }
 
   /** Bulk form of the device reads, for verifying a group's leaves at once. */
@@ -132,7 +143,10 @@ export class E2eeDevicesService {
       seen.add(device.device_key);
       return true;
     });
-    return { devices: devices.map(toApiE2eeDevice) };
+    const activity = this.activityWindow();
+    return {
+      devices: devices.map((device) => toApiE2eeDevice(device, activity))
+    };
   }
 
   private async verifyRegistration(
@@ -197,9 +211,10 @@ export class E2eeDevicesService {
           : false;
         if (
           !wasActive &&
-          (await this.db.countActiveDevices(
+          (await this.db.countDevicesTowardLimit(
             callerProfileId,
             atSeconds,
+            e2eeDeviceActivityWindow(now).inactiveBeforeMs,
             connection
           )) >= E2EE_MAX_ACTIVE_DEVICES
         ) {
@@ -413,10 +428,13 @@ export class E2eeDevicesService {
     profileIds: string[],
     bypass: Set<string>
   ) {
+    const activity = this.activityWindow();
     const facts = await this.db.getPolicyFacts(
       callerProfileId,
       profileIds,
-      nowSeconds(this.deps)
+      activity.atSeconds,
+      undefined,
+      activity.inactiveBeforeMs
     );
     return new Map(
       profileIds.map((profileId) => {
@@ -490,15 +508,21 @@ export class E2eeDevicesService {
     return lastResort;
   }
 
-  /** Active devices per OK target, minus the claimer, filtered by device_keys. */
+  /**
+   * Active devices per OK target, minus the claimer and inactive devices,
+   * filtered by device_keys. Inactive devices are skipped like revoked ones.
+   */
   private async selectClaimDevices(
     request: ApiE2eeClaimKeyPackagesRequest,
     okProfiles: Set<string>
   ): Promise<Map<string, E2eeDeviceRow[]>> {
-    const activeDevices = await this.db.getActiveDevicesOfProfiles(
-      Array.from(okProfiles),
-      nowSeconds(this.deps)
-    );
+    const activity = this.activityWindow();
+    const activeDevices = (
+      await this.db.getActiveDevicesOfProfiles(
+        Array.from(okProfiles),
+        activity.atSeconds
+      )
+    ).filter((device) => !isInactiveDevice(device, activity));
     const devicesByProfile = new Map<string, E2eeDeviceRow[]>();
     for (const target of request.targets) {
       if (!okProfiles.has(target.profile_id)) continue;

@@ -60,6 +60,7 @@ Other settings, read per request:
 | --- | --- | --- |
 | `E2EE_ATTACHMENTS_ENABLED` | Kill switch for attachments, checked after `E2EE_DMS_ENABLED` (with both off, blob routes answer `E2EE_DISABLED`). `false` makes the attachment (blob) routes answer `404 E2EE_ATTACHMENTS_DISABLED` before any blob row or chunk is read or written; resolving the caller may still read the profile. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On everywhere, including production |
 | `E2EE_ENTRIES_PER_GROUP_PER_HOUR` | Commits and proposals one group may sequence per hour (an integer from 1 to 1000) | 12 (P35's value); 30 for `local` and `development`, so automated tests can churn groups |
+| `E2EE_DEVICE_INACTIVE_DAYS` | Days without use after which an active device is inactive (an integer from 1 to 365; see Inactive devices) | 30 |
 | `E2EE_TRUST_AND_SAFETY_GROUP_ID` | The user group whose members may read reported encrypted messages (see Reports and trust and safety) | Unset: reports are stored, nobody can read them |
 
 ## API
@@ -132,8 +133,45 @@ ahead and `expires_at` in the future. It then recovers the EIP-712 signer
 (salt-only domain, no chain id). If that fails and the wallet has code on
 Ethereum mainnet, it calls EIP-1271 `isValidSignature(grant_id, signature)`
 through `verifyContractWalletSignatureHash`. The grant wallet must map to the
-caller's profile. A profile has at most 10 active devices; re-registering an
-unrevoked key of the same profile renews its grant.
+caller's profile. A profile has at most 10 active devices, not counting
+inactive ones (below); re-registering an unrevoked key of the same profile
+renews its grant without needing a free slot.
+
+### Inactive devices
+
+A browser set to delete site data when it closes (or a privacy tool that
+does the same) loses its device on every visit and enrolls a new one next
+time. Each abandoned device would otherwise hold a slot for its whole
+180-day grant and be added to every new group. An active device (not
+revoked, not expired) whose last use is more than `E2EE_DEVICE_INACTIVE_DAYS`
+(30) days ago is therefore inactive:
+
+- it does not count toward the 10-device limit, so registration ignores it;
+- its KeyPackages are not claimable: a claim skips it like a revoked device,
+  also when named in `device_keys`, and returns `NO_DEVICES` for a profile
+  whose devices are all inactive. Eligibility reports the same:
+  `active_devices` counts only claimable devices;
+- it stays a valid device: it can still read and send in groups it is in,
+  and it is listed with `inactive: true` in `GET /e2ee/me`,
+  `GET /e2ee/profiles/{id}/devices`, `GET /e2ee/devices/{key}` and device
+  lookups (the field is absent where activity is not judged, such as claim
+  results and registration responses; read it as false).
+
+Its next authenticated use makes it active again at once. That can put a
+profile above 10 devices that count; registration then waits for a free
+slot as usual. Last use is `last_seen_at`, or the registration time when it
+was never set. Every device-scoped call (`requireOwnActiveDevice`: group and
+log reads, welcomes, the device's groups, entries, messages, roster repair,
+claims, KeyPackage uploads, attachments and reports) updates it, at most
+once every 5 minutes per device; `GET /e2ee/me` and other reads that name no
+device of the caller do not. Registration and renewal set it too.
+
+Inactive devices are not revoked automatically: an automatic revocation by
+6529.io would carry no device signature, so other members would not treat
+it as a required removal (an unverified revocation), and a device that comes
+back after a long break would wipe its local history on seeing its own
+revocation. Members' clients already remove leaves idle for 60 days, and
+the grant expires after 180 days.
 
 A revocation is an Ed25519 signature over
 `H("6529.MlsDeviceRevoke.v1", target, revoker, uint64 revoked_at)` by the
@@ -193,7 +231,7 @@ For "caller adds or claims target" (claims, eligibility, `roster_add` of new
 profiles, roster repair additions): a block in either direction gives
 `BLOCKED`; then the target's DM policy (`EVERYONE`, `PEOPLE_I_FOLLOW` meaning
 the target follows the caller, `NOBODY`); then `NO_DEVICES` when the target
-has no active device. The facts come from four set-based queries regardless
+has no active device that is not inactive. The facts come from four set-based queries regardless
 of the number of targets. A claim with `group` skips blocks and policy for
 profiles already in that group's roster, provided the claimer device is in it
 too; the caller's own profile always skips them.
@@ -202,7 +240,7 @@ too; the caller's own profile always skips them.
 
 | Limit | Value |
 | --- | --- |
-| Active devices per profile | 10 |
+| Active devices per profile | 10, not counting inactive devices (unused for `E2EE_DEVICE_INACTIVE_DAYS`, 30 days) |
 | Unclaimed one-time KeyPackages per device | 100 (`409 E2EE_KEY_PACKAGE_LIMIT` beyond) |
 | KeyPackage size | 8 KiB (an X-Wing KeyPackage is about 2.7 KiB) |
 | Entry data | an entry bucket, at most 2 MiB |

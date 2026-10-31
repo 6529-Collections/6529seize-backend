@@ -248,17 +248,24 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async countActiveDevices(
+  /**
+   * Devices that count toward the device limit: active (not revoked, not
+   * expired) and used at or after `seenSinceMs`. Inactive devices, unused
+   * for longer, leave their slot free until they are used again.
+   */
+  async countDevicesTowardLimit(
     profileId: string,
     nowSeconds: number,
+    seenSinceMs: number,
     connection: Conn
   ): Promise<number> {
     const row = await this.one<{ cnt: number }>(
       `select count(*) as cnt from ${E2EE_DEVICES_TABLE}
        where profile_id = :profileId
          and revoked_at is null
-         and expires_at_seconds > :nowSeconds`,
-      { profileId, nowSeconds },
+         and expires_at_seconds > :nowSeconds
+         and coalesce(last_seen_at, created_at) >= :seenSinceMs`,
+      { profileId, nowSeconds, seenSinceMs },
       connection
     );
     return Number(row?.cnt ?? 0);
@@ -553,12 +560,17 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
 
   // ----------------------------------------------------------------- policy
 
-  /** Facts for section 7.1 in four set-based queries (no per-target query). */
+  /**
+   * Facts for section 7.1 in four set-based queries (no per-target query).
+   * `activeDevices` counts active devices; with `seenSinceMs`, only those
+   * used at or after it (inactive devices are not claimable).
+   */
   async getPolicyFacts(
     callerProfileId: string,
     targetProfileIds: readonly string[],
     nowSeconds: number,
-    connection?: Conn
+    connection?: Conn,
+    seenSinceMs = 0
   ): Promise<Map<string, E2eePolicyFacts>> {
     const targets = inList(targetProfileIds);
     if (!targets.length) return new Map();
@@ -595,8 +607,9 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
         `select profile_id, count(*) as cnt from ${E2EE_DEVICES_TABLE}
          where profile_id in (:targets) and revoked_at is null
            and expires_at_seconds > :nowSeconds
+           and coalesce(last_seen_at, created_at) >= :seenSinceMs
          group by profile_id`,
-        { targets, nowSeconds },
+        { targets, nowSeconds, seenSinceMs },
         connection
       )
     ]);

@@ -944,6 +944,151 @@ describeWithSeed('E2EE delivery service', [], () => {
     });
   });
 
+  describe('inactive devices', () => {
+    const deviceOf = async (profile: Profile, key: E2eeTestKey) =>
+      (await services.devices.getMe(profile.id)).devices.find(
+        (device) => device.device_key === key.publicKey
+      );
+
+    it('updates last_seen_at on authenticated device use, at most every 5 minutes', async () => {
+      const alice = aProfile();
+      const key = await registerDevice(alice);
+      const registeredAt = now;
+      expect((await deviceOf(alice, key))?.last_seen_at).toBe(registeredAt);
+      now += 2 * 60 * 1000;
+      await services.groups.getDeviceGroups(alice.id, key.publicKey);
+      expect((await deviceOf(alice, key))?.last_seen_at).toBe(registeredAt);
+      now += 10 * 60 * 1000;
+      await services.groups.getWelcomes(alice.id, key.publicKey);
+      expect((await deviceOf(alice, key))?.last_seen_at).toBe(now);
+      const touchedAt = now;
+      now += DAY;
+      // Reads that name no device of the caller do not count as its use.
+      await services.devices.getMe(alice.id);
+      await services.devices.getProfileDevices(alice.id);
+      expect((await deviceOf(alice, key))?.last_seen_at).toBe(touchedAt);
+      await uploadKeyPackages(alice, key, 1);
+      expect((await deviceOf(alice, key))?.last_seen_at).toBe(now);
+    });
+
+    it('frees the slots of devices unused for 30 days until they are used again', async () => {
+      const alice = aProfile();
+      const keys: E2eeTestKey[] = [];
+      for (let i = 0; i < 10; i++) keys.push(await registerDevice(alice));
+      await expectE2eeError(registerDevice(alice), 'E2EE_DEVICE_LIMIT');
+      now += 29 * DAY;
+      await expectE2eeError(registerDevice(alice), 'E2EE_DEVICE_LIMIT');
+      expect(
+        (await services.devices.getMe(alice.id)).devices.every(
+          (device) => device.inactive === false
+        )
+      ).toBe(true);
+
+      now += 2 * DAY;
+      const fresh = await registerDevice(alice);
+      const me = await services.devices.getMe(alice.id);
+      expect(me.max_devices).toBe(10);
+      expect(
+        me.devices
+          .filter((device) => device.inactive)
+          .map((device) => device.device_key)
+          .sort()
+      ).toEqual(keys.map((key) => key.publicKey).sort());
+      expect((await deviceOf(alice, fresh))?.inactive).toBe(false);
+
+      // Using an old device makes it count again.
+      await services.groups.getDeviceGroups(alice.id, keys[0].publicKey);
+      expect((await deviceOf(alice, keys[0]))?.inactive).toBe(false);
+      expect(
+        (await services.devices.getDevice(keys[1].publicKey)).inactive
+      ).toBe(true);
+      const lookup = await services.devices.lookupDevices({
+        device_keys: [keys[1].publicKey]
+      });
+      expect(lookup.devices[0].inactive).toBe(true);
+      // Two devices count (keys[0] and fresh): eight more fit, then the limit.
+      for (let i = 0; i < 8; i++) await registerDevice(alice);
+      await expectE2eeError(registerDevice(alice), 'E2EE_DEVICE_LIMIT');
+      // Re-registering an inactive device renews it without a new slot.
+      await registerDevice(alice, keys[2]);
+      expect((await deviceOf(alice, keys[2]))?.inactive).toBe(false);
+    });
+
+    it('does not hand out KeyPackages of inactive devices', async () => {
+      const alice = aProfile();
+      const bob = aProfile();
+      const bobOld = await registerDevice(bob);
+      await uploadKeyPackages(bob, bobOld, 1, true);
+      now += 31 * DAY;
+      const aliceDevice = await registerDevice(alice);
+      const bobNew = await registerDevice(bob);
+      await uploadKeyPackages(bob, bobNew, 1);
+
+      const claimed = await services.devices.claimKeyPackages(alice.id, {
+        targets: [{ profile_id: bob.id }],
+        claimer_device_key: aliceDevice.publicKey
+      });
+      expect(claimed.results[0].status).toBe('OK');
+      expect(
+        claimed.results[0].key_packages.map((item) => item.device.device_key)
+      ).toEqual([bobNew.publicKey]);
+      const named = await services.devices.claimKeyPackages(alice.id, {
+        targets: [{ profile_id: bob.id, device_keys: [bobOld.publicKey] }],
+        claimer_device_key: aliceDevice.publicKey
+      });
+      expect(named.results[0]).toEqual({
+        profile_id: bob.id,
+        status: 'NO_DEVICES',
+        key_packages: []
+      });
+      expect(
+        (
+          await services.devices.checkEligibility(alice.id, {
+            profile_ids: [bob.id]
+          })
+        ).results[0]
+      ).toEqual({ profile_id: bob.id, status: 'OK', active_devices: 1 });
+
+      // Once the old device is used again, its last-resort package is back.
+      await services.groups.getWelcomes(bob.id, bobOld.publicKey);
+      const again = await services.devices.claimKeyPackages(alice.id, {
+        targets: [{ profile_id: bob.id, device_keys: [bobOld.publicKey] }],
+        claimer_device_key: aliceDevice.publicKey
+      });
+      expect(again.results[0].status).toBe('OK');
+      expect(again.results[0].key_packages).toHaveLength(1);
+      expect(again.results[0].key_packages[0].last_resort).toBe(true);
+    });
+
+    it('reports a profile whose only devices are inactive as having no devices', async () => {
+      const alice = aProfile();
+      const bob = aProfile();
+      const bobDevice = await registerDevice(bob);
+      await uploadKeyPackages(bob, bobDevice, 1, true);
+      now += 31 * DAY;
+      const aliceDevice = await registerDevice(alice);
+      expect(
+        (
+          await services.devices.checkEligibility(alice.id, {
+            profile_ids: [bob.id]
+          })
+        ).results[0]
+      ).toEqual({
+        profile_id: bob.id,
+        status: 'NO_DEVICES',
+        active_devices: 0
+      });
+      expect(
+        (
+          await services.devices.claimKeyPackages(alice.id, {
+            targets: [{ profile_id: bob.id }],
+            claimer_device_key: aliceDevice.publicKey
+          })
+        ).results[0]
+      ).toEqual({ profile_id: bob.id, status: 'NO_DEVICES', key_packages: [] });
+    });
+  });
+
   describe('welcomes and revocation', () => {
     it('delivers a welcome once per target until acknowledged', async () => {
       const alice = aProfile();

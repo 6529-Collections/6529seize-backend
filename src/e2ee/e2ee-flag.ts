@@ -32,6 +32,25 @@ export function isE2eeAttachmentsEnabled(env: Env = process.env): boolean {
   return readBooleanFlag(env, 'E2EE_ATTACHMENTS_ENABLED') ?? true;
 }
 
+const DEFAULT_DEVICE_INACTIVE_DAYS = 30;
+const MAX_DEVICE_INACTIVE_DAYS = 365;
+
+/**
+ * `E2EE_DEVICE_INACTIVE_DAYS`: days without authenticated use after which an
+ * unrevoked device is inactive. An inactive device does not count toward the
+ * device limit and its KeyPackages are not claimable, so new groups and adds
+ * skip it; it becomes active again the next time it is used. An integer from
+ * 1 to 365; 30 when unset or invalid.
+ */
+export function e2eeDeviceInactiveDays(env: Env = process.env): number {
+  const raw = env.E2EE_DEVICE_INACTIVE_DAYS?.trim();
+  if (raw && /^\d+$/.test(raw)) {
+    const value = Number(raw);
+    if (value >= 1 && value <= MAX_DEVICE_INACTIVE_DAYS) return value;
+  }
+  return DEFAULT_DEVICE_INACTIVE_DAYS;
+}
+
 /** P35's value; staging allows more so automated tests can churn groups. */
 const PRODUCTION_ENTRIES_PER_GROUP_PER_HOUR = 12;
 const DEVELOPMENT_ENTRIES_PER_GROUP_PER_HOUR = 30;
