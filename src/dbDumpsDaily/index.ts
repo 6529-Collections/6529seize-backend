@@ -1,11 +1,7 @@
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
-import {
-  CONSOLIDATIONS_TABLE,
-  DELEGATIONS_TABLE,
-  NFTDELEGATION_BLOCKS_TABLE,
-  TRANSACTIONS_TABLE
-} from '@/constants';
+import { NFTDELEGATION_BLOCKS_TABLE } from '@/constants';
+import { DB_DUMPS_DAILY_TABLES } from './db-dumps-daily-tables';
 import { sqlExecutor } from '../sql-executor';
 import { json2csv } from 'json-2-csv';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -17,9 +13,9 @@ const s3 = new S3Client({ region: 'eu-west-1' });
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   await doInDbContext(
     async () => {
-      await dumpTable(TRANSACTIONS_TABLE);
-      await dumpTable(DELEGATIONS_TABLE);
-      await dumpTable(CONSOLIDATIONS_TABLE);
+      for (const table of DB_DUMPS_DAILY_TABLES) {
+        await dumpTable(table);
+      }
 
       const nftDelData = await sqlExecutor.execute(
         `SELECT * FROM ${NFTDELEGATION_BLOCKS_TABLE} ORDER BY block DESC LIMIT 1`
