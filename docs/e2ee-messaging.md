@@ -20,8 +20,9 @@ implementation contract v1". This page describes the backend's part of it.
 | unset | On when `NODE_ENV` is `local` or `development` (staging); off otherwise, including production |
 
 While off, every route answers `404 {"error": ..., "code": "E2EE_DISABLED"}`
-before authentication or database work. Production stays off; nothing here
-authorizes enabling it there.
+after the JWT check and before any proxy, profile or database check (a request
+without a valid token still gets the usual 401). Production stays off; nothing
+here authorizes enabling it there.
 
 ## API
 
@@ -66,10 +67,12 @@ synchronization, without foreign keys.
 | `e2ee_push_throttle`, `e2ee_rate_counters` | Wake throttle and fixed-window rate counters |
 
 The server never receives plaintext message content, group names, the MLS
-member list, or private keys. It does see: group handles, epoch numbers,
-padded ciphertext sizes, timing, which devices and profiles are in each
-delivery roster, who submitted what (from the JWT), and notify hints (which
-roster profiles a sender asked to wake).
+member list, or private keys. The one exception is a report: the reporting
+recipient deliberately discloses that message's body (`e2ee_reports` above).
+It does see: group handles, epoch numbers, padded ciphertext sizes, timing,
+which devices and profiles are in each delivery roster, who submitted what
+(from the JWT), and notify hints (which roster profiles a sender asked to
+wake).
 
 Every byte column holds ciphertext or opaque MLS bytes. Queries touching
 `e2ee_*` tables form a private SQL family in `src/db/my-sql.helpers.ts`:

@@ -8,6 +8,7 @@ import {
   Context,
   SQSBatchResponse,
   SQSEvent,
+  SQSRecord,
   ScheduledEvent
 } from 'aws-lambda';
 import { withBadgeLockDeadline } from './device-badge';
@@ -51,15 +52,28 @@ async function refreshInstallationRecords(
 
 type E2eeWakeRecord = { messageId: string; wake: E2eeWakeRequest };
 
-function collectE2eeWakeRecord(
-  messageId: string,
-  notification: unknown,
-  records: E2eeWakeRecord[]
-): boolean {
-  const wake = parseE2eeWakeMessage(notification);
-  if (!wake) return false;
-  records.push({ messageId, wake });
-  return true;
+function parseE2eeWakeBody(body: string): E2eeWakeRequest | null {
+  try {
+    return parseE2eeWakeMessage(JSON.parse(body));
+  } catch {
+    // Not JSON: the main loop reports and retries it like any other record.
+    return null;
+  }
+}
+
+/** Splits content-free E2EE wakes from the other push work in a batch. */
+function partitionE2eeWakeRecords(records: SQSRecord[]): {
+  wakes: E2eeWakeRecord[];
+  others: SQSRecord[];
+} {
+  const wakes: E2eeWakeRecord[] = [];
+  const others: SQSRecord[] = [];
+  for (const record of records) {
+    const wake = parseE2eeWakeBody(record.body);
+    if (wake) wakes.push({ messageId: record.messageId, wake });
+    else others.push(record);
+  }
+  return { wakes, others };
 }
 
 async function sendE2eeWakeRecords(
@@ -85,21 +99,14 @@ const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
       }[] = [];
       const badgeRecords: { messageId: string; profileId: string }[] = [];
       const installationRecords: { messageId: string; deviceId: string }[] = [];
-      const e2eeWakeRecords: E2eeWakeRecord[] = [];
+      const { wakes: e2eeWakeRecords, others } = partitionE2eeWakeRecords(
+        event.Records
+      );
       const failures: { itemIdentifier: string }[] = [];
 
-      for (const record of event.Records) {
+      for (const record of others) {
         try {
           const notification = JSON.parse(record.body);
-          if (
-            collectE2eeWakeRecord(
-              record.messageId,
-              notification,
-              e2eeWakeRecords
-            )
-          ) {
-            continue;
-          }
           if (
             notification.type === 'badge_refresh' &&
             typeof notification.profile_id === 'string' &&
@@ -174,8 +181,10 @@ const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
         }
       }
 
-      failures.push(...(await refreshInstallationRecords(installationRecords)));
-      failures.push(...(await sendE2eeWakeRecords(e2eeWakeRecords)));
+      failures.push(
+        ...(await refreshInstallationRecords(installationRecords)),
+        ...(await sendE2eeWakeRecords(e2eeWakeRecords))
+      );
       const failed = new Set(failures.map((item) => item.itemIdentifier));
       if (
         event.Records.some(

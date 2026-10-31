@@ -6,6 +6,7 @@ import {
 import {
   decodeE2eeBase64,
   fromMysqlBase64,
+  isDeadlockError,
   isDuplicateKeyError,
   isE2eeBucketLength,
   sanitizeE2eeDeviceLabel
@@ -111,5 +112,20 @@ describe('E2EE encodings', () => {
     ).toBe(true);
     expect(isDuplicateKeyError(new Error('other'))).toBe(false);
     expect(isDuplicateKeyError(null)).toBe(false);
+  });
+
+  it('recognizes deadlock errors, including sanitized ones', () => {
+    expect(isDeadlockError({ code: 'ER_LOCK_DEADLOCK' })).toBe(true);
+    expect(isDeadlockError({ errno: 1213 })).toBe(true);
+    expect(
+      isDeadlockError(
+        Object.assign(
+          new Error('Private e2ee messaging database operation failed'),
+          { code: 'ER_LOCK_DEADLOCK' }
+        )
+      )
+    ).toBe(true);
+    expect(isDeadlockError({ code: 'ER_DUP_ENTRY' })).toBe(false);
+    expect(isDeadlockError(undefined)).toBe(false);
   });
 });
