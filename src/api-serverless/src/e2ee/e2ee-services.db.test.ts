@@ -277,6 +277,7 @@ describeWithSeed('E2EE delivery service', [], () => {
     key: E2eeTestKey = randomE2eeKey()
   ): Promise<{ key: E2eeTestKey; grantId: string; message: string }> {
     walletProfiles.set(profile.wallet.address.toLowerCase(), profile.id);
+    await persistProfile(profile, persistedProfiles);
     const challenge = createSiweWebAuthChallenge({
       address: profile.wallet.address,
       clientOrigin: 'https://staging.6529.io',
