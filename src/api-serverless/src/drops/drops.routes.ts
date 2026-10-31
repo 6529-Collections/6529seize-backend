@@ -62,6 +62,7 @@ import {
   deviceSignedWritesService,
   stripDeviceSignature
 } from '@/api/device-signing/device-signed-writes.service';
+import { withStoredAuthorSignature } from '@/api/device-signing/author-signed-drop-response';
 import { DeviceEventKind } from '@/api/device-signing/device-event';
 
 const router = asyncRouter();
@@ -277,7 +278,11 @@ router.post(
         error
       );
     }
-    res.send(createdDrop);
+    res.send(
+      deviceSignature === undefined
+        ? createdDrop
+        : await withStoredAuthorSignature(createdDrop, { timer })
+    );
   }
 );
 
@@ -345,7 +350,11 @@ router.post(
         ),
       { timer, authenticationContext }
     );
-    res.send(updatedDrop);
+    res.send(
+      deviceSignature === undefined
+        ? updatedDrop
+        : await withStoredAuthorSignature(updatedDrop, { timer })
+    );
   }
 );
 
