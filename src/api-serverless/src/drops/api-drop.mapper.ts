@@ -115,6 +115,10 @@ import {
   ContentModerationPresentation
 } from '@/content-moderation/content-moderation.db';
 import { DropModerationStatus } from '@/entities/IContentModeration';
+import {
+  deviceSigningDb,
+  DeviceSigningDb
+} from '@/api/device-signing/device-signing.db';
 
 type VoteRangeByDropId = Record<
   string,
@@ -152,7 +156,11 @@ export class ApiDropMapper {
     private readonly nftLinkResolvingService: NftLinkResolvingService,
     private readonly memeCardDropMappingsDb: MemeCardDropMappingsDb,
     private readonly getMainStageWaveId: () => string | null,
-    private readonly moderationDb: ContentModerationDb = contentModerationDb
+    private readonly moderationDb: ContentModerationDb = contentModerationDb,
+    private readonly authorSignaturesDb: Pick<
+      DeviceSigningDb,
+      'findAuthorSignedDropIds'
+    > = deviceSigningDb
   ) {}
 
   public async mapDrops(
@@ -280,7 +288,8 @@ export class ApiDropMapper {
         pollsByDropId,
         memeCardIdsByDropId,
         moderationPresentations,
-        repliesCountByDropId
+        repliesCountByDropId,
+        authorSignedDropIds
       ] = await Promise.all([
         this.identityFetcher.getApiIdentityOverviewsByIds(authorIds, ctx),
         this.dropsDb.findAuthorWaveParticipationByDropContexts(
@@ -357,7 +366,8 @@ export class ApiDropMapper {
             )
           : Promise.resolve({} as Record<string, number>),
         moderationPresentationsPromise,
-        this.dropsDb.countCollapsedRepliesOfGivenDrops(dropIds, ctx)
+        this.dropsDb.countCollapsedRepliesOfGivenDrops(dropIds, ctx),
+        this.authorSignaturesDb.findAuthorSignedDropIds(dropIds, ctx)
       ]);
 
       const referencedNftsByDropId = this.groupByDropId(referencedNfts);
@@ -413,6 +423,7 @@ export class ApiDropMapper {
             reactions: reactionsByDropId.get(drop.id),
             boosts: boostsCount[drop.id] ?? 0,
             repliesCount: repliesCountByDropId[drop.id],
+            authorSigned: authorSignedDropIds.has(drop.id),
             boosted: boostedDropIds.has(drop.id),
             bookmarked: bookmarkedDropIds.has(drop.id),
             subscribed: (subscribedActions[drop.id] ?? []).length > 0,
@@ -442,6 +453,8 @@ export class ApiDropMapper {
               acc[drop.id].author,
               drop.id
             );
+            // Signed events name the author's wallet.
+            acc[drop.id].is_author_signed = false;
           }
           const reply = acc[drop.id].reply_to_drop;
           if (reply && hiddenDropIds.has(reply.id) && reply.author) {
@@ -547,6 +560,7 @@ export class ApiDropMapper {
     reactions,
     boosts,
     repliesCount,
+    authorSigned,
     boosted,
     bookmarked,
     subscribed,
@@ -578,6 +592,7 @@ export class ApiDropMapper {
     reactions?: DropReactionCountersResult;
     boosts: number;
     repliesCount?: number;
+    authorSigned: boolean;
     boosted: boolean;
     bookmarked: boolean;
     subscribed: boolean;
@@ -596,6 +611,9 @@ export class ApiDropMapper {
       serial_no: drop.serial_no,
       created_at: drop.created_at,
       is_signed: !!drop.signature,
+      // Only content the viewer can see may be reported as author signed.
+      is_author_signed:
+        authorSigned && moderationPresentation.moderation.can_view,
       hide_link_preview: drop.hide_link_preview ?? false,
       parts_count: drop.parts_count,
       author,

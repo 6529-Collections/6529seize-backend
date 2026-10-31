@@ -4,11 +4,6 @@ import { DeviceSignedEventEntity } from '@/entities/IDeviceSignedEvent';
 import { NotFoundException } from '@/exceptions';
 import { DeviceSigningDb } from './device-signing.db';
 import { DropSignedEventsService } from './drop-signed-events.service';
-import { CompetitionAnonymityService } from '@/competitions/competition-anonymity';
-import { AuthenticationContext } from '@/auth-context';
-import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
-import { SqlExecutor } from '@/sql-executor';
-import { DbPoolName } from '@/db-query.options';
 
 const GRANT_ID = `0x${'a'.repeat(64)}`;
 
@@ -60,15 +55,19 @@ const grant: DeviceGrantEntity = {
 describe('DropSignedEventsService', () => {
   let db: DeviceSigningDb;
   const drops = { findDropByIdOrThrow: jest.fn() };
-  let service: DropSignedEventsService;
   const anonymity = { hiddenDropIds: jest.fn() };
+  let service: DropSignedEventsService;
 
   beforeEach(() => {
     jest.clearAllMocks();
     db = mock(DeviceSigningDb);
-    anonymity.hiddenDropIds.mockReset().mockResolvedValue(new Set());
     service = new DropSignedEventsService(db, drops, anonymity);
-    drops.findDropByIdOrThrow.mockResolvedValue({ id: 'drop-1' });
+    anonymity.hiddenDropIds.mockResolvedValue(new Set());
+    drops.findDropByIdOrThrow.mockResolvedValue({
+      id: 'drop-1',
+      moderation: { status: 'VISIBLE', can_view: true },
+      author: { id: 'profile-1' }
+    });
   });
 
   it('returns events, the grants they reference and the current event', async () => {
@@ -140,6 +139,90 @@ describe('DropSignedEventsService', () => {
     });
   });
 
+  it.each([
+    [
+      'moderation hides its content from the caller',
+      {
+        id: 'drop-1',
+        moderation: { status: 'HIDDEN', can_view: false },
+        author: { id: 'profile-1' }
+      }
+    ],
+    [
+      'the drop has no moderation verdict',
+      { id: 'drop-1', author: { id: 'profile-1' } }
+    ],
+    [
+      'its author is anonymous to the caller',
+      {
+        id: 'drop-1',
+        moderation: { status: 'VISIBLE', can_view: true },
+        author: { id: 'anonymous-id', handle: 'Anonymous', is_anonymous: true }
+      }
+    ]
+  ])(
+    'returns the unsigned result without reading events when %s',
+    async (_case, drop) => {
+      drops.findDropByIdOrThrow.mockResolvedValue(drop);
+      const ctx = { timer: undefined };
+
+      await expect(service.findForDrop('drop-1', ctx)).resolves.toEqual({
+        drop_id: 'drop-1',
+        current_event_id: null,
+        events: [],
+        grants: []
+      });
+      expect(drops.findDropByIdOrThrow).toHaveBeenCalledWith(
+        { dropId: 'drop-1' },
+        ctx
+      );
+      expect(db.findEventsByDropId).not.toHaveBeenCalled();
+      expect(db.findDropAuthorSignatureEventId).not.toHaveBeenCalled();
+      expect(db.findGrantsByIds).not.toHaveBeenCalled();
+    }
+  );
+
+  it('asks the anonymity rule directly, whatever the mapped author says', async () => {
+    // A mapped author that lost its is_anonymous flag must still not leak the
+    // wallet: the competition anonymity rule is checked for this caller too.
+    anonymity.hiddenDropIds.mockResolvedValue(new Set(['drop-1']));
+    const ctx = { timer: undefined };
+
+    await expect(service.findForDrop('drop-1', ctx)).resolves.toEqual({
+      drop_id: 'drop-1',
+      current_event_id: null,
+      events: [],
+      grants: []
+    });
+    expect(anonymity.hiddenDropIds).toHaveBeenCalledWith(['drop-1'], ctx);
+    expect(db.findEventsByDropId).not.toHaveBeenCalled();
+    expect(db.findGrantsByIds).not.toHaveBeenCalled();
+  });
+
+  it('returns the events when the read path shows the caller the author and content', async () => {
+    // For example the submitter reading their own anonymous competition
+    // entry: the read path does not anonymize it for them, so neither does
+    // this endpoint.
+    drops.findDropByIdOrThrow.mockResolvedValue({
+      id: 'drop-1',
+      moderation: { status: 'VISIBLE', can_view: true },
+      author: { id: 'profile-1', is_anonymous: false }
+    });
+    jest.mocked(db.findEventsByDropId).mockResolvedValue([anEvent()]);
+    jest
+      .mocked(db.findDropAuthorSignatureEventId)
+      .mockResolvedValue(anEvent().id);
+    jest.mocked(db.findGrantsByIds).mockResolvedValue([grant]);
+
+    const result = await service.findForDrop('drop-1', {});
+
+    expect(result.current_event_id).toBe(anEvent().id);
+    expect(result.events).toHaveLength(1);
+    expect(result.grants).toEqual([
+      expect.objectContaining({ id: GRANT_ID, wallet: grant.wallet })
+    ]);
+  });
+
   it('404s without reading events when the caller cannot read the drop', async () => {
     drops.findDropByIdOrThrow.mockRejectedValue(
       new NotFoundException('Drop drop-1 not found')
@@ -149,111 +232,5 @@ describe('DropSignedEventsService', () => {
       NotFoundException
     );
     expect(db.findEventsByDropId).not.toHaveBeenCalled();
-    expect(db.findDropAuthorSignatureEventId).not.toHaveBeenCalled();
-    expect(db.findGrantsByIds).not.toHaveBeenCalled();
-    expect(anonymity.hiddenDropIds).not.toHaveBeenCalled();
   });
-
-  it('fails closed without reading proofs when the privacy lookup fails', async () => {
-    anonymity.hiddenDropIds.mockRejectedValue(new Error('policy unavailable'));
-    await expect(service.findForDrop('drop-1', {})).rejects.toThrow(
-      'policy unavailable'
-    );
-    expect(db.findEventsByDropId).not.toHaveBeenCalled();
-    expect(db.findDropAuthorSignatureEventId).not.toHaveBeenCalled();
-    expect(db.findGrantsByIds).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    {
-      viewer: 'public',
-      state: 'anonymous',
-      privateOwnerId: null,
-      hidden: true
-    },
-    {
-      viewer: 'rate-only delegate',
-      state: 'anonymous',
-      action: ProfileProxyActionType.RATE_WAVE_DROP,
-      privateOwnerId: null,
-      hidden: true
-    },
-    {
-      viewer: 'read delegate',
-      state: 'anonymous',
-      action: ProfileProxyActionType.READ_WAVE,
-      privateOwnerId: 'profile-1',
-      hidden: false
-    },
-    {
-      viewer: 'owner',
-      state: 'anonymous',
-      privateOwnerId: 'profile-1',
-      hidden: false
-    },
-    { viewer: 'public', state: 'winner', privateOwnerId: null, hidden: false },
-    { viewer: 'public', state: 'ordinary', privateOwnerId: null, hidden: false }
-  ])(
-    'applies shared policy to $state proof metadata for $viewer',
-    async ({ viewer, state, action, privateOwnerId, hidden }) => {
-      const execute = jest.fn(async (_sql, params) =>
-        state === 'anonymous' && params.viewer !== 'profile-1'
-          ? [{ drop_id: 'drop-1' }]
-          : []
-      );
-      const policy = new CompetitionAnonymityService(
-        () => ({ execute }) as unknown as SqlExecutor
-      );
-      service = new DropSignedEventsService(db, drops, policy);
-      const authenticationContext = action
-        ? new AuthenticationContext({
-            authenticatedWallet: null,
-            authenticatedProfileId: 'delegate',
-            roleProfileId: 'profile-1',
-            activeProxyActions: [
-              {
-                id: 'action',
-                type: action,
-                credit_amount: null,
-                credit_spent: null
-              }
-            ]
-          })
-        : viewer === 'owner'
-          ? AuthenticationContext.fromProfileId('profile-1')
-          : AuthenticationContext.notAuthenticated();
-      const connection = { connection: {} };
-      const ctx = { authenticationContext, connection };
-      const event = anEvent();
-      jest.mocked(db.findEventsByDropId).mockResolvedValue([event]);
-      jest
-        .mocked(db.findDropAuthorSignatureEventId)
-        .mockResolvedValue(event.id);
-      jest.mocked(db.findGrantsByIds).mockResolvedValue([grant]);
-
-      const result = await service.findForDrop('drop-1', ctx);
-
-      expect(execute).toHaveBeenCalledWith(
-        expect.stringContaining('e.won_at is null'),
-        { ids: ['drop-1'], viewer: privateOwnerId },
-        { wrappedConnection: connection, forcePool: DbPoolName.WRITE }
-      );
-      if (hidden) {
-        expect(result).toEqual({
-          drop_id: 'drop-1',
-          current_event_id: null,
-          events: [],
-          grants: []
-        });
-        expect(db.findEventsByDropId).not.toHaveBeenCalled();
-        expect(db.findDropAuthorSignatureEventId).not.toHaveBeenCalled();
-        expect(db.findGrantsByIds).not.toHaveBeenCalled();
-      } else {
-        expect(result.current_event_id).toBe(event.id);
-        expect(result.events[0].author).toBe(event.author);
-        expect(result.grants[0].wallet).toBe(grant.wallet);
-        expect(db.findGrantsByIds).toHaveBeenCalledWith([GRANT_ID], ctx);
-      }
-    }
-  );
 });

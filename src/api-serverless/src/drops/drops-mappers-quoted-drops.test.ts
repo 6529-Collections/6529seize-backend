@@ -74,7 +74,8 @@ function relatedData(entities: any[], parts: any[], deletedDrops = {}): any {
     boostsByAuthenticatedUser: new Set(),
     bookmarksByAuthenticatedUser: new Set(),
     dropPollsByDropId: {},
-    rootDropNftLinksByDropId: {}
+    rootDropNftLinksByDropId: {},
+    authorSignedDropIds: new Set()
   };
 }
 

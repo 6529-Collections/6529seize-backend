@@ -129,6 +129,9 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
   const memeCardDropMappingsDb = {
     findMemeCardIdsByDropIds: jest.fn().mockResolvedValue({})
   };
+  const authorSignaturesDb = {
+    findAuthorSignedDropIds: jest.fn().mockResolvedValue(new Set<string>())
+  };
   const moderationDb = {
     getPresentations: jest.fn().mockImplementation((drops: DropEntity[]) =>
       Promise.resolve(
@@ -166,7 +169,8 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
       nftLinkResolvingService as any,
       memeCardDropMappingsDb as any,
       () => configuredMainStageWaveId,
-      moderationDb as any
+      moderationDb as any,
+      authorSignaturesDb
     ),
     setMainStageWaveId: (waveId: string | null) => {
       configuredMainStageWaveId = waveId;
@@ -189,7 +193,8 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
       nftLinksDb,
       nftLinkResolvingService,
       memeCardDropMappingsDb,
-      moderationDb
+      moderationDb,
+      authorSignaturesDb
     }
   };
 }
@@ -1118,4 +1123,64 @@ describe('anonymous competition authors', () => {
       expect(JSON.stringify(result)).not.toContain('author-1-wallet');
     }
   );
+});
+
+describe('author signed drops', () => {
+  it('marks only drops whose current content is author signed, with one lookup per page', async () => {
+    const { mapper, deps } = createMapper();
+    deps.authorSignaturesDb.findAuthorSignedDropIds.mockResolvedValue(
+      new Set(['signed-drop'])
+    );
+    const ctx = {};
+
+    const result = await mapper.mapDrops(
+      [
+        makeDrop({ id: 'signed-drop' }),
+        makeDrop({ id: 'unsigned-drop', serial_no: 2 }),
+        makeDrop({ id: 'signed-drop' })
+      ],
+      ctx
+    );
+
+    expect(result['signed-drop'].is_author_signed).toBe(true);
+    expect(result['unsigned-drop'].is_author_signed).toBe(false);
+    expect(
+      deps.authorSignaturesDb.findAuthorSignedDropIds
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      deps.authorSignaturesDb.findAuthorSignedDropIds
+    ).toHaveBeenCalledWith(['signed-drop', 'unsigned-drop'], ctx);
+  });
+
+  it('does not mark a drop whose content the viewer cannot see', async () => {
+    const { mapper, deps } = createMapper();
+    deps.authorSignaturesDb.findAuthorSignedDropIds.mockResolvedValue(
+      new Set(['drop-1'])
+    );
+    deps.moderationDb.getPresentations.mockResolvedValue({
+      'drop-1': {
+        viewer: { author_blocked: false, drop_hidden: false },
+        moderation: { status: 'MODERATOR_REMOVED', can_view: false }
+      }
+    });
+
+    const result = await mapper.mapDrops([makeDrop()], {});
+
+    expect(result['drop-1'].is_author_signed).toBe(false);
+  });
+
+  it('does not mark a drop whose author is anonymous', async () => {
+    const { mapper, deps } = createMapper();
+    deps.authorSignaturesDb.findAuthorSignedDropIds.mockResolvedValue(
+      new Set(['drop-1'])
+    );
+    jest
+      .spyOn(competitionAnonymityService, 'hiddenDropIds')
+      .mockResolvedValue(new Set(['drop-1']));
+
+    const result = await mapper.mapDrops([makeDrop()], {});
+
+    expect(result['drop-1'].author).toMatchObject({ is_anonymous: true });
+    expect(result['drop-1'].is_author_signed).toBe(false);
+  });
 });
