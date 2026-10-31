@@ -32,6 +32,15 @@ export function isE2eeAttachmentsEnabled(env: Env = process.env): boolean {
   return readBooleanFlag(env, 'E2EE_ATTACHMENTS_ENABLED') ?? true;
 }
 
+/**
+ * `E2EE_BACKUPS_ENABLED`: a kill switch for the encrypted message-history
+ * backup routes (which also need `E2EE_DMS_ENABLED`). On unless it is
+ * exactly `'false'`; `'false'` makes them refuse before any database access.
+ */
+export function isE2eeBackupsEnabled(env: Env = process.env): boolean {
+  return readBooleanFlag(env, 'E2EE_BACKUPS_ENABLED') ?? true;
+}
+
 /** P35's value; staging allows more so automated tests can churn groups. */
 const PRODUCTION_ENTRIES_PER_GROUP_PER_HOUR = 12;
 const DEVELOPMENT_ENTRIES_PER_GROUP_PER_HOUR = 30;
