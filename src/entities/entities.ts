@@ -292,7 +292,6 @@ export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
 export * from './IE2ee';
-
 export {
   MemeCollaborationEntity,
   MemeCollaborationInvitationEntity
