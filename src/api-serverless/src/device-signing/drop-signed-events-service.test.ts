@@ -55,13 +55,19 @@ const grant: DeviceGrantEntity = {
 describe('DropSignedEventsService', () => {
   let db: DeviceSigningDb;
   const drops = { findDropByIdOrThrow: jest.fn() };
+  const anonymity = { hiddenDropIds: jest.fn() };
   let service: DropSignedEventsService;
 
   beforeEach(() => {
     jest.clearAllMocks();
     db = mock(DeviceSigningDb);
-    service = new DropSignedEventsService(db, drops);
-    drops.findDropByIdOrThrow.mockResolvedValue({ id: 'drop-1' });
+    service = new DropSignedEventsService(db, drops, anonymity);
+    anonymity.hiddenDropIds.mockResolvedValue(new Set());
+    drops.findDropByIdOrThrow.mockResolvedValue({
+      id: 'drop-1',
+      moderation: { status: 'VISIBLE', can_view: true },
+      author: { id: 'profile-1' }
+    });
   });
 
   it('returns events, the grants they reference and the current event', async () => {
@@ -131,6 +137,90 @@ describe('DropSignedEventsService', () => {
       events: [],
       grants: []
     });
+  });
+
+  it.each([
+    [
+      'moderation hides its content from the caller',
+      {
+        id: 'drop-1',
+        moderation: { status: 'HIDDEN', can_view: false },
+        author: { id: 'profile-1' }
+      }
+    ],
+    [
+      'the drop has no moderation verdict',
+      { id: 'drop-1', author: { id: 'profile-1' } }
+    ],
+    [
+      'its author is anonymous to the caller',
+      {
+        id: 'drop-1',
+        moderation: { status: 'VISIBLE', can_view: true },
+        author: { id: 'anonymous-id', handle: 'Anonymous', is_anonymous: true }
+      }
+    ]
+  ])(
+    'returns the unsigned result without reading events when %s',
+    async (_case, drop) => {
+      drops.findDropByIdOrThrow.mockResolvedValue(drop);
+      const ctx = { timer: undefined };
+
+      await expect(service.findForDrop('drop-1', ctx)).resolves.toEqual({
+        drop_id: 'drop-1',
+        current_event_id: null,
+        events: [],
+        grants: []
+      });
+      expect(drops.findDropByIdOrThrow).toHaveBeenCalledWith(
+        { dropId: 'drop-1' },
+        ctx
+      );
+      expect(db.findEventsByDropId).not.toHaveBeenCalled();
+      expect(db.findDropAuthorSignatureEventId).not.toHaveBeenCalled();
+      expect(db.findGrantsByIds).not.toHaveBeenCalled();
+    }
+  );
+
+  it('asks the anonymity rule directly, whatever the mapped author says', async () => {
+    // A mapped author that lost its is_anonymous flag must still not leak the
+    // wallet: the competition anonymity rule is checked for this caller too.
+    anonymity.hiddenDropIds.mockResolvedValue(new Set(['drop-1']));
+    const ctx = { timer: undefined };
+
+    await expect(service.findForDrop('drop-1', ctx)).resolves.toEqual({
+      drop_id: 'drop-1',
+      current_event_id: null,
+      events: [],
+      grants: []
+    });
+    expect(anonymity.hiddenDropIds).toHaveBeenCalledWith(['drop-1'], ctx);
+    expect(db.findEventsByDropId).not.toHaveBeenCalled();
+    expect(db.findGrantsByIds).not.toHaveBeenCalled();
+  });
+
+  it('returns the events when the read path shows the caller the author and content', async () => {
+    // For example the submitter reading their own anonymous competition
+    // entry: the read path does not anonymize it for them, so neither does
+    // this endpoint.
+    drops.findDropByIdOrThrow.mockResolvedValue({
+      id: 'drop-1',
+      moderation: { status: 'VISIBLE', can_view: true },
+      author: { id: 'profile-1', is_anonymous: false }
+    });
+    jest.mocked(db.findEventsByDropId).mockResolvedValue([anEvent()]);
+    jest
+      .mocked(db.findDropAuthorSignatureEventId)
+      .mockResolvedValue(anEvent().id);
+    jest.mocked(db.findGrantsByIds).mockResolvedValue([grant]);
+
+    const result = await service.findForDrop('drop-1', {});
+
+    expect(result.current_event_id).toBe(anEvent().id);
+    expect(result.events).toHaveLength(1);
+    expect(result.grants).toEqual([
+      expect.objectContaining({ id: GRANT_ID, wallet: grant.wallet })
+    ]);
   });
 
   it('404s without reading events when the caller cannot read the drop', async () => {
