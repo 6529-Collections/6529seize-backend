@@ -49,6 +49,7 @@ import {
 import {
   assertDistinct,
   decodeE2eeBase64,
+  isDeadlockError,
   isDuplicateKeyError,
   isE2eeBucketLength,
   isZero32
@@ -58,6 +59,8 @@ import { decideE2eePolicy, E2eeEligibilityStatus } from '@/e2ee/e2ee-policy';
 import { ConnectionWrapper } from '@/sql-executor';
 
 type Conn = ConnectionWrapper<unknown>;
+
+const CREATE_GROUP_ATTEMPTS = 3;
 
 interface DecodedWelcome {
   readonly data: Buffer;
@@ -133,60 +136,78 @@ export class E2eeGroupsService {
       callerProfileId
     );
     const now = this.deps.now();
-    try {
-      return await this.db.executeNativeQueriesInTransaction(
-        async (connection) => {
-          const existing = await this.db.lockGroup(request.group, connection);
-          if (existing) {
-            return this.existingCreation(
-              callerProfileId,
-              request,
-              existing,
-              connection
-            );
-          }
-          const group: E2eeGroupRow = {
-            group_handle: request.group,
-            epoch: 0,
-            commit_key: request.commit_key,
-            last_seq: 0,
-            created_by_profile_id: callerProfileId,
-            created_at: now,
-            updated_at: now
-          };
-          await this.db.insertGroup(group, connection);
-          await this.db.insertGroupEpoch(
-            {
-              group: request.group,
-              epoch: 0,
-              commitKey: request.commit_key,
-              createdAt: now
-            },
+    // A lock on a handle that does not exist yet is a gap lock, so two
+    // creations in the same index gap can deadlock on their inserts. Retry
+    // the whole transaction a few times before giving up.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.db.executeNativeQueriesInTransaction((connection) =>
+          this.createGroupInTransaction(
+            callerProfileId,
+            request,
+            now,
             connection
-          );
-          await this.db.insertRosterRows(
-            [
-              {
-                group_handle: request.group,
-                device_key: request.creator_device_key,
-                profile_id: callerProfileId,
-                joined_epoch: 0,
-                added_at: now
-              }
-            ],
-            connection
-          );
-          return toApiE2eeGroup(
-            group,
-            await this.db.getCurrentRoster(request.group, connection)
-          );
-        }
-      );
-    } catch (error) {
-      if (!isDuplicateKeyError(error)) throw error;
-      const existing = await this.db.getGroup(request.group);
-      throw e2eeErrors.epochConflict(Number(existing?.epoch ?? 0));
+          )
+        );
+      } catch (error) {
+        if (isDeadlockError(error) && attempt < CREATE_GROUP_ATTEMPTS) continue;
+        if (!isDuplicateKeyError(error)) throw error;
+        const existing = await this.db.getGroup(request.group);
+        throw e2eeErrors.epochConflict(Number(existing?.epoch ?? 0));
+      }
     }
+  }
+
+  private async createGroupInTransaction(
+    callerProfileId: string,
+    request: ApiE2eeCreateGroupRequest,
+    now: number,
+    connection: Conn
+  ): Promise<ApiE2eeGroup> {
+    const existing = await this.db.lockGroup(request.group, connection);
+    if (existing) {
+      return this.existingCreation(
+        callerProfileId,
+        request,
+        existing,
+        connection
+      );
+    }
+    const group: E2eeGroupRow = {
+      group_handle: request.group,
+      epoch: 0,
+      commit_key: request.commit_key,
+      last_seq: 0,
+      created_by_profile_id: callerProfileId,
+      created_at: now,
+      updated_at: now
+    };
+    await this.db.insertGroup(group, connection);
+    await this.db.insertGroupEpoch(
+      {
+        group: request.group,
+        epoch: 0,
+        commitKey: request.commit_key,
+        createdAt: now
+      },
+      connection
+    );
+    await this.db.insertRosterRows(
+      [
+        {
+          group_handle: request.group,
+          device_key: request.creator_device_key,
+          profile_id: callerProfileId,
+          joined_epoch: 0,
+          added_at: now
+        }
+      ],
+      connection
+    );
+    return toApiE2eeGroup(
+      group,
+      await this.db.getCurrentRoster(request.group, connection)
+    );
   }
 
   /** An identical retry returns the record; anything else conflicts. */
