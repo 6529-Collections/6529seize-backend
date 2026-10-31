@@ -61,6 +61,9 @@ Other settings, read per request:
 | `E2EE_ATTACHMENTS_ENABLED` | Kill switch for attachments, checked after `E2EE_DMS_ENABLED` (with both off, blob routes answer `E2EE_DISABLED`). `false` makes the attachment (blob) routes answer `404 E2EE_ATTACHMENTS_DISABLED` before any blob row or chunk is read or written; resolving the caller may still read the profile. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On everywhere, including production |
 | `E2EE_ENTRIES_PER_GROUP_PER_HOUR` | Commits and proposals one group may sequence per hour (an integer from 1 to 1000) | 12 (P35's value); 30 for `local` and `development`, so automated tests can churn groups |
 | `E2EE_TRUST_AND_SAFETY_GROUP_ID` | The user group whose members may read reported encrypted messages (see Reports and trust and safety) | Unset: reports are stored, nobody can read them |
+| `E2EE_BLOB_STORE` | Where new attachment chunks are stored: `mysql` or `s3` (see Storage of attachments). Anything else refuses new uploads with `503 E2EE_STORAGE_UNAVAILABLE` | `mysql` |
+| `E2EE_BLOB_S3_BUCKET`, `E2EE_BLOB_S3_PREFIX` | The private bucket and key prefix for S3 storage; required for `s3` and to read blobs already in S3. The prefix must contain the environment's stage segment (`staging` for `development`, `prod` for `production`, `local` for `local`) and must not sit inside an expiring ingest prefix | Unset |
+| `E2EE_BLOB_S3_REGION` | The bucket's region | `AWS_REGION`, then `eu-west-1` |
 
 ## API
 
@@ -102,7 +105,7 @@ synchronization, without foreign keys.
 | `e2ee_group_roster` | Delivery windows: device key, profile, `joined_epoch`, `removed_epoch` |
 | `e2ee_log` | The ordered log: wrapped (encrypted) entries and messages, their declared hashes, commit keys, signatures, roster deltas, epoch fingerprints |
 | `e2ee_welcomes`, `e2ee_welcome_deliveries` | MLS Welcome bytes stored once, one pending delivery per target device |
-| `e2ee_blobs`, `e2ee_blob_chunks` | Encrypted attachment chunks and their sizes |
+| `e2ee_blobs`, `e2ee_blob_chunks` | Encrypted attachment metadata (`storage`: `mysql` or `s3`, and for S3 the exact `storage_location`) and chunk sizes; the chunk ciphertext too for MySQL storage (empty for S3) |
 | `e2ee_reports` | Message bodies a recipient chose to disclose (severe-harm categories only), the sender's inner signature, `verified`, `on_hold` |
 | `e2ee_push_throttle`, `e2ee_rate_counters` | Wake throttle and fixed-window rate counters |
 
@@ -271,20 +274,101 @@ checks never act on replica lag.
 
 ## Storage of attachments
 
-In v1, encrypted attachment chunks are stored in MySQL (`e2ee_blob_chunks`).
-The quotas above bound that footprint, uploads may not exceed their declared
-size, and blob retention runs on every attachment upload (five expired or
-abandoned blobs per pass, chunks and row deleted together) in addition to the
-general opportunistic pruning.
+Chunk bytes sit behind one interface, `E2eeBlobStore`
+(`src/e2ee/e2ee-blob-store.ts`), with a MySQL and an S3 implementation; a
+content-addressed store (P51 DN9) would be a third. Blob rows and chunk sizes
+always stay in MySQL, because quotas, completion and retention read them
+under row locks. Each blob records its `storage` when it is created, and for
+S3 the exact `storage_location` (`s3://<bucket>/<prefix>`), so
+`E2EE_BLOB_STORE` decides where new blobs go and existing blobs keep being
+served from where they are. A blob is read or deleted only when the
+configured S3 location equals its recorded one; otherwise it answers `503
+E2EE_STORAGE_UNAVAILABLE` and its objects are left untouched. Changing the
+bucket or prefix of an environment with S3 blobs therefore makes them
+unavailable until the old settings are restored; it never points the API
+at the wrong objects. The API does not change: clients upload and
+download the same opaque ciphertext chunks through `/e2ee/blobs/...`.
 
-Moving ciphertext blobs to a private S3 bucket (or to content-addressed
-pinning, P51 DN9) is the first storage follow-up. The API does not change:
-clients only ever upload and download opaque ciphertext chunks through
-`/e2ee/blobs/...`, so the HTTP API stays compatible. On the server the move
-changes the chunk write, read and prune paths in `src/e2ee/e2ee.db.ts` to an
-object store, makes `e2ee_blob_chunks.data` optional in favor of an object
-key, and deletes objects together with their rows in retention.
-`E2EE_ATTACHMENTS_ENABLED=false` is the kill switch meanwhile.
+- **MySQL** (`mysql`, the default): chunk bytes in `e2ee_blob_chunks.data`.
+- **S3** (`s3`): each chunk is a private object at
+  `<E2EE_BLOB_S3_PREFIX>/<blob_id>/<index>`. Objects carry no ACL (the bucket
+  enforces owner-only objects and blocks public access), are written with
+  SSE-S3 (`AES256`) and a SHA-256 checksum that S3 verifies on upload and the
+  SDK verifies on download, and are never served through a CDN. Chunk rows
+  keep only the size.
+
+Chunks stream through the API rather than through presigned URLs. The
+request shape stays the same, every read keeps its per-request checks
+(active own device, roster history, complete blob, attachments switch), the
+upload size and quota checks stay in the same transaction as the write, and
+no bearer URL can outlive a device revocation or leak through logs. Chunks
+are at most 1 MiB, well inside the Lambda payload limit.
+
+The chunk upload writes the object while holding the blob row lock and then
+records the size; if S3 fails nothing is recorded, and if the transaction
+fails the same key is overwritten on retry. Incomplete uploads stop
+accepting chunks (`404`) ten minutes before retention may delete them, so a
+late chunk can never land after retention removed the blob's objects. A missing object answers `404
+E2EE_NOT_FOUND` (logged as a warning). Storage that is misconfigured or
+unreachable answers `503 E2EE_STORAGE_UNAVAILABLE` and is logged without any
+chunk bytes: an invalid `E2EE_BLOB_STORE`, `s3` without a valid bucket and
+prefix, an S3 blob while the S3 settings are missing or name another
+location, or an S3 error other than a missing key (a missing bucket
+included). Database errors are never turned into this code. New uploads are
+refused before they count against the daily upload limit; they never fall
+back to MySQL. MySQL blobs keep working while only the S3 settings are
+broken.
+
+The quotas above apply to declared bytes whatever the storage. Blob
+retention runs on every attachment upload (five expired or abandoned blobs
+per pass, MySQL and S3 blobs selected separately so a failing store cannot
+stall MySQL retention) and in the general opportunistic pruning: the stored
+bytes go first (S3 objects deleted by key, which needs no listing because
+chunk indexes are always below `chunk_count`), then the rows, which are
+re-read under a row lock and deleted only if they still name the place the
+bytes were deleted from. If S3 cannot delete, the rows stay for the next
+pass (logged as an error), so no object is ever orphaned.
+`E2EE_ATTACHMENTS_ENABLED=false` remains the kill switch.
+
+### Moving existing blobs to S3
+
+The operator-only `dbMigrationsLoop` scope `e2ee-blobs-to-s3` copies
+complete MySQL blobs to S3. It never runs from the deploy workflow or the
+schedule; invoke it directly:
+
+```bash
+# dry run: counts what would move, reads the bucket (HeadBucket), writes nothing
+aws lambda invoke --function-name dbMigrationsLoop --region <region> \
+  --cli-read-timeout 960 --cli-binary-format raw-in-base64-out \
+  --payload '{"schema_scope":"e2ee-blobs-to-s3"}' response.json
+# live: copy, verify and switch
+aws lambda invoke --function-name dbMigrationsLoop --region <region>   --cli-read-timeout 960 --cli-binary-format raw-in-base64-out   --payload '{"schema_scope":"e2ee-blobs-to-s3","live":true}' response.json
+```
+
+Optional fields: `limit` (blobs per run, default 200, at most 2000) and
+`bucket`, `prefix`, `region` (default: the `E2EE_BLOB_S3_*` settings of the
+Lambda; pass the API's values explicitly when `dbMigrationsLoop` does not
+have them). The location is validated exactly as the API validates it,
+including the stage segment, and a live run refuses a location that differs
+from the Lambda's own valid `E2EE_BLOB_S3_*` settings.
+
+For each blob it checks the chunk rows against the blob row, uploads every
+chunk with a SHA-256 checksum, reads every chunk back and compares hashes,
+then in one transaction (re-checked under the row lock) marks the blob `s3`
+at the target location and empties its MySQL chunk bytes. A blob whose copy
+does not verify is reported, left on MySQL, and its copies are removed; a
+blob that retention deleted meanwhile has its copies removed. Blobs within a
+day of their 365-day retention are left to retention. A run stops starting
+new blobs after ten minutes (inside the 900-second Lambda timeout) and
+reports `more`. `dbMigrationsLoop` runs one invocation at a time, so do not
+run the migration while a `dbMigrationsLoop` deployment is in progress. The run is idempotent: switched blobs are never selected
+again and a blob that failed midway is copied again to the same keys.
+Incomplete uploads are left alone (they complete on MySQL and move on a
+later run, or expire after 24 hours). The response reports the inventory
+before the run, `examined`, `migrated`, `bytes`, `vanished`, `failures` and
+whether `more` blobs remain; repeat until `more` is false. InnoDB does not
+return the freed space to the operating system on its own; run
+`OPTIMIZE TABLE e2ee_blob_chunks` in a quiet window if that matters.
 
 ## Retention
 
@@ -292,7 +376,7 @@ Pruned opportunistically by the API (about one write in 100, batches of at
 most 100 rows), with no new Lambda: messages after 90 days, entries after 180
 days, welcome deliveries after 30 days (and the welcome once no delivery
 remains), complete attachments after 365 days and incomplete uploads after
-24 hours, KeyPackages at expiry, revoked devices 365 days after revocation,
+24 hours (S3 objects deleted before their rows), KeyPackages at expiry, revoked devices 365 days after revocation,
 rate counters after 2 days, wake throttle rows after 1 day, and reports
 after 180 days unless trust and safety placed them on hold. Group, epoch
 key and roster rows (small delivery metadata) are kept, and so is the report
@@ -395,9 +479,20 @@ versions and OpenMLS security advisories are the safeguard.
 - A report is stored even when its signature fails; `verified` is true only
   when the sender's inner signature verifies and the sender device was in the
   group's roster at some point.
+- `E2EE_STORAGE_UNAVAILABLE` (503) reports misconfigured or unreachable
+  attachment storage; see Storage of attachments.
 
 ## Deployment
 
 Deploy `dbMigrationsLoop` first (creates the tables), then
 `pushNotificationsHandler` (understands `e2ee_wake` before anyone sends it),
 then `api`. The frontend follows the API.
+
+S3 attachment storage adds the `e2ee_blobs.storage` column (default `mysql`)
+and the `e2ee-blobs-to-s3` scope: deploy `dbMigrationsLoop` (full entity
+sync) before `api`, because the API writes the column. Retention runs only
+in the API, so no other loop is involved. To switch an environment: set
+`E2EE_BLOB_S3_BUCKET`, `E2EE_BLOB_S3_PREFIX` and `E2EE_BLOB_S3_REGION` on
+`seizeAPI`, then `E2EE_BLOB_STORE=s3`, check an upload, then run the
+migration (dry run first). To switch back, set `E2EE_BLOB_STORE=mysql` and
+keep the S3 settings so blobs already in S3 stay readable.

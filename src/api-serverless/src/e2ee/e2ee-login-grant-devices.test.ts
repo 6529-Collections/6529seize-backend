@@ -143,7 +143,12 @@ describe('E2EE devices from combined sign-in grants (NC8)', () => {
       random: () => 1,
       randomHex: () => '0x00',
       attachmentsEnabled: () => true,
-      // Registration and revocation never consult DM admission.
+      // Registration and revocation touch neither attachments nor admission.
+      blobStores: new Proxy({} as E2eeServiceDeps['blobStores'], {
+        get: () => {
+          throw new Error('blob storage is not used by device registration');
+        }
+      }),
       admission: {
         evaluate: async () => {
           throw new Error('admission is not used by device registration');

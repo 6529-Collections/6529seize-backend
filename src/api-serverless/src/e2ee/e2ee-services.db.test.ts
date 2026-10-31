@@ -1,7 +1,11 @@
 import 'reflect-metadata';
 import { randomBytes } from 'node:crypto';
 import { HDNodeWallet, keccak256, Wallet } from 'ethers';
-import { E2eeLoginGrantRecord, E2eeServiceDeps } from '@/api/e2ee/e2ee-context';
+import {
+  E2eeLoginGrantRecord,
+  E2eeServiceDeps,
+  pruneE2eeBlobs
+} from '@/api/e2ee/e2ee-context';
 import { directMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.instance';
 import { computeDeviceGrantId } from '@/api/device-signing/device-grant-message';
 import { createSiweWebAuthChallenge } from '@/api/wallet-signatures/siwe-wallet-auth';
@@ -26,6 +30,9 @@ import {
   E2EE_MAX_ENTRY_AND_WELCOME_BYTES
 } from '@/e2ee/e2ee.constants';
 import { E2eeDb } from '@/e2ee/e2ee.db';
+import { migrateE2eeBlobsToS3 } from '@/e2ee/e2ee-blob-migration';
+import { S3E2eeBlobStore } from '@/e2ee/e2ee-blob-store.s3';
+import { createE2eeBlobStores } from '@/e2ee/e2ee-blob-stores';
 import {
   E2EE_ZERO_32,
   E2eeEntryKind,
@@ -43,9 +50,18 @@ import {
   randomE2eeGroupHandle,
   randomE2eeKey
 } from '@/tests/fixtures/e2ee.fixture';
+import { InMemoryE2eeBlobS3 } from '@/tests/fixtures/e2ee-blob-s3.fixture';
 
 const START = Date.UTC(2026, 9, 12, 12, 0, 0);
 const DAY = 24 * 60 * 60 * 1000;
+const BLOB_BUCKET = 'private-e2ee-test-bucket';
+const BLOB_PREFIX = 'test/e2ee-blobs';
+const S3_BLOB_ENV = {
+  E2EE_BLOB_STORE: 's3',
+  E2EE_BLOB_S3_BUCKET: BLOB_BUCKET,
+  E2EE_BLOB_S3_PREFIX: BLOB_PREFIX,
+  E2EE_BLOB_S3_REGION: 'eu-west-1'
+};
 
 interface Profile {
   readonly id: string;
@@ -158,6 +174,9 @@ describeWithSeed('E2EE delivery service', [], () => {
   let attachmentsEnabled: boolean;
   let loginGrants: Map<string, E2eeLoginGrantRecord>;
   let persistedProfiles: Set<string>;
+  let blobEnv: Record<string, string | undefined>;
+  let s3: InMemoryE2eeBlobS3;
+  let deps: E2eeServiceDeps;
 
   beforeEach(() => {
     now = START;
@@ -167,13 +186,15 @@ describeWithSeed('E2EE delivery service', [], () => {
     randomValue = 1;
     attachmentsEnabled = true;
     persistedProfiles = new Set();
+    blobEnv = {};
+    s3 = new InMemoryE2eeBlobS3(BLOB_BUCKET);
     db = new E2eeDb(() => sqlExecutor);
     const record =
       (method: keyof E2eeEventPublisher) =>
       async (...args: unknown[]) => {
         events.push({ method, args });
       };
-    const deps: E2eeServiceDeps = {
+    deps = {
       db,
       events: {
         groupEvent: record('groupEvent'),
@@ -202,7 +223,12 @@ describeWithSeed('E2EE delivery service', [], () => {
             loginGrants.set(id, { ...grant, revoked_at: revokedAtMs });
           }
         }
-      }
+      },
+      blobStores: createE2eeBlobStores({
+        rows: db,
+        env: () => blobEnv,
+        s3Client: () => s3
+      })
     };
     services = createE2eeServices(deps);
   });
@@ -1422,6 +1448,220 @@ describeWithSeed('E2EE delivery service', [], () => {
       expect(Buffer.from(afterRemoval.data, 'base64').equals(chunk0)).toBe(
         true
       );
+    });
+
+    it('keeps S3 attachment bytes out of MySQL and deletes them at retention', async () => {
+      blobEnv = S3_BLOB_ENV;
+      const alice = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const group = await createGroup(alice, aliceDevice);
+      const blob = await services.blobs.createBlob(alice.id, {
+        group: group.g,
+        uploader_device_key: aliceDevice.publicKey,
+        size: 30,
+        chunk_count: 2
+      });
+      const chunk0 = randomBytes(20);
+      const chunk1 = randomBytes(10);
+      await services.blobs.putChunk(alice.id, blob.blob_id, 0, {
+        data: chunk0.toString('base64')
+      });
+      await services.blobs.putChunk(alice.id, blob.blob_id, 1, {
+        data: chunk1.toString('base64')
+      });
+      await services.blobs.completeBlob(alice.id, blob.blob_id);
+      const stored = s3.objects.get(`${BLOB_PREFIX}/${blob.blob_id}/0`);
+      expect(stored?.body.equals(chunk0)).toBe(true);
+      expect(stored?.input.ServerSideEncryption).toBe('AES256');
+      expect(stored?.input.ACL).toBeUndefined();
+      const rows = await sqlExecutor.execute<{
+        storage: string;
+        size: number;
+        bytes: number;
+      }>(
+        `select b.storage, c.size, length(c.data) as bytes
+         from e2ee_blobs b join e2ee_blob_chunks c on c.blob_id = b.blob_id
+         where b.blob_id = :blobId order by c.chunk_index`,
+        { blobId: blob.blob_id }
+      );
+      expect(
+        rows.map((row) => [row.storage, Number(row.size), Number(row.bytes)])
+      ).toEqual([
+        ['s3', 20, 0],
+        ['s3', 10, 0]
+      ]);
+      const downloaded = await services.blobs.getChunk(
+        alice.id,
+        blob.blob_id,
+        1,
+        aliceDevice.publicKey
+      );
+      expect(Buffer.from(downloaded.data, 'base64').equals(chunk1)).toBe(true);
+
+      // Switching back to MySQL changes new blobs only.
+      blobEnv = { ...S3_BLOB_ENV, E2EE_BLOB_STORE: 'mysql' };
+      const again = await services.blobs.getChunk(
+        alice.id,
+        blob.blob_id,
+        0,
+        aliceDevice.publicKey
+      );
+      expect(Buffer.from(again.data, 'base64').equals(chunk0)).toBe(true);
+
+      // A missing object is a missing chunk, not a server error.
+      s3.objects.delete(`${BLOB_PREFIX}/${blob.blob_id}/0`);
+      await expectE2eeError(
+        services.blobs.getChunk(
+          alice.id,
+          blob.blob_id,
+          0,
+          aliceDevice.publicKey
+        ),
+        'E2EE_NOT_FOUND'
+      );
+
+      // Without its S3 settings an S3 blob fails closed.
+      blobEnv = {};
+      await expectE2eeError(
+        services.blobs.getChunk(
+          alice.id,
+          blob.blob_id,
+          1,
+          aliceDevice.publicKey
+        ),
+        'E2EE_STORAGE_UNAVAILABLE'
+      );
+
+      // While S3 is unavailable, retention keeps the rows (no orphans).
+      now += 366 * DAY;
+      await pruneE2eeBlobs(deps);
+      expect(s3.objects.size).toBe(1);
+      const countRows = async () => {
+        const [{ blobs }] = await sqlExecutor.execute<{ blobs: number }>(
+          `select count(*) as blobs from e2ee_blobs where blob_id = :blobId`,
+          { blobId: blob.blob_id }
+        );
+        return Number(blobs);
+      };
+      expect(await countRows()).toBe(1);
+
+      // Retention deletes the objects first, then the rows.
+      blobEnv = S3_BLOB_ENV;
+      await pruneE2eeBlobs(deps);
+      expect(s3.objects.size).toBe(0);
+      expect(await countRows()).toBe(0);
+    });
+
+    it('keeps the row of a blob the migration moved while retention ran', async () => {
+      const alice = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const group = await createGroup(alice, aliceDevice);
+      const blob = await services.blobs.createBlob(alice.id, {
+        group: group.g,
+        uploader_device_key: aliceDevice.publicKey,
+        size: 4,
+        chunk_count: 1
+      });
+      await services.blobs.putChunk(alice.id, blob.blob_id, 0, {
+        data: randomBytes(4).toString('base64')
+      });
+      await services.blobs.completeBlob(alice.id, blob.blob_id);
+      now += 366 * DAY;
+      let passes = 0;
+      const deleted = await db.pruneExpiredBlobs(now, 5, async (expired) => {
+        if (passes++ > 0) return []; // the S3 pass cannot delete here
+        // The migration switches the blob between retention's select and
+        // its row delete: the row now names objects that must survive.
+        await sqlExecutor.execute(
+          `update e2ee_blobs set storage = 's3', storage_location = :location
+           where blob_id = :blobId`,
+          {
+            location: `s3://${BLOB_BUCKET}/${BLOB_PREFIX}`,
+            blobId: blob.blob_id
+          }
+        );
+        return expired.map((row) => row.blob_id);
+      });
+      expect(deleted).toBe(0);
+      const [{ blobs }] = await sqlExecutor.execute<{ blobs: number }>(
+        `select count(*) as blobs from e2ee_blobs where blob_id = :blobId`,
+        { blobId: blob.blob_id }
+      );
+      expect(Number(blobs)).toBe(1);
+    });
+
+    it('migrates complete MySQL blobs to S3 after verifying them', async () => {
+      const alice = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const group = await createGroup(alice, aliceDevice);
+      const blob = await services.blobs.createBlob(alice.id, {
+        group: group.g,
+        uploader_device_key: aliceDevice.publicKey,
+        size: 15,
+        chunk_count: 2
+      });
+      const chunks = [randomBytes(9), randomBytes(6)];
+      for (let index = 0; index < chunks.length; index++) {
+        await services.blobs.putChunk(alice.id, blob.blob_id, index, {
+          data: chunks[index].toString('base64')
+        });
+      }
+      await services.blobs.completeBlob(alice.id, blob.blob_id);
+      const target = new S3E2eeBlobStore(
+        { bucket: BLOB_BUCKET, prefix: BLOB_PREFIX, region: 'eu-west-1' },
+        s3,
+        db
+      );
+      const dryRun = await migrateE2eeBlobsToS3(
+        { db, target },
+        { live: false, limit: 1000, now: () => now }
+      );
+      expect(dryRun.mode).toBe('dry-run');
+      expect(dryRun.migrated).toBeGreaterThanOrEqual(1);
+      expect(s3.objects.size).toBe(0);
+      const live = await migrateE2eeBlobsToS3(
+        { db, target },
+        { live: true, limit: 1000, now: () => now }
+      );
+      expect(live.failures).toEqual([]);
+      expect(
+        s3.objects
+          .get(`${BLOB_PREFIX}/${blob.blob_id}/1`)
+          ?.body.equals(chunks[1])
+      ).toBe(true);
+      const [row] = await sqlExecutor.execute<{
+        storage: string;
+        bytes: number;
+      }>(
+        `select b.storage, coalesce(sum(length(c.data)), 0) as bytes
+         from e2ee_blobs b join e2ee_blob_chunks c on c.blob_id = b.blob_id
+         where b.blob_id = :blobId group by b.storage`,
+        { blobId: blob.blob_id }
+      );
+      expect([row.storage, Number(row.bytes)]).toEqual(['s3', 0]);
+      const [located] = await sqlExecutor.execute<{
+        storage_location: string;
+      }>(`select storage_location from e2ee_blobs where blob_id = :blobId`, {
+        blobId: blob.blob_id
+      });
+      expect(located.storage_location).toBe(
+        `s3://${BLOB_BUCKET}/${BLOB_PREFIX}`
+      );
+      blobEnv = S3_BLOB_ENV;
+      const downloaded = await services.blobs.getChunk(
+        alice.id,
+        blob.blob_id,
+        0,
+        aliceDevice.publicKey
+      );
+      expect(Buffer.from(downloaded.data, 'base64').equals(chunks[0])).toBe(
+        true
+      );
+      const rerun = await migrateE2eeBlobsToS3(
+        { db, target },
+        { live: true, limit: 1000, now: () => now }
+      );
+      expect(rerun.examined).toBe(0);
     });
 
     it('bounds attachment storage per profile and prunes abandoned uploads', async () => {

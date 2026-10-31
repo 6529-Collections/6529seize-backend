@@ -2084,9 +2084,16 @@ New tables, created by `dbMigrationsLoop` entity sync: `e2ee_devices`,
 `e2ee_blob_chunks`, `e2ee_reports`, `e2ee_report_access_log`,
 `e2ee_push_throttle` and `e2ee_rate_counters`. Their SQL is a private query
 family: statements and bound values never reach logs. Encrypted attachment
-chunks live in MySQL in v1 with per-profile quotas (200 MiB per rolling 24 h,
-1 GiB live) and pruning on every upload, until they move to a private S3
-bucket or content-addressed pinning behind the same routes;
+chunk bytes sit behind `E2eeBlobStore`: MySQL (`e2ee_blob_chunks.data`, the
+default) or private S3 objects at `<E2EE_BLOB_S3_PREFIX>/<blob_id>/<index>`
+(`E2EE_BLOB_STORE=s3`; SSE-S3, no ACL, no CDN, streamed through the API after
+its membership checks). Each blob records its `storage` and exact S3
+location and is only read or deleted there; sizes stay in MySQL for the
+per-profile quotas (200 MiB per rolling 24 h, 1 GiB live), and pruning on
+every upload deletes S3 objects before rows. Misconfigured storage
+fails closed with 503 `E2EE_STORAGE_UNAVAILABLE`. The operator-only
+`dbMigrationsLoop` scope `e2ee-blobs-to-s3` copies MySQL blobs to S3 with
+read-back hash checks (dry run by default).
 `E2EE_ATTACHMENTS_ENABLED=false` (on by default) is a kill switch that makes
 the blob routes refuse before any database access. Reports (severe-harm categories only) are read
 only by the group named in `E2EE_TRUST_AND_SAFETY_GROUP_ID` through
