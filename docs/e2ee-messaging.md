@@ -181,13 +181,32 @@ roster gets `404 E2EE_NOT_MEMBER`, whether or not the group exists.
 ## Policy
 
 For "caller adds or claims target" (claims, eligibility, `roster_add` of new
-profiles, roster repair additions): a block in either direction gives
-`BLOCKED`; then the target's DM policy (`EVERYONE`, `PEOPLE_I_FOLLOW` meaning
-the target follows the caller, `NOBODY`); then `NO_DEVICES` when the target
-has no active device. The facts come from four set-based queries regardless
-of the number of targets. A claim with `group` skips blocks and policy for
-profiles already in that group's roster, provided the claimer device is in it
-too; the caller's own profile always skips them.
+profiles, roster repair additions), E2EE uses the platform's shared DM
+admission, `DirectMessageAdmissionService`
+(`src/api-serverless/src/direct-messages/`), the same rules legacy DMs use:
+
+1. The caller has blocked the target: `BLOCKED` (`E2EE_BLOCKED`). This is the
+   only case reported as a block, because the caller can undo it.
+2. The target has blocked the caller: `POLICY` (`E2EE_POLICY`) with reason
+   `DM_RECIPIENT_NOT_ACCEPTING`, exactly like a `NOBODY` policy, so the block
+   is never disclosed.
+3. The target's DM policy: `EVERYONE`; `PEOPLE_I_FOLLOW` (the target follows
+   the caller); `NOBODY`; or `GROUP_MEMBERS` (the caller is a member of the
+   target's chosen group, or the target follows the caller while
+   "people I follow can always message me" is on; a missing or hidden group
+   falls back to people the target follows).
+4. `NO_DEVICES` when an admitted target has no active device.
+
+Eligibility results carry the shared reason code (`DM_RECIPIENT_NOT_ACCEPTING`,
+`DM_RECIPIENT_PEOPLE_I_FOLLOW_ONLY`, `DM_RECIPIENT_GROUP_MEMBERS_ONLY`,
+`DM_SENDER_BLOCKED_RECIPIENT`) for `POLICY` and `BLOCKED`, and `E2EE_POLICY`
+and `E2EE_BLOCKED` errors carry it as `reason`. Roster additions evaluate
+admission inside the roster transaction with the recipients' profile rows
+locked. Group membership is evaluated with the platform group eligibility
+rules at that time; eligibility probes may reuse a membership result for 30
+seconds. A claim with `group` skips admission for profiles already in that
+group's roster, provided the claimer device is in it too; the caller's own
+profile always skips it.
 
 ## Limits and quotas
 
