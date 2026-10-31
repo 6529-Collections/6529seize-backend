@@ -123,38 +123,25 @@ describe('profile preferences handlers', () => {
     });
   });
 
-  it('accepts the group policy when a group is already saved', async () => {
-    mockGetPreferences.mockResolvedValue(
-      stored({ direct_message_group_id: 'group-1' })
+  it('leaves the group requirement to the locked upsert, without a pre-read', async () => {
+    await put({ direct_message_policy: 'GROUP_MEMBERS' });
+
+    // The "GROUP_MEMBERS needs a group" invariant is checked inside
+    // ProfilePreferencesDb.upsert under the profile-row lock.
+    expect(mockGetPreferences).not.toHaveBeenCalled();
+    expect(mockUpsertPreferences).toHaveBeenCalledWith('profile-1', {
+      direct_message_policy: 'GROUP_MEMBERS'
+    });
+  });
+
+  it('propagates the upsert rejection of the group policy without a group', async () => {
+    mockUpsertPreferences.mockRejectedValue(
+      new BadRequestException('Choose a group to limit who can message you.')
     );
 
     await expect(
       put({ direct_message_policy: 'GROUP_MEMBERS' })
-    ).resolves.toMatchObject({ direct_message_policy: 'GROUP_MEMBERS' });
-  });
-
-  it.each([
-    ['without any group', { direct_message_policy: 'GROUP_MEMBERS' }],
-    [
-      'while clearing the group',
-      { direct_message_policy: 'GROUP_MEMBERS', direct_message_group_id: null }
-    ]
-  ])('rejects the group policy %s', async (_name, body) => {
-    await expect(put(body)).rejects.toBeInstanceOf(BadRequestException);
-    expect(mockUpsertPreferences).not.toHaveBeenCalled();
-  });
-
-  it('rejects clearing the group while the group policy is saved', async () => {
-    mockGetPreferences.mockResolvedValue(
-      stored({
-        direct_message_policy: ProfileDirectMessagePolicy.GROUP_MEMBERS,
-        direct_message_group_id: 'group-1'
-      })
-    );
-
-    await expect(put({ direct_message_group_id: null })).rejects.toBeInstanceOf(
-      BadRequestException
-    );
+    ).rejects.toThrow('Choose a group to limit who can message you.');
   });
 
   it.each([

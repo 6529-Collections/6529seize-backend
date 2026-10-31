@@ -13,11 +13,15 @@ import {
   ProfilePreferencesData,
   ProfilePreferencesUpdate
 } from '@/entities/IProfilePreferences';
+import { BadRequestException } from '@/exceptions';
 import {
   ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '@/sql-executor';
+
+export const DIRECT_MESSAGE_GROUP_REQUIRED_MESSAGE =
+  'Choose a group to limit who can message you.';
 
 type ProfilePreferencesRow = {
   profile_id: string;
@@ -213,6 +217,11 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
         { profileId },
         { wrappedConnection: connection }
       );
+      await this.assertDirectMessageGroupInvariant(
+        profileId,
+        update,
+        connection
+      );
       await this.db.execute(
         `insert into ${PROFILE_PREFERENCES_TABLE} (
           profile_id, direct_message_policy, direct_message_group_id,
@@ -232,6 +241,48 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
       );
       return this.get(profileId, connection);
     });
+  }
+
+  /**
+   * GROUP_MEMBERS always needs a group, from this update or already saved.
+   * Checked after the profile-row lock that serializes every preference
+   * write for the profile, so two concurrent updates (one clearing the
+   * group, one selecting GROUP_MEMBERS) cannot leave GROUP_MEMBERS without a
+   * group.
+   */
+  private async assertDirectMessageGroupInvariant(
+    profileId: string,
+    update: ProfilePreferencesUpdate,
+    connection: ConnectionWrapper<unknown>
+  ): Promise<void> {
+    const touchesGroupRequirement =
+      update.direct_message_policy !== undefined ||
+      update.direct_message_group_id === null;
+    if (!touchesGroupRequirement) return;
+    const stored = await this.db.oneOrNull<
+      Pick<
+        ProfilePreferencesRow,
+        'direct_message_policy' | 'direct_message_group_id'
+      >
+    >(
+      `select direct_message_policy, direct_message_group_id
+       from ${PROFILE_PREFERENCES_TABLE}
+       where profile_id = :profileId for update`,
+      { profileId },
+      { wrappedConnection: connection }
+    );
+    const policy =
+      update.direct_message_policy ??
+      stored?.direct_message_policy ??
+      DEFAULT_PROFILE_PREFERENCES.direct_message_policy;
+    // null is meaningful here (it clears the group), so `??` would be wrong.
+    const groupId =
+      'direct_message_group_id' in update
+        ? update.direct_message_group_id
+        : (stored?.direct_message_group_id ?? null);
+    if (policy === ProfileDirectMessagePolicy.GROUP_MEMBERS && !groupId) {
+      throw new BadRequestException(DIRECT_MESSAGE_GROUP_REQUIRED_MESSAGE);
+    }
   }
 
   async getDirectMessageRecipientsForAdmission(

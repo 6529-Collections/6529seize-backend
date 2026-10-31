@@ -1,4 +1,4 @@
-import { userGroupsService } from '../community-members/user-groups.service';
+import { userGroupsService } from '@/api/community-members/user-groups.service';
 
 /**
  * The shared inbound direct-message admission service. Legacy DM creation
