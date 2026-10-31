@@ -259,10 +259,12 @@ message you" setting are the everyday tools.
   general moderation queue or an AI provider, and no log, wave or
   notification carries their content.
 - Members of the group named by `E2EE_TRUST_AND_SAFETY_GROUP_ID` read them
-  through the trust-and-safety routes (newest first, with `before` paging) and
-  can place a report on hold so retention keeps it. Every list, read, hold and
-  release is written to `e2ee_report_access_log` (viewer, action, report ids,
-  time) before the response is sent. Proxies are rejected.
+  through the trust-and-safety routes (newest first, paged by `before` plus
+  `before_id`, so reports sharing a timestamp are never skipped or repeated)
+  and can place a report on hold so retention keeps it. Every list, read,
+  hold and release is written to `e2ee_report_access_log` (viewer, action,
+  report ids, time) before the response is sent; a hold change and its log
+  row commit in one transaction. Proxies are rejected.
 - While the group id is unset, the routes answer `403 E2EE_FORBIDDEN` ("Trust
   and safety review is not configured"); reports are still stored and become
   readable once it is set.
