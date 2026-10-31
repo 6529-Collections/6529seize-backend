@@ -2065,7 +2065,8 @@ chunks live in MySQL in v1 with per-profile quotas (200 MiB per rolling 24 h,
 bucket or content-addressed pinning behind the same routes;
 `E2EE_ATTACHMENTS_ENABLED=false` (on by default) is a kill switch that makes
 the blob routes refuse before any database access. Reports (severe-harm categories only) are read
-only by the group named in `E2EE_TRUST_AND_SAFETY_GROUP_ID` through
+only by content moderators (the content-moderation queue's check) and the
+optional `E2EE_TRUST_AND_SAFETY_GROUP_ID` group through
 `/e2ee/trust-and-safety/...`, with every read written to
 `e2ee_report_access_log`, and are deleted after 180 days unless on hold. Rate limits are
 DB-backed fixed windows, and retention runs opportunistically in the API

@@ -54,10 +54,10 @@ export function e2eeEntriesPerGroupPerHour(env: Env = process.env): number {
 }
 
 /**
- * `E2EE_TRUST_AND_SAFETY_GROUP_ID`: the user group whose members may read
- * reported encrypted messages. It is separate from wave moderators and from
- * the general moderation queue. While unset, nobody can read reports; they
- * are still stored.
+ * `E2EE_TRUST_AND_SAFETY_GROUP_ID`: an optional additional user group whose
+ * members may read reported encrypted messages. Content moderators (the
+ * content-moderation queue's moderator check) can always read them; wave
+ * moderators never can. Unset means only content moderators.
  */
 export function e2eeTrustAndSafetyGroupId(
   env: Env = process.env

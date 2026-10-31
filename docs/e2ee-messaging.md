@@ -60,7 +60,7 @@ Other settings, read per request:
 | --- | --- | --- |
 | `E2EE_ATTACHMENTS_ENABLED` | Kill switch for attachments, checked after `E2EE_DMS_ENABLED` (with both off, blob routes answer `E2EE_DISABLED`). `false` makes the attachment (blob) routes answer `404 E2EE_ATTACHMENTS_DISABLED` before any blob row or chunk is read or written; resolving the caller may still read the profile. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On everywhere, including production |
 | `E2EE_ENTRIES_PER_GROUP_PER_HOUR` | Commits and proposals one group may sequence per hour (an integer from 1 to 1000) | 12 (P35's value); 30 for `local` and `development`, so automated tests can churn groups |
-| `E2EE_TRUST_AND_SAFETY_GROUP_ID` | The user group whose members may read reported encrypted messages (see Reports and trust and safety) | Unset: reports are stored, nobody can read them |
+| `E2EE_TRUST_AND_SAFETY_GROUP_ID` | An optional additional user group whose members may read reported encrypted messages, besides the content moderators (see Reports and trust and safety) | Unset: only content moderators |
 
 ## API
 
@@ -265,20 +265,20 @@ message you" setting are the everyday tools.
 - A report carries only the one message the reporter selected, its body as
   they decrypted it, and the sender's inner device signature, which the API
   verifies (`verified`). Nothing else in the conversation is revealed.
-- Reports are stored in `e2ee_reports`. They never reach wave moderators, the
-  general moderation queue or an AI provider, and no log, wave or
-  notification carries their content.
-- Members of the group named by `E2EE_TRUST_AND_SAFETY_GROUP_ID` read them
-  through the trust-and-safety routes (newest first, paged by `before` plus
+- Reports are stored in `e2ee_reports`. They never reach wave moderators or
+  an AI provider, and no log, wave or notification carries their content.
+- The content moderators review them: the same people, with the same check
+  (`isModerationDeveloper`, membership in the 6529 Dev Team group), as the
+  content-moderation queue, and in the same place (an "Encrypted reports" tab
+  on `/content-moderation`). Members of the group named by
+  `E2EE_TRUST_AND_SAFETY_GROUP_ID`, when it is set, may also read them. They
+  use the trust-and-safety routes (newest first, paged by `before` plus
   `before_id`, so reports sharing a timestamp are never skipped or repeated)
   and can place a report on hold so retention keeps it. Every list, read,
   hold and release is written to `e2ee_report_access_log` (viewer, action,
   report ids, time) before the response is sent; a hold change and its log
   row commit in one transaction. Proxies are rejected.
-- While the group id is unset, the routes answer `403 E2EE_FORBIDDEN` ("Trust
-  and safety review is not configured"); reports are still stored, and those
-  still within retention (180 days unless on hold) become readable once it is
-  set.
+- Anyone else gets `403 E2EE_FORBIDDEN` ("Moderator access is required").
 
 ## WebSocket hints and push wakes
 

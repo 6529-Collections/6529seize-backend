@@ -1388,29 +1388,38 @@ describeWithSeed('E2EE delivery service', [], () => {
       return { id: report.id, senderId: alice.id };
     }
 
-    function reviewService(groupId: string | null, members: string[]) {
+    function reviewService(
+      options: {
+        moderators?: string[];
+        groupId?: string | null;
+        members?: string[];
+      } = {}
+    ) {
+      const { moderators = [], groupId = null, members = [] } = options;
       return new E2eeTrustAndSafetyService({
         db,
         now: () => now,
+        isModerator: async (profileId) => moderators.includes(profileId),
         groupId: () => groupId,
         isGroupMember: async (profileId, group) =>
           group === groupId && members.includes(profileId)
       });
     }
 
-    it('lets only the configured group read reports and audits every read', async () => {
+    it('lets content moderators read reports, audits every read and refuses others', async () => {
       const { id, senderId } = await fileReport();
+      const review = reviewService({ moderators: ['reviewer'] });
       await expectE2eeError(
-        reviewService(null, ['reviewer']).listReports('reviewer', {}),
+        review.listReports('stranger', {}),
         'E2EE_FORBIDDEN'
       );
+      await expectE2eeError(review.getReport('stranger', id), 'E2EE_FORBIDDEN');
       await expectE2eeError(
-        reviewService('ts-group', ['reviewer']).getReport('stranger', id),
+        review.setHold('stranger', id, true),
         'E2EE_FORBIDDEN'
       );
       expect(await db.listReportAccess()).toEqual([]);
 
-      const review = reviewService('ts-group', ['reviewer']);
       const page = await review.listReports('reviewer', { limit: 10 });
       expect(page.next_before).toBeNull();
       expect(page.items).toEqual([
@@ -1444,12 +1453,31 @@ describeWithSeed('E2EE delivery service', [], () => {
       ]);
     });
 
+    it('also lets members of the optional review group read reports', async () => {
+      const { id } = await fileReport();
+      const review = reviewService({
+        moderators: ['moderator'],
+        groupId: 'ts-group',
+        members: ['ts-member']
+      });
+      await expect(review.getReport('ts-member', id)).resolves.toMatchObject({
+        id
+      });
+      await expect(review.getReport('moderator', id)).resolves.toMatchObject({
+        id
+      });
+      await expectE2eeError(review.getReport('stranger', id), 'E2EE_FORBIDDEN');
+      expect(
+        (await db.listReportAccess()).map((row) => row.viewer_profile_id)
+      ).toEqual(['ts-member', 'moderator']);
+    });
+
     it('pages reports that share a timestamp without skipping or repeating any', async () => {
       const ids: string[] = [];
       for (let index = 0; index < 5; index += 1) {
         ids.push((await fileReport()).id);
       }
-      const review = reviewService('ts-group', ['reviewer']);
+      const review = reviewService({ moderators: ['reviewer'] });
       const all = await review.listReports('reviewer', { limit: 100 });
       expect(new Set(all.items.map((item) => item.created_at)).size).toBe(1);
       const expected = all.items.map((item) => item.id);
@@ -1489,15 +1517,16 @@ describeWithSeed('E2EE delivery service', [], () => {
           }
         },
         now: () => now,
-        groupId: () => 'ts-group',
-        isGroupMember: async () => true
+        isModerator: async () => true,
+        groupId: () => null,
+        isGroupMember: async () => false
       });
       await expect(failingAudit.setHold('reviewer', id, true)).rejects.toThrow(
         'audit log unavailable'
       );
       expect((await db.getReportForReview(id))?.on_hold).toBeFalsy();
       await expectE2eeError(
-        reviewService('ts-group', ['reviewer']).setHold(
+        reviewService({ moderators: ['reviewer'] }).setHold(
           'reviewer',
           `0x${'0'.repeat(32)}`,
           true
@@ -1510,7 +1539,7 @@ describeWithSeed('E2EE delivery service', [], () => {
     it('deletes reports after 180 days unless they are on hold', async () => {
       const kept = await fileReport();
       const expired = await fileReport();
-      const review = reviewService('ts-group', ['reviewer']);
+      const review = reviewService({ moderators: ['reviewer'] });
       const held = await review.setHold('reviewer', kept.id, true);
       expect(held).toMatchObject({ on_hold: true, expires_at: null });
       now = START + 181 * 24 * 60 * 60 * 1000;
