@@ -9,7 +9,7 @@ import { ArtworkDocumentationAppendMuseumRecordRequest, ArtworkDocumentationAppe
 import { AdvanceCollectPlanRequest, AdvanceCollectPlanResponse, AnalyzeCollectGoalRequest, AnalyzeCollectGoalResponse, AnalyzeCollectOffersRequest, AnalyzeCollectOffersResponse, CreateCollectDailyTdhPlanRequest, CreateCollectDailyTdhPlanResponse, CreateCollectPlanRequest, CreateCollectPlanResponse, CreateCollectRuleRequest, CreateCollectRuleResponse, CreateCollectTdhTargetPlanRequest, CreateCollectTdhTargetPlanResponse, GetCollectAssetsRequest, GetCollectAssetsResponse, GetCollectCapabilitiesRequest, GetCollectCapabilitiesResponse, GetCollectCatalogRequest, GetCollectCatalogResponse, GetCollectPlanRequest, GetCollectPlanResponse, GetCollectRuleRequest, GetCollectRuleResponse, GetCollectRulesRequest, GetCollectRulesResponse, GetCollectTdhListingsRequest, GetCollectTdhListingsResponse, GetMarketListingsRequest, GetMarketListingsResponse, PauseCollectRuleRequest, PauseCollectRuleResponse, PrepareCollectRuleRequest, PrepareCollectRuleResponse, ProjectCollectPurchasesRequest, ProjectCollectPurchasesResponse, RankCollectTdhPurchasesRequest, RankCollectTdhPurchasesResponse, ReconcileCollectRuleRequest, ReconcileCollectRuleResponse } from './operations';
 import { GetCompetitionEntryContextsV3Request, GetCompetitionEntryContextsV3Response, GetCompetitionEntryV3Request, GetCompetitionEntryV3Response, GetDropCompetitionContextV3Request, GetDropCompetitionContextV3Response, GetWaveCompetitionV3Request, GetWaveCompetitionV3Response, GetWaveHubV3Request, GetWaveHubV3Response, ListCompetitionDecisionsV3Request, ListCompetitionDecisionsV3Response, ListCompetitionEntriesV3Request, ListCompetitionEntriesV3Response, ListCompetitionEntryVotesV3Request, ListCompetitionEntryVotesV3Response, ListCompetitionLeaderboardV3Request, ListCompetitionLeaderboardV3Response, ListCompetitionOutcomeDistributionV3Request, ListCompetitionOutcomeDistributionV3Response, ListCompetitionOutcomesV3Request, ListCompetitionOutcomesV3Response, ListCompetitionPausesV3Request, ListCompetitionPausesV3Response, ListCompetitionVersionsV3Request, ListCompetitionVersionsV3Response, ListCompetitionVoteActivityV3Request, ListCompetitionVoteActivityV3Response, ListCompetitionVotersV3Request, ListCompetitionVotersV3Response, ListCompetitionWinnersV3Request, ListCompetitionWinnersV3Response, ListWaveCompetitionsV3Request, ListWaveCompetitionsV3Response } from './operations';
 import { GetDeviceGrantsRequest, GetDeviceGrantsResponse, GetDropSignedEventsRequest, GetDropSignedEventsResponse, RevokeDeviceGrantRequest, RevokeDeviceGrantResponse } from './operations';
-import { E2eeAckWelcomeRequest, E2eeAckWelcomeResponse, E2eeCheckEligibilityRequest, E2eeCheckEligibilityResponse, E2eeClaimKeyPackagesRequest, E2eeClaimKeyPackagesResponse, E2eeCompleteBlobRequest, E2eeCompleteBlobResponse, E2eeCreateBlobRequest, E2eeCreateBlobResponse, E2eeCreateGroupRequest, E2eeCreateGroupResponse, E2eeGetBlobChunkRequest, E2eeGetBlobChunkResponse, E2eeGetDeviceGroupsRequest, E2eeGetDeviceGroupsResponse, E2eeGetDeviceRequest, E2eeGetDeviceResponse, E2eeGetGroupLogRequest, E2eeGetGroupLogResponse, E2eeGetGroupRequest, E2eeGetGroupResponse, E2eeGetMeRequest, E2eeGetMeResponse, E2eeGetProfileDevicesRequest, E2eeGetProfileDevicesResponse, E2eeGetWelcomesRequest, E2eeGetWelcomesResponse, E2eeLookupDevicesRequest, E2eeLookupDevicesResponse, E2eePutBlobChunkRequest, E2eePutBlobChunkResponse, E2eeRegisterDeviceRequest, E2eeRegisterDeviceResponse, E2eeRepairRosterRequest, E2eeRepairRosterResponse, E2eeReportMessageRequest, E2eeReportMessageResponse, E2eeRevokeDeviceRequest, E2eeRevokeDeviceResponse, E2eeSendMessageRequest, E2eeSendMessageResponse, E2eeSubmitEntryRequest, E2eeSubmitEntryResponse, E2eeUploadKeyPackagesRequest, E2eeUploadKeyPackagesResponse } from './operations';
+import { E2eeAckWelcomeRequest, E2eeAckWelcomeResponse, E2eeCheckEligibilityRequest, E2eeCheckEligibilityResponse, E2eeClaimKeyPackagesRequest, E2eeClaimKeyPackagesResponse, E2eeCompleteBlobRequest, E2eeCompleteBlobResponse, E2eeCreateBlobRequest, E2eeCreateBlobResponse, E2eeCreateGroupRequest, E2eeCreateGroupResponse, E2eeGetBlobChunkRequest, E2eeGetBlobChunkResponse, E2eeGetDeviceGroupsRequest, E2eeGetDeviceGroupsResponse, E2eeGetDeviceRequest, E2eeGetDeviceResponse, E2eeGetGroupLogRequest, E2eeGetGroupLogResponse, E2eeGetGroupRequest, E2eeGetGroupResponse, E2eeGetMeRequest, E2eeGetMeResponse, E2eeGetProfileDevicesRequest, E2eeGetProfileDevicesResponse, E2eeGetTrustAndSafetyReportRequest, E2eeGetTrustAndSafetyReportResponse, E2eeGetWelcomesRequest, E2eeGetWelcomesResponse, E2eeListTrustAndSafetyReportsRequest, E2eeListTrustAndSafetyReportsResponse, E2eeLookupDevicesRequest, E2eeLookupDevicesResponse, E2eePutBlobChunkRequest, E2eePutBlobChunkResponse, E2eeRegisterDeviceRequest, E2eeRegisterDeviceResponse, E2eeRepairRosterRequest, E2eeRepairRosterResponse, E2eeReportMessageRequest, E2eeReportMessageResponse, E2eeRevokeDeviceRequest, E2eeRevokeDeviceResponse, E2eeSendMessageRequest, E2eeSendMessageResponse, E2eeSetTrustAndSafetyReportHoldRequest, E2eeSetTrustAndSafetyReportHoldResponse, E2eeSubmitEntryRequest, E2eeSubmitEntryResponse, E2eeUploadKeyPackagesRequest, E2eeUploadKeyPackagesResponse } from './operations';
 import { BeginMarketTransactionAttemptRequest, BeginMarketTransactionAttemptResponse, ContinueMarketOperationRequest, ContinueMarketOperationResponse, GetMarketBatchCapabilitiesRequest, GetMarketBatchCapabilitiesResponse, GetMarketOperationRequest, GetMarketOperationResponse, GetMarketOrderRequest, GetMarketOrderResponse, GetMarketOrdersRequest, GetMarketOrdersResponse, GetMyMarketOperationsRequest, GetMyMarketOperationsResponse, PreflightMarketBatchRequest, PreflightMarketBatchResponse, PrepareMarketOperationRequest, PrepareMarketOperationResponse, PublishMarketOperationRequest, PublishMarketOperationResponse, RejectMarketTransactionAttemptRequest, RejectMarketTransactionAttemptResponse, SubmitMarketOperationRequest, SubmitMarketOperationResponse } from './operations';
 import { GetModerationAccessRequest, GetModerationAccessResponse, GetModerationCheckRequest, GetModerationCheckResponse, GetModerationChecksRequest, GetModerationChecksResponse, GetModerationCountsRequest, GetModerationCountsResponse, GetModerationProfileCheckRequest, GetModerationProfileCheckResponse, GetModerationReportCheckRequest, GetModerationReportCheckResponse, GetModerationReviewCasesRequest, GetModerationReviewCasesResponse, ModerationCheckActionRequest, ModerationCheckActionResponse } from './operations';
 import { GetProfilePreferencesRequest, GetProfilePreferencesResponse, PutProfilePreferencesRequest, PutProfilePreferencesResponse } from './operations';
@@ -38,6 +38,7 @@ import { handleGetDropPollOptionVotersV2, handleGetWavePollsV2, handleVoteDropPo
 import { handleDownloadDropV2VotersById, handleGetBoostedDropsV2, handleGetCuratedProfileWaveDropsV2, handleGetDropsV2, handleGetDropV2BoostsById, handleGetDropV2ById, handleGetDropV2MetadataById, handleGetDropV2PartById, handleGetDropV2ReactionsById, handleGetDropV2VoteEditLogsById, handleGetDropV2VotersById } from '@/api/drops/drops-v2.handlers';
 import { handleGetDropV2VoteSummaryById } from '@/api/drops/get-drop-vote-summary.handler';
 import { handleCreateProposalFrame } from '@/api/drops/proposal-frame.handlers';
+import { handleE2eeGetTrustAndSafetyReport, handleE2eeListTrustAndSafetyReports, handleE2eeSetTrustAndSafetyReportHold } from '@/api/e2ee/e2ee-trust-and-safety.handlers';
 import { handleE2eeAckWelcome, handleE2eeCheckEligibility, handleE2eeClaimKeyPackages, handleE2eeCompleteBlob, handleE2eeCreateBlob, handleE2eeCreateGroup, handleE2eeGetBlobChunk, handleE2eeGetDevice, handleE2eeGetDeviceGroups, handleE2eeGetGroup, handleE2eeGetGroupLog, handleE2eeGetMe, handleE2eeGetProfileDevices, handleE2eeGetWelcomes, handleE2eeLookupDevices, handleE2eePutBlobChunk, handleE2eeRegisterDevice, handleE2eeRepairRoster, handleE2eeReportMessage, handleE2eeRevokeDevice, handleE2eeSendMessage, handleE2eeSubmitEntry, handleE2eeUploadKeyPackages } from '@/api/e2ee/e2ee.handlers';
 import { handleGetNftMarketActivity, handleGetNftMarketDepth } from '@/api/market-depth/market-depth.handlers';
 import { handlePreflightMarketBatch } from '@/api/marketplace/marketplace-batch-preflight.handler';
@@ -1213,6 +1214,39 @@ router.post(
     res: Response<ApiResponse<E2eeReportMessageResponse>>
   ) => {
     res.send(await handleE2eeReportMessage(req));
+  }
+);
+
+router.get(
+  '/e2ee/trust-and-safety/reports',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeListTrustAndSafetyReportsRequest,
+    res: Response<ApiResponse<E2eeListTrustAndSafetyReportsResponse>>
+  ) => {
+    res.send(await handleE2eeListTrustAndSafetyReports(req));
+  }
+);
+
+router.get(
+  '/e2ee/trust-and-safety/reports/:report_id',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeGetTrustAndSafetyReportRequest,
+    res: Response<ApiResponse<E2eeGetTrustAndSafetyReportResponse>>
+  ) => {
+    res.send(await handleE2eeGetTrustAndSafetyReport(req));
+  }
+);
+
+router.post(
+  '/e2ee/trust-and-safety/reports/:report_id/hold',
+  needsAuthenticatedUser(),
+  async (
+    req: E2eeSetTrustAndSafetyReportHoldRequest,
+    res: Response<ApiResponse<E2eeSetTrustAndSafetyReportHoldResponse>>
+  ) => {
+    res.send(await handleE2eeSetTrustAndSafetyReportHold(req));
   }
 );
 

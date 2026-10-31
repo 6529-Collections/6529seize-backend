@@ -2075,7 +2075,7 @@ For a documentation-only change, no Lambda redeploy is required.
 
 ### End-to-end encrypted messaging (D109)
 
-The API serves 23 generated `x-6529-router` routes under `/e2ee/...`
+The API serves 26 generated `x-6529-router` routes under `/e2ee/...`
 (handlers in `src/api-serverless/src/e2ee/`, database and pure helpers in
 `src/e2ee/`). They are on only when `E2EE_DMS_ENABLED` is `true`, or when it is
 unset and `NODE_ENV` is `local` or `development`; otherwise they return 404
@@ -2091,12 +2091,17 @@ device can read by epoch window.
 New tables, created by `dbMigrationsLoop` entity sync: `e2ee_devices`,
 `e2ee_key_packages`, `e2ee_groups`, `e2ee_group_epochs`, `e2ee_group_roster`,
 `e2ee_log`, `e2ee_welcomes`, `e2ee_welcome_deliveries`, `e2ee_blobs`,
-`e2ee_blob_chunks`, `e2ee_reports`, `e2ee_push_throttle` and
-`e2ee_rate_counters`. Their SQL is a private query family: statements and
-bound values never reach logs. Encrypted attachment chunks live in MySQL in
-v1 with per-profile quotas (200 MiB per rolling 24 h, 1 GiB live) and pruning
-on every upload; moving them to a private S3 bucket or content-addressed
-pinning is the first storage follow-up before production. Rate limits are
+`e2ee_blob_chunks`, `e2ee_reports`, `e2ee_report_access_log`,
+`e2ee_push_throttle` and `e2ee_rate_counters`. Their SQL is a private query
+family: statements and bound values never reach logs. Encrypted attachment
+chunks live in MySQL in v1 with per-profile quotas (200 MiB per rolling 24 h,
+1 GiB live) and pruning on every upload, until they move to a private S3
+bucket or content-addressed pinning behind the same routes;
+`E2EE_ATTACHMENTS_ENABLED=false` (on by default) is a kill switch that makes
+the blob routes refuse before any database access. Reports (severe-harm categories only) are read
+only by the group named in `E2EE_TRUST_AND_SAFETY_GROUP_ID` through
+`/e2ee/trust-and-safety/...`, with every read written to
+`e2ee_report_access_log`, and are deleted after 180 days unless on hold. Rate limits are
 DB-backed fixed windows, and retention runs opportunistically in the API
 (no new Lambda). E2EE reads use the primary pool.
 

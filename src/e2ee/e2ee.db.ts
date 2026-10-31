@@ -10,6 +10,7 @@ import {
   E2EE_LOG_TABLE,
   E2EE_PUSH_THROTTLE_TABLE,
   E2EE_RATE_COUNTERS_TABLE,
+  E2EE_REPORT_ACCESS_LOG_TABLE,
   E2EE_REPORTS_TABLE,
   E2EE_WELCOME_DELIVERIES_TABLE,
   E2EE_WELCOMES_TABLE,
@@ -28,6 +29,7 @@ import {
   E2eeGroupEntity,
   E2eeGroupRosterEntity,
   E2eeLogEntity,
+  E2eeReportAccessEntity,
   E2eeReportEntity,
   E2eeWelcomeEntity
 } from '@/entities/IE2ee';
@@ -47,6 +49,28 @@ export type E2eeLogMetaRow = Omit<E2eeLogEntity, 'data'>;
 export type E2eeLogInsert = E2eeLogEntity;
 
 export type E2eeRosterRemovalKind = 'commit' | 'leave' | 'revoke' | 'repair';
+
+/** A stored report as trust and safety reads it (body as base64). */
+export interface E2eeReviewReportRow {
+  readonly id: string;
+  readonly group_handle: string;
+  readonly epoch: number;
+  readonly body_b64: string;
+  readonly signature: string;
+  readonly sender_device_key: string;
+  readonly sender_profile_id: string | null;
+  readonly reporter_device_key: string;
+  readonly reporter_profile_id: string;
+  readonly reason: string;
+  readonly notes: string | null;
+  readonly verified: number | boolean;
+  readonly on_hold: number | boolean;
+  readonly created_at: number;
+}
+
+const REVIEW_REPORT_COLUMNS = `id, group_handle, epoch, to_base64(body) as body_b64,
+  signature, sender_device_key, sender_profile_id, reporter_device_key,
+  reporter_profile_id, reason, notes, verified, on_hold, created_at`;
 
 export interface E2eeRosterWindow {
   readonly joined_epoch: number;
@@ -1170,13 +1194,65 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       `insert into ${E2EE_REPORTS_TABLE} (
         id, group_handle, epoch, body, signature, sender_device_key,
         sender_profile_id, reporter_device_key, reporter_profile_id, reason,
-        notes, verified, created_at
+        notes, verified, created_at, on_hold
       ) values (
         :id, :group_handle, :epoch, :body, :signature, :sender_device_key,
         :sender_profile_id, :reporter_device_key, :reporter_profile_id,
-        :reason, :notes, :verified, :created_at
+        :reason, :notes, :verified, :created_at, :on_hold
       )`,
       { ...row }
+    );
+  }
+
+  /** Newest first, for trust and safety review; bodies as base64. */
+  async listReportsForReview(
+    beforeMs: number | null,
+    limit: number
+  ): Promise<E2eeReviewReportRow[]> {
+    return this.many<E2eeReviewReportRow>(
+      `select ${REVIEW_REPORT_COLUMNS} from ${E2EE_REPORTS_TABLE}
+       ${beforeMs === null ? '' : 'where created_at < :beforeMs'}
+       order by created_at desc, id desc limit :limit`,
+      { beforeMs, limit }
+    );
+  }
+
+  async getReportForReview(id: string): Promise<E2eeReviewReportRow | null> {
+    return this.one<E2eeReviewReportRow>(
+      `select ${REVIEW_REPORT_COLUMNS} from ${E2EE_REPORTS_TABLE}
+       where id = :id`,
+      { id }
+    );
+  }
+
+  /** Returns false when the report does not exist. */
+  async setReportHold(id: string, onHold: boolean): Promise<boolean> {
+    const rows = await this.many<{ id: string }>(
+      `select id from ${E2EE_REPORTS_TABLE} where id = :id`,
+      { id }
+    );
+    if (!rows.length) return false;
+    await this.write(
+      `update ${E2EE_REPORTS_TABLE} set on_hold = :onHold where id = :id`,
+      { id, onHold }
+    );
+    return true;
+  }
+
+  async insertReportAccess(row: Omit<E2eeReportAccessEntity, 'id'>) {
+    await this.write(
+      `insert into ${E2EE_REPORT_ACCESS_LOG_TABLE}
+         (viewer_profile_id, action, report_ids, created_at)
+       values (:viewer_profile_id, :action, :report_ids, :created_at)`,
+      { ...row }
+    );
+  }
+
+  async listReportAccess(): Promise<E2eeReportAccessEntity[]> {
+    return this.many<E2eeReportAccessEntity>(
+      `select id, viewer_profile_id, action, report_ids, created_at
+       from ${E2EE_REPORT_ACCESS_LOG_TABLE} order by id`,
+      {}
     );
   }
 
@@ -1415,6 +1491,16 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       `delete from ${E2EE_PUSH_THROTTLE_TABLE}
        where last_sent_at < :cutoff limit :limit`,
       { cutoff: nowMs - E2EE_RETENTION.pushThrottleMs, limit }
+    );
+    await this.pruneExpiredReports(nowMs, limit);
+  }
+
+  /** Reports older than the retention window and not on hold. */
+  async pruneExpiredReports(nowMs: number, limit: number): Promise<number> {
+    return this.write(
+      `delete from ${E2EE_REPORTS_TABLE}
+       where on_hold = false and created_at < :cutoff limit :limit`,
+      { cutoff: nowMs - E2EE_RETENTION.reportsMs, limit }
     );
   }
 }

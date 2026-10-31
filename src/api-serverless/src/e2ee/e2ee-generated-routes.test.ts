@@ -127,4 +127,43 @@ describe('E2EE generated routes', () => {
       );
     });
   });
+
+  it('keeps trust-and-safety reads closed until a group is configured, flag or not', async () => {
+    process.env.E2EE_DMS_ENABLED = 'false';
+    const originalGroup = process.env.E2EE_TRUST_AND_SAFETY_GROUP_ID;
+    delete process.env.E2EE_TRUST_AND_SAFETY_GROUP_ID;
+    const mocked = jest.mocked(getAuthenticationContext);
+    mocked.mockResolvedValueOnce({
+      isAuthenticatedAsProxy: () => true,
+      getActingAsId: () => 'someone'
+    } as never);
+    mocked.mockResolvedValue({
+      isAuthenticatedAsProxy: () => false,
+      getActingAsId: () => 'profile-1'
+    } as never);
+    try {
+      await withServer(async (baseUrl) => {
+        const proxy = await fetch(`${baseUrl}/e2ee/trust-and-safety/reports`);
+        expect(proxy.status).toBe(403);
+        const unconfigured = await fetch(
+          `${baseUrl}/e2ee/trust-and-safety/reports`
+        );
+        expect(unconfigured.status).toBe(403);
+        expect(await unconfigured.json()).toEqual({
+          error: 'Trust and safety review is not configured',
+          code: 'E2EE_FORBIDDEN'
+        });
+        const badId = await fetch(
+          `${baseUrl}/e2ee/trust-and-safety/reports/not-an-id`
+        );
+        expect(badId.status).toBe(400);
+      });
+    } finally {
+      if (originalGroup === undefined) {
+        delete process.env.E2EE_TRUST_AND_SAFETY_GROUP_ID;
+      } else {
+        process.env.E2EE_TRUST_AND_SAFETY_GROUP_ID = originalGroup;
+      }
+    }
+  });
 });

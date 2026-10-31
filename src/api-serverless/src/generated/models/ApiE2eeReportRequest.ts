@@ -10,7 +10,7 @@
  * Do not edit the class manually.
  */
 
-import { ApiContentModerationReportReason } from '../models/ApiContentModerationReportReason';
+import { ApiE2eeReportCategory } from '../models/ApiE2eeReportCategory';
 import { HttpFile } from '../http/http';
 
 export class ApiE2eeReportRequest {
@@ -26,7 +26,7 @@ export class ApiE2eeReportRequest {
     'signature': string;
     'sender_device_key': string;
     'reporter_device_key': string;
-    'reason': ApiContentModerationReportReason;
+    'reason': ApiE2eeReportCategory;
     'notes'?: string;
 
     static readonly discriminator: string | undefined = undefined;
@@ -73,7 +73,7 @@ export class ApiE2eeReportRequest {
         {
             "name": "reason",
             "baseName": "reason",
-            "type": "ApiContentModerationReportReason",
+            "type": "ApiE2eeReportCategory",
             "format": ""
         },
         {

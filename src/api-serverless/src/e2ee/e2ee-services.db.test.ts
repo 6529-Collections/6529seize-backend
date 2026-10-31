@@ -4,7 +4,8 @@ import { HDNodeWallet, keccak256, Wallet } from 'ethers';
 import { E2eeServiceDeps } from '@/api/e2ee/e2ee-context';
 import { E2eeEventPublisher } from '@/api/e2ee/e2ee-events';
 import { createE2eeServices } from '@/api/e2ee/e2ee.handlers';
-import { ApiContentModerationReportReason } from '@/api/generated/models/ApiContentModerationReportReason';
+import { ApiE2eeReportCategory } from '@/api/generated/models/ApiE2eeReportCategory';
+import { E2eeTrustAndSafetyService } from '@/api/e2ee/e2ee-trust-and-safety.service';
 import {
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   E2EE_LOG_TABLE,
@@ -116,12 +117,14 @@ describeWithSeed('E2EE delivery service', [], () => {
   let db: E2eeDb;
   let services: ReturnType<typeof createE2eeServices>;
   let randomValue: number;
+  let attachmentsEnabled: boolean;
 
   beforeEach(() => {
     now = START;
     events = [];
     walletProfiles = new Map();
     randomValue = 1;
+    attachmentsEnabled = true;
     db = new E2eeDb(() => sqlExecutor);
     const record =
       (method: keyof E2eeEventPublisher) =>
@@ -146,7 +149,8 @@ describeWithSeed('E2EE delivery service', [], () => {
         walletProfiles.get(wallet) ?? null,
       now: () => now,
       random: () => randomValue,
-      randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`
+      randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`,
+      attachmentsEnabled: () => attachmentsEnabled
     };
     services = createE2eeServices(deps);
   });
@@ -1229,7 +1233,7 @@ describeWithSeed('E2EE delivery service', [], () => {
         signature: sig64,
         sender_device_key: aliceDevice.publicKey,
         reporter_device_key: bobDevice.publicKey,
-        reason: ApiContentModerationReportReason.Spam
+        reason: ApiE2eeReportCategory.CredibleThreatOfViolence
       });
       expect(report).toMatchObject({
         verified: true,
@@ -1244,10 +1248,173 @@ describeWithSeed('E2EE delivery service', [], () => {
         signature: sig64,
         sender_device_key: aliceDevice.publicKey,
         reporter_device_key: bobDevice.publicKey,
-        reason: ApiContentModerationReportReason.Spam,
+        reason: ApiE2eeReportCategory.CredibleThreatOfViolence,
         notes: 'not what was sent'
       });
       expect(tampered.verified).toBe(false);
+    });
+  });
+
+  describe('attachments switch', () => {
+    it('refuses every blob route and stores nothing while attachments are off', async () => {
+      const alice = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const group = await createGroup(alice, aliceDevice);
+      expect((await services.devices.getMe(alice.id)).attachments_enabled).toBe(
+        true
+      );
+      const blob = await services.blobs.createBlob(alice.id, {
+        group: group.g,
+        uploader_device_key: aliceDevice.publicKey,
+        size: 10,
+        chunk_count: 1
+      });
+      attachmentsEnabled = false;
+      expect((await services.devices.getMe(alice.id)).attachments_enabled).toBe(
+        false
+      );
+      await expectE2eeError(
+        services.blobs.createBlob(alice.id, {
+          group: group.g,
+          uploader_device_key: aliceDevice.publicKey,
+          size: 10,
+          chunk_count: 1
+        }),
+        'E2EE_ATTACHMENTS_DISABLED'
+      );
+      await expectE2eeError(
+        services.blobs.putChunk(alice.id, blob.blob_id, 0, {
+          data: randomBytes(10).toString('base64')
+        }),
+        'E2EE_ATTACHMENTS_DISABLED'
+      );
+      await expectE2eeError(
+        services.blobs.completeBlob(alice.id, blob.blob_id),
+        'E2EE_ATTACHMENTS_DISABLED'
+      );
+      await expectE2eeError(
+        services.blobs.getChunk(
+          alice.id,
+          blob.blob_id,
+          0,
+          aliceDevice.publicKey
+        ),
+        'E2EE_ATTACHMENTS_DISABLED'
+      );
+      const [{ blobs }] = await sqlExecutor.execute<{ blobs: number }>(
+        `select count(*) as blobs from e2ee_blobs`
+      );
+      const [{ chunks }] = await sqlExecutor.execute<{ chunks: number }>(
+        `select count(*) as chunks from e2ee_blob_chunks`
+      );
+      expect(Number(blobs)).toBe(1);
+      expect(Number(chunks)).toBe(0);
+    });
+  });
+
+  describe('trust and safety review', () => {
+    async function fileReport(): Promise<{ id: string; senderId: string }> {
+      const alice = aProfile();
+      const bob = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const bobDevice = await registerDevice(bob);
+      const group = await createGroup(alice, aliceDevice);
+      await commit(alice, group, aliceDevice, {
+        rosterAdd: [bobDevice.publicKey]
+      });
+      const body = Buffer.from(
+        JSON.stringify({ v: 1, t: 'msg', text: 'a credible threat' })
+      );
+      const report = await services.blobs.report(bob.id, {
+        group: group.g,
+        epoch: 1,
+        body: body.toString('base64'),
+        signature: aliceDevice.sign(
+          e2eeMessageDigest({ group: group.g, epoch: 1, body })
+        ),
+        sender_device_key: aliceDevice.publicKey,
+        reporter_device_key: bobDevice.publicKey,
+        reason: ApiE2eeReportCategory.CredibleThreatOfViolence
+      });
+      return { id: report.id, senderId: alice.id };
+    }
+
+    function reviewService(groupId: string | null, members: string[]) {
+      return new E2eeTrustAndSafetyService({
+        db,
+        now: () => now,
+        groupId: () => groupId,
+        isGroupMember: async (profileId, group) =>
+          group === groupId && members.includes(profileId)
+      });
+    }
+
+    it('lets only the configured group read reports and audits every read', async () => {
+      const { id, senderId } = await fileReport();
+      await expectE2eeError(
+        reviewService(null, ['reviewer']).listReports('reviewer', {}),
+        'E2EE_FORBIDDEN'
+      );
+      await expectE2eeError(
+        reviewService('ts-group', ['reviewer']).getReport('stranger', id),
+        'E2EE_FORBIDDEN'
+      );
+      expect(await db.listReportAccess()).toEqual([]);
+
+      const review = reviewService('ts-group', ['reviewer']);
+      const page = await review.listReports('reviewer', { limit: 10 });
+      expect(page.next_before).toBeNull();
+      expect(page.items).toEqual([
+        expect.objectContaining({
+          id,
+          category: ApiE2eeReportCategory.CredibleThreatOfViolence,
+          verified: true,
+          sender_profile_id: senderId,
+          on_hold: false,
+          expires_at: START + 180 * 24 * 60 * 60 * 1000
+        })
+      ]);
+      expect(
+        JSON.parse(Buffer.from(page.items[0].body, 'base64').toString('utf8'))
+      ).toMatchObject({ text: 'a credible threat' });
+      const one = await review.getReport('reviewer', id);
+      expect(one.id).toBe(id);
+      await expectE2eeError(
+        review.getReport('reviewer', `0x${'0'.repeat(32)}`),
+        'E2EE_NOT_FOUND'
+      );
+      expect(
+        (await db.listReportAccess()).map((row) => ({
+          viewer: row.viewer_profile_id,
+          action: row.action,
+          ids: row.report_ids
+        }))
+      ).toEqual([
+        { viewer: 'reviewer', action: 'list', ids: id },
+        { viewer: 'reviewer', action: 'read', ids: id }
+      ]);
+    });
+
+    it('deletes reports after 180 days unless they are on hold', async () => {
+      const kept = await fileReport();
+      const expired = await fileReport();
+      const review = reviewService('ts-group', ['reviewer']);
+      const held = await review.setHold('reviewer', kept.id, true);
+      expect(held).toMatchObject({ on_hold: true, expires_at: null });
+      now = START + 181 * 24 * 60 * 60 * 1000;
+      await db.pruneExpiredReports(now, 100);
+      const remaining = await review.listReports('reviewer', {});
+      expect(remaining.items.map((item) => item.id)).toEqual([kept.id]);
+      expect(await db.getReportForReview(expired.id)).toBeNull();
+      const released = await review.setHold('reviewer', kept.id, false);
+      expect(released.on_hold).toBe(false);
+      await db.pruneExpiredReports(now, 100);
+      expect(await db.getReportForReview(kept.id)).toBeNull();
+      expect((await db.listReportAccess()).map((row) => row.action)).toEqual([
+        'hold',
+        'list',
+        'release'
+      ]);
     });
   });
 

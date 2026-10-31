@@ -146,12 +146,15 @@ import { ApiE2eeLogPage } from '@/api/generated/models/ApiE2eeLogPage';
 import { ApiE2eeMe } from '@/api/generated/models/ApiE2eeMe';
 import { ApiE2eeRegisterDeviceRequest } from '@/api/generated/models/ApiE2eeRegisterDeviceRequest';
 import { ApiE2eeReport } from '@/api/generated/models/ApiE2eeReport';
+import { ApiE2eeReportHoldRequest } from '@/api/generated/models/ApiE2eeReportHoldRequest';
 import { ApiE2eeReportRequest } from '@/api/generated/models/ApiE2eeReportRequest';
 import { ApiE2eeRevokeDeviceRequest } from '@/api/generated/models/ApiE2eeRevokeDeviceRequest';
 import { ApiE2eeRosterRepairRequest } from '@/api/generated/models/ApiE2eeRosterRepairRequest';
 import { ApiE2eeSendMessageRequest } from '@/api/generated/models/ApiE2eeSendMessageRequest';
 import { ApiE2eeSendMessageResponse } from '@/api/generated/models/ApiE2eeSendMessageResponse';
 import { ApiE2eeSubmitEntryRequest } from '@/api/generated/models/ApiE2eeSubmitEntryRequest';
+import { ApiE2eeTrustAndSafetyReport } from '@/api/generated/models/ApiE2eeTrustAndSafetyReport';
+import { ApiE2eeTrustAndSafetyReportPage } from '@/api/generated/models/ApiE2eeTrustAndSafetyReportPage';
 import { ApiE2eeUploadKeyPackagesRequest } from '@/api/generated/models/ApiE2eeUploadKeyPackagesRequest';
 import { ApiE2eeWelcome } from '@/api/generated/models/ApiE2eeWelcome';
 import { ApiEulaConsent } from '@/api/generated/models/ApiEulaConsent';
@@ -1934,6 +1937,55 @@ export type E2eeReportMessageRequest = Request<
   ApiResponse<E2eeReportMessageResponse>,
   ApiE2eeReportRequest,
   E2eeReportMessageQuery,
+  Record<string, never>
+>;
+
+export type E2eeListTrustAndSafetyReportsPathParams = Record<string, never>;
+
+export interface E2eeListTrustAndSafetyReportsQuery {
+  "before"?: number;
+  "limit"?: number;
+}
+
+export type E2eeListTrustAndSafetyReportsResponse = ApiE2eeTrustAndSafetyReportPage;
+
+export type E2eeListTrustAndSafetyReportsRequest = Request<
+  E2eeListTrustAndSafetyReportsPathParams,
+  ApiResponse<E2eeListTrustAndSafetyReportsResponse>,
+  never,
+  E2eeListTrustAndSafetyReportsQuery,
+  Record<string, never>
+>;
+
+export interface E2eeGetTrustAndSafetyReportPathParams {
+  "report_id": string;
+}
+
+export type E2eeGetTrustAndSafetyReportQuery = Record<string, never>;
+
+export type E2eeGetTrustAndSafetyReportResponse = ApiE2eeTrustAndSafetyReport;
+
+export type E2eeGetTrustAndSafetyReportRequest = Request<
+  E2eeGetTrustAndSafetyReportPathParams,
+  ApiResponse<E2eeGetTrustAndSafetyReportResponse>,
+  never,
+  E2eeGetTrustAndSafetyReportQuery,
+  Record<string, never>
+>;
+
+export interface E2eeSetTrustAndSafetyReportHoldPathParams {
+  "report_id": string;
+}
+
+export type E2eeSetTrustAndSafetyReportHoldQuery = Record<string, never>;
+
+export type E2eeSetTrustAndSafetyReportHoldResponse = ApiE2eeTrustAndSafetyReport;
+
+export type E2eeSetTrustAndSafetyReportHoldRequest = Request<
+  E2eeSetTrustAndSafetyReportHoldPathParams,
+  ApiResponse<E2eeSetTrustAndSafetyReportHoldResponse>,
+  ApiE2eeReportHoldRequest,
+  E2eeSetTrustAndSafetyReportHoldQuery,
   Record<string, never>
 >;
 

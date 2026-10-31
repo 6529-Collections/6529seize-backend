@@ -33,10 +33,18 @@ export class E2eeBlobsService {
     return this.deps.db;
   }
 
+  /** While attachments are off, no blob row or chunk is read or written. */
+  private requireAttachments(): void {
+    if (!this.deps.attachmentsEnabled()) {
+      throw e2eeErrors.attachmentsDisabled();
+    }
+  }
+
   async createBlob(
     callerProfileId: string,
     request: ApiE2eeCreateBlobRequest
   ): Promise<ApiE2eeBlob> {
+    this.requireAttachments();
     if (request.chunk_count > E2EE_MAX_BLOB_CHUNKS) {
       throw e2eeErrors.tooLarge('Attachment');
     }
@@ -121,6 +129,7 @@ export class E2eeBlobsService {
     index: number,
     request: ApiE2eeBlobChunk
   ): Promise<ApiE2eeBlob> {
+    this.requireAttachments();
     const data = decodeE2eeBase64(
       request.data,
       'data',
@@ -160,6 +169,7 @@ export class E2eeBlobsService {
     callerProfileId: string,
     blobId: string
   ): Promise<ApiE2eeBlob> {
+    this.requireAttachments();
     const blob = await this.db.executeNativeQueriesInTransaction(
       async (connection) => {
         const locked = await this.lockUploaderBlob(
@@ -196,6 +206,7 @@ export class E2eeBlobsService {
     index: number,
     deviceKey: string
   ): Promise<ApiE2eeBlobChunk> {
+    this.requireAttachments();
     await requireOwnActiveDevice(this.deps, callerProfileId, deviceKey);
     const blob = await this.db.getBlob(blobId);
     if (!blob?.complete) throw e2eeErrors.notFound('Attachment');
@@ -256,7 +267,8 @@ export class E2eeBlobsService {
       reason: String(request.reason),
       notes: request.notes?.trim() || null,
       verified: signatureValid && senderInGroup,
-      created_at: this.deps.now()
+      created_at: this.deps.now(),
+      on_hold: false
     };
     await this.db.insertReport(report);
     return {

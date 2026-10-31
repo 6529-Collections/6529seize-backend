@@ -55,6 +55,7 @@ import {
   isZero32
 } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
+import { e2eeEntriesPerGroupPerHour } from '@/e2ee/e2ee-flag';
 import { decideE2eePolicy, E2eeEligibilityStatus } from '@/e2ee/e2ee-policy';
 import { ConnectionWrapper } from '@/sql-executor';
 
@@ -747,7 +748,10 @@ export class E2eeGroupsService {
     // Counted only after K_n verified, so non-members cannot burn the quota.
     await enforceE2eeRateLimit(
       this.deps,
-      E2EE_RATE_LIMITS.entriesPerGroup,
+      {
+        ...E2EE_RATE_LIMITS.entriesPerGroup,
+        limit: e2eeEntriesPerGroupPerHour()
+      },
       group
     );
     await enforceE2eeByteBudget(

@@ -72,7 +72,8 @@ export class E2eeDevicesService {
       profile_id: callerProfileId,
       devices: devices.map(toApiE2eeDevice),
       key_packages: statuses,
-      max_devices: E2EE_MAX_ACTIVE_DEVICES
+      max_devices: E2EE_MAX_ACTIVE_DEVICES,
+      attachments_enabled: this.deps.attachmentsEnabled()
     };
   }
 
