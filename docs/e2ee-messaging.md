@@ -57,6 +57,7 @@ Errors use `CustomApiCompliantException` and the body
 | Groups | `POST /e2ee/groups`, `GET /e2ee/groups/{group}`, `POST /e2ee/groups/{group}/entries`, `GET /e2ee/groups/{group}/log`, `POST /e2ee/groups/{group}/messages`, `POST /e2ee/groups/{group}/roster`, `GET /e2ee/devices/{device_key}/groups` |
 | Welcomes | `GET /e2ee/devices/{device_key}/welcomes`, `POST /e2ee/devices/{device_key}/welcomes/{welcome_id}/ack` |
 | Attachments | `POST /e2ee/blobs`, `PUT /e2ee/blobs/{blob_id}/chunks/{index}`, `POST /e2ee/blobs/{blob_id}/complete`, `GET /e2ee/blobs/{blob_id}/chunks/{index}` |
+| History backups | `GET /e2ee/backup`, `DELETE /e2ee/backup`, `POST /e2ee/backups`, `GET /e2ee/backups/{backup_id}`, `POST /e2ee/backups/{backup_id}/activate`, `GET` and `POST /e2ee/backups/{backup_id}/chunks`, `GET /e2ee/backups/{backup_id}/chunks/{seq}`, `POST /e2ee/backups/{backup_id}/compact` |
 | Reports | `POST /e2ee/reports` |
 | Trust and safety | `GET /e2ee/trust-and-safety/reports`, `GET /e2ee/trust-and-safety/reports/{report_id}`, `POST /e2ee/trust-and-safety/reports/{report_id}/hold` (not gated by `E2EE_DMS_ENABLED`, so stored reports stay reviewable) |
 
@@ -292,6 +293,56 @@ before the run, `examined`, `migrated`, `bytes`, `vanished`, `failures` and
 whether `more` blobs remain; repeat until `more` is false. InnoDB does not
 return the freed space to the operating system on its own; run
 `OPTIMIZE TABLE e2ee_blob_chunks` in a quiet window if that matters.
+
+## Encrypted message-history backups
+
+Optional, per profile. The client encrypts its own decrypted message history
+(message content, display metadata, attachment references and their keys;
+never MLS state) under a random 256-bit backup key and uploads ciphertext
+chunks. The backup key is wrapped by the user's recovery code (256-bit,
+shown once on the client) into an opaque *envelope* that the server stores
+with the generation. The server never receives plaintext, the backup key or
+the recovery code, and cannot open the envelope (the code is not guessable,
+so no guess limiting is needed).
+
+- **Generations.** `POST /e2ee/backups` creates a *pending* generation with a
+  client-chosen random `backup_id` and envelope; any older pending
+  generation of the profile is deleted. `POST .../activate` makes it the
+  active one and deletes every other generation (used to rotate the recovery
+  code together with the backup key). A profile has at most one active and
+  one pending generation; a pending generation that is never activated is
+  pruned after 24 hours.
+- **Chunks.** `POST .../chunks` appends one ciphertext chunk; the server
+  assigns the next `seq`. Lengths must be one of the buckets 4, 16, 64 or
+  256 KiB or 1 MiB (the client pads). `GET .../chunks` lists
+  `{seq, size, created_at}`; `GET .../chunks/{seq}` returns the bytes.
+  `POST .../compact` deletes chunks up to `through_seq` after the client
+  re-uploaded a snapshot.
+- **Delete.** `DELETE /e2ee/backup` deletes every generation and chunk of the
+  profile (turning backup off and making every recovery code useless).
+- **Quota and limits.** 256 MiB of backup ciphertext per profile across its
+  generations (413 `E2EE_BACKUP_QUOTA`), 10,000 chunks per generation, 3,000
+  chunk uploads and 1 GiB per profile per UTC day, 50 new generations per
+  profile per day, envelope at most 8 KiB.
+- **Authorization.** Profile JWT (no proxies). Writes (create, append,
+  activate, compact) also name an active device of the caller; reads and
+  delete-all need only the profile, so a new device can restore.
+- **What the server sees.** Which profile has a backup, generation ids and
+  times, chunk counts, padded chunk sizes and upload times, which device
+  uploaded each chunk, and the envelope size. Not message content, contacts,
+  group names or keys.
+- **Storage.** Chunk metadata is in `e2ee_backups` and `e2ee_backup_chunks`;
+  the bytes go through the `E2eeCiphertextStore` interface
+  (`src/e2ee/e2ee-ciphertext-store.ts`), whose MySQL implementation writes
+  `e2ee_ciphertext_objects`. An S3 implementation can replace it without API
+  changes: objects are written before the metadata that references them
+  commits, and deleted only after the metadata delete committed.
+- **Kill switch.** `E2EE_BACKUPS_ENABLED=false` (on by default; the routes
+  also need `E2EE_DMS_ENABLED`) makes the backup routes return 404
+  `E2EE_BACKUPS_DISABLED` before any database access.
+
+The client format (key derivation, envelope and chunk layout, restore and
+merge rules) is documented in the frontend repository.
 
 ## Retention
 

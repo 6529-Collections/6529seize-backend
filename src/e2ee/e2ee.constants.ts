@@ -60,6 +60,32 @@ export const E2EE_BLOB_QUOTA = {
   liveBytes: 1024 * MIB
 } as const;
 
+/**
+ * Encrypted message-history backup. Clients pad every chunk so its ciphertext
+ * (12-byte nonce + AES-GCM ciphertext + 16-byte tag) is exactly one of these
+ * lengths; the server only learns coarse sizes.
+ */
+export const E2EE_BACKUP_CHUNK_BUCKETS: readonly number[] = [
+  4 * KIB,
+  16 * KIB,
+  64 * KIB,
+  256 * KIB,
+  MIB
+];
+export const E2EE_BACKUP_MAX_CHUNK_BYTES = MIB;
+/** The wrapped backup key(s); opaque to the server. */
+export const E2EE_BACKUP_MAX_ENVELOPE_BYTES = 8 * KIB;
+/** Chunks per generation; clients compact long before this. */
+export const E2EE_BACKUP_MAX_CHUNKS = 10_000;
+/** Ciphertext bytes per profile across its active and pending generations. */
+export const E2EE_BACKUP_QUOTA_BYTES = 256 * MIB;
+export const E2EE_BACKUP_LIST_DEFAULT_LIMIT = 500;
+export const E2EE_BACKUP_LIST_MAX_LIMIT = 1000;
+/** A pending (never activated) generation is deleted after this long. */
+export const E2EE_BACKUP_PENDING_TTL_MS = 24 * 60 * 60 * 1000;
+/** Stale pending generations deleted per prune pass. */
+export const E2EE_BACKUP_PRUNE_BATCH = 5;
+
 export const E2EE_MAX_CLAIM_TARGETS = 100;
 export const E2EE_MAX_ELIGIBILITY_PROFILES = 100;
 export const E2EE_LOG_DEFAULT_LIMIT = 100;
@@ -111,6 +137,14 @@ export const E2EE_RATE_LIMITS = {
   blobUploadsPerProfile: { scope: 'blob', limit: 100, windowMs: DAY },
   eligibilityPerProfile: { scope: 'elig', limit: 600, windowMs: HOUR },
   reportsPerProfile: { scope: 'report', limit: 100, windowMs: DAY },
+  backupGenerationsPerProfile: { scope: 'bkgen', limit: 50, windowMs: DAY },
+  backupChunksPerProfile: { scope: 'bkchunk', limit: 3000, windowMs: DAY },
+  /** Backup ciphertext bytes uploaded per profile per UTC day. */
+  backupBytesPerProfile: {
+    scope: 'bkbytes',
+    limit: 1024 * MIB,
+    windowMs: DAY
+  },
   /** Log and welcome ciphertext bytes per profile per UTC day. */
   logBytesPerProfile: { scope: 'bytes', limit: 256 * MIB, windowMs: DAY }
 } satisfies Record<string, E2eeRateLimit>;
@@ -134,5 +168,7 @@ export const E2EE_ERROR_CODES = {
   NOT_FOUND: 'E2EE_NOT_FOUND',
   FORBIDDEN: 'E2EE_FORBIDDEN',
   ATTACHMENTS_DISABLED: 'E2EE_ATTACHMENTS_DISABLED',
-  STORAGE_UNAVAILABLE: 'E2EE_STORAGE_UNAVAILABLE'
+  STORAGE_UNAVAILABLE: 'E2EE_STORAGE_UNAVAILABLE',
+  BACKUPS_DISABLED: 'E2EE_BACKUPS_DISABLED',
+  BACKUP_QUOTA: 'E2EE_BACKUP_QUOTA'
 } as const;

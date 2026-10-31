@@ -1,4 +1,8 @@
 import { getAuthenticationContext } from '@/api/auth/auth';
+import {
+  E2eeBackupServiceDeps,
+  E2eeBackupsService
+} from '@/api/e2ee/e2ee-backups.service';
 import { E2eeBlobsService } from '@/api/e2ee/e2ee-blobs.service';
 import {
   defaultE2eeServiceDeps,
@@ -7,10 +11,17 @@ import {
 import { E2eeDevicesService } from '@/api/e2ee/e2ee-devices.service';
 import { E2eeGroupsService } from '@/api/e2ee/e2ee-groups.service';
 import {
+  e2eeBackupChunkListQuerySchema,
+  e2eeBackupChunkUploadSchema,
+  e2eeBackupDeviceSchema,
+  e2eeBackupIdParamSchema,
+  e2eeBackupSeqParamSchema,
   e2eeBlobChunkSchema,
   e2eeBlobIdParamSchema,
   e2eeChunkIndexParamSchema,
   e2eeClaimKeyPackagesSchema,
+  e2eeCompactBackupSchema,
+  e2eeCreateBackupSchema,
   e2eeCreateBlobSchema,
   e2eeCreateGroupSchema,
   e2eeDeviceKeyParamSchema,
@@ -30,10 +41,18 @@ import {
   validateE2ee
 } from '@/api/e2ee/e2ee.validation';
 import { ApiE2eeAck } from '@/api/generated/models/ApiE2eeAck';
+import { ApiE2eeBackup } from '@/api/generated/models/ApiE2eeBackup';
+import { ApiE2eeBackupChunk } from '@/api/generated/models/ApiE2eeBackupChunk';
+import { ApiE2eeBackupChunkData } from '@/api/generated/models/ApiE2eeBackupChunkData';
+import { ApiE2eeBackupChunkPage } from '@/api/generated/models/ApiE2eeBackupChunkPage';
+import { ApiE2eeBackupChunkUpload } from '@/api/generated/models/ApiE2eeBackupChunkUpload';
+import { ApiE2eeBackupStatus } from '@/api/generated/models/ApiE2eeBackupStatus';
 import { ApiE2eeBlob } from '@/api/generated/models/ApiE2eeBlob';
 import { ApiE2eeBlobChunk } from '@/api/generated/models/ApiE2eeBlobChunk';
 import { ApiE2eeClaimKeyPackagesRequest } from '@/api/generated/models/ApiE2eeClaimKeyPackagesRequest';
 import { ApiE2eeClaimKeyPackagesResponse } from '@/api/generated/models/ApiE2eeClaimKeyPackagesResponse';
+import { ApiE2eeCompactBackupRequest } from '@/api/generated/models/ApiE2eeCompactBackupRequest';
+import { ApiE2eeCreateBackupRequest } from '@/api/generated/models/ApiE2eeCreateBackupRequest';
 import { ApiE2eeCreateBlobRequest } from '@/api/generated/models/ApiE2eeCreateBlobRequest';
 import { ApiE2eeCreateGroupRequest } from '@/api/generated/models/ApiE2eeCreateGroupRequest';
 import { ApiE2eeDevice } from '@/api/generated/models/ApiE2eeDevice';
@@ -59,10 +78,18 @@ import { ApiE2eeUploadKeyPackagesRequest } from '@/api/generated/models/ApiE2eeU
 import { ApiE2eeWelcome } from '@/api/generated/models/ApiE2eeWelcome';
 import {
   E2eeAckWelcomeRequest,
+  E2eeActivateBackupRequest,
+  E2eeAppendBackupChunkRequest,
   E2eeCheckEligibilityRequest,
   E2eeClaimKeyPackagesRequest,
+  E2eeCompactBackupRequest,
   E2eeCompleteBlobRequest,
+  E2eeCreateBackupRequest,
   E2eeCreateBlobRequest,
+  E2eeDeleteBackupsRequest,
+  E2eeGetBackupChunkRequest,
+  E2eeGetBackupRequest,
+  E2eeGetBackupStatusRequest,
   E2eeCreateGroupRequest,
   E2eeGetBlobChunkRequest,
   E2eeGetDeviceGroupsRequest,
@@ -72,6 +99,7 @@ import {
   E2eeGetMeRequest,
   E2eeGetProfileDevicesRequest,
   E2eeGetWelcomesRequest,
+  E2eeListBackupChunksRequest,
   E2eeLookupDevicesRequest,
   E2eePutBlobChunkRequest,
   E2eeRegisterDeviceRequest,
@@ -82,9 +110,11 @@ import {
   E2eeSubmitEntryRequest,
   E2eeUploadKeyPackagesRequest
 } from '@/api/generated/routes/operations';
+import { e2eeBackupDb } from '@/e2ee/e2ee-backup.db';
+import { e2eeCiphertextStore } from '@/e2ee/e2ee-ciphertext-store';
 import { E2EE_BLOB_ID_PATTERN } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
-import { isE2eeEnabled } from '@/e2ee/e2ee-flag';
+import { isE2eeBackupsEnabled, isE2eeEnabled } from '@/e2ee/e2ee-flag';
 import { Timer } from '@/time';
 import { Request } from 'express';
 import * as Joi from 'joi';
@@ -92,11 +122,19 @@ import * as Joi from 'joi';
 // Thin handlers for the E2EE delivery service (D109 contract v1, section 4).
 // Every route checks the flag first, then requires a non-proxy profile.
 
-export function createE2eeServices(deps: E2eeServiceDeps) {
+export function createE2eeServices(
+  deps: E2eeServiceDeps,
+  backupDeps: Omit<E2eeBackupServiceDeps, 'e2ee'> = {
+    backups: e2eeBackupDb,
+    store: e2eeCiphertextStore,
+    backupsEnabled: () => isE2eeBackupsEnabled()
+  }
+) {
   return {
     devices: new E2eeDevicesService(deps),
     groups: new E2eeGroupsService(deps),
-    blobs: new E2eeBlobsService(deps)
+    blobs: new E2eeBlobsService(deps),
+    backups: new E2eeBackupsService({ ...backupDeps, e2ee: deps })
   };
 }
 
@@ -126,6 +164,8 @@ const groupOf = (req: { params: { group: string } }) =>
   validateE2ee(req.params.group, e2eeGroupParamSchema);
 const blobIdOf = (req: { params: { blob_id: string } }) =>
   validateE2ee(req.params.blob_id, e2eeBlobIdParamSchema);
+const backupIdOf = (req: { params: { backup_id: string } }) =>
+  validateE2ee(req.params.backup_id, e2eeBackupIdParamSchema);
 const chunkIndexOf = (req: { params: { index: number } }) =>
   validateE2ee<number>(req.params.index, e2eeChunkIndexParamSchema);
 
@@ -355,5 +395,94 @@ export async function handleE2eeReportMessage(
   return services.blobs.report(
     caller,
     body<ApiE2eeReportRequest>(req.body, e2eeReportSchema)
+  );
+}
+
+// ------------------------------------------------- encrypted history backups
+
+export async function handleE2eeGetBackupStatus(
+  req: E2eeGetBackupStatusRequest
+): Promise<ApiE2eeBackupStatus> {
+  return services.backups.getStatus(await e2eeCaller(req));
+}
+
+export async function handleE2eeDeleteBackups(
+  req: E2eeDeleteBackupsRequest
+): Promise<ApiE2eeAck> {
+  return services.backups.deleteAll(await e2eeCaller(req));
+}
+
+export async function handleE2eeCreateBackup(
+  req: E2eeCreateBackupRequest
+): Promise<ApiE2eeBackup> {
+  const caller = await e2eeCaller(req);
+  return services.backups.createBackup(
+    caller,
+    body<ApiE2eeCreateBackupRequest>(req.body, e2eeCreateBackupSchema)
+  );
+}
+
+export async function handleE2eeGetBackup(
+  req: E2eeGetBackupRequest
+): Promise<ApiE2eeBackup> {
+  const caller = await e2eeCaller(req);
+  return services.backups.getBackup(caller, backupIdOf(req));
+}
+
+export async function handleE2eeActivateBackup(
+  req: E2eeActivateBackupRequest
+): Promise<ApiE2eeBackup> {
+  const caller = await e2eeCaller(req);
+  const request = body<{ device_key: string }>(
+    req.body,
+    e2eeBackupDeviceSchema
+  );
+  return services.backups.activate(caller, backupIdOf(req), request.device_key);
+}
+
+export async function handleE2eeListBackupChunks(
+  req: E2eeListBackupChunksRequest
+): Promise<ApiE2eeBackupChunkPage> {
+  const caller = await e2eeCaller(req);
+  return services.backups.listChunks(
+    caller,
+    backupIdOf(req),
+    body<{ after_seq?: number; limit?: number }>(
+      req.query,
+      e2eeBackupChunkListQuerySchema
+    )
+  );
+}
+
+export async function handleE2eeAppendBackupChunk(
+  req: E2eeAppendBackupChunkRequest
+): Promise<ApiE2eeBackupChunk> {
+  const caller = await e2eeCaller(req);
+  return services.backups.appendChunk(
+    caller,
+    backupIdOf(req),
+    body<ApiE2eeBackupChunkUpload>(req.body, e2eeBackupChunkUploadSchema)
+  );
+}
+
+export async function handleE2eeGetBackupChunk(
+  req: E2eeGetBackupChunkRequest
+): Promise<ApiE2eeBackupChunkData> {
+  const caller = await e2eeCaller(req);
+  return services.backups.getChunk(
+    caller,
+    backupIdOf(req),
+    validateE2ee<number>(req.params.seq, e2eeBackupSeqParamSchema)
+  );
+}
+
+export async function handleE2eeCompactBackup(
+  req: E2eeCompactBackupRequest
+): Promise<ApiE2eeBackup> {
+  const caller = await e2eeCaller(req);
+  return services.backups.compact(
+    caller,
+    backupIdOf(req),
+    body<ApiE2eeCompactBackupRequest>(req.body, e2eeCompactBackupSchema)
   );
 }

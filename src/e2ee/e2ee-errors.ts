@@ -116,6 +116,19 @@ export const e2eeErrors = {
       E2EE_ERROR_CODES.ATTACHMENTS_DISABLED,
       'Encrypted attachments are not available'
     ),
+  backupsDisabled: () =>
+    new E2eeApiException(
+      404,
+      E2EE_ERROR_CODES.BACKUPS_DISABLED,
+      'Encrypted message backups are not available'
+    ),
+  backupQuota: (quotaBytes: number) =>
+    new E2eeApiException(
+      413,
+      E2EE_ERROR_CODES.BACKUP_QUOTA,
+      'The encrypted backup storage quota is used up',
+      { quota_bytes: quotaBytes }
+    ),
   notFound: (what: string) =>
     new E2eeApiException(404, E2EE_ERROR_CODES.NOT_FOUND, `${what} not found`),
   /** Attachment storage is misconfigured or unreachable (fails closed). */
