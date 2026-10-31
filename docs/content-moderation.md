@@ -32,7 +32,8 @@ before the drop-write transaction begins:
 6. Reject a configured known-unsafe destination directly.
 7. Send other narrow signals to the dedicated Bedrock evaluator.
 8. Reject only when the evaluator returns `REJECT` with confidence of at least
-   `0.95`; otherwise allow.
+   `0.95`; otherwise allow. Evaluator errors, timeouts, truncated responses,
+   and model refusals also allow.
 9. Record the decision, then pass a preparation token into the transactional
    drop write.
 10. Recalculate and compare the operation, drop ID, author, and fingerprint
@@ -363,7 +364,7 @@ after the backend API is available.
 | Variable                              | Purpose                                                                                                                          |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `CONTENT_MODERATION_BLOCKED_HOSTS`    | Comma-separated exact or parent hosts for deterministic unsafe-destination rejection. Empty disables this direct-rejection list. |
-| `CONTENT_MODERATION_BEDROCK_MODEL_ID` | Optional moderation-specific Bedrock model; otherwise the existing configured/default Anthropic model is used.                   |
+| `CONTENT_MODERATION_BEDROCK_MODEL_ID` | Optional moderation-specific Bedrock model; defaults to Claude Sonnet 4.5 (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`).      |
 | `CONTENT_MODERATION_REPORTS_PER_HOUR` | Per-profile report ceiling; defaults to `100`.                                                                                   |
 
 ## Related documentation

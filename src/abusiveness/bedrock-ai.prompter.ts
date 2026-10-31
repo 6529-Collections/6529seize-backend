@@ -1,6 +1,10 @@
 import { AiPrompter } from './ai-prompter';
 import { getBedrockClient } from '@/bedrock';
 import {
+  buildBedrockAnthropicBody,
+  parseBedrockAnthropicReply
+} from '@/bedrock-anthropic';
+import {
   DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
   getConfiguredBedrockAnthropicModelId
 } from '@/bedrock.config';
@@ -9,11 +13,28 @@ import {
   InvokeModelCommand,
   InvokeModelCommandInput
 } from '@aws-sdk/client-bedrock-runtime';
-import { TextDecoder } from 'node:util';
 
 export const ABUSIVENESS_BEDROCK_MODEL_ID_ENV = 'ABUSIVENESS_BEDROCK_MODEL_ID';
 export const DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID =
   DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID;
+
+const ABUSIVENESS_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['value'],
+  properties: {
+    value: { type: 'string', enum: ['Allowed', 'Disallowed'] },
+    self_dox: { type: 'string', enum: ['Yes', 'No'] },
+    reason: { type: 'string' }
+  }
+};
+
+export function getAbusivenessBedrockModelId(): string {
+  return getConfiguredBedrockAnthropicModelId(
+    ABUSIVENESS_BEDROCK_MODEL_ID_ENV,
+    DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID
+  );
+}
 
 export function buildAbusivenessBedrockInvokeModelInput(
   modelId: string,
@@ -23,14 +44,13 @@ export function buildAbusivenessBedrockInvokeModelInput(
     modelId,
     contentType: 'application/json',
     accept: 'application/json',
-    body: JSON.stringify({
-      anthropic_version: 'bedrock-2023-05-31',
-      max_tokens: 1000,
-      messages: [
-        { role: 'user', content: [{ type: 'text', text: `${prompt}` }] }
-      ],
-      temperature: 0.7,
-      top_k: 30
+    body: buildBedrockAnthropicBody({
+      modelId,
+      prompt,
+      maxTokens: 1000,
+      effort: 'low',
+      jsonSchema: ABUSIVENESS_RESPONSE_SCHEMA,
+      legacySampling: { temperature: 0.7, top_k: 30 }
     })
   };
 }
@@ -42,30 +62,19 @@ class BedrockAiPrompter implements AiPrompter {
     const response = await this.getBedrock().send(
       new InvokeModelCommand(
         buildAbusivenessBedrockInvokeModelInput(
-          getConfiguredBedrockAnthropicModelId(
-            ABUSIVENESS_BEDROCK_MODEL_ID_ENV,
-            DEFAULT_ABUSIVENESS_BEDROCK_MODEL_ID
-          ),
+          getAbusivenessBedrockModelId(),
           prompt
         )
       )
     );
-    const rawRes = response.body;
-
-    const jsonString = new TextDecoder().decode(rawRes);
-
-    try {
-      const parsedResponse = JSON.parse(jsonString) as {
-        readonly content?: ReadonlyArray<{ readonly text?: unknown }>;
-      };
-      const output = parsedResponse.content?.[0]?.text;
-      if (typeof output !== 'string') {
-        throw new TypeError('Missing text content');
-      }
-      return output;
-    } catch (e) {
-      throw new Error(`Unexpected response from Bedrock: ${jsonString}`);
+    const reply = parseBedrockAnthropicReply(response.body);
+    if (reply.stopReason === 'max_tokens') {
+      throw new Error('Abusiveness classifier response was truncated');
     }
+    if (!reply.text) {
+      throw new Error(`Unexpected response from Bedrock: ${reply.raw}`);
+    }
+    return reply.text;
   }
 }
 
