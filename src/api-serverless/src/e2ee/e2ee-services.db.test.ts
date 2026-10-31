@@ -11,6 +11,7 @@ import { ApiE2eeReportCategory } from '@/api/generated/models/ApiE2eeReportCateg
 import { E2eeTrustAndSafetyService } from '@/api/e2ee/e2ee-trust-and-safety.service';
 import {
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
+  DEVICE_GRANTS_TABLE,
   E2EE_LOG_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   PROFILE_PREFERENCES_TABLE
@@ -224,12 +225,31 @@ describeWithSeed('E2EE delivery service', [], () => {
       }
     });
     const grantId = computeDeviceGrantId(challenge.message);
+    const walletSignature = await profile.wallet.signMessage(challenge.message);
     loginGrants.set(grantId, {
       id: grantId,
       wallet: profile.wallet.address.toLowerCase(),
       message: challenge.message,
-      wallet_signature: await profile.wallet.signMessage(challenge.message),
+      wallet_signature: walletSignature,
       revoked_at: null
+    });
+    // What session-login stored; registration locks this row.
+    await insertRow(DEVICE_GRANTS_TABLE, {
+      id: grantId,
+      wallet: profile.wallet.address.toLowerCase(),
+      key_type: 'ed25519',
+      device_key: challenge.deviceGrant!.deviceKey,
+      scopes: 'post,edit,delete,react',
+      device_label: 'Browser',
+      domain: 'staging.6529.io',
+      message: challenge.message,
+      wallet_signature: walletSignature,
+      chain_id: 1,
+      issued_at: now,
+      expires_at: challenge.deviceGrant!.expiresAtSeconds * 1000,
+      created_at: now,
+      revoked_at: null,
+      last_used_at: null
     });
     await services.devices.registerLoginGrantDevice(profile.id, {
       grant_id: grantId,

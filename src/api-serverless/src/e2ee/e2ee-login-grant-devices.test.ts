@@ -21,6 +21,7 @@ const PROFILE = 'profile-alice';
 /** The parts of E2eeDb the device service touches, kept in memory. */
 class FakeE2eeDb {
   readonly devices = new Map<string, E2eeDeviceRow>();
+  isGrantUnrevoked: (grantId: string) => boolean = () => true;
   readonly rosterRemovals: string[] = [];
   readonly keyPackageDeletes: string[] = [];
 
@@ -30,6 +31,9 @@ class FakeE2eeDb {
     return fn({});
   }
   async lockProfile(): Promise<void> {}
+  async lockUnrevokedLoginGrant(grantId: string) {
+    return this.isGrantUnrevoked(grantId);
+  }
   async lockDevice(key: string) {
     return this.getDevice(key);
   }
@@ -119,6 +123,7 @@ describe('E2EE devices from combined sign-in grants (NC8)', () => {
     revokedEvents = [];
     alice = Wallet.createRandom();
     walletProfiles.set(alice.address.toLowerCase(), PROFILE);
+    db.isGrantUnrevoked = (id) => grants.get(id)?.revoked_at === null;
     const deps: E2eeServiceDeps = {
       db: db as unknown as E2eeDb,
       events: {
@@ -256,6 +261,36 @@ describe('E2EE devices from combined sign-in grants (NC8)', () => {
     const { id } = await storeLoginGrant();
     grants.set(id, { ...grants.get(id)!, revoked_at: now });
     await expectBadGrant(register(id), 'login_grant_revoked');
+  });
+
+  it('rejects a grant revoked while the registration was in flight', async () => {
+    const { id } = await storeLoginGrant();
+    // Verified outside the transaction, revoked before the row lock.
+    db.isGrantUnrevoked = () => false;
+    await expectBadGrant(register(id), 'login_grant_revoked');
+    expect(db.devices.size).toBe(0);
+  });
+
+  it('completes a failed sign-in grant revocation when the device is revoked again', async () => {
+    const { id, mlsKey } = await storeLoginGrant();
+    await register(id);
+    const row = db.devices.get(mlsKey.publicKey)!;
+    db.devices.set(mlsKey.publicKey, { ...row, revoked_at: now });
+    const revokedAt = Math.floor(now / 1000);
+
+    await service.revokeDevice(PROFILE, mlsKey.publicKey, {
+      revoker_device_key: mlsKey.publicKey,
+      revoked_at: revokedAt,
+      signature: mlsKey.sign(
+        e2eeRevokeDigest({
+          targetDeviceKey: mlsKey.publicKey,
+          revokerDeviceKey: mlsKey.publicKey,
+          revokedAtSeconds: revokedAt
+        })
+      )
+    });
+
+    expect(grants.get(id)!.revoked_at).toBe(now);
   });
 
   it('rejects a signing-only sign-in grant (the separate prompt stays the path)', async () => {

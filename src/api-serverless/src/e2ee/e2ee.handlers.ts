@@ -167,13 +167,13 @@ export async function handleE2eeRegisterLoginGrantDevice(
 
 /**
  * The wallet's session revoked a signed-messages grant: a device that grant
- * enrolled for encrypted messages (combined grant) stops with it. Best
- * effort; a no-op while encrypted messages are off.
+ * enrolled for encrypted messages (combined grant) stops with it. Runs even
+ * while encrypted messages are off, so turning them back on never revives a
+ * device behind a revoked grant.
  */
 export async function revokeE2eeDeviceOfLoginGrant(
   grantId: string
 ): Promise<void> {
-  if (!isE2eeEnabled()) return;
   await services.devices.revokeDeviceOfLoginGrant(grantId);
 }
 

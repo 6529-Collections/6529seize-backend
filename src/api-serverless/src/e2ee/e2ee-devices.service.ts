@@ -219,11 +219,12 @@ export class E2eeDevicesService {
       ? await this.deps.loginGrants.findGrant(grantId)
       : null;
     if (!stored) throw e2eeErrors.badGrant('login_grant_not_found');
+    const wallet = stored.wallet.toLowerCase();
+    await this.requireWalletOfCaller(callerProfileId, wallet);
     if (stored.revoked_at !== null) {
       throw e2eeErrors.badGrant('login_grant_revoked');
     }
     const parsed = parseSiweWebAuthMessage(stored.message);
-    const wallet = stored.wallet.toLowerCase();
     if (
       !parsed?.mlsDeviceGrant ||
       computeDeviceGrantId(stored.message) !== grantId ||
@@ -241,7 +242,6 @@ export class E2eeDevicesService {
     };
     const problem = findE2eeGrantProblem(grant, nowSeconds(this.deps));
     if (problem) throw e2eeErrors.badGrant(problem);
-    await this.requireWalletOfCaller(callerProfileId, wallet);
     const signature = stored.wallet_signature.toLowerCase();
     return {
       grant,
@@ -302,6 +302,12 @@ export class E2eeDevicesService {
     const device = await this.db.executeNativeQueriesInTransaction(
       async (connection) => {
         await this.db.lockProfile(callerProfileId, connection);
+        if (
+          verified.grantMessage !== null &&
+          !(await this.db.lockUnrevokedLoginGrant(verified.grantId, connection))
+        ) {
+          throw e2eeErrors.badGrant('login_grant_revoked');
+        }
         const existing = await this.db.lockDevice(grant.device_key, connection);
         if (
           existing &&
@@ -380,7 +386,13 @@ export class E2eeDevicesService {
     if (target.profile_id !== callerProfileId) {
       throw e2eeErrors.notYourDevice();
     }
-    if (target.revoked_at !== null) return toApiE2eeDevice(target);
+    if (target.revoked_at !== null) {
+      // Idempotent; also completes a sign-in grant revocation that failed.
+      if (target.grant_message !== null) {
+        await this.revokeLoginGrantOf(target, this.deps.now());
+      }
+      return toApiE2eeDevice(target);
+    }
     if (
       Math.abs(request.revoked_at - nowSeconds(this.deps)) >
       E2EE_REVOCATION_MAX_SKEW_SECONDS

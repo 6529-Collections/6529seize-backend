@@ -32,6 +32,7 @@ import {
 @Entity(E2EE_DEVICES_TABLE)
 @Index('e2ee_devices_profile_idx', ['profile_id', 'revoked_at'])
 @Index('e2ee_devices_revoked_idx', ['revoked_at'])
+@Index('e2ee_devices_grant_idx', ['grant_id'])
 export class E2eeDeviceEntity {
   @PrimaryColumn({ type: 'varchar', length: 66 })
   readonly device_key!: string;

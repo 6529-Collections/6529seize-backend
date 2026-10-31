@@ -1,5 +1,6 @@
 import {
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
+  DEVICE_GRANTS_TABLE,
   E2EE_BLOB_CHUNKS_TABLE,
   E2EE_BLOBS_TABLE,
   E2EE_DEVICES_TABLE,
@@ -333,6 +334,24 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
          and (last_seen_at is null or last_seen_at < :threshold)`,
       { deviceKey, nowMs, threshold: nowMs - intervalMs }
     );
+  }
+
+  /**
+   * Locks a stored sign-in grant row for the rest of the transaction and
+   * says whether it is still unrevoked (false when it is gone). Registration
+   * through a combined grant checks it here, so a revocation either lands
+   * first and blocks the device, or lands after and finds the device.
+   */
+  async lockUnrevokedLoginGrant(
+    grantId: string,
+    connection: Conn
+  ): Promise<boolean> {
+    const row = await this.one<{ revoked_at: number | string | null }>(
+      `select revoked_at from ${DEVICE_GRANTS_TABLE} where id = :grantId for update`,
+      { grantId },
+      connection
+    );
+    return row !== null && row.revoked_at === null;
   }
 
   /**
