@@ -4,7 +4,6 @@ import { HDNodeWallet, keccak256, Wallet } from 'ethers';
 import { E2eeLoginGrantRecord, E2eeServiceDeps } from '@/api/e2ee/e2ee-context';
 import { computeDeviceGrantId } from '@/api/device-signing/device-grant-message';
 import { createSiweWebAuthChallenge } from '@/api/wallet-signatures/siwe-wallet-auth';
-import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
 import { E2eeEventPublisher } from '@/api/e2ee/e2ee-events';
 import { createE2eeServices } from '@/api/e2ee/e2ee.handlers';
 import { ApiE2eeReportCategory } from '@/api/generated/models/ApiE2eeReportCategory';
