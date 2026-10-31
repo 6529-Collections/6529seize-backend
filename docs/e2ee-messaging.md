@@ -34,7 +34,9 @@ again.
 
 ## Feature flag
 
-`E2EE_DMS_ENABLED` controls every `/e2ee/...` route:
+`E2EE_DMS_ENABLED` controls every `/e2ee/...` route except the
+trust-and-safety report routes (`/e2ee/trust-and-safety/...`), which stay
+available so stored reports remain reviewable:
 
 | Value | Result |
 | --- | --- |
@@ -42,7 +44,7 @@ again.
 | `false` | Off |
 | unset | On when `NODE_ENV` is `local` or `development` (staging); off otherwise, including production |
 
-While off, every route answers `404 {"error": ..., "code": "E2EE_DISABLED"}`
+While off, every other route answers `404 {"error": ..., "code": "E2EE_DISABLED"}`
 after the JWT check and before any proxy, profile or database check (a request
 without a valid token still gets the usual 401). Production stays off; nothing
 here authorizes enabling it there.
@@ -51,7 +53,7 @@ Other settings, read per request:
 
 | Variable | Effect | Default |
 | --- | --- | --- |
-| `E2EE_ATTACHMENTS_ENABLED` | Kill switch for attachments: `false` makes the attachment (blob) routes answer `404 E2EE_ATTACHMENTS_DISABLED` before any database read or write. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On everywhere, including production |
+| `E2EE_ATTACHMENTS_ENABLED` | Kill switch for attachments, checked after `E2EE_DMS_ENABLED` (with both off, blob routes answer `E2EE_DISABLED`). `false` makes the attachment (blob) routes answer `404 E2EE_ATTACHMENTS_DISABLED` before any blob row or chunk is read or written; resolving the caller may still read the profile. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On everywhere, including production |
 | `E2EE_ENTRIES_PER_GROUP_PER_HOUR` | Commits and proposals one group may sequence per hour (an integer from 1 to 1000) | 12 (P35's value); 30 for `local` and `development`, so automated tests can churn groups |
 | `E2EE_TRUST_AND_SAFETY_GROUP_ID` | The user group whose members may read reported encrypted messages (see Reports and trust and safety) | Unset: reports are stored, nobody can read them |
 | `E2EE_BLOB_STORE` | Where new attachment chunks are stored: `mysql` or `s3` (see Storage of attachments). Anything else refuses new uploads with `503 E2EE_STORAGE_UNAVAILABLE` | `mysql` |
@@ -111,7 +113,9 @@ which devices and profiles are in each delivery roster, who submitted what
 (from the JWT), and notify hints (which roster profiles a sender asked to
 wake).
 
-Every byte column holds ciphertext or opaque MLS bytes. Queries touching
+Every byte column holds ciphertext or opaque MLS bytes, except
+`e2ee_reports.body`: a report carries the message as the reporting member
+decrypted it, by design. Queries touching
 `e2ee_*` tables form a private SQL family in `src/db/my-sql.helpers.ts`:
 neither statements nor bound values reach slow-query or error logs. The API
 logs no ciphertext, Welcome bytes, KeyPackages or notify hints. Nothing in the
@@ -402,8 +406,9 @@ message you" setting are the everyday tools.
   report ids, time) before the response is sent; a hold change and its log
   row commit in one transaction. Proxies are rejected.
 - While the group id is unset, the routes answer `403 E2EE_FORBIDDEN` ("Trust
-  and safety review is not configured"); reports are still stored and become
-  readable once it is set.
+  and safety review is not configured"); reports are still stored, and those
+  still within retention (180 days unless on hold) become readable once it is
+  set.
 
 ## WebSocket hints and push wakes
 
