@@ -1,4 +1,9 @@
 import { WaveSchema, UpdateWaveSchema } from '@/api/waves/wave-write.schemas';
+import {
+  isLegacyDmClosed,
+  LEGACY_DM_CLOSED_CODE,
+  legacyDmClosedMessage
+} from '@/legacy-dm/legacy-dm-retention';
 export {
   WaveSchema,
   UpdateWaveSchema,
@@ -18,6 +23,7 @@ import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { enums } from '../../../enums';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '../../../exceptions';
@@ -205,6 +211,13 @@ router.post(
     );
     if (request.identity_addresses.includes(authenticatedProfileId)) {
       throw new BadRequestException(`You cannot DM yourself.`);
+    }
+    if (isLegacyDmClosed(Time.currentMillis())) {
+      throw new CustomApiCompliantException(
+        403,
+        legacyDmClosedMessage(),
+        LEGACY_DM_CLOSED_CODE
+      );
     }
 
     const userGroup = await userGroupsService.findOrCreateDirectMessageGroup(

@@ -1,5 +1,10 @@
 import { recordWebSocketEvent } from '@/websocket-outbox/outbox.db';
 import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
+import {
+  isLegacyDmClosed,
+  LEGACY_DM_CLOSED_CODE,
+  legacyDmClosedMessage
+} from '@/legacy-dm/legacy-dm-retention';
 import type { CompetitionRoutingRecord } from '@/competitions/competition.types';
 import {
   COMPETITION_VOTES_TABLE,
@@ -37,6 +42,7 @@ import { ConnectionWrapper } from '@/sql-executor';
 import { dropsDb, DropsDb } from './drops.db';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
@@ -1672,6 +1678,17 @@ export class CreateOrUpdateDropUseCase {
       model.drop_type === DropType.CHAT
     ) {
       throw new ForbiddenException(`Chat drops are not allowed in this wave`);
+    }
+    if (
+      !isDescriptionDrop &&
+      wave.is_direct_message === true &&
+      isLegacyDmClosed(Time.currentMillis())
+    ) {
+      throw new CustomApiCompliantException(
+        403,
+        legacyDmClosedMessage(),
+        LEGACY_DM_CLOSED_CODE
+      );
     }
     const noOfApplicationsAllowedPerParticipantInWave =
       wave.participation_max_applications_per_participant;

@@ -407,6 +407,14 @@ after 180 days unless trust and safety placed them on hold. Group, epoch
 key and roster rows (small delivery metadata) are kept, and so is the report
 access log, which holds ids only.
 
+## Unencrypted DMs (D146)
+
+Plaintext DM waves are not part of this service. Members can export their
+own history, and will be able to move it into an encrypted chat as messages
+labelled imported and unauthenticated; on 2026-12-01 the plaintext copies
+are deleted from 6529.io, backups included. See
+[legacy-dm-deletion-runbook.md](./legacy-dm-deletion-runbook.md).
+
 ## Reports and trust and safety
 
 Reports are for severe or illegal harm only. `reason` must be one of
