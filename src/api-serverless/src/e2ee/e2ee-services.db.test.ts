@@ -12,6 +12,11 @@ import {
   IDENTITY_SUBSCRIPTIONS_TABLE,
   PROFILE_PREFERENCES_TABLE
 } from '@/constants/db-tables';
+import {
+  E2EE_CIPHERSUITE,
+  E2EE_ENTRY_BUCKETS,
+  E2EE_MAX_ENTRY_AND_WELCOME_BYTES
+} from '@/e2ee/e2ee.constants';
 import { E2eeDb } from '@/e2ee/e2ee.db';
 import {
   E2EE_ZERO_32,
@@ -162,7 +167,7 @@ describeWithSeed('E2EE delivery service', [], () => {
     return {
       wallet: profile.wallet.address.toLowerCase(),
       device_key: key.publicKey,
-      ciphersuite: 1,
+      ciphersuite: E2EE_CIPHERSUITE,
       issued_at: issuedAt,
       expires_at: Math.floor(issuedAt / 60) * 60 + 180 * 86400,
       origin: 'staging.6529.io'
@@ -221,9 +226,11 @@ describeWithSeed('E2EE delivery service', [], () => {
     rosterAdd?: string[];
     rosterRemove?: string[];
     welcomeTargets?: string[];
+    entryBytes?: number;
+    welcomeBytes?: number;
   }) {
     const kind = input.kind ?? E2eeEntryKind.COMMIT;
-    const data = randomBytes(2048);
+    const data = randomBytes(input.entryBytes ?? 2048);
     const entryHash = keccak256(data);
     const isCommit = kind === E2eeEntryKind.COMMIT;
     const epochCommitment = isCommit
@@ -257,7 +264,7 @@ describeWithSeed('E2EE delivery service', [], () => {
       roster_remove: input.rosterRemove,
       welcome: input.welcomeTargets
         ? {
-            data: randomBytes(300).toString('base64'),
+            data: randomBytes(input.welcomeBytes ?? 300).toString('base64'),
             targets: input.welcomeTargets
           }
         : undefined
@@ -273,6 +280,8 @@ describeWithSeed('E2EE delivery service', [], () => {
       rosterAdd?: string[];
       rosterRemove?: string[];
       welcomeTargets?: string[];
+      entryBytes?: number;
+      welcomeBytes?: number;
     } = {}
   ) {
     const epoch = group.keys.length - 1;
@@ -987,6 +996,46 @@ describeWithSeed('E2EE delivery service', [], () => {
         { id: welcomes[0].id }
       );
       expect(leftover).toEqual([]);
+    });
+
+    it('gives a welcome what the entry leaves of the shared budget', async () => {
+      const alice = aProfile();
+      const bob = aProfile();
+      const carol = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const bobDevice = await registerDevice(bob);
+      const carolDevice = await registerDevice(carol);
+      const group = await createGroup(alice, aliceDevice);
+      // Beside a 2 MiB entry the welcome keeps 1.25 MiB.
+      const maxEntry = E2EE_ENTRY_BUCKETS.at(-1)!;
+      await expectE2eeError(
+        commit(alice, group, aliceDevice, {
+          rosterAdd: [bobDevice.publicKey],
+          welcomeTargets: [bobDevice.publicKey],
+          entryBytes: maxEntry,
+          welcomeBytes: E2EE_MAX_ENTRY_AND_WELCOME_BYTES - maxEntry + 1
+        }),
+        'E2EE_TOO_LARGE'
+      );
+      await commit(alice, group, aliceDevice, {
+        rosterAdd: [bobDevice.publicKey],
+        welcomeTargets: [bobDevice.publicKey],
+        entryBytes: maxEntry,
+        welcomeBytes: E2EE_MAX_ENTRY_AND_WELCOME_BYTES - maxEntry
+      });
+      // Beside a small entry an X-Wing welcome of 3 MiB fits.
+      await commit(alice, group, aliceDevice, {
+        rosterAdd: [carolDevice.publicKey],
+        welcomeTargets: [carolDevice.publicKey],
+        welcomeBytes: E2EE_MAX_ENTRY_AND_WELCOME_BYTES - 2048
+      });
+      const [welcome] = await services.groups.getWelcomes(
+        carol.id,
+        carolDevice.publicKey
+      );
+      expect(Buffer.from(welcome.data, 'base64')).toHaveLength(
+        E2EE_MAX_ENTRY_AND_WELCOME_BYTES - 2048
+      );
     });
 
     it('revokes a device everywhere with a verified signature', async () => {
