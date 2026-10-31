@@ -6,10 +6,12 @@ import { ConnectionWrapper } from '@/sql-executor';
 import { fromMysqlBase64 } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { Logger } from '@/logging';
+import { RequestContext } from '@/request.context';
 
-// Reported encrypted messages are read only by a designated trust and
-// safety group (E2EE_TRUST_AND_SAFETY_GROUP_ID): not by wave moderators and
-// not through the general moderation queue. Every read or change is
+// Reported encrypted messages are reviewed by the content moderators, the
+// same people who work the content-moderation queue (owner decision for
+// launch), and additionally by members of E2EE_TRUST_AND_SAFETY_GROUP_ID
+// when it is set. Wave moderators have no access. Every read or change is
 // written to e2ee_report_access_log before the response leaves, so there is
 // no unaudited read. Logs carry report ids and counts, never content.
 
@@ -29,7 +31,12 @@ export interface E2eeTrustAndSafetyDeps {
     | 'executeNativeQueriesInTransaction'
   >;
   readonly now: () => number;
-  /** The configured group id, or null while none is set. */
+  /** The content-moderation moderator check, for the acting profile. */
+  readonly isModerator: (
+    profileId: string,
+    ctx: RequestContext
+  ) => Promise<boolean>;
+  /** The optional additional review group id, or null while none is set. */
   readonly groupId: () => string | null;
   readonly isGroupMember: (
     profileId: string,
@@ -73,9 +80,10 @@ export class E2eeTrustAndSafetyService {
       before?: number | undefined;
       before_id?: string | undefined;
       limit?: number | undefined;
-    }
+    },
+    ctx: RequestContext = {}
   ): Promise<ApiE2eeTrustAndSafetyReportPage> {
-    await this.requireReviewer(viewerProfileId);
+    await this.requireReviewer(viewerProfileId, ctx);
     const limit = query.limit ?? E2EE_TRUST_AND_SAFETY_DEFAULT_PAGE;
     const rows = await this.deps.db.listReportsForReview(
       query.before === undefined
@@ -99,9 +107,10 @@ export class E2eeTrustAndSafetyService {
 
   async getReport(
     viewerProfileId: string,
-    reportId: string
+    reportId: string,
+    ctx: RequestContext = {}
   ): Promise<ApiE2eeTrustAndSafetyReport> {
-    await this.requireReviewer(viewerProfileId);
+    await this.requireReviewer(viewerProfileId, ctx);
     const row = await this.deps.db.getReportForReview(reportId);
     if (!row) throw e2eeErrors.notFound('Report');
     await this.audit(viewerProfileId, 'read', [reportId]);
@@ -111,9 +120,10 @@ export class E2eeTrustAndSafetyService {
   async setHold(
     viewerProfileId: string,
     reportId: string,
-    onHold: boolean
+    onHold: boolean,
+    ctx: RequestContext = {}
   ): Promise<ApiE2eeTrustAndSafetyReport> {
-    await this.requireReviewer(viewerProfileId);
+    await this.requireReviewer(viewerProfileId, ctx);
     // The change and its audit row commit together or not at all.
     const row = await this.deps.db.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -133,16 +143,17 @@ export class E2eeTrustAndSafetyService {
     return toApiE2eeTrustAndSafetyReport(row);
   }
 
-  private async requireReviewer(viewerProfileId: string): Promise<void> {
+  /** Content moderators, or members of the optional additional group. */
+  private async requireReviewer(
+    viewerProfileId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    if (await this.deps.isModerator(viewerProfileId, ctx)) return;
     const groupId = this.deps.groupId();
-    if (!groupId) {
-      throw e2eeErrors.forbidden('Trust and safety review is not configured');
+    if (groupId && (await this.deps.isGroupMember(viewerProfileId, groupId))) {
+      return;
     }
-    if (!(await this.deps.isGroupMember(viewerProfileId, groupId))) {
-      throw e2eeErrors.forbidden(
-        'Only the trust and safety group can read reports'
-      );
-    }
+    throw e2eeErrors.forbidden('Moderator access is required');
   }
 
   private async audit(
