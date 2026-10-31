@@ -18,7 +18,8 @@ import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 
 type ResetMigration = {
-  STATEMENTS: string[];
+  STORAGE_COLUMN_QUERY: string;
+  statements: (hasStorageColumn: boolean) => string[];
   up: (db: { runSql: (sql: string) => Promise<unknown> }) => Promise<unknown>;
   down: () => Promise<unknown>;
 };
@@ -145,12 +146,41 @@ describe('E2EE classical ciphersuite reset migration', () => {
   it('targets the current ciphersuite and has a no-op down', async () => {
     const migration = loadMigration();
     expect(E2EE_CIPHERSUITE).toBe(79);
-    for (const statement of migration.STATEMENTS) {
-      expect(statement).toMatch(/^DELETE /);
-      expect(statement).toContain(`ciphersuite <> ${E2EE_CIPHERSUITE}`);
-      expect(statement).not.toMatch(/e2ee_reports|e2ee_report_access_log/);
+    for (const hasStorageColumn of [false, true]) {
+      for (const statement of migration.statements(hasStorageColumn)) {
+        expect(statement).toMatch(/^DELETE /);
+        expect(statement).toContain(`ciphersuite <> ${E2EE_CIPHERSUITE}`);
+        expect(statement).not.toMatch(/e2ee_reports|e2ee_report_access_log/);
+      }
     }
     await expect(migration.down()).resolves.toBeUndefined();
+  });
+
+  it('deletes only MySQL-stored blobs once blobs have a storage column', async () => {
+    const migration = loadMigration();
+    const blobStatements = (hasStorageColumn: boolean) =>
+      migration
+        .statements(hasStorageColumn)
+        .filter((sql) => sql.includes('e2ee_blobs b'));
+    expect(blobStatements(false)).toHaveLength(2);
+    for (const sql of blobStatements(false)) {
+      expect(sql).not.toContain('storage');
+    }
+    for (const sql of blobStatements(true)) {
+      expect(sql).toContain("b.storage = 'mysql'");
+    }
+
+    const executed: string[] = [];
+    await migration.up({
+      runSql: async (sql: string) => {
+        executed.push(sql);
+        return sql === migration.STORAGE_COLUMN_QUERY ? [{ n: 1 }] : [];
+      }
+    });
+    expect(executed).toEqual([
+      migration.STORAGE_COLUMN_QUERY,
+      ...migration.statements(true)
+    ]);
   });
 });
 
@@ -283,6 +313,42 @@ describeWithSeed(
       });
       await expect(count(E2EE_DEVICES_TABLE)).resolves.toBe(1);
       await expect(count(E2EE_GROUPS_TABLE)).resolves.toBe(1);
+    });
+
+    it('keeps classical blobs stored in S3 for retention to delete with their objects', async () => {
+      // The S3 storage column, as the blob storage change adds it (added
+      // here only when the schema does not have it yet).
+      const [{ n }] = await sqlExecutor.execute<{ n: number }>(
+        loadMigration().STORAGE_COLUMN_QUERY
+      );
+      const addedColumn = Number(n) === 0;
+      if (addedColumn) {
+        await sqlExecutor.execute(
+          `ALTER TABLE ${E2EE_BLOBS_TABLE} ADD COLUMN storage varchar(16) NOT NULL DEFAULT 'mysql'`
+        );
+      }
+      try {
+        await sqlExecutor.execute(
+          `UPDATE ${E2EE_BLOBS_TABLE} SET storage = 's3' WHERE blob_id = :id`,
+          { id: OLD_BLOB }
+        );
+        await loadMigration().up({
+          runSql: (sql: string) => sqlExecutor.execute(sql)
+        });
+        const blobIds = await sqlExecutor.execute<{ blob_id: string }>(
+          `SELECT blob_id FROM ${E2EE_BLOBS_TABLE} ORDER BY blob_id`
+        );
+        expect(blobIds.map((row) => row.blob_id)).toEqual([NEW_BLOB, OLD_BLOB]);
+        await expect(count(E2EE_BLOB_CHUNKS_TABLE)).resolves.toBe(2);
+        await expect(count(E2EE_DEVICES_TABLE)).resolves.toBe(1);
+        await expect(count(E2EE_GROUPS_TABLE)).resolves.toBe(1);
+      } finally {
+        if (addedColumn) {
+          await sqlExecutor.execute(
+            `ALTER TABLE ${E2EE_BLOBS_TABLE} DROP COLUMN storage`
+          );
+        }
+      }
     });
   }
 );

@@ -30,11 +30,18 @@ devices registered under any other suite together with their key packages,
 groups (found through the roster), welcomes, log entries and attachments.
 Reports are kept. Only staging and local databases had such rows. A client
 whose device the server no longer lists wipes its local state and enrolls
-again.
+again. A migration cannot delete S3 objects, so where blobs have a `storage`
+column it removes only MySQL-stored attachments; rows of S3-stored ones stay
+and blob retention deletes each object with its row. Staging ran the
+migration before S3 storage reached this branch: its 2 classical blobs in S3
+(about 328 bytes under the staging e2ee-blobs prefix) lost their rows and
+remain as orphaned objects that nothing reads; deleting them is optional.
 
 ## Feature flag
 
-`E2EE_DMS_ENABLED` controls every `/e2ee/...` route:
+`E2EE_DMS_ENABLED` controls every `/e2ee/...` route except the
+trust-and-safety report routes (`/e2ee/trust-and-safety/...`), which stay
+available so stored reports remain reviewable:
 
 | Value | Result |
 | --- | --- |
@@ -42,7 +49,7 @@ again.
 | `false` | Off |
 | unset | On when `NODE_ENV` is `local` or `development` (staging); off otherwise, including production |
 
-While off, every route answers `404 {"error": ..., "code": "E2EE_DISABLED"}`
+While off, every other route answers `404 {"error": ..., "code": "E2EE_DISABLED"}`
 after the JWT check and before any proxy, profile or database check (a request
 without a valid token still gets the usual 401). Production stays off; nothing
 here authorizes enabling it there.
@@ -51,7 +58,7 @@ Other settings, read per request:
 
 | Variable | Effect | Default |
 | --- | --- | --- |
-| `E2EE_ATTACHMENTS_ENABLED` | Kill switch for attachments: `false` makes the attachment (blob) routes answer `404 E2EE_ATTACHMENTS_DISABLED` before any database read or write. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On everywhere, including production |
+| `E2EE_ATTACHMENTS_ENABLED` | Kill switch for attachments, checked after `E2EE_DMS_ENABLED` (with both off, blob routes answer `E2EE_DISABLED`). `false` makes the attachment (blob) routes answer `404 E2EE_ATTACHMENTS_DISABLED` before any blob row or chunk is read or written; resolving the caller may still read the profile. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On everywhere, including production |
 | `E2EE_ENTRIES_PER_GROUP_PER_HOUR` | Commits and proposals one group may sequence per hour (an integer from 1 to 1000) | 12 (P35's value); 30 for `local` and `development`, so automated tests can churn groups |
 | `E2EE_TRUST_AND_SAFETY_GROUP_ID` | The user group whose members may read reported encrypted messages (see Reports and trust and safety) | Unset: reports are stored, nobody can read them |
 
@@ -107,7 +114,9 @@ which devices and profiles are in each delivery roster, who submitted what
 (from the JWT), and notify hints (which roster profiles a sender asked to
 wake).
 
-Every byte column holds ciphertext or opaque MLS bytes. Queries touching
+Every byte column holds ciphertext or opaque MLS bytes, except
+`e2ee_reports.body`: a report carries the message as the reporting member
+decrypted it, by design. Queries touching
 `e2ee_*` tables form a private SQL family in `src/db/my-sql.helpers.ts`:
 neither statements nor bound values reach slow-query or error logs. The API
 logs no ciphertext, Welcome bytes, KeyPackages or notify hints. Nothing in the
@@ -175,7 +184,7 @@ A device reads log items whose epoch lies in one of its roster windows
 `[joined_epoch, removed_epoch)`. A commit that adds a device sets
 `joined_epoch = n + 1`, so the adding commit itself is excluded; a removing
 commit sets `removed_epoch = n + 1`, so the removed device still sees the
-commit that removed it but nothing later. A device that never was in the
+commit that removed it but nothing later. A device that was never in the
 roster gets `404 E2EE_NOT_MEMBER`, whether or not the group exists.
 
 ## Policy
@@ -226,10 +235,11 @@ general opportunistic pruning.
 Moving ciphertext blobs to a private S3 bucket (or to content-addressed
 pinning, P51 DN9) is the first storage follow-up. The API does not change:
 clients only ever upload and download opaque ciphertext chunks through
-`/e2ee/blobs/...`, so the move replaces the three chunk functions in
-`src/e2ee/e2ee.db.ts` (write, read, prune) with an object store and keeps
-sizes in `e2ee_blob_chunks`. `E2EE_ATTACHMENTS_ENABLED=false` is the kill
-switch meanwhile.
+`/e2ee/blobs/...`, so the HTTP API stays compatible. On the server the move
+changes the chunk write, read and prune paths in `src/e2ee/e2ee.db.ts` to an
+object store, makes `e2ee_blob_chunks.data` optional in favor of an object
+key, and deletes objects together with their rows in retention.
+`E2EE_ATTACHMENTS_ENABLED=false` is the kill switch meanwhile.
 
 ## Retention
 
@@ -274,8 +284,9 @@ message you" setting are the everyday tools.
   report ids, time) before the response is sent; a hold change and its log
   row commit in one transaction. Proxies are rejected.
 - While the group id is unset, the routes answer `403 E2EE_FORBIDDEN` ("Trust
-  and safety review is not configured"); reports are still stored and become
-  readable once it is set.
+  and safety review is not configured"); reports are still stored, and those
+  still within retention (180 days unless on hold) become readable once it is
+  set.
 
 ## WebSocket hints and push wakes
 
