@@ -24,11 +24,11 @@ import {
   E2EE_ENTRY_BUCKETS,
   E2EE_LOG_DEFAULT_LIMIT,
   E2EE_MAX_DEVICE_GROUPS,
+  E2EE_MAX_ENTRY_AND_WELCOME_BYTES,
   E2EE_MAX_ENTRY_BYTES,
   E2EE_MAX_MESSAGE_BYTES,
   E2EE_MAX_PROPOSALS_PER_EPOCH,
   E2EE_MAX_ROSTER_DEVICES,
-  E2EE_MAX_WELCOME_BYTES,
   E2EE_MAX_WELCOMES_PER_PAGE,
   E2EE_MESSAGE_BUCKETS,
   E2EE_PAGE_BYTE_BUDGET,
@@ -317,23 +317,18 @@ export class E2eeGroupsService {
 
   private decodeWelcome(
     welcome: ApiE2eeSubmitEntryRequest['welcome'],
-    rosterAdd: string[]
+    rosterAdd: string[],
+    entryBytes: number
   ): DecodedWelcome | null {
     if (!welcome) return null;
-    const data = decodeE2eeBase64(
-      welcome.data,
-      'welcome.data',
-      E2EE_MAX_WELCOME_BYTES
-    );
+    // The Welcome gets whatever the entry leaves of the shared budget.
+    const budget = E2EE_MAX_ENTRY_AND_WELCOME_BYTES - entryBytes;
+    const data = decodeE2eeBase64(welcome.data, 'welcome.data', budget);
     const ratchetTree = welcome.ratchet_tree
-      ? decodeE2eeBase64(
-          welcome.ratchet_tree,
-          'welcome.ratchet_tree',
-          E2EE_MAX_WELCOME_BYTES
-        )
+      ? decodeE2eeBase64(welcome.ratchet_tree, 'welcome.ratchet_tree', budget)
       : null;
     if (!data.length) throw e2eeErrors.badRequest('welcome.data is empty');
-    if (data.length + (ratchetTree?.length ?? 0) > E2EE_MAX_WELCOME_BYTES) {
+    if (data.length + (ratchetTree?.length ?? 0) > budget) {
       throw e2eeErrors.tooLarge('welcome');
     }
     assertDistinct(welcome.targets, 'welcome.targets');
@@ -393,7 +388,7 @@ export class E2eeGroupsService {
       data,
       rosterAdd,
       rosterRemove,
-      welcome: this.decodeWelcome(request.welcome, rosterAdd)
+      welcome: this.decodeWelcome(request.welcome, rosterAdd, data.length)
     };
   }
 

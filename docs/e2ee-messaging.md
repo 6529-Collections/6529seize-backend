@@ -9,6 +9,29 @@ cannot add a device to a group. Existing plaintext DMs are unchanged.
 The normative wire contract is the shared "E2EE DMs and groups (D109): shared
 implementation contract v1". This page describes the backend's part of it.
 
+## Ciphersuite
+
+The only ciphersuite is `MLS_128_MLKEM768X25519_AES128GCM_SHA256_Ed25519`
+(`0x004F`, 79): X-Wing hybrid post-quantum key exchange (ML-KEM-768 with
+X25519), AES-128-GCM, SHA-256 and Ed25519 signatures. There is no fallback
+suite. `0x004F` is a draft code point (draft-ietf-mls-pq-ciphersuites); if
+the code point changes, every device re-enrolls and every group is
+re-created. Device keys stay Ed25519, so their size is unchanged.
+
+X-Wing public keys are 1,216 bytes and its ciphertexts 1,120 bytes, so MLS
+objects are larger than under `0x0001`: a KeyPackage is about 2.7 KiB, a
+fully populated ratchet tree about 2.7 KiB per device, and creating an
+87-member group (one device each) makes a 233 KiB commit (256 KiB bucket)
+and a 228 KiB Welcome. The limits below leave room for that.
+
+The suite replaced `0x0001` before launch. Migration
+`20261031120000-reset-e2ee-classical-ciphersuite-state` removes, once,
+devices registered under any other suite together with their key packages,
+groups (found through the roster), welcomes, log entries and attachments.
+Reports are kept. Only staging and local databases had such rows. A client
+whose device the server no longer lists wipes its local state and enrolls
+again.
+
 ## Feature flag
 
 `E2EE_DMS_ENABLED` controls every `/e2ee/...` route:
@@ -98,7 +121,7 @@ human review only.
 ## Device grants and revocation
 
 `POST /e2ee/devices` rebuilds the grant statement from the signed fields,
-checks ciphersuite 1, a printable origin of at most 64 characters, minute
+checks ciphersuite 79 (`0x004F`), a printable origin of at most 64 characters, minute
 alignment, at most 181 days of lifetime, `issued_at` no more than 10 minutes
 ahead and `expires_at` in the future. It then recovers the EIP-712 signer
 (salt-only domain, no chain id). If that fails and the wallet has code on
@@ -176,9 +199,9 @@ too; the caller's own profile always skips them.
 | --- | --- |
 | Active devices per profile | 10 |
 | Unclaimed one-time KeyPackages per device | 100 (`409 E2EE_KEY_PACKAGE_LIMIT` beyond) |
-| KeyPackage size | 4 KiB |
+| KeyPackage size | 8 KiB (an X-Wing KeyPackage is about 2.7 KiB) |
 | Entry data | an entry bucket, at most 2 MiB |
-| Welcome plus ratchet tree | 1.25 MiB raw (with a 2 MiB entry, the request stays under the 5 MB JSON limit) |
+| Entry plus Welcome plus ratchet tree | 3.25 MiB raw together (the request stays under the 5 MB JSON limit); the Welcome gets what the entry leaves, at least 1.25 MiB |
 | Message data | a message bucket, at most 64 KiB |
 | Attachment | at most 25 chunks of 1 MiB plaintext (each chunk at most 1 MiB + 16 bytes of ciphertext) |
 | Attachment storage per uploading profile | 200 MiB declared bytes per rolling 24 h (`429 E2EE_RATE_LIMITED`), 1 GiB live (`413 E2EE_TOO_LARGE`) |
@@ -372,10 +395,12 @@ message you" setting are the everyday tools.
   general moderation queue or an AI provider, and no log, wave or
   notification carries their content.
 - Members of the group named by `E2EE_TRUST_AND_SAFETY_GROUP_ID` read them
-  through the trust-and-safety routes (newest first, with `before` paging) and
-  can place a report on hold so retention keeps it. Every list, read, hold and
-  release is written to `e2ee_report_access_log` (viewer, action, report ids,
-  time) before the response is sent. Proxies are rejected.
+  through the trust-and-safety routes (newest first, paged by `before` plus
+  `before_id`, so reports sharing a timestamp are never skipped or repeated)
+  and can place a report on hold so retention keeps it. Every list, read,
+  hold and release is written to `e2ee_report_access_log` (viewer, action,
+  report ids, time) before the response is sent; a hold change and its log
+  row commit in one transaction. Proxies are rejected.
 - While the group id is unset, the routes answer `403 E2EE_FORBIDDEN` ("Trust
   and safety review is not configured"); reports are still stored and become
   readable once it is set.

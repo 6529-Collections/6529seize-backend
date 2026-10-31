@@ -2,6 +2,7 @@ import { ApiE2eeTrustAndSafetyReport } from '@/api/generated/models/ApiE2eeTrust
 import { ApiE2eeTrustAndSafetyReportPage } from '@/api/generated/models/ApiE2eeTrustAndSafetyReportPage';
 import { E2EE_RETENTION } from '@/e2ee/e2ee.constants';
 import { E2eeDb, E2eeReviewReportRow } from '@/e2ee/e2ee.db';
+import { ConnectionWrapper } from '@/sql-executor';
 import { fromMysqlBase64 } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { Logger } from '@/logging';
@@ -25,6 +26,7 @@ export interface E2eeTrustAndSafetyDeps {
     | 'getReportForReview'
     | 'setReportHold'
     | 'insertReportAccess'
+    | 'executeNativeQueriesInTransaction'
   >;
   readonly now: () => number;
   /** The configured group id, or null while none is set. */
@@ -67,12 +69,18 @@ export class E2eeTrustAndSafetyService {
 
   async listReports(
     viewerProfileId: string,
-    query: { before?: number | undefined; limit?: number | undefined }
+    query: {
+      before?: number | undefined;
+      before_id?: string | undefined;
+      limit?: number | undefined;
+    }
   ): Promise<ApiE2eeTrustAndSafetyReportPage> {
     await this.requireReviewer(viewerProfileId);
     const limit = query.limit ?? E2EE_TRUST_AND_SAFETY_DEFAULT_PAGE;
     const rows = await this.deps.db.listReportsForReview(
-      query.before ?? null,
+      query.before === undefined
+        ? null
+        : { beforeMs: query.before, beforeId: query.before_id ?? null },
       limit + 1
     );
     const page = rows.slice(0, limit);
@@ -81,10 +89,11 @@ export class E2eeTrustAndSafetyService {
       'list',
       page.map((row) => row.id)
     );
-    const last = page.at(-1);
+    const last = rows.length > limit ? page.at(-1) : undefined;
     return {
       items: page.map(toApiE2eeTrustAndSafetyReport),
-      next_before: rows.length > limit && last ? Number(last.created_at) : null
+      next_before: last ? Number(last.created_at) : null,
+      next_before_id: last ? last.id : null
     };
   }
 
@@ -105,11 +114,21 @@ export class E2eeTrustAndSafetyService {
     onHold: boolean
   ): Promise<ApiE2eeTrustAndSafetyReport> {
     await this.requireReviewer(viewerProfileId);
-    if (!(await this.deps.db.setReportHold(reportId, onHold))) {
-      throw e2eeErrors.notFound('Report');
-    }
-    await this.audit(viewerProfileId, onHold ? 'hold' : 'release', [reportId]);
-    const row = await this.deps.db.getReportForReview(reportId);
+    // The change and its audit row commit together or not at all.
+    const row = await this.deps.db.executeNativeQueriesInTransaction(
+      async (connection) => {
+        if (!(await this.deps.db.setReportHold(reportId, onHold, connection))) {
+          throw e2eeErrors.notFound('Report');
+        }
+        await this.audit(
+          viewerProfileId,
+          onHold ? 'hold' : 'release',
+          [reportId],
+          connection
+        );
+        return this.deps.db.getReportForReview(reportId, connection);
+      }
+    );
     if (!row) throw e2eeErrors.notFound('Report');
     return toApiE2eeTrustAndSafetyReport(row);
   }
@@ -129,14 +148,18 @@ export class E2eeTrustAndSafetyService {
   private async audit(
     viewerProfileId: string,
     action: E2eeReportAccessAction,
-    reportIds: readonly string[]
+    reportIds: readonly string[],
+    connection?: ConnectionWrapper<unknown>
   ): Promise<void> {
-    await this.deps.db.insertReportAccess({
-      viewer_profile_id: viewerProfileId,
-      action,
-      report_ids: reportIds.join(','),
-      created_at: this.deps.now()
-    });
+    await this.deps.db.insertReportAccess(
+      {
+        viewer_profile_id: viewerProfileId,
+        action,
+        report_ids: reportIds.join(','),
+        created_at: this.deps.now()
+      },
+      connection
+    );
     logger.info(
       `[E2EE_REPORT_ACCESS] viewer=${viewerProfileId} action=${action} reports=${reportIds.length}`
     );
