@@ -74,10 +74,11 @@ export class WsE2eeEventPublisher implements E2eeEventPublisher {
     private readonly findConnections: (
       profileIds: string[]
     ) => Promise<{ connectionId: string; identityId: string }[]>,
+    /** Best effort: the delivery result is ignored (clients re-sync over REST). */
     private readonly sendToConnection: (
       connectionId: string,
       message: string
-    ) => Promise<void>,
+    ) => Promise<unknown>,
     /** Resolves false when nothing was queued (push delivery switched off). */
     private readonly enqueueWake: (
       profileIds: string[],
