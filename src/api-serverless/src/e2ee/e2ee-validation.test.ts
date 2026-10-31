@@ -9,6 +9,7 @@ import {
   e2eeSubmitEntrySchema,
   validateE2ee
 } from '@/api/e2ee/e2ee.validation';
+import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
 import { E2EE_ZERO_32 } from '@/e2ee/e2ee-digests';
 import { E2eeApiException } from '@/e2ee/e2ee-errors';
 
@@ -80,7 +81,7 @@ describe('E2EE request validation', () => {
       grant: {
         wallet: `0x${'1'.repeat(40)}`,
         device_key: HEX32,
-        ciphersuite: 1,
+        ciphersuite: E2EE_CIPHERSUITE,
         issued_at: 1760270400,
         expires_at: 1775822400,
         origin: '6529.io'
@@ -90,10 +91,12 @@ describe('E2EE request validation', () => {
     };
     expect(validateE2ee(registration, e2eeRegisterDeviceSchema)).toBeTruthy();
     rejects({ ...registration, platform: 'tv' }, e2eeRegisterDeviceSchema);
-    rejects(
-      { ...registration, grant: { ...registration.grant, ciphersuite: 2 } },
-      e2eeRegisterDeviceSchema
-    );
+    for (const ciphersuite of [1, 2]) {
+      rejects(
+        { ...registration, grant: { ...registration.grant, ciphersuite } },
+        e2eeRegisterDeviceSchema
+      );
+    }
     rejects(
       { ...registration, wallet_signature: '0x123' },
       e2eeRegisterDeviceSchema

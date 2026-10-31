@@ -2095,6 +2095,7 @@ export type E2eeListTrustAndSafetyReportsPathParams = Record<string, never>;
 
 export interface E2eeListTrustAndSafetyReportsQuery {
   "before"?: number;
+  "before_id"?: string;
   "limit"?: number;
 }
 

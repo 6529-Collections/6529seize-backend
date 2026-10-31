@@ -12024,11 +12024,22 @@ paths:
         - name: before
           in: query
           required: false
-          description: Return reports created before this time (ms)
+          description: >-
+            Return reports created before this time (ms). With `before_id`,
+            also reports created at exactly this time whose id sorts before
+            `before_id`.
           schema:
             type: integer
             format: int64
             minimum: 0
+        - name: before_id
+          in: query
+          required: false
+          description: >-
+            The `next_before_id` of the previous page; only together with
+            `before`
+          schema:
+            type: string
         - name: limit
           in: query
           required: false
@@ -33029,7 +33040,7 @@ components:
           description: 0x + 64 hex
         ciphersuite:
           type: integer
-          description: 1 (MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519)
+          description: 79 (0x004F, MLS_128_MLKEM768X25519_AES128GCM_SHA256_Ed25519, a draft code point)
         issued_at:
           type: integer
           format: int64
@@ -33493,6 +33504,7 @@ components:
       required:
         - items
         - next_before
+        - next_before_id
       properties:
         items:
           type: array
@@ -33503,6 +33515,13 @@ components:
           format: int64
           nullable: true
           description: Pass as `before` for the next page; null on the last page
+        next_before_id:
+          type: string
+          nullable: true
+          description: >-
+            Pass as `before_id` with `before` for the next page, so reports
+            sharing a timestamp are neither skipped nor repeated; null on the
+            last page
     ApiE2eeRevokeDeviceRequest:
       type: object
       required:
