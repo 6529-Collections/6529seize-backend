@@ -640,7 +640,7 @@ reset behavior, and the required writer-before-collector deployment order.
 | `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                          | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
 | `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                            | Resolve external NFT links.                                                                                                 |
 | `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                      |
-| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.      |
+| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable; also content-free `e2ee_wake` notifications for encrypted chats. |
 | `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                       |
 | `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                         |
 | `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
@@ -1158,6 +1158,11 @@ Rolling fleet counters distinguish widespread throttling, a persistent outage ev
 ## API Boundary
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
+
+`/e2ee/...` is the end-to-end encrypted messaging delivery service (D109),
+behind `E2EE_DMS_ENABLED` (off in production). It is a ciphertext-only
+orderer for MLS groups; see [End-to-end encrypted messaging](#end-to-end-encrypted-messaging-d109)
+below and [e2ee-messaging.md](./e2ee-messaging.md).
 
 `GET /tdh/rules` publishes current TDH boost definitions evaluated against the
 latest completed snapshot's eligible Meme card range. The latest row in
@@ -2033,6 +2038,50 @@ Typical deployment order when schema or generated API contracts change:
 For a documentation-only change, no Lambda redeploy is required.
 
 ## Architecture Notes
+
+### End-to-end encrypted messaging (D109)
+
+The API serves 26 generated `x-6529-router` routes under `/e2ee/...`
+(handlers in `src/api-serverless/src/e2ee/`, database and pure helpers in
+`src/e2ee/`). They are on only when `E2EE_DMS_ENABLED` is `true`, or when it is
+unset and `NODE_ENV` is `local` or `development`; otherwise they return 404
+`E2EE_DISABLED`. Clients run MLS; the backend verifies wallet-signed device
+grants (EIP-712, EIP-1271 on mainnet), stores wrapped ciphertext, and orders
+key changes: per-group transactions lock the `e2ee_groups` row first, entries
+must be signed by the stored epoch commit key, the first commit per epoch
+wins (unique `e2ee_log (group_handle, commit_epoch)` and the
+`e2ee_group_epochs` primary key back this up), and messages are accepted only
+for the current epoch. Delivery rosters (`e2ee_group_roster`) bound what each
+device can read by epoch window.
+
+New tables, created by `dbMigrationsLoop` entity sync: `e2ee_devices`,
+`e2ee_key_packages`, `e2ee_groups`, `e2ee_group_epochs`, `e2ee_group_roster`,
+`e2ee_log`, `e2ee_welcomes`, `e2ee_welcome_deliveries`, `e2ee_blobs`,
+`e2ee_blob_chunks`, `e2ee_reports`, `e2ee_report_access_log`,
+`e2ee_push_throttle` and `e2ee_rate_counters`. Their SQL is a private query
+family: statements and bound values never reach logs. Encrypted attachment
+chunks live in MySQL in v1 with per-profile quotas (200 MiB per rolling 24 h,
+1 GiB live) and pruning on every upload, until they move to a private S3
+bucket or content-addressed pinning behind the same routes;
+`E2EE_ATTACHMENTS_ENABLED=false` (on by default) is a kill switch that makes
+the blob routes refuse before any database access. Reports (severe-harm categories only) are read
+only by the group named in `E2EE_TRUST_AND_SAFETY_GROUP_ID` through
+`/e2ee/trust-and-safety/...`, with every read written to
+`e2ee_report_access_log`, and are deleted after 180 days unless on hold. Rate limits are
+DB-backed fixed windows, and retention runs opportunistically in the API
+(no new Lambda). E2EE reads use the primary pool.
+
+After commit, the API sends best-effort WebSocket hints to primary
+connections (`E2EE_GROUP_EVENT`, `E2EE_WELCOME`, `E2EE_DEVICE_ADDED`,
+`E2EE_DEVICE_REVOKED`, `E2EE_ROSTER_CHANGED`; items inline only up to 16 KiB)
+and, throttled to one per (profile, group) per 60 s through
+`e2ee_push_throttle`, enqueues `{ "type": "e2ee_wake", "profile_ids", "reason" }`
+on the existing `firebase-push-notifications` queue.
+`pushNotificationsHandler` turns these into content-free FCM notifications
+(title `6529`, fixed body, `redirect: "e2ee"`, no sender, group or text) for
+every registered device of profiles whose "Direct messages" notifications are
+on. No AI or moderation pipeline reads E2EE data. Deployment order:
+`dbMigrationsLoop`, then `pushNotificationsHandler`, then `api`.
 
 ### Private artwork documentation archive
 

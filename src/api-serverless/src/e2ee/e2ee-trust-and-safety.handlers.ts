@@ -1,0 +1,99 @@
+import { getAuthenticationContext } from '@/api/auth/auth';
+import { userGroupsService } from '@/api/community-members/user-groups.service';
+import {
+  E2eeTrustAndSafetyService,
+  E2EE_TRUST_AND_SAFETY_DEFAULT_PAGE
+} from '@/api/e2ee/e2ee-trust-and-safety.service';
+import { validateE2ee } from '@/api/e2ee/e2ee.validation';
+import { ApiE2eeTrustAndSafetyReport } from '@/api/generated/models/ApiE2eeTrustAndSafetyReport';
+import { ApiE2eeTrustAndSafetyReportPage } from '@/api/generated/models/ApiE2eeTrustAndSafetyReportPage';
+import {
+  E2eeGetTrustAndSafetyReportRequest,
+  E2eeListTrustAndSafetyReportsRequest,
+  E2eeSetTrustAndSafetyReportHoldRequest
+} from '@/api/generated/routes/operations';
+import { e2eeDb } from '@/e2ee/e2ee.db';
+import { E2EE_BLOB_ID_PATTERN } from '@/e2ee/e2ee-encoding';
+import { e2eeErrors } from '@/e2ee/e2ee-errors';
+import { e2eeTrustAndSafetyGroupId } from '@/e2ee/e2ee-flag';
+import { Timer } from '@/time';
+import { Request } from 'express';
+import * as Joi from 'joi';
+
+// Trust-and-safety reads of reported encrypted messages. These routes do not
+// depend on the encrypted messaging flag, so stored reports stay reviewable
+// if the feature is switched off.
+
+const service = new E2eeTrustAndSafetyService({
+  db: e2eeDb,
+  now: () => Date.now(),
+  groupId: () => e2eeTrustAndSafetyGroupId(),
+  isGroupMember: async (profileId, groupId) =>
+    (
+      await userGroupsService.getGroupsUserIsEligibleForByIds(profileId, [
+        groupId
+      ])
+    ).includes(groupId)
+});
+
+const listQuerySchema = Joi.object({
+  before: Joi.number().integer().min(0).optional(),
+  before_id: Joi.string().pattern(E2EE_BLOB_ID_PATTERN).optional(),
+  limit: Joi.number()
+    .integer()
+    .min(1)
+    .max(100)
+    .default(E2EE_TRUST_AND_SAFETY_DEFAULT_PAGE)
+}).with('before_id', 'before');
+const reportIdSchema = Joi.string().pattern(E2EE_BLOB_ID_PATTERN).required();
+const holdSchema = Joi.object({ on_hold: Joi.boolean().required() });
+
+async function reviewer(
+  req: Request<any, any, any, any, any>
+): Promise<string> {
+  const context = await getAuthenticationContext(
+    req,
+    Timer.getFromRequest(req)
+  );
+  if (context.isAuthenticatedAsProxy()) {
+    throw e2eeErrors.forbidden('Proxies cannot read reports');
+  }
+  const profileId = context.getActingAsId();
+  if (!profileId) {
+    throw e2eeErrors.forbidden(
+      'Only the trust and safety group can read reports'
+    );
+  }
+  return profileId;
+}
+
+export async function handleE2eeListTrustAndSafetyReports(
+  req: E2eeListTrustAndSafetyReportsRequest
+): Promise<ApiE2eeTrustAndSafetyReportPage> {
+  const viewer = await reviewer(req);
+  const query = validateE2ee<{
+    before?: number;
+    before_id?: string;
+    limit: number;
+  }>(req.query, listQuerySchema);
+  return service.listReports(viewer, query);
+}
+
+export async function handleE2eeGetTrustAndSafetyReport(
+  req: E2eeGetTrustAndSafetyReportRequest
+): Promise<ApiE2eeTrustAndSafetyReport> {
+  const viewer = await reviewer(req);
+  return service.getReport(
+    viewer,
+    validateE2ee<string>(req.params.report_id, reportIdSchema)
+  );
+}
+
+export async function handleE2eeSetTrustAndSafetyReportHold(
+  req: E2eeSetTrustAndSafetyReportHoldRequest
+): Promise<ApiE2eeTrustAndSafetyReport> {
+  const viewer = await reviewer(req);
+  const reportId = validateE2ee<string>(req.params.report_id, reportIdSchema);
+  const body = validateE2ee<{ on_hold: boolean }>(req.body, holdSchema);
+  return service.setHold(viewer, reportId, body.on_hold);
+}

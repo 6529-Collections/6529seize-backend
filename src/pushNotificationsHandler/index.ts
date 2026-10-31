@@ -8,6 +8,7 @@ import {
   Context,
   SQSBatchResponse,
   SQSEvent,
+  SQSRecord,
   ScheduledEvent
 } from 'aws-lambda';
 import { withBadgeLockDeadline } from './device-badge';
@@ -26,6 +27,11 @@ import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
 import * as sentryContext from '../sentry.context';
 import { sendIdentityNotificationsBatch } from '@/pushNotificationsHandler/identityPushNotifications';
+import {
+  E2eeWakeRequest,
+  parseE2eeWakeMessage,
+  sendE2eeWakes
+} from '@/pushNotificationsHandler/e2ee-wake';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER');
 
@@ -44,6 +50,46 @@ async function refreshInstallationRecords(
   return failures;
 }
 
+type E2eeWakeRecord = { messageId: string; wake: E2eeWakeRequest };
+
+function parseE2eeWakeBody(body: string): E2eeWakeRequest | null {
+  try {
+    return parseE2eeWakeMessage(JSON.parse(body));
+  } catch {
+    // Not JSON: the main loop reports and retries it like any other record.
+    return null;
+  }
+}
+
+/** Splits content-free E2EE wakes from the other push work in a batch. */
+function partitionE2eeWakeRecords(records: SQSRecord[]): {
+  wakes: E2eeWakeRecord[];
+  others: SQSRecord[];
+} {
+  const wakes: E2eeWakeRecord[] = [];
+  const others: SQSRecord[] = [];
+  for (const record of records) {
+    const wake = parseE2eeWakeBody(record.body);
+    if (wake) wakes.push({ messageId: record.messageId, wake });
+    else others.push(record);
+  }
+  return { wakes, others };
+}
+
+async function sendE2eeWakeRecords(
+  records: E2eeWakeRecord[]
+): Promise<{ itemIdentifier: string }[]> {
+  if (!records.length) return [];
+  try {
+    await sendE2eeWakes(records.map((record) => record.wake));
+    return [];
+  } catch (error) {
+    // Only lookups before any send can fail here; retry those records.
+    reportPushDeliveryFailure(error, 'delivery');
+    return records.map((record) => ({ itemIdentifier: record.messageId }));
+  }
+}
+
 const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
   return doInDbContext(
     async () => {
@@ -53,9 +99,12 @@ const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
       }[] = [];
       const badgeRecords: { messageId: string; profileId: string }[] = [];
       const installationRecords: { messageId: string; deviceId: string }[] = [];
+      const { wakes: e2eeWakeRecords, others } = partitionE2eeWakeRecords(
+        event.Records
+      );
       const failures: { itemIdentifier: string }[] = [];
 
-      for (const record of event.Records) {
+      for (const record of others) {
         try {
           const notification = JSON.parse(record.body);
           if (
@@ -132,7 +181,10 @@ const sqsHandler = async (event: SQSEvent): Promise<SQSBatchResponse> => {
         }
       }
 
-      failures.push(...(await refreshInstallationRecords(installationRecords)));
+      failures.push(
+        ...(await refreshInstallationRecords(installationRecords)),
+        ...(await sendE2eeWakeRecords(e2eeWakeRecords))
+      );
       const failed = new Set(failures.map((item) => item.itemIdentifier));
       if (
         event.Records.some(
