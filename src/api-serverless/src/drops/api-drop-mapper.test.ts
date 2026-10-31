@@ -1143,7 +1143,7 @@ describe('author signed drops', () => {
     );
 
     expect(result['signed-drop'].is_author_signed).toBe(true);
-    expect(result['unsigned-drop']).not.toHaveProperty('is_author_signed');
+    expect(result['unsigned-drop'].is_author_signed).toBe(false);
     expect(
       deps.authorSignaturesDb.findAuthorSignedDropIds
     ).toHaveBeenCalledTimes(1);
@@ -1166,7 +1166,7 @@ describe('author signed drops', () => {
 
     const result = await mapper.mapDrops([makeDrop()], {});
 
-    expect(result['drop-1']).not.toHaveProperty('is_author_signed');
+    expect(result['drop-1'].is_author_signed).toBe(false);
   });
 
   it('does not mark a drop whose author is anonymous', async () => {
@@ -1181,6 +1181,6 @@ describe('author signed drops', () => {
     const result = await mapper.mapDrops([makeDrop()], {});
 
     expect(result['drop-1'].author).toMatchObject({ is_anonymous: true });
-    expect(result['drop-1']).not.toHaveProperty('is_author_signed');
+    expect(result['drop-1'].is_author_signed).toBe(false);
   });
 });

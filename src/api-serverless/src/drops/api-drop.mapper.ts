@@ -454,7 +454,7 @@ export class ApiDropMapper {
               drop.id
             );
             // Signed events name the author's wallet.
-            delete acc[drop.id].is_author_signed;
+            acc[drop.id].is_author_signed = false;
           }
           const reply = acc[drop.id].reply_to_drop;
           if (reply && hiddenDropIds.has(reply.id) && reply.author) {
@@ -611,6 +611,9 @@ export class ApiDropMapper {
       serial_no: drop.serial_no,
       created_at: drop.created_at,
       is_signed: !!drop.signature,
+      // Only content the viewer can see may be reported as author signed.
+      is_author_signed:
+        authorSigned && moderationPresentation.moderation.can_view,
       hide_link_preview: drop.hide_link_preview ?? false,
       parts_count: drop.parts_count,
       author,
@@ -639,9 +642,6 @@ export class ApiDropMapper {
     }
     if (!moderationPresentation.moderation.can_view) {
       return apiDrop;
-    }
-    if (authorSigned) {
-      apiDrop.is_author_signed = true;
     }
     if (drop.title !== null) {
       apiDrop.title = drop.title;
