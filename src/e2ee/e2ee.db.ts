@@ -1205,46 +1205,75 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   }
 
   /** Newest first, for trust and safety review; bodies as base64. */
+  /**
+   * Newest first by (created_at, id). The cursor is the last row of the
+   * previous page; with only `beforeMs`, rows created before that time.
+   */
   async listReportsForReview(
-    beforeMs: number | null,
+    cursor: { beforeMs: number; beforeId: string | null } | null,
     limit: number
   ): Promise<E2eeReviewReportRow[]> {
+    let where = '';
+    if (cursor?.beforeId) {
+      where =
+        'where created_at < :beforeMs or (created_at = :beforeMs and id < :beforeId)';
+    } else if (cursor) {
+      where = 'where created_at < :beforeMs';
+    }
     return this.many<E2eeReviewReportRow>(
       `select ${REVIEW_REPORT_COLUMNS} from ${E2EE_REPORTS_TABLE}
-       ${beforeMs === null ? '' : 'where created_at < :beforeMs'}
+       ${where}
        order by created_at desc, id desc limit :limit`,
-      { beforeMs, limit }
+      {
+        beforeMs: cursor?.beforeMs ?? null,
+        beforeId: cursor?.beforeId ?? null,
+        limit
+      }
     );
   }
 
-  async getReportForReview(id: string): Promise<E2eeReviewReportRow | null> {
+  async getReportForReview(
+    id: string,
+    connection?: Conn
+  ): Promise<E2eeReviewReportRow | null> {
     return this.one<E2eeReviewReportRow>(
       `select ${REVIEW_REPORT_COLUMNS} from ${E2EE_REPORTS_TABLE}
        where id = :id`,
-      { id }
+      { id },
+      connection
     );
   }
 
   /** Returns false when the report does not exist. */
-  async setReportHold(id: string, onHold: boolean): Promise<boolean> {
+  async setReportHold(
+    id: string,
+    onHold: boolean,
+    connection?: Conn
+  ): Promise<boolean> {
     const rows = await this.many<{ id: string }>(
-      `select id from ${E2EE_REPORTS_TABLE} where id = :id`,
-      { id }
+      `select id from ${E2EE_REPORTS_TABLE} where id = :id for update`,
+      { id },
+      connection
     );
     if (!rows.length) return false;
     await this.write(
       `update ${E2EE_REPORTS_TABLE} set on_hold = :onHold where id = :id`,
-      { id, onHold }
+      { id, onHold },
+      connection
     );
     return true;
   }
 
-  async insertReportAccess(row: Omit<E2eeReportAccessEntity, 'id'>) {
+  async insertReportAccess(
+    row: Omit<E2eeReportAccessEntity, 'id'>,
+    connection?: Conn
+  ) {
     await this.write(
       `insert into ${E2EE_REPORT_ACCESS_LOG_TABLE}
          (viewer_profile_id, action, report_ids, created_at)
        values (:viewer_profile_id, :action, :report_ids, :created_at)`,
-      { ...row }
+      { ...row },
+      connection
     );
   }
 

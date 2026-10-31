@@ -1444,6 +1444,69 @@ describeWithSeed('E2EE delivery service', [], () => {
       ]);
     });
 
+    it('pages reports that share a timestamp without skipping or repeating any', async () => {
+      const ids: string[] = [];
+      for (let index = 0; index < 5; index += 1) {
+        ids.push((await fileReport()).id);
+      }
+      const review = reviewService('ts-group', ['reviewer']);
+      const all = await review.listReports('reviewer', { limit: 100 });
+      expect(new Set(all.items.map((item) => item.created_at)).size).toBe(1);
+      const expected = all.items.map((item) => item.id);
+      expect([...expected].sort()).toEqual([...ids].sort());
+
+      const seen: string[] = [];
+      let cursor: { before?: number; before_id?: string } = {};
+      for (let pageNo = 0; pageNo < 10; pageNo += 1) {
+        const page = await review.listReports('reviewer', {
+          ...cursor,
+          limit: 2
+        });
+        seen.push(...page.items.map((item) => item.id));
+        if (page.next_before === null) {
+          expect(page.next_before_id).toBeNull();
+          break;
+        }
+        cursor = {
+          before: page.next_before,
+          before_id: page.next_before_id!
+        };
+      }
+      expect(seen).toEqual(expected);
+    });
+
+    it('commits a hold change only together with its audit row', async () => {
+      const { id } = await fileReport();
+      const failingAudit = new E2eeTrustAndSafetyService({
+        db: {
+          listReportsForReview: db.listReportsForReview.bind(db),
+          getReportForReview: db.getReportForReview.bind(db),
+          setReportHold: db.setReportHold.bind(db),
+          executeNativeQueriesInTransaction:
+            db.executeNativeQueriesInTransaction.bind(db),
+          insertReportAccess: async () => {
+            throw new Error('audit log unavailable');
+          }
+        },
+        now: () => now,
+        groupId: () => 'ts-group',
+        isGroupMember: async () => true
+      });
+      await expect(failingAudit.setHold('reviewer', id, true)).rejects.toThrow(
+        'audit log unavailable'
+      );
+      expect((await db.getReportForReview(id))?.on_hold).toBeFalsy();
+      await expectE2eeError(
+        reviewService('ts-group', ['reviewer']).setHold(
+          'reviewer',
+          `0x${'0'.repeat(32)}`,
+          true
+        ),
+        'E2EE_NOT_FOUND'
+      );
+      expect(await db.listReportAccess()).toEqual([]);
+    });
+
     it('deletes reports after 180 days unless they are on hold', async () => {
       const kept = await fileReport();
       const expired = await fileReport();

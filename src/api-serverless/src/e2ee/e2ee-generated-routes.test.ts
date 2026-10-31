@@ -157,6 +157,10 @@ describe('E2EE generated routes', () => {
           `${baseUrl}/e2ee/trust-and-safety/reports/not-an-id`
         );
         expect(badId.status).toBe(400);
+        const cursorWithoutTime = await fetch(
+          `${baseUrl}/e2ee/trust-and-safety/reports?before_id=0x${'0'.repeat(32)}`
+        );
+        expect(cursorWithoutTime.status).toBe(400);
       });
     } finally {
       if (originalGroup === undefined) {
