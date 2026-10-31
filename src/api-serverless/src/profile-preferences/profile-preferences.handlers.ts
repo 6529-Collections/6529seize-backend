@@ -154,10 +154,11 @@ async function assertDirectMessageGroupUpdate(
   if (!changesGroupRequirement) return;
   const stored = await profilePreferencesDb.get(profileId);
   const policy = update.direct_message_policy ?? stored.direct_message_policy;
+  // null is meaningful here (it clears the group), so `??` would be wrong.
   const groupId =
-    update.direct_message_group_id === undefined
-      ? stored.direct_message_group_id
-      : update.direct_message_group_id;
+    'direct_message_group_id' in update
+      ? update.direct_message_group_id
+      : stored.direct_message_group_id;
   if (policy === ProfileDirectMessagePolicy.GROUP_MEMBERS && !groupId) {
     throw new BadRequestException(
       'Choose a group to limit who can message you.'
