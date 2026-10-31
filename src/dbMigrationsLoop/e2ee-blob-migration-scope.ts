@@ -60,6 +60,29 @@ function parseLimit(value: unknown): number {
   return value;
 }
 
+/**
+ * A live run may not copy to another location than the one this Lambda's
+ * own E2EE_BLOB_S3_* settings name (when it has valid ones). Blobs record
+ * their location, so a mismatch could not mislead the API, but it would
+ * leave migrated blobs unavailable until the settings are aligned.
+ */
+function assertSameAsConfigured(target: E2eeBlobS3Config, env: Env): void {
+  const configured = parseE2eeBlobS3Config({
+    bucket: env.E2EE_BLOB_S3_BUCKET,
+    prefix: env.E2EE_BLOB_S3_PREFIX,
+    region: env.E2EE_BLOB_S3_REGION?.trim() || env.AWS_REGION,
+    nodeEnv: env.NODE_ENV
+  }).config;
+  if (
+    configured &&
+    (configured.bucket !== target.bucket || configured.prefix !== target.prefix)
+  ) {
+    throw new Error(
+      'A live run must use the configured E2EE_BLOB_S3_BUCKET and E2EE_BLOB_S3_PREFIX'
+    );
+  }
+}
+
 /** Parse after secrets are loaded: NODE_ENV and the defaults come from them. */
 export function parseE2eeBlobMigrationRequest(
   event: Record<string, unknown>,
@@ -77,6 +100,7 @@ export function parseE2eeBlobMigrationRequest(
     nodeEnv: env.NODE_ENV
   });
   if (!parsed.config) throw new Error(parsed.problems.join('; '));
+  if (event.live === true) assertSameAsConfigured(parsed.config, env);
   return {
     live: event.live === true,
     limit: parseLimit(event.limit),

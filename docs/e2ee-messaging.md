@@ -265,14 +265,15 @@ aws lambda invoke --function-name dbMigrationsLoop --region <region> \
   --cli-read-timeout 960 --cli-binary-format raw-in-base64-out \
   --payload '{"schema_scope":"e2ee-blobs-to-s3"}' response.json
 # live: copy, verify and switch
-  --payload '{"schema_scope":"e2ee-blobs-to-s3","live":true}'
+aws lambda invoke --function-name dbMigrationsLoop --region <region>   --cli-read-timeout 960 --cli-binary-format raw-in-base64-out   --payload '{"schema_scope":"e2ee-blobs-to-s3","live":true}' response.json
 ```
 
 Optional fields: `limit` (blobs per run, default 200, at most 2000) and
 `bucket`, `prefix`, `region` (default: the `E2EE_BLOB_S3_*` settings of the
 Lambda; pass the API's values explicitly when `dbMigrationsLoop` does not
 have them). The location is validated exactly as the API validates it,
-including the stage segment.
+including the stage segment, and a live run refuses a location that differs
+from the Lambda's own valid `E2EE_BLOB_S3_*` settings.
 
 For each blob it checks the chunk rows against the blob row, uploads every
 chunk with a SHA-256 checksum, reads every chunk back and compares hashes,

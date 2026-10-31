@@ -53,6 +53,16 @@ describe('parseE2eeBlobMigrationRequest', () => {
     });
   });
 
+  it('lets a dry run, but not a live run, override the configured location', () => {
+    const event = { prefix: 'staging/other-blobs' };
+    expect(parseE2eeBlobMigrationRequest(event, STAGING_ENV).s3.prefix).toBe(
+      'staging/other-blobs'
+    );
+    expect(() =>
+      parseE2eeBlobMigrationRequest({ ...event, live: true }, STAGING_ENV)
+    ).toThrow('A live run must use the configured');
+  });
+
   it.each([
     ['a non-boolean live flag', { live: 'true' }, STAGING_ENV],
     ['a limit above the maximum', { limit: 5000 }, STAGING_ENV],
