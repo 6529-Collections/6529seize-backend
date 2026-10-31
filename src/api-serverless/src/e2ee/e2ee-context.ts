@@ -1,6 +1,8 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import { ethers } from 'ethers';
 import { E2eeEventPublisher, e2eeEventPublisher } from '@/api/e2ee/e2ee-events';
+import type { DirectMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.service';
+import { directMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.instance';
 import { verifyContractWalletSignatureHash } from '@/api/wallet-signatures/structured-wallet-signatures';
 import {
   E2EE_LAST_SEEN_UPDATE_INTERVAL_MS,
@@ -35,6 +37,11 @@ export interface E2eeServiceDeps {
   readonly attachmentsEnabled: () => boolean;
   /** Attachment chunk storage (E2EE_BLOB_STORE: MySQL or S3). */
   readonly blobStores: E2eeBlobStores;
+  /**
+   * The platform's shared inbound DM admission (blocks, DM policy, group
+   * membership), the same rules legacy DMs use.
+   */
+  readonly admission: Pick<DirectMessageAdmissionService, 'evaluate'>;
 }
 
 /** Ethereum mainnet EIP-1271 checks (contract section 2.2 step 3). */
@@ -65,7 +72,8 @@ export const defaultE2eeServiceDeps: E2eeServiceDeps = {
   random: () => randomInt(0, 0x100000000) / 0x100000000,
   randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`,
   attachmentsEnabled: () => isE2eeAttachmentsEnabled(),
-  blobStores: createE2eeBlobStores({ rows: e2eeDb })
+  blobStores: createE2eeBlobStores({ rows: e2eeDb }),
+  admission: directMessageAdmissionService
 };
 
 export function nowSeconds(deps: E2eeServiceDeps): number {

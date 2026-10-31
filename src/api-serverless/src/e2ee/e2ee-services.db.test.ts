@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { randomBytes } from 'node:crypto';
 import { HDNodeWallet, keccak256, Wallet } from 'ethers';
 import { E2eeServiceDeps, pruneE2eeBlobs } from '@/api/e2ee/e2ee-context';
+import { directMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.instance';
 import { E2eeEventPublisher } from '@/api/e2ee/e2ee-events';
 import { createE2eeServices } from '@/api/e2ee/e2ee.handlers';
 import { ApiE2eeReportCategory } from '@/api/generated/models/ApiE2eeReportCategory';
@@ -9,9 +10,13 @@ import { E2eeTrustAndSafetyService } from '@/api/e2ee/e2ee-trust-and-safety.serv
 import {
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   E2EE_LOG_TABLE,
+  IDENTITIES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
-  PROFILE_PREFERENCES_TABLE
+  PROFILE_PREFERENCES_TABLE,
+  PROFILES_TABLE
 } from '@/constants/db-tables';
+import { anIdentity } from '@/tests/fixtures/identity.fixture';
+import { aProfile as aProfileRow } from '@/tests/fixtures/profile.fixture';
 import {
   E2EE_CIPHERSUITE,
   E2EE_ENTRY_BUCKETS,
@@ -96,6 +101,31 @@ async function insertRow(table: string, row: Record<string, unknown>) {
   );
 }
 
+/**
+ * DM admission (shared with legacy DMs) reads the recipient's identity and
+ * profile rows, so every profile a test sends to must exist in the database.
+ */
+async function persistProfile(profile: Profile, persisted: Set<string>) {
+  if (persisted.has(profile.id)) return;
+  persisted.add(profile.id);
+  const wallet = profile.wallet.address.toLowerCase();
+  const handle = `h${profile.id.replace(/-/g, '')}`;
+  await insertRow(PROFILES_TABLE, {
+    ...aProfileRow({ external_id: profile.id, handle, primary_wallet: wallet })
+  });
+  await insertRow(IDENTITIES_TABLE, {
+    ...anIdentity(
+      {},
+      {
+        consolidation_key: wallet,
+        profile_id: profile.id,
+        primary_address: wallet,
+        handle
+      }
+    )
+  });
+}
+
 async function setDmPolicy(profileId: string, policy: string) {
   await insertRow(PROFILE_PREFERENCES_TABLE, {
     profile_id: profileId,
@@ -138,6 +168,7 @@ describeWithSeed('E2EE delivery service', [], () => {
   let blobEnv: Record<string, string | undefined>;
   let s3: InMemoryE2eeBlobS3;
   let deps: E2eeServiceDeps;
+  let persistedProfiles: Set<string>;
 
   beforeEach(() => {
     now = START;
@@ -147,6 +178,7 @@ describeWithSeed('E2EE delivery service', [], () => {
     attachmentsEnabled = true;
     blobEnv = {};
     s3 = new InMemoryE2eeBlobS3(BLOB_BUCKET);
+    persistedProfiles = new Set();
     db = new E2eeDb(() => sqlExecutor);
     const record =
       (method: keyof E2eeEventPublisher) =>
@@ -177,7 +209,8 @@ describeWithSeed('E2EE delivery service', [], () => {
         rows: db,
         env: () => blobEnv,
         s3Client: () => s3
-      })
+      }),
+      admission: directMessageAdmissionService
     };
     services = createE2eeServices(deps);
   });
@@ -210,6 +243,7 @@ describeWithSeed('E2EE delivery service', [], () => {
     key: E2eeTestKey = randomE2eeKey()
   ): Promise<E2eeTestKey> {
     walletProfiles.set(profile.wallet.address.toLowerCase(), profile.id);
+    await persistProfile(profile, persistedProfiles);
     const grant = grantFor(profile, key);
     await services.devices.registerDevice(profile.id, {
       grant,
@@ -826,6 +860,7 @@ describeWithSeed('E2EE delivery service', [], () => {
       for (const profile of [open, picky, friend, closed, blocker, blocked]) {
         await uploadKeyPackages(profile, await registerDevice(profile), 2);
       }
+      await persistProfile(empty, persistedProfiles);
       await setDmPolicy(picky.id, 'PEOPLE_I_FOLLOW');
       await setDmPolicy(friend.id, 'PEOPLE_I_FOLLOW');
       await follow(friend.id, alice.id);
@@ -853,7 +888,9 @@ describeWithSeed('E2EE delivery service', [], () => {
         [picky.id]: 'POLICY',
         [friend.id]: 'OK',
         [closed.id]: 'POLICY',
-        [blocker.id]: 'BLOCKED',
+        // The target's block of the caller looks like a closed inbox; only the
+        // caller's own block is reported as BLOCKED.
+        [blocker.id]: 'POLICY',
         [blocked.id]: 'BLOCKED',
         [empty.id]: 'NO_DEVICES'
       });
@@ -862,7 +899,12 @@ describeWithSeed('E2EE delivery service', [], () => {
       });
       expect(eligibility.results).toEqual([
         { profile_id: open.id, status: 'OK', active_devices: 1 },
-        { profile_id: closed.id, status: 'POLICY', active_devices: 1 },
+        {
+          profile_id: closed.id,
+          status: 'POLICY',
+          active_devices: 1,
+          reason: 'DM_RECIPIENT_NOT_ACCEPTING'
+        },
         { profile_id: alice.id, status: 'OK', active_devices: 1 }
       ]);
     });
@@ -905,7 +947,18 @@ describeWithSeed('E2EE delivery service', [], () => {
         commit(alice, group, aliceDevice, {
           rosterAdd: [daveDevice.publicKey]
         }),
-        'E2EE_BLOCKED'
+        'E2EE_POLICY',
+        { reason: 'DM_RECIPIENT_NOT_ACCEPTING' }
+      );
+      const erin = aProfile();
+      const erinDevice = await registerDevice(erin);
+      await block(alice.id, erin.id);
+      await expectE2eeError(
+        commit(alice, group, aliceDevice, {
+          rosterAdd: [erinDevice.publicKey]
+        }),
+        'E2EE_BLOCKED',
+        { reason: 'DM_SENDER_BLOCKED_RECIPIENT' }
       );
     });
   });

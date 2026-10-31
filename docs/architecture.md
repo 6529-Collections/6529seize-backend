@@ -1709,8 +1709,10 @@ closed to `PEOPLE_I_FOLLOW`, and the preferences API reports
 `direct_message_group_unavailable` so settings can warn. Refusals are 403s with
 stable `DM_*` codes plus the recipient handle; a group is named only when it is
 public. Legacy DM creation calls the service inside the group-creation
-transaction; encrypted DM and group creation should call the shared instance in
-`direct-message-admission.instance.ts` for profiles new to a roster.
+transaction. E2EE eligibility, key-package claims and roster additions call the
+shared instance in `direct-message-admission.instance.ts` (roster additions
+inside the roster transaction with recipient rows locked); a target's block
+maps to `POLICY` there and only the caller's own block to `BLOCKED`.
 
 Roll out this table and its dependent workloads in this order:
 
