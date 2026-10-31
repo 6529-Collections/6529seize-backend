@@ -41,6 +41,10 @@ class MemoryBackupRepository implements E2eeBackupRepository {
     return this.backups.get(backupId) ?? null;
   }
 
+  async lockBackup(backupId: string) {
+    return this.backups.get(backupId) ?? null;
+  }
+
   async getActiveBackup(profileId: string) {
     return (
       Array.from(this.backups.values()).find(
@@ -408,6 +412,135 @@ describe('E2eeBackupsService', () => {
       }),
       'E2EE_TOO_LARGE'
     );
+  });
+
+  describe('expected_seq precondition', () => {
+    it('appends when expected_seq is the next seq', async () => {
+      const backupId = await activeBackup();
+      for (const expected of [1, 2]) {
+        const chunk = await service.appendChunk(alice, backupId, {
+          device_key: aliceDevice.device_key,
+          data: chunkOf(),
+          expected_seq: expected
+        });
+        expect(chunk.seq).toBe(expected);
+      }
+      expect(repo.chunks.map((chunk) => chunk.seq)).toEqual([1, 2]);
+    });
+
+    it('refuses a stale expected_seq with 409 and the current next_seq, storing nothing', async () => {
+      const backupId = await activeBackup();
+      await service.appendChunk(alice, backupId, {
+        device_key: aliceOther.device_key,
+        data: chunkOf(),
+        expected_seq: 1
+      });
+      // This device still believes seq 1 is next.
+      for (const expected of [1, 3]) {
+        const error = await expectCode(
+          service.appendChunk(alice, backupId, {
+            device_key: aliceDevice.device_key,
+            data: chunkOf(),
+            expected_seq: expected
+          }),
+          'E2EE_BACKUP_SEQ_CONFLICT'
+        );
+        expect(error.getStatusCode()).toBe(409);
+        expect(error.details).toEqual({ next_seq: 2 });
+      }
+      expect(repo.chunks).toHaveLength(1);
+      expect(store.objects.size).toBe(1);
+      expect((await service.getBackup(alice, backupId)).next_seq).toBe(2);
+      // Conflicts do not use up the daily chunk budget.
+      expect(
+        Array.from(counters.entries())
+          .filter(([key]) => key.includes('bkchunk'))
+          .map(([, value]) => value)
+      ).toEqual([1]);
+    });
+
+    it('re-checks under the lock when another append lands after the pre-check', async () => {
+      const backupId = await activeBackup();
+      await service.appendChunk(alice, backupId, {
+        device_key: aliceDevice.device_key,
+        data: chunkOf()
+      });
+      const transaction = repo.executeNativeQueriesInTransaction.bind(repo);
+      let raced = false;
+      jest
+        .spyOn(repo, 'executeNativeQueriesInTransaction')
+        .mockImplementation(async (executable) => {
+          if (!raced) {
+            raced = true;
+            // The other device's append commits between this request's
+            // pre-check and its transaction.
+            await service.appendChunk(alice, backupId, {
+              device_key: aliceOther.device_key,
+              data: chunkOf()
+            });
+          }
+          return transaction(executable);
+        });
+      const error = await expectCode(
+        service.appendChunk(alice, backupId, {
+          device_key: aliceDevice.device_key,
+          data: chunkOf(),
+          expected_seq: 2
+        }),
+        'E2EE_BACKUP_SEQ_CONFLICT'
+      );
+      expect(error.details).toEqual({ next_seq: 3 });
+      // Only the two committed chunks remain; the refused object is deleted.
+      expect(repo.chunks.map((chunk) => chunk.uploader_device_key)).toEqual([
+        aliceDevice.device_key,
+        aliceOther.device_key
+      ]);
+      expect(store.objects.size).toBe(2);
+      expect(
+        (
+          await service.appendChunk(alice, backupId, {
+            device_key: aliceDevice.device_key,
+            data: chunkOf(),
+            expected_seq: 3
+          })
+        ).seq
+      ).toBe(3);
+    });
+
+    it('keeps assigning the next seq when expected_seq is omitted', async () => {
+      const backupId = await activeBackup();
+      await service.appendChunk(alice, backupId, {
+        device_key: aliceOther.device_key,
+        data: chunkOf(),
+        expected_seq: 1
+      });
+      const chunk = await service.appendChunk(alice, backupId, {
+        device_key: aliceDevice.device_key,
+        data: chunkOf()
+      });
+      expect(chunk.seq).toBe(2);
+    });
+
+    it('reports a missing or foreign generation as not found before the precondition', async () => {
+      const backupId = await activeBackup();
+      await expectCode(
+        service.appendChunk(bob, backupId, {
+          device_key: bobDevice.device_key,
+          data: chunkOf(),
+          expected_seq: 5
+        }),
+        'E2EE_NOT_FOUND'
+      );
+      await expectCode(
+        service.appendChunk(alice, hex(16), {
+          device_key: aliceDevice.device_key,
+          data: chunkOf(),
+          expected_seq: 1
+        }),
+        'E2EE_NOT_FOUND'
+      );
+      expect(store.objects.size).toBe(0);
+    });
   });
 
   it('hides another profile’s backups and requires an own active device for writes', async () => {
