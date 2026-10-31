@@ -123,6 +123,30 @@ export function formatGrantExpiryUtc(expiresAtSeconds: number): string {
   return `${day} ${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}`;
 }
 
+// Fixed English abbreviations, never Intl: the date is part of signed bytes.
+const UTC_MONTH_ABBREVIATIONS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec'
+] as const;
+
+/** The grant expiry as a UTC calendar date, e.g. "29 Apr 2027" or "5 Nov 2026". */
+export function formatGrantExpiryDateUtc(expiresAtSeconds: number): string {
+  const date = new Date(expiresAtSeconds * 1000);
+  return `${date.getUTCDate()} ${
+    UTC_MONTH_ABBREVIATIONS[date.getUTCMonth()]
+  } ${date.getUTCFullYear()}`;
+}
+
 export function joinScopesAsEnglish(scopes: readonly string[]): string {
   if (scopes.length <= 1) {
     return scopes.join('');
@@ -131,19 +155,70 @@ export function joinScopesAsEnglish(scopes: readonly string[]): string {
   return `${head} and ${scopes.at(-1)}`;
 }
 
+/** What the grant statement says the device will sign for each scope. */
+const DEVICE_GRANT_SCOPE_NOUNS: Readonly<Record<DeviceGrantScope, string>> = {
+  post: 'posts',
+  edit: 'edits',
+  delete: 'deletes',
+  react: 'reactions',
+  vote: 'votes'
+};
+
 function rawKeyHex(deviceKey: string): string {
   return deviceKey.slice(2);
 }
 
+function deviceKeyFingerprint(deviceKey: string): string {
+  const keyHex = rawKeyHex(deviceKey);
+  return `${keyHex.slice(0, 8)}...${keyHex.slice(-8)}`;
+}
+
+/**
+ * The statement of new grant challenges. Wallets sign these exact bytes and
+ * the frontend compares them byte for byte, so any change needs a coordinated
+ * frontend release that accepts the new shape first. The URN alone carries
+ * the exact expiry time; the statement names its UTC date.
+ */
 export function renderDeviceGrantStatement(terms: DeviceGrantTerms): string {
-  const keyHex = rawKeyHex(terms.deviceKey);
-  const keyHint = `${keyHex.slice(0, 8)}...${keyHex.slice(-8)}`;
+  const signs = joinScopesAsEnglish(
+    terms.scopes.map((scope) => DEVICE_GRANT_SCOPE_NOUNS[scope])
+  );
+  return (
+    `Sign in to 6529 and turn on signed messages on this device until ` +
+    `${formatGrantExpiryDateUtc(terms.expiresAtSeconds)}. ` +
+    `This device will sign your ${signs} so anyone can verify they came from your wallet. ` +
+    `It can't move funds, change your handle, add devices or act as an admin. ` +
+    `No transaction, no gas, no token approvals. ` +
+    `(Device key ${deviceKeyFingerprint(terms.deviceKey)})`
+  );
+}
+
+/**
+ * The statement of grant challenges issued before the current wording. Only
+ * accepted when parsing, so a challenge issued just before a deploy can still
+ * be signed and logged in; never rendered for new challenges.
+ */
+export function renderLegacyDeviceGrantStatement(
+  terms: DeviceGrantTerms
+): string {
+  const keyHint = deviceKeyFingerprint(terms.deviceKey);
   return (
     `Sign in to 6529 and let this device post as you until ` +
     `${formatGrantExpiryUtc(terms.expiresAtSeconds)} UTC (device key ${keyHint}). ` +
     `It may ${joinScopesAsEnglish(terms.scopes)}. ` +
     `It cannot move funds, change your handle, add devices or act as an admin. ` +
     `This request does not create a blockchain transaction, cost gas, or approve tokens.`
+  );
+}
+
+/** Exactly the current or the legacy statement rendered from these terms. */
+export function isDeviceGrantStatement(
+  statement: string | undefined,
+  terms: DeviceGrantTerms
+): boolean {
+  return (
+    statement === renderDeviceGrantStatement(terms) ||
+    statement === renderLegacyDeviceGrantStatement(terms)
   );
 }
 

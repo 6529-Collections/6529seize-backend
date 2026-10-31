@@ -155,10 +155,28 @@ without device parameters are unchanged.
   native or desktop client type returns 400.
 - The SIWE message then carries exactly one resource
   `urn:6529:device-grant:v1:ed25519:{key hex}:{scopes joined by .}:{expiry}`
-  and a statement rendered from it that names the expiry minute (UTC), the key
-  and the scopes. The expiry is the issuing minute plus 180 days. The parser
-  accepts only the plain sign-in message or this exact grant shape (one URN,
-  canonical scopes, minute-aligned expiry at most 181 days after Issued At).
+  and a statement rendered from it. The expiry is the issuing minute plus 180
+  days. For the default scopes the statement reads:
+
+  > Sign in to 6529 and turn on signed messages on this device until 29 Apr
+  > 2027. This device will sign your posts, edits, deletes and reactions so
+  > anyone can verify they came from your wallet. It can't move funds, change
+  > your handle, add devices or act as an admin. No transaction, no gas, no
+  > token approvals. (Device key 65942d9f...d8128d49)
+
+  It is one ASCII line. The date is the expiry's UTC calendar date as
+  `D Mon YYYY` (English month abbreviations); the exact expiry time is only in
+  the URN. The scope list names what the device signs (`post` posts, `edit`
+  edits, `delete` deletes, `react` reactions, `vote` votes) joined as an
+  English list, and the key is its first and last 8 hex characters joined by
+  `...`. The parser accepts only the plain sign-in message or this exact grant
+  shape (one URN, canonical scopes, minute-aligned expiry at most 181 days
+  after Issued At, and the statement rendered from that URN). It also accepts
+  the statement of grants issued before this wording ("Sign in to 6529 and let
+  this device post as you until {expiry minute} UTC (device key {key}). It may
+  {scopes}. ..."), so a challenge issued just before a deploy still logs in;
+  grants signed over it stay valid. The frontend must accept a new statement
+  shape before the backend renders it.
 - `POST /api/auth/session-login` stores the grant in `device_grants` only
   after the wallet signature verified and the nonce was consumed, keyed by the
   EIP-191 hash of the exact signed message. The response gains `device_grant`.
