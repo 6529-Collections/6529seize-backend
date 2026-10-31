@@ -107,7 +107,7 @@ import {
   ProfilePreferencesDb
 } from '@/profile-preferences/profile-preferences.db';
 import { ConnectionWrapper } from '@/sql-executor';
-import { DirectMessageAdmissionService } from '../direct-messages/direct-message-admission.service';
+import { DirectMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.service';
 
 import { performance } from 'node:perf_hooks';
 import { randomInt } from 'node:crypto';
