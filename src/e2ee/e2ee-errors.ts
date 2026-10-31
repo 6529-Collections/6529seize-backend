@@ -117,5 +117,12 @@ export const e2eeErrors = {
       'Encrypted attachments are not available'
     ),
   notFound: (what: string) =>
-    new E2eeApiException(404, E2EE_ERROR_CODES.NOT_FOUND, `${what} not found`)
+    new E2eeApiException(404, E2EE_ERROR_CODES.NOT_FOUND, `${what} not found`),
+  /** Attachment storage is misconfigured or unreachable (fails closed). */
+  storageUnavailable: () =>
+    new E2eeApiException(
+      503,
+      E2EE_ERROR_CODES.STORAGE_UNAVAILABLE,
+      'Encrypted attachment storage is unavailable; try again later'
+    )
 };

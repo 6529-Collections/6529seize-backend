@@ -341,9 +341,19 @@ export class E2eeBlobEntity {
 
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly completed_at!: number | null;
+
+  /**
+   * Where the chunk bytes live (`mysql` or `s3`), fixed at creation and
+   * changed only by the S3 migration. Rows from before S3 storage are MySQL.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'mysql' })
+  readonly storage!: string;
 }
 
-/** Ciphertext chunks of an encrypted attachment. */
+/**
+ * Chunk sizes of an encrypted attachment, plus the ciphertext bytes when the
+ * blob's storage is MySQL (empty for blobs stored in S3).
+ */
 @Entity(E2EE_BLOB_CHUNKS_TABLE)
 export class E2eeBlobChunkEntity {
   @PrimaryColumn({ type: 'varchar', length: 34 })

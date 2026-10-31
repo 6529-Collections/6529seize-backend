@@ -21,10 +21,14 @@ import {
   E2EE_RATE_LIMITS
 } from '@/e2ee/e2ee.constants';
 import { E2eeBlobRow } from '@/e2ee/e2ee.db';
+import { E2eeBlobStore } from '@/e2ee/e2ee-blob-store';
 import { e2eeMessageDigest, verifyE2eeEd25519 } from '@/e2ee/e2ee-digests';
 import { decodeE2eeBase64 } from '@/e2ee/e2ee-encoding';
-import { e2eeErrors } from '@/e2ee/e2ee-errors';
+import { E2eeApiException, e2eeErrors } from '@/e2ee/e2ee-errors';
+import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
+
+const logger = Logger.get('E2EE_BLOBS');
 
 export class E2eeBlobsService {
   constructor(private readonly deps: E2eeServiceDeps) {}
@@ -66,6 +70,8 @@ export class E2eeBlobsService {
     if (!roster.some((row) => row.device_key === request.uploader_device_key)) {
       throw e2eeErrors.notMember();
     }
+    // Misconfigured storage refuses here, before the upload counts.
+    const store = this.deps.blobStores.forNewBlob();
     await enforceE2eeRateLimit(
       this.deps,
       E2EE_RATE_LIMITS.blobUploadsPerProfile,
@@ -80,7 +86,8 @@ export class E2eeBlobsService {
       chunk_count: request.chunk_count,
       complete: false,
       created_at: this.deps.now(),
-      completed_at: null
+      completed_at: null,
+      storage: store.storage
     };
     await pruneE2eeBlobs(this.deps);
     await this.db.executeNativeQueriesInTransaction(async (connection) => {
@@ -155,9 +162,11 @@ export class E2eeBlobsService {
         if (others + data.length > Number(locked.size)) {
           throw e2eeErrors.tooLarge('Chunks beyond the declared size');
         }
-        await this.db.upsertBlobChunk(
-          { blobId, index, data, createdAt: this.deps.now() },
-          connection
+        await this.storeCall(locked, (store) =>
+          store.putChunk(
+            { blobId, index, data, createdAt: this.deps.now() },
+            connection
+          )
         );
         return locked;
       }
@@ -213,9 +222,55 @@ export class E2eeBlobsService {
     if (!(await this.db.hasRosterHistory(blob.group_handle, deviceKey))) {
       throw e2eeErrors.notMember();
     }
-    const data = await this.db.getBlobChunkData(blobId, index);
-    if (data === null) throw e2eeErrors.notFound('Attachment chunk');
-    return { data };
+    if (index >= Number(blob.chunk_count)) {
+      throw e2eeErrors.notFound('Attachment chunk');
+    }
+    let data = await this.storeCall(blob, (store) =>
+      store.getChunk(blobId, index)
+    );
+    if (data === null && blob.storage === 'mysql') {
+      // The S3 migration may have moved the blob between the two reads.
+      const current = await this.db.getBlob(blobId);
+      if (current?.complete && current.storage !== blob.storage) {
+        data = await this.storeCall(current, (store) =>
+          store.getChunk(blobId, index)
+        );
+      }
+    }
+    if (data === null) {
+      if (blob.storage !== 'mysql') {
+        logger.warn(
+          `[E2EE BLOB CHUNK MISSING] [STORAGE ${blob.storage}] [BLOB ${blobId}] [INDEX ${index}]`
+        );
+      }
+      throw e2eeErrors.notFound('Attachment chunk');
+    }
+    return { data: data.toString('base64') };
+  }
+
+  /**
+   * Runs a store operation for the blob's storage. External store failures
+   * (S3 unreachable, access denied) become 503 E2EE_STORAGE_UNAVAILABLE and
+   * are logged without any chunk bytes; MySQL errors propagate unchanged.
+   */
+  private async storeCall<T>(
+    blob: Pick<E2eeBlobRow, 'blob_id' | 'storage'>,
+    operation: (store: E2eeBlobStore) => Promise<T>
+  ): Promise<T> {
+    const store = this.deps.blobStores.forBlob(blob);
+    try {
+      return await operation(store);
+    } catch (error) {
+      if (error instanceof E2eeApiException || store.storage === 'mysql') {
+        throw error;
+      }
+      logger.error(
+        `[E2EE BLOB STORAGE ERROR] [STORAGE ${store.storage}] [BLOB ${blob.blob_id}] ${
+          (error as Error)?.name ?? 'Error'
+        }: ${(error as Error)?.message ?? 'unknown'}`
+      );
+      throw e2eeErrors.storageUnavailable();
+    }
   }
 
   async report(

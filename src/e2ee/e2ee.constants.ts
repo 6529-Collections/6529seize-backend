@@ -51,7 +51,8 @@ export const E2EE_MAX_BLOB_BYTES =
 
 /**
  * Blob storage quota per uploading profile, in declared ciphertext bytes.
- * v1 stores attachment chunks in MySQL; see docs/e2ee-messaging.md.
+ * The same quota applies whichever store holds the chunks (MySQL or S3,
+ * `E2EE_BLOB_STORE`); see docs/e2ee-messaging.md.
  */
 export const E2EE_BLOB_QUOTA = {
   rollingWindowMs: 24 * 60 * 60 * 1000,
@@ -132,5 +133,6 @@ export const E2EE_ERROR_CODES = {
   RATE_LIMITED: 'E2EE_RATE_LIMITED',
   NOT_FOUND: 'E2EE_NOT_FOUND',
   FORBIDDEN: 'E2EE_FORBIDDEN',
-  ATTACHMENTS_DISABLED: 'E2EE_ATTACHMENTS_DISABLED'
+  ATTACHMENTS_DISABLED: 'E2EE_ATTACHMENTS_DISABLED',
+  STORAGE_UNAVAILABLE: 'E2EE_STORAGE_UNAVAILABLE'
 } as const;
