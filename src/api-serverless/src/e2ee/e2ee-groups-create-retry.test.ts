@@ -64,3 +64,36 @@ describe('E2eeGroupsService.createGroup transaction retries', () => {
     expect(transaction).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('E2eeGroupsService.ackWelcome deadlock retries', () => {
+  const device = request.creator_device_key;
+  const welcome = `0x${'44'.repeat(16)}`;
+
+  it('retries an acknowledgement that lost a deadlock to a sibling device', async () => {
+    const transaction = jest
+      .fn()
+      .mockRejectedValueOnce({ code: 'ER_LOCK_DEADLOCK' })
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      serviceWith(transaction).ackWelcome(PROFILE, device, welcome)
+    ).resolves.toEqual({});
+    expect(transaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up after three deadlocks and does not retry other errors', async () => {
+    const deadlock = { code: 'ER_LOCK_DEADLOCK' };
+    const always = jest.fn().mockRejectedValue(deadlock);
+    await expect(
+      serviceWith(always).ackWelcome(PROFILE, device, welcome)
+    ).rejects.toBe(deadlock);
+    expect(always).toHaveBeenCalledTimes(3);
+
+    const other = new Error('connection lost');
+    const once = jest.fn().mockRejectedValue(other);
+    await expect(
+      serviceWith(once).ackWelcome(PROFILE, device, welcome)
+    ).rejects.toBe(other);
+    expect(once).toHaveBeenCalledTimes(1);
+  });
+});

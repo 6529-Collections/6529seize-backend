@@ -10,6 +10,7 @@ import {
   formatE2eeGrantExpiry,
   verifyE2eeDeviceGrant
 } from '@/e2ee/e2ee-grant';
+import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
 import { e2eeKeyFromSeed } from '@/tests/fixtures/e2ee.fixture';
 
 // Shared vector (also in the frontend handoff file e2ee-grant-vectors.json).
@@ -22,9 +23,9 @@ const VERIFY_AT = ISSUED_AT + 3600;
 const EXPECTED_STATEMENT =
   'Let this device send and read end-to-end encrypted messages as you until 2026-04-10 12:00 UTC (device key d75a9801...f707511a). 6529 cannot read these messages. This signature cannot move funds, change your handle or act as an admin, and it does not create a blockchain transaction or cost gas.';
 const EXPECTED_GRANT_ID =
-  '0x071474c69e205b3bb03834c8d99c99b2b826caad6eec914c233e67eaca3b2200';
+  '0xa0d5e242c157cdf18a9bec3c34decb63815d19d048621a3aee19a5fdb18243c0';
 const EXPECTED_SIGNATURE =
-  '0xa280cc8335dfaf00e13a7b6b83a2c7f217398dde4d0649b560b3cb3c5e6a9a665bf3d84f35540243c0f462cedbe96153e00db006627f0a3fe75257c219c495f31b';
+  '0xfda409a1ca8e0464eeda29d07ffa05abd066f75999672156ed7f03d1e790bce9540fa06de1640e708841c8a635e66da45ef270e39a615f79599afc26c1f039091b';
 
 const wallet = new Wallet(WALLET_PRIVATE_KEY);
 const device = e2eeKeyFromSeed(DEVICE_SEED);
@@ -33,7 +34,7 @@ function aGrant(overrides: Partial<E2eeDeviceGrant> = {}): E2eeDeviceGrant {
   return {
     wallet: wallet.address.toLowerCase(),
     device_key: device.publicKey,
-    ciphersuite: 1,
+    ciphersuite: E2EE_CIPHERSUITE,
     issued_at: ISSUED_AT,
     expires_at: Math.floor(ISSUED_AT / 60) * 60 + 15552000,
     origin: 'staging.6529.io',
@@ -196,9 +197,11 @@ describe('E2EE device grant', () => {
     expect(findE2eeGrantProblem(grant, ISSUED_AT - 3600)).toBe(
       'issued_in_future'
     );
-    expect(findE2eeGrantProblem(aGrant({ ciphersuite: 2 }), VERIFY_AT)).toBe(
-      'ciphersuite'
-    );
+    for (const ciphersuite of [1, 2]) {
+      expect(findE2eeGrantProblem(aGrant({ ciphersuite }), VERIFY_AT)).toBe(
+        'ciphersuite'
+      );
+    }
     expect(findE2eeGrantProblem(aGrant({ origin: '' }), VERIFY_AT)).toBe(
       'origin'
     );

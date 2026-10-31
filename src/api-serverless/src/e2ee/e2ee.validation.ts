@@ -1,5 +1,6 @@
 import * as Joi from 'joi';
 import {
+  E2EE_CIPHERSUITE,
   E2EE_DEVICE_PLATFORMS,
   E2EE_GRANT_ORIGIN_MAX_LENGTH,
   E2EE_LOG_MAX_LIMIT,
@@ -68,7 +69,7 @@ export const e2eeRegisterDeviceSchema = Joi.object({
   grant: Joi.object({
     wallet: Joi.string().pattern(E2EE_WALLET_PATTERN).required(),
     device_key: hex32().required(),
-    ciphersuite: Joi.number().integer().valid(1).required(),
+    ciphersuite: Joi.number().integer().valid(E2EE_CIPHERSUITE).required(),
     issued_at: unixSeconds().required(),
     expires_at: unixSeconds().required(),
     origin: Joi.string().min(1).max(E2EE_GRANT_ORIGIN_MAX_LENGTH).required()
