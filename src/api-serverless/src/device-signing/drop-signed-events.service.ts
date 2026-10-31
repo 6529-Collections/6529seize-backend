@@ -1,6 +1,10 @@
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { ApiDropSignedEvents } from '@/api/generated/models/ApiDropSignedEvents';
 import { dropsService, DropsApiService } from '@/api/drops/drops.api.service';
+import {
+  competitionAnonymityService,
+  CompetitionAnonymityService
+} from '@/competitions/competition-anonymity';
 import { RequestContext } from '@/request.context';
 import { DeviceSigningDb, deviceSigningDb } from './device-signing.db';
 import {
@@ -26,7 +30,11 @@ function hidesSignedEvents(
 export class DropSignedEventsService {
   constructor(
     private readonly db: DeviceSigningDb,
-    private readonly drops: Pick<DropsApiService, 'findDropByIdOrThrow'>
+    private readonly drops: Pick<DropsApiService, 'findDropByIdOrThrow'>,
+    private readonly anonymity: Pick<
+      CompetitionAnonymityService,
+      'hiddenDropIds'
+    > = competitionAnonymityService
   ) {}
 
   /**
@@ -39,7 +47,10 @@ export class DropSignedEventsService {
     ctx: RequestContext
   ): Promise<ApiDropSignedEvents> {
     const drop = await this.drops.findDropByIdOrThrow({ dropId }, ctx);
-    if (hidesSignedEvents(drop)) {
+    if (
+      hidesSignedEvents(drop) ||
+      (await this.isAnonymousToCaller(dropId, ctx))
+    ) {
       return {
         drop_id: dropId,
         current_event_id: null,
@@ -60,9 +71,22 @@ export class DropSignedEventsService {
       grants: grants.map(toApiDeviceGrantProof)
     };
   }
+
+  /**
+   * The read path's own anonymity rule, asked directly so that hiding the
+   * author's wallet never depends on how the mapped author is represented.
+   */
+  private async isAnonymousToCaller(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const hidden = await this.anonymity.hiddenDropIds([dropId], ctx);
+    return hidden.has(dropId);
+  }
 }
 
 export const dropSignedEventsService = new DropSignedEventsService(
   deviceSigningDb,
-  dropsService
+  dropsService,
+  competitionAnonymityService
 );

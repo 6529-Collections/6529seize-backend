@@ -55,12 +55,14 @@ const grant: DeviceGrantEntity = {
 describe('DropSignedEventsService', () => {
   let db: DeviceSigningDb;
   const drops = { findDropByIdOrThrow: jest.fn() };
+  const anonymity = { hiddenDropIds: jest.fn() };
   let service: DropSignedEventsService;
 
   beforeEach(() => {
     jest.clearAllMocks();
     db = mock(DeviceSigningDb);
-    service = new DropSignedEventsService(db, drops);
+    service = new DropSignedEventsService(db, drops, anonymity);
+    anonymity.hiddenDropIds.mockResolvedValue(new Set());
     drops.findDropByIdOrThrow.mockResolvedValue({
       id: 'drop-1',
       moderation: { status: 'VISIBLE', can_view: true },
@@ -179,6 +181,23 @@ describe('DropSignedEventsService', () => {
       expect(db.findGrantsByIds).not.toHaveBeenCalled();
     }
   );
+
+  it('asks the anonymity rule directly, whatever the mapped author says', async () => {
+    // A mapped author that lost its is_anonymous flag must still not leak the
+    // wallet: the competition anonymity rule is checked for this caller too.
+    anonymity.hiddenDropIds.mockResolvedValue(new Set(['drop-1']));
+    const ctx = { timer: undefined };
+
+    await expect(service.findForDrop('drop-1', ctx)).resolves.toEqual({
+      drop_id: 'drop-1',
+      current_event_id: null,
+      events: [],
+      grants: []
+    });
+    expect(anonymity.hiddenDropIds).toHaveBeenCalledWith(['drop-1'], ctx);
+    expect(db.findEventsByDropId).not.toHaveBeenCalled();
+    expect(db.findGrantsByIds).not.toHaveBeenCalled();
+  });
 
   it('returns the events when the read path shows the caller the author and content', async () => {
     // For example the submitter reading their own anonymous competition
