@@ -541,7 +541,7 @@
             "SOURCE_REGION": {
               "Ref": "SourceRegion"
             },
-            "ALLOWED_SERVICES": "seizeAPI,aggregatedActivityLoop,attachmentsOrchestrator,attachmentsProcessor,artCurationNftWatchLoop,claimsBuilder,claimsMediaArweaveUploader,competitionMigrationLoop,customReplayLoop,dbDumpsDaily,dbMigrationsLoop,delegationsLoop,discoverEnsLoop,dropMediaSanitizer,dropVideoConversionInvokerLoop,ethPriceLoop,externalCollectionLiveTailingLoop,externalCollectionSnapshottingLoop,helpBotReplyLoop,helpBotDailyActivityCreditLoop,marketStatsMEMES,marketStatsLAB,marketStatsGRADIENT,marketStatsNEXTGEN,marketDepthStreamLoop,mintAnnouncementsLoop,nextgenContractLoop,nextgenMetadataLoop,nftHistoryLoop,nftLinkRefresherLoop,nftLinkMediaPreviewLoop,nftOwnersLoop,nftsLoop,overRatesRevocationLoop,ownersBalancesLoop,populateHistoricConsolidatedTdh,pushNotificationsHandler,rateEventProcessingLoop,refreshENS,rememesS3Loop,rememesRefreshMetadataLoop,rememesFileLoop,royaltiesLoop,s3Uploader,subscriptionsDaily,subscriptionCoverageReconciliationLoop,subscriptionsTopUpLoop,xTdhGrantsReviewerLoop,tdhHistoryLoop,tdhLoop,teamLoop,memesTransactionsLoop,gradientsTransactionsLoop,memeLabTransactionsLoop,transactionsProcessingLoop,waveDecisionExecutionLoop,waveLeaderboardSnapshotterLoop,waveDropMetricsRefreshLoop,waveScoreRefreshLoop,xTdhLoop,artworkDocumentationProcessor",
+            "ALLOWED_SERVICES": "seizeAPI,aggregatedActivityLoop,attachmentsOrchestrator,attachmentsProcessor,artCurationNftWatchLoop,claimsBuilder,claimsMediaArweaveUploader,customReplayLoop,dbDumpsDaily,dbMigrationsLoop,delegationsLoop,discoverEnsLoop,dropMediaSanitizer,dropVideoConversionInvokerLoop,ethPriceLoop,externalCollectionLiveTailingLoop,externalCollectionSnapshottingLoop,helpBotReplyLoop,helpBotDailyActivityCreditLoop,marketStatsMEMES,marketStatsLAB,marketStatsGRADIENT,marketStatsNEXTGEN,marketDepthStreamLoop,mintAnnouncementsLoop,nextgenContractLoop,nextgenMetadataLoop,nftHistoryLoop,nftLinkRefresherLoop,nftLinkMediaPreviewLoop,nftOwnersLoop,nftsLoop,overRatesRevocationLoop,ownersBalancesLoop,populateHistoricConsolidatedTdh,pushNotificationsHandler,rateEventProcessingLoop,refreshENS,rememesS3Loop,rememesRefreshMetadataLoop,rememesFileLoop,royaltiesLoop,s3Uploader,subscriptionsDaily,subscriptionCoverageReconciliationLoop,subscriptionsTopUpLoop,xTdhGrantsReviewerLoop,tdhHistoryLoop,tdhLoop,teamLoop,memesTransactionsLoop,gradientsTransactionsLoop,memeLabTransactionsLoop,transactionsProcessingLoop,votingCreditReturnNotificationsLoop,waveDecisionExecutionLoop,waveLeaderboardSnapshotterLoop,waveDropMetricsRefreshLoop,waveScoreRefreshLoop,xTdhLoop,artworkDocumentationProcessor,webSocketDeliveryLoop",
             "EVENTS_PER_SERVICE_MINUTE": "120"
           }
         },
@@ -619,7 +619,8 @@
             "6529.ops"
           ],
           "detail-type": [
-            "6529.ops.error.v1"
+            "6529.ops.error.v1",
+            "6529.ops.loop-health.v1"
           ]
         },
         "Targets": [
@@ -990,7 +991,7 @@
             "SOURCE_REGION": {
               "Ref": "SourceRegion"
             },
-            "ALLOWED_SERVICES": "seizeAPI,aggregatedActivityLoop,attachmentsOrchestrator,attachmentsProcessor,artCurationNftWatchLoop,claimsBuilder,claimsMediaArweaveUploader,competitionMigrationLoop,customReplayLoop,dbDumpsDaily,dbMigrationsLoop,delegationsLoop,discoverEnsLoop,dropMediaSanitizer,dropVideoConversionInvokerLoop,ethPriceLoop,externalCollectionLiveTailingLoop,externalCollectionSnapshottingLoop,helpBotReplyLoop,helpBotDailyActivityCreditLoop,marketStatsMEMES,marketStatsLAB,marketStatsGRADIENT,marketStatsNEXTGEN,marketDepthStreamLoop,mintAnnouncementsLoop,nextgenContractLoop,nextgenMetadataLoop,nftHistoryLoop,nftLinkRefresherLoop,nftLinkMediaPreviewLoop,nftOwnersLoop,nftsLoop,overRatesRevocationLoop,ownersBalancesLoop,populateHistoricConsolidatedTdh,pushNotificationsHandler,rateEventProcessingLoop,refreshENS,rememesS3Loop,rememesRefreshMetadataLoop,rememesFileLoop,royaltiesLoop,s3Uploader,subscriptionsDaily,subscriptionCoverageReconciliationLoop,subscriptionsTopUpLoop,xTdhGrantsReviewerLoop,tdhHistoryLoop,tdhLoop,teamLoop,memesTransactionsLoop,gradientsTransactionsLoop,memeLabTransactionsLoop,transactionsProcessingLoop,waveDecisionExecutionLoop,waveLeaderboardSnapshotterLoop,waveDropMetricsRefreshLoop,waveScoreRefreshLoop,xTdhLoop,artworkDocumentationProcessor",
+            "ALLOWED_SERVICES": "seizeAPI,aggregatedActivityLoop,attachmentsOrchestrator,attachmentsProcessor,artCurationNftWatchLoop,claimsBuilder,claimsMediaArweaveUploader,customReplayLoop,dbDumpsDaily,dbMigrationsLoop,delegationsLoop,discoverEnsLoop,dropMediaSanitizer,dropVideoConversionInvokerLoop,ethPriceLoop,externalCollectionLiveTailingLoop,externalCollectionSnapshottingLoop,helpBotReplyLoop,helpBotDailyActivityCreditLoop,marketStatsMEMES,marketStatsLAB,marketStatsGRADIENT,marketStatsNEXTGEN,marketDepthStreamLoop,mintAnnouncementsLoop,nextgenContractLoop,nextgenMetadataLoop,nftHistoryLoop,nftLinkRefresherLoop,nftLinkMediaPreviewLoop,nftOwnersLoop,nftsLoop,overRatesRevocationLoop,ownersBalancesLoop,populateHistoricConsolidatedTdh,pushNotificationsHandler,rateEventProcessingLoop,refreshENS,rememesS3Loop,rememesRefreshMetadataLoop,rememesFileLoop,royaltiesLoop,s3Uploader,subscriptionsDaily,subscriptionCoverageReconciliationLoop,subscriptionsTopUpLoop,xTdhGrantsReviewerLoop,tdhHistoryLoop,tdhLoop,teamLoop,memesTransactionsLoop,gradientsTransactionsLoop,memeLabTransactionsLoop,transactionsProcessingLoop,votingCreditReturnNotificationsLoop,waveDecisionExecutionLoop,waveLeaderboardSnapshotterLoop,waveDropMetricsRefreshLoop,waveScoreRefreshLoop,xTdhLoop,artworkDocumentationProcessor,webSocketDeliveryLoop",
             "EVENTS_PER_SERVICE_MINUTE": "120"
           }
         },
@@ -998,6 +999,20 @@
           {
             "Version": "2012-10-17",
             "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "Receipts",
+                    "Arn"
+                  ]
+                }
+              },
               {
                 "Effect": "Allow",
                 "Action": [

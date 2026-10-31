@@ -1,9 +1,7 @@
-import { appFeatures, AppFeatures } from '@/app-features';
 import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import {
   CompetitionEntryStatus,
-  CompetitionLifecycle,
-  CompetitionStorageMode
+  CompetitionLifecycle
 } from '@/entities/ICompetition';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
@@ -27,12 +25,7 @@ import {
   competitionCursorCodec,
   CompetitionCursorCodec
 } from '@/competitions/competition-cursor';
-import { LegacyCompetitionAdapter } from '@/competitions/legacy-competition.adapter';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
-import {
-  competitionShadowComparator,
-  CompetitionShadowComparator
-} from '@/competitions/competition-shadow-comparator';
 import type {
   Competition,
   CompetitionConfigVersion,
@@ -50,8 +43,6 @@ import type {
   CompetitionVoter
 } from '@/competitions/competition.types';
 import { WaveEntity } from '@/entities/IWave';
-import { legacyCompetitionBaselineRepository } from '@/competitions/legacy-competition-baseline.repository';
-import { loadLegacyParityCandidate } from '@/competitions/legacy-parity-snapshot';
 import { collectCompetitionPages } from '@/competitions/competition-page';
 import { isCompetitionDecisionPending } from '@/competitions/competition-decision-gate';
 import {
@@ -59,17 +50,20 @@ import {
   selectDefaultCompetition
 } from '@/competitions/default-competition';
 import { ApiDefaultCompetition } from '@/api/generated/models/ApiDefaultCompetition';
+import { competitionCommandRepository } from './competition-command.repository';
 
 export type CompetitionPermissions = {
   readonly view: true;
   readonly submit: boolean;
   readonly vote: boolean;
   readonly administer: boolean;
+  readonly edit_rules_after_activity?: boolean;
+  readonly edit_credit_rules?: boolean;
 };
 
 export type PublicCompetition = Omit<
   Competition,
-  'storage_mode' | 'execution_mode' | 'decision_pauses'
+  'execution_mode' | 'decision_pauses' | 'configuration_activated_at'
 > & {
   readonly permissions: CompetitionPermissions;
 };
@@ -95,12 +89,18 @@ export type WaveHub = {
 export type CursorPageRequest<
   TSort extends string =
     | 'submitted_at'
+    | 'won_at'
     | 'rating'
     | 'rank'
     | 'real_time_rating'
     | 'trend'
+    | 'price'
 > = {
   readonly cursor?: string;
+  readonly is_additional_action_promised?: boolean;
+  readonly price_currency?: string;
+  readonly min_price?: number;
+  readonly max_price?: number;
   readonly limit: number;
   readonly direction: 'ASC' | 'DESC';
   readonly sort?: TSort;
@@ -126,13 +126,10 @@ export class CompetitionService {
     private readonly repository: CompetitionRepository,
     private readonly wavesDb: WavesApiDb,
     private readonly groupsService: UserGroupsService,
-    private readonly features: AppFeatures,
-    private readonly cursorCodec: CompetitionCursorCodec,
-    private readonly shadowComparator: CompetitionShadowComparator = competitionShadowComparator
+    private readonly cursorCodec: CompetitionCursorCodec
   ) {}
 
   public async getHub(waveId: string, ctx: RequestContext): Promise<WaveHub> {
-    this.assertUnifiedReadsEnabled();
     const { wave, eligibleGroups } = await this.getVisibleWave(waveId, ctx);
     const administer = this.canAdminister(wave, eligibleGroups, ctx);
     const records = await this.repository.listCompetitionRecordsForWave(
@@ -156,8 +153,7 @@ export class CompetitionService {
           Boolean(wave.chat_enabled) &&
           this.hasGroupAccess(wave.chat_group_id, eligibleGroups),
         administer,
-        create_competition:
-          administer && this.features.isNativeCompetitionWritesEnabled()
+        create_competition: administer
       }
     };
   }
@@ -166,7 +162,6 @@ export class CompetitionService {
     waveId: string,
     ctx: RequestContext
   ): Promise<ApiDefaultCompetition> {
-    this.assertUnifiedReadsEnabled();
     // Visibility (including parent visibility) is checked before inspecting any records.
     // Competitions inherit wave visibility; action groups never filter this selection.
     const { wave } = await this.getVisibleWave(waveId, ctx);
@@ -175,20 +170,8 @@ export class CompetitionService {
       ctx
     );
     const now = Time.currentMillis();
-    const hasLegacy = records.some(
-      (record) => record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER
-    );
-    const legacySummary = hasLegacy
-      ? await this.repository.getLegacyDecisionSummary(waveId, ctx)
-      : null;
     const inputs = records.flatMap((record) => {
-      const input = normalizeDefaultCompetition(
-        record,
-        wave,
-        now,
-        legacySummary?.last_decision_time ?? null,
-        legacySummary?.decisions_done ?? 0
-      );
+      const input = normalizeDefaultCompetition(record, now);
       return input ? [input] : [];
     });
     return selectDefaultCompetition(inputs, now);
@@ -199,7 +182,6 @@ export class CompetitionService {
     request: CompetitionListRequest,
     ctx: RequestContext
   ): Promise<CompetitionPage<PublicCompetition>> {
-    this.assertUnifiedReadsEnabled();
     const { wave, eligibleGroups } = await this.getVisibleWave(waveId, ctx);
     const filters = {
       lifecycle: request.lifecycle ?? [],
@@ -219,12 +201,7 @@ export class CompetitionService {
     const mayReadDrafts = this.canAdminister(wave, eligibleGroups, ctx);
     const competitions = await Promise.all(
       records
-        .filter(
-          (record) =>
-            mayReadDrafts ||
-            record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER ||
-            record.published_at !== null
-        )
+        .filter((record) => mayReadDrafts || record.published_at !== null)
         .map(async (record) => {
           const reader = this.createReader(record, ctx);
           return await reader.getCompetition(record, Time.currentMillis());
@@ -249,8 +226,19 @@ export class CompetitionService {
       eligibleGroups,
       ctx
     );
-    const data = page.map((competition) =>
-      this.toPublicCompetition(competition, wave, competitionGroups, ctx)
+    const data = await Promise.all(
+      page.map((competition) =>
+        this.toPublicCompetition(
+          competition,
+          wave,
+          competitionGroups,
+          ctx,
+          records.some(
+            (record) =>
+              record.id === competition.id && record.legacy_wave_id === wave.id
+          )
+        )
+      )
     );
     const hasMore = offset + data.length < ordered.length;
     return {
@@ -276,27 +264,6 @@ export class CompetitionService {
       resolved.record,
       Time.currentMillis()
     );
-    if (
-      resolved.record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER
-    ) {
-      await this.shadowComparator.compareIfSampled(
-        resolved.record,
-        (shadowCtx, now) =>
-          legacyCompetitionBaselineRepository.getSnapshot(
-            resolved.record,
-            now,
-            shadowCtx
-          ),
-        (shadowCtx, now) =>
-          loadLegacyParityCandidate(
-            this.createReader(resolved.record, shadowCtx),
-            resolved.record,
-            now,
-            shadowCtx
-          ),
-        ctx
-      );
-    }
     return this.toPublicCompetition(
       competition,
       resolved.wave,
@@ -305,7 +272,8 @@ export class CompetitionService {
         resolved.eligibleGroups,
         ctx
       ),
-      ctx
+      ctx,
+      resolved.record.legacy_wave_id === resolved.wave.id
     );
   }
 
@@ -450,7 +418,7 @@ export class CompetitionService {
       waveId,
       competitionId,
       'winners',
-      request,
+      { ...request, sort: 'won_at' },
       {},
       ctx,
       (resolved, page) => resolved.reader.listWinners(resolved.record, page)
@@ -531,9 +499,18 @@ export class CompetitionService {
   ): Promise<CompetitionPage<T>> {
     const resolved = await this.resolve(waveId, competitionId, ctx);
     const fingerprint = {
+      // Keep existing unfiltered cursors valid across this additive API rollout.
+      ...(request.is_additional_action_promised === undefined
+        ? {}
+        : {
+            is_additional_action_promised: request.is_additional_action_promised
+          }),
       filters,
       direction: request.direction,
-      sort: request.sort ?? null
+      sort: request.sort ?? null,
+      price_currency: request.price_currency ?? null,
+      min_price: request.min_price ?? null,
+      max_price: request.max_price ?? null
     };
     const scope = `competition:${competitionId}:${resource}`;
     const offset = this.cursorCodec.decode(request.cursor, scope, fingerprint);
@@ -541,7 +518,11 @@ export class CompetitionService {
       offset,
       limit: request.limit,
       direction: request.direction,
-      sort: request.sort
+      sort: request.sort,
+      price_currency: request.price_currency,
+      min_price: request.min_price,
+      max_price: request.max_price,
+      is_additional_action_promised: request.is_additional_action_promised
     });
     return {
       ...result,
@@ -560,7 +541,6 @@ export class CompetitionService {
     competitionId: string,
     ctx: RequestContext
   ): Promise<ResolvedCompetition> {
-    this.assertUnifiedReadsEnabled();
     const { wave, eligibleGroups } = await this.getVisibleWave(waveId, ctx);
     const record = await this.repository.findCompetitionRecordById(
       competitionId,
@@ -568,8 +548,7 @@ export class CompetitionService {
     );
     if (
       record?.wave_id !== waveId ||
-      (record.storage_mode === CompetitionStorageMode.NATIVE &&
-        record.published_at === null &&
+      (record.published_at === null &&
         !this.canAdminister(wave, eligibleGroups, ctx))
     ) {
       throw this.maskedNotFound(waveId, competitionId);
@@ -583,12 +562,9 @@ export class CompetitionService {
   }
 
   private createReader(
-    record: CompetitionRoutingRecord,
+    _record: CompetitionRoutingRecord,
     ctx: RequestContext
   ): CompetitionReader {
-    if (record.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER) {
-      return new LegacyCompetitionAdapter(this.repository, this.wavesDb, ctx);
-    }
     return new NativeCompetitionReader(this.repository, ctx);
   }
 
@@ -617,10 +593,6 @@ export class CompetitionService {
   ): Promise<string[]> {
     const groupIds = new Set(
       competitions
-        .filter(
-          (competition) =>
-            competition.storage_mode === CompetitionStorageMode.NATIVE
-        )
         .flatMap((competition) => [
           competition.participation.group_id,
           competition.voting.group_id
@@ -639,46 +611,43 @@ export class CompetitionService {
     return [...waveGroups.filter((id) => !groupIds.has(id)), ...nativeGroups];
   }
 
-  private toPublicCompetition(
+  private async toPublicCompetition(
     competition: Competition,
     wave: WaveEntity,
     eligibleGroups: string[],
-    ctx: RequestContext
-  ): PublicCompetition {
+    ctx: RequestContext,
+    originalPrimary: boolean
+  ): Promise<PublicCompetition> {
     const {
-      storage_mode: _storage,
       execution_mode: _execution,
       decision_pauses: _decisionPauses,
+      configuration_activated_at: _configurationActivatedAt,
       ...publicData
     } = competition;
     const authenticationContext = ctx.authenticationContext;
     const fullyAuthenticated =
       authenticationContext?.isUserFullyAuthenticated() === true;
     const writesAvailable =
-      competition.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER ||
-      (this.features.isNativeCompetitionWritesEnabled() &&
-        this.features.isNativeCompetitionExecutionEnabled() &&
-        competition.execution_mode === 'ACTIVE' &&
-        competition.lifecycle === CompetitionLifecycle.PUBLISHED);
+      competition.execution_mode === 'ACTIVE' &&
+      competition.lifecycle === CompetitionLifecycle.PUBLISHED;
+    const administer = this.canAdminister(wave, eligibleGroups, ctx);
+    const originalRulesEditable =
+      administer &&
+      !authenticationContext?.isAuthenticatedAsProxy() &&
+      originalPrimary &&
+      competition.lifecycle === CompetitionLifecycle.PUBLISHED;
+    const creditRulesEditable =
+      originalRulesEditable &&
+      !(await competitionCommandRepository.hasVotes(competition.id, ctx));
     const now = Date.now();
     const periodOpen = (
       period: Competition['participation'] | Competition['voting']
     ) =>
-      competition.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER ||
-      ((period.starts_at === null || now >= period.starts_at) &&
-        (period.ends_at === null || now <= period.ends_at) &&
-        !isCompetitionDecisionPending(competition, now));
+      (period.starts_at === null || now >= period.starts_at) &&
+      (period.ends_at === null || now <= period.ends_at) &&
+      !isCompetitionDecisionPending(competition, now);
     return {
       ...publicData,
-      // Legacy Settings mutate shared wave fields. Any intervening wave edit
-      // must invalidate a form that would otherwise overwrite those fields.
-      config_version:
-        competition.storage_mode === CompetitionStorageMode.LEGACY_ADAPTER
-          ? Math.max(
-              competition.config_version,
-              Number(wave.updated_at ?? wave.created_at)
-            )
-          : competition.config_version,
       permissions: {
         view: true,
         submit:
@@ -706,13 +675,9 @@ export class CompetitionService {
               ProfileProxyActionType.RATE_WAVE_DROP
             )
           ),
-        administer:
-          this.canAdminister(wave, eligibleGroups, ctx) &&
-          !(
-            competition.storage_mode ===
-              CompetitionStorageMode.LEGACY_ADAPTER &&
-            authenticationContext?.isAuthenticatedAsProxy()
-          )
+        administer,
+        edit_rules_after_activity: originalRulesEditable,
+        edit_credit_rules: creditRulesEditable
       }
     };
   }
@@ -755,12 +720,6 @@ export class CompetitionService {
     return competition.created_at;
   }
 
-  private assertUnifiedReadsEnabled(): void {
-    if (!this.features.isUnifiedCompetitionReadsEnabled()) {
-      throw new NotFoundException('Competition reads are not enabled');
-    }
-  }
-
   private maskedNotFound(
     waveId: string,
     competitionId: string
@@ -775,6 +734,5 @@ export const competitionService = new CompetitionService(
   competitionRepository,
   wavesApiDb,
   userGroupsService,
-  appFeatures,
   competitionCursorCodec
 );

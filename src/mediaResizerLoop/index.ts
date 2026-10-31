@@ -1,3 +1,4 @@
+import { preparePngPreview } from '@/media/png-preview';
 import { reportUnsupportedResizeOnce } from '@/mediaResizerLoop/unsupported-resize-report';
 import { withMediaDependencySmoke } from '@/media/media-dependency-smoke';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -9,6 +10,8 @@ import {
   UPLOAD_RESERVE_MS
 } from '@/mediaResizerLoop/gif-preview';
 import Sharp from 'sharp';
+import { isHeic, prepareHeicPreview } from '@/mediaResizerLoop/heic-preview';
+import { withHeicResizeRejection } from '@/mediaResizerLoop/heic-resize-rejection';
 import {
   classifyResizeDecoderError,
   INPUT_PIXEL_BACKSTOP,
@@ -114,22 +117,7 @@ const liveHandler = wrapLambdaHandler(async (event: any, context) => {
           ) {
             throw new Error('GIF_PREVIEW_DEADLINE_EXCEEDED');
           }
-          const body = createReadStream(outputPath);
-          try {
-            await new Upload({
-              client: s3Client,
-              queueSize: 1,
-              params: {
-                Bucket: BUCKET,
-                Key: path,
-                Body: body,
-                ContentType: 'image/gif',
-                CacheControl: 'public, max-age=86400'
-              }
-            }).done();
-          } finally {
-            body.destroy();
-          }
+          await uploadResizedFile(outputPath, path, 'image/gif');
         }
       );
       return resizedRedirect(path);
@@ -139,7 +127,38 @@ const liveHandler = wrapLambdaHandler(async (event: any, context) => {
       originImage.Body as Readable,
       originImage.ContentLength,
       animated,
-      async (inputPath, resizeAnimated) => {
+      async (inputPath, resizeAnimated, metadata) => {
+        if (metadata.format === 'png') {
+          const outputPath = await preparePngPreview(
+            inputPath,
+            { width, height, fit },
+            context?.getRemainingTimeInMillis?.()
+          );
+          await uploadResizedFile(outputPath, path, 'image/png');
+          return;
+        }
+        if (isHeic(metadata)) {
+          const outputPath = await withHeicResizeRejection(
+            s3Client,
+            BUCKET,
+            key,
+            sourceRevision,
+            () =>
+              prepareHeicPreview(
+                inputPath,
+                { width, height, fit },
+                context?.getRemainingTimeInMillis?.()
+              )
+          );
+          const remainingTimeMs = context?.getRemainingTimeInMillis?.();
+          if (
+            remainingTimeMs !== undefined &&
+            remainingTimeMs < UPLOAD_RESERVE_MS
+          )
+            throw new Error('HEIC_CONVERSION_DEADLINE_EXCEEDED');
+          await uploadResizedFile(outputPath, path, 'image/jpeg');
+          return;
+        }
         const sharp = Sharp(inputPath, {
           failOn: 'none',
           animated: resizeAnimated,
@@ -185,6 +204,29 @@ const liveHandler = wrapLambdaHandler(async (event: any, context) => {
     return handleResizeFailure(e, path, key, sourceRevision);
   }
 });
+
+async function uploadResizedFile(
+  inputPath: string,
+  destination: string,
+  contentType: string
+) {
+  const body = createReadStream(inputPath);
+  try {
+    await new Upload({
+      client: s3Client,
+      queueSize: 1,
+      params: {
+        Bucket: BUCKET,
+        Key: destination,
+        Body: body,
+        ContentType: contentType,
+        CacheControl: 'public, max-age=86400'
+      }
+    }).done();
+  } finally {
+    body.destroy();
+  }
+}
 
 function getSourceObjectRevision(
   versionId: string | undefined,

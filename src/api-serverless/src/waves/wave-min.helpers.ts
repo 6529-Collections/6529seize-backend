@@ -17,6 +17,7 @@ import {
 } from '@/waves/wave-chat-replies.helpers';
 
 export type WaveMinSource = {
+  is_direct_message?: boolean | null;
   id: string;
   name: string;
   picture: string | null;
@@ -91,6 +92,7 @@ export function mapWaveToApiWaveMin({
     groupIdsUserIsEligibleFor.includes(wave.visibility_group_id);
   return {
     id: wave.id,
+    is_direct_message: wave.is_direct_message === true,
     name: displayByWaveId[wave.id]?.name ?? wave.name,
     picture: resolveWavePictureOverride(wave.picture, displayByWaveId[wave.id]),
     description_drop_id: wave.description_drop_id,

@@ -249,6 +249,11 @@ export const WS_NOTIFICATION_SUBSCRIPTIONS_TABLE =
   'ws_notification_subscriptions';
 export const RELEASE_NOTE_STREAM_STATES_TABLE = 'release_note_stream_states';
 export const RELEASE_NOTE_PUBLICATIONS_TABLE = 'release_note_publications';
+export const RELEASE_NOTE_RECOVERY_JOBS_TABLE = 'release_note_recovery_jobs';
+export const RELEASE_DIGEST_ENTRIES_TABLE = 'release_digest_entries';
+export const RELEASE_DIGESTS_TABLE = 'release_digests';
+export const MARKET_DEPTH_PUBLICATION_LOCKS_TABLE =
+  'market_depth_publication_locks';
 export const MARKET_DEPTH_SNAPSHOTS_TABLE = 'market_depth_snapshots';
 export const MARKET_DEPTH_COLLECTION_STATE_TABLE =
   'market_depth_collection_state';
@@ -274,6 +279,7 @@ export const PUSH_NOTIFICATION_CANCELLATIONS_TABLE =
   'push_notification_cancellations';
 
 export const COMPETITION_VOTE_HISTORY_TABLE = 'competition_vote_history';
+export const COMPETITION_SCORE_HISTORY_TABLE = 'competition_score_history';
 export const COMPETITION_ENTRY_RUNTIME_TABLE = 'competition_entry_runtime';
 export const COMPETITION_WINNER_VOTES_TABLE = 'competition_winner_votes';
 export const COMPETITION_OUTCOME_AWARDS_TABLE = 'competition_outcome_awards';
@@ -303,6 +309,15 @@ export const COMPETITION_LEGACY_MIRROR_PERMITS_TABLE =
   'competition_legacy_mirror_permits';
 export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
   'competition_legacy_execution_effects';
+
+export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
+export const MEME_COLLABORATION_INVITATIONS_TABLE =
+  'meme_collaboration_invitations';
+export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';
+
+export const VOTING_CREDIT_RELEASES_TABLE = 'voting_credit_releases';
+export const VOTING_CREDIT_RELEASE_RECIPIENTS_TABLE =
+  'voting_credit_release_recipients';
 
 // End-to-end encrypted DMs and groups (D109). The server stores ciphertext
 // and delivery metadata only; see docs/e2ee-messaging.md.

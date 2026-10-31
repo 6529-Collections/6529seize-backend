@@ -59,6 +59,143 @@ const directMessageProfileWave = aWave(
   { id: 'profile-wave-dm', serial_no: 14, name: 'Profile DM' }
 );
 
+const publicFeedWaves = [
+  publicWaveA,
+  privateWave,
+  aWave(
+    { parent_wave_id: publicWaveA.id, chat_group_id: 'posting-group' },
+    { id: 'public-feed-child', serial_no: 21, name: 'Public child' }
+  ),
+  aWave(
+    { parent_wave_id: privateWave.id },
+    { id: 'private-parent-child', serial_no: 22, name: 'Private parent child' }
+  ),
+  aWave(
+    { parent_wave_id: publicWaveA.id, visibility_group_id: 'group-1' },
+    { id: 'private-feed-child', serial_no: 23, name: 'Private child' }
+  ),
+  directMessageProfileWave
+];
+
+describeWithSeed(
+  'DropsDb public-only latest drops',
+  [
+    withWaves(publicFeedWaves),
+    withIdentities([authorAlice]),
+    {
+      table: DROPS_TABLE,
+      rows: [
+        {
+          id: 'public-root-old',
+          wave_id: publicWaveA.id,
+          serial_no: 201
+        },
+        {
+          id: 'public-root-reply',
+          wave_id: publicWaveA.id,
+          serial_no: 202,
+          reply_to_drop_id: 'public-root-old'
+        },
+        {
+          id: 'public-child',
+          wave_id: 'public-feed-child',
+          serial_no: 203
+        },
+        {
+          id: 'private-root',
+          wave_id: privateWave.id,
+          serial_no: 204
+        },
+        {
+          id: 'private-parent',
+          wave_id: 'private-parent-child',
+          serial_no: 205
+        },
+        {
+          id: 'private-child',
+          wave_id: 'private-feed-child',
+          serial_no: 206
+        },
+        {
+          id: 'direct-message',
+          wave_id: directMessageProfileWave.id,
+          serial_no: 207
+        }
+      ].map((drop) =>
+        aDropRow({
+          ...drop,
+          author_id: authorAlice.profile_id!,
+          created_at: drop.serial_no
+        })
+      )
+    }
+  ],
+  () => {
+    const query = {
+      amount: 2,
+      serial_no_less_than: null,
+      group_ids_user_is_eligible_for: ['group-1'],
+      group_id: null,
+      wave_id: null,
+      author_id: authorAlice.profile_id!,
+      include_replies: true,
+      drop_type: null,
+      ids: null,
+      serial_nos: null,
+      contains_media: false
+    };
+
+    it('filters private waves, private parents and DMs before applying the page limit', async () => {
+      const firstPage = await repo.findLatestDrops(
+        { ...query, public_only: true },
+        ctx
+      );
+      expect(firstPage.map((drop) => drop.id)).toEqual([
+        'public-child',
+        'public-root-reply'
+      ]);
+
+      const secondPage = await repo.findLatestDrops(
+        {
+          ...query,
+          public_only: true,
+          serial_no_less_than: firstPage[1].serial_no
+        },
+        ctx
+      );
+      expect(secondPage.map((drop) => drop.id)).toEqual(['public-root-old']);
+    });
+
+    it.each([undefined, false])(
+      'preserves eligible private results when public_only is %s',
+      async (public_only) => {
+        const drops = await repo.findLatestDrops(
+          { ...query, public_only },
+          ctx
+        );
+        expect(drops.map((drop) => drop.id)).toEqual([
+          'direct-message',
+          'private-child'
+        ]);
+      }
+    );
+
+    it.each([
+      privateWave.id,
+      'private-parent-child',
+      'private-feed-child',
+      directMessageProfileWave.id
+    ])(
+      'does not allow an explicit wave filter to bypass public-only scope for %s',
+      async (wave_id) => {
+        await expect(
+          repo.findLatestDrops({ ...query, wave_id, public_only: true }, ctx)
+        ).resolves.toEqual([]);
+      }
+    );
+  }
+);
+
 describeWithSeed(
   'DropsDb curated profile wave drops',
   [

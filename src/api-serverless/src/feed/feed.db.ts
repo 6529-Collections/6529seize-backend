@@ -5,6 +5,8 @@ import {
   LazyDbAccessCompatibleService
 } from '../../../sql-executor';
 import { ACTIVITY_EVENTS_TABLE } from '@/constants';
+import { anonymousCompetitionEntrySql } from '@/competitions/competition-anonymity';
+import { COMPETITION_ENTRIES_TABLE, COMPETITIONS_TABLE } from '@/constants';
 import {
   ActivityEventAction,
   ActivityEventEntity
@@ -41,6 +43,13 @@ export class FeedDb extends LazyDbAccessCompatibleService {
         AND (
           -- Subscribed events from other users
           (ae.action_author_id <> :subscriber_id
+           AND (ae.target_type <> 'IDENTITY' OR NOT EXISTS (
+             SELECT 1 FROM ${COMPETITION_ENTRIES_TABLE} anonymous_entry
+             JOIN ${COMPETITIONS_TABLE} anonymous_competition
+               ON anonymous_competition.id = anonymous_entry.competition_id
+             WHERE anonymous_entry.drop_id = ae.drop_id
+               AND ${anonymousCompetitionEntrySql('anonymous_entry', 'anonymous_competition')}
+           ))
            AND EXISTS (
              SELECT 1
              FROM identity_subscriptions ids

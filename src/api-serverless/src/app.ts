@@ -160,7 +160,6 @@ import {
   cmsAgentPrivateHeadersMiddleware
 } from '@/api/profile-cms/profile-cms-agent.http';
 import { cacheRequest } from './request-cache';
-import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 import { getValidatedByJoiOrThrow } from './validation';
@@ -174,7 +173,8 @@ import {
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import {
   notificationIdentitiesSyncedMessage,
-  WsMessageType
+  WsMessageType,
+  WS_RECOVERY_CAPABILITY
 } from './ws/ws-message';
 import { registerOpenApiSpecRoutes } from './openapi-spec-routes';
 
@@ -1703,7 +1703,6 @@ function wireApp() {
   rootRouter.use(BASE_PATH, apiRouter);
   rootRouter.use(`/desktop`, desktopRoutes);
   rootRouter.use(`/oracle`, oracleRoutes);
-  rootRouter.use(`/rpc`, rpcRoutes);
   rootRouter.use(`/sitemap`, sitemapRoutes);
   rootRouter.use(`/alchemy-proxy`, alchemyProxyRoutes);
 
@@ -1774,7 +1773,11 @@ function wireApp() {
           identityId,
           connectionId,
           jwtExpiry,
-          ws: socket
+          ws: socket,
+          ...(event.queryStringParameters?.recovery_capability ===
+          WS_RECOVERY_CAPABILITY
+            ? { recoveryCapable: true }
+            : {})
         });
 
         socket.send(JSON.stringify({ routeKey: '$connect', connected: true }));

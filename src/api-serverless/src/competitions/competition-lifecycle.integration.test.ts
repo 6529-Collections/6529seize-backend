@@ -121,21 +121,74 @@ describeWithSeed(
   () => {
     beforeEach(() => {
       jest
-        .spyOn(appFeatures, 'isUnifiedCompetitionReadsEnabled')
-        .mockReturnValue(true);
-      jest
-        .spyOn(appFeatures, 'isNativeCompetitionWritesEnabled')
-        .mockReturnValue(true);
-      jest
-        .spyOn(appFeatures, 'isNativeCompetitionExecutionEnabled')
-        .mockReturnValue(true);
-      jest
         .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
         .mockResolvedValue([]);
     });
     afterEach(() => {
       jest.restoreAllMocks();
       delete process.env.NATIVE_COMPETITION_CAPABILITY_OPERATORS;
+    });
+
+    it('defaults to public submissions and preserves anonymous configuration through publication and cloning', async () => {
+      const publicDraft = await draft();
+      expect(publicDraft.participation.anonymous_submissions).toBe(false);
+      const anonymousConfig = config();
+      anonymousConfig.participation.anonymous_submissions = true;
+      const anonymousDraft = await service.create(
+        wave.id,
+        { idempotency_key: randomUUID(), config: anonymousConfig },
+        ctx
+      );
+      expect(anonymousDraft.participation.anonymous_submissions).toBe(true);
+      const published = await service.action(
+        wave.id,
+        anonymousDraft.id,
+        'publish',
+        { idempotency_key: randomUUID(), config_version: 1 },
+        ctx
+      );
+      const changingPrivacy = {
+        ...anonymousConfig,
+        participation: {
+          ...anonymousConfig.participation,
+          anonymous_submissions: false
+        }
+      };
+      await expect(
+        service.update(
+          wave.id,
+          published.id,
+          {
+            idempotency_key: randomUUID(),
+            config_version: published.config_version,
+            config: changingPrivacy
+          },
+          ctx
+        )
+      ).rejects.toThrow('anonymity cannot change after publication');
+      await completeSchedule(published.id);
+      const clone = await service.action(
+        wave.id,
+        published.id,
+        'clone',
+        {
+          idempotency_key: randomUUID(),
+          config_version: published.config_version
+        },
+        ctx
+      );
+      expect(clone.participation.anonymous_submissions).toBe(true);
+      const updated = await service.update(
+        wave.id,
+        clone.id,
+        {
+          idempotency_key: randomUUID(),
+          config_version: clone.config_version,
+          config: changingPrivacy
+        },
+        ctx
+      );
+      expect(updated.participation.anonymous_submissions).toBe(false);
     });
 
     it('scopes vote activity to visible entries in the chosen competition and masks drafts and mismatched parents', async () => {

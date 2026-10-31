@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
+import { LoopAssessment, parseLoopAssessment } from './loop-health.js';
 
 export const EVENT_TYPE = '6529.ops.error.v1';
 export const MAX_EVENT_BYTES = 8192;
 export type Environment = 'prod' | 'staging';
-export type Severity = 'error' | 'critical' | 'recovery';
+export type Severity = 'error' | 'critical' | 'recovery' | 'warning';
 export type Code =
   | 'APPLICATION_ERROR'
   | 'LAMBDA_FAILURE'
@@ -11,7 +12,9 @@ export type Code =
   | 'PLATFORM_RECOVERY'
   | 'SENTRY_ERROR'
   | 'UPTIME_FAILURE'
-  | 'UPTIME_RECOVERY';
+  | 'UPTIME_RECOVERY'
+  | 'LOOP_HEALTH'
+  | 'LOOP_RECOVERY';
 export interface AlarmMetadata {
   name?: string;
   namespace?: string;
@@ -146,6 +149,7 @@ export interface Alert {
   release?: string;
   alarm?: AlarmMetadata;
   diagnostic?: Diagnostic;
+  loop?: LoopAssessment;
 }
 const CODES = new Set<Code>([
   'APPLICATION_ERROR',
@@ -154,7 +158,9 @@ const CODES = new Set<Code>([
   'PLATFORM_RECOVERY',
   'SENTRY_ERROR',
   'UPTIME_FAILURE',
-  'UPTIME_RECOVERY'
+  'UPTIME_RECOVERY',
+  'LOOP_HEALTH',
+  'LOOP_RECOVERY'
 ]);
 export const hash = (value: string): string =>
   createHash('sha256').update(value).digest('hex');
@@ -197,7 +203,9 @@ export function parseAlert(input: unknown): Alert {
     !token(v.service, 100) ||
     !token(v.fingerprint, 128) ||
     !['prod', 'staging'].includes(String(v.environment)) ||
-    !['error', 'critical', 'recovery'].includes(String(v.severity)) ||
+    !['error', 'critical', 'recovery', 'warning'].includes(
+      String(v.severity)
+    ) ||
     !CODES.has(v.code as Code) ||
     typeof v.occurredAt !== 'string' ||
     !Number.isFinite(Date.parse(v.occurredAt))
@@ -226,6 +234,10 @@ export function parseAlert(input: unknown): Alert {
     const alarm = parseAlarmMetadata(v.alarm);
     if (alarm) alert.alarm = alarm;
   }
+  if (['LOOP_HEALTH', 'LOOP_RECOVERY'].includes(alert.code)) {
+    alert.loop = parseLoopAssessment(v.loop);
+    if (!alert.loop) throw new Error('INVALID_LOOP_ALERT');
+  }
   return alert;
 }
 function alarmFields(alarm: AlarmMetadata | undefined) {
@@ -252,7 +264,9 @@ const DESCRIPTIONS: Record<Code, string> = {
   PLATFORM_RECOVERY: 'An infrastructure alarm recovered.',
   SENTRY_ERROR: 'Sentry reported an application error.',
   UPTIME_FAILURE: 'An independent endpoint check failed.',
-  UPTIME_RECOVERY: 'An independent endpoint check recovered.'
+  UPTIME_RECOVERY: 'An independent endpoint check recovered.',
+  LOOP_HEALTH: 'Background processing needs attention.',
+  LOOP_RECOVERY: 'The reported background processing condition cleared.'
 };
 const CATEGORY_TEXT: Record<Diagnostic['category'], string> = {
   HTTP_ERROR: 'HTTP request failed',
@@ -299,12 +313,74 @@ function recoverySentence(d: Diagnostic, amber: boolean): string {
   }
 }
 function alertDescription(alert: Alert, amber: boolean): string {
+  if (alert.loop) return loopDescription(alert);
+  const websocket = websocketAlarmDescription(alert);
+  if (websocket) return websocket;
   const d = alert.diagnostic;
   if (!d) return DESCRIPTIONS[alert.code];
   let operation = d.operation ?? alert.service;
   if (operation === 'NFT_REFRESH') operation = 'NFT refresh';
   if (operation === 'WS_OUTBOUND_SEND') operation = 'WebSocket send';
   return `${operation} failed: ${failureCause(alert, d)}. ${recoverySentence(d, amber)}`;
+}
+
+function loopDescription(alert: Alert): string {
+  const detail = alert.loop!;
+  const operation = `${alert.service} ${detail.operation.replaceAll('_', ' ')}`;
+  if (alert.code === 'LOOP_RECOVERY')
+    return detail.reason === 'contention_cleared'
+      ? `${operation}: execution contention cleared. Business catch-up has not been verified.`
+      : `${operation}: fresh business observations confirm processing is back within its monitoring budgets.`;
+  const age =
+    detail.ageSeconds === undefined ? '' : ` (${detail.ageSeconds} seconds)`;
+  switch (detail.reason) {
+    case 'deadline':
+      return `${operation}: outstanding work is approaching or exceeding its execution deadline${age}. Automatic processing has not completed it; investigate immediately.`;
+    case 'stalled':
+      return `${operation}: outstanding work has no confirmed progress beyond its stall budget${age}. Catch-up is not confirmed; inspect the worker and its dependencies.`;
+    case 'recovery_failed':
+      return `${operation}: outstanding work cannot recover automatically because recovery is unavailable or exhausted. Operator action is required.`;
+    case 'delayed':
+      return `${operation}: required processing is meaningfully delayed${age}. ${loopRecoveryDescription(detail)}`;
+    case 'telemetry_stale':
+      return `${operation}: business-health observations are stale. Current progress, backlog and recovery cannot be confirmed; inspect telemetry and the worker.`;
+    default:
+      return detail.scope === 'processing'
+        ? `${operation}: business progress and automatic recovery cannot be confirmed from the available observations. Inspect outstanding work and telemetry before treating processing as recovered.`
+        : `${operation}: execution contention is delaying processing opportunities. Business progress and automatic catch-up have not been confirmed; inspect the worker's backlog. Throttling alone does not establish an application failure.`;
+  }
+}
+
+function loopRecoveryDescription(detail: LoopAssessment): string {
+  if (detail.recovery !== 'automatic')
+    return 'Automatic recovery has not been confirmed; inspect the outstanding work.';
+  switch (detail.operation) {
+    case 'indexing':
+      return 'Scheduled scans resume from the persisted checkpoint when an execution slot becomes available.';
+    case 'recalculation':
+      return 'The recalculation remains pending; completion has not been confirmed. Scheduled indexing resumes after it releases the execution slot.';
+    case 'decisions':
+      return 'Outstanding decisions remain due and are rediscovered by scheduled execution; their deadline budget is monitored separately.';
+    case 'publication':
+      return 'Undelivered outbox work remains available for automatic retry when next eligible.';
+    default:
+      return 'Outstanding work remains available for an automatic processing attempt.';
+  }
+}
+
+function websocketAlarmDescription(alert: Alert): string | undefined {
+  if (alert.alarm?.namespace !== '6529/WebSocketDelivery') return undefined;
+  const metric = alert.alarm.metric;
+  if (
+    !['Degraded', 'WorkerHealthy', 'RecoveryUnavailable'].includes(metric ?? '')
+  )
+    return undefined;
+  if (alert.code === 'PLATFORM_RECOVERY')
+    return 'WebSocket delivery monitoring has recovered. Check the latest WS_DELIVERY_HEALTH summary to confirm pending refreshes are draining.';
+  if (alert.code !== 'PLATFORM_ALARM') return undefined;
+  if (metric === 'Degraded')
+    return 'WebSocket delivery is failing across listeners, is persistently unavailable, or has an old retry backlog. Inspect WS_DELIVERY_HEALTH in webSocketDeliveryLoop, check AWS send quotas and Redis, and reduce broadcast bursts. One blocked listener is handled automatically; do not disconnect the fleet.';
+  return 'WebSocket refresh recovery is unavailable. Inspect webSocketDeliveryLoop errors, its schedule and Redis availability. Restore recovery before treating missing live updates as delivered.';
 }
 interface AlertField {
   name: string;
@@ -352,6 +428,12 @@ function alertFields(alert: Alert, count: number): AlertField[] {
     ...diagnosticFields(alert.diagnostic, count),
     ...alarmFields(alert.alarm)
   ];
+  if (alert.loop?.expectedOverlap)
+    fields.push({
+      name: 'Execution pattern',
+      value:
+        'Frequent schedule with one reserved execution; overlap is expected. Business impact is assessed separately.'
+    });
   if (alert.condition)
     fields.push({ name: 'Condition', value: alert.condition });
   fields.push(
@@ -364,7 +446,7 @@ function alertFields(alert: Alert, count: number): AlertField[] {
   return fields;
 }
 export function renderAlert(alert: Alert, count = 1): object {
-  const amber = isAmber(alert);
+  const amber = alert.severity === 'warning' || isAmber(alert);
   let color = 0xef4444;
   if (amber) {
     color = 0xf59e0b;

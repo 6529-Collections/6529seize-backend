@@ -41,8 +41,29 @@ A successful WEB E2E alert is a single line with no mentions:
 ```
 
 Attempt 1 has no attempt suffix. A failed WEB E2E alert is detailed and
-mentions the mapped manual initiator, the original deploy initiator when
-different, and `@devs6529`.
+mentions the mapped manual initiator and the original deploy initiator when
+different. A failed production WEB E2E alert also ends with `cc @devs6529`; a
+failed staging WEB E2E alert does not, because staging E2E does not gate
+releases and a group ping on every staging failure is noise.
+
+Failure senders enrich the existing optional `description` field. The receiver
+preserves its line breaks for failures, including WEB E2E replies. No new
+request fields are required; old senders continue to work and successful WEB
+E2E messages remain one line.
+
+Frontend E2E failures list final failed test names grouped by pack and browser.
+Names shared by desktop and mobile appear once with both browsers in the
+heading. Counts include both executions. Recovered retries and flaky tests do
+not appear in the final failure list. Evidence comes from the final pack
+attempt's retained `output.log` and `evidence.json`.
+
+E2E summaries describe the deployed app, including failures caused by backend
+changes. The frontend E2E workflow reports the failed tests regardless of which
+repository's PR caused the regression. Already-published messages are not
+modified. When test evidence is missing, the sender identifies failed workflow
+steps from the current GitHub run attempt or preserves an explicit fallback
+with the original run link. Notifications remain best effort, and summaries
+are bounded below the receiver's description limit.
 
 ## Deploy Reply Correlation
 
@@ -69,8 +90,10 @@ without a parent identity posts standalone.
 
 Successful WEB E2E results never mention anyone. Failed results notify the
 manual validation initiator and, when distinct and resolvable, the deploy
-initiator, followed by the developers group. Automation actors are not treated
-as people to mention.
+initiator. Production failures are followed by the developers group; staging
+failures are not. Deploy and workflow failures in either environment always
+mention the developers group. Automation actors are not treated as people to
+mention.
 
 ## Deployment And Rollback
 

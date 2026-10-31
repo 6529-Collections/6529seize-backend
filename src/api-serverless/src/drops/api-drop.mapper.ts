@@ -1,3 +1,9 @@
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
+import { collaborationMetadataValues } from '@/meme-collaborations/meme-collaboration-credit';
 import {
   ActivityEventAction,
   ActivityEventTargetType
@@ -120,6 +126,8 @@ const PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY = 'additional_media';
 export interface ApiDropMapperOptions {
   readonly groupIdsUserIsEligibleFor?: string[];
   readonly includeLargestVote?: boolean;
+  /** Native competition readers supply their own scoped voting summary. */
+  readonly includeSubmissionVoting?: boolean;
 }
 
 export class ApiDropMapper {
@@ -160,6 +168,8 @@ export class ApiDropMapper {
         return {};
       }
       const dropIds = entities.map((drop) => drop.id);
+      const bookmarkProfileId =
+        ctx.authenticationContext?.getLoggedInUsersProfileId();
       const contextProfileId = getWaveReadContextProfileId(
         ctx.authenticationContext
       );
@@ -171,8 +181,14 @@ export class ApiDropMapper {
           .map((drop) => drop.reply_to_drop_id)
           .filter((id): id is string => !!id)
       );
-      const submissionEntities = entities.filter((drop) =>
-        this.isSubmissionDrop(drop)
+      const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+        [...dropIds, ...replyDropIds],
+        ctx
+      );
+      const submissionEntities = entities.filter(
+        (drop) =>
+          options.includeSubmissionVoting !== false &&
+          this.isSubmissionDrop(drop)
       );
       const submissionDropIds = submissionEntities.map((drop) => drop.id);
       const participatoryDropEntities = submissionEntities.filter(
@@ -297,10 +313,10 @@ export class ApiDropMapper {
               ctx
             )
           : Promise.resolve(new Set<string>()),
-        contextProfileId
+        bookmarkProfileId
           ? this.dropBookmarksDb.findBookmarkedDropIds(
               {
-                identity_id: contextProfileId,
+                identity_id: bookmarkProfileId,
                 drop_ids: dropIds
               },
               ctx.connection
@@ -317,18 +333,15 @@ export class ApiDropMapper {
             )
           : Promise.resolve({} as Record<string, ActivityEventAction[]>),
         this.dropsDb.getReplyPreviewsByDropIds(replyDropIds, ctx),
-        this.dropVotingDb.getDropV2SubmissionVotingSummaries(
-          submissionDropIds,
-          ctx
-        ),
-        contextProfileId
+        this.submissionVotingSummaries(submissionDropIds, ctx),
+        contextProfileId && participatoryDropEntities.length
           ? this.dropVotingService.findCreditLeftForVotingForDrops(
               contextProfileId,
               participatoryDropEntities,
               ctx.connection
             )
           : Promise.resolve({} as VoteRangeByDropId),
-        contextProfileId
+        contextProfileId && winnerDropIds.length
           ? this.dropVotingDb.getWinningDropsRatingsByVoter(
               winnerDropIds,
               contextProfileId,
@@ -355,6 +368,16 @@ export class ApiDropMapper {
       const priorityMetadataByDropId =
         this.mapPriorityMetadataByDropId(priorityMetadataRows);
 
+      const collaboratorsByDropId = await memeCollaborationsDb.acceptedByDrops(
+        dropIds,
+        ctx
+      );
+      const collaborationPresentation =
+        await memeCollaborationsDb.presentationByDrops(
+          dropIds,
+          ctx,
+          collaboratorsByDropId
+        );
       const dropsById = entities.reduce(
         (acc, drop) => {
           const participation = authorWaveParticipationByWave[drop.wave_id]?.[
@@ -413,6 +436,37 @@ export class ApiDropMapper {
                 )
               : undefined
           });
+          const anonymous = hiddenDropIds.has(drop.id);
+          if (anonymous) {
+            acc[drop.id].author = anonymousCompetitionAuthor(
+              acc[drop.id].author,
+              drop.id
+            );
+          }
+          const reply = acc[drop.id].reply_to_drop;
+          if (reply && hiddenDropIds.has(reply.id) && reply.author) {
+            reply.author = { handle: 'Anonymous', is_anonymous: true };
+          }
+          acc[drop.id].collaborators = anonymous
+            ? []
+            : (collaboratorsByDropId[drop.id] ?? []);
+          const presentation = collaborationPresentation[drop.id];
+          if (
+            !anonymous &&
+            presentation &&
+            acc[drop.id].moderation?.can_view !== false
+          ) {
+            acc[drop.id].submission_artist = presentation.submission_artist;
+            const creditValues = collaborationMetadataValues(
+              presentation.credit
+            );
+            acc[drop.id].priority_metadata = acc[
+              drop.id
+            ].priority_metadata?.map((item) => ({
+              ...item,
+              data_value: creditValues.get(item.data_key) ?? item.data_value
+            }));
+          }
           return acc;
         },
         {} as Record<string, ApiDropV2>
@@ -705,13 +759,12 @@ export class ApiDropMapper {
     if (replyPreview.content !== null) {
       apiReply.content = replyPreview.content;
     }
-    if (
-      replyPreview.author_handle !== null &&
-      replyPreview.author_pfp !== null
-    ) {
+    if (replyPreview.author_handle !== null) {
       apiReply.author = {
         handle: replyPreview.author_handle,
-        pfp: replyPreview.author_pfp
+        ...(replyPreview.author_pfp !== null
+          ? { pfp: replyPreview.author_pfp }
+          : {})
       };
     }
     return apiReply;
@@ -1027,6 +1080,15 @@ export class ApiDropMapper {
       viewer: { author_blocked: false, drop_hidden: false },
       moderation: { status: DropModerationStatus.VISIBLE, can_view: true }
     };
+  }
+
+  private submissionVotingSummaries(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, DropSubmissionVotingSummary>> {
+    return dropIds.length
+      ? this.dropVotingDb.getDropV2SubmissionVotingSummaries(dropIds, ctx)
+      : Promise.resolve({});
   }
 
   private isSubmissionDrop(drop: DropEntity): boolean {

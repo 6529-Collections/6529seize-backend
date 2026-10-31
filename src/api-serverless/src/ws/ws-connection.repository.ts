@@ -1,3 +1,4 @@
+import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import {
   dbSupplier,
   LazyDbAccessCompatibleService,
@@ -26,11 +27,19 @@ import {
 import { ANON_USER_ID, SocketNotAvailableException } from './ws';
 import { randomInt } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import {
+  recordWebSocketDatabaseSession,
+  recordWebSocketSqlPhase,
+  recordWebSocketTransactionIsolation,
+  WsTransactionDiagnostics
+} from '@/api/ws/ws-transaction-diagnostics';
+import { WsDiagnosticOperation } from '@/api/ws/ws-operation-diagnostics';
 
 type NotificationSubscription = { identityId: string; jwtExpiry: number };
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   private static readonly NOTIFICATION_CLEANUP_SAMPLE_DENOMINATOR = 100;
+  private static readonly CONNECTION_LOCK_ATTEMPTS = 3;
 
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -50,20 +59,30 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     subscriptions: NotificationSubscription[],
     ctx: RequestContext
   ) {
-    await this.mutateConnection(ctx, async (transactionContext) => {
-      // The inserted connection row provides the same serialization point used
-      // by reauthentication, subscription sync and deletion.
-      await this.db.execute(
-        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
-        entity,
-        { wrappedConnection: transactionContext.connection }
-      );
-      await this.writeNotificationSubscriptions(
-        entity.connection_id,
-        subscriptions,
-        transactionContext
-      );
-    });
+    await this.mutateConnection(
+      'REGISTER',
+      entity.connection_id,
+      subscriptions.length,
+      ctx,
+      async (transactionContext) => {
+        // The inserted connection row provides the same serialization point used
+        // by reauthentication, subscription sync and deletion.
+        recordWebSocketSqlPhase('insert_connection');
+        await this.db.execute(
+          `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
+          entity,
+          {
+            wrappedConnection: transactionContext.connection,
+            bindInvocationContext: true
+          }
+        );
+        await this.writeNotificationSubscriptions(
+          entity.connection_id,
+          subscriptions,
+          transactionContext
+        );
+      }
+    );
   }
 
   public async updateWaveId(
@@ -89,38 +108,58 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     // Keep this as the sole write path for ws_connections.identity_id. Any
     // future identity update must also replace notification subscriptions so
     // a re-authenticated connection cannot retain another identity's grants.
-    await this.mutateConnection(ctx, async (transactionContext) => {
-      await this.requireConnection(params.connectionId, transactionContext);
-      await this.db.execute(
-        `update ${WS_CONNECTIONS_TABLE}
+    await this.mutateConnection(
+      'AUTHENTICATE',
+      params.connectionId,
+      subscriptions.length,
+      ctx,
+      async (transactionContext) => {
+        await this.requireConnection(params.connectionId, transactionContext);
+        recordWebSocketSqlPhase('update_identity');
+        await this.db.execute(
+          `update ${WS_CONNECTIONS_TABLE}
          set identity_id = :identityId,
              jwt_expiry = :jwtExpiry
          where connection_id = :connectionId`,
-        params,
-        { wrappedConnection: transactionContext.connection }
-      );
-      await this.writeNotificationSubscriptions(
-        params.connectionId,
-        subscriptions,
-        transactionContext
-      );
-    });
+          params,
+          {
+            wrappedConnection: transactionContext.connection,
+            bindInvocationContext: true
+          }
+        );
+        await this.writeNotificationSubscriptions(
+          params.connectionId,
+          subscriptions,
+          transactionContext
+        );
+      }
+    );
   }
 
   public async deleteByConnectionId(connectionId: string, ctx: RequestContext) {
-    await this.mutateConnection(ctx, async (transactionContext) => {
-      // Missing connections may still have legacy orphan grants to remove.
-      await this.lockConnection(connectionId, transactionContext);
-      await this.deleteNotificationSubscriptions(
-        connectionId,
-        transactionContext
-      );
-      await this.db.execute(
-        `delete from ${WS_CONNECTIONS_TABLE} where connection_id = :connectionId`,
-        { connectionId },
-        { wrappedConnection: transactionContext.connection }
-      );
-    });
+    await this.mutateConnection(
+      'DISCONNECT',
+      connectionId,
+      undefined,
+      ctx,
+      async (transactionContext) => {
+        // Missing connections may still have legacy orphan grants to remove.
+        await this.lockConnection(connectionId, transactionContext);
+        await this.deleteNotificationSubscriptions(
+          connectionId,
+          transactionContext
+        );
+        recordWebSocketSqlPhase('delete_connection');
+        await this.db.execute(
+          `delete from ${WS_CONNECTIONS_TABLE} where connection_id = :connectionId`,
+          { connectionId },
+          {
+            wrappedConnection: transactionContext.connection,
+            bindInvocationContext: true
+          }
+        );
+      }
+    );
   }
 
   public async replaceNotificationSubscriptions(
@@ -128,40 +167,73 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     subscriptions: NotificationSubscription[],
     ctx: RequestContext
   ): Promise<void> {
-    await this.mutateConnection(ctx, async (transactionContext) => {
-      await this.requireConnection(connectionId, transactionContext);
-      await this.writeNotificationSubscriptions(
-        connectionId,
-        subscriptions,
-        transactionContext
-      );
-    });
+    await this.mutateConnection(
+      'SYNC_NOTIFICATION_IDENTITIES',
+      connectionId,
+      subscriptions.length,
+      ctx,
+      async (transactionContext) => {
+        await this.requireConnection(connectionId, transactionContext);
+        await this.writeNotificationSubscriptions(
+          connectionId,
+          subscriptions,
+          transactionContext
+        );
+      }
+    );
   }
 
   private async mutateConnection(
+    operation: WsDiagnosticOperation,
+    connectionId: string,
+    subscriptionCount: number | undefined,
     ctx: RequestContext,
     mutation: (ctx: RequestContext) => Promise<void>
   ): Promise<void> {
+    const diagnostics = new WsTransactionDiagnostics(
+      operation,
+      connectionId,
+      ctx.connection ? 'caller' : 'repository',
+      subscriptionCount
+    );
     // A deadlock aborts the whole transaction. Its owner must replay the whole
     // unit: never retry just our statements inside somebody else's transaction.
     if (ctx.connection) {
-      await mutation(ctx);
+      try {
+        await diagnostics.runAttempt(1, () => mutation(ctx));
+        diagnostics.completed();
+      } catch (error) {
+        diagnostics.failed(error, false);
+        throw error;
+      }
       return;
     }
     for (let attempt = 1; ; attempt++) {
       try {
-        await this.db.executeNativeQueriesInTransaction((connection) =>
-          mutation({ ...ctx, connection })
+        await diagnostics.runAttempt(attempt, () =>
+          // A connection row serializes mutations for that socket. READ COMMITTED
+          // avoids locking a shared subscription gap when different sockets have
+          // no existing grants to delete before their inserts.
+          this.db.executeNativeQueriesInTransaction(
+            async (connection) => {
+              recordWebSocketTransactionIsolation('READ-COMMITTED');
+              await mutation({ ...ctx, connection });
+              recordWebSocketSqlPhase('commit');
+            },
+            { isolationLevel: 'READ COMMITTED' }
+          )
         );
+        diagnostics.completed();
         return;
       } catch (error) {
-        if (
-          attempt >= 3 ||
-          !error ||
-          typeof error !== 'object' ||
-          !('code' in error) ||
-          error.code !== 'ER_LOCK_DEADLOCK'
-        ) {
+        const retryPending =
+          attempt < 3 &&
+          !!error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'ER_LOCK_DEADLOCK';
+        diagnostics.failed(error, retryPending);
+        if (!retryPending) {
           throw error;
         }
         await delay(randomInt(10 * attempt, 25 * attempt + 1));
@@ -171,19 +243,51 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
 
   private async lockConnection(
     connectionId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    attemptsLeft = WsConnectionRepository.CONNECTION_LOCK_ATTEMPTS
   ): Promise<boolean> {
-    const connections = await this.db.execute<{ connection_id: string }>(
-      `select connection_id from ${WS_CONNECTIONS_TABLE}
+    recordWebSocketSqlPhase('lock_connection');
+    const connections = await this.db.execute<{
+      connection_id: string;
+      diagnostic_session_id?: number;
+      diagnostic_isolation?: string;
+    }>(
+      `select connection_id, connection_id() as diagnostic_session_id,
+              @@session.transaction_isolation as diagnostic_isolation
+       from ${WS_CONNECTIONS_TABLE}
        where connection_id = :connectionId
        order by identity_id for update`,
       { connectionId },
-      { wrappedConnection: ctx.connection }
+      { wrappedConnection: ctx.connection, bindInvocationContext: true }
     );
-    return connections.length > 0;
+    if (connections.length) {
+      recordWebSocketDatabaseSession(connections[0]);
+      return true;
+    }
+    // identity_id is part of the primary key. A waiting READ COMMITTED scan
+    // can miss a row moved behind its cursor by another authentication. A
+    // writer-bound presence check distinguishes that from an actual deletion;
+    // presence alone never authorizes a mutation or orphan-grant cleanup.
+    const existing = await this.db.execute<{ connection_id: string }>(
+      `select connection_id from ${WS_CONNECTIONS_TABLE}
+       where connection_id = :connectionId limit 1`,
+      { connectionId },
+      { wrappedConnection: ctx.connection, bindInvocationContext: true }
+    );
+    if (!existing.length) return false;
+    if (attemptsLeft > 1) {
+      await delay(randomInt(5, 16));
+      return this.lockConnection(connectionId, ctx, attemptsLeft - 1);
+    }
+    // Persistent key churn also makes this socket unavailable for safe control
+    // writes. Use the existing close/reconnect recovery, not a new 503 retry
+    // contract that WebSocket clients cannot observe as an HTTP response.
+    throw new SocketNotAvailableException();
   }
 
   private async requireConnection(connectionId: string, ctx: RequestContext) {
+    // Only a successful FOR UPDATE scan returns true; a presence probe cannot
+    // satisfy the ownership requirement for any subsequent mutation.
     if (!(await this.lockConnection(connectionId, ctx))) {
       throw new SocketNotAvailableException();
     }
@@ -206,12 +310,13 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         params[`jwtExpiry${index}`] = jwtExpiry;
         return `(:connectionId, :identityId${index}, :jwtExpiry${index})`;
       });
+    recordWebSocketSqlPhase('insert_subscriptions');
     await this.db.execute(
       `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
          (connection_id, identity_id, jwt_expiry)
        values ${values.join(', ')}`,
       params,
-      { wrappedConnection: ctx.connection }
+      { wrappedConnection: ctx.connection, bindInvocationContext: true }
     );
   }
 
@@ -219,23 +324,38 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     if (!this.shouldCleanupNotificationSubscriptions()) {
       return;
     }
+    const diagnostics = new WsTransactionDiagnostics(
+      'CLEANUP',
+      undefined,
+      'autocommit'
+    );
     try {
-      await this.db.execute(
-        `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
+      await diagnostics.runAttempt(1, async () => {
+        recordWebSocketSqlPhase('cleanup_expired');
+        await this.db.execute(
+          `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
          where jwt_expiry <= unix_timestamp()
          order by jwt_expiry asc
-         limit 1000`
-      );
-      await this.db.execute(
-        `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
+         limit 1000`,
+          undefined,
+          { bindInvocationContext: true }
+        );
+        recordWebSocketSqlPhase('cleanup_orphans');
+        await this.db.execute(
+          `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
          where not exists (
            select 1 from ${WS_CONNECTIONS_TABLE} connections
            where connections.connection_id = ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}.connection_id
          )
          order by connection_id, identity_id
-         limit 1000`
-      );
+         limit 1000`,
+          undefined,
+          { bindInvocationContext: true }
+        );
+      });
+      diagnostics.completed();
     } catch (error) {
+      diagnostics.failed(error, false);
       this.logger.warn(
         `Failed to clean stale websocket notification subscriptions: ${String(error)}`
       );
@@ -246,11 +366,12 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     connectionId: string,
     ctx: RequestContext
   ): Promise<void> {
+    recordWebSocketSqlPhase('delete_subscriptions');
     await this.db.execute(
       `delete from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}
        where connection_id = :connectionId`,
       { connectionId },
-      { wrappedConnection: ctx.connection }
+      { wrappedConnection: ctx.connection, bindInvocationContext: true }
     );
   }
 
@@ -261,7 +382,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     return this.db.oneOrNull<WSConnectionEntity>(
       `select * from ${WS_CONNECTIONS_TABLE} where connection_id = :connectionId`,
       { connectionId },
-      { wrappedConnection: ctx.connection }
+      { wrappedConnection: ctx.connection, bindInvocationContext: true }
     );
   }
 
@@ -296,7 +417,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       `select w.visibility_group_id, w.parent_wave_id, p.id as parent_id,
               p.parent_wave_id as parent_parent_id,
               p.visibility_group_id as parent_group_id
-       from ${WAVES_TABLE} w left join ${WAVES_TABLE} p on p.id = w.parent_wave_id
+       from ${legacyGetView(WAVES_TABLE)} w left join ${legacyGetView(WAVES_TABLE)} p on p.id = w.parent_wave_id
        where w.id = :waveId`,
       { waveId },
       { wrappedConnection: ctx.connection }
@@ -343,11 +464,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     }
     const rows = await this.db.execute<{ drop_id: string }>(
       `select d.id as drop_id
-       from ${DROPS_TABLE} d
-       join ${WAVES_TABLE} qw on qw.id = d.wave_id
-       left join ${WAVES_TABLE} qp on qp.id = qw.parent_wave_id
-       join ${WAVES_TABLE} rw on rw.id = :waveId
-       left join ${WAVES_TABLE} rp on rp.id = rw.parent_wave_id
+       from ${legacyGetView(DROPS_TABLE)} d
+       join ${legacyGetView(WAVES_TABLE)} qw on qw.id = d.wave_id
+       left join ${legacyGetView(WAVES_TABLE)} qp on qp.id = qw.parent_wave_id
+       join ${legacyGetView(WAVES_TABLE)} rw on rw.id = :waveId
+       left join ${legacyGetView(WAVES_TABLE)} rp on rp.id = rw.parent_wave_id
        where d.id in (:dropIds)
          and (rw.parent_wave_id is null
            or (rp.id is not null and rp.parent_wave_id is null))
@@ -515,7 +636,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       credit_scope: WaveCreditScope;
     }>(
       `select voting_credit_type as credit_type, voting_credit_scope as credit_scope
-         from ${WAVES_TABLE}
+         from ${legacyGetView(WAVES_TABLE)}
          where id = :waveId`,
       { waveId }
     );
@@ -549,7 +670,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           `
             with given_votes as (
               select voter_id as profile_id, sum(abs(votes)) as credit_spent
-              from ${DROP_VOTER_STATE_TABLE}
+              from ${legacyGetView(DROP_VOTER_STATE_TABLE)}
               where ${creditSpentFilter} and voter_id in (:profileIds)
               group by 1
             ),
@@ -580,7 +701,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           .oneOrNull<{ cnt: number }>(
             `
               select count(*) as cnt
-              from ${WAVE_VOTING_CREDIT_NFTS_TABLE}
+              from ${legacyGetView(WAVE_VOTING_CREDIT_NFTS_TABLE)}
               where wave_id = :waveId
             `,
             { waveId }
@@ -599,7 +720,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           `
             with given_votes as (
               select voter_id as profile_id, sum(abs(votes)) as credit_spent
-              from ${DROP_VOTER_STATE_TABLE}
+              from ${legacyGetView(DROP_VOTER_STATE_TABLE)}
               where ${creditSpentFilter} and voter_id in (:profileIds)
               group by 1
             ),
@@ -612,7 +733,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
               select p.profile_id as profile_id,
                      coalesce(sum(tn.boosted_tdh), 0) as total_credit
               from profile_consolidation_keys p
-              join ${WAVE_VOTING_CREDIT_NFTS_TABLE} wvcn
+              join ${legacyGetView(WAVE_VOTING_CREDIT_NFTS_TABLE)} wvcn
                 on wvcn.wave_id = :waveId
               left join ${TDH_NFT_TABLE} tn
                 on tn.consolidation_key = p.consolidation_key
@@ -667,7 +788,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       rep_category: string | null;
       credit_scope: WaveCreditScope;
     }>(
-      `select voting_credit_category as rep_category, voting_credit_creditor as rep_giver, voting_credit_scope as credit_scope from ${WAVES_TABLE} where id = :waveId`,
+      `select voting_credit_category as rep_category, voting_credit_creditor as rep_giver, voting_credit_scope as credit_scope from ${legacyGetView(WAVES_TABLE)} where id = :waveId`,
       { waveId }
     );
     const rep_giver = waveProps?.rep_giver ?? null;
@@ -681,7 +802,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       credit_left: number;
     }>(
       `
-        with given_votes as (select voter_id as profile_id, sum(abs(votes)) as credit_spent from ${DROP_VOTER_STATE_TABLE}
+        with given_votes as (select voter_id as profile_id, sum(abs(votes)) as credit_spent from ${legacyGetView(DROP_VOTER_STATE_TABLE)}
             where ${creditSpentFilter} and voter_id in (:profileIds)
             group by 1),
         total_reps as (select matter_target_id as profile_id, sum(rating) as rep from ${RATINGS_TABLE} where matter_target_id in (:profileIds) and matter = 'REP' and rating <> 0 ${
@@ -718,9 +839,12 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     return this.db
       .oneOrNull<{
         visibility_group_id: string | null;
-      }>(`select visibility_group_id from ${WAVES_TABLE} where id = :waveId`, {
-        waveId
-      })
+      }>(
+        `select visibility_group_id from ${legacyGetView(WAVES_TABLE)} where id = :waveId`,
+        {
+          waveId
+        }
+      )
       .then((row) => row?.visibility_group_id);
   }
 

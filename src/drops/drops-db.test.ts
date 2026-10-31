@@ -15,6 +15,42 @@ import { DropType } from '@/entities/IDrop';
 import { DropsDb, LeaderboardSort } from './drops.db';
 
 describe('DropsDb', () => {
+  it('applies live wave and parent visibility before cross-wave pagination', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(() => ({ execute }) as any);
+    await repo.searchDropsInWave(
+      {
+        term: 'hello',
+        group_ids_user_is_eligible_for: ['readable'],
+        limit: 21,
+        offset: 20
+      },
+      {}
+    );
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('search_wave.visibility_group_id in (:searchGroups)');
+    expect(sql).toContain(
+      'access_parent.visibility_group_id in (:searchGroups)'
+    );
+    expect(sql).toContain('access_parent.parent_wave_id is null');
+    expect(sql).toContain('ORDER BY d.created_at DESC, d.id DESC');
+    expect(sql).toContain('MAX_EXECUTION_TIME(3000)');
+    expect(params.searchGroups).toEqual(['readable']);
+    expect(params).not.toHaveProperty('wave_id');
+  });
+  it('defaults a cross-wave search without eligible groups to public waves only', async () => {
+    const execute = jest.fn().mockResolvedValue([]);
+    const repo = new DropsDb(() => ({ execute }) as any);
+    await repo.searchDropsInWave(
+      { author_id: 'alice', limit: 20, offset: 0 },
+      {}
+    );
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain('search_wave.visibility_group_id is null');
+    expect(sql).toContain('access_parent.visibility_group_id is null');
+    expect(sql).not.toContain('in (:searchGroups)');
+    expect(params).not.toHaveProperty('searchGroups');
+  });
   it('uses prefix-aware content matching and all structured filters', async () => {
     const execute = jest.fn().mockResolvedValue([]);
     const repo = new DropsDb(() => ({ execute }) as any);
@@ -43,6 +79,7 @@ describe('DropsDb', () => {
       term: '+loo* +good*',
       likeTerm: 'loo good',
       author_id: 'author-1',
+      anonymityViewerId: '',
       after: 100,
       before: 200,
       limit: 21,
@@ -65,6 +102,7 @@ describe('DropsDb', () => {
     expect(params).toEqual({
       wave_id: 'wave-1',
       author_id: 'author-1',
+      anonymityViewerId: '',
       limit: 20,
       offset: 0
     });
@@ -89,7 +127,8 @@ describe('DropsDb', () => {
     expect(params).toEqual({
       wave_id: 'wave-1',
       handle: 'a\\_li',
-      limit: 10
+      limit: 10,
+      anonymityViewerId: null
     });
   });
 
@@ -294,6 +333,7 @@ describe('DropsDb', () => {
       wave_id: 'wave-1',
       author_id: 'author-1',
       drop_type: DropType.PARTICIPATORY,
+      anonymityViewerId: null,
       limit: 51,
       offset: 50
     });
@@ -537,36 +577,6 @@ describe('DropsDb', () => {
     expect(sql.toLowerCase()).not.toContain('like');
     expect(params).toEqual({ dropId: 'drop-1' });
     expect(options).toEqual({ wrappedConnection: { connection } });
-  });
-
-  it('uses wave voting credit nft rows when finding CARD_SET_TDH overvoters', async () => {
-    const execute = jest.fn().mockResolvedValue([]);
-    const repo = new DropsDb(
-      () =>
-        ({
-          execute
-        }) as any
-    );
-
-    const result =
-      await repo.findTdhBasedSubmissionDropOvervotersWithOvervoteAmounts({
-        timer: undefined
-      });
-
-    expect(result).toEqual([]);
-    expect(execute).toHaveBeenCalledTimes(4);
-    const [sql] = execute.mock.calls[3];
-    expect(sql).toContain(`from ${DROP_VOTER_STATE_TABLE}`);
-    expect(sql).toContain(`join ${DROPS_TABLE}`);
-    expect(sql).toContain(`from ${IDENTITIES_TABLE}`);
-    expect(sql).toContain(`join ${WAVES_TABLE} w`);
-    expect(sql).toContain(`voting_credit_scope`);
-    expect(sql).toContain(`join ${WAVE_VOTING_CREDIT_NFTS_TABLE} wvcn`);
-    expect(sql).toContain(`left join ${TDH_NFT_TABLE} tn`);
-    expect(sql).toContain(`CARD_SET_TDH`);
-    expect(sql).toContain(`card_set_voter_waves as`);
-    expect(sql).toContain(`select distinct voter_id, wave_id`);
-    expect(sql).toContain(`from card_set_voter_waves v`);
   });
 
   it('filters realtime leaderboard drops by additional action promise flag', async () => {

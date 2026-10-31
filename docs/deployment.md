@@ -4,6 +4,10 @@ Agents and developers deploy with ordinary merges and the repository's GitHub
 Actions workflows. Use the phase authorized by the user; a staging request does
 not authorize production.
 
+Frontend-only, backend-only, and coupled releases use the direct workflows below
+without submitting a Coordinator request or waiting for its recording workflow.
+Keep existing `.release-coordinator/` run and outbox records as historical evidence.
+
 | Target     | Frontend                                                                       | Backend                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | Staging    | Merge into `1a-staging` and push; `Web Deploy - STAGING` starts automatically. | Merge into `1a-staging`, then dispatch `Deploy a service` for each required service with `environment=staging`. |
@@ -76,6 +80,25 @@ run IDs to correlate E2E replies.
 
 ## Failure and rollback
 
+### Wave score input index
+
+For the author-first Wave Score aggregation, deploy `dbMigrationsLoop` with
+`db_schema_scope=wave-score-input-index` before the updated scoring consumers.
+This scope adds only `drops(wave_id, author_id, created_at)` as
+`idx_drop_wave_author_created`. It requires `ALGORITHM=INPLACE, LOCK=NONE`,
+limits metadata-lock waits to two seconds, checks the resulting full-column
+visible index, and skips unrelated synchronization, migrations, and maintenance.
+If the table is busy or online DDL is unsupported, the deployment fails without
+trying a blocking algorithm. Retry after investigating the failure.
+
+The history aggregation uses a MySQL index optimizer hint to select the covering
+index when available. MySQL ignores the hint before index installation, so the
+old scoring query and the new aggregation both work before and after creation.
+Roll back scoring consumers while keeping `dbMigrationsLoop` at an
+index-aware revision and retaining the additive index. Full manual schema
+synchronization also ensures this index through the same online helper; the
+entity marks it `synchronize: false` so TypeORM does not create or drop it itself.
+
 ### Retired membership materialisation
 
 The dedicated worker and dispatcher are no longer ordinary deployment choices.
@@ -90,6 +113,11 @@ runs enabled historical migrations; it ignores the unregistered retired tables.
 Select `maintenance` explicitly for this rollout to avoid unrelated schema work.
 
 ### Operational failures
+
+The synchronous `dbMigrationsLoop` invocation waits up to 960 seconds for its
+900-second Lambda and disables AWS CLI retries for that invocation. If its response
+is lost, inspect the Lambda invocation logs and completion before retrying the
+workflow; a failed CLI response does not prove the migration stopped.
 
 Inspect the failing job and logs. Fix attributable failures on the development
 branch, merge the fix into the authorized target, and repeat only the required

@@ -1,6 +1,5 @@
 import {
   CompetitionEntryStatus,
-  CompetitionStorageMode,
   CompetitionType
 } from '@/entities/ICompetition';
 import { RequestContext } from '@/request.context';
@@ -26,13 +25,13 @@ import {
 } from '@/competitions/competition.repository';
 import { computeCompetitionPhase } from '@/competitions/competition-phase';
 import { collectCompetitionPages } from '@/competitions/competition-page';
+import { competitionHistoryRepository } from '@/competitions/competition-history.repository';
 import { waveMetadataDb } from '@/api/waves/wave-metadata.db';
 
 export class NativeCompetitionReader implements CompetitionReader {
   public constructor(
     private readonly repository: CompetitionRepository,
-    private readonly ctx: RequestContext,
-    private readonly migrationShadow = false
+    private readonly ctx: RequestContext
   ) {}
 
   public async getCompetition(
@@ -43,16 +42,11 @@ export class NativeCompetitionReader implements CompetitionReader {
       routingRecord.id,
       this.ctx
     );
-    if (
-      !raw ||
-      (raw.storage_mode !== CompetitionStorageMode.NATIVE &&
-        !this.migrationShadow)
-    ) {
+    if (!raw) {
       throw new Error(`Native competition ${routingRecord.id} not found`);
     }
     const record = this.repository.parseCompetitionRecord({
-      ...raw,
-      storage_mode: CompetitionStorageMode.NATIVE
+      ...raw
     });
     const capabilities = await this.repository.findCapabilities(
       record.id,
@@ -68,10 +62,12 @@ export class NativeCompetitionReader implements CompetitionReader {
             ({ data_key, data_value }) => ({ data_key, data_value })
           )
         : competition.presentation;
-    const transferredAt =
-      record.legacy_wave_id && !this.migrationShadow
-        ? await this.repository.findLegacyTransferTime(record.id, this.ctx)
-        : null;
+    const configurationActivatedAt =
+      await competitionHistoryRepository.findConfigurationActivationTime(
+        record.id,
+        Number(record.config_version),
+        this.ctx
+      );
     const needsDecisionPauses =
       competition.type === CompetitionType.RANK &&
       competition.decisions.next_decision_time !== null &&
@@ -79,7 +75,7 @@ export class NativeCompetitionReader implements CompetitionReader {
     return {
       ...competition,
       presentation,
-      legacy_transferred_at: transferredAt,
+      configuration_activated_at: configurationActivatedAt,
       ...(needsDecisionPauses
         ? {
             decision_pauses: await collectCompetitionPages((page) =>
@@ -160,7 +156,9 @@ export class NativeCompetitionReader implements CompetitionReader {
     record: CompetitionRoutingRecord,
     request: CompetitionPageRequest
   ): Promise<CompetitionPage<CompetitionEntry>> {
-    return this.listEntries(record, request, [CompetitionEntryStatus.WINNER]);
+    return this.listEntries(record, { ...request, sort: 'won_at' }, [
+      CompetitionEntryStatus.WINNER
+    ]);
   }
 
   public listOutcomes(
@@ -218,7 +216,6 @@ export class NativeCompetitionReader implements CompetitionReader {
       )
     );
     return {
-      storage_mode: competition.storage_mode,
       config_version: competition.config_version,
       configuration: competition,
       entries,
@@ -243,7 +240,6 @@ export class NativeCompetitionReader implements CompetitionReader {
       legacy_origin: record.legacy_wave_id !== null,
       id: parsed.id,
       wave_id: parsed.wave_id,
-      storage_mode: parsed.storage_mode,
       execution_mode: parsed.execution_mode,
       type: parsed.type,
       lifecycle: parsed.lifecycle,

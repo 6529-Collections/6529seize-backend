@@ -1,3 +1,4 @@
+import { transferReconciliationDb } from '@/transactions/transfer-reconciliation.db';
 import {
   fetchAllSeasons,
   fetchTransactionAddressesFromBlock,
@@ -20,6 +21,13 @@ import {
   consolidateOwnerBalances,
   updateOwnerBalances
 } from './owners_balances';
+
+jest.mock('@/transactions/transfer-reconciliation.db', () => ({
+  transferReconciliationDb: {
+    pending: jest.fn().mockResolvedValue([]),
+    acknowledge: jest.fn().mockResolvedValue(undefined)
+  }
+}));
 
 jest.mock('@/db', () => ({
   fetchAllSeasons: jest.fn(),

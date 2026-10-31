@@ -20,6 +20,26 @@ describe('CompetitionCursorCodec', () => {
     ).toBe(20);
   });
 
+  it('rejects pre-cutover winner cursors after changing to win-time ordering', () => {
+    const old = codec.encode(
+      'competition:a:winners',
+      { direction: 'ASC', sort: null },
+      50
+    );
+    expect(() =>
+      codec.decode(old, 'competition:a:winners', {
+        direction: 'ASC',
+        sort: 'won_at'
+      })
+    ).toThrow('Invalid competition cursor');
+    expect(() =>
+      codec.decode(old, 'competition:a:winners', {
+        direction: 'DESC',
+        sort: 'won_at'
+      })
+    ).toThrow('Invalid competition cursor');
+  });
+
   it('rejects reuse with different filters or resources', () => {
     const cursor = codec.encode('entries:a', { direction: 'ASC' }, 20);
     expect(() =>

@@ -7,6 +7,18 @@ const ORIGINAL_ENV = {
 };
 
 describe('seizeSettings auth rollout settings', () => {
+  const originalActivation =
+    process.env.CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT;
+  beforeEach(() => {
+    process.env.CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT =
+      '2026-10-15T00:00:00Z';
+  });
+  afterAll(() => {
+    if (originalActivation === undefined)
+      delete process.env.CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT;
+    else
+      process.env.CONSOLIDATION_FOUR_WALLET_ACTIVATION_AT = originalActivation;
+  });
   afterEach(() => {
     process.env.AUTH_STRUCTURED_SIGNATURES_REQUIRED =
       ORIGINAL_ENV.AUTH_STRUCTURED_SIGNATURES_REQUIRED;

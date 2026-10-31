@@ -1,3 +1,9 @@
+import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
+import { applyCollaborationPresentation } from '@/meme-collaborations/meme-collaboration-presentation';
 import {
   DropEntity,
   DropMediaEntity,
@@ -160,6 +166,7 @@ export class DropsMappers {
     request: ApiUpdateDropRequest & {
       drop_type: ApiDropType;
       mentioned_groups?: ApiDropGroupMention[];
+      collaborator_ids?: string[];
       is_additional_action_promised?: boolean | null;
     };
     waveId: string;
@@ -169,6 +176,7 @@ export class DropsMappers {
     dropId?: string;
   }): CreateOrUpdateDropModel {
     return {
+      collaborator_ids: request.collaborator_ids,
       author_identity: authorId,
       author_id: authorId,
       proxy_identity: proxyId,
@@ -317,10 +325,12 @@ export class DropsMappers {
   private async getAllDropsRelatedData(
     {
       dropEntities,
-      contextProfileId
+      contextProfileId,
+      bookmarkProfileId
     }: {
       dropEntities: DropEntity[];
       contextProfileId?: string | null;
+      bookmarkProfileId?: string | null;
     },
     connection?: ConnectionWrapper<any>
   ) {
@@ -482,10 +492,10 @@ export class DropsMappers {
             }
           )
         : Promise.resolve(new Set<string>()),
-      contextProfileId
+      bookmarkProfileId
         ? this.dropBookmarksDb.findBookmarkedDropIds(
             {
-              identity_id: contextProfileId,
+              identity_id: bookmarkProfileId,
               drop_ids: allDropIds
             },
             connection
@@ -618,7 +628,9 @@ export class DropsMappers {
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
-        contextProfileId
+        contextProfileId,
+        bookmarkProfileId:
+          ctx.authenticationContext?.getLoggedInUsersProfileId()
       },
       ctx.connection
     );
@@ -844,6 +856,30 @@ export class DropsMappers {
       contextProfileId ?? null,
       ctx.connection
     );
+    const collaboratorsByDropId = await memeCollaborationsDb.acceptedByDrops(
+      allEntities.map((entity) => entity.id),
+      ctx
+    );
+    const collaborationPresentation =
+      await memeCollaborationsDb.presentationByDrops(
+        allEntities.map((entity) => entity.id),
+        ctx,
+        collaboratorsByDropId
+      );
+    const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+      allEntities.map((entity) => entity.id),
+      ctx
+    );
+    const publicCollaborators = Object.fromEntries(
+      Object.entries(collaboratorsByDropId).filter(
+        ([id]) => !hiddenDropIds.has(id)
+      )
+    );
+    const publicPresentations = Object.fromEntries(
+      Object.entries(collaborationPresentation).filter(
+        ([id]) => !hiddenDropIds.has(id)
+      )
+    );
     return entities.map<ApiDropWithoutWave>((dropEntity) => {
       const drop = this.toDrop({
         dropEntity,
@@ -885,12 +921,42 @@ export class DropsMappers {
         rootDropIds,
         visibleQuotedDropIds
       });
+      applyCollaborationPresentation(
+        drop,
+        publicCollaborators,
+        publicPresentations
+      );
+      this.applyAnonymousAuthors(drop, hiddenDropIds);
       return this.applyModerationPresentation(
         drop,
         moderationPresentations,
         new Set<string>()
       );
     });
+  }
+
+  private applyAnonymousAuthors(
+    drop: ApiDropWithoutWave,
+    hiddenDropIds: ReadonlySet<string>,
+    visited = new WeakSet<ApiDropWithoutWave>()
+  ): void {
+    if (visited.has(drop)) return;
+    visited.add(drop);
+    if (hiddenDropIds.has(drop.id)) {
+      drop.author = anonymousCompetitionAuthor(drop.author, drop.id);
+      drop.collaborators = [];
+      delete drop.submission_artist;
+    }
+    if (drop.reply_to?.drop)
+      this.applyAnonymousAuthors(drop.reply_to.drop, hiddenDropIds, visited);
+    for (const part of drop.parts) {
+      if (part.quoted_drop?.drop)
+        this.applyAnonymousAuthors(
+          part.quoted_drop.drop,
+          hiddenDropIds,
+          visited
+        );
+    }
   }
 
   /**
@@ -996,6 +1062,7 @@ export class DropsMappers {
       };
     });
     if (!presentation.moderation.can_view) {
+      delete drop.submission_artist;
       drop.title = null;
       drop.referenced_nfts = [];
       drop.mentioned_users = [];

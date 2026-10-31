@@ -1,3 +1,10 @@
+jest.mock('./competition-command-configuration', () => ({
+  loadNativeCommandConfiguration: jest.fn().mockResolvedValue({})
+}));
+jest.mock('@/competitions/native-competition-runtime.service', () => ({
+  nativeCompetitionRuntimeService: { enqueueDueTransitions: jest.fn() }
+}));
+import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionLifecycleService } from './competition-lifecycle.service';
 import { ApiCompetitionDraftInput } from '@/api/generated/models/ApiCompetitionDraftInput';
@@ -70,13 +77,13 @@ beforeEach(() => {
     .mocked(competitionRepository.findCompetitionRecordById)
     .mockResolvedValue({
       id: 'competition',
-      wave_id: 'wave',
-      storage_mode: 'NATIVE'
+      wave_id: 'wave'
     } as never);
   jest
     .mocked(administerCompetitionWave)
     .mockResolvedValue({ wave: { id: 'wave' } } as never);
   jest.mocked(lockNativeCompetition).mockResolvedValue({
+    competition: { id: 'competition' },
     record: {
       id: 'competition',
       wave_id: 'wave',
@@ -117,6 +124,9 @@ it('persists the trimmed reason in pause and lifecycle history', async () => {
     expect.anything()
   );
   expect(nativeCompetitionRuntimeRepository.enqueueEvent).toHaveBeenCalled();
+  expect(
+    nativeCompetitionRuntimeService.enqueueDueTransitions
+  ).toHaveBeenCalledWith({ id: 'competition' }, expect.any(Number), {});
 });
 
 it('allows resuming without another reason and keeps the original pause record', async () => {

@@ -1,8 +1,4 @@
-import {
-  CompetitionLifecycle,
-  CompetitionStorageMode,
-  CompetitionType
-} from '@/entities/ICompetition';
+import { CompetitionLifecycle, CompetitionType } from '@/entities/ICompetition';
 import {
   Competition,
   CompetitionComputedPhase
@@ -12,7 +8,7 @@ type PhaseInput = Pick<
   Competition,
   'lifecycle' | 'participation' | 'voting' | 'decisions'
 > &
-  Partial<Pick<Competition, 'storage_mode' | 'type'>>;
+  Partial<Pick<Competition, 'type'>>;
 
 export function computeCompetitionPhase(
   competition: PhaseInput,
@@ -33,9 +29,7 @@ export function computeCompetitionPhase(
 
   const participationStart = competition.participation.starts_at;
   const votingStart = competition.voting.starts_at;
-  const native = competition.storage_mode === CompetitionStorageMode.NATIVE;
-  const withinEnd = (end: number | null) =>
-    end === null || (native ? now <= end : now < end);
+  const withinEnd = (end: number | null) => end === null || now <= end;
   const firstStart = [participationStart, votingStart]
     .filter((value): value is number => value !== null)
     .sort((a, b) => a - b)
@@ -57,9 +51,12 @@ export function computeCompetitionPhase(
   }
   if (
     competition.decisions.next_decision_time !== null ||
-    (native && competition.type === CompetitionType.APPROVE)
+    competition.type === CompetitionType.APPROVE
   ) {
     return CompetitionComputedPhase.DECIDING;
   }
   return CompetitionComputedPhase.COMPLETED;
 }
+
+/** Finite wire representation for an indefinite pause in permanent old APIs. */
+export const INDEFINITE_COMPETITION_PAUSE_END = 253402300799000;

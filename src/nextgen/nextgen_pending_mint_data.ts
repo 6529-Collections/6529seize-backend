@@ -17,7 +17,10 @@ import { getRpcProvider } from '@/rpc-provider';
 
 const logger = Logger.get('NEXTGEN_PENDING_MINT_DATA');
 
-export async function processMissingMintData(entityManager: EntityManager) {
+export async function processMissingMintData(
+  entityManager: EntityManager,
+  onIncomplete?: () => void
+) {
   const missingData = await fetchMissingMintDataNextgenTokens(entityManager);
 
   if (missingData.length === 0) {
@@ -83,6 +86,7 @@ export async function processMissingMintData(entityManager: EntityManager) {
         newTraits.push(tokenTrait);
       }
     } catch (e) {
+      onIncomplete?.();
       logger.info(
         `[TOKEN ID ${token.id}] : [ERROR FETCHING TOKEN DATA] : [ERROR ${e}]`
       );

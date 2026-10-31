@@ -49,9 +49,9 @@ A monitoring-runtime change uses `Deploy operational monitoring` with the
 environment-selected branch (`main` for `prod`, `1a-staging` for `staging`).
 The run pins its dispatch commit automatically; there is no commit-SHA input. The shared monitoring bundle updates the configured
 runtime functions, including both dispatchers; unchanged application producers,
-source relay stacks, IAM policies and subscriptions do not need a rollout. Keep
-the existing Coordinator workstream identity and follow current deployment
-authorization and validation gates. Observe natural traffic after deployment;
+source relay stacks, IAM policies and subscriptions do not need a rollout.
+Follow current deployment authorization and validation gates. Observe natural
+traffic after deployment;
 unit tests use mocked transport and do not require new live alert events.
 
 ## Bootstrap and identities
@@ -142,6 +142,11 @@ to `main`.
    `MonitoringEventBusArn` from the monitoring stack output. Set
    `ExistingAlarmTopicArn` to the existing regional confirmed email topic where
    available. Preserve every existing email subscription and existing alarm.
+   Enrolled background-worker Throttles alarms retain metrics but use the
+   [processing-health policy](../../monitoring/README.md#background-processing-health)
+   for notification routing. Deploy its receiver before source forwarding and
+   producers, and reconcile already-active worker alarms before removing their
+   old notification route. Errors, OOM and independent queue guards stay active.
    The guarded `../../bin/6529 run deploy:source` command performs account,
    region, artifact ownership and coverage/subscription preflight before packaging
    and deploying `seize-monitoring-{env}-source`, then enables termination
@@ -267,3 +272,5 @@ retention policies. Roll back the monitoring Lambda artifact or source producer
 SHA while keeping queues, secrets and fallback available. Account/region-wide
 monitoring failure requires the independently configured external provider; no
 component in the failed AWS account can guarantee notification by itself.
+
+For outbound WebSocket 429s, use the [WebSocket delivery recovery runbook](websocket-delivery.md) to distinguish isolated listener backpressure from fleet degradation and to respond to the aggregate alarms.

@@ -36,7 +36,6 @@ import { dropCreationService } from '@/api/drops/drop-creation.api.service';
 import { NotFoundException } from '@/exceptions';
 import { competitionVotingService } from './competition-voting.service';
 import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
-import { installMigrationCapture } from '@/competitions/competition-migration-capture';
 import * as pushNotifications from '@/api/push-notifications/push-notifications.service';
 
 const actor = 'entry-author';
@@ -84,7 +83,6 @@ const participation = {
 const record = {
   id: competitionId,
   wave_id: wave.id,
-  storage_mode: 'NATIVE',
   legacy_wave_id: null,
   execution_mode: 'ACTIVE',
   type: 'RANK',
@@ -246,15 +244,6 @@ describeWithSeed(
       originalApiBaseUrl = process.env.API_BASE_URL;
       process.env.API_BASE_URL = 'https://api.6529.io/api';
       jest
-        .spyOn(appFeatures, 'isUnifiedCompetitionReadsEnabled')
-        .mockReturnValue(true);
-      jest
-        .spyOn(appFeatures, 'isNativeCompetitionWritesEnabled')
-        .mockReturnValue(true);
-      jest
-        .spyOn(appFeatures, 'isNativeCompetitionExecutionEnabled')
-        .mockReturnValue(true);
-      jest
         .spyOn(userGroupsService, 'getGroupsUserIsEligibleFor')
         .mockResolvedValue([]);
     });
@@ -264,18 +253,11 @@ describeWithSeed(
       else process.env.API_BASE_URL = originalApiBaseUrl;
     });
 
-    it('creates native submissions after legacy cutover without touching frozen vote tables', async () => {
+    it('creates native submissions with obsolete vote tables physically absent', async () => {
       await sqlExecutor.execute(
         `update ${tables.COMPETITIONS_TABLE} set legacy_wave_id=:waveId where id=:id`,
         { waveId: wave.id, id: competitionId }
       );
-      await sqlExecutor.execute(
-        `insert into ${tables.COMPETITION_MIGRATIONS_TABLE}
-         (competition_id,wave_id,state,cohort,owner,stage,completed_stages,exceptions,updated_at)
-         values (:id,:waveId,'NATIVE','ACTIVE_LOW_VOLUME','fixture','ARCHIVE_VOTERS','[]','[]',1)`,
-        { waveId: wave.id, id: competitionId }
-      );
-      await installMigrationCapture(sqlExecutor);
       const entry = await service.create(
         wave.id,
         competitionId,
@@ -291,10 +273,8 @@ describeWithSeed(
       ]) {
         expect(
           await sqlExecutor.execute(
-            `select * from ${table} where wave_id=:waveId`,
-            {
-              waveId: wave.id
-            }
+            `select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA=database() and TABLE_NAME=:table`,
+            { table }
           )
         ).toEqual([]);
       }
@@ -311,13 +291,27 @@ describeWithSeed(
           ctx
         )
       ).toMatchObject({ current_vote: 7 });
-      await expect(
-        sqlExecutor.execute(
-          `insert into ${tables.WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id,wave_id,vote,timestamp)
-           values (:dropId,:waveId,0,1)`,
-          { dropId: entry.drop_id, waveId: wave.id }
+      for (const table of [
+        tables.WAVE_LEADERBOARD_ENTRIES_TABLE,
+        tables.DROP_REAL_VOTE_IN_TIME_TABLE,
+        tables.DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
+        tables.DROP_VOTER_STATE_TABLE
+      ])
+        expect(
+          await sqlExecutor.execute(
+            `select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA=database() and TABLE_NAME=:table`,
+            { table }
+          )
+        ).toEqual([]);
+      expect(
+        await competitionVotingService.vote(
+          wave.id,
+          competitionId,
+          entry.id,
+          { idempotency_key: randomUUID(), config_version: 1, value: 8 },
+          ctx
         )
-      ).rejects.toThrow('COMPETITION_NATIVE_OWNER_RETRY');
+      ).toMatchObject({ current_vote: 8 });
     });
     it('masks cross-wave content routes and a private parent from anonymous readers', async () => {
       const entry = await service.create(
@@ -926,13 +920,18 @@ describeWithSeed(
           `select value from ${tables.COMPETITION_VOTES_TABLE}`
         )
       ).toEqual([]);
-      expect(await repository.getContent(entry.id, {})).toBeNull();
+      expect(await repository.getContent(entry.id, {})).toMatchObject({
+        parts: [{ content: 'Original content' }]
+      });
+      await expect(
+        service.getContent(wave.id, competitionId, entry.id, ctx)
+      ).rejects.toThrow('not found');
       expect(
         await competitionRepository.findNativeEntry(competitionId, entry.id, {})
       ).toBeNull();
     });
 
-    it('rejects unsigned edits and removes the entry and snapshot on deletion', async () => {
+    it('rejects unsigned edits and retains signed revisions privately after deletion', async () => {
       const entry = await service.create(
         wave.id,
         competitionId,
@@ -978,7 +977,7 @@ describeWithSeed(
         await sqlExecutor.execute(
           `select version from ${tables.COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE} order by version`
         )
-      ).toEqual([]);
+      ).toEqual([{ version: 1 }]);
       await expect(
         service.getContent(wave.id, competitionId, entry.id, ctx)
       ).rejects.toThrow('not found');

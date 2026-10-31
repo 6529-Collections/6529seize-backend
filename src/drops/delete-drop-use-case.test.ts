@@ -7,6 +7,10 @@ jest.mock('@/competitions/legacy-competition-mutation', () => ({
 }));
 import { identityFetcher } from '@/api-serverless/src/identities/identity.fetcher';
 jest.mock('@/competitions/competition-entry-drop-hooks');
+import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
+import { CompetitionRecord } from '@/competitions/competition.repository';
+import { CompetitionEntryStatus } from '@/entities/ICompetition';
+import { ConnectionWrapper } from '@/sql-executor';
 import { userGroupsService } from '@/api-serverless/src/community-members/user-groups.service';
 import { waveScoreService } from '@/api/waves/wave-score.service';
 import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh.service';
@@ -16,6 +20,10 @@ import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mut
 
 afterEach(() => {
   jest.restoreAllMocks();
+});
+
+beforeEach(() => {
+  jest.mocked(competitionEntryDropHooks.lockForDelete).mockResolvedValue([]);
 });
 
 describe('DeleteDropUseCase', () => {
@@ -124,10 +132,116 @@ describe('DeleteDropUseCase', () => {
       expect(ownerLock).toHaveBeenCalledTimes(
         dropType === DropType.CHAT ? 0 : 1
       );
-      expect(dropVotingService.deleteVotes).toHaveBeenCalledTimes(
-        dropType === DropType.CHAT ? 0 : 1
-      );
+      expect(dropVotingService.deleteVotes).not.toHaveBeenCalled();
       expect(dropsDb.applyDeletedDropMetricsDelta).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    {
+      raw: DropType.PARTICIPATORY,
+      status: null,
+      membership: null,
+      expected: DropType.PARTICIPATORY
+    },
+    {
+      raw: DropType.WINNER,
+      status: null,
+      membership: null,
+      expected: DropType.WINNER
+    },
+    {
+      raw: DropType.COMPETITION,
+      status: null,
+      membership: null,
+      expected: DropType.COMPETITION
+    },
+    {
+      raw: DropType.WINNER,
+      status: CompetitionEntryStatus.ACTIVE,
+      membership: 'primary',
+      expected: DropType.PARTICIPATORY
+    },
+    {
+      raw: DropType.PARTICIPATORY,
+      status: CompetitionEntryStatus.WINNER,
+      membership: 'primary',
+      expected: DropType.WINNER
+    },
+    {
+      raw: DropType.PARTICIPATORY,
+      status: CompetitionEntryStatus.WITHDRAWN,
+      membership: 'primary',
+      expected: DropType.COMPETITION
+    },
+    {
+      raw: DropType.WINNER,
+      status: CompetitionEntryStatus.DISQUALIFIED,
+      membership: 'primary',
+      expected: DropType.COMPETITION
+    },
+    {
+      raw: DropType.PARTICIPATORY,
+      status: CompetitionEntryStatus.ACTIVE,
+      membership: 'sibling',
+      expected: DropType.COMPETITION
+    }
+  ])(
+    'uses $expected deletion metrics for shared $raw and native $membership/$status',
+    async ({ raw, status, membership, expected }) => {
+      const connection = {} as ConnectionWrapper<unknown>;
+      const { useCase, dropsDb } = createUseCase({
+        drop: {
+          id: 'drop-1',
+          wave_id: 'wave-1',
+          author_id: 'author',
+          serial_no: 1,
+          created_at: 1,
+          drop_type: raw
+        },
+        wave: { description_drop_id: 'description' }
+      });
+      jest
+        .mocked(withLegacyPrimaryMutation)
+        .mockImplementationOnce(async (_wave, _ctx, action) =>
+          action({ id: 'primary' } as CompetitionRecord)
+        );
+      if (status !== null)
+        jest
+          .mocked(competitionEntryDropHooks.lockForDelete)
+          .mockResolvedValueOnce([
+            {
+              id: 'entry',
+              competition_id: membership === 'primary' ? 'primary' : 'sibling',
+              wave_id: 'wave-1',
+              drop_id: 'drop-1',
+              submitter_id: 'author',
+              status,
+              config_version: 1,
+              submitted_at: 1,
+              rank: null,
+              won_at: null,
+              decision_id: null,
+              signed: false
+            }
+          ]);
+      jest
+        .spyOn(
+          waveDropMetricsRefreshService,
+          'markWaveDropMetricsDirtyBestEffort'
+        )
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(waveScoreService, 'markWaveScoresDirtyBestEffort')
+        .mockResolvedValue(undefined);
+      await useCase.execute(
+        { drop_id: 'drop-1', deletion_purpose: 'SYSTEM_DELETE' },
+        { connection }
+      );
+      expect(dropsDb.applyDeletedDropMetricsDelta).toHaveBeenCalledWith(
+        expect.objectContaining({ drop_type: expected }),
+        { timer: undefined, connection }
+      );
     }
   );
 

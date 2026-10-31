@@ -1,3 +1,4 @@
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -21,7 +22,8 @@ import {
   WALLET_REGEX,
   WALLETS_TDH_TABLE,
   WAVES_TABLE,
-  X_TDH_COEFFICIENT
+  X_TDH_COEFFICIENT,
+  MEME_COLLABORATION_INVITATIONS_TABLE
 } from '@/constants';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
@@ -34,6 +36,11 @@ import { env } from '../env';
 import { DropType } from '../entities/IDrop';
 import { appFeatures } from '../app-features';
 import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
+import {
+  isLegacyCompetitionGetFacadeScope,
+  legacyGetView,
+  withoutLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
 import {
   groupWaveVotingCreditNftsByContract,
   normalizeWaveVotingCreditNfts,
@@ -1335,32 +1342,49 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!profileIds.length) {
       return {};
     }
-    const results = await this.db.execute<{
-      profile_id: string;
-      drop_id: string;
-    }>(
-      `
-      select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
+    // Only drop_type needs the compatibility projection. Native access checks
+    // use unchanged wave fields and must not materialize the wave config view.
+    const dropsTable = isLegacyCompetitionGetFacadeScope()
+      ? legacyGetView(DROPS_TABLE)
+      : DROPS_TABLE;
+    const results = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{
+        profile_id: string;
+        drop_id: string;
+      }>(
+        `
+      select author_id as profile_id, id as drop_id from ${dropsTable} where author_id in (:profileIds) and wave_id = :mainStageWaveId
       and drop_type = '${DropType.PARTICIPATORY}'
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('ACTIVE')}) native_entry
       where submitter_id in (:profileIds)
+      union select invitation.profile_id, invitation.drop_id
+      from ${MEME_COLLABORATION_INVITATIONS_TABLE} invitation
+      join (${nativeMainStageEntriesSource('ACTIVE')}) collaboration_entry on collaboration_entry.drop_id=invitation.drop_id
+      where invitation.profile_id in (:profileIds) and invitation.status='ACCEPTED'
       `,
-      {
-        profileIds,
-        mainStageWaveId
-      },
-      { wrappedConnection: ctx.connection }
+        {
+          profileIds,
+          mainStageWaveId
+        },
+        { wrappedConnection: ctx.connection }
+      )
     );
-    return results.reduce(
-      (acc, it) => {
-        if (!acc[it.profile_id]) {
-          acc[it.profile_id] = [];
-        }
-        acc[it.profile_id].push(it.drop_id);
-        return acc;
-      },
-      {} as Record<string, string[]>
+    const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+      results.map((row) => row.drop_id),
+      ctx
     );
+    return results
+      .filter((row) => !hiddenDropIds.has(row.drop_id))
+      .reduce(
+        (acc, it) => {
+          if (!acc[it.profile_id]) {
+            acc[it.profile_id] = [];
+          }
+          acc[it.profile_id].push(it.drop_id);
+          return acc;
+        },
+        {} as Record<string, string[]>
+      );
   }
 
   async getMainStageWinnerDropIds(
@@ -1371,21 +1395,32 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!profileIds.length) {
       return {};
     }
-    const results = await this.db.execute<{
-      profile_id: string;
-      drop_id: string;
-    }>(
-      `
-      select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
+    // Only drop_type needs the compatibility projection. Native access checks
+    // use unchanged wave fields and must not materialize the wave config view.
+    const dropsTable = isLegacyCompetitionGetFacadeScope()
+      ? legacyGetView(DROPS_TABLE)
+      : DROPS_TABLE;
+    const results = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{
+        profile_id: string;
+        drop_id: string;
+      }>(
+        `
+      select author_id as profile_id, id as drop_id from ${dropsTable} where author_id in (:profileIds) and wave_id = :mainStageWaveId
       and drop_type = '${DropType.WINNER}'
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('WINNER')}) native_entry
       where submitter_id in (:profileIds)
+      union select invitation.profile_id, invitation.drop_id
+      from ${MEME_COLLABORATION_INVITATIONS_TABLE} invitation
+      join (${nativeMainStageEntriesSource('WINNER')}) collaboration_entry on collaboration_entry.drop_id=invitation.drop_id
+      where invitation.profile_id in (:profileIds) and invitation.status='ACCEPTED'
       `,
-      {
-        profileIds,
-        mainStageWaveId
-      },
-      { wrappedConnection: ctx.connection }
+        {
+          profileIds,
+          mainStageWaveId
+        },
+        { wrappedConnection: ctx.connection }
+      )
     );
     return results.reduce(
       (acc, it) => {

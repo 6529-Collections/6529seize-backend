@@ -3,6 +3,7 @@ import { ReleaseNoteGenerationRequest } from './release-note-generation-queue';
 import { ReleaseNoteGitHubService } from './release-note-github.service';
 import { ReleaseNotePublicationDb } from './release-note-publication.db';
 import { ReleaseNotePublicationService } from './release-note-publication.service';
+import { DeferredReleaseNoteError } from '@/release-notes/release-note-errors';
 
 const request: ReleaseNoteGenerationRequest = {
   repo: '6529-Collections/6529seize-frontend',
@@ -56,6 +57,27 @@ function publication(status: ReleaseNotePublicationStatus) {
 }
 
 describe('ReleaseNotePublicationService', () => {
+  it('raises a typed deferral only after the transaction returned a normal blocked outcome', async () => {
+    const service = new ReleaseNotePublicationService(
+      {
+        findStreamState: jest.fn().mockResolvedValue({}),
+        preparePublication: jest
+          .fn()
+          .mockResolvedValue({ blockedByRunNumber: 1659 })
+      } as unknown as ReleaseNotePublicationDb,
+      {
+        getValidatedReleaseRun: jest.fn().mockResolvedValue(currentRun)
+      } as unknown as ReleaseNoteGitHubService
+    );
+    await expect(
+      service.prepare(request, 'publication-id', {})
+    ).rejects.toEqual(
+      new DeferredReleaseNoteError(
+        'PUBLICATION_BLOCKED',
+        'Release-note run 1659 must complete before run 1660'
+      )
+    );
+  });
   it('bootstraps an empty stream from the bounded previous GitHub run', async () => {
     const findStreamState = jest.fn().mockResolvedValue(null);
     const preparePublication = jest.fn().mockImplementation(async (input) => ({

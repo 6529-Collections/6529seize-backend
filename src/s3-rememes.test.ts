@@ -210,6 +210,12 @@ describe('persistRememesS3', () => {
         ContentType: 'image/webp'
       })
     );
+    // Rememe keys are only created when missing, so their bytes never change.
+    expect(
+      jest
+        .mocked(PutObjectCommand)
+        .mock.calls.map(([input]) => input.CacheControl)
+    ).toEqual(Array(4).fill('public, max-age=31536000, immutable'));
     expect(persistRememes).toHaveBeenCalledWith([
       expect.objectContaining({
         s3_image_original: `${CLOUDFRONT_LINK}/rememes/images/original/${BASE_KEY}png`,

@@ -1,5 +1,11 @@
 import 'reflect-metadata';
-import { WAVES_TABLE, WAVES_DECISIONS_TABLE } from '@/constants';
+import {
+  COMPETITIONS_TABLE,
+  COMPETITION_DECISIONS_TABLE,
+  WAVES_TABLE
+} from '@/constants';
+import { legacyCompetitionId } from '@/competitions/competition-id';
+import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
 import { WaveCreditType, WaveType } from '@/entities/IWave';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
@@ -46,6 +52,25 @@ const waves = [
 ];
 
 describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
+  beforeEach(async () => {
+    for (const wave of waves.filter((wave) => wave.type !== WaveType.CHAT))
+      await seedNativeOriginalPrimaryFixture(wave);
+    expect(
+      await sqlExecutor.execute(
+        'select COLUMN_NAME from information_schema.COLUMNS where TABLE_SCHEMA=database() and TABLE_NAME=:table and COLUMN_NAME in (:columns)',
+        {
+          table: WAVES_TABLE,
+          columns: [
+            'voting_period_end',
+            'voting_credit_type',
+            'next_decision_time',
+            'max_winners'
+          ]
+        }
+      )
+    ).toEqual([]);
+  });
+
   it('uses voting lifecycle and deadline order, not recent chat or reputation', async () => {
     const result = await repo.findActiveTdhVotingWaves(
       { eligibleGroups: [], now, limit: 50, offset: 0 },
@@ -106,7 +131,7 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
 
   it('breaks equal deadlines by id and places open-ended votes last', async () => {
     await sqlExecutor.execute(
-      `update ${WAVES_TABLE} set voting_period_end = :deadline where id in (:ids)`,
+      `update ${COMPETITIONS_TABLE} set voting_ends_at=:deadline,voting_config=json_set(voting_config,'$.ends_at',:deadline) where legacy_wave_id in (:ids)`,
       { deadline: 11000, ids: ['b-combined', 'c-card'] }
     );
     const result = await repo.findActiveTdhVotingWaves(
@@ -124,7 +149,7 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
 
   it('removes approval voting when its final winner is recorded', async () => {
     await sqlExecutor.execute(
-      `update ${WAVES_TABLE} set max_winners = 1 where id = :id`,
+      `update ${COMPETITIONS_TABLE} set decision_config=json_set(decision_config,'$.max_winners',1),winner_config=json_set(winner_config,'$.max_winners',1) where legacy_wave_id=:id`,
       { id: 'a-open' }
     );
     const params = { eligibleGroups: [], now, limit: 50, offset: 0 };
@@ -134,8 +159,8 @@ describeWithSeed('active TDH voting discovery', withWaves(waves), () => {
       )
     ).toContain('a-open');
     await sqlExecutor.execute(
-      `insert into ${WAVES_DECISIONS_TABLE} (wave_id, decision_time) values (:id, :now)`,
-      { id: 'a-open', now }
+      `insert into ${COMPETITION_DECISIONS_TABLE} (id,competition_id,scheduled_at,decided_at,status,execution_key,created_at) values ('final-decision',:id,:now,:now,'COMPLETED','final-decision',:now)`,
+      { id: legacyCompetitionId('a-open'), now }
     );
     const result = await repo.findActiveTdhVotingWaves(params, {});
     expect(result.waves.map((wave) => wave.id)).not.toContain('a-open');

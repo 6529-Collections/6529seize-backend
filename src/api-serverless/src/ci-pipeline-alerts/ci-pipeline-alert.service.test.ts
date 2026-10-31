@@ -445,6 +445,7 @@ describe('CiPipelineAlertService', () => {
       {
         ...baseRequest,
         alert_type: 'web_e2e',
+        description: null,
         workflow: 'Staging E2E',
         title: 'WEB E2E failed',
         triggered_by_github_login: 'ragnep',
@@ -490,7 +491,179 @@ describe('CiPipelineAlertService', () => {
       'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
     );
     expect(request.parts[0].content).not.toContain('(attempt 1)');
+    expect(request.parts[0].content).not.toContain('@devs6529');
+    expect(
+      request.parts[0].content.endsWith(
+        'Run: [#6082](https://github.com/6529-Collections/6529seize-frontend/actions/runs/12345)'
+      )
+    ).toBe(true);
+    expect(normalizeDropGroupMentions({ parts: request.parts })).toEqual([]);
+  });
+
+  it.each(['6529seize-frontend', '6529seize-backend'])(
+    'renders multiline failure details for %s',
+    async (repo) => {
+      const service = new CiPipelineAlertService(
+        dropCreationApiService as unknown as ConstructorParameters<
+          typeof CiPipelineAlertService
+        >[0],
+        identitiesRepository as unknown as ConstructorParameters<
+          typeof CiPipelineAlertService
+        >[1],
+        releaseNotesQueue as unknown as ConstructorParameters<
+          typeof CiPipelineAlertService
+        >[2],
+        alertTargetStore as unknown as ConstructorParameters<
+          typeof CiPipelineAlertService
+        >[3]
+      );
+      const description =
+        '**1 failed test across 1 pack**\n\n**social-readonly — mobile Chromium**\n\n- renders the public [profile]';
+      await service.postAlert(
+        {
+          ...baseRequest,
+          repo,
+          alert_type: repo === '6529seize-frontend' ? 'web_e2e' : 'deploy',
+          service: repo === '6529seize-frontend' ? 'web' : 'api',
+          validation_pack: repo === '6529seize-frontend' ? 'all' : null,
+          description
+        },
+        {}
+      );
+      const content =
+        dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest
+          .parts[0].content;
+      expect(content).toContain(
+        '**1 failed test across 1 pack**\n\n**social-readonly — mobile Chromium**\n\n- renders the public \\[profile\\]'
+      );
+      expect(content).toContain('Run: [#6082]');
+      expect(content).toContain('cc @devs6529');
+    }
+  );
+
+  it('keeps the developer group out of automatic staging E2E failures', async () => {
+    identitiesRepository.getIdsByHandles.mockResolvedValue({
+      prxt0: 'profile-initiator'
+    });
+    alertTargetStore.resolveDeployTarget.mockResolvedValue({
+      dropId: 'deploy-drop',
+      dropPartId: 7,
+      sha: 'c'.repeat(40),
+      triggeredByGithubLogin: 'prxt6529'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any,
+      alertTargetStore as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        alert_type: 'web_e2e',
+        workflow: 'Staging E2E',
+        title: 'WEB E2E failed',
+        triggered_by_github_login: 'github-actions[bot]',
+        parent_deploy_run_id: '791',
+        environment: 'Staging'
+      },
+      {}
+    );
+
+    const request =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(request.wave_id).toBe('staging-wave');
+    expect(request.mentioned_users).toEqual([
+      {
+        mentioned_profile_id: 'profile-initiator',
+        handle_in_content: 'prxt0'
+      }
+    ]);
+    expect(request.parts[0].content).toContain(
+      [
+        '[🚧 STAGING] WEB E2E failed 🚨',
+        '',
+        'Validation: Automatic',
+        'Deploy initiated by: @[prxt0]'
+      ].join('\n')
+    );
+    expect(request.parts[0].content).not.toContain('@devs6529');
+    expect(normalizeDropGroupMentions({ parts: request.parts })).toEqual([]);
+  });
+
+  it('still mentions the developer group for production E2E failures', async () => {
+    identitiesRepository.getIdsByHandles.mockResolvedValue({
+      ragne: 'profile-validator'
+    });
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any,
+      releaseNotesQueue as any,
+      alertTargetStore as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        alert_type: 'web_e2e',
+        workflow: 'Production E2E',
+        title: 'WEB E2E failed',
+        triggered_by_github_login: 'ragnep',
+        parent_deploy_run_id: '792',
+        environment: 'production'
+      },
+      {}
+    );
+
+    const request =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(request.wave_id).toBe('prod-wave');
+    expect(request.mentioned_users).toEqual([
+      {
+        mentioned_profile_id: 'profile-validator',
+        handle_in_content: 'ragne'
+      }
+    ]);
+    expect(request.parts[0].content).toContain(
+      [
+        '[🚀 PRODUCTION] WEB E2E failed 🚨',
+        '',
+        'Validation: Manual by @[ragne]'
+      ].join('\n')
+    );
     expect(request.parts[0].content.endsWith('\n\ncc @devs6529')).toBe(true);
+    expect(normalizeDropGroupMentions({ parts: request.parts })).toEqual([
+      DropGroupMention.DEVS_6529
+    ]);
+  });
+
+  it('still mentions the developer group for staging deploy failures', async () => {
+    const service = new CiPipelineAlertService(
+      dropCreationApiService as any,
+      identitiesRepository as any
+    );
+
+    await service.postAlert(
+      {
+        ...baseRequest,
+        alert_type: 'deploy',
+        workflow: 'Web Deploy - STAGING',
+        environment: 'staging'
+      },
+      {}
+    );
+
+    const request =
+      dropCreationApiService.createDrop.mock.calls[0][0].createDropRequest;
+    expect(request.wave_id).toBe('staging-wave');
+    expect(request.parts[0].content).toContain(
+      '[🚧 STAGING] WEB deploy failed 🚨'
+    );
+    expect(request.parts[0].content.endsWith('\n\ncc @devs6529')).toBe(true);
+    expect(normalizeDropGroupMentions({ parts: request.parts })).toEqual([
+      DropGroupMention.DEVS_6529
+    ]);
   });
 
   it('posts a manual E2E success standalone when its deployment run is missing', async () => {

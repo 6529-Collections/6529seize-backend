@@ -26,6 +26,7 @@ router.get(
     req: Request<any, any, any, GetBookmarkedDropsRequest>,
     res: Response<ApiResponse<ApiDropsPage>>
   ) => {
+    res.set('Cache-Control', 'private, no-store');
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     const ctx = { timer, authenticationContext };

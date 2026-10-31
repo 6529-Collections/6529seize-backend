@@ -14,7 +14,7 @@ V1 ships without full RAG. It retrieves bounded product records from the
 frontend-published `/help-index.json`, caches the latest valid copy in the
 backend answer path, and uses a Bedrock renderer for natural wording with a
 deterministic fallback if the model call fails or times out. It also supports a
-frontend calendar API mode for Meme Card drop timing plus a bounded public-data
+local shared-calendar mode for Meme Card drop timing plus a bounded public-data
 query mode for aggregate questions that are better answered from backend
 database rows than from static frontend docs. Stream questions use the
 frontend-published, versioned Stream review corpus described below.
@@ -217,6 +217,13 @@ changes, and displayed/final quantities are capped without rewriting manual
 requests or historical finalized allocations. These facts continue to be served
 through the frontend's generated `/help-index.json`.
 
+Backend TDH ranking authoring facts are maintained in
+[`docs/tdh-ranking.md`](../docs/tdh-ranking.md#help-knowledge-authoring-facts):
+ordinal ranks use the existing score criteria followed by a canonical-address
+tie-break, and empty singleton candidates are excluded while funded zero-score
+wallets and consolidation members remain included. These facts still require a
+frontend corpus update; the document does not add a second live knowledge source.
+
 ### 4.5 Backend-owned public data query mode
 
 Some questions should be answered from public indexed data, not from the
@@ -273,27 +280,23 @@ slightly warmer wording, and formal questions should stay formal, but tone never
 overrides the source facts, refusal boundaries, no-reliable-source behavior, or
 technical-failure behavior. Deterministic fallback answers remain neutral.
 
-### 4.6 Frontend-owned Memes calendar API mode
+### 4.6 Local shared Memes calendar mode
 
-Meme Card drop timing is frontend-owned because the Memes calendar helper owns
-the cadence, historic phases, skip/extra/reschedule overrides, and mint window
-logic. The backend answers drop timing questions by calling the
-environment-matching frontend API:
+The canonical pure calendar module is maintained in the frontend and bundled as
+an identical versioned copy in the backend. It owns cadence, historical phases,
+skip/extra/reschedule overrides, and Europe/Athens wall times with DST conversion.
+Next/current/specific-mint questions are calculated locally, using the same query
+functions as the existing frontend calendar API. No calendar HTTP service or
+calendar timeout configuration is needed. The request's site URL only determines
+the environment-correct links in the answer.
 
-- `/api/meme-calendar/next`
-- `/api/meme-calendar/current`
-- `/api/meme-calendar/{id}`
-
-The API responses include the mint number, UTC mint date, UTC mint start/end,
-`past`/`live`/`upcoming` status, SZN, Year, Epoch, Period, Era, Eon,
-`/meme-calendar`, and `/the-memes/{id}` paths. This mode answers schedule and
-overall mint-window questions for past, current, and future Meme Cards. Wallet
-eligibility and actual mint success remain outside this mode and are still
-enforced by the mint flow.
-
-The backend validates the response shape before wording an answer. Calendar API
-timeouts, non-2xx responses, or invalid response bodies use the technical-failure
-reply path instead of guessing from stale static knowledge.
+This mode retains UTC mint dates and start/end times, past/live/upcoming wording,
+SZN/Year, and links to `/meme-calendar` and `/the-memes/{id}`. Opening is inclusive
+and closing is exclusive. A live mint can continue after midnight on a non-mint
+day; the current lookup considers that window. Next means strictly future, so the
+next query advances at the exact opening instant. Invalid inputs or calculation
+errors use the existing failure path instead of guessing from static knowledge.
+Wallet eligibility and actual mint success remain enforced by the mint flow.
 
 ### 4.7 Agent maintenance contract
 
@@ -335,7 +338,7 @@ The live answer prompt should receive only the top relevant snippets, not the
 entire corpus.
 
 For V1, retrieval is alias/keyword scoring over the cached frontend records plus
-frontend calendar API calls for drop timing and Bedrock-planned public-data
+local shared-calendar calculations for drop timing and Bedrock-planned public-data
 intents compiled to backend-owned SQL.
 Natural multi-wallet setup wording such as adding, linking, pairing, or setting
 up another wallet is routed to the consolidation records when the wording
@@ -344,9 +347,12 @@ possessive multi-wallet target, regardless of which appears first. Wallet-limit
 questions are routed to consolidation use cases when they combine a wallet or
 address subject with either strong limit language or quantity language plus a
 counting, setup, or consolidation relationship. The answer distinguishes
-registration capacity from the effective metrics group: more than three
-addresses can have consolidation records, but only the last three count for
-consolidation purposes. Removal and unlinking wording with explicit
+registration capacity from the effective metrics group: any number of
+addresses can have consolidation records, but at most four count as one
+consolidation, every pair must be linked both ways, and a fourth address counts
+only when its links were registered from the selected backend’s activation cutoff. Production launch is configured for 2026-10-15 00:00 UTC; staging can use an earlier cutoff. Counts above
+`CONSOLIDATIONS_LIMIT` (four) use the over-limit routing; four-wallet setup
+questions route like other setup questions. Removal and unlinking wording with explicit
 multi-wallet or consolidation context routes to consolidation revoke guidance,
 while replacement and swapping wording with that context routes to update
 guidance. Bare singular requests such as removing or replacing "a wallet"
@@ -601,7 +607,7 @@ private user data beyond what is needed for debugging and abuse controls.
 - Fetch and cache the frontend-published `/help-index.json` artifact.
 - Retrieve a bounded set of top help-index matches so related docs can enrich
   the answer without full vector search.
-- Answer Meme Card drop timing through the frontend-owned calendar API.
+- Answer Meme Card drop timing through the bundled, versioned shared calendar.
 - Add bounded public-data query-intent mode for aggregate questions over the
   backend-owned public query compiler.
 
@@ -733,7 +739,6 @@ footer. Missing or incomplete app knowledge fails closed; product facts remain i
 the frontend corpus. This route runs before Desktop scope inheritance and never
 needs a generated answer or a public-data query.
 
-
 ### Progressive Desktop reconciliation
 
 After a same-block mismatch persists through recalculation, ask for the local
@@ -770,3 +775,17 @@ are expanded without model generation. Supported placeholders are `percentage`,
 `minimum_block`, `checkpoint`, and `from_block`. Deploy this backend before the
 companion corpus templates. No new API, persistence, service, or Desktop build is
 needed; the reply loop consumes the updated frontend-owned corpus.
+
+
+## Image upload format policy
+
+The backend validates every new drop/wave image container before public
+publication, independently of optional privacy metadata stripping. HEIC uploads,
+including HEIC bytes renamed as JPEG, must be exported to real JPEG/PNG bytes.
+Changing a suffix is not conversion. Image media can be processing until the
+worker finishes generating and storing both standard previews; `ready` promises both previews exist. Image uploads must be 256 MiB or smaller. PNG limits are 100 million pixels for 8-bit or 64 million pixels for 16-bit. If the image is permanently rejected because of its dimensions or format, reduce the dimensions or export a complete supported image and upload again. Operational worker or storage failures retry through the existing processing flow. Rejected old public image upload sessions need a fresh upload.
+The existing media status/error fields communicate these outcomes.
+
+This policy is documented in `docs/image-upload-format-validation.md`. The
+frontend-owned `/help-index.json` needs the same guidance in its next corpus
+update; this backend change does not hardcode frontend UI flows into the bot.

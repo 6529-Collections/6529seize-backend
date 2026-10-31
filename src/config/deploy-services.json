@@ -37,7 +37,9 @@
         "aggregatedActivityLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "attachmentsOrchestrator",
@@ -125,29 +127,6 @@
       "default_dependencies": []
     },
     {
-      "name": "competitionMigrationLoop",
-      "allowed_environments": [
-        "staging",
-        "prod"
-      ],
-      "deploy_adapter": "serverless",
-      "aws_region": {
-        "staging": "eu-west-1",
-        "prod": "us-east-1"
-      },
-      "verification_targets": [
-        "competitionMigrationLoop"
-      ],
-      "validation_profile": "lambda-version",
-      "default_dependencies": [
-        "dbMigrationsLoop",
-        "waveLeaderboardSnapshotterLoop",
-        "tdhLoop",
-        "waveDecisionExecutionLoop",
-        "api"
-      ]
-    },
-    {
       "name": "customReplayLoop",
       "allowed_environments": [
         "staging",
@@ -214,6 +193,7 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
+        "dbMigrationsLoop",
         "xTdhLoop"
       ]
     },
@@ -456,7 +436,9 @@
         "nextgenContractLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "nextgenMediaImageResolutions",
@@ -589,7 +571,9 @@
         "nftOwnersLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "nftsLoop",
@@ -693,6 +677,22 @@
       },
       "verification_targets": [
         "rateEventProcessingLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
+    },
+    {
+      "name": "releaseDigestLoop",
+      "allowed_environments": [
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "releaseDigestLoop"
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": []
@@ -877,6 +877,7 @@
       ],
       "validation_profile": "lambda-version",
       "default_dependencies": [
+        "dbMigrationsLoop",
         "xTdhLoop"
       ]
     },
@@ -914,7 +915,9 @@
         "memeLabTransactionsLoop"
       ],
       "validation_profile": "lambda-version",
-      "default_dependencies": []
+      "default_dependencies": [
+        "dbMigrationsLoop"
+      ]
     },
     {
       "name": "transactionsProcessingLoop",
@@ -933,6 +936,29 @@
       "validation_profile": "lambda-version",
       "default_dependencies": [
         "dbMigrationsLoop"
+      ]
+    },
+    {
+      "name": "votingCreditReturnNotificationsLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "votingCreditReturnNotificationsLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": [
+        "dbMigrationsLoop",
+        "api",
+        "pushNotificationsHandler",
+        "tdhLoop",
+        "delegationsLoop"
       ]
     },
     {
@@ -1054,6 +1080,23 @@
         "artworkDocumentationStorage",
         "dbMigrationsLoop"
       ]
+    },
+    {
+      "name": "webSocketDeliveryLoop",
+      "allowed_environments": [
+        "staging",
+        "prod"
+      ],
+      "deploy_adapter": "serverless",
+      "aws_region": {
+        "staging": "eu-west-1",
+        "prod": "us-east-1"
+      },
+      "verification_targets": [
+        "webSocketDeliveryLoop"
+      ],
+      "validation_profile": "lambda-version",
+      "default_dependencies": []
     }
   ]
 }

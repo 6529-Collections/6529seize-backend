@@ -1,6 +1,18 @@
+import { buildVotingCreditReturnPushNotification } from '@/pushNotificationsHandler/voting-credit-return-push-notification';
+import {
+  createCompetitionNotificationActorResolver,
+  CompetitionNotificationActorResolver
+} from '@/pushNotificationsHandler/anonymous-competition-notification';
+import { RequestContext } from '@/request.context';
+import { buildMemeCollaborationPushNotification } from './meme-collaboration-push-notification';
 import { handleMissingNotifications } from './missing-notifications';
 import { buildCompetitionLifecyclePushNotification } from './competition-lifecycle-push-notification';
-import type { CompetitionLifecycleNotificationData } from '@/notifications/user-notification.types';
+import type {
+  CompetitionLifecycleNotificationData,
+  VotingCreditsReturnedNotificationData,
+  MemeCollaborationNotificationData,
+  SubscriptionCoverageNotificationData
+} from '@/notifications/user-notification.types';
 import { In, Like } from 'typeorm';
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
@@ -28,7 +40,6 @@ import {
 import { WaveEntity } from '../entities/IWave';
 import { WaveReaderMetricEntity } from '../entities/IWaveReaderMetric';
 import { Logger } from '../logging';
-import type { SubscriptionCoverageNotificationData } from '@/notifications/user-notification.types';
 import {
   sendIdentityPushGroups,
   type IdentityPushNotificationMessage
@@ -52,6 +63,7 @@ import { wsListenersNotifier } from '../api-serverless/src/ws/ws-listeners-notif
 import { identityPushNotificationAccess } from '@/pushNotificationsHandler/identity-push-notification-access';
 import { isNotificationEnabledForDevice } from '@/pushNotificationsHandler/identity-push-notification-settings';
 import { buildSubscriptionCoveragePushNotificationData } from '@/pushNotificationsHandler/subscription-coverage-push-notification';
+import { getPushNotificationGrouping } from '@/pushNotificationsHandler/push-notification-grouping';
 import {
   appendWavePushNotificationContext,
   buildAllDropsPushNotificationTitle,
@@ -285,8 +297,16 @@ export async function sendIdentityNotificationsBatch(
     notifications.map((notification) => notification.identity_id)
   );
   let mutedNotificationIds: Set<number>;
+  let resolveCompetitionActor: CompetitionNotificationActorResolver;
+  const privacyContext: RequestContext = {};
   try {
     mutedNotificationIds = await findMutedNotificationIds(notifications);
+    resolveCompetitionActor = await createCompetitionNotificationActorResolver(
+      notifications.filter(
+        (notification) => !mutedNotificationIds.has(Number(notification.id))
+      ),
+      privacyContext
+    );
   } catch (error) {
     logger.error(
       'Failed to apply notification visibility filters; retrying push notifications',
@@ -316,7 +336,8 @@ export async function sendIdentityNotificationsBatch(
         return await buildIdentityNotificationMessages(
           notification,
           waveAccessCache,
-          wavePresentationResolver
+          wavePresentationResolver,
+          resolveCompetitionActor
         );
       } catch (error) {
         logger.error(`Failed to build notification ${id}: ${error}`);
@@ -345,6 +366,7 @@ async function findMutedNotificationIds(
     notification_id: Number(notification.id),
     identity_id: notification.identity_id,
     additional_identity_id: notification.additional_identity_id,
+    cause: notification.cause,
     related_drop_id: notification.related_drop_id,
     related_drop_2_id: notification.related_drop_2_id
   }));
@@ -369,7 +391,8 @@ async function findMutedNotificationIds(
 async function buildIdentityNotificationMessages(
   notification: IdentityNotificationEntity,
   waveAccessCache: Map<string, Promise<boolean>>,
-  wavePresentationResolver: WavePresentationResolver
+  wavePresentationResolver: WavePresentationResolver,
+  resolveCompetitionActor: CompetitionNotificationActorResolver
 ): Promise<IdentityPushNotificationMessage[]> {
   if (notification.read_at) {
     logger.info(
@@ -441,7 +464,8 @@ async function buildIdentityNotificationMessages(
   const notificationData = await generateNotificationData(
     notification,
     targetProfile,
-    wavePresentationResolver
+    wavePresentationResolver,
+    resolveCompetitionActor
   );
   if (notificationData === SKIP_NOTIFICATION_PUSH) {
     logger.info(`[ID ${notification.id}] Skipping push notification`);
@@ -454,6 +478,7 @@ async function buildIdentityNotificationMessages(
   }
 
   const { title, body, data, imageUrl } = notificationData;
+  const grouping = getPushNotificationGrouping(notification);
 
   return (
     await Promise.all(
@@ -494,12 +519,14 @@ async function buildIdentityNotificationMessages(
                 target_profile_id: notification.identity_id,
                 target_profile_handle: targetProfileHandle
               },
-              imageUrl: imageUrl ?? undefined
+              imageUrl: imageUrl ?? undefined,
+              ...grouping
             },
             identityId: notification.identity_id,
-            requiresCompetitionSupport:
-              notification.cause ===
+            requiresCompetitionSupport: [
               IdentityNotificationCause.COMPETITION_LIFECYCLE,
+              IdentityNotificationCause.VOTING_CREDITS_RETURNED
+            ].includes(notification.cause),
             device
           };
         }
@@ -579,9 +606,13 @@ export async function handleSendResults(
 async function generateNotificationData(
   notification: IdentityNotificationEntity,
   targetProfile: ApiIdentity,
-  wavePresentationResolver: WavePresentationResolver
+  wavePresentationResolver: WavePresentationResolver,
+  resolveCompetitionActor: CompetitionNotificationActorResolver
 ) {
-  const getAdditionalEntity = () => getAdditionalIdOrThrow(notification);
+  const getAdditionalEntity = async () => {
+    const identity = await getAdditionalIdOrThrow(notification);
+    return resolveCompetitionActor(notification, identity);
+  };
 
   switch (notification.cause) {
     case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
@@ -645,6 +676,19 @@ async function generateNotificationData(
         await getAdditionalEntity(),
         targetProfile,
         wavePresentationResolver
+      );
+    case IdentityNotificationCause.MEME_COLLABORATION: {
+      const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
+      const data =
+        extractAdditionalData<MemeCollaborationNotificationData>(notification);
+      const actor = await getAdditionalEntity().catch(() => null);
+      return buildMemeCollaborationPushNotification(data, dropSerialNo, actor);
+    }
+    case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
+      return buildVotingCreditReturnPushNotification(
+        extractAdditionalData<VotingCreditsReturnedNotificationData>(
+          notification
+        )
       );
     case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       return buildCompetitionLifecyclePushNotification(

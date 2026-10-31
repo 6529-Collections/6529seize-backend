@@ -8,6 +8,10 @@ import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { NotFoundException } from '@/exceptions';
 import { DbPoolName } from '@/db-query.options';
+import {
+  anonymousCompetitionAuthor,
+  competitionAnonymityService
+} from '@/competitions/competition-anonymity';
 
 jest.mock('@/api/push-notifications/push-notifications.service', () => ({
   requestDeviceBadgeRefresh: jest.fn().mockResolvedValue(undefined)
@@ -16,6 +20,13 @@ jest.mock('@/api/push-notifications/push-notifications.service', () => ({
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForReaderWave: jest.fn().mockResolvedValue(undefined)
 }));
+
+beforeEach(() => {
+  jest
+    .spyOn(competitionAnonymityService, 'hiddenDropIds')
+    .mockResolvedValue(new Set());
+});
+afterEach(() => jest.restoreAllMocks());
 
 describe('NotificationsApiService V2 notifications', () => {
   afterEach(() => {
@@ -92,6 +103,175 @@ describe('NotificationsApiService V2 notifications', () => {
       reactionsDb
     };
   }
+
+  it.each(
+    [
+      {
+        cause: IdentityNotificationCause.IDENTITY_MENTIONED,
+        data: {
+          mentioner_identity_id: 'author',
+          drop_id: 'entry',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.DROP_QUOTED,
+        data: {
+          quote_drop_author_id: 'author',
+          quote_drop_id: 'entry',
+          quoted_drop_id: 'parent',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.DROP_REPLIED,
+        data: {
+          reply_drop_author_id: 'author',
+          reply_drop_id: 'entry',
+          replied_drop_id: 'parent',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.ALL_DROPS,
+        data: {
+          additional_identity_id: 'author',
+          drop_id: 'entry',
+          wave_id: 'wave'
+        }
+      },
+      {
+        cause: IdentityNotificationCause.PRIORITY_ALERT,
+        data: {
+          additional_identity_id: 'author',
+          drop_id: 'entry',
+          wave_id: 'wave'
+        }
+      }
+    ].flatMap((notification) => [
+      { ...notification, hydratedAfterReveal: false },
+      { ...notification, hydratedAfterReveal: true }
+    ])
+  )(
+    'keeps the durable anonymous $cause actor when hydratedAfterReveal=$hydratedAfterReveal',
+    async ({ cause, data, hydratedAfterReveal }) => {
+      jest
+        .mocked(competitionAnonymityService.hiddenDropIds)
+        .mockResolvedValue(new Set(['entry']));
+      const { service, notificationsReader, dropsService, identityFetcher } =
+        createService();
+      const author = makeIdentity(
+        'author',
+        'private-handle',
+        'private-picture'
+      );
+      notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+        notifications: [{ id: 1, created_at: 1, read_at: null, cause, data }],
+        total_unread: 1
+      });
+      identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue({
+        author
+      });
+      dropsService.findDropsV2ByIds.mockResolvedValue({
+        entry: {
+          id: 'entry',
+          author: hydratedAfterReveal
+            ? author
+            : anonymousCompetitionAuthor(author, 'entry')
+        },
+        parent: {
+          id: 'parent',
+          author: makeIdentity(
+            'parent-author',
+            'parent-handle',
+            'parent-picture'
+          )
+        }
+      });
+      const authenticationContext =
+        AuthenticationContext.fromProfileId('reader');
+      const response = await service.getNotificationsV2(
+        {
+          id_less_than: null,
+          limit: 10,
+          cause: null,
+          cause_exclude: null,
+          unread_only: false
+        },
+        authenticationContext,
+        { authenticationContext }
+      );
+      expect(response.notifications).toHaveLength(1);
+      expect(response.notifications[0].related_identity).toMatchObject({
+        handle: 'Anonymous',
+        is_anonymous: true
+      });
+      expect(
+        JSON.stringify(response.notifications[0].related_identity)
+      ).not.toContain('private-');
+      if (!hydratedAfterReveal) {
+        expect(JSON.stringify(response.notifications)).not.toContain(
+          'private-'
+        );
+      }
+    }
+  );
+
+  it('maps returned-credit snapshots without loading deleted drops or an actor', async () => {
+    const { service, notificationsReader, dropsService, identityFetcher } =
+      createService();
+    const data = {
+      event_id: 'release',
+      reason: 'AUTHOR_DELETED',
+      wave_id: 'wave',
+      competition_id: 'competition',
+      competition_title: 'Main Stage',
+      entry_id: 'entry',
+      drop_id: 'deleted',
+      submission_title: 'Freedom To Transcend',
+      credit_type: 'TDH',
+      amount: 500,
+      released_at: 1000
+    };
+    notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+      notifications: [
+        {
+          id: 1,
+          created_at: 2000,
+          read_at: null,
+          cause: IdentityNotificationCause.VOTING_CREDITS_RETURNED,
+          data
+        }
+      ],
+      total_unread: 1
+    });
+    const authenticationContext = AuthenticationContext.fromProfileId('voter');
+    const result = await service.getNotificationsV2(
+      {
+        id_less_than: null,
+        limit: 10,
+        cause: null,
+        cause_exclude: null,
+        unread_only: false
+      },
+      authenticationContext,
+      { authenticationContext }
+    );
+    expect(result.notifications[0]).toMatchObject({
+      cause: ApiNotificationCause.VotingCreditsReturned,
+      related_identity: null,
+      related_drops: [],
+      additional_context: data
+    });
+    expect(dropsService.findDropsV2ByIds).toHaveBeenCalledWith(
+      [],
+      expect.anything()
+    );
+    expect(identityFetcher.getApiIdentityOverviewsByIds).toHaveBeenCalledWith(
+      [],
+      expect.anything()
+    );
+  });
 
   it('maps V2 notifications with ApiIdentityOverview and ApiDropV2', async () => {
     const { service, notificationsReader, identityFetcher, dropsService } =

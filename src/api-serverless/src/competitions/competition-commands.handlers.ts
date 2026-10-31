@@ -56,6 +56,8 @@ import { waveHubCreationService } from './wave-hub-creation.service';
 import { competitionActor } from './competition-command-access';
 import { toApiCompetition, toApiEntry } from './competitions-v3.handlers';
 import { enums } from '@/enums';
+import { toApiCompetitionAward } from './competition-award.mapper';
+import { readCompetitionEntryContexts } from '@/api/competitions/competition-entry-context.reader';
 
 const pathFields = {
   wave_id: Joi.string().min(1).max(100).required(),
@@ -125,6 +127,7 @@ export async function handleCreateWaveHubV3(
       visibility: WaveVisibilitySchema.required(),
       chat: WaveChatSchema.required(),
       admin_group: WaveScopeSchema.required(),
+      admin_drop_deletion_enabled: Joi.boolean().default(false),
       parent_wave_id: Joi.string().min(1).max(100).allow(null)
     }).unknown(false)
   );
@@ -297,7 +300,12 @@ export async function handleListCompetitionMyVotesV3(
   req: ListCompetitionMyVotesV3Request
 ): Promise<ApiCompetitionMyVotePage> {
   const { wave_id, competition_id } = path(req.params);
-  const query = getValidatedByJoiOrThrow(req.query, pageSchema);
+  const query = getValidatedByJoiOrThrow(
+    req.query,
+    pageSchema.append<{ cursor?: string; limit: number; include?: 'cards' }>({
+      include: Joi.string().valid('cards').optional()
+    })
+  );
   const ctx = await context(req);
   const actor = competitionActor(ctx);
   await competitionService.getCompetition(wave_id, competition_id, ctx);
@@ -315,14 +323,28 @@ export async function handleListCompetitionMyVotesV3(
     query.limit + 1,
     ctx
   );
+  const data = rows.slice(0, query.limit).map((row) => ({
+    ...row,
+    entry_status: enums.resolveOrThrow(
+      ApiCompetitionEntryStatus,
+      row.entry_status
+    )
+  }));
+  const cards =
+    query.include === 'cards' && data.length
+      ? (
+          await readCompetitionEntryContexts(
+            wave_id,
+            competition_id,
+            data.map((row) => row.entry_id),
+            ctx,
+            true
+          )
+        ).data
+      : [];
   return {
-    data: rows.slice(0, query.limit).map((row) => ({
-      ...row,
-      entry_status: enums.resolveOrThrow(
-        ApiCompetitionEntryStatus,
-        row.entry_status
-      )
-    })),
+    data,
+    ...(query.include === 'cards' ? { cards } : {}),
     has_more: rows.length > query.limit,
     next_cursor:
       rows.length > query.limit
@@ -352,7 +374,7 @@ export async function handleListCompetitionAwardsV3(
     ctx
   );
   return {
-    data: rows.slice(0, query.limit),
+    data: rows.slice(0, query.limit).map(toApiCompetitionAward),
     has_more: rows.length > query.limit,
     next_cursor:
       rows.length > query.limit

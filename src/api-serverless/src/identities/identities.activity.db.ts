@@ -3,6 +3,10 @@ import { DROPS_TABLE, WAVES_TABLE } from '@/constants';
 import { RequestContext } from '@/request.context';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { Time } from '@/time';
+import {
+  publicCompetitionDropSql,
+  competitionAnonymityViewerId
+} from '@/competitions/competition-anonymity';
 
 const DAY_MS = Time.days(1).toMillis();
 
@@ -33,6 +37,7 @@ export class IdentitiesActivityDb extends LazyDbAccessCompatibleService {
           from ${DROPS_TABLE} d
           join ${WAVES_TABLE} w on w.id = d.wave_id
           where d.author_id = :profileId
+            and ${publicCompetitionDropSql('d', 'anonymityViewerId')}
             and d.created_at >= :startInclusive
             and d.created_at < :endExclusive
             and ${waveReadAccessSql('w', false)}
@@ -43,6 +48,7 @@ export class IdentitiesActivityDb extends LazyDbAccessCompatibleService {
         {
           dayMs: DAY_MS,
           profileId,
+          anonymityViewerId: competitionAnonymityViewerId(ctx) ?? null,
           startInclusive,
           endExclusive
         },
