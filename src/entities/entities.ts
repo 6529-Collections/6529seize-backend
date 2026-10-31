@@ -291,6 +291,7 @@ export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalid
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export * from './IE2ee';
 
 export {
   MemeCollaborationEntity,
@@ -302,4 +303,3 @@ export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock'
 
 export * from './IVotingCreditRelease';
 export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
-export * from './IE2ee';
