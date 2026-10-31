@@ -1,3 +1,7 @@
+import {
+  E2eeDeviceActivityWindow,
+  isInactiveDevice
+} from '@/api/e2ee/e2ee-device-activity';
 import { ApiE2eeBlob } from '@/api/generated/models/ApiE2eeBlob';
 import {
   ApiE2eeDevice,
@@ -40,7 +44,14 @@ export function toApiEligibilityStatus(
   return STATUSES[status];
 }
 
-export function toApiE2eeDevice(row: E2eeDeviceRow): ApiE2eeDevice {
+/**
+ * With `activity`, the record also says whether the device is inactive
+ * (unused for E2EE_DEVICE_INACTIVE_DAYS; see e2ee-device-activity.ts).
+ */
+export function toApiE2eeDevice(
+  row: E2eeDeviceRow,
+  activity?: E2eeDeviceActivityWindow
+): ApiE2eeDevice {
   return {
     device_key: row.device_key,
     profile_id: row.profile_id,
@@ -62,6 +73,7 @@ export function toApiE2eeDevice(row: E2eeDeviceRow): ApiE2eeDevice {
     platform: PLATFORMS[row.platform] ?? ApiE2eeDevicePlatform.Web,
     created_at: Number(row.created_at),
     last_seen_at: row.last_seen_at === null ? null : Number(row.last_seen_at),
+    ...(activity ? { inactive: isInactiveDevice(row, activity) } : {}),
     revoked_at: row.revoked_at === null ? null : Number(row.revoked_at),
     revocation:
       row.revoked_at !== null &&

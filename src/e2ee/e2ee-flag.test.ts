@@ -1,4 +1,5 @@
 import {
+  e2eeDeviceInactiveDays,
   e2eeEntriesPerGroupPerHour,
   e2eeTrustAndSafetyGroupId,
   isE2eeAttachmentsEnabled,
@@ -35,6 +36,23 @@ describe('isE2eeAttachmentsEnabled', () => {
     [{}, true]
   ])('resolves %j to %s', (env, expected) => {
     expect(isE2eeAttachmentsEnabled(env)).toBe(expected);
+  });
+});
+
+describe('e2eeDeviceInactiveDays', () => {
+  it.each([
+    [{}, 30],
+    [{ E2EE_DEVICE_INACTIVE_DAYS: '45' }, 45],
+    [{ E2EE_DEVICE_INACTIVE_DAYS: ' 7 ' }, 7],
+    [{ E2EE_DEVICE_INACTIVE_DAYS: '1' }, 1],
+    [{ E2EE_DEVICE_INACTIVE_DAYS: '365' }, 365],
+    [{ E2EE_DEVICE_INACTIVE_DAYS: '0' }, 30],
+    [{ E2EE_DEVICE_INACTIVE_DAYS: '366' }, 30],
+    [{ E2EE_DEVICE_INACTIVE_DAYS: '-5' }, 30],
+    [{ E2EE_DEVICE_INACTIVE_DAYS: '2.5' }, 30],
+    [{ E2EE_DEVICE_INACTIVE_DAYS: 'soon' }, 30]
+  ])('resolves %j to %s', (env, expected) => {
+    expect(e2eeDeviceInactiveDays(env)).toBe(expected);
   });
 });
 
