@@ -25,19 +25,20 @@ const MAX_DELETE_KEYS = 1000;
 const NO_BYTES = Buffer.alloc(0);
 
 /**
- * Lambda-friendly client: bounded connect and request time so a slow S3
- * call fails inside the API's 30 s budget, and region redirects followed in
- * case the API runs in another region than the bucket.
+ * Lambda-friendly client: two attempts of at most 2 s connect plus 8 s
+ * request each, so a hung S3 call fails well inside the API's 30 s budget,
+ * and region redirects followed in case the API runs in another region than
+ * the bucket.
  */
 export function createE2eeBlobS3Client(region: string): S3Client {
   return new S3Client({
     region,
     followRegionRedirects: true,
-    maxAttempts: 3,
+    maxAttempts: 2,
     requestHandler: new NodeHttpHandler({
-      connectionTimeout: 3_000,
-      socketTimeout: 10_000,
-      requestTimeout: 15_000,
+      connectionTimeout: 2_000,
+      socketTimeout: 8_000,
+      requestTimeout: 8_000,
       throwOnRequestTimeout: true
     })
   });
