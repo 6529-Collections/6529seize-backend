@@ -74,7 +74,7 @@ import {
   Strategy as JwtStrategy,
   VerifiedCallback
 } from 'passport-jwt';
-import { ApiCompliantException } from '@/exceptions';
+import { ApiCompliantException, apiCompliantErrorBody } from '@/exceptions';
 import * as sentryContext from '../../sentry.context';
 import { Time, Timer } from '@/time';
 import { DropType } from '@/entities/IDrop';
@@ -681,10 +681,7 @@ function requestLogMiddleware() {
 function customErrorMiddleware() {
   return (err: Error, _: Request, res: Response, next: NextFunction) => {
     if (err instanceof ApiCompliantException) {
-      res.status(err.getStatusCode()).send({
-        error: err.message,
-        ...(err.code ? { code: err.code } : {})
-      });
+      res.status(err.getStatusCode()).send(apiCompliantErrorBody(err));
       next();
     } else {
       res.status(500).send({ error: 'Something went wrong...' });
