@@ -30,7 +30,12 @@ devices registered under any other suite together with their key packages,
 groups (found through the roster), welcomes, log entries and attachments.
 Reports are kept. Only staging and local databases had such rows. A client
 whose device the server no longer lists wipes its local state and enrolls
-again.
+again. A migration cannot delete S3 objects, so where blobs have a `storage`
+column it removes only MySQL-stored attachments; rows of S3-stored ones stay
+and blob retention deletes each object with its row. Staging ran the
+migration before S3 storage reached this branch: its 2 classical blobs in S3
+(about 328 bytes under the staging e2ee-blobs prefix) lost their rows and
+remain as orphaned objects that nothing reads; deleting them is optional.
 
 ## Feature flag
 
