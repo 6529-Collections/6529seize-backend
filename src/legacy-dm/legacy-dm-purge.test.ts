@@ -120,6 +120,7 @@ describe('planLegacyDmPurge (dry run)', () => {
     expect(plan.dmWaves).toBe(7);
     expect(plan.rows.drops_parts).toBe(7);
     expect(plan.media.dropMediaUrls).toBe(2);
+    expect(plan.wavesWithOpenReports).toBe(2);
   });
 
   it('scopes every count to DM waves', async () => {
@@ -296,5 +297,19 @@ describe('executeLegacyDmPurge', () => {
       maxWaves: 1
     });
     expect(result.waves).toBe(1);
+  });
+
+  it('leaves waves under a legal hold out of the selection', async () => {
+    const { db, statements } = fakeDb({ waves: [WAVE], drops: DROPS });
+    await executeLegacyDmPurge(db, {
+      nowMillis: CUTOFF,
+      cutoffMillis: CUTOFF,
+      heldWaveIds: ['held-wave']
+    });
+    const wavePage = statements.find((s) =>
+      s.sql.includes('w.description_drop_id from')
+    );
+    expect(wavePage?.sql).toContain('and w.id not in (?)');
+    expect(wavePage?.params).toEqual([0, ['held-wave']]);
   });
 });

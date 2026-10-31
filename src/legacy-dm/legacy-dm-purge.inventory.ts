@@ -242,6 +242,12 @@ export const LEGACY_DM_KEPT_TABLES: Readonly<Record<string, string>> = {
   [AD_DROP_LINKS]: 'Links of those imports; kept with them'
 };
 
+/** DM waves with an open moderation report (reported before any purge). */
+export const WAVES_WITH_OPEN_REPORTS_SQL = `select count(distinct d.wave_id) as c
+  from ${CONTENT_MODERATION_REPORTS_TABLE} r
+  join ${DROPS_TABLE} d on d.id = r.drop_id
+  where r.status = 'OPEN' and d.wave_id in (${DM_WAVES_SQL})`;
+
 /** Author-imported copies of DM drops in artwork documentation (reported). */
 export const DOCUMENTATION_IMPORTS_SQL = `select count(*) as c from ${AD_SOURCES} s
   join ${AD_DROP_LINKS} l on l.drop_id = s.drop_id

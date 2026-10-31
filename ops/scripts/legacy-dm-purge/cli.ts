@@ -244,7 +244,24 @@ async function main() {
       return;
     }
     if (mode === 'execute') {
+      // Legal holds are checked before any deletion: the operator must state
+      // them, as wave ids or the word "none" (see the runbook, section 3.3).
+      const held = process.env.LEGACY_DM_HELD_WAVES?.trim();
+      if (!held) {
+        throw new Error(
+          'Set LEGACY_DM_HELD_WAVES to the held DM wave ids (comma-separated) or "none" after checking legal holds'
+        );
+      }
+      const heldWaveIds =
+        held === 'none'
+          ? []
+          : held
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean);
+      log(`legal holds: ${heldWaveIds.length} DM waves excluded`);
       const result = await executeLegacyDmPurge(dbFor(runner), {
+        heldWaveIds,
         nowMillis: Date.now(),
         cutoffMillis: legacyDmDeletionCutoffMillis(),
         batchSize: process.env.LEGACY_DM_PURGE_BATCH

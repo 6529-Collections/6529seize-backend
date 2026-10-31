@@ -2089,7 +2089,9 @@ Unencrypted ("legacy") DMs are waves with `is_direct_message` whose chat
 group is a DM group. From `LEGACY_DM_DELETION_CUTOFF` (default
 2026-12-01T00:00Z, `src/legacy-dm/legacy-dm-retention.ts`) the API refuses
 new drops in them and new DMs with `403 LEGACY_DM_CLOSED`. Their content is
-then deleted by an explicit operator CLI, not a Lambda:
+then deleted, except conversations under a legal hold (the CLI's `execute`
+requires `LEGACY_DM_HELD_WAVES` and never selects a held wave), by an
+explicit operator CLI, not a Lambda:
 `ops/scripts/legacy-dm-purge/cli.ts` (`plan` dry run, `execute`,
 `media-plan`, `media-execute`) over the table inventory in
 `src/legacy-dm/legacy-dm-purge.inventory.ts`, whose test fails when a new
