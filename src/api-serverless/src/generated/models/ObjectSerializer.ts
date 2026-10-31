@@ -1412,7 +1412,7 @@ import { ApiE2eeDeviceLookupRequest } from '../models/ApiE2eeDeviceLookupRequest
 import { ApiE2eeDeviceLookupResponse } from '../models/ApiE2eeDeviceLookupResponse';
 import { ApiE2eeDevicePlatform } from '../models/ApiE2eeDevicePlatform';
 import { ApiE2eeDeviceRevocation } from '../models/ApiE2eeDeviceRevocation';
-import { ApiE2eeEligibility    } from '../models/ApiE2eeEligibility';
+import { ApiE2eeEligibility   , ApiE2eeEligibilityReasonEnum   } from '../models/ApiE2eeEligibility';
 import { ApiE2eeEligibilityRequest } from '../models/ApiE2eeEligibilityRequest';
 import { ApiE2eeEligibilityResponse } from '../models/ApiE2eeEligibilityResponse';
 import { ApiE2eeEligibilityStatus } from '../models/ApiE2eeEligibilityStatus';
@@ -1655,7 +1655,7 @@ import { ApiProfileCmsWalletGalleryWallet    , ApiProfileCmsWalletGalleryWalletS
 import { ApiProfileMin                        } from '../models/ApiProfileMin';
 import { ApiProfileMinsPage } from '../models/ApiProfileMinsPage';
 import { ApiProfileNotificationCategories } from '../models/ApiProfileNotificationCategories';
-import { ApiProfilePreferences, ApiProfilePreferencesDirectMessagePolicyEnum  , ApiProfilePreferencesNotificationLevelEnum    } from '../models/ApiProfilePreferences';
+import { ApiProfilePreferences, ApiProfilePreferencesDirectMessagePolicyEnum     , ApiProfilePreferencesNotificationLevelEnum    } from '../models/ApiProfilePreferences';
 import { ApiProfileProxy } from '../models/ApiProfileProxy';
 import { ApiProfileProxyAction             } from '../models/ApiProfileProxyAction';
 import { ApiProfileProxyActionType } from '../models/ApiProfileProxyActionType';
@@ -1759,7 +1759,7 @@ import { ApiUpcomingMemeSubscriptionStatus   , ApiUpcomingMemeSubscriptionStatus
 import { ApiUpdateCompetitionRequest } from '../models/ApiUpdateCompetitionRequest';
 import { ApiUpdateDropRequest } from '../models/ApiUpdateDropRequest';
 import { ApiUpdateProfileNotificationCategories } from '../models/ApiUpdateProfileNotificationCategories';
-import { ApiUpdateProfilePreferences, ApiUpdateProfilePreferencesDirectMessagePolicyEnum  , ApiUpdateProfilePreferencesNotificationLevelEnum    } from '../models/ApiUpdateProfilePreferences';
+import { ApiUpdateProfilePreferences, ApiUpdateProfilePreferencesDirectMessagePolicyEnum    , ApiUpdateProfilePreferencesNotificationLevelEnum    } from '../models/ApiUpdateProfilePreferences';
 import { ApiUpdateProxyActionRequest } from '../models/ApiUpdateProxyActionRequest';
 import { ApiUpdateWaveDecisionPause } from '../models/ApiUpdateWaveDecisionPause';
 import { ApiUpdateWaveNotificationPreferencesRequest } from '../models/ApiUpdateWaveNotificationPreferencesRequest';
@@ -2062,6 +2062,7 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiDropType",
     "ApiE2eeDeviceVerifiedViaEnum",
     "ApiE2eeDevicePlatform",
+    "ApiE2eeEligibilityReasonEnum",
     "ApiE2eeEligibilityStatus",
     "ApiE2eeLogItemTypeEnum",
     "ApiE2eeLogItemKindEnum",

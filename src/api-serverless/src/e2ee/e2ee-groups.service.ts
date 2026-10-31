@@ -56,7 +56,7 @@ import {
 } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { e2eeEntriesPerGroupPerHour } from '@/e2ee/e2ee-flag';
-import { decideE2eePolicy, E2eeEligibilityStatus } from '@/e2ee/e2ee-policy';
+import { DirectMessageRefusalReason } from '@/direct-messages/direct-message-admission';
 import { ConnectionWrapper } from '@/sql-executor';
 
 type Conn = ConnectionWrapper<unknown>;
@@ -412,31 +412,33 @@ export class E2eeGroupsService {
     }
   }
 
-  /** Policy (7.1) for profiles that are new to the roster. */
+  /**
+   * Policy (7.1) for profiles that are new to the roster: the platform's shared
+   * DM admission, evaluated in the roster transaction with the recipients'
+   * profile rows locked so a concurrent block or policy change cannot race
+   * the commit. A target's block of the caller is reported as POLICY so it is
+   * never disclosed; BLOCKED is only the caller's own block.
+   */
   private async assertPolicyForNewProfiles(
     callerProfileId: string,
     newProfiles: string[],
     connection: Conn
   ): Promise<void> {
     if (!newProfiles.length) return;
-    const facts = await this.db.getPolicyFacts(
+    const decisions = await this.deps.admission.evaluate(
       callerProfileId,
       newProfiles,
-      nowSeconds(this.deps),
-      connection
+      { connection, lockForUpdate: true }
     );
     for (const profileId of newProfiles) {
-      const status = decideE2eePolicy({
-        callerProfileId,
-        facts: facts.get(profileId)!,
-        bypass: false
-      });
-      if (status === E2eeEligibilityStatus.BLOCKED) {
+      const decision = decisions.get(profileId);
+      if (decision?.allowed) continue;
+      const reason =
+        decision?.reason ?? DirectMessageRefusalReason.NOT_ACCEPTING;
+      if (reason === DirectMessageRefusalReason.SENDER_BLOCKED_RECIPIENT) {
         throw e2eeErrors.blocked(profileId);
       }
-      if (status === E2eeEligibilityStatus.POLICY) {
-        throw e2eeErrors.policy(profileId);
-      }
+      throw e2eeErrors.policy(profileId, reason);
     }
   }
 

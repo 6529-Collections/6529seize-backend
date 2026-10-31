@@ -1,6 +1,8 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import { ethers } from 'ethers';
 import { E2eeEventPublisher, e2eeEventPublisher } from '@/api/e2ee/e2ee-events';
+import type { DirectMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.service';
+import { directMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.instance';
 import { verifyContractWalletSignatureHash } from '@/api/wallet-signatures/structured-wallet-signatures';
 import {
   E2EE_LAST_SEEN_UPDATE_INTERVAL_MS,
@@ -50,6 +52,11 @@ export interface E2eeServiceDeps {
   readonly randomHex: (bytes: number) => string;
   /** E2EE_ATTACHMENTS_ENABLED: whether blob routes accept or serve chunks. */
   readonly attachmentsEnabled: () => boolean;
+  /**
+   * The platform's shared inbound DM admission (blocks, DM policy, group
+   * membership), the same rules legacy DMs use.
+   */
+  readonly admission: Pick<DirectMessageAdmissionService, 'evaluate'>;
   readonly loginGrants: E2eeLoginGrantStore;
 }
 
@@ -81,6 +88,7 @@ export const defaultE2eeServiceDeps: E2eeServiceDeps = {
   random: () => randomInt(0, 0x100000000) / 0x100000000,
   randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`,
   attachmentsEnabled: () => isE2eeAttachmentsEnabled(),
+  admission: directMessageAdmissionService,
   loginGrants: deviceGrantsLoginGrantStore
 };
 

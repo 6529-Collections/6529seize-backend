@@ -143,6 +143,12 @@ describe('E2EE devices from combined sign-in grants (NC8)', () => {
       random: () => 1,
       randomHex: () => '0x00',
       attachmentsEnabled: () => true,
+      // Registration and revocation never consult DM admission.
+      admission: {
+        evaluate: async () => {
+          throw new Error('admission is not used by device registration');
+        }
+      },
       loginGrants: {
         findGrant: async (id) => grants.get(id) ?? null,
         revokeGrant: async (id, revokedAtMs) => {

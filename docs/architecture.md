@@ -1657,10 +1657,34 @@ delivery fails open and the unfiltered notifications are inserted. The
 combined user-facing “Direct messages and wave activity” category, including
 new-wave, all-drops subscription, and priority-alert causes.
 
+Inbound direct-message admission has one decision point:
+`DirectMessageAdmissionService`
+(`src/api-serverless/src/direct-messages/direct-message-admission.service.ts`,
+pure rules in `src/direct-messages/direct-message-admission.ts`). It reads each
+recipient's policy, chosen group, follow relationship, and blocks in both
+directions in one set-based query, then decides in this order: a sender who
+blocked the recipient is told so; a recipient's block refuses with the generic
+"doesn't accept new messages" reason and is never disclosed; then `EVERYONE`,
+`PEOPLE_I_FOLLOW`, `NOBODY`, or `GROUP_MEMBERS`. `GROUP_MEMBERS` admits members
+of `direct_message_group_id`, evaluated with the platform group eligibility
+rules when the conversation starts (always fresh inside the creation
+transaction; non-transactional checks may reuse a result for 30 seconds per
+sender and group), and, while `direct_message_allow_people_i_follow` is on,
+people the recipient follows. A missing, hidden, or direct-message group fails
+closed to `PEOPLE_I_FOLLOW`, and the preferences API reports
+`direct_message_group_unavailable` so settings can warn. Refusals are 403s with
+stable `DM_*` codes plus the recipient handle; a group is named only when it is
+public. Legacy DM creation calls the service inside the group-creation
+transaction. E2EE eligibility, key-package claims and roster additions call the
+shared instance in `direct-message-admission.instance.ts` (roster additions
+inside the roster transaction with recipient rows locked); a target's block
+maps to `POLICY` there and only the caller's own block to `BLOCKED`.
+
 Roll out this table and its dependent workloads in this order:
 
 1. `dbMigrationsLoop` creates `profile_preferences` with legacy-compatible
-   defaults.
+   defaults (including the nullable `direct_message_group_id` and
+   `direct_message_allow_people_i_follow`, default true).
 2. Deploy `api` for preference endpoints, direct-message admission, and API
    notification writers.
 3. Deploy the `subscriptionsDaily` stack (including

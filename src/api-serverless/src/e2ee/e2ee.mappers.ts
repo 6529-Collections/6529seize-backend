@@ -4,6 +4,7 @@ import {
   ApiE2eeDeviceVerifiedViaEnum
 } from '@/api/generated/models/ApiE2eeDevice';
 import { ApiE2eeDevicePlatform } from '@/api/generated/models/ApiE2eeDevicePlatform';
+import { ApiE2eeEligibilityReasonEnum } from '@/api/generated/models/ApiE2eeEligibility';
 import { ApiE2eeEligibilityStatus } from '@/api/generated/models/ApiE2eeEligibilityStatus';
 import { ApiE2eeGroup } from '@/api/generated/models/ApiE2eeGroup';
 import {
@@ -20,6 +21,7 @@ import {
 } from '@/e2ee/e2ee.db';
 import { E2eeEntryKind } from '@/e2ee/e2ee-digests';
 import { E2eeEligibilityStatus } from '@/e2ee/e2ee-policy';
+import { DirectMessageRefusalReason } from '@/direct-messages/direct-message-admission';
 
 const PLATFORMS: Record<string, ApiE2eeDevicePlatform> = {
   web: ApiE2eeDevicePlatform.Web,
@@ -33,6 +35,28 @@ const STATUSES: Record<E2eeEligibilityStatus, ApiE2eeEligibilityStatus> = {
   [E2eeEligibilityStatus.BLOCKED]: ApiE2eeEligibilityStatus.Blocked,
   [E2eeEligibilityStatus.NO_DEVICES]: ApiE2eeEligibilityStatus.NoDevices
 };
+
+// Same values as DIRECT_MESSAGE_ADMISSION_ERROR_CODES (the legacy DM codes).
+const REASONS: Record<
+  DirectMessageRefusalReason,
+  ApiE2eeEligibilityReasonEnum
+> = {
+  [DirectMessageRefusalReason.NOT_ACCEPTING]:
+    ApiE2eeEligibilityReasonEnum.RecipientNotAccepting,
+  [DirectMessageRefusalReason.PEOPLE_I_FOLLOW_ONLY]:
+    ApiE2eeEligibilityReasonEnum.RecipientPeopleIFollowOnly,
+  [DirectMessageRefusalReason.GROUP_MEMBERS_ONLY]:
+    ApiE2eeEligibilityReasonEnum.RecipientGroupMembersOnly,
+  [DirectMessageRefusalReason.SENDER_BLOCKED_RECIPIENT]:
+    ApiE2eeEligibilityReasonEnum.SenderBlockedRecipient
+};
+
+/** The shared DM admission code behind a POLICY or BLOCKED status. */
+export function toApiEligibilityReason(
+  reason: DirectMessageRefusalReason
+): ApiE2eeEligibilityReasonEnum {
+  return REASONS[reason];
+}
 
 export function toApiEligibilityStatus(
   status: E2eeEligibilityStatus
