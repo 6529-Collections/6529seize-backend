@@ -23,15 +23,13 @@ export function isE2eeEnabled(env: Env = process.env): boolean {
 }
 
 /**
- * `E2EE_ATTACHMENTS_ENABLED`: whether the encrypted attachment (blob) routes
- * accept and serve chunks. Same defaults as `E2EE_DMS_ENABLED`: on for
- * `local` and `development`, off elsewhere, so production stays text-only
- * until attachments move out of MySQL.
+ * `E2EE_ATTACHMENTS_ENABLED`: a kill switch for the encrypted attachment
+ * (blob) routes. On unless it is exactly `'false'`, in every environment
+ * including production; `'false'` makes them refuse before any database
+ * access.
  */
 export function isE2eeAttachmentsEnabled(env: Env = process.env): boolean {
-  return (
-    readBooleanFlag(env, 'E2EE_ATTACHMENTS_ENABLED') ?? isDevelopmentLike(env)
-  );
+  return readBooleanFlag(env, 'E2EE_ATTACHMENTS_ENABLED') ?? true;
 }
 
 /** P35's value; staging allows more so automated tests can churn groups. */

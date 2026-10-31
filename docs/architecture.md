@@ -2061,10 +2061,10 @@ New tables, created by `dbMigrationsLoop` entity sync: `e2ee_devices`,
 `e2ee_push_throttle` and `e2ee_rate_counters`. Their SQL is a private query
 family: statements and bound values never reach logs. Encrypted attachment
 chunks live in MySQL in v1 with per-profile quotas (200 MiB per rolling 24 h,
-1 GiB live) and pruning on every upload; `E2EE_ATTACHMENTS_ENABLED` (off by
-default outside `local`/`development`) makes the blob routes refuse before
-any database access until they move to a private S3 bucket or
-content-addressed pinning. Reports (severe-harm categories only) are read
+1 GiB live) and pruning on every upload, until they move to a private S3
+bucket or content-addressed pinning behind the same routes;
+`E2EE_ATTACHMENTS_ENABLED=false` (on by default) is a kill switch that makes
+the blob routes refuse before any database access. Reports (severe-harm categories only) are read
 only by the group named in `E2EE_TRUST_AND_SAFETY_GROUP_ID` through
 `/e2ee/trust-and-safety/...`, with every read written to
 `e2ee_report_access_log`, and are deleted after 180 days unless on hold. Rate limits are
