@@ -28,7 +28,7 @@ Other settings, read per request:
 
 | Variable | Effect | Default |
 | --- | --- | --- |
-| `E2EE_ATTACHMENTS_ENABLED` | `true` lets the attachment (blob) routes accept and serve chunks; `false` makes them answer `404 E2EE_ATTACHMENTS_DISABLED` before any database read or write. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On for `local` and `development`; off otherwise, so production launches text-only until attachments leave MySQL |
+| `E2EE_ATTACHMENTS_ENABLED` | Kill switch for attachments: `false` makes the attachment (blob) routes answer `404 E2EE_ATTACHMENTS_DISABLED` before any database read or write. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On everywhere, including production |
 | `E2EE_ENTRIES_PER_GROUP_PER_HOUR` | Commits and proposals one group may sequence per hour (an integer from 1 to 1000) | 12 (P35's value); 30 for `local` and `development`, so automated tests can churn groups |
 | `E2EE_TRUST_AND_SAFETY_GROUP_ID` | The user group whose members may read reported encrypted messages (see Reports and trust and safety) | Unset: reports are stored, nobody can read them |
 
@@ -201,9 +201,12 @@ abandoned blobs per pass, chunks and row deleted together) in addition to the
 general opportunistic pruning.
 
 Moving ciphertext blobs to a private S3 bucket (or to content-addressed
-pinning, P51 DN9) is the first storage follow-up. Until then production runs
-with `E2EE_ATTACHMENTS_ENABLED` off: the attachment routes refuse before
-touching the database, and clients hide attaching.
+pinning, P51 DN9) is the first storage follow-up. The API does not change:
+clients only ever upload and download opaque ciphertext chunks through
+`/e2ee/blobs/...`, so the move replaces the three chunk functions in
+`src/e2ee/e2ee.db.ts` (write, read, prune) with an object store and keeps
+sizes in `e2ee_blob_chunks`. `E2EE_ATTACHMENTS_ENABLED=false` is the kill
+switch meanwhile.
 
 ## Retention
 

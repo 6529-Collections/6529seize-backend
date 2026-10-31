@@ -27,11 +27,12 @@ describe('isE2eeAttachmentsEnabled', () => {
   it.each([
     [{ E2EE_ATTACHMENTS_ENABLED: 'true', NODE_ENV: 'production' }, true],
     [{ E2EE_ATTACHMENTS_ENABLED: 'false', NODE_ENV: 'development' }, false],
+    [{ E2EE_ATTACHMENTS_ENABLED: 'FALSE', NODE_ENV: 'production' }, false],
     [{ NODE_ENV: 'local' }, true],
     [{ NODE_ENV: 'development' }, true],
-    [{ NODE_ENV: 'production' }, false],
-    [{ E2EE_DMS_ENABLED: 'true', NODE_ENV: 'production' }, false],
-    [{}, false]
+    [{ NODE_ENV: 'production' }, true],
+    [{ E2EE_ATTACHMENTS_ENABLED: 'no', NODE_ENV: 'production' }, true],
+    [{}, true]
   ])('resolves %j to %s', (env, expected) => {
     expect(isE2eeAttachmentsEnabled(env)).toBe(expected);
   });
