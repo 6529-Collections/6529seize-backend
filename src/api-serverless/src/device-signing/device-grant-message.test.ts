@@ -58,8 +58,9 @@ const VECTOR_GRANT_ID =
   '0x570275df514a120bb521f4e45c6cdc6613101cd36e9e9cfa8a46a6a4fdda886c';
 const LEGACY_VECTOR_GRANT_ID =
   '0xbfa3bda34f9f8db49268ce338e3f3719a4191e879825ae7d8ebd41fb1567bfac';
-// The ERC-4361 statement charset (siwe-parser ABNF): no newline, no non-ASCII.
-const ERC_4361_STATEMENT = /^[a-zA-Z0-9 !#$&-;=?@[\]_~]+$/;
+// The ERC-4361 statement charset (siwe-parser ABNF, RFC 3986 reserved and
+// unreserved characters plus space): no newline, no non-ASCII.
+const ERC_4361_STATEMENT = /^[a-zA-Z0-9 !#$&'()*+,./:;=?@[\]_~-]+$/;
 
 function utcSeconds(
   year: number,
