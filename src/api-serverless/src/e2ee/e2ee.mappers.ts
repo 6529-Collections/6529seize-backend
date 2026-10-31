@@ -73,7 +73,8 @@ export function toApiE2eeDevice(row: E2eeDeviceRow): ApiE2eeDevice {
             revoked_at: Number(row.revocation_signed_at_seconds),
             signature: row.revocation_signature
           }
-        : null
+        : null,
+    grant_message: row.grant_message ?? null
   };
 }
 

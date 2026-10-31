@@ -64,7 +64,7 @@ synchronization, without foreign keys.
 
 | Table | Contents |
 | --- | --- |
-| `e2ee_devices` | Device key, owner profile, the signed grant fields, `grant_id`, wallet signature, `verified_via`, label, platform, timestamps, revocation (revoker key, signed time, Ed25519 signature) |
+| `e2ee_devices` | Device key, owner profile, the signed grant fields, `grant_id`, wallet signature, `verified_via`, label, platform, timestamps, revocation (revoker key, signed time, Ed25519 signature), `grant_message` (the combined sign-in message, NC8; null for EIP-712 grants) |
 | `e2ee_key_packages` | Opaque KeyPackage bytes per device, last-resort flag, expiry |
 | `e2ee_groups` | Random group handle `g`, current epoch, current commit key `pub(K_epoch)`, last sequence number |
 | `e2ee_report_access_log` | Trust-and-safety audit: viewer profile, action (`list`, `read`, `hold`, `release`), report ids, time. No message content |
@@ -102,6 +102,29 @@ Ethereum mainnet, it calls EIP-1271 `isValidSignature(grant_id, signature)`
 through `verifyContractWalletSignatureHash`. The grant wallet must map to the
 caller's profile. A profile has at most 10 active devices; re-registering an
 unrevoked key of the same profile renews its grant.
+
+`POST /e2ee/devices/login-grant` (NC8) registers the MLS key that a combined
+sign-in grant also granted (`docs/auth/wallet-auth.md`), with no second
+wallet signature. The body names the `grant_id` the session login returned.
+The grant must be stored in `device_grants`, unrevoked, and its signed
+message must parse as a combined grant whose
+`urn:6529:mls-device-grant:v1` resource passes the same field checks as an
+EIP-712 grant (ciphersuite, lifetime, expiry; origin = the SIWE domain,
+`issued_at` = its Issued At). The device row keeps that message in
+`grant_message`, `grant_id` is its EIP-191 hash and `wallet_signature` the
+login signature; `verified_via` is `eoa` when the signature recovers to the
+wallet, else `eip1271` (the login verified it on chain). Clients verify such
+devices from `grant_message` instead of rebuilding the EIP-712 grant. Device
+limits and renewal are as for `POST /e2ee/devices`; renewing through either
+route replaces the grant and sets or clears `grant_message`.
+
+One grant, one lifetime: the two keys share the expiry, revoking the
+encrypted-messages device (signed revocation below) also revokes its sign-in
+grant, and revoking the sign-in grant through `/device-grants` revokes the
+device. That last revocation is 6529.io's: the row has `revoked_at` but no
+device signature, delivery stops at once (rosters, KeyPackages, welcomes)
+and other members see an unverified revocation until the device's own
+signed revocation or expiry.
 
 A revocation is an Ed25519 signature over
 `H("6529.MlsDeviceRevoke.v1", target, revoker, uint64 revoked_at)` by the

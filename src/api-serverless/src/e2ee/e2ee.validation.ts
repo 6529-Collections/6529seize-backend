@@ -83,6 +83,14 @@ export const e2eeRegisterDeviceSchema = Joi.object({
     .required()
 });
 
+export const e2eeRegisterLoginGrantDeviceSchema = Joi.object({
+  grant_id: hex32().required(),
+  label: Joi.string().allow('').max(200).optional(),
+  platform: Joi.string()
+    .valid(...E2EE_DEVICE_PLATFORMS)
+    .required()
+});
+
 export const e2eeDeviceLookupSchema = Joi.object({
   profile_ids: Joi.array().items(profileId()).max(200).optional(),
   device_keys: deviceKeyList(500).optional()

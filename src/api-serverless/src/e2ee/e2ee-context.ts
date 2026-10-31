@@ -13,10 +13,32 @@ import { isE2eeAttachmentsEnabled } from '@/e2ee/e2ee-flag';
 import { E2eeContractWalletVerifier } from '@/e2ee/e2ee-grant';
 import { getEthereumRpcProvider } from '@/ethereum-rpc/ethereum-rpc-provider';
 import { identitiesDb } from '@/identities/identities.db';
+import { deviceSigningDb } from '@/api/device-signing/device-signing.db';
 import { Logger } from '@/logging';
 import { ConnectionWrapper } from '@/sql-executor';
 
 const logger = Logger.get('E2EE');
+
+/** The signed-messages grant a combined sign-in stored (NC8). */
+export interface E2eeLoginGrantRecord {
+  readonly id: string;
+  readonly wallet: string;
+  readonly message: string;
+  readonly wallet_signature: string;
+  readonly revoked_at: number | string | null;
+}
+
+/** Combined sign-in grants, stored by the DN1 login (device_grants). */
+export interface E2eeLoginGrantStore {
+  findGrant(grantId: string): Promise<E2eeLoginGrantRecord | null>;
+  revokeGrant(grantId: string, revokedAtMs: number): Promise<void>;
+}
+
+export const deviceGrantsLoginGrantStore: E2eeLoginGrantStore = {
+  findGrant: (grantId) => deviceSigningDb.findGrantById(grantId, {}),
+  revokeGrant: (grantId, revokedAtMs) =>
+    deviceSigningDb.revokeGrant(grantId, revokedAtMs, {})
+};
 
 export interface E2eeServiceDeps {
   readonly db: E2eeDb;
@@ -28,6 +50,7 @@ export interface E2eeServiceDeps {
   readonly randomHex: (bytes: number) => string;
   /** E2EE_ATTACHMENTS_ENABLED: whether blob routes accept or serve chunks. */
   readonly attachmentsEnabled: () => boolean;
+  readonly loginGrants: E2eeLoginGrantStore;
 }
 
 /** Ethereum mainnet EIP-1271 checks (contract section 2.2 step 3). */
@@ -57,7 +80,8 @@ export const defaultE2eeServiceDeps: E2eeServiceDeps = {
   // Uniform [0, 1) from the CSPRNG (used for pruning odds and jitter).
   random: () => randomInt(0, 0x100000000) / 0x100000000,
   randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`,
-  attachmentsEnabled: () => isE2eeAttachmentsEnabled()
+  attachmentsEnabled: () => isE2eeAttachmentsEnabled(),
+  loginGrants: deviceGrantsLoginGrantStore
 };
 
 export function nowSeconds(deps: E2eeServiceDeps): number {

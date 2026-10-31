@@ -177,6 +177,29 @@ without device parameters are unchanged.
   {scopes}. ..."), so a challenge issued just before a deploy still logs in;
   grants signed over it stay valid. The frontend must accept a new statement
   shape before the backend renders it.
+- Combined grant (NC8): with `mls_device_key` (`0x` + 64 lowercase hex, not
+  the signing key) and `mls_ciphersuite` as well, the same message also grants
+  the browser's MLS signature key for end-to-end encrypted messages. It then
+  carries two resources in this order, the signing URN above and
+  `urn:6529:mls-device-grant:v1:{ciphersuite}:{MLS key hex}:{expiry}` with
+  the same expiry, and a combined statement that adds one clause and the
+  second key to the signed-messages statement:
+
+  > ... so anyone can verify they came from your wallet. It will also send
+  > and read your end-to-end encrypted messages, which 6529 cannot read. It
+  > can't move funds, ... (Device key d75a9801...f707511a, encrypted messages
+  > key 3d4017c3...2af4660c)
+
+  The server issues it only while encrypted messages are on and the
+  ciphersuite is its own (`E2EE_CIPHERSUITE`); otherwise it ignores the MLS
+  parameters and issues the signing grant alone. The parser accepts exactly
+  the plain sign-in, the one-resource signing grant (current or legacy
+  statement) and this two-resource shape with a combined statement from the
+  list in `combined-device-grant.ts`; resources out of order, a third
+  resource, a different MLS expiry, the signing key reused as the MLS key or
+  a mismatched statement fail closed. The wording is pending owner approval;
+  to change it, add a renderer at the front of that list (keep the old ones)
+  and ship a frontend that accepts it first.
 - `POST /api/auth/session-login` stores the grant in `device_grants` only
   after the wallet signature verified and the nonce was consumed, keyed by the
   EIP-191 hash of the exact signed message. The response gains `device_grant`.
@@ -185,7 +208,8 @@ without device parameters are unchanged.
   at most 48 characters, defaulting to `Browser`.
 - `GET /api/device-grants` lists the grants of every wallet of the caller's
   profile; `POST /api/device-grants/{grantId}/revoke` revokes one. Neither is
-  available to proxies.
+  available to proxies. Revoking a combined grant also revokes the
+  encrypted-messages device it enrolled (see `docs/e2ee-messaging.md`).
 - `POST /drops`, `POST /drops/{id}`, `DELETE /drops/{id}` and
   `POST|DELETE /drops/{id}/reaction` accept an optional `device_signature`
   (`grant_id`, `seq`, `claimed_time`, `signature`). The server strips it from

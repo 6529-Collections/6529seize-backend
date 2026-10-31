@@ -1,7 +1,10 @@
 import 'reflect-metadata';
 import { randomBytes } from 'node:crypto';
 import { HDNodeWallet, keccak256, Wallet } from 'ethers';
-import { E2eeServiceDeps } from '@/api/e2ee/e2ee-context';
+import { E2eeLoginGrantRecord, E2eeServiceDeps } from '@/api/e2ee/e2ee-context';
+import { computeDeviceGrantId } from '@/api/device-signing/device-grant-message';
+import { createSiweWebAuthChallenge } from '@/api/wallet-signatures/siwe-wallet-auth';
+import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
 import { E2eeEventPublisher } from '@/api/e2ee/e2ee-events';
 import { createE2eeServices } from '@/api/e2ee/e2ee.handlers';
 import { ApiE2eeReportCategory } from '@/api/generated/models/ApiE2eeReportCategory';
@@ -118,11 +121,13 @@ describeWithSeed('E2EE delivery service', [], () => {
   let services: ReturnType<typeof createE2eeServices>;
   let randomValue: number;
   let attachmentsEnabled: boolean;
+  let loginGrants: Map<string, E2eeLoginGrantRecord>;
 
   beforeEach(() => {
     now = START;
     events = [];
     walletProfiles = new Map();
+    loginGrants = new Map();
     randomValue = 1;
     attachmentsEnabled = true;
     db = new E2eeDb(() => sqlExecutor);
@@ -150,7 +155,16 @@ describeWithSeed('E2EE delivery service', [], () => {
       now: () => now,
       random: () => randomValue,
       randomHex: (bytes) => `0x${randomBytes(bytes).toString('hex')}`,
-      attachmentsEnabled: () => attachmentsEnabled
+      attachmentsEnabled: () => attachmentsEnabled,
+      loginGrants: {
+        findGrant: async (id) => loginGrants.get(id) ?? null,
+        revokeGrant: async (id, revokedAtMs) => {
+          const grant = loginGrants.get(id);
+          if (grant?.revoked_at === null) {
+            loginGrants.set(id, { ...grant, revoked_at: revokedAtMs });
+          }
+        }
+      }
     };
     services = createE2eeServices(deps);
   });
@@ -190,6 +204,38 @@ describeWithSeed('E2EE delivery service', [], () => {
       platform: 'web' as never
     });
     return key;
+  }
+
+  /** A combined sign-in grant the login stored, then its E2EE device. */
+  async function registerLoginGrantDevice(
+    profile: Profile,
+    key: E2eeTestKey = randomE2eeKey()
+  ): Promise<{ key: E2eeTestKey; grantId: string; message: string }> {
+    walletProfiles.set(profile.wallet.address.toLowerCase(), profile.id);
+    const challenge = createSiweWebAuthChallenge({
+      address: profile.wallet.address,
+      clientOrigin: 'https://staging.6529.io',
+      chainId: 1,
+      issuedAt: new Date(now),
+      deviceGrant: {
+        deviceKey: randomE2eeKey().publicKey,
+        scopes: ['post', 'edit', 'delete', 'react'],
+        mlsDevice: { deviceKey: key.publicKey, ciphersuite: E2EE_CIPHERSUITE }
+      }
+    });
+    const grantId = computeDeviceGrantId(challenge.message);
+    loginGrants.set(grantId, {
+      id: grantId,
+      wallet: profile.wallet.address.toLowerCase(),
+      message: challenge.message,
+      wallet_signature: await profile.wallet.signMessage(challenge.message),
+      revoked_at: null
+    });
+    await services.devices.registerLoginGrantDevice(profile.id, {
+      grant_id: grantId,
+      platform: 'web' as never
+    });
+    return { key, grantId, message: challenge.message };
   }
 
   interface TestGroup {
@@ -438,6 +484,77 @@ describeWithSeed('E2EE delivery service', [], () => {
       await expectE2eeError(registerDevice(alice), 'E2EE_DEVICE_LIMIT');
       const bob = aProfile();
       await expectE2eeError(registerDevice(bob, keys[0]), 'E2EE_DEVICE_EXISTS');
+    });
+  });
+
+  describe('combined sign-in grants (NC8)', () => {
+    it('stores and serves the signed sign-in message of the device', async () => {
+      const alice = aProfile();
+      const { key, grantId, message } = await registerLoginGrantDevice(alice);
+      const me = await services.devices.getMe(alice.id);
+      expect(me.devices).toHaveLength(1);
+      expect(me.devices[0]).toMatchObject({
+        device_key: key.publicKey,
+        grant_id: grantId,
+        grant_message: message,
+        verified_via: 'eoa',
+        grant: { device_key: key.publicKey, origin: 'staging.6529.io' }
+      });
+      const eip712 = await registerDevice(alice);
+      expect(
+        (await services.devices.getDevice(eip712.publicKey)).grant_message
+      ).toBeNull();
+    });
+
+    it('revoking the sign-in grant removes its device from every roster', async () => {
+      const alice = aProfile();
+      const bob = aProfile();
+      const aliceDevice = await registerDevice(alice);
+      const { key: bobDevice, grantId } = await registerLoginGrantDevice(bob);
+      await uploadKeyPackages(bob, bobDevice, 2);
+      const group = await createGroup(alice, aliceDevice);
+      await commit(alice, group, aliceDevice, {
+        rosterAdd: [bobDevice.publicKey]
+      });
+      events = [];
+
+      await services.devices.revokeDeviceOfLoginGrant(grantId);
+
+      const revoked = await services.devices.getDevice(bobDevice.publicKey);
+      expect(revoked.revoked_at).toBe(now);
+      expect(revoked.revocation).toBeNull();
+      const roster = await services.groups.getGroup(
+        alice.id,
+        group.g,
+        aliceDevice.publicKey
+      );
+      expect(roster.roster.map((row) => row.device_key)).toEqual([
+        aliceDevice.publicKey
+      ]);
+      expect(
+        await db.countOneTimeKeyPackages(bobDevice.publicKey, nowSeconds())
+      ).toBe(0);
+      expect(events.map((event) => event.method)).toEqual(['deviceRevoked']);
+      await services.devices.revokeDeviceOfLoginGrant(grantId);
+      expect(events).toHaveLength(1);
+    });
+
+    it('revoking the device revokes its sign-in grant', async () => {
+      const alice = aProfile();
+      const { key, grantId } = await registerLoginGrantDevice(alice);
+      const revokedAt = nowSeconds();
+      await services.devices.revokeDevice(alice.id, key.publicKey, {
+        revoker_device_key: key.publicKey,
+        revoked_at: revokedAt,
+        signature: key.sign(
+          e2eeRevokeDigest({
+            targetDeviceKey: key.publicKey,
+            revokerDeviceKey: key.publicKey,
+            revokedAtSeconds: revokedAt
+          })
+        )
+      });
+      expect(loginGrants.get(grantId)?.revoked_at).toBe(now);
     });
   });
 

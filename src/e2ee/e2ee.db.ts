@@ -279,12 +279,13 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
         device_key, profile_id, wallet, ciphersuite, issued_at_seconds,
         expires_at_seconds, origin, grant_id, wallet_signature, verified_via,
         label, platform, created_at, updated_at, last_seen_at, revoked_at,
-        revoker_device_key, revocation_signed_at_seconds, revocation_signature
+        revoker_device_key, revocation_signed_at_seconds, revocation_signature,
+        grant_message
       ) values (
         :device_key, :profile_id, :wallet, :ciphersuite, :issued_at_seconds,
         :expires_at_seconds, :origin, :grant_id, :wallet_signature,
         :verified_via, :label, :platform, :created_at, :updated_at,
-        :last_seen_at, null, null, null, null
+        :last_seen_at, null, null, null, null, :grant_message
       )`,
       { ...device },
       connection
@@ -306,6 +307,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       | 'label'
       | 'platform'
       | 'updated_at'
+      | 'grant_message'
     >,
     connection: Conn
   ): Promise<void> {
@@ -315,6 +317,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
         issued_at_seconds = :issued_at_seconds,
         expires_at_seconds = :expires_at_seconds, origin = :origin,
         grant_id = :grant_id, wallet_signature = :wallet_signature,
+        grant_message = :grant_message,
         verified_via = :verified_via, label = :label, platform = :platform,
         updated_at = :updated_at, last_seen_at = :updated_at
        where device_key = :device_key and revoked_at is null`,
@@ -329,6 +332,42 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
        where device_key = :deviceKey
          and (last_seen_at is null or last_seen_at < :threshold)`,
       { deviceKey, nowMs, threshold: nowMs - intervalMs }
+    );
+  }
+
+  /**
+   * The active device a combined sign-in grant registered, if any (for
+   * revoking it together with that grant).
+   */
+  async getUnrevokedDeviceOfLoginGrant(
+    grantId: string,
+    connection?: Conn
+  ): Promise<E2eeDeviceRow | null> {
+    return this.one<E2eeDeviceRow>(
+      `select * from ${E2EE_DEVICES_TABLE}
+       where grant_id = :grantId and grant_message is not null
+         and revoked_at is null
+       limit 1`,
+      { grantId },
+      connection
+    );
+  }
+
+  /**
+   * Revocation by 6529.io when the wallet's session revoked the combined
+   * sign-in grant behind this device. It carries no device signature, so
+   * other members treat it as unverified (D109 2.4); delivery stops at once.
+   */
+  async markDeviceRevokedByGrant(
+    input: { readonly deviceKey: string; readonly revokedAtMs: number },
+    connection: Conn
+  ): Promise<void> {
+    await this.write(
+      `update ${E2EE_DEVICES_TABLE} set
+        revoked_at = :revokedAtMs, updated_at = :revokedAtMs
+       where device_key = :deviceKey and revoked_at is null`,
+      { ...input },
+      connection
     );
   }
 
