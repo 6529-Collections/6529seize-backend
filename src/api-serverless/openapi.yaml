@@ -17554,7 +17554,8 @@ paths:
           description: |
             A recipient does not admit new direct messages from the caller.
             Existing conversations with the same members are returned without
-            this check. The body is `{ error, code, handle }` where code is
+            this check. The body is `{ error, code, handle }` (handle may be
+            null when the recipient has none) where code is
             DM_RECIPIENT_NOT_ACCEPTING, DM_RECIPIENT_PEOPLE_I_FOLLOW_ONLY,
             DM_RECIPIENT_GROUP_MEMBERS_ONLY (plus group_id and group_name only
             when the recipient's group is public) or

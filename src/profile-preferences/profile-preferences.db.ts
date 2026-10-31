@@ -292,6 +292,8 @@ export class ProfilePreferencesDb extends LazyDbAccessCompatibleService {
       'addresses' in selector
         ? 'i.primary_address in (:addresses)'
         : 'i.profile_id in (:profileIds)';
+    // p.* is NULL for a recipient without a preferences row (left join), so
+    // the mapping below applies the legacy defaults.
     const rows = await this.db.execute<DirectMessageRecipientRow>(
       `select i.profile_id, i.primary_address, i.handle,
         coalesce(p.direct_message_policy, :defaultPolicy) as direct_message_policy,

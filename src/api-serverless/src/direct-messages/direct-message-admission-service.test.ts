@@ -237,6 +237,51 @@ describe('DirectMessageAdmissionService', () => {
     );
   });
 
+  it('never reuses a cached membership inside a creation transaction', async () => {
+    const eligible = ['group-1'];
+    const { service, deps } = createService({ eligible });
+    const connection = { connection: { id: 'tx' } };
+
+    // A probe outside the transaction caches "member".
+    await expect(
+      service.canStartDirectMessage(SENDER, 'recipient-profile')
+    ).resolves.toMatchObject({ allowed: true });
+
+    // The sender then drops out of the group before the conversation starts.
+    eligible.length = 0;
+    const error = await refusalOf(
+      service.assertRecipientsAdmitted(SENDER, [recipient()], { connection })
+    );
+
+    expect(error.code).toBe('DM_RECIPIENT_GROUP_MEMBERS_ONLY');
+    expect(deps.groups.getGroupsUserIsEligibleForByIds).toHaveBeenCalledTimes(
+      2
+    );
+  });
+
+  it('keeps the membership cache bounded by evicting the oldest entries', async () => {
+    const groups = Array.from({ length: 3 }, (_, index) =>
+      group({ id: `group-${index}` })
+    );
+    const { service, deps } = createService({ groups, eligible: [] });
+    const cache = (
+      service as unknown as { membershipCache: Map<string, unknown> }
+    ).membershipCache;
+
+    for (let index = 0; index < 5_001; index++) {
+      await service.evaluateRecipients(`sender-${index}`, [
+        recipient({ direct_message_group_id: 'group-0' })
+      ]);
+    }
+
+    expect(cache.size).toBe(5_000);
+    expect(cache.has('sender-0\u0000group-0')).toBe(false);
+    expect(cache.has('sender-5000\u0000group-0')).toBe(true);
+    expect(deps.groups.getGroupsUserIsEligibleForByIds).toHaveBeenCalledTimes(
+      5_001
+    );
+  });
+
   it('reports the first refused recipient of a group conversation', async () => {
     const { service } = createService({
       recipients: [

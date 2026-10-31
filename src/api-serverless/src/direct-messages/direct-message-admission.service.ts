@@ -69,13 +69,15 @@ function isGroupUsable(group: UserGroupEntity | undefined): boolean {
  * - Encrypted (E2EE) DMs and groups: call {@link canStartDirectMessage},
  *   {@link evaluate} or {@link assertCanStartDirectMessage} with profile ids for
  *   every profile that is new to the roster, passing the roster transaction's
- *   connection. Use the shared instance exported from
+ *   connection with `lockForUpdate: true`. Use the shared instance exported from
  *   `direct-message-admission.instance.ts`.
  *
  * Existing conversations must not call this: admission only gates the start
  * of a conversation. Group membership is evaluated with the platform's group
- * eligibility rules at call time (TDH and REP change daily) and reused for
- * {@link DIRECT_MESSAGE_GROUP_MEMBERSHIP_CACHE_TTL_MS} per sender and group.
+ * eligibility rules at call time (TDH and REP change daily). Calls that pass a
+ * `connection` (conversation creation) always evaluate it fresh; other calls
+ * may reuse a result for {@link DIRECT_MESSAGE_GROUP_MEMBERSHIP_CACHE_TTL_MS}
+ * per sender and group.
  */
 export class DirectMessageAdmissionService {
   private readonly membershipCache = new Map<
@@ -266,7 +268,7 @@ export class DirectMessageAdmissionService {
     const memberOf = await this.getMemberships(
       senderProfileId,
       Array.from(usableGroups.keys()),
-      ctx.timer
+      ctx
     );
     const publicNames = await this.getPublicGroupNames(
       Array.from(usableGroups.values()).filter(
@@ -301,45 +303,60 @@ export class DirectMessageAdmissionService {
     return this.deps.groupNames(groups, ctx);
   }
 
+  /**
+   * The sender's memberships among `groupIds`. A transactional evaluation
+   * (one that passes a connection, such as conversation creation) always
+   * evaluates eligibility fresh; only non-transactional checks, such as an
+   * eligibility probe before creating a conversation, reuse recent results.
+   */
   private async getMemberships(
     senderProfileId: string,
     groupIds: string[],
-    timer: Timer | undefined
+    ctx: DirectMessageAdmissionContext
   ): Promise<Set<string>> {
     const now = this.now();
+    const useCache = !ctx.connection;
     const memberOf = new Set<string>();
-    const uncached: string[] = [];
+    const toEvaluate: string[] = [];
     for (const groupId of groupIds) {
-      const cached = this.membershipCache.get(
-        this.membershipKey(senderProfileId, groupId)
-      );
+      const cached = useCache
+        ? this.membershipCache.get(this.membershipKey(senderProfileId, groupId))
+        : undefined;
       if (cached && cached.expiresAt > now) {
         if (cached.member) memberOf.add(groupId);
       } else {
-        uncached.push(groupId);
+        toEvaluate.push(groupId);
       }
     }
-    if (!uncached.length) return memberOf;
+    if (!toEvaluate.length) return memberOf;
     const eligible = new Set(
       await this.deps.groups.getGroupsUserIsEligibleForByIds(
         senderProfileId,
-        uncached,
-        timer
+        toEvaluate,
+        ctx.timer
       )
     );
-    if (this.membershipCache.size >= MEMBERSHIP_CACHE_MAX_ENTRIES) {
-      this.membershipCache.clear();
-    }
     const expiresAt = now + DIRECT_MESSAGE_GROUP_MEMBERSHIP_CACHE_TTL_MS;
-    for (const groupId of uncached) {
+    for (const groupId of toEvaluate) {
       const member = eligible.has(groupId);
-      this.membershipCache.set(this.membershipKey(senderProfileId, groupId), {
+      this.rememberMembership(
+        this.membershipKey(senderProfileId, groupId),
         member,
         expiresAt
-      });
+      );
       if (member) memberOf.add(groupId);
     }
     return memberOf;
+  }
+
+  /** Insertion-ordered map as a bounded FIFO: evict the oldest entry. */
+  private rememberMembership(key: string, member: boolean, expiresAt: number) {
+    this.membershipCache.delete(key);
+    if (this.membershipCache.size >= MEMBERSHIP_CACHE_MAX_ENTRIES) {
+      const oldest = this.membershipCache.keys().next();
+      if (!oldest.done) this.membershipCache.delete(oldest.value);
+    }
+    this.membershipCache.set(key, { member, expiresAt });
   }
 
   private membershipKey(senderProfileId: string, groupId: string): string {

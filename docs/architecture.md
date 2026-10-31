@@ -1662,7 +1662,8 @@ blocked the recipient is told so; a recipient's block refuses with the generic
 "doesn't accept new messages" reason and is never disclosed; then `EVERYONE`,
 `PEOPLE_I_FOLLOW`, `NOBODY`, or `GROUP_MEMBERS`. `GROUP_MEMBERS` admits members
 of `direct_message_group_id`, evaluated with the platform group eligibility
-rules when the conversation starts (membership is reused for 30 seconds per
+rules when the conversation starts (always fresh inside the creation
+transaction; non-transactional checks may reuse a result for 30 seconds per
 sender and group), and, while `direct_message_allow_people_i_follow` is on,
 people the recipient follows. A missing, hidden, or direct-message group fails
 closed to `PEOPLE_I_FOLLOW`, and the preferences API reports
