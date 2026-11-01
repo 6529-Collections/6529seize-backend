@@ -95,6 +95,7 @@ import { deviceGrantsService } from '@/api/device-signing/device-grants.service'
 import { MlsDeviceGrantRequest } from '@/api/device-signing/combined-device-grant';
 import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
 import { isE2eeEnabled } from '@/e2ee/e2ee-flag';
+import { identitiesDb } from '@/identities/identities.db';
 
 const router = asyncRouter();
 const logger = Logger.get('AUTH_ROUTES');
@@ -174,7 +175,7 @@ ${randomUUID()}`;
 
 router.get(
   '/session-nonce',
-  function (
+  async function (
     req: Request<any, any, any, SessionNonceQueryRequest, any>,
     res: Response<ApiResponse<ApiSessionNonceResponse>>
   ) {
@@ -188,7 +189,11 @@ router.get(
         `Invalid signer address ${signerAddress}`
       );
     }
-    const deviceGrant = resolveRequestedDeviceGrant(nonceRequest);
+    const deviceGrant = await resolveRequestedDeviceGrant(
+      nonceRequest,
+      signerAddress,
+      Timer.getFromRequest(req)
+    );
     const nonceContext = resolveSessionNonceContext(req, nonceRequest);
     const authWalletChainId = getAuthWalletChainId();
     if (nonceRequest.client_type === 'web') {
@@ -239,9 +244,11 @@ router.get(
   }
 );
 
-function resolveRequestedDeviceGrant(
-  nonceRequest: SessionNonceQueryRequest
-): SiweDeviceGrantRequest | null {
+async function resolveRequestedDeviceGrant(
+  nonceRequest: SessionNonceQueryRequest,
+  signerAddress: string,
+  timer: Timer
+): Promise<SiweDeviceGrantRequest | null> {
   const hasDeviceParams =
     nonceRequest.device_key !== undefined ||
     nonceRequest.device_key_type !== undefined ||
@@ -261,7 +268,11 @@ function resolveRequestedDeviceGrant(
   return {
     deviceKey: nonceRequest.device_key,
     scopes,
-    mlsDevice: resolveRequestedMlsDevice(nonceRequest)
+    mlsDevice: await resolveRequestedMlsDevice(
+      nonceRequest,
+      signerAddress,
+      timer
+    )
   };
 }
 
@@ -269,10 +280,15 @@ function resolveRequestedDeviceGrant(
  * The MLS half of a combined grant request. A server with encrypted
  * messages off, or on another ciphersuite, issues the signing grant alone;
  * the client then enrolls encrypted messages with its own grant prompt.
+ * So does a wallet without a profile: an MLS device can only join a
+ * profile, so the key would be thrown away and granted again after the
+ * profile is created.
  */
-function resolveRequestedMlsDevice(
-  nonceRequest: SessionNonceQueryRequest
-): MlsDeviceGrantRequest | null {
+async function resolveRequestedMlsDevice(
+  nonceRequest: SessionNonceQueryRequest,
+  signerAddress: string,
+  timer: Timer
+): Promise<MlsDeviceGrantRequest | null> {
   const deviceKey = nonceRequest.mls_device_key;
   const ciphersuite = nonceRequest.mls_ciphersuite;
   if (deviceKey === undefined || ciphersuite === undefined) {
@@ -284,6 +300,13 @@ function resolveRequestedMlsDevice(
     );
   }
   if (!isE2eeEnabled() || ciphersuite !== E2EE_CIPHERSUITE) {
+    return null;
+  }
+  const signerProfileId = await identitiesDb.getProfileIdByWallet(
+    signerAddress,
+    timer
+  );
+  if (!signerProfileId) {
     return null;
   }
   return { deviceKey, ciphersuite };
