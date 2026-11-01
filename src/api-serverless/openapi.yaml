@@ -11618,11 +11618,15 @@ paths:
         - Encrypted Messages
       summary: Append one ciphertext chunk to a backup generation
       description: >-
-        The server assigns the next sequence number. The ciphertext length
-        must be one of the backup chunk buckets (4, 16, 64 or 256 KiB, or 1
-        MiB). Each profile may store at most 256 MiB of backup ciphertext
-        across its generations (413 E2EE_BACKUP_QUOTA) and at most 10,000
-        chunks per generation (413 E2EE_TOO_LARGE).
+        The server assigns the next sequence number. With `expected_seq` the
+        append succeeds only when that is the generation's next sequence
+        number; otherwise nothing is stored and the response is 409
+        E2EE_BACKUP_SEQ_CONFLICT with the current `next_seq` (another device
+        appended first). The ciphertext length must be one of the backup
+        chunk buckets (4, 16, 64 or 256 KiB, or 1 MiB). Each profile may
+        store at most 256 MiB of backup ciphertext across its generations
+        (413 E2EE_BACKUP_QUOTA) and at most 10,000 chunks per generation (413
+        E2EE_TOO_LARGE).
       operationId: e2eeAppendBackupChunk
       security:
         - bearerAuth: []
@@ -11664,6 +11668,11 @@ paths:
           description: >-
             Not found or disabled (E2EE_NOT_FOUND, E2EE_DISABLED,
             E2EE_BACKUPS_DISABLED)
+        "409":
+          description: >-
+            Conflict (E2EE_BACKUP_SEQ_CONFLICT, with the generation's current
+            next_seq in the error details): expected_seq is not the next
+            sequence number
         "413":
           description: Too large (E2EE_TOO_LARGE, E2EE_BACKUP_QUOTA)
         "429":
@@ -32838,6 +32847,15 @@ components:
           description: >-
             Standard base64 of the chunk ciphertext; its length must be a
             backup chunk bucket
+        expected_seq:
+          type: integer
+          minimum: 1
+          description: >-
+            Optional precondition: the sequence number this chunk must get.
+            When the generation's next sequence number differs (another
+            device appended first) the append is refused with 409
+            E2EE_BACKUP_SEQ_CONFLICT. Omitted, the chunk gets the next
+            sequence number.
     ApiE2eeBackupDeviceRequest:
       type: object
       required:

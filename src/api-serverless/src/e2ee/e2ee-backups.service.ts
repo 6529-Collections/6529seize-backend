@@ -71,6 +71,32 @@ function toApiChunk(row: E2eeBackupChunkRow): ApiE2eeBackupChunk {
   };
 }
 
+/** The generation, which must belong to the caller (else 404). */
+function requireOwn(
+  callerProfileId: string,
+  backup: E2eeBackupRow | null
+): E2eeBackupRow {
+  if (backup?.profile_id !== callerProfileId) {
+    throw e2eeErrors.notFound('Backup');
+  }
+  return backup;
+}
+
+/**
+ * The append precondition: with `expected_seq` the chunk must get exactly
+ * that seq, so a device that missed another device's append is refused
+ * (409) instead of forking its hash chain. Without it any seq is accepted.
+ */
+function requireExpectedSeq(
+  backup: E2eeBackupRow,
+  expectedSeq: number | undefined
+): void {
+  const nextSeq = Number(backup.next_seq);
+  if (expectedSeq !== undefined && expectedSeq !== nextSeq) {
+    throw e2eeErrors.backupSeqConflict(nextSeq);
+  }
+}
+
 /**
  * Encrypted message-history backups (history backup v1). The client encrypts
  * its decrypted history under a random backup key and uploads ciphertext
@@ -103,11 +129,10 @@ export class E2eeBackupsService {
     backupId: string,
     connection?: Parameters<E2eeBackupRepository['getBackup']>[1]
   ): Promise<E2eeBackupRow> {
-    const backup = await this.repo.getBackup(backupId, connection);
-    if (backup?.profile_id !== callerProfileId) {
-      throw e2eeErrors.notFound('Backup');
-    }
-    return backup;
+    return requireOwn(
+      callerProfileId,
+      await this.repo.getBackup(backupId, connection)
+    );
   }
 
   /** Object deletes run after the metadata delete committed (best effort). */
@@ -224,8 +249,12 @@ export class E2eeBackupsService {
       callerProfileId,
       request.device_key
     );
-    // Cheap ownership check before any object is written.
-    await this.ownBackup(callerProfileId, backupId);
+    // Cheap ownership and precondition checks before any object is written
+    // (the precondition is checked again under the lock below).
+    requireExpectedSeq(
+      await this.ownBackup(callerProfileId, backupId),
+      request.expected_seq
+    );
     await enforceE2eeRateLimit(
       this.deps.e2ee,
       E2EE_RATE_LIMITS.backupChunksPerProfile,
@@ -245,11 +274,13 @@ export class E2eeBackupsService {
       return await this.repo.executeNativeQueriesInTransaction(
         async (connection) => {
           await this.repo.lockProfile(callerProfileId, connection);
-          const backup = await this.ownBackup(
+          // The generation row stays locked until commit, so next_seq cannot
+          // move between the precondition and the insert.
+          const backup = requireOwn(
             callerProfileId,
-            backupId,
-            connection
+            await this.repo.lockBackup(backupId, connection)
           );
+          requireExpectedSeq(backup, request.expected_seq);
           if (
             Number(backup.chunk_count) >=
             (this.deps.maxChunks ?? E2EE_BACKUP_MAX_CHUNKS)
