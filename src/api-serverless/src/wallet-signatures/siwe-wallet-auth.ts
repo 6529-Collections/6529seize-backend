@@ -17,6 +17,15 @@ import {
   renderDeviceGrantStatement
 } from '@/api/device-signing/device-grant-message';
 import {
+  buildMlsDeviceGrantUrn,
+  isCombinedGrantPair,
+  isCombinedGrantStatement,
+  MlsDeviceGrantRequest,
+  MlsDeviceGrantTerms,
+  parseMlsDeviceGrantUrn,
+  renderCombinedGrantStatement
+} from '@/api/device-signing/combined-device-grant';
+import {
   getStructuredWalletSignatureAudienceForHost,
   isStructuredSignatureDomainAllowed,
   isStructuredWalletSignatureMessage,
@@ -61,11 +70,15 @@ export interface CreatedSiweWebAuthChallenge {
   readonly issuedAt: Date;
   readonly expirationTime: Date;
   readonly deviceGrant: DeviceGrantTerms | null;
+  // Present only for combined challenges that also grant an MLS device key.
+  readonly mlsDeviceGrant: MlsDeviceGrantTerms | null;
 }
 
 export interface SiweDeviceGrantRequest {
   readonly deviceKey: string;
   readonly scopes: readonly DeviceGrantScope[];
+  // Also grant this MLS device key for encrypted messages (combined grant).
+  readonly mlsDevice?: MlsDeviceGrantRequest | null;
 }
 
 export interface ParsedSiweWebAuthMessage {
@@ -80,6 +93,8 @@ export interface ParsedSiweWebAuthMessage {
   readonly expirationTime: Date;
   // Present only for messages that also grant a device signing key.
   readonly deviceGrant: DeviceGrantTerms | null;
+  // Present only for combined grants that also grant an MLS device key.
+  readonly mlsDeviceGrant: MlsDeviceGrantTerms | null;
 }
 
 export interface VerifiedSiweWebAuth {
@@ -90,6 +105,7 @@ export interface VerifiedSiweWebAuth {
   readonly chainId: number;
   readonly issuedAt: Date;
   readonly deviceGrant: DeviceGrantTerms | null;
+  readonly mlsDeviceGrant: MlsDeviceGrantTerms | null;
 }
 
 export type VerifiedSessionChallenge =
@@ -218,20 +234,24 @@ export function createSiweWebAuthChallenge({
   const grantTerms = deviceGrant
     ? toDeviceGrantTerms(deviceGrant, issuedAtSeconds)
     : null;
+  const mlsTerms =
+    grantTerms && deviceGrant?.mlsDevice
+      ? toMlsDeviceGrantTerms(deviceGrant.mlsDevice, grantTerms)
+      : null;
   const siweMessage = new SiweMessage({
     scheme: originUrl.protocol.slice(0, -1),
     domain: originUrl.host,
     address: checksummedAddress,
-    statement: grantTerms
-      ? renderDeviceGrantStatement(grantTerms)
-      : SIWE_WALLET_AUTH_STATEMENT,
+    statement: renderChallengeStatement(grantTerms, mlsTerms),
     uri: normalizedOrigin,
     version: SIWE_VERSION,
     chainId,
     nonce,
     issuedAt: issuedAtSeconds.toISOString(),
     expirationTime: expirationTime.toISOString(),
-    ...(grantTerms ? { resources: [buildDeviceGrantUrn(grantTerms)] } : {})
+    ...(grantTerms
+      ? { resources: buildChallengeResources(grantTerms, mlsTerms) }
+      : {})
   });
 
   return {
@@ -241,8 +261,49 @@ export function createSiweWebAuthChallenge({
     nonce,
     issuedAt: issuedAtSeconds,
     expirationTime,
-    deviceGrant: grantTerms
+    deviceGrant: grantTerms,
+    mlsDeviceGrant: mlsTerms
   };
+}
+
+function renderChallengeStatement(
+  grantTerms: DeviceGrantTerms | null,
+  mlsTerms: MlsDeviceGrantTerms | null
+): string {
+  if (!grantTerms) {
+    return SIWE_WALLET_AUTH_STATEMENT;
+  }
+  return mlsTerms
+    ? renderCombinedGrantStatement(grantTerms, mlsTerms)
+    : renderDeviceGrantStatement(grantTerms);
+}
+
+function buildChallengeResources(
+  grantTerms: DeviceGrantTerms,
+  mlsTerms: MlsDeviceGrantTerms | null
+): string[] {
+  const resources = [buildDeviceGrantUrn(grantTerms)];
+  if (mlsTerms) {
+    resources.push(buildMlsDeviceGrantUrn(mlsTerms));
+  }
+  return resources;
+}
+
+function toMlsDeviceGrantTerms(
+  request: MlsDeviceGrantRequest,
+  grantTerms: DeviceGrantTerms
+): MlsDeviceGrantTerms {
+  const terms: MlsDeviceGrantTerms = {
+    deviceKey: request.deviceKey,
+    ciphersuite: request.ciphersuite,
+    expiresAtSeconds: grantTerms.expiresAtSeconds
+  };
+  // Round trip through the parser so only messages it accepts are issued.
+  const parsed = parseMlsDeviceGrantUrn(buildMlsDeviceGrantUrn(terms));
+  if (!parsed || !isCombinedGrantPair(grantTerms, parsed)) {
+    throw new Error('Invalid SIWE MLS device grant');
+  }
+  return parsed;
 }
 
 function toDeviceGrantTerms(
@@ -400,40 +461,61 @@ export function parseSiweWebAuthMessage(
       nonce: parsed.nonce,
       issuedAt,
       expirationTime,
-      deviceGrant: variant.deviceGrant
+      deviceGrant: variant.deviceGrant,
+      mlsDeviceGrant: variant.mlsDeviceGrant
     };
   } catch {
     return null;
   }
 }
 
+interface StatementVariant {
+  readonly deviceGrant: DeviceGrantTerms | null;
+  readonly mlsDeviceGrant: MlsDeviceGrantTerms | null;
+}
+
 /**
- * Accepts exactly two shapes: the plain login (constant statement, no
- * resources) or a device grant (one valid grant URN and the current or the
- * legacy statement rendered from it). Everything else fails closed.
+ * Accepts exactly three shapes: the plain login (constant statement, no
+ * resources); a device grant (one valid grant URN and the current or the
+ * legacy statement rendered from it); or a combined grant (that grant URN,
+ * then one MLS device grant URN with the same expiry and a different key,
+ * and a combined statement rendered from both). Everything else fails closed.
  */
 function parseStatementVariant(
   statement: string | undefined,
   resources: string[] | undefined,
   issuedAt: Date
-): { readonly deviceGrant: DeviceGrantTerms | null } | null {
+): StatementVariant | null {
   if (resources === undefined) {
     return statement === SIWE_WALLET_AUTH_STATEMENT
-      ? { deviceGrant: null }
+      ? { deviceGrant: null, mlsDeviceGrant: null }
       : null;
   }
-  if (!Array.isArray(resources) || resources.length !== 1) {
-    return null;
-  }
-  const grant = parseDeviceGrantUrn(resources[0]);
   if (
-    !grant ||
-    !isGrantLifetimeValid(grant.expiresAtSeconds, issuedAt) ||
-    !isDeviceGrantStatement(statement, grant)
+    !Array.isArray(resources) ||
+    resources.length < 1 ||
+    resources.length > 2
   ) {
     return null;
   }
-  return { deviceGrant: grant };
+  const grant = parseDeviceGrantUrn(resources[0]);
+  if (!grant || !isGrantLifetimeValid(grant.expiresAtSeconds, issuedAt)) {
+    return null;
+  }
+  if (resources.length === 1) {
+    return isDeviceGrantStatement(statement, grant)
+      ? { deviceGrant: grant, mlsDeviceGrant: null }
+      : null;
+  }
+  const mls = parseMlsDeviceGrantUrn(resources[1]);
+  if (
+    !mls ||
+    !isCombinedGrantPair(grant, mls) ||
+    !isCombinedGrantStatement(statement, grant, mls)
+  ) {
+    return null;
+  }
+  return { deviceGrant: grant, mlsDeviceGrant: mls };
 }
 
 export async function verifySiweWebAuthSignature({
@@ -477,7 +559,8 @@ export async function verifySiweWebAuthSignature({
     expirationTime: parsed.expirationTime,
     chainId: parsed.chainId,
     issuedAt: parsed.issuedAt,
-    deviceGrant: parsed.deviceGrant
+    deviceGrant: parsed.deviceGrant,
+    mlsDeviceGrant: parsed.mlsDeviceGrant
   };
 }
 

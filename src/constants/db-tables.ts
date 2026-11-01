@@ -313,6 +313,27 @@ export const COMPETITION_LEGACY_MIRROR_PERMITS_TABLE =
 export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
   'competition_legacy_execution_effects';
 
+// End-to-end encrypted DMs and groups (D109). The server stores ciphertext
+// and delivery metadata only; see docs/e2ee-messaging.md.
+export const E2EE_DEVICES_TABLE = 'e2ee_devices';
+export const E2EE_KEY_PACKAGES_TABLE = 'e2ee_key_packages';
+export const E2EE_GROUPS_TABLE = 'e2ee_groups';
+export const E2EE_GROUP_EPOCHS_TABLE = 'e2ee_group_epochs';
+export const E2EE_GROUP_ROSTER_TABLE = 'e2ee_group_roster';
+export const E2EE_LOG_TABLE = 'e2ee_log';
+export const E2EE_WELCOMES_TABLE = 'e2ee_welcomes';
+export const E2EE_WELCOME_DELIVERIES_TABLE = 'e2ee_welcome_deliveries';
+export const E2EE_BLOBS_TABLE = 'e2ee_blobs';
+export const E2EE_BLOB_CHUNKS_TABLE = 'e2ee_blob_chunks';
+export const E2EE_REPORTS_TABLE = 'e2ee_reports';
+export const E2EE_PUSH_THROTTLE_TABLE = 'e2ee_push_throttle';
+export const E2EE_RATE_COUNTERS_TABLE = 'e2ee_rate_counters';
+// Encrypted message-history backups: generation and chunk metadata, plus the
+// MySQL implementation of the E2EE ciphertext object store.
+export const E2EE_BACKUPS_TABLE = 'e2ee_backups';
+export const E2EE_BACKUP_CHUNKS_TABLE = 'e2ee_backup_chunks';
+export const E2EE_CIPHERTEXT_OBJECTS_TABLE = 'e2ee_ciphertext_objects';
+
 export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
 export const MEME_COLLABORATION_INVITATIONS_TABLE =
   'meme_collaboration_invitations';
@@ -321,3 +342,7 @@ export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';
 export const VOTING_CREDIT_RELEASES_TABLE = 'voting_credit_releases';
 export const VOTING_CREDIT_RELEASE_RECIPIENTS_TABLE =
   'voting_credit_release_recipients';
+
+// Who read or changed reported encrypted messages (trust and safety audit,
+// D109). Kept apart from the E2EE block above.
+export const E2EE_REPORT_ACCESS_LOG_TABLE = 'e2ee_report_access_log';

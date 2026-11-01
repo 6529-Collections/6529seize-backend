@@ -164,11 +164,21 @@ const DEVICE_GRANT_SCOPE_NOUNS: Readonly<Record<DeviceGrantScope, string>> = {
   vote: 'votes'
 };
 
+/** What the device will sign, e.g. "posts, edits, deletes and reactions". */
+export function describeDeviceGrantScopes(
+  scopes: readonly DeviceGrantScope[]
+): string {
+  return joinScopesAsEnglish(
+    scopes.map((scope) => DEVICE_GRANT_SCOPE_NOUNS[scope])
+  );
+}
+
 function rawKeyHex(deviceKey: string): string {
   return deviceKey.slice(2);
 }
 
-function deviceKeyFingerprint(deviceKey: string): string {
+/** First and last eight hex characters of a 0x-prefixed key. */
+export function deviceKeyFingerprint(deviceKey: string): string {
   const keyHex = rawKeyHex(deviceKey);
   return `${keyHex.slice(0, 8)}...${keyHex.slice(-8)}`;
 }
@@ -180,9 +190,7 @@ function deviceKeyFingerprint(deviceKey: string): string {
  * the exact expiry time; the statement names its UTC date.
  */
 export function renderDeviceGrantStatement(terms: DeviceGrantTerms): string {
-  const signs = joinScopesAsEnglish(
-    terms.scopes.map((scope) => DEVICE_GRANT_SCOPE_NOUNS[scope])
-  );
+  const signs = describeDeviceGrantScopes(terms.scopes);
   return (
     `Sign in to 6529 and turn on signed messages on this device until ` +
     `${formatGrantExpiryDateUtc(terms.expiresAtSeconds)}. ` +

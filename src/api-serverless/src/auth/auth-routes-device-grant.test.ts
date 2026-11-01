@@ -68,10 +68,14 @@ import { ethers } from 'ethers';
 import { SiweMessage } from 'siwe';
 import { clearSiweWalletAuthReplayCacheForTests } from '../wallet-signatures/siwe-wallet-auth';
 import { clearStructuredWalletSignatureReplayCacheForTests } from '../wallet-signatures/structured-wallet-signatures';
+import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
+import { identitiesDb } from '@/identities/identities.db';
 import './auth.routes';
 
 const DEVICE_KEY =
   '0xd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a';
+const MLS_DEVICE_KEY =
+  '0x3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c';
 const wallet = new ethers.Wallet(
   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 );
@@ -81,12 +85,14 @@ const webSessionResponse = {
   client_type: 'web'
 };
 const storedGrant = { id: `0x${'f'.repeat(64)}`, device_label: 'Browser' };
+const SIGNER_PROFILE_ID = 'signer-profile-id';
 
 const sessionNonceHandler = getRouteHandler(mockRouterGet, '/session-nonce');
 const sessionLoginHandler = getRouteHandler(mockRouterPost, '/session-login');
 
 describe('wallet auth device grants', () => {
   const originalEnv = { ...process.env };
+  let getProfileIdByWalletSpy: jest.SpyInstance;
 
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
@@ -94,6 +100,7 @@ describe('wallet auth device grants', () => {
     delete process.env.AUTH_SIGNATURE_ALLOWED_DOMAINS;
     delete process.env.WEB_APP_ORIGIN;
     delete process.env.WEB_APP_ADDITIONAL_ORIGINS;
+    process.env.E2EE_DMS_ENABLED = 'true';
     clearSiweWalletAuthReplayCacheForTests();
     clearStructuredWalletSignatureReplayCacheForTests();
     createWebSessionMock.mockResolvedValue({
@@ -101,16 +108,20 @@ describe('wallet auth device grants', () => {
       response: webSessionResponse
     });
     storeLoginGrantMock.mockResolvedValue(storedGrant);
+    getProfileIdByWalletSpy = jest
+      .spyOn(identitiesDb, 'getProfileIdByWallet')
+      .mockResolvedValue(SIGNER_PROFILE_ID);
   });
 
   afterEach(() => {
     process.env = { ...originalEnv };
+    getProfileIdByWalletSpy.mockRestore();
     jest.clearAllMocks();
   });
 
-  function requestNonce(query: Record<string, unknown>) {
+  async function requestNonce(query: Record<string, unknown>) {
     const response = makeResponse();
-    sessionNonceHandler(
+    await sessionNonceHandler(
       makeRequest({
         query: { signer_address: wallet.address.toLowerCase(), ...query },
         origin: 'https://6529.io',
@@ -147,8 +158,8 @@ describe('wallet auth device grants', () => {
   }
 
   describe('GET /session-nonce', () => {
-    it('adds the device grant statement and URN for web clients', () => {
-      const payload = requestNonce({
+    it('adds the device grant statement and URN for web clients', async () => {
+      const payload = await requestNonce({
         client_type: 'web',
         device_key: DEVICE_KEY,
         device_key_type: 'ed25519',
@@ -171,18 +182,148 @@ describe('wallet auth device grants', () => {
       expect(parsed.statement).toMatch(
         /\(Device key d75a9801\.\.\.f707511a\)$/
       );
+      expect(getProfileIdByWalletSpy).not.toHaveBeenCalled();
     });
 
-    it('uses the default scopes', () => {
-      const payload = requestNonce({
+    it('uses the default scopes', async () => {
+      const payload = await requestNonce({
         device_key: DEVICE_KEY,
         device_key_type: 'ed25519'
       });
       expect(payload.signable_message).toContain(':post.edit.delete.react:');
     });
 
-    it('keeps the plain challenge without device params', () => {
-      const payload = requestNonce({ client_type: 'web' });
+    describe('combined grant (NC8)', () => {
+      const combinedQuery = {
+        client_type: 'web',
+        device_key: DEVICE_KEY,
+        device_key_type: 'ed25519',
+        mls_device_key: MLS_DEVICE_KEY,
+        mls_ciphersuite: E2EE_CIPHERSUITE
+      };
+
+      it('also grants the MLS device key in the same message', async () => {
+        const parsed = new SiweMessage(
+          (await requestNonce(combinedQuery)).signable_message
+        );
+        expect(getProfileIdByWalletSpy).toHaveBeenCalledTimes(1);
+        expect(getProfileIdByWalletSpy.mock.calls[0][0]).toBe(
+          wallet.address.toLowerCase()
+        );
+        expect(parsed.resources).toHaveLength(2);
+        expect(parsed.resources?.[0]).toMatch(
+          /^urn:6529:device-grant:v1:ed25519:d75a9801/
+        );
+        const expiresAt = parsed.resources?.[0].split(':').at(-1);
+        expect(parsed.resources?.[1]).toBe(
+          `urn:6529:mls-device-grant:v1:${E2EE_CIPHERSUITE}:${MLS_DEVICE_KEY.slice(2)}:${expiresAt}`
+        );
+        expect(parsed.statement).toContain(
+          'It will also encrypt (send) and decrypt (read) your end-to-end encrypted messages, which 6529.io cannot read.'
+        );
+        expect(parsed.statement).toMatch(
+          /\(Device key d75a9801\.\.\.f707511a, encrypted messages key 3d4017c3\.\.\.2af4660c\)$/
+        );
+      });
+
+      it('issues the signing grant alone for a wallet without a profile', async () => {
+        getProfileIdByWalletSpy.mockResolvedValue(null);
+
+        const parsed = new SiweMessage(
+          (await requestNonce(combinedQuery)).signable_message
+        );
+
+        expect(getProfileIdByWalletSpy).toHaveBeenCalledTimes(1);
+        expect(getProfileIdByWalletSpy.mock.calls[0][0]).toBe(
+          wallet.address.toLowerCase()
+        );
+        expect(parsed.resources).toHaveLength(1);
+        expect(parsed.resources?.[0]).toMatch(
+          /^urn:6529:device-grant:v1:ed25519:d75a9801/
+        );
+        expect(parsed.statement).not.toContain('encrypted');
+        expect(parsed.statement).toMatch(
+          /\(Device key d75a9801\.\.\.f707511a\)$/
+        );
+      });
+
+      it.each([
+        ['encrypted messages are off', { E2EE_DMS_ENABLED: 'false' }, {}],
+        [
+          'the ciphersuite is not the server one',
+          {},
+          { mls_ciphersuite: E2EE_CIPHERSUITE + 1 }
+        ]
+      ])(
+        'issues the signing grant alone without a profile lookup when %s',
+        async (_name, env: Record<string, string>, query) => {
+          Object.assign(process.env, env);
+          const parsed = new SiweMessage(
+            (await requestNonce({ ...combinedQuery, ...query }))
+              .signable_message
+          );
+          expect(parsed.resources).toHaveLength(1);
+          expect(parsed.statement).not.toContain('encrypted');
+          expect(getProfileIdByWalletSpy).not.toHaveBeenCalled();
+        }
+      );
+
+      it.each([
+        [
+          'the signing key as the MLS key',
+          { mls_device_key: DEVICE_KEY },
+          'The MLS device key must differ from the signing device key'
+        ],
+        [
+          'an MLS key without a ciphersuite',
+          { mls_ciphersuite: undefined },
+          null
+        ],
+        [
+          'a ciphersuite without an MLS key',
+          { mls_device_key: undefined },
+          null
+        ],
+        [
+          'an MLS key without a signing key',
+          { device_key: undefined, device_key_type: undefined },
+          null
+        ],
+        [
+          'an uppercase MLS key',
+          { mls_device_key: MLS_DEVICE_KEY.toUpperCase() },
+          null
+        ],
+        ['ciphersuite 0', { mls_ciphersuite: 0 }, null]
+      ])('rejects %s', async (_name, overrides, message: string | null) => {
+        const query: Record<string, unknown> = {
+          signer_address: wallet.address,
+          ...combinedQuery,
+          ...overrides
+        };
+        for (const key of Object.keys(query)) {
+          if (query[key] === undefined) delete query[key];
+        }
+        const run = () =>
+          sessionNonceHandler(
+            makeRequest({
+              query,
+              origin: 'https://6529.io',
+              host: 'api.6529.io'
+            }),
+            makeResponse()
+          );
+        if (message) {
+          await expect(run()).rejects.toThrow(message);
+        } else {
+          await expect(run()).rejects.toThrow();
+        }
+        expect(getProfileIdByWalletSpy).not.toHaveBeenCalled();
+      });
+    });
+
+    it('keeps the plain challenge without device params', async () => {
+      const payload = await requestNonce({ client_type: 'web' });
       expect(payload.signable_message).not.toContain('Resources');
       expect(new SiweMessage(payload.signable_message).statement).toBe(
         'Sign in to 6529. This request does not create a blockchain transaction, cost gas, or approve tokens.'
@@ -192,8 +333,8 @@ describe('wallet auth device grants', () => {
     it.each([
       ['native', 'http://localhost:6529'],
       ['desktop', 'http://localhost:6529']
-    ])('rejects device params for %s clients', (clientType, origin) => {
-      expect(() =>
+    ])('rejects device params for %s clients', async (clientType, origin) => {
+      await expect(
         sessionNonceHandler(
           makeRequest({
             query: {
@@ -207,7 +348,7 @@ describe('wallet auth device grants', () => {
           }),
           makeResponse()
         )
-      ).toThrow('Device grants are only available for web sessions');
+      ).rejects.toThrow('Device grants are only available for web sessions');
     });
 
     it.each([
@@ -250,8 +391,8 @@ describe('wallet auth device grants', () => {
           device_scopes: 'post,admin'
         }
       ]
-    ])('rejects %s', (_name, query) => {
-      expect(() =>
+    ])('rejects %s', async (_name, query) => {
+      await expect(
         sessionNonceHandler(
           makeRequest({
             query: { signer_address: wallet.address, ...query },
@@ -260,13 +401,13 @@ describe('wallet auth device grants', () => {
           }),
           makeResponse()
         )
-      ).toThrow();
+      ).rejects.toThrow();
     });
   });
 
   describe('POST /session-login', () => {
     it('stores the verified grant and returns it with the session', async () => {
-      const nonce = requestNonce({
+      const nonce = await requestNonce({
         device_key: DEVICE_KEY,
         device_key_type: 'ed25519'
       });
@@ -300,9 +441,34 @@ describe('wallet auth device grants', () => {
       });
     });
 
+    it('stores one grant for a combined sign-in, MLS resource included', async () => {
+      const nonce = await requestNonce({
+        device_key: DEVICE_KEY,
+        device_key_type: 'ed25519',
+        mls_device_key: MLS_DEVICE_KEY,
+        mls_ciphersuite: E2EE_CIPHERSUITE
+      });
+
+      const response = await login(nonce);
+
+      expect(storeLoginGrantMock).toHaveBeenCalledTimes(1);
+      expect(storeLoginGrantMock.mock.calls[0][0]).toMatchObject({
+        terms: { deviceKey: DEVICE_KEY },
+        message: nonce.signable_message
+      });
+      expect(nonce.signable_message).toContain(
+        `- urn:6529:mls-device-grant:v1:${E2EE_CIPHERSUITE}:${MLS_DEVICE_KEY.slice(2)}:`
+      );
+      expect(response.status).toHaveBeenCalledWith(201);
+      expect(response.send).toHaveBeenCalledWith({
+        ...webSessionResponse,
+        device_grant: storedGrant
+      });
+    });
+
     it('logs in without a grant when storing it fails', async () => {
       storeLoginGrantMock.mockRejectedValue(new Error('db down'));
-      const nonce = requestNonce({
+      const nonce = await requestNonce({
         device_key: DEVICE_KEY,
         device_key_type: 'ed25519'
       });
@@ -314,7 +480,7 @@ describe('wallet auth device grants', () => {
     });
 
     it('does not store anything for a plain login', async () => {
-      const response = await login(requestNonce({}), {
+      const response = await login(await requestNonce({}), {
         device_label: 'ignored'
       });
 
@@ -323,7 +489,7 @@ describe('wallet auth device grants', () => {
     });
 
     it('never stores a grant when the wallet signature does not verify', async () => {
-      const nonce = requestNonce({
+      const nonce = await requestNonce({
         device_key: DEVICE_KEY,
         device_key_type: 'ed25519'
       });
@@ -349,7 +515,7 @@ describe('wallet auth device grants', () => {
     });
 
     it('never stores a grant for a replayed challenge', async () => {
-      const nonce = requestNonce({
+      const nonce = await requestNonce({
         device_key: DEVICE_KEY,
         device_key_type: 'ed25519'
       });
@@ -363,7 +529,7 @@ describe('wallet auth device grants', () => {
 
     it('rejects a device label longer than 64 characters', async () => {
       await expect(
-        login(requestNonce({}), { device_label: 'a'.repeat(65) })
+        login(await requestNonce({}), { device_label: 'a'.repeat(65) })
       ).rejects.toThrow();
       expect(createWebSessionMock).not.toHaveBeenCalled();
     });

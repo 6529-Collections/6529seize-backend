@@ -110,13 +110,19 @@ again until they unblock it. The reverse relationship is not changed: blocking
 does not remove the blocked profile's subscriptions to the blocker, expose the
 block to that profile, or make either public profile unavailable.
 
-Blocking acts as a directional, privacy-preserving mute. One-to-one direct
-messages remain available under the normal direct-message admission policy,
-including conversations created after the block. For the blocker, the
-conversation is effectively muted and deprioritized without changing any saved
-manual mute setting. Messages from the blocked profile are retained but use the
-normal personal-block presentation until individually revealed. The blocked
-profile receives no delivery error or explicit block disclosure.
+Blocking acts as a directional, privacy-preserving mute for existing
+conversations, and it always wins over the blocker's direct-message policy for
+new ones. A blocked profile can never start a new direct message (one-to-one or
+group) that includes the blocker, whatever the blocker's policy and even if the
+blocker follows them; the refusal uses the same generic "doesn't accept new
+direct messages" response as the `NOBODY` policy, so the block is not
+disclosed. A blocker who tries to start a new conversation with a profile they
+blocked is told to unblock it first. Conversations that already exist stay
+available. For the blocker, an existing one-to-one conversation is effectively
+muted and deprioritized without changing any saved manual mute setting.
+Messages from the blocked profile are retained but use the normal personal-block
+presentation until individually revealed. The blocked profile receives no
+delivery error or explicit block disclosure in existing conversations.
 
 Group direct messages and shared Waves also remain usable. Drops from a profile
 the viewer blocked retain the normal personal-block presentation, and that

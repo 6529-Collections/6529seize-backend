@@ -161,7 +161,11 @@ export async function getAuthenticationContext(
     roleProfileId,
     activeProxyActions
   });
-  mcache.put(cacheKey, authenticationContext, Time.minutes(1).toMillis());
+  // A wallet without a profile is usually about to create one. Caching that
+  // answer would keep the new profile invisible on this instance for a minute.
+  if (authenticatedProfileId) {
+    mcache.put(cacheKey, authenticationContext, Time.minutes(1).toMillis());
+  }
   return authenticationContext;
 }
 
