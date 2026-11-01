@@ -227,6 +227,7 @@ import { ApiProposalFrameResponse } from '@/api/generated/models/ApiProposalFram
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRefreshPushInstallationBadgeRequest } from '@/api/generated/models/ApiRefreshPushInstallationBadgeRequest';
 import { ApiRefreshPushInstallationBadgeResponse } from '@/api/generated/models/ApiRefreshPushInstallationBadgeResponse';
+import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
 import { ApiReviewProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiReviewProfileCmsAgentProposalRequest';
 import { ApiRevokePushInstallationRequest } from '@/api/generated/models/ApiRevokePushInstallationRequest';
 import { ApiRevokePushInstallationResponse } from '@/api/generated/models/ApiRevokePushInstallationResponse';
@@ -1426,6 +1427,20 @@ export type GetDeviceGrantsRequest = Request<
   ApiResponse<GetDeviceGrantsResponse>,
   never,
   GetDeviceGrantsQuery,
+  Record<string, never>
+>;
+
+export type RegisterDeviceGrantPathParams = Record<string, never>;
+
+export type RegisterDeviceGrantQuery = Record<string, never>;
+
+export type RegisterDeviceGrantResponse = ApiDeviceGrant;
+
+export type RegisterDeviceGrantRequest = Request<
+  RegisterDeviceGrantPathParams,
+  ApiResponse<RegisterDeviceGrantResponse>,
+  ApiRegisterDeviceGrantRequest,
+  RegisterDeviceGrantQuery,
   Record<string, never>
 >;
 

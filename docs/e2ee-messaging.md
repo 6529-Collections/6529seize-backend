@@ -154,6 +154,14 @@ devices from `grant_message` instead of rebuilding the EIP-712 grant. Device
 limits and renewal are as for `POST /e2ee/devices`; renewing through either
 route replaces the grant and sets or clears `grant_message`.
 
+The same route registers the encrypted-messages key of an app device grant
+(`POST /api/device-grants` with an `mls_device_key`, see
+`docs/auth/wallet-auth.md`): `grant_message` is then the signed EIP-712
+`DeviceGrant` message as JSON, `grant_id` its EIP-712 digest, `origin` the
+grant's origin (for example `6529 Desktop`) and `verified_via` is `eoa` when
+the typed-data signature recovers to the wallet, else `eip1271`. Clients tell
+the two forms apart by the first character (`{` for an app grant).
+
 One grant, one lifetime: the two keys share the expiry, revoking the
 encrypted-messages device (signed revocation below) also revokes its sign-in
 grant, and revoking the sign-in grant through `/device-grants` revokes the
