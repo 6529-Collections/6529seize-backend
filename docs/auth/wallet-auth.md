@@ -236,7 +236,11 @@ without device parameters are unchanged.
   EIP-712 digest, `domain` is the grant's `origin`, `chain_id` is 1 and
   `message` is the signed typed-data message as JSON (it starts with `{`, a
   SIWE message never does), so proofs from `GET /drops/{id}/signed-events`
-  stay verifiable by anyone. Signed writes, expiry and revocation treat it
+  stay verifiable by anyone. The typed-data domain has no chain id, so a
+  verifier rebuilds the digest from the JSON alone; the stored `chain_id` only
+  says where an EIP-1271 contract-wallet signature is checked. A
+  signing-only grant sends `mls_device_key` and `ciphersuite` as null (or
+  omits them); `0` is rejected. Signed writes, expiry and revocation treat it
   exactly like a sign-in grant. Idempotent on grant id.
 - `POST /drops`, `POST /drops/{id}`, `DELETE /drops/{id}` and
   `POST|DELETE /drops/{id}/reaction` accept an optional `device_signature`
