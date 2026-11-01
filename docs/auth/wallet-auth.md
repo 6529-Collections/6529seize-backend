@@ -190,9 +190,15 @@ without device parameters are unchanged.
   > which 6529.io cannot read. It can't move funds, ... (Device key
   > d75a9801...f707511a, encrypted messages key 3d4017c3...2af4660c)
 
-  The server issues it only while encrypted messages are on and the
-  ciphersuite is its own (`E2EE_CIPHERSUITE`); otherwise it ignores the MLS
-  parameters and issues the signing grant alone. The parser accepts exactly
+  The server issues it only while encrypted messages are on, the
+  ciphersuite is its own (`E2EE_CIPHERSUITE`) and the signer wallet already
+  has a profile (`identitiesDb.getProfileIdByWallet`, the lookup encrypted
+  messages device registration uses); otherwise it ignores the MLS
+  parameters and issues the signing grant alone. A new wallet therefore
+  never signs an encrypted-messages grant it could not use: the MLS device
+  can only join a profile, so the client enrolls it with its own grant
+  prompt after the profile exists. The profile lookup runs only after the
+  E2EE flag and ciphersuite checks pass. The parser accepts exactly
   the plain sign-in, the one-resource signing grant (current or legacy
   statement) and this two-resource shape with a combined statement from the
   list in `combined-device-grant.ts`; resources out of order, a third
