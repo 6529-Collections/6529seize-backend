@@ -11,8 +11,13 @@ jest.mock('@/api/auth/auth', () => ({
   getAuthenticationContext: jest.fn()
 }));
 
+jest.mock('@/content-moderation/moderation-developer-access', () => ({
+  isModerationDeveloper: jest.fn().mockResolvedValue(false)
+}));
+
 import generatedOpenApiRoutes from '@/api/generated/routes/openapi-generated.routes';
 import { getAuthenticationContext } from '@/api/auth/auth';
+import { isModerationDeveloper } from '@/content-moderation/moderation-developer-access';
 import { ApiCompliantException, apiCompliantErrorBody } from '@/exceptions';
 import express from 'express';
 
@@ -128,7 +133,7 @@ describe('E2EE generated routes', () => {
     });
   });
 
-  it('keeps trust-and-safety reads closed until a group is configured, flag or not', async () => {
+  it('keeps trust-and-safety reads to moderators, flag or not', async () => {
     process.env.E2EE_DMS_ENABLED = 'false';
     const originalGroup = process.env.E2EE_TRUST_AND_SAFETY_GROUP_ID;
     delete process.env.E2EE_TRUST_AND_SAFETY_GROUP_ID;
@@ -145,14 +150,24 @@ describe('E2EE generated routes', () => {
       await withServer(async (baseUrl) => {
         const proxy = await fetch(`${baseUrl}/e2ee/trust-and-safety/reports`);
         expect(proxy.status).toBe(403);
-        const unconfigured = await fetch(
+        const notModerator = await fetch(
           `${baseUrl}/e2ee/trust-and-safety/reports`
         );
-        expect(unconfigured.status).toBe(403);
-        expect(await unconfigured.json()).toEqual({
-          error: 'Trust and safety review is not configured',
+        expect(notModerator.status).toBe(403);
+        expect(await notModerator.json()).toEqual({
+          error: 'Moderator access is required',
           code: 'E2EE_FORBIDDEN'
         });
+        // The proxy was refused before any moderator check; the profile was
+        // checked with the content-moderation queue's moderator check.
+        expect(jest.mocked(isModerationDeveloper).mock.calls).toEqual([
+          [
+            'profile-1',
+            expect.objectContaining({
+              authenticationContext: expect.anything()
+            })
+          ]
+        ]);
         const badId = await fetch(
           `${baseUrl}/e2ee/trust-and-safety/reports/not-an-id`
         );

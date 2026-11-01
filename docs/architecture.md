@@ -2101,7 +2101,8 @@ read-back hash checks (dry run by default).
 the blob routes refuse before any database access. History backups
 (`/e2ee/backup`, `/e2ee/backups/...`) store only client ciphertext per profile
 (256 MiB quota) and have their own kill switch, `E2EE_BACKUPS_ENABLED=false`. Reports (severe-harm categories only) are read
-only by the group named in `E2EE_TRUST_AND_SAFETY_GROUP_ID` through
+only by content moderators (the content-moderation queue's check) and the
+optional `E2EE_TRUST_AND_SAFETY_GROUP_ID` group through
 `/e2ee/trust-and-safety/...`, with every read written to
 `e2ee_report_access_log`, and are deleted after 180 days unless on hold. Rate limits are
 DB-backed fixed windows, and retention runs opportunistically in the API
