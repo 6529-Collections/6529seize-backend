@@ -57,6 +57,12 @@ import {
   decideE2eeEligibility,
   E2eeEligibilityStatus
 } from '@/e2ee/e2ee-policy';
+import {
+  computeAppDeviceGrantId,
+  isAppDeviceGrantMessage,
+  parseAppDeviceGrantMessage,
+  recoversToAppGrantWallet
+} from '@/api/device-signing/app-device-grant';
 import { computeDeviceGrantId } from '@/api/device-signing/device-grant-message';
 import { parseSiweWebAuthMessage } from '@/api/wallet-signatures/siwe-wallet-auth';
 import { Logger } from '@/logging';
@@ -86,6 +92,66 @@ function recoverMessageSigner(
   } catch {
     return null;
   }
+}
+
+/** The MLS device a stored grant also granted, re-read from what was signed. */
+interface StoredGrantMlsDevice {
+  readonly grant: E2eeDeviceGrant;
+  readonly grantId: string;
+  readonly verifiedVia: E2eeGrantVerifiedVia;
+}
+
+/** A combined SIWE sign-in grant (NC8). */
+function readSignInGrantMlsDevice(
+  message: string,
+  signature: string
+): StoredGrantMlsDevice | null {
+  const parsed = parseSiweWebAuthMessage(message);
+  if (!parsed?.mlsDeviceGrant) return null;
+  const wallet = parsed.address.toLowerCase();
+  return {
+    grant: {
+      wallet,
+      device_key: parsed.mlsDeviceGrant.deviceKey,
+      ciphersuite: parsed.mlsDeviceGrant.ciphersuite,
+      issued_at: Math.floor(parsed.issuedAt.getTime() / 1000),
+      expires_at: parsed.mlsDeviceGrant.expiresAtSeconds,
+      origin: parsed.domain
+    },
+    grantId: computeDeviceGrantId(message),
+    // The login verified it; an EOA recovers, anything else was EIP-1271.
+    verifiedVia:
+      recoverMessageSigner(message, signature) === wallet ? 'eoa' : 'eip1271'
+  };
+}
+
+/** An app device grant (EIP-712) registered with an encrypted-messages key. */
+function readAppGrantMlsDevice(
+  message: string,
+  signature: string
+): StoredGrantMlsDevice | null {
+  const parsed = parseAppDeviceGrantMessage(message);
+  const mlsDeviceKey = parsed?.grant.mls_device_key ?? null;
+  const ciphersuite = parsed?.grant.ciphersuite ?? null;
+  if (!parsed || mlsDeviceKey === null || ciphersuite === null) {
+    return null;
+  }
+  const { grant } = parsed;
+  return {
+    grant: {
+      wallet: grant.wallet,
+      device_key: mlsDeviceKey,
+      ciphersuite,
+      issued_at: grant.issued_at,
+      expires_at: grant.expires_at,
+      origin: grant.origin
+    },
+    grantId: computeAppDeviceGrantId(parsed.message),
+    // Registration verified it; an EOA recovers, anything else was EIP-1271.
+    verifiedVia: recoversToAppGrantWallet(parsed.message, signature)
+      ? 'eoa'
+      : 'eip1271'
+  };
 }
 
 export class E2eeDevicesService {
@@ -228,34 +294,20 @@ export class E2eeDevicesService {
     if (stored.revoked_at !== null) {
       throw e2eeErrors.badGrant('login_grant_revoked');
     }
-    const parsed = parseSiweWebAuthMessage(stored.message);
-    if (
-      !parsed?.mlsDeviceGrant ||
-      computeDeviceGrantId(stored.message) !== grantId ||
-      parsed.address.toLowerCase() !== wallet
-    ) {
+    const signature = stored.wallet_signature.toLowerCase();
+    const read = isAppDeviceGrantMessage(stored.message)
+      ? readAppGrantMlsDevice(stored.message, signature)
+      : readSignInGrantMlsDevice(stored.message, signature);
+    if (!read || read.grantId !== grantId || read.grant.wallet !== wallet) {
       throw e2eeErrors.badGrant('login_grant_without_e2ee');
     }
-    const grant: E2eeDeviceGrant = {
-      wallet,
-      device_key: parsed.mlsDeviceGrant.deviceKey,
-      ciphersuite: parsed.mlsDeviceGrant.ciphersuite,
-      issued_at: Math.floor(parsed.issuedAt.getTime() / 1000),
-      expires_at: parsed.mlsDeviceGrant.expiresAtSeconds,
-      origin: parsed.domain
-    };
-    const problem = findE2eeGrantProblem(grant, nowSeconds(this.deps));
+    const problem = findE2eeGrantProblem(read.grant, nowSeconds(this.deps));
     if (problem) throw e2eeErrors.badGrant(problem);
-    const signature = stored.wallet_signature.toLowerCase();
     return {
-      grant,
+      grant: read.grant,
       grantId,
       signature,
-      // The login verified it; an EOA recovers, anything else was EIP-1271.
-      verifiedVia:
-        recoverMessageSigner(stored.message, signature) === wallet
-          ? 'eoa'
-          : 'eip1271',
+      verifiedVia: read.verifiedVia,
       grantMessage: stored.message
     };
   }

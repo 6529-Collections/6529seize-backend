@@ -13,6 +13,7 @@ export * from '../models/ApiAlchemyContractMetadataBatchRequest';
 export * from '../models/ApiAlchemyContractMetadataBatchResponse';
 export * from '../models/ApiAlchemyContractMetadataRequest';
 export * from '../models/ApiAlchemyContractMetadataResult';
+export * from '../models/ApiAppDeviceGrant';
 export * from '../models/ApiArchiveProfileCmsPackageRequest';
 export * from '../models/ApiArtistNameItem';
 export * from '../models/ApiArtworkAssetC2paResult';
@@ -724,6 +725,7 @@ export * from '../models/ApiRedeemRefreshTokenRequest';
 export * from '../models/ApiRedeemRefreshTokenResponse';
 export * from '../models/ApiRefreshPushInstallationBadgeRequest';
 export * from '../models/ApiRefreshPushInstallationBadgeResponse';
+export * from '../models/ApiRegisterDeviceGrantRequest';
 export * from '../models/ApiRegisterPushNotificationTokenRequest';
 export * from '../models/ApiRepCategoriesPage';
 export * from '../models/ApiRepCategory';
@@ -989,6 +991,7 @@ import { ApiAlchemyContractMetadataBatchRequest } from '../models/ApiAlchemyCont
 import { ApiAlchemyContractMetadataBatchResponse } from '../models/ApiAlchemyContractMetadataBatchResponse';
 import { ApiAlchemyContractMetadataRequest , ApiAlchemyContractMetadataRequestChainEnum   } from '../models/ApiAlchemyContractMetadataRequest';
 import { ApiAlchemyContractMetadataResult , ApiAlchemyContractMetadataResultChainEnum      } from '../models/ApiAlchemyContractMetadataResult';
+import { ApiAppDeviceGrant } from '../models/ApiAppDeviceGrant';
 import { ApiArchiveProfileCmsPackageRequest } from '../models/ApiArchiveProfileCmsPackageRequest';
 import { ApiArtistNameItem } from '../models/ApiArtistNameItem';
 import { ApiArtworkAssetC2paResult, ApiArtworkAssetC2paResultStatusEnum        , ApiArtworkAssetC2paResultTrustEnum      , ApiArtworkAssetC2paResultIntegrityEnum   } from '../models/ApiArtworkAssetC2paResult';
@@ -1700,6 +1703,7 @@ import { ApiRedeemRefreshTokenRequest } from '../models/ApiRedeemRefreshTokenReq
 import { ApiRedeemRefreshTokenResponse } from '../models/ApiRedeemRefreshTokenResponse';
 import { ApiRefreshPushInstallationBadgeRequest } from '../models/ApiRefreshPushInstallationBadgeRequest';
 import { ApiRefreshPushInstallationBadgeResponse } from '../models/ApiRefreshPushInstallationBadgeResponse';
+import { ApiRegisterDeviceGrantRequest } from '../models/ApiRegisterDeviceGrantRequest';
 import { ApiRegisterPushNotificationTokenRequest } from '../models/ApiRegisterPushNotificationTokenRequest';
 import { ApiRepCategoriesPage } from '../models/ApiRepCategoriesPage';
 import { ApiRepCategory } from '../models/ApiRepCategory';
@@ -2268,6 +2272,7 @@ let typeMap: {[index: string]: any} = {
     "ApiAlchemyContractMetadataBatchResponse": ApiAlchemyContractMetadataBatchResponse,
     "ApiAlchemyContractMetadataRequest": ApiAlchemyContractMetadataRequest,
     "ApiAlchemyContractMetadataResult": ApiAlchemyContractMetadataResult,
+    "ApiAppDeviceGrant": ApiAppDeviceGrant,
     "ApiArchiveProfileCmsPackageRequest": ApiArchiveProfileCmsPackageRequest,
     "ApiArtistNameItem": ApiArtistNameItem,
     "ApiArtworkAssetC2paResult": ApiArtworkAssetC2paResult,
@@ -2923,6 +2928,7 @@ let typeMap: {[index: string]: any} = {
     "ApiRedeemRefreshTokenResponse": ApiRedeemRefreshTokenResponse,
     "ApiRefreshPushInstallationBadgeRequest": ApiRefreshPushInstallationBadgeRequest,
     "ApiRefreshPushInstallationBadgeResponse": ApiRefreshPushInstallationBadgeResponse,
+    "ApiRegisterDeviceGrantRequest": ApiRegisterDeviceGrantRequest,
     "ApiRegisterPushNotificationTokenRequest": ApiRegisterPushNotificationTokenRequest,
     "ApiRepCategoriesPage": ApiRepCategoriesPage,
     "ApiRepCategory": ApiRepCategory,

@@ -1,15 +1,19 @@
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
 import { ApiDropSignedEvents } from '@/api/generated/models/ApiDropSignedEvents';
+import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
 import {
   GetDeviceGrantsRequest,
   GetDropSignedEventsRequest,
+  RegisterDeviceGrantRequest,
   RevokeDeviceGrantRequest
 } from '@/api/generated/routes/operations';
 import { revokeE2eeDeviceOfLoginGrant } from '@/api/e2ee/e2ee.handlers';
 import { Logger } from '@/logging';
 import { Timer } from '@/time';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { deviceGrantsService } from './device-grants.service';
+import { registerDeviceGrantSchema } from './device-signing.validation';
 import { dropSignedEventsService } from './drop-signed-events.service';
 
 const logger = Logger.get('DEVICE_SIGNING_HANDLERS');
@@ -23,6 +27,20 @@ export async function handleGetDeviceGrants(
     timer,
     authenticationContext
   });
+}
+
+export async function handleRegisterDeviceGrant(
+  req: RegisterDeviceGrantRequest
+): Promise<ApiDeviceGrant> {
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  return deviceGrantsService.registerAppGrant(
+    getValidatedByJoiOrThrow(
+      req.body as ApiRegisterDeviceGrantRequest,
+      registerDeviceGrantSchema
+    ),
+    { timer, authenticationContext }
+  );
 }
 
 export async function handleRevokeDeviceGrant(
