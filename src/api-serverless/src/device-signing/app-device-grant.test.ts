@@ -1,4 +1,5 @@
-import { Wallet } from 'ethers';
+import { TypedDataEncoder, Wallet } from 'ethers';
+import { E2EE_GRANT_DOMAIN } from '@/e2ee/e2ee-grant';
 import fc from 'fast-check';
 import {
   APP_DEVICE_GRANT_DOMAIN,
@@ -96,6 +97,13 @@ describe('app device grant', () => {
     });
   });
 
+  it('has its own domain separator although it shares the E2EE salt', () => {
+    expect(TypedDataEncoder.hashDomain(APP_DEVICE_GRANT_DOMAIN)).not.toBe(
+      TypedDataEncoder.hashDomain(E2EE_GRANT_DOMAIN)
+    );
+    expect(APP_DEVICE_GRANT_DOMAIN.salt).toBe(E2EE_GRANT_DOMAIN.salt);
+  });
+
   describe('verifyAppDeviceGrant', () => {
     it('verifies an EOA signature of the signing-only grant', async () => {
       await expect(
@@ -180,6 +188,7 @@ describe('app device grant', () => {
       ['device_key_format', { device_key: '0x1234' }],
       ['scopes', { scopes: ['react', 'post'] as never }],
       ['scopes', { scopes: ['edit'] as never }],
+      ['scopes', { scopes: ['post', 'post'] as never }],
       ['ciphersuite', { ciphersuite: 0x004f }],
       ['origin', { origin: '' }],
       ['origin', { origin: 'x'.repeat(65) }],
