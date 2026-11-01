@@ -28,6 +28,11 @@ export interface E2eeBackupRepository {
   /** Serializes a profile's backup writes (quota and generation swaps). */
   lockProfile(profileId: string, connection: Conn): Promise<void>;
   getBackup(backupId: string, connection?: Conn): Promise<E2eeBackupRow | null>;
+  /**
+   * Reads the generation with a row lock held until the transaction ends
+   * (serializes appends, so next_seq cannot move under a precondition).
+   */
+  lockBackup(backupId: string, connection: Conn): Promise<E2eeBackupRow | null>;
   getActiveBackup(
     profileId: string,
     connection?: Conn
@@ -120,6 +125,14 @@ export class E2eeBackupDb
   getBackup(backupId: string, connection?: Conn) {
     return this.one<E2eeBackupRow>(
       `select * from ${E2EE_BACKUPS_TABLE} where backup_id = :backupId`,
+      { backupId },
+      connection
+    );
+  }
+
+  lockBackup(backupId: string, connection: Conn) {
+    return this.one<E2eeBackupRow>(
+      `select * from ${E2EE_BACKUPS_TABLE} where backup_id = :backupId for update`,
       { backupId },
       connection
     );

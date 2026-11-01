@@ -21,6 +21,10 @@ export class ApiE2eeBackupChunkUpload {
     * Standard base64 of the chunk ciphertext; its length must be a backup chunk bucket
     */
     'data': string;
+    /**
+    * Optional precondition: the sequence number this chunk must get. When the generation\'s next sequence number differs (another device appended first) the append is refused with 409 E2EE_BACKUP_SEQ_CONFLICT. Omitted, the chunk gets the next sequence number.
+    */
+    'expected_seq'?: number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -37,6 +41,12 @@ export class ApiE2eeBackupChunkUpload {
             "name": "data",
             "baseName": "data",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "expected_seq",
+            "baseName": "expected_seq",
+            "type": "number",
             "format": ""
         }    ];
 

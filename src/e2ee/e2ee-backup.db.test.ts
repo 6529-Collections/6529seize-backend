@@ -129,6 +129,63 @@ describeWithSeed('E2EE encrypted backups (MySQL)', [], () => {
     expect(await count(E2EE_CIPHERTEXT_OBJECTS_TABLE)).toBe(0);
     expect((await service.getStatus(profileId)).backup).toBeNull();
   });
+
+  it('lets exactly one of two concurrent appends with the same expected_seq through', async () => {
+    const backupId = hex(16);
+    await service.createBackup(profileId, {
+      backup_id: backupId,
+      envelope: randomBytes(120).toString('base64'),
+      device_key: deviceKey
+    });
+    await service.activate(profileId, backupId, deviceKey);
+    await service.appendChunk(profileId, backupId, {
+      device_key: deviceKey,
+      data: chunkOf(),
+      expected_seq: 1
+    });
+    // Two devices that both last saw seq 1 append at the same moment.
+    const results = await Promise.allSettled(
+      [0, 1].map(() =>
+        service.appendChunk(profileId, backupId, {
+          device_key: deviceKey,
+          data: chunkOf(),
+          expected_seq: 2
+        })
+      )
+    );
+    const appended = results.flatMap((result) =>
+      result.status === 'fulfilled' ? [result.value.seq] : []
+    );
+    const refused = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason as E2eeApiException] : []
+    );
+    expect(appended).toEqual([2]);
+    expect(refused).toHaveLength(1);
+    expect(refused[0]).toBeInstanceOf(E2eeApiException);
+    expect(refused[0].code).toBe('E2EE_BACKUP_SEQ_CONFLICT');
+    expect(refused[0].getStatusCode()).toBe(409);
+    expect(refused[0].details).toEqual({ next_seq: 3 });
+    // The refused chunk left neither a row nor an object behind.
+    expect(await count(E2EE_BACKUP_CHUNKS_TABLE)).toBe(2);
+    expect(await count(E2EE_CIPHERTEXT_OBJECTS_TABLE)).toBe(2);
+
+    // Without expected_seq concurrent appends still get consecutive seqs.
+    const legacy = await Promise.all(
+      [0, 1].map(() =>
+        service.appendChunk(profileId, backupId, {
+          device_key: deviceKey,
+          data: chunkOf()
+        })
+      )
+    );
+    expect(legacy.map((chunk) => chunk.seq).sort((a, b) => a - b)).toEqual([
+      3, 4
+    ]);
+    expect((await service.getStatus(profileId)).backup).toMatchObject({
+      chunk_count: 4,
+      next_seq: 5
+    });
+  });
 });
 
 async function expectQuota(promise: Promise<unknown>) {
