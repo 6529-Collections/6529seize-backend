@@ -8,11 +8,22 @@ export function getXTdhReceiveCount(event: unknown): number | undefined {
   if (
     !isRecord(event) ||
     !Array.isArray(event.Records) ||
-    event.Records.length !== 1
+    event.Records.length === 0
   ) {
     return undefined;
   }
-  const record = event.Records[0];
+  // The whole batch retries together. Report if any request is exhausting its
+  // retry budget, or if any record lacks trustworthy receive metadata.
+  let maxReceiveCount = 0;
+  for (const record of event.Records) {
+    const count = getRecordReceiveCount(record);
+    if (count === undefined) return undefined;
+    maxReceiveCount = Math.max(maxReceiveCount, count);
+  }
+  return maxReceiveCount;
+}
+
+function getRecordReceiveCount(record: unknown): number | undefined {
   if (!isRecord(record) || !isRecord(record.attributes)) return undefined;
   const value = record.attributes.ApproximateReceiveCount;
   if (typeof value !== 'string') return undefined;

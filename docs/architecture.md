@@ -1935,8 +1935,21 @@ universe transaction commits, `xTdhLoop` enqueues a stats phase back to that
 FIFO queue, using the same FIFO message group as the universe message when one
 is available and the queue's default FIFO group otherwise. That shared message
 group is what orders each universe phase before its stats phase; the SQS event
-source batch size stays at `1` and Lambda reserved concurrency stays at `1` to
-avoid parallel xTDH work across groups. The stats phase rebuilds the inactive
+source batch size remains `1` for the handler-first rollout, and Lambda reserved
+concurrency stays at `1` to avoid parallel xTDH work across groups.
+The handler coalesces each delivered batch into one operation. Any universe
+request selects one universe calculation and one replacement stats request;
+that replacement covers stats requests included in the same batch. A stats-only
+batch performs one stats rebuild. Requests from different FIFO groups can share
+the same global refresh, with the replacement stats message using the first
+universe request's group. The invocation succeeds only after the selected work
+finishes, including enqueueing replacement stats after the universe commits.
+Any failure rejects the entire batch for SQS retry. Conflict reporting uses the
+highest receive count in the batch and reports unknown metadata conservatively.
+Requests arriving during a calculation remain queued for a later invocation.
+Deploy this handler with batch size `1` before enabling batches of up to `10`;
+rollback reduces the mapping to `1` before reverting batch-aware handling.
+The stats phase rebuilds the inactive
 xTDH stats slot and activates it only after the rebuild succeeds; a redelivered
 stats message truncates and refills the inactive slot again before activation.
 Each grant/token stats `INSERT ... SELECT` runs in a dedicated `READ COMMITTED`
