@@ -1,4 +1,8 @@
-import { WaveSchema, UpdateWaveSchema } from '@/api/waves/wave-write.schemas';
+import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
+import {
+  legacyWaveCreation,
+  legacyWaveHubPatch
+} from '@/api/waves/wave-hub.schemas';
 import {
   isLegacyDmClosed,
   LEGACY_DM_CLOSED_CODE,
@@ -135,7 +139,7 @@ router.post(
     ) {
       throw new ForbiddenException(`Proxy is not allowed to create waves`);
     }
-    let request = getValidatedByJoiOrThrow(req.body, WaveSchema);
+    let request = legacyWaveCreation(req.body);
     // Temporary hack to make sure old FE's work with new API's
     if (
       request.chat.scope.group_id === null &&
@@ -244,38 +248,13 @@ router.post(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     const requestContext: RequestContext = { authenticationContext, timer };
-    let request = getValidatedByJoiOrThrow(req.body, UpdateWaveSchema);
-    // Temporary hack to make sure old FE's work with new API's
-    if (
-      request.chat.scope.group_id === null &&
-      request.participation.scope.group_id !== null &&
-      request.wave.type === ApiWaveType.Chat
-    ) {
-      request = {
-        ...request,
-        chat: {
-          ...request.chat,
-          scope: { group_id: request.participation.scope.group_id },
-          enabled: request.chat.enabled
-        }
-      };
-    }
-    const wave = await waveApiService.updateWave(
+    const request = legacyWaveHubPatch(req.body);
+    const wave = await waveApiService.updateWaveHub(
       req.params.id,
       request,
       requestContext
     );
     await giveReadReplicaTimeToCatchUp();
-    await userGroupsService.onWaveRelatedGroupsChanged(
-      [
-        request.visibility.scope.group_id,
-        request.participation.scope.group_id,
-        request.chat.scope.group_id,
-        request.voting.scope.group_id,
-        request.wave.admin_group?.group_id
-      ],
-      requestContext
-    );
     res.send(wave);
   }
 );
@@ -1003,19 +982,13 @@ router.post(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
 
-    const model: ApiUpdateWaveDecisionPause = getValidatedByJoiOrThrow(
-      req.body,
-      Joi.object<ApiUpdateWaveDecisionPause>({
-        id: Joi.number().integer().allow(null).default(null),
-        start_time: Joi.number().integer().min(0).required(),
-        end_time: Joi.number().integer().min(0).required()
-      })
+    // Legacy competition commands are accepted without mutating a competition.
+    const ctx = { timer, authenticationContext };
+    const groups = await getGroupsUserIsEligibleForReadContext(
+      userGroupsService,
+      ctx
     );
-
-    const result = await waveApiService.createOrUpdateWavePause(id, model, {
-      timer,
-      authenticationContext
-    });
+    const result = await waveApiService.findWaveByIdOrThrow(id, groups, ctx);
     res.send(result);
   }
 );
@@ -1027,19 +1000,20 @@ router.delete(
     req: Request<{ waveId: string; id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiWave>>
   ) => {
-    const { waveId, id } = req.params;
-    const pauseId = numbers.parseIntOrNull(id);
-    if (!pauseId) {
-      throw new BadRequestException('Invalid pause id');
-    }
-
+    const { waveId } = req.params;
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
 
-    const result = await waveApiService.deleteWavePause(waveId, pauseId, {
-      timer,
-      authenticationContext
-    });
+    const ctx = { timer, authenticationContext };
+    const groups = await getGroupsUserIsEligibleForReadContext(
+      userGroupsService,
+      ctx
+    );
+    const result = await waveApiService.findWaveByIdOrThrow(
+      waveId,
+      groups,
+      ctx
+    );
     res.send(result);
   }
 );

@@ -51,6 +51,7 @@ describe('WaveApiService updateWave immutability', () => {
         .mockResolvedValueOnce(waveBeforeUpdate)
         .mockResolvedValue(updatedWave ?? waveBeforeUpdate),
       findWaveByIdForUpdate: jest.fn().mockResolvedValue(waveBeforeUpdate),
+      findWaveHubById: jest.fn().mockResolvedValue(waveBeforeUpdate),
       findSubwaveIdsByParentWaveId: jest.fn().mockResolvedValue([]),
       countWaveDecisionsByWaveIds: jest.fn().mockResolvedValue({}),
       deleteWave: jest.fn().mockResolvedValue(undefined),
@@ -177,6 +178,31 @@ describe('WaveApiService updateWave immutability', () => {
       }
     };
   }
+
+  it.each(['stranger', 'proxy'])(
+    'rejects shared-wave edits from a %s',
+    async (caller) => {
+      const before = aWave({
+        created_by: 'owner',
+        admin_group_id: null,
+        visibility_group_id: null
+      });
+      const { service, wavesApiDb, ctx } = createService({
+        waveBeforeUpdate: before
+      });
+      if (caller === 'stranger')
+        ctx.authenticationContext =
+          AuthenticationContext.fromProfileId('stranger');
+      else
+        jest
+          .spyOn(ctx.authenticationContext, 'isAuthenticatedAsProxy')
+          .mockReturnValue(true);
+      await expect(
+        service.updateWaveHub(before.id, { name: 'Unwanted rename' }, ctx)
+      ).rejects.toThrow('administrator');
+      expect(wavesApiDb.deleteWave).not.toHaveBeenCalled();
+    }
+  );
 
   it('rejects changing wave type during update', async () => {
     const waveBeforeUpdate = aWave(

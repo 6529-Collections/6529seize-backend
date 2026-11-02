@@ -1,4 +1,8 @@
 import {
+  applyWaveHubPatch,
+  waveHubAccessChanged
+} from '@/api/waves/wave-hub-update';
+import {
   withLegacyPrimaryMutation,
   reconcileAcceptedLegacySettings
 } from '@/competitions/legacy-competition-mutation';
@@ -63,6 +67,7 @@ import { ApiGroupFull } from '../generated/models/ApiGroupFull';
 import { ApiSetPinnedDropRequest } from '../generated/models/ApiSetPinnedDropRequest';
 import { ApiUpdateWaveDecisionPause } from '../generated/models/ApiUpdateWaveDecisionPause';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
+import { ApiUpdateWaveHubRequest } from '@/api/generated/models/ApiUpdateWaveHubRequest';
 import { ApiWave } from '../generated/models/ApiWave';
 import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
@@ -1603,11 +1608,14 @@ export class WaveApiService {
   async findWaveByIdOrThrow(
     id: string,
     groupIdsUserIsEligibleFor: string[],
-    ctx: RequestContext
+    ctx: RequestContext,
+    sharedConfiguration = false
   ): Promise<ApiWave> {
     const authenticationContext = ctx.authenticationContext;
     const entity = await assertWaveAndParentVisibleOrThrow({
-      wave: await this.wavesApiDb.findWaveById(id),
+      wave: sharedConfiguration
+        ? await this.wavesApiDb.findWaveHubById(id, ctx)
+        : await this.wavesApiDb.findWaveById(id),
       groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
       message: `Wave ${id} not found`,
       wavesApiDb: this.wavesApiDb,
@@ -2168,6 +2176,171 @@ export class WaveApiService {
         );
       }
     }
+  }
+
+  private async mapEditedWaveHub(
+    wave: WaveEntity,
+    actor: string,
+    ctx: RequestContext
+  ): Promise<ApiWave> {
+    const eligible =
+      await this.userGroupsService.getGroupsUserIsEligibleForByIds(
+        actor,
+        waveGroupIds(wave)
+      );
+    return this.waveMappers.waveEntityToApiWave(
+      {
+        waveEntity: wave,
+        groupIdsUserIsEligibleFor: eligible,
+        noRightToVote: false,
+        noRightToParticipate: false
+      },
+      ctx
+    );
+  }
+
+  private async validateWaveHubUpdate(
+    before: WaveEntity,
+    after: WaveEntity,
+    actor: string,
+    groups: string[],
+    ctx: RequestContextWithConnection
+  ): Promise<void> {
+    const waveId = before.id;
+    if (
+      before.is_direct_message &&
+      (after.visibility_group_id !== before.visibility_group_id ||
+        after.chat_group_id !== before.chat_group_id ||
+        !after.chat_enabled)
+    ) {
+      throw new BadRequestException('Direct message access cannot be changed');
+    }
+    if (
+      after.visibility_group_id !== null &&
+      (await profileWavesDb.findSelectedWaveIdsByWaveIds([waveId], ctx)).has(
+        waveId
+      )
+    ) {
+      throw new BadRequestException('Profile waves must remain public');
+    }
+    if (waveHubAccessChanged(before, after)) {
+      const privilegeGroups: WavePrivilegeGroup[] = [
+        { role: ApiWaveGroupRole.Admin, groupId: after.admin_group_id }
+      ];
+      if (after.chat_enabled)
+        privilegeGroups.push({
+          role: ApiWaveGroupRole.Chat,
+          groupId: after.chat_group_id
+        });
+      const referencedGroupIds = collections.distinct(
+        [
+          after.visibility_group_id,
+          ...privilegeGroups.map((group) => group.groupId)
+        ].filter((id): id is string => id !== null)
+      );
+      this.assertNoInvalidWaveGroupRoles(
+        await this.findInvalidWaveGroupRoles(
+          {
+            visibilityGroupId: after.visibility_group_id,
+            privilegeGroups,
+            referencedGroupIds,
+            authenticatedAdminProfileId: actor,
+            enforceRequesterVisibility: true
+          },
+          ctx
+        )
+      );
+    }
+    await this.validateWaveParentOnUpdate({
+      waveBeforeUpdate: before,
+      groupIdsUserIsEligibleFor: groups,
+      ctx
+    });
+  }
+
+  /** Shared-wave edits never validate or rewrite native competition rules. */
+  async updateWaveHub(
+    waveId: string,
+    patch: ApiUpdateWaveHubRequest,
+    ctx: RequestContext
+  ): Promise<ApiWave> {
+    const authentication = this.getRequiredAuthenticationContext(ctx);
+    const actor = authentication.authenticatedProfileId;
+    if (!actor || authentication.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        'Only an authenticated wave administrator can edit a wave'
+      );
+    }
+    const groups = await this.userGroupsService.getGroupsUserIsEligibleFor(
+      actor,
+      ctx.timer
+    );
+    const result = await this.withWaveSettingsTransaction(
+      async (connection) => {
+        const tx = { ...ctx, connection };
+        const before = await assertWaveAndParentVisibleOrThrow({
+          wave: await this.wavesApiDb.findWaveHubById(waveId, tx, true),
+          groupsUserIsEligibleFor: groups,
+          message: `Wave ${waveId} not found`,
+          wavesApiDb: this.wavesApiDb,
+          ctx: tx
+        });
+        if (
+          before.created_by !== actor &&
+          (!before.admin_group_id || !groups.includes(before.admin_group_id))
+        ) {
+          throw new ForbiddenException(
+            'Only wave administrators can edit a wave'
+          );
+        }
+        if (Object.keys(patch).length === 0) {
+          return this.mapEditedWaveHub(before, actor, tx);
+        }
+        const after = applyWaveHubPatch(before, patch);
+        await this.validateWaveHubUpdate(before, after, actor, groups, tx);
+        const hubConfiguration =
+          await this.wavesApiDb.findWaveHubConfigurationForUpdate(waveId, tx);
+        await this.wavesApiDb.deleteWave(waveId, tx);
+        await this.wavesApiDb.insertWave(
+          {
+            ...after,
+            is_direct_message: after.is_direct_message ?? false,
+            voting_credit_nfts: []
+          },
+          tx,
+          {
+            preserveHubConfigurationFrom: hubConfiguration
+          }
+        );
+        if (after.visibility_group_id !== before.visibility_group_id) {
+          await this.wavesApiDb.updateVisibilityInFeedEntities(
+            { waveId, newVisibilityGroupId: after.visibility_group_id },
+            tx
+          );
+          await this.wavesApiDb.updateVisibilityInNotifications(
+            { waveId, newVisibilityGroupId: after.visibility_group_id },
+            tx
+          );
+        }
+        await this.metricsRecorder.recordActiveIdentity(
+          { identityId: actor },
+          tx
+        );
+        return this.mapEditedWaveHub(after, actor, tx);
+      },
+      ctx
+    );
+    if (!ctx.connection) {
+      await this.userGroupsService.onWaveRelatedGroupsChanged(
+        [
+          result.visibility.scope.group?.id ?? null,
+          result.chat.scope.group?.id ?? null,
+          result.wave.admin_group.group?.id ?? null
+        ],
+        ctx
+      );
+    }
+    return result;
   }
 
   async updateWave(

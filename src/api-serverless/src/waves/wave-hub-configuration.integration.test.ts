@@ -532,6 +532,98 @@ describe('live native shared hub configuration', () => {
     ]);
   });
 
+  it('edits shared metadata and chat without changing an identity competition', async () => {
+    const request = chatRequest();
+    const entity = await mapper.createWaveToNewWaveEntity({
+      id: 'identity-wave-edit',
+      serial_no: null,
+      created_at: 100,
+      updated_at: null,
+      request,
+      created_by: 'creator',
+      descriptionDropId: 'identity-description',
+      nextDecisionTime: null,
+      isDirectMessage: false
+    });
+    await repo.executeNativeQueriesInTransaction(async (connection) => {
+      await repo.insertWave(entity, { connection });
+    });
+    const original = await mapper.createWaveToNewWaveEntity({
+      id: entity.id,
+      serial_no: 1,
+      created_at: 100,
+      updated_at: null,
+      request: {
+        ...request,
+        name: 'Original competition title',
+        participation: {
+          ...request.participation,
+          submission_strategy: {
+            type: 'IDENTITY',
+            config: {
+              duplicates: 'NEVER_ALLOW',
+              who_can_be_submitted: 'EVERYONE'
+            }
+          }
+        },
+        wave: { ...request.wave, type: ApiWaveType.Rank }
+      } as ApiCreateNewWave,
+      created_by: 'creator',
+      descriptionDropId: entity.description_drop_id,
+      nextDecisionTime: null,
+      isDirectMessage: false
+    });
+    await seedNativeOriginalPrimaryFixture({ ...original, serial_no: 1 });
+    const competitionsBefore = await sqlExecutor.execute(
+      'select * from competitions where wave_id=:id',
+      { id: entity.id }
+    );
+    const sharedBefore = await sqlExecutor.oneOrNull(
+      'select hub_participation_config,hub_voting_config from waves where id=:id',
+      { id: entity.id }
+    );
+    const { service, ctx } = serviceHarness();
+    const edited = await service.updateWaveHub(
+      entity.id,
+      {
+        name: 'Renamed shared wave',
+        picture: 'https://d3lqz0a4bldqgf.cloudfront.net/new-picture.png',
+        chat: { links_disabled: true, slow_mode_cooldown_ms: 1000 }
+      },
+      ctx
+    );
+    expect(edited.name).toBe('Renamed shared wave');
+    expect(edited.chat.links_disabled).toBe(true);
+    expect(edited.chat.slow_mode_cooldown_ms).toBe(1000);
+    expect(
+      await sqlExecutor.execute(
+        'select * from competitions where wave_id=:id',
+        { id: entity.id }
+      )
+    ).toEqual(competitionsBefore);
+    expect(
+      await sqlExecutor.oneOrNull(
+        'select hub_participation_config,hub_voting_config from waves where id=:id',
+        { id: entity.id }
+      )
+    ).toEqual(sharedBefore);
+    const reread = await repo.findWaveHubById(entity.id, ctx);
+    expect(reread?.name).toBe('Renamed shared wave');
+    expect((await repo.findWaveById(entity.id))?.name).toBe(
+      'Renamed shared wave'
+    );
+    await service.updateWaveHub(
+      entity.id,
+      { picture: null, chat: { slow_mode_cooldown_ms: null } },
+      ctx
+    );
+    const cleared = await repo.findWaveHubById(entity.id, ctx);
+    expect(cleared?.picture).toBeNull();
+    expect(cleared?.chat_slow_mode_cooldown_ms).toBeNull();
+    expect(cleared?.chat_links_disabled).toBeTruthy();
+    expect(cleared?.name).toBe('Renamed shared wave');
+  });
+
   it('keeps original competition settings authoritative without replacing the shared hub policy', async () => {
     const request = chatRequest();
     const entity = await mapper.createWaveToNewWaveEntity({
