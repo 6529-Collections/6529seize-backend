@@ -77,7 +77,7 @@ const primaryWave = aWave(
       is_rolling: false
     }
   },
-  { id: 'rich-contract-primary', name: 'Stale physical title', serial_no: 1 }
+  { id: 'rich-contract-primary', name: 'Shared wave title', serial_no: 1 }
 );
 const chatWave = aWave(
   {
@@ -113,6 +113,17 @@ const names = [
   'disqualified'
 ];
 const drop = (name: string) => `contract-${name}`;
+// Shared names intentionally diverge from the frozen competition-title projection.
+// Keep every other historical projection field under the unchanged oracle.
+function expectedProjectionRows(table: string, rows: unknown[]): unknown[] {
+  if (table !== tables.WAVES_TABLE) return rows;
+  return rows.map((row) => {
+    const wave = row as { id: string; name: string };
+    return wave.id === primaryWave.id
+      ? { ...wave, name: primaryWave.name }
+      : wave;
+  });
+}
 const entry = (name: string) => legacyCompetitionEntryId(id, drop(name));
 const completed = legacyCompetitionDecisionId(id, 2000);
 const pending = legacyCompetitionDecisionId(id, 4000);
@@ -976,7 +987,10 @@ describeWithSeed(
           rows: sorted(
             await sqlExecutor.execute(`SELECT * FROM ${legacyGetView(table)}`)
           )
-        }).toEqual({ table, rows: sorted(baseline.get(table)!) });
+        }).toEqual({
+          table,
+          rows: sorted(expectedProjectionRows(table, baseline.get(table)!))
+        });
       expect(await voting.getWeightedDropRates(orphans, {})).toEqual(
         originalRates!
       );
@@ -1197,7 +1211,7 @@ describeWithSeed(
       });
     });
 
-    it('matches all twelve rich frozen projection rows, complete columns, primitive types and nulls while isolating siblings and preserving original ownership', async () => {
+    it('preserves the twelve frozen projections except shared wave names, while isolating siblings and preserving original ownership', async () => {
       const baseline = await withLegacyCompetitionGetFacade(async () => {
         const result = new Map<string, unknown[]>();
         for (const table of FROZEN_NATIVE_GET_TABLES)
@@ -1215,7 +1229,7 @@ describeWithSeed(
         );
         expect({ table, rows: sorted(actual) }).toEqual({
           table,
-          rows: sorted(baseline.get(table)!)
+          rows: sorted(expectedProjectionRows(table, baseline.get(table)!))
         });
         expect(baseline.get(table)!.length).toBeGreaterThan(0);
       }
@@ -1248,7 +1262,7 @@ describeWithSeed(
           `SELECT name,type FROM ${legacyGetView(tables.WAVES_TABLE)} WHERE id=:waveId`,
           { waveId: primaryWave.id }
         )
-      ).toEqual([{ name: 'Native original title', type: 'RANK' }]);
+      ).toEqual([{ name: primaryWave.name, type: 'RANK' }]);
     });
   },
   historicalCompetitionFixture

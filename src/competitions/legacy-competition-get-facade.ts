@@ -221,7 +221,8 @@ function json(
 }
 
 const waveFields: Readonly<Record<string, string>> = {
-  name: 'c.title',
+  // A wave rename never rewrites its original competition title.
+  name: 'w.name',
   // The native config normalizes an untouched legacy null to created_at.
   updated_at:
     'case when w.updated_at is null and c.updated_at=c.created_at then null else c.updated_at end',
@@ -526,6 +527,19 @@ export function nativeWaveHubField(column: string): string | undefined {
         ? 'json'
         : 'text';
   return `case when w.${policy} is null then ${CHAT_WAVE_COMPATIBILITY_DEFAULTS[column] ?? 'null'} else ${json(`${policy}.${field}`, kind, 'w')} end`;
+}
+
+/** Shared configuration reads never select a competition's projected rules. */
+export function waveHubSelectColumns(): string {
+  return [
+    ...sharedWaveColumns.map((column) => `w.\`${column}\``),
+    'w.hub_participation_config',
+    'w.hub_voting_config',
+    ...Object.keys(waveFields).map(
+      (column) =>
+        `${nativeWaveHubField(column) ?? CHAT_WAVE_COMPATIBILITY_DEFAULTS[column] ?? 'null'} as \`${column}\``
+    )
+  ].join(',');
 }
 
 export function legacyCompetitionGetViewDefinition(table: string): string {

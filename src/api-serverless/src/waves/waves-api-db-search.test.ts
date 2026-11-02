@@ -179,18 +179,18 @@ describeWithSeed(
       expect(results[0]).not.toHaveProperty('normalized_name');
     });
 
-    it('matches the effective name of an original competition-backed wave', async () => {
+    it('searches the shared wave name independently of its competition title', async () => {
       await seedNativeOriginalPrimaryFixture({
         ...publicWaves[0],
         name: 'Original-Competition'
       });
-      expect((await search('original competition'))[0]).toMatchObject({
+      expect((await search('memes chat'))[0]).toMatchObject({
         id: 'search-wave-1',
-        name: 'Original-Competition'
+        name: publicWaves[0].name
       });
-      expect((await search('memes chat')).map(({ id }) => id)).not.toContain(
-        'search-wave-1'
-      );
+      expect(
+        (await search('original competition')).map(({ id }) => id)
+      ).not.toContain('search-wave-1');
     });
 
     it('propagates database failures', async () => {
