@@ -26,6 +26,10 @@ export class ApiSessionLoginRequest {
     * Optional 6529 session-signature protocol compatibility field. This is not the ERC-4361 SIWE Version field; SIWE messages always use Version 1.
     */
     'signature_version'?: ApiSessionLoginRequestSignatureVersionEnum;
+    /**
+    * Optional human readable name for the device key granted by a web SIWE message, for example \"Chrome on macOS\". The server keeps only letters, digits, spaces and ._()- characters, collapses spaces, trims, truncates to 48 characters and uses \"Browser\" when empty. Ignored when the signed message carries no device grant.
+    */
+    'device_label'?: string;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -72,6 +76,12 @@ export class ApiSessionLoginRequest {
             "name": "signature_version",
             "baseName": "signature_version",
             "type": "ApiSessionLoginRequestSignatureVersionEnum",
+            "format": ""
+        },
+        {
+            "name": "device_label",
+            "baseName": "device_label",
+            "type": "string",
             "format": ""
         }    ];
 

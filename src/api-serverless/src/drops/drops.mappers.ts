@@ -110,6 +110,10 @@ import {
 } from '@/content-moderation/content-moderation.db';
 import { DropModerationStatus } from '@/entities/IContentModeration';
 import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
+import {
+  deviceSigningDb,
+  DeviceSigningDb
+} from '@/api/device-signing/device-signing.db';
 
 export class DropsMappers {
   constructor(
@@ -128,7 +132,11 @@ export class DropsMappers {
     private readonly nftLinkResolvingService: NftLinkResolvingService,
     private readonly attachmentsDb: AttachmentsDb,
     private readonly dropPollsDb: DropPollsDb,
-    private readonly moderationDb: ContentModerationDb = contentModerationDb
+    private readonly moderationDb: ContentModerationDb = contentModerationDb,
+    private readonly authorSignaturesDb: Pick<
+      DeviceSigningDb,
+      'findAuthorSignedDropIds'
+    > = deviceSigningDb
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -400,7 +408,8 @@ export class DropsMappers {
       boostsByAuthenticatedUser,
       bookmarksByAuthenticatedUser,
       rootDropNftLinks,
-      dropPollsByDropId
+      dropPollsByDropId,
+      authorSignedDropIds
     ] = await Promise.all([
       this.dropVotingDb.getParticipationDropsRealtimeRanks(
         participatoryDropIds,
@@ -507,6 +516,9 @@ export class DropsMappers {
         authenticationContext: contextProfileId
           ? AuthenticationContext.fromProfileId(contextProfileId)
           : AuthenticationContext.notAuthenticated()
+      }),
+      this.authorSignaturesDb.findAuthorSignedDropIds(allDropIds, {
+        connection
       })
     ]);
     const canonicalIdsOfRootDropLinks = collections.distinct(
@@ -581,7 +593,8 @@ export class DropsMappers {
       boostsByAuthenticatedUser,
       bookmarksByAuthenticatedUser,
       dropPollsByDropId,
-      rootDropNftLinksByDropId
+      rootDropNftLinksByDropId,
+      authorSignedDropIds
     };
   }
 
@@ -624,7 +637,8 @@ export class DropsMappers {
       boostsByAuthenticatedUser,
       bookmarksByAuthenticatedUser,
       dropPollsByDropId,
-      rootDropNftLinksByDropId
+      rootDropNftLinksByDropId,
+      authorSignedDropIds
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -919,7 +933,8 @@ export class DropsMappers {
         dropPollsByDropId,
         rootDropNftLinksByDropId,
         rootDropIds,
-        visibleQuotedDropIds
+        visibleQuotedDropIds,
+        authorSignedDropIds
       });
       applyCollaborationPresentation(
         drop,
@@ -946,6 +961,8 @@ export class DropsMappers {
       drop.author = anonymousCompetitionAuthor(drop.author, drop.id);
       drop.collaborators = [];
       delete drop.submission_artist;
+      // Signed events name the author's wallet.
+      drop.is_author_signed = false;
     }
     if (drop.reply_to?.drop)
       this.applyAnonymousAuthors(drop.reply_to.drop, hiddenDropIds, visited);
@@ -1063,6 +1080,7 @@ export class DropsMappers {
     });
     if (!presentation.moderation.can_view) {
       delete drop.submission_artist;
+      drop.is_author_signed = false;
       drop.title = null;
       drop.referenced_nfts = [];
       drop.mentioned_users = [];
@@ -1121,7 +1139,8 @@ export class DropsMappers {
     dropPollsByDropId,
     rootDropNftLinksByDropId,
     rootDropIds,
-    visibleQuotedDropIds
+    visibleQuotedDropIds,
+    authorSignedDropIds
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
@@ -1167,6 +1186,7 @@ export class DropsMappers {
     rootDropNftLinksByDropId: Record<string, ApiDropNftLink[]>;
     rootDropIds: Set<string>;
     visibleQuotedDropIds: Set<string>;
+    authorSignedDropIds: ReadonlySet<string>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -1334,7 +1354,8 @@ export class DropsMappers {
                   dropPollsByDropId,
                   rootDropNftLinksByDropId,
                   rootDropIds,
-                  visibleQuotedDropIds
+                  visibleQuotedDropIds,
+                  authorSignedDropIds
                 })
               : undefined
           }
@@ -1399,7 +1420,8 @@ export class DropsMappers {
                           dropPollsByDropId,
                           rootDropNftLinksByDropId,
                           rootDropIds,
-                          visibleQuotedDropIds
+                          visibleQuotedDropIds,
+                          authorSignedDropIds
                         })
                       : undefined
                   }
@@ -1471,6 +1493,7 @@ export class DropsMappers {
       subscribed_actions: subscribedActions[dropEntity.id] ?? [],
       winning_context: winningContext,
       is_signed: !!dropEntity.signature,
+      is_author_signed: authorSignedDropIds.has(dropEntity.id),
       reactions: dropReactions.get(dropEntity.id)?.reactions ?? [],
       boosts: boostsCount[dropEntity.id] ?? 0,
       is_additional_action_promised: dropEntity.is_additional_action_promised,

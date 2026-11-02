@@ -10,6 +10,7 @@
  * Do not edit the class manually.
  */
 
+import { ApiDeviceGrant } from '../models/ApiDeviceGrant';
 import { HttpFile } from '../http/http';
 
 export class ApiSessionWebResponse {
@@ -18,6 +19,7 @@ export class ApiSessionWebResponse {
     'access_token': string;
     'access_token_expires_at': Date;
     'client_type': ApiSessionWebResponseClientTypeEnum;
+    'device_grant'?: ApiDeviceGrant;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -52,6 +54,12 @@ export class ApiSessionWebResponse {
             "name": "client_type",
             "baseName": "client_type",
             "type": "ApiSessionWebResponseClientTypeEnum",
+            "format": ""
+        },
+        {
+            "name": "device_grant",
+            "baseName": "device_grant",
+            "type": "ApiDeviceGrant",
             "format": ""
         }    ];
 

@@ -142,10 +142,10 @@ describe('wallet auth SIWE routes', () => {
     ['https://staging.6529.io', 'api.staging.6529.io', 'staging.6529.io']
   ])(
     'GET /session-nonce returns canonical SIWE for %s',
-    (origin, host, expectedDomain) => {
+    async (origin, host, expectedDomain) => {
       const response = makeResponse();
 
-      sessionNonceHandler(
+      await sessionNonceHandler(
         makeRequest({
           query: {
             signer_address: wallet.address.toLowerCase(),
@@ -194,8 +194,8 @@ describe('wallet auth SIWE routes', () => {
       origin: 'https://6529.io/path',
       host: 'api.6529.io'
     }
-  ])('GET /session-nonce rejects $name', ({ origin, host }) => {
-    expect(() =>
+  ])('GET /session-nonce rejects $name', async ({ origin, host }) => {
+    await expect(
       sessionNonceHandler(
         makeRequest({
           query: {
@@ -208,13 +208,13 @@ describe('wallet auth SIWE routes', () => {
         }),
         makeResponse()
       )
-    ).toThrow();
+    ).rejects.toThrow();
   });
 
-  it('GET /session-nonce fails closed on an unrecognized Host without using the production audience', () => {
+  it('GET /session-nonce fails closed on an unrecognized Host without using the production audience', async () => {
     process.env.WEB_APP_ORIGIN = 'https://6529.io';
 
-    expect(() =>
+    await expect(
       sessionNonceHandler(
         makeRequest({
           query: {
@@ -227,11 +227,11 @@ describe('wallet auth SIWE routes', () => {
         }),
         makeResponse()
       )
-    ).toThrow('allowed API Host');
+    ).rejects.toThrow('allowed API Host');
   });
 
-  it('validates the signer before resolving the web API Host', () => {
-    expect(() =>
+  it('validates the signer before resolving the web API Host', async () => {
+    await expect(
       sessionNonceHandler(
         makeRequest({
           query: {
@@ -244,7 +244,7 @@ describe('wallet auth SIWE routes', () => {
         }),
         makeResponse()
       )
-    ).toThrow('Invalid signer address');
+    ).rejects.toThrow('Invalid signer address');
   });
 
   it.each([
@@ -262,10 +262,10 @@ describe('wallet auth SIWE routes', () => {
     }
   ])(
     'GET /session-nonce preserves custom structured v2 for $clientType',
-    ({ clientType, origin, host, expectedSessionType }) => {
+    async ({ clientType, origin, host, expectedSessionType }) => {
       const response = makeResponse();
 
-      sessionNonceHandler(
+      await sessionNonceHandler(
         makeRequest({
           query: {
             signer_address: wallet.address,

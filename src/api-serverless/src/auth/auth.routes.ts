@@ -73,7 +73,9 @@ import {
   createSiweWebAuthChallenge,
   resolveSiweWalletAuthApiAudience,
   signSiweWebAuthChallenge,
+  type SiweDeviceGrantRequest,
   type VerifiedSessionChallenge,
+  type VerifiedSiweWebAuth,
   verifySessionChallengeToken,
   verifySiweWebAuthSignature
 } from '../wallet-signatures/siwe-wallet-auth';
@@ -83,8 +85,20 @@ import type {
 } from '../wallet-signatures/structured-wallet-signatures';
 import type { WalletAuthClientType } from '@/entities/IWalletAuthSession';
 import { normalizeWebAppOrigin } from '../web-app-origins';
+import { Logger } from '@/logging';
+import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
+import {
+  DEVICE_GRANT_KEY_TYPE,
+  parseDeviceScopesParam
+} from '@/api/device-signing/device-grant-message';
+import { deviceGrantsService } from '@/api/device-signing/device-grants.service';
+import { MlsDeviceGrantRequest } from '@/api/device-signing/combined-device-grant';
+import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
+import { isE2eeEnabled } from '@/e2ee/e2ee-flag';
+import { identitiesDb } from '@/identities/identities.db';
 
 const router = asyncRouter();
+const logger = Logger.get('AUTH_ROUTES');
 
 type RefreshTokenSessionClientType = Exclude<WalletAuthClientType, 'web'>;
 
@@ -97,6 +111,12 @@ interface SessionNonceQueryRequest {
   signer_address: string;
   client_type: WalletAuthClientType;
   chain_id: number;
+  device_key?: string;
+  device_key_type?: typeof DEVICE_GRANT_KEY_TYPE;
+  device_scopes?: string;
+  // Combined grant: also grant this MLS device key for encrypted messages.
+  mls_device_key?: string;
+  mls_ciphersuite?: number;
 }
 
 interface ResolvedSessionNonceContext {
@@ -155,7 +175,7 @@ ${randomUUID()}`;
 
 router.get(
   '/session-nonce',
-  function (
+  async function (
     req: Request<any, any, any, SessionNonceQueryRequest, any>,
     res: Response<ApiResponse<ApiSessionNonceResponse>>
   ) {
@@ -169,6 +189,11 @@ router.get(
         `Invalid signer address ${signerAddress}`
       );
     }
+    const deviceGrant = await resolveRequestedDeviceGrant(
+      nonceRequest,
+      signerAddress,
+      Timer.getFromRequest(req)
+    );
     const nonceContext = resolveSessionNonceContext(req, nonceRequest);
     const authWalletChainId = getAuthWalletChainId();
     if (nonceRequest.client_type === 'web') {
@@ -181,7 +206,8 @@ router.get(
       const challenge = createSiweWebAuthChallenge({
         address: signerAddress,
         clientOrigin: nonceContext.clientOrigin,
-        chainId: authWalletChainId
+        chainId: authWalletChainId,
+        deviceGrant
       });
       const serverSignature = signSiweWebAuthChallenge({
         challenge,
@@ -217,6 +243,74 @@ router.get(
     });
   }
 );
+
+async function resolveRequestedDeviceGrant(
+  nonceRequest: SessionNonceQueryRequest,
+  signerAddress: string,
+  timer: Timer
+): Promise<SiweDeviceGrantRequest | null> {
+  const hasDeviceParams =
+    nonceRequest.device_key !== undefined ||
+    nonceRequest.device_key_type !== undefined ||
+    nonceRequest.device_scopes !== undefined;
+  if (!hasDeviceParams) {
+    return null;
+  }
+  if (nonceRequest.client_type !== 'web') {
+    throw new BadRequestException(
+      'Device grants are only available for web sessions'
+    );
+  }
+  const scopes = parseDeviceScopesParam(nonceRequest.device_scopes);
+  if (!nonceRequest.device_key || !scopes) {
+    throw new BadRequestException('Invalid device grant request');
+  }
+  return {
+    deviceKey: nonceRequest.device_key,
+    scopes,
+    mlsDevice: await resolveRequestedMlsDevice(
+      nonceRequest,
+      signerAddress,
+      timer
+    )
+  };
+}
+
+/**
+ * The MLS half of a combined grant request. A server with encrypted
+ * messages off, or on another ciphersuite, issues the signing grant alone;
+ * the client then enrolls encrypted messages with its own grant prompt.
+ * So does a wallet without a profile: an MLS device can only join a
+ * profile, so the key would be thrown away and granted again after the
+ * profile is created.
+ */
+async function resolveRequestedMlsDevice(
+  nonceRequest: SessionNonceQueryRequest,
+  signerAddress: string,
+  timer: Timer
+): Promise<MlsDeviceGrantRequest | null> {
+  const deviceKey = nonceRequest.mls_device_key;
+  const ciphersuite = nonceRequest.mls_ciphersuite;
+  if (deviceKey === undefined || ciphersuite === undefined) {
+    return null;
+  }
+  if (deviceKey === nonceRequest.device_key) {
+    throw new BadRequestException(
+      'The MLS device key must differ from the signing device key'
+    );
+  }
+  if (!isE2eeEnabled() || ciphersuite !== E2EE_CIPHERSUITE) {
+    return null;
+  }
+  const signerProfileId = await identitiesDb.getProfileIdByWallet(
+    signerAddress,
+    timer
+  );
+  if (!signerProfileId) {
+    return null;
+  }
+  return { deviceKey, ciphersuite };
+}
 
 router.post(
   `/login`,
@@ -360,8 +454,65 @@ async function loginWithSiweSessionChallenge({
     clientOrigin: signedClientOrigin,
     apiHost: req.headers.host
   });
+  const deviceGrant = await storeVerifiedDeviceGrant({
+    verified,
+    message,
+    walletSignature: loginRequest.client_signature,
+    deviceLabel: loginRequest.device_label,
+    timer
+  });
   res.setHeader('Set-Cookie', created.setCookie);
-  res.status(201).send(created.response);
+  res
+    .status(201)
+    .send(
+      deviceGrant
+        ? { ...created.response, device_grant: deviceGrant }
+        : created.response
+    );
+}
+
+/**
+ * Stores the device grant carried by a verified SIWE login. A failure is
+ * logged and never fails the login; the session is simply returned without
+ * a grant.
+ */
+async function storeVerifiedDeviceGrant({
+  verified,
+  message,
+  walletSignature,
+  deviceLabel,
+  timer
+}: {
+  readonly verified: VerifiedSiweWebAuth;
+  readonly message: string;
+  readonly walletSignature: string;
+  readonly deviceLabel: string | undefined;
+  readonly timer: Timer;
+}): Promise<ApiDeviceGrant | null> {
+  if (!verified.deviceGrant) {
+    return null;
+  }
+  try {
+    return await deviceGrantsService.storeLoginGrant(
+      {
+        terms: verified.deviceGrant,
+        message,
+        walletSignature,
+        wallet: verified.address,
+        domain: verified.domain,
+        chainId: verified.chainId,
+        issuedAt: verified.issuedAt,
+        deviceLabel
+      },
+      { timer }
+    );
+  } catch (error) {
+    logger.error(
+      `Failed to store device grant for wallet ${verified.address}`,
+      error
+    );
+    return null;
+  }
 }
 
 async function loginWithLegacySessionChallenge({
@@ -1184,8 +1335,23 @@ const SessionNonceQueryRequestSchema: Joi.ObjectSchema<SessionNonceQueryRequest>
       .valid('web', 'native', 'desktop')
       .optional()
       .default('web'),
-    chain_id: Joi.number().integer().min(1).optional().default(1)
-  }).unknown(false);
+    chain_id: Joi.number().integer().min(1).optional().default(1),
+    device_key: Joi.string()
+      .pattern(/^0x[0-9a-f]{64}$/)
+      .optional(),
+    device_key_type: Joi.string().valid(DEVICE_GRANT_KEY_TYPE).optional(),
+    device_scopes: Joi.string().max(64).optional(),
+    mls_device_key: Joi.string()
+      .pattern(/^0x[0-9a-f]{64}$/)
+      .optional(),
+    mls_ciphersuite: Joi.number().integer().min(1).max(0xffff).optional()
+  })
+    .with('device_key', 'device_key_type')
+    .with('device_key_type', 'device_key')
+    .with('device_scopes', 'device_key')
+    .with('mls_device_key', ['device_key', 'mls_ciphersuite'])
+    .with('mls_ciphersuite', 'mls_device_key')
+    .unknown(false);
 
 const ClientTypeSchema = Joi.string().valid('web', 'native', 'desktop');
 
@@ -1200,7 +1366,8 @@ const SessionLoginRequestSchema: Joi.ObjectSchema<ApiSessionLoginRequest> =
       .valid('eoa', 'contract', 'unknown')
       .optional()
       .allow(null),
-    signature_version: Joi.number().integer().valid(1, 2).optional().default(2)
+    signature_version: Joi.number().integer().valid(1, 2).optional().default(2),
+    device_label: Joi.string().max(64).allow('').optional()
   }).unknown(false);
 
 const SessionRefreshWebRequestSchema: Joi.ObjectSchema<ApiSessionRefreshWebRequest> =

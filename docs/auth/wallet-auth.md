@@ -142,6 +142,110 @@ nonce is then consumed as a separate final atomic operation using Redis
 `SET NX EX`; repeated or concurrent use is rejected. Local/test can use the
 in-memory fallback, while production fails closed when Redis is unavailable.
 
+## Device Signing Grants
+
+Web SIWE logins can also grant a browser-held, non-extractable Ed25519 device
+key the right to sign drop writes for 180 days. Unsigned writes and logins
+without device parameters are unchanged.
+
+- `GET /api/auth/session-nonce` accepts optional `device_key` (`0x` + 64
+  lowercase hex), `device_key_type=ed25519` (required with a key) and
+  `device_scopes` (comma list from `post,edit,delete,react,vote`, default
+  `post,edit,delete,react`, must include `post`). Any device parameter with a
+  native or desktop client type returns 400.
+- The SIWE message then carries exactly one resource
+  `urn:6529:device-grant:v1:ed25519:{key hex}:{scopes joined by .}:{expiry}`
+  and a statement rendered from it. The expiry is the issuing minute plus 180
+  days. For the default scopes the statement reads:
+
+  > Sign in to 6529 and turn on signed messages on this device until 29 Apr
+  > 2027. This device will sign your posts, edits, deletes and reactions so
+  > anyone can verify they came from your wallet. It can't move funds, change
+  > your handle, add devices or act as an admin. No transaction, no gas, no
+  > token approvals. (Device key 65942d9f...d8128d49)
+
+  It is one ASCII line. The date is the expiry's UTC calendar date as
+  `D Mon YYYY` (English month abbreviations); the exact expiry time is only in
+  the URN. The scope list names what the device signs (`post` posts, `edit`
+  edits, `delete` deletes, `react` reactions, `vote` votes) joined as an
+  English list, and the key is its first and last 8 hex characters joined by
+  `...`. The parser accepts only the plain sign-in message or this exact grant
+  shape (one URN, canonical scopes, minute-aligned expiry at most 181 days
+  after Issued At, and the statement rendered from that URN). It also accepts
+  the statement of grants issued before this wording ("Sign in to 6529 and let
+  this device post as you until {expiry minute} UTC (device key {key}). It may
+  {scopes}. ..."), so a challenge issued just before a deploy still logs in;
+  grants signed over it stay valid. The frontend must accept a new statement
+  shape before the backend renders it.
+- Combined grant (NC8): with `mls_device_key` (`0x` + 64 lowercase hex, not
+  the signing key) and `mls_ciphersuite` as well, the same message also grants
+  the browser's MLS signature key for end-to-end encrypted messages. It then
+  carries two resources in this order, the signing URN above and
+  `urn:6529:mls-device-grant:v1:{ciphersuite}:{MLS key hex}:{expiry}` with
+  the same expiry, and a combined statement that adds one clause and the
+  second key to the signed-messages statement:
+
+  > ... so anyone can verify they came from your wallet. It will also
+  > encrypt (send) and decrypt (read) your end-to-end encrypted messages,
+  > which 6529.io cannot read. It can't move funds, ... (Device key
+  > d75a9801...f707511a, encrypted messages key 3d4017c3...2af4660c)
+
+  The server issues it only while encrypted messages are on, the
+  ciphersuite is its own (`E2EE_CIPHERSUITE`) and the signer wallet already
+  has a profile (`identitiesDb.getProfileIdByWallet`, the lookup encrypted
+  messages device registration uses); otherwise it ignores the MLS
+  parameters and issues the signing grant alone. A new wallet therefore
+  never signs an encrypted-messages grant it could not use: the MLS device
+  can only join a profile, so the client enrolls it with its own grant
+  prompt after the profile exists. The profile lookup runs only after the
+  E2EE flag and ciphersuite checks pass. The parser accepts exactly
+  the plain sign-in, the one-resource signing grant (current or legacy
+  statement) and this two-resource shape with a combined statement from the
+  list in `combined-device-grant.ts`; resources out of order, a third
+  resource, a different MLS expiry, the signing key reused as the MLS key or
+  a mismatched statement fail closed. The wording is owner-approved;
+  to change it, add a renderer at the front of that list (keep the old ones)
+  and ship a frontend that accepts it first.
+- `POST /api/auth/session-login` stores the grant in `device_grants` only
+  after the wallet signature verified and the nonce was consumed, keyed by the
+  EIP-191 hash of the exact signed message. The response gains `device_grant`.
+  A storage failure is logged and the login still succeeds without it.
+  Optional `device_label` is reduced to letters, digits, spaces and `._()-`,
+  at most 48 characters, defaulting to `Browser`.
+- `GET /api/device-grants` lists the grants of every wallet of the caller's
+  profile; `POST /api/device-grants/{grantId}/revoke` revokes one. Neither is
+  available to proxies. Revoking a combined grant also revokes the
+  encrypted-messages device it enrolled (see `docs/e2ee-messaging.md`).
+- `POST /drops`, `POST /drops/{id}`, `DELETE /drops/{id}` and
+  `POST|DELETE /drops/{id}/reaction` accept an optional `device_signature`
+  (`grant_id`, `seq`, `claimed_time`, `signature`). The server strips it from
+  the body, rebuilds the EIP-712 interim event (kind, stored wave, refs,
+  canonical-JSON body hash), checks the grant (scope, expiry, revocation,
+  wallet of the acting non-proxy profile), the 10-minute clock window and the
+  Ed25519 signature, and reserves the event in `device_signed_events` (unique
+  on event id and on device key plus `seq`) before performing the write. A
+  failed write releases the reservation. Any check failure returns 400 with a
+  message starting `Invalid device signature:` and code
+  `INVALID_DEVICE_SIGNATURE`.
+- `drop_author_signatures` records which event's body is a drop's current
+  content: signed creates and edits set it, unsigned edits and deletes clear
+  it. `GET /api/drops/{dropId}/signed-events` returns a readable drop's
+  events, the grant proofs they reference and the current event id. When the
+  drop read path hides the drop's content from the caller (moderation) or
+  shows its author as anonymous (anonymous competition entries), it returns
+  the empty result of an unsigned drop instead: signed bodies are the content
+  and grant proofs name the author's wallet.
+- Every drop the API serializes (`ApiDrop`, `ApiDropWithoutWave` and
+  `ApiDropV2`, including websocket drop updates) carries the optional
+  `is_author_signed`: true exactly when that drop has a
+  `drop_author_signatures` row, the same state as a non-null current event id.
+  The mappers read it for a whole page with one primary key lookup. It is
+  false when the viewer cannot see the drop's content or its author is
+  anonymous. A signed create or edit maps its response before the signature
+  is stored, so the route re-reads the status from the primary for its
+  response; the websocket update sent during that write still reports the
+  earlier state.
+
 ## Session V2 Refresh And Logout
 
 `POST /api/auth/session-refresh` rotates the session refresh material and returns a fresh JWT access token.
@@ -252,6 +356,16 @@ There is intentionally no `AUTH_LEGACY_REFRESH_ENABLED` flag. Legacy refresh red
 - Web sessions store a hashed cookie secret plus signed domain/client-origin metadata.
 - Native sessions store a hashed native refresh token.
 - Both session types store wallet address, optional role, expiry, last-use time, and revocation time.
+
+`device_grants` stores wallet-signed device signing grants: the exact SIWE
+message and wallet signature, wallet, Ed25519 key, scopes, label, domain,
+chain, issue, expiry, revocation and last-use times.
+
+`device_signed_events` stores every device-signed drop write: the signed event
+fields, the canonical body exactly as hashed, the Ed25519 signature, the drop it
+applied to (set only after the write succeeded) and the server receive time.
+`drop_author_signatures` maps a drop to the event whose body is its current
+content.
 
 `wallet_connection_shares` stores one-time connection share state:
 
