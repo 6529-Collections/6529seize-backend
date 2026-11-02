@@ -71,6 +71,41 @@ describe('nft_history helpers', () => {
 });
 
 describe('nft_history high level functions', () => {
+  test('resumes after the last fully completed block when an invocation stops mid-window', async () => {
+    let stored = 5;
+    jest
+      .spyOn(db, 'fetchLatestNftHistoryBlockNumber')
+      .mockImplementation(() => Promise.resolve(stored));
+    const checkpoint = jest
+      .spyOn(db, 'persistNftHistoryBlock')
+      .mockImplementation((block) => {
+        stored = block;
+        return Promise.resolve();
+      });
+    jest
+      .spyOn(getEthereumRpcClient().constructor.prototype, 'getBlock')
+      .mockResolvedValue({ number: 20 });
+    const ingestMock = jest
+      .spyOn(ingest, 'ingestHistorySources')
+      .mockImplementationOnce(async (_from, _to, _budget, complete) => {
+        await complete(8);
+        throw new Error('History time budget exhausted');
+      })
+      .mockImplementationOnce(async (_from, to, _budget, complete) => {
+        await complete(to);
+      });
+    await expect(findNFTHistory(false)).rejects.toThrow(
+      'History time budget exhausted'
+    );
+    expect(stored).toBe(8);
+    await findNFTHistory(false);
+    expect(ingestMock.mock.calls.map(([from, to]) => [from, to])).toEqual([
+      [6, 20],
+      [9, 20]
+    ]);
+    expect(checkpoint.mock.calls).toEqual([[8], [20]]);
+  });
+
   test('does not checkpoint a window when claim ingestion fails', async () => {
     jest.spyOn(db, 'fetchLatestNftHistoryBlockNumber').mockResolvedValue(5);
     const checkpoint = jest

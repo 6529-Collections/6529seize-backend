@@ -10,6 +10,7 @@ import { nftHistoryReplayDb } from './replay.db';
 import {
   parseSourceReplayRequest,
   runSourceReplay,
+  ingestHistorySources,
   SourceReplayRequest
 } from './source-replay';
 
@@ -223,4 +224,71 @@ it('resumes a partial source replay from the saved immutable cursor', async () =
     runSourceReplay(apply(report.approvalDigest), () => 900000)
   ).resolves.toEqual(expect.objectContaining({ complete: true, nextIndex: 2 }));
   expect((await view.history(MEMES_CONTRACT, 569)).legacy).toHaveLength(1);
+});
+
+it('checkpoints only complete blocks and replays all sources in an interrupted block', async () => {
+  const sources = [
+    { hash: 'tx-1', block: 1, transactionIndex: 1, logs: [] },
+    { hash: 'tx-2', block: 2, transactionIndex: 1, logs: [] },
+    { hash: 'tx-2-later', block: 2, transactionIndex: 2, logs: [] },
+    { hash: 'tx-3', block: 3, transactionIndex: 1, logs: [] }
+  ];
+  jest
+    .mocked(discoverHistoryTransactions)
+    .mockImplementation((from, to) =>
+      Promise.resolve(
+        sources.filter((source) => source.block >= from && source.block <= to)
+      )
+    );
+  let remaining = 900000;
+  jest.mocked(historySourceDb.apply).mockImplementation(async (plan) => {
+    await view.apply(plan);
+    if (plan.writes.length) remaining = 0;
+  });
+  const checkpoint = jest.fn(() => Promise.resolve());
+  await expect(
+    ingestHistorySources(1, 3, () => remaining, checkpoint)
+  ).rejects.toThrow('History time budget exhausted');
+  expect(checkpoint.mock.calls).toEqual([[1]]);
+  expect((await view.history(MEMES_CONTRACT, 569)).legacy).toHaveLength(1);
+  expect(
+    jest.mocked(decodeHistorySource).mock.calls.map(([source]) => source.hash)
+  ).toEqual(['tx-1', 'tx-2']);
+
+  remaining = 900000;
+  await ingestHistorySources(2, 3, () => remaining, checkpoint);
+  expect(checkpoint.mock.calls).toEqual([[1], [2], [3]]);
+  expect(
+    jest.mocked(decodeHistorySource).mock.calls.map(([source]) => source.hash)
+  ).toEqual(['tx-1', 'tx-2', 'tx-2', 'tx-2-later', 'tx-3']);
+  expect((await view.history(MEMES_CONTRACT, 569)).legacy).toHaveLength(1);
+});
+
+it('discovers small chunks and checkpoints empty blocks without skipping undiscovered ranges', async () => {
+  jest.mocked(discoverHistoryTransactions).mockResolvedValue([]);
+  const checkpoint = jest.fn(() => Promise.resolve());
+  await ingestHistorySources(1, 45, () => 900000, checkpoint);
+  expect(
+    jest
+      .mocked(discoverHistoryTransactions)
+      .mock.calls.map(([from, to]) => [from, to])
+  ).toEqual([
+    [1, 20],
+    [21, 40],
+    [41, 45]
+  ]);
+  expect(checkpoint.mock.calls).toEqual([[20], [40], [45]]);
+  expect(historySourceDb.apply).not.toHaveBeenCalled();
+});
+
+it('retains completed discovery chunks when a later chunk fails', async () => {
+  jest
+    .mocked(discoverHistoryTransactions)
+    .mockResolvedValueOnce([])
+    .mockRejectedValueOnce(new Error('discovery time budget exhausted'));
+  const checkpoint = jest.fn(() => Promise.resolve());
+  await expect(
+    ingestHistorySources(1, 45, () => 900000, checkpoint)
+  ).rejects.toThrow('discovery time budget exhausted');
+  expect(checkpoint.mock.calls).toEqual([[20]]);
 });

@@ -270,41 +270,65 @@ function parseSourceManifest(
   return manifest;
 }
 
-/** Shared normal/replay decoder: source discovery never consults an admin wallet. */
+// Keep discovery itself small enough to finish before processing/checkpointing.
+export const HISTORY_DISCOVERY_BLOCKS = 20;
+
+/** Normal ingestion shares the replay decoder without replay's job/checkpoint. */
 export async function ingestHistorySources(
   fromBlock: number,
   toBlock: number,
+  remainingMillis: () => number,
+  checkpoint: (block: number) => Promise<void>
+): Promise<void> {
+  for (
+    let from = fromBlock;
+    from <= toBlock;
+    from += HISTORY_DISCOVERY_BLOCKS
+  ) {
+    const end = Math.min(from + HISTORY_DISCOVERY_BLOCKS - 1, toBlock);
+    const sources = await discoverHistoryTransactions(
+      from,
+      end,
+      false,
+      remainingMillis
+    );
+    Logger.get('NFT_HISTORY').info(
+      `[SOURCE] [BLOCKS ${from}-${end}] [FOUND ${sources.length} TRANSACTIONS]`
+    );
+    for (let index = 0; index < sources.length; index++) {
+      const source = sources[index];
+      await ingestHistorySource(source, remainingMillis);
+      // A partial block must be replayed, including any already committed
+      // transactions. Only the final source in a block may move its checkpoint.
+      if (sources[index + 1]?.block !== source.block)
+        await checkpoint(source.block);
+    }
+    if (sources[sources.length - 1]?.block !== end) await checkpoint(end);
+  }
+}
+
+async function ingestHistorySource(
+  source: HistoryTransaction,
   remainingMillis: () => number
 ): Promise<void> {
-  const sources = await discoverHistoryTransactions(
-    fromBlock,
-    toBlock,
-    false,
-    remainingMillis
-  );
-  Logger.get('NFT_HISTORY').info(
-    `[SOURCE] [BLOCKS ${fromBlock}-${toBlock}] [FOUND ${sources.length} TRANSACTIONS]`
-  );
-  for (const source of sources) {
-    if (remainingMillis() < 90000)
-      throw new Error(
-        'History window time budget exhausted; retry the same window'
-      );
-    try {
-      const plan = await prepareTransactionSource(
-        source,
-        historySourceDb,
-        remainingMillis
-      );
-      if (plan.claims.length || plan.writes.length)
-        await historySourceDb.apply(plan);
-    } catch (error) {
-      throw Object.assign(
-        new Error(
-          `History source ${source.hash} at block ${source.block} failed: ${error instanceof Error ? error.message : String(error)}`
-        ),
-        { cause: error }
-      );
-    }
+  if (remainingMillis() < 90000)
+    throw new Error(
+      'History time budget exhausted; resume after the last completed block'
+    );
+  try {
+    const plan = await prepareTransactionSource(
+      source,
+      historySourceDb,
+      remainingMillis
+    );
+    if (plan.claims.length || plan.writes.length)
+      await historySourceDb.apply(plan);
+  } catch (error) {
+    throw Object.assign(
+      new Error(
+        `History source ${source.hash} at block ${source.block} failed: ${error instanceof Error ? error.message : String(error)}`
+      ),
+      { cause: error }
+    );
   }
 }

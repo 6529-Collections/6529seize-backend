@@ -70,9 +70,11 @@ export async function findNFTHistory(
     throw new Error(
       'NFT_HISTORY_RESET is unsupported; use reviewed bounded history replay'
     );
-  const storedBlock =
-    startingBlock ?? (await fetchLatestNftHistoryBlockNumber());
-  let from = Number(storedBlock ?? 0);
+  // Stored checkpoints represent fully completed blocks. Starting at the next
+  // block avoids spending every retry reprocessing a dense completed boundary.
+  let from =
+    startingBlock ??
+    Number((await fetchLatestNftHistoryBlockNumber()) ?? 0) + 1;
   const finalized = await getEthereumRpcClient().getBlock('finalized');
   const cutoff = Math.min(latestBlock ?? finalized.number, finalized.number);
   for (
@@ -81,8 +83,12 @@ export async function findNFTHistory(
     window++
   ) {
     const end = Math.min(from + HISTORY_WINDOW_BLOCKS - 1, cutoff);
-    await ingestHistorySources(from, end, remainingMillis);
-    await persistNftHistoryBlock(end);
+    await ingestHistorySources(
+      from,
+      end,
+      remainingMillis,
+      persistNftHistoryBlock
+    );
     from = end + 1;
   }
 }

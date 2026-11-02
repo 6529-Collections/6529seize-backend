@@ -347,14 +347,28 @@ type SourceContext = NonNullable<Awaited<ReturnType<typeof verifySource>>> & {
   ): Promise<VerifiedClaim>;
 };
 
+function sourceClaimEvent(
+  log: TransactionReceipt['logs'][number],
+  source: HistoryTransaction
+) {
+  if (
+    !CLAIM_EXTENSIONS.includes(log.address.toLowerCase()) &&
+    !source.logs.some((entry) => entry.logIndex === log.index)
+  )
+    return null;
+  const event = HISTORY_SOURCE_IFACE.parseLog(log);
+  return event && ['ClaimInitialized', 'ClaimUpdated'].includes(event.name)
+    ? event
+    : null;
+}
+
 async function decodeSourceClaims(context: SourceContext): Promise<void> {
   const { receipt, mints, claim, tx, operations } = context;
   for (const log of receipt.logs) {
     if (context.remainingMillis() < 90000)
       throw new Error('Source decode time budget exhausted');
-    const event = HISTORY_SOURCE_IFACE.parseLog(log);
-    if (!event || !['ClaimInitialized', 'ClaimUpdated'].includes(event.name))
-      continue;
+    const event = sourceClaimEvent(log, context.source);
+    if (!event) continue;
     const contract = creatorAddress(String(event.args.creatorContract));
     if (!contract) continue;
     const claimId = String(event.args.instanceId);

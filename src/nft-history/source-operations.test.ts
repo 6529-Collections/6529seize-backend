@@ -378,3 +378,47 @@ it('does not cover an unsupported URI event with another creator token sharing i
     decodeHistorySource(source, { hasMint: async () => false })
   ).rejects.toThrow('Unsupported URI update');
 });
+
+it.each(['ClaimUpdated', 'ClaimInitialized(address,uint256,address)'])(
+  'ignores unrelated forged %s receipt logs but reports them when explicitly audited',
+  async (name) => {
+    const { source, receipt } = fixture(MEMES_CONTRACT, 569, 20);
+    const forged = HISTORY_SOURCE_IFACE.encodeEventLog(
+      HISTORY_SOURCE_IFACE.getEvent(name)!,
+      name === 'ClaimUpdated'
+        ? [MEMES_CONTRACT, 999]
+        : [MEMES_CONTRACT, 999, wallet]
+    );
+    const raw = { ...receipt.logs[0], ...forged, address: wallet, index: 2 };
+    receipt.logs.push(raw);
+    const reader = { hasMint: () => Promise.resolve(false) };
+    const operations = await decodeHistorySource(source, reader);
+    expect(operations.map((operation) => operation.kind)).toEqual([
+      'claim',
+      'mint'
+    ]);
+    const { index: _index, ...log } = raw;
+    source.logs.push({ ...log, logIndex: 2 });
+    await expect(decodeHistorySource(source, reader)).rejects.toThrow(
+      'Unverified claim extension'
+    );
+  }
+);
+
+it('ignores malformed claim-signature logs from unrelated receipt emitters before ABI parsing', async () => {
+  const { source, receipt } = fixture(MEMES_CONTRACT, 569, 20);
+  receipt.logs.push({
+    ...receipt.logs[0],
+    address: wallet,
+    index: 2,
+    topics: [HISTORY_SOURCE_IFACE.getEvent('ClaimUpdated')!.topicHash],
+    data: '0x'
+  });
+  const operations = await decodeHistorySource(source, {
+    hasMint: () => Promise.resolve(false)
+  });
+  expect(operations.map((operation) => operation.kind)).toEqual([
+    'claim',
+    'mint'
+  ]);
+});
