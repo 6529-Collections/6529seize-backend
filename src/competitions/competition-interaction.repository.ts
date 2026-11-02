@@ -81,12 +81,13 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
     if (sort === 'leaderboard') {
       joins = `LEFT JOIN ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb
         ON lb.competition_id=v.competition_id AND lb.entry_id=v.entry_id`;
-      order = `lb.\`rank\` IS NULL ASC,lb.\`rank\` ASC,${record.legacy_wave_id === null ? 'e.id' : 'e.drop_id'} ASC`;
+      order = `lb.\`rank\` IS NULL ASC,lb.\`rank\` ASC,${record.legacy_wave_id === null ? 'COALESCE(lb.entry_id,e.id)' : 'COALESCE(lb.drop_id,e.drop_id)'} ASC`;
     } else if (sort === 'last_voted') {
       // Allocation updated_at also changes on automatic credit reconciliation and
       // no-op commands. Only confirmed user changes establish voting recency.
-      // Retained primary logs supply pre-migration history; duplicate native log
-      // projections do not affect MAX. Unknown timestamps remain null, last.
+      // Retained primary logs supply pre-migration history. Exclude linked
+      // native projections: their DATETIME rounding must not replace exact
+      // native milliseconds. Unknown timestamps remain null, last.
       joins = `LEFT JOIN (
         SELECT activity.drop_id,MAX(activity.occurred_at) AS last_voted_at FROM (
           SELECT entry.drop_id,h.occurred_at FROM ${COMPETITION_VOTE_HISTORY_TABLE} h
@@ -97,9 +98,15 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
           SELECT log.target_id,TIMESTAMPDIFF(MICROSECOND,'1970-01-01',log.created_at) DIV 1000
           FROM ${PROFILES_ACTIVITY_LOGS_TABLE} log
           WHERE log.competition_id=:competitionId AND log.profile_id=:profileId AND log.type='DROP_VOTE_EDIT'
+            AND NOT EXISTS (
+              SELECT 1 FROM ${COMPETITION_VOTE_HISTORY_TABLE} linked
+              WHERE linked.competition_id=:competitionId
+                AND linked.voter_profile_id=:profileId
+                AND log.id=CONCAT(linked.competition_id,':',linked.sequence)
+            )
             AND JSON_EXTRACT(log.contents,'$.reason') IS NULL
-            AND CAST(JSON_UNQUOTE(JSON_EXTRACT(log.contents,'$.oldVote')) AS DECIMAL(65,0))
-              <>CAST(JSON_UNQUOTE(JSON_EXTRACT(log.contents,'$.newVote')) AS DECIMAL(65,0))
+            AND CAST(JSON_UNQUOTE(JSON_EXTRACT(log.contents,'$.oldVote')) AS SIGNED)
+              <>CAST(JSON_UNQUOTE(JSON_EXTRACT(log.contents,'$.newVote')) AS SIGNED)
         ) activity GROUP BY activity.drop_id
       ) recent ON recent.drop_id=e.drop_id`;
       order =

@@ -3,6 +3,7 @@ import {
   COMPETITION_LEADERBOARD_ENTRIES_TABLE,
   COMPETITION_VOTES_TABLE,
   COMPETITION_VOTE_HISTORY_TABLE,
+  COMPETITIONS_TABLE,
   DROPS_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE
 } from '@/constants';
@@ -11,6 +12,7 @@ import { ApiCompetitionMyVotesSort } from '@/api/generated/models/ApiCompetition
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { CompetitionInteractionRepository } from './competition-interaction.repository';
+import { CompetitionRepository } from './competition.repository';
 
 const record = {
   id: 'aaa00000-0000-4000-8000-000000000002',
@@ -32,6 +34,24 @@ const entryId = (id: string) => (id === 'b' ? 'entry-zz' : `entry-${id}`);
 describeWithSeed(
   'My Votes complete server ordering',
   [
+    {
+      table: COMPETITIONS_TABLE,
+      rows: [
+        {
+          ...record,
+          type: 'RANK',
+          lifecycle: 'PUBLISHED',
+          title: 'Sorting',
+          participation_config: {},
+          voting_config: {},
+          decision_config: {},
+          winner_config: {},
+          outcome_config: [],
+          created_at: 1,
+          updated_at: 1
+        }
+      ]
+    },
     {
       table: DROPS_TABLE,
       rows: entries.map(({ id }, index) => ({
@@ -178,6 +198,54 @@ describeWithSeed(
         'e',
         'f'
       ]);
+    });
+    it.each([true, false])(
+      'matches actual leaderboard identity ties (legacy=%s)',
+      async (legacy) => {
+        await sqlExecutor.execute(
+          `UPDATE ${COMPETITIONS_TABLE} SET legacy_wave_id=:legacy WHERE id=:id`,
+          { id: record.id, legacy: legacy ? record.wave_id : null }
+        );
+        const leaderboard = await new CompetitionRepository(
+          () => sqlExecutor
+        ).listNativeLeaderboard(
+          record.id,
+          { offset: 0, limit: 50, sort: 'rating', direction: 'DESC' },
+          {}
+        );
+        const ranked = leaderboard.data
+          .filter((entry) => (entry.rank ?? 0) > 0)
+          .map((entry) => entry.drop_id);
+        expect(
+          (await read(ApiCompetitionMyVotesSort.Leaderboard, legacy)).slice(
+            0,
+            ranked.length
+          )
+        ).toEqual(ranked);
+      }
+    );
+    it('keeps exact native milliseconds when linked compatibility logs round to seconds', async () => {
+      await sqlExecutor.execute(
+        `UPDATE ${COMPETITION_VOTE_HISTORY_TABLE} SET occurred_at=1800 WHERE entry_id='entry-a'`
+      );
+      await sqlExecutor.execute(
+        `UPDATE ${COMPETITION_VOTE_HISTORY_TABLE} SET occurred_at=1900 WHERE entry_id='entry-d'`
+      );
+      await sqlExecutor.execute(
+        `INSERT INTO ${PROFILES_ACTIVITY_LOGS_TABLE}
+         (id,competition_id,profile_id,target_id,type,created_at,contents)
+         VALUES (:id,:competitionId,'viewer','a','DROP_VOTE_EDIT','1970-01-01 00:00:02',:contents)`,
+        {
+          id: `${record.id}:1`,
+          competitionId: record.id,
+          contents: JSON.stringify({ oldVote: 0, newVote: 10 })
+        }
+      );
+      expect(
+        (await read(ApiCompetitionMyVotesSort.LastVoted)).filter(
+          (id) => id === 'a' || id === 'd'
+        )
+      ).toEqual(['d', 'a']);
     });
     it('uses confirmed history, retained legacy dates and deterministic time ties', async () => {
       // DATETIME retains seconds; use one second for the retained legacy edit.

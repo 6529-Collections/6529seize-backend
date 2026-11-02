@@ -1237,7 +1237,9 @@ competition rank with null ranks last and the same identity tie-breaker as the
 leaderboard (legacy drop ID, native entry ID). Last voted uses confirmed changed
 values in competition vote history plus retained competition-scoped
 `DROP_VOTE_EDIT` logs, excluding system reasons and unchanged saves. Missing
-history sorts last; timestamp ties use drop ID. Allocation `updated_at` is not
+history sorts last; timestamp ties use drop ID. Retained logs have second precision;
+exact linked native log projections are excluded so rounding cannot override native
+millisecond history. Allocation `updated_at` is not
 user recency because credit reconciliation and no-op commands also update it.
 Cursors bind actor, competition and sort; omitted and explicit `vote_amount`
 remain compatible with existing cursors. No schema migration is needed; deploy
