@@ -63,3 +63,33 @@ it('bounds normal claim discovery to verified emitters so forged outside logs ca
   expect(rpc.getLogs.mock.calls[2][0]).toHaveProperty('address');
   expect(rpc.getLogs.mock.calls[2][0]).not.toHaveProperty('fromAddress');
 });
+
+it.each([{ transfers: [] }, { transfers: [{ hash: '0xtx' }] }])(
+  'stops discovery when the budget expires during pagination: %j',
+  async ({ transfers }) => {
+    let remaining = 900000;
+    const getAssetTransfers = jest.fn(() => {
+      remaining = 0;
+      return Promise.resolve({ transfers, pageKey: 'a-fresh-cursor' });
+    });
+    jest
+      .mocked(Alchemy)
+      .mockImplementation(
+        () => ({ core: { getAssetTransfers } }) as unknown as Alchemy
+      );
+    const rpc = {
+      getLogs: jest.fn().mockResolvedValue([]),
+      getTransaction: jest.fn()
+    };
+    jest
+      .mocked(getEthereumRpcClient)
+      .mockReturnValue(
+        rpc as unknown as ReturnType<typeof getEthereumRpcClient>
+      );
+    await expect(
+      discoverHistoryTransactions(1, 20, false, () => remaining)
+    ).rejects.toThrow('History discovery time budget exhausted');
+    expect(getAssetTransfers).toHaveBeenCalledTimes(1);
+    expect(rpc.getTransaction).not.toHaveBeenCalled();
+  }
+);

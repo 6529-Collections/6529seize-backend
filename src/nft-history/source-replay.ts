@@ -112,7 +112,8 @@ export async function auditHistorySources(
   const sources = await discoverHistoryTransactions(
     range.fromBlock,
     range.toBlock,
-    true
+    true,
+    remainingMillis
   );
   const manifest: SourceManifest = {
     version: 2,
@@ -275,7 +276,12 @@ export async function ingestHistorySources(
   toBlock: number,
   remainingMillis: () => number
 ): Promise<void> {
-  const sources = await discoverHistoryTransactions(fromBlock, toBlock);
+  const sources = await discoverHistoryTransactions(
+    fromBlock,
+    toBlock,
+    false,
+    remainingMillis
+  );
   Logger.get('NFT_HISTORY').info(
     `[SOURCE] [BLOCKS ${fromBlock}-${toBlock}] [FOUND ${sources.length} TRANSACTIONS]`
   );

@@ -36,6 +36,8 @@ export class NftHistoryReplayDb {
     expectedIndex: number
   ): Promise<void> {
     const repo = manager.getRepository(NFTHistoryReplayJobEntity);
+    // Lock and compare in the caller's history-write transaction. A competing
+    // apply waits, then observes the advanced index and rolls back its writes.
     const job = await repo.findOne({
       where: { job_id: jobId },
       lock: { mode: 'pessimistic_write' }

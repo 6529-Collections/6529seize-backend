@@ -31,8 +31,10 @@ export interface HistoryTransaction {
 export async function discoverHistoryTransactions(
   fromBlock: number,
   toBlock: number,
-  audit = false
+  audit = false,
+  remainingMillis: () => number = () => 900000
 ): Promise<HistoryTransaction[]> {
+  assertDiscoveryBudget(remainingMillis);
   const rpc = getEthereumRpcClient();
   const bounds = {
     fromBlock: `0x${fromBlock.toString(16)}`,
@@ -84,7 +86,8 @@ export async function discoverHistoryTransactions(
       bounds,
       transactions,
       fromBlock,
-      toBlock
+      toBlock,
+      remainingMillis
     );
   }
   for (const entry of Array.from(transactions.values()))
@@ -92,6 +95,13 @@ export async function discoverHistoryTransactions(
   return Array.from(transactions.values()).sort(
     (a, b) => a.block - b.block || a.transactionIndex - b.transactionIndex
   );
+}
+
+function assertDiscoveryBudget(remainingMillis: () => number): void {
+  if (remainingMillis() < 90000)
+    throw new Error(
+      'History discovery time budget exhausted; reduce or retry the block window'
+    );
 }
 
 function collectHistoryLogs(
@@ -145,11 +155,13 @@ async function collectDirectCreatorCalls(
   bounds: { fromBlock: string; toBlock: string },
   transactions: Map<string, HistoryTransaction>,
   fromBlock: number,
-  toBlock: number
+  toBlock: number,
+  remainingMillis: () => number
 ): Promise<void> {
   let pageKey: string | undefined;
   const seenPages = new Set<string>();
   do {
+    assertDiscoveryBudget(remainingMillis);
     const page = await alchemy.core.getAssetTransfers({
       ...bounds,
       toAddress: contract,
@@ -161,6 +173,7 @@ async function collectDirectCreatorCalls(
       ...(pageKey ? { pageKey } : {})
     });
     for (const transfer of page.transfers) {
+      assertDiscoveryBudget(remainingMillis);
       const key = transfer.hash.toLowerCase();
       if (transactions.has(key)) continue;
       transactions.set(
@@ -178,4 +191,5 @@ async function collectDirectCreatorCalls(
       throw new Error('History discovery returned a repeated page cursor');
     if (pageKey) seenPages.add(pageKey);
   } while (pageKey);
+  assertDiscoveryBudget(remainingMillis);
 }

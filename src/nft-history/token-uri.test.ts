@@ -1,8 +1,8 @@
 import { NFT_HISTORY_IFACE } from '@/abis/nft_history';
-import { MEMES_CONTRACT } from '@/constants';
+import { MEMES_CONTRACT, MEMELAB_CONTRACT } from '@/constants';
 import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
 import { nftHistoryDb } from './history.db';
-import { ingestTokenUriUpdate } from './token-uri';
+import { decodeTokenUriUpdate, ingestTokenUriUpdate } from './token-uri';
 
 jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
   getEthereumRpcClient: jest.fn()
@@ -84,5 +84,25 @@ it('rejects changed calldata before writing history', async () => {
   await expect(
     ingestTokenUriUpdate('uri-edit', MEMES_CONTRACT, 550, 'B')
   ).rejects.toThrow('calldata mismatch');
+  expect(nftHistoryDb.apply).not.toHaveBeenCalled();
+});
+
+it.each([MEMES_CONTRACT.toLowerCase(), MEMELAB_CONTRACT])(
+  'accepts the supported creator %s independently of address case',
+  async (contract) => {
+    const { tx } = fixture();
+    tx.to = contract;
+    await expect(
+      decodeTokenUriUpdate('uri-edit', contract, 550, 'B')
+    ).resolves.toEqual(expect.objectContaining({ contract, nft_id: 550 }));
+  }
+);
+
+it('rejects an unsupported creator before RPC reads or history writes', async () => {
+  fixture();
+  await expect(
+    decodeTokenUriUpdate('uri-edit', '0x' + '1'.repeat(40), 550, 'B')
+  ).rejects.toThrow('Unsupported NFT history creator');
+  expect(getEthereumRpcClient).not.toHaveBeenCalled();
   expect(nftHistoryDb.apply).not.toHaveBeenCalled();
 });

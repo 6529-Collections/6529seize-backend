@@ -1,4 +1,5 @@
 import { NFT_HISTORY_IFACE } from '@/abis/nft_history';
+import { MEMES_CONTRACT, MEMELAB_CONTRACT } from '@/constants';
 import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
 import { claimEventId, ClaimEvent } from './claim-events';
 import { nftHistoryDb } from './history.db';
@@ -10,6 +11,12 @@ export async function decodeTokenUriUpdate(
   tokenId: number,
   uri: string
 ): Promise<ClaimEvent> {
+  if (
+    ![MEMES_CONTRACT, MEMELAB_CONTRACT].some(
+      (creator) => creator.toLowerCase() === contract.toLowerCase()
+    )
+  )
+    throw new Error('Unsupported NFT history creator contract');
   const rpc = getEthereumRpcClient();
   const [tx, receipt] = await Promise.all([
     rpc.getTransaction(hash),
