@@ -2592,6 +2592,8 @@ Craft, subscription coverage and Help Bot calendar answers use the bundled, vers
 
 Claim updates use additive `nfts_history_events` storage keyed by Ethereum transaction/log identity. The legacy URI-keyed `nfts_history` table and its primary key are preserved. Settings-only updates retain an audit row with no Timeline description. The API combines both tables and suppresses a legacy row only when its transaction is represented by an event for that NFT. A return to an earlier URI remains a separate edit. Historical insertion reconciles the immediate successor diff with an optimistic snapshot check and transaction-scoped row locks.
 
+Metadata downloads use the shared decentralized gateway catalog, validate every redirect, and enforce a streamed byte limit and one deadline across fallback attempts. Unsupported HTTPS origins fail the window for explicit policy review.
+
 The explicit `dbMigrationsLoop` scope `nft-history-events` synchronizes only the new event entity. Required service order is schema creation, `api`, then `nftHistoryLoop`; no frontend contract regeneration is required because the history response shape is unchanged.
 
 ### Private drop bookmarks

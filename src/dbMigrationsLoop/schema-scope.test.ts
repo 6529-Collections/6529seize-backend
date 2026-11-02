@@ -379,6 +379,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
   it.each([
     'full',
     'maintenance',
+    'nft-history-events',
     'wallet-transfer-analysis',
     'claims-media-upload',
     'nft-link-page-retry',

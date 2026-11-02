@@ -114,8 +114,8 @@ export async function prepareHistoryWrite(
     if (
       Object.keys(candidate).some(
         (key) =>
-          String(candidate[key as keyof ClaimEvent]) !==
-          String(existing[key as keyof ClaimEvent])
+          canonicalEventValue(key as keyof ClaimEvent, candidate) !==
+          canonicalEventValue(key as keyof ClaimEvent, existing)
       )
     )
       throw new Error('Existing event differs from canonical chain event');
@@ -142,4 +142,18 @@ export async function prepareHistoryWrite(
   // Only the next row changes predecessor; reconcile it in the same transaction.
   await reconcileSuccessor(plan, rows[index + 1], candidate.uri, describe);
   return plan;
+}
+
+function canonicalEventValue(key: keyof ClaimEvent, event: ClaimEvent): string {
+  const value = event[key];
+  if (key !== 'transaction_date') return String(value);
+  // The mysql driver returns SQL timestamp strings when its configured timezone
+  // cannot be parsed. Chain dates are UTC; compare instants, not display formats.
+  const date =
+    value instanceof Date
+      ? value
+      : new Date(`${String(value).replace(' ', 'T')}Z`);
+  if (!Number.isFinite(date.getTime()))
+    throw new Error('Invalid history event transaction date');
+  return date.toISOString();
 }

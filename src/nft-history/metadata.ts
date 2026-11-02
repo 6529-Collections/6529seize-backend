@@ -1,5 +1,6 @@
 import { withArweaveFallback } from '@/arweave-gateway-fallback';
 import { HistoryChange, HistoryEdit } from '@/entities/INFTHistoryEvent';
+import { fetchGatewayMetadata } from './metadata-fetch';
 import {
   isPlainObject,
   MetadataPayload,
@@ -12,11 +13,11 @@ export async function fetchHistoryMetadata(
   const fetchUri = uri.startsWith('ipfs://')
     ? `https://ipfs.io/ipfs/${uri.slice(7)}`
     : uri;
+  const signal = AbortSignal.timeout(15000);
   return withArweaveFallback(fetchUri, async (url) => {
-    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    if (!response.ok)
-      throw new Error(`Metadata fetch failed (${response.status}): ${url}`);
-    const metadata = normalizeMetadataPayload(await response.text());
+    const metadata = normalizeMetadataPayload(
+      await fetchGatewayMetadata(url, signal)
+    );
     if (!metadata) throw new Error(`Invalid metadata: ${url}`);
     return metadata;
   });

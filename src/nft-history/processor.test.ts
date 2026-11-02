@@ -126,3 +126,15 @@ it('propagates failed metadata fetches before producing a write plan', async () 
     'fetch failed'
   );
 });
+
+it('replays timestamps returned as UTC SQL strings by the MySQL driver', async () => {
+  const state = snapshot();
+  const event = candidate();
+  state.events.push(...(await prepareHistoryWrite(event, state)).inserts);
+  state.events[0].transaction_date = '1970-01-01 00:00:02' as unknown as Date;
+  expect((await prepareHistoryWrite(event, state)).inserts).toEqual([]);
+  state.events[0].transaction_date = '1970-01-01 00:00:03' as unknown as Date;
+  await expect(prepareHistoryWrite(event, state)).rejects.toThrow(
+    'differs from canonical'
+  );
+});

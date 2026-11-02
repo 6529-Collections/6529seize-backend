@@ -69,15 +69,15 @@ it('skips an unchanged URI but fetches paths that differ only by case', async ()
     .mockImplementation(async () => new Response('{"name":"same"}'));
   expect(
     await describeHistoryEdit(
-      'https://arweave.net/AbC',
-      'https://arweave.net/AbC'
+      'https://arweave.net/IFosq_ZN9_PrDSQmq65JTjeB2GnnfPSFoHxRazxC4PY',
+      'https://arweave.net/IFosq_ZN9_PrDSQmq65JTjeB2GnnfPSFoHxRazxC4PY'
     )
   ).toBeNull();
   expect(fetchMock).not.toHaveBeenCalled();
   expect(
     await describeHistoryEdit(
-      'https://arweave.net/AbC',
-      'https://arweave.net/abc'
+      'https://arweave.net/IFosq_ZN9_PrDSQmq65JTjeB2GnnfPSFoHxRazxC4PY',
+      'https://arweave.net/ifosq_ZN9_PrDSQmq65JTjeB2GnnfPSFoHxRazxC4PY'
     )
   ).toEqual({ event: 'Edit', changes: [] });
   expect(fetchMock).toHaveBeenCalledTimes(2);
