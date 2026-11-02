@@ -3,6 +3,7 @@ import {
   NFTHistoryBlock,
   NFTHistoryClaim
 } from '../entities/INFTHistory';
+import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 import { findNFTHistory } from '../nft_history';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
@@ -17,6 +18,14 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
       logger.info(`[force=${force}]`);
       await findNFTHistory(force);
     },
-    { logger, entities: [NFTHistory, NFTHistoryBlock, NFTHistoryClaim] }
+    {
+      logger,
+      entities: [
+        NFTHistory,
+        NFTHistoryBlock,
+        NFTHistoryClaim,
+        NFTHistoryEventEntity
+      ]
+    }
   );
 });
