@@ -1,3 +1,4 @@
+import { readWaveHub } from '@/api/waves/wave-hub.handlers';
 import {
   toApiCompetition,
   toApiEntry,
@@ -255,10 +256,7 @@ export async function handleGetWaveHubV3(
 ): Promise<ApiWaveV3> {
   getValidatedByJoiOrThrow(req.query, EmptyQuerySchema);
   const { wave_id } = getValidatedByJoiOrThrow(req.params, WavePathSchema);
-  return (await competitionService.getHub(
-    wave_id,
-    await getContext(req)
-  )) as ApiWaveV3;
+  return readWaveHub(wave_id, await getContext(req));
 }
 
 export async function handleGetDefaultWaveCompetitionV3(

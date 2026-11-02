@@ -1279,6 +1279,18 @@ because changing a value can move an entry across page boundaries. The frontend
 invalidates the scoped My Votes query after each confirmed vote. The existing
 competition/voter index restricts reads to that actor's allocations; an additional
 sort index is deferred until query-plan evidence justifies a schema rollout.
+Wave metadata and Configuration edits use `PATCH /v3/waves/{wave_id}` with
+partial wave-owned fields. Omitted fields are retained; nullable fields can be
+cleared explicitly. The command locks the physical shared wave, archives its
+revision and preserves both stored hub policies without changing any competition.
+V3 wave reads expose the shared `configuration`, independent of the original
+competition projection. Legacy wave creation and editing accept and discard
+competition settings before validation; competition configuration mutations use
+the competition commands exclusively. Legacy wave pause commands are accepted
+without changing pauses. Compatibility wave names come from shared wave metadata;
+competition titles remain separately owned. Refresh the compatibility views with
+`dbMigrationsLoop` before deploying `api` and then the frontend.
+
 Creating a hub always creates a
 CHAT wave; competition creation is a separate native command. Historical RANK/APPROVE wire types are projected from native original-primary
 configuration; shared wave storage no longer owns a competition type.
