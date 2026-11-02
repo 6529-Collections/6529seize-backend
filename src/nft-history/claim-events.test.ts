@@ -1,4 +1,5 @@
 import { NFT_HISTORY_IFACE } from '@/abis/nft_history';
+import { AbiCoder } from 'ethers';
 import {
   MEMES_CONTRACT,
   MEMELAB_CONTRACT,
@@ -7,6 +8,7 @@ import {
 import { Log } from '@/ethereum-rpc/ethereum-rpc-types';
 import {
   CLAIM_EVENT_IFACE,
+  LEGACY_GETCLAIM_EXTENSIONS,
   claimEventId,
   decodeClaimUpdate,
   discoverClaimUpdates
@@ -93,6 +95,44 @@ it('ingests a non-deployer transaction and resolves token 550 from claim 12345',
     log.blockNumber
   );
 });
+
+it.each(LEGACY_GETCLAIM_EXTENSIONS)(
+  'verifies legacy extension %s with getClaim instead of the unavailable reverse method',
+  async (extension) => {
+    const { log, tx, receipt, rpc } = fixture();
+    log.address = extension;
+    tx.to = extension;
+    receipt.logs[0].address = extension;
+    rpc.call.mockResolvedValue(
+      AbiCoder.defaultAbiCoder().encode(
+        [
+          'tuple(uint32,uint32,uint32,uint48,uint48,uint8,bytes32,string,uint256,uint256,address)'
+        ],
+        [
+          [
+            1,
+            500,
+            0,
+            0,
+            0,
+            2,
+            '0x' + '0'.repeat(64),
+            'metadata',
+            550,
+            0,
+            MEMES_CONTRACT
+          ]
+        ]
+      )
+    );
+    await expect(decodeClaimUpdate(log, async () => [550])).resolves.toEqual(
+      expect.objectContaining({ nft_id: 550 })
+    );
+    expect(rpc.call.mock.calls[0][0].data.slice(0, 10)).not.toBe(
+      CLAIM_EVENT_IFACE.getFunction('getClaimForToken')!.selector
+    );
+  }
+);
 
 it.each([{ ids: [] }, { ids: [550, 551] }])(
   'rejects missing or ambiguous mappings: %j',

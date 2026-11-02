@@ -161,7 +161,7 @@ async function beforeRecordedMint(
   if (!mint) return true;
   if (event.block !== mint.block) return event.block < mint.block;
   const tx = await getEthereumRpcClient().getTransaction(mint.transaction_hash);
-  if (!tx || tx.blockNumber !== mint.block)
+  if (tx?.blockNumber !== mint.block)
     throw new Error('Cannot position recorded Mint');
   return event.transaction_index < tx.index;
 }

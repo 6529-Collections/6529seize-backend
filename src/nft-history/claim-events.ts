@@ -13,11 +13,15 @@ import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 
 // All ERC1155 claim generations, including the extension used by Meme #550.
 // https://github.com/manifoldxyz/manifold-contract-addresses#erc1155-edition-formerly-known-as-claim
-export const CLAIM_EXTENSIONS = [
+export const LEGACY_GETCLAIM_EXTENSIONS = [
   '0xca71c5270EFf44Eb6D813A92c0ba12577bDDf208',
   '0x4e32004D8b81847A670b4a1778ACe4dCF2bBA01E',
   '0x44e94034AFcE2Dd3CD5Eb62528f239686Fc8f162',
-  '0xE7d3982E214F9DFD53d23a7f72851a7044072250',
+  '0xE7d3982E214F9DFD53d23a7f72851a7044072250'
+].map((address) => address.toLowerCase());
+
+export const CLAIM_EXTENSIONS = [
+  ...LEGACY_GETCLAIM_EXTENSIONS,
   '0xDb8d79C775452a3929b86ac5DEaB3e9d38e1c006',
   '0x04bA6cf3c5AA6D4946F5B7f7ADF111012a9fAC65',
   MANIFOLD_LAZY_CLAIM_CONTRACT,
@@ -164,7 +168,7 @@ export async function decodeClaimUpdate(
   const tokenId = tokenIds[0];
   // The stored mapping is creator-scoped; verify it against this extension to
   // reject collisions when another generation reused the same claim index.
-  if (CLAIM_EXTENSIONS.slice(0, 4).includes(log.address.toLowerCase())) {
+  if (LEGACY_GETCLAIM_EXTENSIONS.includes(log.address.toLowerCase())) {
     const claim = await readHistoryClaim(
       log.address,
       contract,

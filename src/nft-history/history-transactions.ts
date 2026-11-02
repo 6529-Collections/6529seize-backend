@@ -71,7 +71,8 @@ export async function discoverHistoryTransactions(
   const transactions = collectHistoryLogs(groups.flat(), fromBlock, toBlock);
 
   // Manifold's direct setTokenURI emits no URI event. Query calls TO the two
-  // creator contracts, including zero-value calls, rather than calls FROM an admin.
+  // creator contracts: top-level external calls, including zero-value calls,
+  // rather than calls FROM an admin. Internal forwarded calls need traces.
   const alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY

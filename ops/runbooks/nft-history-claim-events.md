@@ -111,6 +111,8 @@ A verified initialization records the actual claim/token association. Claim Mint
 
 The current scanner supports event-backed operations and direct creator calls. Eventless forwarded URI writes require execution-trace discovery and are outside this direct-call scanner. Do not claim those call shapes are covered by the top-level `toAddress` query.
 
+Normal ingestion processes at most 1,000 blocks per invocation (five 200-block windows), down from the former 10,000-block maximum. At 12-second blocks, roughly 150 new blocks arrive each 30-minute schedule; the theoretical backlog reduction is 850 blocks per complete invocation, with actual throughput depending on source density and RPC/metadata latency. Alert when the checkpoint stops advancing for two scheduled invocations or falls more than 300 finalized blocks behind. An extended outage needs an explicitly monitored catch-up plan; do not increase windows or skip sources blindly. One source transaction is bounded to 100 distinct minted tokens; larger batches fail explicitly for review.
+
 The additional manual mode recovers mappings and baselines through the application planner:
 
 ```json

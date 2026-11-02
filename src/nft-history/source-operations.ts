@@ -209,6 +209,9 @@ async function claimBeforeTransaction(
 ): Promise<{ uri: string; total: string }> {
   const priorCalls = await earlierClaimCalls(extension, contract, claimId, tx);
   let prior: VerifiedClaim | undefined;
+  // Initialization creates a new token/claim and rejects an existing claim.
+  // Otherwise prior-block total is essential, even when the first mint occurs
+  // long after initialization. Earlier mints in this block are checked below.
   if (!priorCalls.some((call) => call.initialized))
     prior = await readHistoryClaim(
       extension,
@@ -279,7 +282,7 @@ export async function decodeHistorySource(
 ): Promise<HistorySourceOperation[]> {
   const verified = await verifySource(source);
   if (!verified) return [];
-  const { tx, receipt, block } = verified;
+  const { tx, receipt } = verified;
   const parsed = NFT_HISTORY_IFACE.parseTransaction({ data: tx.data });
   const operations: HistorySourceOperation[] = [];
   const mints = mintLogs(receipt);
@@ -369,9 +372,9 @@ async function decodeSourceClaims(context: SourceContext): Promise<void> {
           'Claim initialization has no matching creator token creation'
         );
     } else {
-      const update = await decodeClaimUpdate(toSourceLog(log), async () => [
-        state.tokenId
-      ]);
+      const update = await decodeClaimUpdate(toSourceLog(log), () =>
+        Promise.resolve([state.tokenId])
+      );
       const before = await claimBeforeTransaction(
         log.address,
         contract,

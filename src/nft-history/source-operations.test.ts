@@ -262,6 +262,38 @@ it('processes every token in a direct multi-token mint from any sender', async (
   ).toEqual(['uri-a', 'uri-b']);
 });
 
+it('decodes TransferBatch values by position when creating a first Mint', async () => {
+  const { source, receipt } = fixture(MEMES_CONTRACT, 569, 20);
+  const batch = HISTORY_SOURCE_IFACE.encodeEventLog(
+    HISTORY_SOURCE_IFACE.getEvent('TransferBatch')!,
+    [MANIFOLD_LAZY_CLAIM_CONTRACT, zero, wallet, [569], [20]]
+  );
+  Object.assign(receipt.logs[0], batch);
+  Object.assign(source.logs[0], batch);
+  const operations = await decodeHistorySource(source, {
+    hasMint: async () => false
+  });
+  expect(
+    operations.filter((operation) => operation.kind === 'mint')
+  ).toHaveLength(1);
+});
+
+it('recognizes a preceding positive TransferBatch instead of inventing a later Mint', async () => {
+  const { source, rpc, raw } = fixture(MEMES_CONTRACT, 569, 20);
+  const batch = HISTORY_SOURCE_IFACE.encodeEventLog(
+    HISTORY_SOURCE_IFACE.getEvent('TransferBatch')!,
+    [MANIFOLD_LAZY_CLAIM_CONTRACT, zero, wallet, [569], [20]]
+  );
+  rpc.getLogs
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      { ...raw, ...batch, logIndex: 0, transactionIndex: 1 }
+    ] as never);
+  await expect(
+    decodeHistorySource(source, { hasMint: async () => false })
+  ).rejects.toThrow('Earlier Mint baseline is missing');
+});
+
 it('rejects reorged/changed receipts and failed source transactions', async () => {
   const { receipt, source } = fixture();
   receipt.blockHash = 'other';
