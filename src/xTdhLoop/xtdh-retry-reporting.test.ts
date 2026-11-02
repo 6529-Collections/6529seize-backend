@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseDocument } from 'yaml';
+import fc from 'fast-check';
 import { XTdhIdentitySnapshotChangedError } from '@/xtdh/xtdh-identity-snapshot-changed-error';
 import {
   enrichXTdhSentryEvent,
@@ -53,12 +54,34 @@ it.each([
   { Records: [null] },
   { Records: [{}] },
   { Records: [{ attributes: null }] },
-  { Records: [...sqsEvent('1').Records, ...sqsEvent('2').Records] }
+  { Records: [...sqsEvent('1').Records, ...sqsEvent('invalid').Records] }
 ])('reports conflicts without unambiguous SQS metadata: %j', (event) => {
   const error = new XTdhIdentitySnapshotChangedError();
   error.receiveCount = getXTdhReceiveCount(event);
   expect(error.receiveCount).toBeUndefined();
   expect(shouldCaptureXTdhError(error)).toBe(true);
+});
+
+it('uses the highest receive count across the entire batch', () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.integer({ min: 1, max: 10 }), {
+        minLength: 1,
+        maxLength: 10
+      }),
+      (counts) => {
+        const event = {
+          Records: counts.flatMap((count) => sqsEvent(String(count)).Records)
+        };
+        const error = new XTdhIdentitySnapshotChangedError();
+        error.receiveCount = getXTdhReceiveCount(event);
+        expect(error.receiveCount).toBe(Math.max(...counts));
+        expect(shouldCaptureXTdhError(error)).toBe(
+          counts.some((count) => count >= XTDH_FINAL_ATTEMPT)
+        );
+      }
+    )
+  );
 });
 
 it('reports unrelated errors, including errors with the same message', () => {
