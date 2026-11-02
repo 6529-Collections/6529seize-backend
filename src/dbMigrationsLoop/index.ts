@@ -26,6 +26,7 @@ import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competi
 import { dbSupplier } from '@/sql-executor';
 import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import { NFTHistoryReplayJobEntity } from '@/entities/INFTHistoryReplayJob';
 import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
@@ -97,6 +98,7 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'market-depth-publication-lock' &&
       scope !== 'voting-credit-returns' &&
       scope !== 'nft-history-events' &&
+      scope !== 'nft-history-replay' &&
       scope !== 'wave-score-input-index' &&
       scope !== E2EE_BLOB_MIGRATION_SCOPE)
   ) {
@@ -109,6 +111,16 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'nft-history-replay') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [NFTHistoryReplayJobEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
+  }
+
   if (scope === 'nft-history-events') {
     await doInDbContext(() => Promise.resolve(), {
       logger,

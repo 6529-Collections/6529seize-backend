@@ -2596,6 +2596,8 @@ Metadata downloads use the shared decentralized gateway catalog, validate every 
 
 The explicit `dbMigrationsLoop` scope `nft-history-events` synchronizes only the new event entity. Required service order is schema creation, `api`, then `nftHistoryLoop`; no frontend contract regeneration is required because the history response shape is unchanged.
 
+Manual `nft-history-replay` invocations reuse the event decoder and history processor with an isolated additive `nfts_history_replay_jobs` receipt/cursor table. Dry-run is read-only; apply is disabled by default and binds a UUID job to a reviewed manifest digest. Event writes and replay cursor advancement share a transaction, and bounded resume never advances the scheduled ingestion checkpoint. The explicit `nft-history-replay` schema scope creates only the job entity. No new scheduled service, queue, or public API is introduced.
+
 ### Private drop bookmarks
 
 The API owns private bookmark writes, the paginated `/drops-bookmarked/` list,
