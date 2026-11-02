@@ -379,6 +379,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
   it.each([
     'full',
     'maintenance',
+    'nft-history-events',
     'wallet-transfer-analysis',
     'claims-media-upload',
     'nft-link-page-retry',
@@ -410,4 +411,18 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(migrations.getInstance).not.toHaveBeenCalled();
     }
   );
+});
+
+it('syncs only the additive NFT history event table in its explicit scope', async () => {
+  jest.clearAllMocks();
+  await invoke({ schema_scope: 'nft-history-events' });
+  expect(doInDbContext).toHaveBeenCalledWith(
+    expect.any(Function),
+    expect.objectContaining({
+      entities: [Entities.NFTHistoryEventEntity],
+      syncEntities: true,
+      skipRedis: true
+    })
+  );
+  expect(getDataSource().synchronize).not.toHaveBeenCalled();
 });
