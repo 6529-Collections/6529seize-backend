@@ -326,3 +326,23 @@ it('records a non-deployer burn/redeem initialization from its verified creator 
     })
   ]);
 });
+
+it('does not cover an unsupported URI event with another creator token sharing its ID', async () => {
+  const { source, receipt } = fixture(MEMES_CONTRACT, 569, 20);
+  const uri = HISTORY_SOURCE_IFACE.encodeEventLog(
+    HISTORY_SOURCE_IFACE.getEvent('URI')!,
+    ['ipfs://other-creator', 569]
+  );
+  const raw = {
+    ...receipt.logs[0],
+    ...uri,
+    address: MEMELAB_CONTRACT,
+    index: 2
+  };
+  receipt.logs.push(raw);
+  const { index: _index, ...log } = raw;
+  source.logs.push({ ...log, logIndex: 2 });
+  await expect(
+    decodeHistorySource(source, { hasMint: async () => false })
+  ).rejects.toThrow('Unsupported URI update');
+});

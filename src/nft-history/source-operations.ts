@@ -512,8 +512,12 @@ function verifySupportedUriEvents(context: SourceContext): void {
       !operations.some(
         (operation) =>
           (operation.kind === 'mint' &&
+            operation.row.contract.toLowerCase() ===
+              log.address.toLowerCase() &&
             operation.row.nft_id === Number(event.args.id)) ||
           (operation.kind === 'edit' &&
+            operation.event.contract.toLowerCase() ===
+              log.address.toLowerCase() &&
             operation.event.nft_id === Number(event.args.id))
       )
     )
