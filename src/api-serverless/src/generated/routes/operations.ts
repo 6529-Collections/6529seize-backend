@@ -243,6 +243,7 @@ import { ApiUndiscoveredDrops } from '@/api/generated/models/ApiUndiscoveredDrop
 import { ApiUnpublishProfileCmsPackageRequest } from '@/api/generated/models/ApiUnpublishProfileCmsPackageRequest';
 import { ApiUpdateCompetitionRequest } from '@/api/generated/models/ApiUpdateCompetitionRequest';
 import { ApiUpdateProfilePreferences } from '@/api/generated/models/ApiUpdateProfilePreferences';
+import { ApiUpdateWaveHubRequest } from '@/api/generated/models/ApiUpdateWaveHubRequest';
 import { ApiValidateProfileCmsAgentCandidateRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentCandidateRequest';
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
@@ -3955,6 +3956,22 @@ export type GetWaveHubV3Request = Request<
   ApiResponse<GetWaveHubV3Response>,
   never,
   GetWaveHubV3Query,
+  Record<string, never>
+>;
+
+export interface UpdateWaveHubV3PathParams {
+  "wave_id": string;
+}
+
+export type UpdateWaveHubV3Query = Record<string, never>;
+
+export type UpdateWaveHubV3Response = ApiWaveV3;
+
+export type UpdateWaveHubV3Request = Request<
+  UpdateWaveHubV3PathParams,
+  ApiResponse<UpdateWaveHubV3Response>,
+  ApiUpdateWaveHubRequest,
+  UpdateWaveHubV3Query,
   Record<string, never>
 >;
 

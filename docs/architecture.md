@@ -1245,6 +1245,18 @@ because changing a value can move an entry across page boundaries. The frontend
 invalidates the scoped My Votes query after each confirmed vote. The existing
 competition/voter index restricts reads to that actor's allocations; an additional
 sort index is deferred until query-plan evidence justifies a schema rollout.
+Wave metadata and Configuration edits use `PATCH /v3/waves/{wave_id}` with
+partial wave-owned fields. Omitted fields are retained; nullable fields can be
+cleared explicitly. The command locks the physical shared wave, archives its
+revision and preserves both stored hub policies without changing any competition.
+V3 wave reads expose the shared `configuration`, independent of the original
+competition projection. Legacy wave creation and editing accept and discard
+competition settings before validation; competition configuration mutations use
+the competition commands exclusively. Legacy wave pause commands are accepted
+without changing pauses. Compatibility wave names come from shared wave metadata;
+competition titles remain separately owned. Refresh the compatibility views with
+`dbMigrationsLoop` before deploying `api` and then the frontend.
+
 Creating a hub always creates a
 CHAT wave; competition creation is a separate native command. Historical RANK/APPROVE wire types are projected from native original-primary
 configuration; shared wave storage no longer owns a competition type.
@@ -1879,10 +1891,12 @@ finishes, to deliver the universe phase through `xtdh-start.fifo`. A partial TDH
 reconsolidation from `delegationsLoop` instead enqueues one universe phase
 directly after its persistence and checkpoint writes complete. After either
 universe transaction commits, `xTdhLoop` enqueues a stats phase back to that
-FIFO queue, using the same FIFO message group as the universe message when one
+FIFO queue, using the same FIFO message group as the first universe request when one
 is available and the queue's default FIFO group otherwise. That shared message
 group is what orders each universe phase before its stats phase; the SQS event
-source batch size remains `1` for the handler-first rollout, and Lambda reserved
+source batch size is `10` in
+`src/xTdhLoop/serverless.yaml` at `functions.xTdhLoop.events[0].sqs.batchSize`.
+Lambda reserved
 concurrency stays at `1` to avoid parallel xTDH work across groups.
 The handler coalesces each delivered batch into one operation. Any universe
 request selects one universe calculation and one replacement stats request;
@@ -1894,8 +1908,12 @@ finishes, including enqueueing replacement stats after the universe commits.
 Any failure rejects the entire batch for SQS retry. Conflict reporting uses the
 highest receive count in the batch and reports unknown metadata conservatively.
 Requests arriving during a calculation remain queued for a later invocation.
-Deploy this handler with batch size `1` before enabling batches of up to `10`;
-rollback reduces the mapping to `1` before reverting batch-aware handling.
+SQS can deliver smaller batches; there is no FIFO batching window. Batch
+enablement follows verification of the batch-capable handler with batch size `1`
+in each environment. To roll back, revert the batch-enablement change and deploy
+`xTdhLoop` through the ordinary workflow. Verify the live event-source mapping is
+back at `1` before reverting batch-aware handling. The deployment-contract tests
+lock the batch limit, single-worker concurrency, and whole-batch retry policy.
 The stats phase rebuilds the inactive
 xTDH stats slot and activates it only after the rebuild succeeds; a redelivered
 stats message truncates and refills the inactive slot again before activation.
