@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_VOTES_TABLE,
+  COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+  COMPETITION_VOTE_HISTORY_TABLE,
+  PROFILES_ACTIVITY_LOGS_TABLE,
   COMPETITION_OUTCOME_AWARDS_TABLE,
   COMPETITION_DECISIONS_TABLE,
   COMPETITION_DECISION_WINNERS_TABLE
@@ -12,6 +15,11 @@ import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
 import { CompetitionRoutingRecord } from './competition.types';
 import { NativeDecisionAward } from './native-competition-runtime.repository';
+
+export type CompetitionMyVotesSort =
+  | 'vote_amount'
+  | 'leaderboard'
+  | 'last_voted';
 
 export type CompetitionMyVote = {
   entry_id: string;
@@ -65,15 +73,46 @@ export class CompetitionInteractionRepository extends LazyDbAccessCompatibleServ
     profileId: string,
     offset: number,
     limit: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    sort: CompetitionMyVotesSort = 'vote_amount'
   ): Promise<CompetitionMyVote[]> {
+    let joins = '';
+    let order = 'v.value DESC,v.updated_at ASC,e.drop_id ASC';
+    if (sort === 'leaderboard') {
+      joins = `LEFT JOIN ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb
+        ON lb.competition_id=v.competition_id AND lb.entry_id=v.entry_id`;
+      order = `lb.\`rank\` IS NULL ASC,lb.\`rank\` ASC,${record.legacy_wave_id === null ? 'e.id' : 'e.drop_id'} ASC`;
+    } else if (sort === 'last_voted') {
+      // Allocation updated_at also changes on automatic credit reconciliation and
+      // no-op commands. Only confirmed user changes establish voting recency.
+      // Retained primary logs supply pre-migration history; duplicate native log
+      // projections do not affect MAX. Unknown timestamps remain null, last.
+      joins = `LEFT JOIN (
+        SELECT activity.drop_id,MAX(activity.occurred_at) AS last_voted_at FROM (
+          SELECT entry.drop_id,h.occurred_at FROM ${COMPETITION_VOTE_HISTORY_TABLE} h
+          JOIN ${COMPETITION_ENTRIES_TABLE} entry ON entry.id=h.entry_id AND entry.competition_id=h.competition_id
+          WHERE h.competition_id=:competitionId AND h.voter_profile_id=:profileId
+            AND h.value<>h.previous_value AND JSON_EXTRACT(h.contents,'$.reason') IS NULL
+          UNION ALL
+          SELECT log.target_id,TIMESTAMPDIFF(MICROSECOND,'1970-01-01',log.created_at) DIV 1000
+          FROM ${PROFILES_ACTIVITY_LOGS_TABLE} log
+          WHERE log.competition_id=:competitionId AND log.profile_id=:profileId AND log.type='DROP_VOTE_EDIT'
+            AND JSON_EXTRACT(log.contents,'$.reason') IS NULL
+            AND CAST(JSON_UNQUOTE(JSON_EXTRACT(log.contents,'$.oldVote')) AS DECIMAL(65,0))
+              <>CAST(JSON_UNQUOTE(JSON_EXTRACT(log.contents,'$.newVote')) AS DECIMAL(65,0))
+        ) activity GROUP BY activity.drop_id
+      ) recent ON recent.drop_id=e.drop_id`;
+      order =
+        'recent.last_voted_at IS NULL ASC,recent.last_voted_at DESC,e.drop_id ASC';
+    }
     const rows = await this.query<CompetitionMyVote>(
       'myVotes',
       `SELECT v.entry_id,e.drop_id,v.value,v.credit_spent,e.status AS entry_status FROM ${COMPETITION_VOTES_TABLE} v
        JOIN ${COMPETITION_ENTRIES_TABLE} e ON e.id=v.entry_id AND e.competition_id=v.competition_id
+       ${joins}
        WHERE v.competition_id=:competitionId AND v.voter_profile_id=:profileId AND v.value<>0 AND e.status='ACTIVE'
          AND ${competitionEntryVisibleSql('e')}
-       ORDER BY v.value DESC,v.updated_at ASC,e.drop_id ASC LIMIT :offset,:limit`,
+       ORDER BY ${order} LIMIT :offset,:limit`,
       { competitionId: record.id, profileId, offset, limit },
       ctx
     );
