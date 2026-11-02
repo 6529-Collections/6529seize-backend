@@ -804,6 +804,8 @@ export * from '../models/ApiUpdateProfileNotificationCategories';
 export * from '../models/ApiUpdateProfilePreferences';
 export * from '../models/ApiUpdateProxyActionRequest';
 export * from '../models/ApiUpdateWaveDecisionPause';
+export * from '../models/ApiUpdateWaveHubChat';
+export * from '../models/ApiUpdateWaveHubRequest';
 export * from '../models/ApiUpdateWaveNotificationPreferencesRequest';
 export * from '../models/ApiUpdateWaveParticipationConfig';
 export * from '../models/ApiUpdateWaveRequest';
@@ -1780,6 +1782,8 @@ import { ApiUpdateProfileNotificationCategories } from '../models/ApiUpdateProfi
 import { ApiUpdateProfilePreferences, ApiUpdateProfilePreferencesDirectMessagePolicyEnum    , ApiUpdateProfilePreferencesNotificationLevelEnum    } from '../models/ApiUpdateProfilePreferences';
 import { ApiUpdateProxyActionRequest } from '../models/ApiUpdateProxyActionRequest';
 import { ApiUpdateWaveDecisionPause } from '../models/ApiUpdateWaveDecisionPause';
+import { ApiUpdateWaveHubChat } from '../models/ApiUpdateWaveHubChat';
+import { ApiUpdateWaveHubRequest } from '../models/ApiUpdateWaveHubRequest';
 import { ApiUpdateWaveNotificationPreferencesRequest } from '../models/ApiUpdateWaveNotificationPreferencesRequest';
 import { ApiUpdateWaveParticipationConfig } from '../models/ApiUpdateWaveParticipationConfig';
 import { ApiUpdateWaveRequest } from '../models/ApiUpdateWaveRequest';
@@ -2992,6 +2996,8 @@ let typeMap: {[index: string]: any} = {
     "ApiUpdateProfilePreferences": ApiUpdateProfilePreferences,
     "ApiUpdateProxyActionRequest": ApiUpdateProxyActionRequest,
     "ApiUpdateWaveDecisionPause": ApiUpdateWaveDecisionPause,
+    "ApiUpdateWaveHubChat": ApiUpdateWaveHubChat,
+    "ApiUpdateWaveHubRequest": ApiUpdateWaveHubRequest,
     "ApiUpdateWaveNotificationPreferencesRequest": ApiUpdateWaveNotificationPreferencesRequest,
     "ApiUpdateWaveParticipationConfig": ApiUpdateWaveParticipationConfig,
     "ApiUpdateWaveRequest": ApiUpdateWaveRequest,
