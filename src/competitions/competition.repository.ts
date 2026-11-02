@@ -1,6 +1,10 @@
 import { INDEFINITE_COMPETITION_PAUSE_END } from './competition-phase';
 import { competitionEntryVisibleSql } from '@/competitions/competition-entry-visibility';
 import {
+  anonymousCompetitionEntrySql,
+  competitionAnonymityViewerId
+} from '@/competitions/competition-anonymity';
+import {
   COMPETITION_CAPABILITIES_TABLE,
   COMPETITION_CONFIG_VERSIONS_TABLE,
   COMPETITION_DECISIONS_TABLE,
@@ -323,7 +327,13 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
   ): Promise<CompetitionPage<CompetitionEntry>> {
     const statusFilter = statuses?.length ? 'and ce.status in (:statuses)' : '';
     const submitterFilter = submitterId
-      ? 'and ce.submitter_id = :submitterId'
+      ? `and ce.submitter_id = :submitterId ${
+          submitterId === competitionAnonymityViewerId(ctx)
+            ? ''
+            : `and not exists (select 1 from ${COMPETITIONS_TABLE} anonymity_competition
+                where anonymity_competition.id=ce.competition_id
+                  and ${anonymousCompetitionEntrySql('ce', 'anonymity_competition')})`
+        }`
       : '';
     let order: string;
     if (request.sort === 'won_at') {
@@ -415,12 +425,14 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
        join ${COMPETITIONS_TABLE} c on c.id=lb.competition_id
        ${priceSelect}
        where lb.competition_id = :competitionId and ${competitionEntryVisibleSql('e')}
+       ${request.is_additional_action_promised === undefined ? '' : `and exists (select 1 from ${DROPS_TABLE} action_drop where action_drop.id=e.drop_id and coalesce(action_drop.is_additional_action_promised,0)=:additionalActionPromised)`}
        ${priceRequested ? 'and (:minPrice is null or prices.price>=:minPrice) and (:maxPrice is null or prices.price<=:maxPrice)' : ''}
        order by ${order}
        limit :offset, :rowLimit`,
       {
         competitionId,
         priceCurrency: request.price_currency ?? null,
+        additionalActionPromised: request.is_additional_action_promised ?? null,
         minPrice: request.min_price ?? null,
         maxPrice: request.max_price ?? null,
         offset: request.offset,

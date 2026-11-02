@@ -36,11 +36,7 @@ describe('nft_history helpers', () => {
     /* ─── mock dependencies that live outside nft_history ─── */
 
     /* ─── stub fetch returning old & new metadata ─── */
-    type FakeResponse = { ok: boolean; text: () => Promise<string> };
-
-    const fetchMock = jest.fn() as jest.MockedFunction<
-      () => Promise<FakeResponse>
-    >;
+    const fetchMock = jest.spyOn(globalThis, 'fetch');
 
     const oldMeta = {
       name: 'Old',
@@ -55,19 +51,13 @@ describe('nft_history helpers', () => {
     };
 
     fetchMock
-      .mockResolvedValueOnce({
-        ok: true,
-        text: async () => JSON.stringify(oldMeta)
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        text: async () => JSON.stringify(newMeta)
-      });
+      .mockResolvedValueOnce(new Response(JSON.stringify(oldMeta)))
+      .mockResolvedValueOnce(new Response(JSON.stringify(newMeta)));
 
-    (globalThis as any).fetch = fetchMock;
-
-    /* ─── call unit under test ─── */
-    const desc = await describeHistoryEdit('old', 'new');
+    const desc = await describeHistoryEdit(
+      'https://arweave.net/IFosq_ZN9_PrDSQmq65JTjeB2GnnfPSFoHxRazxC4PY',
+      'https://arweave.net/yEEVNbUIvVuF1Yb_rRUEmdrrGg3Lj7ZZa-4KBYqJsmg'
+    );
 
     expect(desc).toEqual({
       event: 'Edit',

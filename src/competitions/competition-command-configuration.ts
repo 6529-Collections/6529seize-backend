@@ -26,6 +26,7 @@ export function nativeCommandConfiguration(
     title: c.title,
     description: c.description,
     participation: {
+      anonymous_submissions: c.participation.anonymous_submissions ?? false,
       scope: { group_id: c.participation.group_id },
       signature_required: c.participation.signature_required,
       no_of_applications_allowed_per_participant:

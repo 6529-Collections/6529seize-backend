@@ -3230,6 +3230,46 @@ describe('CreateOrUpdateDropUseCase', () => {
     });
   });
 
+  describe('unencrypted DM cutoff (D146)', () => {
+    const verify = (wave: Record<string, unknown>) =>
+      (createUseCaseWithMocks() as any).verifyParticipatoryLimitations(
+        {
+          isDescriptionDrop: false,
+          wave: { ...createSlowModeWave(), type: WaveType.CHAT, ...wave },
+          model: createChatDropModel()
+        },
+        { connection: {} }
+      );
+
+    afterEach(() => {
+      delete process.env.LEGACY_DM_DELETION_CUTOFF;
+    });
+
+    it('accepts DM messages before the cutoff', async () => {
+      process.env.LEGACY_DM_DELETION_CUTOFF = '2999-01-01T00:00:00Z';
+      await expect(
+        verify({ is_direct_message: true })
+      ).resolves.toBeUndefined();
+    });
+
+    it('refuses DM messages from the cutoff on', async () => {
+      process.env.LEGACY_DM_DELETION_CUTOFF = '2000-01-01T00:00:00Z';
+      await expect(verify({ is_direct_message: true })).rejects.toMatchObject({
+        code: 'LEGACY_DM_CLOSED'
+      });
+    });
+
+    it('leaves other waves alone after the cutoff', async () => {
+      process.env.LEGACY_DM_DELETION_CUTOFF = '2000-01-01T00:00:00Z';
+      await expect(
+        verify({ is_direct_message: false })
+      ).resolves.toBeUndefined();
+      await expect(
+        verify({ is_direct_message: null })
+      ).resolves.toBeUndefined();
+    });
+  });
+
   it('reserves chat slow mode cooldown for non-admin chat drops', async () => {
     const wavesApiDb = {
       reserveWaveChatDropCooldown: jest.fn().mockResolvedValue(null)

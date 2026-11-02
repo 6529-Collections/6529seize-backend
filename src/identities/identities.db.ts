@@ -1,3 +1,4 @@
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -1368,16 +1369,22 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       )
     );
-    return results.reduce(
-      (acc, it) => {
-        if (!acc[it.profile_id]) {
-          acc[it.profile_id] = [];
-        }
-        acc[it.profile_id].push(it.drop_id);
-        return acc;
-      },
-      {} as Record<string, string[]>
+    const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
+      results.map((row) => row.drop_id),
+      ctx
     );
+    return results
+      .filter((row) => !hiddenDropIds.has(row.drop_id))
+      .reduce(
+        (acc, it) => {
+          if (!acc[it.profile_id]) {
+            acc[it.profile_id] = [];
+          }
+          acc[it.profile_id].push(it.drop_id);
+          return acc;
+        },
+        {} as Record<string, string[]>
+      );
   }
 
   async getMainStageWinnerDropIds(

@@ -60,6 +60,7 @@ const LegacyCompetitionGetTypeCaster: TypeCast = (field, next) => {
 };
 
 type PrivateQueryFamily =
+  | 'e2ee messaging'
   | 'artwork documentation'
   | 'market depth'
   | 'content moderation'
@@ -68,6 +69,11 @@ type PrivateQueryFamily =
   | 'membership runtime';
 
 function privateQueryFamily(sql: string): PrivateQueryFamily | null {
+  // Encrypted-messaging rows carry ciphertext, KeyPackages, welcomes and
+  // notify hints; neither statements nor bound values may reach logs.
+  if (/\be2ee_[a-z_]+\b/i.test(sql)) {
+    return 'e2ee messaging';
+  }
   if (
     /\bcompetition_(?:entry_content_versions|signature_nonces|commands)\b/i.test(
       sql
@@ -105,6 +111,7 @@ function describeQuery(sql: string, params?: Record<string, unknown>): string {
   const family = privateQueryFamily(sql);
   if (family === 'competition authorization')
     return '[private competition authorization query]';
+  if (family === 'e2ee messaging') return '[private e2ee messaging query]';
   if (family === 'artwork documentation') {
     return '[private artwork documentation query]';
   }
