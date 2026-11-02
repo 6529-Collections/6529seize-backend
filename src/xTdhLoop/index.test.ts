@@ -226,6 +226,21 @@ describe('xTdhLoop handler', () => {
     expect(mockHandleUniversePhase).not.toHaveBeenCalled();
   });
 
+  it('coalesces ten universe requests into one calculation', async () => {
+    await handler(
+      batchEvent(Array.from({ length: 10 }, () => 'universe')),
+      {} as Context,
+      jest.fn()
+    );
+
+    expect(mockHandleUniversePhase).toHaveBeenCalledTimes(1);
+    expect(mockHandleUniversePhase).toHaveBeenCalledWith(
+      expect.objectContaining({ timer: expect.any(Object) }),
+      { messageGroupId: 'group-0' }
+    );
+    expect(mockHandleStatsPhase).not.toHaveBeenCalled();
+  });
+
   it.each(['universe', 'stats'])(
     'keeps the whole %s batch pending until its work completes',
     async (phase) => {
