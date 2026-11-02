@@ -60,10 +60,10 @@ export class IdentityPushNotificationAccess {
         !(await artistArtworkAlertsDb.isEnabled(
           {
             subscriberId: notification.identity_id,
-            artistId: current.artist_id
+            artistId: current.artist_id,
+            submittedAt: current.submitted_at
           },
-          {},
-          current.submitted_at
+          {}
         ))
       )
         return false;

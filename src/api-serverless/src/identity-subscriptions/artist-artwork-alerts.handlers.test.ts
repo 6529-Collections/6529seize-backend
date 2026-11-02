@@ -1,6 +1,6 @@
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { AuthenticationContext } from '@/auth-context';
-import { identityFetcher } from '@/api/identities/identity.fetcher';
+import { identitiesDb } from '@/identities/identities.db';
 import * as Operations from '@/api/generated/routes/operations';
 import { artistArtworkAlertsDb } from '@/notifications/artist-artwork-alerts.db';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
@@ -11,8 +11,8 @@ import {
 } from './artist-artwork-alerts.handlers';
 
 jest.mock('@/api/auth/auth', () => ({ getAuthenticationContext: jest.fn() }));
-jest.mock('@/api/identities/identity.fetcher', () => ({
-  identityFetcher: { getProfileIdByIdentityKeyOrThrow: jest.fn() }
+jest.mock('@/identities/identities.db', () => ({
+  identitiesDb: { getProfileIdByIdentityKeyFast: jest.fn() }
 }));
 jest.mock('@/notifications/artist-artwork-alerts.db', () => ({
   artistArtworkAlertsDb: { isEnabled: jest.fn(), setEnabled: jest.fn() }
@@ -39,7 +39,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   auth('viewer');
   jest
-    .mocked(identityFetcher.getProfileIdByIdentityKeyOrThrow)
+    .mocked(identitiesDb.getProfileIdByIdentityKeyFast)
     .mockResolvedValue('artist');
   jest.mocked(contentModerationDb.isProfileBlocked).mockResolvedValue(false);
   jest.mocked(artistArtworkAlertsDb.isEnabled).mockResolvedValue(false);
@@ -54,14 +54,20 @@ it('owns preferences by authenticated profile and keeps the artist in the target
   });
   expect(artistArtworkAlertsDb.setEnabled).toHaveBeenCalledWith(
     { subscriberId: 'viewer', artistId: 'artist' },
-    true
+    true,
+    expect.objectContaining({
+      authenticationContext: expect.any(AuthenticationContext)
+    })
   );
   expect(await handleDisableArtistArtworkAlert(request)).toEqual({
     enabled: false
   });
   expect(artistArtworkAlertsDb.setEnabled).toHaveBeenLastCalledWith(
     { subscriberId: 'viewer', artistId: 'artist' },
-    false
+    false,
+    expect.objectContaining({
+      authenticationContext: expect.any(AuthenticationContext)
+    })
   );
 });
 it.each([
@@ -85,6 +91,20 @@ it('rejects a blocked artist but still permits disabling existing alerts', async
   await handleDisableArtistArtworkAlert(request);
   expect(artistArtworkAlertsDb.setEnabled).toHaveBeenCalledWith(
     { subscriberId: 'viewer', artistId: 'artist' },
-    false
+    false,
+    expect.objectContaining({
+      authenticationContext: expect.any(AuthenticationContext)
+    })
   );
+});
+
+it('rejects unknown identities before reading or writing preferences', async () => {
+  jest
+    .mocked(identitiesDb.getProfileIdByIdentityKeyFast)
+    .mockResolvedValue(null);
+  await expect(handleGetArtistArtworkAlert(request)).rejects.toThrow(
+    'Profile not found'
+  );
+  expect(artistArtworkAlertsDb.isEnabled).not.toHaveBeenCalled();
+  expect(artistArtworkAlertsDb.setEnabled).not.toHaveBeenCalled();
 });

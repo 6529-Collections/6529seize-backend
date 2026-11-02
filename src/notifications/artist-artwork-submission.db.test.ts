@@ -1,9 +1,11 @@
 import { ArtistArtworkAlertsDb } from './artist-artwork-alerts.db';
 import { ArtistArtworkNotifications } from './artist-artwork-notifications';
 import { competitionEventRepository } from '@/competitions/competition-event.repository';
+import { pushNotificationOutboxDb } from './push-notification-outbox.db';
 import { userNotifier } from './user.notifier';
 import { DEFAULT_PROFILE_PREFERENCES } from '@/entities/IProfilePreferences';
 import { randomUUID } from 'node:crypto';
+import { DbPoolName } from '@/db-query.options';
 import {
   artistArtworkNotificationVisibleSql,
   ArtistArtworkSubmissionDb
@@ -70,14 +72,97 @@ describeWithSeed(
   () => {
     const db = new ArtistArtworkSubmissionDb(() => sqlExecutor);
     let notifierActivation: string | undefined;
+    let pushActivation: string | undefined;
     beforeEach(() => {
       notifierActivation = process.env.USER_NOTIFIER_ACTIVATED;
+      pushActivation = process.env.PUSH_NOTIFICATIONS_ACTIVATED;
+      process.env.PUSH_NOTIFICATIONS_ACTIVATED = 'true';
       process.env.USER_NOTIFIER_ACTIVATED = 'true';
     });
     afterEach(() => {
+      if (pushActivation === undefined)
+        delete process.env.PUSH_NOTIFICATIONS_ACTIVATED;
+      else process.env.PUSH_NOTIFICATIONS_ACTIVATED = pushActivation;
+      jest.restoreAllMocks();
       if (notifierActivation === undefined)
         delete process.env.USER_NOTIFIER_ACTIVATED;
       else process.env.USER_NOTIFIER_ACTIVATED = notifierActivation;
+    });
+
+    it('uses the primary database before making terminal delivery decisions', async () => {
+      const read = jest.spyOn(sqlExecutor, 'oneOrNull');
+      const submission = (await db.find(event, {}))!;
+      await db.canReceive(submission, 'viewer', [], {});
+      await competitionEventRepository.getContext(
+        {
+          ...event,
+          event_id: randomUUID(),
+          event_version: 1,
+          event_type: 'COMPETITION_ENTRY_CREATED',
+          occurred_at: 200,
+          data: { artwork_alert_eligible: true }
+        },
+        {}
+      );
+      expect(read).toHaveBeenCalledTimes(3);
+      for (const call of read.mock.calls) {
+        expect(call[2]).toMatchObject({ forcePool: DbPoolName.WRITE });
+      }
+    });
+
+    it('rolls back the notification and receipt if the durable push handoff fails, then retries once', async () => {
+      const preferences = new ArtistArtworkAlertsDb(() => sqlExecutor);
+      await preferences.setEnabled(
+        { subscriberId: 'viewer', artistId: 'artist' },
+        true
+      );
+      await sqlExecutor.execute(
+        `update ${tables.ARTIST_ARTWORK_ALERTS_TABLE} set enabled_at=100`
+      );
+      jest
+        .spyOn(pushNotificationOutboxDb, 'enqueueMany')
+        .mockRejectedValueOnce(new Error('outbox unavailable'));
+      const service = new ArtistArtworkNotifications(
+        preferences,
+        db,
+        competitionEventRepository,
+        { getGroupsUserIsEligibleForByIds: async () => [] },
+        {
+          get: async () => DEFAULT_PROFILE_PREFERENCES,
+          getMany: async () => new Map()
+        },
+        userNotifier,
+        pushNotificationOutboxDb
+      );
+      const created = {
+        ...event,
+        event_id: randomUUID(),
+        event_version: 1 as const,
+        event_type: 'COMPETITION_ENTRY_CREATED',
+        occurred_at: 200,
+        data: { artwork_alert_eligible: true }
+      };
+      await expect(service.deliver(created, {})).rejects.toThrow(
+        'outbox unavailable'
+      );
+      for (const table of [
+        tables.IDENTITY_NOTIFICATIONS_TABLE,
+        tables.COMPETITION_EVENT_EFFECTS_TABLE,
+        tables.PUSH_NOTIFICATION_OUTBOX_TABLE
+      ]) {
+        expect(await sqlExecutor.execute(`select * from ${table}`)).toEqual([]);
+      }
+      expect(await service.deliver(created, {})).toBe(true);
+      expect(await service.deliver(created, {})).toBe(true);
+      for (const table of [
+        tables.IDENTITY_NOTIFICATIONS_TABLE,
+        tables.COMPETITION_EVENT_EFFECTS_TABLE,
+        tables.PUSH_NOTIFICATION_OUTBOX_TABLE
+      ]) {
+        expect(
+          await sqlExecutor.execute(`select * from ${table}`)
+        ).toHaveLength(1);
+      }
     });
 
     it.each(['VISIBLE', 'AI_QUARANTINED', 'MODERATOR_REMOVED'])(
@@ -95,15 +180,18 @@ describeWithSeed(
         await sqlExecutor.execute(
           `update ${tables.ARTIST_ARTWORK_ALERTS_TABLE} set enabled_at=100`
         );
-        const push = jest.fn().mockResolvedValue(undefined);
+        const push = jest.spyOn(pushNotificationOutboxDb, 'enqueueMany');
         const service = new ArtistArtworkNotifications(
           preferences,
           db,
           competitionEventRepository,
-          { getGroupsUserIsEligibleFor: async () => [] },
-          { get: async () => DEFAULT_PROFILE_PREFERENCES },
+          { getGroupsUserIsEligibleForByIds: async () => [] },
+          {
+            get: async () => DEFAULT_PROFILE_PREFERENCES,
+            getMany: async () => new Map()
+          },
           userNotifier,
-          push
+          pushNotificationOutboxDb
         );
         const created = {
           ...event,
@@ -120,7 +208,15 @@ describeWithSeed(
         );
         expect(rows).toHaveLength(status === 'VISIBLE' ? 1 : 0);
         const ids = rows.map((row) => Number(row.id));
-        expect(push.mock.calls).toEqual([[ids], [ids]]);
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(push).toHaveBeenCalledWith(
+          ids,
+          expect.objectContaining({ connection: expect.any(Object) })
+        );
+        const pending = await sqlExecutor.execute<{ notification_id: number }>(
+          `select notification_id from ${tables.PUSH_NOTIFICATION_OUTBOX_TABLE}`
+        );
+        expect(pending.map((row) => Number(row.notification_id))).toEqual(ids);
       }
     );
 

@@ -1,62 +1,196 @@
+import { randomUUID } from 'node:crypto';
 import { ArtistArtworkAlertsDb } from './artist-artwork-alerts.db';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
+import * as tables from '@/constants';
+import { stableUuid } from '@/competitions/competition-id';
+import { competitionEventRepository } from '@/competitions/competition-event.repository';
 
-describeWithSeed('Independent artist artwork preferences', [], () => {
-  const db = new ArtistArtworkAlertsDb(() => sqlExecutor);
-  const pair = { subscriberId: 'viewer', artistId: 'artist' };
-  afterEach(() => jest.restoreAllMocks());
+const eventId = randomUUID();
 
-  it('defaults off and persists an explicit opt-in without following', async () => {
-    expect(await db.isEnabled(pair)).toBe(false);
-    jest.spyOn(Date, 'now').mockReturnValue(100);
-    await db.setEnabled(pair, true);
-    expect(await db.isEnabled(pair)).toBe(true);
-    expect(await db.listRecipients('artist', 101, '', {})).toEqual(['viewer']);
-    expect(await db.isEnabled({ ...pair, subscriberId: 'other' })).toBe(false);
-    await db.setEnabled(pair, false);
-    await db.setEnabled(pair, false);
-    expect(await db.isEnabled(pair)).toBe(false);
-  });
-
-  it('never backfills old work and preserves the cutoff when enable is retried', async () => {
-    const now = jest.spyOn(Date, 'now').mockReturnValue(100);
-    await db.setEnabled(pair, true);
-    now.mockReturnValue(200);
-    await db.setEnabled(pair, true);
-    expect(await db.isEnabled(pair, {}, 100)).toBe(false);
-    expect(await db.listRecipients('artist', 100, '', {})).toEqual([]);
-    expect(await db.isEnabled(pair, {}, 150)).toBe(true);
-    await db.setEnabled(pair, false);
-    await db.setEnabled(pair, true);
-    expect(await db.isEnabled(pair, {}, 150)).toBe(false);
-    expect(await db.listRecipients('artist', 201, '', {})).toEqual(['viewer']);
-  });
-
-  it('paginates all recipients exactly once and excludes self notifications', async () => {
-    jest.spyOn(Date, 'now').mockReturnValue(1);
-    for (let index = 0; index < 253; index++) {
-      await db.setEnabled(
+describeWithSeed(
+  'Independent artist artwork preferences',
+  [
+    {
+      table: tables.COMPETITION_ENTRIES_TABLE,
+      rows: [
         {
-          artistId: 'artist',
-          subscriberId: `viewer-${String(index).padStart(3, '0')}`
-        },
-        true
+          id: 'entry',
+          competition_id: 'competition',
+          wave_id: 'wave',
+          drop_id: 'drop',
+          submitter_id: 'artist',
+          status: 'ACTIVE',
+          config_version: 1,
+          submitted_at: 101
+        }
+      ]
+    }
+  ],
+  () => {
+    const db = new ArtistArtworkAlertsDb(() => sqlExecutor);
+    const pair = { subscriberId: 'viewer', artistId: 'artist' };
+    afterEach(() => jest.restoreAllMocks());
+    async function recipients(submittedAt: number) {
+      await sqlExecutor.execute(
+        `update ${tables.COMPETITION_ENTRIES_TABLE} set submitted_at=:submittedAt where id='entry'`,
+        { submittedAt }
+      );
+      return db.listPendingRecipients(eventId, 'entry', {});
+    }
+    async function complete(ids: string[]) {
+      await sqlExecutor.bulkInsert(
+        tables.COMPETITION_EVENT_EFFECTS_TABLE,
+        ids.map((id) => ({
+          id: stableUuid(eventId, `artwork:${id}`),
+          event_id: eventId,
+          effect_key: `artwork:${id}`,
+          result: '[]',
+          completed_at: 10
+        })),
+        ['id', 'event_id', 'effect_key', 'result', 'completed_at']
       );
     }
-    await db.setEnabled({ subscriberId: 'artist', artistId: 'artist' }, true);
-    const first = await db.listRecipients('artist', 2, '', {});
-    const second = await db.listRecipients(
-      'artist',
-      2,
-      first[first.length - 1],
-      {}
-    );
-    expect(first).toHaveLength(250);
-    expect(second).toHaveLength(3);
-    expect(new Set([...first, ...second]).size).toBe(253);
-    expect(
-      await db.listRecipients('artist', 2, second[second.length - 1], {})
-    ).toEqual([]);
-  });
-});
+
+    it('defaults off and persists an explicit opt-in without following', async () => {
+      expect(await db.isEnabled(pair)).toBe(false);
+      jest.spyOn(Date, 'now').mockReturnValue(100);
+      await db.setEnabled(pair, true);
+      expect(await db.isEnabled(pair)).toBe(true);
+      expect(await recipients(101)).toEqual(['viewer']);
+      expect(await db.isEnabled({ ...pair, subscriberId: 'other' })).toBe(
+        false
+      );
+      await db.setEnabled(pair, false);
+      await db.setEnabled(pair, false);
+      expect(await db.isEnabled(pair)).toBe(false);
+    });
+
+    it('never backfills old work and preserves the cutoff when enable is retried', async () => {
+      const now = jest.spyOn(Date, 'now').mockReturnValue(100);
+      await db.setEnabled(pair, true);
+      now.mockReturnValue(200);
+      await db.setEnabled(pair, true);
+      expect(await db.isEnabled({ ...pair, submittedAt: 100 })).toBe(false);
+      expect(await recipients(100)).toEqual([]);
+      expect(await db.isEnabled({ ...pair, submittedAt: 150 })).toBe(true);
+      await db.setEnabled(pair, false);
+      await db.setEnabled(pair, true);
+      expect(await db.isEnabled({ ...pair, submittedAt: 150 })).toBe(false);
+      expect(await recipients(201)).toEqual(['viewer']);
+    });
+
+    it('paginates all recipients exactly once and excludes self notifications', async () => {
+      jest.spyOn(Date, 'now').mockReturnValue(1);
+      for (let index = 0; index < 253; index++) {
+        await db.setEnabled(
+          {
+            artistId: 'artist',
+            subscriberId: `viewer-${String(index).padStart(3, '0')}`
+          },
+          true
+        );
+      }
+      await db.setEnabled({ subscriberId: 'artist', artistId: 'artist' }, true);
+      const first = await recipients(2);
+      await complete(first);
+      const second = await recipients(2);
+      await complete(second);
+      const third = await recipients(2);
+      await complete(third);
+      expect(first).toHaveLength(100);
+      expect(second).toHaveLength(100);
+      expect(third).toHaveLength(53);
+      expect(new Set([...first, ...second, ...third]).size).toBe(253);
+      expect(await recipients(2)).toEqual([]);
+    });
+
+    it('moves both sides of merged preferences, keeps the earliest opt-in and removes self-pairs', async () => {
+      const now = jest.spyOn(Date, 'now').mockReturnValue(100);
+      await db.setEnabled({ subscriberId: 'source', artistId: 'artist' }, true);
+      await db.setEnabled({ subscriberId: 'viewer', artistId: 'target' }, true);
+      now.mockReturnValue(200);
+      await db.setEnabled({ subscriberId: 'target', artistId: 'artist' }, true);
+      await db.setEnabled({ subscriberId: 'viewer', artistId: 'source' }, true);
+      await db.setEnabled({ subscriberId: 'source', artistId: 'target' }, true);
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await db.mergeProfile('source', 'target', { connection });
+          await db.mergeProfile('source', 'target', { connection });
+        }
+      );
+      expect(
+        await sqlExecutor.execute(
+          `select * from ${tables.ARTIST_ARTWORK_ALERTS_TABLE} order by subscriber_id`
+        )
+      ).toEqual([
+        { subscriber_id: 'target', artist_id: 'artist', enabled_at: 100 },
+        { subscriber_id: 'viewer', artist_id: 'target', enabled_at: 100 }
+      ]);
+      expect(
+        await db.isEnabled({
+          subscriberId: 'target',
+          artistId: 'artist',
+          submittedAt: 100
+        })
+      ).toBe(false);
+      expect(
+        await db.isEnabled({
+          subscriberId: 'target',
+          artistId: 'artist',
+          submittedAt: 101
+        })
+      ).toBe(true);
+    });
+
+    it('preserves processed recipients when a profile merges during a pending delivery', async () => {
+      await db.setEnabled({ subscriberId: 'source', artistId: 'artist' }, true);
+      await sqlExecutor.execute(
+        `update ${tables.ARTIST_ARTWORK_ALERTS_TABLE} set enabled_at=1`
+      );
+      await sqlExecutor.execute(
+        `insert into ${tables.COMPETITION_OUTBOX_TABLE}
+      (id,competition_id,wave_id,semantic_key,event,created_at,next_attempt_at,attempts)
+      values (:eventId,'competition','wave','review-event','{}',1,1,0)`,
+        { eventId }
+      );
+      await competitionEventRepository.applyEffect(
+        eventId,
+        'artwork:source',
+        async () => [42]
+      );
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        db.mergeProfile('source', 'target', { connection })
+      );
+      expect(await recipients(2)).toEqual([]);
+      const notify = jest.fn().mockResolvedValue([43]);
+      expect(
+        await competitionEventRepository.applyEffect(
+          eventId,
+          'artwork:target',
+          notify
+        )
+      ).toEqual([42]);
+      expect(notify).not.toHaveBeenCalled();
+    });
+
+    it('finds a merged subscriber even when its ID sorts before a completed recipient', async () => {
+      jest.spyOn(Date, 'now').mockReturnValue(1);
+      await db.setEnabled(
+        { subscriberId: 'z-source', artistId: 'artist' },
+        true
+      );
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        db.mergeProfile('z-source', 'a-target', { connection })
+      );
+      expect(await recipients(2)).toEqual(['a-target']);
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        db.mergeProfile('artist', 'new-artist', { connection })
+      );
+      await sqlExecutor.execute(
+        `update ${tables.COMPETITION_ENTRIES_TABLE} set submitter_id='new-artist' where id='entry'`
+      );
+      expect(await recipients(2)).toEqual(['a-target']);
+    });
+  }
+);

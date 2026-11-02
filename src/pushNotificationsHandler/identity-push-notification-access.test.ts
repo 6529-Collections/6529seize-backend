@@ -90,7 +90,13 @@ describe('IdentityPushNotificationAccess', () => {
       const find = jest
         .spyOn(artistArtworkSubmissionDb, 'find')
         .mockResolvedValue(
-          available ? { ...data, visibility_group_id: 'private-group' } : null
+          available
+            ? {
+                ...data,
+                visibility_group_id: 'private-group',
+                parent_visibility_group_id: null
+              }
+            : null
         );
       const preference = jest
         .spyOn(artistArtworkAlertsDb, 'isEnabled')
@@ -107,9 +113,12 @@ describe('IdentityPushNotificationAccess', () => {
         ).toBe(expected);
         if (available)
           expect(preference).toHaveBeenCalledWith(
-            { subscriberId: 'recipient-1', artistId: 'actor-1' },
-            {},
-            200
+            {
+              subscriberId: 'recipient-1',
+              artistId: 'actor-1',
+              submittedAt: 200
+            },
+            {}
           );
       } finally {
         find.mockRestore();

@@ -11,6 +11,7 @@ import { competitionEntryVisibleSql } from '@/competitions/competition-entry-vis
 import { NativeCompetitionEvent } from '@/competitions/native-competition-runtime.repository';
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 import { RequestContext } from '@/request.context';
+import { DbPoolName } from '@/db-query.options';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { ArtistArtworkNotificationData } from './user-notification.types';
@@ -31,9 +32,30 @@ export function artistArtworkNotificationVisibleSql(alias: string): string {
 
 export type ArtistArtworkSubmission = ArtistArtworkNotificationData & {
   readonly visibility_group_id: string | null;
+  readonly parent_visibility_group_id: string | null;
 };
 
 export class ArtistArtworkSubmissionDb extends LazyDbAccessCompatibleService {
+  private async query<T>(
+    operation: string,
+    sql: string,
+    params: Record<string, unknown>,
+    ctx: RequestContext
+  ): Promise<T | null> {
+    const timer = `${this.constructor.name}->${operation}`;
+    ctx.timer?.start(timer);
+    try {
+      // Missing/currently hidden content is a terminal delivery decision, so
+      // neither the outbox nor the final push check may rely on a lagging replica.
+      return await this.db.oneOrNull<T>(sql, params, {
+        wrappedConnection: ctx.connection,
+        forcePool: DbPoolName.WRITE
+      });
+    } finally {
+      ctx.timer?.stop(timer);
+    }
+  }
+
   async find(
     event: Pick<
       NativeCompetitionEvent,
@@ -41,14 +63,17 @@ export class ArtistArtworkSubmissionDb extends LazyDbAccessCompatibleService {
     >,
     ctx: RequestContext
   ): Promise<ArtistArtworkSubmission | null> {
-    const row = await this.db.oneOrNull<ArtistArtworkSubmission>(
+    const row = await this.query<ArtistArtworkSubmission>(
+      'find',
       `select e.submitter_id as artist_id, e.drop_id, e.wave_id,
         e.competition_id, e.id as entry_id, e.submitted_at,
-        d.title as artwork_title, c.title as competition_title, w.visibility_group_id
+        d.title as artwork_title, c.title as competition_title, w.visibility_group_id,
+        parent.visibility_group_id as parent_visibility_group_id
        from ${COMPETITION_ENTRIES_TABLE} e
        join ${COMPETITIONS_TABLE} c on c.id = e.competition_id and c.wave_id = e.wave_id
        join ${DROPS_TABLE} d on d.id = e.drop_id and d.author_id = e.submitter_id
        join ${WAVES_TABLE} w on w.id = e.wave_id
+       left join ${WAVES_TABLE} parent on parent.id = w.parent_wave_id
        where e.id = :entryId and e.competition_id = :competitionId
          and e.drop_id = :dropId and e.wave_id = :waveId and ${PUBLIC_ARTWORK_ENTRY_SQL}`,
       {
@@ -57,7 +82,7 @@ export class ArtistArtworkSubmissionDb extends LazyDbAccessCompatibleService {
         dropId: event.drop_id ?? null,
         waveId: event.wave_id
       },
-      ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      ctx
     );
     return row ? { ...row, submitted_at: Number(row.submitted_at) } : null;
   }
@@ -68,7 +93,8 @@ export class ArtistArtworkSubmissionDb extends LazyDbAccessCompatibleService {
     eligibleGroupIds: string[],
     ctx: RequestContext
   ): Promise<boolean> {
-    const row = await this.db.oneOrNull<{ id: string }>(
+    const row = await this.query<{ id: string }>(
+      'canReceive',
       `select w.id from ${WAVES_TABLE} w where w.id = :waveId
         and ${waveReadAccessSql('w', eligibleGroupIds.length > 0)}
         and not exists (select 1 from ${IDENTITY_MUTES_TABLE} m
@@ -83,7 +109,7 @@ export class ArtistArtworkSubmissionDb extends LazyDbAccessCompatibleService {
         recipientId,
         eligibleGroupIds
       },
-      ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+      ctx
     );
     return row !== null;
   }

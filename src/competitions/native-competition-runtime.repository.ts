@@ -878,6 +878,23 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     );
   }
 
+  public async deferOutbox(
+    id: string,
+    leaseToken: string,
+    now: number,
+    ctx: RequestContext = {}
+  ): Promise<void> {
+    // Successful partial artwork delivery should resume promptly, without the
+    // exponential backoff reserved for failures.
+    await this.query(
+      'deferOutbox',
+      `update ${COMPETITION_OUTBOX_TABLE} set next_attempt_at = :now + 1000, lease_until = null, lease_token = null
+       where id = :id and lease_token = :leaseToken and delivered_at is null`,
+      { id, leaseToken, now },
+      ctx
+    );
+  }
+
   public async retryOutbox(
     id: string,
     leaseToken: string,
