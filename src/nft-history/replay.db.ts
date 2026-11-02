@@ -2,7 +2,6 @@ import { EntityManager } from 'typeorm';
 import { getDataSource } from '@/db';
 import { NFTHistoryReplayJobEntity } from '@/entities/INFTHistoryReplayJob';
 import { canonicalJson } from './canonical-json';
-import { ReplayManifest } from './replay-manifest';
 import { ReplayRange } from './replay-request';
 
 export class NftHistoryReplayDb {
@@ -12,11 +11,11 @@ export class NftHistoryReplayDb {
       .findOneBy({ job_id: jobId });
   }
 
-  async create(
+  async create<TManifest>(
     jobId: string,
     digest: string,
     range: ReplayRange,
-    manifest: ReplayManifest
+    manifest: TManifest
   ): Promise<NFTHistoryReplayJobEntity> {
     const job = {
       job_id: jobId,
@@ -37,6 +36,8 @@ export class NftHistoryReplayDb {
     expectedIndex: number
   ): Promise<void> {
     const repo = manager.getRepository(NFTHistoryReplayJobEntity);
+    // Lock and compare in the caller's history-write transaction. A competing
+    // apply waits, then observes the advanced index and rolls back its writes.
     const job = await repo.findOne({
       where: { job_id: jobId },
       lock: { mode: 'pessimistic_write' }

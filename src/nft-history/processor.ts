@@ -141,7 +141,8 @@ export async function prepareHistoryWrite(
   event.description = await describe(previous.uri, candidate.uri);
   plan.inserts.push(event);
   // Only the next row changes predecessor; reconcile it in the same transaction.
-  await reconcileSuccessor(plan, rows[index + 1], candidate.uri, describe);
+  if (previous.uri !== candidate.uri)
+    await reconcileSuccessor(plan, rows[index + 1], candidate.uri, describe);
   return plan;
 }
 
