@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readHistoryClaim } from './claim-state';
 import { Interface, zeroPadValue } from 'ethers';
 import { NFT_HISTORY_IFACE } from '@/abis/nft_history';
 import {
@@ -163,22 +164,33 @@ export async function decodeClaimUpdate(
   const tokenId = tokenIds[0];
   // The stored mapping is creator-scoped; verify it against this extension to
   // reject collisions when another generation reused the same claim index.
-  const result = await rpc.call(
-    {
-      to: log.address,
-      data: CLAIM_EVENT_IFACE.encodeFunctionData('getClaimForToken', [
-        contract,
-        tokenId
-      ])
-    },
-    log.blockNumber
-  );
-  if (
-    !/^0x[0-9a-f]+$/i.test(result) ||
-    (result.length - 2) % 64 !== 0 ||
-    BigInt(`0x${result.slice(2, 66)}`).toString() !== claimId
-  )
-    throw new Error('Stored claim mapping does not match extension');
+  if (CLAIM_EXTENSIONS.slice(0, 4).includes(log.address.toLowerCase())) {
+    const claim = await readHistoryClaim(
+      log.address,
+      contract,
+      claimId,
+      log.blockNumber
+    );
+    if (claim.tokenId !== tokenId)
+      throw new Error('Stored claim mapping does not match extension');
+  } else {
+    const result = await rpc.call(
+      {
+        to: log.address,
+        data: CLAIM_EVENT_IFACE.encodeFunctionData('getClaimForToken', [
+          contract,
+          tokenId
+        ])
+      },
+      log.blockNumber
+    );
+    if (
+      !/^0x[0-9a-f]+$/i.test(result) ||
+      (result.length - 2) % 64 !== 0 ||
+      BigInt(`0x${result.slice(2, 66)}`).toString() !== claimId
+    )
+      throw new Error('Stored claim mapping does not match extension');
+  }
   return {
     event_id: claimEventId(log),
     contract,

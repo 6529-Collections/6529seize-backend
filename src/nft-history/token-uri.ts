@@ -4,12 +4,12 @@ import { claimEventId, ClaimEvent } from './claim-events';
 import { nftHistoryDb } from './history.db';
 import { prepareHistoryWrite } from './processor';
 
-export async function ingestTokenUriUpdate(
+export async function decodeTokenUriUpdate(
   hash: string,
   contract: string,
   tokenId: number,
   uri: string
-): Promise<void> {
+): Promise<ClaimEvent> {
   const rpc = getEthereumRpcClient();
   const [tx, receipt] = await Promise.all([
     rpc.getTransaction(hash),
@@ -51,6 +51,16 @@ export async function ingestTokenUriUpdate(
     extension: contract.toLowerCase(),
     claim_id: null
   };
+  return event;
+}
+
+export async function ingestTokenUriUpdate(
+  hash: string,
+  contract: string,
+  tokenId: number,
+  uri: string
+): Promise<void> {
+  const event = await decodeTokenUriUpdate(hash, contract, tokenId, uri);
   const plan = await prepareHistoryWrite(
     event,
     await nftHistoryDb.snapshot(contract, tokenId)

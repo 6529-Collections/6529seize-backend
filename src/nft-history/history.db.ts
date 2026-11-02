@@ -93,43 +93,49 @@ export class NftHistoryDb {
     afterWrite?: (manager: EntityManager) => Promise<void>
   ): Promise<void> {
     await getDataSource().transaction(async (manager) => {
-      const current = await this.snapshot(
-        plan.contract,
-        plan.nft_id,
-        manager,
-        true
-      );
-      if (historyFingerprint(current) !== plan.before)
-        throw new Error(
-          'History changed since plan preparation; regenerate the plan'
-        );
-      for (const { description, ...row } of plan.inserts) {
-        await manager
-          .getRepository(NFTHistoryEventEntity)
-          .createQueryBuilder()
-          .insert()
-          .values({ ...row, description: () => ':historyDescription' })
-          .setParameter(
-            'historyDescription',
-            description === null ? null : JSON.stringify(description)
-          )
-          .execute();
-      }
-      for (const update of plan.eventUpdates) {
-        await manager
-          .getRepository(NFTHistoryEventEntity)
-          .save({ event_id: update.event_id, description: update.description });
-      }
-      for (const update of plan.legacyUpdates) {
-        await manager.getRepository(NFTHistory).save({
-          contract: plan.contract,
-          nft_id: plan.nft_id,
-          uri: update.uri,
-          description: update.description
-        });
-      }
+      await this.applyInTransaction(plan, manager);
       await afterWrite?.(manager);
     });
+  }
+  async applyInTransaction(
+    plan: HistoryWritePlan,
+    manager: EntityManager
+  ): Promise<void> {
+    const current = await this.snapshot(
+      plan.contract,
+      plan.nft_id,
+      manager,
+      true
+    );
+    if (historyFingerprint(current) !== plan.before)
+      throw new Error(
+        'History changed since plan preparation; regenerate the plan'
+      );
+    for (const { description, ...row } of plan.inserts) {
+      await manager
+        .getRepository(NFTHistoryEventEntity)
+        .createQueryBuilder()
+        .insert()
+        .values({ ...row, description: () => ':historyDescription' })
+        .setParameter(
+          'historyDescription',
+          description === null ? null : JSON.stringify(description)
+        )
+        .execute();
+    }
+    for (const update of plan.eventUpdates) {
+      await manager
+        .getRepository(NFTHistoryEventEntity)
+        .save({ event_id: update.event_id, description: update.description });
+    }
+    for (const update of plan.legacyUpdates) {
+      await manager.getRepository(NFTHistory).save({
+        contract: plan.contract,
+        nft_id: plan.nft_id,
+        uri: update.uri,
+        description: update.description
+      });
+    }
   }
 }
 
