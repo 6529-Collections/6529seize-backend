@@ -2294,7 +2294,11 @@ export class WaveApiService {
           );
         }
         if (Object.keys(patch).length === 0) {
-          return this.mapEditedWaveHub(before, actor, tx);
+          return {
+            wave: await this.mapEditedWaveHub(before, actor, tx),
+            changed: false,
+            groupIds: []
+          };
         }
         const after = applyWaveHubPatch(before, patch);
         await this.validateWaveHubUpdate(before, after, actor, groups, tx);
@@ -2326,21 +2330,30 @@ export class WaveApiService {
           { identityId: actor },
           tx
         );
-        return this.mapEditedWaveHub(after, actor, tx);
+        return {
+          wave: await this.mapEditedWaveHub(after, actor, tx),
+          changed: true,
+          groupIds: collections.distinct(
+            [
+              before.visibility_group_id,
+              before.chat_group_id,
+              before.admin_group_id,
+              after.visibility_group_id,
+              after.chat_group_id,
+              after.admin_group_id
+            ].filter((id): id is string => id !== null)
+          )
+        };
       },
       ctx
     );
-    if (!ctx.connection) {
+    if (!ctx.connection && result.changed) {
       await this.userGroupsService.onWaveRelatedGroupsChanged(
-        [
-          result.visibility.scope.group?.id ?? null,
-          result.chat.scope.group?.id ?? null,
-          result.wave.admin_group.group?.id ?? null
-        ],
+        result.groupIds,
         ctx
       );
     }
-    return result;
+    return result.wave;
   }
 
   async updateWave(

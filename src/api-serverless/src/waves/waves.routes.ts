@@ -982,8 +982,9 @@ router.post(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
 
-    // Legacy competition commands are accepted without mutating a competition.
+    // Keep the administration guard while ignoring the legacy pause command.
     const ctx = { timer, authenticationContext };
+    await waveApiService.updateWaveHub(id, {}, ctx);
     const groups = await getGroupsUserIsEligibleForReadContext(
       userGroupsService,
       ctx
@@ -1005,6 +1006,7 @@ router.delete(
     const authenticationContext = await getAuthenticationContext(req, timer);
 
     const ctx = { timer, authenticationContext };
+    await waveApiService.updateWaveHub(waveId, {}, ctx);
     const groups = await getGroupsUserIsEligibleForReadContext(
       userGroupsService,
       ctx

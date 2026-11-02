@@ -179,18 +179,19 @@ describe('WaveApiService updateWave immutability', () => {
     };
   }
 
-  it.each(['stranger', 'proxy'])(
+  it.each(['stranger', 'proxy', 'visibility-only'])(
     'rejects shared-wave edits from a %s',
     async (caller) => {
       const before = aWave({
         created_by: 'owner',
-        admin_group_id: null,
-        visibility_group_id: null
+        admin_group_id: caller === 'visibility-only' ? 'admins' : null,
+        visibility_group_id: caller === 'visibility-only' ? 'viewers' : null
       });
       const { service, wavesApiDb, ctx } = createService({
-        waveBeforeUpdate: before
+        waveBeforeUpdate: before,
+        eligibleGroups: ['viewers']
       });
-      if (caller === 'stranger')
+      if (caller !== 'proxy')
         ctx.authenticationContext =
           AuthenticationContext.fromProfileId('stranger');
       else

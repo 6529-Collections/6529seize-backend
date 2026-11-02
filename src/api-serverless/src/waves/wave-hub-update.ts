@@ -3,7 +3,9 @@ import { WaveEntity } from '@/entities/IWave';
 import { Time } from '@/time';
 
 function requested<T>(value: T | undefined, current: T): T {
-  return value === undefined ? current : value;
+  // Explicit null clears a value; only omission preserves the current setting.
+  if (value === undefined) return current;
+  return value;
 }
 
 export function applyWaveHubPatch<T extends WaveEntity>(

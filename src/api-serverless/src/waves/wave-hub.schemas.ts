@@ -12,11 +12,26 @@ import {
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 
 // Strip ignored legacy fields before applying any competition-specific schema.
+// participation.scope is never reinterpreted as chat access: competition inputs
+// must have no effect on wave settings, including on requests from old clients.
+const WAVE_PICTURE_HOST = 'd3lqz0a4bldqgf.cloudfront.net';
+export const WaveHubPictureSchema = Joi.string()
+  .uri({ scheme: ['https'] })
+  .custom((value: string, helpers) => {
+    const url = new URL(value);
+    if (
+      url.hostname !== WAVE_PICTURE_HOST ||
+      !value.startsWith(`https://${WAVE_PICTURE_HOST}/`)
+    ) {
+      return helpers.error('any.invalid');
+    }
+    return value;
+  })
+  .allow(null);
+
 export const UpdateWaveHubSchema = Joi.object<ApiUpdateWaveHubRequest>({
   name: Joi.string().min(1).max(250),
-  picture: Joi.string()
-    .pattern(/^https:\/\/d3lqz0a4bldqgf.cloudfront.net\//)
-    .allow(null),
+  picture: WaveHubPictureSchema,
   visibility: WaveVisibilitySchema,
   chat: Joi.object({
     scope: WaveScopeSchema,

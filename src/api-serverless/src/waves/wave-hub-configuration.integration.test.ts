@@ -7,11 +7,14 @@ import { ApiWaveType } from '@/api/generated/models/ApiWaveType';
 import { ApiUpdateWaveRequest } from '@/api/generated/models/ApiUpdateWaveRequest';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { UpdateWaveSchema, WaveSchema } from './wave-write.schemas';
+import { legacyWaveHubPatch } from './wave-hub.schemas';
 import {
+  COMPETITIONS_TABLE,
   DROPS_TABLE,
   MEMES_CONTRACT,
   WAVES_ARCHIVE_TABLE,
   WAVES_TABLE,
+  WAVE_METRICS_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE
 } from '@/constants';
 import { AuthenticationContext } from '@/auth-context';
@@ -23,7 +26,7 @@ import {
 import { DropsDb } from '@/drops/drops.db';
 import * as Entities from '@/entities/entities';
 import { UserGroupEntity } from '@/entities/IUserGroup';
-import { WaveCreditType, WaveEntity } from '@/entities/IWave';
+import { WaveCreditType, WaveEntity, WaveType } from '@/entities/IWave';
 import { RequestContext } from '@/request.context';
 import { sqlExecutor } from '@/sql-executor';
 import { resetTestDatabase } from '@/tests/_setup/testDatabase';
@@ -134,6 +137,9 @@ function serviceHarness() {
     'dm-members'
   ];
   const groups = {
+    getApiGroupsVisibleToRequesterByIds: jest.fn(async (ids: string[]) =>
+      ids.map((id) => ({ id }))
+    ),
     getApiGroupsByIds: jest.fn(async (ids: string[]) =>
       ids.map((id) => ({ id }))
     ),
@@ -258,7 +264,7 @@ function serviceHarness() {
     authenticationContext: AuthenticationContext.fromProfileId('creator'),
     timer: new Timer('native-hub-configuration')
   };
-  return { service, ctx, groupIds };
+  return { service, ctx, groupIds, groups };
 }
 
 function assertDisposableWaveSchema() {
@@ -574,12 +580,39 @@ describe('live native shared hub configuration', () => {
       isDirectMessage: false
     });
     await seedNativeOriginalPrimaryFixture({ ...original, serial_no: 1 });
+    await sqlExecutor.bulkInsert(
+      DROPS_TABLE,
+      [
+        {
+          id: 'surviving-shared-drop',
+          wave_id: entity.id,
+          author_id: 'creator',
+          created_at: 100,
+          drop_type: 'CHAT',
+          parts_count: 1
+        }
+      ],
+      ['id', 'wave_id', 'author_id', 'created_at', 'drop_type', 'parts_count']
+    );
+    await sqlExecutor.bulkInsert(
+      WAVE_METRICS_TABLE,
+      [{ wave_id: entity.id, drops_count: 1 }],
+      ['wave_id', 'drops_count']
+    );
+    const dropsBefore = await sqlExecutor.execute(
+      `select * from ${DROPS_TABLE} where wave_id=:id`,
+      { id: entity.id }
+    );
+    const metricsBefore = await sqlExecutor.execute(
+      `select * from ${WAVE_METRICS_TABLE} where wave_id=:id`,
+      { id: entity.id }
+    );
     const competitionsBefore = await sqlExecutor.execute(
-      'select * from competitions where wave_id=:id',
+      `select * from ${COMPETITIONS_TABLE} where wave_id=:id`,
       { id: entity.id }
     );
     const sharedBefore = await sqlExecutor.oneOrNull(
-      'select hub_participation_config,hub_voting_config from waves where id=:id',
+      `select hub_participation_config,hub_voting_config from ${WAVES_TABLE} where id=:id`,
       { id: entity.id }
     );
     const { service, ctx } = serviceHarness();
@@ -597,13 +630,13 @@ describe('live native shared hub configuration', () => {
     expect(edited.chat.slow_mode_cooldown_ms).toBe(1000);
     expect(
       await sqlExecutor.execute(
-        'select * from competitions where wave_id=:id',
+        `select * from ${COMPETITIONS_TABLE} where wave_id=:id`,
         { id: entity.id }
       )
     ).toEqual(competitionsBefore);
     expect(
       await sqlExecutor.oneOrNull(
-        'select hub_participation_config,hub_voting_config from waves where id=:id',
+        `select hub_participation_config,hub_voting_config from ${WAVES_TABLE} where id=:id`,
         { id: entity.id }
       )
     ).toEqual(sharedBefore);
@@ -622,6 +655,88 @@ describe('live native shared hub configuration', () => {
     expect(cleared?.chat_slow_mode_cooldown_ms).toBeNull();
     expect(cleared?.chat_links_disabled).toBeTruthy();
     expect(cleared?.name).toBe('Renamed shared wave');
+    expect(
+      await sqlExecutor.execute(
+        `select * from ${DROPS_TABLE} where wave_id=:id`,
+        { id: entity.id }
+      )
+    ).toEqual(dropsBefore);
+    expect(
+      await sqlExecutor.execute(
+        `select * from ${WAVE_METRICS_TABLE} where wave_id=:id`,
+        { id: entity.id }
+      )
+    ).toEqual(metricsBefore);
+  });
+
+  it('validates legacy access edits and invalidates old and new groups without editing competitions', async () => {
+    const request = chatRequest();
+    const entity = await mapper.createWaveToNewWaveEntity({
+      id: 'legacy-access-edit',
+      serial_no: null,
+      created_at: 100,
+      updated_at: null,
+      request,
+      created_by: 'creator',
+      descriptionDropId: 'legacy-access-description',
+      nextDecisionTime: null,
+      isDirectMessage: false
+    });
+    await repo.executeNativeQueriesInTransaction(async (connection) =>
+      repo.insertWave(entity, { connection })
+    );
+    await seedNativeOriginalPrimaryFixture({
+      ...entity,
+      type: WaveType.RANK,
+      serial_no: 1
+    });
+    const competitionsBefore = await sqlExecutor.execute(
+      `select * from ${COMPETITIONS_TABLE} where wave_id=:id`,
+      { id: entity.id }
+    );
+    const { service, ctx, groups } = serviceHarness();
+    groups.findGroupIdsWithMembersOutsideContainingGroup.mockResolvedValueOnce([
+      'participants'
+    ]);
+    await expect(
+      service.updateWaveHub(
+        entity.id,
+        { chat: { scope: { group_id: 'participants' } } },
+        ctx
+      )
+    ).rejects.toThrow('group members must also belong to the View group');
+    expect((await repo.findWaveHubById(entity.id, ctx))?.chat_group_id).toBe(
+      'chatters'
+    );
+    const patch = legacyWaveHubPatch({
+      ...request,
+      visibility: { scope: { group_id: null } },
+      chat: {
+        ...request.chat,
+        enabled: false,
+        scope: { group_id: 'participants' }
+      },
+      wave: { ...request.wave, admin_group: { group_id: 'voters' } }
+    });
+    const edited = await service.updateWaveHub(entity.id, patch, ctx);
+    expect(edited.chat.enabled).toBe(false);
+    expect(edited.wave.admin_group.group?.id).toBe('voters');
+    expect(groups.onWaveRelatedGroupsChanged).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        'viewers',
+        'chatters',
+        'admins',
+        'participants',
+        'voters'
+      ]),
+      ctx
+    );
+    expect(
+      await sqlExecutor.execute(
+        `select * from ${COMPETITIONS_TABLE} where wave_id=:id`,
+        { id: entity.id }
+      )
+    ).toEqual(competitionsBefore);
   });
 
   it('keeps original competition settings authoritative without replacing the shared hub policy', async () => {

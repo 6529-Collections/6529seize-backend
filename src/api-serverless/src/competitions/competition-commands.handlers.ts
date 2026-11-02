@@ -1,3 +1,4 @@
+import { WaveHubPictureSchema } from '@/api/waves/wave-hub.schemas';
 import { competitionDropVoteSummary } from './competition-drop-votes.service';
 import * as Joi from 'joi';
 import { ApiDropCompetitionContext } from '@/api/generated/models/ApiDropCompetitionContext';
@@ -119,10 +120,7 @@ export async function handleCreateWaveHubV3(
     Joi.object<ApiCreateWaveHubRequest>({
       idempotency_key: commandFields.idempotency_key,
       name: Joi.string().min(1).max(250).required(),
-      picture: Joi.string()
-        .uri({ scheme: ['https'] })
-        .allow(null)
-        .required(),
+      picture: WaveHubPictureSchema.required(),
       description_drop: NewWaveDropSchema.required(),
       visibility: WaveVisibilitySchema.required(),
       chat: WaveChatSchema.required(),

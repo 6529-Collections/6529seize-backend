@@ -74,6 +74,22 @@ describe('wave-only HTTP contracts', () => {
       )
     ).toEqual({ name: 'New name' });
   });
+  it.each([
+    'https://d3lqz0a4bldqgf.cloudfront.net.evil.com/a.png',
+    'https://d3lqz0a4bldqgfXcloudfrontXnet/a.png',
+    'http://d3lqz0a4bldqgf.cloudfront.net/a.png'
+  ])('rejects an untrusted picture URL %s', (picture) => {
+    expect(() =>
+      getValidatedByJoiOrThrow({ picture }, UpdateWaveHubSchema)
+    ).toThrow();
+  });
+  it('does not reinterpret legacy competition access as chat access', () => {
+    const request = {
+      ...legacy,
+      participation: { scope: { group_id: 'competition-only' } }
+    } as unknown as ApiUpdateWaveRequest;
+    expect(legacyWaveHubPatch(request).chat?.scope?.group_id).toBeNull();
+  });
   it('still rejects invalid shared settings', () => {
     expect(() =>
       getValidatedByJoiOrThrow(
