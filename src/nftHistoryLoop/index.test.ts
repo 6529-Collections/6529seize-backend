@@ -1,5 +1,6 @@
 import { doInDbContext } from '@/secrets';
 import { findNFTHistory } from '@/nft_history';
+import { runSourceReplay } from '@/nft-history/source-replay';
 import { runHistoryReplay } from '@/nft-history/replay';
 import {
   NFTHistory,
@@ -14,6 +15,10 @@ jest.mock('@/secrets', () => ({
   doInDbContext: jest.fn(async (fn: () => Promise<unknown>) => fn())
 }));
 jest.mock('@/nft_history', () => ({ findNFTHistory: jest.fn() }));
+jest.mock('@/nft-history/source-replay', () => ({
+  ...jest.requireActual('@/nft-history/source-replay'),
+  runSourceReplay: jest.fn().mockResolvedValue({ sourceReceipt: true })
+}));
 jest.mock('@/nft-history/replay', () => ({
   runHistoryReplay: jest.fn().mockResolvedValue({ receipt: true })
 }));
@@ -63,4 +68,18 @@ it('retains the existing scheduled ingestion behavior', async () => {
 it('rejects malformed requests before opening a database context', async () => {
   await expect(invoke({ ...payload, toBlock: 4000 })).rejects.toThrow();
   expect(doInDbContext).not.toHaveBeenCalled();
+});
+
+it('routes source-recovery audits without registering or changing the normal checkpoint', async () => {
+  const sourceRequest = { ...payload, mode: 'nft-history-source-replay' };
+  await expect(invoke(sourceRequest)).resolves.toEqual({ sourceReceipt: true });
+  expect(runSourceReplay).toHaveBeenCalledWith(
+    sourceRequest,
+    expect.any(Function)
+  );
+  expect(findNFTHistory).not.toHaveBeenCalled();
+  const options = jest.mocked(doInDbContext).mock.calls[0][1];
+  expect(options?.entities).not.toContain(NFTHistoryBlock);
+  expect(options?.syncEntities).toBe(false);
+  expect(options?.skipRedis).toBe(true);
 });

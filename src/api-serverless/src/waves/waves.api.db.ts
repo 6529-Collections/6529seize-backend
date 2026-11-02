@@ -98,7 +98,8 @@ import {
 import { serializeWaveHubConfiguration } from '@/waves/wave-hub-configuration';
 import {
   withoutLegacyCompetitionGetFacade,
-  legacyGetView
+  legacyGetView,
+  waveHubSelectColumns
 } from '@/competitions/legacy-competition-get-facade';
 
 const logger = Logger.get('WAVES_API_DB');
@@ -1055,6 +1056,33 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       ...this.parseWaveEntity(entity),
       last_drop_time: entity.last_drop_time
     };
+  }
+
+  public async findWaveHubById(
+    id: string,
+    forUpdate: boolean,
+    ctx: RequestContext
+  ): Promise<WaveEntityWithLastDropTime | null> {
+    const timerName = `${this.constructor.name}->findWaveHubById`;
+    ctx.timer?.start(timerName);
+    try {
+      if (forUpdate && !ctx.connection) {
+        throw new Error('Locking a wave requires a transaction');
+      }
+      const row = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.oneOrNull<RawWaveEntityWithLastDropTime>(
+          `select ${waveHubSelectColumns()}, coalesce(wm.latest_drop_timestamp,0) as last_drop_time
+         from ${WAVES_TABLE} w
+         left join ${WAVE_METRICS_TABLE} wm on wm.wave_id=w.id
+         where w.id=:id ${forUpdate ? 'for update' : ''}`,
+          { id },
+          ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        )
+      );
+      return row ? this.parseWaveEntityWithLastDropTime(row) : null;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   public async findWaveById(
