@@ -380,6 +380,7 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     'full',
     'maintenance',
     'nft-history-events',
+    'nft-history-replay',
     'wallet-transfer-analysis',
     'claims-media-upload',
     'nft-link-page-retry',

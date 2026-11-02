@@ -24,6 +24,7 @@ it('requires an explicit bounded range and fixed cutoff', () => {
     { fromBlock: -1 },
     { fromBlock: '100' },
     { toBlock: Infinity },
+    { toBlock: 200.5 },
     { toBlock: 99 },
     { toBlock: 2100, cutoffBlock: 2100 },
     { cutoffBlock: 150 },
@@ -54,4 +55,10 @@ it('rejects scheduled replay and malformed replay payloads', () => {
   ).toThrow();
   expect(() => parseReplayRequest({ ...request, mode: 'replay' })).toThrow();
   expect(() => parseReplayRequest({ action: 'apply', jobId })).toThrow();
+});
+
+it('identifies the invalid block field in a malformed request', () => {
+  expect(() => parseReplayRequest({ ...request, cutoffBlock: 300.5 })).toThrow(
+    'Invalid replay cutoffBlock'
+  );
 });

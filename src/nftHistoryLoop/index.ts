@@ -33,6 +33,7 @@ export const handler = sentryContext.wrapLambdaHandler(
             NFTHistoryEventEntity,
             NFTHistoryReplayJobEntity
           ],
+          syncEntities: false,
           skipRedis: true
         }
       );

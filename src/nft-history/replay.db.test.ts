@@ -6,6 +6,7 @@ import { NftHistoryDb } from './history.db';
 import { NftHistoryReplayDb } from './replay.db';
 import { prepareHistoryWrite } from './processor';
 import { ClaimEvent } from './claim-events';
+import { ReplayManifest, manifestDigest } from './replay-manifest';
 
 jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
   getEthereumRpcClient: () => ({
@@ -30,6 +31,16 @@ const candidate = (block: number): ClaimEvent => ({
   claim_id: '12345',
   transaction_date: new Date(block * 1000)
 });
+const manifest: ReplayManifest = {
+  version: 1,
+  range: { fromBlock: 2, toBlock: 3, cutoffBlock: 100 },
+  cutoffHash: 'cutoff',
+  windowEndHash: 'end',
+  entries: [],
+  failures: []
+};
+const digest = manifestDigest(manifest);
+const createJob = () => replay.create(jobId, digest, manifest.range, manifest);
 const describe = async (from: string, to: string) => ({
   event: 'Edit' as const,
   changes: [{ key: 'uri', from, to }]
@@ -55,19 +66,6 @@ beforeEach(async () => {
       transaction_date: new Date(1000),
       description: { event: 'Mint', changes: [] }
     });
-  await replay.create(
-    jobId,
-    'a'.repeat(64),
-    { fromBlock: 2, toBlock: 3, cutoffBlock: 100 },
-    {
-      version: 1,
-      range: { fromBlock: 2, toBlock: 3, cutoffBlock: 100 },
-      cutoffHash: 'cutoff',
-      windowEndHash: 'end',
-      entries: [],
-      failures: []
-    }
-  );
 });
 afterEach(async () => {
   await getDataSource()
@@ -81,6 +79,7 @@ afterEach(async () => {
 });
 
 it('commits event and cursor atomically and rolls both back on a cursor conflict', async () => {
+  await createJob();
   const first = await prepareHistoryWrite(
     candidate(2),
     await db.snapshot(contract, 550001),
@@ -105,13 +104,20 @@ it('commits event and cursor atomically and rolls both back on a cursor conflict
 });
 
 it('never upserts or rewinds a previously approved job', async () => {
+  await createJob();
+  await getDataSource().transaction((manager) =>
+    replay.advance(manager, jobId, 0)
+  );
+  const replacement = { ...manifest, windowEndHash: 'different-end' };
   await expect(
     replay.create(
       jobId,
-      'b'.repeat(64),
-      { fromBlock: 2, toBlock: 3, cutoffBlock: 100 },
-      {} as never
+      manifestDigest(replacement),
+      replacement.range,
+      replacement
     )
-  ).rejects.toThrow();
-  expect((await replay.find(jobId))!.digest).toBe('a'.repeat(64));
+  ).rejects.toThrow(/Duplicate entry/);
+  const stored = (await replay.find(jobId))!;
+  expect(stored.digest).toBe(digest);
+  expect(stored.next_index).toBe(1);
 });

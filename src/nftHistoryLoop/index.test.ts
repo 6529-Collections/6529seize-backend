@@ -1,7 +1,13 @@
 import { doInDbContext } from '@/secrets';
 import { findNFTHistory } from '@/nft_history';
 import { runHistoryReplay } from '@/nft-history/replay';
-import { NFTHistoryBlock } from '@/entities/INFTHistory';
+import {
+  NFTHistory,
+  NFTHistoryBlock,
+  NFTHistoryClaim
+} from '@/entities/INFTHistory';
+import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
+import { NFTHistoryReplayJobEntity } from '@/entities/INFTHistoryReplayJob';
 import { handler } from './index';
 
 jest.mock('@/secrets', () => ({
@@ -38,8 +44,14 @@ it('returns replay results and never runs the scheduled checkpoint path', async 
   expect(runHistoryReplay).toHaveBeenCalledWith(payload, expect.any(Function));
   const options = jest.mocked(doInDbContext).mock.calls[0][1];
   expect(options?.skipRedis).toBe(true);
+  expect(options?.entities).toEqual([
+    NFTHistory,
+    NFTHistoryClaim,
+    NFTHistoryEventEntity,
+    NFTHistoryReplayJobEntity
+  ]);
   expect(options?.entities).not.toContain(NFTHistoryBlock);
-  expect(options?.syncEntities).not.toBe(true);
+  expect(options?.syncEntities).toBe(false);
 });
 
 it('retains the existing scheduled ingestion behavior', async () => {
