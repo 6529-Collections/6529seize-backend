@@ -1,6 +1,7 @@
 import { Interface, JsonRpcProvider, makeError } from 'ethers';
 import { lookupPrimaryEnsName } from '@/ens-lookup';
 import { getRpcProvider } from '@/rpc-provider';
+import { createEnsRefreshProvider } from '@/refreshEnsLoop/ens-refresh-lookup';
 
 jest.mock('@/rpc-provider', () => ({ getRpcProvider: jest.fn() }));
 jest.mock('@/logging', () => ({
@@ -15,53 +16,67 @@ const abi = new Interface([
   'error OffchainLookup(address sender, string[] urls, bytes callData, bytes4 callbackFunction, bytes extraData)'
 ]);
 
-it('completes the ethers off-chain lookup and callback on the same provider', async () => {
-  const provider = new JsonRpcProvider('https://rpc.example.test', 1, {
-    staticNetwork: true
-  });
-  jest.mocked(getRpcProvider).mockReturnValue(provider);
-  jest.spyOn(provider, 'lookupAddress').mockResolvedValue(null);
-  const fetch = jest
-    .spyOn(provider, 'ccipReadFetch')
-    .mockResolvedValue('0x1234');
-  const calls = jest
-    .spyOn(provider, '_perform')
-    .mockImplementation(async (req) => {
-      if (req.method !== 'call')
-        throw new Error('Unexpected provider operation');
-      const tx = req.transaction;
-      if (tx.data?.startsWith(abi.getFunction('reverse')!.selector)) {
-        throw makeError('OffchainLookup', 'CALL_EXCEPTION', {
-          action: 'call',
-          transaction: { to: resolver, data: tx.data },
-          data: abi.encodeErrorResult('OffchainLookup', [
-            resolver,
-            ['https://gateway.example.test/{data}'],
-            '0xabcd',
-            abi.getFunction('reverseCallback')!.selector,
-            '0xbeef'
-          ]),
-          reason: null,
-          invocation: null,
-          revert: null
-        });
-      }
-      expect(tx.to?.toLowerCase()).toBe(resolver.toLowerCase());
-      expect(tx.data).toBe(
-        abi.encodeFunctionData('reverseCallback', ['0x1234', '0xbeef'])
-      );
-      return abi.encodeFunctionResult('reverse', [
-        'offchain.eth',
-        resolver,
-        resolver
-      ]);
-    });
+it.each(['shared', 'refresh'])(
+  'completes the ethers off-chain lookup and callback on the %s provider',
+  async (kind) => {
+    const originalUrl = process.env.ETHEREUM_RPC_URL;
+    process.env.ETHEREUM_RPC_URL = 'https://rpc.example.test';
+    const provider =
+      kind === 'refresh'
+        ? createEnsRefreshProvider(10_000)
+        : new JsonRpcProvider('https://rpc.example.test', 1, {
+            staticNetwork: true
+          });
+    if (kind === 'refresh')
+      jest
+        .spyOn(provider, 'getNetwork')
+        .mockResolvedValue((await import('ethers')).Network.from(1));
+    jest.mocked(getRpcProvider).mockReturnValue(provider);
+    jest.spyOn(provider, 'lookupAddress').mockResolvedValue(null);
+    const fetch = jest
+      .spyOn(provider, 'ccipReadFetch')
+      .mockResolvedValue('0x1234');
+    const calls = jest
+      .spyOn(provider, '_perform')
+      .mockImplementation(async (req) => {
+        if (req.method !== 'call')
+          throw new Error('Unexpected provider operation');
+        const tx = req.transaction;
+        if (tx.data?.startsWith(abi.getFunction('reverse')!.selector)) {
+          throw makeError('OffchainLookup', 'CALL_EXCEPTION', {
+            action: 'call',
+            transaction: { to: resolver, data: tx.data },
+            data: abi.encodeErrorResult('OffchainLookup', [
+              resolver,
+              ['https://gateway.example.test/{data}'],
+              '0xabcd',
+              abi.getFunction('reverseCallback')!.selector,
+              '0xbeef'
+            ]),
+            reason: null,
+            invocation: null,
+            revert: null
+          });
+        }
+        expect(tx.to?.toLowerCase()).toBe(resolver.toLowerCase());
+        expect(tx.data).toBe(
+          abi.encodeFunctionData('reverseCallback', ['0x1234', '0xbeef'])
+        );
+        return abi.encodeFunctionResult('reverse', [
+          'offchain.eth',
+          resolver,
+          resolver
+        ]);
+      });
 
-  try {
-    await expect(lookupPrimaryEnsName(wallet)).resolves.toBe('offchain.eth');
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(calls).toHaveBeenCalledTimes(2);
-  } finally {
-    provider.destroy();
+    try {
+      await expect(lookupPrimaryEnsName(wallet)).resolves.toBe('offchain.eth');
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(calls).toHaveBeenCalledTimes(2);
+    } finally {
+      provider.destroy();
+      if (originalUrl === undefined) delete process.env.ETHEREUM_RPC_URL;
+      else process.env.ETHEREUM_RPC_URL = originalUrl;
+    }
   }
-});
+);

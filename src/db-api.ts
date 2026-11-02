@@ -1,4 +1,8 @@
 import {
+  historyReadSource,
+  HISTORY_PUBLIC_FIELDS
+} from '@/nft-history/history-read';
+import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -15,7 +19,6 @@ import {
   MEMES_EXTENDED_DATA_TABLE,
   MEMES_SEASONS_TABLE,
   NFT_OWNERS_TABLE,
-  NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
   NULL_ADDRESS,
@@ -1553,12 +1556,13 @@ export async function fetchNftHistory(
   };
 
   return fetchPaginated(
-    NFTS_HISTORY_TABLE,
+    historyReadSource(),
     params,
-    `transaction_date desc`,
+    `block desc, transaction_index desc, log_index desc, transaction_hash desc`,
     pageSize,
     page,
-    filter
+    filter,
+    HISTORY_PUBLIC_FIELDS
   );
 }
 

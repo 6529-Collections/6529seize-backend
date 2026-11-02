@@ -12,6 +12,7 @@ import {
   DROPS_TABLE,
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   COMPETITIONS_TABLE,
+  COMPETITION_ENTRIES_TABLE,
   COMPETITION_PAUSES_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
@@ -88,10 +89,17 @@ import { buildWaveNameSearchSql } from '@/api/waves/wave-name-search';
 import { competitionRepository } from '@/competitions/competition.repository';
 import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 import { DbPoolName } from '@/db-query.options';
+import {
+  anonymousCompetitionEntrySql,
+  competitionAnonymityViewerId,
+  publicCompetitionDropSql
+} from '@/competitions/competition-anonymity';
+
 import { serializeWaveHubConfiguration } from '@/waves/wave-hub-configuration';
 import {
   withoutLegacyCompetitionGetFacade,
-  legacyGetView
+  legacyGetView,
+  waveHubSelectColumns
 } from '@/competitions/legacy-competition-get-facade';
 
 const logger = Logger.get('WAVES_API_DB');
@@ -258,6 +266,23 @@ export interface WaveMentionOverview {
   admin_group_id: string | null;
   voting_group_id: string | null;
   is_direct_message: boolean | null;
+}
+
+function profileWaveActivityTimestampSql(): string {
+  return `(case when exists (
+    select 1 from ${COMPETITION_ENTRIES_TABLE} private_activity_entry
+    join ${COMPETITIONS_TABLE} private_activity_competition
+      on private_activity_competition.id = private_activity_entry.competition_id
+    where private_activity_entry.wave_id = w.id
+      and private_activity_entry.submitter_id = :profileId
+      and private_activity_entry.submitter_id <> coalesce(:anonymityViewerId, '')
+      and ${anonymousCompetitionEntrySql('private_activity_entry', 'private_activity_competition')}
+  ) then coalesce((
+    select max(public_activity_drop.created_at) from ${DROPS_TABLE} public_activity_drop
+    where public_activity_drop.wave_id = w.id
+      and public_activity_drop.author_id = :profileId
+      and ${publicCompetitionDropSql('public_activity_drop', 'anonymityViewerId')}
+  ), 0) else coalesce(wdm.latest_drop_timestamp, 0) end)`;
 }
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
@@ -1031,6 +1056,33 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       ...this.parseWaveEntity(entity),
       last_drop_time: entity.last_drop_time
     };
+  }
+
+  public async findWaveHubById(
+    id: string,
+    forUpdate: boolean,
+    ctx: RequestContext
+  ): Promise<WaveEntityWithLastDropTime | null> {
+    const timerName = `${this.constructor.name}->findWaveHubById`;
+    ctx.timer?.start(timerName);
+    try {
+      if (forUpdate && !ctx.connection) {
+        throw new Error('Locking a wave requires a transaction');
+      }
+      const row = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.oneOrNull<RawWaveEntityWithLastDropTime>(
+          `select ${waveHubSelectColumns()}, coalesce(wm.latest_drop_timestamp,0) as last_drop_time
+         from ${WAVES_TABLE} w
+         left join ${WAVE_METRICS_TABLE} wm on wm.wave_id=w.id
+         where w.id=:id ${forUpdate ? 'for update' : ''}`,
+          { id },
+          ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        )
+      );
+      return row ? this.parseWaveEntityWithLastDropTime(row) : null;
+    } finally {
+      ctx.timer?.stop(timerName);
+    }
   }
 
   public async findWaveById(
@@ -2227,7 +2279,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findCreatedProfileWaveActivity`;
     ctx.timer?.start(timerKey);
     try {
-      const latestPostTimestamp = 'coalesce(wdm.latest_drop_timestamp, 0)';
+      const latestPostTimestamp = profileWaveActivityTimestampSql();
       const hasQualifyingPost = `case when ${latestPostTimestamp} > 0 then 1 else 0 end`;
       const cursorFilter = cursor
         ? `and (
@@ -2293,6 +2345,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         `,
         {
           profileId,
+          anonymityViewerId: competitionAnonymityViewerId(ctx),
           eligibleGroups,
           limit,
           cursorHasQualifyingPost: cursor?.hasQualifyingPost,
@@ -2329,11 +2382,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findRecentProfileWaveActivity`;
     ctx.timer?.start(timerKey);
     try {
+      const latestPostTimestamp = profileWaveActivityTimestampSql();
       const cursorFilter = cursor
         ? `and (
-            wdm.latest_drop_timestamp < :cursorLatestPostTimestamp
+            ${latestPostTimestamp} < :cursorLatestPostTimestamp
             or (
-              wdm.latest_drop_timestamp = :cursorLatestPostTimestamp
+              ${latestPostTimestamp} = :cursorLatestPostTimestamp
               and wdm.wave_id < :cursorWaveId
             )
           )`
@@ -2350,13 +2404,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               then 1 else 0
             end as is_private,
             coalesce(wm.drops_count, 0) as total_drops_count,
-            wdm.latest_drop_timestamp as target_latest_post_timestamp
+            ${latestPostTimestamp} as target_latest_post_timestamp
           from ${WAVE_DROPPER_METRICS_TABLE} wdm
           join ${legacyGetView(WAVES_TABLE)} w on w.id = wdm.wave_id
           left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
           left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id
           where wdm.dropper_id = :profileId
-            and wdm.latest_drop_timestamp > 0
+            and ${latestPostTimestamp} > 0
             and (w.is_direct_message = false or w.is_direct_message is null)
             and (
               w.parent_wave_id is null
@@ -2370,11 +2424,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               'eligibleGroups'
             )}
             ${cursorFilter}
-          order by wdm.latest_drop_timestamp desc, wdm.wave_id desc
+          order by target_latest_post_timestamp desc, wdm.wave_id desc
           limit :limit
         `,
         {
           profileId,
+          anonymityViewerId: competitionAnonymityViewerId(ctx),
           eligibleGroups,
           limit,
           cursorLatestPostTimestamp: cursor?.latestPostTimestamp,

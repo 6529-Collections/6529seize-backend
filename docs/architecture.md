@@ -30,6 +30,47 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Anonymous competition submissions
+
+Native competition participation configuration can opt into
+`anonymous_submissions`, defaulting to false and fixed after publication. Real
+drop and entry ownership remains internal. Shared public read and delivery
+policies replace unrevealed authors with an entry-specific anonymous profile;
+author-filtered searches and profile activity exclude those entries before
+pagination. Authenticated owners retain private management access. A saved
+`won_at` reveals only that entry, including in rolling competitions; other
+entries by the same author remain anonymous. User-submitted content and metadata
+are retained as submitted. Unrevealed anonymous entries do not inherit account
+blocks, preventing block-and-check identification; explicit drop hiding and
+platform moderation remain effective. Related author notices bypass account
+blocks and identity mutes only while their submitter remains anonymous;
+ordinary actor, wave and notification-category filters remain effective.
+Deleting an unrevealed submission retains
+a withdrawn membership tombstone so historical author activity stays private.
+
+The existing API, push notifications, Help Bot reply worker and media sanitizer
+share the identity presentation policy, including nested quote/reply and
+WebSocket fallback payloads. Newsletter source queries omit unrevealed entries
+before exposing their author attribution to the publishing pipeline. New drop
+uploads use random public object paths and keep ownership in existing private
+upload records. Legacy owner-bearing upload paths remain compatible for public
+submissions; anonymous entries require a fresh upload instead. Privacy decisions read the writer database to
+avoid exposing identities while a read replica catches up. A missing freshly
+committed membership would otherwise be mistaken for a public entry, even on
+connectionless reads. Every drop reader checks membership for the entire batch,
+including ordinary-looking chat drops: the legacy GET facade presents native
+sibling competition content as chat, so its projected drop type cannot establish
+whether an author is public. Push delivery batches unique entry IDs once per recipient
+batch, and WebSocket delivery batches embedded entries once per broadcast,
+skipping empty audiences. Request-local deduplication never survives a transaction
+or crosses viewers. Competition vote activity is an uncached viewer-scoped REST
+response; its frontend query key includes the connected and proxy profiles.
+The feature uses
+existing JSON configuration and winner records, without a new schema, queue,
+Lambda or environment variable. Deploy affected backend delivery workers and
+the video conversion invoker's compatible media-path reader before the API
+accepts the new setting, then deploy the frontend creation control.
+
 ## Meme collaborator invitations
 
 Artwork submissions retain one author, voting result and minting claim. The API
@@ -529,7 +570,7 @@ through `1a-staging` without deploying this service there. See
 | `nftsLoop`                               | Discover, refresh, and audit NFTs.                                                                                                                                  |
 | `transactionsLoop`                       | Index MEMES, Gradients, and Meme Lab transfers.                                                                                                                     |
 | `nftOwnersLoop`                          | Maintain current owner balance snapshots.                                                                                                                           |
-| `nftHistoryLoop`                         | Maintain ownership history.                                                                                                                                         |
+| `nftHistoryLoop`                         | Maintain NFT metadata history.                                                                                                                                         |
 | `delegationsLoop`                        | Sync delegation.cash and consolidation data.                                                                                                                        |
 | `nextgenContractLoop`                    | Index NextGen contract events.                                                                                                                                      |
 | `nextgenMetadataLoop`                    | Refresh NextGen metadata.                                                                                                                                           |
@@ -599,7 +640,7 @@ reset behavior, and the required writer-before-collector deployment order.
 | `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                          | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
 | `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                            | Resolve external NFT links.                                                                                                 |
 | `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                      |
-| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable.      |
+| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable; also content-free `e2ee_wake` notifications for encrypted chats. |
 | `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                       |
 | `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                         |
 | `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
@@ -660,6 +701,22 @@ not part of this release. Recovery deliberately stops at the rotated session's
 expiry and never extends it. The legacy 30-second allowance starts at the
 successful rotation's `last_used_at`; repeated recovery does not reset it.
 
+### Native push logout reconciliation
+
+Push installation logout persists its original revocation targets on the client.
+When logout precedes the first registration, the API requires a live native
+session before writing a fence scoped to that installation secret. An optional
+`reconciliation_sessions` supplies connected-account proofs when the original
+targets are missing or no longer live; at least one must be live. These proofs
+authorize only this fence and are not revoked unless also present in `sessions`.
+Existing installation credentials, legacy
+token ownership checks, and revision ordering still apply. Replayed logout cannot
+delete profiles registered after the acknowledged revision.
+
+Deploy `api` before the frontend uses the optional proof. Existing clients remain
+compatible, and no schema or notification-worker deployment is needed. Retain
+this API support while new clients are deployed; roll back the frontend first.
+
 ## Main Data Flows
 
 1. Client requests enter through API Gateway and land in `seizeAPI`.
@@ -699,6 +756,21 @@ configured ordinary provider and explicitly enables CCIP-Read for off-chain
 ENS records. Fallback errors retain their null result and emit only allowlisted
 categories, separating resolver reverts from transport and off-chain failures
 without logging raw errors or revert arguments.
+
+ENS refresh uses an isolated provider per wallet with a ten-second total lookup
+deadline, shortened to the remaining work budget. It owns and cancels both RPC
+and CCIP gateway HTTP requests, retaining mainnet verification and CCIP callback
+handling. Refresh reserves at least one minute for persistence and teardown.
+Resolver-controlled CCIP gateway requests require public IP literals and public
+DNS answers pinned to the connection, including on redirects. The configured RPC
+endpoint retains its trusted network policy. Redirects strip credentials across
+origins, and HTTP responses and decoded gzip output are limited to one MiB.
+Provider failures preserve the cached name and timestamp; failed wallets are
+excluded from subsequent batches in that invocation and retried on the next
+schedule. Successful lookups, including authoritative resolver absence, retain
+the existing persistence behavior. Refresh stops after 500 unavailable lookups
+per invocation to bound retry-exclusion query size during an outage. Discovery and other ENS callers keep their
+existing lookup contract.
 
 `NFT_INDEXER_RPC` remains the independently configured external-indexing/NFT-link
 capacity boundary. The unused API-root AWS Managed Blockchain `/rpc` proxy,
@@ -1087,6 +1159,11 @@ Rolling fleet counters distinguish widespread throttling, a persistent outage ev
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
 
+`/e2ee/...` is the end-to-end encrypted messaging delivery service (D109),
+behind `E2EE_DMS_ENABLED` (off in production). It is a ciphertext-only
+orderer for MLS groups; see [End-to-end encrypted messaging](#end-to-end-encrypted-messaging-d109)
+below and [e2ee-messaging.md](./e2ee-messaging.md).
+
 `GET /tdh/rules` publishes current TDH boost definitions evaluated against the
 latest completed snapshot's eligible Meme card range. The latest row in
 `tdh_blocks` is the completion marker because consolidation persists its TDH
@@ -1162,6 +1239,18 @@ because changing a value can move an entry across page boundaries. The frontend
 invalidates the scoped My Votes query after each confirmed vote. The existing
 competition/voter index restricts reads to that actor's allocations; an additional
 sort index is deferred until query-plan evidence justifies a schema rollout.
+Wave metadata and Configuration edits use `PATCH /v3/waves/{wave_id}` with
+partial wave-owned fields. Omitted fields are retained; nullable fields can be
+cleared explicitly. The command locks the physical shared wave, archives its
+revision and preserves both stored hub policies without changing any competition.
+V3 wave reads expose the shared `configuration`, independent of the original
+competition projection. Legacy wave creation and editing accept and discard
+competition settings before validation; competition configuration mutations use
+the competition commands exclusively. Legacy wave pause commands are accepted
+without changing pauses. Compatibility wave names come from shared wave metadata;
+competition titles remain separately owned. Refresh the compatibility views with
+`dbMigrationsLoop` before deploying `api` and then the frontend.
+
 Creating a hub always creates a
 CHAT wave; competition creation is a separate native command. Historical RANK/APPROVE wire types are projected from native original-primary
 configuration; shared wave storage no longer owns a competition type.
@@ -1281,7 +1370,12 @@ Important API responsibilities:
   requested with `client_type=native` or `client_type=desktop`. Both formats
   complete all semantic and wallet-signature checks before a final atomic nonce
   consumption. The full auth contract is documented in
-  [Wallet Authentication](auth/wallet-auth.md).
+  [Wallet Authentication](auth/wallet-auth.md). Web SIWE logins can also grant
+  a browser Ed25519 device key (`device_grants`) that then signs drop creates,
+  edits, deletes and reactions; the API verifies and stores those events in
+  `device_signed_events` and `drop_author_signatures` and serves them at
+  `/drops/{dropId}/signed-events`. See the device signing grants section of
+  that document.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
   subscriptions, and notifications. Wallet distribution allocation reads
   combine Phase 0–2 distribution rows with Public subscription airdrops, while
@@ -1356,6 +1450,29 @@ are checked before replacing a Wave-referenced group, and runtime privilege
 flags remain intersected with View eligibility if group criteria later drift.
 
 The waves v2 read boundary keeps timeline, reply-thread, and curation feeds as separate contracts. `/v2/waves/{id}/drops` returns the wave timeline feed, `/v2/drops/{id}/replies` returns the reply thread for a root drop after resolving its owning visible wave, and `/v2/waves/{id}/curations/{curation_id}/drops` returns drops for one wave curation.
+
+Quick Vote's legacy `GET /waves/{id}/undiscovered-drop` remains compatible,
+while `GET /waves/{id}/undiscovered-drops` returns up to four ordered previews
+with one pair of exact counts. Both use the original legacy competition's
+active native entries and an indexed fallback for retained participatory drops
+without a projected native status. Votes and skips remain scoped to the acting
+profile; zero allocations are unrated, and either sign of nonzero allocation is
+rated. A single aggregate computes total unrated and unskipped unrated counts.
+Counts and previews are separate replica reads and may reflect concurrent vote
+or skip changes. This best-effort ordering applies to both the batch window and
+legacy single-drop offsets; neither endpoint promises a cross-request snapshot.
+A short unskipped read fills available remaining slots from skipped drops, up to
+the requested limit; concurrently exhausted skipped rows can still shorten it.
+Preview windows place newest unskipped drops before skipped drops ordered by
+oldest skip time, then newest drop time and serial number. These native reads
+bypass compatibility SQL rewriting; full drop mapping still uses the ordinary
+visibility and voting projections. The frontend keeps its primary request
+independent and reuses its footer cache,
+then batches the missing lookahead slots with a bounded offset. Ready primary
+candidates render before background previews; each cold window needs at most
+two count aggregates, or one when the primary is already cached. This adds no
+schema or worker;
+deploy only `api` before the dependent frontend in each environment.
 
 Current vote-allocation summaries use separate card and detail read paths.
 V2 rank-wave leaderboard responses can add an optional
@@ -1552,10 +1669,34 @@ delivery fails open and the unfiltered notifications are inserted. The
 combined user-facing “Direct messages and wave activity” category, including
 new-wave, all-drops subscription, and priority-alert causes.
 
+Inbound direct-message admission has one decision point:
+`DirectMessageAdmissionService`
+(`src/api-serverless/src/direct-messages/direct-message-admission.service.ts`,
+pure rules in `src/direct-messages/direct-message-admission.ts`). It reads each
+recipient's policy, chosen group, follow relationship, and blocks in both
+directions in one set-based query, then decides in this order: a sender who
+blocked the recipient is told so; a recipient's block refuses with the generic
+"doesn't accept new messages" reason and is never disclosed; then `EVERYONE`,
+`PEOPLE_I_FOLLOW`, `NOBODY`, or `GROUP_MEMBERS`. `GROUP_MEMBERS` admits members
+of `direct_message_group_id`, evaluated with the platform group eligibility
+rules when the conversation starts (always fresh inside the creation
+transaction; non-transactional checks may reuse a result for 30 seconds per
+sender and group), and, while `direct_message_allow_people_i_follow` is on,
+people the recipient follows. A missing, hidden, or direct-message group fails
+closed to `PEOPLE_I_FOLLOW`, and the preferences API reports
+`direct_message_group_unavailable` so settings can warn. Refusals are 403s with
+stable `DM_*` codes plus the recipient handle; a group is named only when it is
+public. Legacy DM creation calls the service inside the group-creation
+transaction. E2EE eligibility, key-package claims and roster additions call the
+shared instance in `direct-message-admission.instance.ts` (roster additions
+inside the roster transaction with recipient rows locked); a target's block
+maps to `POLICY` there and only the caller's own block to `BLOCKED`.
+
 Roll out this table and its dependent workloads in this order:
 
 1. `dbMigrationsLoop` creates `profile_preferences` with legacy-compatible
-   defaults.
+   defaults (including the nullable `direct_message_group_id` and
+   `direct_message_allow_people_i_follow`, default true).
 2. Deploy `api` for preference endpoints, direct-message admission, and API
    notification writers.
 3. Deploy the `subscriptionsDaily` stack (including
@@ -1744,11 +1885,30 @@ finishes, to deliver the universe phase through `xtdh-start.fifo`. A partial TDH
 reconsolidation from `delegationsLoop` instead enqueues one universe phase
 directly after its persistence and checkpoint writes complete. After either
 universe transaction commits, `xTdhLoop` enqueues a stats phase back to that
-FIFO queue, using the same FIFO message group as the universe message when one
+FIFO queue, using the same FIFO message group as the first universe request when one
 is available and the queue's default FIFO group otherwise. That shared message
 group is what orders each universe phase before its stats phase; the SQS event
-source batch size stays at `1` and Lambda reserved concurrency stays at `1` to
-avoid parallel xTDH work across groups. The stats phase rebuilds the inactive
+source batch size is `10` in
+`src/xTdhLoop/serverless.yaml` at `functions.xTdhLoop.events[0].sqs.batchSize`.
+Lambda reserved
+concurrency stays at `1` to avoid parallel xTDH work across groups.
+The handler coalesces each delivered batch into one operation. Any universe
+request selects one universe calculation and one replacement stats request;
+that replacement covers stats requests included in the same batch. A stats-only
+batch performs one stats rebuild. Requests from different FIFO groups can share
+the same global refresh, with the replacement stats message using the first
+universe request's group. The invocation succeeds only after the selected work
+finishes, including enqueueing replacement stats after the universe commits.
+Any failure rejects the entire batch for SQS retry. Conflict reporting uses the
+highest receive count in the batch and reports unknown metadata conservatively.
+Requests arriving during a calculation remain queued for a later invocation.
+SQS can deliver smaller batches; there is no FIFO batching window. Batch
+enablement follows verification of the batch-capable handler with batch size `1`
+in each environment. To roll back, revert the batch-enablement change and deploy
+`xTdhLoop` through the ordinary workflow. Verify the live event-source mapping is
+back at `1` before reverting batch-aware handling. The deployment-contract tests
+lock the batch limit, single-worker concurrency, and whole-batch retry policy.
+The stats phase rebuilds the inactive
 xTDH stats slot and activates it only after the rebuild succeeds; a redelivered
 stats message truncates and refills the inactive slot again before activation.
 Each grant/token stats `INSERT ... SELECT` runs in a dedicated `READ COMMITTED`
@@ -2160,6 +2320,82 @@ against the pinned address. Funding never grants settings or on-chain admin righ
 
 ## Architecture Notes
 
+### End-to-end encrypted messaging (D109)
+
+The API serves 35 generated `x-6529-router` routes under `/e2ee/...`
+(handlers in `src/api-serverless/src/e2ee/`, database and pure helpers in
+`src/e2ee/`). They are on only when `E2EE_DMS_ENABLED` is `true`, or when it is
+unset and `NODE_ENV` is `local` or `development`; otherwise they return 404
+`E2EE_DISABLED`. Clients run MLS; the backend verifies wallet-signed device
+grants (EIP-712, EIP-1271 on mainnet), stores wrapped ciphertext, and orders
+key changes: per-group transactions lock the `e2ee_groups` row first, entries
+must be signed by the stored epoch commit key, the first commit per epoch
+wins (unique `e2ee_log (group_handle, commit_epoch)` and the
+`e2ee_group_epochs` primary key back this up), and messages are accepted only
+for the current epoch. Delivery rosters (`e2ee_group_roster`) bound what each
+device can read by epoch window.
+
+New tables, created by `dbMigrationsLoop` entity sync: `e2ee_devices`,
+`e2ee_key_packages`, `e2ee_groups`, `e2ee_group_epochs`, `e2ee_group_roster`,
+`e2ee_log`, `e2ee_welcomes`, `e2ee_welcome_deliveries`, `e2ee_blobs`,
+`e2ee_blob_chunks`, `e2ee_reports`, `e2ee_report_access_log`,
+`e2ee_push_throttle`, `e2ee_rate_counters`, and for encrypted message-history
+backups `e2ee_backups`, `e2ee_backup_chunks` and `e2ee_ciphertext_objects`
+(the MySQL implementation of the `E2eeCiphertextStore` object-store interface,
+which an S3 store can replace). Their SQL is a private query
+family: statements and bound values never reach logs. Encrypted attachment
+chunk bytes sit behind `E2eeBlobStore`: MySQL (`e2ee_blob_chunks.data`, the
+default) or private S3 objects at `<E2EE_BLOB_S3_PREFIX>/<blob_id>/<index>`
+(`E2EE_BLOB_STORE=s3`; SSE-S3, no ACL, no CDN, streamed through the API after
+its membership checks). Each blob records its `storage` and exact S3
+location and is only read or deleted there; sizes stay in MySQL for the
+per-profile quotas (200 MiB per rolling 24 h, 1 GiB live), and pruning on
+every upload deletes S3 objects before rows. Misconfigured storage
+fails closed with 503 `E2EE_STORAGE_UNAVAILABLE`. The operator-only
+`dbMigrationsLoop` scope `e2ee-blobs-to-s3` copies MySQL blobs to S3 with
+read-back hash checks (dry run by default).
+`E2EE_ATTACHMENTS_ENABLED=false` (on by default) is a kill switch that makes
+the blob routes refuse before any database access. History backups
+(`/e2ee/backup`, `/e2ee/backups/...`) store only client ciphertext per profile
+(256 MiB quota) and have their own kill switch, `E2EE_BACKUPS_ENABLED=false`. Reports (severe-harm categories only) are read
+only by content moderators (the content-moderation queue's check) and the
+optional `E2EE_TRUST_AND_SAFETY_GROUP_ID` group through
+`/e2ee/trust-and-safety/...`, with every read written to
+`e2ee_report_access_log`, and are deleted after 180 days unless on hold. Rate limits are
+DB-backed fixed windows, and retention runs opportunistically in the API
+(no new Lambda). E2EE reads use the primary pool.
+
+After commit, the API sends best-effort WebSocket hints to primary
+connections (`E2EE_GROUP_EVENT`, `E2EE_WELCOME`, `E2EE_DEVICE_ADDED`,
+`E2EE_DEVICE_REVOKED`, `E2EE_ROSTER_CHANGED`; items inline only up to 16 KiB)
+and, throttled to one per (profile, group) per 60 s through
+`e2ee_push_throttle`, enqueues `{ "type": "e2ee_wake", "profile_ids", "reason" }`
+on the existing `firebase-push-notifications` queue.
+`pushNotificationsHandler` turns these into content-free FCM notifications
+(title `6529`, fixed body, `redirect: "e2ee"`, no sender, group or text) for
+every registered device of profiles whose "Direct messages" notifications are
+on. No AI or moderation pipeline reads E2EE data. Deployment order:
+`dbMigrationsLoop`, then `pushNotificationsHandler`, then `api`.
+
+### Unencrypted DM retention (D146)
+
+Unencrypted ("legacy") DMs are waves with `is_direct_message` whose chat
+group is a DM group. From `LEGACY_DM_DELETION_CUTOFF` (default
+2026-12-01T00:00Z, `src/legacy-dm/legacy-dm-retention.ts`) the API refuses
+new drops in them and new DMs with `403 LEGACY_DM_CLOSED`. Their content is
+then deleted, except conversations under a legal hold (the CLI's `execute`
+requires `LEGACY_DM_HELD_WAVES` and never selects a held wave), by an
+explicit operator CLI, not a Lambda:
+`ops/scripts/legacy-dm-purge/cli.ts` (`plan` dry run, `execute`,
+`media-plan`, `media-execute`) over the table inventory in
+`src/legacy-dm/legacy-dm-purge.inventory.ts`, whose test fails when a new
+table references drops or waves without being listed. Media bytes in the
+images, ingest and attachments buckets are deleted from a write-ahead
+manifest. Backups and the rest of the procedure:
+[legacy-dm-deletion-runbook.md](./legacy-dm-deletion-runbook.md).
+`dbDumpsDaily` dumps a reviewed allowlist of public chain tables
+(`src/dbDumpsDaily/db-dumps-daily-tables.ts`).
+
 ### Private artwork documentation archive
 
 The dedicated processor also exposes closed IAM-only invocation actions for release
@@ -2489,6 +2725,13 @@ are retained for 14 days and have a visible-message CloudWatch alarm on the exis
 alarm topic. Repeated consolidation drift therefore cannot block the FIFO group
 until source retention expires. Deploying `xTdhLoop` also provisions these resources.
 
+Identity snapshot conflicts use a dedicated error type. For a single SQS record
+with a valid receive count, attempts one through four log a warning without a
+Sentry error. The invocation still fails, preserving rollback and SQS retry.
+Attempt five and later, missing/invalid retry metadata, and all other failures
+remain reportable. Conflict Sentry events include the receive count and retry
+limit; the existing dead-letter alarm remains the exhaustion backstop.
+
 ### Transfer reconciliation after late indexing
 
 Independent contract indexers atomically queue per-wallet `owners` and `activity`
@@ -2612,3 +2855,24 @@ confirmations and gas ceilings. Deployment supplies the stage to API/handlers/in
 wallet/reporting identities remain in regional secrets. Launch and preparation keep
 independent environment switches and default-Off UI controls. Signed-intent recovery
 continues with launch execution Off. A receiver mismatch still blocks execution.
+### NFT metadata history
+
+`nftHistoryLoop` discovers history by creator contract and verified extension events, independently of transaction sender. Claim initialization, zero-address ERC1155 mint logs (including public paid mints), URI logs, and claim updates share one ordered decoder/planner. Direct zero-value calls to the creator contracts cover eventless top-level `setTokenURI` writes. Creator-scoped claim mappings come from verified initialization receipts and historical claim state, never from an assumption that claim ID equals token ID. The first positive claim mint supplies the Mint baseline; later editions do not create more Mint rows. Existing baselines are preserved. Finalized blocks are processed in up to five 200-block windows per invocation, with discovery split into 20-block chunks. The checkpoint advances only after every source transaction in a block commits; retries begin at the next block and repeat all transactions of an interrupted block idempotently. Completed block prefixes survive time-budget exhaustion or later failures. A failed decode, missing earlier baseline, or metadata fetch prevents advancement past its block. Unlisted claim logs incidentally present in a mint receipt are ignored; audit-explicit unlisted logs remain failures for review. Mapping/history writes for one source transaction are atomic and insert-only for Mint baselines.
+
+Claim updates use additive `nfts_history_events` storage keyed by Ethereum transaction/log identity. The legacy URI-keyed `nfts_history` table and its primary key are preserved. Settings-only updates retain an audit row with no Timeline description. The API combines both tables and suppresses a legacy row only when its transaction is represented by an event for that NFT. A return to an earlier URI remains a separate edit. Historical insertion reconciles the immediate successor diff with an optimistic snapshot check and transaction-scoped row locks.
+
+Metadata downloads use the shared decentralized gateway catalog, validate every redirect, and enforce a streamed byte limit and one deadline across fallback attempts. Unsupported HTTPS origins fail the window for explicit policy review.
+
+The explicit `dbMigrationsLoop` scope `nft-history-events` synchronizes only the new event entity. Required service order is schema creation, `api`, then `nftHistoryLoop`; no frontend contract regeneration is required because the history response shape is unchanged.
+
+Manual `nft-history-replay` invocations reuse the event decoder and history processor with an isolated additive `nfts_history_replay_jobs` receipt/cursor table. Dry-run is read-only; apply is disabled by default and binds a UUID job to a reviewed manifest digest. Event writes and replay cursor advancement share a transaction, and bounded resume never advances the scheduled ingestion checkpoint. The explicit `nft-history-replay` schema scope creates only the job entity. No new scheduled service, queue, or public API is introduced. The additional manual mode `nft-history-source-replay` uses the same sender-independent source planner to recover missing claim mappings and Mint baselines, as well as edits. Its version-2 manifest and mode-qualified request prevent reuse of an old update-only job ID; existing version-1 jobs remain compatible. Dry-run uses an in-memory chronological overlay and writes nothing. Each approved source transaction commits its mapping/history changes and cursor together. The existing apply flag, finalized anchors, bounds, UUID identity and fresh-digest checks remain mandatory; source replay never registers the scheduled checkpoint entity. No additional schema synchronization or public API deployment is required once the original history event/job tables exist.
+
+### Private drop bookmarks
+
+The API owns private bookmark writes, the paginated `/drops-bookmarked/` list,
+and `/drops-bookmarked/status` count and optional per-drop state. These resolve
+the authenticated owner independently of an active proxy, apply the owner's wave
+read eligibility, and reuse the existing drop bookmark table. Private state is
+not delegated or emitted as public activity. `ApiWaveMin.is_direct_message`
+allows saved-message links to select the correct conversation shell. This runs
+in `api`; no additional worker or schema deployment is required.

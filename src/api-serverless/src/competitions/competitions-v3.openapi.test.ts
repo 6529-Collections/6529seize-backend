@@ -9,6 +9,7 @@ const yaml = require('js-yaml') as {
 type OpenApiOperation = Record<string, any>;
 type OpenApiDocument = {
   readonly paths: Record<string, { readonly get?: OpenApiOperation }>;
+  readonly components: { readonly schemas: Record<string, OpenApiOperation> };
 };
 
 const openapi = yaml.load(
@@ -63,6 +64,14 @@ describe('competition v3 OpenAPI contract', () => {
         operation.responses[status].content['application/json'].schema
       ).toEqual({ $ref: '#/components/schemas/ApiCompetitionError' });
     }
+  });
+
+  it('adds the voter profile as an optional field so older clients keep working', () => {
+    const voter = openapi.components.schemas.ApiCompetitionVoter;
+    expect(voter.required).toEqual(['profile_id', 'votes', 'credit_spent']);
+    expect(voter.properties.voter.allOf).toEqual([
+      { $ref: '#/components/schemas/ApiProfileMin' }
+    ]);
   });
 
   it('uses one direction type with operation-specific defaults', () => {

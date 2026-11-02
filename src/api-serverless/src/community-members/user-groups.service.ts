@@ -106,8 +106,8 @@ import {
   profilePreferencesDb,
   ProfilePreferencesDb
 } from '@/profile-preferences/profile-preferences.db';
-import { ProfileDirectMessagePolicy } from '@/entities/IProfilePreferences';
 import { ConnectionWrapper } from '@/sql-executor';
+import { DirectMessageAdmissionService } from '@/api/direct-messages/direct-message-admission.service';
 
 import { performance } from 'node:perf_hooks';
 import { randomInt } from 'node:crypto';
@@ -239,12 +239,29 @@ async function resolveEligibilityReads<T extends readonly unknown[]>(reads: {
 export class UserGroupsService {
   public static readonly GENERATED_VIEW = 'user_groups_view';
 
+  /**
+   * Shared inbound DM admission (blocks, DM policy, group membership). Other
+   * conversation-creation paths use the same instance through
+   * `direct-message-admission.instance.ts`.
+   */
+  public readonly directMessageAdmission: DirectMessageAdmissionService;
+
   constructor(
     private readonly userGroupsDb: UserGroupsDb,
     private readonly abusivenessCheckService: AbusivenessCheckService,
     private readonly metricsRecorder: MetricsRecorder,
-    private readonly profilePreferences: ProfilePreferencesDb = profilePreferencesDb
-  ) {}
+    private readonly profilePreferences: ProfilePreferencesDb = profilePreferencesDb,
+    directMessageAdmission?: DirectMessageAdmissionService
+  ) {
+    this.directMessageAdmission =
+      directMessageAdmission ??
+      new DirectMessageAdmissionService({
+        preferences: this.profilePreferences,
+        groups: this,
+        groupNames: (groups, ctx) =>
+          moderationPresentationService.groupNames(groups, ctx)
+      });
+  }
 
   private async timeAsync<T>(
     timer: Timer | undefined,
@@ -458,39 +475,18 @@ export class UserGroupsService {
             creatorProfile.id!,
             connection
           );
-        this.assertDirectMessageRecipientsAllowed(
-          uniqueIdentityAddresses,
-          lockedRecipients
+        if (lockedRecipients.length !== uniqueIdentityAddresses.length) {
+          throw new BadRequestException(`Invalid identity addresses.`);
+        }
+        await this.directMessageAdmission.assertRecipientsAdmitted(
+          creatorProfile.id!,
+          lockedRecipients,
+          { connection, timer: ctx.timer }
         );
         const handles = lockedRecipients.map((recipient) => recipient.handle);
         return `DM - ${[creatorProfile.handle, ...handles].join(' / ')}`;
       }
     );
-  }
-
-  private assertDirectMessageRecipientsAllowed(
-    identityAddresses: string[],
-    recipients: Awaited<
-      ReturnType<ProfilePreferencesDb['getDirectMessageRecipients']>
-    >
-  ): void {
-    if (recipients.length !== identityAddresses.length) {
-      throw new BadRequestException(`Invalid identity addresses.`);
-    }
-    const blockedRecipient = recipients.find(
-      (recipient) =>
-        recipient.direct_message_policy === ProfileDirectMessagePolicy.NOBODY ||
-        (recipient.direct_message_policy ===
-          ProfileDirectMessagePolicy.PEOPLE_I_FOLLOW &&
-          !recipient.follows_creator)
-    );
-    if (!blockedRecipient) return;
-    const message =
-      blockedRecipient.direct_message_policy ===
-      ProfileDirectMessagePolicy.PEOPLE_I_FOLLOW
-        ? `You can't start a new direct message with @${blockedRecipient.handle} because they only accept messages from people they follow.`
-        : `You can't start a new direct message with @${blockedRecipient.handle} because they don't accept new direct messages.`;
-    throw new ForbiddenException(message);
   }
 
   private async whichOfGivenGroupsIsUserEligibleFor(

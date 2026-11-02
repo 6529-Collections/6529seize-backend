@@ -131,6 +131,7 @@ export {
 } from './INextGen';
 export { LabExtendedData, LabNFT, MemesExtendedData, NFT } from './INFT';
 export { NFTHistory, NFTHistoryBlock, NFTHistoryClaim } from './INFTHistory';
+export { NFTHistoryEventEntity } from './INFTHistoryEvent';
 export {
   ConsolidatedNFTOwner,
   NFTOwner,
@@ -292,6 +293,10 @@ export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalid
 export * from './IDropForgeLaunch';
 export * from './IDropForgeEvidence';
 export * from './IDropForgeSettings';
+export { DeviceGrantEntity } from './IDeviceGrant';
+export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
+export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export * from './IE2ee';
 export {
   MemeCollaborationEntity,
   MemeCollaborationInvitationEntity
@@ -303,3 +308,5 @@ export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock'
 export * from './IVotingCreditRelease';
 export * from './ITransactionScanCheckpoint';
 export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
+
+export { NFTHistoryReplayJobEntity } from './INFTHistoryReplayJob';

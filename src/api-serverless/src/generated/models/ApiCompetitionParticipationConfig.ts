@@ -13,6 +13,10 @@
 import { HttpFile } from '../http/http';
 
 export class ApiCompetitionParticipationConfig {
+    /**
+    * Competition creation option. Conceal each submission author from other users until that entry wins. Fixed when published; defaults to false.
+    */
+    'anonymous_submissions'?: boolean;
     'group_id': string | null;
     'signature_required': boolean;
     'max_entries_per_participant': number | null;
@@ -30,6 +34,12 @@ export class ApiCompetitionParticipationConfig {
     static readonly mapping: {[index: string]: string} | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
+        {
+            "name": "anonymous_submissions",
+            "baseName": "anonymous_submissions",
+            "type": "boolean",
+            "format": ""
+        },
         {
             "name": "group_id",
             "baseName": "group_id",

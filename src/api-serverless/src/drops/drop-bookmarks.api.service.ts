@@ -11,6 +11,8 @@ import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiDropsPage } from '../generated/models/ApiDropsPage';
 import { ApiPageSortDirection } from '../generated/models/ApiPageSortDirection';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { AuthenticationContext } from '@/auth-context';
+import { ApiDropBookmarksStatus } from '@/api/generated/models/ApiDropBookmarksStatus';
 
 export class DropBookmarksApiService {
   constructor(
@@ -21,7 +23,7 @@ export class DropBookmarksApiService {
   ) {}
 
   async bookmarkDrop(dropId: string, ctx: RequestContext): Promise<ApiDrop> {
-    const identityId = ctx.authenticationContext?.getActingAsId();
+    const identityId = ctx.authenticationContext?.getLoggedInUsersProfileId();
     if (!identityId) {
       throw new ForbiddenException(
         'You need to create a profile before you can bookmark drops'
@@ -54,7 +56,8 @@ export class DropBookmarksApiService {
         const drops = await this.dropsMappers.convertToDropFulls(
           {
             dropEntities: [dropEntity],
-            authenticationContext: ctx.authenticationContext
+            authenticationContext:
+              AuthenticationContext.fromProfileId(identityId)
           },
           connection
         );
@@ -64,7 +67,7 @@ export class DropBookmarksApiService {
   }
 
   async unbookmarkDrop(dropId: string, ctx: RequestContext): Promise<ApiDrop> {
-    const identityId = ctx.authenticationContext?.getActingAsId();
+    const identityId = ctx.authenticationContext?.getLoggedInUsersProfileId();
     if (!identityId) {
       throw new ForbiddenException(
         'You need to create a profile before you can unbookmark drops'
@@ -97,13 +100,51 @@ export class DropBookmarksApiService {
         const drops = await this.dropsMappers.convertToDropFulls(
           {
             dropEntities: [dropEntity],
-            authenticationContext: ctx.authenticationContext
+            authenticationContext:
+              AuthenticationContext.fromProfileId(identityId)
           },
           connection
         );
         return drops[0];
       }
     );
+  }
+
+  async getBookmarkStatus(
+    ctx: RequestContext,
+    dropId?: string
+  ): Promise<ApiDropBookmarksStatus> {
+    const identityId = ctx.authenticationContext?.getLoggedInUsersProfileId();
+    if (!identityId) {
+      throw new ForbiddenException(
+        'You need to create a profile before you can view bookmarks'
+      );
+    }
+    const groups = await this.userGroupsService.getGroupsUserIsEligibleFor(
+      identityId,
+      ctx.timer
+    );
+    const count = await this.dropBookmarksDb.countBookmarkedDropsForIdentity(
+      {
+        identity_id: identityId,
+        wave_id: null,
+        group_ids_user_is_eligible_for: groups
+      },
+      ctx.connection
+    );
+    if (!dropId) return { count };
+    const accessibleDrop = await this.dropsDb.findDropByIdWithEligibilityCheck(
+      dropId,
+      groups,
+      ctx.connection
+    );
+    const bookmarked =
+      !!accessibleDrop &&
+      (await this.dropBookmarksDb.isDropBookmarkedByIdentity(
+        { identity_id: identityId, drop_id: dropId },
+        ctx.connection
+      ));
+    return { count, bookmarked };
   }
 
   async getBookmarkedDrops(
@@ -115,7 +156,7 @@ export class DropBookmarksApiService {
     },
     ctx: RequestContext
   ): Promise<ApiDropsPage> {
-    const identityId = ctx.authenticationContext?.getActingAsId();
+    const identityId = ctx.authenticationContext?.getLoggedInUsersProfileId();
     if (!identityId) {
       throw new ForbiddenException(
         'You need to create a profile before you can view bookmarked drops'
@@ -163,7 +204,7 @@ export class DropBookmarksApiService {
     const drops = await this.dropsMappers.convertToDropFulls(
       {
         dropEntities: orderedDropEntities,
-        authenticationContext: ctx.authenticationContext
+        authenticationContext: AuthenticationContext.fromProfileId(identityId)
       },
       ctx.connection
     );

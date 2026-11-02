@@ -34,6 +34,10 @@ export class ApiRevokePushInstallationRequest {
     */
     'profile_id'?: string;
     'sessions': Array<ApiPushLogoutSession>;
+    /**
+    * Optional native session proofs authorizing a credential-scoped fence when logout preceded the first push registration and its original sessions are missing or no longer live. At least one must be live. These sessions are not revoked unless also listed in sessions. They never prove installation ownership or bypasses an existing installation credential.
+    */
+    'reconciliation_sessions'?: Array<ApiPushLogoutSession>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -85,6 +89,12 @@ export class ApiRevokePushInstallationRequest {
         {
             "name": "sessions",
             "baseName": "sessions",
+            "type": "Array<ApiPushLogoutSession>",
+            "format": ""
+        },
+        {
+            "name": "reconciliation_sessions",
+            "baseName": "reconciliation_sessions",
             "type": "Array<ApiPushLogoutSession>",
             "format": ""
         }    ];

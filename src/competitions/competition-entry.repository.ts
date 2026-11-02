@@ -1,4 +1,5 @@
 import { assembleLegacyDropContent } from '@/competitions/competition-entry-content-source';
+import { anonymousCompetitionEntrySql } from '@/competitions/competition-anonymity';
 import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_ENTRY_CONTENT_VERSIONS_TABLE,
@@ -333,9 +334,20 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
         ctx
       );
     }
+    // Keep the anonymity decision after content deletion: historical activity
+    // still references the drop and must not reveal a losing author later.
+    await this.rows(
+      'retainAnonymousEntry',
+      `update ${COMPETITION_ENTRIES_TABLE} e join ${COMPETITIONS_TABLE} c on c.id=e.competition_id
+       set e.status='WITHDRAWN', e.withdrawn_at=coalesce(e.withdrawn_at,:now)
+       where e.id=:entryId and ${anonymousCompetitionEntrySql('e', 'c')}`,
+      { entryId, now: Date.now() },
+      ctx
+    );
     await this.rows(
       'deleteEntry',
-      `delete from ${COMPETITION_ENTRIES_TABLE} where id=:entryId`,
+      `delete e from ${COMPETITION_ENTRIES_TABLE} e left join ${COMPETITIONS_TABLE} c on c.id=e.competition_id
+       where e.id=:entryId and not coalesce(${anonymousCompetitionEntrySql('e', 'c')}, false)`,
       { entryId },
       ctx
     );

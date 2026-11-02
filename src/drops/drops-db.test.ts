@@ -79,6 +79,7 @@ describe('DropsDb', () => {
       term: '+loo* +good*',
       likeTerm: 'loo good',
       author_id: 'author-1',
+      anonymityViewerId: '',
       after: 100,
       before: 200,
       limit: 21,
@@ -101,6 +102,7 @@ describe('DropsDb', () => {
     expect(params).toEqual({
       wave_id: 'wave-1',
       author_id: 'author-1',
+      anonymityViewerId: '',
       limit: 20,
       offset: 0
     });
@@ -125,7 +127,8 @@ describe('DropsDb', () => {
     expect(params).toEqual({
       wave_id: 'wave-1',
       handle: 'a\\_li',
-      limit: 10
+      limit: 10,
+      anonymityViewerId: null
     });
   });
 
@@ -330,6 +333,7 @@ describe('DropsDb', () => {
       wave_id: 'wave-1',
       author_id: 'author-1',
       drop_type: DropType.PARTICIPATORY,
+      anonymityViewerId: null,
       limit: 51,
       offset: 50
     });
