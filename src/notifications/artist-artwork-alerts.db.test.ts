@@ -8,6 +8,14 @@ import { competitionEventRepository } from '@/competitions/competition-event.rep
 
 const eventId = randomUUID();
 
+function barrier() {
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { ready, release };
+}
+
 describeWithSeed(
   'Independent artist artwork preferences',
   [
@@ -172,6 +180,105 @@ describeWithSeed(
         )
       ).toEqual([42]);
       expect(notify).not.toHaveBeenCalled();
+    });
+
+    it('transfers a source receipt committed after the merge transaction establishes its snapshot', async () => {
+      jest.spyOn(Date, 'now').mockReturnValue(1);
+      await db.setEnabled({ subscriberId: 'source', artistId: 'artist' }, true);
+      await sqlExecutor.execute(
+        `insert into ${tables.COMPETITION_OUTBOX_TABLE}
+        (id,competition_id,wave_id,semantic_key,event,created_at,next_attempt_at,attempts)
+        values (:eventId,'competition','wave','concurrent-event','{}',1,1,0)`,
+        { eventId }
+      );
+      const sourceLocked = barrier();
+      const finishSource = barrier();
+      const mergeStarted = barrier();
+      const delivery = competitionEventRepository.applyEffect(
+        eventId,
+        'artwork:source',
+        async (ctx) => {
+          expect(
+            await db.isEnabled(
+              { subscriberId: 'source', artistId: 'artist', submittedAt: 2 },
+              ctx
+            )
+          ).toBe(true);
+          sourceLocked.release();
+          await finishSource.ready;
+          return [42];
+        }
+      );
+      await sourceLocked.ready;
+      const merge = sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          // This consistent read establishes a snapshot before delivery commits.
+          expect(
+            await sqlExecutor.execute(
+              `select * from ${tables.COMPETITION_EVENT_EFFECTS_TABLE}`,
+              {},
+              { wrappedConnection: connection }
+            )
+          ).toEqual([]);
+          const pending = db.mergeProfile('source', 'target', { connection });
+          mergeStarted.release();
+          await pending;
+        }
+      );
+      await mergeStarted.ready;
+      finishSource.release();
+      await Promise.all([delivery, merge]);
+      expect(await recipients(2)).toEqual([]);
+      const duplicate = jest.fn().mockResolvedValue([43]);
+      expect(
+        await competitionEventRepository.applyEffect(
+          eventId,
+          'artwork:target',
+          duplicate
+        )
+      ).toEqual([42]);
+      expect(duplicate).not.toHaveBeenCalled();
+    });
+
+    it('does not notify a stale source recipient when delivery overlaps a committed preference merge', async () => {
+      jest.spyOn(Date, 'now').mockReturnValue(1);
+      await db.setEnabled({ subscriberId: 'source', artistId: 'artist' }, true);
+      const preferencesMoved = barrier();
+      const finishMerge = barrier();
+      const merge = sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await db.mergeProfile('source', 'target', { connection });
+          preferencesMoved.release();
+          await finishMerge.ready;
+        }
+      );
+      await preferencesMoved.ready;
+      const notify = jest.fn().mockResolvedValue([42]);
+      const delivery = competitionEventRepository.applyEffect(
+        eventId,
+        'artwork:source',
+        async (ctx) => {
+          if (
+            !(await db.isEnabled(
+              { subscriberId: 'source', artistId: 'artist', submittedAt: 2 },
+              ctx
+            ))
+          )
+            return [];
+          return notify();
+        }
+      );
+      finishMerge.release();
+      await Promise.all([delivery, merge]);
+      expect(notify).not.toHaveBeenCalled();
+      expect(await recipients(2)).toEqual(['target']);
+      await competitionEventRepository.applyEffect(
+        eventId,
+        'artwork:target',
+        notify
+      );
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(await recipients(2)).toEqual([]);
     });
 
     it('finds a merged subscriber even when its ID sorts before a completed recipient', async () => {
