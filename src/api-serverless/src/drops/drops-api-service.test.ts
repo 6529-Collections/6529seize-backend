@@ -4,7 +4,12 @@ jest.mock('@/api/api-helpers', () => ({
 
 import { AuthenticationContext } from '@/auth-context';
 import { directMessageWaveDisplayService } from '@/api/waves/direct-message-wave-display.service';
-import { BadRequestException, ForbiddenException } from '@/exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '@/exceptions';
+import { ProfileProxyActionType } from '@/entities/IProfileProxyAction';
 import { wavesApiDb } from '../waves/waves.api.db';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { DropsApiService } from './drops.api.service';
@@ -15,6 +20,9 @@ import { userNotifier } from '@/notifications/user.notifier';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { WaveType } from '@/entities/IWave';
+import { DropType } from '@/entities/IDrop';
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
+import { ApiLightDrop } from '@/api/generated/models/ApiLightDrop';
 
 afterEach(() => {
   jest.clearAllMocks();
@@ -79,6 +87,17 @@ describe('DropsApiService', () => {
     wave?: Record<string, unknown> | null;
   } = {}) {
     const dropsDb = {
+      findDropById: jest.fn().mockResolvedValue({
+        id: 'drop-1',
+        author_id: 'author-1',
+        wave_id: 'wave-1'
+      }),
+      findDropByIdWithEligibilityCheck: jest.fn().mockResolvedValue({
+        id: 'drop-1',
+        author_id: 'author-1',
+        wave_id: 'wave-1'
+      }),
+      findDropByIdWithoutEligibilityCheck: jest.fn(),
       findLatestDrops: jest.fn().mockResolvedValue([]),
       findLatestDropsSimple: jest.fn().mockResolvedValue([]),
       findDropsByCurationPriorityOrder: jest
@@ -139,6 +158,9 @@ describe('DropsApiService', () => {
     const apiDropMapper = {
       mapDrops: jest.fn().mockResolvedValue({})
     };
+    const moderationDb = {
+      getPresentations: jest.fn().mockResolvedValue({})
+    };
 
     return {
       service: new DropsApiService(
@@ -150,11 +172,13 @@ describe('DropsApiService', () => {
         {} as any,
         metricsRecorder as any,
         wsListenersNotifier as any,
-        apiDropMapper as any
+        apiDropMapper as any,
+        moderationDb as any
       ),
       dropsDb,
       dropsMappers,
       apiDropMapper,
+      moderationDb,
       curationsDb,
       userGroupsService,
       metricsRecorder,
@@ -165,6 +189,209 @@ describe('DropsApiService', () => {
       } as any
     };
   }
+
+  describe('findLightDrops', () => {
+    it.each(Object.values(DropType))(
+      'keeps V1 authors as strings while concealing an unrevealed entry presented as %s',
+      async (dropType) => {
+        const { service, dropsDb, ctx } = createService();
+        const ids = ['unrevealed-entry', 'revealed-entry'];
+        dropsDb.findLightDropIdsByWave.mockResolvedValue(
+          ids.map((id) => ({ id }))
+        );
+        dropsDb.findLightDropsByIds.mockResolvedValue(
+          ids.map((id, index) => ({
+            id,
+            wave_id: 'wave-1',
+            wave_name: 'Wave 1',
+            author: 'RealArtist',
+            created_at: 1,
+            serial_no: index + 1,
+            drop_type: dropType,
+            title: 'Entry',
+            part_content: 'Submission',
+            medias_json: '[]'
+          }))
+        );
+        const hiddenDropIds = jest
+          .spyOn(competitionAnonymityService, 'hiddenDropIds')
+          .mockResolvedValue(new Set(['unrevealed-entry']));
+
+        const result: ApiLightDrop[] = await service.findLightDrops(
+          {
+            waveId: 'wave-1',
+            limit: 10,
+            max_serial_no: null,
+            min_serial_no: null,
+            older_first: false
+          },
+          ctx
+        );
+
+        expect(hiddenDropIds).toHaveBeenCalledWith(ids, ctx);
+        expect(result.map(({ author }) => author)).toEqual([
+          'Anonymous',
+          'RealArtist'
+        ]);
+        expect(result.every(({ author }) => typeof author === 'string')).toBe(
+          true
+        );
+        expect(JSON.parse(JSON.stringify(result))[0].author).toBe('Anonymous');
+        expect(ApiLightDrop.getAttributeTypeMap()).toContainEqual({
+          name: 'author',
+          baseName: 'author',
+          type: 'string',
+          format: ''
+        });
+      }
+    );
+  });
+
+  describe('findViewableDropByIdOrThrow', () => {
+    const params = {
+      dropId: 'drop-1',
+      unavailableMessage: 'Artwork unavailable'
+    };
+
+    it('keeps the full-drop lookup available for internal broadcasts', async () => {
+      const { service, dropsDb, dropsMappers, ctx } = createService();
+      const entity = { id: 'drop-1', author_id: 'author-1', wave_id: 'wave-1' };
+      const apiDrop = makeApiDrop();
+      dropsDb.findDropByIdWithoutEligibilityCheck.mockResolvedValue(entity);
+      dropsMappers.convertToDropFulls.mockResolvedValue([apiDrop]);
+
+      await expect(
+        service.findDropByIdOrThrow(
+          { dropId: 'drop-1', skipEligibilityCheck: true },
+          ctx
+        )
+      ).resolves.toBe(apiDrop);
+      expect(dropsDb.findDropByIdWithEligibilityCheck).not.toHaveBeenCalled();
+      expect(dropsMappers.convertToDropFulls).toHaveBeenCalledWith(
+        {
+          dropEntities: [entity],
+          authenticationContext: ctx.authenticationContext
+        },
+        undefined
+      );
+    });
+
+    it('checks eligibility and moderation without mapping full drop data', async () => {
+      const {
+        service,
+        dropsDb,
+        dropsMappers,
+        userGroupsService,
+        moderationDb,
+        ctx
+      } = createService();
+      userGroupsService.getGroupsUserIsEligibleFor.mockResolvedValue([
+        'read-group'
+      ]);
+      ctx.connection = { connection: 'request-connection' };
+      const drop = await service.findViewableDropByIdOrThrow(params, ctx);
+
+      expect(drop).toMatchObject({ id: 'drop-1', author_id: 'author-1' });
+
+      expect(dropsDb.findDropByIdWithEligibilityCheck).toHaveBeenCalledWith(
+        'drop-1',
+        ['read-group'],
+        ctx.connection
+      );
+      expect(
+        dropsDb.findDropByIdWithoutEligibilityCheck
+      ).not.toHaveBeenCalled();
+      expect(moderationDb.getPresentations).toHaveBeenCalledWith(
+        [drop],
+        'profile-1',
+        ctx.connection
+      );
+      expect(dropsMappers.convertToDropFulls).not.toHaveBeenCalled();
+    });
+
+    it('does not inspect moderation for missing drops or inaccessible waves', async () => {
+      const { service, dropsDb, moderationDb, ctx } = createService();
+      dropsDb.findDropByIdWithEligibilityCheck.mockResolvedValue(null);
+
+      await expect(
+        service.findViewableDropByIdOrThrow(params, ctx)
+      ).rejects.toThrow(NotFoundException);
+      expect(moderationDb.getPresentations).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])(
+      'honors viewer-specific moderation access (can_view=%s)',
+      async (canView) => {
+        const { service, moderationDb, ctx } = createService();
+        moderationDb.getPresentations.mockResolvedValue({
+          'drop-1': { moderation: { can_view: canView } }
+        });
+        const result = service.findViewableDropByIdOrThrow(params, ctx);
+        if (canView) {
+          await expect(result).resolves.toMatchObject({ id: 'drop-1' });
+        } else {
+          await expect(result).rejects.toThrow(params.unavailableMessage);
+        }
+      }
+    );
+
+    it.each([false, true])(
+      'uses proxy read permission for eligibility and moderation (read=%s)',
+      async (canRead) => {
+        const { service, moderationDb, userGroupsService, ctx } =
+          createService();
+        ctx.authenticationContext = new AuthenticationContext({
+          authenticatedWallet: null,
+          authenticatedProfileId: 'profile-1',
+          roleProfileId: 'represented-profile',
+          activeProxyActions: canRead
+            ? [
+                {
+                  id: 'read',
+                  type: ProfileProxyActionType.READ_WAVE,
+                  credit_amount: null,
+                  credit_spent: null
+                }
+              ]
+            : []
+        });
+
+        await service.findViewableDropByIdOrThrow(params, ctx);
+
+        const viewerId = canRead ? 'represented-profile' : null;
+        expect(
+          userGroupsService.getGroupsUserIsEligibleFor
+        ).toHaveBeenCalledWith(viewerId);
+        expect(moderationDb.getPresentations).toHaveBeenCalledWith(
+          expect.any(Array),
+          viewerId,
+          undefined
+        );
+      }
+    );
+  });
+
+  it('notifies the real submitter when another profile boosts an anonymous entry', async () => {
+    const { service, dropsDb, ctx } = createService();
+    const apiDrop = makeApiDrop({ authorId: 'anonymous-projection' });
+    apiDrop.author.is_anonymous = true;
+    jest.spyOn(service, 'findDropByIdOrThrow').mockResolvedValue(apiDrop);
+    await service.boostDrop('drop-1', ctx);
+    expect(dropsDb.findDropById).toHaveBeenCalledWith('drop-1', ctx.connection);
+    expect(userNotifier.notifyOfDropBoost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        drop_author_id: 'author-1',
+        booster_id: 'profile-1'
+      }),
+      null,
+      'tx-connection'
+    );
+    expect(apiDrop.author.id).toBe('anonymous-projection');
+    expect(userNotifier.notifyOfDropBoost).toHaveBeenCalledTimes(1);
+    expect(
+      JSON.stringify(jest.mocked(userNotifier.notifyOfDropBoost).mock.calls)
+    ).not.toContain('anonymous-projection');
+  });
 
   it('rejects self-boosts from non-admin wave participants', async () => {
     const { service, dropsDb, ctx } = createService({

@@ -29,6 +29,11 @@ import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublica
 import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
+import { E2eeBlobChunkEntity, E2eeBlobEntity } from '@/entities/IE2ee';
+import {
+  E2EE_BLOB_MIGRATION_SCOPE,
+  runE2eeBlobMigrationScope
+} from './e2ee-blob-migration-scope';
 const DBMigrate = require('db-migrate');
 
 const logger = Logger.get('DB_MIGRATIONS_LOOP');
@@ -92,7 +97,8 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'market-depth-publication-lock' &&
       scope !== 'voting-credit-returns' &&
       scope !== 'nft-history-events' &&
-      scope !== 'wave-score-input-index')
+      scope !== 'wave-score-input-index' &&
+      scope !== E2EE_BLOB_MIGRATION_SCOPE)
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
   }
@@ -113,6 +119,20 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     return { schema_scope: scope };
   }
 
+  if (scope === E2EE_BLOB_MIGRATION_SCOPE) {
+    // Operator-only data job; the deploy workflow never sends this scope.
+    const report = await doInDbContext(
+      () => runE2eeBlobMigrationScope(event as Record<string, unknown>),
+      {
+        logger,
+        entities: [E2eeBlobEntity, E2eeBlobChunkEntity],
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    logger.info(`[FINISHED E2EE BLOB MIGRATION] ${JSON.stringify(report)}`);
+    return { schema_scope: scope, ...report };
+  }
   if (scope === 'wave-score-input-index') {
     const addedIndexes = await doInDbContext(applyWaveScoreInputIndexSchema, {
       logger,

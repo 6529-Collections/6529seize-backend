@@ -40,6 +40,7 @@ import {
 } from '@/profile-preferences/profile-preferences.db';
 import { isNotificationEnabled } from '@/profile-preferences/profile-notification-policy';
 import { DEFAULT_PROFILE_PREFERENCES } from '@/entities/IProfilePreferences';
+import { anonymousNotificationActorSql } from '@/notifications/anonymous-notification-actor';
 
 type SerializableNotificationInsertRow = Record<string, string | number | null>;
 
@@ -201,7 +202,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     try {
       return await this.identityMutesDb.filterMutedNotificationRows(
         notifications,
-        connection
+        connection,
+        { allowPendingCompetitionEntry: true }
       );
     } catch (error) {
       this.logger.error(
@@ -225,7 +227,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       const unblocked =
         await this.contentModerationDb.filterBlockedNotificationRows(
           unmuted,
-          connection
+          connection,
+          { allowPendingCompetitionEntry: true }
         );
       available =
         await this.contentModerationDb.filterUnavailableDropNotificationRows(
@@ -477,8 +480,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         ${param.unread_only ? ` AND n.read_at IS NULL` : ``}
         AND ${COMPETITION_NOTIFICATION_VISIBILITY_SQL}
         AND COALESCE(r.muted, FALSE) = FALSE
-        AND m.id IS NULL
-        AND b.id IS NULL
+        AND (m.id IS NULL OR ${anonymousNotificationActorSql('n')})
+        AND (b.id IS NULL OR ${anonymousNotificationActorSql('n')})
         AND (
           d1.status IS NULL
           OR d1.status = '${DropModerationStatus.VISIBLE}'
@@ -586,8 +589,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
             })
             AND ${optionalWaveReadAccessSql('n.wave_id', eligibleGroupIds.length > 0)}
             AND COALESCE(r.muted, FALSE) = FALSE
-            AND m.id IS NULL
-            AND b.id IS NULL
+            AND (m.id IS NULL OR ${anonymousNotificationActorSql('n')})
+            AND (b.id IS NULL OR ${anonymousNotificationActorSql('n')})
             AND (
               d1.status IS NULL
               OR d1.status = '${DropModerationStatus.VISIBLE}'

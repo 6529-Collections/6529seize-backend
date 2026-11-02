@@ -1,4 +1,9 @@
 import { buildVotingCreditReturnPushNotification } from '@/pushNotificationsHandler/voting-credit-return-push-notification';
+import {
+  createCompetitionNotificationActorResolver,
+  CompetitionNotificationActorResolver
+} from '@/pushNotificationsHandler/anonymous-competition-notification';
+import { RequestContext } from '@/request.context';
 import { buildMemeCollaborationPushNotification } from './meme-collaboration-push-notification';
 import { handleMissingNotifications } from './missing-notifications';
 import { buildCompetitionLifecyclePushNotification } from './competition-lifecycle-push-notification';
@@ -292,8 +297,16 @@ export async function sendIdentityNotificationsBatch(
     notifications.map((notification) => notification.identity_id)
   );
   let mutedNotificationIds: Set<number>;
+  let resolveCompetitionActor: CompetitionNotificationActorResolver;
+  const privacyContext: RequestContext = {};
   try {
     mutedNotificationIds = await findMutedNotificationIds(notifications);
+    resolveCompetitionActor = await createCompetitionNotificationActorResolver(
+      notifications.filter(
+        (notification) => !mutedNotificationIds.has(Number(notification.id))
+      ),
+      privacyContext
+    );
   } catch (error) {
     logger.error(
       'Failed to apply notification visibility filters; retrying push notifications',
@@ -323,7 +336,8 @@ export async function sendIdentityNotificationsBatch(
         return await buildIdentityNotificationMessages(
           notification,
           waveAccessCache,
-          wavePresentationResolver
+          wavePresentationResolver,
+          resolveCompetitionActor
         );
       } catch (error) {
         logger.error(`Failed to build notification ${id}: ${error}`);
@@ -352,6 +366,7 @@ async function findMutedNotificationIds(
     notification_id: Number(notification.id),
     identity_id: notification.identity_id,
     additional_identity_id: notification.additional_identity_id,
+    cause: notification.cause,
     related_drop_id: notification.related_drop_id,
     related_drop_2_id: notification.related_drop_2_id
   }));
@@ -376,7 +391,8 @@ async function findMutedNotificationIds(
 async function buildIdentityNotificationMessages(
   notification: IdentityNotificationEntity,
   waveAccessCache: Map<string, Promise<boolean>>,
-  wavePresentationResolver: WavePresentationResolver
+  wavePresentationResolver: WavePresentationResolver,
+  resolveCompetitionActor: CompetitionNotificationActorResolver
 ): Promise<IdentityPushNotificationMessage[]> {
   if (notification.read_at) {
     logger.info(
@@ -448,7 +464,8 @@ async function buildIdentityNotificationMessages(
   const notificationData = await generateNotificationData(
     notification,
     targetProfile,
-    wavePresentationResolver
+    wavePresentationResolver,
+    resolveCompetitionActor
   );
   if (notificationData === SKIP_NOTIFICATION_PUSH) {
     logger.info(`[ID ${notification.id}] Skipping push notification`);
@@ -589,9 +606,13 @@ export async function handleSendResults(
 async function generateNotificationData(
   notification: IdentityNotificationEntity,
   targetProfile: ApiIdentity,
-  wavePresentationResolver: WavePresentationResolver
+  wavePresentationResolver: WavePresentationResolver,
+  resolveCompetitionActor: CompetitionNotificationActorResolver
 ) {
-  const getAdditionalEntity = () => getAdditionalIdOrThrow(notification);
+  const getAdditionalEntity = async () => {
+    const identity = await getAdditionalIdOrThrow(notification);
+    return resolveCompetitionActor(notification, identity);
+  };
 
   switch (notification.cause) {
     case IdentityNotificationCause.IDENTITY_SUBSCRIBED:

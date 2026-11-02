@@ -6,7 +6,7 @@ import {
   CompetitionType
 } from '@/entities/ICompetition';
 import { WaveType } from '@/entities/IWave';
-import { NotFoundException } from '@/exceptions';
+import { BadRequestException, NotFoundException } from '@/exceptions';
 import { aWave } from '@/tests/fixtures/wave.fixture';
 import { assertCompetitionOpen } from '@/api/competitions/competition-command-access';
 import type { DefaultCompetitionRecord } from '@/competitions/default-competition';
@@ -103,6 +103,7 @@ describe('CompetitionService', () => {
     parseCompetitionRecord: jest.fn((record) => record),
     findCapabilities: jest.fn().mockResolvedValue([]),
     findNativeEntry: jest.fn(),
+    listNativeLeaderboard: jest.fn(),
     listNativeVoters: jest.fn(),
     listNativeOutcomes: jest.fn(),
     listNativeDistribution: jest.fn(),
@@ -151,6 +152,82 @@ describe('CompetitionService', () => {
       has_more: false,
       next_cursor: null
     });
+  });
+
+  it('binds leaderboard cursors to the Additional Action filter', async () => {
+    repository.listNativeLeaderboard.mockResolvedValue({
+      data: [{ drop_id: 'promised-without-plan' }],
+      has_more: true
+    });
+    const request = {
+      limit: 1,
+      direction: 'DESC' as const,
+      sort: 'rating' as const,
+      is_additional_action_promised: true
+    };
+    const page = await service.listLeaderboard(wave.id, first.id, request, {});
+    expect(page.next_cursor).toEqual(expect.any(String));
+    await service.listLeaderboard(
+      wave.id,
+      first.id,
+      { ...request, cursor: page.next_cursor! },
+      {}
+    );
+    expect(repository.listNativeLeaderboard).toHaveBeenLastCalledWith(
+      first.id,
+      expect.objectContaining({
+        offset: 1,
+        is_additional_action_promised: true
+      }),
+      {}
+    );
+    for (const filter of [undefined, false]) {
+      await expect(
+        service.listLeaderboard(
+          wave.id,
+          first.id,
+          {
+            ...request,
+            cursor: page.next_cursor!,
+            is_additional_action_promised: filter
+          },
+          {}
+        )
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+  });
+
+  it('accepts unfiltered leaderboard cursors issued before the promise filter existed', async () => {
+    repository.listNativeLeaderboard.mockResolvedValue({
+      data: [],
+      has_more: false
+    });
+    const cursor = new CompetitionCursorCodec().encode(
+      `competition:${first.id}:leaderboard`,
+      {
+        filters: {},
+        direction: 'DESC',
+        sort: 'rating',
+        price_currency: null,
+        min_price: null,
+        max_price: null
+      },
+      50
+    );
+    await service.listLeaderboard(
+      wave.id,
+      first.id,
+      { cursor, limit: 50, direction: 'DESC', sort: 'rating' },
+      {}
+    );
+    expect(repository.listNativeLeaderboard).toHaveBeenLastCalledWith(
+      first.id,
+      expect.objectContaining({
+        offset: 50,
+        is_additional_action_promised: undefined
+      }),
+      {}
+    );
   });
 
   it('resolves the default over every record without hydrating competitions or resolving action groups', async () => {

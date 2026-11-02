@@ -1,3 +1,4 @@
+import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import {
   competitionService,
   PublicCompetition
@@ -35,6 +36,9 @@ const read = () =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest
+    .spyOn(competitionAnonymityService, 'hiddenDropIds')
+    .mockResolvedValue(new Set());
   jest
     .mocked(competitionService.getCompetition)
     .mockResolvedValue({} as PublicCompetition);
@@ -152,4 +156,28 @@ it('rejects a child from another wave without querying its history', async () =>
     .mockResolvedValue({ wave_id: 'other-wave' } as CompetitionRecord);
   await expect(read()).rejects.toThrow('Competition not found');
   expect(competitionVoteActivityRepository.list).not.toHaveBeenCalled();
+});
+
+it('conceals an unrevealed submitter in vote activity while retaining voter attribution', async () => {
+  jest.mocked(competitionVoteActivityRepository.list).mockResolvedValue([
+    {
+      sequence: 1,
+      drop_id: 'hidden',
+      voter_profile_id: 'voter',
+      submitter_id: 'submitter',
+      previous_value: 0,
+      value: 1,
+      occurred_at: 100
+    }
+  ]);
+  jest
+    .spyOn(competitionAnonymityService, 'hiddenDropIds')
+    .mockResolvedValue(new Set(['hidden']));
+  const [event] = await read();
+  expect(event.invoker).toBe(profile);
+  expect(event.drop_author).toMatchObject({
+    handle: 'Anonymous',
+    is_anonymous: true
+  });
+  expect(event.drop_author?.id).not.toBe(submitter.id);
 });

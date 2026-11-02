@@ -47,6 +47,16 @@ jest.mock('./nft-link-page-retry-schema', () => ({
   applyNftLinkPageRetrySchema: jest.fn().mockResolvedValue(1)
 }));
 
+import { runE2eeBlobMigrationScope } from './e2ee-blob-migration-scope';
+import { E2eeBlobChunkEntity, E2eeBlobEntity } from '@/entities/IE2ee';
+jest.mock('./e2ee-blob-migration-scope', () => ({
+  ...jest.requireActual('./e2ee-blob-migration-scope'),
+  runE2eeBlobMigrationScope: jest.fn().mockResolvedValue({
+    mode: 'dry-run',
+    examined: 0
+  })
+}));
+
 jest.mock('./claims-media-schema', () => ({
   applyClaimsMediaUploadSchema: jest.fn().mockResolvedValue(2)
 }));
@@ -115,6 +125,32 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       'Unsupported database schema scope'
     );
     expect(doInDbContext).not.toHaveBeenCalled();
+  });
+
+  it('runs the operator-only E2EE blob migration without synchronization or maintenance', async () => {
+    const event = { schema_scope: 'e2ee-blobs-to-s3', live: true };
+    await expect(invoke(event)).resolves.toEqual({
+      schema_scope: 'e2ee-blobs-to-s3',
+      mode: 'dry-run',
+      examined: 0
+    });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: [E2eeBlobEntity, E2eeBlobChunkEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(runE2eeBlobMigrationScope).toHaveBeenCalledWith(event);
+    expect(getDataSource().synchronize).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+  });
+
+  it('never runs the E2EE blob migration from the schedule', async () => {
+    await expect(
+      invoke({ ...scheduledEvent, schema_scope: 'e2ee-blobs-to-s3' })
+    ).rejects.toThrow('Unsupported database schema scope');
+    expect(runE2eeBlobMigrationScope).not.toHaveBeenCalled();
   });
 
   it('adds only the online wave score index without synchronization or maintenance', async () => {

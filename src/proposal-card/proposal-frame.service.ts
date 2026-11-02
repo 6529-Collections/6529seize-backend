@@ -93,12 +93,15 @@ export class ProposalFrameService {
       url.origin !== CLOUDFRONT_LINK ||
       url.search ||
       url.hash ||
-      !url.pathname.startsWith(`/drops/author_${profileId}/`)
+      !url.pathname.startsWith('/drops/')
     ) {
       throw new ForbiddenException('Use artwork uploaded by your profile');
     }
     assertMediaExtension(url, body.mime_type);
     const upload = await this.uploads.findByPublicUrl(url.href);
+    if (!upload && !url.pathname.startsWith(`/drops/author_${profileId}/`)) {
+      throw new ForbiddenException('Use artwork uploaded by your profile');
+    }
     if (upload) {
       if (upload.profile_id !== profileId) {
         throw new ForbiddenException('Use artwork uploaded by your profile');

@@ -289,7 +289,10 @@ export * from './ICompetitionEntryContentVersion';
 export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
-
+export { DeviceGrantEntity } from './IDeviceGrant';
+export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
+export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
+export * from './IE2ee';
 export {
   MemeCollaborationEntity,
   MemeCollaborationInvitationEntity

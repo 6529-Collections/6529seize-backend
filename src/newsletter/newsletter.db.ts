@@ -21,6 +21,7 @@ import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { MAIN_STAGE_WAVE_ID, NewsletterWindow } from './newsletter.config';
 import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
+import { publicCompetitionDropSql } from '@/competitions/competition-anonymity';
 
 export interface NewsletterDrop {
   id: string;
@@ -84,6 +85,7 @@ const PUBLIC_WAVE = `${waveReadAccessSql('w', false)}
   and not exists (select 1 from ${WAVES_TABLE} dm_parent
     where dm_parent.id = w.parent_wave_id and dm_parent.is_direct_message = 1)`;
 const PUBLIC_DROP = `${PUBLIC_WAVE}
+  and ${publicCompetitionDropSql('d')}
   and not exists (select 1 from ${CONTENT_MODERATION_DROP_STATES_TABLE} moderation
     where moderation.drop_id = d.id and moderation.status <> 'VISIBLE')`;
 const DROP_SELECT = `select d.id, d.serial_no, d.wave_id, w.name as wave_name,
