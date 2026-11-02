@@ -640,7 +640,7 @@ describe('live native shared hub configuration', () => {
         { id: entity.id }
       )
     ).toEqual(sharedBefore);
-    const reread = await repo.findWaveHubById(entity.id, ctx);
+    const reread = await repo.findWaveHubById(entity.id, false, ctx);
     expect(reread?.name).toBe('Renamed shared wave');
     expect((await repo.findWaveById(entity.id))?.name).toBe(
       'Renamed shared wave'
@@ -650,7 +650,7 @@ describe('live native shared hub configuration', () => {
       { picture: null, chat: { slow_mode_cooldown_ms: null } },
       ctx
     );
-    const cleared = await repo.findWaveHubById(entity.id, ctx);
+    const cleared = await repo.findWaveHubById(entity.id, false, ctx);
     expect(cleared?.picture).toBeNull();
     expect(cleared?.chat_slow_mode_cooldown_ms).toBeNull();
     expect(cleared?.chat_links_disabled).toBeTruthy();
@@ -705,9 +705,9 @@ describe('live native shared hub configuration', () => {
         ctx
       )
     ).rejects.toThrow('group members must also belong to the View group');
-    expect((await repo.findWaveHubById(entity.id, ctx))?.chat_group_id).toBe(
-      'chatters'
-    );
+    expect(
+      (await repo.findWaveHubById(entity.id, false, ctx))?.chat_group_id
+    ).toBe('chatters');
     const patch = legacyWaveHubPatch({
       ...request,
       visibility: { scope: { group_id: null } },

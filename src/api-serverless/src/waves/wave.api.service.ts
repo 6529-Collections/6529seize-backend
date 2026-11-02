@@ -1614,7 +1614,7 @@ export class WaveApiService {
     const authenticationContext = ctx.authenticationContext;
     const entity = await assertWaveAndParentVisibleOrThrow({
       wave: sharedConfiguration
-        ? await this.wavesApiDb.findWaveHubById(id, ctx)
+        ? await this.wavesApiDb.findWaveHubById(id, false, ctx)
         : await this.wavesApiDb.findWaveById(id),
       groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
       message: `Wave ${id} not found`,
@@ -2279,7 +2279,7 @@ export class WaveApiService {
       async (connection) => {
         const tx = { ...ctx, connection };
         const before = await assertWaveAndParentVisibleOrThrow({
-          wave: await this.wavesApiDb.findWaveHubById(waveId, tx, true),
+          wave: await this.wavesApiDb.findWaveHubById(waveId, true, tx),
           groupsUserIsEligibleFor: groups,
           message: `Wave ${waveId} not found`,
           wavesApiDb: this.wavesApiDb,

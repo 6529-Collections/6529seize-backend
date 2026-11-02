@@ -1060,23 +1060,29 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   public async findWaveHubById(
     id: string,
-    ctx: RequestContext,
-    forUpdate = false
+    forUpdate: boolean,
+    ctx: RequestContext
   ): Promise<WaveEntityWithLastDropTime | null> {
-    if (forUpdate && !ctx.connection) {
-      throw new Error('Locking a wave requires a transaction');
+    const timerName = `${this.constructor.name}->findWaveHubById`;
+    ctx.timer?.start(timerName);
+    try {
+      if (forUpdate && !ctx.connection) {
+        throw new Error('Locking a wave requires a transaction');
+      }
+      const row = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.oneOrNull<RawWaveEntityWithLastDropTime>(
+          `select ${waveHubSelectColumns()}, coalesce(wm.latest_drop_timestamp,0) as last_drop_time
+         from ${WAVES_TABLE} w
+         left join ${WAVE_METRICS_TABLE} wm on wm.wave_id=w.id
+         where w.id=:id ${forUpdate ? 'for update' : ''}`,
+          { id },
+          ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        )
+      );
+      return row ? this.parseWaveEntityWithLastDropTime(row) : null;
+    } finally {
+      ctx.timer?.stop(timerName);
     }
-    const row = await withoutLegacyCompetitionGetFacade(() =>
-      this.db.oneOrNull<RawWaveEntityWithLastDropTime>(
-        `select ${waveHubSelectColumns()}, coalesce(wm.latest_drop_timestamp,0) as last_drop_time
-       from ${WAVES_TABLE} w
-       left join ${WAVE_METRICS_TABLE} wm on wm.wave_id=w.id
-       where w.id=:id ${forUpdate ? 'for update' : ''}`,
-        { id },
-        ctx.connection ? { wrappedConnection: ctx.connection } : undefined
-      )
-    );
-    return row ? this.parseWaveEntityWithLastDropTime(row) : null;
   }
 
   public async findWaveById(
