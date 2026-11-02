@@ -1257,7 +1257,20 @@ xTDH dependencies are already compatible. No schema or frontend rollout is neede
 
 Winners paginate by win time, newest first; My Votes excludes completed winners
 without deleting historical allocations. Personal votes sort by signed vote value
-descending, vote update time ascending and drop ID ascending. Its optional
+descending, allocation update time ascending and drop ID ascending by default.
+The optional `sort` parameter accepts `vote_amount`, `leaderboard` or
+`last_voted`, applied before pagination. Leaderboard order uses the materialized
+competition rank with null ranks last and the same identity tie-breaker as the
+leaderboard (legacy drop ID, native entry ID). Last voted uses confirmed changed
+values in competition vote history plus retained competition-scoped
+`DROP_VOTE_EDIT` logs, excluding system reasons and unchanged saves. Missing
+history sorts last; timestamp ties use drop ID. Retained logs have second precision;
+exact linked native log projections are excluded so rounding cannot override native
+millisecond history. Allocation `updated_at` is not
+user recency because credit reconciliation and no-op commands also update it.
+Cursors bind actor, competition and sort; omitted and explicit `vote_amount`
+remain compatible with existing cursors. No schema migration is needed; deploy
+`api` before the frontend sort selector. Its optional
 `include=cards` response reuses the authorized lightweight competition card reader;
 deploy `api` before the frontend that requests this additive projection.
 Personal-vote cursors describe a live list, not a snapshot. After a vote edit,
