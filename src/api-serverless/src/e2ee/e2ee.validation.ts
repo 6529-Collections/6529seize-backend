@@ -238,7 +238,8 @@ export const e2eeCreateBackupSchema = Joi.object({
 
 export const e2eeBackupChunkUploadSchema = Joi.object({
   device_key: hex32().required(),
-  data: base64().required()
+  data: base64().required(),
+  expected_seq: Joi.number().integer().min(1).max(UINT32_MAX).optional()
 });
 
 export const e2eeBackupDeviceSchema = Joi.object({

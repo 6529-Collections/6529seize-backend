@@ -148,6 +148,17 @@ export const e2eeErrors = {
       'The encrypted backup storage quota is used up',
       { quota_bytes: quotaBytes }
     ),
+  /**
+   * The append's expected_seq is not the generation's next seq (another
+   * device appended first). Carries the current next seq.
+   */
+  backupSeqConflict: (nextSeq: number) =>
+    new E2eeApiException(
+      409,
+      E2EE_ERROR_CODES.BACKUP_SEQ_CONFLICT,
+      'Another chunk was already appended at this sequence number',
+      { next_seq: nextSeq }
+    ),
   notFound: (what: string) =>
     new E2eeApiException(404, E2EE_ERROR_CODES.NOT_FOUND, `${what} not found`),
   /** Attachment storage is misconfigured or unreachable (fails closed). */

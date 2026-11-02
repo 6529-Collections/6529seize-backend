@@ -26,6 +26,7 @@ import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competi
 import { dbSupplier } from '@/sql-executor';
 import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
+import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
 import { E2eeBlobChunkEntity, E2eeBlobEntity } from '@/entities/IE2ee';
@@ -95,6 +96,7 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'nft-link-page-retry' &&
       scope !== 'market-depth-publication-lock' &&
       scope !== 'voting-credit-returns' &&
+      scope !== 'nft-history-events' &&
       scope !== 'wave-score-input-index' &&
       scope !== E2EE_BLOB_MIGRATION_SCOPE)
   ) {
@@ -107,6 +109,16 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'nft-history-events') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [NFTHistoryEventEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
+  }
+
   if (scope === E2EE_BLOB_MIGRATION_SCOPE) {
     // Operator-only data job; the deploy workflow never sends this scope.
     const report = await doInDbContext(
