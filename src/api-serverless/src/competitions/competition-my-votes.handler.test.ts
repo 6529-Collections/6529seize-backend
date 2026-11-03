@@ -102,3 +102,54 @@ it('rejects unsupported projections', async () => {
     handleListCompetitionMyVotesV3(request({ include: 'full' }))
   ).rejects.toThrow();
 });
+
+it.each(['vote_amount', 'leaderboard', 'last_voted'])(
+  'passes %s to the reader and continues only the same scoped order',
+  async (sort) => {
+    const first = await handleListCompetitionMyVotesV3(
+      request({ sort, limit: 1 })
+    );
+    expect(competitionInteractionRepository.myVotes).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'viewer',
+      0,
+      2,
+      expect.anything(),
+      sort
+    );
+    await handleListCompetitionMyVotesV3(
+      request({ sort, limit: 1, cursor: first.next_cursor })
+    );
+    expect(competitionInteractionRepository.myVotes).toHaveBeenLastCalledWith(
+      expect.anything(),
+      'viewer',
+      1,
+      2,
+      expect.anything(),
+      sort
+    );
+    for (const other of ['vote_amount', 'leaderboard', 'last_voted'].filter(
+      (value) => value !== sort
+    )) {
+      await expect(
+        handleListCompetitionMyVotesV3(
+          request({ sort: other, cursor: first.next_cursor })
+        )
+      ).rejects.toThrow('Invalid competition cursor');
+    }
+  }
+);
+it('keeps omitted and explicit default sorts cursor-compatible', async () => {
+  const first = await handleListCompetitionMyVotesV3(request({ limit: 1 }));
+  await expect(
+    handleListCompetitionMyVotesV3(
+      request({ sort: 'vote_amount', cursor: first.next_cursor })
+    )
+  ).resolves.toBeDefined();
+});
+it('rejects an unknown sort before reading votes', async () => {
+  await expect(
+    handleListCompetitionMyVotesV3(request({ sort: 'submission_date' }))
+  ).rejects.toThrow();
+  expect(competitionInteractionRepository.myVotes).not.toHaveBeenCalled();
+});

@@ -1236,7 +1236,20 @@ xTDH dependencies are already compatible. No schema or frontend rollout is neede
 
 Winners paginate by win time, newest first; My Votes excludes completed winners
 without deleting historical allocations. Personal votes sort by signed vote value
-descending, vote update time ascending and drop ID ascending. Its optional
+descending, allocation update time ascending and drop ID ascending by default.
+The optional `sort` parameter accepts `vote_amount`, `leaderboard` or
+`last_voted`, applied before pagination. Leaderboard order uses the materialized
+competition rank with null ranks last and the same identity tie-breaker as the
+leaderboard (legacy drop ID, native entry ID). Last voted uses confirmed changed
+values in competition vote history plus retained competition-scoped
+`DROP_VOTE_EDIT` logs, excluding system reasons and unchanged saves. Missing
+history sorts last; timestamp ties use drop ID. Retained logs have second precision;
+exact linked native log projections are excluded so rounding cannot override native
+millisecond history. Allocation `updated_at` is not
+user recency because credit reconciliation and no-op commands also update it.
+Cursors bind actor, competition and sort; omitted and explicit `vote_amount`
+remain compatible with existing cursors. No schema migration is needed; deploy
+`api` before the frontend sort selector. Its optional
 `include=cards` response reuses the authorized lightweight competition card reader;
 deploy `api` before the frontend that requests this additive projection.
 Personal-vote cursors describe a live list, not a snapshot. After a vote edit,
@@ -2625,7 +2638,7 @@ Craft, subscription coverage and Help Bot calendar answers use the bundled, vers
 
 ### NFT metadata history
 
-`nftHistoryLoop` retains legacy deployer discovery for mint baselines and direct token URI writes, and discovers Manifold `ClaimUpdated` events independently of transaction sender. Supported Ethereum ERC1155 claim extensions are filtered by indexed creator contract. Finalized blocks are processed in bounded windows; a failed decode, missing mapping, or metadata fetch prevents the window checkpoint from advancing.
+`nftHistoryLoop` discovers history by creator contract and verified extension events, independently of transaction sender. Claim initialization, zero-address ERC1155 mint logs (including public paid mints), URI logs, and claim updates share one ordered decoder/planner. Direct zero-value calls to the creator contracts cover eventless top-level `setTokenURI` writes. Creator-scoped claim mappings come from verified initialization receipts and historical claim state, never from an assumption that claim ID equals token ID. Scheduled ingestion starts at the verified metadata initialization. Existing baselines are preserved until a reviewed repair. Finalized blocks are processed in up to five 200-block windows per invocation, with discovery split into 20-block chunks. The checkpoint advances only after every source transaction in a block commits; retries begin at the next block and repeat all transactions of an interrupted block idempotently. Completed block prefixes survive time-budget exhaustion or later failures. A failed decode, missing earlier baseline, or metadata fetch prevents advancement past its block. Unlisted claim logs incidentally present in a mint receipt are ignored; audit-explicit unlisted logs remain failures for review. Mapping and history writes for one scheduled source transaction are atomic and insert-only for baselines.
 
 Claim updates use additive `nfts_history_events` storage keyed by Ethereum transaction/log identity. The legacy URI-keyed `nfts_history` table and its primary key are preserved. Settings-only updates retain an audit row with no Timeline description. The API combines both tables and suppresses a legacy row only when its transaction is represented by an event for that NFT. A return to an earlier URI remains a separate edit. Historical insertion reconciles the immediate successor diff with an optimistic snapshot check and transaction-scoped row locks.
 
@@ -2633,7 +2646,23 @@ Metadata downloads use the shared decentralized gateway catalog, validate every 
 
 The explicit `dbMigrationsLoop` scope `nft-history-events` synchronizes only the new event entity. Required service order is schema creation, `api`, then `nftHistoryLoop`; no frontend contract regeneration is required because the history response shape is unchanged.
 
-Manual `nft-history-replay` invocations reuse the event decoder and history processor with an isolated additive `nfts_history_replay_jobs` receipt/cursor table. Dry-run is read-only; apply is disabled by default and binds a UUID job to a reviewed manifest digest. Event writes and replay cursor advancement share a transaction, and bounded resume never advances the scheduled ingestion checkpoint. The explicit `nft-history-replay` schema scope creates only the job entity. No new scheduled service, queue, or public API is introduced.
+Manual `nft-history-replay` invocations reuse the event decoder and history processor with an isolated additive `nfts_history_replay_jobs` receipt/cursor table. Dry-run is read-only; apply is disabled by default and binds a UUID job to a reviewed manifest digest. Event writes and replay cursor advancement share a transaction, and bounded resume never advances the scheduled ingestion checkpoint. The explicit `nft-history-replay` schema scope creates only the job entity. No new scheduled service, queue, or public API is introduced. The additional manual mode `nft-history-source-replay` uses the same sender-independent source planner to recover missing claim mappings and Mint baselines, as well as edits. Its version-2 manifest and mode-qualified request prevent reuse of an old update-only job ID; existing version-1 jobs remain compatible. Dry-run uses an in-memory chronological overlay and writes nothing. Each approved source transaction commits its mapping/history changes and cursor together. The existing apply flag, finalized anchors, bounds, UUID identity and fresh-digest checks remain mandatory; source replay never registers the scheduled checkpoint entity. No additional schema synchronization or public API deployment is required once the original history event/job tables exist.
+
+### NFT history corrections
+
+Scheduled history starts with an Initialized record when the original metadata
+URI is set. Claim initialization, direct creation and burn-and-redeem setup
+provide that origin. Later issuance does not add a metadata Timeline entry.
+The two historical V3 claims use their setup as origin and the later assignment
+receipt to prove the token mapping. Claim URI updates can precede issuance.
+A same-URI settings update stays in the internal ledger.
+
+The manual `nft-history-repair` invocation reconciles one NFT from explicit
+finalized source transactions. It replaces an audited Mint baseline with its
+initialization transaction, preserving the original URI, and reconciles the
+selected Edit sources. The reviewed digest, history fingerprint, apply gate
+and job cursor protect the repair. The baseline change, event ledger writes
+and job completion share one transaction. See the [backfill runbook](nft-history-repair.md).
 
 ### Private drop bookmarks
 

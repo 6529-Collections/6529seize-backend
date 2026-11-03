@@ -59,6 +59,7 @@ import { toApiCompetition, toApiEntry } from './competitions-v3.handlers';
 import { enums } from '@/enums';
 import { toApiCompetitionAward } from './competition-award.mapper';
 import { readCompetitionEntryContexts } from '@/api/competitions/competition-entry-context.reader';
+import { ApiCompetitionMyVotesSort } from '@/api/generated/models/ApiCompetitionMyVotesSort';
 
 const pathFields = {
   wave_id: Joi.string().min(1).max(100).required(),
@@ -300,8 +301,16 @@ export async function handleListCompetitionMyVotesV3(
   const { wave_id, competition_id } = path(req.params);
   const query = getValidatedByJoiOrThrow(
     req.query,
-    pageSchema.append<{ cursor?: string; limit: number; include?: 'cards' }>({
-      include: Joi.string().valid('cards').optional()
+    pageSchema.append<{
+      cursor?: string;
+      limit: number;
+      include?: 'cards';
+      sort: ApiCompetitionMyVotesSort;
+    }>({
+      include: Joi.string().valid('cards').optional(),
+      sort: Joi.string()
+        .valid(...Object.values(ApiCompetitionMyVotesSort))
+        .default(ApiCompetitionMyVotesSort.VoteAmount)
     })
   );
   const ctx = await context(req);
@@ -313,13 +322,19 @@ export async function handleListCompetitionMyVotesV3(
   );
   if (!record) throw new NotFoundException('Competition not found');
   const scope = `competition:${competition_id}:my-votes:${actor}`;
-  const offset = competitionCursorCodec.decode(query.cursor, scope, {});
+  // Preserve existing default cursors while rejecting reuse between orders.
+  const filters =
+    query.sort === ApiCompetitionMyVotesSort.VoteAmount
+      ? {}
+      : { sort: query.sort };
+  const offset = competitionCursorCodec.decode(query.cursor, scope, filters);
   const rows = await competitionInteractionRepository.myVotes(
     record,
     actor,
     offset,
     query.limit + 1,
-    ctx
+    ctx,
+    query.sort
   );
   const data = rows.slice(0, query.limit).map((row) => ({
     ...row,
@@ -346,7 +361,7 @@ export async function handleListCompetitionMyVotesV3(
     has_more: rows.length > query.limit,
     next_cursor:
       rows.length > query.limit
-        ? competitionCursorCodec.encode(scope, {}, offset + query.limit)
+        ? competitionCursorCodec.encode(scope, filters, offset + query.limit)
         : null
   };
 }
