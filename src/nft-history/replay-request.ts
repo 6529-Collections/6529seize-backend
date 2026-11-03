@@ -40,7 +40,7 @@ function parseRange(input: Record<string, unknown>): ReplayRange {
   return range;
 }
 
-function applyIdentity(input: Record<string, unknown>): {
+export function applyIdentity(input: Record<string, unknown>): {
   jobId: string;
   approvalDigest: string;
 } {

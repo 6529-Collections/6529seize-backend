@@ -2,7 +2,6 @@ import { EntityManager } from 'typeorm';
 import { getDataSource } from '@/db';
 import { NFTHistoryReplayJobEntity } from '@/entities/INFTHistoryReplayJob';
 import { canonicalJson } from './canonical-json';
-import { ReplayRange } from './replay-request';
 
 export class NftHistoryReplayDb {
   find(jobId: string): Promise<NFTHistoryReplayJobEntity | null> {
@@ -14,7 +13,7 @@ export class NftHistoryReplayDb {
   async create<TManifest>(
     jobId: string,
     digest: string,
-    range: ReplayRange,
+    range: { cutoffBlock: number },
     manifest: TManifest
   ): Promise<NFTHistoryReplayJobEntity> {
     const job = {
