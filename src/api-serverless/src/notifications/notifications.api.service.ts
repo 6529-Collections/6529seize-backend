@@ -886,17 +886,7 @@ export class NotificationsApiService {
         };
       }
       case IdentityNotificationCause.E2EE_MESSAGE: {
-        return {
-          id: notification.id,
-          created_at: notification.created_at,
-          read_at: notification.read_at,
-          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: null,
-          related_drops: [],
-          additional_context: {
-            encrypted_group: notification.data.encrypted_group
-          }
-        };
+        return this.mapEncryptedMessage(notification);
       }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return {
@@ -995,6 +985,23 @@ export class NotificationsApiService {
     return {
       reaction,
       reactors
+    };
+  }
+
+  private mapEncryptedMessage(
+    notification: Extract<
+      UserNotification,
+      { cause: IdentityNotificationCause.E2EE_MESSAGE }
+    >
+  ): ApiNotification & ApiNotificationV2 {
+    return {
+      id: notification.id,
+      created_at: notification.created_at,
+      read_at: notification.read_at,
+      cause: ApiNotificationCause.E2EeMessage,
+      related_identity: null,
+      related_drops: [],
+      additional_context: { encrypted_group: notification.data.encrypted_group }
     };
   }
 
@@ -1214,17 +1221,7 @@ export class NotificationsApiService {
         };
       }
       case IdentityNotificationCause.E2EE_MESSAGE: {
-        return {
-          id: notification.id,
-          created_at: notification.created_at,
-          read_at: notification.read_at,
-          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
-          related_identity: null,
-          related_drops: [],
-          additional_context: {
-            encrypted_group: notification.data.encrypted_group
-          }
-        };
+        return this.mapEncryptedMessage(notification);
       }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return {

@@ -15,7 +15,8 @@ const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
     'SUBSCRIPTION_COVERAGE',
     'COMPETITION_LIFECYCLE',
     'MEME_COLLABORATION',
-    'VOTING_CREDITS_RETURNED'
+    'VOTING_CREDITS_RETURNED',
+    'E2EE_MESSAGE'
   ],
   'schema ApiProfileCmsPointerEvent.properties.event_type.enum': ['unpublish'],
   'schema ApiPushNotificationSettings.required': ['subscription_coverage'],

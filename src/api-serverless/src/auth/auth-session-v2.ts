@@ -10,6 +10,7 @@ import { ConnectionWrapper } from '@/sql-executor';
 import { Time } from '@/time';
 import { getJwtExpiry, getJwtSecret } from './auth';
 import { authDb } from './auth.db';
+import { identitiesDb } from '@/identities/identities.db';
 import {
   ApiCreateConnectionShareResponse,
   ApiCreateConnectionShareResponseTargetClientTypeEnum
@@ -823,8 +824,15 @@ export async function createConnectionShare({
   readonly encryptedDeviceSetup?: string | null;
 }): Promise<CreatedConnectionShare> {
   assertRefreshTokenConnectionShareTarget(targetClientType);
+  let shareRole = role;
   if (encryptedDeviceSetup !== null && role !== null) {
-    throw new BadRequestException('Device setup cannot be shared by a proxy');
+    const ownProfileId = await identitiesDb.getProfileIdByWallet(
+      address.toLowerCase()
+    );
+    if (role !== ownProfileId) {
+      throw new BadRequestException('Device setup cannot be shared by a proxy');
+    }
+    shareRole = null;
   }
   const connectionShareCode = createOpaqueSecret();
   const expiresAt = getConnectionShareExpiresAt();
@@ -833,7 +841,7 @@ export async function createConnectionShare({
     connectionShareCodeHash: hashSecret(connectionShareCode),
     encryptedDeviceSetup,
     address: address.toLowerCase(),
-    role,
+    role: shareRole,
     targetClientType,
     expiresAt
   });

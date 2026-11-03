@@ -670,6 +670,61 @@ describe('NotificationsApiService V2 notifications', () => {
     });
   });
 
+  it.each(['v1', 'v2'] as const)(
+    'maps content-free encrypted notifications in %s',
+    async (version) => {
+      const { service, notificationsReader, identityFetcher, dropsService } =
+        createService();
+      Object.assign(identityFetcher, {
+        getOverviewsByIds: jest.fn().mockResolvedValue({})
+      });
+      Object.assign(dropsService, {
+        findDropsByIds: jest.fn().mockResolvedValue({})
+      });
+      const data = { encrypted_group: `0x${'a'.repeat(64)}` };
+      const notification = {
+        id: 22,
+        created_at: 6000,
+        read_at: null,
+        cause: IdentityNotificationCause.E2EE_MESSAGE,
+        data
+      };
+      notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+        notifications: [notification],
+        total_unread: 1
+      });
+      const authenticationContext =
+        AuthenticationContext.fromProfileId('viewer-1');
+      const query = {
+        id_less_than: null,
+        limit: 10,
+        cause: null,
+        cause_exclude: null,
+        unread_only: false
+      };
+      const result =
+        version === 'v1'
+          ? await service.getNotifications(query, authenticationContext)
+          : await service.getNotificationsV2(query, authenticationContext, {
+              authenticationContext
+            });
+      expect(result).toEqual({
+        notifications: [
+          {
+            id: 22,
+            created_at: 6000,
+            read_at: null,
+            cause: ApiNotificationCause.E2EeMessage,
+            related_identity: null,
+            related_drops: [],
+            additional_context: data
+          }
+        ],
+        unread_count: 1
+      });
+    }
+  );
+
   it('maps actorless subscription coverage notifications in V2', async () => {
     const { service, notificationsReader, identityFetcher, dropsService } =
       createService();

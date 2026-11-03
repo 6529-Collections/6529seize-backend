@@ -1,4 +1,5 @@
 import { authDb } from './auth.db';
+import { identitiesDb } from '@/identities/identities.db';
 import {
   clearWalletSessionCookie,
   clearWalletSessionCookieForAddressAndOrigin,
@@ -42,6 +43,10 @@ jest.mock('./auth.db', () => ({
   }
 }));
 
+jest.mock('@/identities/identities.db', () => ({
+  identitiesDb: { getProfileIdByWallet: jest.fn() }
+}));
+
 const authDbMock = authDb as jest.Mocked<typeof authDb>;
 
 function toCookieRequestHeader(setCookies: readonly string[]): string {
@@ -79,6 +84,9 @@ function webSession({
 describe('auth-session-v2', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest
+      .mocked(identitiesDb.getProfileIdByWallet)
+      .mockResolvedValue('profile-1');
     process.env.JWT_SECRET = 'test-jwt-secret';
     process.env.JWT_EXPIRY_SECONDS = '900';
     process.env.AUTH_SESSION_HASH_SECRET = 'test-session-hash-secret';
@@ -1234,7 +1242,7 @@ describe('auth-session-v2', () => {
     );
   });
 
-  it('creates one-time connection share codes for desktop sessions', async () => {
+  it('shares encrypted setup from an own-profile role and rejects replay', async () => {
     authDbMock.createWalletConnectionShare.mockImplementation(
       async (params) => ({
         id: params.id,
@@ -1279,7 +1287,7 @@ describe('auth-session-v2', () => {
 
     const created = await createConnectionShare({
       address: '0xABC',
-      role: null,
+      role: 'profile-1',
       targetClientType: 'desktop',
       encryptedDeviceSetup: 'v1.encrypted-payload'
     });
@@ -1296,6 +1304,17 @@ describe('auth-session-v2', () => {
     });
     expect(redeemed?.response.native_refresh_token).toEqual(expect.any(String));
     expect(redeemed?.response.client_type).toBe('desktop');
+    expect(redeemed?.response.encrypted_device_setup).toBe(
+      'v1.encrypted-payload'
+    );
+    authDbMock.consumeWalletConnectionShare.mockResolvedValueOnce(null);
+    await expect(
+      redeemConnectionShare({
+        connectionShareCode: created.connection_share_code,
+        targetClientType: 'desktop',
+        userAgent: '6529 Desktop'
+      })
+    ).resolves.toBeNull();
 
     const [storedSession] = authDbMock.createWalletAuthSession.mock.calls[0];
     expect(storedSession.clientType).toBe('desktop');
