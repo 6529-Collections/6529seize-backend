@@ -23,7 +23,7 @@ describe('Artist artwork push', () => {
       expect(result.data).toEqual({
         redirect: 'waves',
         wave_id: 'wave',
-        drop_id: 'drop',
+        competition_drop_id: 'drop',
         competition_id: 'competition',
         competition_entry_id: 'entry'
       });

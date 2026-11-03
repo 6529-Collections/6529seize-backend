@@ -12,7 +12,7 @@ export function buildArtistArtworkPushNotification(
     data: {
       redirect: 'waves',
       wave_id: data.wave_id,
-      drop_id: data.drop_id,
+      competition_drop_id: data.drop_id,
       competition_id: data.competition_id,
       competition_entry_id: data.entry_id
     },
