@@ -7,8 +7,10 @@ import { DEVICE_GRANT_SCOPES } from './device-grant-message';
 export const deviceLabelRenameSchema = Joi.object<{ label: string }>({
   label: Joi.string()
     .trim()
+    .min(1)
     .max(48)
-    .pattern(new RegExp('^[^\\p{Cc}]+$', 'u'))
+    // eslint-disable-next-line no-control-regex -- Reject control characters in names.
+    .pattern(/^[^\x00-\x1f\x7f-\x9f]+$/)
     .required()
 }).required();
 

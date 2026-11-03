@@ -236,15 +236,14 @@ export class DeviceGrantsService {
     }
     const grant = await this.db.findGrantById(grantId, ctx);
     if (
-      !grant ||
-      grant.revoked_at !== null ||
+      grant?.revoked_at !== null ||
       !(await this.isCallerWallet(grant.wallet, caller))
     ) {
       throw notFound;
     }
     await this.db.renameGrant(grantId, label, ctx);
     const renamed = await this.db.findGrantById(grantId, ctx);
-    if (!renamed || renamed.revoked_at !== null) {
+    if (renamed?.revoked_at !== null) {
       throw notFound;
     }
     return toApiDeviceGrant(renamed);
