@@ -3,7 +3,11 @@ import { fetchNftHistory } from '@/db-api';
 import { NFTHistory, NFTHistoryClaim } from '@/entities/INFTHistory';
 import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 import { ClaimEvent } from './claim-events';
-import { NftHistoryDb } from './history.db';
+import {
+  historyFingerprint,
+  HistoryWritePlan,
+  NftHistoryDb
+} from './history.db';
 import { prepareHistoryWrite } from './processor';
 
 jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
@@ -205,4 +209,58 @@ it('round-trips raw inserts and native ORM successor JSON updates consistently',
       )
     ).inserts
   ).toEqual([]);
+});
+
+it('moves a colliding legacy URI to Mint and preserves both source events atomically', async () => {
+  const edit = candidate('B', 0);
+  const settings = candidate('B', 3);
+  const legacy = getDataSource().getRepository(NFTHistory);
+  await legacy.save({
+    contract,
+    nft_id,
+    uri: 'B',
+    block: settings.block,
+    transaction_hash: settings.transaction_hash,
+    transaction_date: settings.transaction_date,
+    description: { event: 'Edit', changes: [] }
+  });
+  const snapshot = await db.snapshot(contract, nft_id);
+  const mint = snapshot.legacy.find((row) => row.description.event === 'Mint')!;
+  const { created_at, ...row } = mint;
+  const plan: HistoryWritePlan = {
+    contract,
+    nft_id,
+    before: historyFingerprint(snapshot),
+    replaceMint: { oldUri: 'A', collisionUri: 'B', row: { ...row, uri: 'B' } },
+    inserts: [
+      { ...edit, created_at, description: await describe('A', 'B') },
+      { ...settings, created_at, description: null }
+    ],
+    eventUpdates: [],
+    legacyUpdates: []
+  };
+  await expect(
+    db.apply(plan, async () => {
+      throw new Error('job cursor failed');
+    })
+  ).rejects.toThrow('job cursor failed');
+  expect(historyFingerprint(await db.snapshot(contract, nft_id))).toBe(
+    plan.before
+  );
+
+  await db.apply(plan);
+  const result = await fetchNftHistory(10, 1, contract, nft_id);
+  expect(Number(result.count)).toBe(2);
+  expect(
+    result.data.map((entry) => [entry.transaction_hash, entry.uri])
+  ).toEqual([
+    ['mint', 'B'],
+    [edit.transaction_hash, 'B']
+  ]);
+  const repaired = await db.snapshot(contract, nft_id);
+  expect(repaired.legacy).toHaveLength(1);
+  expect(
+    repaired.events.find((event) => event.event_id === settings.event_id)
+      ?.description
+  ).toBeNull();
 });

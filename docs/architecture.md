@@ -2629,6 +2629,20 @@ The explicit `dbMigrationsLoop` scope `nft-history-events` synchronizes only the
 
 Manual `nft-history-replay` invocations reuse the event decoder and history processor with an isolated additive `nfts_history_replay_jobs` receipt/cursor table. Dry-run is read-only; apply is disabled by default and binds a UUID job to a reviewed manifest digest. Event writes and replay cursor advancement share a transaction, and bounded resume never advances the scheduled ingestion checkpoint. The explicit `nft-history-replay` schema scope creates only the job entity. No new scheduled service, queue, or public API is introduced. The additional manual mode `nft-history-source-replay` uses the same sender-independent source planner to recover missing claim mappings and Mint baselines, as well as edits. Its version-2 manifest and mode-qualified request prevent reuse of an old update-only job ID; existing version-1 jobs remain compatible. Dry-run uses an in-memory chronological overlay and writes nothing. Each approved source transaction commits its mapping/history changes and cursor together. The existing apply flag, finalized anchors, bounds, UUID identity and fresh-digest checks remain mandatory; source replay never registers the scheduled checkpoint entity. No additional schema synchronization or public API deployment is required once the original history event/job tables exist.
 
+### NFT history corrections
+
+Claim metadata edits can precede the first positive Mint. Source ingestion
+compares pre-mint updates with the verified predecessor URI at the transaction
+position. An unchanged URI stays in the internal ledger without a public Edit.
+
+The manual `nft-history-repair` invocation reconciles one NFT from explicit
+finalized transaction hashes. It can correct an existing Mint and represent
+selected claim updates in the event ledger with their on-chain diffs. The
+reviewed digest, history fingerprint, apply flag, and job cursor protect the
+repair. The Mint correction, any verified legacy URI collision removal, event
+ledger writes and job completion commit in one database transaction. This path
+uses the existing event and replay job tables and runs in `nftHistoryLoop`.
+
 ### Private drop bookmarks
 
 The API owns private bookmark writes, the paginated `/drops-bookmarked/` list,

@@ -1,4 +1,3 @@
-import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
 import { NFTHistory } from '@/entities/INFTHistory';
 import { canonicalJson, historyDigest } from './canonical-json';
 import {
@@ -6,7 +5,7 @@ import {
   HistoryWritePlan,
   historyFingerprint
 } from './history.db';
-import { prepareHistoryWrite } from './processor';
+import { prepareHistoryWrite, recordVerifiedEdit } from './processor';
 import { applyVirtualPlan, planReceipt } from './replay-manifest';
 import { HistorySourceOperation, SourceClaim } from './source-operations';
 
@@ -143,27 +142,12 @@ async function mintStep(
   const snapshot = await view.history(row.contract, row.nft_id);
   const plan = emptyPlan();
   if (hasMint(snapshot)) return plan;
-  if (
-    snapshot.legacy.length ||
-    snapshot.events.some((event) => event.description !== null)
-  )
+  if (snapshot.legacy.length)
     throw new Error(
       'History exists without a verified Mint baseline; reconcile explicitly'
     );
   plan.writes.push({ kind: 'mint', before: historyFingerprint(snapshot), row });
   return plan;
-}
-
-async function beforeRecordedMint(
-  event: Extract<HistorySourceOperation, { kind: 'edit' }>['event'],
-  mint?: NFTHistory
-): Promise<boolean> {
-  if (!mint) return true;
-  if (event.block !== mint.block) return event.block < mint.block;
-  const tx = await getEthereumRpcClient().getTransaction(mint.transaction_hash);
-  if (tx?.blockNumber !== mint.block)
-    throw new Error('Cannot position recorded Mint');
-  return event.transaction_index < tx.index;
 }
 
 async function editStep(
@@ -172,34 +156,25 @@ async function editStep(
 ): Promise<HistorySourcePlan> {
   const { event } = operation;
   const snapshot = await view.history(event.contract, event.nft_id);
-  const mint = snapshot.legacy
-    .filter((row) => row.description?.event === 'Mint')
-    .sort((a, b) => a.block - b.block)[0];
   const plan = emptyPlan();
-  if (operation.beforeFirstMint && (await beforeRecordedMint(event, mint))) {
-    const existing = snapshot.events.find(
-      (row) => row.event_id === event.event_id
-    );
-    if (existing) {
-      await prepareHistoryWrite(event, snapshot);
-      if (existing.description !== null)
-        throw new Error('Existing pre-Mint event is visible');
-      return plan;
-    }
-    plan.writes.push({
-      kind: 'edit',
-      plan: {
-        contract: event.contract,
-        nft_id: event.nft_id,
-        before: historyFingerprint(snapshot),
-        inserts: [{ ...event, created_at: new Date(), description: null }],
-        eventUpdates: [],
-        legacyUpdates: []
-      }
-    });
+  if (operation.beforeFirstMint) {
+    if (!operation.previousUri)
+      throw new Error('Missing verified predecessor URI for pre-Mint update');
+    const edit: HistoryWritePlan = {
+      contract: event.contract,
+      nft_id: event.nft_id,
+      before: historyFingerprint(snapshot),
+      previous_uri: operation.previousUri,
+      inserts: [],
+      eventUpdates: [],
+      legacyUpdates: []
+    };
+    await recordVerifiedEdit(edit, snapshot, event, operation.previousUri);
+    if (edit.inserts.length || edit.eventUpdates.length)
+      plan.writes.push({ kind: 'edit', plan: edit });
     return plan;
   }
-  if (!mint)
+  if (!hasMint(snapshot))
     throw new Error(
       'Mint baseline missing; replay initialization and first mint first'
     );

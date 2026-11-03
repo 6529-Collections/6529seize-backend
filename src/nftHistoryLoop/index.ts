@@ -16,25 +16,27 @@ import {
   parseSourceReplayRequest,
   runSourceReplay
 } from '@/nft-history/source-replay';
+import {
+  parseHistoryRepairRequest,
+  runHistoryRepair
+} from '@/nft-history/history-repair';
 
 const logger = Logger.get('NFT_HISTORY_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(
   async (event, context) => {
-    const sourceReplay = parseSourceReplayRequest(event);
-    const replay = sourceReplay ? null : parseReplayRequest(event);
-    if (replay || sourceReplay) {
+    const repair = parseHistoryRepairRequest(event);
+    const sourceReplay = repair ? null : parseSourceReplayRequest(event);
+    const replay = repair || sourceReplay ? null : parseReplayRequest(event);
+    const remainingMillis = () => context?.getRemainingTimeInMillis() ?? 900000;
+    if (replay || sourceReplay || repair) {
       return doInDbContext<unknown>(
-        () =>
-          sourceReplay
-            ? runSourceReplay(
-                sourceReplay,
-                () => context?.getRemainingTimeInMillis() ?? 900000
-              )
-            : runHistoryReplay(
-                replay!,
-                () => context?.getRemainingTimeInMillis() ?? 900000
-              ),
+        () => {
+          if (repair) return runHistoryRepair(repair, remainingMillis);
+          if (sourceReplay)
+            return runSourceReplay(sourceReplay, remainingMillis);
+          return runHistoryReplay(replay!, remainingMillis);
+        },
         {
           logger,
           entities: [
@@ -52,12 +54,7 @@ export const handler = sentryContext.wrapLambdaHandler(
       async () => {
         const force = process.env.NFT_HISTORY_RESET == 'true';
         logger.info(`[force=${force}]`);
-        await findNFTHistory(
-          force,
-          undefined,
-          undefined,
-          () => context?.getRemainingTimeInMillis() ?? 900000
-        );
+        await findNFTHistory(force, undefined, undefined, remainingMillis);
       },
       {
         logger,

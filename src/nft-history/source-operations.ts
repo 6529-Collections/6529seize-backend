@@ -33,7 +33,12 @@ export interface SourceClaim {
 export type HistorySourceOperation =
   | { kind: 'claim'; claim: SourceClaim }
   | { kind: 'mint'; row: NFTHistory }
-  | { kind: 'edit'; event: ClaimEvent; beforeFirstMint: boolean };
+  | {
+      kind: 'edit';
+      event: ClaimEvent;
+      beforeFirstMint: boolean;
+      previousUri?: string;
+    };
 
 export interface SourceHistoryReader {
   hasMint(contract: string, tokenId: number): Promise<boolean>;
@@ -262,7 +267,7 @@ async function claimBeforeTransaction(
   return { uri, total: mintedEarlier ? '1' : (prior?.total ?? '0') };
 }
 
-function toSourceLog(log: TransactionReceipt['logs'][number]): Log {
+export function toSourceLog(log: TransactionReceipt['logs'][number]): Log {
   return {
     address: log.address,
     topics: Array.from(log.topics),
@@ -399,7 +404,8 @@ async function decodeSourceClaims(context: SourceContext): Promise<void> {
       operations.push({
         kind: 'edit',
         event: update,
-        beforeFirstMint: BigInt(before.total) === BigInt(0)
+        beforeFirstMint: BigInt(before.total) === BigInt(0),
+        previousUri: before.uri
       });
     }
   }
