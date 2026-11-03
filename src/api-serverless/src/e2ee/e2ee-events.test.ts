@@ -167,6 +167,26 @@ describe('E2EE websocket events', () => {
 });
 
 describe('encrypted inbox notifications', () => {
+  it('keeps add push wakes without creating a message inbox entry', async () => {
+    const inbox = jest.fn(() => Promise.resolve());
+    const enqueue = jest.fn(() => Promise.resolve(true));
+    const publisher = new WsE2eeEventPublisher(
+      {
+        claimPushWakes: jest.fn(() => Promise.resolve(['p2']))
+      } as unknown as E2eeDb,
+      () => Promise.resolve([]),
+      () => Promise.resolve(),
+      enqueue,
+      () => 42,
+      inbox
+    );
+    await publisher.wake('0xgroup', ['p1', 'p2'], 'added');
+    expect(enqueue).toHaveBeenCalledWith(['p2'], 'added');
+    expect(inbox).not.toHaveBeenCalled();
+    await publisher.wake('0xgroup', ['p1', 'p2'], 'message');
+    expect(inbox).toHaveBeenCalledWith('0xgroup', ['p2']);
+  });
+
   it('writes an inbox entry even when push delivery is switched off', async () => {
     const inbox = jest.fn(async () => undefined);
     const releasePushWakes = jest.fn(async () => undefined);

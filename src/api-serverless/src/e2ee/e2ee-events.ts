@@ -202,11 +202,7 @@ export class WsE2eeEventPublisher implements E2eeEventPublisher {
       if (!eligible.length) return;
       // Independent of push settings and of this device having local keys.
       // A failed inbox write must never prevent the existing push wake.
-      try {
-        await this.writeInbox(group, eligible);
-      } catch {
-        this.logger.warn('Encrypted-message inbox notification failed');
-      }
+      await this.writeMessageInbox(group, eligible, reason);
       if ((await this.enqueueWake(eligible, reason)) === false) {
         await this.releaseWakes(group, eligible, claimedAt);
       }
@@ -218,6 +214,19 @@ export class WsE2eeEventPublisher implements E2eeEventPublisher {
           (error as Error)?.message ?? 'unknown'
         }`
       );
+    }
+  }
+
+  private async writeMessageInbox(
+    group: string,
+    profileIds: string[],
+    reason: E2eeWakeReason
+  ): Promise<void> {
+    if (reason !== 'message') return;
+    try {
+      await this.writeInbox(group, profileIds);
+    } catch {
+      this.logger.warn('Encrypted-message inbox notification failed');
     }
   }
 
