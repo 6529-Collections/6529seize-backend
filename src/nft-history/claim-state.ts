@@ -8,6 +8,9 @@ const CLAIM_CALL = new Interface([
   'function getClaim(address,uint256) view returns (bytes)'
 ]);
 
+export const DEFERRED_CLAIM_EXTENSION =
+  '0x44e94034afce2dd3cd5eb62528f239686fc8f162';
+
 export interface VerifiedClaim {
   tokenId: number;
   total: string;
@@ -19,7 +22,8 @@ export async function readHistoryClaim(
   extension: string,
   contract: string,
   claimId: string,
-  block: number
+  block: number,
+  allowUnassigned = false
 ): Promise<VerifiedClaim> {
   if (!CLAIM_EXTENSIONS.includes(extension.toLowerCase()))
     throw new Error(`Unverified claim extension: ${extension}`);
@@ -47,8 +51,15 @@ export async function readHistoryClaim(
     [`tuple(${COMMON_CLAIM}${extra})`],
     raw
   )[0];
-  const tokenId = Number(claim.tokenId);
-  if (!Number.isSafeInteger(tokenId) || tokenId < 0 || tokenId > 2147483647)
+  const unassigned =
+    allowUnassigned &&
+    extension.toLowerCase() === DEFERRED_CLAIM_EXTENSION &&
+    claim.tokenId === (BigInt(1) << BigInt(256)) - BigInt(1);
+  const tokenId = unassigned ? -1 : Number(claim.tokenId);
+  if (
+    !unassigned &&
+    (!Number.isSafeInteger(tokenId) || tokenId < 0 || tokenId > 2147483647)
+  )
     throw new Error('Claim token ID is outside the history storage range');
   return {
     tokenId,

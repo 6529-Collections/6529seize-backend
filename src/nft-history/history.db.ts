@@ -17,6 +17,10 @@ export interface HistoryWritePlan {
   nft_id: number;
   before: string;
   previous_uri?: string;
+  replaceBaseline?: {
+    oldUri: string;
+    row: Omit<NFTHistory, 'created_at'>;
+  };
   inserts: NFTHistoryEventEntity[];
   eventUpdates: { event_id: string; description: HistoryEdit | null }[];
   legacyUpdates: {
@@ -111,6 +115,25 @@ export class NftHistoryDb {
       throw new Error(
         'History changed since plan preparation; regenerate the plan'
       );
+    if (plan.replaceBaseline) {
+      const { oldUri, row } = plan.replaceBaseline;
+      const repo = manager.getRepository(NFTHistory);
+      const key = { contract: plan.contract, nft_id: plan.nft_id };
+      const result = await repo.update(
+        { ...key, uri: oldUri },
+        {
+          uri: row.uri,
+          block: row.block,
+          transaction_hash: row.transaction_hash,
+          transaction_date: row.transaction_date,
+          description: row.description
+        }
+      );
+      if (result.affected !== 1)
+        throw new Error(
+          'Initialization replacement did not affect exactly one row'
+        );
+    }
     for (const { description, ...row } of plan.inserts) {
       await manager
         .getRepository(NFTHistoryEventEntity)

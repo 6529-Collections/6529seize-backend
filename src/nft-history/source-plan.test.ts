@@ -82,18 +82,25 @@ it('audits initialization -> first Mint -> metadata edit in order and replays al
     });
 });
 
-it('records verified pre-first-mint updates as hidden audit rows without inventing a Mint', async () => {
+it('records the initialized URI change before Mint and keeps the later Mint', async () => {
   const view = reader();
   const update = { ...event(), block: 1 };
   const plan = await prepareSourcePlan(
-    [{ kind: 'edit', event: update, beforeFirstMint: true }],
+    [{ kind: 'edit', event: update, beforeFirstMint: true, previousUri: 'A' }],
     view
   );
   expect(plan.writes[0]).toEqual(
     expect.objectContaining({
       kind: 'edit',
       plan: expect.objectContaining({
-        inserts: [expect.objectContaining({ description: null })]
+        inserts: [
+          expect.objectContaining({
+            description: {
+              event: 'Edit',
+              changes: [{ key: 'uri', from: 'A', to: 'B' }]
+            }
+          })
+        ]
       })
     })
   );
