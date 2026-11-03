@@ -215,13 +215,15 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   async renameDevice(
     profileId: string,
     deviceKey: string,
-    label: string
+    label: string,
+    connection: Conn
   ): Promise<void> {
     await this.write(
       `update ${E2EE_DEVICES_TABLE}
        set label = :label
        where device_key = :deviceKey and profile_id = :profileId and revoked_at is null`,
-      { profileId, deviceKey, label }
+      { profileId, deviceKey, label },
+      connection
     );
   }
 

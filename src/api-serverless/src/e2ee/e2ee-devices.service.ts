@@ -210,12 +210,14 @@ export class E2eeDevicesService {
     deviceKey: string,
     label: string
   ): Promise<ApiE2eeDevice> {
-    await this.db.renameDevice(callerProfileId, deviceKey, label);
-    const device = await this.db.getDevice(deviceKey);
-    if (device?.profile_id !== callerProfileId || device.revoked_at !== null) {
-      throw e2eeErrors.notYourDevice();
-    }
-    return toApiE2eeDevice(device);
+    return this.db.executeNativeQueriesInTransaction(async (connection) => {
+      const device = await this.db.lockDevice(deviceKey, connection);
+      if (device?.profile_id !== callerProfileId || device.revoked_at !== null) {
+        throw e2eeErrors.notYourDevice();
+      }
+      await this.db.renameDevice(callerProfileId, deviceKey, label, connection);
+      return toApiE2eeDevice({ ...device, label });
+    });
   }
 
   async getDevice(deviceKey: string): Promise<ApiE2eeDevice> {
