@@ -200,3 +200,23 @@ describe('UserNotificationMapper', () => {
     ]);
   });
 });
+
+it('maps encrypted notifications without including identity or plaintext', () => {
+  const [notification] = new UserNotificationMapper().mapNotifications([
+    {
+      id: 1,
+      identity_id: 'recipient',
+      cause: IdentityNotificationCause.E2EE_MESSAGE,
+      additional_data: { encrypted_group: '0xgroup' },
+      created_at: 123,
+      read_at: null
+    } as IdentityNotificationDeserialized
+  ]);
+  expect(notification).toEqual({
+    id: 1,
+    created_at: 123,
+    read_at: null,
+    cause: IdentityNotificationCause.E2EE_MESSAGE,
+    data: { encrypted_group: '0xgroup' }
+  });
+});

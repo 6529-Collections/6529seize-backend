@@ -98,7 +98,7 @@ synchronization, without foreign keys.
 
 | Table | Contents |
 | --- | --- |
-| `e2ee_devices` | Device key, owner profile, the signed grant fields, `grant_id`, wallet signature, `verified_via`, label, platform, timestamps, revocation (revoker key, signed time, Ed25519 signature), `grant_message` (the combined sign-in message, NC8; null for EIP-712 grants) |
+| `e2ee_devices` | Device key, owner profile, the signed grant fields, `grant_id`, wallet signature, `verified_via`, label, platform, timestamps, revocation (revoker key, signed time, Ed25519 signature), `grant_message` (the combined sign-in message or app-grant `DeviceGrant` JSON; null for direct EIP-712 MLS grants) |
 | `e2ee_key_packages` | Opaque KeyPackage bytes per device, last-resort flag, expiry |
 | `e2ee_groups` | Random group handle `g`, current epoch, current commit key `pub(K_epoch)`, last sequence number |
 | `e2ee_report_access_log` | Trust-and-safety audit: viewer profile, action (`list`, `read`, `hold`, `release`), report ids, time. No message content |

@@ -298,7 +298,7 @@ export class E2eeDevicesService {
     const read = isAppDeviceGrantMessage(stored.message)
       ? readAppGrantMlsDevice(stored.message, signature)
       : readSignInGrantMlsDevice(stored.message, signature);
-    if (!read || read.grantId !== grantId || read.grant.wallet !== wallet) {
+    if (read?.grantId !== grantId || read.grant.wallet !== wallet) {
       throw e2eeErrors.badGrant('login_grant_without_e2ee');
     }
     const problem = findE2eeGrantProblem(read.grant, nowSeconds(this.deps));

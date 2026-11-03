@@ -165,3 +165,59 @@ describe('E2EE websocket events', () => {
     expect(releasePushWakes).not.toHaveBeenCalled();
   });
 });
+
+describe('encrypted inbox notifications', () => {
+  it('keeps add push wakes without creating a message inbox entry', async () => {
+    const inbox = jest.fn(() => Promise.resolve());
+    const enqueue = jest.fn(() => Promise.resolve(true));
+    const publisher = new WsE2eeEventPublisher(
+      {
+        claimPushWakes: jest.fn(() => Promise.resolve(['p2']))
+      } as unknown as E2eeDb,
+      () => Promise.resolve([]),
+      () => Promise.resolve(),
+      enqueue,
+      () => 42,
+      inbox
+    );
+    await publisher.wake('0xgroup', ['p1', 'p2'], 'added');
+    expect(enqueue).toHaveBeenCalledWith(['p2'], 'added');
+    expect(inbox).not.toHaveBeenCalled();
+    await publisher.wake('0xgroup', ['p1', 'p2'], 'message');
+    expect(inbox).toHaveBeenCalledWith('0xgroup', ['p2']);
+  });
+
+  it('writes an inbox entry even when push delivery is switched off', async () => {
+    const inbox = jest.fn(async () => undefined);
+    const releasePushWakes = jest.fn(async () => undefined);
+    const publisher = new WsE2eeEventPublisher(
+      {
+        claimPushWakes: jest.fn(async () => ['p2']),
+        releasePushWakes
+      } as unknown as E2eeDb,
+      async () => [],
+      async () => undefined,
+      async () => false,
+      () => 42,
+      inbox
+    );
+    await publisher.wake('0xgroup', ['p1', 'p2'], 'message');
+    expect(inbox).toHaveBeenCalledWith('0xgroup', ['p2']);
+    expect(releasePushWakes).toHaveBeenCalledWith('0xgroup', ['p2'], 42);
+  });
+  it('keeps push delivery working if writing the inbox fails', async () => {
+    const enqueue = jest.fn(async () => true);
+    const publisher = new WsE2eeEventPublisher(
+      { claimPushWakes: jest.fn(async () => ['p1']) } as unknown as E2eeDb,
+      async () => [],
+      async () => undefined,
+      enqueue,
+      () => 42,
+      async () => {
+        throw new Error('inbox unavailable');
+      }
+    );
+    await publisher.wake('0xgroup', ['p1'], 'message');
+    expect(enqueue).toHaveBeenCalledWith(['p1'], 'message');
+  });
+});

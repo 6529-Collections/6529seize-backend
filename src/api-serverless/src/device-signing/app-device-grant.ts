@@ -173,7 +173,7 @@ function findKeyProblem(grant: AppDeviceGrant): string | null {
   if (!/^0x[0-9a-f]{40}$/.test(grant.wallet)) return 'wallet_format';
   if (!isDeviceKey(grant.device_key)) return 'device_key_format';
   const scopes = parseDeviceScopesParam(grant.scopes.join(','));
-  if (!scopes || scopes.join(',') !== grant.scopes.join(',')) return 'scopes';
+  if (scopes?.join(',') !== grant.scopes.join(',')) return 'scopes';
   if (grant.mls_device_key === null) {
     return grant.ciphersuite === null ? null : 'ciphersuite';
   }

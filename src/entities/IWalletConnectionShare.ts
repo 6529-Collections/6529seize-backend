@@ -21,6 +21,10 @@ export class WalletConnectionShareEntity {
   @Column({ type: 'varchar', length: 16, nullable: false })
   readonly target_client_type!: WalletAuthClientType;
 
+  /** One-time target-device setup. The decryption key stays in the link fragment. */
+  @Column({ type: 'text', nullable: true, default: null })
+  readonly encrypted_device_setup!: string | null;
+
   @Column({
     type: 'datetime',
     precision: 3,

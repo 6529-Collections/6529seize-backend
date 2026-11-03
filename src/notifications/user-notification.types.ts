@@ -247,6 +247,11 @@ export interface VotingCreditsReturnedNotification extends UserNotificationBase 
   data: VotingCreditsReturnedNotificationData;
 }
 
+export interface EncryptedMessageNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.E2EE_MESSAGE;
+  data: { encrypted_group: string };
+}
+
 export type ArtistArtworkNotificationData = ApiArtistArtworkNotificationContext;
 
 export interface ArtistArtworkNotification extends UserNotificationBase {
@@ -256,6 +261,7 @@ export interface ArtistArtworkNotification extends UserNotificationBase {
 
 export type UserNotification =
   | ArtistArtworkNotification
+  | EncryptedMessageNotification
   | VotingCreditsReturnedNotification
   | MemeCollaborationNotification
   | CompetitionLifecycleNotification
