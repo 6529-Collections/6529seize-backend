@@ -58,6 +58,7 @@ import { xTdhRepository, XTdhRepository } from '../xtdh/xtdh.repository';
 import { profileWavesDb, ProfileWavesDb } from '@/profiles/profile-waves.db';
 import { waveGroupNotificationSubscriptionsDb } from '@/notifications/wave-group-notification-subscriptions.db';
 import { mentionAliasesDb } from '@/mention-aliases/mention-aliases.db';
+import { artistArtworkAlertsDb } from '@/notifications/artist-artwork-alerts.db';
 import {
   dropPollsDb,
   DropPollsDb
@@ -397,6 +398,9 @@ export class ProfilesService {
         connectionHolder
       );
       if (sourceProfile) {
+        await artistArtworkAlertsDb.mergeProfile(sourceIdentity, target, {
+          connection: connectionHolder
+        });
         await this.mergeProfileStatements(
           sourceIdentity,
           target,

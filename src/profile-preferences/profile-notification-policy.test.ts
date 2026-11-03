@@ -13,6 +13,7 @@ const categoryCases: Array<
     'direct_messages',
     [
       IdentityNotificationCause.WAVE_CREATED,
+      IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED,
       IdentityNotificationCause.ALL_DROPS,
       IdentityNotificationCause.PRIORITY_ALERT
     ]

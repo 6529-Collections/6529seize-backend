@@ -1560,17 +1560,26 @@ describeWithSeed(
       const [second] = await repository.claimOutbox({ now: 110, limit: 1 });
       expect(second.id).toBe(first.id);
       expect(second.lease_token).not.toBe(first.lease_token);
+      await repository.deferOutbox(first.id, first.lease_token, 110);
+      expect(await repository.claimOutbox({ now: 111, limit: 1 })).toEqual([]);
       await repository.acknowledgeOutbox(first.id, first.lease_token, 111);
       await repository.retryOutbox(second.id, second.lease_token, 111);
       expect(await repository.claimOutbox({ now: 112, limit: 1 })).toEqual([]);
       const [third] = await repository.claimOutbox({ now: 10_000, limit: 1 });
-      await repository.acknowledgeOutbox(third.id, third.lease_token, 10_001);
+      await repository.deferOutbox(third.id, third.lease_token, 10_001);
+      expect(await repository.claimOutbox({ now: 11_000, limit: 1 })).toEqual(
+        []
+      );
+      const [fourth] = await repository.claimOutbox({ now: 11_001, limit: 1 });
+      expect(fourth.id).toBe(third.id);
+      expect(fourth.lease_token).not.toBe(third.lease_token);
+      await repository.acknowledgeOutbox(fourth.id, fourth.lease_token, 11_002);
       expect(
         await sqlExecutor.execute(
           `select delivered_at from ${COMPETITION_OUTBOX_TABLE} where id = :id`,
           { id: third.id }
         )
-      ).toEqual([{ delivered_at: 10_001 }]);
+      ).toEqual([{ delivered_at: 11_002 }]);
     });
   }
 );

@@ -8,6 +8,7 @@ import {
 } from './identity-notifications.db';
 import type { NewIdentityNotification } from './identity-notifications.db';
 import {
+  ArtistArtworkNotificationData,
   DropBoostNotificationData,
   DropPollVoteNotificationData,
   DropQuoteNotificationData,
@@ -28,6 +29,33 @@ export class UserNotifier {
   constructor(
     private readonly identityNotificationsDb: IdentityNotificationsDb
   ) {}
+
+  public async notifyOfArtistArtwork(
+    recipientId: string,
+    data: ArtistArtworkNotificationData,
+    visibilityGroupId: string | null,
+    ctx: RequestContext
+  ): Promise<number[]> {
+    if (!ctx.connection)
+      throw new Error('Artwork alerts require an event effect transaction');
+    return this.identityNotificationsDb.insertManyNotifications(
+      [
+        {
+          identity_id: recipientId,
+          additional_identity_id: data.artist_id,
+          related_drop_id: data.drop_id,
+          related_drop_part_no: 1,
+          related_drop_2_id: null,
+          related_drop_2_part_no: null,
+          cause: IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED,
+          additional_data: { ...data },
+          wave_id: data.wave_id,
+          visibility_group_id: visibilityGroupId
+        }
+      ],
+      ctx.connection
+    );
+  }
 
   public async notifyOfMemeCollaboration(
     recipientId: string,

@@ -1,4 +1,6 @@
 import { retainQueuedNotificationInvalidations } from '@/websocket-outbox/notification-handoff';
+import { buildArtistArtworkPushNotification } from './artist-artwork-push-notification';
+import { ArtistArtworkNotificationData } from '@/notifications/user-notification.types';
 import { buildVotingCreditReturnPushNotification } from '@/pushNotificationsHandler/voting-credit-return-push-notification';
 import {
   createCompetitionNotificationActorResolver,
@@ -531,6 +533,7 @@ async function buildIdentityNotificationMessages(
             },
             identityId: notification.identity_id,
             requiresCompetitionSupport: [
+              IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED,
               IdentityNotificationCause.COMPETITION_LIFECYCLE,
               IdentityNotificationCause.VOTING_CREDITS_RETURNED
             ].includes(notification.cause),
@@ -696,6 +699,11 @@ async function generateNotificationData(
         extractAdditionalData<VotingCreditsReturnedNotificationData>(
           notification
         )
+      );
+    case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
+      return buildArtistArtworkPushNotification(
+        extractAdditionalData<ArtistArtworkNotificationData>(notification),
+        await getAdditionalEntity()
       );
     case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       return buildCompetitionLifecyclePushNotification(

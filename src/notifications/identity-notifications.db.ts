@@ -3,6 +3,7 @@ import {
   recordWebSocketEvents,
   withWebSocketMutation
 } from '@/websocket-outbox/outbox.db';
+import { artistArtworkNotificationVisibleSql } from './artist-artwork-submission.db';
 import { DbPoolName } from '@/db-query.options';
 import { optionalWaveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { isActivated } from '@/api/push-notifications/push-notifications.service';
@@ -548,6 +549,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         ${causesExclude ? ` AND n.cause NOT IN (:causesExclude)` : ``}
         ${param.unread_only ? ` AND n.read_at IS NULL` : ``}
         AND ${COMPETITION_NOTIFICATION_VISIBILITY_SQL}
+        AND ${artistArtworkNotificationVisibleSql('n')}
         AND COALESCE(r.muted, FALSE) = FALSE
         AND (m.id IS NULL OR ${anonymousNotificationActorSql('n')})
         AND (b.id IS NULL OR ${anonymousNotificationActorSql('n')})
@@ -673,6 +675,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
           )
         )${causeClause}${excludeCauseClause}
         AND ${COMPETITION_NOTIFICATION_VISIBILITY_SQL}
+        AND ${artistArtworkNotificationVisibleSql('n')}
       `,
         queryParams,
         options?.forcePool
