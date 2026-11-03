@@ -94,12 +94,14 @@ export function sourceManifestDigest(manifest: SourceManifest): string {
 export async function prepareTransactionSource(
   source: HistoryTransaction,
   reader: SourceReader,
-  remainingMillis: () => number = () => 900000
+  remainingMillis: () => number = () => 900000,
+  recordInitialization = false
 ): Promise<HistorySourcePlan> {
   const operations = await decodeHistorySource(source, {
     hasMint: async (contract, id) =>
       hasMint(await reader.history(contract, id)),
-    remainingMillis
+    remainingMillis,
+    recordInitialization
   });
   return prepareSourcePlan(operations, reader, remainingMillis);
 }
@@ -319,7 +321,8 @@ async function ingestHistorySource(
     const plan = await prepareTransactionSource(
       source,
       historySourceDb,
-      remainingMillis
+      remainingMillis,
+      true
     );
     if (plan.claims.length || plan.writes.length)
       await historySourceDb.apply(plan);

@@ -69,7 +69,10 @@ async function reconcileSuccessor(
   describe: Describe
 ): Promise<void> {
   if (!next?.row.uri) return;
-  if (next.kind === 'legacy' && next.row.description?.event === 'Mint')
+  if (
+    next.kind === 'legacy' &&
+    ['Mint', 'Initialized'].includes(next.row.description?.event)
+  )
     throw new Error(
       'Claim update precedes an existing Mint; manual reconciliation required'
     );
@@ -111,14 +114,7 @@ export async function prepareHistoryWrite(
     (row) => row.event_id === candidate.event_id
   );
   if (existing) {
-    if (
-      Object.keys(candidate).some(
-        (key) =>
-          canonicalEventValue(key as keyof ClaimEvent, candidate) !==
-          canonicalEventValue(key as keyof ClaimEvent, existing)
-      )
-    )
-      throw new Error('Existing event differs from canonical chain event');
+    verifyExistingEvent(candidate, existing);
     return plan;
   }
   const event: NFTHistoryEventEntity = {
@@ -158,4 +154,38 @@ function canonicalEventValue(key: keyof ClaimEvent, event: ClaimEvent): string {
   if (!Number.isFinite(date.getTime()))
     throw new Error('Invalid history event transaction date');
   return date.toISOString();
+}
+
+export function verifyExistingEvent(
+  candidate: ClaimEvent,
+  existing: NFTHistoryEventEntity
+): void {
+  if (
+    Object.keys(candidate).some(
+      (key) =>
+        canonicalEventValue(key as keyof ClaimEvent, candidate) !==
+        canonicalEventValue(key as keyof ClaimEvent, existing)
+    )
+  )
+    throw new Error('Existing event differs from canonical chain event');
+}
+
+export async function recordVerifiedEdit(
+  plan: HistoryWritePlan,
+  snapshot: HistorySnapshot,
+  event: ClaimEvent,
+  previousUri: string
+): Promise<void> {
+  const existing = snapshot.events.find(
+    (row) => row.event_id === event.event_id
+  );
+  if (existing) verifyExistingEvent(event, existing);
+  const description = await describeHistoryEdit(previousUri, event.uri);
+  if (!existing) {
+    plan.inserts.push({ ...event, created_at: new Date(), description });
+  } else if (
+    canonicalJson(existing.description) !== canonicalJson(description)
+  ) {
+    plan.eventUpdates.push({ event_id: event.event_id, description });
+  }
 }
