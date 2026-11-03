@@ -211,8 +211,8 @@ it('round-trips raw inserts and native ORM successor JSON updates consistently',
   ).toEqual([]);
 });
 
-it('moves a colliding legacy URI to Mint and preserves both source events atomically', async () => {
-  const edit = candidate('B', 0);
+it('replaces Mint with initialization and keeps the Edit and its settings receipt atomic', async () => {
+  const edit = candidate('B', 2);
   const settings = candidate('B', 3);
   const legacy = getDataSource().getRepository(NFTHistory);
   await legacy.save({
@@ -231,7 +231,15 @@ it('moves a colliding legacy URI to Mint and preserves both source events atomic
     contract,
     nft_id,
     before: historyFingerprint(snapshot),
-    replaceMint: { oldUri: 'A', collisionUri: 'B', row: { ...row, uri: 'B' } },
+    replaceBaseline: {
+      oldUri: 'A',
+      row: {
+        ...row,
+        block: 0,
+        transaction_hash: 'init',
+        description: { event: 'Initialized', changes: [] }
+      }
+    },
     inserts: [
       { ...edit, created_at, description: await describe('A', 'B') },
       { ...settings, created_at, description: null }
@@ -254,11 +262,12 @@ it('moves a colliding legacy URI to Mint and preserves both source events atomic
   expect(
     result.data.map((entry) => [entry.transaction_hash, entry.uri])
   ).toEqual([
-    ['mint', 'B'],
-    [edit.transaction_hash, 'B']
+    [edit.transaction_hash, 'B'],
+    ['init', 'A']
   ]);
   const repaired = await db.snapshot(contract, nft_id);
-  expect(repaired.legacy).toHaveLength(1);
+  expect(repaired.legacy).toHaveLength(2);
+  expect(result.data[1].description.event).toBe('Initialized');
   expect(
     repaired.events.find((event) => event.event_id === settings.event_id)
       ?.description

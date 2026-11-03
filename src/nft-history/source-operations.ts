@@ -1,4 +1,5 @@
 import {
+  Interface,
   TransactionReceipt,
   TransactionResponse,
   toBeHex,
@@ -16,7 +17,11 @@ import {
   claimMetadataUri,
   decodeClaimUpdate
 } from './claim-events';
-import { readHistoryClaim, VerifiedClaim } from './claim-state';
+import {
+  DEFERRED_CLAIM_EXTENSION,
+  readHistoryClaim,
+  VerifiedClaim
+} from './claim-state';
 import {
   HISTORY_CREATORS,
   HISTORY_SOURCE_IFACE,
@@ -43,6 +48,7 @@ export type HistorySourceOperation =
 export interface SourceHistoryReader {
   hasMint(contract: string, tokenId: number): Promise<boolean>;
   remainingMillis?: () => number;
+  recordInitialization?: boolean;
 }
 
 interface MintLog {
@@ -308,18 +314,20 @@ export async function decodeHistorySource(
         extension,
         contract,
         claimId,
-        source.block
+        source.block,
+        reader.recordInitialization
       );
       claimed.set(key, state);
-      operations.push({
-        kind: 'claim',
-        claim: {
-          contract,
-          claimId,
-          tokenId: state.tokenId,
-          location: state.location
-        }
-      });
+      if (state.tokenId >= 0)
+        operations.push({
+          kind: 'claim',
+          claim: {
+            contract,
+            claimId,
+            tokenId: state.tokenId,
+            location: state.location
+          }
+        });
     }
     return state;
   }
@@ -332,7 +340,7 @@ export async function decodeHistorySource(
     claim,
     remainingMillis: reader.remainingMillis ?? (() => 900000)
   };
-  await decodeSourceClaims(context);
+  await decodeSourceClaims(context, reader);
   await decodeSourceMints(context, reader);
   await decodeDirectUri(context);
   verifySupportedUriEvents(context);
@@ -367,7 +375,10 @@ function sourceClaimEvent(
     : null;
 }
 
-async function decodeSourceClaims(context: SourceContext): Promise<void> {
+async function decodeSourceClaims(
+  context: SourceContext,
+  reader: SourceHistoryReader
+): Promise<void> {
   const { receipt, mints, claim, tx, operations } = context;
   for (const log of receipt.logs) {
     if (context.remainingMillis() < 90000)
@@ -379,6 +390,7 @@ async function decodeSourceClaims(context: SourceContext): Promise<void> {
     const claimId = String(event.args.instanceId);
     const state = await claim(log.address, contract, claimId);
     if (event.name === 'ClaimInitialized') {
+      if (state.tokenId === -1) continue;
       if (
         !mints.some(
           (mint) =>
@@ -390,6 +402,20 @@ async function decodeSourceClaims(context: SourceContext): Promise<void> {
         throw new Error(
           'Claim initialization has no matching creator token creation'
         );
+      if (
+        reader.recordInitialization &&
+        !(await reader.hasMint(contract, state.tokenId))
+      ) {
+        operations.push({
+          kind: 'mint',
+          row: initializationRow(
+            context,
+            contract,
+            state.tokenId,
+            claimInitializationUri(tx, log.address, contract, claimId)
+          )
+        });
+      }
     } else {
       const update = await decodeClaimUpdate(toSourceLog(log), () =>
         Promise.resolve([state.tokenId])
@@ -484,9 +510,17 @@ async function decodeSourceMints(
       tx.to?.toLowerCase() === mint.operator.toLowerCase() &&
       String(parsed.args.creatorContractAddress).toLowerCase() ===
         mint.contract.toLowerCase();
+    if (reader.recordInitialization && !directNew && !burnNew) continue;
     if (mint.amount === BigInt(0) && !directNew && !burnNew) continue;
     const uri = await mintSourceUri(mint, context);
     seenMints.add(key);
+    if (reader.recordInitialization) {
+      operations.push({
+        kind: 'mint',
+        row: initializationRow(context, mint.contract, mint.tokenId, uri)
+      });
+      continue;
+    }
     operations.push({
       kind: 'mint',
       row: {
@@ -581,4 +615,140 @@ async function claimIdForMint(
       throw new Error('Malformed mint claim mapping');
     return BigInt(`0x${raw.slice(2, 66)}`).toString();
   }
+}
+
+const DEFERRED_INIT_IFACE = new Interface([
+  'function initializeClaim(address creatorContractAddress,uint256 claimIndex,(uint32 totalMax,uint32 walletMax,uint48 startDate,uint48 endDate,uint8 storageProtocol,bytes32 merkleRoot,string location,uint256 cost,address paymentReceiver) claimParameters)'
+]);
+
+function claimInitializationUri(
+  tx: TransactionResponse,
+  extension: string,
+  contract: string,
+  claimId: string
+): string {
+  const parsed =
+    NFT_HISTORY_IFACE.parseTransaction({ data: tx.data }) ??
+    (extension.toLowerCase() === DEFERRED_CLAIM_EXTENSION
+      ? DEFERRED_INIT_IFACE.parseTransaction({ data: tx.data })
+      : null);
+  if (
+    tx.to?.toLowerCase() !== extension.toLowerCase() ||
+    parsed?.name !== 'initializeClaim' ||
+    String(parsed.args.creatorContractAddress).toLowerCase() !==
+      contract.toLowerCase() ||
+    String(parsed.args.instanceId ?? parsed.args.claimIndex) !== claimId
+  )
+    throw new Error('Initialization requires verified direct claim calldata');
+  const params = parsed.args.claimParameters;
+  return claimMetadataUri(
+    Number(params.storageProtocol),
+    String(params.location)
+  );
+}
+
+function initializationRow(
+  origin: NonNullable<Awaited<ReturnType<typeof verifySource>>>,
+  contract: string,
+  tokenId: number,
+  uri: string
+): NFTHistory {
+  return {
+    contract,
+    nft_id: tokenId,
+    uri,
+    block: origin.block.number,
+    transaction_hash: origin.tx.hash,
+    transaction_date: new Date(origin.block.timestamp * 1000),
+    created_at: new Date(),
+    description: { event: 'Initialized', changes: [] }
+  };
+}
+
+/** V3 sets the URI before assigning a creator token ID. Prove both ends. */
+export async function decodeDeferredInitialization(
+  initialization: HistoryTransaction,
+  assignment: HistoryTransaction,
+  contract: string,
+  tokenId: number
+): Promise<NFTHistory> {
+  const [origin, later] = await Promise.all([
+    verifySource(initialization),
+    verifySource(assignment)
+  ]);
+  if (
+    !origin ||
+    !later ||
+    initialization.block >= assignment.block ||
+    later.tx.to?.toLowerCase() !== DEFERRED_CLAIM_EXTENSION
+  )
+    throw new Error('Invalid deferred claim assignment');
+
+  const parsed = NFT_HISTORY_IFACE.parseTransaction({ data: later.tx.data });
+  const claimId = String(parsed?.args.claimIndex);
+  const logs = origin.receipt.logs.filter((log) => {
+    if (log.address.toLowerCase() !== DEFERRED_CLAIM_EXTENSION) return false;
+    const event = sourceClaimEvent(log, initialization);
+    return (
+      event?.name === 'ClaimInitialized' &&
+      String(event.args.creatorContract).toLowerCase() ===
+        contract.toLowerCase() &&
+      String(event.args.instanceId) === claimId
+    );
+  });
+  if (
+    parsed?.name !== 'airdrop' ||
+    String(parsed.args.creatorContractAddress).toLowerCase() !==
+      contract.toLowerCase() ||
+    logs.length !== 1 ||
+    !mintLogs(later.receipt).some(
+      (mint) =>
+        mint.contract.toLowerCase() === contract.toLowerCase() &&
+        mint.tokenId === tokenId &&
+        mint.operator.toLowerCase() === DEFERRED_CLAIM_EXTENSION &&
+        mint.amount > BigInt(0)
+    )
+  )
+    throw new Error('Deferred claim assignment does not match initialization');
+
+  const uri = claimInitializationUri(
+    origin.tx,
+    DEFERRED_CLAIM_EXTENSION,
+    contract,
+    claimId
+  );
+  const [initial, before, assigned] = await Promise.all([
+    readHistoryClaim(
+      DEFERRED_CLAIM_EXTENSION,
+      contract,
+      claimId,
+      initialization.block,
+      true
+    ),
+    readHistoryClaim(
+      DEFERRED_CLAIM_EXTENSION,
+      contract,
+      claimId,
+      assignment.block - 1,
+      true
+    ),
+    readHistoryClaim(
+      DEFERRED_CLAIM_EXTENSION,
+      contract,
+      claimId,
+      assignment.block
+    )
+  ]);
+  if (
+    initial.tokenId !== -1 ||
+    initial.uri !== uri ||
+    initial.total !== '0' ||
+    before.tokenId !== -1 ||
+    before.total !== '0' ||
+    assigned.tokenId !== tokenId
+  )
+    throw new Error(
+      'Historical deferred claim state does not match assignment'
+    );
+  return initializationRow(origin, contract, tokenId, uri);
 }

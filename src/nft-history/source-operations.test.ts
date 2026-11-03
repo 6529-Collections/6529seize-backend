@@ -141,6 +141,22 @@ it.each([MEMES_CONTRACT, MEMELAB_CONTRACT])(
         claim: { contract, claimId: '12345', tokenId: 569, location }
       }
     ]);
+    expect(
+      await decodeHistorySource(source, {
+        hasMint: async () => false,
+        recordInitialization: true
+      })
+    ).toEqual([
+      operations[0],
+      expect.objectContaining({
+        kind: 'mint',
+        row: expect.objectContaining({
+          transaction_hash: '0xtx',
+          uri: `https://arweave.net/${location}`,
+          description: { event: 'Initialized', changes: [] }
+        })
+      })
+    ]);
   }
 );
 
@@ -164,6 +180,12 @@ it('recovers the first positive airdrop from another wallet and keeps later aird
   );
   expect(
     await decodeHistorySource(source, { hasMint: async () => true })
+  ).toEqual([]);
+  expect(
+    await decodeHistorySource(source, {
+      hasMint: async () => false,
+      recordInitialization: true
+    })
   ).toEqual([]);
 });
 

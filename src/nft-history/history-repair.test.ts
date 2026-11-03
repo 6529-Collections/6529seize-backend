@@ -29,25 +29,31 @@ const request = {
   contract: MEMES_CONTRACT,
   tokenId: 213,
   cutoffBlock: 10,
-  mintTransaction: hash(2),
+  initializationTransaction: hash(2),
   editTransactions: [hash(1), hash(3)]
 };
 const budget = () => 900000;
-const canonicalMint: NFTHistory = {
+const canonicalInitialization: NFTHistory = {
   contract: MEMES_CONTRACT,
   nft_id: 213,
-  uri: 'gif',
-  block: 2,
+  uri: 'jpeg',
+  block: 1,
   transaction_hash: hash(2),
   transaction_date: new Date(2000),
   created_at: new Date(),
-  description: { event: 'Mint', changes: [] }
+  description: { event: 'Initialized', changes: [] }
 };
 const legacy = [
-  { ...canonicalMint, uri: 'jpeg' },
   {
-    ...canonicalMint,
+    ...canonicalInitialization,
+    block: 2,
+    transaction_hash: hash(4),
+    description: { event: 'Mint', changes: [] }
+  },
+  {
+    ...canonicalInitialization,
     block: 3,
+    uri: 'gif',
     transaction_hash: hash(3),
     description: { event: 'Edit', changes: [] }
   }
@@ -59,7 +65,7 @@ beforeEach(() => {
     .mockResolvedValue({ legacy, events: [] });
   jest.mocked(decodeHistorySource).mockImplementation(async ({ hash: tx }) =>
     tx === hash(2)
-      ? [{ kind: 'mint', row: canonicalMint }]
+      ? [{ kind: 'mint', row: canonicalInitialization }]
       : [
           {
             kind: 'edit',
@@ -86,7 +92,7 @@ beforeEach(() => {
 
 afterEach(() => jest.restoreAllMocks());
 
-it('keeps the pre-Mint Edit and reconciles the colliding settings-only legacy Edit', async () => {
+it('restores the original initialization and attributes the Edit to its real source', async () => {
   const result = await runHistoryRepair(
     parseHistoryRepairRequest(request)!,
     budget
@@ -101,21 +107,30 @@ it('keeps the pre-Mint Edit and reconciles the colliding settings-only legacy Ed
     [hash(1), 'Edit'],
     [hash(3), null]
   ]);
-  expect(result.manifest.plan.replaceMint).toMatchObject({
+  expect(result.manifest.plan.replaceBaseline).toMatchObject({
     oldUri: 'jpeg',
-    collisionUri: 'gif',
-    row: { uri: 'gif', transaction_hash: hash(2) }
+    row: {
+      uri: 'jpeg',
+      transaction_hash: hash(2),
+      description: { event: 'Initialized' }
+    }
   });
   expect(result.approvalDigest).toHaveLength(64);
 });
 
-it('rejects a Mint repair without the colliding source', async () => {
+it('rejects an origin whose URI differs from the audited baseline', async () => {
+  jest
+    .mocked(nftHistoryDb.snapshot)
+    .mockResolvedValue({
+      legacy: [{ ...legacy[0], uri: 'wrong' }, legacy[1]],
+      events: []
+    });
   await expect(
     runHistoryRepair(
       parseHistoryRepairRequest({ ...request, editTransactions: [hash(1)] })!,
       budget
     )
-  ).rejects.toThrow('collision requires');
+  ).rejects.toThrow('verified original URI');
 });
 
 it('rejects an approved plan after history changes and leaves the job and rows untouched', async () => {
@@ -129,7 +144,7 @@ it('rejects an approved plan after history changes and leaves the job and rows u
   const write = jest.spyOn(nftHistoryDb, 'apply');
   jest.spyOn(nftHistoryReplayDb, 'find').mockResolvedValue(null);
   jest.mocked(nftHistoryDb.snapshot).mockResolvedValue({
-    legacy: [{ ...legacy[0], uri: 'other' }, legacy[1]],
+    legacy: [{ ...legacy[0], block: 9 }, legacy[1]],
     events: []
   });
   try {

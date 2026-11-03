@@ -2619,7 +2619,7 @@ Craft, subscription coverage and Help Bot calendar answers use the bundled, vers
 
 ### NFT metadata history
 
-`nftHistoryLoop` discovers history by creator contract and verified extension events, independently of transaction sender. Claim initialization, zero-address ERC1155 mint logs (including public paid mints), URI logs, and claim updates share one ordered decoder/planner. Direct zero-value calls to the creator contracts cover eventless top-level `setTokenURI` writes. Creator-scoped claim mappings come from verified initialization receipts and historical claim state, never from an assumption that claim ID equals token ID. The first positive claim mint supplies the Mint baseline; later editions do not create more Mint rows. Existing baselines are preserved. Finalized blocks are processed in up to five 200-block windows per invocation, with discovery split into 20-block chunks. The checkpoint advances only after every source transaction in a block commits; retries begin at the next block and repeat all transactions of an interrupted block idempotently. Completed block prefixes survive time-budget exhaustion or later failures. A failed decode, missing earlier baseline, or metadata fetch prevents advancement past its block. Unlisted claim logs incidentally present in a mint receipt are ignored; audit-explicit unlisted logs remain failures for review. Mapping/history writes for one source transaction are atomic and insert-only for Mint baselines.
+`nftHistoryLoop` discovers history by creator contract and verified extension events, independently of transaction sender. Claim initialization, zero-address ERC1155 mint logs (including public paid mints), URI logs, and claim updates share one ordered decoder/planner. Direct zero-value calls to the creator contracts cover eventless top-level `setTokenURI` writes. Creator-scoped claim mappings come from verified initialization receipts and historical claim state, never from an assumption that claim ID equals token ID. Scheduled ingestion starts at the verified metadata initialization. Existing baselines are preserved until a reviewed repair. Finalized blocks are processed in up to five 200-block windows per invocation, with discovery split into 20-block chunks. The checkpoint advances only after every source transaction in a block commits; retries begin at the next block and repeat all transactions of an interrupted block idempotently. Completed block prefixes survive time-budget exhaustion or later failures. A failed decode, missing earlier baseline, or metadata fetch prevents advancement past its block. Unlisted claim logs incidentally present in a mint receipt are ignored; audit-explicit unlisted logs remain failures for review. Mapping and history writes for one scheduled source transaction are atomic and insert-only for baselines.
 
 Claim updates use additive `nfts_history_events` storage keyed by Ethereum transaction/log identity. The legacy URI-keyed `nfts_history` table and its primary key are preserved. Settings-only updates retain an audit row with no Timeline description. The API combines both tables and suppresses a legacy row only when its transaction is represented by an event for that NFT. A return to an earlier URI remains a separate edit. Historical insertion reconciles the immediate successor diff with an optimistic snapshot check and transaction-scoped row locks.
 
@@ -2631,17 +2631,19 @@ Manual `nft-history-replay` invocations reuse the event decoder and history proc
 
 ### NFT history corrections
 
-Claim metadata edits can precede the first positive Mint. Source ingestion
-compares pre-mint updates with the verified predecessor URI at the transaction
-position. An unchanged URI stays in the internal ledger without a public Edit.
+Scheduled history starts with an Initialized record when the original metadata
+URI is set. Claim initialization, direct creation and burn-and-redeem setup
+provide that origin. Later issuance does not add a metadata Timeline entry.
+The two historical V3 claims use their setup as origin and the later assignment
+receipt to prove the token mapping. Claim URI updates can precede issuance.
+A same-URI settings update stays in the internal ledger.
 
 The manual `nft-history-repair` invocation reconciles one NFT from explicit
-finalized transaction hashes. It can correct an existing Mint and represent
-selected claim updates in the event ledger with their on-chain diffs. The
-reviewed digest, history fingerprint, apply flag, and job cursor protect the
-repair. The Mint correction, any verified legacy URI collision removal, event
-ledger writes and job completion commit in one database transaction. This path
-uses the existing event and replay job tables and runs in `nftHistoryLoop`.
+finalized source transactions. It replaces an audited Mint baseline with its
+initialization transaction, preserving the original URI, and reconciles the
+selected Edit sources. The reviewed digest, history fingerprint, apply gate
+and job cursor protect the repair. The baseline change, event ledger writes
+and job completion share one transaction. See the [backfill runbook](nft-history-repair.md).
 
 ### Private drop bookmarks
 

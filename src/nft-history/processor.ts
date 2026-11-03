@@ -69,7 +69,10 @@ async function reconcileSuccessor(
   describe: Describe
 ): Promise<void> {
   if (!next?.row.uri) return;
-  if (next.kind === 'legacy' && next.row.description?.event === 'Mint')
+  if (
+    next.kind === 'legacy' &&
+    ['Mint', 'Initialized'].includes(next.row.description?.event)
+  )
     throw new Error(
       'Claim update precedes an existing Mint; manual reconciliation required'
     );

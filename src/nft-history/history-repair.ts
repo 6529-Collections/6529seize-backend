@@ -13,7 +13,11 @@ import { recordVerifiedEdit } from './processor';
 import { nftHistoryReplayDb } from './replay.db';
 import { planReceipt, verifyReplayRange } from './replay-manifest';
 import { applyIdentity, MAX_REPLAY_EVENTS } from './replay-request';
-import { decodeHistorySource, toSourceLog } from './source-operations';
+import {
+  decodeDeferredInitialization,
+  decodeHistorySource,
+  toSourceLog
+} from './source-operations';
 
 const MODE = 'nft-history-repair';
 
@@ -22,7 +26,8 @@ interface RepairScope {
   contract: string;
   tokenId: number;
   cutoffBlock: number;
-  mintTransaction?: string;
+  initializationTransaction?: string;
+  assignmentTransaction?: string;
   editTransactions: string[];
 }
 
@@ -53,7 +58,8 @@ export function parseHistoryRepairRequest(
     'contract',
     'tokenId',
     'cutoffBlock',
-    'mintTransaction',
+    'initializationTransaction',
+    'assignmentTransaction',
     'editTransactions',
     ...(input.action === 'apply' ? ['jobId', 'approvalDigest'] : [])
   ]);
@@ -72,14 +78,23 @@ export function parseHistoryRepairRequest(
     throw new Error('Invalid NFT history repair request');
 
   const editTransactions = input.editTransactions.map(transactionHash);
-  const mintTransaction =
-    input.mintTransaction === undefined
+  const initializationTransaction =
+    input.initializationTransaction === undefined
       ? undefined
-      : transactionHash(input.mintTransaction);
+      : transactionHash(input.initializationTransaction);
+  const assignmentTransaction =
+    input.assignmentTransaction === undefined
+      ? undefined
+      : transactionHash(input.assignmentTransaction);
   if (
-    (!mintTransaction && !editTransactions.length) ||
+    (assignmentTransaction &&
+      (!initializationTransaction ||
+        assignmentTransaction === initializationTransaction ||
+        editTransactions.includes(assignmentTransaction))) ||
+    (!initializationTransaction && !editTransactions.length) ||
     new Set(editTransactions).size !== editTransactions.length ||
-    (mintTransaction && editTransactions.includes(mintTransaction))
+    (initializationTransaction &&
+      editTransactions.includes(initializationTransaction))
   )
     throw new Error('Repair requires distinct, explicit source transactions');
 
@@ -88,7 +103,8 @@ export function parseHistoryRepairRequest(
     contract,
     tokenId: Number(input.tokenId),
     cutoffBlock: Number(input.cutoffBlock),
-    ...(mintTransaction ? { mintTransaction } : {}),
+    ...(initializationTransaction ? { initializationTransaction } : {}),
+    ...(assignmentTransaction ? { assignmentTransaction } : {}),
     editTransactions: editTransactions.sort((a, b) => a.localeCompare(b))
   };
   return input.action === 'apply'
@@ -104,10 +120,9 @@ function repairRange(scope: RepairScope) {
   };
 }
 
-async function decodeRepairTransaction(
+async function loadRepairSource(
   scope: RepairScope,
   hash: string,
-  mint: boolean,
   remainingMillis: () => number
 ) {
   if (remainingMillis() < 90000)
@@ -127,18 +142,26 @@ async function decodeRepairTransaction(
     throw new Error(
       'Repair source must be successful and within the finalized cutoff'
     );
+  return {
+    hash,
+    block: tx.blockNumber,
+    transactionIndex: tx.index,
+    logs: receipt.logs.map(toSourceLog)
+  };
+}
+
+async function decodeRepairTransaction(
+  scope: RepairScope,
+  hash: string,
+  initialization: boolean,
+  remainingMillis: () => number
+) {
   return decodeHistorySource(
-    {
-      hash,
-      block: tx.blockNumber,
-      transactionIndex: tx.index,
-      logs: receipt.logs.map(toSourceLog)
-    },
+    await loadRepairSource(scope, hash, remainingMillis),
     {
       hasMint: async (contract, id) =>
-        !mint ||
-        contract.toLowerCase() !== scope.contract.toLowerCase() ||
-        id !== scope.tokenId,
+        !initialization || !isRepairToken(scope, { contract, nft_id: id }),
+      recordInitialization: initialization,
       remainingMillis
     }
   );
@@ -154,71 +177,68 @@ function isRepairToken(
   );
 }
 
-function planMintReplacement(
+function planInitialization(
   snapshot: HistorySnapshot,
   plan: HistoryWritePlan,
-  row: NFTHistory,
-  verifiedEdits: ReadonlyMap<string, boolean>
+  row: NFTHistory
 ): void {
-  const mints = snapshot.legacy.filter(
-    (entry) => entry.description?.event === 'Mint'
+  const baselines = snapshot.legacy.filter((entry) =>
+    ['Mint', 'Initialized'].includes(entry.description?.event)
   );
-  const old = mints[0];
-  if (mints.length !== 1 || !old.uri || !row.uri || row.uri.length > 100)
+  const old = baselines[0];
+  if (baselines.length !== 1 || !old.uri || old.uri !== row.uri)
     throw new Error(
-      'Repair requires one existing Mint and a storable canonical URI'
+      'Repair requires one existing baseline with the verified original URI'
     );
   if (
-    old.uri === row.uri &&
+    old.description.event === 'Initialized' &&
     old.block === row.block &&
     old.transaction_hash.toLowerCase() === row.transaction_hash.toLowerCase() &&
     new Date(old.transaction_date).getTime() === row.transaction_date.getTime()
   )
     return;
 
-  // Legacy history uses URI as part of its primary key. Only displace a
-  // collision after preserving its source in the ledger as settings-only.
-  const collision = snapshot.legacy.find(
-    (entry) =>
-      entry !== old && entry.uri?.toLowerCase() === row.uri!.toLowerCase()
+  const { created_at: _createdAt, ...canonical } = row;
+  plan.replaceBaseline = { oldUri: old.uri, row: canonical };
+}
+
+async function repairInitialization(
+  scope: RepairScope,
+  hash: string,
+  remainingMillis: () => number
+): Promise<NFTHistory> {
+  if (scope.assignmentTransaction) {
+    const [init, assignment] = await Promise.all([
+      loadRepairSource(scope, hash, remainingMillis),
+      loadRepairSource(scope, scope.assignmentTransaction, remainingMillis)
+    ]);
+    return decodeDeferredInitialization(
+      init,
+      assignment,
+      scope.contract,
+      scope.tokenId
+    );
+  }
+  const operations = await decodeRepairTransaction(
+    scope,
+    hash,
+    true,
+    remainingMillis
   );
+  const origins = operations.filter(
+    (operation) =>
+      operation.kind === 'mint' && isRepairToken(scope, operation.row)
+  );
+  const origin = origins[0];
   if (
-    collision &&
-    (collision.description?.event !== 'Edit' ||
-      verifiedEdits.get(collision.transaction_hash.toLowerCase()) !== true)
+    origins.length !== 1 ||
+    origin.kind !== 'mint' ||
+    origin.row.description?.event !== 'Initialized'
   )
     throw new Error(
-      'Mint URI collision requires a verified settings-only source'
+      'Repair requires a verified initialization for the selected NFT'
     );
-
-  if (old.uri !== row.uri) {
-    const successors = [...snapshot.legacy, ...snapshot.events]
-      .filter(
-        (entry) =>
-          entry !== old &&
-          entry.block >= row.block &&
-          entry.description !== null
-      )
-      .sort((a, b) => a.block - b.block);
-    const nextBlock = successors[0]?.block;
-    if (
-      successors.some(
-        (entry) =>
-          entry.block === nextBlock &&
-          !verifiedEdits.has(entry.transaction_hash.toLowerCase())
-      )
-    )
-      throw new Error(
-        'Mint URI correction requires verification of its first successor'
-      );
-  }
-
-  const { created_at: _createdAt, ...canonical } = row;
-  plan.replaceMint = {
-    oldUri: old.uri,
-    ...(collision ? { collisionUri: collision.uri } : {}),
-    row: canonical
-  };
+  return origin.row;
 }
 
 async function prepareRepair(
@@ -237,7 +257,6 @@ async function prepareRepair(
     legacyUpdates: []
   };
 
-  const verifiedEdits = new Map<string, boolean>();
   for (const hash of scope.editTransactions) {
     const operations = await decodeRepairTransaction(
       scope,
@@ -255,27 +274,18 @@ async function prepareRepair(
         'Repair requires one verified claim edit for the selected NFT per source'
       );
     await recordVerifiedEdit(plan, snapshot, edit.event, edit.previousUri);
-    verifiedEdits.set(hash, edit.previousUri === edit.event.uri);
   }
 
-  if (scope.mintTransaction) {
-    const operations = await decodeRepairTransaction(
-      scope,
-      scope.mintTransaction,
-      true,
-      remainingMillis
+  if (scope.initializationTransaction)
+    planInitialization(
+      snapshot,
+      plan,
+      await repairInitialization(
+        scope,
+        scope.initializationTransaction,
+        remainingMillis
+      )
     );
-    const mints = operations.filter(
-      (operation) =>
-        operation.kind === 'mint' && isRepairToken(scope, operation.row)
-    );
-    const mint = mints[0];
-    if (mints.length !== 1 || mint.kind !== 'mint')
-      throw new Error(
-        'Repair requires a verified first Mint source for the selected NFT'
-      );
-    planMintReplacement(snapshot, plan, mint.row, verifiedEdits);
-  }
 
   if ((await verifyReplayRange(range)).cutoffHash !== cutoffHash)
     throw new Error('Repair cutoff changed; review a fresh dry-run');

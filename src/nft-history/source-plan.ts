@@ -28,7 +28,9 @@ export interface HistorySourcePlan {
 }
 
 export function hasMint(snapshot: HistorySnapshot): boolean {
-  return snapshot.legacy.some((row) => row.description?.event === 'Mint');
+  return snapshot.legacy.some((row) =>
+    ['Mint', 'Initialized'].includes(row.description?.event)
+  );
 }
 
 export function claimFingerprint(rows: StoredSourceClaim[]): string {
