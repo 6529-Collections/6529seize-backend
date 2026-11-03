@@ -267,7 +267,10 @@ it('replaces Mint with initialization and keeps the Edit and its settings receip
   ]);
   const repaired = await db.snapshot(contract, nft_id);
   expect(repaired.legacy).toHaveLength(2);
-  expect(result.data[1].description.event).toBe('Initialized');
+  expect(JSON.parse(result.data[1].description)).toEqual({
+    event: 'Initialized',
+    changes: []
+  });
   expect(
     repaired.events.find((event) => event.event_id === settings.event_id)
       ?.description

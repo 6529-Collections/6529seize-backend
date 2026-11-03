@@ -375,11 +375,48 @@ function sourceClaimEvent(
     : null;
 }
 
+async function recordClaimInitialization(
+  context: SourceContext,
+  reader: SourceHistoryReader,
+  extension: string,
+  contract: string,
+  claimId: string,
+  state: VerifiedClaim
+): Promise<void> {
+  const { mints, tx, operations } = context;
+  if (state.tokenId < 0) return;
+  if (
+    !mints.some(
+      (mint) =>
+        mint.contract === contract &&
+        mint.tokenId === state.tokenId &&
+        mint.operator.toLowerCase() === extension.toLowerCase()
+    )
+  )
+    throw new Error(
+      'Claim initialization has no matching creator token creation'
+    );
+  if (
+    reader.recordInitialization &&
+    !(await reader.hasMint(contract, state.tokenId))
+  ) {
+    operations.push({
+      kind: 'mint',
+      row: initializationRow(
+        context,
+        contract,
+        state.tokenId,
+        claimInitializationUri(tx, extension, contract, claimId)
+      )
+    });
+  }
+}
+
 async function decodeSourceClaims(
   context: SourceContext,
   reader: SourceHistoryReader
 ): Promise<void> {
-  const { receipt, mints, claim, tx, operations } = context;
+  const { receipt, claim, tx, operations } = context;
   for (const log of receipt.logs) {
     if (context.remainingMillis() < 90000)
       throw new Error('Source decode time budget exhausted');
@@ -390,32 +427,14 @@ async function decodeSourceClaims(
     const claimId = String(event.args.instanceId);
     const state = await claim(log.address, contract, claimId);
     if (event.name === 'ClaimInitialized') {
-      if (state.tokenId === -1) continue;
-      if (
-        !mints.some(
-          (mint) =>
-            mint.contract === contract &&
-            mint.tokenId === state.tokenId &&
-            mint.operator.toLowerCase() === log.address.toLowerCase()
-        )
-      )
-        throw new Error(
-          'Claim initialization has no matching creator token creation'
-        );
-      if (
-        reader.recordInitialization &&
-        !(await reader.hasMint(contract, state.tokenId))
-      ) {
-        operations.push({
-          kind: 'mint',
-          row: initializationRow(
-            context,
-            contract,
-            state.tokenId,
-            claimInitializationUri(tx, log.address, contract, claimId)
-          )
-        });
-      }
+      await recordClaimInitialization(
+        context,
+        reader,
+        log.address,
+        contract,
+        claimId,
+        state
+      );
     } else {
       const update = await decodeClaimUpdate(toSourceLog(log), () =>
         Promise.resolve([state.tokenId])
@@ -487,6 +506,17 @@ async function mintSourceUri(
   }
 }
 
+function createsToken(mint: MintLog, { tx, parsed }: SourceContext): boolean {
+  if (parsed?.name === 'mintBaseNew')
+    return tx.to?.toLowerCase() === mint.contract.toLowerCase();
+  return (
+    parsed?.name === 'initializeBurnRedeem' &&
+    tx.to?.toLowerCase() === mint.operator.toLowerCase() &&
+    String(parsed.args.creatorContractAddress).toLowerCase() ===
+      mint.contract.toLowerCase()
+  );
+}
+
 async function decodeSourceMints(
   context: SourceContext,
   reader: SourceHistoryReader
@@ -502,16 +532,11 @@ async function decodeSourceMints(
       seenMints.add(key);
       continue;
     }
-    const directNew =
-      tx.to?.toLowerCase() === mint.contract.toLowerCase() &&
-      parsed?.name === 'mintBaseNew';
-    const burnNew =
-      parsed?.name === 'initializeBurnRedeem' &&
-      tx.to?.toLowerCase() === mint.operator.toLowerCase() &&
-      String(parsed.args.creatorContractAddress).toLowerCase() ===
-        mint.contract.toLowerCase();
-    if (reader.recordInitialization && !directNew && !burnNew) continue;
-    if (mint.amount === BigInt(0) && !directNew && !burnNew) continue;
+    if (
+      !createsToken(mint, context) &&
+      (reader.recordInitialization || mint.amount === BigInt(0))
+    )
+      continue;
     const uri = await mintSourceUri(mint, context);
     seenMints.add(key);
     if (reader.recordInitialization) {
@@ -637,7 +662,7 @@ function claimInitializationUri(
     parsed?.name !== 'initializeClaim' ||
     String(parsed.args.creatorContractAddress).toLowerCase() !==
       contract.toLowerCase() ||
-    String(parsed.args.instanceId ?? parsed.args.claimIndex) !== claimId
+    String(parsed.args[1]) !== claimId
   )
     throw new Error('Initialization requires verified direct claim calldata');
   const params = parsed.args.claimParameters;
@@ -685,7 +710,9 @@ export async function decodeDeferredInitialization(
     throw new Error('Invalid deferred claim assignment');
 
   const parsed = NFT_HISTORY_IFACE.parseTransaction({ data: later.tx.data });
-  const claimId = String(parsed?.args.claimIndex);
+  if (parsed?.name !== 'airdrop')
+    throw new Error('Deferred assignment requires verified airdrop calldata');
+  const claimId = String(parsed.args[1]);
   const logs = origin.receipt.logs.filter((log) => {
     if (log.address.toLowerCase() !== DEFERRED_CLAIM_EXTENSION) return false;
     const event = sourceClaimEvent(log, initialization);
@@ -697,7 +724,6 @@ export async function decodeDeferredInitialization(
     );
   });
   if (
-    parsed?.name !== 'airdrop' ||
     String(parsed.args.creatorContractAddress).toLowerCase() !==
       contract.toLowerCase() ||
     logs.length !== 1 ||

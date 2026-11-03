@@ -46,3 +46,13 @@ Initialized label. No new schema is required. The repair uses the existing
 history and replay tables and does not rewind scheduled ingestion. The plan
 covers the audited origins and known Edit corrections, while unverified older
 eventless updates remain outside this historical batch.
+
+Generate one dry-run request per line from the audited list, using a verified
+finalized cutoff. Keep the JSONL and the returned approvals for reconciliation.
+
+```sh
+jq -c --argjson cutoff "$NFT_HISTORY_FINALIZED_CUTOFF" '
+  .[] | del(.expectedTimelineCount) +
+  {mode: "nft-history-repair", action: "dry-run", cutoffBlock: $cutoff}
+' docs/nft-history-repair-sources.json > nft-history-dry-runs.jsonl
+```

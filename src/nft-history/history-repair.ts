@@ -98,6 +98,7 @@ export function parseHistoryRepairRequest(
   )
     throw new Error('Repair requires distinct, explicit source transactions');
 
+  editTransactions.sort((a, b) => a.localeCompare(b));
   const scope: RepairScope = {
     mode: MODE,
     contract,
@@ -105,7 +106,7 @@ export function parseHistoryRepairRequest(
     cutoffBlock: Number(input.cutoffBlock),
     ...(initializationTransaction ? { initializationTransaction } : {}),
     ...(assignmentTransaction ? { assignmentTransaction } : {}),
-    editTransactions: editTransactions.sort((a, b) => a.localeCompare(b))
+    editTransactions
   };
   return input.action === 'apply'
     ? { ...scope, action: 'apply', ...applyIdentity(input) }
@@ -134,8 +135,7 @@ async function loadRepairSource(
   ]);
   if (
     !tx ||
-    !receipt ||
-    receipt.status !== 1 ||
+    receipt?.status !== 1 ||
     tx.blockNumber === null ||
     tx.blockNumber > scope.cutoffBlock
   )
@@ -159,8 +159,10 @@ async function decodeRepairTransaction(
   return decodeHistorySource(
     await loadRepairSource(scope, hash, remainingMillis),
     {
-      hasMint: async (contract, id) =>
-        !initialization || !isRepairToken(scope, { contract, nft_id: id }),
+      hasMint: (contract, id) =>
+        Promise.resolve(
+          !initialization || !isRepairToken(scope, { contract, nft_id: id })
+        ),
       recordInitialization: initialization,
       remainingMillis
     }
