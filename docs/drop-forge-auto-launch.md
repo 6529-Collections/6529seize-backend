@@ -270,6 +270,10 @@ that signed bytes are invalid. Never clear signer reservations through a DB rese
 
 Wave drop creation and acknowledgement commit together; a reporting retry does
 not repost a committed event. Push delivery after that commit is best effort.
+Legacy DM history deletion preserves distribution-job checkpoints, wallet-funding
+receipts and their report acknowledgements. These records contain no DM message
+content; their `drop_id` fields identify reports. Deleting a report must not erase
+the completed-work evidence or cause its operation or report to be repeated.
 Before reserving the next action, the worker waits for prior wave reports. An
 unsigned RESERVED intent waits for its pending wave reports before signing.
 The worker rechecks acknowledgement under the signer lock before persisting a
