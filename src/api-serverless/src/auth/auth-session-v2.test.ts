@@ -1243,6 +1243,10 @@ describe('auth-session-v2', () => {
   });
 
   it('shares encrypted setup from an own-profile role and rejects replay', async () => {
+    const ownProfileId = 'cd4f5e6a-9c18-4f03-8ee7-47c5372b7ae1';
+    jest
+      .mocked(identitiesDb.getProfileIdByWallet)
+      .mockResolvedValue(ownProfileId);
     authDbMock.createWalletConnectionShare.mockImplementation(
       async (params) => ({
         id: params.id,
@@ -1287,7 +1291,7 @@ describe('auth-session-v2', () => {
 
     const created = await createConnectionShare({
       address: '0xABC',
-      role: 'profile-1',
+      role: ownProfileId,
       targetClientType: 'desktop',
       encryptedDeviceSetup: 'v1.encrypted-payload'
     });
@@ -1343,10 +1347,13 @@ describe('auth-session-v2', () => {
 });
 
 it('rejects sharing device keys from a proxy session', async () => {
+  jest.mocked(identitiesDb.getProfileIdByWallet).mockResolvedValue(
+    'cd4f5e6a-9c18-4f03-8ee7-47c5372b7ae1'
+  );
   await expect(
     createConnectionShare({
       address: '0xabc',
-      role: 'proxy',
+      role: 'e1fbe728-a414-4f60-92f8-05c328db75af',
       targetClientType: 'native',
       encryptedDeviceSetup: 'v1.ciphertext'
     })

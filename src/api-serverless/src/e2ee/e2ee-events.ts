@@ -91,7 +91,7 @@ export class WsE2eeEventPublisher implements E2eeEventPublisher {
     private readonly writeInbox: (
       group: string,
       profiles: string[]
-    ) => Promise<void> = async () => undefined
+    ) => Promise<void> = () => Promise.resolve()
   ) {}
 
   private async sendToProfiles(
