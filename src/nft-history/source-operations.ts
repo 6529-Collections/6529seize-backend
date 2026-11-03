@@ -521,7 +521,7 @@ async function decodeSourceMints(
   context: SourceContext,
   reader: SourceHistoryReader
 ): Promise<void> {
-  const { mints, tx, parsed, operations, source, block } = context;
+  const { mints, tx, operations, source, block } = context;
   const seenMints = new Set<string>();
   for (const mint of mints) {
     const key = `${mint.contract.toLowerCase()}:${mint.tokenId}`;
