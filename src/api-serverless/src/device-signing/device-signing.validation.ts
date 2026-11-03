@@ -4,6 +4,14 @@ import { E2EE_WALLET_SIGNATURE_PATTERN } from '@/e2ee/e2ee-encoding';
 import { APP_DEVICE_GRANT_ORIGIN_MAX_LENGTH } from './app-device-grant';
 import { DEVICE_GRANT_SCOPES } from './device-grant-message';
 
+export const deviceLabelRenameSchema = Joi.object<{ label: string }>({
+  label: Joi.string()
+    .trim()
+    .max(48)
+    .pattern(new RegExp('^[^\\p{Cc}]+$', 'u'))
+    .required()
+}).required();
+
 const hex32 = () => Joi.string().pattern(/^0x[0-9a-fA-F]{64}$/);
 const unixSeconds = () =>
   Joi.number().integer().min(1).max(Number.MAX_SAFE_INTEGER);

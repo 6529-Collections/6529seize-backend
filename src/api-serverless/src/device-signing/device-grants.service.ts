@@ -224,6 +224,32 @@ export class DeviceGrantsService {
     return grants.map(toApiDeviceGrant);
   }
 
+  async renameCallerGrant(
+    grantId: string,
+    label: string,
+    ctx: GrantCallerContext
+  ): Promise<ApiDeviceGrant> {
+    const caller = this.resolveCaller(ctx.authenticationContext);
+    const notFound = new NotFoundException(`Device grant ${grantId} not found`);
+    if (!GRANT_ID_PATTERN.test(grantId)) {
+      throw notFound;
+    }
+    const grant = await this.db.findGrantById(grantId, ctx);
+    if (
+      !grant ||
+      grant.revoked_at !== null ||
+      !(await this.isCallerWallet(grant.wallet, caller))
+    ) {
+      throw notFound;
+    }
+    await this.db.renameGrant(grantId, label, ctx);
+    const renamed = await this.db.findGrantById(grantId, ctx);
+    if (!renamed || renamed.revoked_at !== null) {
+      throw notFound;
+    }
+    return toApiDeviceGrant(renamed);
+  }
+
   async revokeCallerGrant(
     grantId: string,
     ctx: GrantCallerContext

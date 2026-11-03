@@ -205,6 +205,19 @@ export class E2eeDevicesService {
     });
   }
 
+  async renameDevice(
+    callerProfileId: string,
+    deviceKey: string,
+    label: string
+  ): Promise<ApiE2eeDevice> {
+    await this.db.renameDevice(callerProfileId, deviceKey, label);
+    const device = await this.db.getDevice(deviceKey);
+    if (device?.profile_id !== callerProfileId || device.revoked_at !== null) {
+      throw e2eeErrors.notYourDevice();
+    }
+    return toApiE2eeDevice(device);
+  }
+
   async getDevice(deviceKey: string): Promise<ApiE2eeDevice> {
     const device = await this.db.getDevice(deviceKey);
     if (!device) throw e2eeErrors.notFound('Device');

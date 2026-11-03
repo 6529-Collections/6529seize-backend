@@ -183,6 +183,42 @@ describe('DeviceGrantsService', () => {
     });
   });
 
+  describe('renameCallerGrant', () => {
+    it('updates the stored device label', async () => {
+      jest
+        .mocked(db.findGrantById)
+        .mockResolvedValueOnce(aGrant())
+        .mockResolvedValueOnce(aGrant({ device_label: 'My laptop' }));
+
+      const grant = await service.renameCallerGrant(
+        GRANT_ID,
+        'My laptop',
+        callerContext()
+      );
+
+      expect(db.renameGrant).toHaveBeenCalledWith(
+        GRANT_ID,
+        'My laptop',
+        expect.anything()
+      );
+      expect(grant).toMatchObject({
+        device_label: 'My laptop'
+      });
+    });
+
+    it('rejects a grant owned by another profile before writing', async () => {
+      jest.mocked(db.findGrantById).mockResolvedValue(aGrant());
+      jest
+        .mocked(identities.getProfileIdByWallet)
+        .mockResolvedValue('another-profile');
+
+      await expect(
+        service.renameCallerGrant(GRANT_ID, 'My laptop', callerContext())
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(db.renameGrant).not.toHaveBeenCalled();
+    });
+  });
+
   describe('revokeCallerGrant', () => {
     it('revokes a grant of the caller profile and returns it', async () => {
       jest
