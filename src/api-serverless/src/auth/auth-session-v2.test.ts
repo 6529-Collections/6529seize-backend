@@ -1347,9 +1347,9 @@ describe('auth-session-v2', () => {
 });
 
 it('rejects sharing device keys from a proxy session', async () => {
-  jest.mocked(identitiesDb.getProfileIdByWallet).mockResolvedValue(
-    'cd4f5e6a-9c18-4f03-8ee7-47c5372b7ae1'
-  );
+  jest
+    .mocked(identitiesDb.getProfileIdByWallet)
+    .mockResolvedValue('cd4f5e6a-9c18-4f03-8ee7-47c5372b7ae1');
   await expect(
     createConnectionShare({
       address: '0xabc',
