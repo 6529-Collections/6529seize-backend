@@ -1252,6 +1252,18 @@ because changing a value can move an entry across page boundaries. The frontend
 invalidates the scoped My Votes query after each confirmed vote. The existing
 competition/voter index restricts reads to that actor's allocations; an additional
 sort index is deferred until query-plan evidence justifies a schema rollout.
+Wave metadata and Configuration edits use `PATCH /v3/waves/{wave_id}` with
+partial wave-owned fields. Omitted fields are retained; nullable fields can be
+cleared explicitly. The command locks the physical shared wave, archives its
+revision and preserves both stored hub policies without changing any competition.
+V3 wave reads expose the shared `configuration`, independent of the original
+competition projection. Legacy wave creation and editing accept and discard
+competition settings before validation; competition configuration mutations use
+the competition commands exclusively. Legacy wave pause commands are accepted
+without changing pauses. Compatibility wave names come from shared wave metadata;
+competition titles remain separately owned. Refresh the compatibility views with
+`dbMigrationsLoop` before deploying `api` and then the frontend.
+
 Creating a hub always creates a
 CHAT wave; competition creation is a separate native command. Historical RANK/APPROVE wire types are projected from native original-primary
 configuration; shared wave storage no longer owns a competition type.
@@ -1886,11 +1898,30 @@ finishes, to deliver the universe phase through `xtdh-start.fifo`. A partial TDH
 reconsolidation from `delegationsLoop` instead enqueues one universe phase
 directly after its persistence and checkpoint writes complete. After either
 universe transaction commits, `xTdhLoop` enqueues a stats phase back to that
-FIFO queue, using the same FIFO message group as the universe message when one
+FIFO queue, using the same FIFO message group as the first universe request when one
 is available and the queue's default FIFO group otherwise. That shared message
 group is what orders each universe phase before its stats phase; the SQS event
-source batch size stays at `1` and Lambda reserved concurrency stays at `1` to
-avoid parallel xTDH work across groups. The stats phase rebuilds the inactive
+source batch size is `10` in
+`src/xTdhLoop/serverless.yaml` at `functions.xTdhLoop.events[0].sqs.batchSize`.
+Lambda reserved
+concurrency stays at `1` to avoid parallel xTDH work across groups.
+The handler coalesces each delivered batch into one operation. Any universe
+request selects one universe calculation and one replacement stats request;
+that replacement covers stats requests included in the same batch. A stats-only
+batch performs one stats rebuild. Requests from different FIFO groups can share
+the same global refresh, with the replacement stats message using the first
+universe request's group. The invocation succeeds only after the selected work
+finishes, including enqueueing replacement stats after the universe commits.
+Any failure rejects the entire batch for SQS retry. Conflict reporting uses the
+highest receive count in the batch and reports unknown metadata conservatively.
+Requests arriving during a calculation remain queued for a later invocation.
+SQS can deliver smaller batches; there is no FIFO batching window. Batch
+enablement follows verification of the batch-capable handler with batch size `1`
+in each environment. To roll back, revert the batch-enablement change and deploy
+`xTdhLoop` through the ordinary workflow. Verify the live event-source mapping is
+back at `1` before reverting batch-aware handling. The deployment-contract tests
+lock the batch limit, single-worker concurrency, and whole-batch retry policy.
+The stats phase rebuilds the inactive
 xTDH stats slot and activates it only after the rebuild succeeds; a redelivered
 stats message truncates and refills the inactive slot again before activation.
 Each grant/token stats `INSERT ... SELECT` runs in a dedicated `READ COMMITTED`
@@ -2601,13 +2632,15 @@ Craft, subscription coverage and Help Bot calendar answers use the bundled, vers
 
 ### NFT metadata history
 
-`nftHistoryLoop` retains legacy deployer discovery for mint baselines and direct token URI writes, and discovers Manifold `ClaimUpdated` events independently of transaction sender. Supported Ethereum ERC1155 claim extensions are filtered by indexed creator contract. Finalized blocks are processed in bounded windows; a failed decode, missing mapping, or metadata fetch prevents the window checkpoint from advancing.
+`nftHistoryLoop` discovers history by creator contract and verified extension events, independently of transaction sender. Claim initialization, zero-address ERC1155 mint logs (including public paid mints), URI logs, and claim updates share one ordered decoder/planner. Direct zero-value calls to the creator contracts cover eventless top-level `setTokenURI` writes. Creator-scoped claim mappings come from verified initialization receipts and historical claim state, never from an assumption that claim ID equals token ID. The first positive claim mint supplies the Mint baseline; later editions do not create more Mint rows. Existing baselines are preserved. Finalized blocks are processed in up to five 200-block windows per invocation, with discovery split into 20-block chunks. The checkpoint advances only after every source transaction in a block commits; retries begin at the next block and repeat all transactions of an interrupted block idempotently. Completed block prefixes survive time-budget exhaustion or later failures. A failed decode, missing earlier baseline, or metadata fetch prevents advancement past its block. Unlisted claim logs incidentally present in a mint receipt are ignored; audit-explicit unlisted logs remain failures for review. Mapping/history writes for one source transaction are atomic and insert-only for Mint baselines.
 
 Claim updates use additive `nfts_history_events` storage keyed by Ethereum transaction/log identity. The legacy URI-keyed `nfts_history` table and its primary key are preserved. Settings-only updates retain an audit row with no Timeline description. The API combines both tables and suppresses a legacy row only when its transaction is represented by an event for that NFT. A return to an earlier URI remains a separate edit. Historical insertion reconciles the immediate successor diff with an optimistic snapshot check and transaction-scoped row locks.
 
 Metadata downloads use the shared decentralized gateway catalog, validate every redirect, and enforce a streamed byte limit and one deadline across fallback attempts. Unsupported HTTPS origins fail the window for explicit policy review.
 
 The explicit `dbMigrationsLoop` scope `nft-history-events` synchronizes only the new event entity. Required service order is schema creation, `api`, then `nftHistoryLoop`; no frontend contract regeneration is required because the history response shape is unchanged.
+
+Manual `nft-history-replay` invocations reuse the event decoder and history processor with an isolated additive `nfts_history_replay_jobs` receipt/cursor table. Dry-run is read-only; apply is disabled by default and binds a UUID job to a reviewed manifest digest. Event writes and replay cursor advancement share a transaction, and bounded resume never advances the scheduled ingestion checkpoint. The explicit `nft-history-replay` schema scope creates only the job entity. No new scheduled service, queue, or public API is introduced. The additional manual mode `nft-history-source-replay` uses the same sender-independent source planner to recover missing claim mappings and Mint baselines, as well as edits. Its version-2 manifest and mode-qualified request prevent reuse of an old update-only job ID; existing version-1 jobs remain compatible. Dry-run uses an in-memory chronological overlay and writes nothing. Each approved source transaction commits its mapping/history changes and cursor together. The existing apply flag, finalized anchors, bounds, UUID identity and fresh-digest checks remain mandatory; source replay never registers the scheduled checkpoint entity. No additional schema synchronization or public API deployment is required once the original history event/job tables exist.
 
 ### Private drop bookmarks
 
