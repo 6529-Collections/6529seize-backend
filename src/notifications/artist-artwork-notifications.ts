@@ -77,7 +77,7 @@ export class ArtistArtworkNotifications {
     if (Date.now() >= deadline) return false;
     const submission = await this.submissions.find(event, ctx);
     if (!submission) return true;
-    const recipients = await this.preferences.listPendingRecipients(
+    let recipients = await this.preferences.listPendingRecipients(
       event.event_id,
       submission.entry_id,
       ctx
@@ -91,6 +91,30 @@ export class ArtistArtworkNotifications {
         ].filter((id): id is string => id !== null)
       )
     );
+    // Keep database work small, but use the remaining event budget rather than
+    // waiting for another scheduled worker run after each batch.
+    while (recipients.length) {
+      if (Date.now() >= deadline) return false;
+      if (
+        !(await this.deliverBatch(event, recipients, groupIds, ctx, deadline))
+      )
+        return false;
+      recipients = await this.preferences.listPendingRecipients(
+        event.event_id,
+        submission.entry_id,
+        ctx
+      );
+    }
+    return true;
+  }
+
+  private async deliverBatch(
+    event: NativeCompetitionEvent,
+    recipients: string[],
+    groupIds: string[],
+    ctx: RequestContext,
+    deadline: number
+  ): Promise<boolean> {
     const preferences = groupIds.length
       ? await this.profilePreferences.getMany(recipients, ctx.connection)
       : new Map();
@@ -126,15 +150,7 @@ export class ArtistArtworkNotifications {
         ctx
       );
     }
-    return (
-      (
-        await this.preferences.listPendingRecipients(
-          event.event_id,
-          submission.entry_id,
-          ctx
-        )
-      ).length === 0
-    );
+    return true;
   }
 
   private async notifyRecipient(

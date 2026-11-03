@@ -148,15 +148,40 @@ describe('Artist artwork delivery', () => {
     expect(deps.notifier.notifyOfArtistArtwork).toHaveBeenCalledTimes(2);
     expect(deps.push.enqueueMany).toHaveBeenCalledTimes(2);
   });
-  it('bounds a batch to 100 recipients and resumes the remainder', async () => {
+  it('delivers 1,000 subscribers in small batches within one event budget', async () => {
     const deps = setup();
     deps.recipients.push(
-      ...Array.from({ length: 100 }, (_, i) => `viewer-${i}`)
+      ...Array.from({ length: 999 }, (_, i) => `viewer-${i}`)
     );
-    expect(await deps.service.deliver(event, {})).toBe(false);
-    expect(deps.notifier.notifyOfArtistArtwork).toHaveBeenCalledTimes(100);
-    expect(await deps.service.deliver(event, {})).toBe(true);
-    expect(deps.notifier.notifyOfArtistArtwork).toHaveBeenCalledTimes(101);
+    jest.spyOn(Date, 'now').mockReturnValue(0);
+    expect(await deps.service.deliver(event, {}, 20_000)).toBe(true);
+    expect(deps.notifier.notifyOfArtistArtwork).toHaveBeenCalledTimes(1000);
+    expect(deps.preferences.listPendingRecipients).toHaveBeenCalledTimes(11);
+    const batches = await Promise.all(
+      deps.preferences.listPendingRecipients.mock.results.map(
+        (result) => result.value
+      )
+    );
+    expect(batches.every((batch) => batch.length <= 100)).toBe(true);
+    expect(await deps.service.deliver(event, {}, 20_000)).toBe(true);
+    expect(deps.notifier.notifyOfArtistArtwork).toHaveBeenCalledTimes(1000);
+    expect(deps.push.enqueueMany).toHaveBeenCalledTimes(1000);
+  });
+  it('yields in a later batch at the deadline and resumes without duplicates', async () => {
+    const deps = setup();
+    deps.recipients.push(
+      ...Array.from({ length: 249 }, (_, i) => `viewer-${i}`)
+    );
+    let now = 0;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    deps.push.enqueueMany.mockImplementation(async () => {
+      if (deps.push.enqueueMany.mock.calls.length === 150) now = 20_000;
+    });
+    expect(await deps.service.deliver(event, {}, 20_000)).toBe(false);
+    expect(deps.notifier.notifyOfArtistArtwork).toHaveBeenCalledTimes(150);
+    expect(await deps.service.deliver(event, {}, 40_000)).toBe(true);
+    expect(deps.notifier.notifyOfArtistArtwork).toHaveBeenCalledTimes(250);
+    expect(deps.push.enqueueMany).toHaveBeenCalledTimes(250);
   });
   it('skips group eligibility for a public wave and public parent', async () => {
     const deps = setup();
