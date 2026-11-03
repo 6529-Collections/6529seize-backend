@@ -209,7 +209,9 @@ it('resumes a saved repair and returns the same completed receipt on retry', asy
     await expect(runHistoryRepair(apply, budget)).rejects.toThrow(
       'interrupted'
     );
-    const saved = await find('44377abc-20ee-435a-83f8-02c7d25c7c44');
+    const saved = await nftHistoryReplayDb.find(
+      '44377abc-20ee-435a-83f8-02c7d25c7c44'
+    );
     write.mockImplementationOnce(async () => {
       saved!.next_index = 1;
     });
