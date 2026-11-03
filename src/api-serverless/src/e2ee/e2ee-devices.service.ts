@@ -212,7 +212,10 @@ export class E2eeDevicesService {
   ): Promise<ApiE2eeDevice> {
     return this.db.executeNativeQueriesInTransaction(async (connection) => {
       const device = await this.db.lockDevice(deviceKey, connection);
-      if (device?.profile_id !== callerProfileId || device.revoked_at !== null) {
+      if (
+        device?.profile_id !== callerProfileId ||
+        device.revoked_at !== null
+      ) {
         throw e2eeErrors.notYourDevice();
       }
       await this.db.renameDevice(callerProfileId, deviceKey, label, connection);
