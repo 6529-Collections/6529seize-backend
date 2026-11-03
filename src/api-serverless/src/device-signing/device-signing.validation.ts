@@ -2,7 +2,19 @@ import * as Joi from 'joi';
 import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
 import { E2EE_WALLET_SIGNATURE_PATTERN } from '@/e2ee/e2ee-encoding';
 import { APP_DEVICE_GRANT_ORIGIN_MAX_LENGTH } from './app-device-grant';
-import { DEVICE_GRANT_SCOPES } from './device-grant-message';
+import {
+  DEVICE_GRANT_SCOPES,
+  DEVICE_LABEL_MAX_LENGTH
+} from './device-grant-message';
+
+export const deviceLabelRenameSchema = Joi.object<{ label: string }>({
+  label: Joi.string()
+    .trim()
+    .min(1)
+    .max(DEVICE_LABEL_MAX_LENGTH)
+    .pattern(/^[A-Za-z0-9 ._()-]+$/)
+    .required()
+}).required();
 
 const hex32 = () => Joi.string().pattern(/^0x[0-9a-fA-F]{64}$/);
 const unixSeconds = () =>

@@ -96,6 +96,7 @@ import {
   E2eeGetBlobChunkRequest,
   E2eeGetDeviceGroupsRequest,
   E2eeGetDeviceRequest,
+  E2eeRenameDeviceRequest,
   E2eeGetGroupLogRequest,
   E2eeGetGroupRequest,
   E2eeGetMeRequest,
@@ -121,6 +122,7 @@ import { isE2eeBackupsEnabled, isE2eeEnabled } from '@/e2ee/e2ee-flag';
 import { Timer } from '@/time';
 import { Request } from 'express';
 import * as Joi from 'joi';
+import { deviceLabelRenameSchema } from '@/api/device-signing/device-signing.validation';
 
 // Thin handlers for the E2EE delivery service (D109 contract v1, section 4).
 // Every route checks the flag first, then requires a non-proxy profile.
@@ -215,6 +217,14 @@ export async function revokeE2eeDeviceOfLoginGrant(
   grantId: string
 ): Promise<void> {
   await services.devices.revokeDeviceOfLoginGrant(grantId);
+}
+
+export async function handleE2eeRenameDevice(
+  req: E2eeRenameDeviceRequest
+): Promise<ApiE2eeDevice> {
+  const caller = await e2eeCaller(req);
+  const { label } = body<{ label: string }>(req.body, deviceLabelRenameSchema);
+  return services.devices.renameDevice(caller, deviceKeyOf(req), label);
 }
 
 export async function handleE2eeGetDevice(

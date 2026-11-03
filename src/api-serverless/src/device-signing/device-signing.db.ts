@@ -105,6 +105,16 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async renameGrant(id: string, label: string, ctx: RequestContext) {
+    await this.timedExecute(
+      'renameGrant',
+      `update ${DEVICE_GRANTS_TABLE} set device_label = :label
+       where id = :id and revoked_at is null`,
+      { id, label },
+      ctx
+    );
+  }
+
   /** Sets revoked_at once; later calls keep the first revocation time. */
   async revokeGrant(
     id: string,

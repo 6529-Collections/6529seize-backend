@@ -484,10 +484,12 @@ describeWithSeed('E2EE delivery service', [], () => {
         }
       ]);
       expect(events.map((event) => event.method)).toEqual(['deviceAdded']);
+      await services.devices.renameDevice(alice.id, key.publicKey, 'My phone');
       now += DAY;
       await registerDevice(alice, key);
       const renewed = await services.devices.getDevice(key.publicKey);
       expect(renewed.grant.issued_at).toBe(nowSeconds());
+      expect(renewed.label).toBe('My phone');
       expect(await services.devices.getProfileDevices(alice.id)).toHaveLength(
         1
       );

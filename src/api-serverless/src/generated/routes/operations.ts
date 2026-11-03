@@ -229,6 +229,7 @@ import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPu
 import { ApiRefreshPushInstallationBadgeRequest } from '@/api/generated/models/ApiRefreshPushInstallationBadgeRequest';
 import { ApiRefreshPushInstallationBadgeResponse } from '@/api/generated/models/ApiRefreshPushInstallationBadgeResponse';
 import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
+import { ApiRenameDeviceRequest } from '@/api/generated/models/ApiRenameDeviceRequest';
 import { ApiReviewProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiReviewProfileCmsAgentProposalRequest';
 import { ApiRevokePushInstallationRequest } from '@/api/generated/models/ApiRevokePushInstallationRequest';
 import { ApiRevokePushInstallationResponse } from '@/api/generated/models/ApiRevokePushInstallationResponse';
@@ -1446,6 +1447,22 @@ export type RegisterDeviceGrantRequest = Request<
   Record<string, never>
 >;
 
+export interface RenameDeviceGrantPathParams {
+  "grantId": string;
+}
+
+export type RenameDeviceGrantQuery = Record<string, never>;
+
+export type RenameDeviceGrantResponse = ApiDeviceGrant;
+
+export type RenameDeviceGrantRequest = Request<
+  RenameDeviceGrantPathParams,
+  ApiResponse<RenameDeviceGrantResponse>,
+  ApiRenameDeviceRequest,
+  RenameDeviceGrantQuery,
+  Record<string, never>
+>;
+
 export interface RevokeDeviceGrantPathParams {
   "grantId": string;
 }
@@ -1871,6 +1888,22 @@ export type E2eeUploadKeyPackagesRequest = Request<
   ApiResponse<E2eeUploadKeyPackagesResponse>,
   ApiE2eeUploadKeyPackagesRequest,
   E2eeUploadKeyPackagesQuery,
+  Record<string, never>
+>;
+
+export interface E2eeRenameDevicePathParams {
+  "device_key": string;
+}
+
+export type E2eeRenameDeviceQuery = Record<string, never>;
+
+export type E2eeRenameDeviceResponse = ApiE2eeDevice;
+
+export type E2eeRenameDeviceRequest = Request<
+  E2eeRenameDevicePathParams,
+  ApiResponse<E2eeRenameDeviceResponse>,
+  ApiRenameDeviceRequest,
+  E2eeRenameDeviceQuery,
   Record<string, never>
 >;
 
