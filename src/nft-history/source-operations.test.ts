@@ -10,7 +10,11 @@ import {
   HISTORY_SOURCE_IFACE,
   HistoryTransaction
 } from './history-transactions';
-import { decodeHistorySource } from './source-operations';
+import {
+  decodeDeferredInitialization,
+  decodeHistorySource
+} from './source-operations';
+import deferredFixtures from './fixtures/deferred-initialization.json';
 
 jest.mock('@/ethereum-rpc/ethereum-rpc-client', () => ({
   getEthereumRpcClient: jest.fn()
@@ -141,6 +145,22 @@ it.each([MEMES_CONTRACT, MEMELAB_CONTRACT])(
         claim: { contract, claimId: '12345', tokenId: 569, location }
       }
     ]);
+    expect(
+      await decodeHistorySource(source, {
+        hasMint: async () => false,
+        recordInitialization: true
+      })
+    ).toEqual([
+      operations[0],
+      expect.objectContaining({
+        kind: 'mint',
+        row: expect.objectContaining({
+          transaction_hash: '0xtx',
+          uri: `https://arweave.net/${location}`,
+          description: { event: 'Initialized', changes: [] }
+        })
+      })
+    ]);
   }
 );
 
@@ -164,6 +184,12 @@ it('recovers the first positive airdrop from another wallet and keeps later aird
   );
   expect(
     await decodeHistorySource(source, { hasMint: async () => true })
+  ).toEqual([]);
+  expect(
+    await decodeHistorySource(source, {
+      hasMint: async () => false,
+      recordInitialization: true
+    })
   ).toEqual([]);
 });
 
@@ -422,3 +448,53 @@ it('ignores malformed claim-signature logs from unrelated receipt emitters befor
     'mint'
   ]);
 });
+
+it.each(deferredFixtures)(
+  'verifies the historical setup and later assignment of Lab $token',
+  async ({ token, uri, origin, assignment, claimStates }) => {
+    const rpc = {
+      getTransaction: async (hash: string) =>
+        hash === origin.tx.hash ? origin.tx : assignment.tx,
+      getTransactionReceipt: async (hash: string) =>
+        hash === origin.tx.hash ? origin.receipt : assignment.receipt,
+      getBlock: async (block: number) =>
+        block === origin.block.number ? origin.block : assignment.block,
+      call: async (_request: unknown, block: number) =>
+        claimStates[
+          block === origin.block.number
+            ? 0
+            : block === assignment.block.number
+              ? 2
+              : 1
+        ]
+    };
+    jest
+      .mocked(getEthereumRpcClient)
+      .mockReturnValue(
+        rpc as unknown as ReturnType<typeof getEthereumRpcClient>
+      );
+    const source = (entry: typeof origin): HistoryTransaction => ({
+      hash: entry.tx.hash,
+      block: entry.block.number,
+      transactionIndex: entry.tx.index,
+      logs: entry.receipt.logs.map(({ index, ...log }) => ({
+        ...log,
+        logIndex: index
+      }))
+    });
+    const init = source(origin);
+    const later = source(assignment);
+    await expect(
+      decodeDeferredInitialization(init, later, MEMELAB_CONTRACT, token)
+    ).resolves.toMatchObject({
+      nft_id: token,
+      uri,
+      transaction_hash: origin.tx.hash,
+      block: origin.block.number,
+      description: { event: 'Initialized', changes: [] }
+    });
+    await expect(
+      decodeDeferredInitialization(init, later, MEMELAB_CONTRACT, token + 1)
+    ).rejects.toThrow('does not match initialization');
+  }
+);
