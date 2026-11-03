@@ -1146,6 +1146,7 @@ describe('auth-session-v2', () => {
         address: params.address,
         role: params.role,
         target_client_type: params.targetClientType,
+        encrypted_device_setup: params.encryptedDeviceSetup,
         created_at: new Date(),
         expires_at: params.expiresAt,
         consumed_at: null,
@@ -1155,6 +1156,7 @@ describe('auth-session-v2', () => {
     authDbMock.consumeWalletConnectionShare.mockResolvedValue({
       id: 'share-1',
       connection_share_code_hash: 'hashed-share',
+      encrypted_device_setup: null,
       address: '0xabc',
       role: 'profile-1',
       target_client_type: 'native',
@@ -1240,6 +1242,7 @@ describe('auth-session-v2', () => {
         address: params.address,
         role: params.role,
         target_client_type: params.targetClientType,
+        encrypted_device_setup: params.encryptedDeviceSetup,
         created_at: new Date(),
         expires_at: params.expiresAt,
         consumed_at: null,
@@ -1249,8 +1252,9 @@ describe('auth-session-v2', () => {
     authDbMock.consumeWalletConnectionShare.mockResolvedValue({
       id: 'share-1',
       connection_share_code_hash: 'hashed-share',
+      encrypted_device_setup: 'v1.encrypted-payload',
       address: '0xabc',
-      role: 'profile-1',
+      role: null,
       target_client_type: 'desktop',
       created_at: new Date(),
       expires_at: new Date(Date.now() + 60_000),
@@ -1275,8 +1279,9 @@ describe('auth-session-v2', () => {
 
     const created = await createConnectionShare({
       address: '0xABC',
-      role: 'profile-1',
-      targetClientType: 'desktop'
+      role: null,
+      targetClientType: 'desktop',
+      encryptedDeviceSetup: 'v1.encrypted-payload'
     });
     const redeemed = await redeemConnectionShare({
       connectionShareCode: created.connection_share_code,
@@ -1286,7 +1291,7 @@ describe('auth-session-v2', () => {
 
     expect(created).toMatchObject({
       address: '0xabc',
-      role: 'profile-1',
+      role: null,
       target_client_type: 'desktop'
     });
     expect(redeemed?.response.native_refresh_token).toEqual(expect.any(String));
@@ -1316,4 +1321,15 @@ describe('auth-session-v2', () => {
       })
     ).rejects.toThrow('refresh-token clients only');
   });
+});
+
+it('rejects sharing device keys from a proxy session', async () => {
+  await expect(
+    createConnectionShare({
+      address: '0xabc',
+      role: 'proxy',
+      targetClientType: 'native',
+      encryptedDeviceSetup: 'v1.ciphertext'
+    })
+  ).rejects.toThrow('proxy');
 });

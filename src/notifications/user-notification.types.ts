@@ -246,7 +246,13 @@ export interface VotingCreditsReturnedNotification extends UserNotificationBase 
   data: VotingCreditsReturnedNotificationData;
 }
 
+export interface EncryptedMessageNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.E2EE_MESSAGE;
+  data: { encrypted_group: string };
+}
+
 export type UserNotification =
+  | EncryptedMessageNotification
   | VotingCreditsReturnedNotification
   | MemeCollaborationNotification
   | CompetitionLifecycleNotification

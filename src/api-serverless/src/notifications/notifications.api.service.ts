@@ -534,6 +534,7 @@ export class NotificationsApiService {
         }
         case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
         case IdentityNotificationCause.COMPETITION_LIFECYCLE:
+        case IdentityNotificationCause.E2EE_MESSAGE:
         case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
           break;
         }
@@ -572,6 +573,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
       case IdentityNotificationCause.IDENTITY_NIC:
+      case IdentityNotificationCause.E2EE_MESSAGE:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return null;
       }
@@ -606,6 +608,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
+      case IdentityNotificationCause.E2EE_MESSAGE:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return [];
       }
@@ -880,6 +883,19 @@ export class NotificationsApiService {
               : null,
           related_drops: [],
           additional_context: { ...notification.data }
+        };
+      }
+      case IdentityNotificationCause.E2EE_MESSAGE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: null,
+          related_drops: [],
+          additional_context: {
+            encrypted_group: notification.data.encrypted_group
+          }
         };
       }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
@@ -1195,6 +1211,19 @@ export class NotificationsApiService {
               : null,
           related_drops: [],
           additional_context: { ...notification.data }
+        };
+      }
+      case IdentityNotificationCause.E2EE_MESSAGE: {
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: enums.resolveOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: null,
+          related_drops: [],
+          additional_context: {
+            encrypted_group: notification.data.encrypted_group
+          }
         };
       }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {

@@ -261,7 +261,7 @@ describe('AuthDb', () => {
   });
 
   it('reads newly written connection shares from the write pool', async () => {
-    const { authDb, oneOrNull } = createExecutor();
+    const { authDb, oneOrNull, execute } = createExecutor();
     oneOrNull.mockResolvedValueOnce({
       id: 'share-1',
       connection_share_code_hash: 'share-hash',
@@ -277,12 +277,17 @@ describe('AuthDb', () => {
     await authDb.createWalletConnectionShare({
       id: 'share-1',
       connectionShareCodeHash: 'share-hash',
+      encryptedDeviceSetup: 'v1.encrypted-payload',
       address: '0xabc',
       role: null,
       targetClientType: 'native',
       expiresAt: new Date()
     });
 
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('encrypted_device_setup'),
+      expect.objectContaining({ encryptedDeviceSetup: 'v1.encrypted-payload' })
+    );
     expect(oneOrNull).toHaveBeenCalledWith(
       expect.stringContaining('wallet_connection_shares'),
       { id: 'share-1' },

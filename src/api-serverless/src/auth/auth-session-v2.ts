@@ -814,18 +814,24 @@ export async function logoutNativeSession({
 export async function createConnectionShare({
   address,
   role,
-  targetClientType
+  targetClientType,
+  encryptedDeviceSetup = null
 }: {
   readonly address: string;
   readonly role: string | null;
   readonly targetClientType: WalletAuthClientType;
+  readonly encryptedDeviceSetup?: string | null;
 }): Promise<CreatedConnectionShare> {
   assertRefreshTokenConnectionShareTarget(targetClientType);
+  if (encryptedDeviceSetup !== null && role !== null) {
+    throw new BadRequestException('Device setup cannot be shared by a proxy');
+  }
   const connectionShareCode = createOpaqueSecret();
   const expiresAt = getConnectionShareExpiresAt();
   const share = await authDb.createWalletConnectionShare({
     id: randomUUID(),
     connectionShareCodeHash: hashSecret(connectionShareCode),
+    encryptedDeviceSetup,
     address: address.toLowerCase(),
     role,
     targetClientType,
@@ -882,7 +888,10 @@ export async function redeemConnectionShare({
         createdSession.sessionId,
         connection
       );
-      return createdSession;
+      return {
+        ...createdSession,
+        encryptedDeviceSetup: share.encrypted_device_setup ?? null
+      };
     }
   );
   if (!session) {
@@ -892,6 +901,7 @@ export async function redeemConnectionShare({
     response: {
       address: session.response.address,
       role: session.response.role,
+      encrypted_device_setup: session.encryptedDeviceSetup,
       access_token: session.response.access_token,
       access_token_expires_at: session.response.access_token_expires_at,
       client_type:

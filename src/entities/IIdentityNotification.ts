@@ -56,6 +56,7 @@ export class IdentityNotificationEntity {
 }
 
 export enum IdentityNotificationCause {
+  E2EE_MESSAGE = 'E2EE_MESSAGE',
   IDENTITY_SUBSCRIBED = 'IDENTITY_SUBSCRIBED',
   IDENTITY_MENTIONED = 'IDENTITY_MENTIONED',
   IDENTITY_REP = 'IDENTITY_REP',
