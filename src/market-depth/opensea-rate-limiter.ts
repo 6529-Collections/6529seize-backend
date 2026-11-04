@@ -5,8 +5,10 @@ import { Time } from '@/time';
 const DISTRIBUTED_WINDOW_MS = 60_000;
 const DISTRIBUTED_LIMIT = 60;
 const REQUESTS_KEY = 'opensea:market-depth:requests';
-const PACING_KEY = 'opensea:market-depth:next-request';
-const COOLDOWN_KEY = 'opensea:market-depth:cooldown';
+// Hash the full legacy key inside the tag: all Lua keys then share its existing
+// Redis Cluster slot without renaming the quota still used by older workers.
+const PACING_KEY = `{${REQUESTS_KEY}}:next-request`;
+const COOLDOWN_KEY = `{${REQUESTS_KEY}}:cooldown`;
 
 // Retain the rolling-window key so older workers still share the same quota
 // during deployment. New workers also space grants and observe shared cooldowns.
