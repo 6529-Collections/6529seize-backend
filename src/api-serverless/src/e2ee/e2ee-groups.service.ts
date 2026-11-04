@@ -874,13 +874,18 @@ export class E2eeGroupsService {
       item
     });
     const rosterSet = new Set(profiles);
-    await this.deps.events.wake(
-      group,
-      (request.notify ?? [])
-        .map((hint) => hint.profile_id)
-        .filter((id) => rosterSet.has(id) && id !== callerProfileId),
-      'message'
-    );
+    const recipients = (request.notify ?? [])
+      .map((hint) => hint.profile_id)
+      .filter((id) => rosterSet.has(id) && id !== callerProfileId);
+    await Promise.all([
+      this.deps.events.notifyMessage(
+        group,
+        recipients,
+        callerProfileId,
+        item.seq
+      ),
+      this.deps.events.wake(group, recipients, 'message')
+    ]);
     await maybePruneE2ee(this.deps);
     return { seq: item.seq, created_at: item.created_at };
   }

@@ -249,7 +249,11 @@ export interface VotingCreditsReturnedNotification extends UserNotificationBase 
 
 export interface EncryptedMessageNotification extends UserNotificationBase {
   cause: IdentityNotificationCause.E2EE_MESSAGE;
-  data: { encrypted_group: string };
+  data: {
+    encrypted_group: string;
+    encrypted_message_seq?: number;
+    sender_id?: string;
+  };
 }
 
 export type ArtistArtworkNotificationData = ApiArtistArtworkNotificationContext;

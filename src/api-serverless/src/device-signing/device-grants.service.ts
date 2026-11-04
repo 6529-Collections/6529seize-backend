@@ -234,19 +234,18 @@ export class DeviceGrantsService {
     if (!GRANT_ID_PATTERN.test(grantId)) {
       throw notFound;
     }
-    const grant = await this.db.findGrantById(grantId, ctx);
-    if (
-      grant?.revoked_at !== null ||
-      !(await this.isCallerWallet(grant.wallet, caller))
-    ) {
-      throw notFound;
-    }
-    await this.db.renameGrant(grantId, label, ctx);
-    const renamed = await this.db.findGrantById(grantId, ctx);
-    if (renamed?.revoked_at !== null) {
-      throw notFound;
-    }
-    return toApiDeviceGrant(renamed);
+    return this.db.executeNativeQueriesInTransaction(async (connection) => {
+      const txCtx = { ...ctx, connection };
+      const grant = await this.db.lockGrant(grantId, txCtx);
+      if (
+        grant?.revoked_at !== null ||
+        !(await this.isCallerWallet(grant.wallet, caller, txCtx))
+      ) {
+        throw notFound;
+      }
+      await this.db.renameGrant(grantId, grant.wallet, label, txCtx);
+      return toApiDeviceGrant({ ...grant, device_label: label });
+    });
   }
 
   async revokeCallerGrant(
@@ -294,10 +293,18 @@ export class DeviceGrantsService {
 
   private async isCallerWallet(
     grantWallet: string,
-    caller: { readonly wallet: string; readonly profileId: string | null }
+    caller: { readonly wallet: string; readonly profileId: string | null },
+    ctx?: RequestContext
   ): Promise<boolean> {
     if (!caller.profileId) {
       return grantWallet.toLowerCase() === caller.wallet;
+    }
+    if (ctx?.connection) {
+      const identity = await this.identities.getIdentityByWallet(
+        grantWallet.toLowerCase(),
+        ctx.connection
+      );
+      return identity?.profile_id === caller.profileId;
     }
     const grantProfileId = await this.identities.getProfileIdByWallet(
       grantWallet.toLowerCase()
