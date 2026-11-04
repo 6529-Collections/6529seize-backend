@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import {
+  COMPETITION_LEADERBOARD_ENTRIES_TABLE,
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_VOTES_TABLE,
   COMPETITION_WINNER_VOTES_TABLE,
@@ -35,6 +36,19 @@ describeWithSeed(
   'batched entry summaries and winner pagination',
   [
     { table: COMPETITION_ENTRIES_TABLE, rows: entries },
+    {
+      table: COMPETITION_LEADERBOARD_ENTRIES_TABLE,
+      rows: entries.map((entry) => ({
+        competition_id: entry.competition_id,
+        entry_id: entry.id,
+        drop_id: entry.drop_id,
+        rating: 12,
+        decision_rating: 18,
+        real_time_rating: 24,
+        submitted_at: 1,
+        updated_at: 1
+      }))
+    },
     {
       table: COMPETITION_VOTES_TABLE,
       rows: entries.flatMap((entry) =>
@@ -124,6 +138,32 @@ describeWithSeed(
           voters.map(({ voter_id, vote }) => ({ voter_id, vote: Number(vote) }))
         );
       }
+    });
+    it('matches individual score projections and keeps winner final scores immutable', async () => {
+      const result = await batch.read(
+        'competition',
+        entries.map((entry) => entry.id),
+        null,
+        {}
+      );
+      for (const entry of entries) {
+        const score = await single.score(entry, {});
+        const expected = entry.status === 'WINNER' ? 123 : 18;
+        expect(score?.decision_rating).toBe(expected);
+        expect(Number(result.scores.get(entry.id)?.decision_rating)).toBe(
+          expected
+        );
+      }
+    });
+    it('falls back to current score for an older snapshot without a projection', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} set decision_rating=null where entry_id='active'`
+      );
+      expect(await single.score(entries[0], {})).toMatchObject({
+        decision_rating: 12
+      });
+      const result = await batch.read('competition', ['active'], null, {});
+      expect(Number(result.scores.get('active')?.decision_rating)).toBe(12);
     });
     it('returns visible membership in requested order', async () => {
       expect(

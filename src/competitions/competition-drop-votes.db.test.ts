@@ -146,6 +146,7 @@ describeWithSeed(
     it('preserves a real native entry score and its runtime threshold', async () => {
       expect(await db.score(active, {})).toEqual({
         rating: 42,
+        decision_rating: 42,
         rank: 1,
         over_threshold_since: 1_234
       });
