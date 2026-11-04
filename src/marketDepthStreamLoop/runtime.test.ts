@@ -329,6 +329,41 @@ describe('market depth stream runtime', () => {
     }
   );
 
+  it('safely diagnoses unexpected callback failures and still drains accepted events', async () => {
+    const f = fixture();
+    const now = f.options.now!;
+    let clockFails = false;
+    f.subscribe(() => {
+      f.emit(makeEvent());
+      clockFails = true;
+      f.emit(makeEvent('rejected'));
+      clockFails = false;
+    });
+    await expect(
+      runMarketDepthStream({
+        ...f.options,
+        now: () => {
+          if (clockFails) throw new Error('secret-api-key');
+          return now();
+        }
+      })
+    ).rejects.toThrow(
+      'event could not be buffered; 0 events remain unconfirmed'
+    );
+    expect(f.log.warn).toHaveBeenCalledTimes(1);
+    expect(f.log.warn).toHaveBeenCalledWith('OpenSea Stream buffer rejection', {
+      reason: 'enqueue_failed',
+      event_type: EventType.ITEM_LISTED,
+      buffered_events: 1,
+      buffered_bytes: expect.any(Number),
+      incoming_event_bytes: null,
+      max_buffered_events: 1000,
+      max_buffered_bytes: 16 * 1024 * 1024
+    });
+    expect(JSON.stringify(f.log.warn.mock.calls)).not.toContain('secret');
+    expect(f.appendEvents.mock.calls[0][0].events).toHaveLength(1);
+  });
+
   it('reports the byte limit separately and captures buffer sizes before draining', async () => {
     const f = fixture();
     const event = makeEvent('large');
