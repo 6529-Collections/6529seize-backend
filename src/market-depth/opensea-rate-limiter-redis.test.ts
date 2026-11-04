@@ -8,25 +8,41 @@ import {
 
 jest.mock('@/redis', () => ({ getRedisClient: jest.fn() }));
 
-describe('OpenSea distributed request coordination', () => {
+describe('OpenSea distributed request coordination on Redis Cluster', () => {
   let container: StartedTestContainer;
   let redis: ReturnType<typeof createClient>;
   let now: number;
   const keys = [
     'opensea:market-depth:requests',
-    'opensea:market-depth:next-request',
-    'opensea:market-depth:cooldown'
+    '{opensea:market-depth:requests}:next-request',
+    '{opensea:market-depth:requests}:cooldown'
   ];
   const originalLimit = process.env.OPENSEA_SHARED_REQUESTS_PER_MINUTE;
 
   beforeAll(async () => {
     container = await new GenericContainer('redis:7.4.5-alpine')
+      .withCommand([
+        'redis-server',
+        '--cluster-enabled',
+        'yes',
+        '--cluster-config-file',
+        '/tmp/nodes.conf',
+        '--cluster-node-timeout',
+        '1000'
+      ])
       .withExposedPorts(6379)
       .start();
     redis = createClient({
       url: `redis://${container.getHost()}:${container.getMappedPort(6379)}`
     });
     await redis.connect();
+    await redis.sendCommand(['CLUSTER', 'ADDSLOTSRANGE', '0', '16383']);
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const info = await redis.sendCommand(['CLUSTER', 'INFO']);
+      if (String(info).includes('cluster_state:ok')) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error('Redis Cluster fixture did not become ready');
   }, 120000);
 
   beforeEach(async () => {
@@ -53,6 +69,19 @@ describe('OpenSea distributed request coordination', () => {
   ) {
     return new OpenSeaRateLimiter({ now: () => now, sleep });
   }
+
+  it('enforces cross-slot errors while retaining the legacy quota hash slot', async () => {
+    await expect(
+      redis.eval('return 0', {
+        keys: [keys[0], 'opensea:market-depth:cooldown']
+      })
+    ).rejects.toThrow('CROSSSLOT');
+    const slots = await Promise.all(
+      keys.map((key) => redis.sendCommand(['CLUSTER', 'KEYSLOT', key]))
+    );
+    expect(new Set(slots).size).toBe(1);
+    await expect(worker().acquire(10000)).resolves.toBeUndefined();
+  });
 
   it('spaces simultaneous workers instead of granting a burst', async () => {
     await Promise.all([worker().acquire(10000), worker().acquire(10000)]);

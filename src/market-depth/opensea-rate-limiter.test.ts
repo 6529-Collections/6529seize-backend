@@ -119,8 +119,8 @@ describe('shared OpenSea request pacing', () => {
     for (const call of acquire.mock.calls) {
       expect(call[1].keys).toEqual([
         'opensea:market-depth:requests',
-        'opensea:market-depth:next-request',
-        'opensea:market-depth:cooldown'
+        '{opensea:market-depth:requests}:next-request',
+        '{opensea:market-depth:requests}:cooldown'
       ]);
       expect(call[1].arguments[2]).toBe('60');
     }
@@ -153,7 +153,7 @@ describe('shared OpenSea request pacing', () => {
 
     expect(acquire).toHaveBeenCalledTimes(3);
     expect(acquire.mock.calls[1][1].keys).toEqual([
-      'opensea:market-depth:cooldown'
+      '{opensea:market-depth:requests}:cooldown'
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(sleep.mock.contexts[0].toMillis()).toBe(7000);
