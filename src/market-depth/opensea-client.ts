@@ -398,7 +398,9 @@ export class OpenSeaClient {
       try {
         remaining = await this.acquireRequestBudget(deadlineMs);
       } catch (error) {
-        throw retryError ?? error;
+        throw error instanceof OpenSeaDeadlineError
+          ? (retryError ?? error)
+          : error;
       }
       try {
         return await this.requestJson(url, remaining);

@@ -1,5 +1,8 @@
 import { Logger } from '@/logging';
-import { OpenSeaRateLimiter } from '@/market-depth/opensea-rate-limiter';
+import {
+  OpenSeaDeadlineError,
+  OpenSeaRateLimiter
+} from '@/market-depth/opensea-rate-limiter';
 import { Time } from '@/time';
 import { randomInt } from 'node:crypto';
 
@@ -133,7 +136,9 @@ export async function fetchOpenSeaPricePage(
     try {
       await rateLimiter.acquire(deadlineMs);
     } catch (error) {
-      throw retryError ?? error;
+      throw error instanceof OpenSeaDeadlineError
+        ? (retryError ?? error)
+        : error;
     }
     const remainingMs = deadlineMs - Date.now();
     if (remainingMs <= 0) {

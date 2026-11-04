@@ -170,4 +170,38 @@ describe('shared OpenSea request pacing', () => {
     await limiter.acquire(10000);
     expect(sleep.mock.calls).toEqual([[1000], [2000]]);
   });
+
+  it.each(['legacy', 'market-depth'] as const)(
+    'preserves a Redis outage following a %s throttle failure',
+    async (path) => {
+      const failure = new Error('Redis became unavailable');
+      const acquire = jest
+        .fn()
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(0)
+        .mockRejectedValue(failure);
+      jest
+        .mocked(getRedisClient)
+        .mockReturnValue({ eval: acquire } as unknown as ReturnType<
+          typeof getRedisClient
+        >);
+      jest.spyOn(Time.prototype, 'sleep').mockResolvedValue();
+      const fetchMock = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValueOnce(new Response('', { status: 429 }));
+      const deadline = Date.now() + 60000;
+      const pending =
+        path === 'legacy'
+          ? fetchOpenSeaPricePage(
+              'https://api.opensea.io/api/v2/offers/collection/fixture/all',
+              deadline
+            )
+          : new OpenSeaClient({
+              apiKey: 'fixture-key',
+              sleep: async () => undefined
+            }).getAllOffers('fixture', deadline);
+      await expect(pending).rejects.toBe(failure);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+  );
 });

@@ -128,6 +128,16 @@ describe('OpenSea price requests', () => {
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
+  it('stops on a server failure after throttling has passed the ordinary attempt budget', async () => {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      fetchMock.mockResolvedValueOnce(new Response('', { status: 429 }));
+    }
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 503 }));
+    fetchMock.mockResolvedValueOnce(Response.json({ offers: [] }));
+    await expect(request()).rejects.toThrow('HTTP 503');
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
   it('does not retry before Retry-After when it exceeds the remaining deadline', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response('throttled', {

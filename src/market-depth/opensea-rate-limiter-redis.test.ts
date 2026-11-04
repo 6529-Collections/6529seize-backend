@@ -80,6 +80,18 @@ describe('OpenSea distributed request coordination', () => {
     expect(now).toBe(8000);
   });
 
+  it('keeps cooldown expiry positive across forward and backward clock skew', async () => {
+    await worker().recordCooldown(7000);
+    now = 50000;
+    await worker().recordCooldown(1000);
+    expect(await redis.get(keys[2])).toBe('51000');
+    expect(await redis.pTTL(keys[2])).toBeGreaterThan(0);
+    now = 1000;
+    await worker().recordCooldown(2000);
+    expect(await redis.get(keys[2])).toBe('51000');
+    expect(await redis.pTTL(keys[2])).toBeGreaterThan(0);
+  });
+
   it('rechecks shared cooldown extensions before granting a waiting worker', async () => {
     const sender = worker();
     await sender.recordCooldown(3000);

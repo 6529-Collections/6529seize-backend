@@ -335,4 +335,25 @@ describe('OpenSeaClient', () => {
     });
     expect(fetchImpl).toHaveBeenCalledTimes(attempts);
   });
+
+  it('stops on a server failure after throttling has passed the ordinary attempt budget', async () => {
+    let now = 1000;
+    const fetchImpl = jest.fn();
+    for (let attempt = 0; attempt < 5; attempt++)
+      fetchImpl.mockResolvedValueOnce(new Response('', { status: 429 }));
+    fetchImpl.mockResolvedValueOnce(new Response('', { status: 503 }));
+    fetchImpl.mockResolvedValueOnce(Response.json({ offers: [] }));
+    const client = new OpenSeaClient({
+      apiKey: 'fixture-key',
+      fetchImpl,
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      }
+    });
+    await expect(client.getAllOffers('fixture', 600000)).rejects.toMatchObject({
+      status: 503
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
+  });
 });

@@ -32,7 +32,8 @@ const ACQUIRE_SCRIPT = `
 const COOLDOWN_SCRIPT = `
   local untilMs=math.max(tonumber(redis.call('GET', KEYS[1])) or 0,
     tonumber(ARGV[1])+tonumber(ARGV[2]))
-  redis.call('SET', KEYS[1], untilMs, 'PX', untilMs-tonumber(ARGV[1]))
+  -- The new now+duration candidate keeps TTL >= duration even across skewed clocks.
+  redis.call('SET', KEYS[1], untilMs, 'PX', math.max(1, untilMs-tonumber(ARGV[1])))
   return 0`;
 
 export class OpenSeaDeadlineError extends Error {
