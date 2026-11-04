@@ -1,3 +1,5 @@
+import { CompetitionEntrySummaryDb } from '@/competitions/competition-entry-summary.db';
+import { CompetitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { randomUUID } from 'node:crypto';
 import { NewsletterDb } from '@/newsletter/newsletter.db';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
@@ -924,6 +926,68 @@ describeWithSeed(
           `select count(*) as n from ${COMPETITION_DECISIONS_TABLE}`
         )
       ).toEqual([{ n: 1 }]);
+    });
+
+    it('projects late votes at the next checkpoint and sorts before pagination', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.time_lock_ms', 1000) where id = :rankId`,
+        { rankId }
+      );
+      await vote(rankId, rankEntry, 100, 500);
+      await vote(rankId, secondRankEntry, 70, 1, 'other');
+      await service.refreshCompetition(rankId, 600);
+      const page = { offset: 0, limit: 1, direction: 'DESC' as const };
+      const raw = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, sort: 'real_time_rating' },
+        {}
+      );
+      const projected = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, sort: 'decision_rating' },
+        {}
+      );
+      const second = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, offset: 1, sort: 'decision_rating' },
+        {}
+      );
+      const ascending = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, direction: 'ASC', sort: 'decision_rating' },
+        {}
+      );
+      expect(raw.data[0].entry_id).toBe(rankEntry);
+      expect(projected.data[0].entry_id).toBe(secondRankEntry);
+      expect(projected.has_more).toBe(true);
+      expect(second.data[0].entry_id).toBe(rankEntry);
+      expect(ascending.data[0].entry_id).toBe(rankEntry);
+      const batch = await new CompetitionEntrySummaryDb(() => sqlExecutor).read(
+        rankId,
+        [rankEntry, secondRankEntry],
+        null,
+        {}
+      );
+      const single = new CompetitionDropVotesDb(() => sqlExecutor);
+      for (const [entryId, prediction, current] of [
+        [rankEntry, 50, 10],
+        [secondRankEntry, 69, 41]
+      ] as const) {
+        const entry = await competitionRepository.findNativeEntry(
+          rankId,
+          entryId,
+          {}
+        );
+        const score = await single.score(entry!, {});
+        expect(score).toMatchObject({
+          rating: current,
+          decision_rating: prediction
+        });
+        expect(batch.scores.get(entryId)).toMatchObject({
+          rating: current,
+          decision_rating: prediction
+        });
+      }
     });
 
     it('uses scheduled historical weighted votes when execution is late and archives each voter independently', async () => {

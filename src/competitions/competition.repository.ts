@@ -410,6 +410,7 @@ export class CompetitionRepository extends LazyDbAccessCompatibleService {
     const orderColumns: Readonly<Record<string, string>> = {
       submitted_at: 'lb.submitted_at',
       real_time_rating: 'lb.real_time_rating',
+      decision_rating: 'coalesce(lb.decision_rating,lb.rating)',
       trend: '(lb.real_time_rating - lb.rating)',
       rating: 'lb.rating',
       price: 'prices.price'
