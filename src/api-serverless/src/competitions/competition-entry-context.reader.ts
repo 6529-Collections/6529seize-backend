@@ -29,10 +29,14 @@ function voteSummary(
   const realtime = Number(total?.total ?? 0);
   const rating =
     winner || (timeLock ?? 0) > 0 ? Number(score?.rating ?? 0) : realtime;
+  const prediction =
+    !winner && (timeLock ?? 0) > 0
+      ? Number(score?.decision_rating ?? rating)
+      : rating;
   return {
     rating,
     realtime_rating: realtime,
-    rating_prediction: winner ? rating : realtime,
+    rating_prediction: prediction,
     raters_count: Number(total?.count ?? 0),
     voters_count_available: !winner || Number(total?.snapshot_rows ?? 0) > 0,
     user_vote: Number(total?.user_vote ?? 0),

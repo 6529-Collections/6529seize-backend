@@ -247,3 +247,45 @@ it('does not expose metadata when the content mapper observes a newer moderation
   });
   expect(result.data[0].awards).toEqual([]);
 });
+
+it.each([
+  { status: 'ACTIVE', timeLock: 1000, decisionRating: 5, expected: 5 },
+  { status: 'ACTIVE', timeLock: 1000, decisionRating: 0, expected: 0 },
+  { status: 'ACTIVE', timeLock: 1000, decisionRating: -2, expected: -2 },
+  { status: 'ACTIVE', timeLock: null, decisionRating: 5, expected: 7 },
+  { status: 'ACTIVE', timeLock: 0, decisionRating: 5, expected: 7 },
+  { status: 'WINNER', timeLock: 1000, decisionRating: 99, expected: 3 }
+])(
+  'uses checkpoint projection in summaries and embedded cards: %j',
+  async ({ status, timeLock, decisionRating, expected }) => {
+    jest.mocked(competitionService.getCompetition).mockResolvedValue({
+      id: competitionId,
+      wave_id: 'wave',
+      decisions: { time_lock_ms: timeLock },
+      permissions: { vote: true }
+    } as never);
+    jest
+      .mocked(competitionRepository.findNativeEntriesByIds)
+      .mockResolvedValue([
+        { id: entryId, drop_id: 'drop', status, rank: 1 }
+      ] as never);
+    jest.mocked(competitionEntrySummaryDb.read).mockResolvedValue({
+      totals: new Map([[entryId, { total: 7, count: 1, user_vote: 7 }]]),
+      scores: new Map([
+        [entryId, { rating: 3, decision_rating: decisionRating, rank: 1 }]
+      ]),
+      voters: []
+    } as never);
+    const req = request();
+    req.query.include = 'cards';
+    const result = await handleGetCompetitionEntryContextsV3(req);
+    expect(result.data[0].vote_summary).toMatchObject({
+      rating_prediction: expected,
+      realtime_rating: 7
+    });
+    expect(result.data[0].drop?.submission_context?.voting).toMatchObject({
+      predicted_final_vote: expected,
+      total_votes_given: 7
+    });
+  }
+);
