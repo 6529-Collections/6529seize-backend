@@ -24,6 +24,20 @@ export async function prepareUploadImagePreviews(
       contentType === 'image/gif',
       target
     );
+    const frameHeight = metadata.pageHeight ?? metadata.height;
+    const firstPreview = previews[0];
+    // Both targets leave small GIFs at their original size. Reuse the first
+    // preview only after its strict decode/re-encode has succeeded.
+    if (
+      metadata.format === 'gif' &&
+      resizeAnimated &&
+      frameHeight !== undefined &&
+      frameHeight <= STANDARD_PREVIEW_HEIGHTS[0] &&
+      firstPreview
+    ) {
+      previews.push({ ...firstPreview, option: `AUTOx${height}` });
+      continue;
+    }
     let path: string;
     if (metadata.format === 'png') {
       path = await preparePngPreview(source, target);
