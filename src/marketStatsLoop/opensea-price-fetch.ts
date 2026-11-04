@@ -5,8 +5,8 @@ import { randomInt } from 'node:crypto';
 
 const logger = Logger.get('OPENSEA_PRICE_FETCH');
 const MAX_ATTEMPTS = 4;
+const MAX_THROTTLED_ATTEMPTS = 12;
 const REQUEST_TIMEOUT_MS = 15000;
-const MAX_RETRY_AFTER_MS = 30000;
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const RETRYABLE_NETWORK_CODES = new Set([
   'ECONNRESET',
@@ -27,7 +27,8 @@ class OpenSeaPriceFetchError extends Error {
     message: string,
     readonly retryable: boolean,
     readonly cause?: unknown,
-    readonly retryAfterMs = 0
+    readonly retryAfterMs = 0,
+    readonly status?: number
   ) {
     super(message);
     Object.setPrototypeOf(this, OpenSeaPriceFetchError.prototype);
@@ -81,7 +82,8 @@ async function fetchPageOnce(url: string, timeoutMs: number): Promise<unknown> {
         `HTTP ${response.status}`,
         RETRYABLE_STATUSES.has(response.status),
         undefined,
-        retryAfterMs(response)
+        retryAfterMs(response),
+        response.status
       );
     }
     // Keep the timeout active until the body has finished downloading.
@@ -126,8 +128,13 @@ export async function fetchOpenSeaPricePage(
   deadlineMs: number,
   rateLimiter = new OpenSeaRateLimiter()
 ): Promise<unknown> {
+  let retryError: unknown;
   for (let attempt = 1; ; attempt++) {
-    await rateLimiter.acquire(deadlineMs);
+    try {
+      await rateLimiter.acquire(deadlineMs);
+    } catch (error) {
+      throw retryError ?? error;
+    }
     const remainingMs = deadlineMs - Date.now();
     if (remainingMs <= 0) {
       throw new Error(`[OPENSEA] Price fetch deadline exceeded for ${url}`);
@@ -143,22 +150,22 @@ export async function fetchOpenSeaPricePage(
         error instanceof OpenSeaPriceFetchError && error.retryable;
       const serverDelayMs =
         error instanceof OpenSeaPriceFetchError ? error.retryAfterMs : 0;
-      if (
-        !retryable ||
-        attempt === MAX_ATTEMPTS ||
-        serverDelayMs > MAX_RETRY_AFTER_MS
-      ) {
-        throw new OpenSeaPriceFetchError(
-          `[OPENSEA] Request failed after ${attempt} attempt(s) for ${url}: ${errorMessage(error)}`,
-          false,
-          error
-        );
-      }
-
-      const backoffMs = 1000 * 2 ** (attempt - 1);
+      const throttled =
+        error instanceof OpenSeaPriceFetchError && error.status === 429;
+      const backoffMs = Math.min(30_000, 1000 * 2 ** (attempt - 1));
       const delayMs = Math.max(serverDelayMs, backoffMs + randomInt(backoffMs));
+      if (throttled) await rateLimiter.recordCooldown(delayMs);
+      const maxAttempts = throttled ? MAX_THROTTLED_ATTEMPTS : MAX_ATTEMPTS;
+      const failure = new OpenSeaPriceFetchError(
+        `[OPENSEA] Request failed after ${attempt} attempt(s) for ${url}: ${errorMessage(error)}`,
+        false,
+        error
+      );
+      if (!retryable || attempt >= maxAttempts) throw failure;
+
+      retryError = failure;
       logger.warn(
-        `[OPENSEA] Attempt ${attempt}/${MAX_ATTEMPTS} failed for ${url}: ${errorMessage(error)}. Retrying in ${delayMs}ms`
+        `[OPENSEA] Attempt ${attempt}/${maxAttempts} failed for ${url}: ${errorMessage(error)}. Retrying in ${delayMs}ms`
       );
       await waitForOpenSeaPage(delayMs, deadlineMs, url, error);
     }

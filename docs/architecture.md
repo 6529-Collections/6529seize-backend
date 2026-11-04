@@ -978,10 +978,15 @@ unchanged. No API, schema, queue, or frontend deployment dependency is added.
 ### NFT market depth and activity
 
 `marketStatsLoop` legacy price pagination and market-depth REST requests share
-the existing Redis OpenSea request quota, with local pacing when Redis is
-unavailable. Successful price pages proceed as quota permits; retries and the
-shared refresh deadline remain bounded, and incomplete scans never replace stored
-prices.
+the existing Redis OpenSea request quota. Atomic grants space requests across
+workers; HTTP 429 responses publish a shared cooldown that honors Retry-After
+and cannot shorten another worker's pause. Waiting workers recheck the cooldown
+before acquiring quota. The existing rolling-window key remains compatible with
+older workers during deployment. Without Redis, pacing and cooldowns apply per
+client. Throttled pages can make up to twelve attempts within the caller's
+deadline, with capped exponential backoff; other failures retain their existing
+attempt limits. Successful price pages proceed as quota permits, and incomplete
+scans never replace stored prices.
 
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.

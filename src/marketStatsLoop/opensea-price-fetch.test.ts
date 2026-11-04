@@ -114,7 +114,32 @@ describe('OpenSea price requests', () => {
     );
 
     await expect(request()).rejects.toThrow('HTTP 429');
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(12);
+  });
+
+  it('recovers beyond the former four-attempt throttling limit', async () => {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      fetchMock.mockResolvedValueOnce(
+        new Response('throttled', { status: 429 })
+      );
+    }
+    fetchMock.mockResolvedValueOnce(Response.json({ offers: [] }));
+    await expect(request()).resolves.toEqual({ offers: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('does not retry before Retry-After when it exceeds the remaining deadline', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response('throttled', {
+        status: 429,
+        headers: { 'Retry-After': '120' }
+      })
+    );
+    await expect(request(Date.now() + 10000)).rejects.toThrow(
+      'deadline exceeded'
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(delays).toEqual([]);
   });
 
   it.each(['seconds', 'date'])(
@@ -137,17 +162,19 @@ describe('OpenSea price requests', () => {
     }
   );
 
-  it('does not retry earlier than a long Retry-After requests', async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response('throttled', {
-        status: 429,
-        headers: { 'Retry-After': '120' }
-      })
-    );
+  it('waits for a long Retry-After when the deadline allows recovery', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response('throttled', {
+          status: 429,
+          headers: { 'Retry-After': '120' }
+        })
+      )
+      .mockResolvedValueOnce(Response.json({ offers: [] }));
 
-    await expect(request()).rejects.toThrow('HTTP 429');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(delays).toEqual([]);
+    await expect(request()).resolves.toEqual({ offers: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(delays).toEqual([120000]);
   });
 
   it('fails on invalid JSON without returning null or retrying', async () => {
