@@ -492,9 +492,10 @@ primary connections of the affected profiles. Failures never fail the request.
 
 Content-free wakes use the existing `firebase-push-notifications` queue with
 the message `{ "type": "e2ee_wake", "profile_ids": [...], "reason":
-"message" | "added" }`. `pushNotificationsHandler` sends title `6529` and body
-`New encrypted message` or `You were added to an encrypted chat`, no image,
-and data `{ redirect: "e2ee", target_profile_id, target_profile_handle,
+"message" | "added" }`. For a message, `pushNotificationsHandler` sends
+title `New encrypted message` and body `Open 6529 to view`. For an invitation
+it sends title `6529` and body `You were added to an encrypted chat`. Both
+send no image and include data `{ redirect: "e2ee", target_profile_id, target_profile_handle,
 notification_id: "e2ee" }`, without the badge field. It names no sender,
 group or text, honours the profile's "Direct messages" notification
 preference, and removes unregistered tokens. Wakes are hints and are not

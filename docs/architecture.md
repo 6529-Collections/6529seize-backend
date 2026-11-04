@@ -2164,18 +2164,19 @@ connections (`E2EE_GROUP_EVENT`, `E2EE_WELCOME`, `E2EE_DEVICE_ADDED`,
 `E2EE_DEVICE_REVOKED`, `E2EE_ROSTER_CHANGED`; items inline only up to 16 KiB)
 and, throttled to one per (profile, group) per 60 s through
 `e2ee_push_throttle`, enqueues `{ "type": "e2ee_wake", "profile_ids", "reason" }`
-on the existing `firebase-push-notifications` queue. The same eligible wake
-also creates an in-app `E2EE_MESSAGE` notification, storing only an opaque
-`encrypted_group` in `additional_data`, with no sender or plaintext. It obeys
-the Direct messages notification preference. Batch insertion avoids creating a
-second push outbox event; the API sends recipient-scoped notification
-invalidations to all subscribed connections, including devices without local
-MLS keys. Local keys may provide a preview in the client. Inbox failure does
-not prevent push delivery, and disabling push does not suppress inbox writes.
-`pushNotificationsHandler` turns these into content-free FCM notifications
-(title `6529`, fixed body, `redirect: "e2ee"`, no sender, group or text) for
-every registered device of profiles whose "Direct messages" notifications are
-on. No AI or moderation pipeline reads E2EE data. Deployment order:
+on the existing `firebase-push-notifications` queue. Separately, the API
+writes an in-app `E2EE_MESSAGE` notification for eligible message recipients,
+subject to their Direct messages notification preference. The row stores the
+sender in `additional_identity_id` and the opaque chat handle and message
+sequence in `additional_data`. It carries no message plaintext. Batch
+insertion avoids creating a second push outbox event. The API sends
+recipient-scoped invalidations, including to devices without local MLS keys.
+Devices with the keys can render a local preview of the referenced message.
+The push cooldown and delivery settings do not suppress inbox writes.
+`pushNotificationsHandler` sends content-free FCM notifications
+(`redirect: "e2ee"`, no sender, group or text) to registered devices whose
+profiles have Direct messages notifications enabled. No AI or moderation
+pipeline reads E2EE data. Deployment order:
 `dbMigrationsLoop`, then `pushNotificationsHandler`, then `api`.
 
 ### Unencrypted DM retention (D146)
