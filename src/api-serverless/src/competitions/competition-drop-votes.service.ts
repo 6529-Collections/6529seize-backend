@@ -34,11 +34,15 @@ export async function competitionDropVoteSummary(
     entry.status === 'WINNER' || (competition.decisions.time_lock_ms ?? 0) > 0
       ? (score?.rating ?? 0)
       : totals.total;
+  const prediction =
+    entry.status !== 'WINNER' && (competition.decisions.time_lock_ms ?? 0) > 0
+      ? (score?.decision_rating ?? rating)
+      : rating;
   return {
     rating,
     over_threshold_since_ms: score?.over_threshold_since ?? null,
     realtime_rating: totals.total,
-    rating_prediction: entry.status === 'WINNER' ? rating : totals.total,
+    rating_prediction: prediction,
     raters_count: totals.count,
     voters_count_available: totals.voters_count_available,
     user_vote: totals.user_vote,

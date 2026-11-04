@@ -93,6 +93,7 @@ export type CursorPageRequest<
     | 'rating'
     | 'rank'
     | 'real_time_rating'
+    | 'decision_rating'
     | 'trend'
     | 'price'
 > = {
