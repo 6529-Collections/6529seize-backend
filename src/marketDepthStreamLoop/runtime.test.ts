@@ -258,6 +258,7 @@ describe('market depth stream runtime', () => {
       f.emit(makeEvent());
       const circular: Record<string, unknown> = {};
       circular.self = circular;
+      circular.secret = 'secret-api-key';
       expect(() =>
         f.emit({ ...makeEvent('bad'), payload: circular })
       ).not.toThrow();
@@ -266,6 +267,101 @@ describe('market depth stream runtime', () => {
       'event could not be buffered'
     );
     expect(f.appendEvents.mock.calls[0][0].events).toHaveLength(1);
+    expect(f.log.warn).toHaveBeenCalledTimes(1);
+    expect(f.log.warn).toHaveBeenCalledWith('OpenSea Stream buffer rejection', {
+      reason: 'serialization_failed',
+      event_type: EventType.ITEM_LISTED,
+      buffered_events: 1,
+      buffered_bytes: expect.any(Number),
+      incoming_event_bytes: null,
+      max_buffered_events: 1000,
+      max_buffered_bytes: 16 * 1024 * 1024
+    });
+    expect(JSON.stringify(f.log.warn.mock.calls)).not.toContain('secret');
+  });
+
+  it.each(['unknown', 'throwing_getter'])(
+    'reports normalization failures without exposing %s event types or error text',
+    async (type) => {
+      const f = fixture();
+      const secret = 'wss://example/socket?api_key=secret-api-key';
+      const event = makeEvent('bad');
+      if (type === 'unknown') {
+        event.event_type = secret as EventType;
+      } else {
+        Object.defineProperty(event, 'event_type', {
+          get: () => {
+            throw new Error(secret);
+          }
+        });
+      }
+      Object.defineProperty(event, 'payload', {
+        get: () => {
+          const error = new Error(secret);
+          error.name = secret;
+          throw error;
+        }
+      });
+      f.subscribe(() => {
+        f.emit(makeEvent());
+        f.emit(event);
+        f.emit(makeEvent('ignored-after-failure'));
+      });
+      await expect(runMarketDepthStream(f.options)).rejects.toThrow(
+        'event could not be buffered; 0 events remain unconfirmed'
+      );
+      expect(f.log.warn).toHaveBeenCalledTimes(1);
+      expect(f.log.warn).toHaveBeenCalledWith(
+        'OpenSea Stream buffer rejection',
+        {
+          reason: 'normalization_failed',
+          event_type: 'unknown',
+          buffered_events: 1,
+          buffered_bytes: expect.any(Number),
+          incoming_event_bytes: null,
+          max_buffered_events: 1000,
+          max_buffered_bytes: 16 * 1024 * 1024
+        }
+      );
+      expect(JSON.stringify(f.log.warn.mock.calls)).not.toContain(secret);
+      expect(f.appendEvents.mock.calls[0][0].events).toHaveLength(1);
+      expect(f.disconnect).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('reports the byte limit separately and captures buffer sizes before draining', async () => {
+    const f = fixture();
+    const event = makeEvent('large');
+    const payload = {
+      ...(event.payload as Record<string, unknown>),
+      padding: '秘密'.repeat(1_400_000)
+    };
+    event.payload = payload;
+    const eventBytes = Buffer.byteLength(
+      JSON.stringify(streamEventInput(event, collection, new Date(timestamp)))
+    );
+    f.subscribe(() => {
+      f.emit(event);
+      f.emit({ ...event, payload: { ...payload, order_hash: 'other' } });
+    });
+    await expect(runMarketDepthStream(f.options)).rejects.toThrow(
+      'event could not be buffered; 0 events remain unconfirmed'
+    );
+    expect(f.log.warn).toHaveBeenCalledTimes(1);
+    expect(f.log.warn).toHaveBeenCalledWith('OpenSea Stream buffer rejection', {
+      reason: 'byte_limit',
+      event_type: EventType.ITEM_LISTED,
+      buffered_events: 1,
+      buffered_bytes: eventBytes,
+      incoming_event_bytes: eventBytes,
+      max_buffered_events: 1000,
+      max_buffered_bytes: 16 * 1024 * 1024
+    });
+    expect(f.appendEvents.mock.calls[0][0].events).toHaveLength(1);
+    expect(f.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('persisted=1 duplicates=0 pending=0')
+    );
+    expect(JSON.stringify(f.log.warn.mock.calls)).not.toContain('秘密');
   });
 
   it('bounds backpressure and flushes the accepted queue before failing visibly', async () => {
@@ -279,6 +375,19 @@ describe('market depth stream runtime', () => {
     expect(
       f.appendEvents.mock.calls.flatMap(([input]) => input.events)
     ).toHaveLength(1000);
+    expect(f.log.warn).toHaveBeenCalledTimes(1);
+    expect(f.log.warn).toHaveBeenCalledWith('OpenSea Stream buffer rejection', {
+      reason: 'event_count_limit',
+      event_type: EventType.ITEM_LISTED,
+      buffered_events: 1000,
+      buffered_bytes: expect.any(Number),
+      incoming_event_bytes: expect.any(Number),
+      max_buffered_events: 1000,
+      max_buffered_bytes: 16 * 1024 * 1024
+    });
+    expect(f.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('persisted=1000 duplicates=0 pending=0')
+    );
   });
 
   it('overlapping workers keep cursor preconditions null and submit identical lifecycle IDs', async () => {
