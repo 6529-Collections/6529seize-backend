@@ -68,6 +68,11 @@ describe('upload image previews', () => {
     'encodes a %i-pixel-high GIF once without changing either preview',
     async (frameHeight) => {
       await writeFile(source, await animatedGif(frameHeight));
+      // Sharp stacks frames in height; eligibility must use pageHeight.
+      expect(await Sharp(source, { animated: true }).metadata()).toMatchObject({
+        height: frameHeight * 3,
+        pageHeight: frameHeight
+      });
       const previews = await prepareUploadImagePreviews(source, 'image/gif');
 
       expect(previews.map(({ option }) => option)).toEqual([

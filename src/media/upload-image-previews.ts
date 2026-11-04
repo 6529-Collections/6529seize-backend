@@ -17,6 +17,7 @@ export async function prepareUploadImagePreviews(
   contentType: string
 ): Promise<UploadImagePreview[]> {
   const previews: UploadImagePreview[] = [];
+  const smallestPreviewHeight = Math.min(...STANDARD_PREVIEW_HEIGHTS);
   for (const height of STANDARD_PREVIEW_HEIGHTS) {
     const target = { width: null, height, fit: 'cover' as const };
     const { metadata, resizeAnimated } = await inspectResizeInput(
@@ -32,10 +33,14 @@ export async function prepareUploadImagePreviews(
       metadata.format === 'gif' &&
       resizeAnimated &&
       frameHeight !== undefined &&
-      frameHeight <= STANDARD_PREVIEW_HEIGHTS[0] &&
+      frameHeight <= smallestPreviewHeight &&
       firstPreview
     ) {
-      previews.push({ ...firstPreview, option: `AUTOx${height}` });
+      previews.push({
+        path: firstPreview.path,
+        option: `AUTOx${height}`,
+        contentType
+      });
       continue;
     }
     let path: string;
