@@ -30,6 +30,7 @@ const CAUSE_CLASSIFICATION: Record<
   [IdentityNotificationCause.WAVE_CREATED]: 'direct_messages',
   [IdentityNotificationCause.MEME_COLLABORATION]: 'mentions_replies_quotes',
   [IdentityNotificationCause.COMPETITION_LIFECYCLE]: 'direct_messages',
+  [IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED]: 'direct_messages',
   [IdentityNotificationCause.ALL_DROPS]: 'direct_messages',
   [IdentityNotificationCause.PRIORITY_ALERT]: 'direct_messages',
   [IdentityNotificationCause.SUBSCRIPTION_COVERAGE]: 'subscription_coverage'

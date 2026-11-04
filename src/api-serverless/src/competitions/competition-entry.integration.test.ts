@@ -253,6 +253,35 @@ describeWithSeed(
       else process.env.API_BASE_URL = originalApiBaseUrl;
     });
 
+    it.each([
+      { mainStage: true, anonymous: false, expected: true },
+      { mainStage: true, anonymous: true, expected: false },
+      { mainStage: false, anonymous: false, expected: false }
+    ])(
+      'freezes artwork alert eligibility on confirmed entry creation: %j',
+      async ({ mainStage, anonymous, expected }) => {
+        if (mainStage)
+          await sqlExecutor.execute(
+            `insert into ${tables.COMPETITION_CAPABILITIES_TABLE} (capability,competition_id,wave_id,assigned_at) values ('MAIN_STAGE',:competitionId,:waveId,1)`,
+            { competitionId, waveId: wave.id }
+          );
+        await updateParticipation({ anonymous_submissions: anonymous });
+        const input = request();
+        const created = await service.create(
+          wave.id,
+          competitionId,
+          input,
+          ctx
+        );
+        await service.create(wave.id, competitionId, input, ctx);
+        const rows = await sqlExecutor.execute<{ eligible: string }>(
+          `select json_unquote(json_extract(event, '$.data.artwork_alert_eligible')) as eligible from ${tables.COMPETITION_OUTBOX_TABLE} where json_unquote(json_extract(event, '$.competition_entry_id'))=:entry and json_unquote(json_extract(event, '$.event_type'))='COMPETITION_ENTRY_CREATED'`,
+          { entry: created.id }
+        );
+        expect(rows).toEqual([{ eligible: String(expected) }]);
+      }
+    );
+
     it('creates native submissions with obsolete vote tables physically absent', async () => {
       await sqlExecutor.execute(
         `update ${tables.COMPETITIONS_TABLE} set legacy_wave_id=:waveId where id=:id`,
