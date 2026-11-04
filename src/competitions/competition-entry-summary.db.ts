@@ -19,6 +19,7 @@ type EntryTotal = {
 type EntryScore = {
   entry_id: string;
   rating: number;
+  decision_rating: number;
   rank: number | null;
   over_threshold_since: number | null;
 };
@@ -62,6 +63,7 @@ export class CompetitionEntrySummaryDb extends LazyDbAccessCompatibleService {
       this.db.execute<EntryScore>(
         `select e.id as entry_id,
            case when e.status='WINNER' then coalesce(w.final_rating,0) else coalesce(lb.rating,0) end as rating,
+           case when e.status='WINNER' then coalesce(w.final_rating,0) else coalesce(lb.decision_rating,lb.rating,0) end as decision_rating,
            case when e.status='WINNER' then coalesce(w.\`rank\`,e.\`rank\`) else lb.\`rank\` end as \`rank\`,
            case when e.status='ACTIVE' then rt.over_threshold_since else null end as over_threshold_since
          from ${COMPETITION_ENTRIES_TABLE} e

@@ -306,21 +306,24 @@ describe('competition v3 handlers', () => {
   });
 });
 
-it.each(['rating', 'real_time_rating', 'submitted_at', 'trend'])(
-  'forwards leaderboard sort %s in the competition scope',
-  async (sort) => {
-    await handleListCompetitionLeaderboardV3({
-      params: { wave_id: 'wave-a', competition_id: competitionId },
-      query: { sort }
-    } as never);
-    expect(competitionService.listLeaderboard).toHaveBeenLastCalledWith(
-      'wave-a',
-      competitionId,
-      expect.objectContaining({ sort, direction: 'DESC' }),
-      expect.anything()
-    );
-  }
-);
+it.each([
+  'rating',
+  'real_time_rating',
+  'decision_rating',
+  'submitted_at',
+  'trend'
+])('forwards leaderboard sort %s in the competition scope', async (sort) => {
+  await handleListCompetitionLeaderboardV3({
+    params: { wave_id: 'wave-a', competition_id: competitionId },
+    query: { sort }
+  } as never);
+  expect(competitionService.listLeaderboard).toHaveBeenLastCalledWith(
+    'wave-a',
+    competitionId,
+    expect.objectContaining({ sort, direction: 'DESC' }),
+    expect.anything()
+  );
+});
 
 it.each([
   ['true', true],

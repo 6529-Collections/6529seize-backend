@@ -48,9 +48,12 @@ beforeEach(() => {
     user_vote: 39,
     voters_count_available: true
   });
-  jest
-    .mocked(competitionDropVotesDb.score)
-    .mockResolvedValue({ rating: 0, rank: 1, over_threshold_since: 1234 });
+  jest.mocked(competitionDropVotesDb.score).mockResolvedValue({
+    rating: 0,
+    decision_rating: 20,
+    rank: 1,
+    over_threshold_since: 1234
+  });
   jest
     .mocked(competitionDropVotesDb.voters)
     .mockResolvedValue([{ voter_id: 'viewer', vote: 39 }]);
@@ -75,11 +78,12 @@ it('shows accepted votes immediately without waiting for a leaderboard refresh',
     top_raters: [{ rating: 39, profile: { id: 'viewer' } }]
   });
 });
-it('keeps weighted current totals separate from the full vote total', async () => {
+it('shows the next checkpoint projection separately from current and raw totals', async () => {
   const weighted = { decisions: { time_lock_ms: 1000 } } as Competition;
   expect(await competitionDropVoteSummary(weighted, entry, {})).toMatchObject({
     rating: 0,
-    rating_prediction: 39
+    realtime_rating: 39,
+    rating_prediction: 20
   });
 });
 it('uses the native voters and existing dropdown response shape', async () => {
@@ -137,6 +141,7 @@ it('distinguishes missing winner history from a zero count while preserving the 
   });
   jest.mocked(competitionDropVotesDb.score).mockResolvedValue({
     rating: 83321,
+    decision_rating: 99999,
     rank: 3,
     over_threshold_since: null
   });
@@ -145,8 +150,28 @@ it('distinguishes missing winner history from a zero count while preserving the 
     await competitionDropVoteSummary(competition, winner, {})
   ).toMatchObject({
     rating: 83321,
+    rating_prediction: 83321,
     raters_count: 0,
     voters_count_available: false,
     top_raters: []
   });
 });
+
+it.each([0, -15])(
+  'preserves a checkpoint projection of %s',
+  async (prediction) => {
+    jest.mocked(competitionDropVotesDb.score).mockResolvedValue({
+      rating: 0,
+      decision_rating: prediction,
+      rank: 1,
+      over_threshold_since: null
+    });
+    const weighted = { decisions: { time_lock_ms: 1000 } } as Competition;
+    expect(await competitionDropVoteSummary(weighted, entry, {})).toMatchObject(
+      {
+        rating_prediction: prediction,
+        realtime_rating: 39
+      }
+    );
+  }
+);
