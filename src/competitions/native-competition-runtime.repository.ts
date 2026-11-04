@@ -884,11 +884,11 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     now: number,
     ctx: RequestContext = {}
   ): Promise<void> {
-    // Successful partial artwork delivery should resume promptly, without the
-    // exponential backoff reserved for failures.
+    // Yielded delivery should resume promptly. Undo this claim's attempt so
+    // successful partial progress does not inflate later failure backoff.
     await this.query(
       'deferOutbox',
-      `update ${COMPETITION_OUTBOX_TABLE} set next_attempt_at = :now + 1000, lease_until = null, lease_token = null
+      `update ${COMPETITION_OUTBOX_TABLE} set next_attempt_at = :now + 1000, attempts = greatest(attempts - 1, 0), lease_until = null, lease_token = null
        where id = :id and lease_token = :leaseToken and delivered_at is null`,
       { id, leaseToken, now },
       ctx
