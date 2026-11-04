@@ -23,11 +23,10 @@ const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_E2EE');
 
 export type E2eeWakeReason = 'message' | 'added';
 
-export const E2EE_WAKE_TITLE = '6529';
-export const E2EE_WAKE_BODIES: Record<E2eeWakeReason, string> = {
-  message: 'New encrypted message',
-  added: 'You were added to an encrypted chat'
-};
+const E2EE_WAKE_COPY = {
+  message: { title: 'New encrypted message', body: 'Open 6529 to view' },
+  added: { title: '6529', body: 'You were added to an encrypted chat' }
+} satisfies Record<E2eeWakeReason, { title: string; body: string }>;
 
 export interface E2eeWakeRequest {
   readonly profileIds: string[];
@@ -82,8 +81,7 @@ export function buildE2eeWakeInput({
   readonly reason: E2eeWakeReason;
 }): PushNotificationMessageInput {
   return {
-    title: E2EE_WAKE_TITLE,
-    body: E2EE_WAKE_BODIES[reason],
+    ...E2EE_WAKE_COPY[reason],
     token,
     notification_id: 0,
     omitBadge: true,

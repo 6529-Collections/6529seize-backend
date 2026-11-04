@@ -25,8 +25,8 @@ describe('content-free E2EE wakes', () => {
       reason: 'message'
     });
     expect(input).toEqual({
-      title: '6529',
-      body: 'New encrypted message',
+      title: 'New encrypted message',
+      body: 'Open 6529 to view',
       token: 'fcm-token',
       notification_id: 0,
       omitBadge: true,
@@ -133,8 +133,8 @@ describe('content-free E2EE wakes', () => {
       deps
     );
     expect(sent.map((input) => [input.token, input.body])).toEqual([
-      ['t1', 'New encrypted message'],
-      ['t2', 'New encrypted message'],
+      ['t1', 'Open 6529 to view'],
+      ['t2', 'Open 6529 to view'],
       ['t3', 'You were added to an encrypted chat']
     ]);
     expect(sent[0].extra_data.target_profile_handle).toBe('alice-handle');

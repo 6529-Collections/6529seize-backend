@@ -23,9 +23,13 @@ import { HttpFile } from '../http/http';
 */
 export class ApiNotificationAdditionalContextV2 {
     /**
-    * Opaque encrypted-chat handle. No sender or message content is stored in the notification.
+    * Opaque encrypted-chat handle.
     */
     'encrypted_group'?: string;
+    /**
+    * Sequence of the message to preview from local decrypted history.
+    */
+    'encrypted_message_seq'?: number;
     'reason'?: ApiVotingCreditReleaseReason;
     /**
     * Submission title saved before winning or deletion.
@@ -95,6 +99,12 @@ export class ApiNotificationAdditionalContextV2 {
             "name": "encrypted_group",
             "baseName": "encrypted_group",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "encrypted_message_seq",
+            "baseName": "encrypted_message_seq",
+            "type": "number",
             "format": ""
         },
         {

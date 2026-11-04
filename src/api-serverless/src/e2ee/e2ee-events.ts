@@ -47,6 +47,12 @@ export interface E2eeEventPublisher {
     profileIds: string[],
     data: { group: string; epoch: number }
   ): Promise<void>;
+  notifyMessage(
+    group: string,
+    profileIds: string[],
+    senderProfileId: string,
+    sequence: number
+  ): Promise<void>;
   wake(
     group: string,
     profileIds: string[],
@@ -90,7 +96,9 @@ export class WsE2eeEventPublisher implements E2eeEventPublisher {
     private readonly now: () => number = () => Date.now(),
     private readonly writeInbox: (
       group: string,
-      profiles: string[]
+      profiles: string[],
+      senderProfileId: string,
+      sequence: number
     ) => Promise<void> = () => Promise.resolve()
   ) {}
 
@@ -200,9 +208,6 @@ export class WsE2eeEventPublisher implements E2eeEventPublisher {
     try {
       eligible = await this.db.claimPushWakes(group, unique, claimedAt);
       if (!eligible.length) return;
-      // Independent of push settings and of this device having local keys.
-      // A failed inbox write must never prevent the existing push wake.
-      await this.writeMessageInbox(group, eligible, reason);
       if ((await this.enqueueWake(eligible, reason)) === false) {
         await this.releaseWakes(group, eligible, claimedAt);
       }
@@ -217,14 +222,16 @@ export class WsE2eeEventPublisher implements E2eeEventPublisher {
     }
   }
 
-  private async writeMessageInbox(
+  async notifyMessage(
     group: string,
     profileIds: string[],
-    reason: E2eeWakeReason
+    senderProfileId: string,
+    sequence: number
   ): Promise<void> {
-    if (reason !== 'message') return;
+    const recipients = Array.from(new Set(profileIds));
+    if (!recipients.length) return;
     try {
-      await this.writeInbox(group, profileIds);
+      await this.writeInbox(group, recipients, senderProfileId, sequence);
     } catch {
       this.logger.warn('Encrypted-message inbox notification failed');
     }
@@ -251,19 +258,21 @@ export const e2eeEventPublisher: E2eeEventPublisher = new WsE2eeEventPublisher(
   (connectionId, message) => appWebSockets.send({ connectionId, message }),
   enqueueE2eeWake,
   () => Date.now(),
-  async (group, profiles) => {
-    // Batch insertion is in-app only; push wakes keep their existing
-    // content-free delivery path. No sender, text, or title is persisted.
+  async (group, profiles, senderProfileId, sequence) => {
+    // Sender and sequence are for the authenticated feed only.
     await identityNotificationsDb.insertManyNotifications(
       profiles.map((profileId) => ({
         identity_id: profileId,
-        additional_identity_id: null,
+        additional_identity_id: senderProfileId,
         related_drop_id: null,
         related_drop_part_no: null,
         related_drop_2_id: null,
         related_drop_2_part_no: null,
         cause: IdentityNotificationCause.E2EE_MESSAGE,
-        additional_data: { encrypted_group: group },
+        additional_data: {
+          encrypted_group: group,
+          encrypted_message_seq: sequence
+        },
         visibility_group_id: null,
         wave_id: null
       }))

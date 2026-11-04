@@ -202,6 +202,7 @@ describeWithSeed('E2EE delivery service', [], () => {
         deviceAdded: record('deviceAdded'),
         deviceRevoked: record('deviceRevoked'),
         rosterChanged: record('rosterChanged'),
+        notifyMessage: record('notifyMessage'),
         wake: record('wake')
       },
       contractWalletVerifier: {
@@ -953,11 +954,14 @@ describeWithSeed('E2EE delivery service', [], () => {
         'added'
       ]);
       events = [];
-      await sendMessage(alice, group, aliceDevice, [
+      const message = await sendMessage(alice, group, aliceDevice, [
         bob.id,
         'outsider',
         alice.id
       ]);
+      expect(
+        events.find((event) => event.method === 'notifyMessage')?.args
+      ).toEqual([group.g, [bob.id], alice.id, message.seq]);
       expect(events.find((event) => event.method === 'wake')!.args).toEqual([
         group.g,
         [bob.id],

@@ -167,12 +167,15 @@ describe('E2EE websocket events', () => {
 });
 
 describe('encrypted inbox notifications', () => {
-  it('keeps add push wakes without creating a message inbox entry', async () => {
+  it('writes the first message to the inbox even when the add wake claimed the push slot', async () => {
     const inbox = jest.fn(() => Promise.resolve());
     const enqueue = jest.fn(() => Promise.resolve(true));
     const publisher = new WsE2eeEventPublisher(
       {
-        claimPushWakes: jest.fn(() => Promise.resolve(['p2']))
+        claimPushWakes: jest
+          .fn()
+          .mockResolvedValueOnce(['p2'])
+          .mockResolvedValueOnce([])
       } as unknown as E2eeDb,
       () => Promise.resolve([]),
       () => Promise.resolve(),
@@ -184,7 +187,9 @@ describe('encrypted inbox notifications', () => {
     expect(enqueue).toHaveBeenCalledWith(['p2'], 'added');
     expect(inbox).not.toHaveBeenCalled();
     await publisher.wake('0xgroup', ['p1', 'p2'], 'message');
-    expect(inbox).toHaveBeenCalledWith('0xgroup', ['p2']);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    await publisher.notifyMessage('0xgroup', ['p2', 'p2'], 'p1', 2);
+    expect(inbox).toHaveBeenCalledWith('0xgroup', ['p2'], 'p1', 2);
   });
 
   it('writes an inbox entry even when push delivery is switched off', async () => {
@@ -202,7 +207,8 @@ describe('encrypted inbox notifications', () => {
       inbox
     );
     await publisher.wake('0xgroup', ['p1', 'p2'], 'message');
-    expect(inbox).toHaveBeenCalledWith('0xgroup', ['p2']);
+    await publisher.notifyMessage('0xgroup', ['p2'], 'p1', 2);
+    expect(inbox).toHaveBeenCalledWith('0xgroup', ['p2'], 'p1', 2);
     expect(releasePushWakes).toHaveBeenCalledWith('0xgroup', ['p2'], 42);
   });
   it('keeps push delivery working if writing the inbox fails', async () => {
@@ -217,6 +223,9 @@ describe('encrypted inbox notifications', () => {
         throw new Error('inbox unavailable');
       }
     );
+    await expect(
+      publisher.notifyMessage('0xgroup', ['p1'], 'p2', 2)
+    ).resolves.toBeUndefined();
     await publisher.wake('0xgroup', ['p1'], 'message');
     expect(enqueue).toHaveBeenCalledWith(['p1'], 'message');
   });

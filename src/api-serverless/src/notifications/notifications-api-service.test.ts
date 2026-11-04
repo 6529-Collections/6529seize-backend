@@ -670,24 +670,35 @@ describe('NotificationsApiService V2 notifications', () => {
     });
   });
 
-  it.each(['v1', 'v2'] as const)(
-    'maps content-free encrypted notifications in %s',
-    async (version) => {
+  it.each([
+    ['v1', false],
+    ['v1', true],
+    ['v2', false],
+    ['v2', true]
+  ] as const)(
+    'maps encrypted notifications in %s with sender present: %s',
+    async (version, hasSender) => {
       const { service, notificationsReader, identityFetcher, dropsService } =
         createService();
+      const sender = { id: 'sender-1', handle: 'alice' };
+      const profiles = { [sender.id]: sender };
+      identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue(profiles);
       Object.assign(identityFetcher, {
-        getOverviewsByIds: jest.fn().mockResolvedValue({})
+        getOverviewsByIds: jest.fn().mockResolvedValue(profiles)
       });
       Object.assign(dropsService, {
         findDropsByIds: jest.fn().mockResolvedValue({})
       });
-      const data = { encrypted_group: `0x${'a'.repeat(64)}` };
+      const data = {
+        encrypted_group: `0x${'a'.repeat(64)}`,
+        ...(hasSender ? { encrypted_message_seq: 2 } : {})
+      };
       const notification = {
         id: 22,
         created_at: 6000,
         read_at: null,
         cause: IdentityNotificationCause.E2EE_MESSAGE,
-        data
+        data: { ...data, ...(hasSender ? { sender_id: sender.id } : {}) }
       };
       notificationsReader.getNotificationsForIdentity.mockResolvedValue({
         notifications: [notification],
@@ -715,7 +726,7 @@ describe('NotificationsApiService V2 notifications', () => {
             created_at: 6000,
             read_at: null,
             cause: ApiNotificationCause.E2EeMessage,
-            related_identity: null,
+            related_identity: hasSender ? sender : null,
             related_drops: [],
             additional_context: data
           }

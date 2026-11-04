@@ -500,7 +500,9 @@ group or text, honours the profile's "Direct messages" notification
 preference, and removes unregistered tokens. Wakes are hints and are not
 retried after a send. The API sends at most one wake per (profile, group) per
 60 seconds; `reason: "added"` goes to profiles new to a roster, `message` to
-notify-hinted roster profiles other than the sender.
+notify-hinted roster profiles other than the sender. The in-app feed records the
+sender, opaque chat handle, and message sequence independently of the push
+cooldown. Message previews come from the recipient device’s local history.
 
 ## Residual powers of 6529.io as orderer
 
