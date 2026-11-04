@@ -235,6 +235,15 @@ describe('DeviceGrantsService', () => {
       expect(db.renameGrant).not.toHaveBeenCalled();
     });
 
+    it('returns not found when the grant does not exist', async () => {
+      jest.mocked(db.lockGrant).mockResolvedValue(null);
+      await expect(
+        service.renameCallerGrant(GRANT_ID, 'My laptop', callerContext())
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(identities.getIdentityByWallet).not.toHaveBeenCalled();
+      expect(db.renameGrant).not.toHaveBeenCalled();
+    });
+
     it('rejects a grant revoked before the lock was acquired', async () => {
       jest.mocked(db.lockGrant).mockResolvedValue(aGrant({ revoked_at: NOW }));
       await expect(
