@@ -326,7 +326,8 @@ router.post(
       authorId,
       req.headers.host
     );
-    const updatedDrop = await deviceSignedWritesService.mutateDrop(
+    const ctx = { timer, authenticationContext };
+    const { drop, changed } = await deviceSignedWritesService.mutateDrop(
       {
         envelope: deviceSignature,
         kind: DeviceEventKind.EDIT,
@@ -343,18 +344,20 @@ router.post(
             representativeId: authenticationContext.getLoggedInUsersProfileId()!
           },
           {
-            timer,
-            authenticationContext,
+            ...ctx,
             moderationRequestId: req.get('Idempotency-Key')
           }
         ),
-      { timer, authenticationContext }
+      ctx
     );
-    res.send(
+    const updatedDrop =
       deviceSignature === undefined
-        ? updatedDrop
-        : await withStoredAuthorSignature(updatedDrop, { timer })
-    );
+        ? drop
+        : await withStoredAuthorSignature(drop, ctx);
+    if (changed) {
+      await wsListenersNotifier.notifyAboutDropUpdate(updatedDrop, ctx);
+    }
+    res.send(updatedDrop);
   }
 );
 

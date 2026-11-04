@@ -198,7 +198,12 @@ describe('DeviceGrantsService', () => {
       });
     });
 
-    it('locks the grant and updates its wallet-scoped label on the same connection', async () => {
+    it('checks a mixed-case grant wallet and updates its label on the same connection', async () => {
+      const storedWallet = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed';
+      jest
+        .mocked(db.lockGrant)
+        .mockResolvedValue(aGrant({ wallet: storedWallet }));
+
       const grant = await service.renameCallerGrant(
         GRANT_ID,
         'My laptop',
@@ -208,12 +213,12 @@ describe('DeviceGrantsService', () => {
       const txCtx = expect.objectContaining({ connection });
       expect(db.lockGrant).toHaveBeenCalledWith(GRANT_ID, txCtx);
       expect(identities.getIdentityByWallet).toHaveBeenCalledWith(
-        WALLET,
+        storedWallet.toLowerCase(),
         connection
       );
       expect(db.renameGrant).toHaveBeenCalledWith(
         GRANT_ID,
-        WALLET,
+        storedWallet,
         'My laptop',
         txCtx
       );
