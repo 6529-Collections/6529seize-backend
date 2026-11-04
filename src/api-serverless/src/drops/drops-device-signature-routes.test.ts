@@ -6,9 +6,13 @@ import * as auth from '@/api/auth/auth';
 import { AuthenticationContext } from '@/auth-context';
 import { dropCreationService } from '@/api/drops/drop-creation.api.service';
 import { deviceSigningDb } from '@/api/device-signing/device-signing.db';
+import { deviceSignedWritesService } from '@/api/device-signing/device-signed-writes.service';
+import { DeviceEventKind } from '@/api/device-signing/device-event';
+import { dropsDb } from '@/drops/drops.db';
 import { identitiesDb } from '@/identities/identities.db';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
 import { DbPoolName } from '@/db-query.options';
+import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import router from './drops.routes';
 
 jest.mock('passport', () => ({
@@ -25,7 +29,7 @@ jest.mock('@/help-bot/help-bot-trigger.service', () => ({
   }
 }));
 jest.mock('@/api/drops/drop-creation.api.service', () => ({
-  dropCreationService: { createDrop: jest.fn() }
+  dropCreationService: { createDrop: jest.fn(), updateDrop: jest.fn() }
 }));
 
 // Shared DN1 contract vectors.
@@ -161,11 +165,12 @@ describe('POST /drops device signatures', () => {
   });
 
   function post(
-    body: unknown
+    body: unknown,
+    path = '/drops'
   ): Promise<{ status: number; json: () => Record<string, unknown> }> {
     return new Promise((resolve, reject) => {
       const req = request(
-        `${baseUrl}/drops`,
+        `${baseUrl}${path}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Host: 'api.6529.io' }
@@ -189,6 +194,69 @@ describe('POST /drops device signatures', () => {
       req.end(JSON.stringify(body));
     });
   }
+
+  it.each([true, false])(
+    'broadcasts the finalized edit once (signed: %s)',
+    async (signed) => {
+      const dropId = 'b0c5d6e7-1111-4222-8333-944455556666';
+      const editedDrop = { id: dropId, is_author_signed: false };
+      jest
+        .spyOn(dropsDb, 'findWaveIdByDropId')
+        .mockResolvedValue(VECTOR_BODY.wave_id);
+      jest
+        .spyOn(deviceSignedWritesService, 'verifyAndReserve')
+        .mockResolvedValue({
+          eventId: VECTOR_EVENT_ID,
+          grantId: GRANT_ID,
+          kind: DeviceEventKind.EDIT,
+          receivedAt: NOW
+        });
+      jest
+        .spyOn(deviceSigningDb, 'deleteDropAuthorSignature')
+        .mockResolvedValue(undefined);
+      jest
+        .mocked(deviceSigningDb.findAuthorSignedDropIds)
+        .mockResolvedValue(new Set([dropId]));
+      jest.mocked(dropCreationService.updateDrop).mockResolvedValue({
+        drop: editedDrop as Awaited<
+          ReturnType<typeof dropCreationService.updateDrop>
+        >['drop'],
+        changed: true
+      });
+      const broadcast = jest
+        .spyOn(wsListenersNotifier, 'notifyAboutDropUpdate')
+        .mockImplementation(async () => {
+          if (signed) {
+            expect(
+              deviceSigningDb.upsertDropAuthorSignature
+            ).toHaveBeenCalled();
+          } else {
+            expect(
+              deviceSigningDb.deleteDropAuthorSignature
+            ).toHaveBeenCalledTimes(2);
+          }
+        });
+
+      const response = await post(
+        {
+          parts: VECTOR_BODY.parts,
+          ...(signed ? { device_signature: VECTOR_DEVICE_SIGNATURE } : {})
+        },
+        `/drops/${dropId}`
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.json()).toEqual({
+        ...editedDrop,
+        is_author_signed: signed
+      });
+      expect(broadcast).toHaveBeenCalledTimes(1);
+      expect(broadcast).toHaveBeenCalledWith(
+        response.json(),
+        expect.any(Object)
+      );
+    }
+  );
 
   function expectedCreateRequest() {
     return expect.objectContaining({
