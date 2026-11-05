@@ -314,10 +314,12 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     >(query.sql, query.params);
     const last = rows[search.size - 1];
     return {
-      logs: rows.map(({ nic_cursor_created_at: _cursorTime, ...row }) => ({
-        ...row,
-        created_at: new Date(row.created_at)
-      })),
+      logs: rows
+        .slice(0, search.size)
+        .map(({ nic_cursor_created_at: _cursorTime, ...row }) => ({
+          ...row,
+          created_at: new Date(row.created_at)
+        })),
       nextPosition:
         rows.length > search.size && last
           ? { id: last.id, createdAt: last.nic_cursor_created_at }

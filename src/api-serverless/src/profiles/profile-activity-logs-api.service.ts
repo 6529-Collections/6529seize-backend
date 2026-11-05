@@ -214,7 +214,10 @@ export class ProfileActivityLogsApiService {
     ctx.timer?.stop(`${this.constructor.name}->getProfileActivityLogsFiltered`);
     return {
       page: pageRequest.page,
-      next: pageRequest.page_size < convertedData.length,
+      next:
+        nicContext !== null
+          ? nextCursor !== null
+          : pageRequest.page_size < convertedData.length,
       data: convertedData.slice(0, pageRequest.page_size),
       ...(nicContext !== null ? { next_cursor: nextCursor } : {})
     };

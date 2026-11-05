@@ -56,6 +56,7 @@ describeWithSeed(
               {}
             );
             const page = result.logs.slice(0, 10);
+            expect(result.logs.length).toBeLessThanOrEqual(10);
             expect(page.map((log) => log.id)).toEqual(
               expected
                 .slice(actual.length, actual.length + 10)
