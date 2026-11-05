@@ -49,6 +49,48 @@ export class ProfileActivityLogsApiService {
     private readonly userGroupsService: UserGroupsService
   ) {}
 
+  private async searchActivityLogs(
+    request: ProfileActivityLogsSearchRequest,
+    params: ProfileLogSearchParams,
+    nicContext: string | null,
+    ctx: RequestContext
+  ) {
+    if (nicContext === null) {
+      return {
+        logs: await this.profileActivityLogsDb.searchLogs(params, ctx),
+        nextCursor: null
+      };
+    }
+    let direction: 'incoming' | 'all' | 'outgoing' = 'outgoing';
+    if (request.targetId) direction = 'incoming';
+    else if (request.includeProfileIdToIncoming) direction = 'all';
+    const result = await this.profileActivityLogsDb.searchNicLogs(
+      {
+        profileId: request.profileId ?? request.targetId!,
+        direction,
+        types: request.logType ?? [],
+        size: request.pageRequest.page_size,
+        after: decodeNicActivityCursor(
+          request.cursor,
+          nicContext,
+          request.pageRequest.page
+        )
+      },
+      params.viewer_eligible_group_ids,
+      ctx
+    );
+    return {
+      logs: result.logs,
+      nextCursor: result.nextPosition
+        ? encodeNicActivityCursor(
+            result.nextPosition,
+            nicContext,
+            request.pageRequest.page + 1
+          )
+        : null
+    };
+  }
+
   async getProfileActivityLogsFiltered(
     request: ProfileActivityLogsSearchRequest,
     ctx: RequestContext
@@ -108,37 +150,14 @@ export class ProfileActivityLogsApiService {
     let foundLogs: ProfileActivityLog[];
     ctx.timer?.start(searchLogsTimerKey);
     try {
-      if (nicContext !== null) {
-        const result = await this.profileActivityLogsDb.searchNicLogs(
-          {
-            profileId: profileId ?? targetId!,
-            direction: targetId
-              ? 'incoming'
-              : includeProfileIdToIncoming
-                ? 'all'
-                : 'outgoing',
-            types: logType ?? [],
-            size: pageRequest.page_size,
-            after: decodeNicActivityCursor(
-              request.cursor,
-              nicContext,
-              pageRequest.page
-            )
-          },
-          params.viewer_eligible_group_ids,
-          ctx
-        );
-        foundLogs = result.logs;
-        nextCursor = result.nextPosition
-          ? encodeNicActivityCursor(
-              result.nextPosition,
-              nicContext,
-              pageRequest.page + 1
-            )
-          : null;
-      } else {
-        foundLogs = await this.profileActivityLogsDb.searchLogs(params, ctx);
-      }
+      const result = await this.searchActivityLogs(
+        request,
+        params,
+        nicContext,
+        ctx
+      );
+      foundLogs = result.logs;
+      nextCursor = result.nextCursor;
     } finally {
       ctx.timer?.stop(searchLogsTimerKey);
     }

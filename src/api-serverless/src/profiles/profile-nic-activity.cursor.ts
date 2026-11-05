@@ -57,19 +57,24 @@ export function encodeNicActivityCursor(
   context: string,
   page: number
 ) {
+  // This unsigned position never grants access; every query reauthorizes rows.
   return Buffer.from(
     JSON.stringify({ v: 1, context, page, position })
   ).toString('base64url');
 }
 
 export function decodeNicActivityCursor(
-  cursor: string | undefined,
+  cursor: unknown,
   context: string,
   page: number
 ): ProfileNicActivityPosition | null {
-  if (!cursor) return null;
+  if (cursor === undefined || cursor === '') return null;
   try {
-    if (cursor.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(cursor))
+    if (
+      typeof cursor !== 'string' ||
+      cursor.length > 2048 ||
+      !/^[A-Za-z0-9_-]+$/.test(cursor)
+    )
       throw new Error(INVALID_CURSOR);
     const value: unknown = JSON.parse(
       Buffer.from(cursor, 'base64url').toString('utf8')

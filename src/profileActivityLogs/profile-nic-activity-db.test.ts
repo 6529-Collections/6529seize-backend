@@ -25,6 +25,14 @@ describeWithSeed(
   { table: PROFILES_ACTIVITY_LOGS_TABLE, rows: logs },
   () => {
     const db = new ProfileActivityLogsDb(() => sqlExecutor, userGroupsService);
+    it('uses the entity DATETIME precision expected by the cursor boundary', async () => {
+      const columns = await sqlExecutor.execute<{ precision: number }>(
+        `SELECT DATETIME_PRECISION AS \`precision\` FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:table AND COLUMN_NAME='created_at'`,
+        { table: PROFILES_ACTIVITY_LOGS_TABLE }
+      );
+      expect(columns).toEqual([{ precision: 0 }]);
+    });
     it('keeps the exact non-REP history with full pages, ties, null dates and overlapping matches', async () => {
       for (const direction of ['all', 'outgoing', 'incoming'] as const) {
         for (const types of [[], [Type.RATING_EDIT], [Type.PFP_EDIT]]) {

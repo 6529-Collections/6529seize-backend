@@ -27,7 +27,7 @@ import { ApiCompliantException } from '@/exceptions';
 import router from './profile-activity-logs.routes';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { ApiProfileActivityLog } from './profile-activity-logs-api.service';
-import { CountlessPage } from '../page-request';
+import { CountlessPage } from '@/api/page-request';
 
 const secret = 'disposable-nic-test-signing-key';
 const wave = aWave({});
@@ -123,6 +123,8 @@ describeWithSeed(
         };
         expect(page.data.map((log) => log.id)).toEqual(['picture', 'cic']);
         expect(page.next).toBe(true);
+        expect(page.data).toHaveLength(2);
+        expect(page.next_cursor).toEqual(expect.any(String));
         const second = await get(
           `${query}&page=2&cursor=${page.next_cursor}`,
           viewer
@@ -145,6 +147,53 @@ describeWithSeed(
         ).toBe(400);
       }
     );
+    it('retries the same cursor concurrently and returns a full final page consistently', async () => {
+      const query = 'profile=owner&activity_scope=NIC&page_size=2';
+      const first = (await (await get(query, 'owner')).json()) as {
+        next_cursor: string;
+      };
+      const next = `${query}&page=2&cursor=${first.next_cursor}`;
+      const responses = await Promise.all([
+        get(next, 'owner'),
+        get(next, 'owner')
+      ]);
+      expect(responses.map((response) => response.status)).toEqual([200, 200]);
+      const pages = await Promise.all(
+        responses.map((response) => response.json())
+      );
+      expect(pages[0]).toEqual(pages[1]);
+      expect(pages[0]).toMatchObject({
+        page: 2,
+        next: false,
+        next_cursor: null
+      });
+      const final = (await (
+        await get('profile=owner&activity_scope=NIC&page_size=3')
+      ).json()) as CountlessPage<ApiProfileActivityLog>;
+      expect(final.data).toHaveLength(3);
+      expect(final).toMatchObject({ next: false, next_cursor: null });
+    });
+    it('keeps missing-profile history empty and rejects non-string cursors', async () => {
+      jest
+        .spyOn(identitiesDb, 'getProfileIdByIdentityKeyFast')
+        .mockResolvedValue(null);
+      const response = await get(
+        'profile=missing&activity_scope=NIC&page_size=2'
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        data: [],
+        next: false,
+        next_cursor: null
+      });
+      expect(
+        (
+          await get(
+            'profile=owner&activity_scope=NIC&page_size=2&cursor=x&cursor=y'
+          )
+        ).status
+      ).toBe(400);
+    });
     it('keeps incoming, cleared/selected log types, legacy All, REP, wave REP and network requests distinct', async () => {
       const incoming = (await (
         await get(
