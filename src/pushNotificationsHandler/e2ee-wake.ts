@@ -24,7 +24,7 @@ const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_E2EE');
 export type E2eeWakeReason = 'message' | 'added';
 
 const E2EE_WAKE_COPY = {
-  message: { title: 'New encrypted message', body: 'Open 6529 to view' },
+  message: { title: 'New encrypted message', body: 'Open 6529 Mobile to view' },
   added: { title: '6529', body: 'You were added to an encrypted chat' }
 } satisfies Record<E2eeWakeReason, { title: string; body: string }>;
 
@@ -82,6 +82,10 @@ export function buildE2eeWakeInput({
 }): PushNotificationMessageInput {
   return {
     ...E2EE_WAKE_COPY[reason],
+    ...(reason === 'message' &&
+    (process.env.SENTRY_ENVIRONMENT ?? '').endsWith('_staging')
+      ? { body: 'Open 6529 Staging to view' }
+      : {}),
     token,
     notification_id: 0,
     omitBadge: true,

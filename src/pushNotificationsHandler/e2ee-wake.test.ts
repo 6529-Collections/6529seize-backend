@@ -26,7 +26,7 @@ describe('content-free E2EE wakes', () => {
     });
     expect(input).toEqual({
       title: 'New encrypted message',
-      body: 'Open 6529 to view',
+      body: 'Open 6529 Mobile to view',
       token: 'fcm-token',
       notification_id: 0,
       omitBadge: true,
@@ -46,6 +46,38 @@ describe('content-free E2EE wakes', () => {
         reason: 'added'
       }).body
     ).toBe('You were added to an encrypted chat');
+  });
+
+  it.each([
+    ['pushNotificationsHandler_staging', 'Open 6529 Staging to view'],
+    ['pushNotificationsHandler_prod', 'Open 6529 Mobile to view']
+  ])('uses the app name for %s', (environment, expectedBody) => {
+    const previous = process.env.SENTRY_ENVIRONMENT;
+    try {
+      process.env.SENTRY_ENVIRONMENT = environment;
+      expect(
+        buildE2eeWakeInput({
+          token: 'token',
+          profileId: 'p',
+          handle: 'h',
+          reason: 'message'
+        })
+      ).toMatchObject({
+        title: 'New encrypted message',
+        body: expectedBody
+      });
+      expect(
+        buildE2eeWakeInput({
+          token: 'token',
+          profileId: 'p',
+          handle: 'h',
+          reason: 'added'
+        }).body
+      ).toBe('You were added to an encrypted chat');
+    } finally {
+      if (previous === undefined) delete process.env.SENTRY_ENVIRONMENT;
+      else process.env.SENTRY_ENVIRONMENT = previous;
+    }
   });
 
   it('parses only well-formed e2ee_wake bodies', () => {
@@ -133,8 +165,8 @@ describe('content-free E2EE wakes', () => {
       deps
     );
     expect(sent.map((input) => [input.token, input.body])).toEqual([
-      ['t1', 'Open 6529 to view'],
-      ['t2', 'Open 6529 to view'],
+      ['t1', 'Open 6529 Mobile to view'],
+      ['t2', 'Open 6529 Mobile to view'],
       ['t3', 'You were added to an encrypted chat']
     ]);
     expect(sent[0].extra_data.target_profile_handle).toBe('alice-handle');
