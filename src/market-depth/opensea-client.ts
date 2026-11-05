@@ -12,6 +12,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_DEADLINE_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 5;
+const MAX_THROTTLED_ATTEMPTS = 12;
 const RETRYABLE = new Set([408, 429, 500, 502, 503, 504]);
 const RETRYABLE_NETWORK_CODES = new Set([
   'ECONNRESET',
@@ -366,11 +367,17 @@ export class OpenSeaClient {
     attempt: number,
     deadlineMs: number
   ): Promise<void> {
-    if (!isRetryable(error) || attempt === MAX_ATTEMPTS) throw error;
     const serverWait =
       error instanceof OpenSeaHttpError ? error.retryAfterMs : 0;
     const backoff = Math.min(30_000, 500 * 2 ** (attempt - 1));
     const wait = Math.max(serverWait, backoff + randomInt(backoff));
+    const throttled = error instanceof OpenSeaHttpError && error.status === 429;
+    if (throttled) await this.rateLimiter.recordCooldown(wait);
+    if (
+      !isRetryable(error) ||
+      attempt >= (throttled ? MAX_THROTTLED_ATTEMPTS : MAX_ATTEMPTS)
+    )
+      throw error;
     // A provider/network failure remains a failure even when its retry cannot
     // fit. Only waiting for an unused request budget is a planned deferral.
     if (this.now() + wait >= deadlineMs) throw error;
@@ -386,12 +393,14 @@ export class OpenSeaClient {
     for (const [key, value] of Object.entries(query))
       url.searchParams.set(key, value);
     let retryError: unknown;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    for (let attempt = 1; attempt <= MAX_THROTTLED_ATTEMPTS; attempt++) {
       let remaining: number;
       try {
         remaining = await this.acquireRequestBudget(deadlineMs);
       } catch (error) {
-        throw retryError ?? error;
+        throw error instanceof OpenSeaDeadlineError
+          ? (retryError ?? error)
+          : error;
       }
       try {
         return await this.requestJson(url, remaining);

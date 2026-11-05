@@ -209,6 +209,7 @@ describe('OpenSeaClient', () => {
   });
 
   it('walks every listing page and requests private listings', async () => {
+    let now = 1000;
     const fetchImpl = jest
       .fn()
       .mockResolvedValueOnce(
@@ -229,8 +230,10 @@ describe('OpenSeaClient', () => {
     const client = new OpenSeaClient({
       apiKey: 'fixture-key',
       fetchImpl,
-      sleep: async () => undefined,
-      now: () => 1_000
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+      now: () => now
     });
 
     await expect(
@@ -244,6 +247,7 @@ describe('OpenSeaClient', () => {
   });
 
   it('honors Retry-After for throttled requests', async () => {
+    let now = 1000;
     const sleeps: number[] = [];
     const fetchImpl = jest
       .fn()
@@ -261,8 +265,9 @@ describe('OpenSeaClient', () => {
       fetchImpl,
       sleep: async (milliseconds) => {
         sleeps.push(milliseconds);
+        now += milliseconds;
       },
-      now: () => 1_000
+      now: () => now
     });
 
     await expect(client.getAllOffers('fixture', 100_000)).resolves.toEqual([]);
@@ -270,6 +275,7 @@ describe('OpenSeaClient', () => {
   });
 
   it('rejects a repeated pagination cursor', async () => {
+    let now = 1000;
     const response = () =>
       new Response(JSON.stringify({ offers: [], next: 'same' }), {
         status: 200,
@@ -278,12 +284,76 @@ describe('OpenSeaClient', () => {
     const client = new OpenSeaClient({
       apiKey: 'fixture-key',
       fetchImpl: jest.fn().mockImplementation(response),
-      sleep: async () => undefined,
-      now: () => 1_000
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+      now: () => now
     });
 
     await expect(client.getAllOffers('fixture', 100_000)).rejects.toThrow(
       'Repeated OpenSea offers cursor'
     );
+  });
+
+  it('recovers after five throttled attempts within the shared deadline', async () => {
+    let now = 1000;
+    const fetchImpl = jest.fn();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      fetchImpl.mockResolvedValueOnce(new Response('', { status: 429 }));
+    }
+    fetchImpl.mockResolvedValueOnce(Response.json({ offers: [] }));
+    const client = new OpenSeaClient({
+      apiKey: 'fixture-key',
+      fetchImpl,
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      }
+    });
+    await expect(client.getAllOffers('fixture', 600000)).resolves.toEqual([]);
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
+  });
+
+  it.each([
+    [429, 12],
+    [503, 5]
+  ])('bounds HTTP %i recovery to %i attempts', async (status, attempts) => {
+    let now = 1000;
+    const fetchImpl = jest
+      .fn()
+      .mockImplementation(async () => new Response('', { status }));
+    const client = new OpenSeaClient({
+      apiKey: 'fixture-key',
+      fetchImpl,
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      }
+    });
+    await expect(client.getAllOffers('fixture', 600000)).rejects.toMatchObject({
+      status
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(attempts);
+  });
+
+  it('stops on a server failure after throttling has passed the ordinary attempt budget', async () => {
+    let now = 1000;
+    const fetchImpl = jest.fn();
+    for (let attempt = 0; attempt < 5; attempt++)
+      fetchImpl.mockResolvedValueOnce(new Response('', { status: 429 }));
+    fetchImpl.mockResolvedValueOnce(new Response('', { status: 503 }));
+    fetchImpl.mockResolvedValueOnce(Response.json({ offers: [] }));
+    const client = new OpenSeaClient({
+      apiKey: 'fixture-key',
+      fetchImpl,
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      }
+    });
+    await expect(client.getAllOffers('fixture', 600000)).rejects.toMatchObject({
+      status: 503
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
   });
 });

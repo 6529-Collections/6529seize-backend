@@ -17,7 +17,8 @@ function dependencies() {
   const outbox = {
     claimOutbox: jest.fn(),
     acknowledgeOutbox: jest.fn(),
-    retryOutbox: jest.fn()
+    retryOutbox: jest.fn(),
+    deferOutbox: jest.fn()
   };
   const repository = {
     getContext: jest.fn().mockResolvedValue({
@@ -49,6 +50,8 @@ function dependencies() {
   const announcements = { drop: jest.fn().mockResolvedValue([8]) };
   const publishClaim = jest.fn();
   const push = jest.fn();
+  const artworkAlerts = { deliver: jest.fn().mockResolvedValue(true) };
+  const pushOutbox = { enqueueMany: jest.fn() };
   const dispatcher = new CompetitionEventDispatcher(
     outbox,
     repository,
@@ -57,10 +60,14 @@ function dependencies() {
     announcements,
     publishClaim,
     push,
-    () => ['announcement-wave']
+    () => ['announcement-wave'],
+    artworkAlerts,
+    pushOutbox
   );
   return {
     dispatcher,
+    artworkAlerts,
+    pushOutbox,
     outbox,
     repository,
     sockets,
@@ -72,6 +79,88 @@ function dependencies() {
 }
 
 describe('CompetitionEventDispatcher', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('defers partial artwork delivery and acknowledges only after it completes', async () => {
+    const deps = dependencies();
+    deps.outbox.claimOutbox.mockResolvedValue([
+      { id: event.event_id, event, attempts: 1, lease_token: 'lease' }
+    ]);
+    deps.artworkAlerts.deliver.mockResolvedValueOnce(false);
+    await deps.dispatcher.dispatchPending({}, 100);
+    expect(deps.outbox.deferOutbox).toHaveBeenCalledWith(
+      event.event_id,
+      'lease',
+      expect.any(Number),
+      {}
+    );
+    expect(deps.outbox.acknowledgeOutbox).not.toHaveBeenCalled();
+    expect(deps.outbox.retryOutbox).not.toHaveBeenCalled();
+    await deps.dispatcher.dispatchPending({}, 200);
+    expect(deps.outbox.acknowledgeOutbox).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands off ordinary entry pushes once across partial artwork batches', async () => {
+    const deps = dependencies();
+    const activated = process.env.PUSH_NOTIFICATIONS_ACTIVATED;
+    process.env.PUSH_NOTIFICATIONS_ACTIVATED = 'true';
+    try {
+      const receipts = new Map<string, unknown>();
+      deps.repository.applyEffect.mockImplementation(
+        async <T>(
+          _event: string,
+          key: string,
+          apply: (ctx: RequestContext) => Promise<T>,
+          ctx: RequestContext = {}
+        ) => {
+          if (!receipts.has(key)) receipts.set(key, await apply(ctx));
+          return receipts.get(key) as T;
+        }
+      );
+      const created = {
+        ...event,
+        event_type: 'COMPETITION_ENTRY_CREATED',
+        data: {
+          artwork_alert_eligible: true,
+          pending_push_notification_ids: [17, 17, 18]
+        }
+      };
+      deps.artworkAlerts.deliver.mockResolvedValueOnce(false);
+      expect(await deps.dispatcher.dispatch(created, {})).toBe(false);
+      expect(await deps.dispatcher.dispatch(created, {})).toBe(true);
+      expect(deps.pushOutbox.enqueueMany).toHaveBeenCalledTimes(1);
+      expect(deps.pushOutbox.enqueueMany).toHaveBeenCalledWith([17, 18], {});
+      expect(deps.push).not.toHaveBeenCalled();
+    } finally {
+      if (activated === undefined)
+        delete process.env.PUSH_NOTIFICATIONS_ACTIVATED;
+      else process.env.PUSH_NOTIFICATIONS_ACTIVATED = activated;
+    }
+  });
+
+  it('releases remaining claimed records when the dispatch budget is exhausted', async () => {
+    const deps = dependencies();
+    let now = 0;
+    jest.spyOn(Date, 'now').mockImplementation(() => now);
+    deps.outbox.claimOutbox.mockResolvedValue([
+      { id: 'first', event, attempts: 1, lease_token: 'lease-1' },
+      { id: 'second', event, attempts: 1, lease_token: 'lease-2' }
+    ]);
+    deps.artworkAlerts.deliver.mockImplementationOnce(async () => {
+      now = 240_001;
+      return false;
+    });
+    await deps.dispatcher.dispatchPending({}, 0);
+    expect(deps.artworkAlerts.deliver).toHaveBeenCalledWith(event, {}, 20_000);
+    expect(deps.artworkAlerts.deliver).toHaveBeenCalledTimes(1);
+    expect(deps.outbox.deferOutbox.mock.calls.map(([id]) => id)).toEqual([
+      'first',
+      'second'
+    ]);
+    expect(deps.outbox.acknowledgeOutbox).not.toHaveBeenCalled();
+    expect(deps.outbox.retryOutbox).not.toHaveBeenCalled();
+  });
+
   it.each(['DRAFT', 'ARCHIVED'])(
     'suppresses never-published %s competitions from subscriptions and notifications',
     async (lifecycle) => {
@@ -304,7 +393,7 @@ describe('CompetitionEventDispatcher', () => {
     await expect(deps.dispatcher.dispatch(event, {})).rejects.toThrow(
       'queue unavailable'
     );
-    await expect(deps.dispatcher.dispatch(event, {})).resolves.toBeUndefined();
+    await expect(deps.dispatcher.dispatch(event, {})).resolves.toBe(true);
     expect(deps.notifier.notifyOfCompetitionLifecycle).toHaveBeenCalledTimes(1);
     expect(deps.push.mock.calls).toEqual([[[7]], [[7]]]);
   });

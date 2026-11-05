@@ -167,6 +167,31 @@ interface BufferedEvent {
   readonly bytes: number;
 }
 
+type StreamBufferFailureReason =
+  | 'normalization_failed'
+  | 'serialization_failed'
+  | 'event_count_limit'
+  | 'byte_limit';
+
+class StreamBufferError extends Error {
+  constructor(
+    readonly reason: StreamBufferFailureReason,
+    readonly incomingEventBytes: number | null = null
+  ) {
+    super('OpenSea Stream event could not be buffered');
+    Object.setPrototypeOf(this, StreamBufferError.prototype);
+  }
+}
+
+function diagnosticEventType(event: BaseStreamMessage<unknown>): string {
+  try {
+    const type = event?.event_type;
+    return EVENT_TYPES.find((allowed) => allowed === type) ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 class StreamPersistenceError extends Error {
   constructor(
     message: string,
@@ -206,22 +231,48 @@ class EventBuffer {
     return this.pending.length;
   }
 
+  rejectionDiagnostic(error: unknown, event: BaseStreamMessage<unknown>) {
+    // Only static categories, an allowlisted event type, and numeric counters.
+    // Never inspect/log the original exception, payload, or collection metadata.
+    return {
+      reason:
+        error instanceof StreamBufferError ? error.reason : 'enqueue_failed',
+      event_type: diagnosticEventType(event),
+      buffered_events: this.pending.length,
+      buffered_bytes: this.bytes,
+      incoming_event_bytes:
+        error instanceof StreamBufferError ? error.incomingEventBytes : null,
+      max_buffered_events: MAX_BUFFERED_EVENTS,
+      max_buffered_bytes: MAX_BUFFERED_BYTES
+    };
+  }
+
   enqueue(
     event: BaseStreamMessage<unknown>,
     collection: StreamCollection,
     now: Date
   ) {
-    const input = streamEventInput(event, collection, now);
+    let input: MarketDepthEventInput;
+    try {
+      input = streamEventInput(event, collection, now);
+    } catch {
+      throw new StreamBufferError('normalization_failed');
+    }
     if (this.recentIds.has(input.event_id)) {
       this.duplicates++;
       return;
     }
-    const bytes = Buffer.byteLength(JSON.stringify(input));
-    if (
-      this.pending.length >= MAX_BUFFERED_EVENTS ||
-      this.bytes + bytes > MAX_BUFFERED_BYTES
-    ) {
-      throw new Error('OpenSea Stream buffer capacity exceeded');
+    let bytes: number;
+    try {
+      bytes = Buffer.byteLength(JSON.stringify(input));
+    } catch {
+      throw new StreamBufferError('serialization_failed');
+    }
+    if (this.pending.length >= MAX_BUFFERED_EVENTS) {
+      throw new StreamBufferError('event_count_limit', bytes);
+    }
+    if (this.bytes + bytes > MAX_BUFFERED_BYTES) {
+      throw new StreamBufferError('byte_limit', bytes);
     }
     this.pending.push({ event: input, bytes });
     this.bytes += bytes;
@@ -442,8 +493,12 @@ export async function runMarketDepthStream(
           if (!accepting || failure) return;
           try {
             buffer.enqueue(event, collection, now());
-          } catch {
+          } catch (error) {
             failure = new Error('OpenSea Stream event could not be buffered');
+            log.warn(
+              'OpenSea Stream buffer rejection',
+              buffer.rejectionDiagnostic(error, event)
+            );
           }
         })
       );
