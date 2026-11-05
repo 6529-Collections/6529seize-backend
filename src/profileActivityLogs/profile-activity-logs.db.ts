@@ -1,4 +1,8 @@
 import {
+  buildProfileNicActivityQuery,
+  ProfileNicActivitySearch
+} from './profile-nic-activity.query';
+import {
   ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService,
@@ -102,6 +106,38 @@ export function buildProfileLogWaveAccessFilter({
         : {})
     }
   };
+}
+
+function buildProfileLogReadAccessFilter(
+  types: ProfileActivityLogType[] | undefined,
+  eligibleGroupIds: string[],
+  ctx: RequestContext
+) {
+  const waveAccess = buildProfileLogWaveAccessFilter({
+    types: types,
+    eligibleGroupIds: eligibleGroupIds
+  });
+  // Profile-scoped drop logs expose their actor and raw author IDs. Keep
+  // anonymous entries out of this surface before every branch's page limit.
+  if (
+    !types?.length ||
+    types.some((type) => WAVE_SCOPED_DROP_LOG_TYPES.includes(type))
+  ) {
+    waveAccess.conditions.push(`(pa_logs.type not in (:anonymityDropLogTypes)
+        or not exists (
+          select 1 from ${COMPETITION_ENTRIES_TABLE} anonymous_log_entry
+          join ${COMPETITIONS_TABLE} anonymous_log_competition
+            on anonymous_log_competition.id = anonymous_log_entry.competition_id
+          where anonymous_log_entry.drop_id = pa_logs.target_id
+            and ${anonymousCompetitionEntrySql('anonymous_log_entry', 'anonymous_log_competition')}
+            and anonymous_log_entry.submitter_id <> coalesce(:anonymityViewerId, '')
+        ))`);
+    waveAccess.params.anonymityDropLogTypes = [...WAVE_SCOPED_DROP_LOG_TYPES];
+    waveAccess.params.anonymityViewerId =
+      competitionAnonymityViewerId(ctx) ?? null;
+  }
+
+  return waveAccess;
 }
 
 export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
@@ -262,6 +298,33 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     await new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
+  public async searchNicLogs(
+    search: ProfileNicActivitySearch,
+    eligibleGroupIds: string[],
+    ctx: RequestContext
+  ) {
+    const access = buildProfileLogReadAccessFilter(
+      search.types,
+      eligibleGroupIds,
+      ctx
+    );
+    const query = buildProfileNicActivityQuery(search, access);
+    const rows = await this.db.execute<
+      ProfileActivityLog & { nic_cursor_created_at: string | null }
+    >(query.sql, query.params);
+    const last = rows[search.size - 1];
+    return {
+      logs: rows.map(({ nic_cursor_created_at: _cursorTime, ...row }) => ({
+        ...row,
+        created_at: new Date(row.created_at)
+      })),
+      nextPosition:
+        rows.length > search.size && last
+          ? { id: last.id, createdAt: last.nic_cursor_created_at }
+          : null
+    };
+  }
+
   public async searchLogs(
     params: ProfileLogSearchParams,
     ctx: RequestContext
@@ -336,30 +399,11 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       };
     })();
 
-    // Filter before each branch limit so pagination stays exact.
-    const waveAccess = buildProfileLogWaveAccessFilter({
-      types: params.type,
-      eligibleGroupIds: params.viewer_eligible_group_ids
-    });
-    // Profile-scoped drop logs expose their actor and raw author IDs. Keep
-    // anonymous entries out of this surface before every branch's page limit.
-    if (
-      !params.type?.length ||
-      params.type.some((type) => WAVE_SCOPED_DROP_LOG_TYPES.includes(type))
-    ) {
-      waveAccess.conditions.push(`(pa_logs.type not in (:anonymityDropLogTypes)
-        or not exists (
-          select 1 from ${COMPETITION_ENTRIES_TABLE} anonymous_log_entry
-          join ${COMPETITIONS_TABLE} anonymous_log_competition
-            on anonymous_log_competition.id = anonymous_log_entry.competition_id
-          where anonymous_log_entry.drop_id = pa_logs.target_id
-            and ${anonymousCompetitionEntrySql('anonymous_log_entry', 'anonymous_log_competition')}
-            and anonymous_log_entry.submitter_id <> coalesce(:anonymityViewerId, '')
-        ))`);
-      waveAccess.params.anonymityDropLogTypes = [...WAVE_SCOPED_DROP_LOG_TYPES];
-      waveAccess.params.anonymityViewerId =
-        competitionAnonymityViewerId(ctx) ?? null;
-    }
+    const waveAccess = buildProfileLogReadAccessFilter(
+      params.type,
+      params.viewer_eligible_group_ids,
+      ctx
+    );
 
     // Build one branch that returns only (id, created_at)
     const buildIdsBranch = (

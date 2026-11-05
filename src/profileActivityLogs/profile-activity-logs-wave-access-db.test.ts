@@ -164,6 +164,32 @@ describeWithSeed(
       ]);
     });
 
+    it('preserves read access in the NIC cursor query with cleared type filters', async () => {
+      for (const groups of [[], [MEMBER_GROUP]]) {
+        const result = await repo.searchNicLogs(
+          {
+            profileId: 'profile-1',
+            direction: 'all',
+            types: [],
+            size: 50,
+            after: null
+          },
+          groups,
+          ctx
+        );
+        expect(result.logs.map((log) => log.id)).toEqual(
+          groups.length
+            ? [
+                'handle',
+                'member-subwave-reaction',
+                'member-drop',
+                'public-drop'
+              ]
+            : ['handle', 'public-drop']
+        );
+      }
+    });
+
     it('applies the same rules to per-type branches', async () => {
       await expect(
         searchIds({

@@ -1,3 +1,10 @@
+import { BadRequestException } from '@/exceptions';
+import {
+  validateNicActivityRequest,
+  nicActivityContext,
+  decodeNicActivityCursor,
+  encodeNicActivityCursor
+} from './profile-nic-activity.cursor';
 import {
   profileActivityLogsDb,
   ProfileActivityLogsDb,
@@ -8,7 +15,9 @@ import {
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../../../entities/IProfileActivityLog';
-import { CountlessPage, PageRequest } from '../page-request';
+import { PageRequest } from '../page-request';
+import { ApiProfileActivityLog } from '@/api/generated/models/ApiProfileActivityLog';
+import { ApiProfileActivityLogPage } from '@/api/generated/models/ApiProfileActivityLogPage';
 import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
 import { RateMatter } from '../../../entities/IRating';
 import { RequestContext } from '../../../request.context';
@@ -20,6 +29,8 @@ import {
 import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
 
 export interface ProfileActivityLogsSearchRequest {
+  activityScope?: string;
+  cursor?: string;
   profileId?: string;
   targetId?: string;
   logType?: ProfileActivityLogType[];
@@ -39,7 +50,10 @@ export class ProfileActivityLogsApiService {
   ) {}
 
   async getProfileActivityLogsFiltered(
-    {
+    request: ProfileActivityLogsSearchRequest,
+    ctx: RequestContext
+  ): Promise<ApiProfileActivityLogPage> {
+    const {
       profileId,
       order,
       pageRequest,
@@ -49,9 +63,14 @@ export class ProfileActivityLogsApiService {
       logType,
       category,
       group_id
-    }: ProfileActivityLogsSearchRequest,
-    ctx: RequestContext
-  ): Promise<CountlessPage<ApiProfileActivityLog>> {
+    } = request;
+    if (request.activityScope !== undefined)
+      validateNicActivityRequest(request);
+    else if (request.cursor)
+      throw new BadRequestException('A NIC cursor requires activity_scope=NIC');
+    const nicContext =
+      request.activityScope === 'NIC' ? nicActivityContext(request, ctx) : null;
+    let nextCursor: string | null = null;
     ctx.timer?.start(
       `${this.constructor.name}->getProfileActivityLogsFiltered`
     );
@@ -89,7 +108,37 @@ export class ProfileActivityLogsApiService {
     let foundLogs: ProfileActivityLog[];
     ctx.timer?.start(searchLogsTimerKey);
     try {
-      foundLogs = await this.profileActivityLogsDb.searchLogs(params, ctx);
+      if (nicContext !== null) {
+        const result = await this.profileActivityLogsDb.searchNicLogs(
+          {
+            profileId: profileId ?? targetId!,
+            direction: targetId
+              ? 'incoming'
+              : includeProfileIdToIncoming
+                ? 'all'
+                : 'outgoing',
+            types: logType ?? [],
+            size: pageRequest.page_size,
+            after: decodeNicActivityCursor(
+              request.cursor,
+              nicContext,
+              pageRequest.page
+            )
+          },
+          params.viewer_eligible_group_ids,
+          ctx
+        );
+        foundLogs = result.logs;
+        nextCursor = result.nextPosition
+          ? encodeNicActivityCursor(
+              result.nextPosition,
+              nicContext,
+              pageRequest.page + 1
+            )
+          : null;
+      } else {
+        foundLogs = await this.profileActivityLogsDb.searchLogs(params, ctx);
+      }
     } finally {
       ctx.timer?.stop(searchLogsTimerKey);
     }
@@ -147,21 +196,13 @@ export class ProfileActivityLogsApiService {
     return {
       page: pageRequest.page,
       next: pageRequest.page_size < convertedData.length,
-      data: convertedData.slice(0, pageRequest.page_size)
+      data: convertedData.slice(0, pageRequest.page_size),
+      ...(nicContext !== null ? { next_cursor: nextCursor } : {})
     };
   }
 }
 
-export interface ApiProfileActivityLog extends Omit<
-  ProfileActivityLog,
-  'contents' | 'competition_id'
-> {
-  readonly contents: object;
-  readonly profile_handle: string;
-  readonly proxy_handle: string | null;
-  readonly target_profile_handle: string | null;
-  readonly is_target_of_type_drop: boolean;
-}
+export type { ApiProfileActivityLog } from '@/api/generated/models/ApiProfileActivityLog';
 
 export const profileActivityLogsApiService = new ProfileActivityLogsApiService(
   profileActivityLogsDb,
