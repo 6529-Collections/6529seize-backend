@@ -239,8 +239,6 @@ describeWithSeed(
       'page_size=nope',
       'page_size=1&page_size=2',
       'profile=visitor',
-      'log_type=INVALID',
-      'log_type=RATING_EDIT,INVALID',
       'log_type=RATING_EDIT&log_type=HANDLE_EDIT'
     ])(
       'rejects malformed NIC query before legacy normalization: %s',
@@ -252,6 +250,27 @@ describeWithSeed(
         ).toBe(400);
       }
     );
+    it('preserves frontend log-type normalization in NIC and legacy views', async () => {
+      // The existing frontend includes PROXY_DROP_RATING_EDIT in its default
+      // selection. Preserve the shared route's tolerance of unknown log types.
+      const filter =
+        'profile=owner&page_size=10&log_type=rating_edit,HANDLE_EDIT,PROXY_DROP_RATING_EDIT';
+      const legacy = await get(filter);
+      const nic = await get(`${filter}&activity_scope=NIC`);
+      expect(legacy.status).toBe(200);
+      expect(nic.status).toBe(200);
+      const legacyBody =
+        (await legacy.json()) as CountlessPage<ApiProfileActivityLog>;
+      const nicBody =
+        (await nic.json()) as CountlessPage<ApiProfileActivityLog>;
+      expect(legacyBody.data.map((row) => row.id)).toEqual([
+        'wave-rep',
+        'rep',
+        'cic',
+        'handle'
+      ]);
+      expect(nicBody.data.map((row) => row.id)).toEqual(['cic', 'handle']);
+    });
     it('defaults an omitted NIC page size to a valid bounded page', async () => {
       const response = await get('profile=owner&activity_scope=NIC');
       expect(response.status).toBe(200);
