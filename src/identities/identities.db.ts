@@ -471,36 +471,39 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
   async syncProfileAddressesFromIdentitiesToProfiles(
     connection: ConnectionWrapper<any>
   ) {
-    // A broad UPDATE also locks unchanged profiles until the consolidation's
-    // metrics work commits. Posting needs those same rows for moderation.
-    // Discover differences with a consistent read, then lock only exact primary
-    // keys. Keep the identity join and comparison on the write to recheck current
-    // values, and the external id guard in case a handle was reassigned.
-    const changedProfiles = await this.db.execute<{
-      normalised_handle: string;
-      external_id: string;
-    }>(
-      `select p.normalised_handle, p.external_id
-       from ${PROFILES_TABLE} p
-       join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
-       where p.primary_wallet != i.primary_address
-       order by p.normalised_handle asc`,
-      undefined,
-      { wrappedConnection: connection }
-    );
-    for (const profile of changedProfiles) {
-      await this.db.execute(
-        `update ${PROFILES_TABLE} p
+    // A broad UPDATE locks unchanged profiles until the consolidation's metrics
+    // work commits, blocking posting's moderation lock. Discover differences
+    // without locks, then force indexed writes only for those stable profile IDs.
+    // Keyset pages bound discovery memory without depending on mutable handles.
+    let afterProfileId: string | null = null;
+    while (true) {
+      const changedProfiles: { external_id: string }[] = await this.db.execute(
+        `select distinct p.external_id
+         from ${PROFILES_TABLE} p
          join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
-         set p.primary_wallet = i.primary_address
-         where p.normalised_handle = :handle and p.external_id = :profileId
-           and p.primary_wallet != i.primary_address`,
-        {
-          handle: profile.normalised_handle,
-          profileId: profile.external_id
-        },
+         where p.primary_wallet != i.primary_address
+           and (:afterProfileId is null or p.external_id > :afterProfileId)
+         order by p.external_id asc
+         limit 100`,
+        { afterProfileId },
         { wrappedConnection: connection }
       );
+      if (!changedProfiles.length) return;
+      // An IN batch can still choose a full index scan and lock unchanged rows.
+      // Point lookups keep that lock scope narrow. The connection is shared, so
+      // writes must execute sequentially.
+      for (const profile of changedProfiles) {
+        await this.db.execute(
+          `update ${PROFILES_TABLE} p force index (idx_profile_external_id)
+           join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
+           set p.primary_wallet = i.primary_address
+           where p.external_id = :profileId
+             and p.primary_wallet != i.primary_address`,
+          { profileId: profile.external_id },
+          { wrappedConnection: connection }
+        );
+      }
+      afterProfileId = changedProfiles[changedProfiles.length - 1].external_id;
     }
   }
 

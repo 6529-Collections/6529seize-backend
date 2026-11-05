@@ -1902,8 +1902,9 @@ or redemption can be reflected immediately.
 
 TDH persistence in `delegationsLoop` and `tdhLoop` synchronizes profile primary
 wallets in the same transaction as identity consolidation and metrics. It first
-reads the address differences without locking profiles, then updates each changed
-profile by its primary key. This avoids retaining locks on unchanged profiles
+reads bounded pages of address differences without locking profiles, then updates
+changed profiles through point lookups on the stable profile-ID index. This avoids
+retaining locks on unchanged profiles
 through the metrics recalculation, so ordinary posting can still acquire its
 moderation profile lock. Changed profiles remain protected by the consolidation
 transaction and roll back with it.
