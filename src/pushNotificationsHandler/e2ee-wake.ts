@@ -82,8 +82,7 @@ export function buildE2eeWakeInput({
 }): PushNotificationMessageInput {
   return {
     ...E2EE_WAKE_COPY[reason],
-    ...(reason === 'message' &&
-    (process.env.SENTRY_ENVIRONMENT ?? '').endsWith('_staging')
+    ...(reason === 'message' && process.env.NODE_ENV === 'development'
       ? { body: 'Open 6529 Staging to view' }
       : {}),
     token,
