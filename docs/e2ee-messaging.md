@@ -98,7 +98,7 @@ synchronization, without foreign keys.
 
 | Table | Contents |
 | --- | --- |
-| `e2ee_devices` | Device key, owner profile, the signed grant fields, `grant_id`, wallet signature, `verified_via`, label, platform, timestamps, revocation (revoker key, signed time, Ed25519 signature), `grant_message` (the combined sign-in message, NC8; null for EIP-712 grants) |
+| `e2ee_devices` | Device key, owner profile, the signed grant fields, `grant_id`, wallet signature, `verified_via`, label, platform, timestamps, revocation (revoker key, signed time, Ed25519 signature), `grant_message` (the combined sign-in message or app-grant `DeviceGrant` JSON; null for direct EIP-712 MLS grants) |
 | `e2ee_key_packages` | Opaque KeyPackage bytes per device, last-resort flag, expiry |
 | `e2ee_groups` | Random group handle `g`, current epoch, current commit key `pub(K_epoch)`, last sequence number |
 | `e2ee_report_access_log` | Trust-and-safety audit: viewer profile, action (`list`, `read`, `hold`, `release`), report ids, time. No message content |
@@ -153,6 +153,14 @@ wallet, else `eip1271` (the login verified it on chain). Clients verify such
 devices from `grant_message` instead of rebuilding the EIP-712 grant. Device
 limits and renewal are as for `POST /e2ee/devices`; renewing through either
 route replaces the grant and sets or clears `grant_message`.
+
+The same route registers the encrypted-messages key of an app device grant
+(`POST /api/device-grants` with an `mls_device_key`, see
+`docs/auth/wallet-auth.md`): `grant_message` is then the signed EIP-712
+`DeviceGrant` message as JSON, `grant_id` its EIP-712 digest, `origin` the
+grant's origin (for example `6529 Desktop`) and `verified_via` is `eoa` when
+the typed-data signature recovers to the wallet, else `eip1271`. Clients tell
+the two forms apart by the first character (`{` for an app grant).
 
 One grant, one lifetime: the two keys share the expiry, revoking the
 encrypted-messages device (signed revocation below) also revokes its sign-in
@@ -484,15 +492,18 @@ primary connections of the affected profiles. Failures never fail the request.
 
 Content-free wakes use the existing `firebase-push-notifications` queue with
 the message `{ "type": "e2ee_wake", "profile_ids": [...], "reason":
-"message" | "added" }`. `pushNotificationsHandler` sends title `6529` and body
-`New encrypted message` or `You were added to an encrypted chat`, no image,
-and data `{ redirect: "e2ee", target_profile_id, target_profile_handle,
+"message" | "added" }`. For a message, `pushNotificationsHandler` sends
+title `New encrypted message` and body `Open 6529 to view`. For an invitation
+it sends title `6529` and body `You were added to an encrypted chat`. Both
+send no image and include data `{ redirect: "e2ee", target_profile_id, target_profile_handle,
 notification_id: "e2ee" }`, without the badge field. It names no sender,
 group or text, honours the profile's "Direct messages" notification
 preference, and removes unregistered tokens. Wakes are hints and are not
 retried after a send. The API sends at most one wake per (profile, group) per
 60 seconds; `reason: "added"` goes to profiles new to a roster, `message` to
-notify-hinted roster profiles other than the sender.
+notify-hinted roster profiles other than the sender. The in-app feed records the
+sender, opaque chat handle, and message sequence independently of the push
+cooldown. Message previews come from the recipient device’s local history.
 
 ## Residual powers of 6529.io as orderer
 

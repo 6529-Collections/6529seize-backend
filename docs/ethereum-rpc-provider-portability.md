@@ -93,6 +93,28 @@ a docs-only PR.
   and NFT REST capabilities. Its standard RPC methods and the Alchemy-derived
   `getRpcUrl*` helpers are removed.
 
+## Bounded internal-error retries for NFT and NextGen loops
+
+`nftsLoop` URI discovery/refresh and `nextgenContractLoop` ordinary RPC reads
+opt into `withTransientRpcRetry`. It recognizes the observed JSON-RPC
+`-32000: Internal error`, including ethers' `error` and `info.error` envelopes.
+This response can be delivered with HTTP 200 and can appear as either
+`UNKNOWN_ERROR` or `CALL_EXCEPTION: missing revert data`.
+
+The helper allows three retries after delays of 250 ms, 750 ms and 2 seconds,
+each with up to 20% additional jitter. Deliberate waiting is capped at 3.6
+seconds per read; RPC request time and existing transport retries are separate.
+Warnings record the operation, retry number and delay, and an info event records
+successful recovery. Error text, provider URLs and call payloads are omitted.
+Exhaustion preserves the original error and existing caller failure handling.
+Decoded contract reverts and unrecognized errors are not retried.
+
+Only individual reads are retried. NextGen transaction writes and checkpoints
+are not replayed by this helper. The default RPC client, indexed Alchemy calls,
+transaction submission, schema and API contracts are unchanged. Deploy
+`nftsLoop`, then `nextgenContractLoop`, sequentially in each environment; neither
+requires a new dependency deployment. No frontend deployment is required.
+
 ## Explicit retained dependencies and exceptions
 
 This is ordinary-RPC portability, not complete removal of Alchemy.

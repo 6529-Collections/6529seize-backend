@@ -105,6 +105,36 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async lockGrant(
+    id: string,
+    ctx: RequestContext
+  ): Promise<DeviceGrantEntity | null> {
+    const rows = await this.timedExecute<DeviceGrantEntity>(
+      'lockGrant',
+      `select * from ${DEVICE_GRANTS_TABLE} where id = :id for update`,
+      { id },
+      ctx,
+      DbPoolName.WRITE
+    );
+    return rows[0] ?? null;
+  }
+
+  async renameGrant(
+    id: string,
+    wallet: string,
+    label: string,
+    ctx: RequestContext
+  ) {
+    await this.timedExecute(
+      'renameGrant',
+      `update ${DEVICE_GRANTS_TABLE} set device_label = :label
+       where id = :id and wallet = :wallet and revoked_at is null`,
+      { id, wallet, label },
+      ctx,
+      DbPoolName.WRITE
+    );
+  }
+
   /** Sets revoked_at once; later calls keep the first revocation time. */
   async revokeGrant(
     id: string,

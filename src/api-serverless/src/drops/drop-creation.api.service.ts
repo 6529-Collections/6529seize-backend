@@ -653,7 +653,7 @@ export class DropCreationApiService {
       representativeId: string;
     },
     ctx: RequestContext
-  ): Promise<ApiDrop> {
+  ): Promise<{ drop: ApiDrop; changed: boolean }> {
     const drop = await this.dropsDb.findDropById(dropId);
     if (!drop) {
       throw new NotFoundException(`Drop ${dropId} not found`);
@@ -702,7 +702,10 @@ export class DropCreationApiService {
         replay.published_subject_id !== dropId
       )
         moderationConflict();
-      return this.dropsService.findDropByIdOrThrow({ dropId }, ctx);
+      return {
+        drop: await this.dropsService.findDropByIdOrThrow({ dropId }, ctx),
+        changed: false
+      };
     }
     const preResolvedIdentityNomination =
       await this.createOrUpdateDrop.preResolveIdentityNomination(model, {
@@ -750,8 +753,7 @@ export class DropCreationApiService {
       pendingPushNotificationIds
     });
     void this.ensureNftLinkTrackingForDrop(apiDrop.id, ctx);
-    await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, ctx);
-    return apiDrop;
+    return { drop: apiDrop, changed: true };
   }
 
   private async sendPendingPushNotifications({

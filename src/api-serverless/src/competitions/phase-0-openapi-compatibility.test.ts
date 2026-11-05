@@ -17,10 +17,14 @@ const ACCEPTED_ADDITIVE_ENUM_EXTENSIONS: Readonly<Record<string, string[]>> = {
     'ARTIST_ARTWORK_SUBMITTED',
     'COMPETITION_LIFECYCLE',
     'MEME_COLLABORATION',
-    'VOTING_CREDITS_RETURNED'
+    'VOTING_CREDITS_RETURNED',
+    'E2EE_MESSAGE'
   ],
   'schema ApiProfileCmsPointerEvent.properties.event_type.enum': ['unpublish'],
   'schema ApiPushNotificationSettings.required': ['subscription_coverage'],
+  // Mention suggestions include the requested display level; existing response
+  // fields and older clients remain compatible with this additive field.
+  'schema ApiWaveMentionSearchResult.required': ['level'],
   // Settings responses gain the four-wallet consolidation policy; existing
   // fields are unchanged, so older clients keep working.
   'schema ApiSeizeSettings.required': ['consolidation']
@@ -231,5 +235,14 @@ describe('Phase 0 permanent OpenAPI GET compatibility', () => {
       expect(currentSchemas).toHaveProperty(name);
       assertSchemaCompatible(schema, currentSchemas[name], `schema ${name}`);
     }
+  });
+
+  it('declares an integer display level on mention search results', () => {
+    const mentionSchema = current.components.schemas.ApiWaveMentionSearchResult;
+    expect(mentionSchema.required).toContain('level');
+    expect(mentionSchema.properties.level).toEqual({
+      type: 'integer',
+      format: 'int64'
+    });
   });
 });
