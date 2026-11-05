@@ -54,6 +54,7 @@ export interface WaveMentionSearchCandidate {
   readonly handle: string;
   readonly display: string | null;
   readonly pfp: string | null;
+  readonly level_raw: number;
 }
 
 export class IdentitiesDb extends LazyDbAccessCompatibleService {
@@ -637,7 +638,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
             i.profile_id as id,
             i.handle,
             cwt.consolidation_display as display,
-            i.pfp
+            i.pfp,
+            i.level_raw
           from ${IDENTITIES_TABLE} i force index (identity_normalised_handle_idx)
           ${eligibilityJoin}
           left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt
