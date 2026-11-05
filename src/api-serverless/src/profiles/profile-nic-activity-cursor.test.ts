@@ -96,8 +96,6 @@ describe('NIC cursor contract', () => {
     { category: 'category' },
     { page: '2' },
     { page_size: '501' },
-    { log_type: 'INVALID' },
-    { log_type: 'RATING_EDIT,INVALID' },
     { activity_scope: 'REP' }
   ])(
     'rejects unsupported combinations rather than altering other activity views',

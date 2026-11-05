@@ -6,7 +6,6 @@ import { RequestContext } from '@/request.context';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { PageRequest } from '@/api/page-request';
-import { ProfileActivityLogType } from '@/entities/IProfileActivityLog';
 
 const INVALID_CURSOR = 'Invalid NIC activity cursor';
 const NIC_QUERY_SCHEMA = Joi.object({
@@ -16,19 +15,6 @@ const NIC_QUERY_SCHEMA = Joi.object({
   group_id: Joi.valid(''),
   category: Joi.valid(''),
   rating_matter: Joi.valid(''),
-  log_type: Joi.string()
-    .allow('')
-    .custom((value: string, helpers) =>
-      value
-        .split(',')
-        .every((type) =>
-          Object.values(ProfileActivityLogType).includes(
-            type.toUpperCase() as ProfileActivityLogType
-          )
-        )
-        ? value
-        : helpers.error('any.invalid')
-    ),
   order: Joi.string().empty('').lowercase().valid('desc'),
   page: Joi.number().integer().min(1).max(Number.MAX_SAFE_INTEGER).default(1),
   page_size: Joi.number().integer().min(1).max(500).default(50),
