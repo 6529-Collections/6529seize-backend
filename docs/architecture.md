@@ -1908,6 +1908,11 @@ retaining locks on unchanged profiles
 through the metrics recalculation, so ordinary posting can still acquire its
 moderation profile lock. Changed profiles remain protected by the consolidation
 transaction and roll back with it.
+Discovery uses the consolidation transaction's consistent read after its identity
+writes are complete. Each point update rechecks current identity/address values.
+Other primary-address changes use `IdentitiesDb.updatePrimaryAddress` to update
+both identity and profile rows in one transaction; the sync does not chase changes
+committed after its read snapshot.
 
 `delegationsLoop` also supports the explicit maintenance payload in staging and production
 `{"action":"reconsolidate","wallets":["<Ethereum address>"]}`. It expands

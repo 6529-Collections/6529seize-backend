@@ -189,5 +189,10 @@ describe('Profile address synchronization', () => {
       }
     );
     expect(updated).toHaveLength(profiles.length);
+    expect(await walletFor(changed.external_id)).toBe(replacementWallet);
+    expect(await walletFor(unchanged.external_id)).toBe(
+      unchanged.primary_wallet
+    );
+    expect(await walletFor(orphan.external_id)).toBe(orphan.primary_wallet);
   });
 });

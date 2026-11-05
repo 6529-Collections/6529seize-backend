@@ -475,8 +475,12 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     // work commits, blocking posting's moderation lock. Discover differences
     // without locks, then force indexed writes only for those stable profile IDs.
     // Keyset pages bound discovery memory without depending on mutable handles.
+    // Callers finish identity consolidation writes on this connection first.
+    // Concurrent primary-address writers update profiles and identities together
+    // in updatePrimaryAddress; this snapshot need not chase their later commits.
     let afterProfileId: string | null = null;
     while (true) {
+      // external_id is a nonunique index here; the profile PK is its handle.
       const changedProfiles: { external_id: string }[] = await this.db.execute(
         `select distinct p.external_id
          from ${PROFILES_TABLE} p
