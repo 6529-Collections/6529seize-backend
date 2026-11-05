@@ -471,13 +471,37 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
   async syncProfileAddressesFromIdentitiesToProfiles(
     connection: ConnectionWrapper<any>
   ) {
-    await this.db.execute(
-      `update ${PROFILES_TABLE} join ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.profile_id = ${PROFILES_TABLE}.external_id
-                           set ${PROFILES_TABLE}.primary_wallet = ${IDENTITIES_TABLE}.primary_address
-                           where ${PROFILES_TABLE}.primary_wallet != ${IDENTITIES_TABLE}.primary_address`,
+    // A broad UPDATE also locks unchanged profiles until the consolidation's
+    // metrics work commits. Posting needs those same rows for moderation.
+    // Discover differences with a consistent read, then lock only exact primary
+    // keys. Keep the identity join and comparison on the write to recheck current
+    // values, and the external id guard in case a handle was reassigned.
+    const changedProfiles = await this.db.execute<{
+      normalised_handle: string;
+      external_id: string;
+    }>(
+      `select p.normalised_handle, p.external_id
+       from ${PROFILES_TABLE} p
+       join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
+       where p.primary_wallet != i.primary_address
+       order by p.normalised_handle asc`,
       undefined,
       { wrappedConnection: connection }
     );
+    for (const profile of changedProfiles) {
+      await this.db.execute(
+        `update ${PROFILES_TABLE} p
+         join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
+         set p.primary_wallet = i.primary_address
+         where p.normalised_handle = :handle and p.external_id = :profileId
+           and p.primary_wallet != i.primary_address`,
+        {
+          handle: profile.normalised_handle,
+          profileId: profile.external_id
+        },
+        { wrappedConnection: connection }
+      );
+    }
   }
 
   async updateIdentityProfilesOfIds(profileIds: string[], ctx: RequestContext) {

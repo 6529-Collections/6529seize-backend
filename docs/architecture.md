@@ -1900,6 +1900,14 @@ changing alert or dirty state, while
 No request cache is used for the coverage read boundary, so a confirmed top-up
 or redemption can be reflected immediately.
 
+TDH persistence in `delegationsLoop` and `tdhLoop` synchronizes profile primary
+wallets in the same transaction as identity consolidation and metrics. It first
+reads the address differences without locking profiles, then updates each changed
+profile by its primary key. This avoids retaining locks on unchanged profiles
+through the metrics recalculation, so ordinary posting can still acquire its
+moderation profile lock. Changed profiles remain protected by the consolidation
+transaction and roll back with it.
+
 `delegationsLoop` also supports the explicit maintenance payload in staging and production
 `{"action":"reconsolidate","wallets":["<Ethereum address>"]}`. It expands
 requested seeds through old persisted and current confirmed groups, runs the
