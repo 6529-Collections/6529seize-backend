@@ -1,5 +1,6 @@
 import { UserGroupsService } from '@/api/community-members/user-groups.service';
 import { WavesApiDb } from '@/api/waves/waves.api.db';
+import { AuthenticationContext } from '@/auth-context';
 import { ForbiddenException, NotFoundException } from '@/exceptions';
 import { IdentitiesDb } from '@/identities/identities.db';
 import { WaveMentionSearchApiService } from './wave-mention-search.api.service';
@@ -28,6 +29,49 @@ describe('WaveMentionSearchApiService', () => {
     searchWaveMentionCandidates.mockResolvedValue([]);
     getGroupsUserIsEligibleFor.mockResolvedValue(['visibility-group']);
   });
+
+  it.each([
+    [0, 0],
+    [24, 0],
+    [25, 1],
+    [7500, 10]
+  ])(
+    'returns display level %s as %s for wave and draft suggestions',
+    async (score, level) => {
+      findWavesByIds.mockResolvedValue([{ visibility_group_id: null }]);
+      searchWaveMentionCandidates.mockResolvedValue([
+        {
+          id: 'profile-alice',
+          handle: 'alice',
+          display: 'Alice',
+          pfp: null,
+          level_raw: score
+        }
+      ]);
+      const expected = [
+        {
+          id: 'profile-alice',
+          handle: 'alice',
+          display: 'Alice',
+          pfp: null,
+          level
+        }
+      ];
+
+      await expect(
+        service.search({ waveId: 'wave-1', handle: 'ali', limit: 5 }, {})
+      ).resolves.toEqual(expected);
+      await expect(
+        service.searchDraft(
+          { visibilityGroupId: null, handle: 'ali', limit: 5 },
+          {
+            authenticationContext:
+              AuthenticationContext.fromProfileId('profile-me')
+          }
+        )
+      ).resolves.toEqual(expected);
+    }
+  );
 
   it('restricts private-wave results and excludes the acting profile', async () => {
     const eligibility = {

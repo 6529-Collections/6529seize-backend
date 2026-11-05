@@ -225,6 +225,7 @@ describe('IdentitiesDb', () => {
 
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain('force index (identity_normalised_handle_idx)');
+    expect(sql).toContain('i.pfp,\n            i.level_raw');
     expect(sql).toContain('i.normalised_handle like :mentionHandlePrefix');
     expect(sql).toContain('i.level_raw desc');
     expect(sql).toContain('i.profile_id <> :mentionExcludedProfileId');

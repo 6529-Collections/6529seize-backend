@@ -10,6 +10,7 @@ import {
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { ForbiddenException, NotFoundException } from '@/exceptions';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
+import { getLevelFromScore } from '@/profiles/profile-level';
 import { RequestContext } from '@/request.context';
 
 export class WaveMentionSearchApiService {
@@ -52,7 +53,7 @@ export class WaveMentionSearchApiService {
       return [];
     }
 
-    return await this.identitiesDb.searchWaveMentionCandidates(
+    const candidates = await this.identitiesDb.searchWaveMentionCandidates(
       {
         handle,
         limit,
@@ -63,6 +64,10 @@ export class WaveMentionSearchApiService {
       eligibility,
       ctx
     );
+    return candidates.map(({ level_raw, ...profile }) => ({
+      ...profile,
+      level: getLevelFromScore(level_raw)
+    }));
   }
 
   public async searchDraft(
@@ -92,7 +97,7 @@ export class WaveMentionSearchApiService {
       return [];
     }
 
-    return await this.identitiesDb.searchWaveMentionCandidates(
+    const candidates = await this.identitiesDb.searchWaveMentionCandidates(
       {
         handle,
         limit,
@@ -101,6 +106,10 @@ export class WaveMentionSearchApiService {
       eligibility,
       ctx
     );
+    return candidates.map(({ level_raw, ...profile }) => ({
+      ...profile,
+      level: getLevelFromScore(level_raw)
+    }));
   }
 }
 
