@@ -9,6 +9,7 @@ import {
   WAVES_TABLE
 } from '@/constants';
 import { RequestContext } from '@/request.context';
+import { DbPoolName } from '@/db-query.options';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import {
   NativeCompetitionEvent,
@@ -54,15 +55,24 @@ export class CompetitionEventRepository extends LazyDbAccessCompatibleService {
     event: NativeCompetitionEvent,
     ctx: RequestContext
   ): Promise<CompetitionEventContext | null> {
-    const rows = await this.query<CompetitionEventContext>(
-      'getContext',
-      `select c.title, c.lifecycle, c.published_at, w.visibility_group_id
+    const timer = `${this.constructor.name}->getContext`;
+    ctx.timer?.start(timer);
+    try {
+      return await this.db.oneOrNull<CompetitionEventContext>(
+        `select c.title, c.lifecycle, c.published_at, w.visibility_group_id
       from ${COMPETITIONS_TABLE} c join ${WAVES_TABLE} w on w.id = c.wave_id
       where c.id = :competitionId and c.wave_id = :waveId`,
-      { competitionId: event.competition_id, waveId: event.wave_id },
-      ctx
-    );
-    return rows[0] ?? null;
+        { competitionId: event.competition_id, waveId: event.wave_id },
+        {
+          wrappedConnection: ctx.connection,
+          ...(event.data.artwork_alert_eligible === true
+            ? { forcePool: DbPoolName.WRITE }
+            : {})
+        }
+      );
+    } finally {
+      ctx.timer?.stop(timer);
+    }
   }
 
   public async listFollowers(

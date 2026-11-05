@@ -1,3 +1,4 @@
+import { ApiArtistArtworkNotificationContext } from '@/api/generated/models/ApiArtistArtworkNotificationContext';
 import { IdentityNotificationCause } from '../entities/IIdentityNotification';
 
 export interface IdentitySubscriptionNotificationData {
@@ -255,8 +256,16 @@ export interface EncryptedMessageNotification extends UserNotificationBase {
   };
 }
 
+export type ArtistArtworkNotificationData = ApiArtistArtworkNotificationContext;
+
+export interface ArtistArtworkNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED;
+  data: ArtistArtworkNotificationData;
+}
+
 export type UserNotification =
   | EncryptedMessageNotification
+  | ArtistArtworkNotification
   | VotingCreditsReturnedNotification
   | MemeCollaborationNotification
   | CompetitionLifecycleNotification

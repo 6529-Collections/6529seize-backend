@@ -527,6 +527,11 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED: {
+          profileIds.push(notification.data.artist_id);
+          dropIds.push(notification.data.drop_id);
+          break;
+        }
         case IdentityNotificationCause.MEME_COLLABORATION: {
           if (notification.data.actor_id)
             profileIds.push(notification.data.actor_id);
@@ -592,6 +597,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
       case IdentityNotificationCause.ALL_DROPS:
       case IdentityNotificationCause.PRIORITY_ALERT: {
         return notification.data.wave_id;
@@ -621,6 +627,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.DROP_POLL_VOTED:
       case IdentityNotificationCause.DROP_REACTED:
       case IdentityNotificationCause.DROP_BOOSTED:
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
       case IdentityNotificationCause.ALL_DROPS:
       case IdentityNotificationCause.PRIORITY_ALERT: {
         return [notification.data.drop_id];
@@ -836,6 +843,12 @@ export class NotificationsApiService {
           }
         };
       }
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
+        return this.mapArtistArtworkNotification(
+          notification,
+          profiles[notification.data.artist_id],
+          drops[notification.data.drop_id]
+        );
       case IdentityNotificationCause.ALL_DROPS: {
         const data = notification.data;
         return {
@@ -939,6 +952,28 @@ export class NotificationsApiService {
       rater_rating: data.rater_rating ?? undefined,
       total: data.total,
       category: data.category
+    };
+  }
+
+  private mapArtistArtworkNotification<
+    Profile extends ApiProfileMin | ApiIdentityOverview,
+    Drop extends ApiDrop | ApiDropV2
+  >(
+    notification: Extract<
+      UserNotification,
+      { cause: IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED }
+    >,
+    artist: Profile,
+    drop: Drop
+  ) {
+    return {
+      id: notification.id,
+      created_at: notification.created_at,
+      read_at: notification.read_at,
+      cause: ApiNotificationCause.ArtistArtworkSubmitted,
+      related_identity: artist,
+      related_drops: [drop],
+      additional_context: { ...notification.data }
     };
   }
 
@@ -1180,6 +1215,12 @@ export class NotificationsApiService {
           }
         };
       }
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
+        return this.mapArtistArtworkNotification(
+          notification,
+          profiles[notification.data.artist_id],
+          drops[notification.data.drop_id]
+        );
       case IdentityNotificationCause.ALL_DROPS: {
         const data = notification.data;
         return {
