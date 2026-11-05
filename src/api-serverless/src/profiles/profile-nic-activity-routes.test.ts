@@ -239,6 +239,8 @@ describeWithSeed(
       'page_size=nope',
       'page_size=1&page_size=2',
       'profile=visitor',
+      'log_type=INVALID',
+      'log_type=RATING_EDIT,INVALID',
       'log_type=RATING_EDIT&log_type=HANDLE_EDIT'
     ])(
       'rejects malformed NIC query before legacy normalization: %s',

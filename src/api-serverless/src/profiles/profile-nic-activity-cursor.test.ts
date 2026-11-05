@@ -96,6 +96,8 @@ describe('NIC cursor contract', () => {
     { category: 'category' },
     { page: '2' },
     { page_size: '501' },
+    { log_type: 'INVALID' },
+    { log_type: 'RATING_EDIT,INVALID' },
     { activity_scope: 'REP' }
   ])(
     'rejects unsupported combinations rather than altering other activity views',
@@ -107,6 +109,18 @@ describe('NIC cursor contract', () => {
           ...invalid
         })
       ).toThrow();
+    }
+  );
+  it.each(['', 'rating_edit,HANDLE_EDIT'])(
+    'accepts cleared and case-insensitive supported log types: %s',
+    (log_type) => {
+      expect(
+        getNicActivityPageRequest({
+          activity_scope: 'NIC',
+          profile: 'subject',
+          log_type
+        })
+      ).toEqual({ page: 1, page_size: 50 });
     }
   );
 });
