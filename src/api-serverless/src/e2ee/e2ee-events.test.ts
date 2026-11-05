@@ -165,3 +165,68 @@ describe('E2EE websocket events', () => {
     expect(releasePushWakes).not.toHaveBeenCalled();
   });
 });
+
+describe('encrypted inbox notifications', () => {
+  it('writes the first message to the inbox even when the add wake claimed the push slot', async () => {
+    const inbox = jest.fn(() => Promise.resolve());
+    const enqueue = jest.fn(() => Promise.resolve(true));
+    const publisher = new WsE2eeEventPublisher(
+      {
+        claimPushWakes: jest
+          .fn()
+          .mockResolvedValueOnce(['p2'])
+          .mockResolvedValueOnce([])
+      } as unknown as E2eeDb,
+      () => Promise.resolve([]),
+      () => Promise.resolve(),
+      enqueue,
+      () => 42,
+      inbox
+    );
+    await publisher.wake('0xgroup', ['p1', 'p2'], 'added');
+    expect(enqueue).toHaveBeenCalledWith(['p2'], 'added');
+    expect(inbox).not.toHaveBeenCalled();
+    await publisher.wake('0xgroup', ['p1', 'p2'], 'message');
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    await publisher.notifyMessage('0xgroup', ['p2', 'p2'], 'p1', 2);
+    expect(inbox).toHaveBeenCalledWith('0xgroup', ['p2'], 'p1', 2);
+  });
+
+  it('writes an inbox entry even when push delivery is switched off', async () => {
+    const inbox = jest.fn(async () => undefined);
+    const releasePushWakes = jest.fn(async () => undefined);
+    const publisher = new WsE2eeEventPublisher(
+      {
+        claimPushWakes: jest.fn(async () => ['p2']),
+        releasePushWakes
+      } as unknown as E2eeDb,
+      async () => [],
+      async () => undefined,
+      async () => false,
+      () => 42,
+      inbox
+    );
+    await publisher.wake('0xgroup', ['p1', 'p2'], 'message');
+    await publisher.notifyMessage('0xgroup', ['p2'], 'p1', 2);
+    expect(inbox).toHaveBeenCalledWith('0xgroup', ['p2'], 'p1', 2);
+    expect(releasePushWakes).toHaveBeenCalledWith('0xgroup', ['p2'], 42);
+  });
+  it('keeps push delivery working if writing the inbox fails', async () => {
+    const enqueue = jest.fn(async () => true);
+    const publisher = new WsE2eeEventPublisher(
+      { claimPushWakes: jest.fn(async () => ['p1']) } as unknown as E2eeDb,
+      async () => [],
+      async () => undefined,
+      enqueue,
+      () => 42,
+      async () => {
+        throw new Error('inbox unavailable');
+      }
+    );
+    await expect(
+      publisher.notifyMessage('0xgroup', ['p1'], 'p2', 2)
+    ).resolves.toBeUndefined();
+    await publisher.wake('0xgroup', ['p1'], 'message');
+    expect(enqueue).toHaveBeenCalledWith(['p1'], 'message');
+  });
+});

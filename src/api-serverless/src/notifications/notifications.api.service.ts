@@ -537,6 +537,11 @@ export class NotificationsApiService {
             profileIds.push(notification.data.actor_id);
           break;
         }
+        case IdentityNotificationCause.E2EE_MESSAGE: {
+          if (notification.data.sender_id)
+            profileIds.push(notification.data.sender_id);
+          break;
+        }
         case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
         case IdentityNotificationCause.COMPETITION_LIFECYCLE:
         case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
@@ -577,6 +582,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
       case IdentityNotificationCause.IDENTITY_NIC:
+      case IdentityNotificationCause.E2EE_MESSAGE:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return null;
       }
@@ -612,6 +618,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
+      case IdentityNotificationCause.E2EE_MESSAGE:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return [];
       }
@@ -895,6 +902,12 @@ export class NotificationsApiService {
           additional_context: { ...notification.data }
         };
       }
+      case IdentityNotificationCause.E2EE_MESSAGE: {
+        return this.mapEncryptedMessage(
+          notification,
+          profiles[notification.data.sender_id ?? ''] ?? null
+        );
+      }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return {
           id: notification.id,
@@ -1014,6 +1027,29 @@ export class NotificationsApiService {
     return {
       reaction,
       reactors
+    };
+  }
+
+  private mapEncryptedMessage<T extends ApiProfileMin | ApiIdentityOverview>(
+    notification: Extract<
+      UserNotification,
+      { cause: IdentityNotificationCause.E2EE_MESSAGE }
+    >,
+    sender: T | null
+  ) {
+    return {
+      id: notification.id,
+      created_at: notification.created_at,
+      read_at: notification.read_at,
+      cause: ApiNotificationCause.E2EeMessage,
+      related_identity: sender,
+      related_drops: [],
+      additional_context: {
+        encrypted_group: notification.data.encrypted_group,
+        ...(notification.data.encrypted_message_seq === undefined
+          ? {}
+          : { encrypted_message_seq: notification.data.encrypted_message_seq })
+      }
     };
   }
 
@@ -1237,6 +1273,12 @@ export class NotificationsApiService {
           related_drops: [],
           additional_context: { ...notification.data }
         };
+      }
+      case IdentityNotificationCause.E2EE_MESSAGE: {
+        return this.mapEncryptedMessage(
+          notification,
+          profiles[notification.data.sender_id ?? ''] ?? null
+        );
       }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return {

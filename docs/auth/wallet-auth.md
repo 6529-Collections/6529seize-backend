@@ -216,6 +216,32 @@ without device parameters are unchanged.
   profile; `POST /api/device-grants/{grantId}/revoke` revokes one. Neither is
   available to proxies. Revoking a combined grant also revokes the
   encrypted-messages device it enrolled (see `docs/e2ee-messaging.md`).
+- App device grants (6529 Mobile and 6529 Desktop, whose sign-in is not a
+  SIWE web session): `POST /api/device-grants` registers an EIP-712 grant the
+  signed-in wallet signed outside sign-in. Domain `6529 Device Grant`,
+  version `1`, the pre-genesis salt shared with encrypted-messages grants;
+  primary type `DeviceGrant(string statement, address wallet, bytes32
+  deviceKey, string scopes, bytes32 mlsDeviceKey, uint16 ciphersuite, uint64
+  issuedAt, uint64 expiresAt, string origin)`. A signing-only grant carries
+  zero in `mlsDeviceKey` and `ciphersuite`; a combined grant carries the
+  encrypted-messages key (different from `deviceKey`) and the current
+  ciphersuite, only while encrypted messages are on and only for a wallet
+  with a profile. The server renders the statement from the fields
+  (`app-device-grant.ts`; the current wording is a DRAFT awaiting owner
+  approval, see that file) and verifies the signature as an EOA or through
+  EIP-1271 on Ethereum mainnet. The grant wallet must be the authenticated
+  wallet (no proxies), `issuedAt` within the last day (10 minutes of clock
+  skew ahead), the lifetime at most 181 days and `expiresAt` minute aligned.
+  The row is stored in `device_grants` like a sign-in grant: the id is the
+  EIP-712 digest, `domain` is the grant's `origin`, `chain_id` is 1 and
+  `message` is the signed typed-data message as JSON (it starts with `{`, a
+  SIWE message never does), so proofs from `GET /drops/{id}/signed-events`
+  stay verifiable by anyone. The typed-data domain has no chain id, so a
+  verifier rebuilds the digest from the JSON alone; the stored `chain_id` only
+  says where an EIP-1271 contract-wallet signature is checked. A
+  signing-only grant sends `mls_device_key` and `ciphersuite` as null (or
+  omits them); `0` is rejected. Signed writes, expiry and revocation treat it
+  exactly like a sign-in grant. Idempotent on grant id.
 - `POST /drops`, `POST /drops/{id}`, `DELETE /drops/{id}` and
   `POST|DELETE /drops/{id}/reaction` accept an optional `device_signature`
   (`grant_id`, `seq`, `claimed_time`, `signature`). The server strips it from

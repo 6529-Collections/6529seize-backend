@@ -670,6 +670,72 @@ describe('NotificationsApiService V2 notifications', () => {
     });
   });
 
+  it.each([
+    ['v1', false],
+    ['v1', true],
+    ['v2', false],
+    ['v2', true]
+  ] as const)(
+    'maps encrypted notifications in %s with sender present: %s',
+    async (version, hasSender) => {
+      const { service, notificationsReader, identityFetcher, dropsService } =
+        createService();
+      const sender = { id: 'sender-1', handle: 'alice' };
+      const profiles = { [sender.id]: sender };
+      identityFetcher.getApiIdentityOverviewsByIds.mockResolvedValue(profiles);
+      Object.assign(identityFetcher, {
+        getOverviewsByIds: jest.fn().mockResolvedValue(profiles)
+      });
+      Object.assign(dropsService, {
+        findDropsByIds: jest.fn().mockResolvedValue({})
+      });
+      const data = {
+        encrypted_group: `0x${'a'.repeat(64)}`,
+        ...(hasSender ? { encrypted_message_seq: 2 } : {})
+      };
+      const notification = {
+        id: 22,
+        created_at: 6000,
+        read_at: null,
+        cause: IdentityNotificationCause.E2EE_MESSAGE,
+        data: { ...data, ...(hasSender ? { sender_id: sender.id } : {}) }
+      };
+      notificationsReader.getNotificationsForIdentity.mockResolvedValue({
+        notifications: [notification],
+        total_unread: 1
+      });
+      const authenticationContext =
+        AuthenticationContext.fromProfileId('viewer-1');
+      const query = {
+        id_less_than: null,
+        limit: 10,
+        cause: null,
+        cause_exclude: null,
+        unread_only: false
+      };
+      const result =
+        version === 'v1'
+          ? await service.getNotifications(query, authenticationContext)
+          : await service.getNotificationsV2(query, authenticationContext, {
+              authenticationContext
+            });
+      expect(result).toEqual({
+        notifications: [
+          {
+            id: 22,
+            created_at: 6000,
+            read_at: null,
+            cause: ApiNotificationCause.E2EeMessage,
+            related_identity: hasSender ? sender : null,
+            related_drops: [],
+            additional_context: data
+          }
+        ],
+        unread_count: 1
+      });
+    }
+  );
+
   it('maps actorless subscription coverage notifications in V2', async () => {
     const { service, notificationsReader, identityFetcher, dropsService } =
       createService();

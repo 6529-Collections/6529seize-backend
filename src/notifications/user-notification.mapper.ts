@@ -33,6 +33,25 @@ export class UserNotificationMapper {
   ): UserNotification {
     const cause = entity.cause;
     switch (cause) {
+      case IdentityNotificationCause.E2EE_MESSAGE:
+        return {
+          id: entity.id,
+          created_at: entity.created_at,
+          read_at: entity.read_at,
+          cause,
+          data: {
+            encrypted_group: entity.additional_data.encrypted_group,
+            ...(typeof entity.additional_data.encrypted_message_seq === 'number'
+              ? {
+                  encrypted_message_seq:
+                    entity.additional_data.encrypted_message_seq
+                }
+              : {}),
+            ...(entity.additional_identity_id
+              ? { sender_id: entity.additional_identity_id }
+              : {})
+          }
+        };
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
         return this.mapIdentitySubscriptionNotification(entity);
       case IdentityNotificationCause.IDENTITY_MENTIONED:

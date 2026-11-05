@@ -25,8 +25,8 @@ describe('content-free E2EE wakes', () => {
       reason: 'message'
     });
     expect(input).toEqual({
-      title: '6529',
-      body: 'New encrypted message',
+      title: 'New encrypted message',
+      body: 'Open 6529 Mobile to view',
       token: 'fcm-token',
       notification_id: 0,
       omitBadge: true,
@@ -47,6 +47,53 @@ describe('content-free E2EE wakes', () => {
       }).body
     ).toBe('You were added to an encrypted chat');
   });
+
+  it.each([
+    ['development', 'staging', 'Open 6529 Staging to view'],
+    [
+      'development',
+      'pushNotificationsHandler_prod',
+      'Open 6529 Staging to view'
+    ],
+    ['development', undefined, 'Open 6529 Staging to view'],
+    [
+      'production',
+      'pushNotificationsHandler_staging',
+      'Open 6529 Mobile to view'
+    ],
+    ['production', undefined, 'Open 6529 Mobile to view']
+  ])(
+    'uses NODE_ENV=%s independently of Sentry=%s',
+    (nodeEnv, sentryEnv, expectedBody) => {
+      const previous = process.env;
+      try {
+        process.env = { ...previous, NODE_ENV: nodeEnv };
+        if (sentryEnv === undefined) delete process.env.SENTRY_ENVIRONMENT;
+        else process.env.SENTRY_ENVIRONMENT = sentryEnv;
+        expect(
+          buildE2eeWakeInput({
+            token: 'token',
+            profileId: 'p',
+            handle: 'h',
+            reason: 'message'
+          })
+        ).toMatchObject({
+          title: 'New encrypted message',
+          body: expectedBody
+        });
+        expect(
+          buildE2eeWakeInput({
+            token: 'token',
+            profileId: 'p',
+            handle: 'h',
+            reason: 'added'
+          }).body
+        ).toBe('You were added to an encrypted chat');
+      } finally {
+        process.env = previous;
+      }
+    }
+  );
 
   it('parses only well-formed e2ee_wake bodies', () => {
     expect(
@@ -133,8 +180,8 @@ describe('content-free E2EE wakes', () => {
       deps
     );
     expect(sent.map((input) => [input.token, input.body])).toEqual([
-      ['t1', 'New encrypted message'],
-      ['t2', 'New encrypted message'],
+      ['t1', 'Open 6529 Mobile to view'],
+      ['t2', 'Open 6529 Mobile to view'],
       ['t3', 'You were added to an encrypted chat']
     ]);
     expect(sent[0].extra_data.target_profile_handle).toBe('alice-handle');
