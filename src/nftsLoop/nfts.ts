@@ -47,6 +47,7 @@ import {
   normalizeMetadataPayload
 } from '@/metadata-payload';
 import { getRpcProvider } from '@/rpc-provider';
+import { withTransientRpcRetry } from '@/ethereum-rpc/transient-rpc-retry';
 import { equalIgnoreCase } from '@/strings';
 import { text } from '@/text';
 import { Time } from '@/time';
@@ -571,7 +572,10 @@ async function discoverForContract(
 
   while (true) {
     try {
-      const uri = await instance[method](nextId);
+      const uri = await withTransientRpcRetry<string>(
+        () => instance[method](nextId),
+        'nfts.discover.uri'
+      );
       validateUri(uri);
 
       const metadata = await fetchMetadata(uri);
@@ -943,7 +947,10 @@ async function updateUri(
   health?: NftsLoopHealth
 ) {
   const { nft } = entry;
-  const uri = await contract[method](nft.id);
+  const uri = await withTransientRpcRetry<string>(
+    () => contract[method](nft.id),
+    'nfts.refresh.uri'
+  );
   const shouldFetch =
     (uri && uri !== nft.uri && isValidUrl(uri)) || !nft.metadata;
   if (!shouldFetch) return;

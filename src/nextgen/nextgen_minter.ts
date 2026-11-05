@@ -1,4 +1,5 @@
 import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
+import { withTransientRpcRetry } from '@/ethereum-rpc/transient-rpc-retry';
 import { ethers } from 'ethers';
 import {
   Alchemy,
@@ -51,8 +52,9 @@ export async function findMinterTransactions(
 
   const logs: NextGenLog[] = [];
   for (const transfer of response.transfers) {
-    const receipt = await getEthereumRpcClient(network).getTransaction(
-      transfer.hash
+    const receipt = await withTransientRpcRetry(
+      () => getEthereumRpcClient(network).getTransaction(transfer.hash),
+      'nextgen.getTransaction'
     );
     if (receipt) {
       const parsedReceipt = NEXTGEN_MINTER_IFACE.parseTransaction({
