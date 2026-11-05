@@ -17,6 +17,7 @@ import {
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { RequestContext } from '@/request.context';
 
+/** Exposes the shared profile level without leaking its raw score; invalid scores stay unknown. */
 function toMentionSearchResult({
   id,
   handle,

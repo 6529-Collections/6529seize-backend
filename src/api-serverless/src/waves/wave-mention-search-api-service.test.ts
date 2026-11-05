@@ -34,7 +34,11 @@ describe('WaveMentionSearchApiService', () => {
     [10000, 11],
     [60000, 20],
     [25000000, 100],
-    [Number.NaN, null]
+    [-1, 0],
+    [Number.MAX_SAFE_INTEGER, 100],
+    [Number.NaN, null],
+    [Number.POSITIVE_INFINITY, null],
+    [Number.NEGATIVE_INFINITY, null]
   ])(
     'returns the profile level for score %s without exposing the raw score',
     async (score, level) => {
