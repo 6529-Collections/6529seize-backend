@@ -14,6 +14,7 @@ import {
 import { NEXTGEN_CORE_ABI } from '../abis/nextgen';
 import { NextGenTokenTrait } from '../entities/INextGen';
 import { getRpcProvider } from '@/rpc-provider';
+import { withTransientRpcRetry } from '@/ethereum-rpc/transient-rpc-retry';
 
 const logger = Logger.get('NEXTGEN_PENDING_MINT_DATA');
 
@@ -43,7 +44,10 @@ export async function processMissingMintData(
 
   for (const token of missingData) {
     try {
-      const tokenData = await contract.tokenData(token.id);
+      const tokenData = await withTransientRpcRetry<string>(
+        () => contract.tokenData(token.id),
+        'nextgen.tokenData'
+      );
       logger.info(`[TOKEN ID ${token.id}] : [TOKEN DATA] : [${tokenData}]`);
 
       token.mint_data = tokenData;

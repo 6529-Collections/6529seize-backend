@@ -1,4 +1,5 @@
 import { getEthereumRpcClient } from '@/ethereum-rpc/ethereum-rpc-client';
+import { withTransientRpcRetry } from '@/ethereum-rpc/transient-rpc-retry';
 import type { Log } from '@/ethereum-rpc/ethereum-rpc-types';
 import { NEXTGEN_CORE_IFACE } from '@/abis/nextgen';
 import { NULL_ADDRESS, NULL_ADDRESS_DEAD } from '@/constants';
@@ -53,18 +54,25 @@ export async function findCoreEvents(
     `[NETWORK ${network}] : [FINDING EVENTS] : [START BLOCK ${startBlock}] : [END BLOCK ${endBlock}] : [PAGE KEY ${pageKey}]`
   );
 
-  const response = await getEthereumRpcClient(network).getLogs({
-    address: NEXTGEN_CORE_CONTRACT[network],
-    fromBlock: `0x${startBlock.toString(16)}`,
-    toBlock: `0x${endBlock.toString(16)}`
-  });
+  const response = await withTransientRpcRetry(
+    () =>
+      getEthereumRpcClient(network).getLogs({
+        address: NEXTGEN_CORE_CONTRACT[network],
+        fromBlock: `0x${startBlock.toString(16)}`,
+        toBlock: `0x${endBlock.toString(16)}`
+      }),
+    'nextgen.getLogs'
+  );
 
   const logs: NextGenLog[] = [];
   for (const log of response) {
     const processedLog = await processLog(entityManager, log);
     if (processedLog) {
       const blockTimestamp = (
-        await getEthereumRpcClient(network).getBlock(log.blockNumber)
+        await withTransientRpcRetry(
+          () => getEthereumRpcClient(network).getBlock(log.blockNumber),
+          'nextgen.getBlock'
+        )
       ).timestamp;
       const l: NextGenLog = {
         id: `${log.transactionHash}-${log.logIndex}`,
@@ -150,7 +158,10 @@ async function processTransfer(
   const network = getNextgenNetwork();
 
   const blockTimestamp = (
-    await getEthereumRpcClient(network).getBlock(log.blockNumber)
+    await withTransientRpcRetry(
+      () => getEthereumRpcClient(network).getBlock(log.blockNumber),
+      'nextgen.getBlock'
+    )
   ).timestamp;
 
   const tokenId = parseInt(logInfo.args.tokenId);
