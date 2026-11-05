@@ -234,6 +234,7 @@ describeWithSeed(
       'page=1x',
       'page=0',
       'page=1.5',
+      'page=2&cursor=',
       'page_size=0',
       'page_size=nope',
       'page_size=1&page_size=2',

@@ -5,7 +5,7 @@ import {
   decodeNicActivityCursor,
   encodeNicActivityCursor,
   nicActivityContext,
-  validateNicActivityRequest
+  getNicActivityPageRequest
 } from './profile-nic-activity.cursor';
 
 const request: ProfileActivityLogsSearchRequest = {
@@ -20,6 +20,15 @@ const context = nicActivityContext(request, {});
 const position = { id: 'tied-aB', createdAt: '2026-11-05 12:00:00' };
 
 describe('NIC cursor contract', () => {
+  it('leaves legacy query normalization outside NIC validation', () => {
+    expect(
+      getNicActivityPageRequest({
+        profile: 'subject',
+        page: '1x',
+        page_size: '0'
+      })
+    ).toBeNull();
+  });
   it.each([position, { id: 'null-time', createdAt: null }])(
     'roundtrips positions including nullable historical timestamps',
     (point) => {
@@ -78,17 +87,26 @@ describe('NIC cursor contract', () => {
     }
   });
   it.each([
-    { ...request, profileId: undefined },
-    { ...request, targetId: 'second' },
-    { ...request, ratingMatter: 'CIC' },
-    { ...request, order: 'asc' as const },
-    { ...request, group_id: 'group' },
-    { ...request, pageRequest: { page: 2, page_size: 10 } },
-    { ...request, pageRequest: { page: 1, page_size: 501 } }
+    { profile: undefined },
+    { target: 'second' },
+    { rating_matter: 'CIC' },
+    { order: 'asc' },
+    { order: 'other' },
+    { group_id: 'group' },
+    { category: 'category' },
+    { page: '2' },
+    { page_size: '501' },
+    { activity_scope: 'REP' }
   ])(
     'rejects unsupported combinations rather than altering other activity views',
     (invalid) => {
-      expect(() => validateNicActivityRequest(invalid)).toThrow();
+      expect(() =>
+        getNicActivityPageRequest({
+          activity_scope: 'NIC',
+          profile: 'subject',
+          ...invalid
+        })
+      ).toThrow();
     }
   );
 });

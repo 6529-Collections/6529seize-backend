@@ -8,40 +8,58 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { PageRequest } from '@/api/page-request';
 
 const INVALID_CURSOR = 'Invalid NIC activity cursor';
-const NIC_QUERY_SCHEMA = Joi.object<PageRequest>({
+const NIC_QUERY_SCHEMA = Joi.object({
+  activity_scope: Joi.valid('NIC').required(),
+  profile: Joi.string().empty(''),
+  target: Joi.string().empty(''),
+  group_id: Joi.valid(''),
+  category: Joi.valid(''),
+  rating_matter: Joi.valid(''),
+  order: Joi.string().empty('').lowercase().valid('desc'),
   page: Joi.number().integer().min(1).max(Number.MAX_SAFE_INTEGER).default(1),
-  page_size: Joi.number().integer().min(1).max(500).default(50)
-}).pattern(Joi.string(), Joi.string().allow(''));
+  page_size: Joi.number().integer().min(1).max(500).default(50),
+  cursor: Joi.string()
+    .empty('')
+    .when('page', {
+      is: Joi.number().greater(1),
+      then: Joi.required()
+    })
+})
+  .xor('profile', 'target')
+  .pattern(Joi.string(), Joi.string().allow(''));
+const NIC_CURSOR_SCHEMA = Joi.object<{
+  v: 1;
+  context: string;
+  page: number;
+  position: ProfileNicActivityPosition;
+}>({
+  v: Joi.valid(1).required(),
+  context: Joi.string().required(),
+  page: Joi.number().integer().positive().required(),
+  position: Joi.object<ProfileNicActivityPosition>({
+    id: Joi.string().max(100).required(),
+    createdAt: Joi.string()
+      .custom((value: string, helpers) =>
+        isDatabaseTimestamp(value) ? value : helpers.error('any.invalid')
+      )
+      .allow(null)
+      .required()
+  }).required()
+}).prefs({ convert: false, allowUnknown: true });
 
 export function getNicActivityPageRequest(
   query: Record<string, unknown>
-): PageRequest {
-  const { page, page_size } = getValidatedByJoiOrThrow(query, NIC_QUERY_SCHEMA);
-  return { page, page_size };
-}
-
-export function validateNicActivityRequest(
-  request: ProfileActivityLogsSearchRequest
-) {
-  if (
-    request.activityScope !== 'NIC' ||
-    Boolean(request.profileId) === Boolean(request.targetId) ||
-    request.group_id ||
-    request.category ||
-    request.ratingMatter ||
-    request.order !== 'desc' ||
-    !Number.isSafeInteger(request.pageRequest.page) ||
-    request.pageRequest.page < 1 ||
-    !Number.isSafeInteger(request.pageRequest.page_size) ||
-    request.pageRequest.page_size < 1 ||
-    request.pageRequest.page_size > 500
-  ) {
-    throw new BadRequestException(
-      'NIC activity requires one profile, descending order and a page size from 1 to 500'
-    );
+): PageRequest | null {
+  if (query.activity_scope === undefined) {
+    if (query.cursor)
+      throw new BadRequestException('A NIC cursor requires activity_scope=NIC');
+    return null;
   }
-  if (request.pageRequest.page > 1 && !request.cursor)
-    throw new BadRequestException(INVALID_CURSOR);
+  const { page, page_size } = getValidatedByJoiOrThrow<PageRequest>(
+    query,
+    NIC_QUERY_SCHEMA
+  );
+  return { page, page_size };
 }
 
 export function nicActivityContext(
@@ -90,36 +108,16 @@ export function decodeNicActivityCursor(
       !/^[A-Za-z0-9_-]+$/.test(cursor)
     )
       throw new Error(INVALID_CURSOR);
-    const value: unknown = JSON.parse(
-      Buffer.from(cursor, 'base64url').toString('utf8')
+    const value = getValidatedByJoiOrThrow(
+      JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')),
+      NIC_CURSOR_SCHEMA
     );
-    if (
-      !isRecord(value) ||
-      value.v !== 1 ||
-      value.context !== context ||
-      value.page !== page ||
-      !isPosition(value.position)
-    ) {
+    if (value.context !== context || value.page !== page)
       throw new Error(INVALID_CURSOR);
-    }
     return value.position;
   } catch {
     throw new BadRequestException(INVALID_CURSOR);
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function isPosition(value: unknown): value is ProfileNicActivityPosition {
-  return (
-    isRecord(value) &&
-    typeof value.id === 'string' &&
-    value.id.length > 0 &&
-    value.id.length <= 100 &&
-    (value.createdAt === null || isDatabaseTimestamp(value.createdAt))
-  );
 }
 
 function isDatabaseTimestamp(value: unknown): value is string {

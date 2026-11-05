@@ -1,6 +1,4 @@
-import { BadRequestException } from '@/exceptions';
 import {
-  validateNicActivityRequest,
   nicActivityContext,
   decodeNicActivityCursor,
   encodeNicActivityCursor
@@ -52,15 +50,15 @@ export class ProfileActivityLogsApiService {
   private async searchActivityLogs(
     request: ProfileActivityLogsSearchRequest,
     params: ProfileLogSearchParams,
-    nicContext: string | null,
     ctx: RequestContext
   ) {
-    if (nicContext === null) {
+    if (request.activityScope !== 'NIC') {
       return {
         logs: await this.profileActivityLogsDb.searchLogs(params, ctx),
         nextCursor: null
       };
     }
+    const context = nicActivityContext(request, ctx);
     let direction: 'incoming' | 'all' | 'outgoing' = 'outgoing';
     if (request.targetId) direction = 'incoming';
     else if (request.includeProfileIdToIncoming) direction = 'all';
@@ -72,7 +70,7 @@ export class ProfileActivityLogsApiService {
         size: request.pageRequest.page_size,
         after: decodeNicActivityCursor(
           request.cursor,
-          nicContext,
+          context,
           request.pageRequest.page
         )
       },
@@ -84,7 +82,7 @@ export class ProfileActivityLogsApiService {
       nextCursor: result.nextPosition
         ? encodeNicActivityCursor(
             result.nextPosition,
-            nicContext,
+            context,
             request.pageRequest.page + 1
           )
         : null
@@ -106,12 +104,6 @@ export class ProfileActivityLogsApiService {
       category,
       group_id
     } = request;
-    if (request.activityScope !== undefined)
-      validateNicActivityRequest(request);
-    else if (request.cursor)
-      throw new BadRequestException('A NIC cursor requires activity_scope=NIC');
-    const nicContext =
-      request.activityScope === 'NIC' ? nicActivityContext(request, ctx) : null;
     let nextCursor: string | null = null;
     ctx.timer?.start(
       `${this.constructor.name}->getProfileActivityLogsFiltered`
@@ -150,12 +142,7 @@ export class ProfileActivityLogsApiService {
     let foundLogs: ProfileActivityLog[];
     ctx.timer?.start(searchLogsTimerKey);
     try {
-      const result = await this.searchActivityLogs(
-        request,
-        params,
-        nicContext,
-        ctx
-      );
+      const result = await this.searchActivityLogs(request, params, ctx);
       foundLogs = result.logs;
       nextCursor = result.nextCursor;
     } finally {
@@ -215,11 +202,11 @@ export class ProfileActivityLogsApiService {
     return {
       page: pageRequest.page,
       next:
-        nicContext !== null
+        request.activityScope === 'NIC'
           ? nextCursor !== null
           : pageRequest.page_size < convertedData.length,
       data: convertedData.slice(0, pageRequest.page_size),
-      ...(nicContext !== null ? { next_cursor: nextCursor } : {})
+      ...(request.activityScope === 'NIC' ? { next_cursor: nextCursor } : {})
     };
   }
 }

@@ -39,10 +39,7 @@ async function getBaseSearchRequest(
 ): Promise<ProfileActivityLogsSearchRequest> {
   const timer = Timer.getFromRequest(req);
   const queryParams = req.query;
-  const nicPaging =
-    queryParams.activity_scope === 'NIC'
-      ? getNicActivityPageRequest(queryParams)
-      : null;
+  const nicPaging = getNicActivityPageRequest(queryParams);
   const order = queryParams.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
   const profile = queryParams.profile;
   const category = queryParams.category;
