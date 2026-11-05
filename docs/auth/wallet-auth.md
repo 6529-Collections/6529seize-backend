@@ -282,12 +282,16 @@ without device parameters are unchanged.
   `drop_author_signatures` row, the same state as a non-null current event id.
   The mappers read it for a whole page with one primary key lookup. It is
   false when the viewer cannot see the drop's content or its author is
-  anonymous. Signed creates and edits finalize signature persistence before
-  serializing their response and broadcasting the live update. Normally,
-  recipients get the updated content and author-signature status together;
-  unsigned edits clear that status in the live update as well. If the subsequent
-  signature-status read fails, `withStoredAuthorSignature` returns the previously
-  mapped status, which may be stale until a later successful read.
+  anonymous. For signed creates, `DropCreationApiService.createDrop` broadcasts
+  inside the write callback, before `DeviceSignedWritesService.runReserved`
+  finalizes the signature, so the initial live update may report the new drop as
+  unsigned. Signed creates and edits refresh the response's author-signature
+  status after signed-write finalization. Edits then broadcast that refreshed
+  response, so recipients normally get the edited content and author-signature
+  status together; unsigned edits clear that status in the live update as well.
+  If the post-write signature-status read fails, `withStoredAuthorSignature`
+  returns the previously mapped status, which may be stale until a later
+  successful read.
 
 ## Session V2 Refresh And Logout
 
