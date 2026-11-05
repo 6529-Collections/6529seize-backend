@@ -30,5 +30,6 @@ export enum ApiNotificationCause {
     ArtistArtworkSubmitted = 'ARTIST_ARTWORK_SUBMITTED',
     CompetitionLifecycle = 'COMPETITION_LIFECYCLE',
     MemeCollaboration = 'MEME_COLLABORATION',
-    VotingCreditsReturned = 'VOTING_CREDITS_RETURNED'
+    VotingCreditsReturned = 'VOTING_CREDITS_RETURNED',
+    E2EeMessage = 'E2EE_MESSAGE'
 }

@@ -6,9 +6,12 @@ import {
 import { appWebSockets } from '@/api/ws/ws';
 import { wsConnectionRepository } from '@/api/ws/ws-connection.repository';
 import { WsMessageType } from '@/api/ws/ws-message';
+import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { E2EE_WS_INLINE_ITEM_MAX_BYTES } from '@/e2ee/e2ee.constants';
 import { E2eeDb, e2eeDb } from '@/e2ee/e2ee.db';
 import { Logger } from '@/logging';
+import { identityNotificationsDb } from '@/notifications/identity-notifications.db';
+import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
 
 export interface E2eeGroupEventData {
   readonly group: string;
@@ -43,6 +46,12 @@ export interface E2eeEventPublisher {
   rosterChanged(
     profileIds: string[],
     data: { group: string; epoch: number }
+  ): Promise<void>;
+  notifyMessage(
+    group: string,
+    profileIds: string[],
+    senderProfileId: string,
+    sequence: number
   ): Promise<void>;
   wake(
     group: string,
@@ -84,7 +93,13 @@ export class WsE2eeEventPublisher implements E2eeEventPublisher {
       profileIds: string[],
       reason: E2eeWakeReason
     ) => Promise<boolean | void>,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly writeInbox: (
+      group: string,
+      profiles: string[],
+      senderProfileId: string,
+      sequence: number
+    ) => Promise<void> = () => Promise.resolve()
   ) {}
 
   private async sendToProfiles(
@@ -207,6 +222,21 @@ export class WsE2eeEventPublisher implements E2eeEventPublisher {
     }
   }
 
+  async notifyMessage(
+    group: string,
+    profileIds: string[],
+    senderProfileId: string,
+    sequence: number
+  ): Promise<void> {
+    const recipients = Array.from(new Set(profileIds));
+    if (!recipients.length) return;
+    try {
+      await this.writeInbox(group, recipients, senderProfileId, sequence);
+    } catch {
+      this.logger.warn('Encrypted-message inbox notification failed');
+    }
+  }
+
   private async releaseWakes(
     group: string,
     profileIds: string[],
@@ -226,5 +256,27 @@ export const e2eeEventPublisher: E2eeEventPublisher = new WsE2eeEventPublisher(
   (profileIds) =>
     wsConnectionRepository.findPrimaryConnectionIdsByIdentityIds(profileIds),
   (connectionId, message) => appWebSockets.send({ connectionId, message }),
-  enqueueE2eeWake
+  enqueueE2eeWake,
+  () => Date.now(),
+  async (group, profiles, senderProfileId, sequence) => {
+    // Sender and sequence are for the authenticated feed only.
+    await identityNotificationsDb.insertManyNotifications(
+      profiles.map((profileId) => ({
+        identity_id: profileId,
+        additional_identity_id: senderProfileId,
+        related_drop_id: null,
+        related_drop_part_no: null,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        cause: IdentityNotificationCause.E2EE_MESSAGE,
+        additional_data: {
+          encrypted_group: group,
+          encrypted_message_seq: sequence
+        },
+        visibility_group_id: null,
+        wave_id: null
+      }))
+    );
+    await wsListenersNotifier.notifyAboutIdentityNotificationsChanged(profiles);
+  }
 );

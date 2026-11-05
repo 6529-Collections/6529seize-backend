@@ -212,6 +212,21 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async renameDevice(
+    profileId: string,
+    deviceKey: string,
+    label: string,
+    connection: Conn
+  ): Promise<void> {
+    await this.write(
+      `update ${E2EE_DEVICES_TABLE}
+       set label = :label
+       where device_key = :deviceKey and profile_id = :profileId and revoked_at is null`,
+      { profileId, deviceKey, label },
+      connection
+    );
+  }
+
   async lockDevice(
     deviceKey: string,
     connection: Conn
@@ -342,7 +357,6 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       | 'grant_id'
       | 'wallet_signature'
       | 'verified_via'
-      | 'label'
       | 'platform'
       | 'updated_at'
       | 'grant_message'
@@ -356,7 +370,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
         expires_at_seconds = :expires_at_seconds, origin = :origin,
         grant_id = :grant_id, wallet_signature = :wallet_signature,
         grant_message = :grant_message,
-        verified_via = :verified_via, label = :label, platform = :platform,
+        verified_via = :verified_via, platform = :platform,
         updated_at = :updated_at, last_seen_at = :updated_at
        where device_key = :device_key and revoked_at is null`,
       { ...device },

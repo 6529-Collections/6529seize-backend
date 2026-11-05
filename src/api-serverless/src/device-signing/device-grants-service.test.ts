@@ -2,6 +2,7 @@ import { ethers } from 'ethers';
 import { mock } from 'ts-jest-mocker';
 import { AuthenticationContext } from '@/auth-context';
 import { DeviceGrantEntity } from '@/entities/IDeviceGrant';
+import { IdentityEntity } from '@/entities/IIdentity';
 import { ForbiddenException, NotFoundException } from '@/exceptions';
 import { IdentitiesDb } from '@/identities/identities.db';
 import { DeviceGrantsService } from './device-grants.service';
@@ -180,6 +181,80 @@ describe('DeviceGrantsService', () => {
           callerContext({ roleProfileId: 'principal-profile' })
         )
       ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('renameCallerGrant', () => {
+    const connection = { connection: 'tx' };
+
+    beforeEach(() => {
+      jest
+        .mocked(db.executeNativeQueriesInTransaction)
+        .mockImplementation(async (run) => run(connection));
+      jest.mocked(db.lockGrant).mockResolvedValue(aGrant());
+      jest.mocked(identities.getIdentityByWallet).mockResolvedValue({
+        ...mock(IdentityEntity),
+        profile_id: 'profile-1'
+      });
+    });
+
+    it('checks a mixed-case grant wallet and updates its label on the same connection', async () => {
+      const storedWallet = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed';
+      jest
+        .mocked(db.lockGrant)
+        .mockResolvedValue(aGrant({ wallet: storedWallet }));
+
+      const grant = await service.renameCallerGrant(
+        GRANT_ID,
+        'My laptop',
+        callerContext()
+      );
+
+      const txCtx = expect.objectContaining({ connection });
+      expect(db.lockGrant).toHaveBeenCalledWith(GRANT_ID, txCtx);
+      expect(identities.getIdentityByWallet).toHaveBeenCalledWith(
+        storedWallet.toLowerCase(),
+        connection
+      );
+      expect(db.renameGrant).toHaveBeenCalledWith(
+        GRANT_ID,
+        storedWallet,
+        'My laptop',
+        txCtx
+      );
+      expect(db.findGrantById).not.toHaveBeenCalled();
+      expect(grant).toMatchObject({
+        device_label: 'My laptop'
+      });
+    });
+
+    it('rejects a grant owned by another profile before writing', async () => {
+      jest.mocked(identities.getIdentityByWallet).mockResolvedValue({
+        ...mock(IdentityEntity),
+        profile_id: 'another-profile'
+      });
+
+      await expect(
+        service.renameCallerGrant(GRANT_ID, 'My laptop', callerContext())
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(db.renameGrant).not.toHaveBeenCalled();
+    });
+
+    it('returns not found when the grant does not exist', async () => {
+      jest.mocked(db.lockGrant).mockResolvedValue(null);
+      await expect(
+        service.renameCallerGrant(GRANT_ID, 'My laptop', callerContext())
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(identities.getIdentityByWallet).not.toHaveBeenCalled();
+      expect(db.renameGrant).not.toHaveBeenCalled();
+    });
+
+    it('rejects a grant revoked before the lock was acquired', async () => {
+      jest.mocked(db.lockGrant).mockResolvedValue(aGrant({ revoked_at: NOW }));
+      await expect(
+        service.renameCallerGrant(GRANT_ID, 'My laptop', callerContext())
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(db.renameGrant).not.toHaveBeenCalled();
     });
   });
 
