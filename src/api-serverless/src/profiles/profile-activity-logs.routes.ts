@@ -11,6 +11,7 @@ import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { Timer } from '../../../time';
 import { identitiesDb } from '@/identities/identities.db';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { getNicActivityPageRequest } from './profile-nic-activity.cursor';
 
 const router = asyncRouter();
 
@@ -38,6 +39,10 @@ async function getBaseSearchRequest(
 ): Promise<ProfileActivityLogsSearchRequest> {
   const timer = Timer.getFromRequest(req);
   const queryParams = req.query;
+  const nicPaging =
+    queryParams.activity_scope === 'NIC'
+      ? getNicActivityPageRequest(queryParams)
+      : null;
   const order = queryParams.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
   const profile = queryParams.profile;
   const category = queryParams.category;
@@ -111,7 +116,7 @@ async function getBaseSearchRequest(
     includeProfileIdToIncoming,
     ratingMatter,
     category,
-    pageRequest: {
+    pageRequest: nicPaging ?? {
       page,
       page_size: size
     },

@@ -230,5 +230,36 @@ describeWithSeed(
       ])
         expect((await get(query)).status).toBe(400);
     });
+    it.each([
+      'page=1x',
+      'page=0',
+      'page=1.5',
+      'page_size=0',
+      'page_size=nope',
+      'page_size=1&page_size=2',
+      'profile=visitor',
+      'log_type=RATING_EDIT&log_type=HANDLE_EDIT'
+    ])(
+      'rejects malformed NIC query before legacy normalization: %s',
+      async (paging) => {
+        const size = paging.startsWith('page_size=') ? '' : '&page_size=2';
+        expect(
+          (await get(`profile=owner&activity_scope=NIC${size}&${paging}`))
+            .status
+        ).toBe(400);
+      }
+    );
+    it('defaults an omitted NIC page size to a valid bounded page', async () => {
+      const response = await get('profile=owner&activity_scope=NIC');
+      expect(response.status).toBe(200);
+      const body =
+        (await response.json()) as CountlessPage<ApiProfileActivityLog>;
+      expect(body.data.map((row) => row.id)).toEqual([
+        'picture',
+        'cic',
+        'handle'
+      ]);
+      expect(body).toMatchObject({ page: 1, next: false, next_cursor: null });
+    });
   }
 );

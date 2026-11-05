@@ -3,8 +3,22 @@ import { BadRequestException } from '@/exceptions';
 import { ProfileNicActivityPosition } from '@/profileActivityLogs/profile-nic-activity.query';
 import type { ProfileActivityLogsSearchRequest } from './profile-activity-logs-api.service';
 import { RequestContext } from '@/request.context';
+import * as Joi from 'joi';
+import { getValidatedByJoiOrThrow } from '@/api/validation';
+import { PageRequest } from '@/api/page-request';
 
 const INVALID_CURSOR = 'Invalid NIC activity cursor';
+const NIC_QUERY_SCHEMA = Joi.object<PageRequest>({
+  page: Joi.number().integer().min(1).max(Number.MAX_SAFE_INTEGER).default(1),
+  page_size: Joi.number().integer().min(1).max(500).default(50)
+}).pattern(Joi.string(), Joi.string().allow(''));
+
+export function getNicActivityPageRequest(
+  query: Record<string, unknown>
+): PageRequest {
+  const { page, page_size } = getValidatedByJoiOrThrow(query, NIC_QUERY_SCHEMA);
+  return { page, page_size };
+}
 
 export function validateNicActivityRequest(
   request: ProfileActivityLogsSearchRequest
