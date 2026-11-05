@@ -5,7 +5,7 @@ import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
 import { IdentitiesDb } from './identities.db';
 
 const unchanged = {
-  external_id: 'unchanged-profile',
+  external_id: 'a-unchanged-profile',
   handle: 'unchanged',
   primary_wallet: '0x1111'
 };
@@ -39,6 +39,7 @@ describe('Profile address synchronization', () => {
       )
     )
   ];
+  let repo: IdentitiesDb;
 
   async function clearTables(): Promise<void> {
     for (const { table } of seeds) {
@@ -47,14 +48,13 @@ describe('Profile address synchronization', () => {
   }
 
   beforeEach(async () => {
+    repo = new IdentitiesDb(() => sqlExecutor);
     await clearTables();
     for (const { table, rows } of seeds) {
       await sqlExecutor.bulkInsert(table, rows, Object.keys(rows[0]));
     }
   });
   afterEach(clearTables);
-
-  const repo = new IdentitiesDb(() => sqlExecutor);
 
   async function lockUnchangedProfile(
     outerConnection: ConnectionWrapper<unknown>
@@ -85,6 +85,34 @@ describe('Profile address synchronization', () => {
       { id: profileId }
     );
     return profile?.primary_wallet;
+  }
+
+  async function seedPageProfiles() {
+    const profiles = Array.from({ length: 101 }, (_, index) =>
+      aProfile({
+        external_id: `page-profile-${String(index).padStart(3, '0')}`,
+        handle: `page-${index}`,
+        primary_wallet: `old-wallet-${index}`
+      })
+    );
+    const identities = profiles.map((profile) =>
+      anIdentity(
+        {},
+        {
+          profile_id: profile.external_id,
+          consolidation_key: profile.external_id,
+          primary_address: `new-${profile.external_id}`,
+          handle: profile.handle
+        }
+      )
+    );
+    for (const { table, rows } of [
+      withProfiles(profiles),
+      withIdentities(identities)
+    ]) {
+      await sqlExecutor.bulkInsert(table, rows, Object.keys(rows[0]));
+    }
+    return profiles;
   }
 
   it('leaves unchanged profiles available for posting before the consolidation transaction commits', async () => {
@@ -126,6 +154,7 @@ describe('Profile address synchronization', () => {
 
   it('still synchronizes the profile when its handle is reassigned after discovery', async () => {
     const execute = sqlExecutor.execute.bind(sqlExecutor);
+    let handleReassigned = false;
     const discovery = jest
       .spyOn(sqlExecutor, 'execute')
       .mockImplementationOnce(async (sql, params, options) => {
@@ -138,6 +167,7 @@ describe('Profile address synchronization', () => {
           `UPDATE ${PROFILES_TABLE} SET normalised_handle=:handle, handle=:handle WHERE external_id=:id`,
           { id: orphan.external_id, handle: changed.handle }
         );
+        handleReassigned = true;
         return rows;
       });
     try {
@@ -147,34 +177,13 @@ describe('Profile address synchronization', () => {
     } finally {
       discovery.mockRestore();
     }
+    expect(handleReassigned).toBe(true);
     expect(await walletFor(changed.external_id)).toBe(replacementWallet);
     expect(await walletFor(orphan.external_id)).toBe(orphan.primary_wallet);
   });
 
   it('synchronizes all changed profiles across page boundaries without locking unchanged profiles', async () => {
-    const profiles = Array.from({ length: 101 }, (_, index) =>
-      aProfile({
-        external_id: `page-profile-${String(index).padStart(3, '0')}`,
-        handle: `page-${index}`,
-        primary_wallet: `old-wallet-${index}`
-      })
-    );
-    const identities = profiles.map((profile) =>
-      anIdentity(
-        {},
-        {
-          profile_id: profile.external_id,
-          consolidation_key: profile.external_id,
-          primary_address: `new-${profile.external_id}`,
-          handle: profile.handle
-        }
-      )
-    );
-    const profileSeed = withProfiles(profiles);
-    const identitySeed = withIdentities(identities);
-    for (const { table, rows } of [profileSeed, identitySeed]) {
-      await sqlExecutor.bulkInsert(table, rows, Object.keys(rows[0]));
-    }
+    const profiles = await seedPageProfiles();
 
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
       await repo.syncProfileAddressesFromIdentitiesToProfiles(connection);
@@ -194,5 +203,63 @@ describe('Profile address synchronization', () => {
       unchanged.primary_wallet
     );
     expect(await walletFor(orphan.external_id)).toBe(orphan.primary_wallet);
+  });
+
+  it('preserves an atomic primary-address change committed behind the keyset cursor', async () => {
+    await seedPageProfiles();
+    const execute = sqlExecutor.execute.bind(sqlExecutor);
+    let changedBehindCursor = false;
+    const interleaving = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockImplementation(async (sql, params, options) => {
+        if (
+          !changedBehindCursor &&
+          typeof params?.afterProfileId === 'string'
+        ) {
+          expect(params.afterProfileId > unchanged.external_id).toBe(true);
+          changedBehindCursor = true;
+          await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+            repo.updatePrimaryAddress(
+              {
+                profileId: unchanged.external_id,
+                primaryAddress: 'concurrent-wallet'
+              },
+              connection
+            )
+          );
+        }
+        return execute(sql, params, options);
+      });
+    try {
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        repo.syncProfileAddressesFromIdentitiesToProfiles(connection)
+      );
+    } finally {
+      interleaving.mockRestore();
+    }
+    expect(changedBehindCursor).toBe(true);
+    expect(await walletFor(unchanged.external_id)).toBe('concurrent-wallet');
+    const identity = await sqlExecutor.oneOrNull<{ primary_address: string }>(
+      `SELECT primary_address FROM ${IDENTITIES_TABLE} WHERE profile_id=:id`,
+      { id: unchanged.external_id }
+    );
+    expect(identity?.primary_address).toBe('concurrent-wallet');
+  });
+
+  it('synchronizes every profile row sharing one nonunique external ID', async () => {
+    const alias = aProfile({ ...changed, handle: 'changed-alias' });
+    await sqlExecutor.bulkInsert(PROFILES_TABLE, [alias], Object.keys(alias));
+
+    await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      repo.syncProfileAddressesFromIdentitiesToProfiles(connection)
+    );
+    const rows = await sqlExecutor.execute<{ primary_wallet: string }>(
+      `SELECT primary_wallet FROM ${PROFILES_TABLE} WHERE external_id=:id`,
+      { id: changed.external_id }
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.primary_wallet === replacementWallet)).toBe(
+      true
+    );
   });
 });
