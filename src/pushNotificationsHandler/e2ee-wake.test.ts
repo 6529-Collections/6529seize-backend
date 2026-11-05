@@ -49,36 +49,51 @@ describe('content-free E2EE wakes', () => {
   });
 
   it.each([
-    ['pushNotificationsHandler_staging', 'Open 6529 Staging to view'],
-    ['pushNotificationsHandler_prod', 'Open 6529 Mobile to view']
-  ])('uses the app name for %s', (environment, expectedBody) => {
-    const previous = process.env.SENTRY_ENVIRONMENT;
-    try {
-      process.env.SENTRY_ENVIRONMENT = environment;
-      expect(
-        buildE2eeWakeInput({
-          token: 'token',
-          profileId: 'p',
-          handle: 'h',
-          reason: 'message'
-        })
-      ).toMatchObject({
-        title: 'New encrypted message',
-        body: expectedBody
-      });
-      expect(
-        buildE2eeWakeInput({
-          token: 'token',
-          profileId: 'p',
-          handle: 'h',
-          reason: 'added'
-        }).body
-      ).toBe('You were added to an encrypted chat');
-    } finally {
-      if (previous === undefined) delete process.env.SENTRY_ENVIRONMENT;
-      else process.env.SENTRY_ENVIRONMENT = previous;
+    ['development', 'staging', 'Open 6529 Staging to view'],
+    [
+      'development',
+      'pushNotificationsHandler_prod',
+      'Open 6529 Staging to view'
+    ],
+    ['development', undefined, 'Open 6529 Staging to view'],
+    [
+      'production',
+      'pushNotificationsHandler_staging',
+      'Open 6529 Mobile to view'
+    ],
+    ['production', undefined, 'Open 6529 Mobile to view']
+  ])(
+    'uses NODE_ENV=%s independently of Sentry=%s',
+    (nodeEnv, sentryEnv, expectedBody) => {
+      const previous = process.env;
+      try {
+        process.env = { ...previous, NODE_ENV: nodeEnv };
+        if (sentryEnv === undefined) delete process.env.SENTRY_ENVIRONMENT;
+        else process.env.SENTRY_ENVIRONMENT = sentryEnv;
+        expect(
+          buildE2eeWakeInput({
+            token: 'token',
+            profileId: 'p',
+            handle: 'h',
+            reason: 'message'
+          })
+        ).toMatchObject({
+          title: 'New encrypted message',
+          body: expectedBody
+        });
+        expect(
+          buildE2eeWakeInput({
+            token: 'token',
+            profileId: 'p',
+            handle: 'h',
+            reason: 'added'
+          }).body
+        ).toBe('You were added to an encrypted chat');
+      } finally {
+        process.env = previous;
+      }
     }
-  });
+  );
 
   it('parses only well-formed e2ee_wake bodies', () => {
     expect(
