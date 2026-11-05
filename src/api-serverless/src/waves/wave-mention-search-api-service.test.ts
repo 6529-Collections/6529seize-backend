@@ -45,7 +45,8 @@ describe('WaveMentionSearchApiService', () => {
           handle: 'alice',
           display: 'Alice',
           pfp: null,
-          level_raw: score
+          level_raw: score,
+          internal_only: 'not public'
         }
       ]);
       const expected = [

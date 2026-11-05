@@ -9,9 +9,25 @@ import {
 } from '@/api/waves/wave-access.helpers';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { ForbiddenException, NotFoundException } from '@/exceptions';
-import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
+import {
+  identitiesDb,
+  IdentitiesDb,
+  WaveMentionSearchCandidate
+} from '@/identities/identities.db';
 import { getLevelFromScore } from '@/profiles/profile-level';
 import { RequestContext } from '@/request.context';
+
+function toMentionSearchResult(
+  candidate: WaveMentionSearchCandidate
+): ApiWaveMentionSearchResult {
+  return {
+    id: candidate.id,
+    handle: candidate.handle,
+    display: candidate.display,
+    pfp: candidate.pfp,
+    level: getLevelFromScore(candidate.level_raw)
+  };
+}
 
 export class WaveMentionSearchApiService {
   constructor(
@@ -64,10 +80,7 @@ export class WaveMentionSearchApiService {
       eligibility,
       ctx
     );
-    return candidates.map(({ level_raw, ...profile }) => ({
-      ...profile,
-      level: getLevelFromScore(level_raw)
-    }));
+    return candidates.map(toMentionSearchResult);
   }
 
   public async searchDraft(
@@ -106,10 +119,7 @@ export class WaveMentionSearchApiService {
       eligibility,
       ctx
     );
-    return candidates.map(({ level_raw, ...profile }) => ({
-      ...profile,
-      level: getLevelFromScore(level_raw)
-    }));
+    return candidates.map(toMentionSearchResult);
   }
 }
 
