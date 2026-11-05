@@ -522,7 +522,8 @@ export class IdentityFetcher {
       // only that result as absent; transport and other resolver errors must fail.
       if (
         isError(error, 'CALL_EXCEPTION') &&
-        error.reason === 'ResolverNotFound(bytes)'
+        (error.reason === 'ResolverNotFound(bytes)' ||
+          error.revert?.signature === 'ResolverNotFound(bytes)')
       ) {
         return null;
       }
@@ -531,7 +532,6 @@ export class IdentityFetcher {
     if (!wallet) {
       return null;
     }
-    await this.getIdentityAndConsolidationsByWallet(wallet, ctx);
     const identity = await this.getIdentityAndConsolidationsByWallet(
       wallet,
       ctx

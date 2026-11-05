@@ -64,13 +64,23 @@ describe('IdentityFetcher ENS resolution', () => {
     expect(getIdentityByWallet).not.toHaveBeenCalled();
   });
 
-  it('preserves a successfully resolved wallet and the original ENS query', async () => {
+  it('recognizes the structured custom-error signature without a reason string', async () => {
+    const error = Object.assign(resolverError('ResolverNotFound', ['0x']), {
+      reason: null
+    });
+    resolveName.mockRejectedValue(error);
+    await expect(lookup()).resolves.toBeNull();
+    expect(getIdentityByWallet).not.toHaveBeenCalled();
+  });
+
+  it('resolves an unregistered wallet once and preserves the ENS query on its synthetic identity', async () => {
     resolveName.mockResolvedValue(wallet);
     await expect(lookup()).resolves.toMatchObject({
       primary_wallet: wallet,
       query: 'missing.eth'
     });
     expect(getIdentityByWallet).toHaveBeenCalledWith(wallet, undefined);
+    expect(getIdentityByWallet).toHaveBeenCalledTimes(1);
   });
 
   it.each([
