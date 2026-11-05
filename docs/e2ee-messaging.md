@@ -82,7 +82,7 @@ Errors use `CustomApiCompliantException` and the body
 
 | Area             | Routes                                                                                                                                                                                                                                                                                 |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Devices          | `GET /e2ee/me`, `POST /e2ee/devices`, `GET /e2ee/devices/{device_key}`, `GET /e2ee/profiles/{profile_id}/devices`, `POST /e2ee/devices/lookup`, `POST /e2ee/devices/{device_key}/revoke`                                                                                               |
+| Devices          | `GET /e2ee/me`, `POST /e2ee/devices`, `GET /e2ee/devices/{device_key}`, `GET /e2ee/profiles/{profile_id}/devices`, `POST /e2ee/devices/lookup`, `POST /e2ee/devices/{device_key}/revoke`, `POST /e2ee/devices/{device_key}/label`                                                      |
 | KeyPackages      | `POST /e2ee/devices/{device_key}/key-packages`, `POST /e2ee/key-packages/claim`, `POST /e2ee/eligibility`                                                                                                                                                                              |
 | Groups           | `POST /e2ee/groups`, `GET /e2ee/groups/{group}`, `POST /e2ee/groups/{group}/entries`, `GET /e2ee/groups/{group}/log`, `POST /e2ee/groups/{group}/messages`, `POST /e2ee/groups/{group}/roster`, `GET /e2ee/devices/{device_key}/groups`                                                |
 | Welcomes         | `GET /e2ee/devices/{device_key}/welcomes`, `POST /e2ee/devices/{device_key}/welcomes/{welcome_id}/ack`                                                                                                                                                                                 |
@@ -509,7 +509,7 @@ sender, opaque chat handle, and message sequence independently of the push
 cooldown. Message previews come only from the exact referenced sequence in the
 recipient device's local history. Entries without a sequence or a locally
 readable message stay generic; enabling a new device does not transfer older
-history. Notification support does not backfill entries that were never created.
+history or backfill notification entries that were never created.
 
 ## Residual powers of 6529.io as orderer
 
@@ -540,8 +540,7 @@ versions and OpenMLS security advisories are the safeguard.
   `acknowledged` field so the generators emit a model; the server returns
   `{}`.
 - Creating a group that already exists returns the record when the request
-  is an identical retry by the creator; otherwise it is `409
-E2EE_EPOCH_CONFLICT`.
+  is an identical retry by the creator; otherwise it is `409 E2EE_EPOCH_CONFLICT`.
 - `E2EE_KEY_PACKAGE_LIMIT` (409) and `E2EE_FORBIDDEN` (403, proxies, callers
   without a profile, proposals removing others, repairs undoing a leave,
   non-uploader blob writes) and `E2EE_BAD_REQUEST` (400, malformed input) are

@@ -125,8 +125,8 @@ For web sessions:
 
 For native and desktop sessions:
 
-- The signed message must have `Session Type: native` or `Session Type:
-desktop`, matching the requested `client_type`.
+- The signed message must match the requested `client_type`:
+  `Session Type: native` for native or `Session Type: desktop` for desktop.
 - The server creates a row in `wallet_auth_sessions` with `client_type=native`
   or `client_type=desktop`.
 - The refresh token is returned in the JSON response.
@@ -218,9 +218,9 @@ without device parameters are unchanged.
   available to proxies. Revoking a combined grant also revokes the
   encrypted-messages device it enrolled (see `docs/e2ee-messaging.md`).
 - `POST /api/device-grants/{grantId}/label` renames an unrevoked signing
-  grant owned by one of the caller's profile wallets. `POST
-/api/e2ee/devices/{device_key}/label` renames an owned, unrevoked encryption
-  device. The frontend uses the encryption-device label for linked combined
+  grant owned by one of the caller's profile wallets.
+  `POST /api/e2ee/devices/{device_key}/label` renames an owned, unrevoked
+  encryption device. The frontend uses the encryption-device label for linked combined
   grant rows, so both permission views display the same server name.
   Labels use the existing server fields, not a local nickname or an additional
   nickname column. Any authenticated browser or app of the owner can rename
@@ -230,9 +230,13 @@ without device parameters are unchanged.
   SIWE web session): `POST /api/device-grants` registers an EIP-712 grant the
   signed-in wallet signed outside sign-in. Domain `6529 Device Grant`,
   version `1`, the pre-genesis salt shared with encrypted-messages grants;
-  primary type `DeviceGrant(string statement, address wallet, bytes32
-deviceKey, string scopes, bytes32 mlsDeviceKey, uint16 ciphersuite, uint64
-issuedAt, uint64 expiresAt, string origin)`. A signing-only grant carries
+  primary type:
+
+  ```text
+  DeviceGrant(string statement, address wallet, bytes32 deviceKey, string scopes, bytes32 mlsDeviceKey, uint16 ciphersuite, uint64 issuedAt, uint64 expiresAt, string origin)
+  ```
+
+  A signing-only grant carries
   zero in `mlsDeviceKey` and `ciphersuite`; a combined grant carries the
   encrypted-messages key (different from `deviceKey`) and the current
   ciphersuite, only while encrypted messages are on and only for a wallet
@@ -252,6 +256,7 @@ issuedAt, uint64 expiresAt, string origin)`. A signing-only grant carries
   signing-only grant sends `mls_device_key` and `ciphersuite` as null (or
   omits them); `0` is rejected. Signed writes, expiry and revocation treat it
   exactly like a sign-in grant. Idempotent on grant id.
+
 - `POST /drops`, `POST /drops/{id}`, `DELETE /drops/{id}` and
   `POST|DELETE /drops/{id}/reaction` accept an optional `device_signature`
   (`grant_id`, `seq`, `claimed_time`, `signature`). The server strips it from
@@ -278,9 +283,11 @@ issuedAt, uint64 expiresAt, string origin)`. A signing-only grant carries
   The mappers read it for a whole page with one primary key lookup. It is
   false when the viewer cannot see the drop's content or its author is
   anonymous. Signed creates and edits finalize signature persistence before
-  serializing their response and broadcasting the live update. Recipients get
-  the updated content and author-signature status together; unsigned edits
-  clear that status in the live update as well.
+  serializing their response and broadcasting the live update. Normally,
+  recipients get the updated content and author-signature status together;
+  unsigned edits clear that status in the live update as well. If the subsequent
+  signature-status read fails, `withStoredAuthorSignature` returns the previously
+  mapped status, which may be stale until a later successful read.
 
 ## Session V2 Refresh And Logout
 
@@ -354,6 +361,10 @@ Connection share state is stored in `wallet_connection_shares`. Share codes are
 stored only as server-side hashes and expire after a short TTL. Redeeming a
 share returns `client_type` so callers can persist the refresh token under the
 actual session type created by the backend.
+
+Redemption atomically marks the share consumed, so the same code cannot be
+redeemed again. Expiry is checked during redemption. These paths do not
+immediately delete the stored share row or its setup ciphertext.
 
 The desktop compatibility flow remains available for legacy Desktop builds that
 still need the legacy refresh-token handoff:
