@@ -29,6 +29,72 @@ describe('WaveMentionSearchApiService', () => {
     getGroupsUserIsEligibleFor.mockResolvedValue(['visibility-group']);
   });
 
+  it.each([
+    [0, 0],
+    [10000, 11],
+    [60000, 20],
+    [25000000, 100],
+    [Number.NaN, null]
+  ])(
+    'returns the profile level for score %s without exposing the raw score',
+    async (score, level) => {
+      findWavesByIds.mockResolvedValue([{ visibility_group_id: null }]);
+      searchWaveMentionCandidates.mockResolvedValue([
+        {
+          id: 'profile-alice',
+          handle: 'alice',
+          display: null,
+          pfp: null,
+          level_raw: score
+        }
+      ]);
+
+      await expect(
+        service.search({ waveId: 'wave-1', handle: 'ali', limit: 5 }, {})
+      ).resolves.toEqual([
+        {
+          id: 'profile-alice',
+          handle: 'alice',
+          display: null,
+          pfp: null,
+          level
+        }
+      ]);
+    }
+  );
+
+  it('returns levels in the same candidate order for draft-wave searches', async () => {
+    searchWaveMentionCandidates.mockResolvedValue([
+      { id: 'exact', handle: 'ali', display: null, pfp: null, level_raw: 0 },
+      {
+        id: 'high',
+        handle: 'alice',
+        display: null,
+        pfp: null,
+        level_raw: 60000
+      },
+      {
+        id: 'low',
+        handle: 'alison',
+        display: null,
+        pfp: null,
+        level_raw: 10000
+      }
+    ]);
+    const authenticationContext = { getActingAsId: () => 'profile-me' };
+
+    await expect(
+      service.searchDraft(
+        { visibilityGroupId: null, handle: 'ali', limit: 5 },
+        { authenticationContext: authenticationContext as any }
+      )
+    ).resolves.toEqual([
+      { id: 'exact', handle: 'ali', display: null, pfp: null, level: 0 },
+      { id: 'high', handle: 'alice', display: null, pfp: null, level: 20 },
+      { id: 'low', handle: 'alison', display: null, pfp: null, level: 11 }
+    ]);
+  });
+
   it('restricts private-wave results and excludes the acting profile', async () => {
     const eligibility = {
       sql: 'with user_groups_view as (select profile_id from eligible)',

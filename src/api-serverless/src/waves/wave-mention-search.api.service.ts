@@ -9,8 +9,29 @@ import {
 } from '@/api/waves/wave-access.helpers';
 import { wavesApiDb, WavesApiDb } from '@/api/waves/waves.api.db';
 import { ForbiddenException, NotFoundException } from '@/exceptions';
-import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
+import {
+  identitiesDb,
+  IdentitiesDb,
+  WaveMentionSearchCandidate
+} from '@/identities/identities.db';
+import { getLevelFromScore } from '@/profiles/profile-level';
 import { RequestContext } from '@/request.context';
+
+function toMentionSearchResult({
+  id,
+  handle,
+  display,
+  pfp,
+  level_raw
+}: WaveMentionSearchCandidate): ApiWaveMentionSearchResult {
+  return {
+    id,
+    handle,
+    display,
+    pfp,
+    level: Number.isFinite(level_raw) ? getLevelFromScore(level_raw) : null
+  };
+}
 
 export class WaveMentionSearchApiService {
   constructor(
@@ -52,7 +73,7 @@ export class WaveMentionSearchApiService {
       return [];
     }
 
-    return await this.identitiesDb.searchWaveMentionCandidates(
+    const candidates = await this.identitiesDb.searchWaveMentionCandidates(
       {
         handle,
         limit,
@@ -63,6 +84,7 @@ export class WaveMentionSearchApiService {
       eligibility,
       ctx
     );
+    return candidates.map(toMentionSearchResult);
   }
 
   public async searchDraft(
@@ -92,7 +114,7 @@ export class WaveMentionSearchApiService {
       return [];
     }
 
-    return await this.identitiesDb.searchWaveMentionCandidates(
+    const candidates = await this.identitiesDb.searchWaveMentionCandidates(
       {
         handle,
         limit,
@@ -101,6 +123,7 @@ export class WaveMentionSearchApiService {
       eligibility,
       ctx
     );
+    return candidates.map(toMentionSearchResult);
   }
 }
 

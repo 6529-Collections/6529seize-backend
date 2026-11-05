@@ -50,6 +50,7 @@ import {
 const mysql = require('mysql');
 
 export interface WaveMentionSearchCandidate {
+  readonly level_raw: number;
   readonly id: string;
   readonly handle: string;
   readonly display: string | null;
@@ -637,7 +638,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
             i.profile_id as id,
             i.handle,
             cwt.consolidation_display as display,
-            i.pfp
+            i.pfp,
+            i.level_raw
           from ${IDENTITIES_TABLE} i force index (identity_normalised_handle_idx)
           ${eligibilityJoin}
           left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt
@@ -647,6 +649,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
             and i.normalised_handle like :mentionHandlePrefix
             ${excludedProfileClause}
           order by
+            (i.normalised_handle = :mentionExactHandle) desc,
             i.level_raw desc,
             i.normalised_handle asc,
             i.profile_id asc
@@ -654,6 +657,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         `,
         {
           ...(eligibility?.params ?? {}),
+          mentionExactHandle: param.handle.toLowerCase(),
           mentionHandlePrefix: `${param.handle.toLowerCase()}%`,
           mentionExcludedProfileId: param.excludedProfileId,
           mentionLimit: param.limit

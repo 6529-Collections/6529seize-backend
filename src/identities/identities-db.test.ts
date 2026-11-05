@@ -226,10 +226,14 @@ describe('IdentitiesDb', () => {
     const [sql, params] = execute.mock.calls[0];
     expect(sql).toContain('force index (identity_normalised_handle_idx)');
     expect(sql).toContain('i.normalised_handle like :mentionHandlePrefix');
-    expect(sql).toContain('i.level_raw desc');
+    expect(sql).toMatch(/i\.pfp,\s+i\.level_raw/);
+    expect(sql).toMatch(
+      /order by\s+\(i\.normalised_handle = :mentionExactHandle\) desc,\s+i\.level_raw desc,[\s\S]*limit :mentionLimit/
+    );
     expect(sql).toContain('i.profile_id <> :mentionExcludedProfileId');
     expect(sql).not.toContain('join user_groups_view');
     expect(params).toMatchObject({
+      mentionExactHandle: 'ali',
       mentionHandlePrefix: 'ali%',
       mentionExcludedProfileId: 'profile-me',
       mentionLimit: 5
@@ -263,6 +267,7 @@ describe('IdentitiesDb', () => {
     expect(sql).not.toContain('i.profile_id <> :mentionExcludedProfileId');
     expect(params).toMatchObject({
       eligibilityGroupId: 'group-1',
+      mentionExactHandle: 'ali',
       mentionHandlePrefix: 'ali%',
       mentionLimit: 5
     });
@@ -294,6 +299,7 @@ describe('IdentitiesDb', () => {
     expect(sql).toContain('i.profile_id <> :mentionExcludedProfileId');
     expect(params).toMatchObject({
       eligibilityGroupId: 'group-1',
+      mentionExactHandle: 'ali',
       mentionHandlePrefix: 'ali%',
       mentionExcludedProfileId: 'profile-me',
       mentionLimit: 5
