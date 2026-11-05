@@ -28,6 +28,7 @@ import { ApiCommunityMemberMinimal } from '../generated/models/ApiCommunityMembe
 import { enums } from '../../../enums';
 import { profileWavesDb } from '@/profiles/profile-waves.db';
 import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview';
+import { isError } from 'ethers';
 
 export type CommunityMemberMinimalSearchSort = 'level';
 
@@ -513,7 +514,20 @@ export class IdentityFetcher {
     query: string,
     ctx: RequestContext
   ): Promise<ApiIdentity | null> {
-    const wallet = await this.supplyRpc().resolveName(query);
+    let wallet: string | null;
+    try {
+      wallet = await this.supplyRpc().resolveName(query);
+    } catch (error) {
+      // The ENS Universal Resolver reverts for an unconfigured name. Treat
+      // only that result as absent; transport and other resolver errors must fail.
+      if (
+        isError(error, 'CALL_EXCEPTION') &&
+        error.reason === 'ResolverNotFound(bytes)'
+      ) {
+        return null;
+      }
+      throw error;
+    }
     if (!wallet) {
       return null;
     }
