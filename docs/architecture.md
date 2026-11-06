@@ -1205,6 +1205,11 @@ short code as associated data, no sender data, hard-deleted 14 days after upload
 (by uploads and the daily job). Team wallets listed in `TELEMETRY_TEAM_WALLETS`
 read bundles through `GET /api/telemetry/diagnostics[/{code}]`.
 
+`GET /api/e/country` (`6529.io/e/country`) answers the viewer's country from
+the trusted `CloudFront-Viewer-Country` header (unknown: `country: null`,
+`is_eu: true`), so the cookie banner and the iOS US-only purchasing rule no
+longer need a third-party IP lookup.
+
 `GET /tdh/rules` publishes current TDH boost definitions evaluated against the
 latest completed snapshot's eligible Meme card range. The latest row in
 `tdh_blocks` is the completion marker because consolidation persists its TDH

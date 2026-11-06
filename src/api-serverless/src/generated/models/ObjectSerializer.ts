@@ -798,6 +798,7 @@ export * from '../models/ApiTdhSeasonOnePartialRule';
 export * from '../models/ApiTdhSeasonScheduleRule';
 export * from '../models/ApiTdhSeasonSetRule';
 export * from '../models/ApiTelemetryBatch';
+export * from '../models/ApiTelemetryCountry';
 export * from '../models/ApiTelemetryDiagnosticsBundle';
 export * from '../models/ApiTelemetryDiagnosticsPage';
 export * from '../models/ApiTelemetryDiagnosticsReceipt';
@@ -1793,6 +1794,7 @@ import { ApiTdhSeasonOnePartialRule    } from '../models/ApiTdhSeasonOnePartialR
 import { ApiTdhSeasonScheduleRule } from '../models/ApiTdhSeasonScheduleRule';
 import { ApiTdhSeasonSetRule } from '../models/ApiTdhSeasonSetRule';
 import { ApiTelemetryBatch, ApiTelemetryBatchVEnum    } from '../models/ApiTelemetryBatch';
+import { ApiTelemetryCountry } from '../models/ApiTelemetryCountry';
 import { ApiTelemetryDiagnosticsBundle } from '../models/ApiTelemetryDiagnosticsBundle';
 import { ApiTelemetryDiagnosticsPage } from '../models/ApiTelemetryDiagnosticsPage';
 import { ApiTelemetryDiagnosticsReceipt } from '../models/ApiTelemetryDiagnosticsReceipt';
@@ -3032,6 +3034,7 @@ let typeMap: {[index: string]: any} = {
     "ApiTdhSeasonScheduleRule": ApiTdhSeasonScheduleRule,
     "ApiTdhSeasonSetRule": ApiTdhSeasonSetRule,
     "ApiTelemetryBatch": ApiTelemetryBatch,
+    "ApiTelemetryCountry": ApiTelemetryCountry,
     "ApiTelemetryDiagnosticsBundle": ApiTelemetryDiagnosticsBundle,
     "ApiTelemetryDiagnosticsPage": ApiTelemetryDiagnosticsPage,
     "ApiTelemetryDiagnosticsReceipt": ApiTelemetryDiagnosticsReceipt,

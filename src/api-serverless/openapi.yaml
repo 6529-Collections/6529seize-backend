@@ -19269,6 +19269,28 @@ paths:
           description: Not a team wallet
         "404":
           description: Unknown or expired code
+  /e/country:
+    get:
+      tags:
+        - Telemetry
+      summary: Viewer country from the CDN edge
+      description: >-
+        Same-origin 6529.io/e/country. Returns the ISO country code CloudFront
+        derives for the viewer, replacing the third-party IP lookup behind
+        /policies/country-check. Only trusted when the request comes through the
+        6529.io edge; otherwise, and when CloudFront cannot tell, the answer is
+        unknown (`country: null`, `is_eu: true`), which keeps the cookie banner
+        on and region-restricted purchasing hidden. Not cached, not stored, not
+        logged.
+      operationId: getTelemetryCountry
+      security: []
+      responses:
+        "200":
+          description: Viewer country, or null when unknown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTelemetryCountry"
   /transactions:
     get:
       tags:
@@ -42720,6 +42742,19 @@ components:
           maxItems: 40
           items:
             $ref: "#/components/schemas/ApiTelemetryEvent"
+    ApiTelemetryCountry:
+      type: object
+      required:
+        - country
+        - is_eu
+      properties:
+        country:
+          type: string
+          nullable: true
+          description: ISO 3166-1 alpha-2 code, or null when unknown.
+        is_eu:
+          type: boolean
+          description: True for EU/EEA countries and for unknown countries.
     ApiTelemetryDiagnosticsBundle:
       type: object
       required:
