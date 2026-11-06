@@ -408,7 +408,7 @@ export class CreateOrUpdateDropUseCase {
         'Only wave creators or admins can mention @all'
       );
     }
-    const connection = ctx.connection ?? { connection: null };
+    const connection = ctx.connection;
     const followers =
       await this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
         { waveId, authorId, mentionedGroups: [DropGroupMention.ALL] },
@@ -3190,7 +3190,7 @@ export class CreateOrUpdateDropUseCase {
   private async filterIdentityIdsEligibleToReadWave(
     wave: WaveEntity,
     identityIds: string[],
-    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: RequestContext
   ): Promise<string[]> {
     const visibilityGroupIds = [wave.visibility_group_id].filter(
       (groupId): groupId is string => groupId !== null

@@ -323,7 +323,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       authorId: string;
       mentionedGroups: DropGroupMention[];
     },
-    connection: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>
   ): Promise<
     {
       identity_id: string;

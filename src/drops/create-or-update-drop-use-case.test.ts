@@ -209,7 +209,7 @@ describe('CreateOrUpdateDropUseCase', () => {
           authorId: 'author',
           mentionedGroups: [DropGroupMention.ALL]
         },
-        { connection: null }
+        undefined
       );
       expect(setup.countMentionRecipients).toHaveBeenCalledWith(
         ['both'],
