@@ -31,25 +31,25 @@ class GatewayError extends Error {
   }
 }
 
-function providerError(status: number, body: string): GatewayError {
-  let code = 'gateway_error';
+function providerCode(body: string): string {
+  let value: unknown;
   try {
     const details: unknown = JSON.parse(body);
     if (details && typeof details === 'object') {
-      const value =
-        'error' in details
-          ? details.error
-          : 'details' in details
-            ? details.details
-            : undefined;
-      // Record short provider codes, never reflected request bodies or stacks.
-      if (typeof value === 'string' && /^[\w .:-]{1,160}$/.test(value.trim())) {
-        code = value.trim();
-      }
+      if ('error' in details) value = details.error;
+      else if ('details' in details) value = details.details;
     }
   } catch {
-    if (/^[a-z_]{1,80}$/.test(body.trim())) code = body.trim();
+    value = body;
   }
+  // Record short provider codes, never reflected request bodies or stacks.
+  return typeof value === 'string' && /^[\w .:-]{1,160}$/.test(value.trim())
+    ? value.trim()
+    : 'gateway_error';
+}
+
+function providerError(status: number, body: string): GatewayError {
+  const code = providerCode(body);
   const transient = [
     'data_root_not_found',
     'exceeds_disk_pool_size_limit',
@@ -71,6 +71,8 @@ class UploadSession {
   private readonly controller = new AbortController();
   private gatewayIndex = 0;
   private transactionId = 'unsigned';
+  private signedHeader = '';
+  private readonly headers = new Map<string, Promise<void>>();
   private stopped: Error | undefined;
 
   constructor(private readonly logger: UploadLogger) {}
@@ -133,11 +135,14 @@ class UploadSession {
     transaction.addTag('Content-Type', 'text/csv');
     await arweave.transactions.sign(transaction, key);
     this.transactionId = transaction.id;
+    this.signedHeader = JSON.stringify(
+      new Transaction({ ...transaction, data: new Uint8Array(0) }).toJSON()
+    );
     // Failover always resubmits the same signed header and immutable chunks.
     await this.request({
       path: 'tx',
       method: 'POST',
-      body: JSON.stringify({ ...transaction.toJSON(), data: '' })
+      body: this.signedHeader
     });
     await this.uploadChunks(transaction, data);
     this.logger.info(`[ARWEAVE UPLOAD COMPLETE] [TX ${transaction.id}]`);
@@ -194,8 +199,20 @@ class UploadSession {
       this.throwIfStopped();
       const index = (firstGateway + attempt) % GATEWAYS.length;
       const gateway = GATEWAYS[index];
+      let requestedOperation = operation;
       try {
+        if (operation.path === 'chunk') {
+          requestedOperation = {
+            path: 'tx',
+            method: 'POST',
+            body: this.signedHeader
+          };
+          await this.ensureHeader(gateway, requestedOperation);
+          requestedOperation = operation;
+        }
         const body = await this.fetch(gateway, operation);
+        if (operation.path === 'tx')
+          this.headers.set(gateway, Promise.resolve());
         this.gatewayIndex = index;
         return body;
       } catch (error) {
@@ -204,7 +221,7 @@ class UploadSession {
           error instanceof GatewayError
             ? error
             : new GatewayError(0, 'network_error', true);
-        const context = `[TX ${this.transactionId}] [GATEWAY ${gateway}] [OP ${operation.method} ${operation.path}] [CHUNK ${operation.chunk ?? '-'}] [ATTEMPT ${attempt + 1}/${attempts}] [STATUS ${failure.status}] [ERROR ${failure.code}]`;
+        const context = `[TX ${this.transactionId}] [GATEWAY ${gateway}] [OP ${requestedOperation.method} ${requestedOperation.path}] [CHUNK ${operation.chunk ?? '-'}] [ATTEMPT ${attempt + 1}/${attempts}] [STATUS ${failure.status}] [ERROR ${failure.code}]`;
         this.logger.warn(`[ARWEAVE REQUEST FAILED] ${context}`);
         if (!failure.retryable || attempt + 1 === attempts) {
           throw new Error(`Arweave request failed ${context}`);
@@ -213,6 +230,19 @@ class UploadSession {
       }
     }
     throw new Error('Arweave request exhausted its retry budget');
+  }
+
+  private ensureHeader(gateway: string, operation: Operation): Promise<void> {
+    const existing = this.headers.get(gateway);
+    if (existing) return existing;
+    const pending = this.fetch(gateway, operation)
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        if (this.headers.get(gateway) === pending) this.headers.delete(gateway);
+        throw error;
+      });
+    this.headers.set(gateway, pending);
+    return pending;
   }
 
   private async fetch(gateway: string, operation: Operation): Promise<string> {

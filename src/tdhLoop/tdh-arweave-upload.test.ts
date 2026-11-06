@@ -104,9 +104,9 @@ describe('TDH Arweave gateway uploads', () => {
       chunkCalls.map(([input]) => new URL(String(input)).hostname)
     ).toEqual(['ardrive.net', 'turbo-gateway.com']);
     expect(chunkCalls[0][1]!.body).toBe(chunkCalls[1][1]!.body);
-    expect(
-      fetch.mock.calls.filter(([input]) => path(input) === '/tx')
-    ).toHaveLength(1);
+    const headers = fetch.mock.calls.filter(([input]) => path(input) === '/tx');
+    expect(headers).toHaveLength(2);
+    expect(headers[0][1]!.body).toBe(headers[1][1]!.body);
     expect(Arweave.crypto.sign).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringMatching(
@@ -116,6 +116,35 @@ describe('TDH Arweave gateway uploads', () => {
     expect(JSON.stringify(logger.warn.mock.calls)).not.toMatch(
       /private-marker|private upstream trace/
     );
+  });
+
+  it('registers a fallback header once for concurrent chunks before sending their proofs', async () => {
+    const fetch = setup();
+    const registered = new Set<string>();
+    const accepted = new Set<string>();
+    fetch.mockImplementation(async (input, init) => {
+      if (init?.method === 'GET') return metadata(input);
+      const gateway = new URL(String(input)).hostname;
+      if (path(input) === '/tx') {
+        registered.add(gateway);
+        return new Response('');
+      }
+      if (gateway === 'ardrive.net') return new Response('{}', { status: 500 });
+      if (!registered.has(gateway)) {
+        return new Response('{"error":"data_root_not_found"}', { status: 400 });
+      }
+      accepted.add(JSON.parse(init!.body as string).offset);
+      return new Response('');
+    });
+    await uploadTdhCsvToArweave('x'.repeat(2_300_000), key, logger);
+    const headers = fetch.mock.calls.filter(([input]) => path(input) === '/tx');
+    expect(headers.map(([input]) => new URL(String(input)).hostname)).toEqual([
+      'ardrive.net',
+      'turbo-gateway.com'
+    ]);
+    expect(headers[0][1]!.body).toBe(headers[1][1]!.body);
+    expect(accepted.size).toBe(9);
+    expect(Arweave.crypto.sign).toHaveBeenCalledTimes(1);
   });
 
   it('retries a lost header acknowledgement with the identical signed transaction', async () => {
