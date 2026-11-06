@@ -132,7 +132,7 @@ export async function deleteTelemetryRowsBefore(
   for (const table of TELEMETRY_TABLES) {
     for (let batch = 0; batch < RETENTION_MAX_BATCHES_PER_TABLE; batch++) {
       const result = await sqlExecutor.execute(
-        `DELETE FROM ${table} WHERE day < :cutoffDay LIMIT ${RETENTION_DELETE_BATCH}`,
+        `DELETE FROM ${table} WHERE day < :cutoffDay ORDER BY day LIMIT ${RETENTION_DELETE_BATCH}`,
         { cutoffDay }
       );
       const affected = sqlExecutor.getAffectedRows(result);

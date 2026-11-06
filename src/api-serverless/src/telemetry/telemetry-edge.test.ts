@@ -59,6 +59,14 @@ describe('requireTelemetryEdge', () => {
     expect(reachedRoute).toBe(0);
   });
 
+  it('hardens every /e response, including rejections', async () => {
+    const rejected = await post('/api/e');
+    expect(rejected.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(rejected.headers.get('cache-control')).toBe('no-store');
+    const accepted = await post('/api/e', { 'x-6529-edge-auth': EDGE_SECRET });
+    expect(accepted.headers.get('x-content-type-options')).toBe('nosniff');
+  });
+
   it('lets edge requests through', async () => {
     expect(
       (await post('/api/e', { 'x-6529-edge-auth': EDGE_SECRET })).status
