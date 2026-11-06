@@ -15,16 +15,10 @@ import { Logger } from '../logging';
 import { fetchAllOwnerBalances } from '../ownersBalancesLoop/db.owners_balances';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
+import { uploadTdhCsvToArweave } from '@/tdhLoop/tdh-arweave-upload';
+import { JWKInterface } from 'arweave/node/lib/wallet';
 
 let logger: Logger;
-
-const Arweave = require('arweave');
-
-const myarweave = Arweave.init({
-  host: 'arweave.net',
-  port: 443,
-  protocol: 'https'
-});
 
 type TDHUpload = (UploadFieldsWallet | UploadFieldsConsolidation)[];
 
@@ -167,32 +161,20 @@ async function persistUpload(
   const size = csv.length / (1024 * 1024);
   logger.info(`[CSV CREATED - SIZE ${size.toFixed(2)} MB]`);
 
-  const arweaveKey = process.env.ARWEAVE_KEY
-    ? JSON.parse(process.env.ARWEAVE_KEY)
-    : {};
-
-  const transaction = await myarweave.createTransaction(
-    { data: Buffer.from(csv) },
-    arweaveKey
-  );
-
-  transaction.addTag('Content-Type', 'text/csv');
-
-  logger.info(`[SIGNING ARWEAVE TRANSACTION]`);
-
-  await myarweave.transactions.sign(transaction, arweaveKey);
-
-  const uploader = await myarweave.transactions.getUploader(transaction);
-
-  while (!uploader.isComplete) {
-    await uploader.uploadChunk();
-    logger.info(
-      `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
-    );
+  if (!process.env.ARWEAVE_KEY) throw new Error('ARWEAVE_KEY not set');
+  let arweaveKey: JWKInterface;
+  try {
+    arweaveKey = JSON.parse(process.env.ARWEAVE_KEY);
+  } catch {
+    // JSON parser diagnostics can include fragments of the private key.
+    throw new Error('ARWEAVE_KEY invalid JSON');
   }
-
-  const url = `https://arweave.net/${transaction.id}`;
-  const cloudfrontUrl = `${CLOUDFRONT_LINK}/arweave/${transaction.id}`;
+  const { url, transactionId } = await uploadTdhCsvToArweave(
+    csv,
+    arweaveKey,
+    logger
+  );
+  const cloudfrontUrl = `${CLOUDFRONT_LINK}/arweave/${transactionId}`;
 
   if (isConsolidation) {
     await persistConsolidatedTdhUpload(block, dateString, url);
@@ -200,7 +182,7 @@ async function persistUpload(
     await persistTdhUpload(block, dateString, url);
   }
 
-  await persistCsvToS3(csv, transaction.id);
+  await persistCsvToS3(csv, transactionId);
 
   logger.info(`[ARWEAVE LINK ${url}]`);
   logger.info(`[ARWEAVE S3 MIRROR ${cloudfrontUrl}]`);
