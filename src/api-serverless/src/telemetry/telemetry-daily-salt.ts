@@ -24,6 +24,7 @@ const SALT_BYTES = 32;
 const REDIS_TIMEOUT_MS = 250;
 
 let current: TelemetryDailySalt | null = null;
+let loading: { day: string; promise: Promise<Buffer | null> } | null = null;
 
 export function utcDay(now: Date): string {
   return now.toISOString().slice(0, 10);
@@ -76,23 +77,43 @@ function destroyCurrent() {
   current = null;
 }
 
+function loadSharedSaltOnce(day: string, now: Date): Promise<Buffer | null> {
+  if (loading?.day !== day) {
+    const promise = loadSharedSalt(day, now).finally(() => {
+      if (loading?.promise === promise) {
+        loading = null;
+      }
+    });
+    loading = { day, promise };
+  }
+  return loading.promise;
+}
+
 export async function getTelemetryDailySalt(
   now: Date = new Date()
 ): Promise<TelemetryDailySalt> {
   const day = utcDay(now);
   if (current && current.day !== day) {
+    // UTC midnight: the previous salt is wiped and can never be used again.
     destroyCurrent();
   }
   if (current?.shared) {
     return current;
   }
-  const shared = await loadSharedSalt(day, now);
+  const shared = await loadSharedSaltOnce(day, now);
+  if (current?.day === day && current.shared) {
+    return current;
+  }
   if (shared) {
-    destroyCurrent();
+    // Replaces at most a same-day per-process fallback, which was never
+    // used to count uniques; it is dropped rather than wiped in case an
+    // in-flight request still holds it.
     current = { day, salt: shared, shared: true };
     return current;
   }
-  current ??= { day, salt: randomBytes(SALT_BYTES), shared: false };
+  if (current?.day !== day) {
+    current = { day, salt: randomBytes(SALT_BYTES), shared: false };
+  }
   return current;
 }
 
@@ -109,4 +130,5 @@ export function telemetryDailyHash(
 /** Test hook: forget the in-process salt. */
 export function resetTelemetryDailySaltForTests() {
   destroyCurrent();
+  loading = null;
 }

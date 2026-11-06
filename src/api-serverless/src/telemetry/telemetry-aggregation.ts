@@ -125,12 +125,23 @@ export function analyticsDimsKey(
   return createHash('sha256').update(canonical).digest('hex');
 }
 
-/** Canonical `key=value&key=value` form, sorted by key. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) {
+    return -1;
+  }
+  return a > b ? 1 : 0;
+}
+
+/**
+ * Canonical `key=value&key=value`, sorted by key code units so every host
+ * produces the same string (and dims_key) regardless of locale. Registry
+ * keys and values never contain `&` or `=` (checked by a test).
+ */
 export function canonicalProps(
   props: Readonly<Record<string, string>>
 ): string {
   return Object.keys(props)
-    .sort((a, b) => a.localeCompare(b))
+    .sort(compareCodeUnits)
     .map((key) => `${key}=${props[key]}`)
     .join('&');
 }

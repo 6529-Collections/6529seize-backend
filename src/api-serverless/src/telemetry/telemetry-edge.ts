@@ -2,6 +2,9 @@ import { NextFunction, Request, Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import { env } from '@/env';
 import { getIp, normalizeIp } from '@/api/policies/policies';
+import { Logger } from '@/logging';
+
+const logger = Logger.get('TELEMETRY_EDGE');
 
 /**
  * Viewer facts for telemetry requests.
@@ -61,6 +64,10 @@ export function isTrustedTelemetryEdge(req: Request): boolean {
  */
 export function requireTelemetryEdge() {
   return (req: Request, res: Response, next: NextFunction) => {
+    // These routes end before the shared helmet middleware runs.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'same-origin');
+    res.setHeader('Cache-Control', 'no-store');
     if (
       !env.getStringOrNull('TELEMETRY_EDGE_SECRET') ||
       isTrustedTelemetryEdge(req)
@@ -68,9 +75,30 @@ export function requireTelemetryEdge() {
       next();
       return;
     }
-    res.setHeader('Cache-Control', 'no-store');
+    noteRejectedEdgeRequest();
     res.status(403).end();
   };
+}
+
+const REJECTION_LOG_INTERVAL_MS = 60_000;
+let rejectedSinceLastLog = 0;
+let lastRejectionLogMs = 0;
+
+/**
+ * At most one warning a minute per instance, with a count only, so an edge
+ * secret that drifted between CloudFront and the API is visible without
+ * logging anything about the rejected requests.
+ */
+function noteRejectedEdgeRequest() {
+  rejectedSinceLastLog += 1;
+  const now = Date.now();
+  if (now - lastRejectionLogMs >= REJECTION_LOG_INTERVAL_MS) {
+    logger.warn(
+      `Telemetry edge guard rejected ${rejectedSinceLastLog} request(s) without a valid edge secret`
+    );
+    rejectedSinceLastLog = 0;
+    lastRejectionLogMs = now;
+  }
 }
 
 /**
