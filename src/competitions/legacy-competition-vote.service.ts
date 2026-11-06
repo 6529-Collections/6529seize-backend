@@ -43,11 +43,11 @@ export async function voteForMigratedLegacyEntry(
   // This legacy request has no competition-bound signature envelope.
   if (competition.voting.signature_required)
     throw new ForbiddenException(
-      'This competition requires a signed vote; use the competition voting endpoint'
+      'This decision requires a signed vote; use the decision voting endpoint'
     );
   if (isCompetitionDecisionPending(competition, now))
     throw new ForbiddenException(
-      "Wave has unresolved decisions and votes can't be edited at the moment. Try again later"
+      "Wave has pending results and votes can't be edited at the moment. Try again later"
     );
   if (
     competition.voting.starts_at !== null &&

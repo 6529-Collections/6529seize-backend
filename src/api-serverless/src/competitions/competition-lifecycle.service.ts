@@ -185,7 +185,7 @@ export class CompetitionLifecycleService {
       ctx
     );
     if (record?.wave_id !== waveId)
-      competitionConflict('Native competition configuration is unavailable');
+      competitionConflict('Native decision configuration is unavailable');
     return this.commandConfiguration(record, ctx);
   }
 
@@ -217,9 +217,7 @@ export class CompetitionLifecycleService {
             CompetitionLifecycle.PUBLISHED
           ].includes(record.lifecycle)
         )
-          competitionConflict(
-            'Clone a terminal competition to change its rules'
-          );
+          competitionConflict('Clone a terminal decision to change its rules');
         const previous = await this.commandConfiguration(record, tx);
         if (
           record.published_at !== null &&
@@ -245,7 +243,7 @@ export class CompetitionLifecycleService {
           record.lifecycle === CompetitionLifecycle.PUBLISHED &&
           config.rules.type !== previous.rules.type
         )
-          competitionConflict('Published competition type cannot change');
+          competitionConflict('Published decision type cannot change');
         if (
           rulesChanged &&
           originalPolicy === null &&
@@ -345,7 +343,7 @@ export class CompetitionLifecycleService {
     await administerCompetitionWave(waveId, ctx);
     const reason = request.reason?.trim() || null;
     if (action === 'pause' && !reason)
-      throw new BadRequestException('A reason is required to pause decisions');
+      throw new BadRequestException('A reason is required to pause results');
     const actor = competitionActor(ctx);
     return competitionCommandRepository.command(
       actor,
@@ -369,7 +367,7 @@ export class CompetitionLifecycleService {
               CompetitionLifecycle.ARCHIVED
             ].includes(record.lifecycle)
           )
-            competitionConflict('Only terminal competitions can be cloned');
+            competitionConflict('Only terminal decisions can be cloned');
           const clone = newRecord(waveId, config, now);
           await this.persistNew(clone, config, actor, tx);
           return competitionService.getCompetition(waveId, clone.id, tx);
@@ -454,7 +452,7 @@ export class CompetitionLifecycleService {
     }
     if (action === 'archive') {
       if (record.lifecycle === CompetitionLifecycle.ARCHIVED)
-        competitionConflict('Competition is already archived');
+        competitionConflict('Decision is already archived');
       return {
         ...record,
         lifecycle: CompetitionLifecycle.ARCHIVED,
@@ -463,7 +461,7 @@ export class CompetitionLifecycleService {
       };
     }
     if (record.lifecycle !== CompetitionLifecycle.PUBLISHED)
-      competitionConflict('This action requires a published competition');
+      competitionConflict('This action requires a published decision');
     return record;
   }
 
@@ -475,7 +473,9 @@ export class CompetitionLifecycleService {
       config.rules.decisions_strategy &&
       config.rules.decisions_strategy.first_decision_time <= now
     )
-      throw new BadRequestException('The first decision must be in the future');
+      throw new BadRequestException(
+        'The first results time must be in the future'
+      );
     for (const period of [config.participation.period, config.voting.period]) {
       if (
         period?.max !== null &&
@@ -483,7 +483,7 @@ export class CompetitionLifecycleService {
         period.max <= now
       )
         throw new BadRequestException(
-          'Competition periods must not have ended before publication'
+          'Decision periods must not have ended before publication'
         );
     }
   }

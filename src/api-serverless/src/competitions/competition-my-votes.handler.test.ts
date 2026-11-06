@@ -135,7 +135,7 @@ it.each(['vote_amount', 'leaderboard', 'last_voted'])(
         handleListCompetitionMyVotesV3(
           request({ sort: other, cursor: first.next_cursor })
         )
-      ).rejects.toThrow('Invalid competition cursor');
+      ).rejects.toThrow('Invalid decision cursor');
     }
   }
 );

@@ -407,7 +407,7 @@ export class MemeCollaborationsService {
         { id: competitionId },
         ctx
       );
-      if (!competition) throw new NotFoundException('Competition not found');
+      if (!competition) throw new NotFoundException('Decision not found');
       const config =
         typeof competition.participation_config === 'string'
           ? JSON.parse(competition.participation_config)

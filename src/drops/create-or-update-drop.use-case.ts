@@ -752,7 +752,7 @@ export class CreateOrUpdateDropUseCase {
       )
     )
       throw new BadRequestException(
-        'Competition identity submission strategy is misconfigured'
+        'Decision identity submission strategy is misconfigured'
       );
     const profileId = await this.resolveIdentityNominationProfileId(
       nominations[0].data_value,
@@ -2381,7 +2381,7 @@ export class CreateOrUpdateDropUseCase {
         wave.next_decision_time < Time.currentMillis()
       ) {
         throw new ForbiddenException(
-          `Wave has unresolved decisions and doesn't accept new drops or drop updates at the moment. Try again later`
+          `Wave has pending results and doesn't accept new drops or drop updates at the moment. Try again later`
         );
       }
     }

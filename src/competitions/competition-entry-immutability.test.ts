@@ -64,10 +64,10 @@ it.each(Object.values(CompetitionEntryStatus))(
       .mockResolvedValue(entries);
     await expect(
       competitionEntryDropHooks.prepareUpdate(model, async () => {}, ctx)
-    ).rejects.toThrow('Competition submissions cannot be edited');
+    ).rejects.toThrow('Decision submissions cannot be edited');
     await expect(
       competitionEntryDropHooks.preparePresentationUpdate(drop, entries, ctx)
-    ).rejects.toThrow('Competition submissions cannot be edited');
+    ).rejects.toThrow('Decision submissions cannot be edited');
   }
 );
 
