@@ -124,11 +124,9 @@ and elapsed duration with `native_competition_execution_failed`.
   submissions, voting and decisions. A decision holding that lock finishes first;
   later attempts observe the archived lifecycle and do nothing. Existing
   entries, votes, winners and awards are retained without manufacturing an end
-  time. Any historical entries or votes require a non-blank lifecycle audit
-  reason; deleted entries and reset votes count. The additive
-  `permissions.archive_requires_reason` detail field guides the administrator's dialog;
-  collection reads omit it to avoid per-item activity probes.
-  The archive command checks again inside its transaction.
+  time. Archive does not require or retain a reason. Pause reasons remain in
+  the separate public pause history. Lifecycle audit events retain lifecycle,
+  actor and timestamp only.
   Existing Main Stage winners remain eligible for delayed claim delivery after
   archival. Deploy `claimsBuilder` first so queued claims accept archived winners,
   then `waveDecisionExecutionLoop` so delayed decisions still enqueue those claims.
@@ -136,7 +134,15 @@ and elapsed duration with `native_competition_execution_failed`.
   claims/decision invocations to drain before deploying `api`, then the dependent
   frontend controls. Both workers have a 900-second maximum runtime; the new
   consumers remain compatible with the existing API during this window.
-  No schema change is required.
+  Removing the lifecycle audit reason column requires updating all writers first:
+  deploy `waveDecisionExecutionLoop`, then `api`. Allow 900 seconds after the
+  worker update and 30 seconds after the API update for old invocations to drain.
+  Then deploy `dbMigrationsLoop` with `db_schema_scope=competition-lifecycle-events`
+  to synchronize only that entity and drop `competition_lifecycle_events.reason`,
+  including its stored values. Deploy the dependent frontend last. Other lifecycle
+  fields and `competition_pauses.reason` remain intact. Do not roll back
+  to a reason-writing API or worker after the column has been dropped; first
+  restore the nullable column, whose old contents cannot be recovered by sync.
   Manual end/cancel and entry withdrawal/disqualification are not exposed.
 - Dedicated native submission content is immutable, including unsigned entries.
   A migrated original legacy submission retains its original pre-winner edit

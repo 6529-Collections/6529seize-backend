@@ -120,6 +120,7 @@ ${indent(yamlList(serviceNames))}
           - wave-score-input-index
           - nft-history-events
           - nft-history-replay
+          - competition-lifecycle-events
       release_pull_request:
         type: string
         description: 'Merged PR represented by this production release'
@@ -195,7 +196,7 @@ jobs:
           set -euo pipefail
           [[ "$INPUT_ENVIRONMENT" =~ ^(staging|prod)$ ]] || exit 1
           [[ "$INPUT_SERVICE" =~ ^(${serviceCasePattern})$ ]] || exit 1
-          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|maintenance|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|market-depth-publication-lock|voting-credit-returns|wave-score-input-index|nft-history-events|nft-history-replay)$ ]] || exit 1
+          [[ "$DB_SCHEMA_SCOPE" =~ ^(full|maintenance|wallet-transfer-analysis|claims-media-upload|nft-link-page-retry|market-depth-publication-lock|voting-credit-returns|wave-score-input-index|nft-history-events|nft-history-replay|competition-lifecycle-events)$ ]] || exit 1
           if [ "$DB_SCHEMA_SCOPE" != full ] && [ "$INPUT_SERVICE" != dbMigrationsLoop ]; then
             echo "db_schema_scope is only supported for dbMigrationsLoop" >&2
             exit 1

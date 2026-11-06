@@ -294,13 +294,12 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
     record: Pick<CompetitionEntity, 'id' | 'wave_id' | 'lifecycle'>,
     previous: CompetitionLifecycle | null,
     actorId: string,
-    reason: string | null,
     ctx: RequestContext
   ): Promise<void> {
     return this.timed('recordLifecycle', ctx, async () => {
       await this.db.execute(
-        `INSERT INTO ${COMPETITION_LIFECYCLE_EVENTS_TABLE} (id, competition_id, wave_id, previous_lifecycle, lifecycle, actor_id, reason, created_at)
-       VALUES (:id, :competitionId, :waveId, :previous, :lifecycle, :actorId, :reason, :now)`,
+        `INSERT INTO ${COMPETITION_LIFECYCLE_EVENTS_TABLE} (id, competition_id, wave_id, previous_lifecycle, lifecycle, actor_id, created_at)
+       VALUES (:id, :competitionId, :waveId, :previous, :lifecycle, :actorId, :now)`,
         {
           id: randomUUID(),
           competitionId: record.id,
@@ -308,7 +307,6 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
           previous,
           lifecycle: record.lifecycle,
           actorId,
-          reason,
           now: Date.now()
         },
         options(ctx)
