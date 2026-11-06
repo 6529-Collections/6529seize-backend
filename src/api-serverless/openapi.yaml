@@ -42917,8 +42917,8 @@ components:
     ApiTelemetryDashboard:
       type: object
       required:
-        - from
-        - to
+        - start_day
+        - end_day
         - suppression_threshold
         - daily
         - top_routes
@@ -42933,10 +42933,12 @@ components:
         - product_events
         - reports
       properties:
-        from:
+        start_day:
           type: string
-        to:
+          description: First day of the range (YYYY-MM-DD, UTC).
+        end_day:
           type: string
+          description: Last day of the range (YYYY-MM-DD, UTC).
         suppression_threshold:
           type: integer
         daily:
@@ -43211,17 +43213,17 @@ components:
       type: object
       required:
         - type
-        - from
-        - to
+        - start_day
+        - end_day
       properties:
         type:
           type: string
           enum:
             - week
             - month
-        from:
+        start_day:
           type: string
-        to:
+        end_day:
           type: string
     ApiTelemetryPublicStats:
       type: object

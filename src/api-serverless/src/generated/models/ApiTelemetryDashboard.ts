@@ -17,8 +17,14 @@ import { ApiTelemetryVitalsSummary } from '../models/ApiTelemetryVitalsSummary';
 import { HttpFile } from '../http/http';
 
 export class ApiTelemetryDashboard {
-    '_from': string;
-    'to': string;
+    /**
+    * First day of the range (YYYY-MM-DD, UTC).
+    */
+    'start_day': string;
+    /**
+    * Last day of the range (YYYY-MM-DD, UTC).
+    */
+    'end_day': string;
     'suppression_threshold': number;
     'daily': Array<ApiTelemetryDailyTotals>;
     'top_routes': Array<ApiTelemetryCell>;
@@ -39,14 +45,14 @@ export class ApiTelemetryDashboard {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "_from",
-            "baseName": "from",
+            "name": "start_day",
+            "baseName": "start_day",
             "type": "string",
             "format": ""
         },
         {
-            "name": "to",
-            "baseName": "to",
+            "name": "end_day",
+            "baseName": "end_day",
             "type": "string",
             "format": ""
         },

@@ -147,8 +147,8 @@ export async function handleGetTelemetryDashboard(
     fetchHealthCells(range)
   ]);
   return {
-    from: range.from,
-    to: range.to,
+    start_day: range.from,
+    end_day: range.to,
     suppression_threshold: SMALL_CELL_THRESHOLD,
     daily: dailyTotals(
       daysBetween(range.from, range.to),
@@ -270,7 +270,7 @@ export async function handleGetTelemetryPublicStats(
     fetchVitalsBuckets(period)
   ]);
   return {
-    generated_at: new Date().toISOString(),
+    generated_at: new Date(),
     suppression_threshold: SMALL_CELL_THRESHOLD,
     daily: dailyTotals(
       daysBetween(daily.from, daily.to),
@@ -283,8 +283,8 @@ export async function handleGetTelemetryPublicStats(
         query.period === 'month'
           ? ApiTelemetryPeriodTypeEnum.Month
           : ApiTelemetryPeriodTypeEnum.Week,
-      from: period.from,
-      to: period.to
+      start_day: period.from,
+      end_day: period.to
     },
     top_routes: toSuppressedCells(routes, ['route'], 25),
     referrers: toSuppressedCells(entries, ['referrer_domain'], 25),

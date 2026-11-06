@@ -125,7 +125,7 @@ describe('telemetry dashboards', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     const stats = await handleGetTelemetryPublicStats({ query: {} } as any);
     const today = new Date().toISOString().slice(0, 10);
-    expect(stats.period.to < today).toBe(true);
+    expect(stats.period.end_day < today).toBe(true);
     expect(stats.daily.every((day) => day.day < today)).toBe(true);
   });
 

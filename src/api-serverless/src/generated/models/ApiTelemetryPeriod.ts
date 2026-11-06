@@ -14,8 +14,8 @@ import { HttpFile } from '../http/http';
 
 export class ApiTelemetryPeriod {
     'type': ApiTelemetryPeriodTypeEnum;
-    '_from': string;
-    'to': string;
+    'start_day': string;
+    'end_day': string;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -29,14 +29,14 @@ export class ApiTelemetryPeriod {
             "format": ""
         },
         {
-            "name": "_from",
-            "baseName": "from",
+            "name": "start_day",
+            "baseName": "start_day",
             "type": "string",
             "format": ""
         },
         {
-            "name": "to",
-            "baseName": "to",
+            "name": "end_day",
+            "baseName": "end_day",
             "type": "string",
             "format": ""
         }    ];
