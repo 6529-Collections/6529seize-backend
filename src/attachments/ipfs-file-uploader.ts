@@ -9,6 +9,8 @@ type IpfsDirectoryFile = {
   contentType: string;
 };
 
+const FILE_UPLOAD_PATH = '/api/v0/add?pin=true';
+
 export class IpfsFileUploader {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -21,6 +23,40 @@ export class IpfsFileUploader {
     url: string;
     files: Record<string, string>;
   }> {
+    const uploadPath =
+      process.env.IPFS_API_UPLOAD_PATH ??
+      '/api/v0/add?pin=true&wrap-with-directory=true';
+    const cid = await this.add(files, uploadPath);
+    const rootUrl = `ipfs://${cid}`;
+    const fileUrls = files.reduce(
+      (acc, file) => {
+        acc[file.fileName] = `${rootUrl}/${encodeURIComponent(file.fileName)}`;
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+    this.logger.info(`Uploaded attachment bundle to IPFS cid=${cid}`);
+    return {
+      cid,
+      url: rootUrl,
+      files: fileUrls
+    };
+  }
+
+  /** Adds and pins one file on its own, without a wrapping directory. */
+  public async uploadFile(file: IpfsDirectoryFile): Promise<{
+    cid: string;
+    url: string;
+  }> {
+    const cid = await this.add([file], FILE_UPLOAD_PATH);
+    this.logger.info(`Uploaded file to IPFS cid=${cid}`);
+    return { cid, url: `ipfs://${cid}` };
+  }
+
+  private async add(
+    files: IpfsDirectoryFile[],
+    uploadPath: string
+  ): Promise<string> {
     const apiEndpoint = process.env.IPFS_API_ENDPOINT;
     if (!apiEndpoint) {
       throw new Error('IPFS_API_ENDPOINT not configured');
@@ -34,9 +70,6 @@ export class IpfsFileUploader {
       });
     }
 
-    const uploadPath =
-      process.env.IPFS_API_UPLOAD_PATH ??
-      '/api/v0/add?pin=true&wrap-with-directory=true';
     const response = await fetch(
       `${apiEndpoint.replace(/\/$/, '')}${uploadPath}`,
       {
@@ -53,22 +86,7 @@ export class IpfsFileUploader {
       );
     }
 
-    const items = this.extractItems(body);
-    const cid = this.extractRootCid(items);
-    const rootUrl = `ipfs://${cid}`;
-    const fileUrls = files.reduce(
-      (acc, file) => {
-        acc[file.fileName] = `${rootUrl}/${encodeURIComponent(file.fileName)}`;
-        return acc;
-      },
-      {} as Record<string, string>
-    );
-    this.logger.info(`Uploaded attachment bundle to IPFS cid=${cid}`);
-    return {
-      cid,
-      url: rootUrl,
-      files: fileUrls
-    };
+    return this.extractRootCid(this.extractItems(body));
   }
 
   private extractItems(responseBody: string): Record<string, unknown>[] {
