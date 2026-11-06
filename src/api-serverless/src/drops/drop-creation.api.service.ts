@@ -79,6 +79,10 @@ import {
   readChatHistoryPurgeToken
 } from '@/api/waves/chat-history-purge-token';
 import { ApiWaveChatHistoryPurgePlan } from '@/api/generated/models/ApiWaveChatHistoryPurgePlan';
+import {
+  DropPostHops,
+  serverReceivedAtFromTimer
+} from '@/ws-delivery/wave-delivery-metrics';
 
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
@@ -128,6 +132,8 @@ export class DropCreationApiService {
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
+    const hops = new DropPostHops();
+    const serverReceivedAt = serverReceivedAtFromTimer(ctx.timer);
     const proxyId =
       authorId === representativeId ? undefined : representativeId;
     const model = this.dropsMappers.createDropApiToUseCaseModel({
@@ -168,13 +174,14 @@ export class DropCreationApiService {
       createModel,
       ctx
     );
+    hops.set('drop_pre_commit_ms', hops.elapsed());
     const {
       drop,
       pendingPushNotificationIds,
       dmUnreadRecipientIds,
       dailyActivityCreditRequestEnqueued
-    } = await this.dropsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
+    } = await hops.time('drop_commit_ms', () =>
+      this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
         return await this.createDropWithGivenConnection(
           {
             model: createModel,
@@ -186,34 +193,56 @@ export class DropCreationApiService {
           normalizeCreateDropPollRequest(createDropRequest.poll),
           { timer: ctx.timer!, connection }
         );
-      }
+      })
     );
+    const committedAt = hops.elapsed();
     if (dailyActivityCreditRequestEnqueued) {
-      await this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx);
+      await hops.time('post_commit_daily_activity_ms', () =>
+        this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx)
+      );
     }
-    await waveScoreService.requestWaveScoreRefreshBestEffort(
-      [createModel.wave_id],
-      WaveScoreDirtyRefreshReason.DROP_CHANGED,
-      ctx
+    await hops.time('post_commit_wave_score_ms', () =>
+      waveScoreService.requestWaveScoreRefreshBestEffort(
+        [createModel.wave_id],
+        WaveScoreDirtyRefreshReason.DROP_CHANGED,
+        ctx
+      )
     );
-    await invalidateWaveUnreadCacheForWave(createModel.wave_id);
-    await this.sendPendingPushNotifications({
-      dropId: drop.id,
-      pendingPushNotificationIds
-    });
+    await hops.time('post_commit_unread_cache_ms', () =>
+      invalidateWaveUnreadCacheForWave(createModel.wave_id)
+    );
+    await hops.time('post_commit_push_ms', () =>
+      this.sendPendingPushNotifications({
+        dropId: drop.id,
+        pendingPushNotificationIds
+      })
+    );
     void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
-    await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
-    if (createDropRequest.collaborator_ids?.length) {
-      await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
-        authorId,
-        ...createDropRequest.collaborator_ids
-      ]);
+    await hops.time('post_commit_fanout_ms', () =>
+      this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx)
+    );
+    const collaboratorIds = createDropRequest.collaborator_ids ?? [];
+    if (collaboratorIds.length) {
+      await hops.time('post_commit_collaborators_ms', () =>
+        this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+          authorId,
+          ...collaboratorIds
+        ])
+      );
     }
-    await this.notifyDmUnreadStateChanged({
-      waveId: createModel.wave_id,
-      recipientIds: dmUnreadRecipientIds,
-      ctx
-    });
+    await hops.time('post_commit_dm_unread_ms', () =>
+      this.notifyDmUnreadStateChanged({
+        waveId: createModel.wave_id,
+        recipientIds: dmUnreadRecipientIds,
+        ctx
+      })
+    );
+    hops.set('drop_post_commit_ms', hops.elapsed() - committedAt);
+    hops.set(
+      'drop_post_total_ms',
+      serverReceivedAt === null ? hops.elapsed() : Date.now() - serverReceivedAt
+    );
+    hops.emit({ drop_id: drop.id, wave_id: createModel.wave_id });
     return drop;
   }
 
