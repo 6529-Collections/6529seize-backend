@@ -457,6 +457,80 @@ describe('WsListenersNotifier', () => {
     );
   });
 
+  describe('cheaper fan-out on the #2111 send path (1.2)', () => {
+    const recipients = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        connectionId: `c-${index}`,
+        profileId: index % 5 === 0 ? null : `p-${index}`
+      }));
+
+    it('sends one shared payload with one delivery batch', async () => {
+      const appWebSockets = {
+        send: jest.fn().mockResolvedValue({ status: 'sent' })
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        {
+          getCurrentlyOnlineCommunityMemberConnectionIds: jest
+            .fn()
+            .mockResolvedValue(recipients(40))
+        } as never
+      );
+
+      await notifier.notifyAboutDropUpdate(createDrop('hello'), {});
+
+      const calls = appWebSockets.send.mock.calls as unknown as [
+        { message: string; batch: unknown }
+      ][];
+      expect(calls).toHaveLength(40);
+      expect(calls.every(([call]) => call.batch === calls[0][0].batch)).toBe(
+        true
+      );
+      const bodies = new Set(
+        calls.map(([call]) => {
+          const { sent_at, server_received_at, ...frame } = JSON.parse(
+            call.message
+          );
+          return JSON.stringify(frame);
+        })
+      );
+      expect(bodies.size).toBe(1);
+    });
+
+    it('awaits deferred bookkeeping before the fan-out returns', async () => {
+      let release!: () => void;
+      const bookkeeping = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const appWebSockets = {
+        send: jest.fn(async ({ batch }) => {
+          batch.defer(bookkeeping);
+          return { status: 'sent' };
+        })
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        {
+          getCurrentlyOnlineCommunityMemberConnectionIds: jest
+            .fn()
+            .mockResolvedValue(recipients(3))
+        } as never
+      );
+      let done = false;
+      const fanout = notifier
+        .notifyAboutDropUpdate(createDrop('hello'), {})
+        .then(() => {
+          done = true;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(appWebSockets.send).toHaveBeenCalledTimes(3);
+      expect(done).toBe(false);
+      release();
+      await fanout;
+      expect(done).toBe(true);
+    });
+  });
+
   describe('delivery measurement (1.0)', () => {
     const originalLambda = process.env.AWS_LAMBDA_FUNCTION_NAME;
     let stdout: jest.SpyInstance;
@@ -527,7 +601,8 @@ describe('WsListenersNotifier', () => {
         drop_id: 'drop-1',
         wave_id: 'wave-1',
         fanout_recipients: 2,
-        fanout_serializations: 2,
+        // Both recipients share one audience class (#2321): one payload.
+        fanout_serializations: 1,
         fanout_connection_reads: 2,
         fanout_sent: 1,
         fanout_gone: 1

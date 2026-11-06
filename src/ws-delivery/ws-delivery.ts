@@ -24,6 +24,18 @@ export type WebSocketDeliveryResult =
   | { status: 'gone' }
   | { status: 'failed' };
 
+/**
+ * Per-fan-out batching hooks. A fan-out to many connections passes one
+ * batch so it can (a) take the bookkeeping write after a successful send off
+ * each send's critical path and await all of them once, and (b) write one
+ * aggregated EMF record instead of one log line per send.
+ */
+export interface DeliveryBatch {
+  /** Receives the post-send bookkeeping; the owner must await it. */
+  readonly defer: (settlement: Promise<unknown>) => void;
+  readonly metrics: DeliveryMetricsBatch;
+}
+
 interface DeliveryInput {
   connectionId: string;
   message: string;
@@ -31,6 +43,7 @@ interface DeliveryInput {
   close?: () => Promise<void>;
   recovery?: boolean;
   signal?: AbortSignal;
+  batch?: DeliveryBatch;
 }
 
 const logger = Logger.get('WEBSOCKET_DELIVERY');
@@ -73,12 +86,53 @@ type DeliveryMetric =
   | 'RecoveryUnavailable'
   | 'Cancelled';
 
+const ATTEMPTED_OUTCOMES: ReadonlySet<DeliveryMetric> = new Set<DeliveryMetric>(
+  ['Sent', 'Gone', 'Throttled', 'Failed', 'Cancelled']
+);
+
 function metric(outcome: DeliveryMetric, sdkAttempts = 0): void {
+  writeDeliveryMetrics(
+    { [outcome]: 1 },
+    sdkAttempts,
+    Math.max(0, sdkAttempts - 1)
+  );
+}
+
+/** Accumulates delivery outcomes for one fan-out; flush writes one record. */
+export class DeliveryMetricsBatch {
+  private counts: Partial<Record<DeliveryMetric, number>> = {};
+  private sdkAttempts = 0;
+  private sdkRetries = 0;
+
+  record(outcome: DeliveryMetric, sdkAttempts = 0): void {
+    this.counts[outcome] = (this.counts[outcome] ?? 0) + 1;
+    this.sdkAttempts += sdkAttempts;
+    this.sdkRetries += Math.max(0, sdkAttempts - 1);
+  }
+
+  flush(): void {
+    if (!Object.keys(this.counts).length) return;
+    writeDeliveryMetrics(this.counts, this.sdkAttempts, this.sdkRetries);
+    this.counts = {};
+    this.sdkAttempts = 0;
+    this.sdkRetries = 0;
+  }
+}
+
+// Fixed, low-cardinality dimensions. Never make a connection a metric dimension.
+function writeDeliveryMetrics(
+  counts: Partial<Record<DeliveryMetric, number>>,
+  sdkAttempts: number,
+  sdkRetries: number
+): void {
   if (!process.env.AWS_LAMBDA_FUNCTION_NAME) return;
+  const outcomes = Object.keys(counts) as DeliveryMetric[];
+  const attempted = outcomes
+    .filter((outcome) => ATTEMPTED_OUTCOMES.has(outcome))
+    .reduce((total, outcome) => total + (counts[outcome] ?? 0), 0);
   const environment = (process.env.SENTRY_ENVIRONMENT ?? '').includes('staging')
     ? 'staging'
     : 'prod';
-  // Fixed, low-cardinality dimensions. Never make a connection a metric dimension.
   try {
     process.stdout.write(
       `${JSON.stringify({
@@ -89,7 +143,10 @@ function metric(outcome: DeliveryMetric, sdkAttempts = 0): void {
               Namespace: '6529/WebSocketDelivery',
               Dimensions: [['Environment']],
               Metrics: [
-                { Name: outcome, Unit: 'Count' },
+                ...outcomes.map((outcome) => ({
+                  Name: outcome,
+                  Unit: 'Count'
+                })),
                 { Name: 'Attempted', Unit: 'Count' },
                 { Name: 'SdkAttempts', Unit: 'Count' },
                 { Name: 'SdkRetries', Unit: 'Count' }
@@ -98,23 +155,25 @@ function metric(outcome: DeliveryMetric, sdkAttempts = 0): void {
           ]
         },
         Environment: environment,
-        [outcome]: 1,
-        Attempted: [
-          'Sent',
-          'Gone',
-          'Throttled',
-          'Failed',
-          'Cancelled'
-        ].includes(outcome)
-          ? 1
-          : 0,
+        ...counts,
+        Attempted: attempted,
         SdkAttempts: sdkAttempts,
-        SdkRetries: Math.max(0, sdkAttempts - 1)
-      })}\n`
+        SdkRetries: sdkRetries
+      })}
+`
     );
   } catch {
     /* Telemetry must not alter delivery. */
   }
+}
+
+function record(
+  input: DeliveryInput,
+  outcome: DeliveryMetric,
+  sdkAttempts = 0
+): void {
+  if (input.batch) input.batch.metrics.record(outcome, sdkAttempts);
+  else metric(outcome, sdkAttempts);
 }
 
 function completedSdkAttempts(response: unknown): number {
@@ -155,20 +214,24 @@ export class WebSocketDelivery {
     const token = randomUUID();
     const claim = await this.claim(input, token);
     if (claim && !claim.acquired) {
-      metric('Deferred');
+      record(input, 'Deferred');
       return { status: 'resync_pending' };
     }
     if (await this.reconnectBlockedListener(input, token, claim))
       return { status: 'gone' };
     try {
       const response = await input.send();
-      await this.finish(input, token, claim, 'sent');
-      metric('Sent', completedSdkAttempts(response));
+      // A successful send's bookkeeping does not change its result, so a
+      // fan-out takes it off the critical path and awaits it before returning.
+      const finished = this.finish(input, token, claim, 'sent');
+      if (input.batch) input.batch.defer(finished);
+      else await finished;
+      record(input, 'Sent', completedSdkAttempts(response));
       return { status: 'sent' };
     } catch (error) {
       if (input.signal?.aborted) {
         await this.finish(input, token, claim, 'failed');
-        metric('Cancelled');
+        record(input, 'Cancelled');
         return { status: 'failed' };
       }
       return this.handleFailure(input, token, claim, error);
@@ -198,7 +261,7 @@ export class WebSocketDelivery {
     try {
       await input.close();
       await this.finish(input, token, claim, 'gone');
-      metric('Reconnected');
+      record(input, 'Reconnected');
       return true;
     } catch {
       try {
@@ -266,14 +329,14 @@ export class WebSocketDelivery {
     const failure = describeWebSocketSendFailure(input.message, error);
     if (failure.unavailable) {
       await this.finish(input, token, claim, 'gone');
-      metric('Gone', failure.diagnostic.sdk_attempts ?? 0);
+      record(input, 'Gone', failure.diagnostic.sdk_attempts ?? 0);
       return { status: 'gone' };
     }
     if (failure.diagnostic.error_category === 'THROTTLED') {
       return this.throttled(input, token, claim, failure.diagnostic);
     }
     await this.finish(input, token, claim, 'failed');
-    metric('Failed', failure.diagnostic.sdk_attempts ?? 0);
+    record(input, 'Failed', failure.diagnostic.sdk_attempts ?? 0);
     try {
       logger.error({
         ...failure.diagnostic,
@@ -296,7 +359,7 @@ export class WebSocketDelivery {
   ): Promise<WebSocketDeliveryResult> {
     const control = controlAcknowledgement(input.message);
     const firstFailure = await this.finish(input, token, claim, 'throttled');
-    metric('Throttled', diagnostic.sdk_attempts ?? 0);
+    record(input, 'Throttled', diagnostic.sdk_attempts ?? 0);
     if (firstFailure) {
       try {
         logger.warn({

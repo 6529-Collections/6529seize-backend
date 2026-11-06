@@ -53,6 +53,7 @@ import { NotFoundException, UnauthorisedException } from '@/exceptions';
 import { isExpectedClientError } from '@/operational-errors';
 import { typingFailureDetails } from './ws-typing-failure';
 import { forEachWebSocketRecipient } from '@/api/ws/ws-send-scheduler';
+import { DeliveryBatch, DeliveryMetricsBatch } from '@/ws-delivery/ws-delivery';
 import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import {
   anonymizeDropBroadcast,
@@ -385,6 +386,105 @@ export function serializeDropReactionUpdateForRecipient(
   );
 }
 
+const DEFAULT_VIEWER_CONTEXT = { author_blocked: false, drop_hidden: false };
+
+/**
+ * Authors whose identity changes what a recipient sees: those of drops in the
+ * tree (root, quotes, reply targets) that are not publicly visible. Mirrors
+ * the traversal and owner lookup in `applyGlobalModerationForRecipient`.
+ */
+function moderationRelevantAuthorIds(
+  drop: ApiDrop,
+  authorIdsByDropId: ReadonlyMap<string, string>
+): Set<string> {
+  const authors = new Set<string>();
+  // Same path-scoped cycle guard as applyGlobalModerationForRecipient, so
+  // both reach exactly the same nodes even when one id appears twice.
+  const visit = (
+    current: ApiDrop | ApiDropWithoutWave,
+    path: ReadonlySet<string>
+  ): void => {
+    const status =
+      current.moderation?.status ?? ApiDropModerationStatus.Visible;
+    if (status !== ApiDropModerationStatus.Visible) {
+      authors.add(authorIdsByDropId.get(current.id) ?? current.author.id);
+    }
+    if (path.has(current.id)) return;
+    const nextPath = new Set(path).add(current.id);
+    for (const part of current.parts) {
+      if (part.quoted_drop?.drop) visit(part.quoted_drop.drop, nextPath);
+    }
+    if (current.reply_to?.drop) visit(current.reply_to.drop, nextPath);
+  };
+  visit(drop, new Set<string>());
+  return authors;
+}
+
+/**
+ * Returns the serialized frame for a recipient, building it once per
+ * audience class. Everything recipient-specific in a drop frame is:
+ * - whether the recipient authored a drop in the tree that is not publicly
+ *   visible (moderation `can_view`),
+ * - their `viewer_context`,
+ * - their `credit_left` (participatory drops only).
+ * Recipients that agree on all three get the identical string, so a chat
+ * message to 1,000 sockets is usually serialized once.
+ */
+export function createDropPayloadSerializer({
+  audienceDrop,
+  hiddenDropIds,
+  authorIdsByDropId,
+  viewerContexts,
+  creditLefts,
+  updateType,
+  reason,
+  onSerialized
+}: {
+  audienceDrop: ApiDrop;
+  hiddenDropIds: ReadonlySet<string>;
+  authorIdsByDropId: ReadonlyMap<string, string>;
+  viewerContexts: Readonly<Record<string, ApiDrop['viewer_context']>>;
+  creditLefts: Readonly<Record<string, number>>;
+  updateType: DropMessageType;
+  reason?: string;
+  onSerialized?: () => void;
+}): (profileId: string | null) => string {
+  const moderationAuthors = moderationRelevantAuthorIds(
+    audienceDrop,
+    authorIdsByDropId
+  );
+  const payloads = new Map<string, string>();
+  return (profileId) => {
+    const viewerContext =
+      profileId === null
+        ? DEFAULT_VIEWER_CONTEXT
+        : (viewerContexts[profileId] ?? DEFAULT_VIEWER_CONTEXT);
+    const creditLeft = profileId === null ? 0 : (creditLefts[profileId] ?? 0);
+    const key = JSON.stringify([
+      profileId !== null && moderationAuthors.has(profileId) ? profileId : null,
+      viewerContext,
+      creditLeft
+    ]);
+    const cached = payloads.get(key);
+    if (cached !== undefined) return cached;
+    const recipientDrop = applyGlobalModerationForRecipient(
+      audienceDrop,
+      profileId,
+      authorIdsByDropId
+    );
+    recipientDrop.viewer_context = viewerContext;
+    const payload = serializeDropMessageForRecipient(
+      anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
+      creditLeft,
+      updateType,
+      reason
+    );
+    onSerialized?.();
+    payloads.set(key, payload);
+    return payload;
+  };
+}
+
 export class WsListenersNotifier {
   private readonly logger: Logger = Logger.get(this.constructor.name);
 
@@ -432,6 +532,7 @@ export class WsListenersNotifier {
   private async sendLegacyNotification(input: {
     connectionId: string;
     message: string;
+    batch?: DeliveryBatch;
   }): Promise<unknown> {
     return this.appWebSockets.send({
       ...input,
@@ -680,38 +781,32 @@ export class WsListenersNotifier {
         },
         ctx.connection
       );
+      const payloadFor = createDropPayloadSerializer({
+        audienceDrop,
+        hiddenDropIds,
+        authorIdsByDropId,
+        viewerContexts,
+        creditLefts,
+        updateType,
+        reason,
+        onSerialized: () => measurement.serialized()
+      });
       measurement.prepareDone();
-      await forEachWebSocketRecipient(
-        onlineProfiles,
-        ({ connectionId, profileId }) => {
-          const recipientDrop = applyGlobalModerationForRecipient(
-            audienceDrop,
-            profileId,
-            authorIdsByDropId
-          );
-          recipientDrop.viewer_context =
-            profileId === null
-              ? { author_blocked: false, drop_hidden: false }
-              : (viewerContexts[profileId] ?? {
-                  author_blocked: false,
-                  drop_hidden: false
-                });
-          const message = serializeDropMessageForRecipient(
-            anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
-            profileId === null ? 0 : (creditLefts[profileId] ?? 0),
-            updateType,
-            reason
-          );
-          measurement.serialized();
-          // AppWebSockets.send re-reads the connection row before sending.
-          measurement.connectionRead();
-          return this.sendMeasured(
-            connectionId,
-            message,
-            serverReceivedAt,
-            measurement
-          );
-        }
+      await this.withDeliveryBatch((batch) =>
+        forEachWebSocketRecipient(
+          onlineProfiles,
+          ({ connectionId, profileId }) => {
+            // AppWebSockets.send re-reads the connection row before sending.
+            measurement.connectionRead();
+            return this.sendMeasured(
+              connectionId,
+              payloadFor(profileId),
+              serverReceivedAt,
+              measurement,
+              batch
+            );
+          }
+        )
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, updateType, inputDrop, e);
@@ -724,18 +819,40 @@ export class WsListenersNotifier {
     }
   }
 
+  /**
+   * Batches post-send bookkeeping and delivery metrics for one fan-out; the
+   * deferred bookkeeping is awaited before this returns.
+   */
+  private async withDeliveryBatch(
+    run: (batch: DeliveryBatch) => Promise<void>
+  ): Promise<void> {
+    const settlements: Promise<unknown>[] = [];
+    const batch: DeliveryBatch = {
+      defer: (settlement) => settlements.push(settlement),
+      metrics: new DeliveryMetricsBatch()
+    };
+    try {
+      await run(batch);
+    } finally {
+      await Promise.allSettled(settlements);
+      batch.metrics.flush();
+    }
+  }
+
   /** Stamps delivery times on the frame and records the send's outcome. */
   private async sendMeasured(
     connectionId: string,
     message: string,
     serverReceivedAt: number | null,
-    measurement: FanoutMeasurement
+    measurement: FanoutMeasurement,
+    batch?: DeliveryBatch
   ): Promise<unknown> {
     const sentAt = Date.now();
     try {
       const result = await this.sendLegacyNotification({
         connectionId,
-        message: withDeliveryTimestamps(message, { serverReceivedAt, sentAt })
+        message: withDeliveryTimestamps(message, { serverReceivedAt, sentAt }),
+        ...(batch ? { batch } : {})
       });
       measurement.sendSettled(sentAt, sendOutcome(result));
       return result;
