@@ -130,8 +130,13 @@ and elapsed duration with `native_competition_execution_failed`.
   collection reads omit it to avoid per-item activity probes.
   The archive command checks again inside its transaction.
   Existing Main Stage winners remain eligible for delayed claim delivery after
-  archival. Deploy `waveDecisionExecutionLoop` first to preserve those deliveries,
-  then `api`, then the dependent frontend controls. No schema change is required.
+  archival. Deploy `claimsBuilder` first so queued claims accept archived winners,
+  then `waveDecisionExecutionLoop` so delayed decisions still enqueue those claims.
+  After the decision worker deployment succeeds, allow 900 seconds for old in-flight
+  claims/decision invocations to drain before deploying `api`, then the dependent
+  frontend controls. Both workers have a 900-second maximum runtime; the new
+  consumers remain compatible with the existing API during this window.
+  No schema change is required.
   Manual end/cancel and entry withdrawal/disqualification are not exposed.
 - Dedicated native submission content is immutable, including unsigned entries.
   A migrated original legacy submission retains its original pre-winner edit
