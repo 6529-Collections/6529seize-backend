@@ -1,6 +1,7 @@
 import {
   clientDropFingerprint,
-  DropCreationApiService
+  DropCreationApiService,
+  metricEnvironment
 } from '@/api/drops/drop-creation.api.service';
 import { NewDropSchema } from '@/api/drops/drop.validator';
 jest.mock('@/competitions/competition-entry-drop-hooks');
@@ -266,6 +267,37 @@ describe('DropCreationApiService.createDrop with client_drop_id (R11-5)', () => 
     expect(sendIdentityPushNotifications).not.toHaveBeenCalled();
   });
 
+  it('returns the same drop for a mixed-case retry of a claimed id', async () => {
+    const { create, clientIdsDb, createOrUpdateDrop } = setup({
+      claimed: claim()
+    });
+
+    const drop = await create(CLIENT_DROP_ID.toUpperCase());
+
+    expect(clientIdsDb.find).toHaveBeenCalledWith(
+      { authorId: AUTHOR, clientDropId: CLIENT_DROP_ID },
+      expect.anything()
+    );
+    expect(drop).toMatchObject({
+      id: 'first-drop',
+      client_drop_id: CLIENT_DROP_ID
+    });
+    expect(createOrUpdateDrop.execute).not.toHaveBeenCalled();
+  });
+
+  it.each(['not-a-uuid', `{${CLIENT_DROP_ID}}`, `urn:uuid:${CLIENT_DROP_ID}`])(
+    'rejects the malformed id %s before any lookup',
+    async (clientDropId) => {
+      const { create, clientIdsDb, createOrUpdateDrop } = setup();
+
+      await expect(create(clientDropId)).rejects.toMatchObject({
+        message: expect.stringContaining('client_drop_id must be a UUID')
+      });
+      expect(clientIdsDb.find).not.toHaveBeenCalled();
+      expect(createOrUpdateDrop.preparePrePublication).not.toHaveBeenCalled();
+    }
+  );
+
   it('surfaces other transaction failures unchanged', async () => {
     const failure = new Error('deadlock');
     const { create, clientIdsDb } = setup({ insertError: failure });
@@ -276,6 +308,31 @@ describe('DropCreationApiService.createDrop with client_drop_id (R11-5)', () => 
 });
 
 describe('client_drop_id request contract', () => {
+  it('leaves proofs out of the fingerprint, so a re-signed identical retry still matches', () => {
+    const request = {
+      wave_id: 'wave-1',
+      drop_type: 'PARTICIPATORY',
+      parts: [{ content: 'entry', media: [] }],
+      signature: '0xfirst',
+      signature_message: '{"nonce":"first"}',
+      is_safe_signature: false,
+      signer_address: '0x1111111111111111111111111111111111111111'
+    };
+
+    expect(
+      clientDropFingerprint({
+        ...request,
+        signature: '0xsecond',
+        signature_message: '{"nonce":"second"}',
+        is_safe_signature: true,
+        signer_address: '0x2222222222222222222222222222222222222222'
+      } as never)
+    ).toBe(clientDropFingerprint(request as never));
+    expect(
+      clientDropFingerprint({ ...request, title: 'changed' } as never)
+    ).not.toBe(clientDropFingerprint(request as never));
+  });
+
   it('fingerprints only what the client sent, without the id, envelope or server fields', () => {
     const request = {
       wave_id: 'wave-1',
@@ -320,5 +377,23 @@ describe('client_drop_id request contract', () => {
     ]) {
       expect(NewDropSchema.validate(body(bad)).error).toBeDefined();
     }
+  });
+});
+
+describe('metricEnvironment', () => {
+  it.each([
+    ['prod', 'prod'],
+    ['production', 'prod'],
+    ['api_prod', 'prod'],
+    ['staging', 'staging'],
+    ['api_staging', 'staging'],
+    ['development', 'dev'],
+    ['local', 'dev'],
+    ['test', 'dev'],
+    ['', 'unknown'],
+    ['preview', 'unknown'],
+    ['reproduction', 'unknown']
+  ])('maps %p to %p', (configured, expected) => {
+    expect(metricEnvironment(configured)).toBe(expected);
   });
 });

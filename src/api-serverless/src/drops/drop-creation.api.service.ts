@@ -107,29 +107,72 @@ interface ClientDrop {
 }
 
 /**
- * Fingerprints exactly what the client sent, so it stays the same for an
- * identical retry whatever the server derives from it. The id itself, the
- * device signature envelope and server-added fields are left out.
+ * Request fields that prove who sent a drop rather than describe it. A
+ * retry may carry fresh proofs for the same content (a new wallet nonce or
+ * device envelope), so they are not part of the fingerprint.
+ */
+const CLIENT_DROP_PROOF_FIELDS = [
+  'client_drop_id',
+  'device_signature',
+  'signature',
+  'signature_message',
+  'is_safe_signature',
+  'signer_address',
+  'author'
+] as const;
+
+/**
+ * Fingerprints the drop content exactly as the client sent it: the same for
+ * an identical retry, whatever the server derives from it and whatever
+ * fresh signature the retry carries; different as soon as wave, parts,
+ * metadata, mentions, poll or any other content field changes.
  */
 export function clientDropFingerprint(request: ApiCreateDropRequest): string {
-  const {
-    client_drop_id: _clientDropId,
-    device_signature: _deviceSignature,
-    ...content
-  } = request as ApiCreateDropRequest & { author?: unknown };
-  delete (content as { author?: unknown }).author;
+  const content: Record<string, unknown> = { ...request };
+  for (const field of CLIENT_DROP_PROOF_FIELDS) {
+    delete content[field];
+  }
   return moderationFingerprint(content);
 }
 
+const CLIENT_DROP_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 function clientDropFor(request: ApiCreateDropRequest): ClientDrop | null {
-  if (!request.client_drop_id) {
+  if (request.client_drop_id === undefined || request.client_drop_id === null) {
     return null;
   }
+  // The route passes Joi's normalized value; re-check for other callers so a
+  // malformed id never reaches a lookup or becomes a key.
+  const clientDropId = String(request.client_drop_id).toLowerCase();
+  if (!CLIENT_DROP_ID_PATTERN.test(clientDropId)) {
+    throw new BadRequestException(
+      'client_drop_id must be a UUID in the plain 8-4-4-4-12 form'
+    );
+  }
   return {
-    clientDropId: request.client_drop_id.toLowerCase(),
+    clientDropId,
     waveId: request.wave_id,
     contentFingerprint: clientDropFingerprint(request)
   };
+}
+
+/**
+ * Metric environment from the deployment's own settings. Only explicit
+ * production, staging and development names map to those buckets; anything
+ * else is reported as `unknown` rather than counted as production.
+ */
+export function metricEnvironment(
+  configured: string | undefined = process.env.SENTRY_ENVIRONMENT ??
+    process.env.OPS_ENVIRONMENT ??
+    process.env.NODE_ENV
+): 'prod' | 'staging' | 'dev' | 'unknown' {
+  const value = (configured ?? '').toLowerCase();
+  if (value.includes('staging')) return 'staging';
+  if (/(^|[^a-z])(prod|production)([^a-z]|$)/.test(value)) return 'prod';
+  if (/(^|[^a-z])(dev|development|local|test)([^a-z]|$)/.test(value))
+    return 'dev';
+  return 'unknown';
 }
 
 /**
@@ -140,9 +183,7 @@ function recordClientDropOutcome(
   outcome: 'replayed' | 'concurrent' | 'reused'
 ): void {
   if (!process.env.AWS_LAMBDA_FUNCTION_NAME) return;
-  const environment = (process.env.SENTRY_ENVIRONMENT ?? '').includes('staging')
-    ? 'staging'
-    : 'prod';
+  const environment = metricEnvironment();
   try {
     process.stdout.write(
       `${JSON.stringify({

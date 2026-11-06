@@ -212,11 +212,6 @@ router.post(
         'Each drop part must have content, media, or attachments'
       );
     }
-    await assertDropIsCorrectlySigned(
-      apiRequest,
-      authorProfileId,
-      req.headers.host
-    );
     const createDropRequest: ApiCreateDropRequest & {
       author: { external_id: string };
     } = {
@@ -238,20 +233,32 @@ router.post(
       is_additional_action_promised: newDrop.is_additional_action_promised,
       client_drop_id: newDrop.client_drop_id
     };
-    if (deviceSignature !== undefined && createDropRequest.client_drop_id) {
-      // A retried signed send carries an envelope the first attempt already
-      // used. Answer it from the client_drop_id claim before signature
-      // reservation would refuse it (waves R11-5).
+    // Idempotent retry (waves R11-5). This runs after validation, so the id
+    // is Joi's normalized output, and before any signature check: a retry
+    // resends the same body, and its wallet nonce or device envelope was
+    // already used by the first attempt, so a signature check would refuse
+    // a retry that changes nothing. The answer only returns the author's own
+    // existing drop when wave and content match; nothing is written.
+    if (createDropRequest.client_drop_id) {
       const replayedDrop = await dropCreationService.findClientDropReplay(
         { createDropRequest, authorId: authorProfileId },
         { timer, authenticationContext }
       );
       if (replayedDrop) {
         return res.send(
-          await withStoredAuthorSignature(replayedDrop, { timer })
+          deviceSignature === undefined
+            ? replayedDrop
+            : await withStoredAuthorSignature(replayedDrop, { timer })
         );
       }
     }
+    // A body changed after signing, including one that adds client_drop_id,
+    // no longer matches its signature and is refused here.
+    await assertDropIsCorrectlySigned(
+      apiRequest,
+      authorProfileId,
+      req.headers.host
+    );
     const createdDrop = await deviceSignedWritesService.createDrop(
       {
         envelope: deviceSignature,

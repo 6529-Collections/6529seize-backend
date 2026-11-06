@@ -38,7 +38,7 @@ export class ApiCreateDropRequest {
     */
     'hide_link_preview'?: boolean;
     /**
-    * Optional client-generated UUID that makes the create idempotent. When the same author sends the same client_drop_id again with the same wave and content (a retry), the drop created the first time is returned instead of a new one. The same id with a different wave or content is rejected with 409. Without it, every create makes a new drop. Use the plain 8-4-4-4-12 UUID form. Like every other body field, it is part of the signed payload when present, so a retry must resend the same body.
+    * Optional client-generated UUID that makes the create idempotent. When the same author sends the same client_drop_id again with the same wave and content (a retry), the drop created the first time is returned instead of a new one. The same id with a different wave or content is rejected with 409. Without it, every create makes a new drop. Use the plain 8-4-4-4-12 UUID form. A retry is matched on wave and content only, so a retry carrying a fresh signature for the same content is answered too. Like every other body field, client_drop_id is part of the signed payload when present: adding it to a body that was signed without it fails the signature check.
     */
     'client_drop_id'?: string;
     'device_signature'?: ApiDeviceSignature;
