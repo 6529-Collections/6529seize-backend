@@ -72,6 +72,11 @@ import {
 } from '@/api/ws/ws-listeners-notifier';
 import { DbPoolName } from '@/db-query.options';
 import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
+import {
+  isReadStateSyncEnabled,
+  readStateNotifier as defaultReadStateNotifier,
+  ReadStateNotifier
+} from '@/api/notifications/read-state-sync';
 
 interface DropReactedNotificationAdditionalContextV2 {
   reaction: string;
@@ -111,7 +116,11 @@ export class NotificationsApiService {
     private readonly waveGroupNotificationSubscriptionsDb: WaveGroupNotificationSubscriptionsDb,
     private readonly reactionsDb: ReactionsDb = defaultReactionsDb,
     private readonly apiWaveOverviewMapper: ApiWaveOverviewMapper = defaultApiWaveOverviewMapper,
-    private readonly wsListenersNotifier: WsListenersNotifier = defaultWsListenersNotifier
+    private readonly wsListenersNotifier: WsListenersNotifier = defaultWsListenersNotifier,
+    private readonly readStateNotifier: Pick<
+      ReadStateNotifier,
+      'notify'
+    > = defaultReadStateNotifier
   ) {}
 
   public async markNotificationAsRead(param: {
@@ -159,6 +168,142 @@ export class NotificationsApiService {
   }
 
   public async markWaveNotificationsAsRead(
+    waveId: string,
+    identityId: string,
+    ctx: RequestContext,
+    readThroughSerialNo?: number,
+    requestDmUnreadState = false
+  ): Promise<ApiDmUnreadConversationState | null> {
+    if (isReadStateSyncEnabled()) {
+      return this.syncWaveReadState(
+        waveId,
+        identityId,
+        ctx,
+        readThroughSerialNo,
+        requestDmUnreadState
+      );
+    }
+    return this.markWaveNotificationsAsReadLegacy(
+      waveId,
+      identityId,
+      ctx,
+      readThroughSerialNo,
+      requestDmUnreadState
+    );
+  }
+
+  /**
+   * Read-state sync (waves plan 1.7, behind WS_READ_STATE_SYNC). A read is
+   * one idempotent watermark write, and every side effect happens only when
+   * something changed:
+   * - the badge refresh and IDENTITY_NOTIFICATIONS_CHANGED only when unread
+   *   notifications were marked read (the badge counts only those);
+   * - the unread cache, DM_UNREAD_STATE_CHANGED and READ_STATE only when the
+   *   watermark moved. READ_STATE reaches the reader's other devices.
+   */
+  private async syncWaveReadState(
+    waveId: string,
+    identityId: string,
+    ctx: RequestContext,
+    readThroughSerialNo: number | undefined,
+    requestDmUnreadState: boolean
+  ): Promise<ApiDmUnreadConversationState | null> {
+    const timerLabel = `${this.constructor.name}->syncWaveReadState`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const wave = await this.wavesApiDb.findById(
+        waveId,
+        ctx.connection,
+        DbPoolName.WRITE
+      );
+      const isDirectMessage = wave?.is_direct_message === true;
+      let groupsUserIsEligibleFor: string[] | undefined;
+      if (isDirectMessage) {
+        groupsUserIsEligibleFor =
+          await this.userGroupsService.getGroupsUserIsEligibleFor(
+            identityId,
+            ctx.timer
+          );
+        await assertWaveAndParentVisibleOrThrow({
+          wave,
+          groupsUserIsEligibleFor,
+          message: `Wave ${waveId} not found.`,
+          wavesApiDb: this.wavesApiDb,
+          ctx
+        });
+      }
+      const notificationsMarked =
+        await this.identityNotificationsDb.markUnreadWaveNotificationsAsRead(
+          waveId,
+          identityId,
+          ctx
+        );
+      const readState = isDirectMessage
+        ? await this.wavesApiDb.advanceDirectMessageReadWatermark(
+            { waveId, readerId: identityId, readThroughSerialNo },
+            ctx
+          )
+        : await this.wavesApiDb.advanceWaveReadWatermark(
+            { waveId, readerId: identityId },
+            ctx
+          );
+      if (notificationsMarked > 0) {
+        await requestDeviceBadgeRefresh(identityId);
+      }
+      if (readState.changed) {
+        await invalidateWaveUnreadCacheForReaderWave({ identityId, waveId });
+      }
+      const recipients =
+        notificationsMarked > 0 || readState.changed
+          ? await this.wsListenersNotifier.findConnectedNotificationRecipients([
+              identityId
+            ])
+          : [];
+      const dmUnreadState =
+        isDirectMessage &&
+        (requestDmUnreadState || (readState.changed && recipients.length > 0))
+          ? ((
+              await this.wavesApiDb.findDmUnreadConversationStates(
+                {
+                  identityId,
+                  eligibleGroups: groupsUserIsEligibleFor,
+                  waveIds: [waveId]
+                },
+                ctx,
+                DbPoolName.WRITE
+              )
+            )[0] ?? null)
+          : null;
+      if (readState.changed && recipients.length) {
+        if (dmUnreadState) {
+          await this.wsListenersNotifier.notifyAboutDmUnreadStateChanged(
+            [dmUnreadState],
+            recipients
+          );
+        }
+        if (readState.watermark) {
+          await this.readStateNotifier.notify(
+            {
+              profile_id: identityId,
+              wave_id: waveId,
+              ...readState.watermark
+            },
+            recipients
+          );
+        }
+      }
+      if (notificationsMarked > 0) {
+        await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+          identityId
+        ]);
+      }
+      return requestDmUnreadState ? dmUnreadState : null;
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  private async markWaveNotificationsAsReadLegacy(
     waveId: string,
     identityId: string,
     ctx: RequestContext,

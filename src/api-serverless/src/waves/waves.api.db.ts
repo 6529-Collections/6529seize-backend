@@ -285,6 +285,48 @@ function profileWaveActivityTimestampSql(): string {
   ), 0) else coalesce(wdm.latest_drop_timestamp, 0) end)`;
 }
 
+export interface StoredWaveReadWatermark {
+  readonly latest_read_timestamp: number;
+  readonly latest_read_serial_no: number | null;
+  readonly version: number;
+}
+
+export interface WaveReadWatermark {
+  readonly latest_read_serial_no: number;
+  readonly latest_read_timestamp: number;
+  readonly version: number;
+}
+
+export interface WaveReadWatermarkChange {
+  /** True only when the stored watermark moved. */
+  readonly changed: boolean;
+  readonly watermark: WaveReadWatermark | null;
+}
+
+function isWatermarkAtOrPast(
+  stored: StoredWaveReadWatermark | null,
+  drop: { serial_no: number; created_at: number }
+): boolean {
+  return (
+    stored !== null &&
+    stored.latest_read_serial_no !== null &&
+    stored.latest_read_serial_no >= drop.serial_no &&
+    stored.latest_read_timestamp >= drop.created_at
+  );
+}
+
+function toReadWatermark(
+  stored: StoredWaveReadWatermark | null
+): WaveReadWatermark | null {
+  return stored
+    ? {
+        latest_read_serial_no: stored.latest_read_serial_no ?? 0,
+        latest_read_timestamp: stored.latest_read_timestamp,
+        version: stored.version
+      }
+    : null;
+}
+
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   private getWaveScoreSortColumn(sort: ApiWaveScoreSort): string {
     switch (sort) {
@@ -3890,6 +3932,180 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     } finally {
       ctx.timer?.stop(timerLabel);
     }
+  }
+
+  /** The reader's stored watermark, read on the writer. */
+  async findWaveReadWatermark(
+    param: { waveId: string; readerId: string },
+    ctx: RequestContext
+  ): Promise<StoredWaveReadWatermark | null> {
+    const row = await this.db.oneOrNull<{
+      latest_read_timestamp: number | string;
+      latest_read_serial_no: number | string | null;
+      unread_state_version: number | string;
+    }>(
+      `select latest_read_timestamp, latest_read_serial_no, unread_state_version
+       from ${WAVE_READER_METRICS_TABLE}
+       where wave_id = :waveId and reader_id = :readerId`,
+      param,
+      ctx.connection
+        ? { wrappedConnection: ctx.connection }
+        : { forcePool: DbPoolName.WRITE }
+    );
+    if (!row) return null;
+    return {
+      latest_read_timestamp: Number(row.latest_read_timestamp),
+      latest_read_serial_no:
+        row.latest_read_serial_no === null
+          ? null
+          : Number(row.latest_read_serial_no),
+      version: Number(row.unread_state_version)
+    };
+  }
+
+  private async findLatestDropAtOrBelowSerial(
+    param: { waveId: string; serialLimit: number },
+    ctx: RequestContext
+  ): Promise<{ serial_no: number; created_at: number } | null> {
+    const row = await this.db.oneOrNull<{
+      serial_no: number | string;
+      created_at: number | string;
+    }>(
+      `select serial_no, created_at
+       from ${DROPS_TABLE}
+       where wave_id = :waveId
+         and serial_no <= :serialLimit
+       order by serial_no desc
+       limit 1`,
+      param,
+      ctx.connection
+        ? { wrappedConnection: ctx.connection }
+        : { forcePool: DbPoolName.WRITE }
+    );
+    return row
+      ? { serial_no: Number(row.serial_no), created_at: Number(row.created_at) }
+      : null;
+  }
+
+  /**
+   * Marks an ordinary (non-DM) wave read through its latest drop, writing
+   * only when that moves the watermark (waves plan 1.7). Unread counts for
+   * these waves compare drop `created_at` with `latest_read_timestamp`, so the
+   * timestamp keeps its existing meaning ("read at"); the serial and version
+   * are kept alongside for READ_STATE.
+   */
+  async advanceWaveReadWatermark(
+    param: { waveId: string; readerId: string },
+    ctx: RequestContext
+  ): Promise<WaveReadWatermarkChange> {
+    const timerLabel = `${this.constructor.name}->advanceWaveReadWatermark`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const [latest, stored] = await Promise.all([
+        this.findLatestDropAtOrBelowSerial(
+          { waveId: param.waveId, serialLimit: Number.MAX_SAFE_INTEGER },
+          ctx
+        ),
+        this.findWaveReadWatermark(param, ctx)
+      ]);
+      if (!latest || isWatermarkAtOrPast(stored, latest)) {
+        return { changed: false, watermark: toReadWatermark(stored) };
+      }
+      const now = Time.currentMillis();
+      await this.db.execute(
+        `insert into ${WAVE_READER_METRICS_TABLE}
+           (wave_id, reader_id, latest_read_timestamp, latest_read_serial_no, unread_state_version)
+         values
+           (:waveId, :readerId, :now, :serialNo, 1)
+         on duplicate key update
+           latest_read_timestamp = greatest(latest_read_timestamp, :now),
+           latest_read_serial_no = greatest(coalesce(latest_read_serial_no, 0), :serialNo),
+           unread_state_version = unread_state_version + 1`,
+        { ...param, now, serialNo: latest.serial_no },
+        { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+      );
+      return {
+        changed: true,
+        watermark: toReadWatermark(await this.findWaveReadWatermark(param, ctx))
+      };
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  /**
+   * DM counterpart of advanceWaveReadWatermark: skips the write when the
+   * stored watermark already covers the requested drop, otherwise runs the
+   * existing monotonic read-through write.
+   */
+  async advanceDirectMessageReadWatermark(
+    param: { waveId: string; readerId: string; readThroughSerialNo?: number },
+    ctx: RequestContext
+  ): Promise<WaveReadWatermarkChange> {
+    const timerLabel = `${this.constructor.name}->advanceDirectMessageReadWatermark`;
+    ctx.timer?.start(timerLabel);
+    try {
+      const serialLimit = Math.max(
+        0,
+        Math.floor(param.readThroughSerialNo ?? Number.MAX_SAFE_INTEGER)
+      );
+      const key = { waveId: param.waveId, readerId: param.readerId };
+      const [target, stored] = await Promise.all([
+        this.findLatestDropAtOrBelowSerial(
+          { waveId: param.waveId, serialLimit },
+          ctx
+        ),
+        this.findWaveReadWatermark(key, ctx)
+      ]);
+      if (!target || isWatermarkAtOrPast(stored, target)) {
+        return { changed: false, watermark: toReadWatermark(stored) };
+      }
+      await this.markDirectMessageReadThroughSerial(param, ctx);
+      const after = await this.findWaveReadWatermark(key, ctx);
+      return {
+        // A timestamp-only catch-up leaves DM unread counts as they were.
+        changed:
+          !!after &&
+          (!stored ||
+            after.version !== stored.version ||
+            after.latest_read_serial_no !== stored.latest_read_serial_no),
+        watermark: toReadWatermark(after)
+      };
+    } finally {
+      ctx.timer?.stop(timerLabel);
+    }
+  }
+
+  /**
+   * Mark-unread for an ordinary wave: moves the watermark to just before the
+   * drop and bumps the version, so READ_STATE can carry it to other devices.
+   */
+  async setWaveReadWatermarkBeforeDrop(
+    param: {
+      waveId: string;
+      readerId: string;
+      dropSerialNo: number;
+      dropCreatedAt: number;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    await this.db.execute(
+      `insert into ${WAVE_READER_METRICS_TABLE}
+         (wave_id, reader_id, latest_read_timestamp, latest_read_serial_no, unread_state_version)
+       values
+         (:waveId, :readerId, :timestamp, :serialNo, 1)
+       on duplicate key update
+         latest_read_timestamp = :timestamp,
+         latest_read_serial_no = :serialNo,
+         unread_state_version = unread_state_version + 1`,
+      {
+        waveId: param.waveId,
+        readerId: param.readerId,
+        timestamp: param.dropCreatedAt - 1,
+        serialNo: Math.max(0, Math.floor(param.dropSerialNo) - 1)
+      },
+      { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+    );
   }
 
   async recordDirectMessageUnreadDrop(

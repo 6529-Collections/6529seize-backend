@@ -64,6 +64,10 @@ import {
 } from '@/api/device-signing/device-signed-writes.service';
 import { withStoredAuthorSignature } from '@/api/device-signing/author-signed-drop-response';
 import { DeviceEventKind } from '@/api/device-signing/device-event';
+import {
+  isReadStateSyncEnabled,
+  readStateNotifier
+} from '@/api/notifications/read-state-sync';
 
 const router = asyncRouter();
 const logger = Logger.get('DropsRoutes');
@@ -784,6 +788,17 @@ router.post(
         },
         { timer }
       );
+    } else if (isReadStateSyncEnabled()) {
+      // Keep the serial watermark in step so the next read moves it forward.
+      await wavesApiDb.setWaveReadWatermarkBeforeDrop(
+        {
+          waveId,
+          readerId: identityId,
+          dropSerialNo: drop.serial_no,
+          dropCreatedAt: drop.created_at
+        },
+        { timer }
+      );
     } else {
       await wavesApiDb.setWaveReaderMetricLatestReadTimestamp(
         waveId,
@@ -797,6 +812,22 @@ router.post(
       waveId
     });
     const ctx = { timer };
+    if (isReadStateSyncEnabled()) {
+      // Mark-unread moves the watermark back; other devices follow it.
+      const watermark = await wavesApiDb.findWaveReadWatermark(
+        { waveId, readerId: identityId },
+        ctx
+      );
+      if (watermark) {
+        await readStateNotifier.notify({
+          profile_id: identityId,
+          wave_id: waveId,
+          latest_read_serial_no: watermark.latest_read_serial_no ?? 0,
+          latest_read_timestamp: watermark.latest_read_timestamp,
+          version: watermark.version
+        });
+      }
+    }
     if (wave?.is_direct_message) {
       const dmRecipients =
         await wsListenersNotifier.findConnectedNotificationRecipients([
