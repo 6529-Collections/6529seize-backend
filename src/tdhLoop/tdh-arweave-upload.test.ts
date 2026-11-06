@@ -84,7 +84,7 @@ describe('TDH Arweave gateway uploads', () => {
     );
     expect(Arweave.crypto.sign).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
-      url: `https://arweave.net/${header.id}`,
+      url: `https://ardrive.net/${header.id}`,
       transactionId: header.id
     });
     expect(logger.info).toHaveBeenCalledWith(

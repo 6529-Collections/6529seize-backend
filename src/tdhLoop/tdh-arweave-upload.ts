@@ -185,7 +185,9 @@ class UploadSession {
     await this.uploadChunks(transaction, data);
     this.logger.info(`[ARWEAVE UPLOAD COMPLETE] [TX ${transaction.id}]`);
     return {
-      url: `https://arweave.net/${transaction.id}`,
+      // Keep the public link on our primary gateway as well: another gateway
+      // can accept a transaction while arweave.net serves an empty response.
+      url: `https://${GATEWAYS[0]}/${transaction.id}`,
       transactionId: transaction.id
     };
   }
