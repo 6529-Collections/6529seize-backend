@@ -49,7 +49,12 @@ export interface DropBroadcastLeaseStore {
 }
 
 export const DROP_BROADCAST_COALESCE_ENV = 'WS_DROP_UPDATE_COALESCE_MS';
-export const DEFAULT_DROP_BROADCAST_COALESCE_MS = 250;
+/**
+ * Coalescing changes when frames reach viewers, so it ships off: an unset
+ * value means 0. Staging sets 250 (the plan's window); production stays off
+ * until the owner turns it on.
+ */
+export const DEFAULT_DROP_BROADCAST_COALESCE_MS = 0;
 const MAX_DROP_BROADCAST_COALESCE_MS = 2_000;
 const REDIS_COMMAND_TIMEOUT_MS = 100;
 const KEY_PREFIX = 'ws_coalesce_6529';
@@ -60,6 +65,43 @@ export function readDropBroadcastCoalesceWindowMs(): number {
     return DEFAULT_DROP_BROADCAST_COALESCE_MS;
   }
   return Math.min(Math.max(configured, 0), MAX_DROP_BROADCAST_COALESCE_MS);
+}
+
+/**
+ * One EMF count per broadcast, so a Redis outage that silently turns every
+ * broadcast into `immediate` is visible. Fixed, low-cardinality dimensions.
+ */
+function recordOutcome(
+  kind: DropBroadcastKind,
+  outcome: DropBroadcastOutcome
+): void {
+  if (!process.env.AWS_LAMBDA_FUNCTION_NAME) return;
+  const environment = (process.env.SENTRY_ENVIRONMENT ?? '').includes('staging')
+    ? 'staging'
+    : 'prod';
+  try {
+    process.stdout.write(
+      `${JSON.stringify({
+        _aws: {
+          Timestamp: Date.now(),
+          CloudWatchMetrics: [
+            {
+              Namespace: '6529/WaveBroadcast',
+              Dimensions: [['Environment', 'Kind', 'Outcome']],
+              Metrics: [{ Name: 'DropBroadcastCoalesce', Unit: 'Count' }]
+            }
+          ]
+        },
+        Environment: environment,
+        Kind: kind,
+        Outcome: outcome,
+        DropBroadcastCoalesce: 1
+      })}
+`
+    );
+  } catch {
+    /* Telemetry must not alter delivery. */
+  }
 }
 
 function withTimeout<T>(operation: Promise<T>): Promise<T> {
@@ -166,6 +208,20 @@ export class DropBroadcastCoalescer {
     dropId: string;
     send: (phase: DropBroadcastPhase) => Promise<void>;
   }): Promise<DropBroadcastOutcome> {
+    const outcome = await this.coalesce({ kind, dropId, send });
+    recordOutcome(kind, outcome);
+    return outcome;
+  }
+
+  private async coalesce({
+    kind,
+    dropId,
+    send
+  }: {
+    kind: DropBroadcastKind;
+    dropId: string;
+    send: (phase: DropBroadcastPhase) => Promise<void>;
+  }): Promise<DropBroadcastOutcome> {
     const windowMs = this.windowMs();
     if (windowMs <= 0) {
       await send('immediate');
@@ -210,7 +266,11 @@ export class DropBroadcastCoalescer {
       // either leads a new window or becomes the next trailing flusher.
       await this.store.release(trailKey, token);
     }
-    // Throttle a sustained burst to one broadcast per window.
+    // Throttle a sustained burst to one broadcast per window. The result is
+    // ignored on purpose: if another update opened the window in the gap, it
+    // has already sent, or deferred to a flusher that reads after it.
+    // Updates that commit after the release either lead a window or become
+    // the next trailing flusher, so none is folded into this send's read.
     await this.store.acquire(leadKey, token, windowMs);
     await send('trailing');
     return 'trailing';

@@ -158,6 +158,19 @@ describe('rating broadcast (waves plan 1.6)', () => {
     expect(transactions).toContainEqual({ isolationLevel: 'READ COMMITTED' });
   });
 
+  it('never hands the ended transaction connection to the broadcast', async () => {
+    const { service, ws } = coalescingFixture(async (send) => {
+      await send('trailing');
+      return 'trailing';
+    });
+    const callerConnection = { connection: { ended: true } };
+
+    await service.updateCheers(request, { connection: callerConnection });
+
+    const broadcastCtx = ws.notifyAboutDropRatingUpdate.mock.calls[0][1];
+    expect(broadcastCtx.connection).toBeUndefined();
+  });
+
   it('does not fail a committed vote when the broadcast fails', async () => {
     const { service } = coalescingFixture(async () => {
       throw new Error('fan-out failed');

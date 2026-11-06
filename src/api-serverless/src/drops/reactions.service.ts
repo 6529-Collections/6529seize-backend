@@ -158,9 +158,12 @@ export class ReactionsService {
       );
     }
 
+    // The mutation's transaction has ended; nothing after this point may use
+    // its connection.
+    const postCommitCtx: RequestContext = { ...ctx, connection: undefined };
     // Read the committed state from the writer instead of sleeping for the
     // read replica to catch up (waves plan 1.6).
-    const drop = await this.findCommittedDrop(dropId, ctx);
+    const drop = await this.findCommittedDrop(dropId, postCommitCtx);
     await this.runPostCommitSideEffects([
       ...postCommitSideEffects,
       {
@@ -172,9 +175,9 @@ export class ReactionsService {
             send: async (phase) =>
               this.wsListenersNotifier.notifyAboutDropReactionUpdate(
                 phase === 'trailing'
-                  ? await this.findCommittedDrop(dropId, ctx)
+                  ? await this.findCommittedDrop(dropId, postCommitCtx)
                   : drop,
-                ctx
+                postCommitCtx
               )
           });
         }

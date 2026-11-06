@@ -264,6 +264,34 @@ describe('DropBroadcastCoalescer', () => {
   });
 });
 
+describe('DropBroadcastCoalescer outcome metric', () => {
+  const previous = process.env.AWS_LAMBDA_FUNCTION_NAME;
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (previous === undefined) delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+    else process.env.AWS_LAMBDA_FUNCTION_NAME = previous;
+  });
+
+  it('counts each outcome by kind in Lambda', async () => {
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'api';
+    const writes: string[] = [];
+    jest.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { update } = setup();
+
+    await update();
+
+    const metric = JSON.parse(writes.find((it) => it.includes('_aws'))!);
+    expect(metric).toMatchObject({
+      Kind: 'REACTION',
+      Outcome: 'leading',
+      DropBroadcastCoalesce: 1
+    });
+  });
+});
+
 describe('readDropBroadcastCoalesceWindowMs', () => {
   const previous = process.env.WS_DROP_UPDATE_COALESCE_MS;
   afterEach(() => {
@@ -271,8 +299,13 @@ describe('readDropBroadcastCoalesceWindowMs', () => {
     else process.env.WS_DROP_UPDATE_COALESCE_MS = previous;
   });
 
-  it('defaults to 250 ms', () => {
+  it('is off unless configured', () => {
     delete process.env.WS_DROP_UPDATE_COALESCE_MS;
+    expect(readDropBroadcastCoalesceWindowMs()).toBe(0);
+  });
+
+  it('uses the configured window', () => {
+    process.env.WS_DROP_UPDATE_COALESCE_MS = '250';
     expect(readDropBroadcastCoalesceWindowMs()).toBe(250);
   });
 

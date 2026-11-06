@@ -171,6 +171,9 @@ export class DropCheeringService {
     // replica, so this wait stays until that lookup moves to the writer.
     await giveReadReplicaTimeToCatchUp();
     const dropId = drop.id;
+    // The vote's transaction has ended; nothing after this may use its
+    // connection.
+    const postCommitCtx: RequestContext = { ...ctx, connection: undefined };
     try {
       await this.broadcastCoalescer.broadcast({
         kind: 'RATING',
@@ -180,10 +183,10 @@ export class DropCheeringService {
             phase === 'trailing'
               ? await findCommittedDropOnWriter(
                   { dropId, db: this.dropsDb, dropsService: this.dropsService },
-                  ctx
+                  postCommitCtx
                 )
               : drop,
-            ctx
+            postCommitCtx
           )
       });
     } catch (error) {
