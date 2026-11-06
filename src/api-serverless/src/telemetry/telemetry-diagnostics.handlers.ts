@@ -36,8 +36,8 @@ export async function handleListTelemetryDiagnostics(
   return {
     data: rows.map((row) => ({
       code: row.code,
-      created_at: new Date(row.created_at).toISOString(),
-      expires_at: new Date(row.expires_at).toISOString(),
+      created_at: new Date(row.created_at),
+      expires_at: new Date(row.expires_at),
       compressed_bytes: Number(row.compressed_bytes),
       uncompressed_bytes: Number(row.uncompressed_bytes)
     }))
@@ -58,8 +58,8 @@ export async function handleGetTelemetryDiagnosticsBundle(
   logger.info(`Diagnostics bundle ${found.code} read by team wallet ${wallet}`);
   return {
     code: found.code,
-    created_at: new Date(found.created_at).toISOString(),
-    expires_at: new Date(found.expires_at).toISOString(),
+    created_at: new Date(found.created_at),
+    expires_at: new Date(found.expires_at),
     compressed_bytes: Number(found.compressed_bytes),
     uncompressed_bytes: Number(found.uncompressed_bytes),
     bundle: found.bundle
