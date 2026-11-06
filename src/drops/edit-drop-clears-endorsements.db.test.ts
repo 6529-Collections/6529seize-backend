@@ -215,9 +215,11 @@ describeWithSeed(
     }
   ],
   () => {
-    const previousMaxEditTime = process.env.MAX_DROP_EDIT_TIME_MS;
+    let previousMaxEditTime: string | undefined;
 
     beforeEach(() => {
+      previousMaxEditTime = process.env.MAX_DROP_EDIT_TIME_MS;
+      // Read at call time by the use case; without it every edit is refused.
       process.env.MAX_DROP_EDIT_TIME_MS = `${Time.hours(1).toMillis()}`;
     });
 
@@ -276,13 +278,17 @@ describeWithSeed(
         pollVotes: 3,
         curations: 1
       });
+    });
+
+    it('closes the gap the edited drop left in the curation order', async () => {
+      await editDrop();
+
       const neighbourCuration = await sqlExecutor.oneOrNull<{
         priority_order: number;
       }>(
         `select priority_order from ${DROP_CURATIONS_TABLE} where drop_id = :id`,
         { id: untouchedDropId }
       );
-      // Removing the edited drop closes the gap it left in the curation order.
       expect(Number(neighbourCuration?.priority_order)).toBe(1);
     });
 
@@ -290,8 +296,13 @@ describeWithSeed(
       await editDrop();
       await sqlExecutor.execute(
         `insert into ${DROP_REACTIONS_TABLE} (profile_id, wave_id, drop_id, reaction)
-         values (:profileId, :waveId, :dropId, ':heart:')`,
-        { profileId: reactorIds[1], waveId: wave.id, dropId: editedDropId }
+         values (:profileId, :waveId, :dropId, :reaction)`,
+        {
+          profileId: reactorIds[1],
+          waveId: wave.id,
+          dropId: editedDropId,
+          reaction: ':heart:'
+        }
       );
       expect((await endorsementCounts(editedDropId)).reactions).toBe(1);
 
