@@ -25,6 +25,12 @@ import {
 import { describeWebSocketSendFailure } from './ws-send-diagnostics';
 import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
 import { WsConnectionPurpose } from '@/entities/IWSConnection';
+import * as http from 'node:http';
+import * as https from 'node:https';
+import type { DeliveryBatch } from '@/ws-delivery/ws-delivery';
+
+/** Upper bound on concurrent gateway sends from one fan-out (and agent sockets). */
+export const WS_SEND_CONCURRENCY_CAP = 64;
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -53,6 +59,7 @@ abstract class ClientConnections {
     connectionId: string;
     message: string;
     recovery?: boolean;
+    batch?: DeliveryBatch;
   }): Promise<WebSocketDeliveryResult>;
   abstract closeClient(
     connectionId: string,
@@ -123,7 +130,19 @@ class ApiGatewayClientConnections extends ClientConnections {
       requestHandler: new NodeHttpHandler({
         connectionTimeout: 2000,
         requestTimeout: 5000,
-        throwOnRequestTimeout: true
+        throwOnRequestTimeout: true,
+        // Reused TLS connections, sized to the fan-out send pool so the pool,
+        // not the agent queue, bounds concurrency.
+        httpsAgent: new https.Agent({
+          keepAlive: true,
+          keepAliveMsecs: 1000,
+          maxSockets: WS_SEND_CONCURRENCY_CAP
+        }),
+        httpAgent: new http.Agent({
+          keepAlive: true,
+          keepAliveMsecs: 1000,
+          maxSockets: WS_SEND_CONCURRENCY_CAP
+        })
       })
     });
   }
@@ -131,16 +150,19 @@ class ApiGatewayClientConnections extends ClientConnections {
   override async sendMessage({
     connectionId,
     message,
-    recovery = false
+    recovery = false,
+    batch
   }: {
     connectionId: string;
     message: string;
     recovery?: boolean;
+    batch?: DeliveryBatch;
   }) {
     return webSocketDelivery.deliver({
       connectionId,
       message,
       recovery,
+      batch,
       close: () => this.closeClient(connectionId, true),
       send: async () => {
         try {
@@ -204,36 +226,48 @@ export class AppWebSockets {
     private readonly wsConnectionRepository: WsConnectionRepository
   ) {}
 
+  /**
+   * Sends one frame. The JWT fence holds on every path: a connection whose
+   * stored JWT has expired is closed instead of sent to.
+   *
+   * Fan-outs pass the `jwtExpiry` their recipient query already returned, so
+   * the fence needs no MySQL read per recipient. Only an expiry that looks
+   * past is re-read, because a reauthentication may have extended it since.
+   */
   async send({
     connectionId,
     message,
     skipStaleConnectionCheck = false,
-    recovery = false
+    recovery = false,
+    jwtExpiry,
+    batch,
+    onConnectionRead
   }: {
     connectionId: string;
     message: string;
     skipStaleConnectionCheck?: boolean;
     recovery?: boolean;
+    jwtExpiry?: number | string | null;
+    batch?: DeliveryBatch;
+    /** Measurement hook: called when the fence had to read MySQL. */
+    onConnectionRead?: () => void;
   }) {
-    if (!skipStaleConnectionCheck) {
-      const entity = await this.wsConnectionRepository.getByConnectionId(
-        connectionId,
-        {}
+    if (
+      !skipStaleConnectionCheck &&
+      !(await this.hasActiveJwt(connectionId, jwtExpiry, onConnectionRead))
+    ) {
+      this.logger.info(
+        `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
       );
-      const jwtExpiry = getActiveJwtExpiry(entity?.jwt_expiry);
-      if (!entity || jwtExpiry === null) {
-        this.logger.info(
-          `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
-        );
-        await this.deregister({ connectionId });
-        return { status: 'gone' as const };
-      }
+      await this.deregister({ connectionId });
+      return { status: 'gone' as const };
     }
     try {
       const result = await ClientConnections.Get().sendMessage({
         connectionId,
         message,
-        recovery
+        recovery,
+        batch
       });
       if (result.status === 'gone')
         await this.wsConnectionRepository.deleteByConnectionId(
@@ -246,6 +280,25 @@ export class AppWebSockets {
       await this.deregister({ connectionId });
       return { status: 'gone' as const };
     }
+  }
+
+  private async hasActiveJwt(
+    connectionId: string,
+    knownJwtExpiry: number | string | null | undefined,
+    onConnectionRead?: () => void
+  ): Promise<boolean> {
+    if (
+      knownJwtExpiry !== undefined &&
+      getActiveJwtExpiry(knownJwtExpiry) !== null
+    ) {
+      return true;
+    }
+    onConnectionRead?.();
+    const entity = await this.wsConnectionRepository.getByConnectionId(
+      connectionId,
+      {}
+    );
+    return !!entity && getActiveJwtExpiry(entity.jwt_expiry) !== null;
   }
 
   async register({

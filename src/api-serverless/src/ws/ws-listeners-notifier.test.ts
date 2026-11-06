@@ -23,6 +23,7 @@ import {
   competitionAnonymityService
 } from '@/competitions/competition-anonymity';
 import { dropsDb } from '@/drops/drops.db';
+import { WS_SEND_CONCURRENCY_CAP } from '@/api/ws/ws';
 
 function createDrop(content: string, dropType = ApiDropType.Chat) {
   return {
@@ -272,7 +273,7 @@ describe('WsListenersNotifier', () => {
     await notifier.notifyAboutDropDeletes(deletedDrops, null, {});
 
     expect(appWebSockets.send).toHaveBeenCalledTimes(220);
-    expect(maximumActiveSends).toBe(100);
+    expect(maximumActiveSends).toBe(WS_SEND_CONCURRENCY_CAP);
   });
 
   it('keeps stamped full frames within the application ceiling', () => {
@@ -289,6 +290,112 @@ describe('WsListenersNotifier', () => {
     expect(Buffer.byteLength(stamped, 'utf8')).toBeLessThanOrEqual(
       DROP_UPDATE_MAX_UTF8_BYTES
     );
+  });
+
+  describe('cheaper fan-out (1.2)', () => {
+    const recipients = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        connectionId: `c-${index}`,
+        profileId: index % 5 === 0 ? null : `p-${index}`,
+        jwtExpiry: 4102444800
+      }));
+
+    it('sends through a capped pool with each recipient expiry and one payload', async () => {
+      let active = 0;
+      let maximum = 0;
+      const appWebSockets = {
+        send: jest.fn(async () => {
+          active++;
+          maximum = Math.max(maximum, active);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          active--;
+          return { status: 'sent' };
+        })
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        {
+          getCurrentlyOnlineCommunityMemberConnectionIds: jest
+            .fn()
+            .mockResolvedValue(recipients(200))
+        } as never
+      );
+
+      await notifier.notifyAboutDropUpdate(createDrop('hello'), {});
+
+      expect(appWebSockets.send).toHaveBeenCalledTimes(200);
+      expect(maximum).toBe(WS_SEND_CONCURRENCY_CAP);
+      const calls = appWebSockets.send.mock.calls as unknown as [
+        { jwtExpiry: number; message: string; batch: unknown }
+      ][];
+      expect(calls.every(([call]) => call.jwtExpiry === 4102444800)).toBe(true);
+      expect(calls.every(([call]) => call.batch === calls[0][0].batch)).toBe(
+        true
+      );
+      const bodies = new Set(
+        calls.map(([call]) => {
+          const { sent_at, server_received_at, ...frame } = JSON.parse(
+            call.message
+          );
+          return JSON.stringify(frame);
+        })
+      );
+      expect(bodies.size).toBe(1);
+    });
+
+    it('awaits deferred bookkeeping before the fan-out returns', async () => {
+      let release!: () => void;
+      const bookkeeping = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const appWebSockets = {
+        send: jest.fn(async ({ batch }) => {
+          batch.defer(bookkeeping);
+          return { status: 'sent' };
+        })
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        {
+          getCurrentlyOnlineCommunityMemberConnectionIds: jest
+            .fn()
+            .mockResolvedValue(recipients(3))
+        } as never
+      );
+
+      let done = false;
+      const fanout = notifier
+        .notifyAboutDropUpdate(createDrop('hello'), {})
+        .then(() => {
+          done = true;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(appWebSockets.send).toHaveBeenCalledTimes(3);
+      expect(done).toBe(false);
+      release();
+      await fanout;
+      expect(done).toBe(true);
+    });
+
+    it('passes known expiries to identity and direct-message sends', async () => {
+      const appWebSockets = { send: jest.fn().mockResolvedValue(undefined) };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        {
+          findNotificationConnectionIdsByIdentityIds: jest
+            .fn()
+            .mockResolvedValue([
+              { connectionId: 'c-1', identityId: 'p-1', jwtExpiry: 123 }
+            ])
+        } as never
+      );
+
+      await notifier.notifyAboutIdentityNotificationsChanged(['p-1']);
+
+      expect(appWebSockets.send).toHaveBeenCalledWith(
+        expect.objectContaining({ connectionId: 'c-1', jwtExpiry: 123 })
+      );
+    });
   });
 
   describe('delivery measurement (1.0)', () => {
@@ -361,8 +468,11 @@ describe('WsListenersNotifier', () => {
         drop_id: 'drop-1',
         wave_id: 'wave-1',
         fanout_recipients: 2,
-        fanout_serializations: 2,
-        fanout_connection_reads: 2,
+        // Both recipients share one audience class: one serialization.
+        fanout_serializations: 1,
+        // The recipient query supplied no expiry and the test transport
+        // reports no fence read.
+        fanout_connection_reads: 0,
         fanout_sent: 1,
         fanout_gone: 1
       });

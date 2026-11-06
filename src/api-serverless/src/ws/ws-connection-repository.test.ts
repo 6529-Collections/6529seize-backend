@@ -32,12 +32,32 @@ describe('WsConnectionRepository', () => {
       const execute = jest
         .fn()
         .mockResolvedValueOnce([
-          { connection_id: 'child-only', profile_id: 'a', wave_id: 'wave' },
-          { connection_id: 'both', profile_id: 'b', wave_id: 'wave' }
+          {
+            connection_id: 'child-only',
+            profile_id: 'a',
+            wave_id: 'wave',
+            jwt_expiry: '4102444800'
+          },
+          {
+            connection_id: 'both',
+            profile_id: 'b',
+            wave_id: 'wave',
+            jwt_expiry: '4102444800'
+          }
         ])
         .mockResolvedValueOnce([
-          { connection_id: 'both', profile_id: 'b', wave_id: 'wave' },
-          { connection_id: 'parent-only', profile_id: 'c', wave_id: 'wave' }
+          {
+            connection_id: 'both',
+            profile_id: 'b',
+            wave_id: 'wave',
+            jwt_expiry: '4102444800'
+          },
+          {
+            connection_id: 'parent-only',
+            profile_id: 'c',
+            wave_id: 'wave',
+            jwt_expiry: '4102444800'
+          }
         ]);
       const groupQuery = jest.fn().mockResolvedValue({ sql: '', params: {} });
       const repo = new WsConnectionRepository(
@@ -55,7 +75,12 @@ describe('WsConnectionRepository', () => {
       await expect(
         method({ waveId: 'wave', groupId: null }, {})
       ).resolves.toEqual([
-        { connectionId: 'both', profileId: 'b', wave_id: 'wave' }
+        {
+          connectionId: 'both',
+          profileId: 'b',
+          wave_id: 'wave',
+          jwtExpiry: 4102444800
+        }
       ]);
       expect(groupQuery.mock.calls.map((call) => call[0])).toEqual([
         'child',
@@ -320,11 +345,13 @@ describe('WsConnectionRepository', () => {
   });
 
   it('finds active primary and extra-account notification subscriptions', async () => {
-    const execute = jest
-      .fn()
-      .mockResolvedValue([
-        { connection_id: 'connection-1', identity_id: 'profile-1' }
-      ]);
+    const execute = jest.fn().mockResolvedValue([
+      {
+        connection_id: 'connection-1',
+        identity_id: 'profile-1',
+        jwt_expiry: 4102444800
+      }
+    ]);
     const repo = new WsConnectionRepository(
       () => ({ execute }) as any,
       {} as any
@@ -336,8 +363,13 @@ describe('WsConnectionRepository', () => {
         'profile-1'
       ])
     ).resolves.toEqual([
-      { connectionId: 'connection-1', identityId: 'profile-1' }
+      {
+        connectionId: 'connection-1',
+        identityId: 'profile-1',
+        jwtExpiry: 4102444800
+      }
     ]);
+    expect(execute.mock.calls[0][0]).toContain('connections.jwt_expiry');
 
     expect(execute.mock.calls[0][0]).toContain(
       `from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`

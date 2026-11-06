@@ -1,5 +1,12 @@
 import { ApiDrop } from '../generated/models/ApiDrop';
-import { ANON_USER_ID, appWebSockets, AppWebSockets } from './ws';
+import {
+  ANON_USER_ID,
+  appWebSockets,
+  AppWebSockets,
+  WS_SEND_CONCURRENCY_CAP
+} from './ws';
+import { forEachConcurrent } from '@/for-each-concurrent';
+import { DeliveryBatch, DeliveryMetricsBatch } from '@/ws-delivery/ws-delivery';
 import {
   wsConnectionRepository,
   WsConnectionRepository
@@ -70,8 +77,6 @@ const dropNotificationIdentityForLog = (drop: ApiDrop): string =>
     drop.wave?.id
   )} serial_no=${scalarForLog(drop.serial_no)}`;
 
-const DROP_DELETE_NOTIFICATION_BATCH_SIZE = 100;
-
 const SEND_OUTCOMES: ReadonlySet<string> = new Set([
   'sent',
   'resync_pending',
@@ -93,6 +98,15 @@ function sendOutcome(result: unknown): FanoutSendOutcome {
 export interface NotificationConnectionRecipient {
   readonly connectionId: string;
   readonly identityId: string;
+  /** Stored JWT expiry when the lookup returned it; skips a fence read. */
+  readonly jwtExpiry?: number;
+}
+
+interface FanoutSend {
+  readonly connectionId: string;
+  readonly jwtExpiry?: number;
+  /** Resolved when the pool reaches this send, so payloads stay lazy. */
+  readonly message: () => string;
 }
 
 const normalizedErrorForLog = (error: unknown): string => {
@@ -383,6 +397,105 @@ export function serializeDropReactionUpdateForRecipient(
   );
 }
 
+const DEFAULT_VIEWER_CONTEXT = { author_blocked: false, drop_hidden: false };
+
+/**
+ * Authors whose identity changes what a recipient sees: those of drops in the
+ * tree (root, quotes, reply targets) that are not publicly visible. Mirrors
+ * the traversal and owner lookup in `applyGlobalModerationForRecipient`.
+ */
+function moderationRelevantAuthorIds(
+  drop: ApiDrop,
+  authorIdsByDropId: ReadonlyMap<string, string>
+): Set<string> {
+  const authors = new Set<string>();
+  // Same path-scoped cycle guard as applyGlobalModerationForRecipient, so
+  // both reach exactly the same nodes even when one id appears twice.
+  const visit = (
+    current: ApiDrop | ApiDropWithoutWave,
+    path: ReadonlySet<string>
+  ): void => {
+    const status =
+      current.moderation?.status ?? ApiDropModerationStatus.Visible;
+    if (status !== ApiDropModerationStatus.Visible) {
+      authors.add(authorIdsByDropId.get(current.id) ?? current.author.id);
+    }
+    if (path.has(current.id)) return;
+    const nextPath = new Set(path).add(current.id);
+    for (const part of current.parts) {
+      if (part.quoted_drop?.drop) visit(part.quoted_drop.drop, nextPath);
+    }
+    if (current.reply_to?.drop) visit(current.reply_to.drop, nextPath);
+  };
+  visit(drop, new Set<string>());
+  return authors;
+}
+
+/**
+ * Returns the serialized frame for a recipient, building it once per
+ * audience class. Everything recipient-specific in a drop frame is:
+ * - whether the recipient authored a drop in the tree that is not publicly
+ *   visible (moderation `can_view`),
+ * - their `viewer_context`,
+ * - their `credit_left` (participatory drops only).
+ * Recipients that agree on all three get the identical string, so a chat
+ * message to 1,000 sockets is usually serialized once.
+ */
+export function createDropPayloadSerializer({
+  audienceDrop,
+  hiddenDropIds,
+  authorIdsByDropId,
+  viewerContexts,
+  creditLefts,
+  updateType,
+  reason,
+  onSerialized
+}: {
+  audienceDrop: ApiDrop;
+  hiddenDropIds: ReadonlySet<string>;
+  authorIdsByDropId: ReadonlyMap<string, string>;
+  viewerContexts: Readonly<Record<string, ApiDrop['viewer_context']>>;
+  creditLefts: Readonly<Record<string, number>>;
+  updateType: DropMessageType;
+  reason?: string;
+  onSerialized?: () => void;
+}): (profileId: string | null) => string {
+  const moderationAuthors = moderationRelevantAuthorIds(
+    audienceDrop,
+    authorIdsByDropId
+  );
+  const payloads = new Map<string, string>();
+  return (profileId) => {
+    const viewerContext =
+      profileId === null
+        ? DEFAULT_VIEWER_CONTEXT
+        : (viewerContexts[profileId] ?? DEFAULT_VIEWER_CONTEXT);
+    const creditLeft = profileId === null ? 0 : (creditLefts[profileId] ?? 0);
+    const key = JSON.stringify([
+      profileId !== null && moderationAuthors.has(profileId) ? profileId : null,
+      viewerContext,
+      creditLeft
+    ]);
+    const cached = payloads.get(key);
+    if (cached !== undefined) return cached;
+    const recipientDrop = applyGlobalModerationForRecipient(
+      audienceDrop,
+      profileId,
+      authorIdsByDropId
+    );
+    recipientDrop.viewer_context = viewerContext;
+    const payload = serializeDropMessageForRecipient(
+      anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
+      creditLeft,
+      updateType,
+      reason
+    );
+    onSerialized?.();
+    payloads.set(key, payload);
+    return payload;
+  };
+}
+
 export class WsListenersNotifier {
   private readonly logger: Logger = Logger.get(this.constructor.name);
 
@@ -429,15 +542,13 @@ export class WsListenersNotifier {
         drop_id: event.drop_id
       }
     });
-    for (let offset = 0; offset < recipients.length; offset += 100) {
-      await Promise.all(
-        recipients
-          .slice(offset, offset + 100)
-          .map(({ connectionId }) =>
-            this.appWebSockets.send({ connectionId, message })
-          )
-      );
-    }
+    await forEachConcurrent(
+      recipients,
+      async ({ connectionId, jwtExpiry }) => {
+        await this.appWebSockets.send({ connectionId, jwtExpiry, message });
+      },
+      { concurrency: WS_SEND_CONCURRENCY_CAP }
+    );
   }
 
   async notifyAboutIdentityNotificationsChanged(
@@ -454,15 +565,18 @@ export class WsListenersNotifier {
         await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
           profileIds
         );
-      await Promise.all(
-        recipients.map(({ connectionId, identityId }) =>
-          this.appWebSockets.send({
+      await forEachConcurrent(
+        recipients,
+        async ({ connectionId, identityId, jwtExpiry }) => {
+          await this.appWebSockets.send({
             connectionId,
+            jwtExpiry,
             message: JSON.stringify(
               identityNotificationsChangedMessage(identityId)
             )
-          })
-        )
+          });
+        },
+        { concurrency: WS_SEND_CONCURRENCY_CAP }
       );
     } catch (error) {
       this.logger.error(
@@ -492,15 +606,22 @@ export class WsListenersNotifier {
         (await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
           profileIds
         ));
-      await Promise.all(
-        recipients.flatMap(({ connectionId, identityId }) =>
-          (statesByProfileId.get(identityId) ?? []).map((state) =>
-            this.appWebSockets.send({
-              connectionId,
-              message: JSON.stringify(dmUnreadStateChangedMessage(state))
-            })
-          )
-        )
+      await forEachConcurrent(
+        recipients.flatMap(({ connectionId, identityId, jwtExpiry }) =>
+          (statesByProfileId.get(identityId) ?? []).map((state) => ({
+            connectionId,
+            jwtExpiry,
+            state
+          }))
+        ),
+        async ({ connectionId, jwtExpiry, state }) => {
+          await this.appWebSockets.send({
+            connectionId,
+            jwtExpiry,
+            message: JSON.stringify(dmUnreadStateChangedMessage(state))
+          });
+        },
+        { concurrency: WS_SEND_CONCURRENCY_CAP }
       );
     } catch (error) {
       this.logger.error(
@@ -620,37 +741,25 @@ export class WsListenersNotifier {
         },
         ctx.connection
       );
+      const payloadFor = createDropPayloadSerializer({
+        audienceDrop,
+        hiddenDropIds,
+        authorIdsByDropId,
+        viewerContexts,
+        creditLefts,
+        updateType,
+        reason,
+        onSerialized: () => measurement.serialized()
+      });
       measurement.prepareDone();
-      await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) => {
-          const recipientDrop = applyGlobalModerationForRecipient(
-            audienceDrop,
-            profileId,
-            authorIdsByDropId
-          );
-          recipientDrop.viewer_context =
-            profileId === null
-              ? { author_blocked: false, drop_hidden: false }
-              : (viewerContexts[profileId] ?? {
-                  author_blocked: false,
-                  drop_hidden: false
-                });
-          const message = serializeDropMessageForRecipient(
-            anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
-            profileId === null ? 0 : (creditLefts[profileId] ?? 0),
-            updateType,
-            reason
-          );
-          measurement.serialized();
-          // AppWebSockets.send re-reads the connection row before sending.
-          measurement.connectionRead();
-          return this.sendMeasured(
-            connectionId,
-            message,
-            serverReceivedAt,
-            measurement
-          );
-        })
+      await this.sendToAll(
+        onlineProfiles.map(({ connectionId, profileId, jwtExpiry }) => ({
+          connectionId,
+          jwtExpiry,
+          message: () => payloadFor(profileId)
+        })),
+        serverReceivedAt,
+        measurement
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, updateType, inputDrop, e);
@@ -663,18 +772,59 @@ export class WsListenersNotifier {
     }
   }
 
+  /**
+   * Sends one frame per recipient through a capped pool. Post-send
+   * bookkeeping and delivery metrics are batched for the whole fan-out and
+   * awaited before this returns: nothing is left running after a response.
+   */
+  private async sendToAll(
+    sends: Iterable<FanoutSend>,
+    serverReceivedAt: number | null,
+    measurement: FanoutMeasurement
+  ): Promise<void> {
+    const settlements: Promise<unknown>[] = [];
+    const batch: DeliveryBatch = {
+      defer: (settlement) => settlements.push(settlement),
+      metrics: new DeliveryMetricsBatch()
+    };
+    try {
+      await forEachConcurrent(
+        sends,
+        async (send) => {
+          await this.sendMeasured(
+            send.connectionId,
+            send.message(),
+            serverReceivedAt,
+            measurement,
+            send.jwtExpiry,
+            batch
+          );
+        },
+        { concurrency: WS_SEND_CONCURRENCY_CAP }
+      );
+    } finally {
+      await Promise.allSettled(settlements);
+      batch.metrics.flush();
+    }
+  }
+
   /** Stamps delivery times on the frame and records the send's outcome. */
   private async sendMeasured(
     connectionId: string,
     message: string,
     serverReceivedAt: number | null,
-    measurement: FanoutMeasurement
+    measurement: FanoutMeasurement,
+    jwtExpiry?: number,
+    batch?: DeliveryBatch
   ): Promise<unknown> {
     const sentAt = Date.now();
     try {
       const result = await this.appWebSockets.send({
         connectionId,
-        message: withDeliveryTimestamps(message, { serverReceivedAt, sentAt })
+        message: withDeliveryTimestamps(message, { serverReceivedAt, sentAt }),
+        jwtExpiry,
+        batch,
+        onConnectionRead: () => measurement.connectionRead()
       });
       measurement.sendSettled(sentAt, sendOutcome(result));
       return result;
@@ -899,40 +1049,23 @@ export class WsListenersNotifier {
         );
       measurement.queryDone(onlineClients.length * dropInfos.length);
       measurement.prepareDone();
-      const connectionIds = onlineClients.map((it) => it.connectionId);
-      let pendingSends: Promise<unknown>[] = [];
-      const sendFailures: unknown[] = [];
-      const flushPendingSends = async (): Promise<void> => {
-        const results = await Promise.allSettled(pendingSends);
-        sendFailures.push(
-          ...results.flatMap((result) =>
-            result.status === 'rejected' ? [result.reason] : []
-          )
-        );
-        pendingSends = [];
-      };
-      for (const dropInfo of dropInfos) {
-        const message = JSON.stringify(dropDeleteMessage(dropInfo));
+      const messages = dropInfos.map((dropInfo) => {
         measurement.serialized();
-        for (const connectionId of connectionIds) {
-          measurement.connectionRead();
-          pendingSends.push(
-            this.sendMeasured(
-              connectionId,
-              message,
-              serverReceivedAt,
-              measurement
-            )
-          );
-          if (pendingSends.length === DROP_DELETE_NOTIFICATION_BATCH_SIZE) {
-            await flushPendingSends();
-          }
-        }
-      }
-      await flushPendingSends();
-      if (sendFailures.length) {
-        throw sendFailures[0];
-      }
+        return JSON.stringify(dropDeleteMessage(dropInfo));
+      });
+      // Deletions go out in order, each to every listener; a failed send
+      // does not stop later ones, and the first failure is rethrown.
+      await this.sendToAll(
+        messages.flatMap((message) =>
+          onlineClients.map(({ connectionId, jwtExpiry }) => ({
+            connectionId,
+            jwtExpiry,
+            message: () => message
+          }))
+        ),
+        serverReceivedAt,
+        measurement
+      );
     } finally {
       ctx.timer?.stop(timerName);
       measurement.emit({
