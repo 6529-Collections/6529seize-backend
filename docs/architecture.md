@@ -577,7 +577,7 @@ through `1a-staging` without deploying this service there. See
 | `externalCollectionSnapshottingLoop`     | Snapshot external collection ownership.                                                                                                                             |
 | `externalCollectionLiveTailingLoop`      | Live-tail external collection transfers.                                                                                                                            |
 | `transactionsProcessingLoop`             | Normalize raw transactions into processed state.                                                                                                                    |
-| `tdhLoop`                                | Calculate TDH and publish TDH completion.                                                                                                                           |
+| `tdhLoop`                                | Calculate TDH, publish wallet/consolidated CSVs through bounded Arweave gateway failover with public ArDrive download links, and publish TDH completion.                                                 |
 | `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                                                                                     |
 | `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                                                                                   |
 | `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                                                                                      |
@@ -2947,3 +2947,7 @@ read eligibility, and reuse the existing drop bookmark table. Private state is
 not delegated or emitted as public activity. `ApiWaveMin.is_direct_message`
 allows saved-message links to select the correct conversation shell. This runs
 in `api`; no additional worker or schema deployment is required.
+
+The authenticated `GET /v2/waves/{waveId}/all-mention-count` API previews the current
+`@all` audience for creators and admins, reusing follower, visibility and notification
+write filters without inserting notifications. The frontend confirms before posting.

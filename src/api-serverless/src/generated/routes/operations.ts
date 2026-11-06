@@ -263,6 +263,7 @@ import { ApiValidateProfileCmsAgentCandidateRequest } from '@/api/generated/mode
 import { ApiValidateProfileCmsAgentPatchRequest } from '@/api/generated/models/ApiValidateProfileCmsAgentPatchRequest';
 import { ApiValidateProfileCmsPackageRequest } from '@/api/generated/models/ApiValidateProfileCmsPackageRequest';
 import { ApiWalletDistributionAllocations } from '@/api/generated/models/ApiWalletDistributionAllocations';
+import { ApiWaveAllMentionCount } from '@/api/generated/models/ApiWaveAllMentionCount';
 import { ApiWaveChatHistoryPurgePlan } from '@/api/generated/models/ApiWaveChatHistoryPurgePlan';
 import { ApiWaveDecisionsPageV2 } from '@/api/generated/models/ApiWaveDecisionsPageV2';
 import { ApiWaveDropsFeedV2 } from '@/api/generated/models/ApiWaveDropsFeedV2';
@@ -4087,6 +4088,22 @@ export type GetWavePollsV2Request = Request<
   ApiResponse<GetWavePollsV2Response>,
   never,
   GetWavePollsV2Query,
+  Record<string, never>
+>;
+
+export interface GetWaveAllMentionCountPathParams {
+  "waveId": string;
+}
+
+export type GetWaveAllMentionCountQuery = Record<string, never>;
+
+export type GetWaveAllMentionCountResponse = ApiWaveAllMentionCount;
+
+export type GetWaveAllMentionCountRequest = Request<
+  GetWaveAllMentionCountPathParams,
+  ApiResponse<GetWaveAllMentionCountResponse>,
+  never,
+  GetWaveAllMentionCountQuery,
   Record<string, never>
 >;
 

@@ -114,6 +114,31 @@ Select `maintenance` explicitly for this rollout to avoid unrelated schema work.
 
 ### Operational failures
 
+#### TDH export uploads
+
+`tdhLoop` uploads each wallet and consolidated CSV using `ardrive.net`, then
+`turbo-gateway.com` and `arweave.net` on failure. A successful gateway remains
+preferred for subsequent chunks. Uploads retain one signed transaction across
+failover, use at most eight concurrent chunks, limit each HTTP request to ten
+seconds, and stop each export after two minutes. Each request has at most two
+attempts per gateway. Permanent validation errors stop immediately. Failure
+logs include the transaction, gateway, operation, chunk, attempt, status and a
+short provider error code; they exclude keys, CSV bodies and provider stacks.
+Unknown HTTP 400 responses also fail over: broadcasters can aggregate temporary
+peer rejections under that status without returning a protocol error code.
+Those logs summarize peer success/failure counts and statuses. Between complete
+chunk retry rounds, allow thirty seconds for fresh headers to propagate; this
+backoff is canceled when the same two-minute export deadline expires.
+
+Deploy only `tdhLoop` for upload-only changes; unchanged schema and xTDH
+dependencies do not need redeployment. Verify both `/api/uploads` and
+`/api/consolidated_uploads` have the target snapshot date/block after invoking
+the loop. Also verify both Arweave uploads and their S3 mirrors in the run logs.
+New export links use the primary public gateway (`ardrive.net`) so readers do
+not depend on `arweave.net` returning complete files after a successful upload.
+The immutable Arweave transaction IDs, CSV schema and S3 mirror keys remain
+unchanged. Existing links retain their stored gateway URLs.
+
 The synchronous `dbMigrationsLoop` invocation waits up to 960 seconds for its
 900-second Lambda and disables AWS CLI retries for that invocation. If its response
 is lost, inspect the Lambda invocation logs and completion before retrying the

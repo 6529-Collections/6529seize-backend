@@ -437,6 +437,18 @@ export class UserNotifier {
     ctx.timer?.stop('userNotifier->notifyOfWaveCreated');
   }
 
+  public async countMentionRecipients(
+    identityIds: string[],
+    authorId: string,
+    { connection }: RequestContext
+  ): Promise<number> {
+    return this.identityNotificationsDb.countMentionRecipients(
+      identityIds,
+      authorId,
+      connection
+    );
+  }
+
   public async notifyWaveDropCreatedRecipients(
     {
       waveId,

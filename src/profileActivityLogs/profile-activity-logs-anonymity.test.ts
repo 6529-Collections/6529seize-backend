@@ -56,3 +56,26 @@ it('leaves profile changes unrelated to drops outside the anonymity filter', asy
   const [sql] = execute.mock.calls[0];
   expect(sql).not.toContain('anonymous_log_entry');
 });
+
+it('keeps the anonymous-entry restriction before each NIC cursor branch limit', async () => {
+  const execute = jest.fn().mockResolvedValue([]);
+  const repository = new ProfileActivityLogsDb(
+    () => ({ execute }) as unknown as SqlExecutor,
+    {} as never
+  );
+  await repository.searchNicLogs(
+    { profileId: 'artist', direction: 'all', types: [], size: 10, after: null },
+    [],
+    { authenticationContext: AuthenticationContext.fromProfileId('reader') }
+  );
+  const [sql, params] = execute.mock.calls[0];
+  const branches = sql.split('UNION DISTINCT');
+  expect(branches).toHaveLength(12);
+  for (const branch of branches) {
+    expect(branch).toContain('anonymous_log_entry.won_at is null');
+    expect(
+      branch.indexOf('anonymous_log_entry.drop_id = pa_logs.target_id')
+    ).toBeLessThan(branch.indexOf('LIMIT'));
+  }
+  expect(params.anonymityViewerId).toBe('reader');
+});

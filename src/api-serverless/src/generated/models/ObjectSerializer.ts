@@ -682,6 +682,8 @@ export * from '../models/ApiPageSortDirection';
 export * from '../models/ApiPageWithNextUriBase';
 export * from '../models/ApiPageWithoutCount';
 export * from '../models/ApiPaymentDetails';
+export * from '../models/ApiProfileActivityLog';
+export * from '../models/ApiProfileActivityLogPage';
 export * from '../models/ApiProfileBlockState';
 export * from '../models/ApiProfileClassification';
 export * from '../models/ApiProfileCmsAgentCandidateValidation';
@@ -848,6 +850,7 @@ export * from '../models/ApiWallet';
 export * from '../models/ApiWalletDistributionAllocation';
 export * from '../models/ApiWalletDistributionAllocations';
 export * from '../models/ApiWave';
+export * from '../models/ApiWaveAllMentionCount';
 export * from '../models/ApiWaveChatConfig';
 export * from '../models/ApiWaveChatHistoryPurgePlan';
 export * from '../models/ApiWaveChatRepliesConfig';
@@ -1687,6 +1690,8 @@ import { ApiPageSortDirection } from '../models/ApiPageSortDirection';
 import { ApiPageWithNextUriBase } from '../models/ApiPageWithNextUriBase';
 import { ApiPageWithoutCount } from '../models/ApiPageWithoutCount';
 import { ApiPaymentDetails } from '../models/ApiPaymentDetails';
+import { ApiProfileActivityLog } from '../models/ApiProfileActivityLog';
+import { ApiProfileActivityLogPage } from '../models/ApiProfileActivityLogPage';
 import { ApiProfileBlockState } from '../models/ApiProfileBlockState';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileCmsAgentCandidateValidation } from '../models/ApiProfileCmsAgentCandidateValidation';
@@ -1853,6 +1858,7 @@ import { ApiWallet } from '../models/ApiWallet';
 import { ApiWalletDistributionAllocation, ApiWalletDistributionAllocationPhaseEnum     } from '../models/ApiWalletDistributionAllocation';
 import { ApiWalletDistributionAllocations } from '../models/ApiWalletDistributionAllocations';
 import { ApiWave } from '../models/ApiWave';
+import { ApiWaveAllMentionCount } from '../models/ApiWaveAllMentionCount';
 import { ApiWaveChatConfig } from '../models/ApiWaveChatConfig';
 import { ApiWaveChatHistoryPurgePlan } from '../models/ApiWaveChatHistoryPurgePlan';
 import { ApiWaveChatRepliesConfig } from '../models/ApiWaveChatRepliesConfig';
@@ -2957,6 +2963,8 @@ let typeMap: {[index: string]: any} = {
     "ApiPageWithNextUriBase": ApiPageWithNextUriBase,
     "ApiPageWithoutCount": ApiPageWithoutCount,
     "ApiPaymentDetails": ApiPaymentDetails,
+    "ApiProfileActivityLog": ApiProfileActivityLog,
+    "ApiProfileActivityLogPage": ApiProfileActivityLogPage,
     "ApiProfileBlockState": ApiProfileBlockState,
     "ApiProfileCmsAgentCandidateValidation": ApiProfileCmsAgentCandidateValidation,
     "ApiProfileCmsAgentConstraints": ApiProfileCmsAgentConstraints,
@@ -3106,6 +3114,7 @@ let typeMap: {[index: string]: any} = {
     "ApiWalletDistributionAllocation": ApiWalletDistributionAllocation,
     "ApiWalletDistributionAllocations": ApiWalletDistributionAllocations,
     "ApiWave": ApiWave,
+    "ApiWaveAllMentionCount": ApiWaveAllMentionCount,
     "ApiWaveChatConfig": ApiWaveChatConfig,
     "ApiWaveChatHistoryPurgePlan": ApiWaveChatHistoryPurgePlan,
     "ApiWaveChatRepliesConfig": ApiWaveChatRepliesConfig,

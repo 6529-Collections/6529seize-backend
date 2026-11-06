@@ -88,6 +88,29 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     super(dbSupplier);
   }
 
+  public async countMentionRecipients(
+    identityIds: string[],
+    authorId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    const rows = await this.filterNotificationRowsForWrite(
+      Array.from(new Set(identityIds)).map((identityId) => ({
+        identity_id: identityId,
+        additional_identity_id: authorId,
+        cause: IdentityNotificationCause.IDENTITY_MENTIONED,
+        related_drop_id: null,
+        related_drop_part_no: null,
+        related_drop_2_id: null,
+        related_drop_2_part_no: null,
+        wave_id: null,
+        visibility_group_id: null,
+        additional_data: {}
+      })),
+      connection
+    );
+    return rows.length;
+  }
+
   private isNotifierActivated() {
     return process.env.USER_NOTIFIER_ACTIVATED === 'true';
   }
