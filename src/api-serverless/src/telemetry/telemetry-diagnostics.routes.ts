@@ -20,9 +20,12 @@ const logger = Logger.get('TELEMETRY_DIAGNOSTICS');
 
 const router = express.Router();
 
+// Compression belongs inside the bundle (`encoding: "gzip"`), where its
+// output is bounded; compressed request bodies are refused.
 const readBody = express.text({
   type: () => true,
-  limit: DIAG_MAX_REQUEST_BYTES
+  limit: DIAG_MAX_REQUEST_BYTES,
+  inflate: false
 });
 
 function parseJson(body: unknown): unknown {

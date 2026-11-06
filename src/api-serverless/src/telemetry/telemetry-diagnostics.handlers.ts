@@ -8,7 +8,7 @@ import {
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { NotFoundException } from '@/exceptions';
 import { Logger } from '@/logging';
-import { assertTelemetryTeamMember } from '@/api/telemetry/telemetry-team-auth';
+import { assertTelemetryTeamReader } from '@/api/telemetry/telemetry-team-auth';
 import { normalizeDiagnosticsCode } from '@/api/telemetry/telemetry-diagnostics-crypto';
 import { listDiagnostics } from '@/api/telemetry/telemetry-diagnostics.db';
 import { readDiagnostics } from '@/api/telemetry/telemetry-diagnostics';
@@ -29,7 +29,7 @@ function setPrivateHeaders(req: {
 export async function handleListTelemetryDiagnostics(
   req: ListTelemetryDiagnosticsRequest
 ): Promise<ApiTelemetryDiagnosticsPage> {
-  assertTelemetryTeamMember(req);
+  await assertTelemetryTeamReader(req);
   setPrivateHeaders(req);
   const { limit } = getValidatedByJoiOrThrow(req.query, ListQuerySchema);
   const rows = await listDiagnostics(new Date(), limit);
@@ -47,15 +47,17 @@ export async function handleListTelemetryDiagnostics(
 export async function handleGetTelemetryDiagnosticsBundle(
   req: GetTelemetryDiagnosticsBundleRequest
 ): Promise<ApiTelemetryDiagnosticsBundle> {
-  const wallet = assertTelemetryTeamMember(req);
+  const readerProfileId = await assertTelemetryTeamReader(req);
   setPrivateHeaders(req);
   const code = normalizeDiagnosticsCode(String(req.params.code ?? ''));
   const found = code ? await readDiagnostics(code, new Date()) : null;
   if (!found) {
     throw new NotFoundException('Diagnostics bundle not found or expired');
   }
-  // Access audit: which team wallet opened which code. Never the content.
-  logger.info(`Diagnostics bundle ${found.code} read by team wallet ${wallet}`);
+  // Access audit: reader profile id and bundle code only, never the content.
+  logger.info(
+    `Diagnostics bundle read: code=${found.code} reader_profile_id=${readerProfileId}`
+  );
   return {
     code: found.code,
     created_at: new Date(found.created_at),
