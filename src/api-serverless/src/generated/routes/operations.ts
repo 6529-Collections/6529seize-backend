@@ -241,8 +241,10 @@ import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompe
 import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
+import { ApiTelemetryDashboard } from '@/api/generated/models/ApiTelemetryDashboard';
 import { ApiTelemetryDiagnosticsBundle } from '@/api/generated/models/ApiTelemetryDiagnosticsBundle';
 import { ApiTelemetryDiagnosticsPage } from '@/api/generated/models/ApiTelemetryDiagnosticsPage';
+import { ApiTelemetryPublicStats } from '@/api/generated/models/ApiTelemetryPublicStats';
 import { ApiUndiscoveredDrops } from '@/api/generated/models/ApiUndiscoveredDrops';
 import { ApiUnpublishProfileCmsPackageRequest } from '@/api/generated/models/ApiUnpublishProfileCmsPackageRequest';
 import { ApiUpdateCompetitionRequest } from '@/api/generated/models/ApiUpdateCompetitionRequest';
@@ -3305,6 +3307,23 @@ export type GetTdhRulesRequest = Request<
   Record<string, never>
 >;
 
+export type GetTelemetryDashboardPathParams = Record<string, never>;
+
+export interface GetTelemetryDashboardQuery {
+  "from"?: string;
+  "to"?: string;
+}
+
+export type GetTelemetryDashboardResponse = ApiTelemetryDashboard;
+
+export type GetTelemetryDashboardRequest = Request<
+  GetTelemetryDashboardPathParams,
+  ApiResponse<GetTelemetryDashboardResponse>,
+  never,
+  GetTelemetryDashboardQuery,
+  Record<string, never>
+>;
+
 export type ListTelemetryDiagnosticsPathParams = Record<string, never>;
 
 export interface ListTelemetryDiagnosticsQuery {
@@ -3334,6 +3353,24 @@ export type GetTelemetryDiagnosticsBundleRequest = Request<
   ApiResponse<GetTelemetryDiagnosticsBundleResponse>,
   never,
   GetTelemetryDiagnosticsBundleQuery,
+  Record<string, never>
+>;
+
+export type GetTelemetryPublicStatsPathParams = Record<string, never>;
+
+export interface GetTelemetryPublicStatsQuery {
+  "days"?: number;
+  "period"?: "week" | "month";
+  "start"?: string;
+}
+
+export type GetTelemetryPublicStatsResponse = ApiTelemetryPublicStats;
+
+export type GetTelemetryPublicStatsRequest = Request<
+  GetTelemetryPublicStatsPathParams,
+  ApiResponse<GetTelemetryPublicStatsResponse>,
+  never,
+  GetTelemetryPublicStatsQuery,
   Record<string, never>
 >;
 
