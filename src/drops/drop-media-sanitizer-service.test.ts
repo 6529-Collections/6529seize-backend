@@ -482,61 +482,74 @@ describe('image format validation before publication', () => {
       expect.objectContaining({ toStatus: DropMediaUploadStatus.FAILED })
     );
   });
-  it('marks ready only after both verified previews have been stored', async () => {
-    const p = pipeline(fixture('jpeg'));
-    const write = p.publicSend.getMockImplementation()!;
-    let release!: () => void;
-    let reached!: () => void;
-    const paused = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      reached = resolve;
-    });
-    p.publicSend.mockImplementation(async (command) => {
-      const result = await write(command);
-      if (command.input.Key.includes('/AUTOx1080/')) {
-        reached();
-        await paused;
-      }
-      return result;
-    });
-    const processing = p.process();
-    await started;
-    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
-      expect.objectContaining({ toStatus: DropMediaUploadStatus.SANITIZING })
-    );
-    release();
-    await processing;
-    const keys = p.publicSend.mock.calls.map(([command]) => command.input.Key);
-    expect(keys).toEqual([
-      'drops/author/image.jpg',
-      'drops/author/AUTOx450/image.jpg',
-      'drops/author/AUTOx1080/image.jpg'
-    ]);
-    for (const [command] of p.publicSend.mock.calls.slice(1)) {
-      expect(await Sharp(command.input.Body).metadata()).toMatchObject({
-        format: 'jpeg'
+  it.each(['jpeg', 'gif'])(
+    'marks %s ready only after both verified previews have been stored',
+    async (format) => {
+      const p = pipeline(fixture(format), `image/${format}`);
+      const write = p.publicSend.getMockImplementation()!;
+      let release!: () => void;
+      let reached!: () => void;
+      const paused = new Promise<void>((resolve) => {
+        release = resolve;
       });
+      const started = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      p.publicSend.mockImplementation(async (command) => {
+        const result = await write(command);
+        if (command.input.Key.includes('/AUTOx1080/')) {
+          reached();
+          await paused;
+        }
+        return result;
+      });
+      const processing = p.process();
+      await started;
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ toStatus: DropMediaUploadStatus.SANITIZING })
+      );
+      release();
+      await processing;
+      const keys = p.publicSend.mock.calls.map(
+        ([command]) => command.input.Key
+      );
+      expect(keys).toEqual([
+        'drops/author/image.jpg',
+        'drops/author/AUTOx450/image.jpg',
+        'drops/author/AUTOx1080/image.jpg'
+      ]);
+      for (const [command] of p.publicSend.mock.calls.slice(1)) {
+        expect(await Sharp(command.input.Body).metadata()).toMatchObject({
+          format
+        });
+      }
+      if (format === 'gif') {
+        expect(p.publicSend.mock.calls[2][0].input.Body).toEqual(
+          p.publicSend.mock.calls[1][0].input.Body
+        );
+      }
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
+      );
     }
-    expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
-      expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
-    );
-  });
+  );
 
-  it('keeps a partial derivative upload failure retryable without declaring ready', async () => {
-    const p = pipeline(fixture('jpeg'));
-    const write = p.publicSend.getMockImplementation()!;
-    const error = new Error('preview storage unavailable');
-    p.publicSend.mockImplementation(async (command) => {
-      if (command.input.Key.includes('/AUTOx1080/')) throw error;
-      return write(command);
-    });
-    await expect(p.process()).rejects.toBe(error);
-    expect(p.uploadsDb.transitionStatus).toHaveBeenCalledTimes(1);
-    expect(p.ingestSend).toHaveBeenCalledTimes(1);
-    expect(p.notifier.notifyStatusTransition).not.toHaveBeenCalled();
-  });
+  it.each(['jpeg', 'gif'])(
+    'keeps a partial %s derivative upload failure retryable without declaring ready',
+    async (format) => {
+      const p = pipeline(fixture(format), `image/${format}`);
+      const write = p.publicSend.getMockImplementation()!;
+      const error = new Error('preview storage unavailable');
+      p.publicSend.mockImplementation(async (command) => {
+        if (command.input.Key.includes('/AUTOx1080/')) throw error;
+        return write(command);
+      });
+      await expect(p.process()).rejects.toBe(error);
+      expect(p.uploadsDb.transitionStatus).toHaveBeenCalledTimes(1);
+      expect(p.ingestSend).toHaveBeenCalledTimes(1);
+      expect(p.notifier.notifyStatusTransition).not.toHaveBeenCalled();
+    }
+  );
 
   it('rejects corrupt PNG pixel data before publishing the original', async () => {
     const valid = fixture('png');
