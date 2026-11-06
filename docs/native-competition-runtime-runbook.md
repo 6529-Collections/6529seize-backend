@@ -126,8 +126,9 @@ and elapsed duration with `native_competition_execution_failed`.
   entries, votes, winners and awards are retained without manufacturing an end
   time. Any historical entries or votes require a non-blank lifecycle audit
   reason; deleted entries and reset votes count. The additive
-  `permissions.archive_requires_reason` field guides the administrator's dialog;
-  the archive command checks again inside its transaction.
+  `permissions.archive_requires_reason` detail field guides the administrator's dialog;
+  collection reads omit it to avoid per-item activity probes.
+  The archive command checks again inside its transaction.
   Existing Main Stage winners remain eligible for delayed claim delivery after
   archival. Deploy `waveDecisionExecutionLoop` first to preserve those deliveries,
   then `api`, then the dependent frontend controls. No schema change is required.

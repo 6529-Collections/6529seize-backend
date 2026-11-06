@@ -259,12 +259,18 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
     ctx: RequestContext
   ): Promise<boolean> {
     return this.timed('hasActivity', ctx, async () => {
-      const row = await this.db.oneOrNull<{ id: string }>(
-        `SELECT id FROM ${COMPETITION_ENTRIES_TABLE} WHERE competition_id = :competitionId LIMIT 1`,
+      // Advisory permission reads may use the read pool. Commands supply their
+      // locked transaction connection; no routing or timeout options are dropped.
+      const row = await this.db.oneOrNull<{ found: number }>(
+        `select 1 as found
+         where exists(select 1 from ${COMPETITION_ENTRIES_TABLE} where competition_id=:competitionId)
+            or exists(select 1 from ${COMPETITION_VOTES_TABLE} where competition_id=:competitionId)
+            or exists(select 1 from ${COMPETITION_VOTE_HISTORY_TABLE} where competition_id=:competitionId)
+            or exists(select 1 from ${COMPETITION_SCORE_HISTORY_TABLE} where competition_id=:competitionId and kind='VOTER')`,
         { competitionId },
         { wrappedConnection: ctx.connection }
       );
-      return row !== null || this.hasVotes(competitionId, ctx);
+      return row !== null;
     });
   }
 

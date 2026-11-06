@@ -171,6 +171,8 @@ export class CompetitionEventRepository extends LazyDbAccessCompatibleService {
         { competitionId },
         ctx
       );
+    // Archiving stops future decisions, but delayed delivery must retain the
+    // claims earned by an already finalized Main Stage decision.
     const rows = await this.query<NativeDecisionWinner>(
       'getPrivilegedWinners',
       `select e.id as entry_id, e.drop_id, e.submitter_id, w.\`rank\`, w.final_rating
