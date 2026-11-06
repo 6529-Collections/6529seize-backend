@@ -1,4 +1,5 @@
 import Arweave from 'arweave';
+import Transaction from 'arweave/node/lib/transaction';
 import { JWKInterface } from 'arweave/node/lib/wallet';
 import { uploadTdhCsvToArweave } from '@/tdhLoop/tdh-arweave-upload';
 
@@ -52,6 +53,17 @@ describe('TDH Arweave gateway uploads', () => {
 
   it('signs once, submits a metadata-only header, and uploads every chunk with its original data root', async () => {
     const fetch = setup();
+    const setSignature = Transaction.prototype.setSignature;
+    let signed: ReturnType<Transaction['toJSON']> | undefined;
+    jest
+      .spyOn(Transaction.prototype, 'setSignature')
+      .mockImplementation(function (
+        this: Transaction,
+        attributes: Parameters<Transaction['setSignature']>[0]
+      ) {
+        setSignature.call(this, attributes);
+        signed = this.toJSON();
+      });
     const csv = 'x'.repeat(600000);
     const result = await uploadTdhCsvToArweave(csv, key, logger);
     const posts = fetch.mock.calls.filter(
@@ -62,6 +74,8 @@ describe('TDH Arweave gateway uploads', () => {
       .slice(1)
       .map(([, init]) => JSON.parse(init!.body as string));
     expect(header.data).toBe('');
+    expect(signed).toBeDefined();
+    expect(header).toEqual({ ...signed, data: '' });
     expect(header.data_size).toBe('600000');
     expect(chunks).toHaveLength(3);
     expect(new Set(chunks.map((chunk) => chunk.offset)).size).toBe(3);
@@ -85,7 +99,10 @@ describe('TDH Arweave gateway uploads', () => {
     const fetch = setup();
     fetch.mockImplementation(async (input, init) => {
       if (init?.method === 'GET') return metadata(input);
-      if (path(input) === '/chunk' && String(input).includes('ardrive.net')) {
+      if (
+        path(input) === '/chunk' &&
+        new URL(String(input)).hostname === 'ardrive.net'
+      ) {
         return new Response(
           JSON.stringify({
             details: '  function_clause',
@@ -146,6 +163,54 @@ describe('TDH Arweave gateway uploads', () => {
     expect(accepted.size).toBe(9);
     expect(Arweave.crypto.sign).toHaveBeenCalledTimes(1);
   });
+
+  it.each([false, true])(
+    'coordinates all three gateways before concurrent chunks when the fallback header fails: %s',
+    async (failHeader) => {
+      const fetch = setup();
+      const registered = new Set<string>();
+      const offsets = new Map<string, number>();
+      const accepted = new Set<string>();
+      fetch.mockImplementation(async (input, init) => {
+        if (init?.method === 'GET') return metadata(input);
+        const gateway = new URL(String(input)).hostname;
+        if (path(input) === '/tx') {
+          // Keep registration pending while multiple workers await the same promise.
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          if (gateway === 'turbo-gateway.com' && failHeader)
+            return new Response('{}', { status: 503 });
+          registered.add(gateway);
+          return new Response('');
+        }
+        expect(registered.has(gateway)).toBe(true);
+        const offset: string = JSON.parse(init!.body as string).offset;
+        if (!offsets.has(offset)) offsets.set(offset, offsets.size);
+        if (
+          gateway === 'ardrive.net' ||
+          (gateway === 'turbo-gateway.com' && offsets.get(offset)! % 2 === 0)
+        )
+          return new Response('{}', { status: 500 });
+        accepted.add(offset);
+        return new Response('');
+      });
+      await uploadTdhCsvToArweave('x'.repeat(2_300_000), key, logger);
+      const headers = fetch.mock.calls.filter(
+        ([input]) => path(input) === '/tx'
+      );
+      expect(headers.map(([input]) => new URL(String(input)).hostname)).toEqual(
+        ['ardrive.net', 'turbo-gateway.com', 'arweave.net']
+      );
+      expect(new Set(headers.map(([, init]) => init!.body)).size).toBe(1);
+      expect(accepted.size).toBe(9);
+      expect(Arweave.crypto.sign).toHaveBeenCalledTimes(1);
+      if (failHeader)
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /GATEWAY turbo-gateway.com.*OP POST tx.*STATUS 503/
+          )
+        );
+    }
+  );
 
   it('retries a lost header acknowledgement with the identical signed transaction', async () => {
     const fetch = setup();
@@ -212,7 +277,7 @@ describe('TDH Arweave gateway uploads', () => {
   it('fails over metadata and rejects malformed successful responses before signing', async () => {
     const fetch = setup();
     fetch.mockImplementation(async (input, init) => {
-      if (String(input).includes('ardrive.net'))
+      if (new URL(String(input)).hostname === 'ardrive.net')
         return new Response('<html>gateway error</html>');
       return init?.method === 'GET' ? metadata(input) : new Response('');
     });
@@ -224,7 +289,9 @@ describe('TDH Arweave gateway uploads', () => {
     expect(
       fetch.mock.calls
         .filter(([input]) => path(input) === '/tx')
-        .every(([input]) => String(input).includes('turbo-gateway.com'))
+        .every(
+          ([input]) => new URL(String(input)).hostname === 'turbo-gateway.com'
+        )
     ).toBe(true);
   });
 
@@ -238,7 +305,10 @@ describe('TDH Arweave gateway uploads', () => {
     let firstSignal: AbortSignal | null | undefined;
     fetch.mockImplementation(async (input, init) => {
       if (init?.method === 'GET') return metadata(input);
-      if (path(input) === '/chunk' && String(input).includes('ardrive.net')) {
+      if (
+        path(input) === '/chunk' &&
+        new URL(String(input)).hostname === 'ardrive.net'
+      ) {
         firstSignal = init?.signal;
         started();
         return hangingRequest(init?.signal);

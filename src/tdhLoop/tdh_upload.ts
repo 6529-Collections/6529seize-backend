@@ -16,6 +16,7 @@ import { fetchAllOwnerBalances } from '../ownersBalancesLoop/db.owners_balances'
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
 import { uploadTdhCsvToArweave } from '@/tdhLoop/tdh-arweave-upload';
+import { JWKInterface } from 'arweave/node/lib/wallet';
 
 let logger: Logger;
 
@@ -161,7 +162,13 @@ async function persistUpload(
   logger.info(`[CSV CREATED - SIZE ${size.toFixed(2)} MB]`);
 
   if (!process.env.ARWEAVE_KEY) throw new Error('ARWEAVE_KEY not set');
-  const arweaveKey = JSON.parse(process.env.ARWEAVE_KEY);
+  let arweaveKey: JWKInterface;
+  try {
+    arweaveKey = JSON.parse(process.env.ARWEAVE_KEY);
+  } catch {
+    // JSON parser diagnostics can include fragments of the private key.
+    throw new Error('ARWEAVE_KEY invalid JSON');
+  }
   const { url, transactionId } = await uploadTdhCsvToArweave(
     csv,
     arweaveKey,
