@@ -24,6 +24,21 @@ here="$(cd "$(dirname "$0")" && pwd)"
 dir=/srv/sentry/self-hosted
 log() { printf '[install-sentry] %s\n' "$*"; }
 
+# The values are rendered into sed replacements and Python/YAML string
+# literals, so accept only their expected shapes.
+require_format() {
+  local name="$1" pattern="$2"
+  [[ "${!name}" =~ $pattern ]] || { log "$name has an unexpected format"; exit 1; }
+}
+require_format SELF_HOSTED_VERSION '^[0-9]+\.[0-9]+\.[0-9]+$'
+require_format SELF_HOSTED_COMMIT '^[0-9a-f]{40}$'
+require_format URL_PREFIX '^https://[a-z0-9.-]+$'
+require_format ADMIN_EMAIL '^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+$'
+require_format MAIL_FROM '^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+$'
+require_format MAIL_DOMAIN '^[a-z0-9.-]+$'
+require_format AWS_REGION '^[a-z0-9-]+$'
+require_format SES_PARAMETER_PREFIX '^/[A-Za-z0-9/_.-]+$'
+
 mountpoint -q /srv || { log "/srv is not mounted; run bootstrap-host.sh first"; exit 1; }
 mkdir -p /srv/sentry
 
@@ -42,10 +57,11 @@ cd "$dir"
 
 # --- configuration -------------------------------------------------------------
 render() {
+  local template="$1"
   sed -e "s|__URL_PREFIX__|${URL_PREFIX}|g" \
     -e "s|__ADMIN_EMAIL__|${ADMIN_EMAIL}|g" \
     -e "s|__MAIL_FROM__|${MAIL_FROM}|g" \
-    -e "s|__MAIL_DOMAIN__|${MAIL_DOMAIN}|g" "$1"
+    -e "s|__MAIL_DOMAIN__|${MAIL_DOMAIN}|g" "$template"
 }
 apply_managed_block() {
   local target="$1" block="$2"
@@ -59,7 +75,8 @@ apply_managed_block sentry/sentry.conf.py "$here/sentry.conf.overrides.py"
 apply_managed_block sentry/config.yml "$here/config.overrides.yml"
 
 read_parameter() {
-  aws ssm get-parameter --region "$AWS_REGION" --name "$1" --with-decryption \
+  local name="$1"
+  aws ssm get-parameter --region "$AWS_REGION" --name "$name" --with-decryption \
     --query Parameter.Value --output text 2>/dev/null || true
 }
 env_custom=.env.custom

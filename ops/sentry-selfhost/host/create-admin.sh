@@ -36,10 +36,15 @@ else
   log "stored the generated password in $PASSWORD_PARAMETER"
 fi
 
-# The password travels on stdin, not in docker exec arguments.
-printf '%s\n' "$password" | $sc exec -T web sh -c \
+# The password travels on stdin, not in docker exec arguments, and none of the
+# command's output is kept, so it cannot reach the SSM command log.
+if ! printf '%s\n' "$password" | $sc exec -T web sh -c \
   'IFS= read -r p; exec sentry createuser --email "$1" --password "$p" --superuser --no-input' \
-  createuser "$ADMIN_EMAIL" | grep -v -i password || true
+  createuser "$ADMIN_EMAIL" >/dev/null 2>&1; then
+  unset password
+  log "sentry createuser failed"
+  exit 1
+fi
 unset password
 
 created="$($sc exec -T -e ADMIN_EMAIL="$ADMIN_EMAIL" web sentry exec -c '

@@ -23,9 +23,16 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 host_dir="$here/host"
 [[ -f "$host_dir/$(basename "$script")" ]] || { echo "unknown host script: $script" >&2; exit 2; }
 
+# Only these non-secret settings may be passed, and only with plain values.
+allowed_keys=" DATA_VOLUME_ID SELF_HOSTED_VERSION SELF_HOSTED_COMMIT URL_PREFIX ADMIN_EMAIL MAIL_FROM \
+MAIL_DOMAIN AWS_REGION SES_PARAMETER_PREFIX PASSWORD_PARAMETER ORG_SLUG ORG_NAME "
 env_args=()
 for kv in "$@"; do
-  [[ "$kv" =~ ^[A-Z_][A-Z0-9_]*=[^\'[:space:]]*$ ]] || { echo "bad KEY=VALUE: $kv" >&2; exit 2; }
+  key="${kv%%=*}"
+  if [[ "$allowed_keys" != *" $key "* ]] || ! [[ "$kv" =~ ^[A-Z_]+=[A-Za-z0-9._:/@+-]*$ ]]; then
+    echo "refusing KEY=VALUE '$kv': key not allowed or value has characters outside [A-Za-z0-9._:/@+-]" >&2
+    exit 2
+  fi
   env_args+=("'$kv'")
 done
 
@@ -55,7 +62,9 @@ while :; do
     *) break ;;
   esac
 done
-aws ssm get-command-invocation --region "$region" --command-id "$command_id" --instance-id "$INSTANCE_ID" \
-  --query '[StandardOutputContent, StandardErrorContent]' --output text
+result="$(aws ssm get-command-invocation --region "$region" --command-id "$command_id" \
+  --instance-id "$INSTANCE_ID" --output json)"
+jq -r '.StandardOutputContent, .StandardErrorContent' <<<"$result"
+status="$(jq -r .Status <<<"$result")"
 echo "status: $status"
 [[ "$status" == "Success" ]]

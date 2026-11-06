@@ -540,10 +540,74 @@
         ]
       }
     },
+    "AlarmTopicKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": "sentry-selfhost alarm topic encryption",
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "AccountAdministration",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+                }
+              },
+              "Action": "kms:*",
+              "Resource": "*"
+            },
+            {
+              "Sid": "CloudWatchAlarmsPublish",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudwatch.amazonaws.com"
+              },
+              "Action": [
+                "kms:Decrypt",
+                "kms:GenerateDataKey*"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:SourceAccount": {
+                    "Ref": "AWS::AccountId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "sentry-selfhost"
+          },
+          {
+            "Key": "Owner",
+            "Value": "6529"
+          }
+        ]
+      }
+    },
+    "AlarmTopicKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": "alias/sentry-selfhost-alarms",
+        "TargetKeyId": {
+          "Ref": "AlarmTopicKey"
+        }
+      }
+    },
     "AlarmTopic": {
       "Type": "AWS::SNS::Topic",
       "Properties": {
         "TopicName": "sentry-selfhost-alarms",
+        "KmsMasterKeyId": {
+          "Ref": "AlarmTopicKey"
+        },
         "Tags": [
           {
             "Key": "Project",
@@ -1181,7 +1245,9 @@
                 {
                   "Effect": "Allow",
                   "Action": "ses:SendRawEmail",
-                  "Resource": "*",
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${MailDomain}"
+                  },
                   "Condition": {
                     "StringEquals": {
                       "ses:FromAddress": {

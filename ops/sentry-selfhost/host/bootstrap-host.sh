@@ -55,7 +55,7 @@ apt-get install -y -q ca-certificates curl gnupg git jq
 
 install -m 0755 -d /etc/apt/keyrings
 key_tmp="$(mktemp)"
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o "$key_tmp"
+curl --proto '=https' --tlsv1.2 -fsSL https://download.docker.com/linux/ubuntu/gpg -o "$key_tmp"
 actual_fpr="$(gpg --show-keys --with-colons "$key_tmp" | awk -F: '/^fpr:/ {print $10; exit}')"
 if [[ "$actual_fpr" != "$DOCKER_KEY_FINGERPRINT" ]]; then
   log "unexpected Docker signing key fingerprint: $actual_fpr"

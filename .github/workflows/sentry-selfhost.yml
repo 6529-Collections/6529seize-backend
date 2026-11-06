@@ -22,4 +22,7 @@ jobs:
         run: shellcheck -S warning host/*.sh scripts/*.sh
       - name: Check Python scripts
         working-directory: ops/sentry-selfhost
-        run: python3 -m py_compile scripts/rotate-ses-smtp-credentials.py
+        run: python3 -m py_compile scripts/rotate-ses-smtp-credentials.py scripts/check-domain-list.py
+      - name: Check the no-phone-home domain list and evidence pattern agree
+        working-directory: ops/sentry-selfhost
+        run: python3 scripts/check-domain-list.py

@@ -26,4 +26,4 @@ for key in ("system.url-prefix", "system.event-retention-days", "auth.allow-regi
 echo "== beacon task log (last 24h)"
 $sc logs --no-color --since 24h taskworker taskscheduler 2>/dev/null | grep -i 'beacon' | tail -n 5 || echo "no beacon log lines"
 echo "== established outbound TCP peers"
-ss -Htn state established | awk '{print $4}' | grep -v -E '^(10\.|127\.|\[::1\]|172\.)' | sort | uniq -c | sort -rn | head -n 20 || true
+ss -Htn state established | awk '{print $4}' | grep -v -E '^(10\.|127\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|\[)' | sort | uniq -c | sort -rn | head -n 20 || true

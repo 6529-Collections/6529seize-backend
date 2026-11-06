@@ -49,6 +49,13 @@ shellcheck -S warning host/*.sh scripts/*.sh
   `sentry-cdn.com`, `sentry.dev` and their subdomains, every query is logged to
   `/sentry-selfhost/dns-queries` (90 days), and a blocked query raises the
   `BlockedDnsQueryAlarm`. `scripts/verify-no-phone-home.sh` prints the evidence.
+  The control is DNS-level: egress is open on TCP 80, 443 and 587 because
+  Docker registries, Ubuntu mirrors, SSM, CloudWatch and SES have no fixed
+  address ranges, so a process that connected to a hard-coded IP address or
+  used its own resolver would not be stopped. Nothing in the pinned release
+  does either; re-run the evidence script after every upgrade.
+  The CI workflow checks that the firewall domain list and the evidence
+  script's pattern name the same domains.
 - **Ingress:** CloudFront terminates TLS for `sentry.6529.io` and reaches the
   instance's port 9000 through a VPC origin; the security group admits only
   CloudFront's origin-facing managed prefix list (VPC origin traffic arrives
@@ -72,10 +79,13 @@ shellcheck -S warning host/*.sh scripts/*.sh
 - **Mail:** SES domain identity `sentry.6529.io` (Easy DKIM, 2048-bit), sending
   as `sentry@sentry.6529.io` through the bundled SMTP container's SES relay.
   The account is in the SES sandbox, so recipients must be verified identities.
-  The SMTP user may only send with that From address. Its access key is created
+  The SMTP user may only send through that domain identity with that From
+  address. Its access key is created
   by `scripts/rotate-ses-smtp-credentials.py` and stored only in SSM
   (`/sentry-selfhost/ses/smtp-username`, `/sentry-selfhost/ses/smtp-password`).
-- **Alarms** go to SNS topic `sentry-selfhost-alarms`: system status check
+- **Alarms** go to SNS topic `sentry-selfhost-alarms` (encrypted with the
+  rotating customer-managed key `alias/sentry-selfhost-alarms`, which
+  CloudWatch may use): system status check
   (also triggers EC2 recover), instance and attached-EBS status checks, memory
   above 90%, `/` above 85%, `/srv` above 80%, a blocked Sentry-company DNS
   query, the Route 53 HTTPS health check of `/_health/`, and CloudFront 5xx
