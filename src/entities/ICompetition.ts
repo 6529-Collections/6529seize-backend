@@ -262,9 +262,6 @@ export class CompetitionLifecycleEventEntity {
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly actor_id!: string | null;
 
-  @Column({ type: 'text', nullable: true, default: null })
-  readonly reason!: string | null;
-
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;
 }

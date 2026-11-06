@@ -22,6 +22,7 @@ import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 import { getDataSource } from '@/db';
+import { CompetitionLifecycleEventEntity } from '@/entities/ICompetition';
 import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 import { dbSupplier } from '@/sql-executor';
 import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
@@ -92,6 +93,7 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
     scheduledInvocation ||
     (scope !== 'full' &&
       scope !== 'maintenance' &&
+      scope !== 'competition-lifecycle-events' &&
       scope !== 'wallet-transfer-analysis' &&
       scope !== 'claims-media-upload' &&
       scope !== 'nft-link-page-retry' &&
@@ -111,6 +113,16 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'competition-lifecycle-events') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [CompetitionLifecycleEventEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
+  }
+
   if (scope === 'nft-history-replay') {
     await doInDbContext(() => Promise.resolve(), {
       logger,

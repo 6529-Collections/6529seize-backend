@@ -357,7 +357,7 @@ describe('CompetitionService', () => {
     });
   });
 
-  it('loads archive requirements on administrator detail reads without probing list items', async () => {
+  it('does not probe archive activity on detail or collection reads', async () => {
     const activity = jest
       .spyOn(competitionCommandRepository, 'hasActivity')
       .mockResolvedValue(true);
@@ -384,8 +384,8 @@ describe('CompetitionService', () => {
         first.id,
         readContext
       );
-      expect(detail.permissions.archive_requires_reason).toBe(true);
-      expect(activity).toHaveBeenCalledTimes(1);
+      expect(detail.permissions).not.toHaveProperty('archive_requires_reason');
+      expect(activity).not.toHaveBeenCalled();
     } finally {
       activity.mockRestore();
     }
