@@ -76,7 +76,7 @@ import {
 } from 'passport-jwt';
 import { ApiCompliantException, apiCompliantErrorBody } from '@/exceptions';
 import * as sentryContext from '../../sentry.context';
-import { Time, Timer } from '@/time';
+import { Time } from '@/time';
 import { DropType } from '@/entities/IDrop';
 import { dropsDb } from '@/drops/drops.db';
 import { identitiesDb } from '@/identities/identities.db';
@@ -102,9 +102,7 @@ import { NFT } from '@/entities/INFT';
 import { TDHBlock } from '@/entities/ITDH';
 import { Upload } from '@/entities/IUpload';
 import { env, loadLocalConfig, loadSecrets } from '@/env';
-import { loggerContext } from '@/logger-context';
 import { Logger } from '@/logging';
-import { numbers } from '@/numbers';
 import { getRedisClient, initRedis } from '@/redis';
 import {
   API_REDIS_FAIL_FAST_OPTIONS,
@@ -153,8 +151,8 @@ import {
 } from './rate-limiting/rate-limiting.middleware';
 import { ACCESS_TOKEN_ALGORITHMS } from '@/api/auth/access-token-wallet';
 import { setNoStoreHeaders } from '@/api/response-headers';
+import { requestLogMiddleware } from '@/api/request-log.middleware';
 import {
-  isCmsAgentRequest,
   validateCmsAgentRawBody,
   cmsAgentErrorMiddleware,
   cmsAgentPrivateHeadersMiddleware
@@ -185,7 +183,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 const multer = require('multer');
 
-const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
 
 const API_PORT = 3000;
@@ -626,56 +623,6 @@ async function postSentryAlertDrop({
       `Failed to enqueue Sentry alert push notifications for drop ${dropId}: ${error}`
     );
   }
-}
-
-function requestLogMiddleware() {
-  return (request: Request, response: Response, next: NextFunction) => {
-    const requestId =
-      request.apiGateway?.context?.awsRequestId ?? ids.uniqueShortId();
-    if (
-      request.path.startsWith('/api/artwork-documentation') ||
-      isCmsAgentRequest(request.path)
-    ) {
-      response.setHeader('X-Request-Id', requestId);
-      response.setHeader('Cache-Control', 'private, no-store');
-      response.setHeader('X-Robots-Tag', 'noindex, nofollow');
-      response.setHeader('X-Content-Type-Options', 'nosniff');
-    }
-    loggerContext.run({ requestId }, () => {
-      const { method } = request;
-      const url =
-        request.path.startsWith('/api/artwork-documentation') ||
-        isCmsAgentRequest(request.path)
-          ? request.path
-          : request.originalUrl;
-      const uqKey = `${method} ${url}`;
-      const timer = new Timer(uqKey);
-      (request as any).timer = timer;
-      response.on('close', () => {
-        const { statusCode } = response;
-        const slowRequestThresholdEnv = numbers.parseIntOrNull(
-          process.env.SLOW_API_REQUEST_THRESHOLD
-        );
-        const slowRequestThreshold = slowRequestThresholdEnv
-          ? Time.millis(slowRequestThresholdEnv)
-          : Time.seconds(1);
-        if (timer.getTotalTimePassed().gt(slowRequestThreshold)) {
-          requestLogger.warn(
-            `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
-              .getTotalTimePassed()
-              .toMillis()}] [${timer.getReport()}]`
-          );
-        } else {
-          requestLogger.info(
-            `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
-              .getTotalTimePassed()
-              .toMillis()}]`
-          );
-        }
-      });
-      next();
-    });
-  };
 }
 
 function customErrorMiddleware() {
