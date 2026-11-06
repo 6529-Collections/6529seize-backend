@@ -115,7 +115,7 @@ describe('POST /api/e/diag', () => {
   it('stores an encrypted bundle and returns a short code', async () => {
     const response = await post(gzipRequest());
     expect(response.status).toBe(201);
-    const receipt = await response.json();
+    const receipt = (await response.json()) as any;
     expect(receipt.code).toMatch(DIAGNOSTICS_CODE_PATTERN);
     const expires = Date.parse(receipt.expires_at) - Date.now();
     expect(expires).toBeGreaterThan(13.9 * 24 * 3600 * 1000);
