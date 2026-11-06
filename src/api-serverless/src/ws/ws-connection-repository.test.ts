@@ -4,12 +4,14 @@ import {
   TDH_NFT_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVES_TABLE,
+  WS_CONNECTIONS_TABLE,
   WS_NOTIFICATION_SUBSCRIPTIONS_TABLE
 } from '@/constants';
 import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
 import { WsConnectionRepository } from './ws-connection.repository';
+import { WsConnectionPurpose } from '@/entities/IWSConnection';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 
 describe('WsConnectionRepository', () => {
@@ -238,6 +240,141 @@ describe('WsConnectionRepository', () => {
     expect(execute.mock.calls[2][2]).toEqual({
       wrappedConnection: transactionConnection,
       bindInvocationContext: true
+    });
+  });
+
+  describe('typing-purpose sockets (0.12a)', () => {
+    const purposeFilter = "(ws.purpose is null or ws.purpose <> 'TYPING')";
+
+    it('inserts the purpose column only for sockets that declare one', async () => {
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new WsConnectionRepository(
+        () =>
+          ({
+            execute,
+            executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+              callback({ connection: {} })
+            )
+          }) as any,
+        {} as any
+      );
+      const base = {
+        identity_id: 'profile-1',
+        jwt_expiry: 123,
+        wave_id: null
+      };
+
+      await repo.save(
+        { ...base, connection_id: 'legacy', purpose: null },
+        [],
+        {}
+      );
+      await repo.save(
+        {
+          ...base,
+          connection_id: 'typing',
+          purpose: WsConnectionPurpose.TYPING
+        },
+        [],
+        {}
+      );
+
+      const inserts = execute.mock.calls
+        .map(([sql, params]) => ({ sql: String(sql), params }))
+        .filter(({ sql }) =>
+          sql.startsWith(`insert into ${WS_CONNECTIONS_TABLE}`)
+        );
+      expect(inserts).toHaveLength(2);
+      expect(inserts[0].sql).not.toContain('purpose');
+      expect(inserts[1].sql).toContain(
+        '(connection_id, jwt_expiry, identity_id, durable_updates, purpose)'
+      );
+      expect(inserts[1].params).toMatchObject({
+        connection_id: 'typing',
+        purpose: WsConnectionPurpose.TYPING
+      });
+    });
+
+    it.each([false, true])(
+      'leaves typing sockets out of wave audiences unless asked (system=%s)',
+      async (system) => {
+        const oneOrNull = jest.fn().mockResolvedValue({
+          visibility_group_id: null,
+          parent_wave_id: null,
+          parent_id: null,
+          parent_parent_id: null,
+          parent_group_id: null
+        });
+        const execute = jest.fn().mockResolvedValue([]);
+        const repo = new WsConnectionRepository(
+          () => ({ oneOrNull, execute }) as never,
+          {} as never
+        );
+        const method = system
+          ? repo.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast.bind(
+              repo
+            )
+          : repo.getCurrentlyOnlineCommunityMemberConnectionIds.bind(repo);
+
+        await method({ waveId: 'wave', groupId: null }, {});
+        await method(
+          { waveId: 'wave', groupId: null },
+          {},
+          { includeTypingSockets: true }
+        );
+
+        expect(execute.mock.calls[0][0]).toContain(purposeFilter);
+        expect(execute.mock.calls[0][0]).toContain(
+          '(ws.wave_id = :waveId or ws.wave_id is null)'
+        );
+        expect(execute.mock.calls[1][0]).not.toContain('ws.purpose');
+      }
+    );
+
+    it('applies the filter to grouped wave audiences', async () => {
+      const oneOrNull = jest.fn().mockResolvedValue({
+        visibility_group_id: 'group',
+        parent_wave_id: null,
+        parent_id: null,
+        parent_parent_id: null,
+        parent_group_id: null
+      });
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new WsConnectionRepository(
+        () => ({ oneOrNull, execute }) as never,
+        {
+          getSqlAndParamsByGroupId: jest
+            .fn()
+            .mockResolvedValue({ sql: 'with cm as (select 1)', params: {} })
+        } as never
+      );
+
+      await repo.getCurrentlyOnlineCommunityMemberConnectionIds(
+        { waveId: 'wave', groupId: null },
+        {}
+      );
+
+      expect(execute.mock.calls[0][0]).toContain(`where ${purposeFilter}`);
+    });
+
+    it('leaves typing sockets out of identity and global lookups', async () => {
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new WsConnectionRepository(
+        () => ({ execute }) as never,
+        {} as never
+      );
+
+      await repo.findConnectionIdsByIdentityId('profile-1');
+      await repo.findPrimaryConnectionIdsByIdentityIds(['profile-1']);
+      await repo.findNotificationConnectionIdsByIdentityIds(['profile-1']);
+      await repo.findAllConnectionIds();
+
+      for (const [sql] of execute.mock.calls) {
+        expect(sql).toContain(purposeFilter);
+      }
+      expect(execute.mock.calls[2][0]).toContain(
+        "(connections.purpose is null or connections.purpose <> 'TYPING')"
+      );
     });
   });
 

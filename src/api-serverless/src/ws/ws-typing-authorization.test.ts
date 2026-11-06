@@ -69,7 +69,7 @@ function fixture(
       if (sql.includes('join user_groups_view')) {
         return groupRows[String(params.profile_group_id)];
       }
-      if (sql.includes('where ws.wave_id = :waveId')) {
+      if (sql.includes('where (ws.wave_id = :waveId or ws.wave_id is null)')) {
         return [row('sender'), row('both'), row(ANON_USER_ID)];
       }
       throw new Error('Unexpected SQL in synthetic fixture');
@@ -208,6 +208,33 @@ describe('typing sender and recipient authorization', () => {
       );
     }
   );
+
+  it('keeps typing-purpose sockets in the typing audience only (0.12a)', async () => {
+    const f = fixture();
+    f.oneOrNull.mockResolvedValue({
+      visibility_group_id: null,
+      parent_wave_id: null,
+      parent_id: null,
+      parent_parent_id: null,
+      parent_group_id: null
+    });
+    await f.notifier.notifyAboutUserIsTyping({
+      identityId: 'sender',
+      waveId: 'wave'
+    });
+    await f.repository.getCurrentlyOnlineCommunityMemberConnectionIds(
+      { waveId: 'wave', groupId: null },
+      {}
+    );
+    const recipientSql = f.execute.mock.calls
+      .map(([sql]) => String(sql))
+      .filter((sql) => sql.includes('ws.wave_id = :waveId'));
+    expect(recipientSql).toHaveLength(2);
+    expect(recipientSql[0]).not.toContain('ws.purpose');
+    expect(recipientSql[1]).toContain(
+      "(ws.purpose is null or ws.purpose <> 'TYPING')"
+    );
+  });
 
   it('reproduces the previous anonymous context failure with the real helpers', async () => {
     const f = fixture({ privateChild: true });
