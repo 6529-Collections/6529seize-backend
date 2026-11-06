@@ -117,6 +117,56 @@ function createRepo({
 }
 
 describe('IdentityNotificationsDb', () => {
+  it('previews distinct mention recipients through mutes, blocks and notification preferences without writes', async () => {
+    const {
+      repo,
+      db,
+      identityMutesDb,
+      contentModerationDb,
+      profilePreferencesDb
+    } = createRepo({ filteredNotifications: [] });
+    identityMutesDb.filterMutedNotificationRows.mockImplementation(
+      async (rows) => rows.filter((row) => row.identity_id !== 'muted')
+    );
+    contentModerationDb.filterBlockedNotificationRows.mockImplementation(
+      async (rows) => rows.filter((row) => row.identity_id !== 'blocked')
+    );
+    profilePreferencesDb.getMany.mockResolvedValue(
+      new Map([
+        [
+          'disabled',
+          {
+            ...DEFAULT_PROFILE_PREFERENCES,
+            notifications: {
+              ...DEFAULT_PROFILE_PREFERENCES.notifications,
+              mentions_replies_quotes: false
+            }
+          }
+        ]
+      ])
+    );
+    await expect(
+      repo.countMentionRecipients(
+        ['enabled', 'enabled', 'muted', 'blocked', 'disabled'],
+        'author',
+        connection
+      )
+    ).resolves.toBe(1);
+    expect(db.bulkInsert).not.toHaveBeenCalled();
+    expect(db.executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+    expect(identityMutesDb.filterMutedNotificationRows).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          identity_id: 'enabled',
+          additional_identity_id: 'author',
+          related_drop_id: null
+        })
+      ]),
+      connection,
+      { allowPendingCompetitionEntry: true }
+    );
+  });
+
   const originalNotifierActivated = process.env.USER_NOTIFIER_ACTIVATED;
   const originalNodeEnvironment = process.env.NODE_ENV;
 
