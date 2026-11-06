@@ -65,14 +65,55 @@ export interface PinnedDocumentCheck {
 
 export type HttpGet = (url: string) => Promise<Buffer>;
 
+/**
+ * Hosts the official sources are served from. OFAC answers with a redirect to
+ * a short-lived S3 link in AWS GovCloud. Every request and redirect must use
+ * https and one of these hosts.
+ */
+const ALLOWED_HOSTS: ReadonlyArray<string> = [
+  'sanctionslistservice.ofac.treas.gov',
+  '.s3.us-gov-west-1.amazonaws.com',
+  'sanctionslist.fcdo.gov.uk',
+  'webgate.ec.europa.eu',
+  'www.sesam.search.admin.ch',
+  'www.mof.go.jp',
+  'www.law.go.kr',
+  'matal.mod.gov.il',
+  'www.international.gc.ca'
+];
+
+export function assertAllowedSourceUrl(
+  protocol: string,
+  hostname: string
+): void {
+  const host = hostname.toLowerCase();
+  const allowed = ALLOWED_HOSTS.some((entry) =>
+    entry.charAt(0) === '.'
+      ? host.length > entry.length &&
+        host.slice(host.length - entry.length) === entry
+      : host === entry
+  );
+  if (protocol !== 'https:' || !allowed) {
+    throw new Error(`Refusing to fetch from ${protocol}//${hostname}`);
+  }
+}
+
 export const defaultHttpGet: HttpGet = async (url: string) => {
+  const parsed = new URL(url);
+  assertAllowedSourceUrl(parsed.protocol, parsed.hostname);
   const response = await axios.get<ArrayBuffer>(url, {
     responseType: 'arraybuffer',
     timeout: TIMEOUT_MS,
     maxRedirects: 5,
     maxContentLength: MAX_BYTES,
     headers: { 'User-Agent': USER_AGENT },
-    validateStatus: (status) => status === 200
+    validateStatus: (status) => status === 200,
+    beforeRedirect: (options: Record<string, unknown>) => {
+      assertAllowedSourceUrl(
+        String(options.protocol ?? ''),
+        String(options.hostname ?? '')
+      );
+    }
   });
   return Buffer.from(response.data);
 };
@@ -113,6 +154,30 @@ async function fetchJp(get: HttpGet): Promise<FetchedFile[]> {
   return [await fetchOne(get, name, csvUrl)];
 }
 
+interface IlPage {
+  readonly total: number;
+  readonly ids: string[];
+}
+
+function readIlPage(file: FetchedFile): IlPage {
+  const page = JSON.parse(file.bytes.toString('utf8')) as {
+    total?: unknown;
+    items?: Array<{ id?: unknown }>;
+  };
+  if (typeof page.total !== 'number' || !Array.isArray(page.items)) {
+    throw new Error(`il-nbctf: unexpected page shape at ${file.url}`);
+  }
+  return {
+    total: page.total,
+    ids: page.items.map((item) => (typeof item.id === 'string' ? item.id : ''))
+  };
+}
+
+/**
+ * Pages through one content type. The API is live and has no snapshot, so
+ * the fetch fails (and the job keeps the last good input) unless every page
+ * reports the same total and the pages hold exactly `total` distinct items.
+ */
 async function fetchIlPages(
   get: HttpGet,
   filter: string,
@@ -120,24 +185,35 @@ async function fetchIlPages(
   prefix: string
 ): Promise<FetchedFile[]> {
   const files: FetchedFile[] = [];
+  const seen: Record<string, true> = {};
+  let expectedTotal: number | null = null;
   let skip = 0;
-  let total = Number.POSITIVE_INFINITY;
-  while (skip < total) {
+  while (expectedTotal === null || skip < expectedTotal) {
     const url = `${IL_API_URL}?filter=${filter}&skip=${skip}&take=${pageSize}`;
     const file = await fetchOne(get, `${prefix}-${skip}.json`, url);
-    const page = JSON.parse(file.bytes.toString('utf8')) as {
-      total?: unknown;
-      items?: unknown[];
-    };
-    if (typeof page.total !== 'number' || !Array.isArray(page.items)) {
-      throw new Error(`il-nbctf: unexpected page shape at ${url}`);
+    const page = readIlPage(file);
+    if (expectedTotal !== null && page.total !== expectedTotal) {
+      throw new Error(
+        `il-nbctf: ${prefix} total changed from ${expectedTotal} to ${page.total} while paging`
+      );
     }
-    total = page.total;
+    expectedTotal = page.total;
+    if (page.ids.length === 0 && skip < expectedTotal) {
+      throw new Error(`il-nbctf: ${prefix} page at ${skip} is empty`);
+    }
+    for (const id of page.ids) {
+      if (id === '' || seen[id]) {
+        throw new Error(`il-nbctf: ${prefix} has a missing or repeated id`);
+      }
+      seen[id] = true;
+    }
     files.push(file);
-    if (page.items.length === 0) {
-      break;
-    }
     skip += pageSize;
+  }
+  if (Object.keys(seen).length !== expectedTotal) {
+    throw new Error(
+      `il-nbctf: ${prefix} returned ${Object.keys(seen).length} items, total says ${expectedTotal}`
+    );
   }
   return files;
 }

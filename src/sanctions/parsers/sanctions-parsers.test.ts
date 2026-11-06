@@ -249,6 +249,15 @@ describe('ca-sema-xml', () => {
     expect(parsed.source_published).toBe('2025-12-01');
   });
 
+  it('never expands DTD entities (no entity-expansion attacks)', () => {
+    const xml =
+      '<!DOCTYPE data-set [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;">]>' +
+      '<data-set><record><LastName-NomDeFamille>&b;</LastName-NomDeFamille></record></data-set>';
+    expect(() =>
+      parseCaSemaXml([{ name: 'sema-lmes.xml', bytes: Buffer.from(xml) }])
+    ).toThrow(/Invalid character entity/);
+  });
+
   it('rejects malformed XML', () => {
     expect(() =>
       parseCaSemaXml([

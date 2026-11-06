@@ -119,6 +119,28 @@ describe('createSanctionsIndex', () => {
     expect(() => createSanctionsIndex(list)).toThrow(/non-normalized/);
   });
 
+  it('refuses duplicate addresses instead of keeping only one entry', () => {
+    const list = {
+      ...vectors.list,
+      addresses: [vectors.list.addresses[0], vectors.list.addresses[0]]
+    };
+    expect(() => createSanctionsIndex(list)).toThrow(/duplicate/);
+  });
+
+  it('refuses malformed listing dates', () => {
+    const [first] = vectors.list.addresses;
+    const list = {
+      ...vectors.list,
+      addresses: [
+        {
+          ...first,
+          listings: [{ ...first.listings[0], valid_until: '2026-7-31' }]
+        }
+      ]
+    };
+    expect(() => createSanctionsIndex(list)).toThrow(/malformed date/);
+  });
+
   it('refuses an unknown schema', () => {
     const list = {
       ...vectors.list,

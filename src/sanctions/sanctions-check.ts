@@ -42,6 +42,22 @@ function assertAsOf(asOf: IsoDate): void {
   }
 }
 
+/** Dates must be strict `YYYY-MM-DD` so that string comparison orders them. */
+function assertListingDates(listing: SanctionsListing): void {
+  for (const date of [listing.listed_on, listing.valid_until]) {
+    if (date !== null && !isIsoDate(date)) {
+      throw new Error(`List contains a malformed date in ${listing.source}`);
+    }
+  }
+}
+
+function inForce(listing: SanctionsListing, asOf: IsoDate): boolean {
+  return (
+    listing.valid_until === null ||
+    compareCodePoints(listing.valid_until, asOf) >= 0
+  );
+}
+
 export function createSanctionsIndex(list: SanctionsListV1): SanctionsIndex {
   if (list.schema !== SANCTIONS_LIST_SCHEMA) {
     throw new Error(`Unsupported sanctions list schema ${String(list.schema)}`);
@@ -51,6 +67,12 @@ export function createSanctionsIndex(list: SanctionsListV1): SanctionsIndex {
     const address = normalizeEvmAddress(entry.address);
     if (address === null || address !== entry.address) {
       throw new Error(`List contains a non-normalized address`);
+    }
+    if (Object.prototype.hasOwnProperty.call(byAddress, address)) {
+      throw new Error(`List contains a duplicate address`);
+    }
+    for (const listing of entry.listings) {
+      assertListingDates(listing);
     }
     byAddress[address] = entry.listings;
   }
@@ -66,10 +88,7 @@ export function listingInForce(
   asOf: IsoDate
 ): boolean {
   assertAsOf(asOf);
-  return (
-    listing.valid_until === null ||
-    compareCodePoints(listing.valid_until, asOf) >= 0
-  );
+  return inForce(listing, asOf);
 }
 
 /** Every listing of the address, lapsed ones included (for provenance). */
@@ -93,7 +112,7 @@ function inForceSources(
 ): SanctionsSourceId[] {
   return sortedUniqueTexts(
     sanctionListings(address, index)
-      .filter((listing) => listingInForce(listing, asOf))
+      .filter((listing) => inForce(listing, asOf))
       .map((listing) => listing.source)
   ) as SanctionsSourceId[];
 }

@@ -201,7 +201,7 @@ export function verifySanctionsRelease(
     const signer = recoveredSigner(message, signature);
     if (
       signer !== null &&
-      signer === signature.keyid.toLowerCase() &&
+      signer === signature.keyid &&
       pinned.indexOf(signer) !== -1
     ) {
       signers[signer] = true;
