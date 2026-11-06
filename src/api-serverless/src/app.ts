@@ -183,6 +183,7 @@ import {
   TELEMETRY_BASE_PATH,
   TELEMETRY_DIAGNOSTICS_PATH
 } from '@/api/telemetry/telemetry-paths';
+import { requireTelemetryEdge } from '@/api/telemetry/telemetry-edge';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -784,7 +785,10 @@ function wireApp() {
     )
   );
   // The telemetry collector parses its own small text bodies and applies its
-  // own salted-hash rate limit, so it is mounted before the shared JSON parser.
+  // own salted-hash rate limit, so it is mounted before the shared JSON parser
+  // and the per-IP limiter (behind CloudFront every /e request would share
+  // the edge's IP). The edge guard covers every route under /api/e.
+  app.use(TELEMETRY_BASE_PATH, requireTelemetryEdge());
   app.use(TELEMETRY_BASE_PATH, telemetryIngestRoutes);
   app.use(TELEMETRY_DIAGNOSTICS_PATH, telemetryDiagnosticsRoutes);
   app.use(
