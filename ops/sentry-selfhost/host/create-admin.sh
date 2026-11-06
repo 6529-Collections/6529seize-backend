@@ -44,11 +44,12 @@ trap 'rm -f "$password_file"' EXIT
 
 if aws ssm get-parameter --region "$AWS_REGION" --name "$PASSWORD_PARAMETER" >/dev/null 2>&1; then
   log "reusing the password already stored in $PASSWORD_PARAMETER"
-  # Pipe through cat: the snap-packaged AWS CLI writes nothing when its stdout
-  # is redirected straight to a file.
+  # Pipe, never redirect: the snap-packaged AWS CLI writes nothing when its
+  # stdout is a file. Dropping the CLI's trailing newline makes both paths
+  # hold exactly the password bytes.
   aws ssm get-parameter --region "$AWS_REGION" --name "$PASSWORD_PARAMETER" \
-    --with-decryption --query Parameter.Value --output text | cat >"$password_file"
-  [[ "$(wc -c <"$password_file")" -ge 21 ]] || { log "the stored password could not be read"; exit 1; }
+    --with-decryption --query Parameter.Value --output text | tr -d '\n' >"$password_file"
+  [[ "$(wc -c <"$password_file")" -ge 20 ]] || { log "the stored password could not be read"; exit 1; }
 else
   openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 40 >"$password_file"
   [[ "$(wc -c <"$password_file")" -eq 40 ]] || { log "password generation failed"; exit 1; }
@@ -70,7 +71,9 @@ import os
 import sys
 from sentry.users.models.user import User
 u = User.objects.get(email__iexact=os.environ["ADMIN_EMAIL"])
+# A user left incomplete by an interrupted run is repaired to an active superuser.
 u.is_superuser = True
+u.is_active = True
 u.set_password(sys.stdin.readline().rstrip("\n"))
 u.save()
 print("PASSWORD_SET")
