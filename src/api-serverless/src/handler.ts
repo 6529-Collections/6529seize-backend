@@ -10,7 +10,8 @@ import {
   appWebSockets,
   authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
-  authenticateWebSocketToken
+  authenticateWebSocketToken,
+  connectionPurposeFromQuery
 } from './ws/ws';
 import { Logger } from '../../logging';
 import {
@@ -229,6 +230,7 @@ async function wsHandler(
           identityId,
           connectionId: connectionId!,
           jwtExpiry,
+          purpose: connectionPurposeFromQuery(event.queryStringParameters),
           ...(event.queryStringParameters?.recovery_capability ===
           WS_RECOVERY_CAPABILITY
             ? { recoveryCapable: true }
