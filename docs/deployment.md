@@ -134,7 +134,10 @@ Deploy only `tdhLoop` for upload-only changes; unchanged schema and xTDH
 dependencies do not need redeployment. Verify both `/api/uploads` and
 `/api/consolidated_uploads` have the target snapshot date/block after invoking
 the loop. Also verify both Arweave uploads and their S3 mirrors in the run logs.
-The CSV schema and canonical public Arweave URLs remain unchanged.
+New export links use the primary public gateway (`ardrive.net`) so readers do
+not depend on `arweave.net` returning complete files after a successful upload.
+The immutable Arweave transaction IDs, CSV schema and S3 mirror keys remain
+unchanged. Existing links retain their stored gateway URLs.
 
 The synchronous `dbMigrationsLoop` invocation waits up to 960 seconds for its
 900-second Lambda and disables AWS CLI retries for that invocation. If its response
