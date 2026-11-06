@@ -329,6 +329,7 @@ describe('websocket connection purpose (0.12a)', () => {
         jwt_expiry: 123,
         connection_id: 'typing-1',
         wave_id: null,
+        durable_updates: false,
         purpose: WsConnectionPurpose.TYPING
       },
       {
@@ -336,6 +337,7 @@ describe('websocket connection purpose (0.12a)', () => {
         jwt_expiry: 123,
         connection_id: 'legacy-1',
         wave_id: null,
+        durable_updates: false,
         purpose: null
       }
     ]);
