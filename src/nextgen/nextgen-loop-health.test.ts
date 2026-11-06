@@ -106,3 +106,61 @@ it('keeps a capped block scan pending and does not claim enrichment completed', 
   });
   expect(processPendingMetadataTokens).not.toHaveBeenCalled();
 });
+
+describe('transient RPC retries', () => {
+  const error = Object.assign(new Error('could not coalesce error'), {
+    code: 'UNKNOWN_ERROR',
+    error: { code: -32000, message: 'Internal error' }
+  });
+
+  beforeEach(() => {
+    jest.useFakeTimers({ doNotFake: ['Date'] });
+    jest.spyOn(Math, 'random').mockReturnValue(0);
+  });
+  afterEach(() => jest.useRealTimers());
+
+  it('recovers the head read before opening the transaction', async () => {
+    const read = jest.mocked(getEthereumRpcClient().getBlockNumber);
+    read.mockRejectedValueOnce(error);
+    const result = findNextGenTransactions(new NextgenLoopHealth());
+    await jest.advanceTimersByTimeAsync(249);
+    expect(transaction).not.toHaveBeenCalled();
+    await jest.runAllTimersAsync();
+    await result;
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(persistNextGenBlock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries the failed block read without replaying transaction writes', async () => {
+    const read = jest.mocked(getEthereumRpcClient().getBlock);
+    read.mockRejectedValueOnce(error);
+    const result = findNextGenTransactions(new NextgenLoopHealth());
+    await jest.runAllTimersAsync();
+    await result;
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(persistNextGenBlock).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'indexing', pending: false })
+    );
+  });
+
+  it('does not advance a checkpoint or report progress after retries exhaust', async () => {
+    const read = jest.mocked(getEthereumRpcClient().getBlock);
+    read.mockRejectedValue(error);
+    const rejection = expect(
+      findNextGenTransactions(new NextgenLoopHealth())
+    ).rejects.toBe(error);
+    await jest.runAllTimersAsync();
+    await rejection;
+    expect(read).toHaveBeenCalledTimes(4);
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(persistNextGenBlock).not.toHaveBeenCalled();
+    expect(
+      report.mock.calls.some(
+        ([value]) => value.progressAt !== undefined || value.pending === false
+      )
+    ).toBe(false);
+  });
+});

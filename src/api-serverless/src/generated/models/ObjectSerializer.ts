@@ -13,6 +13,7 @@ export * from '../models/ApiAlchemyContractMetadataBatchRequest';
 export * from '../models/ApiAlchemyContractMetadataBatchResponse';
 export * from '../models/ApiAlchemyContractMetadataRequest';
 export * from '../models/ApiAlchemyContractMetadataResult';
+export * from '../models/ApiAppDeviceGrant';
 export * from '../models/ApiArchiveProfileCmsPackageRequest';
 export * from '../models/ApiArtistArtworkAlert';
 export * from '../models/ApiArtistArtworkNotificationContext';
@@ -660,6 +661,8 @@ export * from '../models/ApiPageSortDirection';
 export * from '../models/ApiPageWithNextUriBase';
 export * from '../models/ApiPageWithoutCount';
 export * from '../models/ApiPaymentDetails';
+export * from '../models/ApiProfileActivityLog';
+export * from '../models/ApiProfileActivityLogPage';
 export * from '../models/ApiProfileBlockState';
 export * from '../models/ApiProfileClassification';
 export * from '../models/ApiProfileCmsAgentCandidateValidation';
@@ -727,7 +730,9 @@ export * from '../models/ApiRedeemRefreshTokenRequest';
 export * from '../models/ApiRedeemRefreshTokenResponse';
 export * from '../models/ApiRefreshPushInstallationBadgeRequest';
 export * from '../models/ApiRefreshPushInstallationBadgeResponse';
+export * from '../models/ApiRegisterDeviceGrantRequest';
 export * from '../models/ApiRegisterPushNotificationTokenRequest';
+export * from '../models/ApiRenameDeviceRequest';
 export * from '../models/ApiRepCategoriesPage';
 export * from '../models/ApiRepCategory';
 export * from '../models/ApiRepContributor';
@@ -994,6 +999,7 @@ import { ApiAlchemyContractMetadataBatchRequest } from '../models/ApiAlchemyCont
 import { ApiAlchemyContractMetadataBatchResponse } from '../models/ApiAlchemyContractMetadataBatchResponse';
 import { ApiAlchemyContractMetadataRequest , ApiAlchemyContractMetadataRequestChainEnum   } from '../models/ApiAlchemyContractMetadataRequest';
 import { ApiAlchemyContractMetadataResult , ApiAlchemyContractMetadataResultChainEnum      } from '../models/ApiAlchemyContractMetadataResult';
+import { ApiAppDeviceGrant } from '../models/ApiAppDeviceGrant';
 import { ApiArchiveProfileCmsPackageRequest } from '../models/ApiArchiveProfileCmsPackageRequest';
 import { ApiArtistArtworkAlert } from '../models/ApiArtistArtworkAlert';
 import { ApiArtistArtworkNotificationContext } from '../models/ApiArtistArtworkNotificationContext';
@@ -1286,7 +1292,7 @@ import { ApiCreateAttachmentMultipartUploadRequest   } from '../models/ApiCreate
 import { ApiCreateAttachmentMultipartUploadResponse     } from '../models/ApiCreateAttachmentMultipartUploadResponse';
 import { ApiCreateCompetitionEntryRequest } from '../models/ApiCreateCompetitionEntryRequest';
 import { ApiCreateCompetitionRequest } from '../models/ApiCreateCompetitionRequest';
-import { ApiCreateConnectionShareRequest, ApiCreateConnectionShareRequestTargetClientTypeEnum   , ApiCreateConnectionShareRequestClientTypeEnum     } from '../models/ApiCreateConnectionShareRequest';
+import { ApiCreateConnectionShareRequest , ApiCreateConnectionShareRequestTargetClientTypeEnum   , ApiCreateConnectionShareRequestClientTypeEnum     } from '../models/ApiCreateConnectionShareRequest';
 import { ApiCreateConnectionShareResponse    , ApiCreateConnectionShareResponseTargetClientTypeEnum    } from '../models/ApiCreateConnectionShareResponse';
 import { ApiCreateDropMedia } from '../models/ApiCreateDropMedia';
 import { ApiCreateDropPart } from '../models/ApiCreateDropPart';
@@ -1618,7 +1624,7 @@ import { ApiNftOwnerPage } from '../models/ApiNftOwnerPage';
 import { ApiNftsPage } from '../models/ApiNftsPage';
 import { ApiNonceResponse } from '../models/ApiNonceResponse';
 import { ApiNotification        } from '../models/ApiNotification';
-import { ApiNotificationAdditionalContextV2                                                } from '../models/ApiNotificationAdditionalContextV2';
+import { ApiNotificationAdditionalContextV2                                                  } from '../models/ApiNotificationAdditionalContextV2';
 import { ApiNotificationCause } from '../models/ApiNotificationCause';
 import { ApiNotificationDropReactedReactor } from '../models/ApiNotificationDropReactedReactor';
 import { ApiNotificationPollVoteOption } from '../models/ApiNotificationPollVoteOption';
@@ -1641,6 +1647,8 @@ import { ApiPageSortDirection } from '../models/ApiPageSortDirection';
 import { ApiPageWithNextUriBase } from '../models/ApiPageWithNextUriBase';
 import { ApiPageWithoutCount } from '../models/ApiPageWithoutCount';
 import { ApiPaymentDetails } from '../models/ApiPaymentDetails';
+import { ApiProfileActivityLog } from '../models/ApiProfileActivityLog';
+import { ApiProfileActivityLogPage } from '../models/ApiProfileActivityLogPage';
 import { ApiProfileBlockState } from '../models/ApiProfileBlockState';
 import { ApiProfileClassification } from '../models/ApiProfileClassification';
 import { ApiProfileCmsAgentCandidateValidation } from '../models/ApiProfileCmsAgentCandidateValidation';
@@ -1703,12 +1711,14 @@ import { ApiRateMatter } from '../models/ApiRateMatter';
 import { ApiRatingWithProfileInfoAndLevel } from '../models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../models/ApiRatingWithProfileInfoAndLevelPage';
 import { ApiRedeemConnectionShareRequest , ApiRedeemConnectionShareRequestTargetClientTypeEnum   } from '../models/ApiRedeemConnectionShareRequest';
-import { ApiRedeemConnectionShareResponse    , ApiRedeemConnectionShareResponseClientTypeEnum     } from '../models/ApiRedeemConnectionShareResponse';
+import { ApiRedeemConnectionShareResponse     , ApiRedeemConnectionShareResponseClientTypeEnum     } from '../models/ApiRedeemConnectionShareResponse';
 import { ApiRedeemRefreshTokenRequest } from '../models/ApiRedeemRefreshTokenRequest';
 import { ApiRedeemRefreshTokenResponse } from '../models/ApiRedeemRefreshTokenResponse';
 import { ApiRefreshPushInstallationBadgeRequest } from '../models/ApiRefreshPushInstallationBadgeRequest';
 import { ApiRefreshPushInstallationBadgeResponse } from '../models/ApiRefreshPushInstallationBadgeResponse';
+import { ApiRegisterDeviceGrantRequest } from '../models/ApiRegisterDeviceGrantRequest';
 import { ApiRegisterPushNotificationTokenRequest } from '../models/ApiRegisterPushNotificationTokenRequest';
+import { ApiRenameDeviceRequest } from '../models/ApiRenameDeviceRequest';
 import { ApiRepCategoriesPage } from '../models/ApiRepCategoriesPage';
 import { ApiRepCategory } from '../models/ApiRepCategory';
 import { ApiRepContributor } from '../models/ApiRepContributor';
@@ -2279,6 +2289,7 @@ let typeMap: {[index: string]: any} = {
     "ApiAlchemyContractMetadataBatchResponse": ApiAlchemyContractMetadataBatchResponse,
     "ApiAlchemyContractMetadataRequest": ApiAlchemyContractMetadataRequest,
     "ApiAlchemyContractMetadataResult": ApiAlchemyContractMetadataResult,
+    "ApiAppDeviceGrant": ApiAppDeviceGrant,
     "ApiArchiveProfileCmsPackageRequest": ApiArchiveProfileCmsPackageRequest,
     "ApiArtistArtworkAlert": ApiArtistArtworkAlert,
     "ApiArtistArtworkNotificationContext": ApiArtistArtworkNotificationContext,
@@ -2874,6 +2885,8 @@ let typeMap: {[index: string]: any} = {
     "ApiPageWithNextUriBase": ApiPageWithNextUriBase,
     "ApiPageWithoutCount": ApiPageWithoutCount,
     "ApiPaymentDetails": ApiPaymentDetails,
+    "ApiProfileActivityLog": ApiProfileActivityLog,
+    "ApiProfileActivityLogPage": ApiProfileActivityLogPage,
     "ApiProfileBlockState": ApiProfileBlockState,
     "ApiProfileCmsAgentCandidateValidation": ApiProfileCmsAgentCandidateValidation,
     "ApiProfileCmsAgentConstraints": ApiProfileCmsAgentConstraints,
@@ -2936,7 +2949,9 @@ let typeMap: {[index: string]: any} = {
     "ApiRedeemRefreshTokenResponse": ApiRedeemRefreshTokenResponse,
     "ApiRefreshPushInstallationBadgeRequest": ApiRefreshPushInstallationBadgeRequest,
     "ApiRefreshPushInstallationBadgeResponse": ApiRefreshPushInstallationBadgeResponse,
+    "ApiRegisterDeviceGrantRequest": ApiRegisterDeviceGrantRequest,
     "ApiRegisterPushNotificationTokenRequest": ApiRegisterPushNotificationTokenRequest,
+    "ApiRenameDeviceRequest": ApiRenameDeviceRequest,
     "ApiRepCategoriesPage": ApiRepCategoriesPage,
     "ApiRepCategory": ApiRepCategory,
     "ApiRepContributor": ApiRepContributor,

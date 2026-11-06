@@ -45,6 +45,7 @@ type CreateWalletAuthSessionParams = {
 };
 
 type CreateWalletConnectionShareParams = {
+  readonly encryptedDeviceSetup: string | null;
   readonly id: string;
   readonly connectionShareCodeHash: string;
   readonly address: string;
@@ -288,8 +289,8 @@ export class AuthDb extends LazyDbAccessCompatibleService {
   ): Promise<WalletConnectionShareEntity> {
     await this.db.execute(
       `insert into ${WALLET_CONNECTION_SHARES_TABLE}
-       (id, connection_share_code_hash, address, role, target_client_type, expires_at)
-       values (:id, :connectionShareCodeHash, :address, :role, :targetClientType, :expiresAt)`,
+       (id, connection_share_code_hash, address, role, target_client_type, expires_at, encrypted_device_setup)
+       values (:id, :connectionShareCodeHash, :address, :role, :targetClientType, :expiresAt, :encryptedDeviceSetup)`,
       params
     );
     return this.getWalletConnectionShareByIdOrThrow(params.id);

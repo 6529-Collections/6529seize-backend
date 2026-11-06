@@ -43,11 +43,11 @@ remain as orphaned objects that nothing reads; deleting them is optional.
 trust-and-safety report routes (`/e2ee/trust-and-safety/...`), which stay
 available so stored reports remain reviewable:
 
-| Value | Result |
-| --- | --- |
-| `true` | On |
-| `false` | Off |
-| unset | On when `NODE_ENV` is `local` or `development` (staging); off otherwise, including production |
+| Value   | Result                                                                                        |
+| ------- | --------------------------------------------------------------------------------------------- |
+| `true`  | On                                                                                            |
+| `false` | Off                                                                                           |
+| unset   | On when `NODE_ENV` is `local` or `development` (staging); off otherwise, including production |
 
 While off, every other route answers `404 {"error": ..., "code": "E2EE_DISABLED"}`
 after the JWT check and before any proxy, profile or database check (a request
@@ -56,14 +56,14 @@ here authorizes enabling it there.
 
 Other settings, read per request:
 
-| Variable | Effect | Default |
-| --- | --- | --- |
-| `E2EE_ATTACHMENTS_ENABLED` | Kill switch for attachments, checked after `E2EE_DMS_ENABLED` (with both off, blob routes answer `E2EE_DISABLED`). `false` makes the attachment (blob) routes answer `404 E2EE_ATTACHMENTS_DISABLED` before any blob row or chunk is read or written; resolving the caller may still read the profile. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On everywhere, including production |
-| `E2EE_ENTRIES_PER_GROUP_PER_HOUR` | Commits and proposals one group may sequence per hour (an integer from 1 to 1000) | 12 (P35's value); 30 for `local` and `development`, so automated tests can churn groups |
-| `E2EE_TRUST_AND_SAFETY_GROUP_ID` | An optional additional user group whose members may read reported encrypted messages, besides the content moderators (see Reports and trust and safety) | Unset: only content moderators |
-| `E2EE_BLOB_STORE` | Where new attachment chunks are stored: `mysql` or `s3` (see Storage of attachments). Anything else refuses new uploads with `503 E2EE_STORAGE_UNAVAILABLE` | `mysql` |
-| `E2EE_BLOB_S3_BUCKET`, `E2EE_BLOB_S3_PREFIX` | The private bucket and key prefix for S3 storage; required for `s3` and to read blobs already in S3. The prefix must contain the environment's stage segment (`staging` for `development`, `prod` for `production`, `local` for `local`) and must not sit inside an expiring ingest prefix | Unset |
-| `E2EE_BLOB_S3_REGION` | The bucket's region | `AWS_REGION`, then `eu-west-1` |
+| Variable                                     | Effect                                                                                                                                                                                                                                                                                                                                                                                                  | Default                                                                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `E2EE_ATTACHMENTS_ENABLED`                   | Kill switch for attachments, checked after `E2EE_DMS_ENABLED` (with both off, blob routes answer `E2EE_DISABLED`). `false` makes the attachment (blob) routes answer `404 E2EE_ATTACHMENTS_DISABLED` before any blob row or chunk is read or written; resolving the caller may still read the profile. `GET /e2ee/me` reports it as `attachments_enabled`, and clients hide attaching while it is false | On everywhere, including production                                                     |
+| `E2EE_ENTRIES_PER_GROUP_PER_HOUR`            | Commits and proposals one group may sequence per hour (an integer from 1 to 1000)                                                                                                                                                                                                                                                                                                                       | 12 (P35's value); 30 for `local` and `development`, so automated tests can churn groups |
+| `E2EE_TRUST_AND_SAFETY_GROUP_ID`             | An optional additional user group whose members may read reported encrypted messages, besides the content moderators (see Reports and trust and safety)                                                                                                                                                                                                                                                 | Unset: only content moderators                                                          |
+| `E2EE_BLOB_STORE`                            | Where new attachment chunks are stored: `mysql` or `s3` (see Storage of attachments). Anything else refuses new uploads with `503 E2EE_STORAGE_UNAVAILABLE`                                                                                                                                                                                                                                             | `mysql`                                                                                 |
+| `E2EE_BLOB_S3_BUCKET`, `E2EE_BLOB_S3_PREFIX` | The private bucket and key prefix for S3 storage; required for `s3` and to read blobs already in S3. The prefix must contain the environment's stage segment (`staging` for `development`, `prod` for `production`, `local` for `local`) and must not sit inside an expiring ingest prefix                                                                                                              | Unset                                                                                   |
+| `E2EE_BLOB_S3_REGION`                        | The bucket's region                                                                                                                                                                                                                                                                                                                                                                                     | `AWS_REGION`, then `eu-west-1`                                                          |
 
 ## API
 
@@ -80,35 +80,35 @@ Errors use `CustomApiCompliantException` and the body
 `E2EE_EPOCH_CONFLICT` and `E2EE_EPOCH_STALE` through the new optional
 `details` of `CustomApiCompliantException`.
 
-| Area | Routes |
-| --- | --- |
-| Devices | `GET /e2ee/me`, `POST /e2ee/devices`, `GET /e2ee/devices/{device_key}`, `GET /e2ee/profiles/{profile_id}/devices`, `POST /e2ee/devices/lookup`, `POST /e2ee/devices/{device_key}/revoke` |
-| KeyPackages | `POST /e2ee/devices/{device_key}/key-packages`, `POST /e2ee/key-packages/claim`, `POST /e2ee/eligibility` |
-| Groups | `POST /e2ee/groups`, `GET /e2ee/groups/{group}`, `POST /e2ee/groups/{group}/entries`, `GET /e2ee/groups/{group}/log`, `POST /e2ee/groups/{group}/messages`, `POST /e2ee/groups/{group}/roster`, `GET /e2ee/devices/{device_key}/groups` |
-| Welcomes | `GET /e2ee/devices/{device_key}/welcomes`, `POST /e2ee/devices/{device_key}/welcomes/{welcome_id}/ack` |
-| Attachments | `POST /e2ee/blobs`, `PUT /e2ee/blobs/{blob_id}/chunks/{index}`, `POST /e2ee/blobs/{blob_id}/complete`, `GET /e2ee/blobs/{blob_id}/chunks/{index}` |
-| History backups | `GET /e2ee/backup`, `DELETE /e2ee/backup`, `POST /e2ee/backups`, `GET /e2ee/backups/{backup_id}`, `POST /e2ee/backups/{backup_id}/activate`, `GET` and `POST /e2ee/backups/{backup_id}/chunks`, `GET /e2ee/backups/{backup_id}/chunks/{seq}`, `POST /e2ee/backups/{backup_id}/compact` |
-| Reports | `POST /e2ee/reports` |
-| Trust and safety | `GET /e2ee/trust-and-safety/reports`, `GET /e2ee/trust-and-safety/reports/{report_id}`, `POST /e2ee/trust-and-safety/reports/{report_id}/hold` (not gated by `E2EE_DMS_ENABLED`, so stored reports stay reviewable) |
+| Area             | Routes                                                                                                                                                                                                                                                                                 |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Devices          | `GET /e2ee/me`, `POST /e2ee/devices`, `GET /e2ee/devices/{device_key}`, `GET /e2ee/profiles/{profile_id}/devices`, `POST /e2ee/devices/lookup`, `POST /e2ee/devices/{device_key}/revoke`, `POST /e2ee/devices/{device_key}/label`                                                      |
+| KeyPackages      | `POST /e2ee/devices/{device_key}/key-packages`, `POST /e2ee/key-packages/claim`, `POST /e2ee/eligibility`                                                                                                                                                                              |
+| Groups           | `POST /e2ee/groups`, `GET /e2ee/groups/{group}`, `POST /e2ee/groups/{group}/entries`, `GET /e2ee/groups/{group}/log`, `POST /e2ee/groups/{group}/messages`, `POST /e2ee/groups/{group}/roster`, `GET /e2ee/devices/{device_key}/groups`                                                |
+| Welcomes         | `GET /e2ee/devices/{device_key}/welcomes`, `POST /e2ee/devices/{device_key}/welcomes/{welcome_id}/ack`                                                                                                                                                                                 |
+| Attachments      | `POST /e2ee/blobs`, `PUT /e2ee/blobs/{blob_id}/chunks/{index}`, `POST /e2ee/blobs/{blob_id}/complete`, `GET /e2ee/blobs/{blob_id}/chunks/{index}`                                                                                                                                      |
+| History backups  | `GET /e2ee/backup`, `DELETE /e2ee/backup`, `POST /e2ee/backups`, `GET /e2ee/backups/{backup_id}`, `POST /e2ee/backups/{backup_id}/activate`, `GET` and `POST /e2ee/backups/{backup_id}/chunks`, `GET /e2ee/backups/{backup_id}/chunks/{seq}`, `POST /e2ee/backups/{backup_id}/compact` |
+| Reports          | `POST /e2ee/reports`                                                                                                                                                                                                                                                                   |
+| Trust and safety | `GET /e2ee/trust-and-safety/reports`, `GET /e2ee/trust-and-safety/reports/{report_id}`, `POST /e2ee/trust-and-safety/reports/{report_id}/hold` (not gated by `E2EE_DMS_ENABLED`, so stored reports stay reviewable)                                                                    |
 
 ## What the server stores
 
 All tables are new (`e2ee_` prefix), created by `dbMigrationsLoop` entity
 synchronization, without foreign keys.
 
-| Table | Contents |
-| --- | --- |
-| `e2ee_devices` | Device key, owner profile, the signed grant fields, `grant_id`, wallet signature, `verified_via`, label, platform, timestamps, revocation (revoker key, signed time, Ed25519 signature), `grant_message` (the combined sign-in message, NC8; null for EIP-712 grants) |
-| `e2ee_key_packages` | Opaque KeyPackage bytes per device, last-resort flag, expiry |
-| `e2ee_groups` | Random group handle `g`, current epoch, current commit key `pub(K_epoch)`, last sequence number |
-| `e2ee_report_access_log` | Trust-and-safety audit: viewer profile, action (`list`, `read`, `hold`, `release`), report ids, time. No message content |
-| `e2ee_group_epochs` | `pub(K_n)` for every epoch n (immutable per epoch) |
-| `e2ee_group_roster` | Delivery windows: device key, profile, `joined_epoch`, `removed_epoch` |
-| `e2ee_log` | The ordered log: wrapped (encrypted) entries and messages, their declared hashes, commit keys, signatures, roster deltas, epoch fingerprints |
-| `e2ee_welcomes`, `e2ee_welcome_deliveries` | MLS Welcome bytes stored once, one pending delivery per target device |
-| `e2ee_blobs`, `e2ee_blob_chunks` | Encrypted attachment metadata (`storage`: `mysql` or `s3`, and for S3 the exact `storage_location`) and chunk sizes; the chunk ciphertext too for MySQL storage (empty for S3) |
-| `e2ee_reports` | Message bodies a recipient chose to disclose (severe-harm categories only), the sender's inner signature, `verified`, `on_hold` |
-| `e2ee_push_throttle`, `e2ee_rate_counters` | Wake throttle and fixed-window rate counters |
+| Table                                      | Contents                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `e2ee_devices`                             | Device key, owner profile, the signed grant fields, `grant_id`, wallet signature, `verified_via`, label, platform, timestamps, revocation (revoker key, signed time, Ed25519 signature), `grant_message` (the combined sign-in message or app-grant `DeviceGrant` JSON; null for direct EIP-712 MLS grants) |
+| `e2ee_key_packages`                        | Opaque KeyPackage bytes per device, last-resort flag, expiry                                                                                                                                                                                                                                                |
+| `e2ee_groups`                              | Random group handle `g`, current epoch, current commit key `pub(K_epoch)`, last sequence number                                                                                                                                                                                                             |
+| `e2ee_report_access_log`                   | Trust-and-safety audit: viewer profile, action (`list`, `read`, `hold`, `release`), report ids, time. No message content                                                                                                                                                                                    |
+| `e2ee_group_epochs`                        | `pub(K_n)` for every epoch n (immutable per epoch)                                                                                                                                                                                                                                                          |
+| `e2ee_group_roster`                        | Delivery windows: device key, profile, `joined_epoch`, `removed_epoch`                                                                                                                                                                                                                                      |
+| `e2ee_log`                                 | The ordered log: wrapped (encrypted) entries and messages, their declared hashes, commit keys, signatures, roster deltas, epoch fingerprints                                                                                                                                                                |
+| `e2ee_welcomes`, `e2ee_welcome_deliveries` | MLS Welcome bytes stored once, one pending delivery per target device                                                                                                                                                                                                                                       |
+| `e2ee_blobs`, `e2ee_blob_chunks`           | Encrypted attachment metadata (`storage`: `mysql` or `s3`, and for S3 the exact `storage_location`) and chunk sizes; the chunk ciphertext too for MySQL storage (empty for S3)                                                                                                                              |
+| `e2ee_reports`                             | Message bodies a recipient chose to disclose (severe-harm categories only), the sender's inner signature, `verified`, `on_hold`                                                                                                                                                                             |
+| `e2ee_push_throttle`, `e2ee_rate_counters` | Wake throttle and fixed-window rate counters                                                                                                                                                                                                                                                                |
 
 The server never receives plaintext message content, group names, the MLS
 member list, or private keys. The one exception is a report: the reporting
@@ -153,6 +153,14 @@ wallet, else `eip1271` (the login verified it on chain). Clients verify such
 devices from `grant_message` instead of rebuilding the EIP-712 grant. Device
 limits and renewal are as for `POST /e2ee/devices`; renewing through either
 route replaces the grant and sets or clears `grant_message`.
+
+The same route registers the encrypted-messages key of an app device grant
+(`POST /api/device-grants` with an `mls_device_key`, see
+`docs/auth/wallet-auth.md`): `grant_message` is then the signed EIP-712
+`DeviceGrant` message as JSON, `grant_id` its EIP-712 digest, `origin` the
+grant's origin (for example `6529 Desktop`) and `verified_via` is `eoa` when
+the typed-data signature recovers to the wallet, else `eip1271`. Clients tell
+the two forms apart by the first character (`{` for an app grant).
 
 One grant, one lifetime: the two keys share the expiry, revoking the
 encrypted-messages device (signed revocation below) also revokes its sign-in
@@ -249,25 +257,25 @@ profile always skips it.
 
 ## Limits and quotas
 
-| Limit | Value |
-| --- | --- |
-| Active devices per profile | 10 |
-| Unclaimed one-time KeyPackages per device | 100 (`409 E2EE_KEY_PACKAGE_LIMIT` beyond) |
-| KeyPackage size | 8 KiB (an X-Wing KeyPackage is about 2.7 KiB) |
-| Entry data | an entry bucket, at most 2 MiB |
-| Entry plus Welcome plus ratchet tree | 3.25 MiB raw together (the request stays under the 5 MB JSON limit); the Welcome gets what the entry leaves, at least 1.25 MiB |
-| Message data | a message bucket, at most 64 KiB |
-| Attachment | at most 25 chunks of 1 MiB plaintext (each chunk at most 1 MiB + 16 bytes of ciphertext) |
-| Attachment storage per uploading profile | 200 MiB declared bytes per rolling 24 h (`429 E2EE_RATE_LIMITED`), 1 GiB live (`413 E2EE_TOO_LARGE`) |
-| Log and welcome ciphertext per profile | 256 MiB per UTC day (`429`) |
-| Messages | 120 per minute per device |
-| Entries | 12 per hour per group in production, 30 on staging, or `E2EE_ENTRIES_PER_GROUP_PER_HOUR` (counted after the commit-key signature verifies) |
-| Roster repairs | 60 per hour per group |
-| Claims | 120 per hour per caller profile; 30 per hour per target device (over the device limit, only its last-resort KeyPackage is returned) |
-| Group creations | 200 per day per profile |
-| Attachment uploads | 100 per day per profile |
-| Eligibility checks | 600 per hour per profile |
-| Reports | 100 per day per profile |
+| Limit                                     | Value                                                                                                                                      |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Active devices per profile                | 10                                                                                                                                         |
+| Unclaimed one-time KeyPackages per device | 100 (`409 E2EE_KEY_PACKAGE_LIMIT` beyond)                                                                                                  |
+| KeyPackage size                           | 8 KiB (an X-Wing KeyPackage is about 2.7 KiB)                                                                                              |
+| Entry data                                | an entry bucket, at most 2 MiB                                                                                                             |
+| Entry plus Welcome plus ratchet tree      | 3.25 MiB raw together (the request stays under the 5 MB JSON limit); the Welcome gets what the entry leaves, at least 1.25 MiB             |
+| Message data                              | a message bucket, at most 64 KiB                                                                                                           |
+| Attachment                                | at most 25 chunks of 1 MiB plaintext (each chunk at most 1 MiB + 16 bytes of ciphertext)                                                   |
+| Attachment storage per uploading profile  | 200 MiB declared bytes per rolling 24 h (`429 E2EE_RATE_LIMITED`), 1 GiB live (`413 E2EE_TOO_LARGE`)                                       |
+| Log and welcome ciphertext per profile    | 256 MiB per UTC day (`429`)                                                                                                                |
+| Messages                                  | 120 per minute per device                                                                                                                  |
+| Entries                                   | 12 per hour per group in production, 30 on staging, or `E2EE_ENTRIES_PER_GROUP_PER_HOUR` (counted after the commit-key signature verifies) |
+| Roster repairs                            | 60 per hour per group                                                                                                                      |
+| Claims                                    | 120 per hour per caller profile; 30 per hour per target device (over the device limit, only its last-resort KeyPackage is returned)        |
+| Group creations                           | 200 per day per profile                                                                                                                    |
+| Attachment uploads                        | 100 per day per profile                                                                                                                    |
+| Eligibility checks                        | 600 per hour per profile                                                                                                                   |
+| Reports                                   | 100 per day per profile                                                                                                                    |
 
 Rate limits are fixed-window counters in `e2ee_rate_counters` (works without
 Redis and in every Lambda instance). Reads use the primary pool so ordering
@@ -377,12 +385,12 @@ Optional, per profile. The client encrypts its own decrypted message history
 (message content, display metadata, attachment references and their keys;
 never MLS state) under a random 256-bit backup key and uploads ciphertext
 chunks. The backup key is wrapped by the user's recovery code (256-bit,
-shown once on the client) into an opaque *envelope* that the server stores
+shown once on the client) into an opaque _envelope_ that the server stores
 with the generation. The server never receives plaintext, the backup key or
 the recovery code, and cannot open the envelope (the code is not guessable,
 so no guess limiting is needed).
 
-- **Generations.** `POST /e2ee/backups` creates a *pending* generation with a
+- **Generations.** `POST /e2ee/backups` creates a _pending_ generation with a
   client-chosen random `backup_id` and envelope; any older pending
   generation of the profile is deleted. `POST .../activate` makes it the
   active one and deletes every other generation (used to rotate the recovery
@@ -474,25 +482,34 @@ message you" setting are the everyday tools.
 After a transaction commits, the API sends best-effort WebSocket frames to the
 primary connections of the affected profiles. Failures never fail the request.
 
-| Type | Data | Recipients |
-| --- | --- | --- |
-| `E2EE_GROUP_EVENT` | `{ group, seq, epoch, type, item? }`, `item` only when it serializes to at most 16 KiB | Roster profiles (for entries, before and after the change) |
-| `E2EE_WELCOME` | `{ device_key, welcome_id, group }` | Target device's profile |
-| `E2EE_DEVICE_ADDED` | `{ profile_id, device_key }` | Owner and profiles sharing a roster |
-| `E2EE_DEVICE_REVOKED` | `{ profile_id, device_key }` | Owner and profiles sharing a roster |
-| `E2EE_ROSTER_CHANGED` | `{ group, epoch }` | Roster profiles after a repair |
+| Type                  | Data                                                                                   | Recipients                                                 |
+| --------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `E2EE_GROUP_EVENT`    | `{ group, seq, epoch, type, item? }`, `item` only when it serializes to at most 16 KiB | Roster profiles (for entries, before and after the change) |
+| `E2EE_WELCOME`        | `{ device_key, welcome_id, group }`                                                    | Target device's profile                                    |
+| `E2EE_DEVICE_ADDED`   | `{ profile_id, device_key }`                                                           | Owner and profiles sharing a roster                        |
+| `E2EE_DEVICE_REVOKED` | `{ profile_id, device_key }`                                                           | Owner and profiles sharing a roster                        |
+| `E2EE_ROSTER_CHANGED` | `{ group, epoch }`                                                                     | Roster profiles after a repair                             |
 
 Content-free wakes use the existing `firebase-push-notifications` queue with
 the message `{ "type": "e2ee_wake", "profile_ids": [...], "reason":
-"message" | "added" }`. `pushNotificationsHandler` sends title `6529` and body
-`New encrypted message` or `You were added to an encrypted chat`, no image,
-and data `{ redirect: "e2ee", target_profile_id, target_profile_handle,
+"message" | "added" }`. For a message, `pushNotificationsHandler` sends
+title `New encrypted message` and body `Open 6529 Mobile to view` in production
+or `Open 6529 Staging to view` on staging. The handler uses the loaded
+`NODE_ENV` (`development` for staging, `production` for production), independently
+of Sentry monitoring configuration. For an invitation
+it sends title `6529` and body `You were added to an encrypted chat`. Both
+send no image and include data `{ redirect: "e2ee", target_profile_id, target_profile_handle,
 notification_id: "e2ee" }`, without the badge field. It names no sender,
 group or text, honours the profile's "Direct messages" notification
 preference, and removes unregistered tokens. Wakes are hints and are not
 retried after a send. The API sends at most one wake per (profile, group) per
 60 seconds; `reason: "added"` goes to profiles new to a roster, `message` to
-notify-hinted roster profiles other than the sender.
+notify-hinted roster profiles other than the sender. The in-app feed records the
+sender, opaque chat handle, and message sequence independently of the push
+cooldown. Message previews come only from the exact referenced sequence in the
+recipient device's local history. Entries without a sequence or a locally
+readable message stay generic; enabling a new device does not transfer older
+history or backfill notification entries that were never created.
 
 ## Residual powers of 6529.io as orderer
 
@@ -523,8 +540,7 @@ versions and OpenMLS security advisories are the safeguard.
   `acknowledged` field so the generators emit a model; the server returns
   `{}`.
 - Creating a group that already exists returns the record when the request
-  is an identical retry by the creator; otherwise it is `409
-  E2EE_EPOCH_CONFLICT`.
+  is an identical retry by the creator; otherwise it is `409 E2EE_EPOCH_CONFLICT`.
 - `E2EE_KEY_PACKAGE_LIMIT` (409) and `E2EE_FORBIDDEN` (403, proxies, callers
   without a profile, proposals removing others, repairs undoing a leave,
   non-uploader blob writes) and `E2EE_BAD_REQUEST` (400, malformed input) are

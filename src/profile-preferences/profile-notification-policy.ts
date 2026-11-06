@@ -14,6 +14,7 @@ const CAUSE_CLASSIFICATION: Record<
   IdentityNotificationCause,
   NotificationClassification
 > = {
+  [IdentityNotificationCause.E2EE_MESSAGE]: 'direct_messages',
   [IdentityNotificationCause.IDENTITY_SUBSCRIBED]: 'new_followers',
   [IdentityNotificationCause.IDENTITY_MENTIONED]: 'mentions_replies_quotes',
   [IdentityNotificationCause.IDENTITY_REP]: 'rep_and_nic',

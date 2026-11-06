@@ -125,8 +125,8 @@ For web sessions:
 
 For native and desktop sessions:
 
-- The signed message must have `Session Type: native` or `Session Type:
-  desktop`, matching the requested `client_type`.
+- The signed message must match the requested `client_type`:
+  `Session Type: native` for native or `Session Type: desktop` for desktop.
 - The server creates a row in `wallet_auth_sessions` with `client_type=native`
   or `client_type=desktop`.
 - The refresh token is returned in the JSON response.
@@ -158,8 +158,7 @@ without device parameters are unchanged.
   and a statement rendered from it. The expiry is the issuing minute plus 180
   days. For the default scopes the statement reads:
 
-  > Sign in to 6529 and turn on signed messages on this device until 29 Apr
-  > 2027. This device will sign your posts, edits, deletes and reactions so
+  > Sign in to 6529 and turn on signed messages on this device until 29 Apr 2027. This device will sign your posts, edits, deletes and reactions so
   > anyone can verify they came from your wallet. It can't move funds, change
   > your handle, add devices or act as an admin. No transaction, no gas, no
   > token approvals. (Device key 65942d9f...d8128d49)
@@ -177,6 +176,7 @@ without device parameters are unchanged.
   {scopes}. ..."), so a challenge issued just before a deploy still logs in;
   grants signed over it stay valid. The frontend must accept a new statement
   shape before the backend renders it.
+
 - Combined grant (NC8): with `mls_device_key` (`0x` + 64 lowercase hex, not
   the signing key) and `mls_ciphersuite` as well, the same message also grants
   the browser's MLS signature key for end-to-end encrypted messages. It then
@@ -206,6 +206,7 @@ without device parameters are unchanged.
   a mismatched statement fail closed. The wording is owner-approved;
   to change it, add a renderer at the front of that list (keep the old ones)
   and ship a frontend that accepts it first.
+
 - `POST /api/auth/session-login` stores the grant in `device_grants` only
   after the wallet signature verified and the nonce was consumed, keyed by the
   EIP-191 hash of the exact signed message. The response gains `device_grant`.
@@ -216,6 +217,46 @@ without device parameters are unchanged.
   profile; `POST /api/device-grants/{grantId}/revoke` revokes one. Neither is
   available to proxies. Revoking a combined grant also revokes the
   encrypted-messages device it enrolled (see `docs/e2ee-messaging.md`).
+- `POST /api/device-grants/{grantId}/label` renames an unrevoked signing
+  grant owned by one of the caller's profile wallets.
+  `POST /api/e2ee/devices/{device_key}/label` renames an owned, unrevoked
+  encryption device. The frontend uses the encryption-device label for linked combined
+  grant rows, so both permission views display the same server name.
+  Labels use the existing server fields, not a local nickname or an additional
+  nickname column. Any authenticated browser or app of the owner can rename
+  a device; other clients see it when they refresh their lists. Rename and
+  revocation use row locking so a concurrent revoke cannot leave stale labels.
+- App device grants (6529 Mobile and 6529 Desktop, whose sign-in is not a
+  SIWE web session): `POST /api/device-grants` registers an EIP-712 grant the
+  signed-in wallet signed outside sign-in. Domain `6529 Device Grant`,
+  version `1`, the pre-genesis salt shared with encrypted-messages grants;
+  primary type:
+
+  ```text
+  DeviceGrant(string statement, address wallet, bytes32 deviceKey, string scopes, bytes32 mlsDeviceKey, uint16 ciphersuite, uint64 issuedAt, uint64 expiresAt, string origin)
+  ```
+
+  A signing-only grant carries
+  zero in `mlsDeviceKey` and `ciphersuite`; a combined grant carries the
+  encrypted-messages key (different from `deviceKey`) and the current
+  ciphersuite, only while encrypted messages are on and only for a wallet
+  with a profile. The server renders the statement from the fields
+  (`app-device-grant.ts`; the owner-approved wording is part of the signed
+  commitment and must remain byte-for-byte compatible with clients) and verifies the signature as an EOA or through
+  EIP-1271 on Ethereum mainnet. The grant wallet must be the authenticated
+  wallet (no proxies), `issuedAt` within the last day (10 minutes of clock
+  skew ahead), the lifetime at most 181 days and `expiresAt` minute aligned.
+  The row is stored in `device_grants` like a sign-in grant: the id is the
+  EIP-712 digest, `domain` is the grant's `origin`, `chain_id` is 1 and
+  `message` is the signed typed-data message as JSON (it starts with `{`, a
+  SIWE message never does), so proofs from `GET /drops/{id}/signed-events`
+  stay verifiable by anyone. The typed-data domain has no chain id, so a
+  verifier rebuilds the digest from the JSON alone; the stored `chain_id` only
+  says where an EIP-1271 contract-wallet signature is checked. A
+  signing-only grant sends `mls_device_key` and `ciphersuite` as null (or
+  omits them); `0` is rejected. Signed writes, expiry and revocation treat it
+  exactly like a sign-in grant. Idempotent on grant id.
+
 - `POST /drops`, `POST /drops/{id}`, `DELETE /drops/{id}` and
   `POST|DELETE /drops/{id}/reaction` accept an optional `device_signature`
   (`grant_id`, `seq`, `claimed_time`, `signature`). The server strips it from
@@ -241,10 +282,16 @@ without device parameters are unchanged.
   `drop_author_signatures` row, the same state as a non-null current event id.
   The mappers read it for a whole page with one primary key lookup. It is
   false when the viewer cannot see the drop's content or its author is
-  anonymous. A signed create or edit maps its response before the signature
-  is stored, so the route re-reads the status from the primary for its
-  response; the websocket update sent during that write still reports the
-  earlier state.
+  anonymous. For signed creates, `DropCreationApiService.createDrop` broadcasts
+  inside the write callback, before `DeviceSignedWritesService.runReserved`
+  finalizes the signature, so the initial live update may report the new drop as
+  unsigned. Signed creates and edits refresh the response's author-signature
+  status after signed-write finalization. Edits then broadcast that refreshed
+  response, so recipients normally get the edited content and author-signature
+  status together; unsigned edits clear that status in the live update as well.
+  If the post-write signature-status read fails, `withStoredAuthorSignature`
+  returns the previously mapped status, which may be stale until a later
+  successful read.
 
 ## Session V2 Refresh And Logout
 
@@ -296,6 +343,16 @@ The session-v2 mobile/native/desktop flow is:
 
 The original client remains connected. This is connection sharing, not moving or revoking the original connection.
 
+A share may include opaque `encrypted_device_setup` ciphertext for receiving-app
+setup. The server stores and returns that ciphertext without its decryption key;
+the frontend carries the key privately in the link fragment. Secure setup is
+not available to proxy sessions. Creating the share does not register a signing
+grant or encryption device: the receiving app redeems the session, decrypts the
+setup and registers the wallet-approved grant. An unused QR therefore leaves no
+active device entry. A client can preserve already usable receiver keys/history
+instead of registering replacements. The source browser need not enroll itself
+to approve another device.
+
 Connection share creation requires bearer JWT auth plus proof that the caller has
 an active matching source session for the authenticated wallet and role:
 
@@ -308,6 +365,10 @@ Connection share state is stored in `wallet_connection_shares`. Share codes are
 stored only as server-side hashes and expire after a short TTL. Redeeming a
 share returns `client_type` so callers can persist the refresh token under the
 actual session type created by the backend.
+
+Redemption atomically marks the share consumed, so the same code cannot be
+redeemed again. Expiry is checked during redemption. These paths do not
+immediately delete the stored share row or its setup ciphertext.
 
 The desktop compatibility flow remains available for legacy Desktop builds that
 still need the legacy refresh-token handoff:

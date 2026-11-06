@@ -12,6 +12,13 @@ import { E2eeDb, E2eeDeviceRow } from '@/e2ee/e2ee.db';
 import { e2eeRevokeDigest } from '@/e2ee/e2ee-digests';
 import { E2eeApiException } from '@/e2ee/e2ee-errors';
 import { buildE2eeGrantTypedData, E2eeDeviceGrant } from '@/e2ee/e2ee-grant';
+import {
+  APP_DEVICE_GRANT_DOMAIN,
+  APP_DEVICE_GRANT_TYPES,
+  buildAppDeviceGrantMessage,
+  computeAppDeviceGrantId,
+  serializeAppDeviceGrantMessage
+} from '@/api/device-signing/app-device-grant';
 import { E2eeTestKey, randomE2eeKey } from '@/tests/fixtures/e2ee.fixture';
 
 const START = Date.UTC(2026, 9, 18, 12, 0, 0);
@@ -496,5 +503,99 @@ describe('E2EE devices from combined sign-in grants (NC8)', () => {
     const { id } = await storeLoginGrant();
     await service.revokeDeviceOfLoginGrant(id);
     expect(revokedEvents).toEqual([]);
+  });
+
+  describe('app device grants (EIP-712, 6529 Mobile and Desktop)', () => {
+    async function storeAppGrant({
+      signer = alice,
+      mlsKey = randomE2eeKey(),
+      combined = true
+    }: {
+      signer?: HDNodeWallet;
+      mlsKey?: E2eeTestKey;
+      combined?: boolean;
+    } = {}) {
+      const issuedAt = Math.floor(now / 1000);
+      const message = buildAppDeviceGrantMessage({
+        wallet: signer.address.toLowerCase(),
+        device_key: randomE2eeKey().publicKey,
+        scopes: ['post', 'edit', 'delete', 'react'],
+        mls_device_key: combined ? mlsKey.publicKey : null,
+        ciphersuite: combined ? E2EE_CIPHERSUITE : null,
+        issued_at: issuedAt,
+        expires_at: issuedAt - (issuedAt % 60) + 180 * 86400,
+        origin: '6529 Desktop'
+      });
+      const id = computeAppDeviceGrantId(message);
+      const text = serializeAppDeviceGrantMessage(message);
+      grants.set(id, {
+        id,
+        wallet: signer.address.toLowerCase(),
+        message: text,
+        wallet_signature: await signer.signTypedData(
+          APP_DEVICE_GRANT_DOMAIN,
+          APP_DEVICE_GRANT_TYPES,
+          message
+        ),
+        revoked_at: null
+      });
+      return { id, mlsKey, message: text };
+    }
+
+    it('registers the MLS key of a combined app grant without a new signature', async () => {
+      const { id, mlsKey, message } = await storeAppGrant();
+
+      const device = await register(id);
+
+      expect(device).toMatchObject({
+        device_key: mlsKey.publicKey,
+        profile_id: PROFILE,
+        grant: {
+          wallet: alice.address.toLowerCase(),
+          device_key: mlsKey.publicKey,
+          ciphersuite: E2EE_CIPHERSUITE,
+          origin: '6529 Desktop'
+        },
+        grant_id: id,
+        verified_via: 'eoa',
+        grant_message: message
+      });
+    });
+
+    it('marks a contract-wallet app grant as verified through EIP-1271', async () => {
+      const { id } = await storeAppGrant();
+      grants.set(id, { ...grants.get(id)!, wallet_signature: '0x' });
+
+      expect((await register(id)).verified_via).toBe('eip1271');
+    });
+
+    it('rejects a signing-only app grant', async () => {
+      const { id } = await storeAppGrant({ combined: false });
+      await expectBadGrant(register(id), 'login_grant_without_e2ee');
+    });
+
+    it('rejects a stored message that does not hash to the grant id', async () => {
+      const { id, message } = await storeAppGrant();
+      grants.set(id, {
+        ...grants.get(id)!,
+        message: message.replace('6529 Desktop', '6529 Mobile')
+      });
+      await expectBadGrant(register(id), 'login_grant_without_e2ee');
+    });
+
+    it('rejects an app grant of a wallet outside the profile', async () => {
+      const { id } = await storeAppGrant({ signer: Wallet.createRandom() });
+      await expectBadGrant(register(id), 'wallet_not_in_profile');
+    });
+
+    it('revokes the device with its app grant', async () => {
+      const { id, mlsKey } = await storeAppGrant();
+      await register(id);
+
+      await service.revokeDeviceOfLoginGrant(id);
+
+      expect(db.devices.get(mlsKey.publicKey)!.revoked_at).toBe(now);
+      expect(revokedEvents).toHaveLength(1);
+    });
   });
 });
