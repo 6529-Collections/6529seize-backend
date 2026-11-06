@@ -15,16 +15,9 @@ import { Logger } from '../logging';
 import { fetchAllOwnerBalances } from '../ownersBalancesLoop/db.owners_balances';
 import { equalIgnoreCase } from '../strings';
 import { Time } from '../time';
+import { uploadTdhCsvToArweave } from '@/tdhLoop/tdh-arweave-upload';
 
 let logger: Logger;
-
-const Arweave = require('arweave');
-
-const myarweave = Arweave.init({
-  host: 'arweave.net',
-  port: 443,
-  protocol: 'https'
-});
 
 type TDHUpload = (UploadFieldsWallet | UploadFieldsConsolidation)[];
 
@@ -167,32 +160,14 @@ async function persistUpload(
   const size = csv.length / (1024 * 1024);
   logger.info(`[CSV CREATED - SIZE ${size.toFixed(2)} MB]`);
 
-  const arweaveKey = process.env.ARWEAVE_KEY
-    ? JSON.parse(process.env.ARWEAVE_KEY)
-    : {};
-
-  const transaction = await myarweave.createTransaction(
-    { data: Buffer.from(csv) },
-    arweaveKey
+  if (!process.env.ARWEAVE_KEY) throw new Error('ARWEAVE_KEY not set');
+  const arweaveKey = JSON.parse(process.env.ARWEAVE_KEY);
+  const { url, transactionId } = await uploadTdhCsvToArweave(
+    csv,
+    arweaveKey,
+    logger
   );
-
-  transaction.addTag('Content-Type', 'text/csv');
-
-  logger.info(`[SIGNING ARWEAVE TRANSACTION]`);
-
-  await myarweave.transactions.sign(transaction, arweaveKey);
-
-  const uploader = await myarweave.transactions.getUploader(transaction);
-
-  while (!uploader.isComplete) {
-    await uploader.uploadChunk();
-    logger.info(
-      `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
-    );
-  }
-
-  const url = `https://arweave.net/${transaction.id}`;
-  const cloudfrontUrl = `${CLOUDFRONT_LINK}/arweave/${transaction.id}`;
+  const cloudfrontUrl = `${CLOUDFRONT_LINK}/arweave/${transactionId}`;
 
   if (isConsolidation) {
     await persistConsolidatedTdhUpload(block, dateString, url);
@@ -200,7 +175,7 @@ async function persistUpload(
     await persistTdhUpload(block, dateString, url);
   }
 
-  await persistCsvToS3(csv, transaction.id);
+  await persistCsvToS3(csv, transactionId);
 
   logger.info(`[ARWEAVE LINK ${url}]`);
   logger.info(`[ARWEAVE S3 MIRROR ${cloudfrontUrl}]`);
