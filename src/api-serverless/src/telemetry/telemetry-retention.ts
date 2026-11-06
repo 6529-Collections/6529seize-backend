@@ -2,10 +2,14 @@ import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
 import { deleteTelemetryRowsBefore } from '@/api/telemetry/telemetry.db';
 import { utcDay } from '@/api/telemetry/telemetry-daily-salt';
+import {
+  previousUtcDay,
+  rollUpSignedInActives
+} from '@/api/telemetry/telemetry-actives';
 
-const logger = Logger.get('TELEMETRY_RETENTION');
+const logger = Logger.get('TELEMETRY_DAILY_JOBS');
 export const TELEMETRY_RETENTION_MONTHS = 25;
-const LOCK_KEY_PREFIX = 'telemetry:retention:';
+const LOCK_KEY_PREFIX = 'telemetry:daily-jobs:';
 const LOCK_TTL_SECONDS = 26 * 60 * 60;
 
 let lastRunDay: string | null = null;
@@ -26,7 +30,7 @@ export function telemetryRetentionCutoffDay(now: Date): string {
 async function acquireDailyLock(day: string): Promise<boolean> {
   const redis = getRedisClient();
   if (!redis?.isReady) {
-    // Without Redis each instance runs the cheap sweep once per day.
+    // Without Redis each instance runs the cheap jobs once per day.
     return true;
   }
   const result = await redis.set(`${LOCK_KEY_PREFIX}${day}`, '1', {
@@ -36,13 +40,26 @@ async function acquireDailyLock(day: string): Promise<boolean> {
   return result === 'OK';
 }
 
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : 'Error';
+}
+
+async function runJob(name: string, job: () => Promise<void>) {
+  try {
+    await job();
+  } catch (error) {
+    logger.warn(`Telemetry daily job ${name} failed: ${errorName(error)}`);
+  }
+}
+
 /**
- * Lazy daily sweep: the first collector request of each UTC day (across all
- * instances, coordinated through a Redis lock) removes rows older than the
- * 25-month retention window. It needs no scheduler of its own because the
- * collector receives traffic every day.
+ * Lazy daily jobs: the first collector request of each UTC day (across all
+ * instances, coordinated through a Redis lock) stores yesterday's signed-in
+ * actives and removes rows older than the 25-month retention window. No
+ * scheduler of its own is needed because the collector receives traffic
+ * every day.
  */
-export async function maybeRunTelemetryRetention(
+export async function maybeRunTelemetryDailyJobs(
   now: Date = new Date()
 ): Promise<void> {
   const day = utcDay(now);
@@ -50,21 +67,24 @@ export async function maybeRunTelemetryRetention(
     return;
   }
   lastRunDay = day;
+  let acquired = false;
   try {
-    if (!(await acquireDailyLock(day))) {
-      return;
-    }
+    acquired = await acquireDailyLock(day);
+  } catch (error) {
+    logger.warn(`Telemetry daily job lock failed: ${errorName(error)}`);
+  }
+  if (!acquired) {
+    return;
+  }
+  await runJob('actives', () => rollUpSignedInActives(previousUtcDay(now)));
+  await runJob('retention', async () => {
     const removed = await deleteTelemetryRowsBefore(
       telemetryRetentionCutoffDay(now)
     );
     logger.info(`Telemetry retention removed ${removed} daily rows`);
-  } catch (error) {
-    logger.warn(
-      `Telemetry retention sweep failed: ${(error as Error)?.name ?? 'Error'}`
-    );
-  }
+  });
 }
 
-export function resetTelemetryRetentionForTests() {
+export function resetTelemetryDailyJobsForTests() {
   lastRunDay = null;
 }
