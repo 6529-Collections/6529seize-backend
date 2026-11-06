@@ -10,7 +10,7 @@ import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { BadRequestException } from '@/exceptions';
 import { AnalyticsKind } from '@/api/telemetry/telemetry-aggregation';
 import { utcDay } from '@/api/telemetry/telemetry-daily-salt';
-import { assertTelemetryTeamMember } from '@/api/telemetry/telemetry-team-auth';
+import { assertTelemetryTeamReader } from '@/api/telemetry/telemetry-team-auth';
 import {
   DayRange,
   fetchAnalyticsCells,
@@ -97,11 +97,14 @@ export function resolveDashboardRange(
   return { from, to };
 }
 
-/** Internal dashboard (team wallets only). Every cell under 5 is withheld. */
+/**
+ * Internal dashboard, for the same readers as diagnostics bundles (current
+ * writers in the team reader wave). Every cell under 5 is withheld.
+ */
 export async function handleGetTelemetryDashboard(
   req: GetTelemetryDashboardRequest
 ): Promise<ApiTelemetryDashboard> {
-  assertTelemetryTeamMember(req);
+  await assertTelemetryTeamReader(req);
   (req as ResHolder).res?.setHeader('Cache-Control', 'private, no-store');
   const query = getValidatedByJoiOrThrow(req.query, DashboardQuerySchema);
   const range = resolveDashboardRange(query, utcDay(new Date()));

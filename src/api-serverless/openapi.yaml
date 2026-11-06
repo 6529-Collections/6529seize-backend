@@ -19344,7 +19344,7 @@ paths:
         "401":
           description: Authentication required
         "403":
-          description: Not a team wallet
+          description: Not a current writer in the team reader wave
   /telemetry/public-stats:
     get:
       tags:

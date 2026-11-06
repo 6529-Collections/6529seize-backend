@@ -10,6 +10,11 @@ const mockFetchAnalyticsCells = jest.fn();
 const mockFetchUniquesDaily = jest.fn();
 const mockFetchVitalsBuckets = jest.fn();
 const mockFetchHealthCells = jest.fn();
+const mockAssertReader = jest.fn();
+
+jest.mock('@/api/telemetry/telemetry-team-auth', () => ({
+  assertTelemetryTeamReader: (...args: unknown[]) => mockAssertReader(...args)
+}));
 
 jest.mock('@/api/telemetry/telemetry-dashboard.db', () => ({
   fetchAnalyticsCells: (...args: unknown[]) => mockFetchAnalyticsCells(...args),
@@ -17,8 +22,6 @@ jest.mock('@/api/telemetry/telemetry-dashboard.db', () => ({
   fetchVitalsBuckets: (...args: unknown[]) => mockFetchVitalsBuckets(...args),
   fetchHealthCells: (...args: unknown[]) => mockFetchHealthCells(...args)
 }));
-
-const TEAM_WALLET = '0x00000000000000000000000000000000000000aa';
 
 /** Every cube returns a mix of large and small cells, with every dimension. */
 function cellsFor(dimensions: string[]) {
@@ -59,7 +62,8 @@ function allCounts(value: unknown, path = ''): { path: string; n: number }[] {
 
 describe('telemetry dashboards', () => {
   beforeEach(() => {
-    process.env.TELEMETRY_TEAM_WALLETS = TEAM_WALLET;
+    mockAssertReader.mockReset().mockResolvedValue('profile-reader');
+    mockFetchAnalyticsCells.mockClear();
     mockFetchAnalyticsCells.mockImplementation(
       async (_kind: string, _range: unknown, dimensions: string[]) =>
         cellsFor(dimensions)
@@ -73,10 +77,6 @@ describe('telemetry dashboards', () => {
       { route: '/waves', metric: 'lcp', bucket: vitalsBucket(3000), count: 2 }
     ]);
     mockFetchHealthCells.mockResolvedValue(cellsFor(['counter', 'dim']));
-  });
-
-  afterAll(() => {
-    delete process.env.TELEMETRY_TEAM_WALLETS;
   });
 
   it('public output never contains a cell under 5 or a small referrer', async () => {
@@ -130,16 +130,14 @@ describe('telemetry dashboards', () => {
   });
 
   it('the internal dashboard is team-only and also suppresses small cells', async () => {
+    mockAssertReader.mockRejectedValueOnce(new ForbiddenException('no'));
     await expect(
-      handleGetTelemetryDashboard({
-        query: {},
-        user: { wallet: '0x00000000000000000000000000000000000000bb' }
-      } as any)
+      handleGetTelemetryDashboard({ query: {} } as any)
     ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(mockFetchAnalyticsCells).not.toHaveBeenCalled();
 
     const dashboard = await handleGetTelemetryDashboard({
       query: {},
-      user: { wallet: TEAM_WALLET },
       res: { setHeader: jest.fn() }
     } as any);
     for (const { n } of allCounts(dashboard)) {
