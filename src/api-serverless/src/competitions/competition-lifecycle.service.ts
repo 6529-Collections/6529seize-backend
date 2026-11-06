@@ -359,6 +359,15 @@ export class CompetitionLifecycleService {
           tx
         );
         const { wave } = await administerCompetitionWave(waveId, tx);
+        if (
+          action === 'archive' &&
+          record.lifecycle === CompetitionLifecycle.PUBLISHED &&
+          !reason &&
+          (await competitionCommandRepository.hasActivity(competitionId, tx))
+        )
+          throw new BadRequestException(
+            'A reason is required to archive a competition with entries or votes'
+          );
         const config = await this.commandConfiguration(record, tx);
         const now = Date.now();
         if (action === 'clone') {
@@ -454,13 +463,8 @@ export class CompetitionLifecycleService {
       };
     }
     if (action === 'archive') {
-      if (
-        record.lifecycle === CompetitionLifecycle.PUBLISHED ||
-        record.lifecycle === CompetitionLifecycle.ARCHIVED
-      )
-        competitionConflict(
-          'Only drafts or completed competitions can be archived'
-        );
+      if (record.lifecycle === CompetitionLifecycle.ARCHIVED)
+        competitionConflict('Competition is already archived');
       return {
         ...record,
         lifecycle: CompetitionLifecycle.ARCHIVED,

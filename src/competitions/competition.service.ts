@@ -59,6 +59,7 @@ export type CompetitionPermissions = {
   readonly administer: boolean;
   readonly edit_rules_after_activity?: boolean;
   readonly edit_credit_rules?: boolean;
+  readonly archive_requires_reason?: boolean;
 };
 
 export type PublicCompetition = Omit<
@@ -237,7 +238,8 @@ export class CompetitionService {
           records.some(
             (record) =>
               record.id === competition.id && record.legacy_wave_id === wave.id
-          )
+          ),
+          false
         )
       )
     );
@@ -617,7 +619,8 @@ export class CompetitionService {
     wave: WaveEntity,
     eligibleGroups: string[],
     ctx: RequestContext,
-    originalPrimary: boolean
+    originalPrimary: boolean,
+    includeArchiveRequirements = true
   ): Promise<PublicCompetition> {
     const {
       execution_mode: _execution,
@@ -677,6 +680,17 @@ export class CompetitionService {
             )
           ),
         administer,
+        ...(includeArchiveRequirements
+          ? {
+              archive_requires_reason:
+                administer &&
+                competition.lifecycle === CompetitionLifecycle.PUBLISHED &&
+                (await competitionCommandRepository.hasActivity(
+                  competition.id,
+                  ctx
+                ))
+            }
+          : {}),
         edit_rules_after_activity: originalRulesEditable,
         edit_credit_rules: creditRulesEditable
       }

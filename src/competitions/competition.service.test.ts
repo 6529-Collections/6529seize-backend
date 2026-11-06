@@ -11,6 +11,7 @@ import { aWave } from '@/tests/fixtures/wave.fixture';
 import { assertCompetitionOpen } from '@/api/competitions/competition-command-access';
 import type { DefaultCompetitionRecord } from '@/competitions/default-competition';
 import { NativeCompetitionReader } from '@/competitions/native-competition.reader';
+import { competitionCommandRepository } from '@/competitions/competition-command.repository';
 
 function nativeRecord(id: string, waveId: string, createdAt: number) {
   return {
@@ -354,6 +355,40 @@ describe('CompetitionService', () => {
       submit: false,
       vote: false
     });
+  });
+
+  it('loads archive requirements on administrator detail reads without probing list items', async () => {
+    const activity = jest
+      .spyOn(competitionCommandRepository, 'hasActivity')
+      .mockResolvedValue(true);
+    const readContext = {
+      authenticationContext: {
+        isUserFullyAuthenticated: () => true,
+        isAuthenticatedAsProxy: () => false,
+        getActingAsId: () => wave.created_by,
+        hasRightsTo: () => true
+      }
+    } as never;
+    try {
+      const page = await service.listCompetitions(
+        wave.id,
+        { limit: 10, direction: 'ASC', sort: 'created_at' },
+        readContext
+      );
+      expect(page.data[0].permissions).not.toHaveProperty(
+        'archive_requires_reason'
+      );
+      expect(activity).not.toHaveBeenCalled();
+      const detail = await service.getCompetition(
+        wave.id,
+        first.id,
+        readContext
+      );
+      expect(detail.permissions.archive_requires_reason).toBe(true);
+      expect(activity).toHaveBeenCalledTimes(1);
+    } finally {
+      activity.mockRestore();
+    }
   });
 
   it('resolves native-only access groups for detail and list permissions', async () => {
