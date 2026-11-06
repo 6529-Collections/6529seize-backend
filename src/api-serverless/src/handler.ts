@@ -10,7 +10,8 @@ import {
   appWebSockets,
   authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
-  authenticateWebSocketToken
+  authenticateWebSocketToken,
+  connectionPurposeFromQuery
 } from './ws/ws';
 import { Logger } from '../../logging';
 import {
@@ -237,6 +238,7 @@ async function wsHandler(
           durableUpdates: supportsDurableUpdates(
             event.queryStringParameters?.[DELIVERY_CAPABILITY_QUERY]
           ),
+          purpose: connectionPurposeFromQuery(event.queryStringParameters),
           ...(event.queryStringParameters?.recovery_capability ===
           WS_RECOVERY_CAPABILITY
             ? { recoveryCapable: true }

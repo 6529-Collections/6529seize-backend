@@ -34,6 +34,7 @@ import {
 } from '@/api/ws/ws-send-scheduler';
 
 import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
+import { WsConnectionPurpose } from '@/entities/IWSConnection';
 
 import {
   ANON_USER_ID,
@@ -448,7 +449,8 @@ export class AppWebSockets {
     jwtExpiry,
     durableUpdates = false,
     ws,
-    recoveryCapable = false
+    recoveryCapable = false,
+    purpose = null
   }: {
     identityId: string;
     connectionId: string;
@@ -456,6 +458,7 @@ export class AppWebSockets {
     durableUpdates?: boolean;
     ws?: WebSocket;
     recoveryCapable?: boolean;
+    purpose?: WsConnectionPurpose | null;
   }) {
     this.logger.info(
       `Registering socket for client ${identityId} (connectionId: ${connectionId})`
@@ -475,7 +478,8 @@ export class AppWebSockets {
         jwt_expiry: jwtExpiry,
         connection_id: connectionId,
         wave_id: null,
-        durable_updates: durableUpdates
+        durable_updates: durableUpdates,
+        purpose
       },
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
       {}
@@ -555,6 +559,19 @@ export class AppWebSockets {
     await this.wsConnectionRepository.maybeCleanupStaleNotificationSubscriptions();
     return authenticatedSubscriptions.map(({ identityId }) => identityId);
   }
+}
+
+/**
+ * Reads the socket purpose a client declares on `$connect` (`?purpose=`).
+ * Unknown or missing values keep the legacy audience rules.
+ */
+export function connectionPurposeFromQuery(
+  query: Record<string, string | undefined> | null | undefined
+): WsConnectionPurpose | null {
+  const value = query?.purpose;
+  return typeof value === 'string' && value.trim().toLowerCase() === 'typing'
+    ? WsConnectionPurpose.TYPING
+    : null;
 }
 
 export const MAX_NOTIFICATION_IDENTITY_SUBSCRIPTIONS = 5;

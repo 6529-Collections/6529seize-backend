@@ -47,7 +47,9 @@ jest.mock('./ws/ws', () => ({
   },
   authenticateWebSocketJwtOrGetByConnectionId: jest.fn(),
   authenticateNotificationIdentityTokens: jest.fn(),
-  authenticateWebSocketToken: jest.fn()
+  authenticateWebSocketToken: jest.fn(),
+  connectionPurposeFromQuery:
+    jest.requireActual('./ws/ws').connectionPurposeFromQuery
 }));
 
 jest.mock('./ws/ws-listeners-notifier', () => ({
@@ -111,6 +113,7 @@ describe('handler websocket auth', () => {
         connectionId: 'connection-1',
         jwtExpiry: 100,
         durableUpdates: false,
+        purpose: null,
         ...(capability === 'resync_v1' ? { recoveryCapable: true } : {})
       });
     }
@@ -142,8 +145,43 @@ describe('handler websocket auth', () => {
         connectionId: 'c',
         identityId: 'stale-identity',
         jwtExpiry: 100,
-        durableUpdates
+        durableUpdates,
+        purpose: null
       });
+    }
+  );
+
+  it.each([
+    ['typing', 'TYPING'],
+    ['app', null],
+    [undefined, null]
+  ])(
+    'registers the declared socket purpose %p as %p',
+    async (purpose, expected) => {
+      const response = await handler(
+        {
+          httpMethod: 'GET',
+          requestContext: {
+            routeKey: '$connect',
+            connectionId: 'connection-1'
+          },
+          queryStringParameters: {
+            recovery_capability: 'resync_v1',
+            delivery_capability: 'durable_updates_v1',
+            ...(purpose === undefined ? {} : { purpose })
+          }
+        } as unknown as APIGatewayEvent,
+        {} as Context,
+        jest.fn()
+      );
+      expect(response).toMatchObject({ statusCode: 200 });
+      expect(appWebSocketsMock.register).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          purpose: expected,
+          durableUpdates: true,
+          recoveryCapable: true
+        })
+      );
     }
   );
 

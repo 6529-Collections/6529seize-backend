@@ -769,7 +769,10 @@ export class WsListenersNotifier {
           {
             authenticationContext:
               AuthenticationContext.fromProfileId(identityId)
-          }
+          },
+          // Typing rides on sockets subscribed to this wave, including the
+          // typing-purpose socket that is left out of every other frame.
+          { includeTypingSockets: true }
         )
         .then((res) => res.filter((it) => it.wave_id === waveId));
       // Group metadata visibility alone is insufficient: the sender must also

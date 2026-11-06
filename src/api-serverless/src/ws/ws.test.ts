@@ -25,8 +25,10 @@ import {
   AppWebSockets,
   authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
-  authenticateWebSocketToken
+  authenticateWebSocketToken,
+  connectionPurposeFromQuery
 } from '@/api/ws/ws';
+import { WsConnectionPurpose } from '@/entities/IWSConnection';
 import WebSocket from 'ws';
 import { webSocketDelivery } from '@/ws-delivery/ws-delivery';
 
@@ -270,5 +272,74 @@ describe('AppWebSockets.send', () => {
 
     expect(repository.getByConnectionId).not.toHaveBeenCalled();
     expect(socket.send).toHaveBeenCalledWith('AUTHENTICATION_FAILED');
+  });
+});
+
+describe('websocket connection purpose (0.12a)', () => {
+  let afterTestRestore: () => void = () => undefined;
+  afterEach(() => {
+    afterTestRestore();
+    afterTestRestore = () => undefined;
+  });
+
+  it.each([
+    [{ purpose: 'typing' }, WsConnectionPurpose.TYPING],
+    [{ purpose: ' TYPING ' }, WsConnectionPurpose.TYPING],
+    [{ purpose: 'app' }, null],
+    [{ purpose: 'TYPING_EXTRA' }, null],
+    [{ recovery_capability: 'resync_v1' }, null],
+    [null, null],
+    [undefined, null]
+  ])('reads %p as %p', (query, expected) => {
+    expect(connectionPurposeFromQuery(query)).toBe(expected);
+  });
+
+  it('stores the declared purpose and defaults legacy sockets to null', async () => {
+    // Outside local development no in-process socket is needed.
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+    afterTestRestore = () => {
+      process.env.NODE_ENV = originalNodeEnv;
+    };
+    const repository = {
+      save: jest.fn().mockResolvedValue(undefined),
+      maybeCleanupStaleNotificationSubscriptions: jest
+        .fn()
+        .mockResolvedValue(undefined)
+    };
+    const sockets = new AppWebSockets(
+      repository as unknown as WsConnectionRepository
+    );
+
+    await sockets.register({
+      identityId: 'profile-1',
+      connectionId: 'typing-1',
+      jwtExpiry: 123,
+      purpose: WsConnectionPurpose.TYPING
+    });
+    await sockets.register({
+      identityId: 'profile-1',
+      connectionId: 'legacy-1',
+      jwtExpiry: 123
+    });
+
+    expect(repository.save.mock.calls.map(([entity]) => entity)).toEqual([
+      {
+        identity_id: 'profile-1',
+        jwt_expiry: 123,
+        connection_id: 'typing-1',
+        wave_id: null,
+        durable_updates: false,
+        purpose: WsConnectionPurpose.TYPING
+      },
+      {
+        identity_id: 'profile-1',
+        jwt_expiry: 123,
+        connection_id: 'legacy-1',
+        wave_id: null,
+        durable_updates: false,
+        purpose: null
+      }
+    ]);
   });
 });
