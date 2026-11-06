@@ -10,16 +10,16 @@ const LOCK_TTL_SECONDS = 26 * 60 * 60;
 
 let lastRunDay: string | null = null;
 
-/** First day that is kept: the same calendar day 25 months earlier (UTC). */
+/**
+ * First day that is kept: the same calendar day 25 months earlier (UTC),
+ * clamped to the last day of that month (Mar 31 -> Feb 28/29).
+ */
 export function telemetryRetentionCutoffDay(now: Date): string {
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth() - TELEMETRY_RETENTION_MONTHS;
+  const lastDayOfMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   return utcDay(
-    new Date(
-      Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth() - TELEMETRY_RETENTION_MONTHS,
-        now.getUTCDate()
-      )
-    )
+    new Date(Date.UTC(year, month, Math.min(now.getUTCDate(), lastDayOfMonth)))
   );
 }
 

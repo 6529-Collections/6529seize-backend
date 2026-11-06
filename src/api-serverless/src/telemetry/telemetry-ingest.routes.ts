@@ -24,9 +24,12 @@ const router = express.Router();
 
 // sendBeacon posts strings as text/plain; fetch may use application/json.
 // The body is parsed here as text so any content type is accepted.
+// Compressed request bodies are refused (415 -> 400): beacons are never
+// compressed, and an unauthenticated route should not inflate input.
 const readBatchBody = express.text({
   type: () => true,
-  limit: TELEMETRY_MAX_BATCH_BYTES
+  limit: TELEMETRY_MAX_BATCH_BYTES,
+  inflate: false
 });
 
 function parseJson(body: unknown): unknown {
@@ -49,7 +52,13 @@ export async function handleTelemetryBatch(
   res: Response
 ): Promise<void> {
   res.setHeader('Cache-Control', 'no-store');
-  const batch = parseJson(req.body);
+  const text = typeof req.body === 'string' ? req.body : '';
+  if (text.trim() === '') {
+    // An empty beacon is a no-op, like a batch whose events are all dropped.
+    res.status(204).end();
+    return;
+  }
+  const batch = parseJson(text);
   if (batch === undefined) {
     res.status(400).end();
     return;
