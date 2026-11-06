@@ -276,6 +276,12 @@ describe('AppWebSockets.send', () => {
 });
 
 describe('websocket connection purpose (0.12a)', () => {
+  let afterTestRestore: () => void = () => undefined;
+  afterEach(() => {
+    afterTestRestore();
+    afterTestRestore = () => undefined;
+  });
+
   it.each([
     [{ purpose: 'typing' }, WsConnectionPurpose.TYPING],
     [{ purpose: ' TYPING ' }, WsConnectionPurpose.TYPING],
@@ -289,6 +295,12 @@ describe('websocket connection purpose (0.12a)', () => {
   });
 
   it('stores the declared purpose and defaults legacy sockets to null', async () => {
+    // Outside local development no in-process socket is needed.
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+    afterTestRestore = () => {
+      process.env.NODE_ENV = originalNodeEnv;
+    };
     const repository = {
       save: jest.fn().mockResolvedValue(undefined),
       maybeCleanupStaleNotificationSubscriptions: jest
