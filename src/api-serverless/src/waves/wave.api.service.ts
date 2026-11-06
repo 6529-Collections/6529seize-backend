@@ -859,7 +859,7 @@ export class WaveApiService {
       : null;
     if (wave.type !== WaveType.APPROVE && !nextDecisionTime) {
       throw new BadRequestException(
-        `Can't add pauses to wave without a next results time`
+        `Can't add pauses to wave without a next result time`
       );
     }
     const proposedEndTime = Time.millis(model.end_time);
@@ -919,7 +919,7 @@ export class WaveApiService {
       : null;
     if (wave.type !== WaveType.APPROVE && !nextDecisionTime) {
       throw new BadRequestException(
-        `Can't add pauses to wave without a next results time`
+        `Can't add pauses to wave without a next result time`
       );
     }
     if (nextDecisionTime?.isInPast()) {

@@ -474,7 +474,7 @@ export class CompetitionLifecycleService {
       config.rules.decisions_strategy.first_decision_time <= now
     )
       throw new BadRequestException(
-        'The first results time must be in the future'
+        'The first result must be in the future'
       );
     for (const period of [config.participation.period, config.voting.period]) {
       if (
