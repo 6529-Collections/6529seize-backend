@@ -1177,6 +1177,19 @@ behind `E2EE_DMS_ENABLED` (off in production). It is a ciphertext-only
 orderer for MLS groups; see [End-to-end encrypted messaging](#end-to-end-encrypted-messaging-d109)
 below and [e2ee-messaging.md](./e2ee-messaging.md).
 
+`POST /api/e` is the first-party telemetry collector (C52), reached by
+browsers as same-origin `6529.io/e` through a CloudFront behavior that adds
+`CloudFront-Viewer-Address`/`-Country` and a secret origin header
+(`TELEMETRY_EDGE_SECRET`); edge headers are ignored without that secret. It is
+mounted ahead of the shared JSON parser and rate limiter, reads at most 8 KB of
+text, keeps only schema v1 (`telemetry.schema.ts`, published as
+`telemetry-collector.v1.schema.json`) and increments daily counter tables
+`analytics_daily`, `vitals_daily` (log-scale histogram buckets) and
+`health_daily`. No raw events, IPs, user agents or request bodies are stored or
+logged. Its rate limit is keyed on an HMAC of the viewer IP under a daily salt
+that lives only in Redis memory and expires at UTC midnight. The first request
+of each UTC day sweeps rows older than 25 months.
+
 `GET /tdh/rules` publishes current TDH boost definitions evaluated against the
 latest completed snapshot's eligible Meme card range. The latest row in
 `tdh_blocks` is the completion marker because consolidation persists its TDH
