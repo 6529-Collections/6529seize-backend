@@ -1,0 +1,48 @@
+{
+  "description": "normalizeEvmAddress(input) -> output. Null means 'not an EVM address'. extract cases: every boundary-checked address in free text, lowercased, in order.",
+  "normalize": [
+    { "input": "0x0123456789abcdef0123456789abcdef01234567", "output": "0x0123456789abcdef0123456789abcdef01234567" },
+    { "input": "0x0123456789ABCDEF0123456789ABCDEF01234567", "output": "0x0123456789abcdef0123456789abcdef01234567" },
+    { "input": "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", "output": "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" },
+    { "input": "0x5AAEB6053F3E94C9B9A09F33669435E7EF1BEAED", "output": "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" },
+    { "input": "  0x0123456789abcdef0123456789abcdef01234567\n", "output": "0x0123456789abcdef0123456789abcdef01234567" },
+    { "input": "0X0123456789abcdef0123456789abcdef01234567", "output": null },
+    { "input": "0123456789abcdef0123456789abcdef01234567", "output": null },
+    { "input": "0x0123456789abcdef0123456789abcdef0123456", "output": null },
+    { "input": "0x0123456789abcdef0123456789abcdef012345678", "output": null },
+    { "input": "0x0123456789abcdef0123456789abcdef0123456g", "output": null },
+    { "input": "ETH: 0x0123456789abcdef0123456789abcdef01234567", "output": null },
+    { "input": "", "output": null },
+    { "input": "TA1hsikRfsgGiW9nEBpT4tEXEySTNYLr2d", "output": null }
+  ],
+  "extract": [
+    {
+      "text": "ETH: 0xAbCdEf0123456789aBcDeF0123456789AbCdEf01; BSC: 0x1111111111111111111111111111111111111111",
+      "addresses": ["0xabcdef0123456789abcdef0123456789abcdef01", "0x1111111111111111111111111111111111111111"]
+    },
+    {
+      "text": "glued 0x55555555555555555555555555555555555555550x6666666666666666666666666666666666666666",
+      "addresses": []
+    },
+    {
+      "text": "transaction 0x1111111111111111111111111111111111111111111111111111111111111111",
+      "addresses": []
+    },
+    {
+      "text": "男性暗号資産アドレス：0xdddddddddddddddddddddddddddddddddddddddd",
+      "addresses": ["0xdddddddddddddddddddddddddddddddddddddddd"]
+    },
+    {
+      "text": "0xc8fe1c81e927540fcc99ebb3c880a840082293da, TR2nTbTestTron",
+      "addresses": ["0xc8fe1c81e927540fcc99ebb3c880a840082293da"]
+    },
+    {
+      "text": "id0x2222222222222222222222222222222222222222 x",
+      "addresses": []
+    },
+    {
+      "text": "https://etherscan.io/address/0x2222222222222222222222222222222222222222",
+      "addresses": ["0x2222222222222222222222222222222222222222"]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{"total":3,"items":[
+{"contentType":"seizureAndForfeitureOrder","name":"FO 01/25","id":"r1","properties":{"orderType":"FO (Forfeiture)","orderNumber":"01/25","orderDate":"2025-01-26","validityDate":"2028-04-29","isCanceled":null,"assets":[{"id":"w1"}]}},
+{"contentType":"seizureAndForfeitureOrder","name":"FO 02/24","id":"r2","properties":{"orderType":"FO (Forfeiture)","orderNumber":"02/24","orderDate":"2024-01-21","validityDate":"2026-07-31","isCanceled":null,"assets":[{"id":"w2"},{"id":"w1"}]}},
+{"contentType":"seizureAndForfeitureOrder","name":"ASO 09/23","id":"r3","properties":{"orderType":"ASO (Administrative Seizure)","orderNumber":"09/23","orderDate":"2023-05-01","validityDate":"2027-01-01","isCanceled":true,"assets":[{"id":"w4"}]}}
+]}

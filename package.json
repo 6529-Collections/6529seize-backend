@@ -40,6 +40,7 @@
     "prelint": "node scripts/require-6529-command.cjs && ./bin/6529 run generate:deploy-config",
     "lint": "node scripts/require-6529-command.cjs && NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --fix --max-warnings=0",
     "lint:check": "node scripts/require-6529-command.cjs && NODE_OPTIONS=--max-old-space-size=8192 eslint \"src/**/*.ts\" --max-warnings=0",
+    "sanctions:list": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/sanctions/sanctions-list.cli.ts",
     "competition:capability": "node scripts/require-6529-command.cjs && ts-node -r tsconfig-paths/register src/competitions/competition-capability.cli.ts",
     "calendar:check": "node scripts/require-6529-command.cjs && node scripts/memes-calendar.mjs check"
   },
@@ -61,6 +62,7 @@
     "@types/passport": "^1.0.13",
     "@types/passport-anonymous": "^1.0.4",
     "@types/passport-jwt": "^3.0.10",
+    "@types/sax": "^1.2.7",
     "@types/winston": "^2.4.4",
     "@typescript-eslint/eslint-plugin": "^8.32.1",
     "@typescript-eslint/parser": "^8.32.1",
@@ -145,6 +147,7 @@
     "passport-jwt": "^4.0.1",
     "pdf-lib": "^1.17.1",
     "redis": "^4.7.0",
+    "sax": "^1.4.1",
     "sharp": "0.35.4",
     "short-uuid": "^6.0.0",
     "siwe": "^3.0.0",

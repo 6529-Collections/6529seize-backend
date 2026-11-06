@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Designations xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <DateGenerated>02/01/2026</DateGenerated>
+  <Designation>
+    <LastUpdated>09/04/2025</LastUpdated>
+    <DateDesignated>27/03/2024</DateDesignated>
+    <UniqueID>TST0001</UniqueID>
+    <Names>
+      <Name>
+        <Name6>Alias Holder</Name6>
+        <NameType>Alias</NameType>
+      </Name>
+      <Name>
+        <Name1>Test</Name1>
+        <Name6>UK  PERSON</Name6>
+        <NameType>Primary Name</NameType>
+      </Name>
+    </Names>
+    <RegimeName>The Test (Sanctions) Regulations 2019</RegimeName>
+    <OtherInformation>Wallets subject to the asset freeze: (1) ETH: 0x4444444444444444444444444444444444444444 (2) USDT 3E6ZtestBitcoinFormat (3) BNB: 0x4444444444444444444444444444444444444444 (4) glued 0x55555555555555555555555555555555555555550x6666666666666666666666666666666666666666 (5) SDT: TTgcTestTronAddress</OtherInformation>
+  </Designation>
+  <Designation>
+    <DateDesignated>14/10/2025</DateDesignated>
+    <UniqueID>TST0002</UniqueID>
+    <Names>
+      <Name>
+        <Name6>Test Exchange Company Limited </Name6>
+        <NameType>Primary Name</NameType>
+      </Name>
+    </Names>
+    <RegimeName>The Global Human Rights Sanctions Regulations 2020</RegimeName>
+    <OtherInformation>Associated with the following Ethereum crypto addresses:   0x7777777777777777777777777777777777777777
+0x7777777777777777777777777777777777777777</OtherInformation>
+  </Designation>
+</Designations>
