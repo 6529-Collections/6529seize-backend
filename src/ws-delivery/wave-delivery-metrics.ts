@@ -82,6 +82,9 @@ export function sampleValues(values: readonly number[], max: number): number[] {
   );
 }
 
+/** Where a fan-out ran: inside the request, or in the 1.1 worker. */
+export type FanoutStage = 'inline' | 'async';
+
 export type FanoutSendOutcome =
   | 'sent'
   | 'resync_pending'
@@ -101,6 +104,9 @@ export class FanoutMeasurement {
   private recipients = 0;
   private serializations = 0;
   private connectionReads = 0;
+  private handedOffRecipients = 0;
+  private handOffMs: number | null = null;
+  private fellBackRecipients = 0;
   private firstSettledAt: number | null = null;
   private lastSettledAt: number | null = null;
   private readonly sendDurations: number[] = [];
@@ -115,7 +121,8 @@ export class FanoutMeasurement {
   constructor(
     private readonly frameType: string,
     private readonly serverReceivedAt: number | null,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly stage: FanoutStage = 'inline'
   ) {
     this.startedAt = now();
   }
@@ -125,8 +132,20 @@ export class FanoutMeasurement {
     this.recipients = recipients;
   }
 
+  /** Records the first preparation only; later batches reuse its timing. */
   prepareDone(): void {
-    this.prepareMs = this.now() - this.startedAt - (this.queryMs ?? 0);
+    this.prepareMs ??= this.now() - this.startedAt - (this.queryMs ?? 0);
+  }
+
+  /** Recipients accepted by the queue for the worker, and the hand-off time. */
+  handedOff(recipients: number, milliseconds: number): void {
+    this.handedOffRecipients += recipients;
+    this.handOffMs = milliseconds;
+  }
+
+  /** Recipients the queue did not accept, sent inline instead. */
+  fellBack(recipients: number): void {
+    this.fellBackRecipients += recipients;
   }
 
   serialized(): void {
@@ -150,7 +169,7 @@ export class FanoutMeasurement {
     const sinceStart = (at: number | null) =>
       at === null ? Number.NaN : at - this.startedAt;
     writeEmf({
-      dimensions: { FrameType: this.frameType },
+      dimensions: { FrameType: this.frameType, Stage: this.stage },
       metrics: {
         fanout_recipients: { unit: 'Count', value: this.recipients },
         fanout_query_ms: { unit: 'Milliseconds', value: this.queryMs ?? NaN },
@@ -186,6 +205,15 @@ export class FanoutMeasurement {
           unit: 'Count',
           value: this.connectionReads
         },
+        fanout_handed_off: {
+          unit: 'Count',
+          value: this.handedOffRecipients
+        },
+        fanout_hand_off_ms: {
+          unit: 'Milliseconds',
+          value: this.handOffMs ?? Number.NaN
+        },
+        fanout_fell_back: { unit: 'Count', value: this.fellBackRecipients },
         fanout_sent: { unit: 'Count', value: this.outcomes.sent },
         fanout_resync_pending: {
           unit: 'Count',

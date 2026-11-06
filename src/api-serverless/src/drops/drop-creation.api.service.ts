@@ -83,6 +83,15 @@ import {
   DropPostHops,
   serverReceivedAtFromTimer
 } from '@/ws-delivery/wave-delivery-metrics';
+import {
+  DropCreatedEffectsJob,
+  WAVE_FANOUT_JOB_VERSION
+} from '@/ws-delivery/wave-fanout-job';
+import {
+  isAsyncFanoutEnabled,
+  WaveFanoutQueue,
+  waveFanoutQueue
+} from '@/ws-delivery/wave-fanout-queue';
 
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
@@ -113,7 +122,8 @@ export class DropCreationApiService {
     private readonly dropPollsApiService: DropPollsApiService,
     private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb,
     private readonly dailyActivityCreditQueueService: HelpBotDailyActivityCreditQueueService = helpBotDailyActivityCreditQueueService,
-    private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb
+    private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb,
+    private readonly fanoutQueue: WaveFanoutQueue = waveFanoutQueue
   ) {}
 
   public async createDrop(
@@ -196,6 +206,32 @@ export class DropCreationApiService {
       })
     );
     const committedAt = hops.elapsed();
+    if (isAsyncFanoutEnabled()) {
+      await this.replyAfterCommit(
+        {
+          v: WAVE_FANOUT_JOB_VERSION,
+          kind: 'drop_created_effects',
+          enqueued_at: Date.now(),
+          drop_id: drop.id,
+          wave_id: createModel.wave_id,
+          author_id: authorId,
+          pending_push_notification_ids: pendingPushNotificationIds,
+          dm_unread_recipient_ids: dmUnreadRecipientIds,
+          collaborator_ids: createDropRequest.collaborator_ids ?? []
+        },
+        { drop, dailyActivityCreditRequestEnqueued, hops },
+        ctx
+      );
+      hops.set('drop_post_commit_ms', hops.elapsed() - committedAt);
+      hops.set(
+        'drop_post_total_ms',
+        serverReceivedAt === null
+          ? hops.elapsed()
+          : Date.now() - serverReceivedAt
+      );
+      hops.emit({ drop_id: drop.id, wave_id: createModel.wave_id });
+      return drop;
+    }
     if (dailyActivityCreditRequestEnqueued) {
       await hops.time('post_commit_daily_activity_ms', () =>
         this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx)
@@ -244,6 +280,80 @@ export class DropCreationApiService {
     );
     hops.emit({ drop_id: drop.id, wave_id: createModel.wave_id });
     return drop;
+  }
+
+  /**
+   * Waves 1.1 (`WS_ASYNC_FANOUT`): after the commit the request only
+   * invalidates the unread cache, sends the drop to open-wave viewers (the
+   * notifier queues the rest of the audience), and hands push, DM unread,
+   * collaborator and wave-score work to the fan-out worker. The hand-off is
+   * awaited; if the queue does not accept it, the work runs here instead.
+   */
+  private async replyAfterCommit(
+    effects: DropCreatedEffectsJob,
+    {
+      drop,
+      dailyActivityCreditRequestEnqueued,
+      hops
+    }: {
+      drop: ApiDrop;
+      dailyActivityCreditRequestEnqueued: boolean;
+      hops: DropPostHops;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    if (dailyActivityCreditRequestEnqueued) {
+      await hops.time('post_commit_daily_activity_ms', () =>
+        this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx)
+      );
+    }
+    await hops.time('post_commit_unread_cache_ms', () =>
+      invalidateWaveUnreadCacheForWave(effects.wave_id)
+    );
+    void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
+    const [, notAccepted] = await Promise.all([
+      hops.time('post_commit_fanout_ms', () =>
+        this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx)
+      ),
+      hops.time('post_commit_hand_off_ms', () =>
+        this.fanoutQueue.enqueue([effects])
+      )
+    ]);
+    if (notAccepted.length) {
+      await hops.time('post_commit_effects_inline_ms', () =>
+        this.runDropCreatedEffects(effects, ctx)
+      );
+    }
+  }
+
+  /**
+   * The post-commit side effects of a new drop other than its frames. Each
+   * step is best effort, as before 1.1; the worker runs this for queued jobs.
+   */
+  public async runDropCreatedEffects(
+    effects: DropCreatedEffectsJob,
+    ctx: RequestContext
+  ): Promise<void> {
+    await waveScoreService.requestWaveScoreRefreshBestEffort(
+      [effects.wave_id],
+      WaveScoreDirtyRefreshReason.DROP_CHANGED,
+      ctx
+    );
+    await this.sendPendingPushNotifications({
+      dropId: effects.drop_id,
+      pendingPushNotificationIds: effects.pending_push_notification_ids
+    });
+    if (effects.collaborator_ids.length) {
+      await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+        effects.author_id,
+        ...effects.collaborator_ids
+      ]);
+    }
+    await this.notifyDmUnreadStateChanged({
+      waveId: effects.wave_id,
+      recipientIds: effects.dm_unread_recipient_ids,
+      ctx
+    });
   }
 
   private async createDropWithGivenConnection(
