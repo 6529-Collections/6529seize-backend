@@ -48,9 +48,14 @@ export async function isTelemetryRateLimited(
   if (!ip || !getRedisClient()) {
     return false;
   }
-  const result = await rateLimitingService.checkRateLimit(
-    telemetryRateLimitIdentifier(scope, ip, salt),
-    getConfig(scope)
-  );
-  return !result.allowed;
+  try {
+    const result = await rateLimitingService.checkRateLimit(
+      telemetryRateLimitIdentifier(scope, ip, salt),
+      getConfig(scope)
+    );
+    return !result.allowed;
+  } catch {
+    // Fail open like the shared limiter; the CDN WAF rate rule remains.
+    return false;
+  }
 }
