@@ -5,6 +5,7 @@ import {
   dropUpdateRefMessage,
   identityNotificationsChangedMessage,
   notificationIdentitiesSyncedMessage,
+  withDeliveryTimestamps,
   WsMessageType
 } from './ws-message';
 
@@ -85,6 +86,44 @@ describe('ws-message', () => {
     expect(notificationIdentitiesSyncedMessage(['profile-1'])).toEqual({
       type: WsMessageType.NOTIFICATION_IDENTITIES_SYNCED,
       data: { profile_ids: ['profile-1'] }
+    });
+  });
+
+  describe('withDeliveryTimestamps', () => {
+    it('appends server receipt and send times without re-serializing', () => {
+      const message = JSON.stringify(
+        dropUpdateMessage({ id: 'drop-1' } as ApiDrop, 'POLL_RESPONSE')
+      );
+      const stamped = withDeliveryTimestamps(message, {
+        serverReceivedAt: 1_700_000_000_000.4,
+        sentAt: 1_700_000_000_042
+      });
+      expect(stamped.startsWith(message.slice(0, -1))).toBe(true);
+      expect(JSON.parse(stamped)).toEqual({
+        type: WsMessageType.DROP_UPDATE,
+        data: { id: 'drop-1' },
+        reason: 'POLL_RESPONSE',
+        server_received_at: 1_700_000_000_000,
+        sent_at: 1_700_000_000_042
+      });
+    });
+
+    it('omits the receipt time for background producers', () => {
+      const stamped = withDeliveryTimestamps(
+        '{"type":"DROP_DELETE","data":{}}',
+        { serverReceivedAt: null, sentAt: 5 }
+      );
+      expect(JSON.parse(stamped)).toEqual({
+        type: 'DROP_DELETE',
+        data: {},
+        sent_at: 5
+      });
+    });
+
+    it.each(['{}', '[]', 'not json', ''])('leaves %p unchanged', (message) => {
+      expect(
+        withDeliveryTimestamps(message, { serverReceivedAt: 1, sentAt: 2 })
+      ).toBe(message);
     });
   });
 });

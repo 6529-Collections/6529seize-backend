@@ -203,19 +203,35 @@ describe('WsListenersNotifier', () => {
     ).toEqual([
       {
         connectionId: 'connection-1',
-        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[0] }
+        message: {
+          type: WsMessageType.DROP_DELETE,
+          data: deletedDrops[0],
+          sent_at: expect.any(Number)
+        }
       },
       {
         connectionId: 'connection-2',
-        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[0] }
+        message: {
+          type: WsMessageType.DROP_DELETE,
+          data: deletedDrops[0],
+          sent_at: expect.any(Number)
+        }
       },
       {
         connectionId: 'connection-1',
-        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[1] }
+        message: {
+          type: WsMessageType.DROP_DELETE,
+          data: deletedDrops[1],
+          sent_at: expect.any(Number)
+        }
       },
       {
         connectionId: 'connection-2',
-        message: { type: WsMessageType.DROP_DELETE, data: deletedDrops[1] }
+        message: {
+          type: WsMessageType.DROP_DELETE,
+          data: deletedDrops[1],
+          sent_at: expect.any(Number)
+        }
       }
     ]);
   });
@@ -255,6 +271,165 @@ describe('WsListenersNotifier', () => {
 
     expect(appWebSockets.send).toHaveBeenCalledTimes(220);
     expect(maximumActiveSends).toBe(100);
+  });
+
+  describe('delivery measurement (1.0)', () => {
+    const originalLambda = process.env.AWS_LAMBDA_FUNCTION_NAME;
+    let stdout: jest.SpyInstance;
+
+    beforeEach(() => {
+      process.env.AWS_LAMBDA_FUNCTION_NAME = 'api';
+      stdout = jest
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(() => true);
+    });
+
+    afterEach(() => {
+      if (originalLambda === undefined)
+        delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+      else process.env.AWS_LAMBDA_FUNCTION_NAME = originalLambda;
+    });
+
+    const fanoutRecords = () =>
+      stdout.mock.calls
+        .map(([line]) => JSON.parse(String(line)))
+        .filter((record) => record.event === 'WAVE_FANOUT');
+
+    const requestTimer = (elapsedMs: number) =>
+      ({
+        start: jest.fn(),
+        stop: jest.fn(),
+        getTotalTimePassed: () => ({ toMillis: () => elapsedMs })
+      }) as any;
+
+    it('stamps request receipt and send times on every drop frame', async () => {
+      const before = Date.now();
+      const appWebSockets = {
+        send: jest
+          .fn()
+          .mockResolvedValueOnce({ status: 'sent' })
+          .mockResolvedValueOnce({ status: 'gone' })
+      };
+      const connections = {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue([
+            { connectionId: 'c-1', profileId: 'p-1' },
+            { connectionId: 'c-2', profileId: null }
+          ])
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        connections as never
+      );
+
+      await notifier.notifyAboutDropUpdate(createDrop('hello'), {
+        timer: requestTimer(40)
+      });
+      const after = Date.now();
+
+      expect(appWebSockets.send).toHaveBeenCalledTimes(2);
+      for (const [{ message }] of appWebSockets.send.mock.calls) {
+        const frame = JSON.parse(message);
+        expect(frame.type).toBe(WsMessageType.DROP_UPDATE);
+        expect(frame.server_received_at).toBeGreaterThanOrEqual(before - 40);
+        expect(frame.server_received_at).toBeLessThanOrEqual(after - 40);
+        expect(frame.sent_at).toBeGreaterThanOrEqual(frame.server_received_at);
+        expect(frame.sent_at).toBeLessThanOrEqual(after);
+      }
+      const [record] = fanoutRecords();
+      expect(record).toMatchObject({
+        FrameType: WsMessageType.DROP_UPDATE,
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        fanout_recipients: 2,
+        fanout_serializations: 2,
+        fanout_connection_reads: 2,
+        fanout_sent: 1,
+        fanout_gone: 1
+      });
+      expect(record.fanout_per_send_ms).toHaveLength(2);
+      expect(record.fanout_server_last_send_ms).toBeGreaterThanOrEqual(40);
+    });
+
+    it('measures a rejected send as a failure without hiding it', async () => {
+      const appWebSockets = {
+        send: jest.fn().mockRejectedValue(new Error('transport down'))
+      };
+      const connections = {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue([{ connectionId: 'c-1', profileId: 'p-1' }])
+      };
+      const loggerError = jest.fn();
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        connections as never
+      );
+      (notifier as any).logger = { error: loggerError };
+
+      await notifier.notifyAboutDropUpdate(createDrop('hello'), {});
+
+      expect(loggerError).toHaveBeenCalledTimes(1);
+      expect(fanoutRecords()[0]).toMatchObject({
+        fanout_recipients: 1,
+        fanout_failed: 1
+      });
+    });
+
+    it('reports an empty audience without send timings', async () => {
+      const connections = {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue([])
+      };
+      const notifier = new WsListenersNotifier(
+        { send: jest.fn() } as never,
+        connections as never
+      );
+
+      await notifier.notifyAboutDropReactionUpdate(createDrop('hello'), {});
+
+      const [record] = fanoutRecords();
+      expect(record).toMatchObject({
+        FrameType: WsMessageType.DROP_REACTION_UPDATE,
+        fanout_recipients: 0
+      });
+      expect(record).not.toHaveProperty('fanout_last_send_ms');
+    });
+
+    it('stamps and measures drop deletions', async () => {
+      const appWebSockets = { send: jest.fn().mockResolvedValue(undefined) };
+      const connections = {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue([{ connectionId: 'c-1', profileId: 'p-1' }])
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        connections as never
+      );
+
+      await notifier.notifyAboutDropDelete(
+        { drop_id: 'drop-9', wave_id: 'wave-1', drop_serial: 9 },
+        null,
+        { timer: requestTimer(5) }
+      );
+
+      const frame = JSON.parse(appWebSockets.send.mock.calls[0][0].message);
+      expect(frame).toMatchObject({
+        type: WsMessageType.DROP_DELETE,
+        data: { drop_id: 'drop-9', wave_id: 'wave-1', drop_serial: 9 }
+      });
+      expect(typeof frame.server_received_at).toBe('number');
+      expect(typeof frame.sent_at).toBe('number');
+      expect(fanoutRecords()[0]).toMatchObject({
+        FrameType: WsMessageType.DROP_DELETE,
+        drop_id: 'drop-9',
+        fanout_recipients: 1,
+        fanout_sent: 1
+      });
+    });
   });
 
   it('attempts later bulk deletion batches after a websocket send fails', async () => {
@@ -640,7 +815,8 @@ describe('WsListenersNotifier', () => {
         author_id: 'author-1',
         serial_no: 42,
         update_type: WsMessageType.DROP_UPDATE
-      }
+      },
+      sent_at: expect.any(Number)
     });
   });
 

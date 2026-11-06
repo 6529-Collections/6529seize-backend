@@ -54,6 +54,32 @@ export const DROP_UPDATE_REASON_MEDIA_STATUS = 'MEDIA_STATUS';
  */
 export const DROP_UPDATE_MAX_UTF8_BYTES = 28 * 1024;
 
+/**
+ * Delivery timing on a serialized frame (additive top-level fields; clients
+ * that do not know them ignore them):
+ * - `server_received_at`: epoch ms when the API received the request that
+ *   produced this frame. Omitted for background producers.
+ * - `sent_at`: epoch ms when the server handed this frame to the gateway.
+ *
+ * Appending to the serialized text keeps the payload serialized once.
+ */
+export function withDeliveryTimestamps(
+  message: string,
+  {
+    serverReceivedAt,
+    sentAt
+  }: { serverReceivedAt: number | null; sentAt: number }
+): string {
+  if (!message.startsWith('{') || !message.endsWith('}') || message === '{}') {
+    return message;
+  }
+  const received =
+    serverReceivedAt === null || !Number.isFinite(serverReceivedAt)
+      ? ''
+      : `,"server_received_at":${Math.round(serverReceivedAt)}`;
+  return `${message.slice(0, -1)}${received},"sent_at":${Math.round(sentAt)}}`;
+}
+
 export type DropUpdateRefType =
   | WsMessageType.DROP_UPDATE
   | WsMessageType.DROP_RATING_UPDATE
