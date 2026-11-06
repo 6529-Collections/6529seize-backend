@@ -504,7 +504,9 @@ describeWithSeed(
         { idempotency_key: randomUUID(), config_version: 1 },
         ctx
       );
-      expect(published.permissions.archive_requires_reason).toBe(false);
+      expect(published.permissions).not.toHaveProperty(
+        'archive_requires_reason'
+      );
       const archived = await service.action(
         wave.id,
         first.id,
@@ -521,13 +523,12 @@ describeWithSeed(
         ended_at: null,
         permissions: {
           submit: false,
-          vote: false,
-          archive_requires_reason: false
+          vote: false
         }
       });
     });
 
-    it('requires a reason after deleted entries and historical votes and preserves them on idempotent archive', async () => {
+    it('archives without a reason after deleted entries and historical votes and preserves them idempotently', async () => {
       const first = await draft();
       const published = await service.action(
         wave.id,
@@ -547,30 +548,19 @@ describeWithSeed(
          VALUES (:competitionId,:entryId,'voter',0,10,0,-10,1)`,
         { competitionId: first.id, entryId }
       );
-      expect(
-        (await competitionService.getCompetition(wave.id, first.id, ctx))
-          .permissions.archive_requires_reason
-      ).toBe(true);
       const request = {
         idempotency_key: randomUUID(),
         config_version: published.config_version
-      };
-      await expect(
-        service.action(wave.id, first.id, 'archive', request, ctx)
-      ).rejects.toThrow('A reason is required');
-      const withReason = {
-        ...request,
-        reason: '  Retired by administrators  '
       };
       const archived = await service.action(
         wave.id,
         first.id,
         'archive',
-        withReason,
+        request,
         ctx
       );
       expect(
-        await service.action(wave.id, first.id, 'archive', withReason, ctx)
+        await service.action(wave.id, first.id, 'archive', request, ctx)
       ).toEqual(archived);
       const record = await competitionRepository.findCompetitionRecordById(
         first.id,
@@ -608,11 +598,11 @@ describeWithSeed(
       ).toHaveLength(1);
       expect(
         await sqlExecutor.execute(
-          `SELECT actor_id,reason FROM ${COMPETITION_LIFECYCLE_EVENTS_TABLE}
+          `SELECT actor_id FROM ${COMPETITION_LIFECYCLE_EVENTS_TABLE}
          WHERE competition_id=:id AND lifecycle='ARCHIVED'`,
           { id: first.id }
         )
-      ).toEqual([{ actor_id: actor, reason: 'Retired by administrators' }]);
+      ).toEqual([{ actor_id: actor }]);
     });
 
     it('waits for an executing decision, preserves its winners and awards, and prevents later decisions', async () => {
