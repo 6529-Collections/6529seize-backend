@@ -829,6 +829,7 @@ export * from '../models/ApiWallet';
 export * from '../models/ApiWalletDistributionAllocation';
 export * from '../models/ApiWalletDistributionAllocations';
 export * from '../models/ApiWave';
+export * from '../models/ApiWaveAllMentionCount';
 export * from '../models/ApiWaveChatConfig';
 export * from '../models/ApiWaveChatHistoryPurgePlan';
 export * from '../models/ApiWaveChatRepliesConfig';
@@ -1815,6 +1816,7 @@ import { ApiWallet } from '../models/ApiWallet';
 import { ApiWalletDistributionAllocation, ApiWalletDistributionAllocationPhaseEnum     } from '../models/ApiWalletDistributionAllocation';
 import { ApiWalletDistributionAllocations } from '../models/ApiWalletDistributionAllocations';
 import { ApiWave } from '../models/ApiWave';
+import { ApiWaveAllMentionCount } from '../models/ApiWaveAllMentionCount';
 import { ApiWaveChatConfig } from '../models/ApiWaveChatConfig';
 import { ApiWaveChatHistoryPurgePlan } from '../models/ApiWaveChatHistoryPurgePlan';
 import { ApiWaveChatRepliesConfig } from '../models/ApiWaveChatRepliesConfig';
@@ -3036,6 +3038,7 @@ let typeMap: {[index: string]: any} = {
     "ApiWalletDistributionAllocation": ApiWalletDistributionAllocation,
     "ApiWalletDistributionAllocations": ApiWalletDistributionAllocations,
     "ApiWave": ApiWave,
+    "ApiWaveAllMentionCount": ApiWaveAllMentionCount,
     "ApiWaveChatConfig": ApiWaveChatConfig,
     "ApiWaveChatHistoryPurgePlan": ApiWaveChatHistoryPurgePlan,
     "ApiWaveChatRepliesConfig": ApiWaveChatRepliesConfig,

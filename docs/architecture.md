@@ -2709,3 +2709,7 @@ read eligibility, and reuse the existing drop bookmark table. Private state is
 not delegated or emitted as public activity. `ApiWaveMin.is_direct_message`
 allows saved-message links to select the correct conversation shell. This runs
 in `api`; no additional worker or schema deployment is required.
+
+The authenticated `GET /v2/waves/{waveId}/all-mention-count` API previews the current
+`@all` audience for creators and admins, reusing follower, visibility and notification
+write filters without inserting notifications. The frontend confirms before posting.
