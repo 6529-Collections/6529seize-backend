@@ -80,6 +80,33 @@ describe('IpfsFileUploader', () => {
     );
   });
 
+  it.each([
+    ['/custom/add?pin=true&wrap-with-directory=true', '/custom/add?pin=true'],
+    [
+      '/custom/add?wrap-with-directory=true&pin=true&cid-version=1',
+      '/custom/add?pin=true&cid-version=1'
+    ],
+    ['/custom/add?wrap-with-directory=true', '/custom/add'],
+    ['/custom/add', '/custom/add']
+  ])(
+    'derives the single-file path from IPFS_API_UPLOAD_PATH %s',
+    async (configuredPath, expectedPath) => {
+      process.env.IPFS_API_UPLOAD_PATH = configuredPath;
+      respond('{"Name":"pfp.png","Hash":"QmSingleFile"}');
+
+      await new IpfsFileUploader().uploadFile({
+        fileName: 'pfp.png',
+        fileBuffer: Buffer.from('png'),
+        contentType: 'image/png'
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        `https://ipfs-api.example.test${expectedPath}`,
+        expect.objectContaining({ method: 'POST' })
+      );
+    }
+  );
+
   it('reports a failed upload with its status', async () => {
     respond('rate limited', 503);
 

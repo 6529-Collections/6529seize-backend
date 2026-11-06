@@ -9,7 +9,26 @@ type IpfsDirectoryFile = {
   contentType: string;
 };
 
-const FILE_UPLOAD_PATH = '/api/v0/add?pin=true';
+const DEFAULT_DIRECTORY_UPLOAD_PATH =
+  '/api/v0/add?pin=true&wrap-with-directory=true';
+
+function getDirectoryUploadPath(): string {
+  return process.env.IPFS_API_UPLOAD_PATH ?? DEFAULT_DIRECTORY_UPLOAD_PATH;
+}
+
+// Single files use the configured add path without the wrapping directory.
+function getFileUploadPath(): string {
+  const directoryPath = getDirectoryUploadPath();
+  const queryStart = directoryPath.indexOf('?');
+  if (queryStart < 0) {
+    return directoryPath;
+  }
+  const params = new URLSearchParams(directoryPath.slice(queryStart + 1));
+  params.delete('wrap-with-directory');
+  const query = params.toString();
+  const path = directoryPath.slice(0, queryStart);
+  return query ? `${path}?${query}` : path;
+}
 
 export class IpfsFileUploader {
   private readonly logger = Logger.get(this.constructor.name);
@@ -23,10 +42,7 @@ export class IpfsFileUploader {
     url: string;
     files: Record<string, string>;
   }> {
-    const uploadPath =
-      process.env.IPFS_API_UPLOAD_PATH ??
-      '/api/v0/add?pin=true&wrap-with-directory=true';
-    const cid = await this.add(files, uploadPath);
+    const cid = await this.add(files, getDirectoryUploadPath());
     const rootUrl = `ipfs://${cid}`;
     const fileUrls = files.reduce(
       (acc, file) => {
@@ -43,12 +59,15 @@ export class IpfsFileUploader {
     };
   }
 
-  /** Adds and pins one file on its own, without a wrapping directory. */
+  /**
+   * Adds and pins one file on its own, without a wrapping directory. The add
+   * response then has a single entry, the file itself, whose hash is the CID.
+   */
   public async uploadFile(file: IpfsDirectoryFile): Promise<{
     cid: string;
     url: string;
   }> {
-    const cid = await this.add([file], FILE_UPLOAD_PATH);
+    const cid = await this.add([file], getFileUploadPath());
     this.logger.info(`Uploaded file to IPFS cid=${cid}`);
     return { cid, url: `ipfs://${cid}` };
   }

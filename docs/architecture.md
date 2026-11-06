@@ -216,7 +216,8 @@ its separate URL guard also protects local previews, which do not use this API.
 Authenticated `POST /profiles/pfp/ipfs` accepts one multipart `pfp` file of at
 most 2 MiB (multer rejects larger bodies with 413), recognizes PNG, JPEG, GIF or
 WebP from the file's own bytes, and pins it with the shared IPFS uploader as a
-single unwrapped file. It returns `{ pfp_url: "ipfs://<cid>" }`; the caller then
+single unwrapped file (the configured `IPFS_API_UPLOAD_PATH` without
+`wrap-with-directory`). It returns `{ pfp_url: "ipfs://<cid>" }`; the caller then
 saves that URL through the existing `POST /profiles` validation. The web app
 uploads through this route instead of posting to the IPFS node from the
 browser. Deploy `api` before the frontend that calls it. No new service,

@@ -108,9 +108,15 @@ describe('ProfilePictureIpfsUploadService', () => {
       Buffer.alloc(PROFILE_PICTURE_MAX_BYTES)
     ]);
 
-    await expect(service.upload({ buffer: oversized })).rejects.toThrow(
-      'Profile picture is too large'
-    );
+    await expect(service.upload({ buffer: oversized })).rejects.toMatchObject({
+      message: 'Profile picture is too large',
+      getStatusCode: expect.any(Function)
+    });
+    await expect(
+      service
+        .upload({ buffer: oversized })
+        .catch((error) => error.getStatusCode())
+    ).resolves.toBe(413);
     expect(uploader.uploadFile).not.toHaveBeenCalled();
   });
 });

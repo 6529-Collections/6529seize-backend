@@ -2,7 +2,7 @@ import {
   IpfsFileUploader,
   ipfsFileUploader
 } from '@/attachments/ipfs-file-uploader';
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
 
 /** Matches the limit the profile editor enforces before upload. */
 export const PROFILE_PICTURE_MAX_BYTES = 2 * 1024 * 1024;
@@ -79,7 +79,10 @@ export class ProfilePictureIpfsUploadService {
       throw new BadRequestException('No profile picture provided');
     }
     if (bytes.length > PROFILE_PICTURE_MAX_BYTES) {
-      throw new BadRequestException('Profile picture is too large');
+      throw new CustomApiCompliantException(
+        413,
+        'Profile picture is too large'
+      );
     }
     const format = detectProfilePictureFormat(bytes);
     if (!format) {
