@@ -57,12 +57,13 @@ export class CompetitionDropVotesDb extends LazyDbAccessCompatibleService {
     const winner = entry.status === 'WINNER';
     const rows = await this.db.execute<{
       rating: number;
+      decision_rating: number;
       rank: number | null;
       over_threshold_since: number | null;
     }>(
       winner
-        ? `select final_rating as rating, \`rank\`, null as over_threshold_since from ${COMPETITION_DECISION_WINNERS_TABLE} where competition_id=:competitionId and entry_id=:entryId and decision_id=:decisionId`
-        : `select lb.rating, lb.\`rank\`, rt.over_threshold_since
+        ? `select final_rating as rating, final_rating as decision_rating, \`rank\`, null as over_threshold_since from ${COMPETITION_DECISION_WINNERS_TABLE} where competition_id=:competitionId and entry_id=:entryId and decision_id=:decisionId`
+        : `select lb.rating, coalesce(lb.decision_rating,lb.rating,0) as decision_rating, lb.\`rank\`, rt.over_threshold_since
            from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb
            join ${COMPETITION_ENTRIES_TABLE} e
              on e.competition_id=lb.competition_id and e.id=lb.entry_id
@@ -75,6 +76,7 @@ export class CompetitionDropVotesDb extends LazyDbAccessCompatibleService {
     return rows[0]
       ? {
           rating: Number(rows[0].rating),
+          decision_rating: Number(rows[0].decision_rating),
           over_threshold_since:
             rows[0].over_threshold_since == null
               ? null

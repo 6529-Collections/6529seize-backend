@@ -978,10 +978,17 @@ unchanged. No API, schema, queue, or frontend deployment dependency is added.
 ### NFT market depth and activity
 
 `marketStatsLoop` legacy price pagination and market-depth REST requests share
-the existing Redis OpenSea request quota, with local pacing when Redis is
-unavailable. Successful price pages proceed as quota permits; retries and the
-shared refresh deadline remain bounded, and incomplete scans never replace stored
-prices.
+the existing Redis OpenSea request quota. Atomic grants space requests across
+workers; HTTP 429 responses publish a shared cooldown that honors Retry-After
+and cannot shorten another worker's pause. Waiting workers recheck the cooldown
+before acquiring quota. The existing rolling-window key remains compatible with
+older workers during deployment. Without Redis, pacing and cooldowns apply per
+client. The added keys use a hash tag containing the full legacy quota key, so
+all Lua keys share its existing Redis Cluster slot without renaming it.
+Throttled pages can make up to twelve attempts within the caller's
+deadline, with capped exponential backoff; other failures retain their existing
+attempt limits. Successful price pages proceed as quota permits, and incomplete
+scans never replace stored prices.
 
 `marketStatsLoop` publishes complete OpenSea order snapshots atomically with
 current orders and a persistent queue for reconciling disappeared orders.
@@ -1140,6 +1147,12 @@ retention, rerun, and rollout contract.
 Notification read/unread mutations also enqueue a `badge_refresh` job with the affected profile ID on the existing `firebase-push-notifications` queue. `pushNotificationsHandler` combines shared-device refreshes within each batch, discovers current iOS registrations, and computes aggregate unread counts from the primary database using the existing push settings, visibility and moderation filters. The API performs only the queue handoff, not device lookup, counting or Firebase delivery. Normal iOS alerts and badge-only refreshes share a per-device Redis lock covering count calculation and submission. Android delivery and installation logout use the same lock to fence removed recipients. Failed or invalid profile contributions never become partial badge totals. See [Mobile badge synchronization](./mobile-badge-sync.md) for the payload, failure handling and rollout boundaries.
 
 The push worker's SQS event source is capped at 18 concurrent batches, below the Lambda's reserved concurrency of 20. This leaves two slots of headroom and keeps excess burst traffic queued instead of allowing the poller to exceed the function limit. The same cap applies in staging and production. Batch size remains 10; partial-batch retries, visibility timeout, dead-letter routing, and monitoring thresholds/frequency are unchanged. Queueing can increase during bursts, so queue-age and dead-letter alarms remain important. Deploy only `pushNotificationsHandler` to apply this event-source configuration.
+
+Artist artwork alerts use an independent `artist_artwork_alerts` preference keyed by recipient and artist, with the opt-in timestamp as the no-backfill boundary. The identity preference API permits direct profile sessions only, resolves only the target profile ID, and never changes feed subscriptions. Confirmed non-anonymous Main Stage entry creation freezes eligibility in the existing competition outbox.
+
+`waveDecisionExecutionLoop` reads pending recipients in batches of at most 100 and continues through additional batches within a 20-second artwork budget. It checks the deadline before each batch and between recipients, within the dispatcher's overall budget. These are cooperative bounds, not cancellation of an in-flight database or group lookup. Completed effect receipts identify progress; partial delivery releases the existing outbox lease for another pass. Notification rows, effect receipts and push-outbox handoffs commit together. The existing push worker publishes the saved IDs, so resuming delivery does not repeat completed recipient work or lose a push after committing its notification. Terminal content decisions use the primary database. Public waves with public parents skip group eligibility work; private access resolves only the relevant groups before taking receipt/preference locks and rechecks visibility and global preferences in the effect transaction.
+
+Profile consolidation remaps both preference IDs, preserves the earliest opt-in when pairs collide, removes self-pairs, and transfers completed recipient receipts for unfinished events. Current wave/parent access, mutes, blocks, moderation and profile preferences apply, and both reads and push delivery suppress hidden attribution or withdrawn entries. The existing push queue, device settings and registration capability gates are reused. Deploy the preference schema, compatible push/competition consumers and profile-consolidation consumer before the API producer, then the frontend contract.
 
 Notification invalidation is emitted only after the push worker loads durable notification rows. It intentionally remains independent from mobile push registration, mute settings, and delivery success because those controls affect Firebase delivery only; the durable row remains visible through the authenticated REST feed. Duplicate SQS deliveries may repeat this idempotent invalidation without duplicating notification data.
 
@@ -1717,7 +1730,14 @@ Roll out this table and its dependent workloads in this order:
    these may proceed in parallel after the schema and API are live.
 
 Wallet auth session v2 state is stored in `wallet_auth_sessions` and one-time
-connection share state is stored in `wallet_connection_shares`. Web sessions
+connection share state is stored in `wallet_connection_shares`. Optional
+`encrypted_device_setup` carries AES-GCM ciphertext for fresh receiving-app
+signing/MLS keys plus a directly wallet-signed app grant. Its unlock key stays
+in the client link fragment and never reaches the API. Only own-account shares
+may carry it; redemption returns it once, bound to the one-time code's wallet
+and native/desktop target. The receiving client authenticates the grant again
+before local import and preserves any already usable local devices. Deploy
+`dbMigrationsLoop` before `api` when adding this nullable column. Web sessions
 persist the signed domain and normalized client origin so refresh and logout
 requests can be bound to the same browser origin that created the session. Web
 clients receive a compatibility `6529_session` cookie plus address-scoped
@@ -1879,6 +1899,20 @@ changing alert or dirty state, while
 `SUBSCRIPTION_COVERAGE_BASELINE_ONLY=true` persists state but emits nothing.
 No request cache is used for the coverage read boundary, so a confirmed top-up
 or redemption can be reflected immediately.
+
+TDH persistence in `delegationsLoop` and `tdhLoop` synchronizes profile primary
+wallets in the same transaction as identity consolidation and metrics. It first
+reads bounded pages of address differences without locking profiles, then updates
+changed profiles through point lookups on the stable profile-ID index. This avoids
+retaining locks on unchanged profiles
+through the metrics recalculation, so ordinary posting can still acquire its
+moderation profile lock. Changed profiles remain protected by the consolidation
+transaction and roll back with it.
+Discovery uses the consolidation transaction's consistent read after its identity
+writes are complete. Each point update rechecks current identity/address values.
+Other primary-address changes use `IdentitiesDb.updatePrimaryAddress` to update
+both identity and profile rows in one transaction; the sync does not chase changes
+committed after its read snapshot.
 
 `delegationsLoop` also supports the explicit maintenance payload in staging and production
 `{"action":"reconsolidate","wallets":["<Ethereum address>"]}`. It expands
@@ -2383,11 +2417,19 @@ connections (`E2EE_GROUP_EVENT`, `E2EE_WELCOME`, `E2EE_DEVICE_ADDED`,
 `E2EE_DEVICE_REVOKED`, `E2EE_ROSTER_CHANGED`; items inline only up to 16 KiB)
 and, throttled to one per (profile, group) per 60 s through
 `e2ee_push_throttle`, enqueues `{ "type": "e2ee_wake", "profile_ids", "reason" }`
-on the existing `firebase-push-notifications` queue.
-`pushNotificationsHandler` turns these into content-free FCM notifications
-(title `6529`, fixed body, `redirect: "e2ee"`, no sender, group or text) for
-every registered device of profiles whose "Direct messages" notifications are
-on. No AI or moderation pipeline reads E2EE data. Deployment order:
+on the existing `firebase-push-notifications` queue. Separately, the API
+writes an in-app `E2EE_MESSAGE` notification for eligible message recipients,
+subject to their Direct messages notification preference. The row stores the
+sender in `additional_identity_id` and the opaque chat handle and message
+sequence in `additional_data`. It carries no message plaintext. Batch
+insertion avoids creating a second push outbox event. The API sends
+recipient-scoped invalidations, including to devices without local MLS keys.
+Devices with the keys can render a local preview of the referenced message.
+The push cooldown and delivery settings do not suppress inbox writes.
+`pushNotificationsHandler` sends content-free FCM notifications
+(`redirect: "e2ee"`, no sender, group or text) to registered devices whose
+profiles have Direct messages notifications enabled. No AI or moderation
+pipeline reads E2EE data. Deployment order:
 `dbMigrationsLoop`, then `pushNotificationsHandler`, then `api`.
 
 ### Unencrypted DM retention (D146)

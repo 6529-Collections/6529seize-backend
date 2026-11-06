@@ -309,4 +309,5 @@ export * from './IVotingCreditRelease';
 export * from './ITransactionScanCheckpoint';
 export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
 
+export { ArtistArtworkAlertEntity } from './IArtistArtworkAlert';
 export { NFTHistoryReplayJobEntity } from './INFTHistoryReplayJob';

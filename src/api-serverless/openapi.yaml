@@ -3343,6 +3343,94 @@ paths:
           description: Authentication required
         "403":
           description: Not available to proxies
+    post:
+      tags:
+        - Authentication
+      summary: Register an app device grant
+      description: >-
+        Registers an EIP-712 device grant (domain "6529 Device Grant", primary
+        type DeviceGrant) that 6529 Mobile or 6529 Desktop had the signed-in
+        wallet sign outside a web sign-in. It grants the device's Ed25519
+        signing key and, when mls_device_key is set, its encrypted-messages key
+        (register that key next with POST /e2ee/devices/login-grant). The server
+        rebuilds the statement from the fields and verifies the wallet signature
+        (EOA, or EIP-1271 on Ethereum mainnet). The grant wallet must be the
+        authenticated wallet. Verification, expiry and revocation work as for
+        sign-in grants. Idempotent on grant id. Not available to proxies.
+      operationId: registerDeviceGrant
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: device-signing
+        handler:
+          import: "@/api/device-signing/device-signing.handlers"
+          name: handleRegisterDeviceGrant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiRegisterDeviceGrantRequest"
+      responses:
+        "200":
+          description: The stored grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiDeviceGrant"
+        "400":
+          description: Invalid grant or signature
+        "401":
+          description: Authentication required
+        "403":
+          description: Not available to proxies, or not the signed-in wallet
+  /device-grants/{grantId}/label:
+    post:
+      tags:
+        - Authentication
+      summary: Rename a device signing grant owned by the caller
+      operationId: renameDeviceGrant
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: device-signing
+        handler:
+          import: "@/api/device-signing/device-signing.handlers"
+          name: handleRenameDeviceGrant
+      parameters:
+        - name: grantId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^0x[0-9a-f]{64}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiRenameDeviceRequest"
+      responses:
+        "200":
+          description: Updated device
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiDeviceGrant"
+        "400":
+          description: Invalid device label
+        "401":
+          description: Unauthorized
+        "403":
+          description: Not available to proxies
+        "404":
+          description: Grant is missing, revoked or belongs to another profile
   /device-grants/{grantId}/revoke:
     post:
       tags:
@@ -4918,9 +5006,9 @@ paths:
             competition's authoritative rank ascending, unranked entries last,
             with the leaderboard's stable identity tie-breaker. last_voted uses
             the most recent confirmed user vote change (including retained
-            history), newest first, excluding automatic adjustments and unchanged votes;
-            unknown times sort last, ties by drop ID ascending. Cursors are
-            bound to the sort.
+            history), newest first, excluding automatic adjustments and
+            unchanged votes; unknown times sort last, ties by drop ID ascending.
+            Cursors are bound to the sort.
           schema:
             $ref: "#/components/schemas/ApiCompetitionMyVotesSort"
         - name: limit
@@ -6238,11 +6326,15 @@ paths:
         - name: sort
           in: query
           required: false
+          description: >-
+            Sort by current weighted rating, raw vote total, or next-decision
+            weighted projection (decision_rating).
           schema:
             type: string
             enum:
               - rating
               - real_time_rating
+              - decision_rating
               - submitted_at
               - trend
               - price
@@ -11001,9 +11093,10 @@ paths:
       description: >-
         Registers the MLS device key that a combined sign-in grant (NC8) also
         granted, without a separate wallet signature. The grant must be one this
-        server stored at a Sign-In with Ethereum login, unrevoked and unexpired,
-        carrying an urn:6529:mls-device-grant:v1 resource for the current
-        ciphersuite, and its wallet must belong to the caller's profile. Same
+        server stored at a Sign-In with Ethereum login (carrying an
+        urn:6529:mls-device-grant:v1 resource for the current ciphersuite) or an
+        app device grant (POST /device-grants) with an mls_device_key, unrevoked
+        and unexpired, and its wallet must belong to the caller's profile. Same
         device limit and renewal rules as POST /e2ee/devices. Requires a
         profile; proxies are rejected; 404 E2EE_DISABLED while the feature flag
         is off.
@@ -11140,6 +11233,49 @@ paths:
           description: Payload too large (E2EE_TOO_LARGE)
         "429":
           description: Rate limited (E2EE_RATE_LIMITED)
+  /e2ee/devices/{device_key}/label:
+    post:
+      tags:
+        - Encrypted Messages
+      summary: Rename an encrypted-messaging device owned by the caller
+      operationId: e2eeRenameDevice
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        typeImportGroup: e2ee
+        handler:
+          import: "@/api/e2ee/e2ee.handlers"
+          name: handleE2eeRenameDevice
+      parameters:
+        - name: device_key
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^0x[0-9a-f]{64}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiRenameDeviceRequest"
+      responses:
+        "200":
+          description: Updated device
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiE2eeDevice"
+        "400":
+          description: Invalid device label
+        "401":
+          description: Unauthorized
+        "403":
+          description: Device is revoked or belongs to another profile
+        "404":
+          description: Encrypted messaging is disabled
   /e2ee/devices/{device_key}/revoke:
     post:
       tags:
@@ -13287,6 +13423,115 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiIdentitySubscriptionActions"
+  /identities/{id}/artwork-alerts:
+    get:
+      tags:
+        - Identities
+      summary: Read your independent artwork-alert preference for an artist.
+      operationId: getArtistArtworkAlert
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: artist-artwork-alerts
+        handler:
+          import: "@/api/identity-subscriptions/artist-artwork-alerts.handlers"
+          name: handleGetArtistArtworkAlert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current preference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiArtistArtworkAlert"
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Own profile required or artist is blocked
+        "404":
+          description: Identity not found
+    post:
+      tags:
+        - Identities
+      summary: Enable future artwork alerts without following the artist.
+      operationId: enableArtistArtworkAlert
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: artist-artwork-alerts
+        handler:
+          import: "@/api/identity-subscriptions/artist-artwork-alerts.handlers"
+          name: handleEnableArtistArtworkAlert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current preference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiArtistArtworkAlert"
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Own profile required or artist is blocked
+        "404":
+          description: Identity not found
+    delete:
+      tags:
+        - Identities
+      summary: Disable artwork alerts without changing feed subscriptions.
+      operationId: disableArtistArtworkAlert
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: artist-artwork-alerts
+        handler:
+          import: "@/api/identity-subscriptions/artist-artwork-alerts.handlers"
+          name: handleDisableArtistArtworkAlert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current preference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiArtistArtworkAlert"
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Own profile required or artist is blocked
+        "404":
+          description: Identity not found
   /identities/{id}/mute:
     get:
       tags:
@@ -23208,11 +23453,107 @@ components:
         status:
           type: integer
           description: Upstream failure status, or 502 for an unavailable lookup.
+    ApiAppDeviceGrant:
+      type: object
+      additionalProperties: false
+      description: >-
+        The fields of an EIP-712 DeviceGrant (domain "6529 Device Grant",
+        version 1, the 6529 pre-genesis salt). The statement is not sent: the
+        server renders it from these fields.
+      required:
+        - wallet
+        - device_key
+        - scopes
+        - issued_at
+        - expires_at
+        - origin
+      properties:
+        wallet:
+          type: string
+          pattern: ^0x[0-9a-fA-F]{40}$
+        device_key:
+          type: string
+          pattern: ^0x[0-9a-fA-F]{64}$
+          description: The Ed25519 signing key.
+        scopes:
+          type: array
+          description: Canonical order post, edit, delete, react, vote; must include post.
+          items:
+            type: string
+        mls_device_key:
+          type: string
+          nullable: true
+          pattern: ^0x[0-9a-fA-F]{64}$
+          description: >-
+            The encrypted-messages (MLS signature) key, different from
+            device_key; null or absent for a signing-only grant.
+        ciphersuite:
+          type: integer
+          nullable: true
+          description: >-
+            The MLS ciphersuite of mls_device_key; null or absent without one (0
+            is rejected).
+        issued_at:
+          type: integer
+          format: int64
+          description: Unix seconds.
+        expires_at:
+          type: integer
+          format: int64
+          description: Unix seconds, minute aligned, at most 181 days after issued_at.
+        origin:
+          type: string
+          maxLength: 64
+          description: Printable ASCII, e.g. 6529.io or "6529 Desktop".
     ApiArchiveProfileCmsPackageRequest:
       type: object
       properties:
         expected_package_hash:
           type: string
+    ApiArtistArtworkAlert:
+      type: object
+      required:
+        - enabled
+      properties:
+        enabled:
+          type: boolean
+          description: >-
+            Explicit opt-in for new non-anonymous Main Stage artwork
+            submissions, independent of feed following. Defaults to false.
+            Existing submissions are never backfilled.
+    ApiArtistArtworkNotificationContext:
+      type: object
+      description: Additional context for ARTIST_ARTWORK_SUBMITTED notifications.
+      required:
+        - artist_id
+        - drop_id
+        - wave_id
+        - competition_id
+        - entry_id
+        - competition_title
+        - artwork_title
+        - submitted_at
+      properties:
+        artist_id:
+          type: string
+        drop_id:
+          type: string
+        wave_id:
+          type: string
+        competition_id:
+          type: string
+          format: uuid
+        entry_id:
+          type: string
+          format: uuid
+        competition_title:
+          type: string
+        artwork_title:
+          type: string
+          nullable: true
+        submitted_at:
+          type: integer
+          format: int64
     ApiArtistNameItem:
       type: object
       required:
@@ -30737,6 +31078,13 @@ components:
       required:
         - target_client_type
       properties:
+        encrypted_device_setup:
+          type: string
+          maxLength: 32768
+          pattern: ^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]+$
+          description: >-
+            Encrypted fresh target-device keys and wallet grant. The unlock
+            secret is never sent to this API. Not supported for proxy sessions.
         target_client_type:
           type: string
           enum:
@@ -31841,7 +32189,7 @@ components:
       description: >-
         A wallet signed grant that lets a browser-held Ed25519 device key sign
         drop writes. Its id is the EIP-191 hash of the exact SIWE message the
-        wallet signed.
+        wallet signed at sign-in, or the EIP-712 digest of an app device grant.
       required:
         - id
         - wallet
@@ -31877,11 +32225,13 @@ components:
           type: string
         domain:
           type: string
-          description: SIWE domain the grant was signed for, e.g. 6529.io.
+          description: >-
+            SIWE domain the grant was signed for, e.g. 6529.io, or the origin of
+            an app device grant (e.g. 6529.io or "6529 Desktop").
         issued_at:
           type: integer
           format: int64
-          description: SIWE Issued At, epoch milliseconds.
+          description: SIWE Issued At (or app grant issuedAt), epoch milliseconds.
         expires_at:
           type: integer
           format: int64
@@ -31908,12 +32258,18 @@ components:
       properties:
         message:
           type: string
-          description: Exact SIWE message signed by the wallet.
+          description: >-
+            Exact SIWE message signed by the wallet, or for an app device grant
+            the signed EIP-712 DeviceGrant message as JSON (it starts with "{";
+            its EIP-712 digest is the grant id).
         wallet_signature:
           type: string
         chain_id:
           type: integer
           format: int64
+          description: >-
+            SIWE Chain ID; 1 for app device grants, whose EIP-1271 contract
+            wallet signatures are checked on Ethereum mainnet.
     ApiDeviceSignature:
       type: object
       additionalProperties: false
@@ -34371,12 +34727,16 @@ components:
           type: string
           nullable: true
           description: >-
-            Set when the device was granted by a combined sign-in grant: the
-            exact Sign-In with Ethereum message the wallet signed. Then
-            wallet_signature is the EIP-191 signature over it, grant_id is its
-            EIP-191 hash, and grant holds the terms of its
-            urn:6529:mls-device-grant:v1 resource (origin = the SIWE domain,
-            issued_at = its Issued At). Null for EIP-712 MlsDeviceGrant grants.
+            Set for a combined sign-in grant or an app device grant with an
+            encrypted-messages key. For a combined sign-in grant, this is the
+            exact SIWE message the wallet signed; wallet_signature is its
+            EIP-191 signature, grant_id its EIP-191 hash, and grant holds the
+            terms of its urn:6529:mls-device-grant:v1 resource (origin = the
+            SIWE domain, issued_at = its Issued At). For an app device grant,
+            this is the signed EIP-712 DeviceGrant message as JSON;
+            wallet_signature is its typed-data signature and grant_id its
+            EIP-712 digest. Null for direct EIP-712 MlsDeviceGrant
+            registrations.
     ApiE2eeDeviceGrant:
       type: object
       description: >-
@@ -34753,7 +35113,8 @@ components:
           pattern: ^0x[0-9a-f]{64}$
           description: >-
             Id of a combined grant this profile stored at sign-in (the
-            device_grant.id the session login returned)
+            device_grant.id the session login returned) or of an app device
+            grant with an encrypted-messages key
         label:
           type: string
           description: >-
@@ -39287,9 +39648,27 @@ components:
             $ref: "#/components/schemas/ApiDrop"
         additional_context:
           type: object
+          description: >-
+            For ARTIST_ARTWORK_SUBMITTED, follows
+            ApiArtistArtworkNotificationContext.
     ApiNotificationAdditionalContextV2:
       type: object
       properties:
+        encrypted_group:
+          type: string
+          description: Opaque encrypted-chat handle.
+        encrypted_message_seq:
+          type: integer
+          description: Sequence of the message to preview from local decrypted history.
+        artist_id:
+          type: string
+        artwork_title:
+          type: string
+          nullable: true
+          description: Title for an ARTIST_ARTWORK_SUBMITTED notification.
+        submitted_at:
+          type: integer
+          format: int64
         reason:
           $ref: "#/components/schemas/ApiVotingCreditReleaseReason"
         submission_title:
@@ -39445,9 +39824,11 @@ components:
         - ALL_DROPS
         - PRIORITY_ALERT
         - SUBSCRIPTION_COVERAGE
+        - ARTIST_ARTWORK_SUBMITTED
         - COMPETITION_LIFECYCLE
         - MEME_COLLABORATION
         - VOTING_CREDITS_RETURNED
+        - E2EE_MESSAGE
     ApiNotificationDropReactedReactor:
       type: object
       required:
@@ -41705,6 +42086,12 @@ components:
         - native_refresh_token
         - refresh_token_expires_at
       properties:
+        encrypted_device_setup:
+          type: string
+          nullable: true
+          description: >-
+            One-time encrypted device setup, unlocked locally using the link
+            fragment.
         address:
           type: string
         role:
@@ -41775,6 +42162,20 @@ components:
         queued:
           type: boolean
           description: Queue acceptance, not confirmation of device delivery.
+    ApiRegisterDeviceGrantRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - grant
+        - wallet_signature
+      properties:
+        grant:
+          $ref: "#/components/schemas/ApiAppDeviceGrant"
+        wallet_signature:
+          type: string
+        device_label:
+          type: string
+          description: Sanitized to at most 48 characters of [A-Za-z0-9 ._()-].
     ApiRegisterPushNotificationTokenRequest:
       type: object
       required:
@@ -41815,6 +42216,16 @@ components:
         platform:
           type: string
           description: Optional platform (ios, android, web)
+    ApiRenameDeviceRequest:
+      type: object
+      required:
+        - label
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 48
+          pattern: ^[A-Za-z0-9 ._()-]+$
     ApiRepCategoriesPage:
       type: object
       required:
@@ -44287,6 +44698,7 @@ components:
         - handle
         - display
         - pfp
+        - level
       properties:
         id:
           type: string
@@ -44298,6 +44710,9 @@ components:
         pfp:
           type: string
           nullable: true
+        level:
+          type: integer
+          format: int64
     ApiWaveMetadata:
       type: object
       required:

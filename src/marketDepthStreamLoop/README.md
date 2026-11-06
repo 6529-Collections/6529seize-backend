@@ -32,6 +32,16 @@ retries, and incomplete draining fail the invocation visibly.
 Retry backoff is capped at half the remaining SQL work duration, excluding the
 one-second finalization reserve.
 
+The first rejected event emits one `OpenSea Stream buffer rejection` warning
+before shutdown drains the queue. Its `reason` distinguishes `event_count_limit`,
+`byte_limit`, `normalization_failed`, and `serialization_failed`; unexpected
+enqueue failures use `enqueue_failed`. Diagnostics include the pending event
+count and bytes at rejection, both configured limits, the incoming normalized
+event size when available, and an allowlisted event type (`unknown` otherwise).
+They exclude original exception messages/stacks, payloads, collection metadata,
+and authenticated URLs. A final `pending=0` only confirms accepted events were
+saved; it does not count rejected or subsequently missed stream deliveries.
+
 Each stream database operation uses the SQL owner's monotonic five-second budget,
 shortened to the remaining run budget, with one second reserved for finalization.
 The SQL owner bounds acquisition, statements, commit and cleanup, disposing of a

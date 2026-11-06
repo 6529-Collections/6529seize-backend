@@ -194,6 +194,7 @@ type LeaderboardQuery = CursorQuery & {
   readonly sort:
     | 'rating'
     | 'real_time_rating'
+    | 'decision_rating'
     | 'submitted_at'
     | 'trend'
     | 'price';
@@ -208,7 +209,14 @@ const LeaderboardQuerySchema: Joi.ObjectSchema<LeaderboardQuery> =
     cursor: Joi.string().min(1).max(1000).optional(),
     limit: Joi.number().integer().min(1).max(100).default(50),
     sort: Joi.string()
-      .valid('rating', 'real_time_rating', 'submitted_at', 'trend', 'price')
+      .valid(
+        'rating',
+        'real_time_rating',
+        'decision_rating',
+        'submitted_at',
+        'trend',
+        'price'
+      )
       .default('rating'),
     price_currency: Joi.string().trim().min(1).max(100).optional(),
     min_price: Joi.number().min(0).optional(),

@@ -527,9 +527,19 @@ export class NotificationsApiService {
           dropIds.push(data.drop_id);
           break;
         }
+        case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED: {
+          profileIds.push(notification.data.artist_id);
+          dropIds.push(notification.data.drop_id);
+          break;
+        }
         case IdentityNotificationCause.MEME_COLLABORATION: {
           if (notification.data.actor_id)
             profileIds.push(notification.data.actor_id);
+          break;
+        }
+        case IdentityNotificationCause.E2EE_MESSAGE: {
+          if (notification.data.sender_id)
+            profileIds.push(notification.data.sender_id);
           break;
         }
         case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
@@ -572,6 +582,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
       case IdentityNotificationCause.IDENTITY_REP:
       case IdentityNotificationCause.IDENTITY_NIC:
+      case IdentityNotificationCause.E2EE_MESSAGE:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return null;
       }
@@ -586,6 +597,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
       case IdentityNotificationCause.ALL_DROPS:
       case IdentityNotificationCause.PRIORITY_ALERT: {
         return notification.data.wave_id;
@@ -606,6 +618,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.VOTING_CREDITS_RETURNED:
       case IdentityNotificationCause.COMPETITION_LIFECYCLE:
       case IdentityNotificationCause.WAVE_CREATED:
+      case IdentityNotificationCause.E2EE_MESSAGE:
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return [];
       }
@@ -614,6 +627,7 @@ export class NotificationsApiService {
       case IdentityNotificationCause.DROP_POLL_VOTED:
       case IdentityNotificationCause.DROP_REACTED:
       case IdentityNotificationCause.DROP_BOOSTED:
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
       case IdentityNotificationCause.ALL_DROPS:
       case IdentityNotificationCause.PRIORITY_ALERT: {
         return [notification.data.drop_id];
@@ -829,6 +843,12 @@ export class NotificationsApiService {
           }
         };
       }
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
+        return this.mapArtistArtworkNotification(
+          notification,
+          profiles[notification.data.artist_id],
+          drops[notification.data.drop_id]
+        );
       case IdentityNotificationCause.ALL_DROPS: {
         const data = notification.data;
         return {
@@ -882,6 +902,12 @@ export class NotificationsApiService {
           additional_context: { ...notification.data }
         };
       }
+      case IdentityNotificationCause.E2EE_MESSAGE: {
+        return this.mapEncryptedMessage(
+          notification,
+          profiles[notification.data.sender_id ?? ''] ?? null
+        );
+      }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return {
           id: notification.id,
@@ -926,6 +952,28 @@ export class NotificationsApiService {
       rater_rating: data.rater_rating ?? undefined,
       total: data.total,
       category: data.category
+    };
+  }
+
+  private mapArtistArtworkNotification<
+    Profile extends ApiProfileMin | ApiIdentityOverview,
+    Drop extends ApiDrop | ApiDropV2
+  >(
+    notification: Extract<
+      UserNotification,
+      { cause: IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED }
+    >,
+    artist: Profile,
+    drop: Drop
+  ) {
+    return {
+      id: notification.id,
+      created_at: notification.created_at,
+      read_at: notification.read_at,
+      cause: ApiNotificationCause.ArtistArtworkSubmitted,
+      related_identity: artist,
+      related_drops: [drop],
+      additional_context: { ...notification.data }
     };
   }
 
@@ -979,6 +1027,29 @@ export class NotificationsApiService {
     return {
       reaction,
       reactors
+    };
+  }
+
+  private mapEncryptedMessage<T extends ApiProfileMin | ApiIdentityOverview>(
+    notification: Extract<
+      UserNotification,
+      { cause: IdentityNotificationCause.E2EE_MESSAGE }
+    >,
+    sender: T | null
+  ) {
+    return {
+      id: notification.id,
+      created_at: notification.created_at,
+      read_at: notification.read_at,
+      cause: ApiNotificationCause.E2EeMessage,
+      related_identity: sender,
+      related_drops: [],
+      additional_context: {
+        encrypted_group: notification.data.encrypted_group,
+        ...(notification.data.encrypted_message_seq === undefined
+          ? {}
+          : { encrypted_message_seq: notification.data.encrypted_message_seq })
+      }
     };
   }
 
@@ -1144,6 +1215,12 @@ export class NotificationsApiService {
           }
         };
       }
+      case IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED:
+        return this.mapArtistArtworkNotification(
+          notification,
+          profiles[notification.data.artist_id],
+          drops[notification.data.drop_id]
+        );
       case IdentityNotificationCause.ALL_DROPS: {
         const data = notification.data;
         return {
@@ -1196,6 +1273,12 @@ export class NotificationsApiService {
           related_drops: [],
           additional_context: { ...notification.data }
         };
+      }
+      case IdentityNotificationCause.E2EE_MESSAGE: {
+        return this.mapEncryptedMessage(
+          notification,
+          profiles[notification.data.sender_id ?? ''] ?? null
+        );
       }
       case IdentityNotificationCause.SUBSCRIPTION_COVERAGE: {
         return {

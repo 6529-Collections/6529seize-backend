@@ -94,9 +94,9 @@ export class E2eeDeviceEntity {
   @Column({ type: 'varchar', length: 130, nullable: true, default: null })
   readonly revocation_signature!: string | null;
 
-  // Combined sign-in grant (NC8): the exact SIWE message the wallet signed;
-  // then grant_id is its EIP-191 hash and wallet_signature signs it. Null
-  // for EIP-712 MlsDeviceGrant grants.
+  // Combined sign-in (NC8): exact SIWE message, EIP-191 grant_id/signature.
+  // App grant: signed DeviceGrant JSON, EIP-712 grant_id/signature.
+  // Null for direct EIP-712 MlsDeviceGrant registrations.
   @Column({ type: 'text', nullable: true, default: null })
   readonly grant_message!: string | null;
 }

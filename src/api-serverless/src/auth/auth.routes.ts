@@ -743,6 +743,7 @@ router.post(
     const created = await createConnectionShare({
       address: authenticatedWallet,
       role: authRole,
+      encryptedDeviceSetup: shareRequest.encrypted_device_setup ?? null,
       targetClientType: shareRequest.target_client_type
     });
     res.status(201).send(created);
@@ -1403,6 +1404,10 @@ const CreateConnectionShareRequestSchema: Joi.ObjectSchema<ApiCreateConnectionSh
   Joi.object<ApiCreateConnectionShareRequest>({
     target_client_type: Joi.string().valid('native', 'desktop').required(),
     role: Joi.string().optional().allow(null),
+    encrypted_device_setup: Joi.string()
+      .max(32768)
+      .pattern(/^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]+$/)
+      .optional(),
     client_type: Joi.string().valid('native', 'desktop').optional(),
     client_address: Joi.string().optional(),
     native_refresh_token: Joi.string().hex().length(128).optional()

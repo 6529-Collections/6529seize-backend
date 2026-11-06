@@ -14,6 +14,7 @@ const CAUSE_CLASSIFICATION: Record<
   IdentityNotificationCause,
   NotificationClassification
 > = {
+  [IdentityNotificationCause.E2EE_MESSAGE]: 'direct_messages',
   [IdentityNotificationCause.IDENTITY_SUBSCRIBED]: 'new_followers',
   [IdentityNotificationCause.IDENTITY_MENTIONED]: 'mentions_replies_quotes',
   [IdentityNotificationCause.IDENTITY_REP]: 'rep_and_nic',
@@ -30,6 +31,7 @@ const CAUSE_CLASSIFICATION: Record<
   [IdentityNotificationCause.WAVE_CREATED]: 'direct_messages',
   [IdentityNotificationCause.MEME_COLLABORATION]: 'mentions_replies_quotes',
   [IdentityNotificationCause.COMPETITION_LIFECYCLE]: 'direct_messages',
+  [IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED]: 'direct_messages',
   [IdentityNotificationCause.ALL_DROPS]: 'direct_messages',
   [IdentityNotificationCause.PRIORITY_ALERT]: 'direct_messages',
   [IdentityNotificationCause.SUBSCRIPTION_COVERAGE]: 'subscription_coverage'

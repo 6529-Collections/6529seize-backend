@@ -1,3 +1,5 @@
+import { CompetitionEntrySummaryDb } from '@/competitions/competition-entry-summary.db';
+import { CompetitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { randomUUID } from 'node:crypto';
 import { NewsletterDb } from '@/newsletter/newsletter.db';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
@@ -926,6 +928,68 @@ describeWithSeed(
       ).toEqual([{ n: 1 }]);
     });
 
+    it('projects late votes at the next checkpoint and sorts before pagination', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.time_lock_ms', 1000) where id = :rankId`,
+        { rankId }
+      );
+      await vote(rankId, rankEntry, 100, 500);
+      await vote(rankId, secondRankEntry, 70, 1, 'other');
+      await service.refreshCompetition(rankId, 600);
+      const page = { offset: 0, limit: 1, direction: 'DESC' as const };
+      const raw = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, sort: 'real_time_rating' },
+        {}
+      );
+      const projected = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, sort: 'decision_rating' },
+        {}
+      );
+      const second = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, offset: 1, sort: 'decision_rating' },
+        {}
+      );
+      const ascending = await competitionRepository.listNativeLeaderboard(
+        rankId,
+        { ...page, direction: 'ASC', sort: 'decision_rating' },
+        {}
+      );
+      expect(raw.data[0].entry_id).toBe(rankEntry);
+      expect(projected.data[0].entry_id).toBe(secondRankEntry);
+      expect(projected.has_more).toBe(true);
+      expect(second.data[0].entry_id).toBe(rankEntry);
+      expect(ascending.data[0].entry_id).toBe(rankEntry);
+      const batch = await new CompetitionEntrySummaryDb(() => sqlExecutor).read(
+        rankId,
+        [rankEntry, secondRankEntry],
+        null,
+        {}
+      );
+      const single = new CompetitionDropVotesDb(() => sqlExecutor);
+      for (const [entryId, prediction, current] of [
+        [rankEntry, 50, 10],
+        [secondRankEntry, 69, 41]
+      ] as const) {
+        const entry = await competitionRepository.findNativeEntry(
+          rankId,
+          entryId,
+          {}
+        );
+        const score = await single.score(entry!, {});
+        expect(score).toMatchObject({
+          rating: current,
+          decision_rating: prediction
+        });
+        expect(batch.scores.get(entryId)).toMatchObject({
+          rating: current,
+          decision_rating: prediction
+        });
+      }
+    });
+
     it('uses scheduled historical weighted votes when execution is late and archives each voter independently', async () => {
       await sqlExecutor.execute(
         `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.time_lock_ms', 1000) where id = :rankId`,
@@ -1549,6 +1613,43 @@ describeWithSeed(
       ).resolves.toBe(42);
     });
 
+    it('does not count successful delivery deferrals toward failure backoff', async () => {
+      await vote(rankId, rankEntry, 20, 100);
+      for (const now of [100, 1100, 2100]) {
+        const [record] = await repository.claimOutbox({ now, limit: 1 });
+        expect(record.attempts).toBe(1);
+        await repository.deferOutbox(record.id, record.lease_token, now);
+      }
+
+      const [firstFailure] = await repository.claimOutbox({
+        now: 3100,
+        limit: 1
+      });
+      expect(firstFailure.attempts).toBe(1);
+      await repository.retryOutbox(
+        firstFailure.id,
+        firstFailure.lease_token,
+        3100
+      );
+      expect(await repository.claimOutbox({ now: 5099, limit: 1 })).toEqual([]);
+
+      const [secondFailure] = await repository.claimOutbox({
+        now: 5100,
+        limit: 1
+      });
+      expect(secondFailure.id).toBe(firstFailure.id);
+      expect(secondFailure.attempts).toBe(2);
+      await repository.retryOutbox(
+        secondFailure.id,
+        secondFailure.lease_token,
+        5100
+      );
+      expect(await repository.claimOutbox({ now: 9099, limit: 1 })).toEqual([]);
+      const [retry] = await repository.claimOutbox({ now: 9100, limit: 1 });
+      expect(retry.id).toBe(firstFailure.id);
+      expect(retry.attempts).toBe(3);
+    });
+
     it('leases durable delivery exclusively and recovers expiry without accepting a stale acknowledgement', async () => {
       await vote(rankId, rankEntry, 20, 100);
       const [first] = await repository.claimOutbox({
@@ -1560,17 +1661,28 @@ describeWithSeed(
       const [second] = await repository.claimOutbox({ now: 110, limit: 1 });
       expect(second.id).toBe(first.id);
       expect(second.lease_token).not.toBe(first.lease_token);
+      await repository.deferOutbox(first.id, first.lease_token, 110);
+      expect(await repository.claimOutbox({ now: 111, limit: 1 })).toEqual([]);
       await repository.acknowledgeOutbox(first.id, first.lease_token, 111);
       await repository.retryOutbox(second.id, second.lease_token, 111);
       expect(await repository.claimOutbox({ now: 112, limit: 1 })).toEqual([]);
       const [third] = await repository.claimOutbox({ now: 10_000, limit: 1 });
-      await repository.acknowledgeOutbox(third.id, third.lease_token, 10_001);
+      expect(third.attempts).toBe(3);
+      await repository.deferOutbox(third.id, third.lease_token, 10_001);
+      expect(await repository.claimOutbox({ now: 11_000, limit: 1 })).toEqual(
+        []
+      );
+      const [fourth] = await repository.claimOutbox({ now: 11_001, limit: 1 });
+      expect(fourth.id).toBe(third.id);
+      expect(fourth.attempts).toBe(3);
+      expect(fourth.lease_token).not.toBe(third.lease_token);
+      await repository.acknowledgeOutbox(fourth.id, fourth.lease_token, 11_002);
       expect(
         await sqlExecutor.execute(
           `select delivered_at from ${COMPETITION_OUTBOX_TABLE} where id = :id`,
           { id: third.id }
         )
-      ).toEqual([{ delivered_at: 10_001 }]);
+      ).toEqual([{ delivered_at: 11_002 }]);
     });
   }
 );

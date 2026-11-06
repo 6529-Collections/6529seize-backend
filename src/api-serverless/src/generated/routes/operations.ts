@@ -3,6 +3,7 @@ import { Request } from 'express';
 import { ApiResponse } from '@/api/api-response';
 import { ApiActiveWaveVotesPage } from '@/api/generated/models/ApiActiveWaveVotesPage';
 import { ApiArchiveProfileCmsPackageRequest } from '@/api/generated/models/ApiArchiveProfileCmsPackageRequest';
+import { ApiArtistArtworkAlert } from '@/api/generated/models/ApiArtistArtworkAlert';
 import { ApiArtworkDocumentationAssetLinkRequest } from '@/api/generated/models/ApiArtworkDocumentationAssetLinkRequest';
 import { ApiArtworkDocumentationAssetResponse } from '@/api/generated/models/ApiArtworkDocumentationAssetResponse';
 import { ApiArtworkDocumentationAvailableArtistRecord } from '@/api/generated/models/ApiArtworkDocumentationAvailableArtistRecord';
@@ -240,6 +241,8 @@ import { ApiProposalFrameResponse } from '@/api/generated/models/ApiProposalFram
 import { ApiPublishProfileCmsPackageRequest } from '@/api/generated/models/ApiPublishProfileCmsPackageRequest';
 import { ApiRefreshPushInstallationBadgeRequest } from '@/api/generated/models/ApiRefreshPushInstallationBadgeRequest';
 import { ApiRefreshPushInstallationBadgeResponse } from '@/api/generated/models/ApiRefreshPushInstallationBadgeResponse';
+import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
+import { ApiRenameDeviceRequest } from '@/api/generated/models/ApiRenameDeviceRequest';
 import { ApiReviewProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiReviewProfileCmsAgentProposalRequest';
 import { ApiRevokePushInstallationRequest } from '@/api/generated/models/ApiRevokePushInstallationRequest';
 import { ApiRevokePushInstallationResponse } from '@/api/generated/models/ApiRevokePushInstallationResponse';
@@ -1443,6 +1446,36 @@ export type GetDeviceGrantsRequest = Request<
   Record<string, never>
 >;
 
+export type RegisterDeviceGrantPathParams = Record<string, never>;
+
+export type RegisterDeviceGrantQuery = Record<string, never>;
+
+export type RegisterDeviceGrantResponse = ApiDeviceGrant;
+
+export type RegisterDeviceGrantRequest = Request<
+  RegisterDeviceGrantPathParams,
+  ApiResponse<RegisterDeviceGrantResponse>,
+  ApiRegisterDeviceGrantRequest,
+  RegisterDeviceGrantQuery,
+  Record<string, never>
+>;
+
+export interface RenameDeviceGrantPathParams {
+  "grantId": string;
+}
+
+export type RenameDeviceGrantQuery = Record<string, never>;
+
+export type RenameDeviceGrantResponse = ApiDeviceGrant;
+
+export type RenameDeviceGrantRequest = Request<
+  RenameDeviceGrantPathParams,
+  ApiResponse<RenameDeviceGrantResponse>,
+  ApiRenameDeviceRequest,
+  RenameDeviceGrantQuery,
+  Record<string, never>
+>;
+
 export interface RevokeDeviceGrantPathParams {
   "grantId": string;
 }
@@ -2104,6 +2137,22 @@ export type E2eeUploadKeyPackagesRequest = Request<
   Record<string, never>
 >;
 
+export interface E2eeRenameDevicePathParams {
+  "device_key": string;
+}
+
+export type E2eeRenameDeviceQuery = Record<string, never>;
+
+export type E2eeRenameDeviceResponse = ApiE2eeDevice;
+
+export type E2eeRenameDeviceRequest = Request<
+  E2eeRenameDevicePathParams,
+  ApiResponse<E2eeRenameDeviceResponse>,
+  ApiRenameDeviceRequest,
+  E2eeRenameDeviceQuery,
+  Record<string, never>
+>;
+
 export interface E2eeRevokeDevicePathParams {
   "device_key": string;
 }
@@ -2420,6 +2469,54 @@ export type PreviewGroupMembersRequest = Request<
   ApiResponse<PreviewGroupMembersResponse>,
   ApiGroupMembersPreviewRequest,
   PreviewGroupMembersQuery,
+  Record<string, never>
+>;
+
+export interface DisableArtistArtworkAlertPathParams {
+  "id": string;
+}
+
+export type DisableArtistArtworkAlertQuery = Record<string, never>;
+
+export type DisableArtistArtworkAlertResponse = ApiArtistArtworkAlert;
+
+export type DisableArtistArtworkAlertRequest = Request<
+  DisableArtistArtworkAlertPathParams,
+  ApiResponse<DisableArtistArtworkAlertResponse>,
+  never,
+  DisableArtistArtworkAlertQuery,
+  Record<string, never>
+>;
+
+export interface GetArtistArtworkAlertPathParams {
+  "id": string;
+}
+
+export type GetArtistArtworkAlertQuery = Record<string, never>;
+
+export type GetArtistArtworkAlertResponse = ApiArtistArtworkAlert;
+
+export type GetArtistArtworkAlertRequest = Request<
+  GetArtistArtworkAlertPathParams,
+  ApiResponse<GetArtistArtworkAlertResponse>,
+  never,
+  GetArtistArtworkAlertQuery,
+  Record<string, never>
+>;
+
+export interface EnableArtistArtworkAlertPathParams {
+  "id": string;
+}
+
+export type EnableArtistArtworkAlertQuery = Record<string, never>;
+
+export type EnableArtistArtworkAlertResponse = ApiArtistArtworkAlert;
+
+export type EnableArtistArtworkAlertRequest = Request<
+  EnableArtistArtworkAlertPathParams,
+  ApiResponse<EnableArtistArtworkAlertResponse>,
+  never,
+  EnableArtistArtworkAlertQuery,
   Record<string, never>
 >;
 
@@ -4504,7 +4601,7 @@ export interface ListCompetitionLeaderboardV3PathParams {
 
 export interface ListCompetitionLeaderboardV3Query {
   "is_additional_action_promised"?: boolean;
-  "sort"?: "rating" | "real_time_rating" | "submitted_at" | "trend" | "price";
+  "sort"?: "rating" | "real_time_rating" | "decision_rating" | "submitted_at" | "trend" | "price";
   "price_currency"?: string;
   "min_price"?: number;
   "max_price"?: number;

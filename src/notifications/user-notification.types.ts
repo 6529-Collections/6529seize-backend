@@ -1,3 +1,4 @@
+import { ApiArtistArtworkNotificationContext } from '@/api/generated/models/ApiArtistArtworkNotificationContext';
 import { IdentityNotificationCause } from '../entities/IIdentityNotification';
 
 export interface IdentitySubscriptionNotificationData {
@@ -246,7 +247,25 @@ export interface VotingCreditsReturnedNotification extends UserNotificationBase 
   data: VotingCreditsReturnedNotificationData;
 }
 
+export interface EncryptedMessageNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.E2EE_MESSAGE;
+  data: {
+    encrypted_group: string;
+    encrypted_message_seq?: number;
+    sender_id?: string;
+  };
+}
+
+export type ArtistArtworkNotificationData = ApiArtistArtworkNotificationContext;
+
+export interface ArtistArtworkNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.ARTIST_ARTWORK_SUBMITTED;
+  data: ArtistArtworkNotificationData;
+}
+
 export type UserNotification =
+  | EncryptedMessageNotification
+  | ArtistArtworkNotification
   | VotingCreditsReturnedNotification
   | MemeCollaborationNotification
   | CompetitionLifecycleNotification
