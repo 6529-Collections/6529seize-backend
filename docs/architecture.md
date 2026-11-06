@@ -2747,3 +2747,16 @@ in `api`; no additional worker or schema deployment is required.
 The authenticated `GET /v2/waves/{waveId}/all-mention-count` API previews the current
 `@all` audience for creators and admins, reusing follower, visibility and notification
 write filters without inserting notifications. The frontend confirms before posting.
+
+## Competition lifecycle audit storage
+
+`competition_lifecycle_events` records competition lifecycle, previous lifecycle,
+actor and timestamp. Archive actions do not require or store a reason. Pause
+reasons remain separately in `competition_pauses` and public pause history.
+The explicit `dbMigrationsLoop` scope `competition-lifecycle-events` synchronizes
+only the lifecycle event entity. Before removing its obsolete reason column,
+deploy `waveDecisionExecutionLoop` and `api` so every writer omits the column;
+drain old invocations for 900 seconds after the worker update and 30 seconds after
+the API update, then synchronize that scope and deploy the frontend. The column's
+stored values are intentionally discarded; rolling back older writers requires
+recreating the nullable column first.

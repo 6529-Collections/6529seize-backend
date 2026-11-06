@@ -34,6 +34,7 @@ jest.mock('./wave-score-input-index-schema', () => ({
   applyWaveScoreInputIndexSchema: jest.fn().mockResolvedValue(1)
 }));
 import { getDataSource } from '@/db';
+import { CompetitionLifecycleEventEntity } from '@/entities/ICompetition';
 import { moderationRetentionSchemaDb } from './moderation-retention-schema.db';
 import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
@@ -221,6 +222,10 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       ]
     },
     { scope: 'claims-media-upload', entities: [MintingClaimEntity] },
+    {
+      scope: 'competition-lifecycle-events',
+      entities: [CompetitionLifecycleEventEntity]
+    },
     {
       scope: 'voting-credit-returns',
       entities: [VotingCreditReleaseEntity, VotingCreditReleaseRecipientEntity]

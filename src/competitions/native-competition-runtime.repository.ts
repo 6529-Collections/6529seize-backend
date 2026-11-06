@@ -736,8 +736,8 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       await this.query(
         'updateSchedule',
         `insert ignore into ${COMPETITION_LIFECYCLE_EVENTS_TABLE}
-       (id, competition_id, wave_id, previous_lifecycle, lifecycle, actor_id, reason, created_at)
-       select :id, id, wave_id, 'PUBLISHED', 'ENDED', null, 'SCHEDULE_COMPLETED', :now
+       (id, competition_id, wave_id, previous_lifecycle, lifecycle, actor_id, created_at)
+       select :id, id, wave_id, 'PUBLISHED', 'ENDED', null, :now
        from ${COMPETITIONS_TABLE} where id = :competitionId and lifecycle = 'PUBLISHED'`,
         {
           id: stableUuid(competitionId, 'lifecycle:scheduled-end'),
