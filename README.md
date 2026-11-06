@@ -95,6 +95,10 @@ The dashboard falls back to plain `gh run list` output in non-interactive shells
 See [Deployment](docs/deployment.md) for staging/production merges, service
 ordering, automatic frontend validation, and failure recovery.
 
+Drop Forge operators should start with the dedicated
+[launch automation setup guide](docs/drop-forge-auto-launch-setup.md) for
+environment configuration, KMS/IAM permissions, reporting and rollout.
+
 `ghdeploy` triggers the GitHub Actions deploy workflow for this repo.
 
 You can run it from anywhere inside this repository, but it only works in these locations:
@@ -491,5 +495,17 @@ Currently 6529.io uses an Admin Panel to manage:
 The admin panel repo is located [here](https://github.com/6529-Collections/6529seize-admin).
 
 \* Note: Please bear in mind that in the near future the admin panel will be deprecated and all functionality will be moved to the 6529SEIZE-BACKEND repo.
+
+### Internal Memes operations handlers
+
+`memesDistributionHandler` consumes queued Process and Finalize checkpoints.
+`dropForgeLaunchHandler` consumes Launch/Update Claim and per-drop scheduled work.
+Neither has an always-on recurring trigger. See the maintained
+[setup and rollout guide](docs/drop-forge-auto-launch-setup.md) before enabling them;
+it covers versioned IAM roles, queues, one-time schedules, secrets and recovery.
+Post-mint work includes a one-time 17:15 preview and fresh RPC/database agreement
+checks for 18:00 Research and optional Pay Artist. Deploy the transaction-indexing
+coverage prerequisite in the guide. All new posts use only the dedicated operations
+wave; existing mint-announcement waves are unchanged.
 
 Shared Memes calendar maintenance: [guide](docs/shared-memes-calendar.md).

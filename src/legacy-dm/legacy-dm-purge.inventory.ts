@@ -22,6 +22,8 @@ import {
   DROP_BOOKMARKS_TABLE,
   DROP_BOOSTS_TABLE,
   DROP_CURATIONS_TABLE,
+  DROP_FORGE_FUNDING_TABLE,
+  DROP_FORGE_JOBS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_MEDIA_UPLOADS_TABLE,
   DROP_MENTIONED_GROUPS_TABLE,
@@ -225,6 +227,10 @@ export const LEGACY_DM_KEPT_TABLES: Readonly<Record<string, string>> = {
     'Deleted by drop and by wave through push cancellation, not by a plain step',
   [PUSH_NOTIFICATION_CANCELLATIONS_TABLE]:
     'Receives the cancelled notification ids so queued pushes are dropped',
+  [DROP_FORGE_FUNDING_TABLE]:
+    'Operational-wallet funding receipts and report acknowledgements; no message content, retained to prevent duplicate processing',
+  [DROP_FORGE_JOBS_TABLE]:
+    'Distribution job checkpoints and report acknowledgements; no message content, retained to prevent duplicate processing',
   [ATTACHMENTS_TABLE]:
     'Deleted only when no remaining drop links the attachment (shared assets survive)',
   [DROPS_TABLE]: 'Deleted by id after every drop-owned row is gone',

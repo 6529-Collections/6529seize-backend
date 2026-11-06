@@ -1,3 +1,4 @@
+import { RequestContext } from '@/request.context';
 import { computeAllowlistMerkle } from '@/api/minting-claims/allowlist-merkle';
 import {
   DISTRIBUTION_AUTOMATIC_AIRDROP_PHASES,
@@ -117,8 +118,17 @@ export async function populateDistribution(
     airdrops: ResultsResponse[];
     airdrops_unconsolidated: ResultsResponse[];
     allowlists: ResultsResponse[];
-  }
+  },
+  ctx: RequestContext = {}
 ): Promise<void> {
+  if (!ctx.connection) {
+    return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      populateDistribution(contract, cardId, phase, splitResults, {
+        ...ctx,
+        connection
+      })
+    );
+  }
   const walletAirdropCountMap = new Map<string, number>();
   const walletAllowlistCountMap = new Map<string, number>();
   const allWallets = new Set<string>();
@@ -137,7 +147,7 @@ export async function populateDistribution(
     walletAllowlistCountMap.set(wallet, currentCount + allowlist.amount);
   }
 
-  const tdhWalletMap = await fetchWalletTdhData(Array.from(allWallets));
+  const tdhWalletMap = await fetchWalletTdhData(Array.from(allWallets), ctx);
 
   const distributionInserts: DistributionInsert[] = [];
 
@@ -165,52 +175,25 @@ export async function populateDistribution(
     });
   }
 
-  await insertDistributions(distributionInserts);
+  await insertDistributions(distributionInserts, ctx.connection);
 
   const allowlistEntries = splitResults.allowlists.map((a) => ({
     address: a.wallet,
     amount: a.amount
   }));
-  if (allowlistEntries.length === 0) {
-    await sqlExecutor.executeNativeQueriesInTransaction(
-      async (wrappedConnection) => {
-        await deleteMintingMerkleForPhase(
-          contract,
-          cardId,
-          phase,
-          wrappedConnection
-        );
-      }
-    );
-    return;
-  }
-
+  await deleteMintingMerkleForPhase(contract, cardId, phase, ctx.connection);
+  if (!allowlistEntries.length) return;
   const { merkleRoot, proofsByAddress } =
     computeAllowlistMerkle(allowlistEntries);
   if (!merkleRoot) return;
-
-  await sqlExecutor.executeNativeQueriesInTransaction(
-    async (wrappedConnection) => {
-      await deleteMintingMerkleForPhase(
-        contract,
-        cardId,
-        phase,
-        wrappedConnection
-      );
-      await insertMintingMerkleRoot(
-        contract,
-        cardId,
-        phase,
-        merkleRoot,
-        wrappedConnection
-      );
-      await insertMintingMerkleProofs(
-        merkleRoot,
-        proofsByAddress,
-        wrappedConnection
-      );
-    }
+  await insertMintingMerkleRoot(
+    contract,
+    cardId,
+    phase,
+    merkleRoot,
+    ctx.connection
   );
+  await insertMintingMerkleProofs(merkleRoot, proofsByAddress, ctx.connection);
 }
 
 export async function insertAutomaticAirdrops(
@@ -327,31 +310,27 @@ export async function upsertAutomaticAirdropsForPhase(
 
 export async function populateDistributionNormalized(
   contract: string,
-  cardId: number
+  cardId: number,
+  ctx: RequestContext = {}
 ): Promise<void> {
+  if (!ctx.connection) {
+    return sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+      populateDistributionNormalized(contract, cardId, { ...ctx, connection })
+    );
+  }
   const distributions: Distribution[] = await sqlExecutor.execute(
     `SELECT * FROM ${DISTRIBUTION_TABLE} WHERE card_id = :cardId AND contract = :contract`,
     {
       cardId,
       contract: contract.toLowerCase()
-    }
+    },
+    { wrappedConnection: ctx.connection }
   );
 
   if (distributions.length === 0) {
     throw new BadRequestException(
       `No distributions found for ${contract}#${cardId}`
     );
-  }
-
-  if (distributions.length === 0) {
-    await sqlExecutor.execute(
-      `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE card_id = :cardId AND contract = :contract`,
-      {
-        cardId,
-        contract: contract.toLowerCase()
-      }
-    );
-    return;
   }
 
   const uniqueWallets = Array.from(
@@ -362,7 +341,8 @@ export async function populateDistributionNormalized(
     `SELECT wallet, display FROM ${ENS_TABLE} WHERE LOWER(wallet) IN (:wallets)`,
     {
       wallets: uniqueWallets
-    }
+    },
+    { wrappedConnection: ctx.connection }
   );
 
   const ensMap = new Map<string, string>();
@@ -380,7 +360,8 @@ export async function populateDistributionNormalized(
     {
       cardId,
       contract: contract.toLowerCase()
-    }
+    },
+    { wrappedConnection: ctx.connection }
   );
 
   const nft = nftResults[0] || null;
@@ -456,53 +437,34 @@ export async function populateDistributionNormalized(
     cardId
   );
 
-  await sqlExecutor.executeNativeQueriesInTransaction(
-    async (wrappedConnection) => {
-      await sqlExecutor.execute(
-        `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE card_id = :cardId AND contract = :contract`,
-        {
-          cardId,
-          contract: contract.toLowerCase()
-        },
-        { wrappedConnection }
-      );
-
-      if (distributionsNormalized.size > 0) {
-        const normalizedArray = Array.from(distributionsNormalized.values());
-        const params: Record<string, any> = {};
-        const placeholders = normalizedArray
-          .map(
-            (_, index) =>
-              `(:card_id_${index}, :contract_${index}, :wallet_${index}, :wallet_display_${index}, :card_name_${index}, :mint_date_${index}, :airdrops_${index}, :total_spots_${index}, :total_count_${index}, :minted_${index}, :allowlist_${index}, :phases_${index})`
-          )
-          .join(', ');
-
-        normalizedArray.forEach((dn, index) => {
-          params[`card_id_${index}`] = dn.card_id;
-          params[`contract_${index}`] = dn.contract;
-          params[`wallet_${index}`] = dn.wallet;
-          params[`wallet_display_${index}`] = dn.wallet_display;
-          params[`card_name_${index}`] = dn.card_name;
-          params[`mint_date_${index}`] = dn.mint_date;
-          params[`airdrops_${index}`] = dn.airdrops;
-          params[`total_spots_${index}`] = dn.total_spots;
-          params[`total_count_${index}`] = dn.total_count;
-          params[`minted_${index}`] = dn.minted;
-          params[`allowlist_${index}`] = JSON.stringify(dn.allowlist);
-          params[`phases_${index}`] = JSON.stringify(dn.phases);
-        });
-
-        const insertSql = `
-          INSERT INTO ${DISTRIBUTION_NORMALIZED_TABLE} 
-            (card_id, contract, wallet, wallet_display, card_name, mint_date, airdrops, total_spots, total_count, minted, allowlist, phases)
-          VALUES
-            ${placeholders}
-        `;
-
-        await sqlExecutor.execute(insertSql, params, {
-          wrappedConnection
-        });
-      }
-    }
+  await sqlExecutor.execute(
+    `DELETE FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE card_id = :cardId AND contract = :contract`,
+    { cardId, contract: contract.toLowerCase() },
+    { wrappedConnection: ctx.connection }
+  );
+  const rows = Array.from(distributionsNormalized.values()).map((row) => ({
+    ...row,
+    allowlist: JSON.stringify(row.allowlist),
+    phases: JSON.stringify(row.phases)
+  }));
+  await sqlExecutor.bulkInsert(
+    DISTRIBUTION_NORMALIZED_TABLE,
+    rows,
+    [
+      'card_id',
+      'contract',
+      'wallet',
+      'wallet_display',
+      'card_name',
+      'mint_date',
+      'airdrops',
+      'total_spots',
+      'total_count',
+      'minted',
+      'allowlist',
+      'phases'
+    ],
+    ctx,
+    { chunkSize: 500 }
   );
 }

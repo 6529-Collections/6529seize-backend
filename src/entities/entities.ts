@@ -289,6 +289,10 @@ export * from './ICompetitionEntryContentVersion';
 export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
+
+export * from './IDropForgeLaunch';
+export * from './IDropForgeEvidence';
+export * from './IDropForgeSettings';
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
 export { DropAuthorSignatureEntity } from './IDropAuthorSignature';
@@ -302,6 +306,7 @@ export { TransferReconciliationEntity } from './ITransferReconciliation';
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';
 
 export * from './IVotingCreditRelease';
+export * from './ITransactionScanCheckpoint';
 export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
 
 export { ArtistArtworkAlertEntity } from './IArtistArtworkAlert';

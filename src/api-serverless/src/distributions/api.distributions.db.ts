@@ -1,3 +1,4 @@
+import { RequestContext } from '@/request.context';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   DISTRIBUTION_NORMALIZED_TABLE,
@@ -340,8 +341,10 @@ function safeParseJson<T>(jsonString: string): T | null {
 }
 
 export async function fetchWalletTdhData(
-  wallets: string[]
+  wallets: string[],
+  ctx: RequestContext = {}
 ): Promise<Map<string, WalletTdhData>> {
+  if (!wallets.length) return new Map();
   const tdhResult: {
     wallets: string;
     boosted_tdh: number;
@@ -349,7 +352,9 @@ export async function fetchWalletTdhData(
     unique_memes: number;
     gradients_balance: number;
   }[] = await sqlExecutor.execute(
-    `SELECT wallets, boosted_tdh, memes_balance, unique_memes, gradients_balance FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}`
+    `SELECT wallets, boosted_tdh, memes_balance, unique_memes, gradients_balance FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE JSON_OVERLAPS(wallets, :wallets)`,
+    { wallets: JSON.stringify(wallets.map((wallet) => wallet.toLowerCase())) },
+    { wrappedConnection: ctx.connection }
   );
 
   const tdhWalletMap = new Map<string, WalletTdhData>();
@@ -406,12 +411,35 @@ export async function deleteAirdropDistributions(
   );
 }
 
+async function insertDistributionBatches(
+  distributions: DistributionInsert[],
+  wrappedConnection: RequestContext['connection'],
+  offset = 0
+): Promise<void> {
+  if (offset >= distributions.length) return;
+  await insertDistributions(
+    distributions.slice(offset, offset + 500),
+    wrappedConnection
+  );
+  return insertDistributionBatches(
+    distributions,
+    wrappedConnection,
+    offset + 500
+  );
+}
+
 export async function insertDistributions(
   distributions: DistributionInsert[],
   wrappedConnection?: any
 ): Promise<void> {
   if (distributions.length === 0) {
     return;
+  }
+
+  if (distributions.length > 500) {
+    // Keep batches sequential on the shared transaction connection and bound
+    // each statement's parameters rather than queueing concurrent SQL writes.
+    return insertDistributionBatches(distributions, wrappedConnection);
   }
 
   const params: Record<string, any> = {};

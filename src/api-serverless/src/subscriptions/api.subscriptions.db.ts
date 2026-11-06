@@ -1,3 +1,4 @@
+import { RequestContext } from '@/request.context';
 import { PaginatedResponse } from '@/api/api-constants';
 import { constructFilters } from '@/api/api-helpers';
 import {
@@ -701,7 +702,8 @@ export async function fetchFinalSubscriptionsByPhase(
 
 export async function fetchAllNftFinalSubscriptionsForContractAndToken(
   contract: string,
-  token_id: number
+  token_id: number,
+  ctx: RequestContext = {}
 ): Promise<NFTFinalSubscription[]> {
   return sqlExecutor.execute(
     `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
@@ -709,13 +711,15 @@ export async function fetchAllNftFinalSubscriptionsForContractAndToken(
       contract = :contract 
       AND token_id = :token_id
     ORDER BY subscribed_at ASC`,
-    { contract, token_id }
+    { contract, token_id },
+    { wrappedConnection: ctx.connection }
   );
 }
 
 export async function fetchAllPublicFinalSubscriptionsForContractAndToken(
   contract: string,
-  token_id: number
+  token_id: number,
+  ctx: RequestContext = {}
 ): Promise<NFTFinalSubscription[]> {
   return sqlExecutor.execute(
     `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
@@ -724,7 +728,8 @@ export async function fetchAllPublicFinalSubscriptionsForContractAndToken(
       AND token_id = :token_id
       AND phase IS NULL
     ORDER BY subscribed_at ASC`,
-    { contract, token_id }
+    { contract, token_id },
+    { wrappedConnection: ctx.connection }
   );
 }
 

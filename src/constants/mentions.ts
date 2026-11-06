@@ -1,2 +1,5 @@
 export const DEVS_6529_MENTION_TOKEN = 'devs6529';
 export const DEVS_6529_MENTION = `@${DEVS_6529_MENTION_TOKEN}`;
+
+export const DROPS_6529_MENTION_TOKEN = 'drops6529';
+export const DROPS_6529_MENTION = `@${DROPS_6529_MENTION_TOKEN}`;
