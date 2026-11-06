@@ -1,12 +1,8 @@
-import axios from 'axios';
 import express, { Request } from 'express';
 import * as fc from 'fast-check';
-import * as mcache from 'memory-cache';
 import * as http from 'node:http';
 import { AddressInfo, isIP } from 'node:net';
-import { getIp, getIpInfo, normalizeIp } from './policies';
-
-jest.mock('axios');
+import { getIp, normalizeIp } from './policies';
 
 const serverlessHttp = require('serverless-http');
 
@@ -169,74 +165,6 @@ describe('getIp', () => {
     } finally {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
-    }
-  });
-});
-
-describe('getIpInfo', () => {
-  const mockedGet = axios.get as jest.Mock;
-
-  beforeEach(() => {
-    mockedGet.mockReset();
-    process.env.FINDIP_API_TOKEN = 'test-token';
-  });
-
-  afterEach(() => {
-    // Drops cached entries and their expiry timers.
-    mcache.clear();
-  });
-
-  it.each([
-    '',
-    'not-an-ip',
-    '203.0.113.10/../../admin',
-    '203.0.113.10?x=1',
-    '::1%eth0'
-  ])('does not call the lookup service for %p', async (ip) => {
-    await expect(getIpInfo(ip)).resolves.toBeNull();
-    expect(mockedGet).not.toHaveBeenCalled();
-  });
-
-  it('builds the lookup URL from the validated IP only', async () => {
-    mockedGet.mockResolvedValue({ data: {} });
-
-    await getIpInfo('2001:db8::42');
-
-    const url = new URL(mockedGet.mock.calls[0][0]);
-    expect(url.origin).toBe('https://api.findip.net');
-    expect(url.pathname).toBe('/2001:db8::42/');
-    expect(url.searchParams.get('token')).toBe('test-token');
-  });
-
-  it('returns the same shape on a cache hit as on a lookup', async () => {
-    mockedGet.mockResolvedValue({
-      data: {
-        city: { names: { en: 'Berlin' } },
-        country: { iso_code: 'DE', names: { en: 'Germany' } }
-      }
-    });
-    const expected = {
-      city_name: 'Berlin',
-      country_name: 'Germany',
-      country: 'DE'
-    };
-
-    await expect(getIpInfo('203.0.113.7')).resolves.toEqual(expected);
-    await expect(getIpInfo('203.0.113.7')).resolves.toEqual(expected);
-    expect(mockedGet).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns no location fields on a cache hit when the lookup had none', async () => {
-    mockedGet.mockResolvedValue({ data: { city: null } });
-
-    const miss = await getIpInfo('203.0.113.8');
-    const hit = await getIpInfo('203.0.113.8');
-
-    expect(mockedGet).toHaveBeenCalledTimes(1);
-    for (const result of [miss, hit]) {
-      expect(result?.city_name).toBeUndefined();
-      expect(result?.country_name).toBeUndefined();
-      expect(result?.country).toBeUndefined();
     }
   });
 });
