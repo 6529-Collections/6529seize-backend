@@ -6,6 +6,18 @@ import { ForbiddenException, NotFoundException } from '@/exceptions';
 
 const mockReadDiagnostics = jest.fn();
 const mockListDiagnostics = jest.fn();
+const mockAssertReader = jest.fn();
+const mockLogLines: string[] = [];
+
+jest.mock('@/logging', () => ({
+  Logger: {
+    get: () => {
+      const record = (...args: unknown[]) =>
+        mockLogLines.push(args.map((a) => String(a)).join(' '));
+      return { info: record, warn: record, error: record, debug: record };
+    }
+  }
+}));
 
 jest.mock('@/api/telemetry/telemetry-diagnostics', () => ({
   readDiagnostics: (...args: unknown[]) => mockReadDiagnostics(...args)
@@ -15,12 +27,14 @@ jest.mock('@/api/telemetry/telemetry-diagnostics.db', () => ({
   listDiagnostics: (...args: unknown[]) => mockListDiagnostics(...args)
 }));
 
-const TEAM_WALLET = '0x00000000000000000000000000000000000000aa';
-const OTHER_WALLET = '0x00000000000000000000000000000000000000bb';
+jest.mock('@/api/telemetry/telemetry-team-auth', () => ({
+  assertTelemetryTeamReader: (...args: unknown[]) => mockAssertReader(...args)
+}));
 
-function request(wallet: string | null, extra: Record<string, unknown> = {}) {
+const READER = 'profile-reader';
+
+function request(extra: Record<string, unknown> = {}) {
   return {
-    user: wallet ? { wallet } : undefined,
     query: {},
     params: {},
     res: { setHeader: jest.fn() },
@@ -30,45 +44,36 @@ function request(wallet: string | null, extra: Record<string, unknown> = {}) {
 
 describe('team-only diagnostics reads', () => {
   beforeEach(() => {
-    process.env.TELEMETRY_TEAM_WALLETS = `${TEAM_WALLET.toUpperCase().replace('0X', '0x')}, 0x1`;
     mockReadDiagnostics.mockReset();
     mockListDiagnostics.mockReset();
+    mockAssertReader.mockReset().mockResolvedValue(READER);
+    mockLogLines.length = 0;
   });
 
-  afterAll(() => {
-    delete process.env.TELEMETRY_TEAM_WALLETS;
-  });
-
-  it('refuses wallets outside the team list', async () => {
+  it('refuses callers the reader check rejects, before touching any bundle', async () => {
+    mockAssertReader.mockRejectedValue(new ForbiddenException('no'));
     await expect(
       handleGetTelemetryDiagnosticsBundle(
-        request(OTHER_WALLET, { params: { code: 'D-7K3Q-9XW2' } })
+        request({ params: { code: 'D-7K3Q-9XW2' } })
       )
     ).rejects.toBeInstanceOf(ForbiddenException);
     await expect(
-      handleListTelemetryDiagnostics(request(null))
+      handleListTelemetryDiagnostics(request())
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(mockReadDiagnostics).not.toHaveBeenCalled();
     expect(mockListDiagnostics).not.toHaveBeenCalled();
   });
 
-  it('refuses everyone when no team list is configured', async () => {
-    delete process.env.TELEMETRY_TEAM_WALLETS;
-    await expect(
-      handleListTelemetryDiagnostics(request(TEAM_WALLET))
-    ).rejects.toBeInstanceOf(ForbiddenException);
-  });
-
-  it('returns a bundle to a team wallet with private cache headers', async () => {
+  it('returns a bundle to a reader and audits only profile id and code', async () => {
     mockReadDiagnostics.mockResolvedValue({
       code: 'D-7K3Q-9XW2',
       created_at: new Date('2026-11-06T10:00:00Z'),
       expires_at: new Date('2026-11-20T10:00:00Z'),
       compressed_bytes: 100,
       uncompressed_bytes: 400,
-      bundle: { v: 1 }
+      bundle: { v: 1, secretish: 'bundle-content-probe' }
     });
-    const req = request(TEAM_WALLET, { params: { code: 'd-7k3q-9xw2' } });
+    const req = request({ params: { code: 'd-7k3q-9xw2' } });
     const result = await handleGetTelemetryDiagnosticsBundle(req);
     expect(mockReadDiagnostics).toHaveBeenCalledWith(
       'D-7K3Q-9XW2',
@@ -80,29 +85,31 @@ describe('team-only diagnostics reads', () => {
       expires_at: new Date('2026-11-20T10:00:00.000Z'),
       compressed_bytes: 100,
       uncompressed_bytes: 400,
-      bundle: { v: 1 }
+      bundle: { v: 1, secretish: 'bundle-content-probe' }
     });
     expect(req.res.setHeader).toHaveBeenCalledWith(
       'Cache-Control',
       'private, no-store'
     );
+    expect(mockLogLines).toEqual([
+      'Diagnostics bundle read: code=D-7K3Q-9XW2 reader_profile_id=profile-reader'
+    ]);
   });
 
   it('answers 404 for unknown, malformed or expired codes', async () => {
     mockReadDiagnostics.mockResolvedValue(null);
     await expect(
       handleGetTelemetryDiagnosticsBundle(
-        request(TEAM_WALLET, { params: { code: 'D-0000-0000' } })
+        request({ params: { code: 'D-0000-0000' } })
       )
     ).rejects.toBeInstanceOf(NotFoundException);
     await expect(
-      handleGetTelemetryDiagnosticsBundle(
-        request(TEAM_WALLET, { params: { code: 'nope' } })
-      )
+      handleGetTelemetryDiagnosticsBundle(request({ params: { code: 'nope' } }))
     ).rejects.toBeInstanceOf(NotFoundException);
+    expect(mockLogLines).toEqual([]);
   });
 
-  it('lists unexpired bundles for the team', async () => {
+  it('lists unexpired bundles for a reader', async () => {
     mockListDiagnostics.mockResolvedValue([
       {
         code: 'D-7K3Q-9XW2',
@@ -113,7 +120,7 @@ describe('team-only diagnostics reads', () => {
       }
     ]);
     const result = await handleListTelemetryDiagnostics(
-      request(TEAM_WALLET, { query: { limit: '10' } })
+      request({ query: { limit: '10' } })
     );
     expect(mockListDiagnostics).toHaveBeenCalledWith(expect.any(Date), 10);
     expect(result.data).toHaveLength(1);

@@ -19204,6 +19204,10 @@ paths:
       tags:
         - Telemetry
       summary: List stored diagnostics bundles (team only)
+      description: >-
+        Readers are profiles that can currently write in the wave configured as
+        TELEMETRY_DIAG_READER_WAVE_ID (the dev-team chat), checked live on every
+        request.
       operationId: listTelemetryDiagnostics
       security:
         - bearerAuth: []
@@ -19233,12 +19237,15 @@ paths:
         "401":
           description: Authentication required
         "403":
-          description: Not a team wallet
+          description: Not a current writer in the team reader wave
   /telemetry/diagnostics/{code}:
     get:
       tags:
         - Telemetry
       summary: Read one diagnostics bundle (team only)
+      description: >-
+        Same reader rule as the list. Each read is logged with the reader's
+        profile id and the bundle code only.
       operationId: getTelemetryDiagnosticsBundle
       security:
         - bearerAuth: []
@@ -19266,7 +19273,7 @@ paths:
         "401":
           description: Authentication required
         "403":
-          description: Not a team wallet
+          description: Not a current writer in the team reader wave
         "404":
           description: Unknown or expired code
   /transactions:

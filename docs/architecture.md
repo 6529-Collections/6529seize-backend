@@ -1202,8 +1202,10 @@ activity).
 `POST /api/e/diag` (`6529.io/e/diag`) stores a user-sent diagnostics bundle in
 `telemetry_diagnostics`: gzip, AES-256-GCM under `TELEMETRY_DIAG_KEY` with the
 short code as associated data, no sender data, hard-deleted 14 days after upload
-(by uploads and the daily job). Team wallets listed in `TELEMETRY_TEAM_WALLETS`
-read bundles through `GET /api/telemetry/diagnostics[/{code}]`.
+(by uploads and the daily job). Bundles are read through
+`GET /api/telemetry/diagnostics[/{code}]` by profiles that can currently write
+in the wave set as `TELEMETRY_DIAG_READER_WAVE_ID` (the dev-team chat), checked
+live against that wave's chat group on every request; unset means nobody.
 
 `GET /tdh/rules` publishes current TDH boost definitions evaluated against the
 latest completed snapshot's eligible Meme card range. The latest row in

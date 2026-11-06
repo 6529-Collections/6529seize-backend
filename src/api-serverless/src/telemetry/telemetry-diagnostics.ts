@@ -34,8 +34,20 @@ export class DiagnosticsInputError extends Error {
     message: string
   ) {
     super(message);
+    // Keeps instanceof working when compiled to ES5.
+    Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'DiagnosticsInputError';
   }
+}
+
+function isOutputLimitError(error: unknown): boolean {
+  // zlib reports maxOutputLength as ERR_BUFFER_TOO_LARGE (a RangeError).
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    ((error as { code?: unknown }).code === 'ERR_BUFFER_TOO_LARGE' ||
+      (error as { name?: unknown }).name === 'RangeError')
+  );
 }
 
 interface DecodedBundle {
@@ -66,7 +78,7 @@ function inflate(compressed: Buffer): Buffer {
       maxOutputLength: DIAG_MAX_UNCOMPRESSED_BYTES
     });
   } catch (error) {
-    if (error instanceof RangeError) {
+    if (isOutputLimitError(error)) {
       throw new DiagnosticsInputError(413, 'bundle too large');
     }
     throw new DiagnosticsInputError(400, 'data is not gzip');
