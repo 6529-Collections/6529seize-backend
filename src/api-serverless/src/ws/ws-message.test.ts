@@ -5,6 +5,7 @@ import {
   dropUpdateRefMessage,
   identityNotificationsChangedMessage,
   notificationIdentitiesSyncedMessage,
+  DELIVERY_TIMESTAMPS_RESERVED_BYTES,
   withDeliveryTimestamps,
   WsMessageType
 } from './ws-message';
@@ -118,6 +119,26 @@ describe('ws-message', () => {
         data: {},
         sent_at: 5
       });
+    });
+
+    it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+      'never writes a non-finite send time (%p)',
+      (sentAt) => {
+        const message = '{"type":"DROP_DELETE","data":{}}';
+        expect(
+          withDeliveryTimestamps(message, { serverReceivedAt: 1, sentAt })
+        ).toBe(message);
+      }
+    );
+
+    it('fits the longest stamp inside the reserved bytes', () => {
+      const stamped = withDeliveryTimestamps('{"a":1}', {
+        serverReceivedAt: 9_999_999_999_999,
+        sentAt: 9_999_999_999_999
+      });
+      expect(Buffer.byteLength(stamped) - '{"a":1}'.length).toBeLessThanOrEqual(
+        DELIVERY_TIMESTAMPS_RESERVED_BYTES
+      );
     });
 
     it.each(['{}', '[]', 'not json', ''])('leaves %p unchanged', (message) => {

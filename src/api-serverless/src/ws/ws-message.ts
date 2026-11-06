@@ -63,6 +63,13 @@ export const DROP_UPDATE_MAX_UTF8_BYTES = 28 * 1024;
  *
  * Appending to the serialized text keeps the payload serialized once.
  */
+/**
+ * Bytes reserved for the timing fields when a frame's size is checked against
+ * DROP_UPDATE_MAX_UTF8_BYTES, so a stamped frame stays within the ceiling.
+ * The longest form is `,"server_received_at":<13 digits>,"sent_at":<13 digits>`.
+ */
+export const DELIVERY_TIMESTAMPS_RESERVED_BYTES = 64;
+
 export function withDeliveryTimestamps(
   message: string,
   {
@@ -70,7 +77,12 @@ export function withDeliveryTimestamps(
     sentAt
   }: { serverReceivedAt: number | null; sentAt: number }
 ): string {
-  if (!message.startsWith('{') || !message.endsWith('}') || message === '{}') {
+  if (
+    !message.startsWith('{') ||
+    !message.endsWith('}') ||
+    message === '{}' ||
+    !Number.isFinite(sentAt)
+  ) {
     return message;
   }
   const received =

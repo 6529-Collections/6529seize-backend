@@ -10,8 +10,10 @@ import {
   WsListenersNotifier
 } from '@/api/ws/ws-listeners-notifier';
 import {
+  DELIVERY_TIMESTAMPS_RESERVED_BYTES,
   DROP_UPDATE_MAX_UTF8_BYTES,
   DropUpdateRefType,
+  withDeliveryTimestamps,
   WsMessageType
 } from '@/api/ws/ws-message';
 import { Logger } from '@/logging';
@@ -271,6 +273,22 @@ describe('WsListenersNotifier', () => {
 
     expect(appWebSockets.send).toHaveBeenCalledTimes(220);
     expect(maximumActiveSends).toBe(100);
+  });
+
+  it('keeps stamped full frames within the application ceiling', () => {
+    const contentLength = findMaximumSafeAsciiContentLength(0);
+    const message = serializeDropUpdateForRecipient(
+      createDrop('a'.repeat(contentLength)),
+      0
+    );
+    expect(JSON.parse(message).type).toBe(WsMessageType.DROP_UPDATE);
+    const stamped = withDeliveryTimestamps(message, {
+      serverReceivedAt: 9_999_999_999_999,
+      sentAt: 9_999_999_999_999
+    });
+    expect(Buffer.byteLength(stamped, 'utf8')).toBeLessThanOrEqual(
+      DROP_UPDATE_MAX_UTF8_BYTES
+    );
   });
 
   describe('delivery measurement (1.0)', () => {
@@ -686,9 +704,11 @@ describe('WsListenersNotifier', () => {
         updateType
       );
 
-      expect(Buffer.byteLength(safeMessage, 'utf8')).toBe(
-        DROP_UPDATE_MAX_UTF8_BYTES
-      );
+      // The ceiling applies to the frame as sent, timing fields included.
+      expect(
+        Buffer.byteLength(safeMessage, 'utf8') +
+          DELIVERY_TIMESTAMPS_RESERVED_BYTES
+      ).toBe(DROP_UPDATE_MAX_UTF8_BYTES);
       expect(JSON.parse(safeMessage).type).toBe(updateType);
       expect(JSON.parse(oversizedMessage)).toEqual({
         type: WsMessageType.DROP_UPDATE_REF,

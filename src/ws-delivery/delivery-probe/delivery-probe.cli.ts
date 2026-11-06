@@ -62,9 +62,12 @@ export function parseProbeArgs(
   const listenerMode = (values['listener-mode'] ?? 'app') as ListenerMode;
   if (listenerMode !== 'app' && listenerMode !== 'open-wave')
     throw new Error('--listener-mode must be app or open-wave');
+  const wsUrl = values.ws ?? deriveSocketUrl(apiBase);
+  if (!wsUrl?.startsWith('wss://') && !wsUrl?.startsWith('ws://'))
+    throw new Error('--ws must be a ws(s) URL');
   return {
     apiBase,
-    wsUrl: values.ws ?? apiBase.replace(/^http(s?):\/\/api/, 'ws$1://ws'),
+    wsUrl,
     waveId,
     count: integer('count', 100, 1, 1000),
     intervalMs: integer('interval-ms', 1000, 0, 60_000),
@@ -77,6 +80,14 @@ export function parseProbeArgs(
     stagingAuth: env.PROBE_STAGING_AUTH || undefined,
     json
   };
+}
+
+/** Mirrors the frontend: https://api.<host> serves sockets at wss://ws.<host>. */
+function deriveSocketUrl(apiBase: string): string {
+  const derived = apiBase.replace(/^http(s?):\/\/api\./, 'ws$1://ws.');
+  if (derived === apiBase)
+    throw new Error('--ws is required when --api is not an api.<host> URL');
+  return derived;
 }
 
 function formatDistribution(name: string, value: Distribution): string {

@@ -13,6 +13,7 @@ import {
   dropUpdateMessage,
   dmUnreadStateChangedMessage,
   dropUpdateRefMessage,
+  DELIVERY_TIMESTAMPS_RESERVED_BYTES,
   DROP_UPDATE_MAX_UTF8_BYTES,
   DropUpdateRefType,
   WsMessageType,
@@ -318,7 +319,11 @@ export function serializeDropMessageForRecipient(
     fullMessage = JSON.stringify(dropReactionUpdateMessage(recipientDrop));
   }
 
-  if (Buffer.byteLength(fullMessage, 'utf8') <= DROP_UPDATE_MAX_UTF8_BYTES) {
+  if (
+    Buffer.byteLength(fullMessage, 'utf8') +
+      DELIVERY_TIMESTAMPS_RESERVED_BYTES <=
+    DROP_UPDATE_MAX_UTF8_BYTES
+  ) {
     return fullMessage;
   }
 
@@ -872,6 +877,7 @@ export class WsListenersNotifier {
     if (!dropInfos.length) {
       return;
     }
+    const firstDrop = dropInfos[0];
     const timerName = `${this.constructor.name}->notifyAboutDropDeletes`;
     ctx.timer?.start(timerName);
     const serverReceivedAt = serverReceivedAtFromTimer(ctx.timer);
@@ -884,7 +890,7 @@ export class WsListenersNotifier {
         await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
           {
             groupId: visibility_group_id,
-            waveId: dropInfos[0]!.wave_id
+            waveId: firstDrop.wave_id
           },
           ctx
         );
@@ -927,8 +933,8 @@ export class WsListenersNotifier {
     } finally {
       ctx.timer?.stop(timerName);
       measurement.emit({
-        drop_id: dropInfos.length === 1 ? dropInfos[0]!.drop_id : null,
-        wave_id: dropInfos[0]!.wave_id
+        drop_id: dropInfos.length === 1 ? firstDrop.drop_id : null,
+        wave_id: firstDrop.wave_id
       });
     }
   }

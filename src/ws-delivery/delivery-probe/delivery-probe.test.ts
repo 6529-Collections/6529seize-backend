@@ -290,10 +290,22 @@ describe('delivery probe arguments', () => {
       parseProbeArgs(['--api', 'https://a', '--wave', 'w'], {})
     ).toThrow('PROBE_POSTER_JWT');
     expect(() =>
-      parseProbeArgs(['--api', 'https://a', '--wave', 'w', '--count', '0'], {
+      parseProbeArgs(
+        ['--api', 'https://api.a', '--wave', 'w', '--count', '0'],
+        { PROBE_POSTER_JWT: 'p' }
+      )
+    ).toThrow('--count');
+    expect(() =>
+      parseProbeArgs(['--api', 'https://example.test', '--wave', 'w'], {
         PROBE_POSTER_JWT: 'p'
       })
-    ).toThrow('--count');
+    ).toThrow('--ws is required');
+    expect(() =>
+      parseProbeArgs(
+        ['--api', 'https://example.test', '--wave', 'w', '--ws', 'https://x'],
+        { PROBE_POSTER_JWT: 'p' }
+      )
+    ).toThrow('--ws must be a ws(s) URL');
     expect(() =>
       parseProbeArgs(['--api', 'ftp://a', '--wave', 'w'], {
         PROBE_POSTER_JWT: 'p'
