@@ -10,9 +10,18 @@ import {
   TELEMETRY_PAGE_ROUTE_ROOTS
 } from '@/api/telemetry/telemetry.schema';
 
-const STATIC_SEGMENT = /^[a-z0-9][a-z0-9_-]{0,39}$/;
-const PLACEHOLDER_SEGMENT =
-  /^(?:\[(?:\.\.\.)?[A-Za-z]\w{0,23}\]|\[\[\.\.\.[A-Za-z]\w{0,23}\]\]|:[A-Za-z]\w{0,23})$/;
+const STATIC_SEGMENT_SOURCE = '[a-z0-9][a-z0-9_-]{0,39}';
+const PLACEHOLDER_SEGMENT_SOURCE =
+  '\\[(?:\\.\\.\\.)?[A-Za-z]\\w{0,23}\\]|\\[\\[\\.\\.\\.[A-Za-z]\\w{0,23}\\]\\]|:[A-Za-z]\\w{0,23}';
+const STATIC_SEGMENT = new RegExp(`^${STATIC_SEGMENT_SOURCE}$`);
+const PLACEHOLDER_SEGMENT = new RegExp(`^(?:${PLACEHOLDER_SEGMENT_SOURCE})$`);
+const SEGMENT_SOURCE = `(?:${STATIC_SEGMENT_SOURCE}|${PLACEHOLDER_SEGMENT_SOURCE})`;
+
+/** Shape of a route template, published in the JSON Schema for clients. */
+export const ROUTE_TEMPLATE_PATTERN_SOURCE = `^/(?:${SEGMENT_SOURCE}(?:/${SEGMENT_SOURCE}){0,7})?$`;
+/** Shape of a referrer hostname, published in the JSON Schema for clients. */
+export const HOSTNAME_PATTERN_SOURCE =
+  '^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$';
 // Segments that look like identifiers are never kept as static text.
 const ID_LIKE_SEGMENTS = [
   /^0x/,

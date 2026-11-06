@@ -20,6 +20,10 @@ import {
   TELEMETRY_TIME_VITALS,
   TelemetryProductEventSpec
 } from '@/api/telemetry/telemetry.schema';
+import {
+  HOSTNAME_PATTERN_SOURCE,
+  ROUTE_TEMPLATE_PATTERN_SOURCE
+} from '@/api/telemetry/telemetry-routes';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -36,6 +40,7 @@ const ms: JsonSchema = {
 const routeTemplate: JsonSchema = {
   type: 'string',
   maxLength: TELEMETRY_MAX_ROUTE_LENGTH,
+  pattern: ROUTE_TEMPLATE_PATTERN_SOURCE,
   description:
     'Route template such as `/waves/[wave]` or `/[user]/collected`. Static segments are lowercase; ids and names must be placeholders (`[name]`, `[...name]`, `[[...name]]` or `:name`). Unknown first segments and id-looking segments are recorded as `/[other]`.'
 };
@@ -141,6 +146,7 @@ export function buildTelemetryJsonSchema(): JsonSchema {
           referrer_domain: {
             type: 'string',
             maxLength: TELEMETRY_MAX_REFERRER_LENGTH,
+            pattern: HOSTNAME_PATTERN_SOURCE,
             description:
               'External hostname only, sent only when prev_route is `entry`.'
           },

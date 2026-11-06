@@ -5,6 +5,7 @@ import {
   DAILY_HOUR
 } from '@/api/telemetry/telemetry-aggregation';
 import { sanitizeTelemetryBatch } from '@/api/telemetry/telemetry-sanitizer';
+import { TELEMETRY_PRODUCT_EVENTS } from '@/api/telemetry/telemetry.schema';
 
 const pv = {
   v: 1,
@@ -19,6 +20,36 @@ const pv = {
   signed_in: true,
   fp: 'fingerprintValue01'
 };
+
+describe('product event registry and canonical props', () => {
+  it('orders keys by code units, independent of locale', () => {
+    expect(canonicalProps({ b: '1', a: '2', B: '3', _x: '4' })).toBe(
+      'B=3&_x=4&a=2&b=1'
+    );
+    expect(canonicalProps({ a: '2', b: '1' })).toBe(
+      canonicalProps({ b: '1', a: '2' })
+    );
+  });
+
+  it('never needs escaping and always fits the props column', () => {
+    for (const [name, spec] of Object.entries(TELEMETRY_PRODUCT_EVENTS)) {
+      const longest: Record<string, string> = {};
+      for (const [prop, values] of Object.entries(spec)) {
+        expect(prop).not.toMatch(/[&=]/);
+        const options = values === true ? ['false'] : values;
+        for (const value of options) {
+          expect(value).not.toMatch(/[&=]/);
+        }
+        longest[prop] = options.reduce((a, b) => (b.length > a.length ? b : a));
+      }
+      expect({ name, length: canonicalProps(longest).length }).toEqual({
+        name,
+        length: expect.any(Number)
+      });
+      expect(canonicalProps(longest).length).toBeLessThanOrEqual(512);
+    }
+  });
+});
 
 describe('aggregateTelemetryEvents', () => {
   it('writes one row per cube and merges repeats', () => {
@@ -118,6 +149,9 @@ describe('aggregateTelemetryEvents', () => {
     expect(increments.vitals.map((row) => row.metric).sort()).toEqual(
       ['cls', 'lcp', 'ws_lag'].sort()
     );
+    expect(
+      increments.vitals.find((row) => row.metric === 'ws_lag')
+    ).toMatchObject({ route: '/', device: 'desktop', platform: 'web' });
     expect(increments.health).toEqual([
       { route: '/', platform: 'web', counter: 'long_task', dim: '', count: 3 }
     ]);

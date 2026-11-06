@@ -104,6 +104,19 @@ describe('telemetry daily salt', () => {
     expect(telemetryDailyHash(after, '203.0.113.1')).not.toBe(hashBefore);
   });
 
+  it('loads the shared salt once for concurrent callers', async () => {
+    const now = new Date('2026-11-06T09:00:00Z');
+    const [a, b, c] = await Promise.all([
+      getTelemetryDailySalt(now),
+      getTelemetryDailySalt(now),
+      getTelemetryDailySalt(now)
+    ]);
+    expect(mockRedisSets).toHaveLength(1);
+    expect(a).toBe(b);
+    expect(b).toBe(c);
+    expect(a.salt.some((byte) => byte !== 0)).toBe(true);
+  });
+
   it('falls back to a per-process salt that is not marked shared', async () => {
     mockRedisReady = false;
     const salt = await getTelemetryDailySalt(new Date('2026-11-06T10:00:00Z'));

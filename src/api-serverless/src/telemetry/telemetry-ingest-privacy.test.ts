@@ -249,6 +249,7 @@ describe('telemetry ingest over HTTP', () => {
     mockSql.length = 0;
     mockLogLines.length = 0;
     mockRateLimitCount = 1;
+    resetTelemetryDailySaltForTests();
   });
 
   it('accepts sendBeacon text/plain bodies', async () => {
@@ -259,6 +260,54 @@ describe('telemetry ingest over HTTP', () => {
     });
     expect(response.status).toBe(204);
     expect(mockSql.length).toBeGreaterThan(0);
+  });
+
+  it('treats an empty beacon as a no-op', async () => {
+    const response = await fetch(baseUrl, { method: 'POST', body: '' });
+    expect(response.status).toBe(204);
+    expect(mockSql).toHaveLength(0);
+  });
+
+  it('refuses compressed and non-JSON bodies without recording them', async () => {
+    const { gzipSync } = await import('node:zlib');
+    const compressed = await fetch(baseUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-encoding': 'gzip'
+      },
+      body: gzipSync(Buffer.from(JSON.stringify(batch)))
+    });
+    expect(compressed.status).toBe(400);
+    for (const contentType of [
+      'multipart/form-data; boundary=x',
+      'application/octet-stream'
+    ]) {
+      const response = await fetch(baseUrl, {
+        method: 'POST',
+        headers: { 'content-type': contentType },
+        body: '--x\r\nContent-Disposition: form-data; name="a"\r\n\r\nb\r\n--x--'
+      });
+      expect(response.status).toBe(400);
+    }
+    expect(mockSql).toHaveLength(0);
+  });
+
+  it('answers 503 on a storage failure and logs only the error name', async () => {
+    const { sqlExecutor } = jest.requireMock('@/sql-executor');
+    sqlExecutor.execute.mockImplementationOnce(async () => {
+      throw new Error(`write failed for ${VIEWER_IP} ${FP}`);
+    });
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: JSON.stringify(batch)
+    });
+    expect(response.status).toBe(503);
+    const logs = mockLogLines.join('\n');
+    expect(logs).toContain('Telemetry batch not recorded: Error');
+    expect(logs).not.toContain(VIEWER_IP);
+    expect(logs).not.toContain(FP);
   });
 
   it('rejects bodies over 8 KB without recording them', async () => {
