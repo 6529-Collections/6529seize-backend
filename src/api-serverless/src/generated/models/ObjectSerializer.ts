@@ -798,6 +798,11 @@ export * from '../models/ApiTdhSeasonOnePartialRule';
 export * from '../models/ApiTdhSeasonScheduleRule';
 export * from '../models/ApiTdhSeasonSetRule';
 export * from '../models/ApiTelemetryBatch';
+export * from '../models/ApiTelemetryDiagnosticsBundle';
+export * from '../models/ApiTelemetryDiagnosticsPage';
+export * from '../models/ApiTelemetryDiagnosticsReceipt';
+export * from '../models/ApiTelemetryDiagnosticsSummary';
+export * from '../models/ApiTelemetryDiagnosticsUpload';
 export * from '../models/ApiTelemetryEvent';
 export * from '../models/ApiTelemetryHealthCounters';
 export * from '../models/ApiToggleHideLinkPreviewRequest';
@@ -1788,6 +1793,11 @@ import { ApiTdhSeasonOnePartialRule    } from '../models/ApiTdhSeasonOnePartialR
 import { ApiTdhSeasonScheduleRule } from '../models/ApiTdhSeasonScheduleRule';
 import { ApiTdhSeasonSetRule } from '../models/ApiTdhSeasonSetRule';
 import { ApiTelemetryBatch, ApiTelemetryBatchVEnum    } from '../models/ApiTelemetryBatch';
+import { ApiTelemetryDiagnosticsBundle } from '../models/ApiTelemetryDiagnosticsBundle';
+import { ApiTelemetryDiagnosticsPage } from '../models/ApiTelemetryDiagnosticsPage';
+import { ApiTelemetryDiagnosticsReceipt } from '../models/ApiTelemetryDiagnosticsReceipt';
+import { ApiTelemetryDiagnosticsSummary } from '../models/ApiTelemetryDiagnosticsSummary';
+import { ApiTelemetryDiagnosticsUpload, ApiTelemetryDiagnosticsUploadVEnum  , ApiTelemetryDiagnosticsUploadEncodingEnum    } from '../models/ApiTelemetryDiagnosticsUpload';
 import { ApiTelemetryEvent, ApiTelemetryEventVEnum  , ApiTelemetryEventTEnum   , ApiTelemetryEventDeviceEnum  , ApiTelemetryEventPlatformEnum     , ApiTelemetryEventBrowserEnum              } from '../models/ApiTelemetryEvent';
 import { ApiTelemetryHealthCounters } from '../models/ApiTelemetryHealthCounters';
 import { ApiToggleHideLinkPreviewRequest } from '../models/ApiToggleHideLinkPreviewRequest';
@@ -2248,6 +2258,8 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiSubwavesSort",
     "ApiTdhSeasonOnePartialKey",
     "ApiTelemetryBatchVEnum",
+    "ApiTelemetryDiagnosticsUploadVEnum",
+    "ApiTelemetryDiagnosticsUploadEncodingEnum",
     "ApiTelemetryEventVEnum",
     "ApiTelemetryEventTEnum",
     "ApiTelemetryEventDeviceEnum",
@@ -3020,6 +3032,11 @@ let typeMap: {[index: string]: any} = {
     "ApiTdhSeasonScheduleRule": ApiTdhSeasonScheduleRule,
     "ApiTdhSeasonSetRule": ApiTdhSeasonSetRule,
     "ApiTelemetryBatch": ApiTelemetryBatch,
+    "ApiTelemetryDiagnosticsBundle": ApiTelemetryDiagnosticsBundle,
+    "ApiTelemetryDiagnosticsPage": ApiTelemetryDiagnosticsPage,
+    "ApiTelemetryDiagnosticsReceipt": ApiTelemetryDiagnosticsReceipt,
+    "ApiTelemetryDiagnosticsSummary": ApiTelemetryDiagnosticsSummary,
+    "ApiTelemetryDiagnosticsUpload": ApiTelemetryDiagnosticsUpload,
     "ApiTelemetryEvent": ApiTelemetryEvent,
     "ApiTelemetryHealthCounters": ApiTelemetryHealthCounters,
     "ApiToggleHideLinkPreviewRequest": ApiToggleHideLinkPreviewRequest,

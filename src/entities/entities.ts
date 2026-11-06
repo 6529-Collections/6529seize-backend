@@ -312,3 +312,4 @@ export {
   UniquesDailyEntity,
   VitalsDailyEntity
 } from './ITelemetryDaily';
+export { TelemetryDiagnosticsEntity } from './ITelemetryDiagnostics';

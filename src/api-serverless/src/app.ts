@@ -178,7 +178,11 @@ import {
 } from './ws/ws-message';
 import { registerOpenApiSpecRoutes } from './openapi-spec-routes';
 import telemetryIngestRoutes from '@/api/telemetry/telemetry-ingest.routes';
-import { TELEMETRY_BASE_PATH } from '@/api/telemetry/telemetry-paths';
+import telemetryDiagnosticsRoutes from '@/api/telemetry/telemetry-diagnostics.routes';
+import {
+  TELEMETRY_BASE_PATH,
+  TELEMETRY_DIAGNOSTICS_PATH
+} from '@/api/telemetry/telemetry-paths';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -782,6 +786,7 @@ function wireApp() {
   // The telemetry collector parses its own small text bodies and applies its
   // own salted-hash rate limit, so it is mounted before the shared JSON parser.
   app.use(TELEMETRY_BASE_PATH, telemetryIngestRoutes);
+  app.use(TELEMETRY_DIAGNOSTICS_PATH, telemetryDiagnosticsRoutes);
   app.use(
     express.json({
       limit: '5mb',

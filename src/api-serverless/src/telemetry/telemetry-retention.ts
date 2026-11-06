@@ -1,6 +1,7 @@
 import { Logger } from '@/logging';
 import { getRedisClient } from '@/redis';
 import { deleteTelemetryRowsBefore } from '@/api/telemetry/telemetry.db';
+import { deleteExpiredDiagnostics } from '@/api/telemetry/telemetry-diagnostics.db';
 import { utcDay } from '@/api/telemetry/telemetry-daily-salt';
 import {
   previousUtcDay,
@@ -55,7 +56,9 @@ async function runJob(name: string, job: () => Promise<void>) {
 /**
  * Lazy daily jobs: the first collector request of each UTC day (across all
  * instances, coordinated through a Redis lock) stores yesterday's signed-in
- * actives and removes rows older than the 25-month retention window. No
+ * actives, deletes diagnostics bundles past their 14 days (uploads also
+ * delete expired ones) and removes rows older than the 25-month retention
+ * window. No
  * scheduler of its own is needed because the collector receives traffic
  * every day.
  */
@@ -77,6 +80,10 @@ export async function maybeRunTelemetryDailyJobs(
     return;
   }
   await runJob('actives', () => rollUpSignedInActives(previousUtcDay(now)));
+  await runJob('diagnostics', async () => {
+    const removed = await deleteExpiredDiagnostics(now);
+    logger.info(`Telemetry removed ${removed} expired diagnostics bundles`);
+  });
   await runJob('retention', async () => {
     const removed = await deleteTelemetryRowsBefore(
       telemetryRetentionCutoffDay(now)

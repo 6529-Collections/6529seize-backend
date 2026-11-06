@@ -356,3 +356,4 @@ export const ANALYTICS_DAILY_TABLE = 'analytics_daily';
 export const VITALS_DAILY_TABLE = 'vitals_daily';
 export const HEALTH_DAILY_TABLE = 'health_daily';
 export const UNIQUES_DAILY_TABLE = 'uniques_daily';
+export const TELEMETRY_DIAGNOSTICS_TABLE = 'telemetry_diagnostics';

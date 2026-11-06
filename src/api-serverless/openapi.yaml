@@ -19163,6 +19163,112 @@ paths:
           description: Too many batches from this visitor
         "503":
           description: Counters could not be recorded
+  /e/diag:
+    post:
+      tags:
+        - Telemetry
+      summary: Send a diagnostics bundle
+      description: >-
+        Stores a user-sent diagnostics bundle (6529.io/e/diag through
+        CloudFront) and returns a short code the user can share with the team.
+        `data` is the base64 of the bundle JSON, gzip-compressed when `encoding`
+        is gzip; decoded data at most 256 KB, decompressed at most 2 MiB,
+        top-level object with `v: 1`. Stored AES-256-GCM encrypted, deleted
+        after 14 days, readable only by the team. Nothing about the sender is
+        stored. Limited to 5 bundles per hour per visitor.
+      operationId: uploadTelemetryDiagnostics
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiTelemetryDiagnosticsUpload"
+      responses:
+        "201":
+          description: Bundle stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTelemetryDiagnosticsReceipt"
+        "400":
+          description: Invalid bundle
+        "413":
+          description: Bundle too large
+        "429":
+          description: Too many bundles from this visitor
+        "503":
+          description: Diagnostics are unavailable
+  /telemetry/diagnostics:
+    get:
+      tags:
+        - Telemetry
+      summary: List stored diagnostics bundles (team only)
+      operationId: listTelemetryDiagnostics
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: telemetry
+        handler:
+          import: "@/api/telemetry/telemetry-diagnostics.handlers"
+          name: handleListTelemetryDiagnostics
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: Unexpired bundles, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTelemetryDiagnosticsPage"
+        "401":
+          description: Authentication required
+        "403":
+          description: Not a team wallet
+  /telemetry/diagnostics/{code}:
+    get:
+      tags:
+        - Telemetry
+      summary: Read one diagnostics bundle (team only)
+      operationId: getTelemetryDiagnosticsBundle
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: telemetry
+        handler:
+          import: "@/api/telemetry/telemetry-diagnostics.handlers"
+          name: handleGetTelemetryDiagnosticsBundle
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Decrypted bundle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTelemetryDiagnosticsBundle"
+        "401":
+          description: Authentication required
+        "403":
+          description: Not a team wallet
+        "404":
+          description: Unknown or expired code
   /transactions:
     get:
       tags:
@@ -42614,6 +42720,92 @@ components:
           maxItems: 40
           items:
             $ref: "#/components/schemas/ApiTelemetryEvent"
+    ApiTelemetryDiagnosticsBundle:
+      type: object
+      required:
+        - code
+        - created_at
+        - expires_at
+        - compressed_bytes
+        - uncompressed_bytes
+        - bundle
+      properties:
+        code:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        compressed_bytes:
+          type: integer
+        uncompressed_bytes:
+          type: integer
+        bundle:
+          type: object
+          additionalProperties: true
+    ApiTelemetryDiagnosticsPage:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryDiagnosticsSummary"
+    ApiTelemetryDiagnosticsReceipt:
+      type: object
+      required:
+        - code
+        - expires_at
+      properties:
+        code:
+          type: string
+          description: Short code such as D-7K3Q-9XW2 (Crockford base32).
+        expires_at:
+          type: string
+          format: date-time
+    ApiTelemetryDiagnosticsSummary:
+      type: object
+      required:
+        - code
+        - created_at
+        - expires_at
+        - compressed_bytes
+        - uncompressed_bytes
+      properties:
+        code:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        compressed_bytes:
+          type: integer
+        uncompressed_bytes:
+          type: integer
+    ApiTelemetryDiagnosticsUpload:
+      type: object
+      required:
+        - v
+        - encoding
+        - data
+      properties:
+        v:
+          type: integer
+          enum:
+            - 1
+        encoding:
+          type: string
+          enum:
+            - gzip
+            - identity
+        data:
+          type: string
+          description: Base64 of the (optionally gzip-compressed) bundle JSON.
     ApiTelemetryEvent:
       type: object
       description: >-
