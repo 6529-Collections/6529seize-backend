@@ -180,7 +180,8 @@ export class CompetitionEventRepository extends LazyDbAccessCompatibleService {
       join ${WAVES_TABLE} hub on hub.id = c.wave_id and ${publicCompetitionWaveSql('hub')}
       join ${COMPETITION_CAPABILITIES_TABLE} cap on cap.competition_id = c.id and cap.wave_id = c.wave_id and cap.capability = 'MAIN_STAGE'
       where e.competition_id = :competitionId and e.decision_id = :decisionId and e.status = 'WINNER'
-        and c.lifecycle in ('PUBLISHED', 'ENDED') order by w.\`rank\` asc, e.id asc`,
+        and c.published_at is not null
+        and c.lifecycle in ('PUBLISHED', 'ENDED', 'ARCHIVED') order by w.\`rank\` asc, e.id asc`,
       { competitionId, decisionId },
       ctx
     );

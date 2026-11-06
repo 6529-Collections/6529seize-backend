@@ -262,7 +262,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
       const row = await this.db.oneOrNull<{ id: string }>(
         `SELECT id FROM ${COMPETITION_ENTRIES_TABLE} WHERE competition_id = :competitionId LIMIT 1`,
         { competitionId },
-        options(ctx)
+        { wrappedConnection: ctx.connection }
       );
       return row !== null || this.hasVotes(competitionId, ctx);
     });

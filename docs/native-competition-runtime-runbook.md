@@ -118,7 +118,19 @@ and elapsed duration with `native_competition_execution_failed`.
   automatic REP/CIC outcome behavior creates descriptors, not new rating grants.
   Original-primary PARTI/WINNER wire classifications derive from native entries;
   no physical drop lifecycle mirror is written.
-- Administrators may archive competitions; filters retain access to history.
+- Administrators may archive drafts, published and completed competitions;
+  filters retain access to history. Published archival disables execution and
+  rejects new entries/votes under the same competition-row lock used by
+  submissions, voting and decisions. A decision holding that lock finishes first;
+  later attempts observe the archived lifecycle and do nothing. Existing
+  entries, votes, winners and awards are retained without manufacturing an end
+  time. Any historical entries or votes require a non-blank lifecycle audit
+  reason; deleted entries and reset votes count. The additive
+  `permissions.archive_requires_reason` field guides the administrator's dialog;
+  the archive command checks again inside its transaction.
+  Existing Main Stage winners remain eligible for delayed claim delivery after
+  archival. Deploy `waveDecisionExecutionLoop` first to preserve those deliveries,
+  then `api`, then the dependent frontend controls. No schema change is required.
   Manual end/cancel and entry withdrawal/disqualification are not exposed.
 - Dedicated native submission content is immutable, including unsigned entries.
   A migrated original legacy submission retains its original pre-winner edit

@@ -59,6 +59,7 @@ export type CompetitionPermissions = {
   readonly administer: boolean;
   readonly edit_rules_after_activity?: boolean;
   readonly edit_credit_rules?: boolean;
+  readonly archive_requires_reason?: boolean;
 };
 
 export type PublicCompetition = Omit<
@@ -677,6 +678,10 @@ export class CompetitionService {
             )
           ),
         administer,
+        archive_requires_reason:
+          administer &&
+          competition.lifecycle === CompetitionLifecycle.PUBLISHED &&
+          (await competitionCommandRepository.hasActivity(competition.id, ctx)),
         edit_rules_after_activity: originalRulesEditable,
         edit_credit_rules: creditRulesEditable
       }
