@@ -124,6 +124,11 @@ seconds, and stop each export after two minutes. Each request has at most two
 attempts per gateway. Permanent validation errors stop immediately. Failure
 logs include the transaction, gateway, operation, chunk, attempt, status and a
 short provider error code; they exclude keys, CSV bodies and provider stacks.
+Unknown HTTP 400 responses also fail over: broadcasters can aggregate temporary
+peer rejections under that status without returning a protocol error code.
+Those logs summarize peer success/failure counts and statuses. Between complete
+chunk retry rounds, allow thirty seconds for fresh headers to propagate; this
+backoff is canceled when the same two-minute export deadline expires.
 
 Deploy only `tdhLoop` for upload-only changes; unchanged schema and xTDH
 dependencies do not need redeployment. Verify both `/api/uploads` and

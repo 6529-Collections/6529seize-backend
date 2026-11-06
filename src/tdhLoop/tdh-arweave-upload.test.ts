@@ -230,18 +230,115 @@ describe('TDH Arweave gateway uploads', () => {
     expect(Arweave.crypto.sign).toHaveBeenCalledTimes(1);
   });
 
-  it.each([408, 429, 500, 503])(
-    'bounds transient HTTP %s failures to two attempts per gateway',
-    async (status) => {
+  it.each([
+    [
+      JSON.stringify({
+        successCount: 0,
+        failureCount: 7,
+        results: Array.from({ length: 7 }, () => ({
+          peer: 'http://peer-private-marker:1984',
+          statusCode: 400,
+          success: false
+        }))
+      }),
+      'peer_upload_failed:success_0:failure_7:statuses_400'
+    ],
+    [JSON.stringify('data_root_not_found'), 'data_root_not_found']
+  ])(
+    'fails over a gateway HTTP 400 response with diagnostic %s',
+    async (body, code) => {
       const fetch = setup();
       fetch.mockImplementation(async (input, init) => {
         if (init?.method === 'GET') return metadata(input);
+        return path(input) === '/chunk' &&
+          new URL(String(input)).hostname === 'ardrive.net'
+          ? new Response(body, { status: 400 })
+          : new Response('');
+      });
+      await uploadTdhCsvToArweave('CSV', key, logger);
+      const chunks = fetch.mock.calls.filter(
+        ([input]) => path(input) === '/chunk'
+      );
+      expect(chunks.map(([input]) => new URL(String(input)).hostname)).toEqual([
+        'ardrive.net',
+        'turbo-gateway.com'
+      ]);
+      expect(chunks[0][1]!.body).toBe(chunks[1][1]!.body);
+      expect(Arweave.crypto.sign).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(code));
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(
+        'peer-private-marker'
+      );
+    }
+  );
+
+  it('cancels retry backoff when the overall upload deadline expires', async () => {
+    jest.useFakeTimers();
+    const fetch = setup();
+    let signing!: () => void;
+    const signReady = new Promise<void>((resolve) => {
+      signing = resolve;
+    });
+    jest.mocked(Arweave.crypto.sign).mockImplementation(async () => {
+      signing();
+      return new Promise((resolve) =>
+        setTimeout(() => resolve(new Uint8Array(512).fill(1)), 90_000)
+      );
+    });
+    let chunk!: () => void;
+    const chunkReady = new Promise<void>((resolve) => {
+      chunk = resolve;
+    });
+    fetch.mockImplementation(async (input, init) => {
+      if (init?.method === 'GET') return metadata(input);
+      if (path(input) === '/chunk') {
+        chunk();
+        return new Response('{}', { status: 500 });
+      }
+      return new Response('');
+    });
+    const outcome = uploadTdhCsvToArweave('CSV', key, logger).catch(
+      (error: unknown) => error
+    );
+    await signReady;
+    await jest.advanceTimersByTimeAsync(90_000);
+    await chunkReady;
+    await jest.advanceTimersByTimeAsync(30_001);
+    expect(await outcome).toEqual(
+      expect.objectContaining({
+        message: 'TDH Arweave upload exceeded 120000ms deadline'
+      })
+    );
+    const calls = fetch.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(20_000);
+    expect(fetch).toHaveBeenCalledTimes(calls);
+  });
+
+  it.each([400, 408, 429, 500, 503])(
+    'bounds transient HTTP %s failures to two attempts per gateway',
+    async (status) => {
+      jest.useFakeTimers();
+      const fetch = setup();
+      let started!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      fetch.mockImplementation(async (input, init) => {
+        if (init?.method === 'GET') return metadata(input);
+        if (path(input) === '/chunk') started();
         return path(input) === '/chunk'
           ? new Response('{}', { status })
           : new Response('');
       });
-      await expect(uploadTdhCsvToArweave('CSV', key, logger)).rejects.toThrow(
-        'Arweave request failed'
+      const outcome = uploadTdhCsvToArweave('CSV', key, logger).catch(
+        (error: unknown) => error
+      );
+      await ready;
+      await jest.advanceTimersByTimeAsync(120001);
+      expect(await outcome).toEqual(
+        expect.objectContaining({
+          message: expect.stringContaining('Arweave request failed')
+        })
       );
       const gateways = fetch.mock.calls
         .filter(([input]) => path(input) === '/chunk')
@@ -258,16 +355,24 @@ describe('TDH Arweave gateway uploads', () => {
     }
   );
 
-  it('fails immediately on a permanent invalid-proof response', async () => {
+  it.each([
+    'invalid_json',
+    'chunk_too_big',
+    'data_path_too_big',
+    'offset_too_big',
+    'data_size_too_big',
+    'chunk_proof_ratio_not_attractive',
+    'invalid_proof'
+  ])('fails immediately on the permanent protocol error %s', async (code) => {
     const fetch = setup();
     fetch.mockImplementation(async (input, init) => {
       if (init?.method === 'GET') return metadata(input);
       return path(input) === '/chunk'
-        ? new Response('{"error":"invalid_proof"}', { status: 400 })
+        ? new Response(JSON.stringify({ error: code }), { status: 400 })
         : new Response('');
     });
     await expect(uploadTdhCsvToArweave('CSV', key, logger)).rejects.toThrow(
-      'invalid_proof'
+      code
     );
     expect(
       fetch.mock.calls.filter(([input]) => path(input) === '/chunk')

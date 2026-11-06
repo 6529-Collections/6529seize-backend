@@ -1,7 +1,6 @@
 import Arweave from 'arweave';
 import Transaction from 'arweave/node/lib/transaction';
 import { JWKInterface } from 'arweave/node/lib/wallet';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { Logger } from '@/logging';
 
 const GATEWAYS = ['ardrive.net', 'turbo-gateway.com', 'arweave.net'];
@@ -9,6 +8,16 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
 const ATTEMPTS_PER_GATEWAY = 2;
 const CHUNK_CONCURRENCY = 8;
+const PROPAGATION_DELAY_MS = 30_000;
+const FATAL_CHUNK_ERRORS = new Set([
+  'invalid_json',
+  'chunk_too_big',
+  'data_path_too_big',
+  'offset_too_big',
+  'data_size_too_big',
+  'chunk_proof_ratio_not_attractive',
+  'invalid_proof'
+]);
 
 type UploadLogger = Pick<Logger, 'info' | 'warn' | 'error'>;
 type UploadResult = { url: string; transactionId: string };
@@ -31,13 +40,44 @@ class GatewayError extends Error {
   }
 }
 
+function peerStatus(result: unknown): number[] {
+  return result &&
+    typeof result === 'object' &&
+    'statusCode' in result &&
+    typeof result.statusCode === 'number' &&
+    Number.isInteger(result.statusCode) &&
+    result.statusCode >= 100 &&
+    result.statusCode <= 599
+    ? [result.statusCode]
+    : [];
+}
+
+function peerFailureCode(details: object): string | undefined {
+  if (
+    !('results' in details) ||
+    !Array.isArray(details.results) ||
+    !('successCount' in details) ||
+    !Number.isSafeInteger(details.successCount) ||
+    !('failureCount' in details) ||
+    !Number.isSafeInteger(details.failureCount)
+  )
+    return undefined;
+  const statuses = Array.from(new Set(details.results.flatMap(peerStatus)))
+    .sort((a, b) => a - b)
+    .slice(0, 8);
+  // Compose only numeric diagnostics, excluding peer URLs and response bodies.
+  return `peer_upload_failed:success_${details.successCount}:failure_${details.failureCount}:statuses_${statuses.join('_') || 'unknown'}`;
+}
+
 function providerCode(body: string): string {
   let value: unknown;
   try {
     const details: unknown = JSON.parse(body);
-    if (details && typeof details === 'object') {
+    if (typeof details === 'string') value = details;
+    else if (details && typeof details === 'object') {
       if ('error' in details) value = details.error;
       else if ('details' in details) value = details.details;
+      else value = peerFailureCode(details);
     }
   } catch {
     value = body;
@@ -50,21 +90,19 @@ function providerCode(body: string): string {
 
 function providerError(status: number, body: string): GatewayError {
   const code = providerCode(body);
-  const transient = [
-    'data_root_not_found',
-    'exceeds_disk_pool_size_limit',
-    'not_joined',
-    'timeout'
-  ];
+  // A broadcaster can return HTTP 400 for peers missing a fresh header.
+  // Only explicit protocol validation errors establish a permanent failure.
   return new GatewayError(
     status,
     code,
-    status >= 500 ||
-      status === 408 ||
-      status === 429 ||
-      status === 404 ||
-      transient.includes(code)
+    status !== 400 || !FATAL_CHUNK_ERRORS.has(code)
   );
+}
+
+function retryDelay(operation: Operation, attempt: number): number {
+  return operation.path === 'chunk' && (attempt + 1) % GATEWAYS.length === 0
+    ? PROPAGATION_DELAY_MS
+    : 250 * (attempt + 1);
 }
 
 class UploadSession {
@@ -226,7 +264,9 @@ class UploadSession {
         if (!failure.retryable || attempt + 1 === attempts) {
           throw new Error(`Arweave request failed ${context}`);
         }
-        await sleep(250, undefined, { signal: this.controller.signal });
+        // Try each gateway promptly, then allow fresh headers to propagate
+        // before the second round. The overall upload deadline still applies.
+        await this.pause(retryDelay(operation, attempt));
       }
     }
     throw new Error('Arweave request exhausted its retry budget');
@@ -243,6 +283,21 @@ class UploadSession {
       });
     this.headers.set(gateway, pending);
     return pending;
+  }
+
+  private pause(delayMs: number): Promise<void> {
+    const signal = this.controller.signal;
+    return new Promise((resolve, reject) => {
+      const finish = () => {
+        clearTimeout(timeout);
+        signal.removeEventListener('abort', finish);
+        if (this.stopped) reject(this.stopped);
+        else resolve();
+      };
+      const timeout = setTimeout(finish, delayMs);
+      signal.addEventListener('abort', finish, { once: true });
+      if (signal.aborted) finish();
+    });
   }
 
   private async fetch(gateway: string, operation: Operation): Promise<string> {
