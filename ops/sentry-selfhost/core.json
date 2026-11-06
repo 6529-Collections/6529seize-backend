@@ -721,15 +721,25 @@
               "Version": "2012-10-17",
               "Statement": [
                 {
+                  "Sid": "ReadOwnParameters",
                   "Effect": "Allow",
                   "Action": [
                     "ssm:GetParameter",
-                    "ssm:GetParameters",
+                    "ssm:GetParameters"
+                  ],
+                  "Resource": {
+                    "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sentry-selfhost/*"
+                  }
+                },
+                {
+                  "Sid": "WriteAdminPasswordOnly",
+                  "Effect": "Allow",
+                  "Action": [
                     "ssm:PutParameter",
                     "ssm:AddTagsToResource"
                   ],
                   "Resource": {
-                    "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sentry-selfhost/*"
+                    "Fn::Sub": "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sentry-selfhost/admin/*"
                   }
                 }
               ]

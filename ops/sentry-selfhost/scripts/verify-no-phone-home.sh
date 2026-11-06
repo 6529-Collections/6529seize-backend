@@ -25,6 +25,11 @@ run_query() {
       *) break ;;
     esac
   done
+  # A failed, cancelled or timed-out query returns no rows; never read that as "none".
+  if [[ "$status" != "Complete" ]]; then
+    echo "Logs Insights query ended with status $status" >&2
+    exit 1
+  fi
   aws logs get-query-results --region "$region" --query-id "$id" --output json |
     jq -r '.results[] | map(.value // "-") | join("\t")'
 }

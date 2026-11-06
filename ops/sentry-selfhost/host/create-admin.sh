@@ -1,57 +1,81 @@
 #!/usr/bin/env bash
 # Creates the owner's Sentry superuser once. The password is generated on this
 # host, written to SSM Parameter Store as a SecureString before the user exists,
-# and never printed. Idempotent: an existing user is left unchanged.
+# and never printed or passed as a command-line argument: it moves only through
+# a root-only temporary file and stdin. Idempotent: a user that already has a
+# password is left unchanged.
 #
-# Required environment: ADMIN_EMAIL, PASSWORD_PARAMETER (e.g.
-# /sentry-selfhost/admin/initial-password), AWS_REGION.
+# Required environment: ADMIN_EMAIL, PASSWORD_PARAMETER (under
+# /sentry-selfhost/admin/, the only prefix the instance role may write),
+# AWS_REGION.
 set -euo pipefail
 
 : "${ADMIN_EMAIL:?}" "${PASSWORD_PARAMETER:?}" "${AWS_REGION:?}"
 log() { printf '[create-admin] %s\n' "$*"; }
 sc=/usr/local/sbin/sentry-compose
 
-user_exists="$($sc exec -T -e ADMIN_EMAIL="$ADMIN_EMAIL" web sentry exec -c '
+[[ "$PASSWORD_PARAMETER" =~ ^/sentry-selfhost/admin/[A-Za-z0-9/_.-]+$ ]] ||
+  { log "PASSWORD_PARAMETER must be under /sentry-selfhost/admin/"; exit 1; }
+
+user_state() {
+  $sc exec -T -e ADMIN_EMAIL="$ADMIN_EMAIL" web sentry exec -c '
 import os
 from sentry.users.models.user import User
-print("USER_EXISTS=" + str(User.objects.filter(email__iexact=os.environ["ADMIN_EMAIL"]).exists()))
-' 2>/dev/null | sed -n 's/^USER_EXISTS=//p')"
-if [[ "$user_exists" == "True" ]]; then
-  log "a user with that email already exists; nothing to do"
-  exit 0
-fi
-[[ "$user_exists" == "False" ]] || { log "could not query users"; exit 1; }
+u = User.objects.filter(email__iexact=os.environ["ADMIN_EMAIL"]).first()
+if u is None:
+    print("USER_STATE=none")
+elif u.is_superuser and u.has_usable_password():
+    print("USER_STATE=ready")
+else:
+    print("USER_STATE=incomplete")
+' 2>/dev/null | sed -n 's/^USER_STATE=//p'
+}
+
+state="$(user_state)"
+case "$state" in
+  ready) log "the superuser already exists with a password; nothing to do"; exit 0 ;;
+  none | incomplete) ;;
+  *) log "could not query users"; exit 1 ;;
+esac
+
+umask 077
+password_file="$(mktemp /root/.sentry-admin-password.XXXXXX)"
+trap 'rm -f "$password_file"' EXIT
 
 if aws ssm get-parameter --region "$AWS_REGION" --name "$PASSWORD_PARAMETER" >/dev/null 2>&1; then
   log "reusing the password already stored in $PASSWORD_PARAMETER"
-  password="$(aws ssm get-parameter --region "$AWS_REGION" --name "$PASSWORD_PARAMETER" \
-    --with-decryption --query Parameter.Value --output text)"
+  # Pipe through cat: the snap-packaged AWS CLI writes nothing when its stdout
+  # is redirected straight to a file.
+  aws ssm get-parameter --region "$AWS_REGION" --name "$PASSWORD_PARAMETER" \
+    --with-decryption --query Parameter.Value --output text | cat >"$password_file"
+  [[ "$(wc -c <"$password_file")" -ge 21 ]] || { log "the stored password could not be read"; exit 1; }
 else
-  password="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 40)"
-  [[ ${#password} -eq 40 ]] || { log "password generation failed"; exit 1; }
+  openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 40 >"$password_file"
+  [[ "$(wc -c <"$password_file")" -eq 40 ]] || { log "password generation failed"; exit 1; }
   aws ssm put-parameter --region "$AWS_REGION" --name "$PASSWORD_PARAMETER" --type SecureString \
     --description "Initial password of the self-hosted Sentry owner account. Change it and enable 2FA at first login." \
     --tags Key=Project,Value=sentry-selfhost Key=Owner,Value=6529 \
-    --value "$password" >/dev/null
+    --value "file://$password_file" >/dev/null
   log "stored the generated password in $PASSWORD_PARAMETER"
 fi
 
-# The password travels on stdin, not in docker exec arguments, and none of the
-# command's output is kept, so it cannot reach the SSM command log.
-if ! printf '%s\n' "$password" | $sc exec -T web sh -c \
-  'IFS= read -r p; exec sentry createuser --email "$1" --password "$p" --superuser --no-input' \
-  createuser "$ADMIN_EMAIL" >/dev/null 2>&1; then
-  unset password
-  log "sentry createuser failed"
-  exit 1
+if [[ "$state" == "none" ]]; then
+  $sc exec -T web sentry createuser --email "$ADMIN_EMAIL" --superuser --no-password --no-input \
+    >/dev/null 2>&1 || { log "sentry createuser failed"; exit 1; }
 fi
-unset password
 
-created="$($sc exec -T -e ADMIN_EMAIL="$ADMIN_EMAIL" web sentry exec -c '
+# Set the password from stdin; output is reduced to a fixed marker.
+set_result="$($sc exec -T -e ADMIN_EMAIL="$ADMIN_EMAIL" web sentry exec -c '
 import os
+import sys
 from sentry.users.models.user import User
 u = User.objects.get(email__iexact=os.environ["ADMIN_EMAIL"])
-print("CREATED=" + str(u.is_superuser and u.has_usable_password()))
-' 2>/dev/null | sed -n 's/^CREATED=//p')"
-[[ "$created" == "True" ]] || { log "user was not created"; exit 1; }
+u.is_superuser = True
+u.set_password(sys.stdin.readline().rstrip("\n"))
+u.save()
+print("PASSWORD_SET")
+' <"$password_file" 2>/dev/null | grep -x PASSWORD_SET || true)"
+[[ "$set_result" == "PASSWORD_SET" ]] || { log "setting the password failed"; exit 1; }
+
+[[ "$(user_state)" == "ready" ]] || { log "user was not created"; exit 1; }
 log "created superuser $ADMIN_EMAIL"

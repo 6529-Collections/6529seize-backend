@@ -74,7 +74,9 @@ shellcheck -S warning host/*.sh scripts/*.sh
 - **Accounts:** local accounts only, registration closed, join requests off,
   organization-wide 2FA required. The owner's superuser is created by `host/create-admin.sh`; its
   generated password is stored only in the SSM SecureString
-  `/sentry-selfhost/admin/initial-password`. GitHub SSO would need a GitHub App
+  `/sentry-selfhost/admin/initial-password` and reaches Sentry through stdin,
+  never a command line. The instance role can read `/sentry-selfhost/*` but
+  write only under `/sentry-selfhost/admin/`. GitHub SSO would need a GitHub App
   created by a 6529-Collections organization admin and is not set up.
 - **Mail:** SES domain identity `sentry.6529.io` (Easy DKIM, 2048-bit), sending
   as `sentry@sentry.6529.io` through the bundled SMTP container's SES relay.

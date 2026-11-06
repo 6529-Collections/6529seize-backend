@@ -40,7 +40,10 @@ remote_dir=/root/sentry-selfhost
 commands=("set -eu" "rm -rf $remote_dir && mkdir -p $remote_dir")
 for file in "$host_dir"/*; do
   name="$(basename "$file")"
-  commands+=("echo $(base64 -w0 "$file") | base64 -d > $remote_dir/$name")
+  # Portable single-line base64 (macOS base64 has no -w).
+  encoded="$(base64 <"$file" | tr -d '\n')" || { echo "could not encode $file" >&2; exit 1; }
+  [[ -n "$encoded" ]] || { echo "could not encode $file" >&2; exit 1; }
+  commands+=("echo $encoded | base64 -d > $remote_dir/$name")
 done
 commands+=("env ${env_args[*]:-} bash $remote_dir/$(basename "$script")")
 
@@ -54,16 +57,27 @@ command_id="$(aws ssm send-command --region "$region" \
   --query Command.CommandId --output text)"
 echo "command $command_id ($(basename "$script")); full output in $log_group"
 
+# Poll until the command finishes. Read errors are retried for a bounded time
+# (the invocation can take a few seconds to register), then reported.
+read_failures=0
 while :; do
-  status="$(aws ssm get-command-invocation --region "$region" --command-id "$command_id" \
-    --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)"
+  if result="$(aws ssm get-command-invocation --region "$region" --command-id "$command_id" \
+    --instance-id "$INSTANCE_ID" --output json 2>&1)"; then
+    read_failures=0
+    status="$(jq -r .Status <<<"$result")"
+  else
+    read_failures=$((read_failures + 1))
+    if ((read_failures >= 20)); then
+      echo "could not read the command invocation: $result" >&2
+      exit 1
+    fi
+    status=Pending
+  fi
   case "$status" in
     Pending | InProgress | Delayed) sleep 15 ;;
     *) break ;;
   esac
 done
-result="$(aws ssm get-command-invocation --region "$region" --command-id "$command_id" \
-  --instance-id "$INSTANCE_ID" --output json)"
 jq -r '.StandardOutputContent, .StandardErrorContent' <<<"$result"
 status="$(jq -r .Status <<<"$result")"
 echo "status: $status"

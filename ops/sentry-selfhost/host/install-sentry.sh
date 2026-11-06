@@ -74,16 +74,31 @@ apply_managed_block() {
 apply_managed_block sentry/sentry.conf.py "$here/sentry.conf.overrides.py"
 apply_managed_block sentry/config.yml "$here/config.overrides.yml"
 
+# Prints the decrypted value, or nothing when the parameter does not exist yet.
+# Any other failure stops the install before .env.custom is rewritten, so a
+# transient SSM error cannot silently drop the SES relay settings.
 read_parameter() {
-  local name="$1"
-  aws ssm get-parameter --region "$AWS_REGION" --name "$name" --with-decryption \
-    --query Parameter.Value --output text 2>/dev/null || true
+  local name="$1" value error_file
+  error_file="$(mktemp)"
+  if value="$(aws ssm get-parameter --region "$AWS_REGION" --name "$name" --with-decryption \
+    --query Parameter.Value --output text 2>"$error_file")"; then
+    rm -f "$error_file"
+    printf '%s' "$value"
+    return 0
+  fi
+  if grep -q 'ParameterNotFound' "$error_file"; then
+    rm -f "$error_file"
+    return 0
+  fi
+  rm -f "$error_file"
+  log "could not read $name from SSM"
+  return 1
 }
 env_custom=.env.custom
 launchpad_secret="$(sed -n 's/^LAUNCHPAD_RPC_SHARED_SECRET=//p' "$env_custom" 2>/dev/null || true)"
 [[ -n "$launchpad_secret" ]] || launchpad_secret="$(openssl rand -hex 32)"
-ses_user="$(read_parameter "$SES_PARAMETER_PREFIX/smtp-username")"
-ses_password="$(read_parameter "$SES_PARAMETER_PREFIX/smtp-password")"
+ses_user="$(read_parameter "$SES_PARAMETER_PREFIX/smtp-username")" || exit 1
+ses_password="$(read_parameter "$SES_PARAMETER_PREFIX/smtp-password")" || exit 1
 (
   umask 077
   {
