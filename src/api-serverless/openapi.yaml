@@ -30822,7 +30822,9 @@ components:
             same wave and content (a retry), the drop created the first time is
             returned instead of a new one. The same id with a different wave or
             content is rejected with 409. Without it, every create makes a new
-            drop.
+            drop. Use the plain 8-4-4-4-12 UUID form. Like every other body
+            field, it is part of the signed payload when present, so a retry
+            must resend the same body.
         device_signature:
           $ref: "#/components/schemas/ApiDeviceSignature"
     ApiCreateGroup:

@@ -334,8 +334,14 @@ export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
       otherwise: Joi.forbidden()
     }),
     hide_link_preview: Joi.boolean().optional(),
-    // Makes a create idempotent per author (waves R11-5); stored lowercase.
-    client_drop_id: Joi.string().guid().lowercase().optional()
+    // Makes a create idempotent per author (waves R11-5). Only the plain
+    // 8-4-4-4-12 form is accepted, stored lowercase, so one UUID is one key.
+    client_drop_id: Joi.string()
+      .pattern(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      )
+      .lowercase()
+      .optional()
   }
 );
 

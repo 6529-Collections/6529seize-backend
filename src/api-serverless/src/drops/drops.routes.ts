@@ -238,6 +238,20 @@ router.post(
       is_additional_action_promised: newDrop.is_additional_action_promised,
       client_drop_id: newDrop.client_drop_id
     };
+    if (deviceSignature !== undefined && createDropRequest.client_drop_id) {
+      // A retried signed send carries an envelope the first attempt already
+      // used. Answer it from the client_drop_id claim before signature
+      // reservation would refuse it (waves R11-5).
+      const replayedDrop = await dropCreationService.findClientDropReplay(
+        { createDropRequest, authorId: authorProfileId },
+        { timer, authenticationContext }
+      );
+      if (replayedDrop) {
+        return res.send(
+          await withStoredAuthorSignature(replayedDrop, { timer })
+        );
+      }
+    }
     const createdDrop = await deviceSignedWritesService.createDrop(
       {
         envelope: deviceSignature,

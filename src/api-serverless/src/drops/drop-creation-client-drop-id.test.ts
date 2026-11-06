@@ -1,4 +1,8 @@
-import { DropCreationApiService } from '@/api/drops/drop-creation.api.service';
+import {
+  clientDropFingerprint,
+  DropCreationApiService
+} from '@/api/drops/drop-creation.api.service';
+import { NewDropSchema } from '@/api/drops/drop.validator';
 jest.mock('@/competitions/competition-entry-drop-hooks');
 import { waveScoreService } from '@/api/waves/wave-score.service';
 import { DropType } from '@/entities/IDrop';
@@ -6,8 +10,6 @@ import { helpBotDailyActivityCreditQueueService } from '@/help-bot/help-bot-dail
 import { DropClientIdTakenError } from '@/drops/drop-client-ids.db';
 import { DropClientIdEntity } from '@/entities/IDropClientId';
 import { NotFoundException } from '@/exceptions';
-import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
-import { sanitizeDropStructuredFields } from '@/drops/create-or-update-drop.use-case';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
@@ -37,9 +39,7 @@ const model = {
   mentioned_groups: [],
   referenced_nfts: []
 };
-const fingerprint = moderationFingerprint(
-  sanitizeDropStructuredFields(model as never)
-);
+const fingerprint = clientDropFingerprint({ wave_id: 'wave-1' } as never);
 
 function claim(overrides: Partial<DropClientIdEntity> = {}) {
   return {
@@ -272,5 +272,53 @@ describe('DropCreationApiService.createDrop with client_drop_id (R11-5)', () => 
 
     await expect(create()).rejects.toBe(failure);
     expect(clientIdsDb.find).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('client_drop_id request contract', () => {
+  it('fingerprints only what the client sent, without the id, envelope or server fields', () => {
+    const request = {
+      wave_id: 'wave-1',
+      parts: [{ content: 'gm', media: [] }],
+      client_drop_id: CLIENT_DROP_ID
+    };
+    const same = clientDropFingerprint(request as never);
+
+    expect(
+      clientDropFingerprint({
+        ...request,
+        client_drop_id: undefined,
+        device_signature: { seq: 9 },
+        author: { external_id: 'x' }
+      } as never)
+    ).toBe(same);
+    expect(
+      clientDropFingerprint({
+        ...request,
+        parts: [{ content: 'gm!', media: [] }]
+      } as never)
+    ).not.toBe(same);
+  });
+
+  it('accepts only the plain UUID form and stores it lowercase', () => {
+    const body = (clientDropId: string) => ({
+      wave_id: 'wave-1',
+      parts: [{ content: 'gm', media: [] }],
+      referenced_nfts: [],
+      mentioned_users: [],
+      metadata: [],
+      client_drop_id: clientDropId
+    });
+    const valid = NewDropSchema.validate(body(CLIENT_DROP_ID.toUpperCase()));
+    expect(valid.error).toBeUndefined();
+    expect(valid.value.client_drop_id).toBe(CLIENT_DROP_ID);
+    for (const bad of [
+      `{${CLIENT_DROP_ID}}`,
+      `urn:uuid:${CLIENT_DROP_ID}`,
+      CLIENT_DROP_ID.split('-').join(''),
+      'not-a-uuid'
+    ]) {
+      expect(NewDropSchema.validate(body(bad)).error).toBeDefined();
+    }
   });
 });

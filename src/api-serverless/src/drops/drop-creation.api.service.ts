@@ -100,6 +100,72 @@ function normalizeCreateDropPollRequest(
 
 import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
 
+interface ClientDrop {
+  readonly clientDropId: string;
+  readonly waveId: string;
+  readonly contentFingerprint: string;
+}
+
+/**
+ * Fingerprints exactly what the client sent, so it stays the same for an
+ * identical retry whatever the server derives from it. The id itself, the
+ * device signature envelope and server-added fields are left out.
+ */
+export function clientDropFingerprint(request: ApiCreateDropRequest): string {
+  const {
+    client_drop_id: _clientDropId,
+    device_signature: _deviceSignature,
+    ...content
+  } = request as ApiCreateDropRequest & { author?: unknown };
+  delete (content as { author?: unknown }).author;
+  return moderationFingerprint(content);
+}
+
+function clientDropFor(request: ApiCreateDropRequest): ClientDrop | null {
+  if (!request.client_drop_id) {
+    return null;
+  }
+  return {
+    clientDropId: request.client_drop_id.toLowerCase(),
+    waveId: request.wave_id,
+    contentFingerprint: clientDropFingerprint(request)
+  };
+}
+
+/**
+ * One EMF count per idempotent-create outcome, so a retry storm (many
+ * `concurrent` or `replayed`) or misbehaving clients (`reused`) show up.
+ */
+function recordClientDropOutcome(
+  outcome: 'replayed' | 'concurrent' | 'reused'
+): void {
+  if (!process.env.AWS_LAMBDA_FUNCTION_NAME) return;
+  const environment = (process.env.SENTRY_ENVIRONMENT ?? '').includes('staging')
+    ? 'staging'
+    : 'prod';
+  try {
+    process.stdout.write(
+      `${JSON.stringify({
+        _aws: {
+          Timestamp: Date.now(),
+          CloudWatchMetrics: [
+            {
+              Namespace: '6529/DropCreate',
+              Dimensions: [['Environment', 'Outcome']],
+              Metrics: [{ Name: 'ClientDropIdOutcome', Unit: 'Count' }]
+            }
+          ]
+        },
+        Environment: environment,
+        Outcome: outcome,
+        ClientDropIdOutcome: 1
+      })}\n`
+    );
+  } catch {
+    /* Telemetry must not alter the create. */
+  }
+}
+
 export class DropCreationApiService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -169,21 +235,14 @@ export class DropCreationApiService {
     }
     // A retried send with the same client_drop_id returns the drop the first
     // attempt made, before any moderation or write work (waves R11-5).
-    const clientDrop = createDropRequest.client_drop_id
-      ? {
-          clientDropId: createDropRequest.client_drop_id.toLowerCase(),
-          contentFingerprint: moderationFingerprint(
-            sanitizeDropStructuredFields(createModel)
-          )
-        }
-      : null;
+    const clientDrop = clientDropFor(createDropRequest);
     if (clientDrop) {
-      const claimed = await this.clientIdsDb.find(
-        { authorId, clientDropId: clientDrop.clientDropId },
+      const replay = await this.findClientDropReplay(
+        { createDropRequest, authorId },
         ctx
       );
-      if (claimed) {
-        return this.findClientDropRetry(claimed, createModel, clientDrop, ctx);
+      if (replay) {
+        return replay;
       }
     }
     const preResolvedIdentityNomination =
@@ -227,7 +286,8 @@ export class DropCreationApiService {
       if (!claimed) {
         throw error;
       }
-      return this.findClientDropRetry(claimed, createModel, clientDrop, ctx);
+      recordClientDropOutcome('concurrent');
+      return this.findClientDropRetry(claimed, clientDrop, ctx);
     }
     const {
       drop,
@@ -268,19 +328,47 @@ export class DropCreationApiService {
   }
 
   /**
+   * The drop an earlier attempt with the same client_drop_id created, or
+   * null when the id is unused. The create route calls this before checking
+   * device signatures: a retried signed envelope would otherwise be refused
+   * as already used, although the first attempt succeeded.
+   */
+  public async findClientDropReplay(
+    {
+      createDropRequest,
+      authorId
+    }: { createDropRequest: ApiCreateDropRequest; authorId: string },
+    ctx: RequestContext
+  ): Promise<ApiDrop | null> {
+    const clientDrop = clientDropFor(createDropRequest);
+    if (!clientDrop) {
+      return null;
+    }
+    const claimed = await this.clientIdsDb.find(
+      { authorId, clientDropId: clientDrop.clientDropId },
+      ctx
+    );
+    if (!claimed) {
+      return null;
+    }
+    recordClientDropOutcome('replayed');
+    return this.findClientDropRetry(claimed, clientDrop, ctx);
+  }
+
+  /**
    * Answers a retried create whose client_drop_id is already claimed. Only an
    * identical request (same wave and content) gets the original drop back.
    */
   private async findClientDropRetry(
     claimed: DropClientIdEntity,
-    model: CreateOrUpdateDropModel,
-    clientDrop: { clientDropId: string; contentFingerprint: string },
+    clientDrop: ClientDrop,
     ctx: RequestContext
   ): Promise<ApiDrop> {
     if (
-      claimed.wave_id !== model.wave_id ||
+      claimed.wave_id !== clientDrop.waveId ||
       claimed.content_fingerprint !== clientDrop.contentFingerprint
     ) {
+      recordClientDropOutcome('reused');
       throw new CustomApiCompliantException(
         409,
         'client_drop_id was already used for a different drop',
@@ -300,6 +388,7 @@ export class DropCreationApiService {
       );
     } catch (error) {
       if (error instanceof NotFoundException) {
+        recordClientDropOutcome('reused');
         throw new CustomApiCompliantException(
           409,
           'client_drop_id was used for a drop that no longer exists',
@@ -327,7 +416,7 @@ export class DropCreationApiService {
       > | null;
       prePublication: PrePublicationPreparation;
       requestDailyActivityCredit: boolean;
-      clientDrop?: { clientDropId: string; contentFingerprint: string } | null;
+      clientDrop?: ClientDrop | null;
     },
     poll: CreateDropPollRequest | null | undefined,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
