@@ -134,6 +134,139 @@ describe('CreateOrUpdateDropUseCase', () => {
     );
   }
 
+  describe('all mention audience preview', () => {
+    function previewSetup(overrides: Record<string, unknown> = {}) {
+      const wave = {
+        id: 'wave-1',
+        created_by: 'author',
+        admin_group_id: 'admins',
+        visibility_group_id: 'visible',
+        parent_wave_id: 'parent',
+        ...overrides
+      };
+      const findWaveById = jest.fn(async (id: string) =>
+        id === 'parent'
+          ? {
+              id: 'parent',
+              parent_wave_id: null,
+              visibility_group_id: 'parent-visible'
+            }
+          : wave
+      );
+      const getGroupsUserIsEligibleFor = jest
+        .fn()
+        .mockResolvedValue(['visible', 'parent-visible']);
+      const findIdentitiesInGroups = jest.fn(async (groups: string[]) =>
+        groups[0] === 'visible'
+          ? ['both', 'child-only']
+          : ['both', 'parent-only']
+      );
+      const findWaveFollowersEligibleForDropNotifications = jest
+        .fn()
+        .mockResolvedValue([
+          { identity_id: 'both', has_group_mention: true },
+          { identity_id: 'both', has_group_mention: true },
+          { identity_id: 'child-only', has_group_mention: true },
+          { identity_id: 'parent-only', has_group_mention: true },
+          { identity_id: 'opted-out', has_group_mention: false }
+        ]);
+      const countMentionRecipients = jest.fn(
+        async (ids: string[]) => ids.length
+      );
+      const useCase = createUseCaseWithMocks({
+        wavesApiDb: { findWaveById },
+        userGroupsService: {
+          getGroupsUserIsEligibleFor,
+          findIdentitiesInGroups
+        },
+        identitySubscriptionsDb: {
+          findWaveFollowersEligibleForDropNotifications
+        },
+        userNotifier: { countMentionRecipients }
+      });
+      return {
+        useCase,
+        findWaveById,
+        getGroupsUserIsEligibleFor,
+        findWaveFollowersEligibleForDropNotifications,
+        countMentionRecipients
+      };
+    }
+
+    it('counts distinct broadcast subscribers visible in both wave and parent', async () => {
+      const setup = previewSetup();
+      const ctx = {
+        authenticationContext: AuthenticationContext.fromProfileId('author')
+      };
+      await expect(
+        setup.useCase.countAllMentionRecipients('wave-1', ctx)
+      ).resolves.toBe(1);
+      expect(
+        setup.findWaveFollowersEligibleForDropNotifications
+      ).toHaveBeenCalledWith(
+        {
+          waveId: 'wave-1',
+          authorId: 'author',
+          mentionedGroups: [DropGroupMention.ALL]
+        },
+        { connection: null }
+      );
+      expect(setup.countMentionRecipients).toHaveBeenCalledWith(
+        ['both'],
+        'author',
+        ctx
+      );
+    });
+
+    it('allows an eligible admin and returns the final notification preference count', async () => {
+      const setup = previewSetup({ created_by: 'other' });
+      setup.getGroupsUserIsEligibleFor.mockResolvedValue([
+        'admins',
+        'visible',
+        'parent-visible'
+      ]);
+      setup.countMentionRecipients.mockResolvedValue(0);
+      await expect(
+        setup.useCase.countAllMentionRecipients('wave-1', {
+          authenticationContext: AuthenticationContext.fromProfileId('author')
+        })
+      ).resolves.toBe(0);
+    });
+
+    it('rejects ordinary members before reading audience data', async () => {
+      const setup = previewSetup({ created_by: 'other' });
+      await expect(
+        setup.useCase.countAllMentionRecipients('wave-1', {
+          authenticationContext: AuthenticationContext.fromProfileId('author')
+        })
+      ).rejects.toThrow('Only wave creators or admins');
+      expect(
+        setup.findWaveFollowersEligibleForDropNotifications
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not reveal a private parent audience', async () => {
+      const setup = previewSetup();
+      setup.getGroupsUserIsEligibleFor.mockResolvedValue(['visible']);
+      await expect(
+        setup.useCase.countAllMentionRecipients('wave-1', {
+          authenticationContext: AuthenticationContext.fromProfileId('author')
+        })
+      ).rejects.toThrow('Wave not found');
+      expect(
+        setup.findWaveFollowersEligibleForDropNotifications
+      ).not.toHaveBeenCalled();
+    });
+
+    it('requires a fully authenticated posting identity', async () => {
+      const setup = previewSetup();
+      await expect(
+        setup.useCase.countAllMentionRecipients('wave-1', {})
+      ).rejects.toThrow('Posting rights');
+      expect(setup.findWaveById).not.toHaveBeenCalled();
+    });
+  });
+
   it('requires the published MIME type and uploader for an AVIF media reference', async () => {
     const useCase = createUseCaseWithMocks({
       dropMediaUploadsDb: {

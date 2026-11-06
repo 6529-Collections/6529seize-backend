@@ -1,3 +1,4 @@
+import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
 import {
   isLegacyDmClosed,
@@ -372,6 +373,56 @@ export class CreateOrUpdateDropUseCase {
     > = contentModerationDb,
     private readonly entryHooks: CompetitionEntryDropHooks = competitionEntryDropHooks
   ) {}
+
+  public async countAllMentionRecipients(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<number> {
+    const auth = ctx.authenticationContext;
+    const authorId = auth?.getActingAsId();
+    if (
+      !authorId ||
+      !auth?.hasRightsTo(ProfileProxyActionType.CREATE_DROP_TO_WAVE)
+    ) {
+      throw new ForbiddenException('Posting rights are required');
+    }
+    const [wave, groups] = await Promise.all([
+      this.wavesApiDb.findWaveById(waveId, ctx.connection),
+      this.userGroupsService.getGroupsUserIsEligibleFor(authorId, ctx.timer)
+    ]);
+    const visibleWave = await assertWaveAndParentVisibleOrThrow({
+      wave,
+      groupsUserIsEligibleFor: groups,
+      message: 'Wave not found',
+      wavesApiDb: this.wavesApiDb,
+      ctx
+    });
+    if (
+      visibleWave.created_by !== authorId &&
+      !(
+        visibleWave.admin_group_id &&
+        groups.includes(visibleWave.admin_group_id)
+      )
+    ) {
+      throw new ForbiddenException(
+        'Only wave creators or admins can mention @all'
+      );
+    }
+    const connection = ctx.connection ?? { connection: null };
+    const followers =
+      await this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
+        { waveId, authorId, mentionedGroups: [DropGroupMention.ALL] },
+        connection
+      );
+    const recipients = await this.filterIdentityIdsEligibleToReadWave(
+      visibleWave,
+      followers
+        .filter((follower) => follower.has_group_mention)
+        .map((follower) => follower.identity_id),
+      { timer: ctx.timer, connection }
+    );
+    return this.userNotifier.countMentionRecipients(recipients, authorId, ctx);
+  }
 
   /**
    * Persistence-boundary guard shared by every caller (API requests as well as
