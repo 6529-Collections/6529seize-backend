@@ -235,7 +235,8 @@ router.post(
       drop_type: newDrop.drop_type,
       signature: newDrop.signature,
       hide_link_preview: newDrop.hide_link_preview,
-      is_additional_action_promised: newDrop.is_additional_action_promised
+      is_additional_action_promised: newDrop.is_additional_action_promised,
+      client_drop_id: newDrop.client_drop_id
     };
     const createdDrop = await deviceSignedWritesService.createDrop(
       {

@@ -333,7 +333,9 @@ export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
       then: NewDropPollSchema.optional(),
       otherwise: Joi.forbidden()
     }),
-    hide_link_preview: Joi.boolean().optional()
+    hide_link_preview: Joi.boolean().optional(),
+    // Makes a create idempotent per author (waves R11-5); stored lowercase.
+    client_drop_id: Joi.string().guid().lowercase().optional()
   }
 );
 

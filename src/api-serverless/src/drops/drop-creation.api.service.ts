@@ -4,7 +4,7 @@ import { DropsApiService, dropsService } from './drops.api.service';
 import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { AuthenticationContext } from '../../../auth-context';
-import { Timer } from '../../../time';
+import { Time, Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import {
@@ -67,7 +67,13 @@ import {
   HelpBotDailyActivityCreditQueueService
 } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
+import {
+  dropClientIdsDb,
+  DropClientIdsDb,
+  DropClientIdTakenError
+} from '@/drops/drop-client-ids.db';
+import { DropClientIdEntity } from '@/entities/IDropClientId';
 import { DropType } from '@/entities/IDrop';
 import {
   chatHistoryPurgeDb,
@@ -109,7 +115,8 @@ export class DropCreationApiService {
     private readonly dropPollsApiService: DropPollsApiService,
     private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb,
     private readonly dailyActivityCreditQueueService: HelpBotDailyActivityCreditQueueService = helpBotDailyActivityCreditQueueService,
-    private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb
+    private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb,
+    private readonly clientIdsDb: DropClientIdsDb = dropClientIdsDb
   ) {}
 
   public async createDrop(
@@ -160,6 +167,25 @@ export class DropCreationApiService {
         ctx
       );
     }
+    // A retried send with the same client_drop_id returns the drop the first
+    // attempt made, before any moderation or write work (waves R11-5).
+    const clientDrop = createDropRequest.client_drop_id
+      ? {
+          clientDropId: createDropRequest.client_drop_id.toLowerCase(),
+          contentFingerprint: moderationFingerprint(
+            sanitizeDropStructuredFields(createModel)
+          )
+        }
+      : null;
+    if (clientDrop) {
+      const claimed = await this.clientIdsDb.find(
+        { authorId, clientDropId: clientDrop.clientDropId },
+        ctx
+      );
+      if (claimed) {
+        return this.findClientDropRetry(claimed, createModel, clientDrop, ctx);
+      }
+    }
     const preResolvedIdentityNomination =
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
@@ -168,26 +194,50 @@ export class DropCreationApiService {
       createModel,
       ctx
     );
+    let created: Awaited<
+      ReturnType<DropCreationApiService['createDropWithGivenConnection']>
+    >;
+    try {
+      created = await this.dropsDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          return await this.createDropWithGivenConnection(
+            {
+              model: createModel,
+              authorId,
+              preResolvedIdentityNomination,
+              prePublication,
+              requestDailyActivityCredit,
+              clientDrop
+            },
+            normalizeCreateDropPollRequest(createDropRequest.poll),
+            { timer: ctx.timer!, connection }
+          );
+        }
+      );
+    } catch (error) {
+      if (!(error instanceof DropClientIdTakenError) || !clientDrop) {
+        throw error;
+      }
+      // A concurrent attempt with the same id committed first; this one
+      // rolled back and returns that attempt's drop.
+      const claimed = await this.clientIdsDb.find(
+        { authorId, clientDropId: clientDrop.clientDropId },
+        ctx
+      );
+      if (!claimed) {
+        throw error;
+      }
+      return this.findClientDropRetry(claimed, createModel, clientDrop, ctx);
+    }
     const {
       drop,
       pendingPushNotificationIds,
       dmUnreadRecipientIds,
       dailyActivityCreditRequestEnqueued
-    } = await this.dropsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        return await this.createDropWithGivenConnection(
-          {
-            model: createModel,
-            authorId,
-            preResolvedIdentityNomination,
-            prePublication,
-            requestDailyActivityCredit
-          },
-          normalizeCreateDropPollRequest(createDropRequest.poll),
-          { timer: ctx.timer!, connection }
-        );
-      }
-    );
+    } = created;
+    if (clientDrop) {
+      drop.client_drop_id = clientDrop.clientDropId;
+    }
     if (dailyActivityCreditRequestEnqueued) {
       await this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx);
     }
@@ -217,13 +267,58 @@ export class DropCreationApiService {
     return drop;
   }
 
+  /**
+   * Answers a retried create whose client_drop_id is already claimed. Only an
+   * identical request (same wave and content) gets the original drop back.
+   */
+  private async findClientDropRetry(
+    claimed: DropClientIdEntity,
+    model: CreateOrUpdateDropModel,
+    clientDrop: { clientDropId: string; contentFingerprint: string },
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
+    if (
+      claimed.wave_id !== model.wave_id ||
+      claimed.content_fingerprint !== clientDrop.contentFingerprint
+    ) {
+      throw new CustomApiCompliantException(
+        409,
+        'client_drop_id was already used for a different drop',
+        'CLIENT_DROP_ID_REUSED'
+      );
+    }
+    let drop: ApiDrop;
+    try {
+      // Read the writer: the first attempt may have committed moments ago.
+      drop = await this.dropsDb.executeNativeQueriesInTransaction(
+        (connection) =>
+          this.dropsService.findDropByIdOrThrow(
+            { dropId: claimed.drop_id, skipEligibilityCheck: true },
+            { ...ctx, connection }
+          ),
+        { isolationLevel: 'READ COMMITTED' }
+      );
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw new CustomApiCompliantException(
+          409,
+          'client_drop_id was used for a drop that no longer exists',
+          'CLIENT_DROP_ID_REUSED'
+        );
+      }
+      throw error;
+    }
+    return { ...drop, client_drop_id: clientDrop.clientDropId };
+  }
+
   private async createDropWithGivenConnection(
     {
       model,
       authorId,
       preResolvedIdentityNomination,
       prePublication,
-      requestDailyActivityCredit
+      requestDailyActivityCredit,
+      clientDrop = null
     }: {
       model: CreateOrUpdateDropModel;
       authorId: string;
@@ -232,6 +327,7 @@ export class DropCreationApiService {
       > | null;
       prePublication: PrePublicationPreparation;
       requestDailyActivityCredit: boolean;
+      clientDrop?: { clientDropId: string; contentFingerprint: string } | null;
     },
     poll: CreateDropPollRequest | null | undefined,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
@@ -252,6 +348,21 @@ export class DropCreationApiService {
       preResolvedIdentityNomination,
       prePublication
     });
+    if (clientDrop && !replayed) {
+      // Claimed in the same transaction as the drop. A concurrent attempt
+      // with the same id waits on this one key and then fails.
+      await this.clientIdsDb.insert(
+        {
+          author_id: authorId,
+          client_drop_id: clientDrop.clientDropId,
+          drop_id,
+          wave_id: model.wave_id,
+          content_fingerprint: clientDrop.contentFingerprint,
+          created_at: Time.currentMillis()
+        },
+        { timer, connection }
+      );
+    }
     if (!replayed)
       await this.dropPollsApiService.createPollForDrop(
         {
