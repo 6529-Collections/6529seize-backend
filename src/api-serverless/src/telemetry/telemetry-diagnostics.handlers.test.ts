@@ -76,8 +76,8 @@ describe('team-only diagnostics reads', () => {
     );
     expect(result).toEqual({
       code: 'D-7K3Q-9XW2',
-      created_at: '2026-11-06T10:00:00.000Z',
-      expires_at: '2026-11-20T10:00:00.000Z',
+      created_at: new Date('2026-11-06T10:00:00.000Z'),
+      expires_at: new Date('2026-11-20T10:00:00.000Z'),
       compressed_bytes: 100,
       uncompressed_bytes: 400,
       bundle: { v: 1 }
