@@ -1,4 +1,4 @@
-import { Request } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import { env } from '@/env';
 import { getIp, normalizeIp } from '@/api/policies/policies';
@@ -50,6 +50,27 @@ export function isTrustedTelemetryEdge(req: Request): boolean {
     return false;
   }
   return secretsMatch(secret, headerValue(req, TELEMETRY_EDGE_SECRET_HEADER));
+}
+
+/**
+ * Once `TELEMETRY_EDGE_SECRET` is configured, every `/api/e` request must
+ * come through the 6529.io edge: a missing or wrong secret header is answered
+ * 403 before the body is read, and viewer headers are never trusted without
+ * it. Without a configured secret (local development) requests pass, but
+ * viewer headers are still ignored.
+ */
+export function requireTelemetryEdge() {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (
+      !env.getStringOrNull('TELEMETRY_EDGE_SECRET') ||
+      isTrustedTelemetryEdge(req)
+    ) {
+      next();
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(403).end();
+  };
 }
 
 /**
