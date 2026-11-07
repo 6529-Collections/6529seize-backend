@@ -29,6 +29,11 @@ jest.mock('@/competitions/retired-competition-storage', () => ({
 }));
 import { handler } from './index';
 import { DropEntity } from '@/entities/IDrop';
+import { applyProfileGroupsCollationSchema } from './profile-groups-collation-schema';
+jest.mock('./profile-groups-collation-schema', () => ({
+  applyProfileGroupsCollationSchema: jest.fn().mockResolvedValue(1)
+}));
+import { ProfileGroupEntity } from '@/entities/IProfileGroup';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
 jest.mock('./wave-score-input-index-schema', () => ({
   applyWaveScoreInputIndexSchema: jest.fn().mockResolvedValue(1)
@@ -170,6 +175,36 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     expect(getDataSource().synchronize).not.toHaveBeenCalled();
     expect(migrations.getInstance).not.toHaveBeenCalled();
     expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['profile-groups-collation', 'convert'],
+    ['profile-groups-collation-revert', 'revert']
+  ])(
+    'runs only the guarded profile_groups collation change for %s',
+    async (scope, direction) => {
+      await expect(invoke({ schema_scope: scope })).resolves.toEqual({
+        schema_scope: scope
+      });
+      expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+        logger: expect.anything(),
+        entities: [ProfileGroupEntity],
+        syncEntities: false,
+        skipRedis: true
+      });
+      expect(applyProfileGroupsCollationSchema).toHaveBeenCalledWith(direction);
+      expect(getDataSource().synchronize).not.toHaveBeenCalled();
+      expect(migrations.getInstance).not.toHaveBeenCalled();
+      expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+    }
+  );
+
+  it('never runs the profile_groups collation change from the schedule or a full deploy', async () => {
+    await expect(
+      invoke({ ...scheduledEvent, schema_scope: 'profile-groups-collation' })
+    ).rejects.toThrow('Unsupported database schema scope');
+    await invoke({ schema_scope: 'full' });
+    expect(applyProfileGroupsCollationSchema).not.toHaveBeenCalled();
   });
 
   it('propagates an online index failure without acknowledging the schema scope', async () => {

@@ -99,6 +99,31 @@ index-aware revision and retaining the additive index. Full manual schema
 synchronization also ensures this index through the same online helper; the
 entity marks it `synchronize: false` so TypeORM does not create or drop it itself.
 
+### profile_groups collation
+
+`profile_groups` stores both ids as `utf8mb3_bin`, while every table it is
+joined with uses the schema default `utf8mb4_0900_ai_ci`. Column-to-column
+joins across the two cannot use the `profile_groups` indexes. Deploy
+`dbMigrationsLoop` with `db_schema_scope=profile-groups-collation` to move both
+columns to the schema default. Run it off-peak; `full` never runs it.
+
+- It is idempotent: an already converted table is left alone, and any other
+  column or primary-key shape is refused.
+- It first refuses ids that would collide under the target collation.
+- A charset change cannot run in place, so the ALTER copies the table with
+  `ALGORITHM=COPY, LOCK=SHARED`. Reads continue, and writes (DM creation,
+  identity-group edits) wait for the copy. Production's table is about 50 MB.
+- Metadata-lock waits are limited to two seconds, so the queue behind a waiting
+  ALTER stays short. The ALTER is tried up to five times on lock timeouts, with
+  backoff (2, 4, 8, 16 s); other failures stop the run, and MySQL rolls the
+  ALTER back.
+- It verifies the new column collations and that the indexes are unchanged.
+
+TypeORM's synchronize never changes the collation of existing columns, so a
+`full` run neither repeats nor reverts the change. To roll back, deploy with
+`db_schema_scope=profile-groups-collation-revert`. It returns both ids to
+`utf8mb3_bin` with the same guards, and is lossless because the ids are ASCII.
+
 ### Retired membership materialisation
 
 The dedicated worker and dispatcher are no longer ordinary deployment choices.
