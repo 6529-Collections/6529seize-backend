@@ -138,6 +138,19 @@ export async function maybeFlushAnonymousVisitors(now: Date): Promise<void> {
   }
 }
 
+/**
+ * Persists a finished day's count. Called by the locked daily job on the
+ * first collector request after midnight, while the day's HyperLogLog is
+ * still within its grace period, so the final count never depends on a
+ * throttled flush happening to land in that window.
+ */
+export async function finalizeAnonymousVisitors(day: string): Promise<void> {
+  const count = await readCount(day);
+  if (count !== null && count > 0) {
+    await upsertUniquesDailyMax(day, ANONYMOUS_VISITORS_METRIC, count);
+  }
+}
+
 /** Live count for today (not yet flushed), or null without Redis. */
 export async function readTodayAnonymousVisitors(
   now: Date

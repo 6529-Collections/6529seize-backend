@@ -6,6 +6,7 @@ import {
   previousUtcDay,
   rollUpSignedInActives
 } from '@/api/telemetry/telemetry-actives';
+import { finalizeAnonymousVisitors } from '@/api/telemetry/telemetry-uniques';
 
 const logger = Logger.get('TELEMETRY_DAILY_JOBS');
 export const TELEMETRY_RETENTION_MONTHS = 25;
@@ -76,7 +77,11 @@ export async function maybeRunTelemetryDailyJobs(
   if (!acquired) {
     return;
   }
-  await runJob('actives', () => rollUpSignedInActives(previousUtcDay(now)));
+  const yesterday = previousUtcDay(now);
+  await runJob('anonymous-visitors', () =>
+    finalizeAnonymousVisitors(yesterday)
+  );
+  await runJob('actives', () => rollUpSignedInActives(yesterday));
   await runJob('retention', async () => {
     const removed = await deleteTelemetryRowsBefore(
       telemetryRetentionCutoffDay(now)
