@@ -2,6 +2,7 @@ import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { RequestContext } from '@/request.context';
 import { ConnectionWrapper, SqlTransactionOptions } from '@/sql-executor';
 import type { DropsApiService } from '@/api/drops/drops.api.service';
+import { withPrimaryReads } from '@/db/primary-read-scope';
 
 type TransactionRunner = {
   executeNativeQueriesInTransaction<T>(
@@ -37,5 +38,30 @@ export function findCommittedDropOnWriter(
         { ...ctx, connection }
       ),
     { isolationLevel: 'READ COMMITTED' }
+  );
+}
+
+/**
+ * Reads a drop this invocation has just committed from the primary, with no
+ * transaction (waves 1.8). The drop is already committed, so it needs no
+ * snapshot; without one, the mapper's parallel queries each take a pooled
+ * primary connection instead of queueing on a single transaction connection.
+ */
+export function findCommittedDropOnPrimary(
+  {
+    dropId,
+    dropsService
+  }: {
+    dropId: string;
+    dropsService: Pick<DropsApiService, 'findDropByIdOrThrow'>;
+  },
+  ctx: RequestContext,
+  primaryReads: <T>(work: () => Promise<T>) => Promise<T> = withPrimaryReads
+): Promise<ApiDrop> {
+  return primaryReads(() =>
+    dropsService.findDropByIdOrThrow(
+      { dropId, skipEligibilityCheck: true },
+      { ...ctx, connection: undefined }
+    )
   );
 }
