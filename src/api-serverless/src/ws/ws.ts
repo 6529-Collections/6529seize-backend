@@ -25,12 +25,14 @@ import {
 import { describeWebSocketSendFailure } from './ws-send-diagnostics';
 import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
 import { WsConnectionPurpose } from '@/entities/IWSConnection';
-import * as http from 'node:http';
-import * as https from 'node:https';
 import type { DeliveryBatch } from '@/ws-delivery/ws-delivery';
+import {
+  isKnownExpiryFenceEnabled,
+  wsFanoutConcurrency
+} from './ws-fanout-settings';
 
-/** Upper bound on concurrent gateway sends from one fan-out (and agent sockets). */
-export const WS_SEND_CONCURRENCY_CAP = 64;
+/** The SDK's own keep-alive agent size; raised only to fit a wider fan-out. */
+const GATEWAY_AGENT_MIN_SOCKETS = 50;
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -131,18 +133,11 @@ class ApiGatewayClientConnections extends ClientConnections {
         connectionTimeout: 2000,
         requestTimeout: 5000,
         throwOnRequestTimeout: true,
-        // Reused TLS connections, sized to the fan-out send pool so the pool,
-        // not the agent queue, bounds concurrency.
-        httpsAgent: new https.Agent({
-          keepAlive: true,
-          keepAliveMsecs: 1000,
-          maxSockets: WS_SEND_CONCURRENCY_CAP
-        }),
-        httpAgent: new http.Agent({
-          keepAlive: true,
-          keepAliveMsecs: 1000,
-          maxSockets: WS_SEND_CONCURRENCY_CAP
-        })
+        // The SDK's agent already keeps connections alive; it only needs
+        // enough sockets that the fan-out pool, not the agent, bounds sends.
+        httpsAgent: {
+          maxSockets: Math.max(GATEWAY_AGENT_MIN_SOCKETS, wsFanoutConcurrency())
+        }
       })
     });
   }
@@ -233,6 +228,8 @@ export class AppWebSockets {
    * Fan-outs pass the `jwtExpiry` their recipient query already returned, so
    * the fence needs no MySQL read per recipient. Only an expiry that looks
    * past is re-read, because a reauthentication may have extended it since.
+   * `WS_KNOWN_EXPIRY_FENCE=off` ignores the known expiry and re-reads the row
+   * before every send.
    */
   async send({
     connectionId,
@@ -289,7 +286,8 @@ export class AppWebSockets {
   ): Promise<boolean> {
     if (
       knownJwtExpiry !== undefined &&
-      getActiveJwtExpiry(knownJwtExpiry) !== null
+      getActiveJwtExpiry(knownJwtExpiry) !== null &&
+      isKnownExpiryFenceEnabled()
     ) {
       return true;
     }
