@@ -2,7 +2,11 @@ import { Readable } from 'node:stream';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Request, Response, RequestHandler } from 'express';
-import { initMulterSingleMiddleware } from '@/api/multer-middleware';
+import {
+  initMulterSingleMiddleware,
+  type MulterSingleMiddlewareOptions
+} from '@/api/multer-middleware';
+import { CustomApiCompliantException } from '@/exceptions';
 
 const boundary = '6529-multipart-regression';
 function part(name: string, bytes: Buffer, filename?: string): Buffer {
@@ -18,7 +22,12 @@ function part(name: string, bytes: Buffer, filename?: string): Buffer {
   ]);
 }
 
-async function parse(field: string, parts: Buffer[], terminate = true) {
+async function parse(
+  field: string,
+  parts: Buffer[],
+  terminate = true,
+  options?: MulterSingleMiddlewareOptions
+) {
   const body = Buffer.concat([
     ...parts,
     ...(terminate ? [Buffer.from(`--${boundary}--\r\n`)] : [])
@@ -32,7 +41,7 @@ async function parse(field: string, parts: Buffer[], terminate = true) {
     'content-length': String(body.length)
   };
   request.method = 'POST';
-  const middleware: RequestHandler = initMulterSingleMiddleware(field);
+  const middleware: RequestHandler = initMulterSingleMiddleware(field, options);
   await new Promise<void>((resolve, reject) => {
     middleware(request, {} as Response, (error) =>
       error ? reject(error) : resolve()
@@ -83,6 +92,25 @@ describe('production multipart middleware', () => {
     await expect(parse('pfp', [file, file])).rejects.toMatchObject({
       code: 'LIMIT_UNEXPECTED_FILE'
     });
+  });
+
+  it('rejects a file over an explicit size limit with HTTP 413', async () => {
+    const file = part('pfp', Buffer.alloc(9, 1), 'fixture.png');
+    const error = await parse('pfp', [file], true, {
+      maxFileSizeBytes: 8
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(CustomApiCompliantException);
+    expect((error as CustomApiCompliantException).getStatusCode()).toBe(413);
+    expect(
+      (
+        await parse(
+          'pfp',
+          [part('pfp', Buffer.alloc(8, 1), 'fixture.png')],
+          true,
+          { maxFileSizeBytes: 8 }
+        )
+      ).file?.size
+    ).toBe(8);
   });
 
   it('rejects a truncated multipart stream and still accepts the next upload', async () => {

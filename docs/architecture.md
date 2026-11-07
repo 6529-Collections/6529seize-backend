@@ -211,6 +211,18 @@ interactive-art submission model without fetching arbitrary source content on
 the server. The template applies attribute escaping before every media branch;
 its separate URL guard also protects local previews, which do not use this API.
 
+## Profile picture uploads
+
+Authenticated `POST /profiles/pfp/ipfs` accepts one multipart `pfp` file of at
+most 2 MiB (multer rejects larger bodies with 413), recognizes PNG, JPEG, GIF or
+WebP from the file's own bytes, and pins it with the shared IPFS uploader as a
+single unwrapped file (the configured `IPFS_API_UPLOAD_PATH` without
+`wrap-with-directory`). It returns `{ pfp_url: "ipfs://<cid>" }`; the caller then
+saves that URL through the existing `POST /profiles` validation. The web app
+uploads through this route instead of posting to the IPFS node from the
+browser. Deploy `api` before the frontend that calls it. No new service,
+database schema, or migration is required.
+
 ## Profile collecting and marketplace operations
 
 The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs
@@ -1159,6 +1171,8 @@ Notification invalidation is emitted only after the push worker loads durable no
 WebSocket registration and re-authentication persist the identity, JWT expiry and notification grants atomically. Existing connection mutations lock the connection row before subscription rows; identity resync and deletion use the same order, and missing connections cannot gain grants. Repository-owned mutations use transaction-scoped `READ COMMITTED` to avoid shared subscription-gap locks when different sockets replace empty grants. Pooled session defaults, caller-owned isolation and sampled cleanup keep their existing policies. Only a transaction's owner retries confirmed deadlocks, with at most three whole attempts and bounded jitter; caller-owned transactions and ambiguous failures propagate. Socket acknowledgements follow persistence, and socket/provider operations remain outside the retried transaction. New connections, re-authentication, and identity resyncs each retain a one-percent chance of running bounded cleanup of expired and orphaned subscriptions after persistence. The repository identity update method remains the sole write path for `ws_connections.identity_id`.
 
 If authentication or notification identity sync finds that the stored connection has disappeared, the API requests transport closure and then removes orphan subscription state before returning 410. This condition does not reject the credential and sends no authentication or subscription acknowledgement. Unexpected operation, close or cleanup failures remain 5xx, with fixed action/stage warning labels alongside the existing response error envelope. The mounted web application's health check can reconnect a disconnected socket using its current token; reconnect timing depends on client lifecycle and browser scheduling. The local WebSocket adapter follows the same closure path. This defensive recovery does not establish the cause of any historical connection loss.
+
+A socket may declare its purpose once on `$connect` with `purpose=typing`, stored in nullable `ws_connections.purpose`. `WSConnectionEntity` is registered in `src/entities/entities.ts`, so the full `dbMigrationsLoop` schema sync adds the column; every connection query reads it, so `dbMigrationsLoop` must deploy before `api`. Typing-purpose sockets receive only `USER_IS_TYPING` for their subscribed wave; drop, deletion, rating, reaction, competition, attachment, notification and NFT-link broadcasts from the API leave them out, so each tab gets each of those frames once through its app socket. Sockets without a purpose keep the legacy audience rules.
 
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
 
