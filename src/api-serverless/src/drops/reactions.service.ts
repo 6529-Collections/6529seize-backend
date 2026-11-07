@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import { RequestContext } from '../../../request.context';
 import {
   BadRequestException,
@@ -389,21 +390,23 @@ export class ReactionsService {
           return false;
         }
 
-        await Promise.all([
-          this.metricsRecorder.recordActiveIdentity(
-            { identityId: profileId },
-            ctx
-          ),
-          profileActivityLogsDb.insert(
-            this.buildReactionActivityLog({
-              dropEntity,
-              profileId,
-              reaction
-            }),
-            connection,
-            ctx.timer
-          ),
-          (() =>
+        await inSequence([
+          () =>
+            this.metricsRecorder.recordActiveIdentity(
+              { identityId: profileId },
+              ctx
+            ),
+          () =>
+            profileActivityLogsDb.insert(
+              this.buildReactionActivityLog({
+                dropEntity,
+                profileId,
+                reaction
+              }),
+              connection,
+              ctx.timer
+            ),
+          () =>
             dropEntity.author_id === profileId
               ? Promise.resolve()
               : this.userNotifier.notifyOfDropReaction(
@@ -416,7 +419,7 @@ export class ReactionsService {
                   },
                   wave.visibility_group_id,
                   connection
-                ))()
+                )
         ]);
         return true;
       },
