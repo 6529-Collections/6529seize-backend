@@ -1,0 +1,74 @@
+service: dropWriteOutboxLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 512
+  timeout: 60
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  dropWriteOutboxLoop:
+    handler: index.handler
+    reservedConcurrency: 1
+    name: dropWriteOutboxLoop
+    description: ${env:VERSION_DESCRIPTION}
+    events:
+      - schedule:
+          name: dropWriteOutboxLoop-${opt:stage, self:provider.stage}
+          rate: rate(1 minute)
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'dropWriteOutboxLoop_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    DropWriteOutboxLoopLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/dropWriteOutboxLoop
+        RetentionInDays: 60
+
+    DropWriteOutboxLoopOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn:
+        - DropWriteOutboxLoopLogGroup
+      Properties:
+        LogGroupName:
+          Ref: DropWriteOutboxLoopLogGroup
+        FilterPattern: 'Runtime.OutOfMemory'
+        MetricTransformations:
+          - MetricNamespace: 'Lambda/OOM'
+            MetricName: 'dropWriteOutboxLoop_OOMErrorCount'
+            MetricValue: '1'
+            DefaultValue: 0
+
+    DropWriteOutboxLoopOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: DropWriteOutboxLoopOOMFilter
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-dropWriteOutboxLoop-OOM'
+        AlarmDescription: !Sub 'Lambda dropWriteOutboxLoop OutOfMemory in ${AWS::Region}'
+        Namespace: 'Lambda/OOM'
+        MetricName: 'dropWriteOutboxLoop_OOMErrorCount'
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

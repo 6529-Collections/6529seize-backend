@@ -73,6 +73,39 @@ export class PushNotificationOutboxDb extends LazyDbAccessCompatibleService {
       { isolationLevel: 'READ COMMITTED' }
     );
   }
+
+  /**
+   * Publishes specific committed rows right away, so a producer need not
+   * wait for the per-minute publisher. Rows another publisher holds are
+   * skipped; rows whose send fails stay for the publisher to retry.
+   */
+  async publishIds(
+    notificationIds: readonly number[],
+    send: (ids: number[]) => Promise<void>
+  ): Promise<number> {
+    if (!notificationIds.length) return 0;
+    return this.db.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const rows = await this.db.execute<{ notification_id: number }>(
+          `select notification_id from ${PUSH_NOTIFICATION_OUTBOX_TABLE}
+           where notification_id in (:ids)
+           order by notification_id for update skip locked`,
+          { ids: notificationIds },
+          { wrappedConnection: connection }
+        );
+        if (!rows.length) return 0;
+        const ids = rows.map((row) => Number(row.notification_id));
+        await send(ids);
+        await this.db.execute(
+          `delete from ${PUSH_NOTIFICATION_OUTBOX_TABLE} where notification_id in (:ids)`,
+          { ids },
+          { wrappedConnection: connection }
+        );
+        return ids.length;
+      },
+      { isolationLevel: 'READ COMMITTED' }
+    );
+  }
 }
 
 export const pushNotificationOutboxDb = new PushNotificationOutboxDb(
