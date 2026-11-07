@@ -22,15 +22,39 @@ export class WaveLogsUnavailableException extends CustomApiCompliantException {
   }
 }
 
+/** One request shape: wave, sort, page and types (in any order). */
 function timeoutKey(param: DropLogsQueryParams): string {
   const types = [...param.log_types].sort((a, b) => a.localeCompare(b));
   return [
     'wave-logs-timeout',
-    param.wave_id,
+    encodeURIComponent(param.wave_id),
     param.sort_direction,
     param.offset,
+    param.limit,
     types.join(',')
   ].join(':');
+}
+
+/** The memo is best-effort: Redis trouble never changes the response. */
+async function rememberedTimeout(key: string): Promise<boolean> {
+  try {
+    return (await redisGet<boolean>(key)) === true;
+  } catch (error) {
+    logger.warn('[WAVE_LOGS_TIMEOUT_MEMO_UNAVAILABLE]', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return false;
+  }
+}
+
+async function rememberTimeout(key: string): Promise<void> {
+  try {
+    await redisSetJson(key, true, WAVE_LOGS_TIMEOUT_TTL);
+  } catch (error) {
+    logger.warn('[WAVE_LOGS_TIMEOUT_MEMO_UNAVAILABLE]', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
 }
 
 /**
@@ -45,13 +69,13 @@ export async function withWaveLogsTimeoutGuard<T>(
 ): Promise<T> {
   if (param.drop_id) return read();
   const key = timeoutKey(param);
-  if (await redisGet<boolean>(key)) throw new WaveLogsUnavailableException();
+  if (await rememberedTimeout(key)) throw new WaveLogsUnavailableException();
   try {
     return await read();
   } catch (error) {
     if (!isQueryTimeout(error)) throw error;
     logger.warn('[WAVE_LOGS_TIMEOUT]', { wave_id: param.wave_id });
-    await redisSetJson(key, true, WAVE_LOGS_TIMEOUT_TTL);
+    await rememberTimeout(key);
     throw new WaveLogsUnavailableException();
   }
 }
