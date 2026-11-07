@@ -23,6 +23,10 @@ import {
   competitionAnonymityService
 } from '@/competitions/competition-anonymity';
 import { dropsDb } from '@/drops/drops.db';
+import {
+  WS_FANOUT_CONCURRENCY_DEFAULT,
+  WS_FANOUT_CONCURRENCY_MAX
+} from '@/api/ws/ws-fanout-settings';
 
 function createDrop(content: string, dropType = ApiDropType.Chat) {
   return {
@@ -272,7 +276,7 @@ describe('WsListenersNotifier', () => {
     await notifier.notifyAboutDropDeletes(deletedDrops, null, {});
 
     expect(appWebSockets.send).toHaveBeenCalledTimes(220);
-    expect(maximumActiveSends).toBe(100);
+    expect(maximumActiveSends).toBe(WS_FANOUT_CONCURRENCY_DEFAULT);
   });
 
   it('keeps stamped full frames within the application ceiling', () => {
@@ -289,6 +293,210 @@ describe('WsListenersNotifier', () => {
     expect(Buffer.byteLength(stamped, 'utf8')).toBeLessThanOrEqual(
       DROP_UPDATE_MAX_UTF8_BYTES
     );
+  });
+
+  describe('cheaper fan-out (1.2)', () => {
+    const recipients = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        connectionId: `c-${index}`,
+        profileId: index % 5 === 0 ? null : `p-${index}`,
+        jwtExpiry: 4102444800
+      }));
+
+    it('sends through a capped pool with each recipient expiry and one payload', async () => {
+      // Every send waits on a gate, so the pool's cap is actually reached.
+      let open!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      let active = 0;
+      let maximum = 0;
+      const appWebSockets = {
+        send: jest.fn(async () => {
+          active++;
+          maximum = Math.max(maximum, active);
+          await gate;
+          active--;
+          return { status: 'sent' };
+        })
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        {
+          getCurrentlyOnlineCommunityMemberConnectionIds: jest
+            .fn()
+            .mockResolvedValue(recipients(200))
+        } as never
+      );
+
+      const fanout = notifier.notifyAboutDropUpdate(createDrop('hello'), {});
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(appWebSockets.send).toHaveBeenCalledTimes(
+        WS_FANOUT_CONCURRENCY_DEFAULT
+      );
+      expect(active).toBe(WS_FANOUT_CONCURRENCY_DEFAULT);
+      open();
+      await fanout;
+
+      expect(appWebSockets.send).toHaveBeenCalledTimes(200);
+      expect(maximum).toBe(WS_FANOUT_CONCURRENCY_DEFAULT);
+      const calls = appWebSockets.send.mock.calls as unknown as [
+        {
+          connectionId: string;
+          jwtExpiry: number;
+          message: string;
+          batch: unknown;
+        }
+      ][];
+      expect(new Set(calls.map(([call]) => call.connectionId)).size).toBe(200);
+      expect(calls.every(([call]) => call.jwtExpiry === 4102444800)).toBe(true);
+      expect(calls.every(([call]) => call.batch === calls[0][0].batch)).toBe(
+        true
+      );
+      const bodies = new Set(
+        calls.map(([call]) => {
+          const { sent_at, server_received_at, ...frame } = JSON.parse(
+            call.message
+          );
+          return JSON.stringify(frame);
+        })
+      );
+      expect(bodies.size).toBe(1);
+    });
+
+    it.each([
+      ['a configured width', '40', 40],
+      ['a width clamped to the maximum', '1000', WS_FANOUT_CONCURRENCY_MAX]
+    ])(
+      'keeps %s of sends in flight from WS_FANOUT_CONCURRENCY',
+      async (_label, configured, expected) => {
+        const previous = process.env.WS_FANOUT_CONCURRENCY;
+        process.env.WS_FANOUT_CONCURRENCY = configured;
+        try {
+          let open!: () => void;
+          const gate = new Promise<void>((resolve) => {
+            open = resolve;
+          });
+          let active = 0;
+          let maximum = 0;
+          const appWebSockets = {
+            send: jest.fn(async () => {
+              active++;
+              maximum = Math.max(maximum, active);
+              await gate;
+              active--;
+              return { status: 'sent' };
+            })
+          };
+          const notifier = new WsListenersNotifier(
+            appWebSockets as never,
+            {
+              getCurrentlyOnlineCommunityMemberConnectionIds: jest
+                .fn()
+                .mockResolvedValue(recipients(300))
+            } as never
+          );
+
+          const fanout = notifier.notifyAboutDropUpdate(
+            createDrop('hello'),
+            {}
+          );
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          expect(active).toBe(expected);
+          open();
+          await fanout;
+          expect(appWebSockets.send).toHaveBeenCalledTimes(300);
+          expect(maximum).toBe(expected);
+        } finally {
+          if (previous === undefined) delete process.env.WS_FANOUT_CONCURRENCY;
+          else process.env.WS_FANOUT_CONCURRENCY = previous;
+        }
+      }
+    );
+
+    it('logs rejected bookkeeping once per fan-out without failing it', async () => {
+      const appWebSockets = {
+        send: jest.fn(async ({ batch }) => {
+          batch.defer(Promise.reject(new Error('redis down')));
+          return { status: 'sent' };
+        })
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        {
+          getCurrentlyOnlineCommunityMemberConnectionIds: jest
+            .fn()
+            .mockResolvedValue(recipients(3))
+        } as never
+      );
+      const warn = jest.fn();
+      (notifier as any).logger = { warn, error: jest.fn() };
+
+      await expect(
+        notifier.notifyAboutDropUpdate(createDrop('hello'), {})
+      ).resolves.toBeUndefined();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith({
+        code: 'WS_DELIVERY_BOOKKEEPING_FAILED',
+        failed: 3,
+        total: 3
+      });
+    });
+
+    it('awaits deferred bookkeeping before the fan-out returns', async () => {
+      let release!: () => void;
+      const bookkeeping = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const appWebSockets = {
+        send: jest.fn(async ({ batch }) => {
+          batch.defer(bookkeeping);
+          return { status: 'sent' };
+        })
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        {
+          getCurrentlyOnlineCommunityMemberConnectionIds: jest
+            .fn()
+            .mockResolvedValue(recipients(3))
+        } as never
+      );
+
+      let done = false;
+      const fanout = notifier
+        .notifyAboutDropUpdate(createDrop('hello'), {})
+        .then(() => {
+          done = true;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(appWebSockets.send).toHaveBeenCalledTimes(3);
+      expect(done).toBe(false);
+      release();
+      await fanout;
+      expect(done).toBe(true);
+    });
+
+    it('passes known expiries to identity and direct-message sends', async () => {
+      const appWebSockets = { send: jest.fn().mockResolvedValue(undefined) };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        {
+          findNotificationConnectionIdsByIdentityIds: jest
+            .fn()
+            .mockResolvedValue([
+              { connectionId: 'c-1', identityId: 'p-1', jwtExpiry: 123 }
+            ])
+        } as never
+      );
+
+      await notifier.notifyAboutIdentityNotificationsChanged(['p-1']);
+
+      expect(appWebSockets.send).toHaveBeenCalledWith(
+        expect.objectContaining({ connectionId: 'c-1', jwtExpiry: 123 })
+      );
+    });
   });
 
   describe('delivery measurement (1.0)', () => {
@@ -361,8 +569,11 @@ describe('WsListenersNotifier', () => {
         drop_id: 'drop-1',
         wave_id: 'wave-1',
         fanout_recipients: 2,
-        fanout_serializations: 2,
-        fanout_connection_reads: 2,
+        // Both recipients share one audience class: one serialization.
+        fanout_serializations: 1,
+        // The recipient query supplied no expiry and the test transport
+        // reports no fence read.
+        fanout_connection_reads: 0,
         fanout_sent: 1,
         fanout_gone: 1
       });
