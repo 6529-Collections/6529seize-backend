@@ -40,6 +40,10 @@ import { enums } from '../../../enums';
 import { profileWavesApiService } from '@/api/profiles/profile-waves.api.service';
 import { helpBotCreditsService } from '@/help-bot/help-bot-credits.service';
 import { Logger } from '@/logging';
+import {
+  PROFILE_PICTURE_MAX_BYTES,
+  profilePictureIpfsUploadService
+} from './profile-picture-ipfs-upload';
 
 const router = asyncRouter();
 const logger = Logger.get('ProfilesRoutes');
@@ -195,6 +199,22 @@ router.post(
     }
     await giveReadReplicaTimeToCatchUp();
     res.status(201).send(profile);
+  }
+);
+
+router.post(
+  `/pfp/ipfs`,
+  needsAuthenticatedUser(),
+  initMulterSingleMiddleware('pfp', {
+    maxFileSizeBytes: PROFILE_PICTURE_MAX_BYTES
+  }),
+  async function (
+    req: Request,
+    res: Response<ApiResponse<{ pfp_url: string }>>
+  ) {
+    getWalletOrThrow(req);
+    const response = await profilePictureIpfsUploadService.upload(req.file);
+    res.status(201).send(response);
   }
 );
 

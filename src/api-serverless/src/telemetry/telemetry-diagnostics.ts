@@ -155,7 +155,16 @@ export async function readDiagnostics(
     return null;
   }
   const gzip = decryptDiagnostics(stored, stored.code);
-  const bundle = JSON.parse(gunzipSync(gzip).toString('utf8'));
+  // Bounded like uploads, so a stored row can never inflate without limit.
+  const json = gunzipSync(gzip, {
+    maxOutputLength: DIAG_MAX_UNCOMPRESSED_BYTES
+  }).toString('utf8');
+  let bundle: Record<string, unknown>;
+  try {
+    bundle = JSON.parse(json);
+  } catch {
+    throw new Error('Stored diagnostics bundle is not valid JSON');
+  }
   return {
     code: stored.code,
     created_at: stored.created_at,

@@ -168,6 +168,7 @@ import {
   authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
   authenticateWebSocketToken,
+  connectionPurposeFromQuery,
   mapHttpRequestToGatewayEvent
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
@@ -1791,6 +1792,7 @@ function wireApp() {
           connectionId,
           jwtExpiry,
           ws: socket,
+          purpose: connectionPurposeFromQuery(event.queryStringParameters),
           ...(event.queryStringParameters?.recovery_capability ===
           WS_RECOVERY_CAPABILITY
             ? { recoveryCapable: true }
