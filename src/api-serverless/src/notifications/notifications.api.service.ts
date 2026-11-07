@@ -26,6 +26,7 @@ import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview'
 import { ApiNotificationAdditionalContextV2 } from '@/api/generated/models/ApiNotificationAdditionalContextV2';
 import { ApiNotificationV2 } from '@/api/generated/models/ApiNotificationV2';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
+import { ApiNotificationsUnreadCountV2 } from '@/api/generated/models/ApiNotificationsUnreadCountV2';
 import { ApiSubscriptionCoverageStatus } from '@/api/generated/models/ApiSubscriptionCoverageStatus';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import {
@@ -305,6 +306,26 @@ export class NotificationsApiService {
     return {
       notifications: apiNotifications,
       unread_count: notifications.total_unread
+    };
+  }
+
+  public async getUnreadNotificationsCountV2(
+    param: { include_competitions?: boolean },
+    authenticationContext: AuthenticationContext,
+    ctx: RequestContext
+  ): Promise<ApiNotificationsUnreadCountV2> {
+    const identityId = authenticationContext.getActingAsId()!;
+    const eligible_group_ids =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        identityId,
+        ctx.timer
+      );
+    return {
+      unread_count: await this.notificationsReader.countUnreadForIdentity({
+        identity_id: identityId,
+        eligible_group_ids,
+        include_competitions: param.include_competitions
+      })
     };
   }
 

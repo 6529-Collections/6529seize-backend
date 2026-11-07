@@ -74,7 +74,8 @@ describe('NotificationsApiService V2 notifications', () => {
       getNotificationsForIdentity: jest.fn().mockResolvedValue({
         notifications: [],
         total_unread: 0
-      })
+      }),
+      countUnreadForIdentity: jest.fn().mockResolvedValue(5)
     };
     const userGroupsService = {
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['group-1'])
@@ -117,6 +118,45 @@ describe('NotificationsApiService V2 notifications', () => {
       reactionsDb
     };
   }
+
+  it('counts unread notifications without loading or mapping any', async () => {
+    const {
+      service,
+      notificationsReader,
+      userGroupsService,
+      dropsService,
+      identityFetcher,
+      wavesApiDb
+    } = createService();
+    const authenticationContext = {
+      getActingAsId: () => 'profile-1'
+    } as any;
+    const timer = { start: jest.fn(), stop: jest.fn() } as any;
+
+    await expect(
+      service.getUnreadNotificationsCountV2(
+        { include_competitions: true },
+        authenticationContext,
+        { timer, authenticationContext }
+      )
+    ).resolves.toEqual({ unread_count: 5 });
+
+    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
+      'profile-1',
+      timer
+    );
+    expect(notificationsReader.countUnreadForIdentity).toHaveBeenCalledWith({
+      identity_id: 'profile-1',
+      eligible_group_ids: ['group-1'],
+      include_competitions: true
+    });
+    expect(
+      notificationsReader.getNotificationsForIdentity
+    ).not.toHaveBeenCalled();
+    expect(dropsService.findDropsV2ByIds).not.toHaveBeenCalled();
+    expect(identityFetcher.getApiIdentityOverviewsByIds).not.toHaveBeenCalled();
+    expect(wavesApiDb.findWavesByIds).not.toHaveBeenCalled();
+  });
 
   it.each(
     [
