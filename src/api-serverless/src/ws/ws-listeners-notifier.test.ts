@@ -23,7 +23,10 @@ import {
   competitionAnonymityService
 } from '@/competitions/competition-anonymity';
 import { dropsDb } from '@/drops/drops.db';
-import { WS_SEND_CONCURRENCY_CAP } from '@/api/ws/ws';
+import {
+  WS_FANOUT_CONCURRENCY_DEFAULT,
+  WS_FANOUT_CONCURRENCY_MAX
+} from '@/api/ws/ws-fanout-settings';
 
 function createDrop(content: string, dropType = ApiDropType.Chat) {
   return {
@@ -273,7 +276,7 @@ describe('WsListenersNotifier', () => {
     await notifier.notifyAboutDropDeletes(deletedDrops, null, {});
 
     expect(appWebSockets.send).toHaveBeenCalledTimes(220);
-    expect(maximumActiveSends).toBe(WS_SEND_CONCURRENCY_CAP);
+    expect(maximumActiveSends).toBe(WS_FANOUT_CONCURRENCY_DEFAULT);
   });
 
   it('keeps stamped full frames within the application ceiling', () => {
@@ -328,13 +331,15 @@ describe('WsListenersNotifier', () => {
 
       const fanout = notifier.notifyAboutDropUpdate(createDrop('hello'), {});
       await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(appWebSockets.send).toHaveBeenCalledTimes(WS_SEND_CONCURRENCY_CAP);
-      expect(active).toBe(WS_SEND_CONCURRENCY_CAP);
+      expect(appWebSockets.send).toHaveBeenCalledTimes(
+        WS_FANOUT_CONCURRENCY_DEFAULT
+      );
+      expect(active).toBe(WS_FANOUT_CONCURRENCY_DEFAULT);
       open();
       await fanout;
 
       expect(appWebSockets.send).toHaveBeenCalledTimes(200);
-      expect(maximum).toBe(WS_SEND_CONCURRENCY_CAP);
+      expect(maximum).toBe(WS_FANOUT_CONCURRENCY_DEFAULT);
       const calls = appWebSockets.send.mock.calls as unknown as [
         {
           connectionId: string;
@@ -358,6 +363,56 @@ describe('WsListenersNotifier', () => {
       );
       expect(bodies.size).toBe(1);
     });
+
+    it.each([
+      ['a configured width', '40', 40],
+      ['a width clamped to the maximum', '1000', WS_FANOUT_CONCURRENCY_MAX]
+    ])(
+      'keeps %s of sends in flight from WS_FANOUT_CONCURRENCY',
+      async (_label, configured, expected) => {
+        const previous = process.env.WS_FANOUT_CONCURRENCY;
+        process.env.WS_FANOUT_CONCURRENCY = configured;
+        try {
+          let open!: () => void;
+          const gate = new Promise<void>((resolve) => {
+            open = resolve;
+          });
+          let active = 0;
+          let maximum = 0;
+          const appWebSockets = {
+            send: jest.fn(async () => {
+              active++;
+              maximum = Math.max(maximum, active);
+              await gate;
+              active--;
+              return { status: 'sent' };
+            })
+          };
+          const notifier = new WsListenersNotifier(
+            appWebSockets as never,
+            {
+              getCurrentlyOnlineCommunityMemberConnectionIds: jest
+                .fn()
+                .mockResolvedValue(recipients(300))
+            } as never
+          );
+
+          const fanout = notifier.notifyAboutDropUpdate(
+            createDrop('hello'),
+            {}
+          );
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          expect(active).toBe(expected);
+          open();
+          await fanout;
+          expect(appWebSockets.send).toHaveBeenCalledTimes(300);
+          expect(maximum).toBe(expected);
+        } finally {
+          if (previous === undefined) delete process.env.WS_FANOUT_CONCURRENCY;
+          else process.env.WS_FANOUT_CONCURRENCY = previous;
+        }
+      }
+    );
 
     it('logs rejected bookkeeping once per fan-out without failing it', async () => {
       const appWebSockets = {
