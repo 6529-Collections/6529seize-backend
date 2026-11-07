@@ -31,6 +31,7 @@ import {
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { dropsMappers, DropsMappers } from './drops.mappers';
 import { RequestContext } from '@/request.context';
+import { Timer } from '@/time';
 import { wavesApiDb } from '../waves/waves.api.db';
 import { ApiDropTraceItem } from '../generated/models/ApiDropTraceItem';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
@@ -407,12 +408,14 @@ export class DropsApiService {
   async findDropsByIdsOrThrow(
     dropIds: string[],
     authenticationContext: AuthenticationContext | undefined,
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>,
+    timer?: Timer
   ): Promise<Record<string, ApiDrop>> {
     const result = await this.findDropsByIds(
       dropIds,
       authenticationContext,
-      connection
+      connection,
+      timer
     );
     const dropFulls = Object.values(result);
     const missingDrops = dropIds.filter(
@@ -440,16 +443,22 @@ export class DropsApiService {
   public async findDropsByIds(
     dropIds: string[],
     authenticationContext: AuthenticationContext | undefined,
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>,
+    timer?: Timer
   ): Promise<Record<string, ApiDrop>> {
-    const dropEntities = await this.dropsDb.getDropsByIds(dropIds, connection);
+    const dropEntities = await Timer.timed(
+      timer,
+      'dropFulls.getDropsByIds',
+      () => this.dropsDb.getDropsByIds(dropIds, connection)
+    );
     return await this.dropsMappers
       .convertToDropFulls(
         {
           dropEntities,
           authenticationContext
         },
-        connection
+        connection,
+        timer
       )
       .then((drops) =>
         drops.reduce(

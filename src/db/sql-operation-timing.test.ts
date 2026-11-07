@@ -2,6 +2,10 @@ import { performance } from 'node:perf_hooks';
 import { PoolConnection } from 'mysql';
 import { DbPoolName } from '@/db-query.options';
 import { execSQLWithConnection } from '@/db/my-sql.helpers';
+import {
+  emptyRequestSqlTotals,
+  formatRequestSqlTotals
+} from '@/db/sql-operation-timing';
 import { Logger } from '@/logging';
 import { loggerContext, LoggerContextValue } from '@/logger-context';
 
@@ -297,6 +301,54 @@ describe('SQL operation timing', () => {
     });
     expect(fixture.release).not.toHaveBeenCalled();
     expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('adds pool wait and SQL time of every operation to the request totals', async () => {
+    const sql = emptyRequestSqlTotals();
+    const pooled = connectionFixture();
+    const supplied = connectionFixture();
+    const acquired = deferred<PoolConnection>();
+    const failure = new Error('pool exhausted');
+    const failedAcquisition = deferred<PoolConnection>();
+
+    const operations = loggerContext.run({ requestId: 'request', sql }, () => [
+      execSQLWithConnection('SELECT id FROM profiles', {
+        pool: DbPoolName.READ,
+        acquire: () => acquired.promise
+      }),
+      execSQLWithConnection('SELECT id FROM waves', {
+        connection: supplied.connection
+      }),
+      execSQLWithConnection('SELECT id FROM drops', {
+        pool: DbPoolName.READ,
+        acquire: () => failedAcquisition.promise
+      })
+    ]);
+    await jest.advanceTimersByTimeAsync(5);
+    supplied.succeed();
+    await jest.advanceTimersByTimeAsync(25);
+    acquired.resolve(pooled.connection);
+    await jest.advanceTimersByTimeAsync(20);
+    pooled.succeed();
+    await jest.advanceTimersByTimeAsync(10);
+    failedAcquisition.reject(failure);
+    const results = await Promise.allSettled(operations);
+
+    expect(results.map((it) => it.status)).toEqual([
+      'fulfilled',
+      'fulfilled',
+      'rejected'
+    ]);
+    // Pool waits 30 + 60 ms (none on the supplied connection); SQL 20 + 5 ms.
+    expect(sql).toEqual({
+      operations: 3,
+      acquisitionMs: 90,
+      maxAcquisitionMs: 60,
+      sqlMs: 25
+    });
+    expect(formatRequestSqlTotals(sql)).toBe(
+      '[SQL_OPS 3] [SQL_ACQUIRE_MS 90] [SQL_ACQUIRE_MAX_MS 60] [SQL_MS 25]'
+    );
   });
 
   it('cleans up after a synchronous acquisition exception', async () => {
