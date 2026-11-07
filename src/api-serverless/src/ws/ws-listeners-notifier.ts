@@ -1,10 +1,6 @@
 import { ApiDrop } from '../generated/models/ApiDrop';
-import {
-  ANON_USER_ID,
-  appWebSockets,
-  AppWebSockets,
-  WS_SEND_CONCURRENCY_CAP
-} from './ws';
+import { ANON_USER_ID, appWebSockets, AppWebSockets } from './ws';
+import { wsFanoutConcurrency } from './ws-fanout-settings';
 import { forEachConcurrent } from '@/for-each-concurrent';
 import {
   buildDropFramesJobs,
@@ -584,7 +580,7 @@ export class WsListenersNotifier {
       async ({ connectionId, jwtExpiry }) => {
         await this.appWebSockets.send({ connectionId, jwtExpiry, message });
       },
-      { concurrency: WS_SEND_CONCURRENCY_CAP }
+      { concurrency: wsFanoutConcurrency() }
     );
   }
 
@@ -613,7 +609,7 @@ export class WsListenersNotifier {
             )
           });
         },
-        { concurrency: WS_SEND_CONCURRENCY_CAP }
+        { concurrency: wsFanoutConcurrency() }
       );
     } catch (error) {
       this.logger.error(
@@ -658,7 +654,7 @@ export class WsListenersNotifier {
             message: JSON.stringify(dmUnreadStateChangedMessage(state))
           });
         },
-        { concurrency: WS_SEND_CONCURRENCY_CAP }
+        { concurrency: wsFanoutConcurrency() }
       );
     } catch (error) {
       this.logger.error(
@@ -1029,7 +1025,7 @@ export class WsListenersNotifier {
             batch
           );
         },
-        { concurrency: WS_SEND_CONCURRENCY_CAP }
+        { concurrency: wsFanoutConcurrency() }
       );
     } finally {
       const settled = await Promise.allSettled(settlements);

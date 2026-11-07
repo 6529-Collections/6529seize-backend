@@ -127,6 +127,57 @@ describe('AppWebSockets.send JWT fence', () => {
     }
   );
 
+  describe('with WS_KNOWN_EXPIRY_FENCE=off', () => {
+    const previous = process.env.WS_KNOWN_EXPIRY_FENCE;
+
+    beforeEach(() => {
+      process.env.WS_KNOWN_EXPIRY_FENCE = 'off';
+    });
+
+    afterEach(() => {
+      if (previous === undefined) delete process.env.WS_KNOWN_EXPIRY_FENCE;
+      else process.env.WS_KNOWN_EXPIRY_FENCE = previous;
+    });
+
+    it('re-reads the row before a send even with a future known expiry', async () => {
+      const { sockets, repository, socket } = await connected(
+        nowSeconds() + 3600
+      );
+      const reads = jest.fn();
+
+      await expect(
+        sockets.send({
+          connectionId: 'connection-1',
+          message: '{}',
+          jwtExpiry: nowSeconds() + 60,
+          onConnectionRead: reads
+        })
+      ).resolves.toEqual({ status: 'sent' });
+
+      expect(reads).toHaveBeenCalledTimes(1);
+      expect(repository.getByConnectionId).toHaveBeenCalledTimes(1);
+      expect(socket.send).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets the stored row win over a future known expiry', async () => {
+      const { sockets, repository, socket } = await connected(nowSeconds() - 1);
+
+      await expect(
+        sockets.send({
+          connectionId: 'connection-1',
+          message: '{}',
+          jwtExpiry: nowSeconds() + 60
+        })
+      ).resolves.toEqual({ status: 'gone' });
+
+      expect(repository.deleteByConnectionId).toHaveBeenCalledWith(
+        'connection-1',
+        {}
+      );
+      expect(socket.send).not.toHaveBeenCalled();
+    });
+  });
+
   it('keeps the legacy read when no expiry is supplied', async () => {
     const { sockets, repository } = await connected(null);
     await expect(

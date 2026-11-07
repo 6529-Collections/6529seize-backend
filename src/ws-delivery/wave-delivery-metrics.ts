@@ -14,6 +14,11 @@ type EmfUnit = 'Milliseconds' | 'Count';
 
 interface EmfRecord {
   readonly dimensions: Record<string, string>;
+  /**
+   * Published as a second, finer dimension set, so the coarse metric stream
+   * (and dashboards on it) stays continuous when a dimension is added.
+   */
+  readonly detailDimensions?: Record<string, string>;
   readonly metrics: Record<string, { unit: EmfUnit; value: number | number[] }>;
   readonly properties?: Record<string, string | number | boolean | null>;
 }
@@ -34,6 +39,13 @@ function writeEmf(record: EmfRecord): void {
     Environment: deliveryEnvironment(),
     ...record.dimensions
   };
+  const detail = record.detailDimensions ?? {};
+  const dimensionSets = Object.keys(detail).length
+    ? [
+        Object.keys(dimensions),
+        [...Object.keys(dimensions), ...Object.keys(detail)]
+      ]
+    : [Object.keys(dimensions)];
   const metricValues: Record<string, number | number[]> = {};
   const definitions: { Name: string; Unit: EmfUnit }[] = [];
   for (const [name, { unit, value }] of Object.entries(record.metrics)) {
@@ -53,12 +65,13 @@ function writeEmf(record: EmfRecord): void {
           CloudWatchMetrics: [
             {
               Namespace: WAVE_DELIVERY_NAMESPACE,
-              Dimensions: [Object.keys(dimensions)],
+              Dimensions: dimensionSets,
               Metrics: definitions
             }
           ]
         },
         ...dimensions,
+        ...detail,
         ...(record.properties ?? {}),
         ...metricValues
       })}\n`
@@ -169,7 +182,8 @@ export class FanoutMeasurement {
     const sinceStart = (at: number | null) =>
       at === null ? Number.NaN : at - this.startedAt;
     writeEmf({
-      dimensions: { FrameType: this.frameType, Stage: this.stage },
+      dimensions: { FrameType: this.frameType },
+      detailDimensions: { Stage: this.stage },
       metrics: {
         fanout_recipients: { unit: 'Count', value: this.recipients },
         fanout_query_ms: { unit: 'Milliseconds', value: this.queryMs ?? NaN },
