@@ -46,6 +46,7 @@ import {
   findAnonymousNotificationActorPairs,
   NotificationActorWriteOptions
 } from '@/notifications/anonymous-notification-actor';
+import { invalidateWaveUnreadCacheForReaderAfterCommit } from '@/api/waves/wave-unread-cache';
 
 const REPORT_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const DEFAULT_REPORTS_PER_HOUR = 100;
@@ -308,6 +309,12 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
           },
           connection
         );
+        // The blocked author's drops leave the blocker's unread counts in
+        // every wave.
+        await invalidateWaveUnreadCacheForReaderAfterCommit(
+          blockerProfileId,
+          connection
+        );
       }
     });
   }
@@ -354,6 +361,10 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
             previousState: 'BLOCKED',
             newState: 'UNBLOCKED'
           },
+          connection
+        );
+        await invalidateWaveUnreadCacheForReaderAfterCommit(
+          blockerProfileId,
           connection
         );
       }
