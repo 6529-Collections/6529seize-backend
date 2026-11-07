@@ -1,0 +1,13 @@
+# >>> 6529 sentry-selfhost overrides (managed by ops/sentry-selfhost/host/install-sentry.sh)
+system.url-prefix: '__URL_PREFIX__'
+system.admin-email: '__ADMIN_EMAIL__'
+mail.from: '__MAIL_FROM__'
+mail.list-namespace: '__MAIL_DOMAIN__'
+# Required by the setup wizard; the beacon itself is disabled in sentry.conf.py.
+beacon.anonymous: true
+# Accounts are created by invitation or by an administrator only.
+auth.allow-registration: false
+# Application-level login throttles, in addition to the WAF rate limit.
+auth.ip-rate-limit: 20
+auth.user-rate-limit: 10
+# <<< 6529 sentry-selfhost overrides
