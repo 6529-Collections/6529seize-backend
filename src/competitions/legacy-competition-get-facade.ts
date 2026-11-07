@@ -349,7 +349,7 @@ function nativeSelects(table: string): {
           drop_id: 'e.drop_id',
           wave_id: 'c.wave_id',
           // The frozen rank column is VARCHAR, including its wire primitive type.
-          vote: 'convert(r.real_time_rating using utf8mb4) collate utf8mb4_unicode_ci',
+          vote: `convert(r.real_time_rating using utf8mb4) collate ${DB_TEXT_COLLATION}`,
           last_increased: 'coalesce(r.last_increased_at,e.submitted_at)'
         }
       };
