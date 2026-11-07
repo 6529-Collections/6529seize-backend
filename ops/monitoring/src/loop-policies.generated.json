@@ -675,6 +675,17 @@
       ]
     },
     {
+      "service": "waveFanoutWorker",
+      "reservedConcurrency": 30,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 315,
+      "freshSeconds": 135,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
       "service": "waveLeaderboardSnapshotterLoop",
       "intervalSeconds": 300,
       "reservedConcurrency": 1,
@@ -1352,6 +1363,17 @@
       "delaySeconds": 600,
       "stallSeconds": 1200,
       "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "waveFanoutWorker",
+      "reservedConcurrency": 30,
+      "expectedOverlap": false,
+      "delaySeconds": 600,
+      "stallSeconds": 315,
+      "freshSeconds": 135,
       "operations": [
         "processing"
       ]

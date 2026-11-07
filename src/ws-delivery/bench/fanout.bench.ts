@@ -8,7 +8,13 @@
  *
  * Not part of `6529 run test` (not a *.test.ts file). Run with:
  *   6529 exec jest --testMatch '**\/*.bench.ts' src/ws-delivery/bench
+ * The second part measures waves 1.1 (WS_ASYNC_FANOUT): the request's share
+ * (inline budget plus an awaited queue hand-off of BENCH_SQS_MS) and the
+ * worker's time per queued chunk. Chunks run in separate Lambdas, so the last
+ * recipient waits roughly request share + SQS pickup + the slowest chunk.
+ *
  * Tunables: BENCH_RECIPIENTS (1000), BENCH_GATEWAY_MS (20), BENCH_RUNS (5),
+ * BENCH_SQS_MS (15),
  * BENCH_REDIS=off (delivery bookkeeping unavailable, as in a Redis outage).
  */
 import 'reflect-metadata';
@@ -158,6 +164,60 @@ describeWithSeed('inline fan-out lab benchmark', [withWaves([wave])], () => {
         fanout_ms_max: Math.round(Math.max(...totals)),
         connection_reads_per_fanout: reads.mock.calls.length,
         max_concurrent_gateway_requests: maxInFlight
+      })}\n`
+    );
+
+    // Waves 1.1: reply after commit with an in-memory queue.
+    const sqsMs = Number(process.env.BENCH_SQS_MS ?? 15);
+    const queued: any[] = [];
+    const asyncNotifier = new WsListenersNotifier(
+      new AppWebSockets(repo),
+      repo,
+      { getViewerContextsForDrop: async () => ({}) },
+      {
+        enqueue: async (jobs) => {
+          await new Promise((resolve) => setTimeout(resolve, sqsMs));
+          queued.push(...jobs);
+          return [];
+        }
+      }
+    );
+    process.env.WS_ASYNC_FANOUT = 'true';
+    const requestShares: number[] = [];
+    const chunkTimes: number[] = [];
+    try {
+      for (let run = 0; run < RUNS + 1; run++) {
+        await mockRedis.flushDb();
+        queued.length = 0;
+        received = 0;
+        const startedAt = performance.now();
+        await asyncNotifier.notifyAboutDropUpdate(drop, {});
+        const share = performance.now() - startedAt;
+        const inlineReceived = received;
+        for (const job of queued) {
+          const chunkStartedAt = performance.now();
+          await asyncNotifier.deliverQueuedDropFrames(job);
+          if (run > 0) chunkTimes.push(performance.now() - chunkStartedAt);
+        }
+        expect(received).toBe(RECIPIENTS);
+        expect(inlineReceived).toBeLessThan(RECIPIENTS);
+        if (run > 0) requestShares.push(share);
+      }
+    } finally {
+      delete process.env.WS_ASYNC_FANOUT;
+    }
+    process.stdout.write(
+      `${JSON.stringify({
+        bench: 'reply-after-commit',
+        recipients: RECIPIENTS,
+        gateway_ms: GATEWAY_MS,
+        sqs_hand_off_ms: sqsMs,
+        runs: RUNS,
+        request_share_ms_p50: Math.round(percentile(requestShares, 50)),
+        request_share_ms_max: Math.round(Math.max(...requestShares)),
+        chunks_per_drop: queued.length,
+        chunk_ms_p50: Math.round(percentile(chunkTimes, 50)),
+        chunk_ms_max: Math.round(Math.max(...chunkTimes))
       })}\n`
     );
   }, 600_000);

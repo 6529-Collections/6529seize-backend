@@ -939,14 +939,19 @@ describe('DropCreationApiService.createDrop delivery hops (1.0)', () => {
       .mockImplementation(() => true);
     const service = new DropCreationApiService(
       {
-        findDropByIdOrThrow: jest
-          .fn()
-          .mockResolvedValue({ id: 'drop-1', wave_id: 'wave-1' })
+        findDropByIdOrThrow: jest.fn().mockResolvedValue({
+          id: 'drop-1',
+          wave_id: 'wave-1',
+          wave: { id: 'wave-1' },
+          serial_no: 7
+        })
       } as never,
       {
         executeNativeQueriesInTransaction: jest.fn(async (callback) =>
           callback({})
-        )
+        ),
+        // A real marker read, so no failure warning reaches stdout.
+        findPreviousSerialNo: jest.fn().mockResolvedValue(6)
       } as never,
       {
         createDropApiToUseCaseModel: jest
@@ -1013,5 +1018,384 @@ describe('DropCreationApiService.createDrop delivery hops (1.0)', () => {
     }
     expect(record.drop_post_total_ms).toBeGreaterThanOrEqual(12);
     expect(record).not.toHaveProperty('post_commit_daily_activity_ms');
+  });
+});
+
+describe('DropCreationApiService.createDrop reply after commit (1.1)', () => {
+  const env = { ...process.env };
+
+  function makeCreateService(enqueue: jest.Mock) {
+    const wsListenersNotifier = {
+      notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined),
+      notifyAboutIdentityNotificationsChanged: jest
+        .fn()
+        .mockResolvedValue(undefined),
+      findConnectedNotificationRecipients: jest.fn().mockResolvedValue([])
+    };
+    const service = new DropCreationApiService(
+      {
+        findDropByIdOrThrow: jest.fn().mockResolvedValue({
+          id: 'drop-1',
+          wave_id: 'wave-1',
+          wave: { id: 'wave-1' },
+          serial_no: 7
+        })
+      } as never,
+      {
+        executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+          callback({})
+        ),
+        // A real marker read, so no failure warning reaches stdout.
+        findPreviousSerialNo: jest.fn().mockResolvedValue(6)
+      } as never,
+      {
+        createDropApiToUseCaseModel: jest
+          .fn()
+          .mockReturnValue({ wave_id: 'wave-1', drop_type: DropType.CHAT })
+      } as never,
+      {
+        preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+        preparePrePublication: jest.fn().mockResolvedValue({}),
+        execute: jest.fn().mockResolvedValue({
+          drop_id: 'drop-1',
+          pending_push_notification_ids: [11, 12],
+          dm_unread_recipient_ids: ['dm-reader']
+        })
+      } as never,
+      {} as never,
+      wsListenersNotifier as never,
+      { findByDropId: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never,
+      undefined,
+      undefined,
+      undefined,
+      { enqueue } as never
+    );
+    return { service, wsListenersNotifier };
+  }
+
+  beforeEach(() => {
+    process.env.WS_ASYNC_FANOUT = 'true';
+    (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
+    jest
+      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
+      .mockResolvedValue(false);
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    process.env = { ...env };
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  const create = (service: DropCreationApiService) =>
+    service.createDrop(
+      {
+        createDropRequest: { collaborator_ids: ['collaborator-1'] } as never,
+        authorId: 'author-1',
+        representativeId: 'author-1'
+      },
+      { timer: undefined } as never
+    );
+
+  it('hands push, DM unread, collaborator and score work to the worker', async () => {
+    const enqueue = jest.fn().mockResolvedValue([]);
+    const { service, wsListenersNotifier } = makeCreateService(enqueue);
+
+    await create(service);
+
+    expect(enqueue).toHaveBeenCalledWith([
+      expect.objectContaining({
+        kind: 'drop_created_effects',
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        author_id: 'author-1',
+        pending_push_notification_ids: [11, 12],
+        dm_unread_recipient_ids: ['dm-reader'],
+        collaborator_ids: ['collaborator-1']
+      })
+    ]);
+    expect(wsListenersNotifier.notifyAboutDropUpdate).toHaveBeenCalledTimes(1);
+    expect(invalidateWaveUnreadCacheForWave).toHaveBeenCalledWith('wave-1');
+    expect(sendIdentityPushNotifications).not.toHaveBeenCalled();
+    expect(
+      waveScoreService.requestWaveScoreRefreshBestEffort
+    ).not.toHaveBeenCalled();
+    expect(
+      wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+    ).not.toHaveBeenCalled();
+  });
+
+  it('runs the work inline when the queue does not accept it', async () => {
+    const enqueue = jest.fn(async (jobs) => jobs);
+    const { service, wsListenersNotifier } = makeCreateService(enqueue);
+
+    await create(service);
+
+    expect(sendIdentityPushNotifications).toHaveBeenCalledWith([11, 12]);
+    expect(
+      waveScoreService.requestWaveScoreRefreshBestEffort
+    ).toHaveBeenCalledWith(['wave-1'], expect.anything(), expect.anything());
+    expect(
+      wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+    ).toHaveBeenCalledWith(['author-1', 'collaborator-1']);
+    expect(
+      wsListenersNotifier.findConnectedNotificationRecipients
+    ).toHaveBeenCalledWith(['dm-reader']);
+  });
+
+  it('does not return before the hand-off is accepted', async () => {
+    let accept!: () => void;
+    const enqueue = jest.fn(
+      () =>
+        new Promise((resolve) => {
+          accept = () => resolve([]);
+        })
+    );
+    const { service } = makeCreateService(enqueue);
+    let done = false;
+    const post = create(service).then(() => {
+      done = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(done).toBe(false);
+    accept();
+    await post;
+    expect(done).toBe(true);
+  });
+});
+
+describe('DropCreationApiService.createDrop after-commit pipeline', () => {
+  const env = { ...process.env };
+  const defaultDropAfterCommitStagesForTest = () => ({
+    readCommittedDrop: async ({ inTransactionDrop }: any) => inTransactionDrop,
+    processOutbox: async () => undefined
+  });
+
+  beforeEach(() => {
+    (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
+    jest
+      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
+      .mockResolvedValue(false);
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    process.env = { ...env };
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  function makeService(
+    stages: object,
+    order: string[],
+    findPreviousSerialNo = jest.fn().mockResolvedValue(41)
+  ) {
+    return new DropCreationApiService(
+      {
+        findDropByIdOrThrow: jest.fn().mockResolvedValue({
+          id: 'drop-1',
+          wave_id: 'wave-1',
+          wave: { id: 'wave-1' },
+          serial_no: 42,
+          v: 'tx'
+        })
+      } as never,
+      {
+        executeNativeQueriesInTransaction: jest.fn(async (callback) => {
+          const result = await callback({});
+          order.push('committed');
+          return result;
+        }),
+        findPreviousSerialNo
+      } as never,
+      {
+        createDropApiToUseCaseModel: jest
+          .fn()
+          .mockReturnValue({ wave_id: 'wave-1', drop_type: DropType.CHAT })
+      } as never,
+      {
+        preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+        preparePrePublication: jest.fn().mockResolvedValue({}),
+        execute: jest.fn().mockResolvedValue({
+          drop_id: 'drop-1',
+          pending_push_notification_ids: []
+        })
+      } as never,
+      {} as never,
+      {
+        notifyAboutDropUpdate: jest.fn(async (drop) => {
+          order.push(`deliver:${drop.v}`);
+        })
+      } as never,
+      { findByDropId: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never,
+      undefined,
+      undefined,
+      undefined,
+      { enqueue: jest.fn().mockResolvedValue([]) } as never,
+      stages as never
+    );
+  }
+
+  const create = (service: DropCreationApiService) =>
+    service.createDrop(
+      {
+        createDropRequest: {} as never,
+        authorId: 'author-1',
+        representativeId: 'author-1'
+      },
+      { timer: undefined } as never
+    );
+
+  it.each([false, true])(
+    'reads the committed drop first, then delivers it and hands off the outbox (async=%s)',
+    async (asyncFanout) => {
+      if (asyncFanout) process.env.WS_ASYNC_FANOUT = 'true';
+      else delete process.env.WS_ASYNC_FANOUT;
+      const order: string[] = [];
+      let finishOutbox!: () => void;
+      const service = makeService(
+        {
+          readCommittedDrop: jest.fn(async ({ dropId, inTransactionDrop }) => {
+            order.push(`read:${dropId}:${inTransactionDrop.v}`);
+            return { ...inTransactionDrop, v: 'writer' };
+          }),
+          processOutbox: jest.fn(
+            ({ dropId, waveId }) =>
+              new Promise<void>((resolve) => {
+                order.push(`outbox-start:${dropId}:${waveId}`);
+                finishOutbox = () => {
+                  order.push('outbox-done');
+                  resolve();
+                };
+              })
+          )
+        },
+        order
+      );
+
+      let returned: any = null;
+      const post = create(service).then((drop) => {
+        returned = drop;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Stage 3 started with delivery and the POST waits for it.
+      expect(returned).toBeNull();
+      finishOutbox();
+      await post;
+
+      expect(order).toEqual([
+        'committed',
+        'read:drop-1:tx',
+        'outbox-start:drop-1:wave-1',
+        'deliver:writer',
+        'outbox-done'
+      ]);
+      expect(returned).toMatchObject({ id: 'drop-1', v: 'writer' });
+    }
+  );
+
+  it.each([false, true])(
+    'passes the gap marker read after commit to the drop frames (async=%s)',
+    async (asyncFanout) => {
+      if (asyncFanout) process.env.WS_ASYNC_FANOUT = 'true';
+      else delete process.env.WS_ASYNC_FANOUT;
+      const findPreviousSerialNo = jest.fn().mockResolvedValue(41);
+      const service = makeService(
+        defaultDropAfterCommitStagesForTest(),
+        [],
+        findPreviousSerialNo
+      );
+      await create(service);
+      expect(findPreviousSerialNo).toHaveBeenCalledWith(
+        { waveId: 'wave-1', serialNo: 42 },
+        expect.anything()
+      );
+      const notifier = (service as any).wsListenersNotifier;
+      expect(notifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'drop-1' }),
+        expect.anything(),
+        { prevSerialNo: 41 }
+      );
+    }
+  );
+
+  it('passes null for the first drop of a wave', async () => {
+    const service = makeService(
+      defaultDropAfterCommitStagesForTest(),
+      [],
+      jest.fn().mockResolvedValue(null)
+    );
+    await create(service);
+    expect(
+      (service as any).wsListenersNotifier.notifyAboutDropUpdate
+    ).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      prevSerialNo: null
+    });
+  });
+
+  it('sends without a gap marker when its read fails, and still succeeds', async () => {
+    const service = makeService(
+      defaultDropAfterCommitStagesForTest(),
+      [],
+      jest.fn().mockRejectedValue(new Error('read failed'))
+    );
+    const warn = jest.fn();
+    (service as any).logger = { warn, error: jest.fn() };
+    await expect(create(service)).resolves.toMatchObject({ id: 'drop-1' });
+    expect(
+      (service as any).wsListenersNotifier.notifyAboutDropUpdate
+    ).toHaveBeenCalledWith(expect.anything(), expect.anything(), {});
+    expect(warn).toHaveBeenCalledWith(
+      'Gap marker read failed for drop drop-1; sending without it',
+      expect.any(Error)
+    );
+  });
+
+  it('logs an outbox hand-off failure without failing the committed POST', async () => {
+    const order: string[] = [];
+    const service = makeService(
+      {
+        readCommittedDrop: async ({ inTransactionDrop }: any) =>
+          inTransactionDrop,
+        processOutbox: jest.fn().mockRejectedValue(new Error('queue down'))
+      },
+      order
+    );
+    const error = jest.fn();
+    (service as any).logger = { error };
+
+    await expect(create(service)).resolves.toMatchObject({ id: 'drop-1' });
+    expect(error).toHaveBeenCalledWith(
+      'Failed to hand off post-commit outbox work for drop drop-1',
+      expect.any(Error)
+    );
+  });
+
+  it('defaults to the in-transaction drop and no outbox', async () => {
+    const { defaultDropAfterCommitStages } = jest.requireActual(
+      '@/api/drops/drop-creation.api.service'
+    );
+    const drop = { id: 'drop-1' };
+    await expect(
+      defaultDropAfterCommitStages.readCommittedDrop(
+        { dropId: 'drop-1', inTransactionDrop: drop },
+        {}
+      )
+    ).resolves.toBe(drop);
+    await expect(
+      defaultDropAfterCommitStages.processOutbox(
+        { dropId: 'drop-1', waveId: 'wave-1' },
+        {}
+      )
+    ).resolves.toBeUndefined();
   });
 });
