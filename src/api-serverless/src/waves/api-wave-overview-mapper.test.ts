@@ -11,6 +11,7 @@ import {
   ApiWaveOverviewMapper,
   createUnknownWaveCreatorProfile
 } from './api-wave-overview.mapper';
+import * as staticOverviewCache from './wave-overview-static-cache';
 
 function makeWave(overrides: Partial<WaveEntity> = {}): WaveEntity {
   return {
@@ -250,6 +251,43 @@ describe('ApiWaveOverviewMapper', () => {
       ['creator-1'],
       ctx
     );
+  });
+
+  it('loads creator profiles per request even when the static overview is cached', async () => {
+    const { mapper, deps } = createMapper();
+    const read = jest
+      .spyOn(staticOverviewCache, 'readWaveOverviewStaticCache')
+      .mockResolvedValue({
+        cachedByWaveId: {
+          'wave-1': {
+            descriptionDropPartOne: null,
+            descriptionDropPartOneMedia: []
+          }
+        },
+        uncachedWaveIds: [],
+        cacheKeysByWaveId: {},
+        versionedKeysByWaveId: {}
+      });
+    const viewerCreator = makeProfile({ handle: 'seen-by-this-viewer' });
+    deps.identityFetcher.getOverviewsByIds.mockResolvedValue({
+      'creator-1': viewerCreator
+    });
+    const ctx = {
+      authenticationContext: AuthenticationContext.notAuthenticated()
+    };
+
+    try {
+      const result = await mapper.mapWaves([makeWave()], ctx);
+
+      expect(result['wave-1'].creator).toEqual(viewerCreator);
+      expect(deps.dropsDb.getDropPartOnes).not.toHaveBeenCalled();
+      expect(deps.identityFetcher.getOverviewsByIds).toHaveBeenCalledWith(
+        ['creator-1'],
+        ctx
+      );
+    } finally {
+      read.mockRestore();
+    }
   });
 
   it('maps disabled links flag from wave settings', async () => {

@@ -75,6 +75,8 @@ import { ApiDmUnreadConversationState } from '../generated/models/ApiDmUnreadCon
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
 import { ApiWaveVisibilityTier } from '../generated/models/ApiWaveVisibilityTier';
 import {
+  invalidateWaveUnreadCacheForReaderWaveAfterCommit,
+  invalidateWaveUnreadCacheForWaveAfterCommit,
   readWaveUnreadSummaryCache,
   WaveUnreadSummary,
   withInFlightWaveUnreadSummaryCacheMiss,
@@ -1383,6 +1385,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       },
       { wrappedConnection: connection }
     );
+    // Edits replace the row: chat_replies_collapsed feeds unread summaries.
+    await this.invalidateUnreadForWaveAfterCommit(wave.id, ctx);
     ctx.timer?.stop('waveApiDb->insertWave');
   }
 
@@ -3819,6 +3823,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { waveId, readerId, now },
       { wrappedConnection: ctx.connection }
     );
+    await this.invalidateUnreadForReaderWaveAfterCommit(readerId, waveId, ctx);
     ctx.timer?.stop(
       `${this.constructor.name}->updateWaveReaderMetricLatestReadTimestamp`
     );
@@ -3906,6 +3911,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           forcePool: DbPoolName.WRITE
         }
       );
+      await this.invalidateUnreadForReaderWaveAfterCommit(
+        param.readerId,
+        param.waveId,
+        ctx
+      );
     } finally {
       ctx.timer?.stop(timerLabel);
     }
@@ -3947,6 +3957,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         params,
         { wrappedConnection: ctx.connection }
       );
+      // New reader rows change who has a summary at all: one wave-wide bump.
+      await this.invalidateUnreadForWaveAfterCommit(param.waveId, ctx);
     } finally {
       ctx.timer?.stop(timerLabel);
     }
@@ -3968,6 +3980,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       { waveId, readerId, timestamp },
       { wrappedConnection: ctx.connection }
     );
+    await this.invalidateUnreadForReaderWaveAfterCommit(readerId, waveId, ctx);
     ctx.timer?.stop(
       `${this.constructor.name}->setWaveReaderMetricLatestReadTimestamp`
     );
@@ -4008,6 +4021,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           wrappedConnection: ctx.connection,
           forcePool: DbPoolName.WRITE
         }
+      );
+      await this.invalidateUnreadForReaderWaveAfterCommit(
+        param.readerId,
+        param.waveId,
+        ctx
       );
     } finally {
       ctx.timer?.stop(timerLabel);
@@ -4152,6 +4170,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         ignoreDuplicates: true
       }
     );
+    await this.invalidateUnreadForWaveAfterCommit(param.waveId, ctx);
     ctx.timer?.stop(`${this.constructor.name}->insertMissingWaveReaderMetrics`);
   }
 
@@ -4202,7 +4221,34 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       param,
       { wrappedConnection: ctx.connection }
     );
+    await this.invalidateUnreadForReaderWaveAfterCommit(
+      param.readerId,
+      param.waveId,
+      ctx
+    );
     ctx.timer?.stop(`${this.constructor.name}->setWaveMuted`);
+  }
+
+  /**
+   * Unread summaries are cached per reader and wave (wave-unread-cache.ts).
+   * Writes to their inputs bump a version once the transaction commits.
+   */
+  private async invalidateUnreadForReaderWaveAfterCommit(
+    readerId: string,
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    await invalidateWaveUnreadCacheForReaderWaveAfterCommit(
+      { identityId: readerId, waveId },
+      ctx.connection
+    );
+  }
+
+  private async invalidateUnreadForWaveAfterCommit(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    await invalidateWaveUnreadCacheForWaveAfterCommit(waveId, ctx.connection);
   }
 
   async findIdentityUnreadDropsSummaryByWaveId(
@@ -4219,8 +4265,21 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerLabel = `${this.constructor.name}->findIdentityUnreadDropsSummaryByWaveId`;
     ctx.timer?.start(timerLabel);
     try {
-      const { cachedByWaveId, uncachedWaveIds, cacheKeysByWaveId } =
-        await readWaveUnreadSummaryCache(param.identityId, param.waveIds);
+      if (ctx.connection) {
+        // Inside a transaction the result can include uncommitted writes:
+        // never read or fill the shared cache from it.
+        return await this.queryIdentityUnreadDropsSummaries(
+          param.identityId,
+          param.waveIds,
+          ctx.connection
+        );
+      }
+      const {
+        cachedByWaveId,
+        uncachedWaveIds,
+        cacheKeysByWaveId,
+        versionedKeysByWaveId
+      } = await readWaveUnreadSummaryCache(param.identityId, param.waveIds);
       if (!uncachedWaveIds.length) {
         return cachedByWaveId;
       }
@@ -4228,63 +4287,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       const dbSummariesByWaveId = await withInFlightWaveUnreadSummaryCacheMiss({
         identityId: param.identityId,
         waveIds: uncachedWaveIds,
-        cacheKeysByWaveId,
+        versionedKeysByWaveId,
         getValue: async () => {
-          // Reader metrics are the unread baseline source of truth. Without
-          // a reader row we do not infer unread drops from old wave history.
-          // All consumed drop/wave fields pass through the compatibility views.
-          const dbresult = await withoutLegacyCompetitionGetFacade(() =>
-            this.db.execute<WaveUnreadSummaryRow>(
-              `
-                SELECT d.wave_id AS wave_id,
-                       COUNT(d.id) AS unread_drops_count,
-                       MIN(d.serial_no) AS first_unread_drop_serial_no
-                FROM ${DROPS_TABLE} d
-                JOIN ${WAVE_READER_METRICS_TABLE} r
-                  ON r.wave_id = d.wave_id
-                  AND r.reader_id = :identityId
-                JOIN ${legacyGetView(WAVES_TABLE)} w
-                  ON w.id = d.wave_id
-                LEFT JOIN ${IDENTITY_MUTES_TABLE} im
-                  ON im.muter_id = :identityId
-                  AND im.muted_identity_id = d.author_id
-                LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
-                  ON profile_block.blocker_profile_id = :identityId
-                  AND profile_block.blocked_profile_id = d.author_id
-                WHERE d.wave_id IN (:waveIds)
-                  AND d.author_id != :identityId
-                  AND im.id IS NULL
-                  AND profile_block.id IS NULL
-                  AND d.created_at > r.latest_read_timestamp
-                  AND r.muted = false
-                  -- Collapsed replies live in threads, not the main feed.
-                  AND (d.reply_to_drop_id IS NULL OR w.chat_replies_collapsed = false)
-                GROUP BY d.wave_id
-              `,
-              { identityId: param.identityId, waveIds: uncachedWaveIds },
-              { wrappedConnection: ctx.connection }
-            )
-          );
-
-          const uncachedSummariesByWaveId = uncachedWaveIds.reduce(
-            (acc, waveId) => {
-              acc[waveId] = {
-                unread_drops_count: 0,
-                first_unread_drop_serial_no: null
-              };
-              return acc;
-            },
-            {} as Record<string, WaveUnreadSummary>
-          );
-          const summariesByWaveId = dbresult.reduce((acc, row) => {
-            acc[row.wave_id] = {
-              unread_drops_count: Number(row.unread_drops_count),
-              first_unread_drop_serial_no: this.toNullableNumber(
-                row.first_unread_drop_serial_no
-              )
-            };
-            return acc;
-          }, uncachedSummariesByWaveId);
+          const summariesByWaveId =
+            await this.queryIdentityUnreadDropsSummaries(
+              param.identityId,
+              uncachedWaveIds,
+              undefined
+            );
           await writeWaveUnreadSummaryCache({
             summariesByWaveId,
             cacheKeysByWaveId
@@ -4297,6 +4307,72 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     } finally {
       ctx.timer?.stop(timerLabel);
     }
+  }
+
+  private async queryIdentityUnreadDropsSummaries(
+    identityId: string,
+    waveIds: string[],
+    connection: ConnectionWrapper<any> | undefined
+  ): Promise<Record<string, WaveUnreadSummary>> {
+    // Reader metrics are the unread baseline source of truth. Without a
+    // reader row we do not infer unread drops from old wave history. All
+    // consumed drop/wave fields pass through the compatibility views.
+    // Every input below has a cache invalidation (see wave-unread-cache.ts):
+    // drops (insert/delete), reader metrics, identity mutes, profile blocks
+    // and the wave's chat_replies_collapsed.
+    const dbresult = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<WaveUnreadSummaryRow>(
+        `
+            SELECT d.wave_id AS wave_id,
+                   COUNT(d.id) AS unread_drops_count,
+                   MIN(d.serial_no) AS first_unread_drop_serial_no
+            FROM ${DROPS_TABLE} d
+            JOIN ${WAVE_READER_METRICS_TABLE} r
+              ON r.wave_id = d.wave_id
+              AND r.reader_id = :identityId
+            JOIN ${legacyGetView(WAVES_TABLE)} w
+              ON w.id = d.wave_id
+            LEFT JOIN ${IDENTITY_MUTES_TABLE} im
+              ON im.muter_id = :identityId
+              AND im.muted_identity_id = d.author_id
+            LEFT JOIN ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
+              ON profile_block.blocker_profile_id = :identityId
+              AND profile_block.blocked_profile_id = d.author_id
+            WHERE d.wave_id IN (:waveIds)
+              AND d.author_id != :identityId
+              AND im.id IS NULL
+              AND profile_block.id IS NULL
+              AND d.created_at > r.latest_read_timestamp
+              AND r.muted = false
+              -- Collapsed replies live in threads, not the main feed.
+              AND (d.reply_to_drop_id IS NULL OR w.chat_replies_collapsed = false)
+            GROUP BY d.wave_id
+          `,
+        { identityId, waveIds },
+        { wrappedConnection: connection }
+      )
+    );
+
+    const emptySummariesByWaveId = waveIds.reduce(
+      (acc, waveId) => {
+        acc[waveId] = {
+          unread_drops_count: 0,
+          first_unread_drop_serial_no: null
+        };
+        return acc;
+      },
+      {} as Record<string, WaveUnreadSummary>
+    );
+    const summariesByWaveId = dbresult.reduce((acc, row) => {
+      acc[row.wave_id] = {
+        unread_drops_count: Number(row.unread_drops_count),
+        first_unread_drop_serial_no: this.toNullableNumber(
+          row.first_unread_drop_serial_no
+        )
+      };
+      return acc;
+    }, emptySummariesByWaveId);
+    return summariesByWaveId;
   }
 
   async findIdentityUnreadDropsCountByWaveId(

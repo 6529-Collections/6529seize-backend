@@ -89,6 +89,7 @@ import {
 } from '../sql-executor';
 import { Time, Timer } from '../time';
 import { DbPoolName } from '@/db-query.options';
+import { invalidateWaveUnreadCacheForWaveAfterCommit } from '@/api/waves/wave-unread-cache';
 
 const mysql = require('mysql');
 
@@ -619,6 +620,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     if (!options.deferMetrics) {
       await this.applyInsertedDropMetricsDelta(newDropEntity, { connection });
     }
+    // Every drop insert (API, bots, alerts) moves the wave's cached unread
+    // summaries once its transaction commits.
+    await invalidateWaveUnreadCacheForWaveAfterCommit(waveId, connection);
   }
 
   async applyInsertedDropMetricsDelta(

@@ -86,7 +86,7 @@ describe('redis cache eviction helpers', () => {
       COUNT: 1000
     });
     expect(del).toHaveBeenCalledTimes(1);
-    expect(del).toHaveBeenCalledWith(['cache:minting-claims:1']);
+    expect(del).toHaveBeenCalledWith('cache:minting-claims:1');
   });
 
   it('evictRedisCacheForPath scans using the derived wildcard key pattern', async () => {
@@ -117,12 +117,12 @@ describe('redis cache eviction helpers', () => {
       MATCH: '__SEIZE_CACHE_test__/api/minting-claims/1*',
       COUNT: 1000
     });
-    expect(del).toHaveBeenCalledWith([
+    expect(del).toHaveBeenCalledWith(
       '__SEIZE_CACHE_test__/api/minting-claims/1'
-    ]);
+    );
   });
 
-  it('evicts subscription query variants across hash slots with single-key deletes', async () => {
+  it('evicts query variants across hash slots with single-key deletes', async () => {
     const keys = [
       '__SEIZE_CACHE_test__/api/subscriptions/consolidation/upcoming-memes/wallet',
       '__SEIZE_CACHE_test__/api/subscriptions/consolidation/upcoming-memes/wallet?card_count=37'
@@ -143,8 +143,7 @@ describe('redis cache eviction helpers', () => {
     await redisModule.initRedis();
 
     const result = await redisModule.evictRedisCacheForPathWithTimeout({
-      path: '/api/subscriptions/consolidation/upcoming-memes/wallet',
-      singleKeyDeletes: true
+      path: '/api/subscriptions/consolidation/upcoming-memes/wallet'
     });
 
     expect(result.success).toBe(true);
