@@ -36,6 +36,7 @@ import {
   WALLETS_TDH_TABLE
 } from '@/constants';
 import { RememeSource } from './entities/IRememe';
+import { poolForUnboundQuery } from '@/db/primary-read-scope';
 import {
   ConnectionWrapper,
   setSqlExecutor,
@@ -212,7 +213,8 @@ export async function connect() {
         );
       }
       const suppliedConnection = options?.wrappedConnection?.connection;
-      const pool = options?.forcePool ?? getPoolNameBySql(sql);
+      const pool =
+        options?.forcePool ?? poolForUnboundQuery(getPoolNameBySql(sql));
       return await execSQLWithConnection<T>(
         legacyCompetitionGetSql(sql),
         suppliedConnection

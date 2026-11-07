@@ -8,6 +8,8 @@ import { DropType } from '@/entities/IDrop';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { helpBotDailyActivityCreditQueueService } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 import { handOffDropWriteOutbox } from '@/drops/drop-write-outbox.hand-off';
+import { poolForUnboundQuery } from '@/db/primary-read-scope';
+import { DbPoolName } from '@/db-query.options';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForWave: jest.fn().mockResolvedValue(undefined)
@@ -57,12 +59,17 @@ describe('DropCreationApiService.createDrop with the post outbox (1.8)', () => {
         }
       })
     };
-    const reads: { inWriteTransaction: boolean; connection: unknown }[] = [];
+    const reads: {
+      inWriteTransaction: boolean;
+      connection: unknown;
+      onPrimary: boolean;
+    }[] = [];
     const dropsService = {
       findDropByIdOrThrow: jest.fn(async (_query, ctx) => {
         reads.push({
           inWriteTransaction: inTransaction && transactions.length === 1,
-          connection: ctx.connection
+          connection: ctx.connection,
+          onPrimary: poolForUnboundQuery(DbPoolName.READ) === DbPoolName.WRITE
         });
         return { id: 'drop-1', wave_id: 'wave-1' };
       })
@@ -107,10 +114,8 @@ describe('DropCreationApiService.createDrop with the post outbox (1.8)', () => {
       undefined,
       undefined,
       { enqueue: jest.fn().mockResolvedValue([]) } as never,
-      dropWriteOutboxAfterCommitStages(
-        dropsService as never,
-        dropsDb as never,
-        (input, ctx) => handOffDropWriteOutbox(input, ctx, queue)
+      dropWriteOutboxAfterCommitStages(dropsService as never, (input, ctx) =>
+        handOffDropWriteOutbox(input, ctx, queue)
       )
     );
     const create = () =>
@@ -140,7 +145,11 @@ describe('DropCreationApiService.createDrop with the post outbox (1.8)', () => {
     // One transaction, and the API read happens inside it, as before.
     expect(dropsDb.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
     expect(reads).toEqual([
-      { inWriteTransaction: true, connection: { connection: 'tx-1' } }
+      {
+        inWriteTransaction: true,
+        connection: { connection: 'tx-1' },
+        onPrimary: false
+      }
     ]);
     expect(queue.enqueue).not.toHaveBeenCalled();
     // The pushes go out once, from the write's own notification ids.
@@ -160,11 +169,12 @@ describe('DropCreationApiService.createDrop with the post outbox (1.8)', () => {
       false,
       expect.objectContaining({ useOutbox: true })
     );
-    // The write transaction does no API read; a second, read-only
-    // transaction reads the committed drop on the writer.
-    expect(dropsDb.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(2);
+    // The write transaction does no API read. The committed drop is read
+    // on the primary after commit, with no transaction of its own, so the
+    // mapper's parallel queries are not serialized on one connection.
+    expect(dropsDb.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
     expect(reads).toEqual([
-      { inWriteTransaction: false, connection: { connection: 'tx-2' } }
+      { inWriteTransaction: false, connection: undefined, onPrimary: true }
     ]);
     expect(queue.enqueue).toHaveBeenCalledWith([
       expect.objectContaining({

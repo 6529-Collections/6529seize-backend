@@ -115,7 +115,7 @@ function normalizeCreateDropPollRequest(
 import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
 import { isDropWriteOutboxEnabled } from '@/drops/drop-write-outbox.types';
 import { handOffDropWriteOutbox } from '@/drops/drop-write-outbox.hand-off';
-import { findCommittedDropOnWriter } from '@/api/drops/drop-writer-read';
+import { findCommittedDropOnPrimary } from '@/api/drops/drop-writer-read';
 
 /**
  * The after-commit pipeline of a new drop: (1) read the committed drop; then
@@ -154,18 +154,18 @@ export const defaultDropAfterCommitStages: DropAfterCommitStages = {
 /**
  * Waves 1.8 stages. With `WS_POST_OUTBOX` off the write still reads the drop
  * in its transaction and leaves no outbox row, so these behave exactly like
- * the defaults. With it on, stage 1 reads the committed drop on the writer
- * and stage 3 hands the outbox row to the worker.
+ * the defaults. With it on, stage 1 reads the committed drop on the primary,
+ * outside any transaction so its queries run in parallel, and stage 3 hands
+ * the outbox row to the worker.
  */
 export function dropWriteOutboxAfterCommitStages(
   dropsService: Pick<DropsApiService, 'findDropByIdOrThrow'>,
-  dropsDb: Pick<DropsDb, 'executeNativeQueriesInTransaction'>,
   handOff: typeof handOffDropWriteOutbox = handOffDropWriteOutbox
 ): DropAfterCommitStages {
   return {
     readCommittedDrop: async ({ dropId, inTransactionDrop }, ctx) =>
       inTransactionDrop ??
-      findCommittedDropOnWriter({ dropId, db: dropsDb, dropsService }, ctx),
+      findCommittedDropOnPrimary({ dropId, dropsService }, ctx),
     processOutbox: async ({ dropId, waveId, outboxId }, ctx) => {
       await handOff({ outboxId, dropId, waveId }, ctx);
     }
@@ -1408,5 +1408,5 @@ export const dropCreationService = new DropCreationApiService(
   undefined,
   undefined,
   undefined,
-  dropWriteOutboxAfterCommitStages(dropsService, dropsDb)
+  dropWriteOutboxAfterCommitStages(dropsService)
 );
