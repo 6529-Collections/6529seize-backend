@@ -31,6 +31,8 @@ import { NFTHistoryReplayJobEntity } from '@/entities/INFTHistoryReplayJob';
 import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
+import { applyProfileActivityLogWaveIndexSchema } from './profile-activity-log-wave-index-schema';
+import { ProfileActivityLog } from '@/entities/IProfileActivityLog';
 import { E2eeBlobChunkEntity, E2eeBlobEntity } from '@/entities/IE2ee';
 import {
   E2EE_BLOB_MIGRATION_SCOPE,
@@ -102,6 +104,7 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'nft-history-events' &&
       scope !== 'nft-history-replay' &&
       scope !== 'wave-score-input-index' &&
+      scope !== 'profile-activity-log-wave-index' &&
       scope !== E2EE_BLOB_MIGRATION_SCOPE)
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
@@ -166,6 +169,21 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     });
     logger.info(
       `[FINISHED WAVE SCORE INPUT INDEX] added_indexes=${addedIndexes}`
+    );
+    return { schema_scope: scope };
+  }
+  if (scope === 'profile-activity-log-wave-index') {
+    const addedIndexes = await doInDbContext(
+      applyProfileActivityLogWaveIndexSchema,
+      {
+        logger,
+        entities: [ProfileActivityLog],
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    logger.info(
+      `[FINISHED PROFILE ACTIVITY LOG WAVE INDEX] added_indexes=${addedIndexes}`
     );
     return { schema_scope: scope };
   }

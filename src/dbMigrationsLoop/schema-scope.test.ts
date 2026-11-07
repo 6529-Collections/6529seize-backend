@@ -30,6 +30,11 @@ jest.mock('@/competitions/retired-competition-storage', () => ({
 import { handler } from './index';
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
+import { applyProfileActivityLogWaveIndexSchema } from './profile-activity-log-wave-index-schema';
+import { ProfileActivityLog } from '@/entities/IProfileActivityLog';
+jest.mock('./profile-activity-log-wave-index-schema', () => ({
+  applyProfileActivityLogWaveIndexSchema: jest.fn().mockResolvedValue(1)
+}));
 jest.mock('./wave-score-input-index-schema', () => ({
   applyWaveScoreInputIndexSchema: jest.fn().mockResolvedValue(1)
 }));
@@ -167,6 +172,22 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       skipRedis: true
     });
     expect(applyWaveScoreInputIndexSchema).toHaveBeenCalledTimes(1);
+    expect(getDataSource().synchronize).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+  });
+
+  it('adds only the online activity-log wave index, never in a full run', async () => {
+    await expect(
+      invoke({ schema_scope: 'profile-activity-log-wave-index' })
+    ).resolves.toEqual({ schema_scope: 'profile-activity-log-wave-index' });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: [ProfileActivityLog],
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyProfileActivityLogWaveIndexSchema).toHaveBeenCalledTimes(1);
     expect(getDataSource().synchronize).not.toHaveBeenCalled();
     expect(migrations.getInstance).not.toHaveBeenCalled();
     expect(moderationReviewDb.retain).not.toHaveBeenCalled();

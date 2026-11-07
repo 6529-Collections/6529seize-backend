@@ -9,6 +9,13 @@ import { PROFILES_ACTIVITY_LOGS_TABLE } from '@/constants';
 @Index('idx_pal_proxy_type_created_at', ['proxy_id', 'type', 'created_at'])
 @Index('idx_pal_target_type_created_at', ['target_id', 'type', 'created_at'])
 @Index('idx_pal_competition_created_at', ['competition_id', 'created_at', 'id'])
+// Installed explicitly with online DDL by dbMigrationsLoop's
+// profile-activity-log-wave-index scope (the table is large).
+@Index(
+  'idx_pal_wave_type_created_at',
+  ['additional_data_2', 'type', 'created_at'],
+  { synchronize: false }
+)
 export class ProfileActivityLog {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   readonly id!: string;
