@@ -52,15 +52,16 @@ export async function describeImage(
     failOn: 'none' as const,
     limitInputPixels: 1_000_000_000
   };
-  const metadata = await Sharp(input, options)
-    .timeout({ seconds: DESCRIBE_TIMEOUT_SECONDS })
-    .metadata();
+  // metadata() reads only the header; the single decode is the resize below.
+  const image = Sharp(input, options).timeout({
+    seconds: DESCRIBE_TIMEOUT_SECONDS
+  });
+  const metadata = await image.metadata();
   const size = orientedSize(metadata);
   if (!size) {
     return null;
   }
-  const { data, info } = await Sharp(input, options)
-    .timeout({ seconds: DESCRIBE_TIMEOUT_SECONDS })
+  const { data, info } = await image
     .rotate()
     .resize(THUMBHASH_MAX_SIDE, THUMBHASH_MAX_SIDE, {
       fit: 'inside',
