@@ -751,6 +751,18 @@
         "lambda-errors",
         "lambda-throttles"
       ]
+    },
+    {
+      "service": "dropWriteOutboxLoop",
+      "region": "us-east-1",
+      "functions": [
+        "dropWriteOutboxLoop"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
     }
   ],
   "supplementalSource": "ops/monitoring/platform-functions.json",

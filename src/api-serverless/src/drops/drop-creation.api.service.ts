@@ -112,6 +112,9 @@ function normalizeCreateDropPollRequest(
 }
 
 import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
+import { isDropWriteOutboxEnabled } from '@/drops/drop-write-outbox.types';
+import { handOffDropWriteOutbox } from '@/drops/drop-write-outbox.hand-off';
+import { findCommittedDropOnWriter } from '@/api/drops/drop-writer-read';
 
 /**
  * The after-commit pipeline of a new drop: (1) read the committed drop; then
@@ -123,7 +126,7 @@ import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop
 export interface DropAfterCommitStages {
   /** Stage 1: the committed drop as the writer sees it. */
   readCommittedDrop(
-    input: { dropId: string; inTransactionDrop: ApiDrop },
+    input: { dropId: string; inTransactionDrop: ApiDrop | null },
     ctx: RequestContext
   ): Promise<ApiDrop>;
   /**
@@ -131,16 +134,42 @@ export interface DropAfterCommitStages {
    * only). It must not do notification or metric work before the response.
    */
   processOutbox(
-    input: { dropId: string; waveId: string },
+    input: { dropId: string; waveId: string; outboxId: number | null },
     ctx: RequestContext
   ): Promise<void>;
 }
 
 /** Until 1.8: the drop read inside the transaction, and no outbox. */
 export const defaultDropAfterCommitStages: DropAfterCommitStages = {
-  readCommittedDrop: async ({ inTransactionDrop }) => inTransactionDrop,
+  readCommittedDrop: async ({ inTransactionDrop }) => {
+    if (!inTransactionDrop) {
+      throw new Error('The default stages need the in-transaction drop');
+    }
+    return inTransactionDrop;
+  },
   processOutbox: async () => undefined
 };
+
+/**
+ * Waves 1.8 stages. With `WS_POST_OUTBOX` off the write still reads the drop
+ * in its transaction and leaves no outbox row, so these behave exactly like
+ * the defaults. With it on, stage 1 reads the committed drop on the writer
+ * and stage 3 hands the outbox row to the worker.
+ */
+export function dropWriteOutboxAfterCommitStages(
+  dropsService: Pick<DropsApiService, 'findDropByIdOrThrow'>,
+  dropsDb: Pick<DropsDb, 'executeNativeQueriesInTransaction'>,
+  handOff: typeof handOffDropWriteOutbox = handOffDropWriteOutbox
+): DropAfterCommitStages {
+  return {
+    readCommittedDrop: async ({ dropId, inTransactionDrop }, ctx) =>
+      inTransactionDrop ??
+      findCommittedDropOnWriter({ dropId, db: dropsDb, dropsService }, ctx),
+    processOutbox: async ({ dropId, waveId, outboxId }, ctx) => {
+      await handOff({ outboxId, dropId, waveId }, ctx);
+    }
+  };
+}
 
 interface ClientDrop {
   readonly clientDropId: string;
@@ -380,6 +409,8 @@ export class DropCreationApiService {
     const committedAt = hops.elapsed();
     const {
       drop: transactionDrop,
+      dropId: committedDropId,
+      outboxId,
       pendingPushNotificationIds,
       dmUnreadRecipientIds,
       dailyActivityCreditRequestEnqueued
@@ -388,8 +419,11 @@ export class DropCreationApiService {
     // 1. the committed drop as the writer sees it;
     const drop = await hops.time('post_commit_read_ms', () =>
       this.afterCommitStages.readCommittedDrop(
-        { dropId: transactionDrop.id, inTransactionDrop: transactionDrop },
-        ctx
+        { dropId: committedDropId, inTransactionDrop: transactionDrop },
+        {
+          ...ctx,
+          authenticationContext: AuthenticationContext.fromProfileId(authorId)
+        }
       )
     );
     if (clientDrop) {
@@ -429,7 +463,7 @@ export class DropCreationApiService {
     //    a delivery failure is rethrown only after the hand-off has settled.
     const [delivered] = await Promise.allSettled([
       delivery,
-      this.handOffOutbox(drop, createModel.wave_id, hops, ctx)
+      this.handOffOutbox(drop, createModel.wave_id, outboxId, hops, ctx)
     ]);
     if (delivered.status === 'rejected') throw delivered.reason;
     hops.set('drop_post_commit_ms', hops.elapsed() - committedAt);
@@ -448,12 +482,16 @@ export class DropCreationApiService {
   private async handOffOutbox(
     drop: ApiDrop,
     waveId: string,
+    outboxId: number | null,
     hops: DropPostHops,
     ctx: RequestContext
   ): Promise<void> {
     try {
       await hops.time('post_commit_outbox_ms', () =>
-        this.afterCommitStages.processOutbox({ dropId: drop.id, waveId }, ctx)
+        this.afterCommitStages.processOutbox(
+          { dropId: drop.id, waveId, outboxId },
+          ctx
+        )
       );
     } catch (error) {
       this.logger.error(
@@ -696,21 +734,26 @@ export class DropCreationApiService {
     poll: CreateDropPollRequest | null | undefined,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
   ): Promise<{
-    drop: ApiDrop;
+    drop: ApiDrop | null;
+    dropId: string;
+    outboxId: number | null;
     pendingPushNotificationIds: number[];
     dmUnreadRecipientIds: string[];
     dailyActivityCreditRequestEnqueued: boolean;
   }> {
+    const useOutbox = isDropWriteOutboxEnabled();
     const {
       drop_id,
       replayed,
       pending_push_notification_ids,
-      dm_unread_recipient_ids
+      dm_unread_recipient_ids,
+      outbox_id
     } = await this.createOrUpdateDrop.execute(model, false, {
       timer,
       connection,
       preResolvedIdentityNomination,
-      prePublication
+      prePublication,
+      useOutbox
     });
     if (clientDrop && !replayed) {
       // Claimed in the same transaction as the drop. A concurrent attempt
@@ -749,19 +792,26 @@ export class DropCreationApiService {
             { timer, connection }
           )
         : false;
-    const drop = await this.dropsService.findDropByIdOrThrow(
-      {
-        dropId: drop_id,
-        skipEligibilityCheck: true
-      },
-      {
-        connection,
-        authenticationContext: AuthenticationContext.fromProfileId(authorId),
-        timer
-      }
-    );
+    // Waves 1.8: with the outbox the response read runs after commit, on the
+    // writer, so it no longer extends the write transaction.
+    const drop = useOutbox
+      ? null
+      : await this.dropsService.findDropByIdOrThrow(
+          {
+            dropId: drop_id,
+            skipEligibilityCheck: true
+          },
+          {
+            connection,
+            authenticationContext:
+              AuthenticationContext.fromProfileId(authorId),
+            timer
+          }
+        );
     return {
       drop,
+      dropId: drop_id,
+      outboxId: outbox_id ?? null,
       pendingPushNotificationIds: pending_push_notification_ids,
       dmUnreadRecipientIds: dm_unread_recipient_ids ?? [],
       dailyActivityCreditRequestEnqueued
@@ -1190,33 +1240,58 @@ export class DropCreationApiService {
       model,
       ctx
     );
-    const { apiDrop, pendingPushNotificationIds } =
-      await this.dropsDb.executeNativeQueriesInTransaction(
-        async (connection) => {
-          const { drop_id, pending_push_notification_ids } =
-            await this.createOrUpdateDrop.execute(model, false, {
-              timer: ctx.timer!,
-              connection,
-              preResolvedIdentityNomination,
-              prePublication
-            });
-          const apiDrop = await this.dropsService.findDropByIdOrThrow(
-            {
-              dropId: drop_id,
-              skipEligibilityCheck: true
-            },
-            {
-              ...ctx,
-              connection
-            }
-          );
-          return {
-            apiDrop,
-            pendingPushNotificationIds: pending_push_notification_ids
-          };
-        },
-        { isolationLevel: 'READ COMMITTED' }
+    const useOutbox = isDropWriteOutboxEnabled();
+    const {
+      inTransactionDrop,
+      committedDropId,
+      outboxId,
+      pendingPushNotificationIds
+    } = await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const { drop_id, pending_push_notification_ids, outbox_id } =
+          await this.createOrUpdateDrop.execute(model, false, {
+            timer: ctx.timer!,
+            connection,
+            preResolvedIdentityNomination,
+            prePublication,
+            useOutbox
+          });
+        const inTransactionDrop = useOutbox
+          ? null
+          : await this.dropsService.findDropByIdOrThrow(
+              {
+                dropId: drop_id,
+                skipEligibilityCheck: true
+              },
+              {
+                ...ctx,
+                connection
+              }
+            );
+        return {
+          inTransactionDrop,
+          committedDropId: drop_id,
+          outboxId: outbox_id ?? null,
+          pendingPushNotificationIds: pending_push_notification_ids
+        };
+      },
+      { isolationLevel: 'READ COMMITTED' }
+    );
+    const apiDrop = await this.afterCommitStages.readCommittedDrop(
+      { dropId: committedDropId, inTransactionDrop },
+      ctx
+    );
+    try {
+      await this.afterCommitStages.processOutbox(
+        { dropId: committedDropId, waveId: model.wave_id, outboxId },
+        ctx
       );
+    } catch (error) {
+      this.logger.error(
+        `Failed to hand off post-commit outbox work for drop ${committedDropId}`,
+        error
+      );
+    }
     await waveScoreService.requestWaveScoreRefreshBestEffort(
       [model.wave_id],
       WaveScoreDirtyRefreshReason.DROP_CHANGED,
@@ -1283,5 +1358,11 @@ export const dropCreationService = new DropCreationApiService(
   wsListenersNotifier,
   dropNftLinksDb,
   nftLinkResolvingService,
-  dropPollsApiService
+  dropPollsApiService,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  dropWriteOutboxAfterCommitStages(dropsService, dropsDb)
 );

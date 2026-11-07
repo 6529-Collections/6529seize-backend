@@ -149,6 +149,16 @@ import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-
 import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import {
+  dropWriteOutboxDb as defaultDropWriteOutboxDb,
+  DropWriteOutboxDb
+} from '@/drops/drop-write-outbox.db';
+import {
+  DeferredDropNotifications,
+  DROP_WRITE_OUTBOX_PAYLOAD_VERSION,
+  DropWriteOutboxPayload,
+  DropWriteResult
+} from '@/drops/drop-write-outbox.types';
+import {
   getPrePublicationContentFingerprint,
   prePublicationModerationService,
   PrePublicationModerationService
@@ -173,6 +183,10 @@ import {
   CompetitionEntryDropHooks,
   competitionEntryDropHooks
 } from '@/competitions/competition-entry-drop-hooks';
+import {
+  waveDropMetricsRefreshService,
+  WaveDropMetricsDirtyRefreshReason
+} from '@/drops/wave-drop-metrics-refresh.service';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
@@ -372,7 +386,8 @@ export class CreateOrUpdateDropUseCase {
       ContentModerationDb,
       'filterBlockedNotificationRows'
     > = contentModerationDb,
-    private readonly entryHooks: CompetitionEntryDropHooks = competitionEntryDropHooks
+    private readonly entryHooks: CompetitionEntryDropHooks = competitionEntryDropHooks,
+    private readonly dropWriteOutboxDb: DropWriteOutboxDb = defaultDropWriteOutboxDb
   ) {}
 
   public async countAllMentionRecipients(
@@ -499,7 +514,8 @@ export class CreateOrUpdateDropUseCase {
       bypassChatLinkRestrictions,
       bypassChatSlowModeRestrictions,
       nativeEntryContent,
-      prePublication
+      prePublication,
+      useOutbox = false
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
@@ -508,13 +524,13 @@ export class CreateOrUpdateDropUseCase {
       bypassChatSlowModeRestrictions?: boolean;
       nativeEntryContent?: NativeEntryContentPermit;
       prePublication: PrePublicationPreparation;
+      /**
+       * Waves 1.8: leave notifications, metric rollups, wave metrics and the
+       * score dirty mark to the post outbox instead of doing them here.
+       */
+      useOutbox?: boolean;
     }
-  ): Promise<{
-    drop_id: string;
-    replayed?: boolean;
-    pending_push_notification_ids: number[];
-    dm_unread_recipient_ids: string[];
-  }> {
+  ): Promise<DropWriteResult> {
     this.assertDropLimits(model);
     if (
       nativeEntryContent &&
@@ -612,7 +628,8 @@ export class CreateOrUpdateDropUseCase {
               bypassChatSlowModeRestrictions || isNativeEntryContent,
             isNativeEntryContent,
             nativeCompetitionId: contentPermit?.competitionId,
-            prePublication
+            prePublication,
+            useOutbox
           }
         );
         const collaborationNotificationIds =
@@ -895,7 +912,8 @@ export class CreateOrUpdateDropUseCase {
       bypassChatSlowModeRestrictions,
       isNativeEntryContent = false,
       nativeCompetitionId,
-      prePublication
+      prePublication,
+      useOutbox = false
     }: {
       timer?: Timer;
       connection: ConnectionWrapper<any>;
@@ -905,13 +923,9 @@ export class CreateOrUpdateDropUseCase {
       isNativeEntryContent?: boolean;
       nativeCompetitionId?: string;
       prePublication: PrePublicationPreparation;
+      useOutbox?: boolean;
     }
-  ): Promise<{
-    drop_id: string;
-    replayed?: boolean;
-    pending_push_notification_ids: number[];
-    dm_unread_recipient_ids: string[];
-  }> {
+  ): Promise<DropWriteResult> {
     this.assertDropLimits(model);
     if (!('trustedSystem' in prePublication)) {
       const tx = {
@@ -1061,6 +1075,8 @@ export class CreateOrUpdateDropUseCase {
     }
     let pendingPushNotificationIds: number[] = [];
     let dmUnreadRecipientIds: string[] = [];
+    // Waves 1.8: filled by insertAllDropComponents when the outbox is used.
+    const deferred: { notifications?: DeferredDropNotifications } = {};
     if (preExistingDropId) {
       dropId = preExistingDropId;
       const dropBeforeUpdate = await this.dropsDb.findDropById(
@@ -1114,7 +1130,8 @@ export class CreateOrUpdateDropUseCase {
           serialNo: dropBeforeUpdate.serial_no,
           updatedAt: Time.currentMillis(),
           wave,
-          isNativeEntryContent
+          isNativeEntryContent,
+          deferredNotifications: useOutbox ? deferred : undefined
         },
         { connection, timer }
       );
@@ -1128,7 +1145,8 @@ export class CreateOrUpdateDropUseCase {
           serialNo: null,
           updatedAt: null,
           wave,
-          isNativeEntryContent
+          isNativeEntryContent,
+          deferredNotifications: useOutbox ? deferred : undefined
         },
         { connection, timer }
       );
@@ -1150,20 +1168,16 @@ export class CreateOrUpdateDropUseCase {
           { connection, timer }
         );
       }
-      await Promise.all([
-        this.metricsRecorder.recordDrop(
+      if (!useOutbox) {
+        await this.recordCreatedDropRollups(
           {
-            identityId: authorId,
+            authorId,
             waveId: validatedModel.wave_id,
             dropType: validatedModel.drop_type
           },
           { timer, connection }
-        ),
-        this.metricsRecorder.recordActiveIdentity(
-          { identityId: authorId },
-          { timer, connection }
-        )
-      ]);
+        );
+      }
     }
     await this.artCurationTokenWatchService.registerDrop(
       {
@@ -1175,7 +1189,7 @@ export class CreateOrUpdateDropUseCase {
       },
       { timer, connection }
     );
-    if (!preExistingDropId) {
+    if (!preExistingDropId && !useOutbox) {
       await this.dropsDb.applyInsertedDropMetricsDelta(
         {
           wave_id: validatedModel.wave_id,
@@ -1185,6 +1199,26 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       );
     }
+    // One unique row instead of the shared metric, wave-metric and score rows
+    // and the notification inserts: the transaction holds fewer locks.
+    const outboxId =
+      useOutbox && deferred.notifications
+        ? await this.dropWriteOutboxDb.insert(
+            {
+              drop_id: dropId,
+              wave_id: validatedModel.wave_id,
+              author_id: authorId,
+              operation: preExistingDropId ? 'UPDATE' : 'CREATE',
+              payload: {
+                v: DROP_WRITE_OUTBOX_PAYLOAD_VERSION,
+                drop_type: validatedModel.drop_type,
+                notifications: deferred.notifications,
+                record_created_drop: !preExistingDropId
+              } satisfies DropWriteOutboxPayload
+            },
+            { timer, connection }
+          )
+        : null;
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
     if (!('trustedSystem' in prePublication) && prePublication.reviewItemId) {
       await moderationReviewDb.setPublishedRevision(
@@ -1203,8 +1237,106 @@ export class CreateOrUpdateDropUseCase {
     return {
       drop_id: dropId,
       pending_push_notification_ids: pendingPushNotificationIds,
-      dm_unread_recipient_ids: dmUnreadRecipientIds
+      dm_unread_recipient_ids: dmUnreadRecipientIds,
+      outbox_id: outboxId
     };
+  }
+
+  private async recordCreatedDropRollups(
+    {
+      authorId,
+      waveId,
+      dropType
+    }: { authorId: string; waveId: string; dropType: DropType },
+    ctx: RequestContext
+  ): Promise<void> {
+    await Promise.all([
+      this.metricsRecorder.recordDrop(
+        { identityId: authorId, waveId, dropType },
+        ctx
+      ),
+      this.metricsRecorder.recordActiveIdentity({ identityId: authorId }, ctx)
+    ]);
+  }
+
+  /**
+   * Runs the work a drop write left in the post outbox (waves 1.8), inside
+   * the processor's transaction: the same notifications, rollups, wave
+   * metrics delta and score dirty mark the write would have done itself.
+   * Returns the notification ids to push.
+   */
+  public async applyDropWriteOutbox(
+    row: {
+      drop_id: string;
+      wave_id: string;
+      author_id: string;
+      operation: 'CREATE' | 'UPDATE';
+      payload: DropWriteOutboxPayload;
+    },
+    ctx: RequestContext & { connection: ConnectionWrapper<any> }
+  ): Promise<number[]> {
+    const { payload } = row;
+    const [drop, wave] = await Promise.all([
+      this.dropsDb.findDropById(row.drop_id, ctx.connection),
+      this.wavesApiDb.findById(row.wave_id, ctx.connection)
+    ]);
+    if (payload.record_created_drop) {
+      // The hourly rollups count creations, so they always apply.
+      await this.recordCreatedDropRollups(
+        {
+          authorId: row.author_id,
+          waveId: row.wave_id,
+          dropType: payload.drop_type
+        },
+        ctx
+      );
+      if (drop) {
+        await this.dropsDb.applyInsertedDropMetricsDelta(
+          {
+            wave_id: row.wave_id,
+            author_id: row.author_id,
+            drop_type: payload.drop_type
+          },
+          ctx
+        );
+      } else {
+        // Deleted before its outbox ran: the delete already subtracted a
+        // drop the counts never had. Let the authoritative resync recount
+        // the wave from its drops instead of adding a delta.
+        await waveDropMetricsRefreshService.markWaveDropMetricsDirtyBestEffort(
+          [row.wave_id],
+          WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
+          ctx
+        );
+      }
+    }
+    await waveScoreService.markWaveScoresDirtyBestEffort(
+      [row.wave_id],
+      WaveScoreDirtyRefreshReason.DROP_CHANGED,
+      ctx
+    );
+    // A drop deleted before its outbox ran gets no notifications; the delete
+    // already removed any that existed.
+    if (!drop || !wave) {
+      return [];
+    }
+    const notifications = payload.notifications;
+    return this.notifyWaveDropRecipients(
+      {
+        model: {
+          ...notifications.model,
+          author_identity: row.author_id
+        } as CreateOrUpdateDropModel,
+        wave,
+        directlyMentionedIdentityIds:
+          notifications.directly_mentioned_identity_ids,
+        groupMentionNotificationsEnabled:
+          notifications.group_mention_notifications_enabled,
+        suppressFollowerNotifications:
+          notifications.suppress_follower_notifications
+      },
+      ctx
+    );
   }
 
   private async recordDirectMessageUnreadForNewDrop(
@@ -2360,7 +2492,8 @@ export class CreateOrUpdateDropUseCase {
       createdAt,
       updatedAt,
       serialNo,
-      isNativeEntryContent = false
+      isNativeEntryContent = false,
+      deferredNotifications
     }: {
       model: CreateOrUpdateDropModel;
       wave: WaveEntity;
@@ -2368,6 +2501,8 @@ export class CreateOrUpdateDropUseCase {
       updatedAt: number | null;
       serialNo: number | null;
       isNativeEntryContent?: boolean;
+      /** Waves 1.8: collect notification inputs here instead of inserting. */
+      deferredNotifications?: { notifications?: DeferredDropNotifications };
     },
     { connection, timer }: { connection: ConnectionWrapper<any>; timer?: Timer }
   ): Promise<number[]> {
@@ -2562,6 +2697,43 @@ export class CreateOrUpdateDropUseCase {
       connection,
       timer
     });
+    const notificationInputs = {
+      directlyMentionedIdentityIds: resolvedMentionedUsers.mentionedUserIds,
+      // Group mention notifications, including @all, are create-only so an
+      // edit cannot resend a wave-wide or permission-derived notification.
+      groupMentionNotificationsEnabled: updatedAt === null,
+      suppressFollowerNotifications:
+        isNativeEntryContent ||
+        isCollapsedWaveReply({
+          wave,
+          replyToDropId: model.reply_to?.drop_id
+        })
+    };
+    if (deferredNotifications) {
+      // Waves 1.8: the post outbox does the score mark and notifications
+      // after commit, from exactly these inputs.
+      deferredNotifications.notifications = {
+        model: {
+          drop_id: dropId,
+          wave_id: model.wave_id,
+          author_id: authorId,
+          drop_type: model.drop_type,
+          reply_to: model.reply_to ?? null,
+          mentioned_groups: model.mentioned_groups,
+          parts: model.parts.map((part) => ({
+            quoted_drop: part.quoted_drop ?? null
+          }))
+        },
+        directly_mentioned_identity_ids:
+          notificationInputs.directlyMentionedIdentityIds,
+        group_mention_notifications_enabled:
+          notificationInputs.groupMentionNotificationsEnabled,
+        suppress_follower_notifications:
+          notificationInputs.suppressFollowerNotifications
+      };
+      timer?.stop(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
+      return [];
+    }
     await waveScoreService.markWaveScoresDirtyBestEffort(
       [wave.id],
       WaveScoreDirtyRefreshReason.DROP_CHANGED,
@@ -2571,20 +2743,7 @@ export class CreateOrUpdateDropUseCase {
       }
     );
     const pendingPushNotificationIds = await this.notifyWaveDropRecipients(
-      {
-        model,
-        wave,
-        directlyMentionedIdentityIds: resolvedMentionedUsers.mentionedUserIds,
-        // Group mention notifications, including @all, are create-only so an
-        // edit cannot resend a wave-wide or permission-derived notification.
-        groupMentionNotificationsEnabled: updatedAt === null,
-        suppressFollowerNotifications:
-          isNativeEntryContent ||
-          isCollapsedWaveReply({
-            wave,
-            replyToDropId: model.reply_to?.drop_id
-          })
-      },
+      { model, wave, ...notificationInputs },
       { timer, connection }
     );
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);

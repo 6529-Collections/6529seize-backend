@@ -11,6 +11,7 @@ import {
   processWaveFanoutBatch,
   registerWaveJobHandler
 } from '@/ws-delivery/wave-fanout-worker';
+import '@/drops/drop-write-outbox.worker-registration';
 import {
   asDropCreatedEffectsJob,
   asDropFramesJob
