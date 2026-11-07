@@ -39,9 +39,19 @@ export class NftLinkRefreshNotifier {
   ) {}
 
   /** Attempt post-persistence fan-out within its budget and always release cancellation resources. */
-  async notifyAboutNftLinkUpdate(data: ApiNftLinkData): Promise<void> {
+  /**
+   * Wakes the outbox (capable clients' frame was captured with the refresh)
+   * and broadcasts to legacy connections. `legacyBroadcast: false` only
+   * wakes the outbox: the refresh changed nothing a client sees (#2336).
+   */
+  async notifyAboutNftLinkUpdate(
+    data: ApiNftLinkData,
+    _ctx?: unknown,
+    { legacyBroadcast = true }: { legacyBroadcast?: boolean } = {}
+  ): Promise<void> {
     if (this.wakeOutbox && process.env.NODE_ENV !== 'local')
       await this.wakeOutbox();
+    if (!legacyBroadcast) return;
     const budget = getNftLinkResolutionBudget();
     const controller = new AbortController();
     // Each bounded SQS enqueue can attach transport cancellation listeners.

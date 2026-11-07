@@ -28,6 +28,30 @@ describe('NFT link refresh notifications', () => {
     jest.restoreAllMocks();
   });
 
+  it('only wakes durable NFT delivery when the legacy broadcast is skipped', async () => {
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'staging';
+    const recipients = jest
+      .spyOn(nftLinkRefreshNotifierDb, 'findActiveRecipients')
+      .mockResolvedValue([recipient(1)]);
+    const send = jest
+      .spyOn(appWebSockets, 'send')
+      .mockResolvedValue({ status: 'sent' });
+    const wake = jest.fn().mockResolvedValue(undefined);
+    try {
+      await new NftLinkRefreshNotifier(
+        undefined,
+        undefined,
+        wake
+      ).notifyAboutNftLinkUpdate(data, {}, { legacyBroadcast: false });
+      expect(wake).toHaveBeenCalledTimes(1);
+      expect(recipients).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+    }
+  });
+
   it('wakes durable NFT delivery while sending the default production broadcast only to legacy recipients', async () => {
     const originalEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'staging';
