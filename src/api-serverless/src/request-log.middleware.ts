@@ -23,7 +23,7 @@ type ApiGatewayRequest = Request & {
  */
 export function resolveRequestId(request: Request): string {
   return (
-    (request as ApiGatewayRequest).apiGateway?.context?.awsRequestId ??
+    (request as ApiGatewayRequest).apiGateway?.context?.awsRequestId ||
     ids.uniqueShortId()
   );
 }
