@@ -48,17 +48,19 @@ export class WavesChangedNotifier {
           Array.from(byProfile.keys())
         );
       await forEachConcurrent(
-        recipients.flatMap(({ connectionId, identityId, jwtExpiry }) =>
-          (byProfile.get(identityId) ?? []).map((change) => ({
-            connectionId,
-            jwtExpiry,
+        recipients.flatMap((recipient) =>
+          (byProfile.get(recipient.identityId) ?? []).map((change) => ({
+            connectionId: recipient.connectionId,
+            // The stored JWT expiry, when this lookup returns it, saves a
+            // fence read on send; versions without it still send.
+            jwtExpiry: (recipient as { jwtExpiry?: number }).jwtExpiry,
             change
           }))
         ),
         async ({ connectionId, jwtExpiry, change }) => {
           await this.sockets.send({
             connectionId,
-            jwtExpiry,
+            ...(jwtExpiry === undefined ? {} : { jwtExpiry }),
             message: JSON.stringify(
               wavesChangedMessage({
                 profile_id: change.profileId,
