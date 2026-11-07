@@ -4,89 +4,131 @@ jest.mock('@/logging', () => ({
 }));
 
 import type { SQSEvent } from 'aws-lambda';
-import { processWaveFanoutBatch } from './wave-fanout-worker';
-import { WAVE_FANOUT_JOB_VERSION } from './wave-fanout-job';
-
-const frames = {
-  v: WAVE_FANOUT_JOB_VERSION,
-  kind: 'drop_frames',
-  update_type: 'DROP_UPDATE',
-  server_received_at: 1,
-  enqueued_at: 2,
-  chunk: 0,
-  drop: { id: 'drop-1' },
-  hidden_drop_ids: [],
-  author_ids_by_drop_id: [],
-  recipients: [{ c: 'c-1', p: 'p-1', e: 4102444800 }]
-};
-const effects = {
-  v: WAVE_FANOUT_JOB_VERSION,
-  kind: 'drop_created_effects',
-  enqueued_at: 2,
-  drop_id: 'drop-1',
-  wave_id: 'wave-1',
-  author_id: 'author-1',
-  pending_push_notification_ids: [7],
-  dm_unread_recipient_ids: ['p-2'],
-  collaborator_ids: []
-};
+import { processWaveFanoutBatch, WaveJobRegistry } from './wave-fanout-worker';
 
 const event = (...bodies: string[]): SQSEvent =>
   ({
     Records: bodies.map((body, index) => ({
       messageId: `m-${index}`,
       body,
-      attributes: { ApproximateReceiveCount: '1' }
+      attributes: {
+        ApproximateReceiveCount: '1',
+        SentTimestamp: String(Date.now() - 25)
+      }
     }))
   }) as never;
 
 describe('processWaveFanoutBatch', () => {
-  beforeEach(() => jest.clearAllMocks());
+  const lambda = process.env.AWS_LAMBDA_FUNCTION_NAME;
+  let stdout: jest.SpyInstance;
 
-  it('routes each job and acknowledges successes', async () => {
-    const deps = {
-      deliverQueuedDropFrames: jest.fn().mockResolvedValue(undefined),
-      runDropCreatedEffects: jest.fn().mockResolvedValue(undefined)
-    };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'waveFanoutWorker';
+    stdout = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    stdout.mockRestore();
+    if (lambda === undefined) delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+    else process.env.AWS_LAMBDA_FUNCTION_NAME = lambda;
+  });
+
+  const jobRecords = () =>
+    stdout.mock.calls
+      .map(([line]) => JSON.parse(String(line)))
+      .filter((record) => record.event === 'WAVE_JOB');
+
+  it('treats a body without kind as a drop fan-out chunk', async () => {
+    const registry = new WaveJobRegistry();
+    const frames = jest.fn().mockResolvedValue(undefined);
+    registry.register('drop_frames', frames);
+
+    await expect(
+      processWaveFanoutBatch(event('{"v":1,"drop":{"id":"d"}}'), registry)
+    ).resolves.toEqual({ batchItemFailures: [] });
+
+    expect(frames).toHaveBeenCalledWith({ v: 1, drop: { id: 'd' } });
+    expect(jobRecords()[0]).toMatchObject({
+      JobKind: 'drop_frames',
+      wave_job_processed: 1,
+      wave_job_failed: 0
+    });
+    expect(jobRecords()[0].wave_job_queue_age_ms).toBeGreaterThanOrEqual(25);
+  });
+
+  it('runs a kind registered by another module', async () => {
+    const registry = new WaveJobRegistry();
+    registry.register('drop_frames', jest.fn());
+    const outbox = jest.fn().mockResolvedValue(undefined);
+    registry.register('drop_write_outbox', outbox);
 
     await expect(
       processWaveFanoutBatch(
-        event(JSON.stringify(frames), JSON.stringify(effects)),
-        deps
+        event('{"kind":"drop_write_outbox","drop_id":"d-1"}'),
+        registry
       )
     ).resolves.toEqual({ batchItemFailures: [] });
 
-    expect(deps.deliverQueuedDropFrames).toHaveBeenCalledWith(frames);
-    expect(deps.runDropCreatedEffects).toHaveBeenCalledWith(effects);
+    expect(outbox).toHaveBeenCalledWith({
+      kind: 'drop_write_outbox',
+      drop_id: 'd-1'
+    });
+    expect(() => registry.register('drop_write_outbox', jest.fn())).toThrow(
+      'already registered'
+    );
   });
 
-  it('reports only the failed or malformed records for retry', async () => {
-    const deps = {
-      deliverQueuedDropFrames: jest
-        .fn()
-        .mockRejectedValue(new Error('viewer contexts unavailable')),
-      runDropCreatedEffects: jest.fn().mockResolvedValue(undefined)
-    };
+  it('fails only the unknown, malformed or throwing items', async () => {
+    const registry = new WaveJobRegistry();
+    const frames = jest.fn().mockResolvedValue(undefined);
+    registry.register('drop_frames', frames);
+    registry.register(
+      'flaky',
+      jest.fn().mockRejectedValue(new Error('viewer contexts unavailable'))
+    );
 
     const result = await processWaveFanoutBatch(
-      event(JSON.stringify(frames), JSON.stringify(effects), '{"v":9}'),
-      deps
+      event(
+        '{"kind":"drop_frames","v":1}',
+        '{"kind":"not_registered"}',
+        'not json',
+        '{"kind":"flaky"}'
+      ),
+      registry
     );
 
     expect(result.batchItemFailures).toEqual(
       expect.arrayContaining([
-        { itemIdentifier: 'm-0' },
-        { itemIdentifier: 'm-2' }
+        { itemIdentifier: 'm-1' },
+        { itemIdentifier: 'm-2' },
+        { itemIdentifier: 'm-3' }
       ])
     );
-    expect(result.batchItemFailures).toHaveLength(2);
-    expect(deps.runDropCreatedEffects).toHaveBeenCalledTimes(1);
+    expect(result.batchItemFailures).toHaveLength(3);
+    expect(frames).toHaveBeenCalledTimes(1);
     expect(mockLoggerError).toHaveBeenCalledWith(
       expect.objectContaining({
         code: 'WAVE_FANOUT_JOB_FAILED',
-        message_id: 'm-0',
+        kind: 'not_registered',
+        message_id: 'm-1',
+        error_message: 'Unknown wave job kind not_registered'
+      })
+    );
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'unparsed', message_id: 'm-2' })
+    );
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'flaky',
         error_message: 'viewer contexts unavailable'
       })
     );
+    expect(
+      jobRecords()
+        .filter((record) => record.wave_job_failed === 1)
+        .map((record) => record.JobKind)
+        .sort((a: string, b: string) => a.localeCompare(b))
+    ).toEqual(['flaky', 'not_registered', 'unparsed']);
   });
 });

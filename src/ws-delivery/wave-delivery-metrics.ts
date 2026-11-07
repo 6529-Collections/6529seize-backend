@@ -230,6 +230,29 @@ export class FanoutMeasurement {
   }
 }
 
+/** One queued wave job's outcome, by job kind (waves 1.1 worker). */
+export function emitWaveJobMetrics(
+  kind: string,
+  outcome: 'processed' | 'failed',
+  queueAgeMs: number | null
+): void {
+  writeEmf({
+    dimensions: { JobKind: kind },
+    metrics: {
+      wave_job_processed: {
+        unit: 'Count',
+        value: outcome === 'processed' ? 1 : 0
+      },
+      wave_job_failed: { unit: 'Count', value: outcome === 'failed' ? 1 : 0 },
+      wave_job_queue_age_ms: {
+        unit: 'Milliseconds',
+        value: queueAgeMs ?? Number.NaN
+      }
+    },
+    properties: { event: 'WAVE_JOB' }
+  });
+}
+
 /** Server-side hops of one drop POST, emitted as one EMF record. */
 export class DropPostHops {
   private readonly hops: Record<string, number> = {};

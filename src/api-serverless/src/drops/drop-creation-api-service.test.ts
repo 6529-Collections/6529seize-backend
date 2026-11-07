@@ -1158,3 +1158,164 @@ describe('DropCreationApiService.createDrop reply after commit (1.1)', () => {
     expect(done).toBe(true);
   });
 });
+
+describe('DropCreationApiService.createDrop after-commit pipeline', () => {
+  const env = { ...process.env };
+
+  beforeEach(() => {
+    (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
+    jest
+      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
+      .mockResolvedValue(false);
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    process.env = { ...env };
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  function makeService(stages: object, order: string[]) {
+    return new DropCreationApiService(
+      {
+        findDropByIdOrThrow: jest
+          .fn()
+          .mockResolvedValue({ id: 'drop-1', wave_id: 'wave-1', v: 'tx' })
+      } as never,
+      {
+        executeNativeQueriesInTransaction: jest.fn(async (callback) => {
+          const result = await callback({});
+          order.push('committed');
+          return result;
+        })
+      } as never,
+      {
+        createDropApiToUseCaseModel: jest
+          .fn()
+          .mockReturnValue({ wave_id: 'wave-1', drop_type: DropType.CHAT })
+      } as never,
+      {
+        preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+        preparePrePublication: jest.fn().mockResolvedValue({}),
+        execute: jest.fn().mockResolvedValue({
+          drop_id: 'drop-1',
+          pending_push_notification_ids: []
+        })
+      } as never,
+      {} as never,
+      {
+        notifyAboutDropUpdate: jest.fn(async (drop) => {
+          order.push(`deliver:${drop.v}`);
+        })
+      } as never,
+      { findByDropId: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never,
+      undefined,
+      undefined,
+      undefined,
+      { enqueue: jest.fn().mockResolvedValue([]) } as never,
+      stages as never
+    );
+  }
+
+  const create = (service: DropCreationApiService) =>
+    service.createDrop(
+      {
+        createDropRequest: {} as never,
+        authorId: 'author-1',
+        representativeId: 'author-1'
+      },
+      { timer: undefined } as never
+    );
+
+  it.each([false, true])(
+    'reads the committed drop first, then delivers it and hands off the outbox (async=%s)',
+    async (asyncFanout) => {
+      if (asyncFanout) process.env.WS_ASYNC_FANOUT = 'true';
+      else delete process.env.WS_ASYNC_FANOUT;
+      const order: string[] = [];
+      let finishOutbox!: () => void;
+      const service = makeService(
+        {
+          readCommittedDrop: jest.fn(async ({ dropId, inTransactionDrop }) => {
+            order.push(`read:${dropId}:${inTransactionDrop.v}`);
+            return { ...inTransactionDrop, v: 'writer' };
+          }),
+          processOutbox: jest.fn(
+            ({ dropId, waveId }) =>
+              new Promise<void>((resolve) => {
+                order.push(`outbox-start:${dropId}:${waveId}`);
+                finishOutbox = () => {
+                  order.push('outbox-done');
+                  resolve();
+                };
+              })
+          )
+        },
+        order
+      );
+
+      let returned: any = null;
+      const post = create(service).then((drop) => {
+        returned = drop;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      // Stage 3 started with delivery and the POST waits for it.
+      expect(returned).toBeNull();
+      finishOutbox();
+      await post;
+
+      expect(order).toEqual([
+        'committed',
+        'read:drop-1:tx',
+        'outbox-start:drop-1:wave-1',
+        'deliver:writer',
+        'outbox-done'
+      ]);
+      expect(returned).toMatchObject({ id: 'drop-1', v: 'writer' });
+    }
+  );
+
+  it('logs an outbox hand-off failure without failing the committed POST', async () => {
+    const order: string[] = [];
+    const service = makeService(
+      {
+        readCommittedDrop: async ({ inTransactionDrop }: any) =>
+          inTransactionDrop,
+        processOutbox: jest.fn().mockRejectedValue(new Error('queue down'))
+      },
+      order
+    );
+    const error = jest.fn();
+    (service as any).logger = { error };
+
+    await expect(create(service)).resolves.toMatchObject({ id: 'drop-1' });
+    expect(error).toHaveBeenCalledWith(
+      'Failed to hand off post-commit outbox work for drop drop-1',
+      expect.any(Error)
+    );
+  });
+
+  it('defaults to the in-transaction drop and no outbox', async () => {
+    const { defaultDropAfterCommitStages } = jest.requireActual(
+      '@/api/drops/drop-creation.api.service'
+    );
+    const drop = { id: 'drop-1' };
+    await expect(
+      defaultDropAfterCommitStages.readCommittedDrop(
+        { dropId: 'drop-1', inTransactionDrop: drop },
+        {}
+      )
+    ).resolves.toBe(drop);
+    await expect(
+      defaultDropAfterCommitStages.processOutbox(
+        { dropId: 'drop-1', waveId: 'wave-1' },
+        {}
+      )
+    ).resolves.toBeUndefined();
+  });
+});

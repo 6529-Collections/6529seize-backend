@@ -65,6 +65,19 @@ export function buildDropFramesJobs(
 ): { jobs: DropFramesJob[]; unqueueable: QueuedRecipient[] } {
   const jobs: DropFramesJob[] = [];
   const unqueueable: QueuedRecipient[] = [];
+  if (!recipients.length) return { jobs, unqueueable };
+  // The drop is repeated in every job: if it does not fit with a single
+  // recipient, no split can help, so skip the halving entirely.
+  const smallest: DropFramesJob = {
+    v: WAVE_FANOUT_JOB_VERSION,
+    kind: 'drop_frames',
+    ...base,
+    chunk: 0,
+    recipients: [recipients[0]]
+  };
+  if (jobByteLength(smallest) > WAVE_FANOUT_MAX_MESSAGE_BYTES) {
+    return { jobs, unqueueable: [...recipients] };
+  }
   const pending: QueuedRecipient[][] = [];
   for (let offset = 0; offset < recipients.length; offset += chunkSize) {
     pending.push(recipients.slice(offset, offset + chunkSize));
@@ -94,38 +107,59 @@ export function jobByteLength(job: WaveFanoutJob): number {
   return Buffer.byteLength(JSON.stringify(job), 'utf8');
 }
 
-/** Validates a queued body; unknown versions or kinds are rejected loudly. */
-export function parseWaveFanoutJob(body: string): WaveFanoutJob {
-  const job = JSON.parse(body) as Partial<WaveFanoutJob>;
-  if (!job || typeof job !== 'object' || job.v !== WAVE_FANOUT_JOB_VERSION)
+/** The kind of a queued body without one: today's drop fan-out chunk. */
+export const DEFAULT_WAVE_JOB_KIND = 'drop_frames';
+
+/** Reads a queued body's kind; the body itself is validated by its handler. */
+export function parseWaveJobEnvelope(body: string): {
+  kind: string;
+  job: Record<string, unknown>;
+} {
+  const job: unknown = JSON.parse(body);
+  if (!job || typeof job !== 'object' || Array.isArray(job))
+    throw new Error('Wave job body is not an object');
+  const kind = Reflect.get(job, 'kind');
+  return {
+    kind: typeof kind === 'string' && kind ? kind : DEFAULT_WAVE_JOB_KIND,
+    job: job as Record<string, unknown>
+  };
+}
+
+function requireVersion(job: Record<string, unknown>): void {
+  if (job.v !== WAVE_FANOUT_JOB_VERSION)
     throw new Error('Unsupported wave fan-out job version');
-  if (job.kind === 'drop_frames') {
-    const frames = job as Partial<DropFramesJob>;
-    if (
-      !frames.drop ||
-      typeof frames.drop.id !== 'string' ||
-      !Array.isArray(frames.recipients) ||
-      !Array.isArray(frames.hidden_drop_ids) ||
-      !Array.isArray(frames.author_ids_by_drop_id)
-    )
-      throw new Error('Malformed drop_frames job');
-    return frames as DropFramesJob;
-  }
-  if (job.kind === 'drop_created_effects') {
-    const effects = job as Partial<DropCreatedEffectsJob>;
-    if (
-      typeof effects.drop_id !== 'string' ||
-      typeof effects.wave_id !== 'string' ||
-      !Array.isArray(effects.pending_push_notification_ids) ||
-      !Array.isArray(effects.dm_unread_recipient_ids)
-    )
-      throw new Error('Malformed drop_created_effects job');
-    return {
-      ...effects,
-      collaborator_ids: Array.isArray(effects.collaborator_ids)
-        ? effects.collaborator_ids
-        : []
-    } as DropCreatedEffectsJob;
-  }
-  throw new Error('Unsupported wave fan-out job kind');
+}
+
+export function asDropFramesJob(job: Record<string, unknown>): DropFramesJob {
+  requireVersion(job);
+  const frames = job as Partial<DropFramesJob>;
+  if (
+    !frames.drop ||
+    typeof frames.drop.id !== 'string' ||
+    !Array.isArray(frames.recipients) ||
+    !Array.isArray(frames.hidden_drop_ids) ||
+    !Array.isArray(frames.author_ids_by_drop_id)
+  )
+    throw new Error('Malformed drop_frames job');
+  return { ...frames, kind: 'drop_frames' } as DropFramesJob;
+}
+
+export function asDropCreatedEffectsJob(
+  job: Record<string, unknown>
+): DropCreatedEffectsJob {
+  requireVersion(job);
+  const effects = job as Partial<DropCreatedEffectsJob>;
+  if (
+    typeof effects.drop_id !== 'string' ||
+    typeof effects.wave_id !== 'string' ||
+    !Array.isArray(effects.pending_push_notification_ids) ||
+    !Array.isArray(effects.dm_unread_recipient_ids)
+  )
+    throw new Error('Malformed drop_created_effects job');
+  return {
+    ...effects,
+    collaborator_ids: Array.isArray(effects.collaborator_ids)
+      ? effects.collaborator_ids
+      : []
+  } as DropCreatedEffectsJob;
 }

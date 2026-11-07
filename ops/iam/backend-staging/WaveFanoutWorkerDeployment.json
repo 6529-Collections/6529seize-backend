@@ -256,9 +256,7 @@
       "Effect": "Allow",
       "Action": [
         "lambda:GetEventSourceMapping",
-        "lambda:ListTags",
-        "lambda:TagResource",
-        "lambda:UntagResource"
+        "lambda:ListTags"
       ],
       "Resource": [
         "arn:aws:lambda:eu-west-1:987989283142:event-source-mapping:*"

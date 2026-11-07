@@ -7,7 +7,21 @@ import * as sentryContext from '@/sentry.context';
 import { API_REDIS_FAIL_FAST_OPTIONS } from '@/api/app-initialization';
 import { wsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { dropCreationService } from '@/api/drops/drop-creation.api.service';
-import { processWaveFanoutBatch } from '@/ws-delivery/wave-fanout-worker';
+import {
+  processWaveFanoutBatch,
+  registerWaveJobHandler
+} from '@/ws-delivery/wave-fanout-worker';
+import {
+  asDropCreatedEffectsJob,
+  asDropFramesJob
+} from '@/ws-delivery/wave-fanout-job';
+
+registerWaveJobHandler('drop_frames', (job) =>
+  wsListenersNotifier.deliverQueuedDropFrames(asDropFramesJob(job))
+);
+registerWaveJobHandler('drop_created_effects', (job) =>
+  dropCreationService.runDropCreatedEffects(asDropCreatedEffectsJob(job), {})
+);
 
 const logger = Logger.get('WAVE_FANOUT_WORKER');
 
@@ -34,12 +48,7 @@ const consume = async (
   });
   await initialized;
   logger.info(`[RECORDS ${event.Records.length}]`);
-  return processWaveFanoutBatch(event, {
-    deliverQueuedDropFrames: (job) =>
-      wsListenersNotifier.deliverQueuedDropFrames(job),
-    runDropCreatedEffects: (job) =>
-      dropCreationService.runDropCreatedEffects(job, {})
-  });
+  return processWaveFanoutBatch(event);
 };
 
 export const handler = sentryContext.wrapLambdaHandler(consume);

@@ -867,8 +867,13 @@ export class WsListenersNotifier {
         ctx
       ),
       this.fanoutQueue.enqueue(jobs).then((notAccepted) => {
+        const rejectedRecipients = notAccepted.reduce(
+          (total, job) =>
+            total + (job.kind === 'drop_frames' ? job.recipients.length : 0),
+          0
+        );
         measurement.handedOff(
-          split.deferred.length - unqueueable.length,
+          split.deferred.length - unqueueable.length - rejectedRecipients,
           Date.now() - enqueueStartedAt
         );
         return notAccepted;

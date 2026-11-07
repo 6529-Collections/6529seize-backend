@@ -2,7 +2,10 @@ import {
   buildDropFramesJobs,
   DropFramesJob,
   jobByteLength,
-  parseWaveFanoutJob,
+  asDropCreatedEffectsJob,
+  asDropFramesJob,
+  DEFAULT_WAVE_JOB_KIND,
+  parseWaveJobEnvelope,
   QueuedRecipient,
   WAVE_FANOUT_JOB_VERSION,
   WAVE_FANOUT_MAX_MESSAGE_BYTES
@@ -74,9 +77,36 @@ describe('wave fan-out jobs', () => {
     expect(unqueueable).toEqual(recipients(3));
   });
 
-  it('round-trips jobs and rejects unknown or malformed bodies', () => {
+  it('does not halve a drop that cannot fit with a single recipient', () => {
+    const stringify = jest.spyOn(JSON, 'stringify');
+    try {
+      const { jobs, unqueueable } = buildDropFramesJobs(
+        base('x'.repeat(WAVE_FANOUT_MAX_MESSAGE_BYTES)),
+        recipients(1000),
+        10
+      );
+      expect(jobs).toEqual([]);
+      expect(unqueueable).toHaveLength(1000);
+      expect(stringify).toHaveBeenCalledTimes(1);
+    } finally {
+      stringify.mockRestore();
+    }
+    expect(buildDropFramesJobs(base(), [], 10)).toEqual({
+      jobs: [],
+      unqueueable: []
+    });
+  });
+
+  it('reads job envelopes and validates the built-in kinds strictly', () => {
     const [job] = buildDropFramesJobs(base(), recipients(2), 10).jobs;
-    expect(parseWaveFanoutJob(JSON.stringify(job))).toEqual(job);
+    const envelope = parseWaveJobEnvelope(JSON.stringify(job));
+    expect(envelope.kind).toBe('drop_frames');
+    expect(asDropFramesJob(envelope.job)).toEqual(job);
+    const { kind, ...withoutKind } = job;
+    expect(parseWaveJobEnvelope(JSON.stringify(withoutKind)).kind).toBe(
+      DEFAULT_WAVE_JOB_KIND
+    );
+    expect(asDropFramesJob(withoutKind)).toEqual(job);
     const effects = {
       v: WAVE_FANOUT_JOB_VERSION,
       kind: 'drop_created_effects',
@@ -87,20 +117,14 @@ describe('wave fan-out jobs', () => {
       pending_push_notification_ids: [1],
       dm_unread_recipient_ids: []
     };
-    expect(parseWaveFanoutJob(JSON.stringify(effects))).toEqual({
+    expect(asDropCreatedEffectsJob(effects)).toEqual({
       ...effects,
       collaborator_ids: []
     });
-    expect(() => parseWaveFanoutJob('{"v":2,"kind":"drop_frames"}')).toThrow(
-      'version'
-    );
-    expect(() => parseWaveFanoutJob('{"v":1,"kind":"other"}')).toThrow('kind');
-    expect(() =>
-      parseWaveFanoutJob('{"v":1,"kind":"drop_frames","drop":{}}')
-    ).toThrow('Malformed');
-    expect(() =>
-      parseWaveFanoutJob('{"v":1,"kind":"drop_created_effects"}')
-    ).toThrow('Malformed');
-    expect(() => parseWaveFanoutJob('not json')).toThrow();
+    expect(() => asDropFramesJob({ v: 2 })).toThrow('version');
+    expect(() => asDropFramesJob({ v: 1, drop: {} })).toThrow('Malformed');
+    expect(() => asDropCreatedEffectsJob({ v: 1 })).toThrow('Malformed');
+    expect(() => parseWaveJobEnvelope('[1]')).toThrow('not an object');
+    expect(() => parseWaveJobEnvelope('not json')).toThrow();
   });
 });

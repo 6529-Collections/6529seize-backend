@@ -192,6 +192,71 @@ describe('reply after commit (waves 1.1)', () => {
     expect(done).toBe(true);
   });
 
+  it.each([
+    ['none', [] as number[]],
+    ['the first', [0]],
+    ['the last', [2]],
+    ['every', [0, 1, 2]]
+  ])(
+    'delivers each recipient exactly once when %s chunk is rejected',
+    async (_label, rejectedChunks) => {
+      process.env.AWS_LAMBDA_FUNCTION_NAME = 'api';
+      const stdout = jest
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(() => true);
+      const all = Array.from({ length: 10 }, (_, i) => recipient(i));
+      const h = harness({
+        recipients: all,
+        enqueue: async (jobs) =>
+          jobs.filter((job) =>
+            rejectedChunks.includes((job as DropFramesJob).chunk)
+          )
+      });
+
+      await h.notifier.notifyAboutDropUpdate(createDrop(), {});
+
+      const queued = (h.queue.enqueue.mock.calls[0][0] as DropFramesJob[])
+        .filter((job) => !rejectedChunks.includes(job.chunk))
+        .flatMap((job) => job.recipients.map((r) => r.c));
+      const delivered = [...h.sentTo(), ...queued];
+      expect(new Set(delivered).size).toBe(delivered.length);
+      expect(new Set(delivered)).toEqual(
+        new Set(all.map((r) => r.connectionId))
+      );
+      // The EMF record reconciles: recipients = handed off + sent here.
+      const record = stdout.mock.calls
+        .map(([line]) => JSON.parse(String(line)))
+        .find((line) => line.event === 'WAVE_FANOUT');
+      expect(record.fanout_recipients).toBe(10);
+      expect(record.fanout_handed_off + record.fanout_sent).toBe(10);
+      expect(record.fanout_handed_off).toBe(queued.length);
+      expect(record.fanout_fell_back).toBe(10 - 3 - queued.length);
+    }
+  );
+
+  it('sends nothing from a queued chunk when a payload input fails', async () => {
+    const h = harness({ recipients: [] });
+    const credits = jest
+      .spyOn(h.notifier as any, 'getCreditLeftsForOnlineProfiles')
+      .mockRejectedValue(new Error('credit read failed'));
+    await expect(
+      h.notifier.deliverQueuedDropFrames({
+        v: 1,
+        kind: 'drop_frames',
+        update_type: WsMessageType.DROP_UPDATE,
+        server_received_at: null,
+        enqueued_at: Date.now(),
+        chunk: 0,
+        drop: createDrop(),
+        hidden_drop_ids: [],
+        author_ids_by_drop_id: [],
+        recipients: [{ c: 'c-1', p: 'p-1', e: 4102444800 }]
+      })
+    ).rejects.toThrow('credit read failed');
+    expect(credits).toHaveBeenCalled();
+    expect(h.appWebSockets.send).not.toHaveBeenCalled();
+  });
+
   it('delivers a queued chunk with exactly the inline payload', async () => {
     const inline = harness({ recipients: [recipient(4)] });
     await inline.notifier.notifyAboutDropUpdate(createDrop(), {});
