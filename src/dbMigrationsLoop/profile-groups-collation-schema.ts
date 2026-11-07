@@ -2,6 +2,7 @@ import type { DataSource, QueryRunner } from 'typeorm';
 import { getDataSource } from '@/db';
 import { PROFILE_GROUPS_TABLE } from '@/constants';
 import { Logger } from '@/logging';
+import { DB_TEXT_COLLATION } from '@/db/db-collation';
 
 const logger = Logger.get('PROFILE_GROUPS_COLLATION_SCHEMA');
 
@@ -25,7 +26,7 @@ const logger = Logger.get('PROFILE_GROUPS_COLLATION_SCHEMA');
  * - the result is verified before success is reported.
  */
 export const PROFILE_GROUPS_TARGET_CHARSET = 'utf8mb4';
-export const PROFILE_GROUPS_TARGET_COLLATION = 'utf8mb4_0900_ai_ci';
+export const PROFILE_GROUPS_TARGET_COLLATION = DB_TEXT_COLLATION;
 export const PROFILE_GROUPS_LEGACY_CHARSET = 'utf8mb3';
 export const PROFILE_GROUPS_LEGACY_COLLATION = 'utf8mb3_bin';
 

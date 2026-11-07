@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import {
   PROFILES_ACTIVITY_LOGS_TABLE,
+  PROFILE_GROUPS_TABLE,
   TDH_NFT_TABLE,
   USER_GROUPS_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE,
@@ -28,7 +29,10 @@ const COMPARED_COLUMNS: ReadonlyArray<readonly [string, string]> = [
   [legacyGetView(WAVES_TABLE), 'participation_group_id'],
   [legacyGetView(WAVES_TABLE), 'voting_group_id'],
   [legacyGetView(WAVES_TABLE), 'voting_credit_creditor'],
-  [legacyGetView(WAVE_VOTING_CREDIT_NFTS_TABLE), 'contract']
+  [legacyGetView(WAVE_VOTING_CREDIT_NFTS_TABLE), 'contract'],
+  // Joined with community_groups, blocks and identities on both ids.
+  [PROFILE_GROUPS_TABLE, 'profile_group_id'],
+  [PROFILE_GROUPS_TABLE, 'profile_id']
 ];
 
 describe('database text collation', () => {

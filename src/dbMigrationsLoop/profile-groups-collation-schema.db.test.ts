@@ -94,6 +94,8 @@ describeWithSeed('profile_groups collation change', [], () => {
         applyProfileGroupsCollationSchema('convert', source, noWait)
       ).resolves.toBe(1);
     } finally {
+      // Leave the shared test schema on the production collation.
+      await applyProfileGroupsCollationSchema('convert', source, noWait);
       await source.query('DELETE FROM profile_groups');
       await source.destroy();
     }
