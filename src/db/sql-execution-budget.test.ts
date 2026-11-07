@@ -638,3 +638,112 @@ describe('physical SQL execution budgets', () => {
     expect(driver.statements).toEqual([]);
   });
 });
+
+describe('session retirement instead of restoration', () => {
+  const restore =
+    'SET SESSION max_execution_time = 0, innodb_lock_wait_timeout = 50';
+  function retiringDriver(
+    retireError?: Error,
+    intercept?: (sql: string, callback: Callback) => boolean
+  ) {
+    const driver = fakeDriver(intercept);
+    const retire = jest.fn(() => {
+      if (retireError) throw retireError;
+      driver.connection.destroy();
+    });
+    return { ...driver, retire, lease: { ...driver.lease, retire } };
+  }
+
+  it('retires after an acknowledged COMMIT without sending the restore', async () => {
+    const driver = retiringDriver();
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => 'committed'
+      )
+    ).resolves.toBe('committed');
+    expect(driver.statements).toContain('COMMIT');
+    expect(driver.statements).not.toContain(restore);
+    expect(driver.retire).toHaveBeenCalledTimes(1);
+    expect(driver.destroy).toHaveBeenCalledTimes(1);
+    expect(driver.release).toHaveBeenCalledTimes(1);
+    expect(driver.retire.mock.invocationCallOrder[0]).toBeLessThan(
+      driver.release.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('retires after an acknowledged ROLLBACK without marking the error destroyed', async () => {
+    const driver = retiringDriver();
+    const failure = new Error('work failed');
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => {
+          throw failure;
+        }
+      )
+    ).rejects.toBe(failure);
+    expect(driver.statements).toContain('ROLLBACK');
+    expect(driver.statements).not.toContain(restore);
+    expect(driver.retire).toHaveBeenCalledTimes(1);
+    expect(driver.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the session variables when retirement fails', async () => {
+    const driver = retiringDriver(new Error('cannot destroy'));
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => 'committed'
+      )
+    ).resolves.toBe('committed');
+    expect(driver.retire).toHaveBeenCalledTimes(1);
+    expect(driver.statements.slice(-1)).toEqual([restore]);
+    expect(driver.destroy).not.toHaveBeenCalled();
+    expect(driver.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retire a session whose variables were never changed', async () => {
+    const driver = retiringDriver();
+    const invalid = fakeDriver(undefined, 'not-a-number');
+    const lease = { ...invalid.lease, retire: driver.retire };
+    await expect(
+      executeBudgetedSqlTransaction(async () => lease, budget(), jest.fn())
+    ).rejects.toThrow('Invalid saved SQL session value');
+    expect(driver.retire).not.toHaveBeenCalled();
+    // The SETUP failure itself aborts and disposes the session.
+    expect(invalid.destroy).toHaveBeenCalledTimes(1);
+    expect(invalid.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retire again after an abort already destroyed the session', async () => {
+    const driver = retiringDriver(undefined, (sql, callback) => {
+      if (sql !== 'SELECT lost') return false;
+      queueMicrotask(() =>
+        callback(
+          Object.assign(new Error('lost'), {
+            fatal: true,
+            code: 'PROTOCOL_CONNECTION_LOST'
+          })
+        )
+      );
+      return true;
+    });
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => driver.lease,
+        budget(),
+        async () => execSQLWithParams('SELECT lost', driver.connection, false)
+      )
+    ).rejects.toMatchObject({
+      serverCode: 'PROTOCOL_CONNECTION_LOST',
+      connectionDestroyed: true
+    });
+    expect(driver.retire).not.toHaveBeenCalled();
+    expect(driver.destroy).toHaveBeenCalledTimes(1);
+    expect(driver.release).toHaveBeenCalledTimes(1);
+  });
+});

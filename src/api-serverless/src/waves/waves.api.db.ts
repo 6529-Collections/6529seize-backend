@@ -41,6 +41,10 @@ import {
 } from '@/constants';
 import { Logger } from '@/logging';
 import {
+  querySqlInListChunks,
+  SQL_IN_LIST_CHUNK_BYTES
+} from '@/db/sql-in-list-chunks';
+import {
   groupWaveVotingCreditNftsByContract,
   waveVotingCreditNftKey,
   WaveVotingCreditNft
@@ -489,14 +493,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!authenticated_user_id || !waveIds.length) {
       return new Set();
     }
-    const rows = await this.db.execute<WaveIdRow>(
-      `
-        select wave_id
-        from ${PINNED_WAVES_TABLE}
-        where profile_id = :authenticated_user_id
-          and wave_id in (:waveIds)
-      `,
-      { authenticated_user_id, waveIds }
+    // Candidate windows hold up to 1,000 wave ids; keep each statement small.
+    const rows = await querySqlInListChunks(waveIds, (chunk) =>
+      this.db.execute<WaveIdRow>(
+        `
+          select wave_id
+          from ${PINNED_WAVES_TABLE}
+          where profile_id = :authenticated_user_id
+            and wave_id in (:waveIds)
+        `,
+        { authenticated_user_id, waveIds: chunk }
+      )
     );
     return new Set(rows.map((row) => row.wave_id));
   }
@@ -513,8 +520,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!authenticated_user_id || !waveIds.length) {
       return new Set();
     }
-    const rows = await this.db.execute<WaveIdRow>(
-      `
+    const sql = `
         select w.id as wave_id
         from ${legacyGetView(WAVES_TABLE)} w
         left join ${WAVE_READER_METRICS_TABLE} wrm
@@ -528,9 +534,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               'authenticated_user_id'
             )}
           )
-      `,
-      { authenticated_user_id, waveIds },
-      connection ? { wrappedConnection: connection } : undefined
+      `;
+    const options = connection ? { wrappedConnection: connection } : undefined;
+    const rows = await querySqlInListChunks(
+      waveIds,
+      (chunk) =>
+        this.db.execute<WaveIdRow>(
+          sql,
+          { authenticated_user_id, waveIds: chunk },
+          options
+        ),
+      { sequential: !!connection }
     );
     return new Set(rows.map((row) => row.wave_id));
   }
@@ -578,8 +592,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!authenticated_user_id || !waveIds.length) {
       return new Set();
     }
-    const rows = await this.db.execute<WaveIdRow>(
-      `
+    const sql = `
         select target_id as wave_id
         from ${IDENTITY_SUBSCRIPTIONS_TABLE}
         where subscriber_id = :authenticated_user_id
@@ -608,14 +621,20 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             eligibleGroups,
             'eligibleGroups'
           )}
-      `,
-      {
-        authenticated_user_id,
-        waveIds,
-        eligibleGroups,
-        wave_target_type: ActivityEventTargetType.WAVE,
-        drop_created_action: ActivityEventAction.DROP_CREATED
-      }
+      `;
+    // Each row depends on one candidate id, so per-chunk results union
+    // exactly. The candidate list is inlined twice.
+    const rows = await querySqlInListChunks(
+      waveIds,
+      (chunk) =>
+        this.db.execute<WaveIdRow>(sql, {
+          authenticated_user_id,
+          waveIds: chunk,
+          eligibleGroups,
+          wave_target_type: ActivityEventTargetType.WAVE,
+          drop_created_action: ActivityEventAction.DROP_CREATED
+        }),
+      { maxBytes: SQL_IN_LIST_CHUNK_BYTES / 2 }
     );
     return new Set(rows.map((row) => row.wave_id));
   }
