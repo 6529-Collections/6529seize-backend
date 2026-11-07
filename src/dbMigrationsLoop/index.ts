@@ -31,6 +31,8 @@ import { NFTHistoryReplayJobEntity } from '@/entities/INFTHistoryReplayJob';
 import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
+import { applyProfileGroupsCollationSchema } from './profile-groups-collation-schema';
+import { ProfileGroupEntity } from '@/entities/IProfileGroup';
 import { E2eeBlobChunkEntity, E2eeBlobEntity } from '@/entities/IE2ee';
 import {
   E2EE_BLOB_MIGRATION_SCOPE,
@@ -102,6 +104,8 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'nft-history-events' &&
       scope !== 'nft-history-replay' &&
       scope !== 'wave-score-input-index' &&
+      scope !== 'profile-groups-collation' &&
+      scope !== 'profile-groups-collation-revert' &&
       scope !== E2EE_BLOB_MIGRATION_SCOPE)
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
@@ -166,6 +170,27 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     });
     logger.info(
       `[FINISHED WAVE SCORE INPUT INDEX] added_indexes=${addedIndexes}`
+    );
+    return { schema_scope: scope };
+  }
+  if (
+    scope === 'profile-groups-collation' ||
+    scope === 'profile-groups-collation-revert'
+  ) {
+    // Operator-only: copies profile_groups, so it never runs with `full`.
+    const direction =
+      scope === 'profile-groups-collation' ? 'convert' : 'revert';
+    const changed = await doInDbContext(
+      () => applyProfileGroupsCollationSchema(direction),
+      {
+        logger,
+        entities: [ProfileGroupEntity],
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    logger.info(
+      `[FINISHED PROFILE GROUPS COLLATION] direction=${direction} changed=${changed}`
     );
     return { schema_scope: scope };
   }
