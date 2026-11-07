@@ -237,19 +237,19 @@ export class DropCreationApiService {
     );
     const committedAt = hops.elapsed();
     // After-commit pipeline, in this order (waves 1.1 + 1.8):
-    // 1. the committed drop as the writer sees it, and its gap marker
-    //    (waves 1.5): the wave's previous surviving serial, read after commit;
-    const [drop, prevSerialNo] = await Promise.all([
-      hops.time('post_commit_read_ms', () =>
-        this.afterCommitStages.readCommittedDrop(
-          { dropId: transactionDrop.id, inTransactionDrop: transactionDrop },
-          ctx
-        )
-      ),
-      hops.time('post_commit_prev_serial_ms', () =>
-        this.findPrevSerialNo(transactionDrop, ctx)
+    // 1. the committed drop as the writer sees it, then its gap marker
+    //    (waves 1.5): the wave's previous surviving serial, read after commit.
+    //    The marker uses the committed drop because 1.8's stage 1 may read
+    //    it fresh instead of reusing an in-transaction copy.
+    const drop = await hops.time('post_commit_read_ms', () =>
+      this.afterCommitStages.readCommittedDrop(
+        { dropId: transactionDrop.id, inTransactionDrop: transactionDrop },
+        ctx
       )
-    ]);
+    );
+    const prevSerialNo = await hops.time('post_commit_prev_serial_ms', () =>
+      this.findPrevSerialNo(drop, ctx)
+    );
     const gapMarker = prevSerialNo === undefined ? {} : { prevSerialNo };
     // 2. delivery: frames, plus (with WS_ASYNC_FANOUT) the worker hand-off;
     const delivery = isAsyncFanoutEnabled()

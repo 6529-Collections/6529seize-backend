@@ -939,14 +939,19 @@ describe('DropCreationApiService.createDrop delivery hops (1.0)', () => {
       .mockImplementation(() => true);
     const service = new DropCreationApiService(
       {
-        findDropByIdOrThrow: jest
-          .fn()
-          .mockResolvedValue({ id: 'drop-1', wave_id: 'wave-1' })
+        findDropByIdOrThrow: jest.fn().mockResolvedValue({
+          id: 'drop-1',
+          wave_id: 'wave-1',
+          wave: { id: 'wave-1' },
+          serial_no: 7
+        })
       } as never,
       {
         executeNativeQueriesInTransaction: jest.fn(async (callback) =>
           callback({})
-        )
+        ),
+        // A real marker read, so no failure warning reaches stdout.
+        findPreviousSerialNo: jest.fn().mockResolvedValue(6)
       } as never,
       {
         createDropApiToUseCaseModel: jest
@@ -1029,14 +1034,19 @@ describe('DropCreationApiService.createDrop reply after commit (1.1)', () => {
     };
     const service = new DropCreationApiService(
       {
-        findDropByIdOrThrow: jest
-          .fn()
-          .mockResolvedValue({ id: 'drop-1', wave_id: 'wave-1' })
+        findDropByIdOrThrow: jest.fn().mockResolvedValue({
+          id: 'drop-1',
+          wave_id: 'wave-1',
+          wave: { id: 'wave-1' },
+          serial_no: 7
+        })
       } as never,
       {
         executeNativeQueriesInTransaction: jest.fn(async (callback) =>
           callback({})
-        )
+        ),
+        // A real marker read, so no failure warning reaches stdout.
+        findPreviousSerialNo: jest.fn().mockResolvedValue(6)
       } as never,
       {
         createDropApiToUseCaseModel: jest
