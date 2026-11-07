@@ -96,11 +96,19 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         // The inserted connection row provides the same serialization point used
         // by reauthentication, subscription sync and deletion.
         recordWebSocketSqlPhase('insert_connection');
-        // Legacy sockets omit `purpose`, so they insert exactly as before.
+        // Optional columns are written only when declared, so legacy sockets
+        // insert exactly as before.
+        const columns = [
+          'connection_id',
+          'jwt_expiry',
+          'identity_id',
+          ...(entity.purpose ? ['purpose'] : []),
+          ...(entity.client_version ? ['client_version'] : [])
+        ];
         await this.db.execute(
-          entity.purpose
-            ? `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id, purpose) values (:connection_id, :jwt_expiry, :identity_id, :purpose)`
-            : `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
+          `insert into ${WS_CONNECTIONS_TABLE} (${columns.join(', ')}) values (${columns
+            .map((column) => `:${column}`)
+            .join(', ')})`,
           entity,
           {
             wrappedConnection: transactionContext.connection,

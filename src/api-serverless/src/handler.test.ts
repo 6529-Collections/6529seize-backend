@@ -119,6 +119,37 @@ describe('handler websocket auth', () => {
   );
 
   it.each([
+    ['abc1234', { clientVersion: 'abc1234' }],
+    ['ABCDEF0123', { clientVersion: 'abcdef0123' }],
+    ['not-a-sha', {}],
+    [undefined, {}]
+  ])(
+    'registers the declared client_version %p only when it is a hex SHA',
+    async (clientVersion, expected) => {
+      await handler(
+        {
+          httpMethod: 'GET',
+          requestContext: {
+            routeKey: '$connect',
+            connectionId: 'connection-1'
+          },
+          queryStringParameters:
+            clientVersion === undefined ? {} : { client_version: clientVersion }
+        } as unknown as APIGatewayEvent,
+        {} as Context,
+        jest.fn()
+      );
+      const registered = appWebSocketsMock.register.mock.calls.at(-1)![0];
+      expect(registered.clientVersion).toEqual(
+        (expected as { clientVersion?: string }).clientVersion
+      );
+      if (!('clientVersion' in expected)) {
+        expect(registered).not.toHaveProperty('clientVersion');
+      }
+    }
+  );
+
+  it.each([
     ['typing', 'TYPING'],
     ['app', null],
     [undefined, null]
