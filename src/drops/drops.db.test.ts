@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import {
   DROP_CURATIONS_TABLE,
   DROP_MEDIA_TABLE,
+  DROP_MEDIA_UPLOADS_TABLE,
   DROP_RELATIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
@@ -1140,6 +1141,56 @@ describeWithSeed(
           media_error: null
         }
       ]);
+    });
+
+    it('carries known media layout hints (waves R11-2) and omits unknown ones', async () => {
+      await sqlExecutor.execute(
+        `insert into ${DROP_MEDIA_UPLOADS_TABLE}
+           (id, profile_id, source, public_key, public_url, ingest_bucket, ingest_key,
+            s3_upload_id, declared_mime_type, status, created_at, updated_at,
+            width, height, thumbhash)
+         values ('upload-hinted', 'author', 'drop', 'k', 'https://example.com/hinted.png',
+            'b', 'i', 's3', 'image/png', 'ready', 1, 1, 640, 480, 'HBkSHYSIeHiPiHh8eJd4eTN0EEQG')`
+      );
+      await sqlExecutor.execute(
+        `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type, media_upload_id, wave_id)
+         values ('drop-public-a-old', 1, 'https://example.com/hinted.png', 'image/png', 'upload-hinted', :waveId)`,
+        { waveId: publicWaveA.id }
+      );
+
+      const [light] = await repo.findLightDropsByIds(
+        ['drop-public-a-old'],
+        ctx
+      );
+      const media = await repo.getDropMedia([
+        'drop-public-a-old',
+        'drop-public-a-new'
+      ]);
+
+      expect(JSON.parse(light.medias_json ?? '[]')).toEqual([
+        {
+          url: 'https://example.com/hinted.png',
+          mime_type: 'image/png',
+          media_upload_id: 'upload-hinted',
+          media_status: 'ready',
+          media_error: null,
+          width: 640,
+          height: 480,
+          thumbhash: 'HBkSHYSIeHiPiHh8eJd4eTN0EEQG'
+        }
+      ]);
+      expect(media['drop-public-a-old']).toEqual([
+        expect.objectContaining({
+          media_width: 640,
+          media_height: 480,
+          media_thumbhash: 'HBkSHYSIeHiPiHh8eJd4eTN0EEQG'
+        })
+      ]);
+      expect(media['drop-public-a-new'][0]).toMatchObject({
+        media_width: null,
+        media_height: null,
+        media_thumbhash: null
+      });
     });
   }
 );
