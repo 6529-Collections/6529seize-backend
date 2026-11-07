@@ -14,7 +14,6 @@ import {
   WAVE_READER_METRICS_TABLE
 } from '@/constants';
 import { BadRequestException } from '@/exceptions';
-import { Logger } from '@/logging';
 import { RequestContext } from '@/request.context';
 import {
   ConnectionWrapper,
@@ -22,9 +21,7 @@ import {
   LazyDbAccessCompatibleService
 } from '@/sql-executor';
 import { Time } from '@/time';
-import { invalidateWaveUnreadCacheForReaderWaves } from '@/api/waves/wave-unread-cache';
-
-const MAX_UNREAD_SUMMARY_INVALIDATION_WAVES = 500;
+import { invalidateWaveUnreadCacheForReaderAfterCommit } from '@/api/waves/wave-unread-cache';
 
 export interface IdentityMutePair {
   readonly muter_id: string;
@@ -32,8 +29,6 @@ export interface IdentityMutePair {
 }
 
 export class IdentityMutesDb extends LazyDbAccessCompatibleService {
-  private readonly logger = Logger.get(IdentityMutesDb.name);
-
   async muteIdentity(pair: IdentityMutePair, ctx: RequestContext) {
     return withWebSocketMutation(this.db, ctx, async (ctx) => {
       this.assertNotSelfMute(pair);
@@ -55,7 +50,7 @@ export class IdentityMutesDb extends LazyDbAccessCompatibleService {
           { ...pair, created_at: Time.currentMillis() },
           ctx.connection ? { wrappedConnection: ctx.connection } : undefined
         );
-        this.invalidateUnreadSummariesForPairBestEffort(pair);
+        await this.invalidateUnreadSummariesForMuter(pair, ctx);
       } finally {
         ctx.timer?.stop(`${this.constructor.name}->muteIdentity`);
       }
@@ -77,7 +72,7 @@ export class IdentityMutesDb extends LazyDbAccessCompatibleService {
           pair,
           ctx.connection ? { wrappedConnection: ctx.connection } : undefined
         );
-        this.invalidateUnreadSummariesForPairBestEffort(pair);
+        await this.invalidateUnreadSummariesForMuter(pair, ctx);
       } finally {
         ctx.timer?.stop(`${this.constructor.name}->unmuteIdentity`);
       }
@@ -236,34 +231,17 @@ export class IdentityMutesDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  private invalidateUnreadSummariesForPairBestEffort(pair: IdentityMutePair) {
-    void this.invalidateUnreadSummariesForPair(pair).catch((error) => {
-      this.logger.warn('Failed to invalidate unread summaries for mute pair', {
-        pair,
-        error
-      });
-    });
-  }
-
-  private async invalidateUnreadSummariesForPair(pair: IdentityMutePair) {
-    const rows = await this.db.execute<{ wave_id: string }>(
-      `
-        select distinct d.wave_id
-        from ${DROPS_TABLE} d
-        join ${WAVE_READER_METRICS_TABLE} r
-          on r.wave_id = d.wave_id
-          and r.reader_id = :muter_id
-        where d.author_id = :muted_identity_id
-        limit :limit
-      `,
-      { ...pair, limit: MAX_UNREAD_SUMMARY_INVALIDATION_WAVES }
-    );
-
-    await invalidateWaveUnreadCacheForReaderWaves(
-      rows.map((row) => ({
-        identityId: pair.muter_id,
-        waveId: row.wave_id
-      }))
+  /**
+   * A mute hides the author's drops from the muter's unread counts in every
+   * wave: one reader-wide version, bumped once the write commits.
+   */
+  private async invalidateUnreadSummariesForMuter(
+    pair: IdentityMutePair,
+    ctx: RequestContext
+  ) {
+    await invalidateWaveUnreadCacheForReaderAfterCommit(
+      pair.muter_id,
+      ctx.connection
     );
   }
 }

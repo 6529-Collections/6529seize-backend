@@ -14,6 +14,20 @@ import { NotFoundException } from '@/exceptions';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
+  // After-commit bumps from the DB chokepoints (drop insert/delete, reader
+  // metrics, wave insert, blocks and mutes).
+  invalidateWaveUnreadCacheForWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForWavesAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
   invalidateWaveUnreadCacheForWave: jest.fn().mockResolvedValue(undefined)
 }));
 

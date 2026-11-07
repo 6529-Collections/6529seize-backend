@@ -144,6 +144,12 @@ export async function redisGetManyByIds<T>({
   );
 }
 
+/**
+ * Reads many cache keys with single-key GETs sent together (node-redis
+ * pipelines commands issued in the same tick). Never MGET: the API cache is
+ * ElastiCache Serverless in cluster mode, which rejects a multi-key command
+ * whose keys hash to different slots with CROSSSLOT.
+ */
 export async function redisGetMany<T>(
   keys: string[]
 ): Promise<Record<string, T>> {
@@ -154,9 +160,9 @@ export async function redisGetMany<T>(
     return {};
   }
   const valuesFromRedisRaw = await runFailOpenCommand<(string | null)[]>(
-    'MGET',
+    'GET (many)',
     [],
-    (client) => client.mGet(keys)
+    (client) => Promise.all(keys.map((key) => client.get(key)))
   );
   return valuesFromRedisRaw.reduce(
     (acc: Record<string, T>, value: string | null, index: number) => {
@@ -211,7 +217,13 @@ export async function redisSetJson<T>(
   });
 }
 
-/** Return undefined while another instance owns a cold-cache refresh. */
+/**
+ * Return undefined while another instance owns a cold-cache refresh.
+ *
+ * The publish script touches `key` and `${key}:refresh-lease` together, so
+ * `key` must carry a hash tag (`{...}`) that puts both in one Redis Cluster
+ * slot; without one the script fails with CROSSSLOT.
+ */
 export async function redisCachedWithRefreshLease<T>(
   key: string,
   ttl: Time,
@@ -312,8 +324,7 @@ export async function evictKeyFromRedisCache(key: string): Promise<any> {
   await redis.del(key);
 }
 export async function evictAllKeysMatchingPatternFromRedisCache(
-  pattern: string,
-  singleKeyDeletes = false
+  pattern: string
 ) {
   logger.info(`Evicting all keys matching pattern: ${pattern}`);
   if (!redis) {
@@ -323,24 +334,18 @@ export async function evictAllKeysMatchingPatternFromRedisCache(
   do {
     const result = await redis.scan(cursor, { MATCH: pattern, COUNT: 1000 });
     cursor = Number(result.cursor);
-    await deleteRedisCacheKeys(result.keys, singleKeyDeletes);
+    await deleteRedisCacheKeys(result.keys);
   } while (cursor !== 0);
 }
 
-async function deleteRedisCacheKeys(
-  keys: string[],
-  singleKeyDeletes: boolean
-): Promise<void> {
+async function deleteRedisCacheKeys(keys: string[]): Promise<void> {
   const client = redis;
   if (!client || keys.length === 0) {
     return;
   }
-  if (!singleKeyDeletes) {
-    await client.del(keys);
-    return;
-  }
-  // Query variants need not share a Redis Cluster hash slot. Keep each DEL
-  // single-key and bound concurrency when a scan returns many matches.
+  // Scanned keys need not share a Redis Cluster hash slot, and a multi-key
+  // DEL across slots fails with CROSSSLOT. Keep each DEL single-key and bound
+  // concurrency when a scan returns many matches.
   for (let start = 0; start < keys.length; start += 20) {
     await Promise.all(
       keys.slice(start, start + 20).map((key) => client.del(key))
@@ -356,24 +361,18 @@ export function getRedisCacheKeyPatternForPath(path: string): string {
   return getRedisCacheKeyForPath(path);
 }
 
-export async function evictRedisCacheForPath(
-  path: string,
-  singleKeyDeletes = false
-): Promise<void> {
+export async function evictRedisCacheForPath(path: string): Promise<void> {
   await evictAllKeysMatchingPatternFromRedisCache(
-    getRedisCacheKeyPatternForPath(`${path}*`),
-    singleKeyDeletes
+    getRedisCacheKeyPatternForPath(`${path}*`)
   );
 }
 
 export async function evictRedisCacheForPathWithTimeout({
   path,
-  timeoutMs = 1_500,
-  singleKeyDeletes = false
+  timeoutMs = 1_500
 }: {
   path: string;
   timeoutMs?: number;
-  singleKeyDeletes?: boolean;
 }): Promise<{
   success: boolean;
   elapsed_ms: number;
@@ -383,10 +382,7 @@ export async function evictRedisCacheForPathWithTimeout({
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   try {
-    const evictionPromise = evictRedisCacheForPath(
-      path,
-      singleKeyDeletes
-    ).finally(() => {
+    const evictionPromise = evictRedisCacheForPath(path).finally(() => {
       if (timeoutId) {
         clearTimeout(timeoutId);
       }

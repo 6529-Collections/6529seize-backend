@@ -1,5 +1,6 @@
 import type { PoolConnection } from 'mysql';
 import { SqlTransactionOptions } from '@/sql-executor';
+import { afterCommit } from './after-commit';
 import { CustomTypeCaster, execNativeTransactionally } from './my-sql.helpers';
 
 const castTinyInt = CustomTypeCaster as (
@@ -119,5 +120,92 @@ describe('explicit transaction isolation', () => {
     ).rejects.toThrow('Unsupported explicit transaction isolation');
     expect(work).not.toHaveBeenCalled();
     expect(statements).toEqual(['ROLLBACK']);
+  });
+});
+
+describe('after-commit callbacks', () => {
+  function legacyConnectionFixture(commitError?: Error) {
+    const statements: string[] = [];
+    const connection = {
+      query(_sql: string, callback: (error: Error | null) => void) {
+        statements.push('SET');
+        callback(null);
+      },
+      beginTransaction(callback?: (error?: Error) => void) {
+        statements.push('BEGIN');
+        callback?.();
+      },
+      commit(callback: (error?: Error) => void) {
+        statements.push('COMMIT');
+        callback(commitError);
+      },
+      rollback(callback?: () => void) {
+        statements.push('ROLLBACK');
+        callback?.();
+      },
+      release: jest.fn(() => statements.push('RELEASE'))
+    } as unknown as PoolConnection;
+    return { connection, statements };
+  }
+
+  it.each([undefined, { isolationLevel: 'READ COMMITTED' as const }])(
+    'runs callbacks registered in the transaction after COMMIT (options %p)',
+    async (options) => {
+      const { connection, statements } = legacyConnectionFixture();
+      const result = await execNativeTransactionally(
+        async (bound) => {
+          await afterCommit(bound, () => statements.push('EFFECT'), 'k');
+          await afterCommit(bound, () => statements.push('DUPLICATE'), 'k');
+          statements.push('WORK');
+          return 'done';
+        },
+        connection,
+        options
+      );
+      expect(result).toBe('done');
+      expect(statements.filter((s) => s !== 'SET')).toEqual(
+        expect.arrayContaining(['BEGIN', 'WORK', 'COMMIT', 'RELEASE', 'EFFECT'])
+      );
+      expect(statements.indexOf('EFFECT')).toBeGreaterThan(
+        statements.indexOf('COMMIT')
+      );
+      expect(statements).not.toContain('DUPLICATE');
+    }
+  );
+
+  it('drops callbacks when the work fails or COMMIT fails', async () => {
+    const effect = jest.fn();
+    const failing = legacyConnectionFixture();
+    await expect(
+      execNativeTransactionally(async (bound) => {
+        await afterCommit(bound, effect);
+        throw new Error('work failed');
+      }, failing.connection)
+    ).rejects.toThrow('work failed');
+
+    const commitFails = legacyConnectionFixture(new Error('commit failed'));
+    await expect(
+      execNativeTransactionally(async (bound) => {
+        await afterCommit(bound, effect);
+      }, commitFails.connection)
+    ).rejects.toThrow('commit failed');
+
+    expect(effect).not.toHaveBeenCalled();
+    // A later statement on the same pooled connection is not in a tracked
+    // transaction, so its callback runs at once.
+    await afterCommit({ connection: failing.connection }, effect);
+    expect(effect).toHaveBeenCalledTimes(1);
+  });
+
+  it('never fails a committed transaction because a callback failed', async () => {
+    const { connection } = legacyConnectionFixture();
+    await expect(
+      execNativeTransactionally(async (bound) => {
+        await afterCommit(bound, () => {
+          throw new Error('redis down');
+        });
+        return 'committed';
+      }, connection)
+    ).resolves.toBe('committed');
   });
 });
