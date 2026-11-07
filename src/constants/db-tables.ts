@@ -350,3 +350,10 @@ export const ARTIST_ARTWORK_ALERTS_TABLE = 'artist_artwork_alerts';
 // Who read or changed reported encrypted messages (trust and safety audit,
 // D109). Kept apart from the E2EE block above.
 export const E2EE_REPORT_ACCESS_LOG_TABLE = 'e2ee_report_access_log';
+
+// First-party telemetry (C52): daily counters only, no raw events, no IPs.
+export const ANALYTICS_DAILY_TABLE = 'analytics_daily';
+export const VITALS_DAILY_TABLE = 'vitals_daily';
+export const HEALTH_DAILY_TABLE = 'health_daily';
+export const UNIQUES_DAILY_TABLE = 'uniques_daily';
+export const TELEMETRY_DIAGNOSTICS_TABLE = 'telemetry_diagnostics';
