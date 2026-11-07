@@ -38,4 +38,10 @@ export class WSConnectionEntity {
   @Index('idx_ws_connections_open_wave_id')
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly open_wave_id?: string | null;
+  /**
+   * The frontend build (git SHA) the client declared with `client_version=`
+   * on `$connect`, for build-adoption metrics. Null when not declared.
+   */
+  @Column({ type: 'varchar', length: 40, nullable: true, default: null })
+  readonly client_version?: string | null;
 }

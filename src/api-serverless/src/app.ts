@@ -1,4 +1,5 @@
 import * as db from '../../db-api';
+import { clientVersionFromQuery } from '@/ws-client-versions/ws-client-versions';
 import { ids } from '@/ids';
 
 import * as fs from 'node:fs';
@@ -1717,12 +1718,16 @@ function wireApp() {
         const { identityId, jwtExpiry } =
           await authenticateWebSocketJwtOrGetByConnectionId(event);
         let activeIdentityId = identityId;
+        const clientVersion = clientVersionFromQuery(
+          event.queryStringParameters
+        );
         await appWebSockets.register({
           identityId,
           connectionId,
           jwtExpiry,
           ws: socket,
           purpose: connectionPurposeFromQuery(event.queryStringParameters),
+          ...(clientVersion ? { clientVersion } : {}),
           ...(event.queryStringParameters?.recovery_capability ===
           WS_RECOVERY_CAPABILITY
             ? { recoveryCapable: true }

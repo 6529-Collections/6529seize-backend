@@ -72,6 +72,31 @@ function purposeFilterSql(
     : broadcastPurposeFilterSql(alias);
 }
 
+/** The `client_version` column is not there (yet, or any more). */
+export function isMissingClientVersionColumn(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  return (
+    code === 'ER_BAD_FIELD_ERROR' &&
+    (typeof message !== 'string' || message.includes('client_version'))
+  );
+}
+
+let warnedMissingClientVersionColumn = false;
+
+function warnMissingClientVersionColumnOnce(logger: Logger): void {
+  if (warnedMissingClientVersionColumn) return;
+  warnedMissingClientVersionColumn = true;
+  logger.warn(
+    'ws_connections.client_version is missing; registering sockets without the client build until dbMigrationsLoop adds it'
+  );
+}
+
+/** Test hook: lets each test observe the once-only warning. */
+export function resetClientVersionColumnWarningForTests(): void {
+  warnedMissingClientVersionColumn = false;
+}
+
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   private static readonly NOTIFICATION_CLEANUP_SAMPLE_DENOMINATOR = 100;
   private static readonly CONNECTION_LOCK_ATTEMPTS = 3;
@@ -103,17 +128,39 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         // The inserted connection row provides the same serialization point used
         // by reauthentication, subscription sync and deletion.
         recordWebSocketSqlPhase('insert_connection');
-        // Legacy sockets omit `purpose`, so they insert exactly as before.
-        await this.db.execute(
-          entity.purpose
-            ? `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id, purpose) values (:connection_id, :jwt_expiry, :identity_id, :purpose)`
-            : `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
-          entity,
-          {
-            wrappedConnection: transactionContext.connection,
-            bindInvocationContext: true
+        // Optional columns are written only when declared, so legacy sockets
+        // insert exactly as before.
+        const insert = (withClientVersion: boolean) => {
+          const columns = [
+            'connection_id',
+            'jwt_expiry',
+            'identity_id',
+            ...(entity.purpose ? ['purpose'] : []),
+            ...(withClientVersion ? ['client_version'] : [])
+          ];
+          return this.db.execute(
+            `insert into ${WS_CONNECTIONS_TABLE} (${columns.join(', ')}) values (${columns
+              .map((column) => `:${column}`)
+              .join(', ')})`,
+            entity,
+            {
+              wrappedConnection: transactionContext.connection,
+              bindInvocationContext: true
+            }
+          );
+        };
+        try {
+          await insert(!!entity.client_version);
+        } catch (error) {
+          // Build telemetry must never fail a connect: if the column is
+          // missing (a deploy-order slip or a rollback), register without it.
+          // A failed statement does not end the transaction.
+          if (!entity.client_version || !isMissingClientVersionColumn(error)) {
+            throw error;
           }
-        );
+          warnMissingClientVersionColumnOnce(this.logger);
+          await insert(false);
+        }
         await this.writeNotificationSubscriptions(
           entity.connection_id,
           subscriptions,
