@@ -380,9 +380,9 @@ describe('WsConnectionRepository', () => {
       // Each connect tried with the build, then registered without it.
       expect(inserts).toEqual([
         expect.stringContaining('client_version'),
-        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
+        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id, durable_updates) values (:connection_id, :jwt_expiry, :identity_id, :durable_updates)`,
         expect.stringContaining('client_version'),
-        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`
+        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id, durable_updates) values (:connection_id, :jwt_expiry, :identity_id, :durable_updates)`
       ]);
       // Logged once, not per connect.
       expect(
@@ -458,7 +458,7 @@ describe('WsConnectionRepository', () => {
         String(sql).startsWith(`insert into ${WS_CONNECTIONS_TABLE}`)
       );
       expect(insert[0]).toContain(
-        '(connection_id, jwt_expiry, identity_id, purpose, client_version) values (:connection_id, :jwt_expiry, :identity_id, :purpose, :client_version)'
+        '(connection_id, jwt_expiry, identity_id, durable_updates, purpose, client_version) values (:connection_id, :jwt_expiry, :identity_id, :durable_updates, :purpose, :client_version)'
       );
       expect(insert[1]).toMatchObject({ client_version: 'abc1234' });
     });
