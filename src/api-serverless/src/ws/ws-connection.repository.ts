@@ -897,7 +897,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     ctx: RequestContext = {}
   ): Promise<Set<string>> {
     const rows = await this.db.execute<{ identity_id: string }>(
-      `select distinct identity_id from ${WS_CONNECTIONS_TABLE}
+      `/* not a broadcast audience */ select distinct identity_id from ${WS_CONNECTIONS_TABLE}
        where wave_id = :waveId and identity_id <> :anonymous`,
       { waveId, anonymous: ANON_USER_ID },
       { wrappedConnection: ctx.connection }
