@@ -320,6 +320,7 @@ describe('generated deployment source guard', () => {
         'wave-score-input-index',
         'profile-groups-collation',
         'profile-groups-collation-revert',
+        'profile-activity-log-wave-index',
         'nft-history-events',
         'nft-history-replay',
         'competition-lifecycle-events'
@@ -442,6 +443,7 @@ describe('generated deployment source guard', () => {
     'wave-score-input-index',
     'profile-groups-collation',
     'profile-groups-collation-revert',
+    'profile-activity-log-wave-index',
     'nft-history-events',
     'nft-history-replay',
     'competition-lifecycle-events'
