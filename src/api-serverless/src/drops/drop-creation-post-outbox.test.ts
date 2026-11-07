@@ -105,6 +105,7 @@ describe('DropCreationApiService.createDrop with the post outbox (1.8)', () => {
       undefined,
       undefined,
       undefined,
+      undefined,
       { enqueue: jest.fn().mockResolvedValue([]) } as never,
       dropWriteOutboxAfterCommitStages(
         dropsService as never,

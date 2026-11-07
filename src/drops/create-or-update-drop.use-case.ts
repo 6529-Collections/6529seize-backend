@@ -1,3 +1,4 @@
+import { recordWebSocketEvent } from '@/websocket-outbox/outbox.db';
 import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
 import {
@@ -146,7 +147,6 @@ import {
 import { isWaveCreatorOrAdmin } from '@/waves/wave-admin.helpers';
 import { parseDecentralizedMediaRef } from '@/decentralized-media/decentralized-media';
 import { Logger } from '@/logging';
-import { validateMainStageMediaSize } from '@/drops/main-stage-media-validator';
 import { RequestContext } from '@/request.context';
 import {
   dropWriteOutboxDb as defaultDropWriteOutboxDb,
@@ -167,6 +167,7 @@ import {
   contentModerationDb,
   ContentModerationDb
 } from '@/content-moderation/content-moderation.db';
+import { validateMainStageMediaSize } from '@/drops/main-stage-media-validator';
 import {
   moderationReviewDb,
   moderationConflict,
@@ -636,7 +637,12 @@ export class CreateOrUpdateDropUseCase {
             resolvedModel,
             result.drop_id,
             entryCtx,
-            contentPermit?.competitionId ?? nativeOwner?.id
+            contentPermit?.competitionId ??
+              (!resolvedModel.drop_id &&
+              !isDescriptionDrop &&
+              resolvedModel.drop_type === DropType.PARTICIPATORY
+                ? nativeOwner?.id
+                : undefined)
           );
         result.pending_push_notification_ids.push(
           ...collaborationNotificationIds
@@ -769,7 +775,7 @@ export class CreateOrUpdateDropUseCase {
       )
     )
       throw new BadRequestException(
-        'Competition identity submission strategy is misconfigured'
+        'Decision identity submission strategy is misconfigured'
       );
     const profileId = await this.resolveIdentityNominationProfileId(
       nominations[0].data_value,
@@ -1224,6 +1230,10 @@ export class CreateOrUpdateDropUseCase {
         { timer, connection }
       );
     }
+    await recordWebSocketEvent(
+      { type: 'drop', dropId, updateType: 'DROP_UPDATE' },
+      { connection, timer }
+    );
     return {
       drop_id: dropId,
       pending_push_notification_ids: pendingPushNotificationIds,
@@ -2516,7 +2526,7 @@ export class CreateOrUpdateDropUseCase {
         wave.next_decision_time < Time.currentMillis()
       ) {
         throw new ForbiddenException(
-          `Wave has unresolved decisions and doesn't accept new drops or drop updates at the moment. Try again later`
+          `Wave has pending results and doesn't accept new drops or drop updates at the moment. Try again later`
         );
       }
     }

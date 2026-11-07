@@ -48,9 +48,7 @@ export class VoteForDropUseCase {
     }
     const owner = await competitionRepository.lockOriginalPrimary(wave_id, ctx);
     if (!owner)
-      throw new ForbiddenException(
-        'This drop does not belong to a competition'
-      );
+      throw new ForbiddenException('This drop does not belong to a decision');
     return voteForMigratedLegacyEntry(
       owner,
       { voter_id, drop_id, wave_id, votes, proxy_id },

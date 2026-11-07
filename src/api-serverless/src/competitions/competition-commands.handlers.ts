@@ -320,7 +320,7 @@ export async function handleListCompetitionMyVotesV3(
     competition_id,
     ctx
   );
-  if (!record) throw new NotFoundException('Competition not found');
+  if (!record) throw new NotFoundException('Decision not found');
   const scope = `competition:${competition_id}:my-votes:${actor}`;
   // Preserve existing default cursors while rejecting reuse between orders.
   const filters =
@@ -377,7 +377,7 @@ export async function handleListCompetitionAwardsV3(
     competition_id,
     ctx
   );
-  if (!record) throw new NotFoundException('Competition not found');
+  if (!record) throw new NotFoundException('Decision not found');
   const scope = `competition:${competition_id}:awards`;
   const offset = competitionCursorCodec.decode(query.cursor, scope, {});
   const rows = await competitionInteractionRepository.awards(

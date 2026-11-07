@@ -64,6 +64,10 @@ import {
 } from '@/api/device-signing/device-signed-writes.service';
 import { withStoredAuthorSignature } from '@/api/device-signing/author-signed-drop-response';
 import { DeviceEventKind } from '@/api/device-signing/device-event';
+import {
+  isReadStateSyncEnabled,
+  readStateNotifier
+} from '@/api/notifications/read-state-sync';
 
 const router = asyncRouter();
 const logger = Logger.get('DropsRoutes');
@@ -212,11 +216,6 @@ router.post(
         'Each drop part must have content, media, or attachments'
       );
     }
-    await assertDropIsCorrectlySigned(
-      apiRequest,
-      authorProfileId,
-      req.headers.host
-    );
     const createDropRequest: ApiCreateDropRequest & {
       author: { external_id: string };
     } = {
@@ -235,8 +234,35 @@ router.post(
       drop_type: newDrop.drop_type,
       signature: newDrop.signature,
       hide_link_preview: newDrop.hide_link_preview,
-      is_additional_action_promised: newDrop.is_additional_action_promised
+      is_additional_action_promised: newDrop.is_additional_action_promised,
+      client_drop_id: newDrop.client_drop_id
     };
+    // Idempotent retry (waves R11-5). This runs after validation, so the id
+    // is Joi's normalized output, and before any signature check: a retry
+    // resends the same body, and its wallet nonce or device envelope was
+    // already used by the first attempt, so a signature check would refuse
+    // a retry that changes nothing. The answer only returns the author's own
+    // existing drop when wave and content match; nothing is written.
+    if (createDropRequest.client_drop_id) {
+      const replayedDrop = await dropCreationService.findClientDropReplay(
+        { createDropRequest, authorId: authorProfileId },
+        { timer, authenticationContext }
+      );
+      if (replayedDrop) {
+        return res.send(
+          deviceSignature === undefined
+            ? replayedDrop
+            : await withStoredAuthorSignature(replayedDrop, { timer })
+        );
+      }
+    }
+    // A body changed after signing, including one that adds client_drop_id,
+    // no longer matches its signature and is refused here.
+    await assertDropIsCorrectlySigned(
+      apiRequest,
+      authorProfileId,
+      req.headers.host
+    );
     const createdDrop = await deviceSignedWritesService.createDrop(
       {
         envelope: deviceSignature,
@@ -784,6 +810,17 @@ router.post(
         },
         { timer }
       );
+    } else if (isReadStateSyncEnabled()) {
+      // Keep the serial watermark in step so the next read moves it forward.
+      await wavesApiDb.setWaveReadWatermarkBeforeDrop(
+        {
+          waveId,
+          readerId: identityId,
+          dropSerialNo: drop.serial_no,
+          dropCreatedAt: drop.created_at
+        },
+        { timer }
+      );
     } else {
       await wavesApiDb.setWaveReaderMetricLatestReadTimestamp(
         waveId,
@@ -797,11 +834,37 @@ router.post(
       waveId
     });
     const ctx = { timer };
+    const syncReadState = isReadStateSyncEnabled();
+    // Resolved once for both frames.
+    const recipients =
+      syncReadState || wave?.is_direct_message
+        ? await wsListenersNotifier.findConnectedNotificationRecipients([
+            identityId
+          ])
+        : [];
+    // Mark-unread moves the watermark back; other devices follow it. DM
+    // state goes first, as in the read path, then READ_STATE.
+    const sendReadState = async () => {
+      if (!syncReadState || !recipients.length) return;
+      const watermark = await wavesApiDb.findWaveReadWatermark(
+        { waveId, readerId: identityId },
+        ctx
+      );
+      if (watermark) {
+        await readStateNotifier.notify(
+          {
+            profile_id: identityId,
+            wave_id: waveId,
+            latest_read_serial_no: watermark.latest_read_serial_no ?? 0,
+            latest_read_timestamp: watermark.latest_read_timestamp,
+            version: watermark.version
+          },
+          recipients
+        );
+      }
+    };
     if (wave?.is_direct_message) {
-      const dmRecipients =
-        await wsListenersNotifier.findConnectedNotificationRecipients([
-          identityId
-        ]);
+      const dmRecipients = recipients;
       const dmUnreadState = (
         await wavesApiDb.findDmUnreadConversationStates(
           { identityId, waveIds: [waveId] },
@@ -815,6 +878,7 @@ router.post(
           dmRecipients
         );
       }
+      await sendReadState();
       return res.send({
         your_unread_drops_count: dmUnreadState?.unread_count ?? 0,
         first_unread_drop_serial_no:
@@ -822,6 +886,7 @@ router.post(
         dm_unread_state: dmUnreadState ?? null
       });
     }
+    await sendReadState();
     const unreadSummaries =
       await wavesApiDb.findIdentityUnreadDropsSummaryByWaveId(
         { identityId, waveIds: [waveId] },

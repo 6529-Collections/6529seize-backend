@@ -69,6 +69,7 @@ export { DropBookmarkEntity } from './IDropBookmark';
 export { DropQuickVoteSkipEntity } from './IDropQuickVoteSkip';
 export { DropCurationEntity } from './IDropCuration';
 export { DropWriteOutboxEntity } from './IDropWriteOutbox';
+export { DropClientIdEntity } from './IDropClientId';
 export {
   DropPollEntity,
   DropPollOptionEntity,
@@ -281,6 +282,7 @@ export { PushInstallationEntity } from './IPushInstallation';
 export { PushDeviceLogoutFenceEntity } from './IPushDeviceLogoutFence';
 
 export { PushNotificationCancellationEntity } from './IPushNotificationCancellation';
+export { WebSocketOutboxEntity } from './IWebSocketOutbox';
 
 export * from './ICompetitionRuntime';
 
@@ -289,6 +291,7 @@ export * from './ICompetitionEntryContentVersion';
 
 export * from './ICompetitionCapabilityAudit';
 export { PushNotificationOutboxEntity } from './IPushNotificationOutbox';
+
 export { SubscriptionCacheInvalidationEntity } from './ISubscriptionCacheInvalidation';
 export { DeviceGrantEntity } from './IDeviceGrant';
 export { DeviceSignedEventEntity } from './IDeviceSignedEvent';
@@ -298,6 +301,7 @@ export {
   MemeCollaborationEntity,
   MemeCollaborationInvitationEntity
 } from './IMemeCollaboration';
+
 export { TransferReconciliationEntity } from './ITransferReconciliation';
 
 export { MarketDepthPublicationLockEntity } from './IMarketDepthPublicationLock';
@@ -307,3 +311,10 @@ export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
 
 export { ArtistArtworkAlertEntity } from './IArtistArtworkAlert';
 export { NFTHistoryReplayJobEntity } from './INFTHistoryReplayJob';
+export {
+  AnalyticsDailyEntity,
+  HealthDailyEntity,
+  UniquesDailyEntity,
+  VitalsDailyEntity
+} from './ITelemetryDaily';
+export { TelemetryDiagnosticsEntity } from './ITelemetryDiagnostics';

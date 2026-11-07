@@ -23,7 +23,6 @@ import {
   competitionAnonymityService
 } from '@/competitions/competition-anonymity';
 import { dropsDb } from '@/drops/drops.db';
-import { WS_SEND_CONCURRENCY_CAP } from '@/api/ws/ws';
 
 function createDrop(content: string, dropType = ApiDropType.Chat) {
   return {
@@ -87,6 +86,157 @@ describe('WsListenersNotifier', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
+  it('wakes the outbox and excludes capable clients from immediate poll fan-out', async () => {
+    const originalNodeEnvironment = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'staging';
+    const send = jest.fn();
+    const wakeOutbox = jest.fn().mockResolvedValue(undefined);
+    const notifier = new WsListenersNotifier(
+      { send } as never,
+      {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue([{ connectionId: 'capable', profileId: 'p' }]),
+        filterConnectionIdsByDeliveryMode: jest.fn().mockResolvedValue([])
+      } as never,
+      contentModerationDb,
+      wakeOutbox
+    );
+    try {
+      await notifier.notifyAboutDropUpdate(
+        createDrop('poll'),
+        {},
+        {
+          reason: 'POLL_RESPONSE'
+        }
+      );
+      expect(wakeOutbox).toHaveBeenCalledTimes(1);
+      expect(send).not.toHaveBeenCalled();
+      expect(
+        contentModerationDb.getViewerContextsForDrop
+      ).not.toHaveBeenCalled();
+    } finally {
+      if (originalNodeEnvironment === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnvironment;
+    }
+  });
+
+  it.each([
+    'drop',
+    'rating',
+    'reaction',
+    'delete',
+    'identity',
+    'dm',
+    'attachment',
+    'nft'
+  ] as const)(
+    'keeps immediate legacy %s fan-out and excludes capable sessions of the same profile',
+    async (kind) => {
+      const originalNodeEnvironment = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'staging';
+      const send = jest.fn().mockResolvedValue(undefined);
+      const wake = jest.fn().mockResolvedValue(undefined);
+      const ids = ['legacy', 'capable'];
+      const rows = ids.map((connectionId) => ({
+        connectionId,
+        profileId: 'p',
+        wave_id: 'wave-1'
+      }));
+      const repository = {
+        getCurrentlyOnlineCommunityMemberConnectionIds: jest
+          .fn()
+          .mockResolvedValue(rows),
+        getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast: jest
+          .fn()
+          .mockResolvedValue(rows),
+        findNotificationConnectionIdsByIdentityIds: jest
+          .fn()
+          .mockResolvedValue(
+            ids.map((connectionId) => ({ connectionId, identityId: 'p' }))
+          ),
+        filterConnectionIdsByDeliveryMode: jest
+          .fn()
+          .mockResolvedValue(['legacy']),
+        findConnectionIdsByIdentityId: jest.fn().mockResolvedValue(ids),
+        findAllConnectionIds: jest.fn().mockResolvedValue(ids),
+        findWaveVisibilityGroupId: jest.fn().mockResolvedValue(null)
+      };
+      const notifier = new WsListenersNotifier(
+        { send } as never,
+        repository as never,
+        contentModerationDb,
+        wake
+      );
+      const timer = { start: jest.fn(), stop: jest.fn() };
+      const ctx = { timer } as never;
+      try {
+        switch (kind) {
+          case 'drop':
+            await notifier.notifyAboutDropUpdate(createDrop('content'), ctx);
+            break;
+          case 'rating':
+            await notifier.notifyAboutDropRatingUpdate(
+              createDrop('content'),
+              ctx
+            );
+            break;
+          case 'reaction':
+            await notifier.notifyAboutDropReactionUpdate(
+              createDrop('content'),
+              ctx
+            );
+            break;
+          case 'delete':
+            await notifier.notifyAboutDropDelete(
+              { drop_id: 'd', wave_id: 'wave-1', drop_serial: 42 },
+              null,
+              ctx
+            );
+            break;
+          case 'identity':
+            await notifier.notifyAboutIdentityNotificationsChanged(['p']);
+            break;
+          case 'dm':
+            await notifier.notifyAboutDmUnreadStateChanged([
+              { profile_id: 'p', wave_id: 'wave-1', version: 2 }
+            ] as never);
+            break;
+          case 'attachment':
+            await notifier.notifyAboutAttachmentStatusUpdate(
+              {
+                attachment: { id: 'a' },
+                ownerProfileId: 'p',
+                waveIds: ['wave-1']
+              } as never,
+              ctx
+            );
+            break;
+          case 'nft':
+            await notifier.notifyAboutNftLinkUpdate(
+              { canonical_id: 'n' } as never,
+              ctx
+            );
+            break;
+        }
+        expect(wake).toHaveBeenCalledTimes(1);
+        expect(
+          repository.filterConnectionIdsByDeliveryMode
+        ).toHaveBeenCalledWith(ids, false, expect.anything());
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(send).toHaveBeenCalledWith(
+          expect.objectContaining({ connectionId: 'legacy', legacyOnly: true })
+        );
+        expect(timer.stop.mock.calls).toEqual(
+          expect.arrayContaining(timer.start.mock.calls)
+        );
+        expect(timer.stop).toHaveBeenCalledTimes(timer.start.mock.calls.length);
+      } finally {
+        process.env.NODE_ENV = originalNodeEnvironment;
+      }
+    }
+  );
+
   it.each(['update', 'rating', 'reaction'] as const)(
     'skips %s policy reads when no websocket recipient exists',
     async (kind) => {
@@ -124,17 +274,24 @@ describe('WsListenersNotifier', () => {
         .spyOn(dropsDb, 'getDropsByIds')
         .mockResolvedValue([{ id: 'drop-1', author_id: 'author-1' }] as never);
       const appWebSockets = { send: jest.fn().mockResolvedValue(undefined) };
+      const wakeOutbox = jest.fn().mockResolvedValue(undefined);
       const connections = {
         getCurrentlyOnlineCommunityMemberConnectionIds: jest
           .fn()
           .mockResolvedValue([
             { connectionId: 'owner', profileId: 'author-1' },
-            { connectionId: 'reader', profileId: 'reader-1' }
-          ])
+            { connectionId: 'reader', profileId: 'reader-1' },
+            { connectionId: 'capable', profileId: 'reader-1' }
+          ]),
+        filterConnectionIdsByDeliveryMode: jest
+          .fn()
+          .mockResolvedValue(['owner', 'reader'])
       };
       const notifier = new WsListenersNotifier(
         appWebSockets as never,
-        connections as never
+        connections as never,
+        contentModerationDb,
+        wakeOutbox
       );
       const drop = createDrop('private quarantined artwork');
       drop.author = anonymousCompetitionAuthor(drop.author, drop.id);
@@ -144,6 +301,14 @@ describe('WsListenersNotifier', () => {
         await notifier.notifyAboutDropRatingUpdate(drop, {});
       else await notifier.notifyAboutDropReactionUpdate(drop, {});
 
+      expect(wakeOutbox).toHaveBeenCalledTimes(1);
+      expect(appWebSockets.send).toHaveBeenCalledTimes(2);
+      expect(competitionAnonymityService.hiddenDropIds).toHaveBeenCalledTimes(
+        1
+      );
+      expect(
+        appWebSockets.send.mock.calls.every(([sent]) => sent.legacyOnly)
+      ).toBe(true);
       expect(contentModerationDb.getViewerContextsForDrop).toHaveBeenCalledWith(
         expect.objectContaining({ authorProfileId: 'author-1' }),
         undefined
@@ -273,7 +438,7 @@ describe('WsListenersNotifier', () => {
     await notifier.notifyAboutDropDeletes(deletedDrops, null, {});
 
     expect(appWebSockets.send).toHaveBeenCalledTimes(220);
-    expect(maximumActiveSends).toBe(WS_SEND_CONCURRENCY_CAP);
+    expect(maximumActiveSends).toBe(100);
   });
 
   it('keeps stamped full frames within the application ceiling', () => {
@@ -292,59 +457,32 @@ describe('WsListenersNotifier', () => {
     );
   });
 
-  describe('cheaper fan-out (1.2)', () => {
+  describe('cheaper fan-out on the #2111 send path (1.2)', () => {
     const recipients = (count: number) =>
       Array.from({ length: count }, (_, index) => ({
         connectionId: `c-${index}`,
-        profileId: index % 5 === 0 ? null : `p-${index}`,
-        jwtExpiry: 4102444800
+        profileId: index % 5 === 0 ? null : `p-${index}`
       }));
 
-    it('sends through a capped pool with each recipient expiry and one payload', async () => {
-      // Every send waits on a gate, so the pool's cap is actually reached.
-      let open!: () => void;
-      const gate = new Promise<void>((resolve) => {
-        open = resolve;
-      });
-      let active = 0;
-      let maximum = 0;
+    it('sends one shared payload with one delivery batch', async () => {
       const appWebSockets = {
-        send: jest.fn(async () => {
-          active++;
-          maximum = Math.max(maximum, active);
-          await gate;
-          active--;
-          return { status: 'sent' };
-        })
+        send: jest.fn().mockResolvedValue({ status: 'sent' })
       };
       const notifier = new WsListenersNotifier(
         appWebSockets as never,
         {
           getCurrentlyOnlineCommunityMemberConnectionIds: jest
             .fn()
-            .mockResolvedValue(recipients(200))
+            .mockResolvedValue(recipients(40))
         } as never
       );
 
-      const fanout = notifier.notifyAboutDropUpdate(createDrop('hello'), {});
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(appWebSockets.send).toHaveBeenCalledTimes(WS_SEND_CONCURRENCY_CAP);
-      expect(active).toBe(WS_SEND_CONCURRENCY_CAP);
-      open();
-      await fanout;
+      await notifier.notifyAboutDropUpdate(createDrop('hello'), {});
 
-      expect(appWebSockets.send).toHaveBeenCalledTimes(200);
-      expect(maximum).toBe(WS_SEND_CONCURRENCY_CAP);
       const calls = appWebSockets.send.mock.calls as unknown as [
-        {
-          connectionId: string;
-          jwtExpiry: number;
-          message: string;
-          batch: unknown;
-        }
+        { message: string; batch: unknown }
       ][];
-      expect(new Set(calls.map(([call]) => call.connectionId)).size).toBe(200);
-      expect(calls.every(([call]) => call.jwtExpiry === 4102444800)).toBe(true);
+      expect(calls).toHaveLength(40);
       expect(calls.every(([call]) => call.batch === calls[0][0].batch)).toBe(
         true
       );
@@ -357,36 +495,6 @@ describe('WsListenersNotifier', () => {
         })
       );
       expect(bodies.size).toBe(1);
-    });
-
-    it('logs rejected bookkeeping once per fan-out without failing it', async () => {
-      const appWebSockets = {
-        send: jest.fn(async ({ batch }) => {
-          batch.defer(Promise.reject(new Error('redis down')));
-          return { status: 'sent' };
-        })
-      };
-      const notifier = new WsListenersNotifier(
-        appWebSockets as never,
-        {
-          getCurrentlyOnlineCommunityMemberConnectionIds: jest
-            .fn()
-            .mockResolvedValue(recipients(3))
-        } as never
-      );
-      const warn = jest.fn();
-      (notifier as any).logger = { warn, error: jest.fn() };
-
-      await expect(
-        notifier.notifyAboutDropUpdate(createDrop('hello'), {})
-      ).resolves.toBeUndefined();
-
-      expect(warn).toHaveBeenCalledTimes(1);
-      expect(warn).toHaveBeenCalledWith({
-        code: 'WS_DELIVERY_BOOKKEEPING_FAILED',
-        failed: 3,
-        total: 3
-      });
     });
 
     it('awaits deferred bookkeeping before the fan-out returns', async () => {
@@ -408,7 +516,6 @@ describe('WsListenersNotifier', () => {
             .mockResolvedValue(recipients(3))
         } as never
       );
-
       let done = false;
       const fanout = notifier
         .notifyAboutDropUpdate(createDrop('hello'), {})
@@ -421,26 +528,6 @@ describe('WsListenersNotifier', () => {
       release();
       await fanout;
       expect(done).toBe(true);
-    });
-
-    it('passes known expiries to identity and direct-message sends', async () => {
-      const appWebSockets = { send: jest.fn().mockResolvedValue(undefined) };
-      const notifier = new WsListenersNotifier(
-        appWebSockets as never,
-        {
-          findNotificationConnectionIdsByIdentityIds: jest
-            .fn()
-            .mockResolvedValue([
-              { connectionId: 'c-1', identityId: 'p-1', jwtExpiry: 123 }
-            ])
-        } as never
-      );
-
-      await notifier.notifyAboutIdentityNotificationsChanged(['p-1']);
-
-      expect(appWebSockets.send).toHaveBeenCalledWith(
-        expect.objectContaining({ connectionId: 'c-1', jwtExpiry: 123 })
-      );
     });
   });
 
@@ -514,11 +601,9 @@ describe('WsListenersNotifier', () => {
         drop_id: 'drop-1',
         wave_id: 'wave-1',
         fanout_recipients: 2,
-        // Both recipients share one audience class: one serialization.
+        // Both recipients share one audience class (#2321): one payload.
         fanout_serializations: 1,
-        // The recipient query supplied no expiry and the test transport
-        // reports no fence read.
-        fanout_connection_reads: 0,
+        fanout_connection_reads: 2,
         fanout_sent: 1,
         fanout_gone: 1
       });
@@ -706,6 +791,38 @@ describe('WsListenersNotifier', () => {
         }
       }
     ]);
+  });
+
+  it('attempts later DM unread states and recipients after a send rejects', async () => {
+    const appWebSockets = {
+      send: jest
+        .fn()
+        .mockRejectedValueOnce(new Error('send failed'))
+        .mockResolvedValue(undefined)
+    };
+    const notifier = new WsListenersNotifier(appWebSockets as any, {} as any);
+    const states = Array.from({ length: 20 }, (_, index) => ({
+      profile_id: 'profile-1',
+      wave_id: `wave-${index}`,
+      unread_count: 2,
+      first_unread_drop_serial_no: 10,
+      latest_drop_serial_no: 11,
+      latest_read_serial_no: 9,
+      version: 3
+    }));
+
+    await notifier.notifyAboutDmUnreadStateChanged(states, [
+      { connectionId: 'connection-1', identityId: 'profile-1' },
+      { connectionId: 'connection-2', identityId: 'profile-1' }
+    ]);
+
+    expect(appWebSockets.send).toHaveBeenCalledTimes(40);
+    for (const connectionId of ['connection-1', 'connection-2']) {
+      const deliveredStates = appWebSockets.send.mock.calls
+        .filter(([call]) => call.connectionId === connectionId)
+        .map(([call]) => JSON.parse(call.message).data);
+      expect(deliveredStates).toEqual(states);
+    }
   });
 
   it('uses pre-resolved direct-message recipients without repeating the connection lookup', async () => {

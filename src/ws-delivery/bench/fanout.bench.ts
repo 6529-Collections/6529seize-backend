@@ -174,6 +174,7 @@ describeWithSeed('inline fan-out lab benchmark', [withWaves([wave])], () => {
       new AppWebSockets(repo),
       repo,
       { getViewerContextsForDrop: async () => ({}) },
+      undefined,
       {
         enqueue: async (jobs) => {
           await new Promise((resolve) => setTimeout(resolve, sqsMs));

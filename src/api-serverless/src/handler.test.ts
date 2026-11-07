@@ -112,8 +112,41 @@ describe('handler websocket auth', () => {
         identityId: 'stale-identity',
         connectionId: 'connection-1',
         jwtExpiry: 100,
+        durableUpdates: false,
         purpose: null,
         ...(capability === 'resync_v1' ? { recoveryCapable: true } : {})
+      });
+    }
+  );
+
+  it.each([
+    [undefined, false],
+    ['', false],
+    ['unknown', false],
+    ['durable_updates_v1', true],
+    ['DURABLE_UPDATES_V1', false]
+  ])(
+    'records only the exact public connection capability %s',
+    async (capability, durableUpdates) => {
+      const response = await handler(
+        {
+          httpMethod: 'GET',
+          requestContext: { routeKey: '$connect', connectionId: 'c' },
+          queryStringParameters:
+            capability === undefined
+              ? null
+              : { delivery_capability: capability }
+        } as unknown as APIGatewayEvent,
+        {} as Context,
+        jest.fn()
+      );
+      expect(response).toMatchObject({ statusCode: 200 });
+      expect(appWebSocketsMock.register).toHaveBeenCalledWith({
+        connectionId: 'c',
+        identityId: 'stale-identity',
+        jwtExpiry: 100,
+        durableUpdates,
+        purpose: null
       });
     }
   );
@@ -134,6 +167,7 @@ describe('handler websocket auth', () => {
           },
           queryStringParameters: {
             recovery_capability: 'resync_v1',
+            delivery_capability: 'durable_updates_v1',
             ...(purpose === undefined ? {} : { purpose })
           }
         } as unknown as APIGatewayEvent,
@@ -142,7 +176,11 @@ describe('handler websocket auth', () => {
       );
       expect(response).toMatchObject({ statusCode: 200 });
       expect(appWebSocketsMock.register).toHaveBeenLastCalledWith(
-        expect.objectContaining({ purpose: expected, recoveryCapable: true })
+        expect.objectContaining({
+          purpose: expected,
+          durableUpdates: true,
+          recoveryCapable: true
+        })
       );
     }
   );

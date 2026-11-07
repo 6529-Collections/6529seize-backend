@@ -1,3 +1,4 @@
+import { recordWebSocketEvent } from '@/websocket-outbox/outbox.db';
 import { randomUUID } from 'node:crypto';
 import { AuthenticationContext } from '@/auth-context';
 import {
@@ -282,6 +283,16 @@ export class DropPollsApiService {
           },
           txCtx
         );
+        if (pollVoteChanged)
+          await recordWebSocketEvent(
+            {
+              type: 'drop',
+              dropId,
+              updateType: 'DROP_UPDATE',
+              reason: DROP_UPDATE_REASON_POLL_RESPONSE
+            },
+            txCtx
+          );
       }
     );
     if (pollVoteChanged) {

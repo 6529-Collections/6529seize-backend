@@ -1,0 +1,126 @@
+service: websocketOutboundHandler
+package:
+  artifact: dist/index.zip
+plugins:
+  - serverless-offline
+provider:
+  name: aws
+  runtime: nodejs22.x
+  memorySize: 1024
+  timeout: 30
+  architecture: arm64
+  logRetentionInDays: 60
+functions:
+  websocketOutboundHandler:
+    handler: index.handler
+    name: websocketOutboundHandler
+    description: ${env:VERSION_DESCRIPTION, ''}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 20
+    events:
+      - schedule: rate(1 minute)
+      - sqs:
+          arn: !GetAtt WebSocketOutboundQueue.Arn
+          batchSize: 1
+          maximumConcurrency: 16
+          functionResponseType: ReportBatchItemFailures
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN, ''}
+      SENTRY_ENVIRONMENT: 'websocketOutboundHandler_${opt:stage, self:provider.stage}'
+      WS_OUTBOUND_QUEUE_URL: !Ref WebSocketOutboundQueue
+resources:
+  Resources:
+    WebSocketOutboundQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: websocket-outbound.fifo
+        FifoQueue: true
+        ContentBasedDeduplication: true
+        DeduplicationScope: messageGroup
+        FifoThroughputLimit: perMessageGroupId
+        SqsManagedSseEnabled: true
+        VisibilityTimeout: 180
+        MessageRetentionPeriod: 345600
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt WebSocketOutboundDLQ.Arn
+          maxReceiveCount: 100
+    WebSocketOutboundDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: websocket-outbound-dlq.fifo
+        FifoQueue: true
+        SqsManagedSseEnabled: true
+        MessageRetentionPeriod: 1209600
+    WebSocketOutboundQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref WebSocketOutboundQueue
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: arn:aws:iam::987989283142:role/lambda-vpc-role
+              Action:
+                - sqs:SendMessage
+                - sqs:GetQueueUrl
+                - sqs:GetQueueAttributes
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:ChangeMessageVisibility
+              Resource: !GetAtt WebSocketOutboundQueue.Arn
+    WebSocketOutboundDLQAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-dead-letters'
+        AlarmDescription: 'WebSocket frames exhausted retries; investigate before redrive. Do not redrive obsolete sessions.'
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: !GetAtt WebSocketOutboundDLQ.QueueName
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+    WebSocketOutboundAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-backlog-age'
+        AlarmDescription: 'WebSocket delivery is delayed; check send failures and queue throughput.'
+        Namespace: AWS/SQS
+        MetricName: ApproximateAgeOfOldestMessage
+        Dimensions:
+          - Name: QueueName
+            Value: !GetAtt WebSocketOutboundQueue.QueueName
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 2
+        Threshold: 60
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    WebSocketOutboxAgeAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub '${AWS::StackName}-outbox-age'
+        AlarmDescription: 'Committed WebSocket events remain unpublished. Inspect outbox failures and database/queue access.'
+        Namespace: 6529/WebSocketOutbox
+        MetricName: AgeSeconds
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 2
+        Threshold: 180
+        ComparisonOperator: GreaterThanThreshold
+        TreatMissingData: breaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}

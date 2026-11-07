@@ -27,6 +27,9 @@ export class WSConnectionEntity {
   @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
+  // Capability is immutable for this physical connection; older rows default to legacy.
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly durable_updates?: boolean;
   @Column({ type: 'varchar', length: 16, nullable: true, default: null })
   readonly purpose?: WsConnectionPurpose | null;
 }

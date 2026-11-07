@@ -17,7 +17,7 @@ function assertFixedDefinitions(
   next: ApiCompetitionDraftInput
 ) {
   if (next.rules.type !== previous.rules.type)
-    throw new BadRequestException('Original competition type cannot change');
+    throw new BadRequestException('Original decision type cannot change');
   if (
     competitionPayloadHash(next.participation.submission_strategy ?? null) !==
     competitionPayloadHash(previous.participation.submission_strategy ?? null)
@@ -30,7 +30,7 @@ function assertFixedDefinitions(
     competitionPayloadHash(previous.outcomes)
   )
     throw new BadRequestException(
-      'Original competition outcome definitions are immutable'
+      'Original decision outcome definitions are immutable'
     );
 }
 
@@ -97,7 +97,7 @@ export async function validateOriginalPrimaryRuleUpdate(
 ): Promise<{ scheduleChanged: boolean; nextDecisionTime: number | null }> {
   if (ctx.authenticationContext?.isAuthenticatedAsProxy())
     throw new ForbiddenException(
-      'Legacy competition settings cannot be changed by proxies'
+      'Legacy decision settings cannot be changed by proxies'
     );
   const now = Date.now();
   if (
@@ -105,7 +105,7 @@ export async function validateOriginalPrimaryRuleUpdate(
     competition.decisions.next_decision_time < now
   )
     throw new ForbiddenException(
-      "Wave has unresolved decisions and can't be edited at the moment. Try again later"
+      "Wave has pending results and can't be edited at the moment. Try again later"
     );
   assertFixedDefinitions(previousConfig, nextConfig);
   assertVoteLimitCanIncrease(previousConfig, nextConfig);

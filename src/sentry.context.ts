@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/serverless';
 import { Logger } from '@/logging';
 import type { Handler } from 'aws-lambda';
+import { withLambdaRemainingTime } from '@/lambda-deadline';
 import {
   isExpectedClientError,
   operationalError,
@@ -80,6 +81,11 @@ export function wrapLambdaHandler(
         throw error;
       }
     });
+  const bounded: Handler = (event, context, callback) =>
+    withLambdaRemainingTime(
+      () => context?.getRemainingTimeInMillis?.() ?? Infinity,
+      () => capture(event, context, callback)
+    );
   if (isConfigured()) {
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
@@ -99,7 +105,7 @@ export function wrapLambdaHandler(
         );
       }
     });
-    return Sentry.AWSLambda.wrapHandler(capture);
+    return Sentry.AWSLambda.wrapHandler(bounded);
   }
-  return capture;
+  return bounded;
 }

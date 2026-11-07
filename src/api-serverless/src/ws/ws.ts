@@ -18,26 +18,31 @@ import { RequestContext } from '../../../request.context';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
-import {
-  webSocketDelivery,
-  WebSocketDeliveryResult
-} from '@/ws-delivery/ws-delivery';
 import { describeWebSocketSendFailure } from './ws-send-diagnostics';
+import {
+  DeliveryBatch,
+  webSocketDelivery,
+  WebSocketDeliveryResult,
+  WebSocketDeliveryDeferredError
+} from '@/ws-delivery/ws-delivery';
+import {
+  enqueueWebSocketFrame,
+  QueuedWebSocketFrame
+} from '@/api/ws/ws-outbound-queue';
+import {
+  WebSocketSendScheduler,
+  hasWebSocketSendBudget
+} from '@/api/ws/ws-send-scheduler';
+
 import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
 import { WsConnectionPurpose } from '@/entities/IWSConnection';
-import * as http from 'node:http';
-import * as https from 'node:https';
-import type { DeliveryBatch } from '@/ws-delivery/ws-delivery';
 
-/** Upper bound on concurrent gateway sends from one fan-out (and agent sockets). */
-export const WS_SEND_CONCURRENCY_CAP = 64;
-
-export class SocketNotAvailableException extends Error {
-  constructor() {
-    super(`Socket is not available`);
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
-}
+import {
+  ANON_USER_ID,
+  SocketNotAvailableException,
+  DURABLE_UPDATES_CAPABILITY
+} from './ws-shared';
+export { ANON_USER_ID, SocketNotAvailableException } from './ws-shared';
 
 abstract class ClientConnections {
   private static instance: ClientConnections | null = null;
@@ -54,10 +59,12 @@ abstract class ClientConnections {
 
   abstract sendMessage({
     connectionId,
-    message
+    message,
+    abortSignal
   }: {
     connectionId: string;
     message: string;
+    abortSignal?: AbortSignal;
     recovery?: boolean;
     batch?: DeliveryBatch;
   }): Promise<WebSocketDeliveryResult>;
@@ -73,11 +80,14 @@ class WebsocketClientConnections extends ClientConnections {
 
   override async sendMessage({
     connectionId,
-    message
+    message,
+    abortSignal
   }: {
     connectionId: string;
     message: string;
+    abortSignal?: AbortSignal;
   }) {
+    abortSignal?.throwIfAborted();
     const socket = this.sockets[connectionId];
     if (!socket) {
       recordWebSocketAcknowledgement(connectionId, message, 'unavailable');
@@ -120,6 +130,7 @@ class WebsocketClientConnections extends ClientConnections {
 
 class ApiGatewayClientConnections extends ClientConnections {
   private readonly client: ApiGatewayManagementApiClient;
+  private readonly scheduler = new WebSocketSendScheduler();
 
   constructor() {
     super();
@@ -129,20 +140,7 @@ class ApiGatewayClientConnections extends ClientConnections {
       maxAttempts: 3,
       requestHandler: new NodeHttpHandler({
         connectionTimeout: 2000,
-        requestTimeout: 5000,
-        throwOnRequestTimeout: true,
-        // Reused TLS connections, sized to the fan-out send pool so the pool,
-        // not the agent queue, bounds concurrency.
-        httpsAgent: new https.Agent({
-          keepAlive: true,
-          keepAliveMsecs: 1000,
-          maxSockets: WS_SEND_CONCURRENCY_CAP
-        }),
-        httpAgent: new http.Agent({
-          keepAlive: true,
-          keepAliveMsecs: 1000,
-          maxSockets: WS_SEND_CONCURRENCY_CAP
-        })
+        requestTimeout: 5000
       })
     });
   }
@@ -150,28 +148,42 @@ class ApiGatewayClientConnections extends ClientConnections {
   override async sendMessage({
     connectionId,
     message,
-    recovery = false,
+    abortSignal,
+    recovery,
     batch
   }: {
     connectionId: string;
     message: string;
+    abortSignal?: AbortSignal;
     recovery?: boolean;
     batch?: DeliveryBatch;
-  }) {
-    return webSocketDelivery.deliver({
+  }): Promise<WebSocketDeliveryResult> {
+    let terminalError: unknown;
+    const result = await webSocketDelivery.deliver({
       connectionId,
       message,
       recovery,
+      signal: abortSignal,
       batch,
       close: () => this.closeClient(connectionId, true),
       send: async () => {
+        let response: unknown;
+
         try {
-          const response = await this.client.send(
-            new PostToConnectionCommand({
-              ConnectionId: connectionId,
-              Data: Buffer.from(message)
-            })
-          );
+          await this.scheduler.send(connectionId, async (deadlineSignal) => {
+            response = await this.client.send(
+              new PostToConnectionCommand({
+                ConnectionId: connectionId,
+                Data: Buffer.from(message)
+              }),
+              {
+                abortSignal: abortSignal
+                  ? AbortSignal.any([deadlineSignal, abortSignal])
+                  : deadlineSignal
+              }
+            );
+          });
+
           recordWebSocketAcknowledgement(connectionId, message, 'accepted');
           return response;
         } catch (error) {
@@ -181,10 +193,21 @@ class ApiGatewayClientConnections extends ClientConnections {
             message,
             failure.unavailable ? 'unavailable' : 'failed'
           );
+          terminalError = error;
+
           throw error;
         }
       }
     });
+    // Durable consumers retain non-throttle failures using their existing retry contract.
+    if (
+      result.status === 'failed' &&
+      !recovery &&
+      describeWebSocketSendFailure(message, terminalError).diagnostic
+        .error_category !== 'THROTTLED'
+    )
+      throw terminalError ?? new Error('WebSocket delivery failed');
+    return result;
   }
 
   override async closeClient(
@@ -226,46 +249,190 @@ export class AppWebSockets {
     private readonly wsConnectionRepository: WsConnectionRepository
   ) {}
 
-  /**
-   * Sends one frame. The JWT fence holds on every path: a connection whose
-   * stored JWT has expired is closed instead of sent to.
-   *
-   * Fan-outs pass the `jwtExpiry` their recipient query already returned, so
-   * the fence needs no MySQL read per recipient. Only an expiry that looks
-   * past is re-read, because a reauthentication may have extended it since.
-   */
-  async send({
+  /** Queue capable-client frames; keep legacy, local and authentication replies inline. */
+  async send(input: {
+    connectionId: string;
+    message: string;
+    skipStaleConnectionCheck?: boolean;
+    abortSignal?: AbortSignal;
+    outboxId?: string;
+    legacyOnly?: boolean;
+    deliveryCapability?: typeof DURABLE_UPDATES_CAPABILITY;
+    recovery?: boolean;
+    batch?: DeliveryBatch;
+  }): Promise<WebSocketDeliveryResult> {
+    input.abortSignal?.throwIfAborted();
+    // Authentication acknowledgements must follow the control operation inline,
+    // including credential rejection when no authenticated row exists yet.
+    if (isDevEnv() || input.skipStaleConnectionCheck || input.recovery)
+      return this.deliver(input);
+    const entity = await this.wsConnectionRepository.getByConnectionId(
+      input.connectionId,
+      {}
+    );
+    input.abortSignal?.throwIfAborted();
+    const expiry = getActiveJwtExpiry(entity?.jwt_expiry);
+    if (!entity || expiry === null) {
+      await this.deregister({ connectionId: input.connectionId });
+      return { status: 'gone' };
+    }
+    if (input.legacyOnly && entity.durable_updates === true)
+      return { status: 'sent' };
+    // New outbox jobs must never switch to direct delivery after capability loss.
+    if (input.deliveryCapability && entity.durable_updates !== true) {
+      this.logger.warn({ code: 'WS_OUTBOUND_SESSION_CHANGED' });
+      return { status: 'gone' };
+    }
+    if (entity.durable_updates !== true && !input.outboxId)
+      return this.deliver({ ...input, skipStaleConnectionCheck: true });
+    try {
+      await enqueueWebSocketFrame(
+        {
+          connectionId: input.connectionId,
+          message: input.message,
+          identityId: entity.identity_id,
+          jwtExpiry: expiry,
+          ...(entity.durable_updates === true
+            ? { deliveryCapability: DURABLE_UPDATES_CAPABILITY }
+            : {})
+        },
+        input.abortSignal,
+        input.outboxId
+      );
+      return { status: 'resync_pending' };
+    } catch {
+      // Do not expose queue bodies/provider errors, or claim failed persistence
+      // was accepted. The caller must see the failure as well as the error log.
+      this.logger.error({ code: 'WS_OUTBOUND_ENQUEUE_FAILED' });
+      throw new Error('WebSocket queue persistence failed');
+    }
+  }
+
+  /** Worker-only transport path: it must never enqueue recursively. */
+  async deliverQueued(frame: QueuedWebSocketFrame): Promise<void> {
+    const entity = await this.wsConnectionRepository.getByConnectionId(
+      frame.connectionId,
+      {}
+    );
+    if (!entity || getActiveJwtExpiry(entity.jwt_expiry) === null) {
+      await this.deregister({ connectionId: frame.connectionId });
+      return;
+    }
+    if (
+      (frame.deliveryCapability && entity.durable_updates !== true) ||
+      entity.identity_id !== frame.identityId ||
+      Number(entity.jwt_expiry) !== frame.jwtExpiry
+    ) {
+      this.logger.warn({ code: 'WS_OUTBOUND_SESSION_CHANGED' });
+      return;
+    }
+    if (!(await this.canDeliverQueuedPayload(frame))) return;
+    const result = await this.deliver({
+      connectionId: frame.connectionId,
+      message: frame.message,
+      skipStaleConnectionCheck: true
+    });
+    if (result.status === 'resync_pending' || result.status === 'failed')
+      throw new WebSocketDeliveryDeferredError();
+  }
+
+  /** Recheck notification subscriptions and resource access before delayed delivery. */
+  private async canDeliverQueuedPayload(
+    frame: QueuedWebSocketFrame
+  ): Promise<boolean> {
+    const payload = JSON.parse(frame.message) as {
+      type?: string;
+      data?: {
+        profile_id?: string;
+        wave_id?: string;
+        wave?: { id?: string };
+        attachment_id?: string;
+        timestamp?: number;
+      };
+    };
+    if (
+      payload.type === 'USER_IS_TYPING' &&
+      (typeof payload.data?.timestamp !== 'number' ||
+        Date.now() - payload.data.timestamp > 10_000)
+    )
+      return false;
+    let accessIdentityId = frame.identityId;
+    if (
+      payload.type === 'IDENTITY_NOTIFICATIONS_CHANGED' ||
+      payload.type === 'DM_UNREAD_STATE_CHANGED'
+    ) {
+      const profileId = payload.data?.profile_id;
+      if (!profileId) throw new Error('Missing notification profile');
+      accessIdentityId = profileId;
+      const recipients =
+        await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+          [profileId]
+        );
+      if (
+        !recipients.some(
+          (recipient) => recipient.connectionId === frame.connectionId
+        )
+      ) {
+        this.logger.warn({ code: 'WS_OUTBOUND_SUBSCRIPTION_CHANGED' });
+        return false;
+      }
+    }
+    const waveId = payload.data?.wave_id ?? payload.data?.wave?.id;
+    const attachmentId = payload.data?.attachment_id;
+    let resource: { attachmentId: string } | { waveId: string } | null = null;
+    if (attachmentId) resource = { attachmentId };
+    else if (waveId) resource = { waveId };
+    if (
+      resource &&
+      !(await this.wsConnectionRepository.canIdentityReadQueuedResource(
+        accessIdentityId,
+        resource
+      ))
+    ) {
+      this.logger.warn({ code: 'WS_OUTBOUND_ACCESS_CHANGED' });
+      return false;
+    }
+    return true;
+  }
+
+  /** Send through bounded transport; propagate non-stale failures for the caller to retry. */
+  async deliver({
     connectionId,
     message,
     skipStaleConnectionCheck = false,
-    recovery = false,
-    jwtExpiry,
-    batch,
-    onConnectionRead
+    abortSignal,
+    recovery,
+    batch
   }: {
     connectionId: string;
     message: string;
     skipStaleConnectionCheck?: boolean;
+    abortSignal?: AbortSignal;
     recovery?: boolean;
-    jwtExpiry?: number | string | null;
     batch?: DeliveryBatch;
-    /** Measurement hook: called when the fence had to read MySQL. */
-    onConnectionRead?: () => void;
-  }) {
-    if (
-      !skipStaleConnectionCheck &&
-      !(await this.hasActiveJwt(connectionId, jwtExpiry, onConnectionRead))
-    ) {
-      this.logger.info(
-        `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
+  }): Promise<WebSocketDeliveryResult> {
+    // An expired invocation goes directly to the sender's reported deadline
+    // failure; do not spend the remaining budget looking up unsendable work.
+    if (!skipStaleConnectionCheck && hasWebSocketSendBudget()) {
+      const entity = await this.wsConnectionRepository.getByConnectionId(
+        connectionId,
+        {}
       );
-      await this.deregister({ connectionId });
-      return { status: 'gone' as const };
+      const jwtExpiry = getActiveJwtExpiry(entity?.jwt_expiry);
+      if (!entity || jwtExpiry === null) {
+        this.logger.info(
+          `Discovered a stale websocket ${connectionId}. Can't send messages to it. Will close it.`
+        );
+        await this.deregister({ connectionId });
+        return { status: 'gone' };
+      }
     }
+    abortSignal?.throwIfAborted();
     try {
       const result = await ClientConnections.Get().sendMessage({
         connectionId,
         message,
+        abortSignal,
         recovery,
         batch
       });
@@ -275,36 +442,21 @@ export class AppWebSockets {
           {}
         );
       return result;
-    } catch {
-      // The local adapter throws for a missing/closed socket; remove its subscription.
-      await this.deregister({ connectionId });
-      return { status: 'gone' as const };
+    } catch (err) {
+      if (err instanceof SocketNotAvailableException) {
+        await this.deregister({ connectionId });
+        return { status: 'gone' };
+      } else {
+        throw err;
+      }
     }
-  }
-
-  private async hasActiveJwt(
-    connectionId: string,
-    knownJwtExpiry: number | string | null | undefined,
-    onConnectionRead?: () => void
-  ): Promise<boolean> {
-    if (
-      knownJwtExpiry !== undefined &&
-      getActiveJwtExpiry(knownJwtExpiry) !== null
-    ) {
-      return true;
-    }
-    onConnectionRead?.();
-    const entity = await this.wsConnectionRepository.getByConnectionId(
-      connectionId,
-      {}
-    );
-    return !!entity && getActiveJwtExpiry(entity.jwt_expiry) !== null;
   }
 
   async register({
     identityId,
     connectionId,
     jwtExpiry,
+    durableUpdates = false,
     ws,
     recoveryCapable = false,
     purpose = null
@@ -312,6 +464,7 @@ export class AppWebSockets {
     identityId: string;
     connectionId: string;
     jwtExpiry: number;
+    durableUpdates?: boolean;
     ws?: WebSocket;
     recoveryCapable?: boolean;
     purpose?: WsConnectionPurpose | null;
@@ -334,6 +487,7 @@ export class AppWebSockets {
         jwt_expiry: jwtExpiry,
         connection_id: connectionId,
         wave_id: null,
+        durable_updates: durableUpdates,
         purpose
       },
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
@@ -416,8 +570,6 @@ export class AppWebSockets {
   }
 }
 
-export const ANON_USER_ID = '$ANONONYMOUS_USER$';
-
 /**
  * Reads the socket purpose a client declares on `$connect` (`?purpose=`).
  * Unknown or missing values keep the legacy audience rules.
@@ -430,6 +582,7 @@ export function connectionPurposeFromQuery(
     ? WsConnectionPurpose.TYPING
     : null;
 }
+
 export const MAX_NOTIFICATION_IDENTITY_SUBSCRIPTIONS = 5;
 
 export interface AuthenticatedWebSocketIdentity {

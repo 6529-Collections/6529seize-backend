@@ -140,7 +140,8 @@ describe('sending budgeted push messages', () => {
       input(1, {
         body: '👋'.repeat(5000),
         imageUrl: 'https://example.com/image.jpg',
-        badge: 3
+        badge: 3,
+        extra_data: { target_profile_id: 'profile:A', wave_id: 'wave/1' }
       })
     ]);
     const initial = sendEach.mock.calls[0][0][0];
@@ -150,8 +151,15 @@ describe('sending budgeted push messages', () => {
         Buffer.byteLength(JSON.stringify({ ...message, token: undefined }))
       ).toBeLessThanOrEqual(3584);
       expect(message.android.notification.sound).toBe('default');
+      expect(message.android.notification.tag).toBe(
+        '6529:v1:profile%3AA:1:wave%2F1'
+      );
       expect(message.apns.payload.aps).toEqual({ badge: 3, sound: 'default' });
-      expect(message.data).toEqual({ notification_id: '1' });
+      expect(message.data).toEqual({
+        notification_id: '1',
+        target_profile_id: 'profile:A',
+        wave_id: 'wave/1'
+      });
     }
     expect(initial.notification.imageUrl).toBeDefined();
     expect(retry.notification.imageUrl).toBeUndefined();

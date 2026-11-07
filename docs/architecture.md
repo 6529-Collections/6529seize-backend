@@ -47,6 +47,14 @@ blocks and identity mutes only while their submitter remains anonymous;
 ordinary actor, wave and notification-category filters remain effective.
 Deleting an unrevealed submission retains
 a withdrawn membership tombstone so historical author activity stays private.
+Durable WebSocket drop-reference jobs apply the same public author policy
+before recipient messages are materialized; policy failures retain the intent
+for retry. Deploy `websocketOutboundHandler` with this guard before enabling
+anonymous submissions through the API.
+Author-signing proofs also contain wallet and device identifiers. The signed-event
+reader checks drop visibility first, then withholds events and grant proofs for
+unrevealed entries unless the viewer has private owner read access. Winning and
+ordinary entries retain their existing proofs; stored signatures stay intact.
 
 The existing API, push notifications, Help Bot reply worker and media sanitizer
 share the identity presentation policy, including nested quote/reply and
@@ -81,7 +89,7 @@ is final. Invitee acceptance saves a nullable, submission-specific artist credit
 invitee. Public drop V1/V2 mappings expose accepted collaborators and derive
 artist/profile/Collab metadata from those records.
 
-Native MAIN_STAGE decision transactions, including the transferred original Main Stage, lock the same
+Native MAIN_STAGE decision transactions lock the same
 collaboration row used by acceptance, save the accepted artist roster, and close
 pending invitations. Claims Builder consumes that saved roster for initial
 claim credits; pending invitations do not delay minting. Admins can edit all final claim credits, traits
@@ -94,20 +102,19 @@ managed record remain compatible.
 Invitation, acceptance and author-cancellation notifications use the existing identity-notification
 and push pipelines with cause `MEME_COLLABORATION`. New generated endpoints are
 `GET /drops/{drop_id}/collaborations`,
-`POST /drops/{drop_id}/collaborations` (submitter-only additions on active
-designated Memes Main Stage entries, including transferred original submissions), and
+`POST /drops/{drop_id}/collaborations` (submitter-only additions on actual ACTIVE
+native MAIN_STAGE entries), and
 `POST /drops/{drop_id}/collaborations/{invitation_id}/response`; both use the
 existing wave visibility checks. Accepted identities participate in Main Stage
 profile artwork queries, without changing submission ownership or allowances.
 No new Lambda, queue, environment variable, or on-chain contract is introduced.
 
-After legacy runtime retirement, invitation eligibility and collaborator profile
-submissions/wins use native Main Stage membership rather than physical drop types
-or retired winner tables. Original submission routes pass their native owner to
-the invitation writer so consent uses that competition's terms. The retained
-wave GET compatibility projection supplies terms for older callers without an
-explicit competition ID. The retired wave decision service is not restored;
-`waveDecisionExecutionLoop` freezes credits through its native decision path.
+Invitation eligibility uses the exact native entry and MAIN_STAGE capability,
+including designated siblings in other public hubs. Shared drop classification
+and hub configuration grant no membership. New submission hooks receive only a
+verified native content permit target or the locked original-primary target of
+a new participatory command. New contexts snapshot terms from that competition
+bound to the submission wave; saved consent and frozen credits remain unchanged.
 
 ## Oracle TDH API and retired Prenode registry
 
@@ -210,6 +217,18 @@ popup, download, or top-navigation permissions. This preserves the existing
 interactive-art submission model without fetching arbitrary source content on
 the server. The template applies attribute escaping before every media branch;
 its separate URL guard also protects local previews, which do not use this API.
+
+## Profile picture uploads
+
+Authenticated `POST /profiles/pfp/ipfs` accepts one multipart `pfp` file of at
+most 2 MiB (multer rejects larger bodies with 413), recognizes PNG, JPEG, GIF or
+WebP from the file's own bytes, and pins it with the shared IPFS uploader as a
+single unwrapped file (the configured `IPFS_API_UPLOAD_PATH` without
+`wrap-with-directory`). It returns `{ pfp_url: "ipfs://<cid>" }`; the caller then
+saves that URL through the existing `POST /profiles` validation. The web app
+uploads through this route instead of posting to the IPFS node from the
+browser. Deploy `api` before the frontend that calls it. No new service,
+database schema, or migration is required.
 
 ## Profile collecting and marketplace operations
 
@@ -570,14 +589,14 @@ through `1a-staging` without deploying this service there. See
 | `nftsLoop`                               | Discover, refresh, and audit NFTs.                                                                                                                                  |
 | `transactionsLoop`                       | Index MEMES, Gradients, and Meme Lab transfers.                                                                                                                     |
 | `nftOwnersLoop`                          | Maintain current owner balance snapshots.                                                                                                                           |
-| `nftHistoryLoop`                         | Maintain NFT metadata history.                                                                                                                                         |
+| `nftHistoryLoop`                         | Maintain NFT metadata history.                                                                                                                                      |
 | `delegationsLoop`                        | Sync delegation.cash and consolidation data.                                                                                                                        |
 | `nextgenContractLoop`                    | Index NextGen contract events.                                                                                                                                      |
 | `nextgenMetadataLoop`                    | Refresh NextGen metadata.                                                                                                                                           |
 | `externalCollectionSnapshottingLoop`     | Snapshot external collection ownership.                                                                                                                             |
 | `externalCollectionLiveTailingLoop`      | Live-tail external collection transfers.                                                                                                                            |
 | `transactionsProcessingLoop`             | Normalize raw transactions into processed state.                                                                                                                    |
-| `tdhLoop`                                | Calculate TDH, publish wallet/consolidated CSVs through bounded Arweave gateway failover with public ArDrive download links, and publish TDH completion.                                                 |
+| `tdhLoop`                                | Calculate TDH, publish wallet/consolidated CSVs through bounded Arweave gateway failover with public ArDrive download links, and publish TDH completion.            |
 | `tdhHistoryLoop`                         | Write historical TDH snapshots.                                                                                                                                     |
 | `ownersBalancesLoop`                     | Project owner balance aggregates.                                                                                                                                   |
 | `aggregatedActivityLoop`                 | Calculate activity aggregates.                                                                                                                                      |
@@ -629,30 +648,30 @@ reset behavior, and the required writer-before-collector deployment order.
 
 ### Triggered Lambdas
 
-| Lambda                           | Trigger                                                                                                                             | Purpose                                                                                                                     |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                          | Public REST API and WebSocket boundary.                                                                                     |
-| `claimsBuilder`                  | SQS `claims-builder`                                                                                                                | Build minting claims from winning drops.                                                                                    |
-| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                   | Upload claim media and metadata to Arweave.                                                                                 |
-| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                              | Mirror, compress, and upload NFT media.                                                                                     |
-| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                         | Find uploaded attachment objects, retry, and enqueue processing.                                                            |
-| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                        | Scan/process attachments.                                                                                                   |
-| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                          | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                 |
-| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                            | Resolve external NFT links.                                                                                                 |
-| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                      |
-| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable; also content-free `e2ee_wake` notifications for encrypted chats. |
-| `waveFanoutWorker`               | SQS `wave-fanout` (DLQ `wave-fanout-dlq`)                                                                                         | With `WS_ASYNC_FANOUT` on `seizeAPI`: send queued chunks of a drop/rating/reaction fan-out, and run a new drop's push, DM unread, collaborator and wave-score work after the API has replied. |
+| Lambda                           | Trigger                                                                                                                             | Purpose                                                                                                                                                                                       |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api` / `seizeAPI`               | API Gateway HTTP/WebSocket                                                                                                          | Public REST API and WebSocket boundary.                                                                                                                                                       |
+| `claimsBuilder`                  | SQS `claims-builder`                                                                                                                | Build minting claims from winning drops.                                                                                                                                                      |
+| `claimsMediaArweaveUploader`     | SQS `claims-media-arweave-upload`                                                                                                   | Upload claim media and metadata to Arweave.                                                                                                                                                   |
+| `s3Uploader`                     | SQS `s3-uploader-jobs`                                                                                                              | Mirror, compress, and upload NFT media.                                                                                                                                                       |
+| `attachmentsOrchestrator`        | SQS `attachments-orchestration` and S3 object-created event                                                                         | Find uploaded attachment objects, retry, and enqueue processing.                                                                                                                              |
+| `attachmentsProcessor`           | SQS `attachments-processing`                                                                                                        | Scan/process attachments.                                                                                                                                                                     |
+| `dropMediaSanitizer`             | SQS `drop-media-sanitizer`                                                                                                          | Strip metadata from private-ingest drop/wave image uploads and publish sanitized originals.                                                                                                   |
+| `nftLinkRefresherLoop`           | SQS `nft-link-refreshes`                                                                                                            | Resolve external NFT links.                                                                                                                                                                   |
+| `nftLinkMediaPreviewLoop`        | SQS `nft-link-media-previews`                                                                                                       | Generate media previews for NFT links.                                                                                                                                                        |
+| `pushNotificationsHandler`       | SQS `firebase-push-notifications`                                                                                                   | Deliver Firebase pushes and recipient-scoped WebSocket notification invalidations after notification rows are durable; also content-free `e2ee_wake` notifications for encrypted chats.       |
+| `waveFanoutWorker`               | SQS `wave-fanout` (DLQ `wave-fanout-dlq`)                                                                                           | With `WS_ASYNC_FANOUT` on `seizeAPI`: send queued chunks of a drop/rating/reaction fan-out, and run a new drop's push, DM unread, collaborator and wave-score work after the API has replied. |
 | `dropWriteOutboxLoop` | Schedule (1 minute) | With `WS_POST_OUTBOX` on `seizeAPI`: finish `drop_write_outbox` rows older than 30 s that the `waveFanoutWorker` `drop_write_outbox` job did not (a lost hand-off or a Lambda that died after commit). Same claim-and-fence processor as the worker. |
-| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                       |
-| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                         |
-| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                |
-| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                    | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                 |
-| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.         |
-| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                        |
-| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations. |
-| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                    |
-| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                          |
-| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                               |
+| `helpBotReplyLoop`               | SQS `help-bot-replies`                                                                                                              | Answer `@help6529` interactions and direct follow-ups to bot replies.                                                                                                                         |
+| `helpBotDailyActivityCreditLoop` | SQS `help-bot-daily-activity-credits.fifo` with EventBridge wakeup fallback                                                         | Grant idempotent once-per-UTC-day activity credits from durable post-drop requests.                                                                                                           |
+| `releaseNotesGenerationLoop`     | SQS `release-note-generation`                                                                                                       | Publish production Backend, Frontend, and Desktop release notes as `ci6529`.                                                                                                                  |
+| `waveDropMetricsRefreshLoop`     | SQS `wave-drop-metrics-refresh-dirty.fifo`; EventBridge fallback                                                                    | Repair materialized wave/dropper drop counts and latest-drop timestamps after drop deletes.                                                                                                   |
+| `xTdhLoop`                       | SNS `tdh-calculation-done.fifo` or a direct post-persistence partial-TDH enqueue via SQS `xtdh-start.fifo`; self-queued stats phase | Recalculate the xTDH universe after TDH finishes, then rebuild and publish xTDH stats in a follow-up queue message.                                                                           |
+| `overRatesRevocationLoop`        | SNS `tdh-calculation-done.fifo` via SQS `over-rates-revocation-start.fifo`                                                          | Revoke over-rates after TDH changes.                                                                                                                                                          |
+| `waveScoreRefreshLoop`           | SNS `tdh-calculation-done.fifo` via SQS `wave-score-refresh-start.fifo`; SQS `wave-score-refresh-dirty.fifo`; EventBridge fallback  | Refresh materialized wave REP and Wave Score discovery fields after TDH changes or wave/drop/rating/subscription mutations.                                                                   |
+| `mediaResizerLoop`               | CloudFront/request path                                                                                                             | Resize images on demand.                                                                                                                                                                      |
+| `nextgenMediaProxyInterceptor`   | Lambda@Edge / CloudFront request                                                                                                    | Provide NextGen metadata fallback.                                                                                                                                                            |
+| `dropVideoConversionInvokerLoop` | S3 object-created event for `drops/`                                                                                                | Invoke MediaConvert for uploaded drop videos.                                                                                                                                                 |
 
 ### Manual Or One-Off Lambdas
 
@@ -963,19 +982,13 @@ including older responses without a recognizable instance ID. A listingType-only
 response keeps those legacy assets and uses an unknown market state with a view
 action, without inferring a claim price.
 
-After persistence, a worker-specific notifier reads active WebSocket recipients
-once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
-five-second request limits, and a 15-second broadcast deadline. Notification
-failure cannot change a successful metadata refresh. The notification metadata
-read is bounded to five seconds; both notification queries also use a three-second
-database execution limit. Late read results cannot trigger delivery.
-Cancelled preview-queue sends leave their source retryable, without overwriting
-newer previews or active consumers. Expired or disconnected
-clients are skipped; normal WebSocket lifecycle handling retains ownership of
-stale-connection deletion. The API and other resolver callers retain their
-existing policy. Request IDs, message IDs, and stage durations connect these
-operations to CloudWatch invocation reports. Sentry's existing warning timer is
-unchanged. No API, schema, queue, or frontend deployment dependency is added.
+NFT resolution and preview transitions capture a WebSocket outbox event in the
+same database transaction. The post-commit notifier wakes `websocketOutboundHandler`;
+its scheduled fallback recovers a lost wakeup. The worker resolves current NFT
+state, materializes durable recipient jobs, and queues `MEDIA_LINK_UPDATED`
+frames for capable clients. Legacy connections retain immediate NFT broadcasts;
+a producer deadline cannot discard capable-client committed delivery intent.
+See [WebSocket outbound delivery](./websocket-outbound-delivery.md).
 
 ### NFT market depth and activity
 
@@ -1166,6 +1179,30 @@ A socket may declare its purpose once on `$connect` with `purpose=typing`, store
 
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
 
+Non-429 WebSocket send failures retain the existing operational error event with an allowlisted frame type, error category, final HTTP status and SDK attempt/retry-delay metadata. Diagnostics also include frame byte count, a SHA-256 hash of the random connection ID, and a fixed SDK/queue-full/deadline failure label; they never include raw connection IDs, payloads or exception text. These describe failed sends, not confirmed client delivery.
+
+Persistent WebSocket-producing mutations write `websocket_outbox` in their business
+transaction. Post-commit SQS wakeups and a one-minute EventBridge schedule drive
+the existing `websocketOutboundHandler`. Resource events resolve current state
+and audience on the writer and atomically materialize recipient jobs; only SQS
+acceptance deletes a recipient job. Hashed per-resource/per-connection partitions
+prevent later jobs from overtaking a deferred head. Stable envelope IDs aid FIFO
+deduplication, while client-side canonical reconciliation and stale/deletion
+guards handle at-least-once delivery. Drop events carry compact canonical-fetch
+references. The encrypted FIFO consumer retains failed Gateway sends with
+randomized backoff and a monitored DLQ. Throttling never deletes a live connection.
+Outbox-age/missing-health alarms cover the database-to-queue boundary. Deploy
+`dbMigrationsLoop` before the worker and capability-aware API/producers. The
+frontend opts into durable delivery with `delivery_capability=durable_updates_v1`
+on every connection, including anonymous sessions. `ws_connections.durable_updates`
+defaults to false and remains fixed across reauthentication. Updated producers
+split legacy immediate Gateway delivery from capable-client outbox delivery;
+older clients and Core builds retain their legacy path until their frontend
+updates. Backend and frontend can therefore roll out independently. Previously
+accepted unmarked work retains its original delivery contract until drained. See
+[WebSocket outbound delivery](./websocket-outbound-delivery.md) for capture
+coverage, mixed-version rollout, limits and rollback.
+
 Outbound WebSocket delivery uses one policy in `src/ws-delivery/`, shared by the API, background senders and the worker-specific NFT-link notifier. Final 429s retain a hashed connection identifier and bounded SDK metadata in warnings and low-cardinality EMF metrics; they do not emit per-send operational errors. Shared Redis cooldowns use exponential backoff with jitter and a short endpoint pause for broad throttling. Normal healthy sends remain concurrent. Atomic leases apply only to recovery probes. Each connection has one content-free pending refresh marker; user content and credentials are never queued. A revision prevents an in-flight recovery from acknowledging newer missed updates.
 
 Reply after commit (waves 1.1) is behind `WS_ASYNC_FANOUT=true` on `seizeAPI`. When a drop, rating or reaction fan-out has more recipients than `WS_INLINE_FANOUT_MAX` (default 64), the request sends to that many itself, open-wave viewers first (sockets subscribed to the wave, and the other sockets of profiles that have it open), and puts the rest into `wave-fanout` jobs of `WS_FANOUT_CHUNK_SIZE` (default 150) recipients. Jobs carry the audience-neutral drop, the anonymity inputs and each recipient's connection, profile and stored JWT expiry; `waveFanoutWorker` reads viewer contexts and credits once per chunk and sends with the same payload classes, JWT fence and delivery policy as the API. A new drop also hands its push, DM-unread, collaborator and wave-score work to the worker. Every hand-off is awaited: work the queue does not accept runs in the request instead. A chunk is retried only if it fails before its first send, so a retry never repeats delivered frames; clients repair anything missed from REST.
@@ -1176,6 +1213,8 @@ The scheduled `webSocketDeliveryLoop` drains due markers every minute, rechecks 
 
 Rolling fleet counters distinguish widespread throttling, a persistent outage even with a single listener, and an old retry backlog. The recovery worker emits the `6529/WebSocketDelivery` Degraded, WorkerHealthy and Pending metrics. CloudWatch alarms report sustained degradation, worker failure/missing heartbeat and repeated recovery-store failures, with explicit operational guidance in the isolated monitor. Application metrics retain SDK retries, 429s and cooldown suppressions because API Gateway metrics may omit 429s. Redis operations are bounded; unavailable recovery state fails open for direct sends, returns an explicit failed result when retry persistence is unknown, and retains independent monitoring. Retry state is versioned, endpoint-scoped and expires after two hours and five minutes without activity; deploying the worker before producers and the additive frontend consumer preserves a compatible rollout.
 
+Durable SQS frames retain their existing retry contract. Cooldown deferrals retain the FIFO record without per-attempt error alerts; the generic repair marker bypasses the durable payload queue.
+
 ## API Boundary
 
 The API is organized by domain routers under `src/api-serverless/src`. The OpenAPI file defines the public contract and generated models. Legacy routes are wired manually, while newer OpenAPI operations can opt into generated route wiring through `x-6529-router` and thin domain handlers.
@@ -1184,6 +1223,36 @@ The API is organized by domain routers under `src/api-serverless/src`. The OpenA
 behind `E2EE_DMS_ENABLED` (off in production). It is a ciphertext-only
 orderer for MLS groups; see [End-to-end encrypted messaging](#end-to-end-encrypted-messaging-d109)
 below and [e2ee-messaging.md](./e2ee-messaging.md).
+
+`POST /api/e` is the first-party telemetry collector (C52), reached by
+browsers as same-origin `6529.io/e` through a CloudFront behavior that adds
+`CloudFront-Viewer-Address`/`-Country` and a secret origin header
+(`TELEMETRY_EDGE_SECRET`); edge headers are ignored without that secret. It is
+mounted ahead of the shared JSON parser and rate limiter, reads at most 8 KB of
+text, keeps only schema v1 (`telemetry.schema.ts`, published as
+`telemetry-collector.v1.schema.json`) and increments daily counter tables
+`analytics_daily`, `vitals_daily` (log-scale histogram buckets) and
+`health_daily`. No raw events, IPs, user agents or request bodies are stored or
+logged. Its rate limit is keyed on an HMAC of the viewer IP under a daily salt
+that lives only in Redis memory and expires at UTC midnight. The first request
+of each UTC day sweeps rows older than 25 months.
+
+Daily counts of people (C52 D2/C52a) are stored only as numbers in
+`uniques_daily`. Anonymous visitors: each page view's HMAC of (daily salt, IP,
+browser family, optional coarse client `fp`) goes into a per-day Redis
+HyperLogLog and is discarded; a Redis-locked flush persists the count at most
+every five minutes. Signed-in DAU/WAU/MAU are snapshotted by the same daily job
+from `wallet_auth_sessions.last_used_at` (distinct consolidated identities) and
+from the existing `ACTIVE_IDENTITY` hourly rollup (authenticated write
+activity).
+
+`POST /api/e/diag` (`6529.io/e/diag`) stores a user-sent diagnostics bundle in
+`telemetry_diagnostics`: gzip, AES-256-GCM under `TELEMETRY_DIAG_KEY` with the
+short code as associated data, no sender data, hard-deleted 14 days after upload
+(by uploads and the daily job). Bundles are read through
+`GET /api/telemetry/diagnostics[/{code}]` by profiles that can currently write
+in the wave set as `TELEMETRY_DIAG_READER_WAVE_ID` (the dev-team chat), checked
+live against that wave's chat group on every request; unset means nobody.
 
 `GET /tdh/rules` publishes current TDH boost definitions evaluated against the
 latest completed snapshot's eligible Meme card range. The latest row in
@@ -1341,6 +1410,13 @@ profile consolidation, winner notifications and newsletter readers use native
 configuration/entries/snapshots. Capability restrictions remain independent of
 storage history or sharing a special wave. Mixed chat handlers retain chat
 posting/reactions/visibility/notifications.
+Native vote saves reconcile the acting voter's credit inside the command
+transaction; background workers reconcile competition-wide credit and refresh
+weighted standings. WAVE credit checks batch identity and spending reads, while
+DROP credit checks retain per-entry reconciliation. Leaderboard and threshold
+writes use batches of 100 on the same connection, preserving atomic scores,
+cleanup and events. Each worker competition pass records elapsed time including
+lock acquisition and commit.
 Curation token watches register only explicit eligible CURATION entry content.
 Pre-entry creation carries its verified competition permit; existing drops use
 locked active membership. A shared hub or default selection grants no watch

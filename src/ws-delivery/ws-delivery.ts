@@ -8,6 +8,15 @@ import {
   webSocketDeliveryStore
 } from './ws-delivery-store';
 import { shouldReconnectListener } from './ws-delivery-policy';
+import { WebSocketSendLimitError } from '@/api/ws/ws-send-scheduler';
+
+/** Expected cooldown at the durable queue boundary; retain without paging per retry. */
+export class WebSocketDeliveryDeferredError extends Error {
+  constructor() {
+    super('WebSocket delivery deferred');
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
 
 export type WebSocketDeliveryResult =
   | { status: 'sent' }
@@ -331,6 +340,9 @@ export class WebSocketDelivery {
     try {
       logger.error({
         ...failure.diagnostic,
+        delivery_failure:
+          error instanceof WebSocketSendLimitError ? error.reason : 'SDK',
+        frame_bytes: Buffer.byteLength(input.message, 'utf8'),
         connection_hash: connectionHash(input.connectionId)
       });
     } catch {

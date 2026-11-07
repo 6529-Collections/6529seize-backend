@@ -59,6 +59,8 @@ function harness({
     appWebSockets as never,
     connections as never,
     { getViewerContextsForDrop: viewerContexts },
+    // Staging (#2111): no outbox wakeup in these unit tests.
+    undefined,
     queue
   );
   const sentTo = () =>
@@ -276,7 +278,7 @@ describe('reply after commit (waves 1.1)', () => {
     const [[inlineCall]] = inline.appWebSockets.send.mock.calls;
     const [[queuedCall]] = queued.appWebSockets.send.mock.calls;
     expect(queuedCall.connectionId).toBe('c-4');
-    expect(queuedCall.jwtExpiry).toBe(4102444800);
+    // Staging (#2111): the send re-reads the row, so no known expiry is passed.
     expect(frameBody(queuedCall.message)).toEqual(
       frameBody(inlineCall.message)
     );

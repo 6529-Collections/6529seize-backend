@@ -771,7 +771,7 @@ describeWithSeed(
             connection
           })
         )
-      ).rejects.toThrow('competition history');
+      ).rejects.toThrow('decision history');
     });
 
     it('rejects stale configuration and records pause/resume without closing participation', async () => {

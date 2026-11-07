@@ -1,26 +1,7 @@
+import { wakeWebSocketOutbox } from '@/websocket-outbox/wakeup';
 import { ApiDrop } from '../generated/models/ApiDrop';
+import { ANON_USER_ID, appWebSockets, AppWebSockets } from './ws';
 import {
-  ANON_USER_ID,
-  appWebSockets,
-  AppWebSockets,
-  WS_SEND_CONCURRENCY_CAP
-} from './ws';
-import { forEachConcurrent } from '@/for-each-concurrent';
-import {
-  buildDropFramesJobs,
-  DropFramesJob,
-  QueuedRecipient
-} from '@/ws-delivery/wave-fanout-job';
-import {
-  fanoutChunkSize,
-  inlineFanoutLimit,
-  isAsyncFanoutEnabled,
-  WaveFanoutQueue,
-  waveFanoutQueue
-} from '@/ws-delivery/wave-fanout-queue';
-import { DeliveryBatch, DeliveryMetricsBatch } from '@/ws-delivery/ws-delivery';
-import {
-  WaveRecipient,
   wsConnectionRepository,
   WsConnectionRepository
 } from './ws-connection.repository';
@@ -71,6 +52,20 @@ import { AuthenticationContext } from '@/auth-context';
 import { NotFoundException, UnauthorisedException } from '@/exceptions';
 import { isExpectedClientError } from '@/operational-errors';
 import { typingFailureDetails } from './ws-typing-failure';
+import { forEachWebSocketRecipient } from '@/api/ws/ws-send-scheduler';
+import {
+  buildDropFramesJobs,
+  DropFramesJob,
+  QueuedRecipient
+} from '@/ws-delivery/wave-fanout-job';
+import {
+  fanoutChunkSize,
+  inlineFanoutLimit,
+  isAsyncFanoutEnabled,
+  WaveFanoutQueue,
+  waveFanoutQueue
+} from '@/ws-delivery/wave-fanout-queue';
+import { DeliveryBatch, DeliveryMetricsBatch } from '@/ws-delivery/ws-delivery';
 import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import {
   anonymizeDropBroadcast,
@@ -89,6 +84,8 @@ const dropNotificationIdentityForLog = (drop: ApiDrop): string =>
   `drop_id=${scalarForLog(drop.id)} wave_id=${scalarForLog(
     drop.wave?.id
   )} serial_no=${scalarForLog(drop.serial_no)}`;
+
+const DROP_DELETE_NOTIFICATION_BATCH_SIZE = 100;
 
 const SEND_OUTCOMES: ReadonlySet<string> = new Set([
   'sent',
@@ -111,7 +108,17 @@ function sendOutcome(result: unknown): FanoutSendOutcome {
 export interface NotificationConnectionRecipient {
   readonly connectionId: string;
   readonly identityId: string;
-  /** Stored JWT expiry when the lookup returned it; skips a fence read. */
+}
+
+/**
+ * A wave fan-out recipient. Staging (#2111): recipient rows carry no stored
+ * JWT expiry, because every send re-reads the connection row; queued jobs
+ * therefore carry 0, which nothing on this branch reads.
+ */
+interface WaveRecipient {
+  readonly connectionId: string;
+  readonly profileId: string | null;
+  readonly wave_id: string | null;
   readonly jwtExpiry?: number;
 }
 
@@ -140,8 +147,7 @@ function queuedToRecipient(recipient: QueuedRecipient): WaveRecipient {
 
 interface FanoutSend {
   readonly connectionId: string;
-  readonly jwtExpiry?: number;
-  /** Resolved when the pool reaches this send, so payloads stay lazy. */
+  /** Resolved when the scheduler reaches this send, so payloads stay lazy. */
   readonly message: () => string;
 }
 
@@ -542,8 +548,51 @@ export class WsListenersNotifier {
       ContentModerationDb,
       'getViewerContextsForDrop'
     > = contentModerationDb,
+    private readonly wakeOutbox?: () => Promise<void>,
     private readonly fanoutQueue: WaveFanoutQueue = waveFanoutQueue
   ) {}
+
+  private get usesOutbox(): boolean {
+    return !!this.wakeOutbox && process.env.NODE_ENV !== 'local';
+  }
+
+  private async legacyConnectionIds(
+    ids: readonly string[],
+    ctx: RequestContext = {}
+  ): Promise<string[]> {
+    return this.usesOutbox
+      ? this.wsConnectionRepository.filterConnectionIdsByDeliveryMode(
+          ids,
+          false,
+          ctx
+        )
+      : [...ids];
+  }
+
+  private async legacyRecipients<T extends { connectionId: string }>(
+    rows: readonly T[],
+    ctx: RequestContext = {}
+  ): Promise<T[]> {
+    if (!this.usesOutbox) return [...rows];
+    const allowed = new Set(
+      await this.legacyConnectionIds(
+        rows.map((row) => row.connectionId),
+        ctx
+      )
+    );
+    return rows.filter((row) => allowed.has(row.connectionId));
+  }
+
+  private async sendLegacyNotification(input: {
+    connectionId: string;
+    message: string;
+    batch?: DeliveryBatch;
+  }): Promise<unknown> {
+    return this.appWebSockets.send({
+      ...input,
+      ...(this.usesOutbox ? { legacyOnly: true } : {})
+    });
+  }
 
   async notifyAboutCompetitionUpdate(
     event: {
@@ -579,18 +628,22 @@ export class WsListenersNotifier {
         drop_id: event.drop_id
       }
     });
-    await forEachConcurrent(
-      recipients,
-      async ({ connectionId, jwtExpiry }) => {
-        await this.appWebSockets.send({ connectionId, jwtExpiry, message });
-      },
-      { concurrency: WS_SEND_CONCURRENCY_CAP }
-    );
+    for (let offset = 0; offset < recipients.length; offset += 100) {
+      await Promise.all(
+        recipients
+          .slice(offset, offset + 100)
+          .map(({ connectionId }) =>
+            this.appWebSockets.send({ connectionId, message })
+          )
+      );
+    }
   }
 
   async notifyAboutIdentityNotificationsChanged(
     inputProfileIds: string[]
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     const profileIds = Array.from(
       new Set(inputProfileIds.filter((profileId) => !!profileId))
     );
@@ -598,22 +651,20 @@ export class WsListenersNotifier {
       return;
     }
     try {
-      const recipients =
+      const recipients = await this.legacyRecipients(
         await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
           profileIds
-        );
-      await forEachConcurrent(
+        )
+      );
+      await forEachWebSocketRecipient(
         recipients,
-        async ({ connectionId, identityId, jwtExpiry }) => {
-          await this.appWebSockets.send({
+        ({ connectionId, identityId }) =>
+          this.sendLegacyNotification({
             connectionId,
-            jwtExpiry,
             message: JSON.stringify(
               identityNotificationsChangedMessage(identityId)
             )
-          });
-        },
-        { concurrency: WS_SEND_CONCURRENCY_CAP }
+          })
       );
     } catch (error) {
       this.logger.error(
@@ -627,6 +678,8 @@ export class WsListenersNotifier {
     states: ApiDmUnreadConversationState[],
     resolvedRecipients?: readonly NotificationConnectionRecipient[]
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     const statesByProfileId = states.reduce((acc, state) => {
       const profileStates = acc.get(state.profile_id) ?? [];
       profileStates.push(state);
@@ -638,27 +691,26 @@ export class WsListenersNotifier {
     }
     const profileIds = Array.from(statesByProfileId.keys());
     try {
-      const recipients =
+      const recipients = await this.legacyRecipients(
         resolvedRecipients ??
-        (await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
-          profileIds
-        ));
-      await forEachConcurrent(
-        recipients.flatMap(({ connectionId, identityId, jwtExpiry }) =>
-          (statesByProfileId.get(identityId) ?? []).map((state) => ({
-            connectionId,
-            jwtExpiry,
-            state
-          }))
-        ),
-        async ({ connectionId, jwtExpiry, state }) => {
-          await this.appWebSockets.send({
-            connectionId,
-            jwtExpiry,
-            message: JSON.stringify(dmUnreadStateChangedMessage(state))
-          });
-        },
-        { concurrency: WS_SEND_CONCURRENCY_CAP }
+          (await this.wsConnectionRepository.findNotificationConnectionIdsByIdentityIds(
+            profileIds
+          ))
+      );
+      // Each frame is independent: a failed conversation must not skip later
+      // states for the same recipient. Generate lazily to keep fan-out bounded.
+      const frames = function* () {
+        for (const { connectionId, identityId } of recipients) {
+          for (const state of statesByProfileId.get(identityId) ?? []) {
+            yield { connectionId, state };
+          }
+        }
+      };
+      await forEachWebSocketRecipient(frames(), ({ connectionId, state }) =>
+        this.sendLegacyNotification({
+          connectionId,
+          message: JSON.stringify(dmUnreadStateChangedMessage(state))
+        })
       );
     } catch (error) {
       this.logger.error(
@@ -729,6 +781,8 @@ export class WsListenersNotifier {
       useSystemBroadcastAudience?: boolean;
     } = {}
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     const timerName = `${this.constructor.name}->${
       {
         [WsMessageType.DROP_UPDATE]: 'notifyAboutDrop',
@@ -740,21 +794,24 @@ export class WsListenersNotifier {
     const serverReceivedAt = serverReceivedAtFromTimer(ctx.timer);
     const measurement = new FanoutMeasurement(updateType, serverReceivedAt);
     try {
-      const onlineProfiles = useSystemBroadcastAudience
-        ? await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
-            {
-              groupId: inputDrop.wave.visibility_group_id,
-              waveId: inputDrop.wave.id
-            },
-            ctx
-          )
-        : await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
-            {
-              groupId: inputDrop.wave.visibility_group_id,
-              waveId: inputDrop.wave.id
-            },
-            ctx
-          );
+      const onlineProfiles = await this.legacyRecipients(
+        useSystemBroadcastAudience
+          ? await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
+              {
+                groupId: inputDrop.wave.visibility_group_id,
+                waveId: inputDrop.wave.id
+              },
+              ctx
+            )
+          : await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+              {
+                groupId: inputDrop.wave.visibility_group_id,
+                waveId: inputDrop.wave.id
+              },
+              ctx
+            ),
+        ctx
+      );
       measurement.queryDone(onlineProfiles.length);
       if (!onlineProfiles.length) return;
       const audienceDrop = await this.restrictQuotesToWaveAudience(
@@ -852,7 +909,7 @@ export class WsListenersNotifier {
       split.deferred.map(({ connectionId, profileId, jwtExpiry }) => ({
         c: connectionId,
         p: profileId,
-        e: jwtExpiry
+        e: jwtExpiry ?? 0
       })),
       fanoutChunkSize()
     );
@@ -973,7 +1030,7 @@ export class WsListenersNotifier {
   ): Promise<FanoutSend[]> {
     const { audienceDrop, authorIdsByDropId } = frames;
     const creditLefts = await this.getCreditLeftsForOnlineProfiles(
-      recipients,
+      [...recipients],
       audienceDrop
     );
     const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
@@ -994,22 +1051,42 @@ export class WsListenersNotifier {
       onSerialized: () => measurement.serialized()
     });
     measurement.prepareDone();
-    return recipients.map(({ connectionId, profileId, jwtExpiry }) => ({
+    return recipients.map(({ connectionId, profileId }) => ({
       connectionId,
-      jwtExpiry,
       message: () => payloadFor(profileId)
     }));
   }
 
   /**
-   * Sends one frame per recipient through a capped pool. Post-send
-   * bookkeeping and delivery metrics are batched for the whole fan-out and
-   * awaited before this returns: nothing is left running after a response.
+   * Sends one frame per recipient through #2111's send scheduler, with
+   * bookkeeping and delivery metrics batched for the fan-out.
    */
   private async sendToAll(
-    sends: Iterable<FanoutSend>,
+    sends: readonly FanoutSend[],
     serverReceivedAt: number | null,
     measurement: FanoutMeasurement
+  ): Promise<void> {
+    await this.withDeliveryBatch((batch) =>
+      forEachWebSocketRecipient(sends, (send) => {
+        // AppWebSockets.send re-reads the connection row before sending.
+        measurement.connectionRead();
+        return this.sendMeasured(
+          send.connectionId,
+          send.message(),
+          serverReceivedAt,
+          measurement,
+          batch
+        );
+      })
+    );
+  }
+
+  /**
+   * Batches post-send bookkeeping and delivery metrics for one fan-out; the
+   * deferred bookkeeping is awaited before this returns.
+   */
+  private async withDeliveryBatch(
+    run: (batch: DeliveryBatch) => Promise<void>
   ): Promise<void> {
     const settlements: Promise<unknown>[] = [];
     const batch: DeliveryBatch = {
@@ -1017,20 +1094,7 @@ export class WsListenersNotifier {
       metrics: new DeliveryMetricsBatch()
     };
     try {
-      await forEachConcurrent(
-        sends,
-        async (send) => {
-          await this.sendMeasured(
-            send.connectionId,
-            send.message(),
-            serverReceivedAt,
-            measurement,
-            send.jwtExpiry,
-            batch
-          );
-        },
-        { concurrency: WS_SEND_CONCURRENCY_CAP }
-      );
+      await run(batch);
     } finally {
       const settled = await Promise.allSettled(settlements);
       const failed = settled.filter(
@@ -1053,17 +1117,14 @@ export class WsListenersNotifier {
     message: string,
     serverReceivedAt: number | null,
     measurement: FanoutMeasurement,
-    jwtExpiry?: number,
     batch?: DeliveryBatch
   ): Promise<unknown> {
     const sentAt = Date.now();
     try {
-      const result = await this.appWebSockets.send({
+      const result = await this.sendLegacyNotification({
         connectionId,
         message: withDeliveryTimestamps(message, { serverReceivedAt, sentAt }),
-        jwtExpiry,
-        batch,
-        onConnectionRead: () => measurement.connectionRead()
+        ...(batch ? { batch } : {})
       });
       measurement.sendSettled(sentAt, sendOutcome(result));
       return result;
@@ -1154,19 +1215,17 @@ export class WsListenersNotifier {
       };
       const now = Time.currentMillis();
       stage = 'delivery';
-      await Promise.all(
-        connectionIds.map((connectionId: string) =>
-          this.appWebSockets.send({
-            connectionId,
-            message: JSON.stringify(
-              userIsTypingMessage({
-                wave_id: waveId,
-                timestamp: now,
-                profile: profile
-              })
-            )
-          })
-        )
+      await forEachWebSocketRecipient(connectionIds, (connectionId: string) =>
+        this.appWebSockets.send({
+          connectionId,
+          message: JSON.stringify(
+            userIsTypingMessage({
+              wave_id: waveId,
+              timestamp: now,
+              profile: profile
+            })
+          )
+        })
       );
     } catch (error) {
       if (!isExpectedClientError(error)) {
@@ -1220,10 +1279,7 @@ export class WsListenersNotifier {
   }
 
   private async getCreditLeftsForOnlineProfiles(
-    onlineProfiles: readonly {
-      connectionId: string;
-      profileId: string | null;
-    }[],
+    onlineProfiles: { connectionId: string; profileId: string | null }[],
     inputDrop: ApiDrop
   ) {
     const profileIds = onlineProfiles
@@ -1269,6 +1325,8 @@ export class WsListenersNotifier {
     visibility_group_id: string | null,
     ctx: RequestContext
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     if (!dropInfos.length) {
       return;
     }
@@ -1281,33 +1339,53 @@ export class WsListenersNotifier {
       serverReceivedAt
     );
     try {
-      const onlineClients =
+      const onlineClients = await this.legacyRecipients(
         await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
           {
             groupId: visibility_group_id,
             waveId: firstDrop.wave_id
           },
           ctx
-        );
+        ),
+        ctx
+      );
       measurement.queryDone(onlineClients.length * dropInfos.length);
       measurement.prepareDone();
-      const messages = dropInfos.map((dropInfo) => {
+      if (!onlineClients.length) return;
+      const connectionIds = onlineClients.map((it) => it.connectionId);
+      let pendingSends: Promise<unknown>[] = [];
+      const sendFailures: unknown[] = [];
+      const flushPendingSends = async (): Promise<void> => {
+        const results = await Promise.allSettled(pendingSends);
+        sendFailures.push(
+          ...results.flatMap((result) =>
+            result.status === 'rejected' ? [result.reason] : []
+          )
+        );
+        pendingSends = [];
+      };
+      for (const dropInfo of dropInfos) {
+        const message = JSON.stringify(dropDeleteMessage(dropInfo));
         measurement.serialized();
-        return JSON.stringify(dropDeleteMessage(dropInfo));
-      });
-      // Deletions go out in order, each to every listener; a failed send
-      // does not stop later ones, and the first failure is rethrown.
-      await this.sendToAll(
-        messages.flatMap((message) =>
-          onlineClients.map(({ connectionId, jwtExpiry }) => ({
-            connectionId,
-            jwtExpiry,
-            message: () => message
-          }))
-        ),
-        serverReceivedAt,
-        measurement
-      );
+        for (const connectionId of connectionIds) {
+          measurement.connectionRead();
+          pendingSends.push(
+            this.sendMeasured(
+              connectionId,
+              message,
+              serverReceivedAt,
+              measurement
+            )
+          );
+          if (pendingSends.length === DROP_DELETE_NOTIFICATION_BATCH_SIZE) {
+            await flushPendingSends();
+          }
+        }
+      }
+      await flushPendingSends();
+      if (sendFailures.length) {
+        throw sendFailures[0];
+      }
     } finally {
       ctx.timer?.stop(timerName);
       measurement.emit({
@@ -1329,6 +1407,8 @@ export class WsListenersNotifier {
     },
     ctx: RequestContext
   ): Promise<void> {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     ctx.timer?.start(
       `${this.constructor.name}->notifyAboutAttachmentStatusUpdate`
     );
@@ -1360,19 +1440,22 @@ export class WsListenersNotifier {
           }
         )
       );
-      const uniqueConnectionIds = Array.from(
-        new Set([...ownerConnectionIds, ...waveConnectionIdLists.flat()])
+      const uniqueConnectionIds = await this.legacyConnectionIds(
+        Array.from(
+          new Set([...ownerConnectionIds, ...waveConnectionIdLists.flat()])
+        ),
+        ctx
       );
       if (!uniqueConnectionIds.length) {
         return;
       }
-      await Promise.all(
-        uniqueConnectionIds.map((connectionId: string) =>
-          this.appWebSockets.send({
+      await forEachWebSocketRecipient(
+        uniqueConnectionIds,
+        (connectionId: string) =>
+          this.sendLegacyNotification({
             connectionId,
             message
           })
-        )
       );
     } catch (e) {
       this.logger.error(
@@ -1390,19 +1473,21 @@ export class WsListenersNotifier {
     nftLinkData: ApiNftLinkData,
     ctx: RequestContext
   ) {
+    if (this.usesOutbox) await this.wakeOutbox!();
+
     ctx.timer?.start(`${this.constructor.name}->notifyAboutNftLinkUpdate`);
     const message = JSON.stringify(nftLinkUpdatedMessage(nftLinkData));
     try {
-      const connections =
-        await this.wsConnectionRepository.findAllConnectionIds();
+      const connections = await this.legacyConnectionIds(
+        await this.wsConnectionRepository.findAllConnectionIds(),
+        ctx
+      );
       if (connections.length) {
-        await Promise.all(
-          connections.map((connectionId: string) =>
-            this.appWebSockets.send({
-              connectionId,
-              message
-            })
-          )
+        await forEachWebSocketRecipient(connections, (connectionId: string) =>
+          this.sendLegacyNotification({
+            connectionId,
+            message
+          })
         );
       }
     } catch (e) {
@@ -1418,5 +1503,7 @@ export class WsListenersNotifier {
 
 export const wsListenersNotifier = new WsListenersNotifier(
   appWebSockets,
-  wsConnectionRepository
+  wsConnectionRepository,
+  contentModerationDb,
+  wakeWebSocketOutbox
 );

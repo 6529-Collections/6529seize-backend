@@ -325,10 +325,10 @@ describe('dbMigrationsLoop explicit schema scope', () => {
         entities: Object.values(Entities),
         syncEntities: false
       });
+      expect(getDataSource().synchronize).not.toHaveBeenCalled();
       expect(
         pushNotificationCancellationsDb.deleteExpired
       ).toHaveBeenCalledTimes(1);
-      expect(getDataSource().synchronize).not.toHaveBeenCalled();
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(
         contentModerationDb.deleteExpiredPrePublicationChecks

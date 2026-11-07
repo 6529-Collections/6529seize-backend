@@ -264,8 +264,8 @@ export interface ArtistArtworkNotification extends UserNotificationBase {
 }
 
 export type UserNotification =
-  | EncryptedMessageNotification
   | ArtistArtworkNotification
+  | EncryptedMessageNotification
   | VotingCreditsReturnedNotification
   | MemeCollaborationNotification
   | CompetitionLifecycleNotification

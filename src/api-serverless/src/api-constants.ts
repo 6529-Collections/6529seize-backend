@@ -31,7 +31,9 @@ export const corsOptions: ApiCorsOptions = {
     'Accept',
     'X-Requested-With',
     'Authorization'
-  ]
+  ],
+  // Lets web clients read the id that matches a response to server logs.
+  exposedHeaders: ['X-Request-Id']
 };
 
 const WEB_AUTH_CREDENTIAL_ROUTE_PATHS = new Set([
@@ -92,7 +94,7 @@ export function getCorsOptionsForRequest(
     ...corsOptions,
     origin,
     credentials: true,
-    exposedHeaders: ['Retry-After', 'X-RateLimit-Reset']
+    exposedHeaders: ['Retry-After', 'X-RateLimit-Reset', 'X-Request-Id']
   };
 }
 

@@ -1,3 +1,7 @@
+import {
+  recordWebSocketEvent,
+  withWebSocketMutation
+} from '@/websocket-outbox/outbox.db';
 import { DROP_MEDIA_UPLOADS_TABLE, DROP_MEDIA_TABLE } from '@/constants';
 import {
   DropMediaUploadEntity,
@@ -123,23 +127,37 @@ export class DropMediaUploadsDb extends LazyDbAccessCompatibleService {
       timer?: Timer;
     } = {}
   ): Promise<void> {
-    timer?.start(`${this.constructor.name}->updateUpload`);
-    try {
-      const allowedPatch = this.getAllowedPatch(patch);
-      const assignments = Object.keys(allowedPatch)
-        .map((key) => `${key} = :${key}`)
-        .join(', ');
-      if (!assignments) {
-        return;
+    return withWebSocketMutation(
+      this.db,
+      { connection, timer },
+      async ({ connection, timer }) => {
+        const mutationResult = await (async () => {
+          timer?.start(`${this.constructor.name}->updateUpload`);
+          try {
+            const allowedPatch = this.getAllowedPatch(patch);
+            const assignments = Object.keys(allowedPatch)
+              .map((key) => `${key} = :${key}`)
+              .join(', ');
+            if (!assignments) {
+              return;
+            }
+            await this.db.execute(
+              `update ${DROP_MEDIA_UPLOADS_TABLE} set ${assignments} where id = :id`,
+              { id, ...allowedPatch },
+              connection ? { wrappedConnection: connection } : undefined
+            );
+          } finally {
+            timer?.stop(`${this.constructor.name}->updateUpload`);
+          }
+        })();
+        await recordWebSocketEvent(
+          { type: 'media', uploadId: id },
+          { connection, timer },
+          this.db
+        );
+        return mutationResult;
       }
-      await this.db.execute(
-        `update ${DROP_MEDIA_UPLOADS_TABLE} set ${assignments} where id = :id`,
-        { id, ...allowedPatch },
-        connection ? { wrappedConnection: connection } : undefined
-      );
-    } finally {
-      timer?.stop(`${this.constructor.name}->updateUpload`);
-    }
+    );
   }
 
   async transitionStatus(
@@ -158,30 +176,41 @@ export class DropMediaUploadsDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext = {}
   ): Promise<boolean> {
-    const allowedPatch = this.getAllowedPatch({
-      ...patch,
-      status: toStatus,
-      updated_at: Time.currentMillis()
-    });
-    const assignments = Object.keys(allowedPatch)
-      .map((key) => `${key} = :${key}`)
-      .join(', ');
-    const params = {
-      id,
-      fromStatuses,
-      ...allowedPatch,
-      ...(updatedBefore === undefined ? {} : { updatedBefore })
-    };
-    const result = await this.db.execute(
-      `update ${DROP_MEDIA_UPLOADS_TABLE}
+    return withWebSocketMutation(this.db, ctx, async (ctx) => {
+      const mutationResult = await (async () => {
+        const allowedPatch = this.getAllowedPatch({
+          ...patch,
+          status: toStatus,
+          updated_at: Time.currentMillis()
+        });
+        const assignments = Object.keys(allowedPatch)
+          .map((key) => `${key} = :${key}`)
+          .join(', ');
+        const params = {
+          id,
+          fromStatuses,
+          ...allowedPatch,
+          ...(updatedBefore === undefined ? {} : { updatedBefore })
+        };
+        const result = await this.db.execute(
+          `update ${DROP_MEDIA_UPLOADS_TABLE}
        set ${assignments}
        where id = :id
          and status in (:fromStatuses)
          ${updatedBefore === undefined ? '' : 'and updated_at < :updatedBefore'}`,
-      params,
-      ctx.connection ? { wrappedConnection: ctx.connection } : undefined
-    );
-    return this.db.getAffectedRows(result) === 1;
+          params,
+          ctx.connection ? { wrappedConnection: ctx.connection } : undefined
+        );
+        return this.db.getAffectedRows(result) === 1;
+      })();
+      if (mutationResult)
+        await recordWebSocketEvent(
+          { type: 'media', uploadId: id },
+          ctx,
+          this.db
+        );
+      return mutationResult;
+    });
   }
 
   async attachUploadsToDrop({

@@ -8590,13 +8590,19 @@ paths:
               $ref: "#/components/schemas/ApiCreateDropRequest"
       responses:
         "201":
-          description: successful operation
+          description: >-
+            The created drop. A retry carrying an already used client_drop_id
+            returns the drop created the first time.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiDrop"
         "400":
           description: Invalid request
+        "409":
+          description: >-
+            client_drop_id was already used by this author for a different wave
+            or content.
   /drop-ids:
     get:
       tags:
@@ -19127,6 +19133,155 @@ paths:
                 $ref: "#/components/schemas/ApiTdhEditionsPage"
         "404":
           description: Identity not found
+  /e:
+    post:
+      tags:
+        - Telemetry
+      summary: Record first-party telemetry counters
+      description: >-
+        First-party analytics collector, reached as 6529.io/e through
+        CloudFront. Accepts one batch of at most 8192 bytes as text/plain
+        (sendBeacon) or application/json and returns 204. Unknown fields,
+        events, props and values are dropped rather than rejected. Only daily
+        counters are stored; the IP address, user agent, `fp` and request body
+        are never logged or stored. The full JSON Schema, including the
+        product-event registry, is telemetry-collector.v1.schema.json next to
+        the collector source.
+      operationId: recordTelemetryBatch
+      security: []
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              $ref: "#/components/schemas/ApiTelemetryBatch"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiTelemetryBatch"
+      responses:
+        "204":
+          description: Batch accepted (anything outside the schema was dropped)
+        "400":
+          description: Body is not JSON
+        "413":
+          description: Body larger than 8192 bytes
+        "429":
+          description: Too many batches from this visitor
+        "503":
+          description: Counters could not be recorded
+  /e/diag:
+    post:
+      tags:
+        - Telemetry
+      summary: Send a diagnostics bundle
+      description: >-
+        Stores a user-sent diagnostics bundle (6529.io/e/diag through
+        CloudFront) and returns a short code the user can share with the team.
+        `data` is the base64 of the bundle JSON, gzip-compressed when `encoding`
+        is gzip; decoded data at most 256 KB, decompressed at most 2 MiB,
+        top-level object with `v: 1`. Stored AES-256-GCM encrypted, deleted
+        after 14 days, readable only by the team. Nothing about the sender is
+        stored. Limited to 5 bundles per hour per visitor.
+      operationId: uploadTelemetryDiagnostics
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiTelemetryDiagnosticsUpload"
+      responses:
+        "201":
+          description: Bundle stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTelemetryDiagnosticsReceipt"
+        "400":
+          description: Invalid bundle
+        "413":
+          description: Bundle too large
+        "429":
+          description: Too many bundles from this visitor
+        "503":
+          description: Diagnostics are unavailable
+  /telemetry/diagnostics:
+    get:
+      tags:
+        - Telemetry
+      summary: List stored diagnostics bundles (team only)
+      description: >-
+        Readers are profiles that can currently write in the wave configured as
+        TELEMETRY_DIAG_READER_WAVE_ID (the dev-team chat), checked live on every
+        request.
+      operationId: listTelemetryDiagnostics
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: telemetry
+        handler:
+          import: "@/api/telemetry/telemetry-diagnostics.handlers"
+          name: handleListTelemetryDiagnostics
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: Unexpired bundles, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTelemetryDiagnosticsPage"
+        "401":
+          description: Authentication required
+        "403":
+          description: Not a current writer in the team reader wave
+  /telemetry/diagnostics/{code}:
+    get:
+      tags:
+        - Telemetry
+      summary: Read one diagnostics bundle (team only)
+      description: >-
+        Same reader rule as the list. Each read is logged with the reader's
+        profile id and the bundle code only.
+      operationId: getTelemetryDiagnosticsBundle
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: telemetry
+        handler:
+          import: "@/api/telemetry/telemetry-diagnostics.handlers"
+          name: handleGetTelemetryDiagnosticsBundle
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Decrypted bundle
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTelemetryDiagnosticsBundle"
+        "401":
+          description: Authentication required
+        "403":
+          description: Not a current writer in the team reader wave
+        "404":
+          description: Unknown or expired code
   /transactions:
     get:
       tags:
@@ -30807,6 +30962,20 @@ components:
             hidden. Omit or set to false to leave previews visible.
             Signature-required drops must include this field in the signed
             payload when present.
+        client_drop_id:
+          type: string
+          format: uuid
+          description: >-
+            Optional client-generated UUID that makes the create idempotent.
+            When the same author sends the same client_drop_id again with the
+            same wave and content (a retry), the drop created the first time is
+            returned instead of a new one. The same id with a different wave or
+            content is rejected with 409. Without it, every create makes a new
+            drop. Use the plain 8-4-4-4-12 UUID form. A retry is matched on wave
+            and content only, so a retry carrying a fresh signature for the same
+            content is answered too. Like every other body field, client_drop_id
+            is part of the signed payload when present: adding it to a body that
+            was signed without it fails the signature check.
         device_signature:
           $ref: "#/components/schemas/ApiDeviceSignature"
     ApiCreateGroup:
@@ -32057,6 +32226,15 @@ components:
             voter count is then unknown, not zero. Omitted by older servers.
         id:
           type: string
+        client_drop_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: >-
+            The client_drop_id sent when the drop was created. Present on the
+            create response (including a retried create) and on the DROP_UPDATE
+            broadcast for that creation, so the author's client can match its
+            pending send. Omitted on other reads.
         serial_no:
           description: Sequence number of the drop in Seize
           type: number
@@ -38632,12 +38810,6 @@ components:
     ApiNotificationAdditionalContextV2:
       type: object
       properties:
-        encrypted_group:
-          type: string
-          description: Opaque encrypted-chat handle.
-        encrypted_message_seq:
-          type: integer
-          description: Sequence of the message to preview from local decrypted history.
         artist_id:
           type: string
         artwork_title:
@@ -38647,6 +38819,12 @@ components:
         submitted_at:
           type: integer
           format: int64
+        encrypted_group:
+          type: string
+          description: Opaque encrypted-chat handle.
+        encrypted_message_seq:
+          type: integer
+          description: Sequence of the message to preview from local decrypted history.
         reason:
           $ref: "#/components/schemas/ApiVotingCreditReleaseReason"
         submission_title:
@@ -42562,6 +42740,244 @@ components:
         bonus:
           type: number
           format: double
+    ApiTelemetryBatch:
+      type: object
+      description: First-party telemetry batch, schema version 1.
+      required:
+        - v
+        - events
+      properties:
+        v:
+          type: integer
+          enum:
+            - 1
+        events:
+          type: array
+          maxItems: 40
+          items:
+            $ref: "#/components/schemas/ApiTelemetryEvent"
+    ApiTelemetryDiagnosticsBundle:
+      type: object
+      required:
+        - code
+        - created_at
+        - expires_at
+        - compressed_bytes
+        - uncompressed_bytes
+        - bundle
+      properties:
+        code:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        compressed_bytes:
+          type: integer
+        uncompressed_bytes:
+          type: integer
+        bundle:
+          type: object
+          additionalProperties: true
+    ApiTelemetryDiagnosticsPage:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryDiagnosticsSummary"
+    ApiTelemetryDiagnosticsReceipt:
+      type: object
+      required:
+        - code
+        - expires_at
+      properties:
+        code:
+          type: string
+          description: Short code such as D-7K3Q-9XW2 (Crockford base32).
+        expires_at:
+          type: string
+          format: date-time
+    ApiTelemetryDiagnosticsSummary:
+      type: object
+      required:
+        - code
+        - created_at
+        - expires_at
+        - compressed_bytes
+        - uncompressed_bytes
+      properties:
+        code:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        compressed_bytes:
+          type: integer
+        uncompressed_bytes:
+          type: integer
+    ApiTelemetryDiagnosticsUpload:
+      type: object
+      required:
+        - v
+        - encoding
+        - data
+      properties:
+        v:
+          type: integer
+          enum:
+            - 1
+        encoding:
+          type: string
+          enum:
+            - gzip
+            - identity
+        data:
+          type: string
+          description: Base64 of the (optionally gzip-compressed) bundle JSON.
+    ApiTelemetryEvent:
+      type: object
+      description: >-
+        One telemetry record. `pv` page view, `vitals` web vitals, `ev`
+        registered product event, `health` client health counters. Routes are
+        templates (for example /waves/[wave]); ids, handles, addresses and free
+        text are never sent.
+      required:
+        - v
+        - t
+        - route
+        - device
+        - platform
+      properties:
+        v:
+          type: integer
+          enum:
+            - 1
+        t:
+          type: string
+          enum:
+            - pv
+            - vitals
+            - ev
+            - health
+        route:
+          type: string
+          maxLength: 96
+        device:
+          type: string
+          enum:
+            - mobile
+            - tablet
+            - desktop
+        platform:
+          type: string
+          enum:
+            - web
+            - ios
+            - android
+            - desktop
+        page_group:
+          type: string
+          maxLength: 32
+        prev_route:
+          type: string
+          maxLength: 96
+          description: Previous in-app route template, or `entry` for an arrival.
+        referrer_domain:
+          type: string
+          maxLength: 100
+          description: External referrer hostname; only kept for entries.
+        browser:
+          type: string
+          enum:
+            - chrome
+            - safari
+            - firefox
+            - edge
+            - other
+        signed_in:
+          type: boolean
+        fp:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{8,32}$
+          description: >-
+            Optional coarse client hash used only in memory for daily unique
+            counts; never stored or logged. Omitted for EU/EEA/UK and unknown
+            countries.
+        lcp:
+          type: number
+          minimum: 0
+          maximum: 300000
+        inp:
+          type: number
+          minimum: 0
+          maximum: 300000
+        ttfb:
+          type: number
+          minimum: 0
+          maximum: 300000
+        fcp:
+          type: number
+          minimum: 0
+          maximum: 300000
+        cls:
+          type: number
+          minimum: 0
+          maximum: 100
+        name:
+          type: string
+          maxLength: 64
+          description: Registered product event name.
+        p:
+          type: object
+          description: Up to six registered enum or boolean props.
+          additionalProperties: true
+        c:
+          $ref: "#/components/schemas/ApiTelemetryHealthCounters"
+        ws_lag:
+          type: number
+          minimum: 0
+          maximum: 300000
+          description: Page p75 WebSocket receive-to-render lag in ms.
+    ApiTelemetryHealthCounters:
+      type: object
+      description: Per-page-view health counts (each 1..10000).
+      properties:
+        asset_fail:
+          type: object
+          description: Keys script, style, font, image, media, other.
+          additionalProperties:
+            type: integer
+        api_fail:
+          type: object
+          description: Keys are API endpoint templates without /api.
+          additionalProperties:
+            type: integer
+        api_slow:
+          type: object
+          description: Keys are API endpoint templates without /api.
+          additionalProperties:
+            type: integer
+        error:
+          type: object
+          description: >-
+            Keys unhandled_error, unhandled_rejection, chunk_load, boundary,
+            resource, other.
+          additionalProperties:
+            type: integer
+        ws_drop:
+          type: integer
+        ws_reconnect:
+          type: integer
+        long_task:
+          type: integer
     ApiToggleHideLinkPreviewRequest:
       type: object
       properties:

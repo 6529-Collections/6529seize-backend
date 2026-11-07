@@ -1,3 +1,6 @@
+jest.mock('@/websocket-outbox/notification-handoff', () => ({
+  retainQueuedNotificationInvalidations: jest.fn().mockResolvedValue(undefined)
+}));
 import { sendIdentityNotificationsBatch } from './identityPushNotifications';
 import { getDataSource } from '@/db';
 import { pushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';

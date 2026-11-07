@@ -1,3 +1,4 @@
+import { recordWebSocketEvent } from '@/websocket-outbox/outbox.db';
 import {
   ATTACHMENTS_TABLE,
   CONTENT_MODERATION_AUDIT_LOG_TABLE,
@@ -1492,6 +1493,16 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
         reason: input.reason
       },
       connection
+    );
+    await recordWebSocketEvent(
+      {
+        type: 'drop',
+        dropId: input.dropId,
+        updateType: 'DROP_UPDATE',
+        reason: 'CONTENT_MODERATION'
+      },
+      { connection },
+      this.db
     );
   }
 

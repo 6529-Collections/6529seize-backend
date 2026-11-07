@@ -1,3 +1,7 @@
+import {
+  recordWebSocketEvent,
+  withWebSocketMutation
+} from '@/websocket-outbox/outbox.db';
 import { ATTACHMENTS_TABLE, DROP_ATTACHMENTS_TABLE } from '@/constants';
 import {
   AttachmentEntity,
@@ -49,10 +53,15 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
       timer?: Timer;
     } = {}
   ) {
-    timer?.start(`${this.constructor.name}->createAttachment`);
-    try {
-      await this.db.execute(
-        `insert into ${ATTACHMENTS_TABLE}
+    return withWebSocketMutation(
+      this.db,
+      { connection, timer },
+      async ({ connection, timer }) => {
+        const mutationResult = await (async () => {
+          timer?.start(`${this.constructor.name}->createAttachment`);
+          try {
+            await this.db.execute(
+              `insert into ${ATTACHMENTS_TABLE}
           (id, owner_profile_id, original_file_name, kind, declared_mime, detected_mime, status,
            original_bucket, original_key, size_bytes, sha256, guardduty_status, verdict,
            ipfs_cid, ipfs_url, error_reason, created_at, updated_at)
@@ -60,12 +69,21 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
           (:id, :owner_profile_id, :original_file_name, :kind, :declared_mime, :detected_mime, :status,
            :original_bucket, :original_key, :size_bytes, :sha256, :guardduty_status, :verdict,
            :ipfs_cid, :ipfs_url, :error_reason, :created_at, :updated_at)`,
-        attachment,
-        connection ? { wrappedConnection: connection } : undefined
-      );
-    } finally {
-      timer?.stop(`${this.constructor.name}->createAttachment`);
-    }
+              attachment,
+              connection ? { wrappedConnection: connection } : undefined
+            );
+          } finally {
+            timer?.stop(`${this.constructor.name}->createAttachment`);
+          }
+        })();
+        await recordWebSocketEvent(
+          { type: 'attachment', attachmentId: attachment.id },
+          { connection, timer },
+          this.db
+        );
+        return mutationResult;
+      }
+    );
   }
 
   async updateAttachment(
@@ -84,23 +102,37 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
       timer?: Timer;
     } = {}
   ) {
-    timer?.start(`${this.constructor.name}->updateAttachment`);
-    try {
-      const allowedPatch = this.getAllowedAttachmentPatch(patch);
-      const assignments = Object.keys(allowedPatch)
-        .map((key) => `${key} = :${key}`)
-        .join(', ');
-      if (!assignments) {
-        return;
+    return withWebSocketMutation(
+      this.db,
+      { connection, timer },
+      async ({ connection, timer }) => {
+        const mutationResult = await (async () => {
+          timer?.start(`${this.constructor.name}->updateAttachment`);
+          try {
+            const allowedPatch = this.getAllowedAttachmentPatch(patch);
+            const assignments = Object.keys(allowedPatch)
+              .map((key) => `${key} = :${key}`)
+              .join(', ');
+            if (!assignments) {
+              return;
+            }
+            await this.db.execute(
+              `update ${ATTACHMENTS_TABLE} set ${assignments} where id = :id`,
+              { id, ...allowedPatch },
+              connection ? { wrappedConnection: connection } : undefined
+            );
+          } finally {
+            timer?.stop(`${this.constructor.name}->updateAttachment`);
+          }
+        })();
+        await recordWebSocketEvent(
+          { type: 'attachment', attachmentId: id },
+          { connection, timer },
+          this.db
+        );
+        return mutationResult;
       }
-      await this.db.execute(
-        `update ${ATTACHMENTS_TABLE} set ${assignments} where id = :id`,
-        { id, ...allowedPatch },
-        connection ? { wrappedConnection: connection } : undefined
-      );
-    } finally {
-      timer?.stop(`${this.constructor.name}->updateAttachment`);
-    }
+    );
   }
 
   async transitionAttachmentStatus(
@@ -125,27 +157,42 @@ export class AttachmentsDb extends LazyDbAccessCompatibleService {
       timer?: Timer;
     } = {}
   ): Promise<boolean> {
-    timer?.start(`${this.constructor.name}->transitionAttachmentStatus`);
-    try {
-      const allowedPatch = this.getAllowedAttachmentPatch({
-        ...patch,
-        status: toStatus,
-        updated_at: updatedAt
-      });
-      const assignments = Object.keys(allowedPatch)
-        .map((key) => `${key} = :${key}`)
-        .join(', ');
-      const result = await this.db.execute(
-        `update ${ATTACHMENTS_TABLE}
+    return withWebSocketMutation(
+      this.db,
+      { connection, timer },
+      async ({ connection, timer }) => {
+        const mutationResult = await (async () => {
+          timer?.start(`${this.constructor.name}->transitionAttachmentStatus`);
+          try {
+            const allowedPatch = this.getAllowedAttachmentPatch({
+              ...patch,
+              status: toStatus,
+              updated_at: updatedAt
+            });
+            const assignments = Object.keys(allowedPatch)
+              .map((key) => `${key} = :${key}`)
+              .join(', ');
+            const result = await this.db.execute(
+              `update ${ATTACHMENTS_TABLE}
          set ${assignments}
          where id = :id and status = :fromStatus`,
-        { id, fromStatus, ...allowedPatch },
-        connection ? { wrappedConnection: connection } : undefined
-      );
-      return this.db.getAffectedRows(result) === 1;
-    } finally {
-      timer?.stop(`${this.constructor.name}->transitionAttachmentStatus`);
-    }
+              { id, fromStatus, ...allowedPatch },
+              connection ? { wrappedConnection: connection } : undefined
+            );
+            return this.db.getAffectedRows(result) === 1;
+          } finally {
+            timer?.stop(`${this.constructor.name}->transitionAttachmentStatus`);
+          }
+        })();
+        if (mutationResult)
+          await recordWebSocketEvent(
+            { type: 'attachment', attachmentId: id },
+            { connection, timer },
+            this.db
+          );
+        return mutationResult;
+      }
+    );
   }
 
   async findAttachmentById(

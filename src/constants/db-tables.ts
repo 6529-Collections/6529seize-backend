@@ -195,6 +195,7 @@ export const DROP_POLLS_TABLE = 'drop_polls';
 export const DROP_POLL_OPTIONS_TABLE = 'drop_poll_options';
 export const DROP_POLL_VOTES_TABLE = 'drop_poll_votes';
 export const DROP_WRITE_OUTBOX_TABLE = 'drop_write_outbox';
+export const DROP_CLIENT_IDS_TABLE = 'drop_client_ids';
 export const PINNED_WAVES_TABLE = 'pinned_waves';
 export const PROFILE_WAVES_TABLE = 'profile_waves';
 export const COOKIES_CONSENT_TABLE = 'cookies_consent';
@@ -284,6 +285,8 @@ export const PUSH_NOTIFICATION_DEVICE_LOGOUT_FENCES_TABLE =
 export const PUSH_NOTIFICATION_CANCELLATIONS_TABLE =
   'push_notification_cancellations';
 
+export const WEBSOCKET_OUTBOX_TABLE = 'websocket_outbox';
+
 export const COMPETITION_VOTE_HISTORY_TABLE = 'competition_vote_history';
 export const COMPETITION_SCORE_HISTORY_TABLE = 'competition_score_history';
 export const COMPETITION_ENTRY_RUNTIME_TABLE = 'competition_entry_runtime';
@@ -303,8 +306,6 @@ export const COMPETITION_CAPABILITY_AUDITS_TABLE =
   'competition_capability_audits';
 export const PUSH_NOTIFICATION_OUTBOX_TABLE =
   'push_notification_outbox_entries';
-export const SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE =
-  'subscription_cache_invalidations';
 export const COMPETITION_MIGRATIONS_TABLE = 'competition_migrations';
 export const COMPETITION_MIGRATION_CHANGES_TABLE =
   'competition_migration_changes';
@@ -315,6 +316,9 @@ export const COMPETITION_LEGACY_MIRROR_PERMITS_TABLE =
   'competition_legacy_mirror_permits';
 export const COMPETITION_LEGACY_EXECUTION_EFFECTS_TABLE =
   'competition_legacy_execution_effects';
+
+export const SUBSCRIPTION_CACHE_INVALIDATIONS_TABLE =
+  'subscription_cache_invalidations';
 
 // End-to-end encrypted DMs and groups (D109). The server stores ciphertext
 // and delivery metadata only; see docs/e2ee-messaging.md.
@@ -340,6 +344,7 @@ export const E2EE_CIPHERTEXT_OBJECTS_TABLE = 'e2ee_ciphertext_objects';
 export const MEME_COLLABORATIONS_TABLE = 'meme_collaborations';
 export const MEME_COLLABORATION_INVITATIONS_TABLE =
   'meme_collaboration_invitations';
+
 export const TRANSFER_RECONCILIATIONS_TABLE = 'transfer_reconciliations';
 
 export const VOTING_CREDIT_RELEASES_TABLE = 'voting_credit_releases';
@@ -351,3 +356,10 @@ export const ARTIST_ARTWORK_ALERTS_TABLE = 'artist_artwork_alerts';
 // Who read or changed reported encrypted messages (trust and safety audit,
 // D109). Kept apart from the E2EE block above.
 export const E2EE_REPORT_ACCESS_LOG_TABLE = 'e2ee_report_access_log';
+
+// First-party telemetry (C52): daily counters only, no raw events, no IPs.
+export const ANALYTICS_DAILY_TABLE = 'analytics_daily';
+export const VITALS_DAILY_TABLE = 'vitals_daily';
+export const HEALTH_DAILY_TABLE = 'health_daily';
+export const UNIQUES_DAILY_TABLE = 'uniques_daily';
+export const TELEMETRY_DIAGNOSTICS_TABLE = 'telemetry_diagnostics';

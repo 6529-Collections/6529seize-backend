@@ -49,7 +49,7 @@ export class CompetitionEntryDropHooks {
           !entry.legacy_origin || entry.status === CompetitionEntryStatus.WINNER
       )
     )
-      throw new ForbiddenException('Competition submissions cannot be edited');
+      throw new ForbiddenException('Decision submissions cannot be edited');
     return { entries, reset_votes: true };
   }
 
@@ -64,7 +64,7 @@ export class CompetitionEntryDropHooks {
           !entry.legacy_origin || entry.status === CompetitionEntryStatus.WINNER
       )
     )
-      throw new ForbiddenException('Competition submissions cannot be edited');
+      throw new ForbiddenException('Decision submissions cannot be edited');
     return { entries, reset_votes: false };
   }
 

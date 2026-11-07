@@ -3,7 +3,8 @@ import { IdentityMutesDb } from './identity-mutes.db';
 function createRepo() {
   const db = {
     execute: jest.fn(),
-    oneOrNull: jest.fn()
+    oneOrNull: jest.fn(),
+    bulkInsert: jest.fn().mockResolvedValue(undefined)
   };
   return {
     db,
@@ -97,4 +98,55 @@ describe('IdentityMutesDb', () => {
     ]);
     expect(db.execute).toHaveBeenCalledTimes(1);
   });
+});
+
+it.each(['muteIdentity', 'unmuteIdentity'] as const)(
+  'captures %s and advances unread versions without checking online recipients',
+  async (method) => {
+    const { db, repo } = createRepo();
+    const connection = { connection: {} };
+    db.execute.mockImplementation(async (sql: string) =>
+      sql.includes('select r.wave_id') ? [{ wave_id: 'wave-1' }] : []
+    );
+    await repo[method](
+      { muter_id: 'muter-1', muted_identity_id: 'author-1' },
+      { connection }
+    );
+    for (const fragment of [
+      method === 'muteIdentity'
+        ? 'insert into identity_mutes'
+        : 'delete from identity_mutes',
+      'set unread_state_version = unread_state_version + 1'
+    ]) {
+      expect(db.execute).toHaveBeenCalledWith(
+        expect.stringContaining(fragment),
+        expect.anything(),
+        { wrappedConnection: connection }
+      );
+    }
+    expect(db.bulkInsert).toHaveBeenCalledWith(
+      'websocket_outbox',
+      [
+        expect.objectContaining({
+          event: JSON.stringify({
+            type: 'dm',
+            profileIds: ['muter-1'],
+            waveId: 'wave-1',
+            deliveryCapability: 'durable_updates_v1'
+          })
+        })
+      ],
+      expect.any(Array),
+      { connection },
+      { connection }
+    );
+  }
+);
+
+const originalNodeEnvironment = process.env.NODE_ENV;
+beforeEach(() => {
+  process.env.NODE_ENV = 'test';
+});
+afterEach(() => {
+  process.env.NODE_ENV = originalNodeEnvironment;
 });

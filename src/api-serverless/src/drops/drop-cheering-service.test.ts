@@ -81,7 +81,7 @@ it('keeps sibling native entries protected even when an old wire projection clas
     .mockResolvedValue([{ competition_id: 'sibling' }] as never);
   const { service, reactions, votes, ws } = fixture(DropType.CHAT);
   await expect(service.updateCheers(request, {})).rejects.toThrow(
-    'Vote through the competition entry'
+    'Vote through the decision entry'
   );
   expect(reactions.addReaction).not.toHaveBeenCalled();
   expect(votes.execute).not.toHaveBeenCalled();

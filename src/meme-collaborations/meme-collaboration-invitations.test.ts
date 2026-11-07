@@ -1,6 +1,5 @@
 import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
-import { env } from '@/env';
 import { userNotifier } from '@/notifications/user.notifier';
 import { competitionMainStageRepository } from '@/competitions/competition-main-stage.repository';
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
@@ -54,7 +53,7 @@ function setup() {
     invitations: jest.fn(async () => [{ profile_id: 'B', status: 'ACCEPTED' }]),
     activeMainStageDrop: jest.fn(async () => ({
       author_id: 'A',
-      competition_id: null
+      competition_id: 'native-main'
     })),
     profiles: jest.fn(async (ids: string[]) =>
       ids.map((id) => ({ id, handle: id }))
@@ -114,6 +113,7 @@ it('snapshots persisted artwork and current terms when inviting on an old unmana
     'createContext',
     expect.any(String),
     expect.objectContaining({
+      terms: 'Native terms',
       artwork: JSON.stringify({
         name: 'Current title',
         description: 'Current description',
@@ -121,6 +121,18 @@ it('snapshots persisted artwork and current terms when inviting on an old unmana
         animation_url: null
       })
     }),
+    expect.any(Object)
+  );
+  expect(db.query).toHaveBeenCalledWith(
+    'competitionTerms',
+    expect.stringContaining('wave_id=:waveId'),
+    { id: 'native-main', waveId: 'wave' },
+    expect.any(Object)
+  );
+  expect(db.query).toHaveBeenCalledWith(
+    'wave',
+    expect.not.stringContaining('participation_terms'),
+    { id: 'wave' },
     expect.any(Object)
   );
 });
@@ -187,7 +199,6 @@ it('rejects nonauthors and proxies', async () => {
 it.each([undefined, 'native-other'])(
   'rejects invitations on new artwork outside Main Stage: %s',
   async (competitionId) => {
-    jest.spyOn(env, 'getStringOrNull').mockReturnValue('main-stage');
     jest
       .spyOn(competitionMainStageRepository, 'isDesignated')
       .mockResolvedValue(false);
@@ -212,14 +223,13 @@ it.each([undefined, 'native-other'])(
 );
 
 it.each([
-  { competitionId: undefined, ids: ['C'] },
-  { competitionId: undefined, ids: ['C', 'D'] },
+  { competitionId: 'native-original', ids: ['C'] },
+  { competitionId: 'native-original', ids: ['C', 'D'] },
   { competitionId: 'native-main', ids: ['C'] },
   { competitionId: 'native-main', ids: ['C', 'D'] }
 ])(
-  'creates invitations on legacy or designated native Main Stage: %j',
+  'creates invitations on an explicitly designated native Main Stage: %j',
   async ({ competitionId, ids }) => {
-    jest.spyOn(env, 'getStringOrNull').mockReturnValue('wave');
     jest
       .spyOn(competitionMainStageRepository, 'isDesignated')
       .mockResolvedValue(true);
@@ -230,7 +240,10 @@ it.each([
       wave_id: 'wave',
       author_id: 'A',
       title: 'Artwork',
-      drop_type: competitionId ? DropType.COMPETITION : DropType.PARTICIPATORY,
+      drop_type:
+        competitionId === 'native-original'
+          ? DropType.PARTICIPATORY
+          : DropType.COMPETITION,
       metadata: [{ data_key: 'memeName', data_value: 'GM' }],
       parts: [
         {

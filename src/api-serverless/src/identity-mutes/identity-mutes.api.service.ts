@@ -98,10 +98,6 @@ export class IdentityMutesApiService {
         if (!waveIds.length) {
           return;
         }
-        await this.wavesApiDb.incrementDmUnreadStateVersionsForReaderWaves(
-          { readerId: pair.muter_id, waveIds },
-          ctx
-        );
         if (!recipients.length) {
           afterWaveId = waveIds.at(-1);
           hasMore = waveIds.length === DM_UNREAD_SYNC_PAGE_SIZE;

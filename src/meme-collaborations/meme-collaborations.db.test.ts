@@ -1,28 +1,25 @@
 import 'reflect-metadata';
 import { AuthenticationContext } from '@/auth-context';
 import {
+  COMPETITIONS_TABLE,
+  COMPETITION_CAPABILITIES_TABLE,
+  COMPETITION_ENTRIES_TABLE,
+  COMPETITION_DECISION_WINNERS_TABLE,
   DROPS_TABLE,
   MEME_COLLABORATIONS_TABLE,
   MEME_COLLABORATION_INVITATIONS_TABLE
 } from '@/constants';
-import {
-  COMPETITIONS_TABLE,
-  COMPETITION_CAPABILITIES_TABLE,
-  COMPETITION_DECISION_WINNERS_TABLE,
-  COMPETITION_ENTRIES_TABLE
-} from '@/constants';
-import { nativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
-import { legacyCompetitionId } from '@/competitions/competition-id';
 import { PROFILES_TABLE } from '@/constants';
 import { DropType } from '@/entities/IDrop';
-import { env } from '@/env';
+import { WaveType } from '@/entities/IWave';
+import { legacyCompetitionEntryId } from '@/competitions/competition-id';
 import { identitiesDb } from '@/identities/identities.db';
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { aProfile, withProfiles } from '@/tests/fixtures/profile.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
-import { WaveType } from '@/entities/IWave';
+import { nativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
 import { userNotifier } from '@/notifications/user.notifier';
 import { MemeCollaborationsDb } from './meme-collaborations.db';
 import {
@@ -31,12 +28,12 @@ import {
   collaborationArtworkHash
 } from './meme-collaborations.service';
 
-const originalGetStringOrNull = env.getStringOrNull.bind(env);
-const mainStageWave = aWave(
+const wave = aWave(
   { type: WaveType.RANK, participation_terms: 'Terms' },
   { id: 'wave', name: 'Main Stage' }
 );
-const mainStageCompetitionId = legacyCompetitionId(mainStageWave.id);
+const competition = nativeOriginalPrimaryFixture(wave);
+const entryId = legacyCompetitionEntryId(competition.id, 'drop');
 const wallet = (index: number) => `0x${String(index).padStart(40, '0')}`;
 const artworkModel: CreateOrUpdateDropModel = {
   drop_id: null,
@@ -118,18 +115,15 @@ describeWithSeed(
         })
       )
     ),
-    withWaves([mainStageWave]),
-    {
-      table: COMPETITIONS_TABLE,
-      rows: [nativeOriginalPrimaryFixture(mainStageWave)]
-    },
+    withWaves([wave]),
+    { table: COMPETITIONS_TABLE, rows: [competition] },
     {
       table: COMPETITION_CAPABILITIES_TABLE,
       rows: [
         {
           capability: 'MAIN_STAGE',
-          competition_id: mainStageCompetitionId,
-          wave_id: 'wave',
+          competition_id: competition.id,
+          wave_id: wave.id,
           assigned_at: 0
         }
       ]
@@ -138,9 +132,9 @@ describeWithSeed(
       table: COMPETITION_ENTRIES_TABLE,
       rows: [
         {
-          id: 'main-stage-entry',
-          competition_id: mainStageCompetitionId,
-          wave_id: 'wave',
+          id: entryId,
+          competition_id: competition.id,
+          wave_id: wave.id,
           drop_id: 'drop',
           submitter_id: 'A',
           status: 'ACTIVE',
@@ -173,11 +167,12 @@ describeWithSeed(
         `update ${DROPS_TABLE} set drop_type='CHAT' where id='drop'`
       );
       expect(await db.activeMainStageDrop('drop', {})).toMatchObject({
-        competition_id: mainStageCompetitionId,
+        competition_id: competition.id,
         author_id: 'A'
       });
       await sqlExecutor.execute(
-        `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id='main-stage-entry'`
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id=:entryId`,
+        { entryId }
       );
       expect(await db.activeMainStageDrop('drop', {})).toBeNull();
     });
@@ -255,11 +250,6 @@ describeWithSeed(
     const db = new MemeCollaborationsDb(() => sqlExecutor);
     const service = new MemeCollaborationsService(db);
     beforeEach(() => {
-      jest
-        .spyOn(env, 'getStringOrNull')
-        .mockImplementation((key) =>
-          key === 'MAIN_STAGE_WAVE_ID' ? 'wave' : originalGetStringOrNull(key)
-        );
       jest
         .spyOn(userNotifier, 'notifyOfMemeCollaboration')
         .mockResolvedValue([42]);
@@ -440,10 +430,6 @@ describeWithSeed(
     });
 
     it('lists accepted submissions and wins on both artist profiles without listing pending invitations', async () => {
-      jest.spyOn(env, 'getStringOrNull').mockReturnValue('wave');
-      await sqlExecutor.execute(
-        `update ${DROPS_TABLE} set drop_type='CHAT' where id='drop'`
-      );
       await service.respond(
         'drop',
         invites[0].id,
@@ -466,15 +452,15 @@ describeWithSeed(
       });
       await db.query(
         'winner',
-        `update ${COMPETITION_ENTRIES_TABLE} set status='WINNER',decision_id='decision' where id='main-stage-entry'`,
-        {},
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WINNER',decision_id='decision',won_at=2,\`rank\`=1 where id=:entryId`,
+        { entryId },
         {}
       );
-      await sqlExecutor.execute(
-        `insert into ${COMPETITION_DECISION_WINNERS_TABLE}
-        (decision_id,competition_id,entry_id,\`rank\`,final_rating,created_at)
-        values ('decision',:competitionId,'main-stage-entry',1,100,1000)`,
-        { competitionId: mainStageCompetitionId }
+      await db.query(
+        'winnerRecord',
+        `insert into ${COMPETITION_DECISION_WINNERS_TABLE} (decision_id,entry_id,competition_id,\`rank\`,final_rating,created_at) values ('decision',:entryId,:competitionId,1,10,2)`,
+        { entryId, competitionId: competition.id },
+        {}
       );
       expect(
         await identitiesDb.getActiveMainStageDropIds(['A', 'B', 'C'], {})
@@ -626,7 +612,12 @@ describeWithSeed(
 
     it('manages new artwork from older clients even without an invitation field', async () => {
       await db.executeNativeQueriesInTransaction((connection) =>
-        service.onWrite(artworkModel, 'new-drop', { connection })
+        service.onWrite(
+          artworkModel,
+          'new-drop',
+          { connection },
+          competition.id
+        )
       );
       expect((await service.state('new-drop', 'A', {})).managed).toBe(true);
       expect((await service.state('new-drop', null, {})).collaborators).toEqual(
@@ -637,7 +628,8 @@ describeWithSeed(
           service.onWrite(
             { ...artworkModel, collaborator_ids: ['B', 'C'] },
             'collab-drop',
-            { connection }
+            { connection },
+            competition.id
           )
         )
       ).toEqual([43, 44]);

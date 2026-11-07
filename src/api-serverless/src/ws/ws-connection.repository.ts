@@ -1,14 +1,14 @@
+import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import {
   dbSupplier,
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '../../../sql-executor';
+import { WSConnectionEntity } from '../../../entities/IWSConnection';
 import {
-  WSConnectionEntity,
-  WsConnectionPurpose
-} from '../../../entities/IWSConnection';
-import {
+  ATTACHMENTS_TABLE,
+  DROP_ATTACHMENTS_TABLE,
   DROP_VOTER_STATE_TABLE,
   DROPS_TABLE,
   IDENTITIES_TABLE,
@@ -27,7 +27,7 @@ import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
-import { ANON_USER_ID, SocketNotAvailableException } from './ws';
+import { ANON_USER_ID, SocketNotAvailableException } from './ws-shared';
 import { randomInt } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -37,17 +37,9 @@ import {
   WsTransactionDiagnostics
 } from '@/api/ws/ws-transaction-diagnostics';
 import { WsDiagnosticOperation } from '@/api/ws/ws-operation-diagnostics';
+import { broadcastPurposeFilterSql } from '@/ws-delivery/ws-connection-purpose';
 
 type NotificationSubscription = { identityId: string; jwtExpiry: number };
-
-/** One online socket in a wave audience, with what its send fence needs. */
-export interface WaveRecipient {
-  readonly connectionId: string;
-  readonly profileId: string | null;
-  readonly wave_id: string | null;
-  /** Stored JWT expiry (epoch seconds), so sends skip a per-socket read. */
-  readonly jwtExpiry: number;
-}
 
 export interface WaveRecipientOptions {
   /** Typing broadcasts only: include sockets opened with purpose=typing. */
@@ -64,7 +56,7 @@ function purposeFilterSql(
 ): string {
   return options.includeTypingSockets
     ? '1 = 1'
-    : `(${alias}.purpose is null or ${alias}.purpose <> '${WsConnectionPurpose.TYPING}')`;
+    : broadcastPurposeFilterSql(alias);
 }
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
@@ -101,9 +93,9 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         // Legacy sockets omit `purpose`, so they insert exactly as before.
         await this.db.execute(
           entity.purpose
-            ? `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id, purpose) values (:connection_id, :jwt_expiry, :identity_id, :purpose)`
-            : `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
-          entity,
+            ? `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id, durable_updates, purpose) values (:connection_id, :jwt_expiry, :identity_id, :durable_updates, :purpose)`
+            : `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id, durable_updates) values (:connection_id, :jwt_expiry, :identity_id, :durable_updates)`,
+          { ...entity, durable_updates: entity.durable_updates === true },
           {
             wrappedConnection: transactionContext.connection,
             bindInvocationContext: true
@@ -412,11 +404,15 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     connectionId: string,
     ctx: RequestContext
   ): Promise<WSConnectionEntity | null> {
-    return this.db.oneOrNull<WSConnectionEntity>(
+    const entity = await this.db.oneOrNull<WSConnectionEntity>(
       `select * from ${WS_CONNECTIONS_TABLE} where connection_id = :connectionId`,
       { connectionId },
       { wrappedConnection: ctx.connection, bindInvocationContext: true }
     );
+    // Raw MySQL queries return BOOLEAN/TINYINT as 0/1 rather than ORM booleans.
+    return entity
+      ? { ...entity, durable_updates: Number(entity.durable_updates) === 1 }
+      : null;
   }
 
   /**
@@ -542,7 +538,9 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext,
     options: WaveRecipientOptions = {}
-  ): Promise<WaveRecipient[]> {
+  ): Promise<
+    { connectionId: string; profileId: string | null; wave_id: string | null }[]
+  > {
     ctx.timer?.start(
       `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
     );
@@ -552,13 +550,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           connection_id: string;
           profile_id: string | null;
           wave_id: string | null;
-          jwt_expiry: number | string;
         }>(
           `select
         ws.connection_id as connection_id,
         ws.identity_id as profile_id,
-        ws.wave_id as wave_id,
-        ws.jwt_expiry as jwt_expiry
+        ws.wave_id as wave_id
       from ${WS_CONNECTIONS_TABLE} ws
       where (ws.wave_id = :waveId or ws.wave_id is null)
         and ${purposeFilterSql(options)}`,
@@ -568,8 +564,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           res.map((it) => ({
             connectionId: it.connection_id,
             wave_id: it.wave_id,
-            profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id,
-            jwtExpiry: Number(it.jwt_expiry)
+            profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id
           }))
         );
       ctx?.timer?.stop(
@@ -593,8 +588,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       select
         ws.connection_id as connection_id,
         ws.identity_id as profile_id,
-        ws.wave_id as wave_id,
-        ws.jwt_expiry as jwt_expiry
+        ws.wave_id as wave_id
       from ${WS_CONNECTIONS_TABLE} ws
       join ${UserGroupsService.GENERATED_VIEW} cm
       on ws.identity_id = cm.profile_id
@@ -606,14 +600,12 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         connection_id: string;
         profile_id: string | null;
         wave_id: string | null;
-        jwt_expiry: number | string;
       }>(sql, sqlParams)
       .then((res) =>
         res.map((it) => ({
           connectionId: it.connection_id,
           wave_id: it.wave_id,
-          profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id,
-          jwtExpiry: Number(it.jwt_expiry)
+          profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id
         }))
       );
     ctx?.timer?.stop(
@@ -630,7 +622,9 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     params: { groupId: string | null; waveId: string },
     ctx: RequestContext,
     options: WaveRecipientOptions = {}
-  ): Promise<WaveRecipient[]> {
+  ): Promise<
+    { connectionId: string; profileId: string | null; wave_id: string | null }[]
+  > {
     if (params.groupId === null) {
       return await this.getGroupRecipients(params, ctx, options);
     }
@@ -648,8 +642,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       select
         ws.connection_id as connection_id,
         ws.identity_id as profile_id,
-        ws.wave_id as wave_id,
-        ws.jwt_expiry as jwt_expiry
+        ws.wave_id as wave_id
       from ${WS_CONNECTIONS_TABLE} ws
       join ${UserGroupsService.GENERATED_VIEW} cm
       on ws.identity_id = cm.profile_id
@@ -661,14 +654,12 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         connection_id: string;
         profile_id: string | null;
         wave_id: string | null;
-        jwt_expiry: number | string;
       }>(sql, sqlParams)
       .then((res) =>
         res.map((it) => ({
           connectionId: it.connection_id,
           wave_id: it.wave_id,
-          profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id,
-          jwtExpiry: Number(it.jwt_expiry)
+          profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id
         }))
       );
     return result;
@@ -882,7 +873,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   async findAllByWaveId(waveId: string): Promise<WSConnectionEntity[]> {
     return this.db.execute<WSConnectionEntity>(
       `
-    select * from ${WS_CONNECTIONS_TABLE} where wave_id = :waveId
+    select * from ${WS_CONNECTIONS_TABLE} ws
+    where wave_id = :waveId and ${purposeFilterSql()}
     `,
       { waveId }
     );
@@ -897,7 +889,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     ctx: RequestContext = {}
   ): Promise<Set<string>> {
     const rows = await this.db.execute<{ identity_id: string }>(
-      `select distinct identity_id from ${WS_CONNECTIONS_TABLE}
+      `/* not a broadcast audience */ select distinct identity_id from ${WS_CONNECTIONS_TABLE}
        where wave_id = :waveId and identity_id <> :anonymous`,
       { waveId, anonymous: ANON_USER_ID },
       { wrappedConnection: ctx.connection }
@@ -906,7 +898,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   async findWaveVisibilityGroupId(
-    waveId: string
+    waveId: string,
+    ctx: RequestContext = {}
   ): Promise<string | null | undefined> {
     return this.db
       .oneOrNull<{
@@ -915,12 +908,16 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         `select visibility_group_id from ${legacyGetView(WAVES_TABLE)} where id = :waveId`,
         {
           waveId
-        }
+        },
+        { wrappedConnection: ctx.connection }
       )
       .then((row) => row?.visibility_group_id);
   }
 
-  async findConnectionIdsByIdentityId(identityId: string): Promise<string[]> {
+  async findConnectionIdsByIdentityId(
+    identityId: string,
+    ctx: RequestContext = {}
+  ): Promise<string[]> {
     if (!identityId || identityId === ANON_USER_ID) {
       return [];
     }
@@ -930,7 +927,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       }>(
         `select connection_id from ${WS_CONNECTIONS_TABLE} ws
          where identity_id = :identityId and ${purposeFilterSql()}`,
-        { identityId }
+        { identityId },
+        { wrappedConnection: ctx.connection }
       )
       .then((res) => res.map((it) => it.connection_id));
   }
@@ -962,10 +960,9 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   async findNotificationConnectionIdsByIdentityIds(
-    identityIds: string[]
-  ): Promise<
-    { connectionId: string; identityId: string; jwtExpiry: number }[]
-  > {
+    identityIds: string[],
+    ctx: RequestContext = {}
+  ): Promise<{ connectionId: string; identityId: string }[]> {
     const uniqueIdentityIds = Array.from(
       new Set(identityIds.filter((identityId) => !!identityId))
     ).filter((identityId) => identityId !== ANON_USER_ID);
@@ -973,24 +970,16 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       return [];
     }
     return this.db
-      .execute<{
-        connection_id: string;
-        identity_id: string;
-        jwt_expiry: number | string;
-      }>(
-        // Both branches report the connection's own expiry, so DISTINCT still
-        // collapses a connection reachable through both.
-        `select distinct recipients.connection_id, recipients.identity_id,
-                recipients.jwt_expiry
+      .execute<{ connection_id: string; identity_id: string }>(
+        `select distinct recipients.connection_id, recipients.identity_id
          from (
-           select connection_id, identity_id, jwt_expiry
+           select connection_id, identity_id
            from ${WS_CONNECTIONS_TABLE} ws
            where identity_id in (:identityIds)
              and jwt_expiry > unix_timestamp()
              and ${purposeFilterSql()}
            union
-           select subscriptions.connection_id, subscriptions.identity_id,
-                  connections.jwt_expiry
+           select subscriptions.connection_id, subscriptions.identity_id
            from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE} subscriptions
            inner join ${WS_CONNECTIONS_TABLE} connections
              on connections.connection_id = subscriptions.connection_id
@@ -999,24 +988,80 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
              and connections.jwt_expiry > unix_timestamp()
              and ${purposeFilterSql({}, 'connections')}
          ) recipients`,
-        { identityIds: uniqueIdentityIds }
+        { identityIds: uniqueIdentityIds },
+        { wrappedConnection: ctx.connection }
       )
       .then((rows) =>
         rows.map((row) => ({
           connectionId: row.connection_id,
-          identityId: row.identity_id,
-          jwtExpiry: Number(row.jwt_expiry)
+          identityId: row.identity_id
         }))
       );
   }
 
-  async findAllConnectionIds(): Promise<string[]> {
+  /** Evaluate current wave eligibility or attachment ownership/access for a queued frame. */
+  async canIdentityReadQueuedResource(
+    identityId: string | null,
+    resource: { waveId: string } | { attachmentId: string }
+  ): Promise<boolean> {
+    const eligibleGroupIds =
+      identityId && identityId !== ANON_USER_ID
+        ? await this.userGroupsService.getGroupsUserIsEligibleFor(identityId)
+        : [];
+    const access = waveReadAccessSql('w', eligibleGroupIds.length > 0);
+    const row =
+      'waveId' in resource
+        ? await this.db.oneOrNull<{ id: string }>(
+            `select w.id from ${WAVES_TABLE} w where w.id = :waveId and ${access}`,
+            { waveId: resource.waveId, eligibleGroupIds }
+          )
+        : await this.db.oneOrNull<{ id: string }>(
+            `select a.id from ${ATTACHMENTS_TABLE} a where a.id = :attachmentId
+           and (a.owner_profile_id = :identityId or exists (
+             select 1 from ${DROP_ATTACHMENTS_TABLE} da
+             inner join ${WAVES_TABLE} w on w.id = da.wave_id
+             where da.attachment_id = a.id and ${access}
+           ))`,
+            {
+              attachmentId: resource.attachmentId,
+              identityId,
+              eligibleGroupIds
+            }
+          );
+    return row !== null;
+  }
+
+  /**
+   * Select one delivery audience without changing identity/subscription
+   * authorization. It only narrows connection ids its caller already chose,
+   * so the caller's audience query owns the typing-purpose filter (typing
+   * broadcasts must keep their typing sockets here).
+   */
+  async filterConnectionIdsByDeliveryMode(
+    connectionIds: readonly string[],
+    durable: boolean,
+    ctx: RequestContext = {}
+  ): Promise<string[]> {
+    if (!connectionIds.length) return [];
+    const rows = await this.db.execute<{ connection_id: string }>(
+      `select distinct connection_id /* not a broadcast audience */ from ${WS_CONNECTIONS_TABLE}
+       where connection_id in (:connectionIds)
+         and durable_updates = :durable`,
+      { connectionIds: Array.from(new Set(connectionIds)), durable },
+      { wrappedConnection: ctx.connection }
+    );
+    return rows.map((row) => row.connection_id);
+  }
+
+  async findAllConnectionIds(ctx: RequestContext = {}): Promise<string[]> {
     return this.db
       .execute<{ connection_id: string }>(
         `
     select distinct connection_id from ${WS_CONNECTIONS_TABLE} ws
     where ${purposeFilterSql()}
-    `
+    `,
+        {},
+        { wrappedConnection: ctx.connection }
       )
       .then((res) => res.map((it) => it.connection_id));
   }

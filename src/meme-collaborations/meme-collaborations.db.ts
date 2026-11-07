@@ -79,7 +79,9 @@ export class MemeCollaborationsDb extends LazyDbAccessCompatibleService {
       'activeMainStageDrop',
       `select d.id, d.author_id, d.wave_id, native_entry.competition_id
        from ${DROPS_TABLE} d
-       join (${nativeMainStageEntriesSource('ACTIVE')}) native_entry on native_entry.drop_id=d.id
+       join (${nativeMainStageEntriesSource('ACTIVE')}) native_entry
+         on native_entry.drop_id=d.id and native_entry.wave_id=d.wave_id
+         and native_entry.submitter_id=d.author_id
        where d.id=:dropId`,
       { dropId },
       ctx,

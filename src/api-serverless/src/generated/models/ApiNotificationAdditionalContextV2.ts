@@ -22,6 +22,12 @@ import { HttpFile } from '../http/http';
 * Notification-specific additional context. For DROP_REACTED notifications this includes reaction and reactors, where each reactor only has handle, pfp, and subscribed. COMPETITION_LIFECYCLE always includes event_id, event_type, wave_id, competition_id and competition_title; winner events also include entry_id and drop_id. These identify the native competition destination independently of the shared drop\'s legacy projection. VOTING_CREDITS_RETURNED includes event_id, reason, wave_id, competition_id, competition_title, entry_id, drop_id, submission_title, credit_type, amount and released_at. Amount is the positive released allocation, independent of time-weighted winning scores. Related drops are not required.
 */
 export class ApiNotificationAdditionalContextV2 {
+    'artist_id'?: string;
+    /**
+    * Title for an ARTIST_ARTWORK_SUBMITTED notification.
+    */
+    'artwork_title'?: string | null;
+    'submitted_at'?: number;
     /**
     * Opaque encrypted-chat handle.
     */
@@ -30,12 +36,6 @@ export class ApiNotificationAdditionalContextV2 {
     * Sequence of the message to preview from local decrypted history.
     */
     'encrypted_message_seq'?: number;
-    'artist_id'?: string;
-    /**
-    * Title for an ARTIST_ARTWORK_SUBMITTED notification.
-    */
-    'artwork_title'?: string | null;
-    'submitted_at'?: number;
     'reason'?: ApiVotingCreditReleaseReason;
     /**
     * Submission title saved before winning or deletion.
@@ -102,18 +102,6 @@ export class ApiNotificationAdditionalContextV2 {
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "encrypted_group",
-            "baseName": "encrypted_group",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "encrypted_message_seq",
-            "baseName": "encrypted_message_seq",
-            "type": "number",
-            "format": ""
-        },
-        {
             "name": "artist_id",
             "baseName": "artist_id",
             "type": "string",
@@ -130,6 +118,18 @@ export class ApiNotificationAdditionalContextV2 {
             "baseName": "submitted_at",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "encrypted_group",
+            "baseName": "encrypted_group",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "encrypted_message_seq",
+            "baseName": "encrypted_message_seq",
+            "type": "number",
+            "format": ""
         },
         {
             "name": "reason",

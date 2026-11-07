@@ -5,8 +5,8 @@ export function competitionLifecycleMessage(eventType: string): string {
     COMPETITION_PUBLISHED: 'is now published',
     COMPETITION_STARTED: 'has started',
     COMPETITION_SCHEDULE_CHANGED: 'has an updated schedule',
-    COMPETITION_PAUSED: 'has paused decisions',
-    COMPETITION_RESUMED: 'has resumed decisions',
+    COMPETITION_PAUSED: 'has paused results',
+    COMPETITION_RESUMED: 'has resumed results',
     COMPETITION_UPDATED: 'has an updated schedule',
     COMPETITION_CANCELLED: 'was cancelled',
     COMPETITION_ENDED: 'has ended',
@@ -21,7 +21,7 @@ export function buildCompetitionLifecyclePushNotification(
   data: CompetitionLifecycleNotificationData
 ) {
   return {
-    title: 'Competition update',
+    title: 'Decision update',
     body: `${data.competition_title} ${competitionLifecycleMessage(data.event_type)}`,
     data: {
       redirect: 'waves',

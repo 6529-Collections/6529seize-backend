@@ -1060,6 +1060,8 @@ describe('DropCreationApiService.createDrop reply after commit (1.1)', () => {
       undefined,
       undefined,
       undefined,
+      // Staging (#2318): the client drop id store comes first.
+      undefined,
       { enqueue } as never
     );
     return { service, wsListenersNotifier };
@@ -1216,6 +1218,8 @@ describe('DropCreationApiService.createDrop after-commit pipeline', () => {
       { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never,
       undefined,
       undefined,
+      undefined,
+      // Staging (#2318): the client drop id store comes first.
       undefined,
       { enqueue: jest.fn().mockResolvedValue([]) } as never,
       stages as never
