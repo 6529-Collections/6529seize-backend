@@ -32,8 +32,10 @@ const HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT = 250;
 
 // The address-only Alchemy migration retains this route as an uncached 410.
 // Keep checking its mount/auth and every other baseline cache expectation.
+// GET /api/waves/:id shares anonymous responses for 15 s (#2340).
 const ACCEPTED_ROUTE_CACHE_CHANGES = new Map<string, ManifestRoute['cache']>([
-  ['/alchemy-proxy/collections', 'uncached']
+  ['/alchemy-proxy/collections', 'uncached'],
+  ['/api/waves/:id', 'cached']
 ]);
 
 const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([
