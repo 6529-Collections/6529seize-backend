@@ -8,7 +8,8 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import {
   ProfileActivityLogsDb,
-  ProfileLogSearchParams
+  ProfileLogSearchParams,
+  resetViewerGroupsCteSupport
 } from './profile-activity-logs.db';
 
 const MEMBER_GROUP = 'member-group';
@@ -246,6 +247,85 @@ describeWithSeed(
           pageRequest: { page: 2, page_size: 1 }
         })
       ).resolves.toEqual([]);
+    });
+
+    describe('shared viewer-group table', () => {
+      afterEach(() => resetViewerGroupsCteSupport());
+
+      it('is used against the production collation', async () => {
+        resetViewerGroupsCteSupport();
+        const execute = jest.spyOn(sqlExecutor, 'execute');
+        try {
+          await searchIds({
+            profile_id: 'profile-1',
+            viewer_eligible_group_ids: [MEMBER_GROUP]
+          });
+          expect(
+            execute.mock.calls.some(([sql]) =>
+              sql.includes('pa_viewer_groups as (')
+            )
+          ).toBe(true);
+        } finally {
+          execute.mockRestore();
+        }
+      });
+
+      const viewerGroupSets = [
+        [MEMBER_GROUP],
+        ['other-group'],
+        [MEMBER_GROUP, 'other-group'],
+        ['unrelated-group'],
+        // Matching follows the column collation (case-insensitive), as the
+        // inlined literal list did.
+        [MEMBER_GROUP.toUpperCase()]
+      ];
+      const searches: Partial<ProfileLogSearchParams>[] = [
+        { profile_id: 'profile-1' },
+        { profile_id: 'profile-1', includeProfileIdToIncoming: true },
+        {
+          profile_id: 'profile-1',
+          type: [
+            ProfileActivityLogType.DROP_CREATED,
+            ProfileActivityLogType.DROP_REACTED,
+            ProfileActivityLogType.DROP_VOTE_EDIT,
+            ProfileActivityLogType.RATING_EDIT,
+            ProfileActivityLogType.HANDLE_EDIT
+          ]
+        },
+        {
+          profile_id: 'profile-1',
+          type: [ProfileActivityLogType.DROP_CREATED]
+        },
+        {},
+        {
+          type: [
+            ProfileActivityLogType.DROP_CREATED,
+            ProfileActivityLogType.DROP_REACTED
+          ]
+        }
+      ];
+
+      it('returns exactly the rows of the inlined list for eligible, non-eligible and public waves', async () => {
+        for (const viewer_eligible_group_ids of viewerGroupSets)
+          for (const search of searches) {
+            const request = { ...search, viewer_eligible_group_ids };
+            resetViewerGroupsCteSupport(false);
+            const inline = await searchIds(request);
+            resetViewerGroupsCteSupport(true);
+            const shared = await searchIds(request);
+            expect({ request, ids: shared }).toEqual({ request, ids: inline });
+          }
+      });
+
+      it('still shows member-wave rows only to members', async () => {
+        resetViewerGroupsCteSupport(true);
+        await expect(
+          searchIds({
+            profile_id: 'profile-1',
+            viewer_eligible_group_ids: ['other-group']
+          })
+        ).resolves.toEqual(['handle', 'profile-rep', 'public-drop']);
+      });
     });
   }
 );
