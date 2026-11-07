@@ -1,3 +1,4 @@
+import { dropMediaLayoutHints } from '@/api/drops/drop-media-layout-hints';
 import {
   ActivityEventAction,
   ActivityEventTargetType
@@ -543,7 +544,8 @@ export class ApiWaveOverviewMapper {
       mime_type: item.mime_type,
       media_upload_id: item.media_upload_id,
       media_status: mapDropMediaUploadStatus(item.media_status),
-      media_error: item.media_error ?? null
+      media_error: item.media_error ?? null,
+      ...dropMediaLayoutHints(item)
     }));
   }
 

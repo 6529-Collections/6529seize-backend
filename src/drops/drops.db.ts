@@ -375,7 +375,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                  WHEN dm.media_upload_id IS NULL THEN 'ready'
                  ELSE COALESCE(dmu.status, 'failed')
                END as media_status,
-               dmu.error_reason as media_error
+               dmu.error_reason as media_error,
+               dmu.width as media_width,
+               dmu.height as media_height,
+               dmu.thumbhash as media_thumbhash
         from ${DROP_MEDIA_TABLE} dm
              left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
         where dm.drop_id in (:dropIds)
@@ -437,7 +440,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                  WHEN dm.media_upload_id IS NULL THEN 'ready'
                  ELSE COALESCE(dmu.status, 'failed')
                END as media_status,
-               dmu.error_reason as media_error
+               dmu.error_reason as media_error,
+               dmu.width as media_width,
+               dmu.height as media_height,
+               dmu.thumbhash as media_thumbhash
         from ${DROP_MEDIA_TABLE} dm
              left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
         where dm.drop_id = :dropId
@@ -1125,7 +1131,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          LEFT JOIN (
             SELECT  drop_id,
                     JSON_ARRAYAGG(
-                            JSON_OBJECT(
+                            -- Layout hints (waves R11-2) merge in only when known:
+                            -- JSON_MERGE_PATCH drops keys whose value is null.
+                            JSON_MERGE_PATCH(
+                              JSON_OBJECT(
                                     'url',       url,
                                     'mime_type', mime_type,
                                     'media_upload_id', media_upload_id,
@@ -1134,10 +1143,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                       ELSE COALESCE(media_status, 'failed')
                                     END,
                                     'media_error', media_error
+                              ),
+                              JSON_OBJECT(
+                                    'width', IF(media_width > 0 AND media_height > 0, media_width, NULL),
+                                    'height', IF(media_width > 0 AND media_height > 0, media_height, NULL),
+                                    'thumbhash', media_thumbhash
+                              )
                             )
                     ) AS medias_json
             FROM    (
-              SELECT dm.*, dmu.status as media_status, dmu.error_reason as media_error
+              SELECT dm.*, dmu.status as media_status, dmu.error_reason as media_error,
+                     dmu.width as media_width, dmu.height as media_height,
+                     dmu.thumbhash as media_thumbhash
               FROM ${DROP_MEDIA_TABLE} dm
                    left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
             ) drop_media_with_uploads
@@ -1802,7 +1819,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                 WHEN dm.media_upload_id IS NULL THEN 'ready'
                 ELSE COALESCE(dmu.status, 'failed')
               END as media_status,
-              dmu.error_reason as media_error
+              dmu.error_reason as media_error,
+              dmu.width as media_width,
+              dmu.height as media_height,
+              dmu.thumbhash as media_thumbhash
        from ${DROP_MEDIA_TABLE} dm
             left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
        where dm.drop_id in (:dropIds)`,

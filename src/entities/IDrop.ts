@@ -203,6 +203,10 @@ export class DropMediaEntity {
   readonly media_upload_id!: string | null;
   readonly media_status?: DropMediaUploadStatus | null;
   readonly media_error?: string | null;
+  // Layout hints joined from the upload (waves R11-2); not stored here.
+  readonly media_width?: number | null;
+  readonly media_height?: number | null;
+  readonly media_thumbhash?: string | null;
   @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;

@@ -32382,6 +32382,28 @@ components:
         media_error:
           type: string
           nullable: true
+        width:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: >-
+            Displayed pixel width (after EXIF orientation), for reserving layout
+            space before the media loads. Omitted or null when unknown.
+        height:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: >-
+            Displayed pixel height (after EXIF orientation). Omitted or null
+            when unknown.
+        thumbhash:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: >-
+            Base64 ThumbHash placeholder (https://evanw.github.io/thumbhash/),
+            decodable with the thumbhash npm package. Omitted or null when
+            unknown.
     ApiDropMediaStatus:
       type: string
       enum:
