@@ -1,17 +1,40 @@
-import { IDENTITY_SUBSCRIPTIONS_TABLE } from '@/constants';
+import {
+  IDENTITY_SUBSCRIPTIONS_TABLE,
+  WS_CONNECTIONS_TABLE
+} from '@/constants';
 import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '@/entities/IActivityEvent';
 
 /**
- * Waves plan 1.3 (D3): with `WS_AUDIENCE_FOLLOWERS=true`, a wave's frames
- * reach only sockets with the wave open, sockets of its followers, and DM
- * members, always within today's visibility rules. Off unless set; it only
- * ever narrows today's audience.
+ * Waves plan 1.3 (D3): the narrower wave audience. A wave's frames reach
+ * sockets with the wave open, followers' sockets and DM members, always
+ * within today's visibility rules. It only ever narrows today's audience.
+ *
+ * `WS_AUDIENCE_FOLLOWERS`:
+ * - unset or anything else: off, today's audience;
+ * - `legacy-clients`: narrow only sockets of builds that predate
+ *   `client_version` (no stored build), the old tabs that refetch every
+ *   wave list for each drop; newer builds keep today's audience;
+ * - `all` (or `true`): narrow every socket.
+ *
+ * In both modes an old signed-in socket counts as viewing a wave when the
+ * same identity has a socket subscribed to it (old builds keep a per-wave
+ * socket for the open wave but take drops on their app socket), and old
+ * anonymous sockets, which cannot be told apart, keep today's audience.
  */
+export type FollowerAudienceMode = 'legacy-clients' | 'all';
+
+export function followerAudienceMode(): FollowerAudienceMode | null {
+  const value = (process.env.WS_AUDIENCE_FOLLOWERS ?? '').trim().toLowerCase();
+  if (value === 'true' || value === 'all') return 'all';
+  if (value === 'legacy-clients') return 'legacy-clients';
+  return null;
+}
+
 export function isFollowerAudienceEnabled(): boolean {
-  return process.env.WS_AUDIENCE_FOLLOWERS === 'true';
+  return followerAudienceMode() !== null;
 }
 
 /**
@@ -22,6 +45,9 @@ export function isFollowerAudienceEnabled(): boolean {
 export interface FollowerAudience {
   readonly waveId: string;
   readonly followTargets: readonly string[];
+  readonly mode: FollowerAudienceMode;
+  /** The shared identity id of anonymous sockets. */
+  readonly anonymousIdentityId: string;
 }
 
 export function followerAudienceParams(audience: FollowerAudience) {
@@ -29,7 +55,8 @@ export function followerAudienceParams(audience: FollowerAudience) {
     audienceWaveId: audience.waveId,
     audienceFollowTargets: [...audience.followTargets],
     audienceTargetType: ActivityEventTargetType.WAVE,
-    audienceTargetAction: ActivityEventAction.DROP_CREATED
+    audienceTargetAction: ActivityEventAction.DROP_CREATED,
+    audienceAnonymous: audience.anonymousIdentityId
   };
 }
 
@@ -50,31 +77,65 @@ function followersSql({ driving }: { driving: boolean }): string {
             and s.target_action = :audienceTargetAction`;
 }
 
-/**
- * Condition on a socket row: it has the wave open, or its identity follows
- * the wave. Used inside a visibility-group query, which already limits the
- * rows to members.
- */
-export function followerAudienceConditionSql(alias = 'ws'): string {
-  return `(${alias}.wave_id = :audienceWaveId
-       or ${alias}.open_wave_id = :audienceWaveId
-       or ${alias}.identity_id in (${followersSql({ driving: false })}))`;
+/** Signed-in identities with a socket subscribed to the wave (wave_id index). */
+function identitiesViewingSql(): string {
+  return `select v.identity_id
+          from ${WS_CONNECTIONS_TABLE} v
+          where v.wave_id = :audienceWaveId
+            and v.identity_id <> :audienceAnonymous`;
 }
 
 /**
- * Ungrouped (public) waves: today every socket that is not viewing another
- * wave gets the frame. Narrowed, it is the sockets with the wave open
- * (subscribed to it, or an app socket that declared it with SET_OPEN_WAVE),
- * plus the followers' sockets that are not subscribed to another wave. Every
- * branch starts from an index (ws_connections.wave_id; .open_wave_id;
- * identity_subscriptions.target_id, then ws_connections by identity).
+ * Sockets that keep today's audience in this mode: in `legacy-clients`,
+ * every socket of a build that stores `client_version`; in both modes, old
+ * anonymous sockets.
+ */
+function unnarrowedSql(mode: FollowerAudienceMode, alias = 'ws'): string {
+  const oldAnonymous = `(${alias}.client_version is null and ${alias}.identity_id = :audienceAnonymous)`;
+  return mode === 'legacy-clients'
+    ? `(${alias}.client_version is not null or ${oldAnonymous})`
+    : oldAnonymous;
+}
+
+/**
+ * Condition on a socket row inside a visibility-group query, which already
+ * limits the rows to members: it keeps today's audience in this mode, has
+ * the wave open (subscribed, declared, or inferred for an old build's app
+ * socket, as in the public-wave query), or its identity follows the wave.
+ */
+export function followerAudienceConditionSql(
+  mode: FollowerAudienceMode,
+  alias = 'ws'
+): string {
+  return `(${unnarrowedSql(mode, alias)}
+       or ${alias}.wave_id = :audienceWaveId
+       or ${alias}.open_wave_id = :audienceWaveId
+       or ${alias}.identity_id in (${followersSql({ driving: false })})
+       or (${alias}.client_version is null
+           and ${alias}.wave_id is null
+           and ${alias}.identity_id in (${identitiesViewingSql()})))`;
+}
+
+/**
+ * Ungrouped (public) waves. Today every socket that is not subscribed to
+ * another wave gets the frame. Narrowed, it is the union of:
+ * 1. sockets subscribed to the wave (wave_id index);
+ * 2. sockets that declared it open with SET_OPEN_WAVE (open_wave_id index);
+ * 3. followers' sockets not subscribed to another wave (identity_subscriptions
+ *    target_id, then ws_connections by identity);
+ * 4. old signed-in sockets whose identity has a socket subscribed to the
+ *    wave (wave_id index, then ws_connections by identity);
+ * 5. sockets that keep today's audience in this mode, not subscribed to
+ *    another wave (wave_id index on null, as today).
  */
 export function ungroupedFollowerAudienceSql({
   table,
-  purposeFilter
+  purposeFilter,
+  mode
 }: {
   table: string;
   purposeFilter: string;
+  mode: FollowerAudienceMode;
 }): string {
   const columns = `ws.connection_id as connection_id,
         ws.identity_id as profile_id,
@@ -95,5 +156,19 @@ export function ungroupedFollowerAudienceSql({
       straight_join ${table} ws force index (idx_ws_connections_identity_expiry)
         on ws.identity_id = f.subscriber_id
       where ws.wave_id is null
+        and ${purposeFilter}
+      union
+      select ${columns}
+      from (${identitiesViewingSql()}) i
+      straight_join ${table} ws force index (idx_ws_connections_identity_expiry)
+        on ws.identity_id = i.identity_id
+      where ws.wave_id is null
+        and ws.client_version is null
+        and ${purposeFilter}
+      union
+      select ${columns}
+      from ${table} ws
+      where ws.wave_id is null
+        and ${unnarrowedSql(mode)}
         and ${purposeFilter}`;
 }
