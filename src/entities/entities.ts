@@ -68,6 +68,7 @@ export { DropNftLinkEntity } from './IDropNftLink';
 export { DropBookmarkEntity } from './IDropBookmark';
 export { DropQuickVoteSkipEntity } from './IDropQuickVoteSkip';
 export { DropCurationEntity } from './IDropCuration';
+export { DropClientIdEntity } from './IDropClientId';
 export {
   DropPollEntity,
   DropPollOptionEntity,

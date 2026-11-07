@@ -194,6 +194,7 @@ export const DROP_MENTIONED_GROUPS_TABLE = 'drop_mentioned_groups';
 export const DROP_POLLS_TABLE = 'drop_polls';
 export const DROP_POLL_OPTIONS_TABLE = 'drop_poll_options';
 export const DROP_POLL_VOTES_TABLE = 'drop_poll_votes';
+export const DROP_CLIENT_IDS_TABLE = 'drop_client_ids';
 export const PINNED_WAVES_TABLE = 'pinned_waves';
 export const PROFILE_WAVES_TABLE = 'profile_waves';
 export const COOKIES_CONSENT_TABLE = 'cookies_consent';
