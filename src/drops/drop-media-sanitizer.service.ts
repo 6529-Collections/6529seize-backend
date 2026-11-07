@@ -22,6 +22,7 @@ import {
   S3Client
 } from '@aws-sdk/client-s3';
 import Sharp from 'sharp';
+import { describeImage, MediaLayoutHints } from './media-placeholder';
 import { Readable } from 'node:stream';
 import { getS3 } from '@/s3.client';
 import {
@@ -102,14 +103,21 @@ export class DropMediaSanitizerService {
     }
 
     try {
-      await this.sanitizeAndPublish(upload);
+      const hints = await this.sanitizeAndPublish(upload);
       const markedReady = await this.dropMediaUploadsDb.transitionStatus({
         id: upload.id,
         fromStatuses: [DropMediaUploadStatus.SANITIZING],
         toStatus: DropMediaUploadStatus.READY,
         patch: {
           error_reason: null,
-          completed_at: Time.currentMillis()
+          completed_at: Time.currentMillis(),
+          ...(hints
+            ? {
+                width: hints.width,
+                height: hints.height,
+                thumbhash: hints.thumbhash
+              }
+            : {})
         }
       });
       if (!markedReady) {
@@ -185,7 +193,7 @@ export class DropMediaSanitizerService {
 
   private async sanitizeAndPublish(
     upload: DropMediaUploadEntity
-  ): Promise<void> {
+  ): Promise<MediaLayoutHints | null> {
     this.logger.info(`Validating drop media upload ${upload.id}`);
     const rawObject = await this.ingestS3().send(
       new GetObjectCommand({
@@ -207,6 +215,7 @@ export class DropMediaSanitizerService {
     const stripMetadata =
       rawObject.Metadata?.[DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY] !==
         'false' || upload.declared_mime_type.toLowerCase() === 'image/avif';
+    let hints: MediaLayoutHints | null = null;
     await withResizeSourceFile(source, contentLength, async (path) => {
       const published = await preparePublishedImageFile(
         path,
@@ -226,7 +235,29 @@ export class DropMediaSanitizerService {
         stripMetadata,
         previews
       );
+      hints = await this.describePublishedImage(upload.id, published.path);
     });
+    return hints;
+  }
+
+  /**
+   * Layout hints are a best-effort extra (waves R11-2): an image that cannot
+   * be described still publishes, and clients render it as before.
+   */
+  private async describePublishedImage(
+    uploadId: string,
+    path: string
+  ): Promise<MediaLayoutHints | null> {
+    try {
+      return await describeImage(path);
+    } catch (error) {
+      this.logger.warn(
+        `Could not compute layout hints for drop media upload ${uploadId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return null;
+    }
   }
 
   private async deleteIngestObject(

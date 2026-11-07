@@ -6,6 +6,12 @@ import { DropType } from '@/entities/IDrop';
 import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh.service';
 import { sendIdentityPushNotifications } from '@/api/push-notifications/push-notifications.service';
 import { DbPoolName } from '@/db-query.options';
+import { dropMediaUploadsDb } from '@/drops/drop-media-uploads.db';
+import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
+import { dropsMappers } from '@/api/drops/drops.mappers';
+import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
+import { moderationFingerprint } from '@/content-moderation/moderation-review.types';
+import { sanitizeDropStructuredFields } from '@/drops/create-or-update-drop.use-case';
 import { helpBotDailyActivityCreditQueueService } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
@@ -1013,5 +1019,183 @@ describe('DropCreationApiService.createDrop delivery hops (1.0)', () => {
     }
     expect(record.drop_post_total_ms).toBeGreaterThanOrEqual(12);
     expect(record).not.toHaveProperty('post_commit_daily_activity_ms');
+  });
+});
+
+describe('DropCreationApiService.createDrop media upload ids (R11-2)', () => {
+  beforeEach(() => {
+    (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
+    jest
+      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
+      .mockResolvedValue(false);
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  it('writes the media with the author’s own upload id, which links its layout hints', async () => {
+    const url = 'https://media.example/drops/u/photo.jpg';
+    jest.spyOn(dropMediaUploadsDb, 'findById').mockResolvedValue({
+      id: 'upload-1',
+      profile_id: 'author-profile',
+      public_url: url,
+      declared_mime_type: 'image/jpeg',
+      status: DropMediaUploadStatus.READY,
+      drop_id: null,
+      wave_id: null
+    } as never);
+    const execute = jest.fn().mockResolvedValue({
+      drop_id: 'drop-1',
+      pending_push_notification_ids: []
+    });
+    const service = new DropCreationApiService(
+      {
+        findDropByIdOrThrow: jest
+          .fn()
+          .mockResolvedValue({ id: 'drop-1', wave_id: 'wave-1' })
+      } as never,
+      {
+        executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+          callback({})
+        )
+      } as never,
+      dropsMappers,
+      {
+        preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+        preparePrePublication: jest.fn().mockResolvedValue({}),
+        execute
+      } as never,
+      {} as never,
+      {
+        notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
+      } as never,
+      { findByDropId: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never
+    );
+
+    await service.createDrop(
+      {
+        createDropRequest: {
+          wave_id: 'wave-1',
+          drop_type: 'CHAT',
+          title: null,
+          parts: [
+            {
+              content: 'photo',
+              quoted_drop: null,
+              media: [
+                { url, mime_type: 'image/jpeg', media_upload_id: 'upload-1' }
+              ]
+            }
+          ],
+          referenced_nfts: [],
+          mentioned_users: [],
+          metadata: []
+        } as never,
+        authorId: 'author-profile',
+        representativeId: 'author-profile'
+      },
+      { timer: undefined } as never
+    );
+
+    // Before R11-2 the API mapping dropped the id, so chat media never
+    // linked to its upload's hints.
+    expect(execute.mock.calls[0][0].parts[0].media).toEqual([
+      { url, mime_type: 'image/jpeg', media_upload_id: 'upload-1' }
+    ]);
+  });
+});
+
+describe('DropCreationApiService.createDrop media upload ids on a replay (R11-2)', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  it('returns the published drop when a retry resolves its ids as the first attempt did', async () => {
+    const url = 'https://media.example/drops/u/photo.jpg';
+    const request = {
+      wave_id: 'wave-1',
+      drop_type: 'CHAT',
+      title: null,
+      parts: [
+        {
+          content: 'photo',
+          quoted_drop: null,
+          media: [{ url, mime_type: 'image/jpeg', media_upload_id: 'upload-1' }]
+        }
+      ],
+      referenced_nfts: [],
+      mentioned_users: [],
+      metadata: []
+    };
+    // What the first attempt published: the model with the upload id kept.
+    const publishedModel = dropsMappers.createDropApiToUseCaseModel({
+      request: request as never,
+      authorId: 'author-profile'
+    });
+    publishedModel.parts[0].media[0] = {
+      ...publishedModel.parts[0].media[0],
+      media_upload_id: 'upload-1'
+    };
+    jest.spyOn(moderationReviewDb, 'savedRequest').mockResolvedValue({
+      published_subject_id: 'drop-1',
+      scope: {
+        context_fingerprint: moderationFingerprint(
+          sanitizeDropStructuredFields(publishedModel)
+        )
+      }
+    } as never);
+    // Since then the upload was attached to that drop, and its status moved.
+    jest.spyOn(dropMediaUploadsDb, 'findById').mockResolvedValue({
+      id: 'upload-1',
+      profile_id: 'author-profile',
+      public_url: url,
+      declared_mime_type: 'image/jpeg',
+      status: DropMediaUploadStatus.FAILED,
+      drop_id: 'drop-1',
+      wave_id: 'wave-1'
+    } as never);
+    const findDropByIdOrThrow = jest
+      .fn()
+      .mockResolvedValue({ id: 'drop-1', wave_id: 'wave-1' });
+    const execute = jest.fn();
+    const service = new DropCreationApiService(
+      { findDropByIdOrThrow } as never,
+      { executeNativeQueriesInTransaction: jest.fn() } as never,
+      dropsMappers,
+      {
+        preResolveIdentityNomination: jest.fn(),
+        preparePrePublication: jest.fn(),
+        execute
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    await expect(
+      service.createDrop(
+        {
+          createDropRequest: request as never,
+          authorId: 'author-profile',
+          representativeId: 'author-profile'
+        },
+        { timer: undefined, moderationRequestId: 'request-1' } as never
+      )
+    ).resolves.toEqual({ id: 'drop-1', wave_id: 'wave-1' });
+    expect(findDropByIdOrThrow).toHaveBeenCalledWith(
+      { dropId: 'drop-1' },
+      expect.anything()
+    );
+    expect(execute).not.toHaveBeenCalled();
   });
 });

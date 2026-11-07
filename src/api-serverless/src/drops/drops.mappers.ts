@@ -1,3 +1,4 @@
+import { dropMediaLayoutHints } from '@/api/drops/drop-media-layout-hints';
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import {
   anonymousCompetitionAuthor,
@@ -1435,7 +1436,8 @@ export class DropsMappers {
                   mime_type: it.mime_type,
                   media_upload_id: it.media_upload_id,
                   media_status: mapDropMediaUploadStatus(it.media_status),
-                  media_error: it.media_error ?? null
+                  media_error: it.media_error ?? null,
+                  ...dropMediaLayoutHints(it)
                 })) ?? [],
             attachments: (dropAttachments[dropEntity.id] ?? [])
               .filter(
