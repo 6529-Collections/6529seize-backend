@@ -3,7 +3,8 @@ import * as mysql from 'mysql';
 import {
   chunkSqlInListValues,
   querySqlInListChunks,
-  SQL_IN_LIST_CHUNK_BYTES
+  SQL_IN_LIST_CHUNK_BYTES,
+  sqlInListBytes
 } from './sql-in-list-chunks';
 
 function inlinedBytes(values: readonly (string | number)[]): number {
@@ -71,6 +72,24 @@ describe('chunkSqlInListValues', () => {
         }
       ),
       { numRuns: 200 }
+    );
+  });
+});
+
+describe('sqlInListBytes', () => {
+  it('measures the distinct values as the driver inlines them', () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.oneof(fc.string({ maxLength: 40 }), fc.integer()), {
+          maxLength: 50
+        }),
+        (values) => {
+          expect(sqlInListBytes(values)).toBe(
+            inlinedBytes(Array.from(new Set(values)))
+          );
+        }
+      ),
+      { numRuns: 100 }
     );
   });
 });
