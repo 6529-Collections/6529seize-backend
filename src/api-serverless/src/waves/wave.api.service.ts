@@ -7,6 +7,7 @@ import {
   reconcileAcceptedLegacySettings
 } from '@/competitions/legacy-competition-mutation';
 import { competitionHistoryRepository } from '@/competitions/competition-history.repository';
+import { wavesChangedNotifier } from '@/api/waves/waves-changed.notifier';
 import { waveGroupIds } from '@/waves/wave-group-ids';
 import { randomUUID } from 'crypto';
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '@/constants';
@@ -564,6 +565,8 @@ export class WaveApiService {
     });
     const { id, descriptionDropModel, descriptionPrePublication } =
       prepared ?? (await this.prepareWaveCreation(createWaveRequest, ctx));
+    // DM members other than the creator were added to the new wave.
+    let addedMemberIds: string[] = [];
     const { createdWave, pendingPushNotificationIds, dmUnreadRecipientIds } =
       await this.withWaveCreationTransaction(
         async (connection) => {
@@ -671,6 +674,11 @@ export class WaveApiService {
                 ctxWithConnection
               );
           }
+          if (waveEntity.is_direct_message) {
+            addedMemberIds = usersToNotify.filter(
+              (it) => it !== waveEntity.created_by
+            );
+          }
           await this.userNotifier.notifyOfWaveCreated(
             waveEntity.id,
             waveEntity.created_by,
@@ -738,6 +746,20 @@ export class WaveApiService {
         postCommitCtx
       );
       await sendIdentityPushNotifications(pendingPushNotificationIds);
+      // Waves 1.3: the creator now follows the wave and DM members were
+      // added to it, so their sockets refetch their wave lists.
+      await wavesChangedNotifier.notify([
+        {
+          profileId: actingAsId,
+          waveIds: [createdWave.id],
+          reason: 'FOLLOWED'
+        },
+        ...addedMemberIds.map((profileId) => ({
+          profileId,
+          waveIds: [createdWave.id],
+          reason: 'ADDED' as const
+        }))
+      ]);
     };
     if (deferredEffects) deferredEffects.push(afterCommit);
     else await afterCommit();
@@ -1644,7 +1666,56 @@ export class WaveApiService {
     );
   }
 
-  async addWaveSubscriptionActions({
+  /**
+   * Follows (or adds actions to) a wave. After the change commits, a follow
+   * sends WAVES_CHANGED (waves 1.3) so the profile's sockets refetch their
+   * wave list.
+   */
+  async addWaveSubscriptionActions(params: {
+    subscriber: string;
+    waveId: string;
+    actions: ApiWaveSubscriptionTargetAction[];
+  }): Promise<ApiWaveSubscriptionTargetAction[]> {
+    const active = await this.addWaveSubscriptionActionsInTransaction(params);
+    if (
+      params.actions.includes(ApiWaveSubscriptionTargetAction.DropCreated) &&
+      active.includes(ApiWaveSubscriptionTargetAction.DropCreated)
+    ) {
+      await wavesChangedNotifier.notify([
+        {
+          profileId: params.subscriber,
+          waveIds: [params.waveId],
+          reason: 'FOLLOWED'
+        }
+      ]);
+    }
+    return active;
+  }
+
+  /** Unfollows (or removes actions from) a wave; an unfollow sends WAVES_CHANGED. */
+  async removeWaveSubscriptionActions(params: {
+    subscriber: string;
+    waveId: string;
+    actions: ApiWaveSubscriptionTargetAction[];
+  }): Promise<ApiWaveSubscriptionTargetAction[]> {
+    const active =
+      await this.removeWaveSubscriptionActionsInTransaction(params);
+    if (
+      params.actions.includes(ApiWaveSubscriptionTargetAction.DropCreated) &&
+      !active.includes(ApiWaveSubscriptionTargetAction.DropCreated)
+    ) {
+      await wavesChangedNotifier.notify([
+        {
+          profileId: params.subscriber,
+          waveIds: [params.waveId],
+          reason: 'UNFOLLOWED'
+        }
+      ]);
+    }
+    return active;
+  }
+
+  private async addWaveSubscriptionActionsInTransaction({
     subscriber,
     waveId,
     actions
@@ -1715,7 +1786,7 @@ export class WaveApiService {
     );
   }
 
-  async removeWaveSubscriptionActions({
+  private async removeWaveSubscriptionActionsInTransaction({
     subscriber,
     waveId,
     actions

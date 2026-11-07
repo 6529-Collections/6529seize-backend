@@ -29,4 +29,13 @@ export class WSConnectionEntity {
   readonly wave_id!: string | null;
   @Column({ type: 'varchar', length: 16, nullable: true, default: null })
   readonly purpose?: WsConnectionPurpose | null;
+  /**
+   * The wave this tab has open, declared by the app socket with
+   * `SET_OPEN_WAVE` (waves 1.3). Unlike `wave_id` (SUBSCRIBE_TO_WAVE), it
+   * never narrows what the socket receives; it only adds the socket to that
+   * wave's viewers when `WS_AUDIENCE_FOLLOWERS` is on.
+   */
+  @Index('idx_ws_connections_open_wave_id')
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly open_wave_id?: string | null;
 }

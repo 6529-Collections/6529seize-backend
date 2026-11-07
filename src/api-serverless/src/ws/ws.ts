@@ -354,6 +354,20 @@ export class AppWebSockets {
     await this.wsConnectionRepository.deleteByConnectionId(connectionId, {});
   }
 
+  /** The app socket's open wave (SET_OPEN_WAVE, waves 1.3). */
+  async updateOpenWaveForConnection(
+    {
+      connectionId,
+      openWaveId
+    }: { connectionId: string; openWaveId: string | null },
+    ctx: RequestContext
+  ) {
+    await this.wsConnectionRepository.updateOpenWaveId(
+      { connectionId, waveId: openWaveId },
+      ctx
+    );
+  }
+
   async updateActiveWaveForConnection(
     {
       connectionId,
