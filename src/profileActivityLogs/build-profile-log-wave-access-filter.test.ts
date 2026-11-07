@@ -213,9 +213,14 @@ describe('ProfileActivityLogsDb.searchLogs shared viewer groups', () => {
     );
     // Every branch still checks access, now against the shared table.
     expect(sql.match(/\(case/g)!.length).toBeGreaterThan(3);
-    expect(sql.match(/select id from pa_viewer_groups/g)!.length).toBe(
-      sql.match(/\(case/g)!.length * 4
-    );
+    const references = sql.match(/ id from pa_viewer_groups\)/g)!.length;
+    expect(references).toBe(sql.match(/\(case/g)!.length * 4);
+    // Every reference reads one shared materialization, never a per-row EXISTS.
+    expect(
+      sql.match(
+        /select \/\*\+ NO_MERGE\(pa_viewer_groups\) SUBQUERY\(MATERIALIZATION\) \*\/ id from pa_viewer_groups\)/g
+      )
+    ).toHaveLength(references);
   });
 
   it('shrinks the statement from megabytes to about one list', async () => {

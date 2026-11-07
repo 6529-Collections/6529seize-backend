@@ -122,6 +122,10 @@ describeWithSeed(
   ],
   () => {
     const repo = new ProfileActivityLogsDb(() => sqlExecutor, {} as any);
+    // The repository keeps the executor it first saw, while each test installs
+    // a new one; spy on the repository's own.
+    const repoDb = () =>
+      (repo as unknown as { readonly db: typeof sqlExecutor }).db;
     const ctx: RequestContext = { timer: undefined };
 
     async function searchIds(
@@ -254,7 +258,7 @@ describeWithSeed(
 
       it('is used against the production collation', async () => {
         resetViewerGroupsCteSupport();
-        const execute = jest.spyOn(sqlExecutor, 'execute');
+        const execute = jest.spyOn(repoDb(), 'execute');
         try {
           await searchIds({
             profile_id: 'profile-1',
@@ -268,6 +272,36 @@ describeWithSeed(
         } finally {
           execute.mockRestore();
         }
+      });
+
+      it('reads the groups once per statement, not once per wave row', async () => {
+        resetViewerGroupsCteSupport();
+        const execute = jest.spyOn(repoDb(), 'execute');
+        let statement: [string, Record<string, any>] | undefined;
+        try {
+          await searchIds({
+            profile_id: 'profile-1',
+            includeProfileIdToIncoming: true,
+            viewer_eligible_group_ids: [MEMBER_GROUP, 'other-group']
+          });
+          const call = execute.mock.calls.find(([sql]) =>
+            sql.includes('pa_viewer_groups as (')
+          );
+          statement = call && [call[0], call[1] ?? {}];
+        } finally {
+          execute.mockRestore();
+        }
+        expect(statement).toBeDefined();
+        const [row] = await sqlExecutor.execute<Record<string, string>>(
+          `explain format=tree ${statement![0]}`,
+          statement![1]
+        );
+        const plan = Object.values(row)[0];
+        // One shared materialization of the JSON, reused by every reference.
+        expect(plan.match(/Materialize table function/g)).toHaveLength(1);
+        expect(plan).toContain('Materialize CTE pa_viewer_groups');
+        // No reference turns into a correlated EXISTS over the groups.
+        expect(plan).not.toMatch(/visibility_group_id,\s*<exists>/);
       });
 
       const viewerGroupSets = [
@@ -324,7 +358,13 @@ describeWithSeed(
             profile_id: 'profile-1',
             viewer_eligible_group_ids: ['other-group']
           })
-        ).resolves.toEqual(['handle', 'profile-rep', 'public-drop']);
+        ).resolves.toEqual([
+          'handle',
+          'profile-rep',
+          // The viewer is in other-group, so its wave's rows stay visible.
+          'other-vote',
+          'public-drop'
+        ]);
       });
     });
   }

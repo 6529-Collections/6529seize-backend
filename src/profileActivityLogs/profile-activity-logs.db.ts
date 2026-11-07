@@ -74,7 +74,17 @@ const VIEWER_GROUPS_CTE_SQL = `${VIEWER_GROUPS_CTE} as (
         select convert(viewer_group.id using utf8mb4) collate ${DB_TEXT_COLLATION} as id
         from json_table(:${VIEWER_GROUPS_JSON_PARAM}, '$[*]' columns (id varchar(200) path '$')) viewer_group
       )`;
-const VIEWER_GROUPS_SET_SQL = `select id from ${VIEWER_GROUPS_CTE}`;
+/**
+ * Each reference reads the groups through two hints, so the JSON is parsed
+ * once per statement rather than once per checked wave row:
+ * - NO_MERGE materializes the shared table once, and every reference reuses
+ *   it (otherwise each reference re-reads JSON_TABLE).
+ * - SUBQUERY(MATERIALIZATION) runs each `IN` once into a deduplicated,
+ *   indexed table. The `IN` sits under OR, so it can't be a semijoin; without
+ *   the hint the optimizer may pick a correlated EXISTS that re-reads the
+ *   groups for every wave row (seen on production plans for small branches).
+ */
+const VIEWER_GROUPS_SET_SQL = `select /*+ NO_MERGE(${VIEWER_GROUPS_CTE}) SUBQUERY(MATERIALIZATION) */ id from ${VIEWER_GROUPS_CTE}`;
 
 let viewerGroupsCteSupport: Promise<boolean> | undefined;
 
