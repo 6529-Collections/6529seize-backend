@@ -4,34 +4,43 @@ import { cacheKey } from '@/api/api-helpers';
 import { cacheRequest, type RequestCacheOptions } from '@/api/request-cache';
 import type { ApiWave } from '@/api/generated/models/ApiWave';
 import { Logger } from '@/logging';
+import { evictKeyFromRedisCache, getRedisCacheKeyForPath } from '@/redis';
 
 /**
  * How long an anonymous `GET /waves/:id` response is shared. Anonymous
  * viewers see a public wave's metadata, metrics and description drop up to
  * this much late, and a wave that turns private stays visible to them for at
- * most this long.
+ * most this long (an update through `POST /waves/:id` evicts it at once).
  */
 export const ANONYMOUS_WAVE_RESPONSE_TTL = Time.seconds(15);
 
 const SHAREABLE = 'shareableAnonymousWave';
+const ANON_WAVE_KEY_SUFFIX = '__ANON_WAVE';
+const AUTH_COOKIE_NAMES = new Set(['wallet-auth', '__host-wallet-auth']);
 const logger = Logger.get('WAVE_RESPONSE_CACHE');
 
 /** Any request signal that could identify the viewer. */
 export function carriesIdentity(req: Request): boolean {
   if (req.user) return true;
   if (req.headers.authorization) return true;
-  const cookies = req.headers.cookie ?? '';
-  return /(?:^|;\s*)(?:__Host-wallet-auth|wallet-auth)[^=]*=/i.test(cookies);
+  // A plain split rather than a regex keeps a long cookie header linear.
+  return (req.headers.cookie ?? '')
+    .split(';')
+    .some((cookie) =>
+      AUTH_COOKIE_NAMES.has(cookie.split('=', 1)[0].trim().toLowerCase())
+    );
 }
 
+// 0, false, null and undefined are the anonymous defaults of these fields.
 const isSet = (value: unknown) =>
   value !== undefined && value !== null && value !== 0 && value !== false;
 
 /**
  * True when the response holds state that belongs to one viewer: their
  * subscriptions, pin, counts, read position, mute, rep contribution or
- * their own context on the description drop. An anonymous response has
- * none of these.
+ * their own context on the description drop or parent wave. An anonymous
+ * response has none of these. A schema test fails when the wave model
+ * gains a field this does not account for.
  */
 export function carriesViewerState(wave: ApiWave): boolean {
   const metrics = wave.metrics;
@@ -66,27 +75,32 @@ export function markShareableWaveResponse(
 
 /**
  * Cache options for `GET /waves/:id`. Requests with any identity signal
- * bypass the cache entirely (no read, no fill) in the middleware below. Only 200 responses that the
- * handler marked shareable are stored, so a 304, an error or a viewer's
- * response is never replayed. Express still answers a matching
- * `If-None-Match` with 304 from the cached body. The key is the full URL
- * (path and query); no request header changes this route's body.
+ * never reach the cache (no read, no fill); the middleware below routes
+ * them past it. Only 200 responses the handler marked shareable are stored,
+ * so a 304, an error or a viewer's response is never replayed. Express
+ * still answers a matching `If-None-Match` with 304 from the cached body.
+ * The key is the full URL (path and query); no request header changes this
+ * route's body.
+ *
+ * Sharing one body across anonymous callers is sound because the handler
+ * resolves every anonymous caller to the same read context: no profile and
+ * no eligible groups. A wave that context cannot read is a 404, never a
+ * 200, so only globally public waves are stored.
  */
 export const anonymousWaveResponseCacheOptions: RequestCacheOptions = {
   ttl: ANONYMOUS_WAVE_RESPONSE_TTL,
-  // Identity-bearing requests never reach the cache (see the middleware),
-  // because cacheRequest falls back to the plain URL key for a null key.
-  key: (req: Request) => `${cacheKey(req)}__ANON_WAVE`,
+  key: (req: Request) => `${cacheKey(req)}${ANON_WAVE_KEY_SUFFIX}`,
   shouldCacheResponse: (_req, res) =>
     res.statusCode === 200 && res.locals[SHAREABLE] === true
 };
 
 type CacheOutcome = 'hit' | 'miss' | 'bypass';
 
-function deliveryEnvironment(): string {
-  return (process.env.SENTRY_ENVIRONMENT ?? '').includes('staging')
-    ? 'staging'
-    : 'prod';
+function metricEnvironment(): 'staging' | 'prod' | 'unknown' {
+  if ((process.env.SENTRY_ENVIRONMENT ?? '').includes('staging'))
+    return 'staging';
+  // Production runs only in us-east-1; anything else is not counted as prod.
+  return process.env.AWS_REGION === 'us-east-1' ? 'prod' : 'unknown';
 }
 
 /** One EMF count per request in `6529/ApiCache`, so the hit rate shows. */
@@ -109,7 +123,7 @@ export function recordWaveCacheOutcome(outcome: CacheOutcome): void {
             }
           ]
         },
-        Environment: deliveryEnvironment(),
+        Environment: metricEnvironment(),
         Route: 'GET /waves/:id',
         CacheHit: outcome === 'hit' ? 1 : 0,
         CacheMiss: outcome === 'miss' ? 1 : 0,
@@ -134,6 +148,7 @@ export function anonymousWaveResponseCache() {
       next();
       return;
     }
+    // cacheRequest marks every response it handles X-Cache: HIT or MISS.
     res.once('finish', () =>
       recordWaveCacheOutcome(
         res.getHeader('X-Cache') === 'HIT' ? 'hit' : 'miss'
@@ -141,4 +156,22 @@ export function anonymousWaveResponseCache() {
     );
     return cache(req, res, next);
   };
+}
+
+/**
+ * Drops the shared anonymous body of a wave after it is updated or deleted,
+ * so anonymous readers see the change at once instead of up to 15 s later.
+ * Only the plain URL is evicted (what clients request); a query-string
+ * variant still expires by TTL. Never fails the write.
+ */
+export async function invalidateAnonymousWaveResponse(
+  waveId: string
+): Promise<void> {
+  try {
+    await evictKeyFromRedisCache(
+      `${getRedisCacheKeyForPath(`/api/waves/${waveId}`)}${ANON_WAVE_KEY_SUFFIX}`
+    );
+  } catch (error) {
+    logger.warn('Failed to evict the anonymous wave response', error);
+  }
 }

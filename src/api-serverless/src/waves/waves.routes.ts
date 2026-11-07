@@ -46,6 +46,7 @@ import { userGroupsService } from '../community-members/user-groups.service';
 import { dropsService } from '../drops/drops.api.service';
 import {
   anonymousWaveResponseCache,
+  invalidateAnonymousWaveResponse,
   markShareableWaveResponse
 } from './wave-response-cache';
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
@@ -258,6 +259,7 @@ router.post(
       request,
       requestContext
     );
+    await invalidateAnonymousWaveResponse(req.params.id);
     await giveReadReplicaTimeToCatchUp();
     res.send(wave);
   }
@@ -324,6 +326,7 @@ router.delete(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     await waveApiService.deleteWave(id, { authenticationContext, timer });
+    await invalidateAnonymousWaveResponse(id);
     res.send({});
   }
 );

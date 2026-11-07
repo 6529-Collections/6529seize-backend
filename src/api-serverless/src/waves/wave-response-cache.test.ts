@@ -8,7 +8,12 @@ jest.mock('@/redis', () => ({
   redisSetJson: jest.fn(async (key: string, value: unknown, ttl: unknown) => {
     mockCacheStore.set(key, JSON.stringify(value));
     mockTtls.push(ttl);
-  })
+  }),
+  evictKeyFromRedisCache: jest.fn(async (key: string) => {
+    mockCacheStore.delete(key);
+  }),
+  getRedisCacheKeyForPath: (path: string) =>
+    `__SEIZE_CACHE_${process.env.NODE_ENV}__${path}`
 }));
 const mockTtls: unknown[] = [];
 
@@ -16,12 +21,14 @@ import express, { Request, Response } from 'express';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { get as httpGet, Server } from 'node:http';
-import type { ApiWave } from '@/api/generated/models/ApiWave';
+import { ApiWave } from '@/api/generated/models/ApiWave';
+import { ApiWaveMetrics } from '@/api/generated/models/ApiWaveMetrics';
 import {
   ANONYMOUS_WAVE_RESPONSE_TTL,
   anonymousWaveResponseCache,
   carriesIdentity,
   carriesViewerState,
+  invalidateAnonymousWaveResponse,
   markShareableWaveResponse
 } from './wave-response-cache';
 
@@ -106,6 +113,66 @@ describe('carriesViewerState', () => {
   });
 });
 
+describe('viewer-state schema drift', () => {
+  const VIEWER_NEUTRAL_METRICS = new Set([
+    'subscribers_count',
+    'drops_count',
+    'latest_drop_timestamp'
+  ]);
+
+  it('treats every per-viewer metrics field as viewer state', () => {
+    const viewerFields = ApiWaveMetrics.getAttributeTypeMap()
+      .map((attribute) => attribute.name)
+      .filter((name) => !VIEWER_NEUTRAL_METRICS.has(name));
+    expect(viewerFields.length).toBeGreaterThan(0);
+    for (const field of viewerFields) {
+      const value = field === 'muted' ? true : 7;
+      expect({
+        field,
+        flagged: carriesViewerState(
+          anonymousWave({
+            metrics: { ...anonymousWave().metrics, [field]: value }
+          })
+        )
+      }).toEqual({ field, flagged: true });
+    }
+  });
+
+  it('fails when the wave model gains a field, so it is reviewed for viewer state', () => {
+    expect(
+      ApiWave.getAttributeTypeMap()
+        .map((attribute) => attribute.name)
+        .sort((a, b) => a.localeCompare(b))
+    ).toEqual(
+      [
+        'id',
+        'serial_no',
+        'author',
+        'name',
+        'picture',
+        'created_at',
+        'last_drop_time',
+        'description_drop',
+        'voting',
+        'visibility',
+        'participation',
+        'chat',
+        'wave',
+        'contributors_overview',
+        'subscribed_actions',
+        'metrics',
+        'pauses',
+        'pinned',
+        'identity_wave',
+        'parent_wave',
+        'has_subwaves',
+        'wave_rep',
+        'wave_score'
+      ].sort((a, b) => a.localeCompare(b))
+    );
+  });
+});
+
 describe('carriesIdentity', () => {
   const req = (headers: Record<string, string>, user?: unknown) =>
     ({ headers, user }) as unknown as Request;
@@ -172,14 +239,15 @@ describe('anonymous GET /waves/:id response cache', () => {
     app.use((req, res, next) => {
       requestCounter += 1;
       res.setHeader('X-Request-Id', `request-${requestCounter}`);
-      // Stands in for maybeAuthenticatedUser(): only a valid token sets it.
-      if (req.headers.authorization === 'Bearer valid') {
+      // Stands in for maybeAuthenticatedUser(), which sets req.user only
+      // for a verified token.
+      if (req.headers['x-test-verified'] === 'yes') {
         req.user = { wallet: '0xviewer', role: null };
       }
       next();
     });
     app.get(
-      '/waves/:id',
+      '/api/waves/:id',
       anonymousWaveResponseCache(),
       (req: Request, res: Response) => {
         handlerCalls++;
@@ -228,8 +296,8 @@ describe('anonymous GET /waves/:id response cache', () => {
 
   it('serves the second anonymous request from the cache for 15 s, with its own request id', async () => {
     await withServer(async (base) => {
-      const first = await fetch(`${base}/waves/wave-1?x=1`);
-      const second = await fetch(`${base}/waves/wave-1?x=1`);
+      const first = await fetch(`${base}/api/waves/wave-1?x=1`);
+      const second = await fetch(`${base}/api/waves/wave-1?x=1`);
       expect(handlerCalls).toBe(1);
       expect(first.headers.get('x-cache')).toBe('MISS');
       expect(second.headers.get('x-cache')).toBe('HIT');
@@ -240,7 +308,7 @@ describe('anonymous GET /waves/:id response cache', () => {
       );
       expect(second.headers.get('x-request-id')).toMatch(/^request-\d+$/);
       // A different query string is a different entry.
-      await fetch(`${base}/waves/wave-1?x=2`);
+      await fetch(`${base}/api/waves/wave-1?x=2`);
       expect(handlerCalls).toBe(2);
     });
     expect(mockTtls[0]).toBe(ANONYMOUS_WAVE_RESPONSE_TTL);
@@ -248,16 +316,19 @@ describe('anonymous GET /waves/:id response cache', () => {
   });
 
   it.each([
-    ['a valid token', { authorization: 'Bearer valid' }],
+    [
+      'a verified token',
+      { authorization: 'Bearer verified', 'x-test-verified': 'yes' }
+    ],
     ['an unverified Authorization header', { authorization: 'Bearer bad' }],
     ['the wallet-auth cookie', { cookie: 'wallet-auth=x' }]
   ])(
     'never serves or fills the cache for a request with %s',
     async (_label, headers) => {
       await withServer(async (base) => {
-        await fetch(`${base}/waves/wave-1`); // anonymous: fills the cache
-        const signedIn1 = await fetch(`${base}/waves/wave-1`, { headers });
-        const signedIn2 = await fetch(`${base}/waves/wave-1`, { headers });
+        await fetch(`${base}/api/waves/wave-1`); // anonymous: fills the cache
+        const signedIn1 = await fetch(`${base}/api/waves/wave-1`, { headers });
+        const signedIn2 = await fetch(`${base}/api/waves/wave-1`, { headers });
         expect(handlerCalls).toBe(3);
         expect(signedIn1.headers.get('x-cache')).toBeNull();
         expect(signedIn2.headers.get('x-cache')).toBeNull();
@@ -269,11 +340,11 @@ describe('anonymous GET /waves/:id response cache', () => {
 
   it('does not let a signed-in request fill the anonymous entry', async () => {
     await withServer(async (base) => {
-      await fetch(`${base}/waves/wave-1`, {
-        headers: { authorization: 'Bearer valid' }
+      await fetch(`${base}/api/waves/wave-1`, {
+        headers: { authorization: 'Bearer verified', 'x-test-verified': 'yes' }
       });
       expect(mockCacheStore.size).toBe(0);
-      const anonymous = await fetch(`${base}/waves/wave-1`);
+      const anonymous = await fetch(`${base}/api/waves/wave-1`);
       expect(anonymous.headers.get('x-cache')).toBe('MISS');
       const body = (await anonymous.json()) as ApiWave;
       expect(carriesViewerState(body)).toBe(false);
@@ -282,14 +353,17 @@ describe('anonymous GET /waves/:id response cache', () => {
 
   it('stores only 200 responses: never a 404 or a 304', async () => {
     await withServer(async (base) => {
-      expect((await fetch(`${base}/waves/missing`)).status).toBe(404);
-      expect((await fetch(`${base}/waves/missing`)).status).toBe(404);
+      expect((await fetch(`${base}/api/waves/missing`)).status).toBe(404);
+      expect((await fetch(`${base}/api/waves/missing`)).status).toBe(404);
       expect(handlerCalls).toBe(2);
 
-      const fresh = await fetch(`${base}/waves/wave-2`);
+      const fresh = await fetch(`${base}/api/waves/wave-2`);
       const etag = fresh.headers.get('etag')!;
       mockCacheStore.clear();
-      const notModified = await conditionalGet(`${base}/waves/wave-2`, etag);
+      const notModified = await conditionalGet(
+        `${base}/api/waves/wave-2`,
+        etag
+      );
       expect(notModified.status).toBe(304);
       expect(mockCacheStore.size).toBe(0);
     });
@@ -297,19 +371,31 @@ describe('anonymous GET /waves/:id response cache', () => {
 
   it('answers If-None-Match with 304 from a cached body', async () => {
     await withServer(async (base) => {
-      const first = await fetch(`${base}/waves/wave-1`);
+      const first = await fetch(`${base}/api/waves/wave-1`);
       const etag = first.headers.get('etag')!;
-      const cached = await conditionalGet(`${base}/waves/wave-1`, etag);
+      const cached = await conditionalGet(`${base}/api/waves/wave-1`, etag);
       expect(cached.status).toBe(304);
       expect(cached.xCache).toBe('HIT');
       expect(handlerCalls).toBe(1);
     });
   });
 
+  it('evicts the anonymous body when the wave is updated or deleted', async () => {
+    await withServer(async (base) => {
+      await fetch(`${base}/api/waves/wave-1`);
+      expect(mockCacheStore.size).toBe(1);
+      await invalidateAnonymousWaveResponse('wave-1');
+      expect(mockCacheStore.size).toBe(0);
+      const after = await fetch(`${base}/api/waves/wave-1`);
+      expect(after.headers.get('x-cache')).toBe('MISS');
+      expect(handlerCalls).toBe(2);
+    });
+  });
+
   it('never stores a response that carries viewer state', async () => {
     await withServer(async (base) => {
-      await fetch(`${base}/waves/leaky`);
-      await fetch(`${base}/waves/leaky`);
+      await fetch(`${base}/api/waves/leaky`);
+      await fetch(`${base}/api/waves/leaky`);
       expect(handlerCalls).toBe(2);
     });
     expect(mockCacheStore.size).toBe(0);
