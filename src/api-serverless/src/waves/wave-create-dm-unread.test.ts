@@ -21,6 +21,20 @@ const mockRequestWaveScoreRefreshBestEffort = jest.mocked(
 );
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
+  // After-commit bumps from the DB chokepoints (drop insert/delete, reader
+  // metrics, wave insert, blocks and mutes).
+  invalidateWaveUnreadCacheForWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForWavesAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
   invalidateWaveUnreadCacheForReaderWave: jest.fn(),
   invalidateWaveUnreadCacheForWave: jest.fn()
 }));

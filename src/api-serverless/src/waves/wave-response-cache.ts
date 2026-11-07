@@ -5,6 +5,7 @@ import { cacheRequest, type RequestCacheOptions } from '@/api/request-cache';
 import type { ApiWave } from '@/api/generated/models/ApiWave';
 import { Logger } from '@/logging';
 import { evictKeyFromRedisCache } from '@/redis';
+import { metricEnvironment } from './wave-cache-metrics';
 
 /**
  * How long an anonymous `GET /waves/:id` response is shared. Anonymous
@@ -104,13 +105,6 @@ export const anonymousWaveResponseCacheOptions: RequestCacheOptions = {
 };
 
 type CacheOutcome = 'hit' | 'miss' | 'bypass';
-
-function metricEnvironment(): 'staging' | 'prod' | 'unknown' {
-  if ((process.env.SENTRY_ENVIRONMENT ?? '').includes('staging'))
-    return 'staging';
-  // Production runs only in us-east-1; anything else is not counted as prod.
-  return process.env.AWS_REGION === 'us-east-1' ? 'prod' : 'unknown';
-}
 
 /** One EMF count per request in `6529/ApiCache`, so the hit rate shows. */
 export function recordWaveCacheOutcome(outcome: CacheOutcome): void {
