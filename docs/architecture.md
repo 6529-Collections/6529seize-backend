@@ -1572,12 +1572,17 @@ BIGINT values, including when they reuse a socket opened inside that scope.
 API pools reach MySQL through RDS Proxy. The proxy pins a client session to one
 database connection for the session's life after a statement over 16 KB or an
 untracked `SET SESSION`, and warm Lambda containers keep pooled sessions open.
-The API therefore measures each formatted statement: above 16,000 bytes, a
-connection borrowed for that statement is destroyed instead of released, and a
-transaction connection is destroyed when the transaction releases it. Budgeted
-API transactions, which set session timeouts, destroy their connection instead
-of restoring the timeouts. Each disposal emits the `6529/DbProxy`
-`ProxyPinnedSessionRetired` metric with a value-free statement fingerprint.
+The API therefore measures each formatted statement and marks a connection
+pinned once a statement exceeds 16,000 bytes. Each Lambda invocation runs in a
+pin scope: pinned connections keep returning to the pool, so the rest of the
+invocation reuses them, and the scope destroys the idle ones when the
+invocation ends. A pinned connection released outside an open scope, such as
+background work that outlives its invocation, is destroyed at release.
+Budgeted API transactions, which set session timeouts, destroy their
+connection after COMMIT or ROLLBACK instead of restoring the timeouts. Each
+disposal emits the `6529/DbProxy` `ProxyPinnedSessionRetired` metric (`When`
+is `release` or `request_end`) with a value-free statement fingerprint, and
+each invocation that pinned emits `ProxyPinnedSessionsRetiredPerRequest`.
 Long inlined `IN` lists that can be split per value use
 `querySqlInListChunks`, which keeps each statement's list near 12 KB. Loop mode
 is unchanged; loops disconnect after each invocation.

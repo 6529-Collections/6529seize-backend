@@ -1,3 +1,4 @@
+import * as mysql from 'mysql';
 import type { PoolConnection } from 'mysql';
 import * as fc from 'fast-check';
 import {
@@ -7,7 +8,8 @@ import {
   PROXY_PIN_STATEMENT_BYTES,
   releaseOrRetireProxySession,
   retireProxySession,
-  sqlFingerprint
+  sqlFingerprint,
+  withProxyPinScope
 } from './proxy-session-pinning';
 
 function fakeConnection(destroyError?: Error) {
@@ -171,14 +173,180 @@ describe('proxy session disposal', () => {
     expect(records[0]).toMatchObject({
       Pool: 'READ',
       Reason: 'oversized_statement',
+      When: 'release',
       ProxyPinnedSessionRetired: 1,
       ProxyPinStatementBytes: 20_000,
       fingerprint: 'select * from t where id in (?)'
     });
     expect(records[0]._aws.CloudWatchMetrics[0]).toMatchObject({
       Namespace: '6529/DbProxy',
-      Dimensions: [['Environment', 'Pool', 'Reason']]
+      Dimensions: [['Environment', 'Pool', 'Reason', 'When']]
     });
     expect(lines.join('')).not.toContain('secret');
+  });
+});
+
+/** mysql 2.x pool shape: released connections wait in `_freeConnections`. */
+function fakePool() {
+  const pool = { _freeConnections: [] as PoolConnection[] };
+  const created: ReturnType<typeof fakeConnection>[] = [];
+  const acquire = (): PoolConnection => {
+    const idle = pool._freeConnections.shift();
+    if (idle) return idle;
+    const driver = fakeConnection();
+    const connection = driver.connection as unknown as { _pool: unknown };
+    connection._pool = pool;
+    driver.release.mockImplementation(() => {
+      pool._freeConnections.push(driver.connection);
+    });
+    driver.destroy.mockImplementation(() => {
+      const index = pool._freeConnections.indexOf(driver.connection);
+      if (index !== -1) pool._freeConnections.splice(index, 1);
+      connection._pool = null;
+    });
+    created.push(driver);
+    return driver.connection;
+  };
+  return { acquire, created };
+}
+
+function pinnedStatement(connection: PoolConnection): void {
+  markProxySessionPinned(connection, {
+    reason: 'oversized_statement',
+    statementBytes: 20_000
+  });
+  releaseOrRetireProxySession(connection, 'READ');
+}
+
+describe('request-scoped retirement', () => {
+  const lambdaName = process.env.AWS_LAMBDA_FUNCTION_NAME;
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (lambdaName === undefined) delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+    else process.env.AWS_LAMBDA_FUNCTION_NAME = lambdaName;
+  });
+
+  it('reuses one pinned connection for a whole request and retires it once at the end', async () => {
+    const pool = fakePool();
+    await withProxyPinScope(async () => {
+      for (let i = 0; i < 5; i++) {
+        pinnedStatement(pool.acquire());
+        await Promise.resolve();
+      }
+      expect(pool.created).toHaveLength(1);
+      expect(pool.created[0].release).toHaveBeenCalledTimes(5);
+      expect(pool.created[0].destroy).not.toHaveBeenCalled();
+    });
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+    // The next request opens exactly one replacement.
+    pool.acquire();
+    expect(pool.created).toHaveLength(2);
+  });
+
+  it('retires pinned connections when the request fails', async () => {
+    const pool = fakePool();
+    const failure = new Error('handler failed');
+    await expect(
+      withProxyPinScope(async () => {
+        pinnedStatement(pool.acquire());
+        throw failure;
+      })
+    ).rejects.toBe(failure);
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves unpinned connections in the pool', async () => {
+    const pool = fakePool();
+    await withProxyPinScope(async () => {
+      releaseOrRetireProxySession(pool.acquire(), 'READ');
+    });
+    expect(pool.created[0].destroy).not.toHaveBeenCalled();
+  });
+
+  it('does not touch a pinned connection that is borrowed at request end', async () => {
+    const pool = fakePool();
+    let background: PoolConnection | undefined;
+    await withProxyPinScope(async () => {
+      pinnedStatement(pool.acquire());
+      // Background work borrows it again and outlives the request.
+      background = pool.acquire();
+    });
+    expect(pool.created[0].destroy).not.toHaveBeenCalled();
+    // Its later release happens outside an open scope and retires it.
+    releaseOrRetireProxySession(background!, 'READ');
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+    expect(isProxySessionPinned(background!)).toBe(false);
+  });
+
+  it('retires at release when background work of an ended request releases it', async () => {
+    const pool = fakePool();
+    let background: Promise<void> | undefined;
+    await withProxyPinScope(async () => {
+      const connection = pool.acquire();
+      // This continuation runs in the request's scope after it has closed.
+      background = new Promise<void>((resolve) => setTimeout(resolve, 5)).then(
+        () => pinnedStatement(connection)
+      );
+    });
+    expect(pool.created[0].destroy).not.toHaveBeenCalled();
+    await background;
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+    expect(pool.created[0].release).not.toHaveBeenCalled();
+  });
+
+  it('destroys pinning outside any request scope at release', () => {
+    const pool = fakePool();
+    pinnedStatement(pool.acquire());
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+    expect(pool.created[0].release).not.toHaveBeenCalled();
+  });
+
+  it('records request-end retirements and the per-request count', async () => {
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'seizeAPI';
+    const write = jest
+      .spyOn(process.stdout, 'write')
+      .mockImplementation(() => true);
+    const pool = fakePool();
+    await withProxyPinScope(async () => {
+      const first = pool.acquire();
+      const second = pool.acquire();
+      pinnedStatement(first);
+      pinnedStatement(second);
+    });
+    const records = write.mock.calls.map(([line]) => JSON.parse(String(line)));
+    expect(
+      records.filter((record) => record.ProxyPinnedSessionRetired === 1)
+    ).toEqual([
+      expect.objectContaining({ When: 'request_end', Pool: 'READ' }),
+      expect.objectContaining({ When: 'request_end', Pool: 'READ' })
+    ]);
+    expect(
+      records.filter(
+        (record) => record.event === 'db_proxy_pins_at_request_end'
+      )
+    ).toEqual([
+      expect.objectContaining({
+        ProxyPinnedSessionsRetiredPerRequest: 2,
+        deferred: 0
+      })
+    ]);
+  });
+
+  it('recognizes idle connections in a real mysql pool', async () => {
+    const pool = mysql.createPool({ host: '127.0.0.1', connectionLimit: 1 });
+    const destroy = jest.fn();
+    const connection = {
+      _pool: pool,
+      destroy,
+      release() {
+        (
+          pool as unknown as { releaseConnection(c: unknown): void }
+        ).releaseConnection(this);
+      }
+    } as unknown as PoolConnection;
+    await withProxyPinScope(async () => {
+      pinnedStatement(connection);
+    });
+    expect(destroy).toHaveBeenCalledTimes(1);
   });
 });

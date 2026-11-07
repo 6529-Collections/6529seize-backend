@@ -8,7 +8,10 @@ import {
   execSQLWithConnection,
   execSQLWithParams
 } from './my-sql.helpers';
-import { isProxySessionPinned } from './proxy-session-pinning';
+import {
+  isProxySessionPinned,
+  withProxyPinScope
+} from './proxy-session-pinning';
 
 type Callback = (error: unknown, rows?: unknown) => void;
 type QueryInput = string | { sql: string; values?: Record<string, unknown> };
@@ -76,7 +79,7 @@ function captureEmf() {
       .map((line) => JSON.parse(line));
 }
 
-describe('RDS Proxy pin containment in the API SQL path', () => {
+describe('RDS Proxy pin containment outside a request scope', () => {
   const lambdaName = process.env.AWS_LAMBDA_FUNCTION_NAME;
   afterEach(() => {
     jest.restoreAllMocks();
@@ -278,5 +281,152 @@ describe('budgeted API transactions', () => {
     });
     expect(driver.statements).toContain('ROLLBACK');
     expect(driver.destroy).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** mysql 2.x pool shape around fake connections: idle ones wait in `_freeConnections`. */
+function fakePool() {
+  const pool = { _freeConnections: [] as PoolConnection[] };
+  const created: ReturnType<typeof fakeConnection>[] = [];
+  const acquire = async (): Promise<PoolConnection> => {
+    const idle = pool._freeConnections.shift();
+    if (idle) return idle;
+    const driver = fakeConnection();
+    const connection = driver.connection as unknown as { _pool: unknown };
+    connection._pool = pool;
+    driver.release.mockImplementation(() => {
+      pool._freeConnections.push(driver.connection);
+    });
+    driver.destroy.mockImplementation(() => {
+      const index = pool._freeConnections.indexOf(driver.connection);
+      if (index !== -1) pool._freeConnections.splice(index, 1);
+      connection._pool = null;
+    });
+    created.push(driver);
+    return driver.connection;
+  };
+  return { acquire, created };
+}
+
+describe('RDS Proxy pin containment inside a request scope', () => {
+  it('runs every oversized statement of a request on one reused connection', async () => {
+    const pool = fakePool();
+    await withProxyPinScope(async () => {
+      for (let i = 0; i < 6; i++) {
+        await execSQLWithConnection(
+          oversized,
+          { pool: DbPoolName.READ, acquire: pool.acquire },
+          { ids: manyIds }
+        );
+      }
+      expect(pool.created).toHaveLength(1);
+      expect(pool.created[0].release).toHaveBeenCalledTimes(6);
+      expect(pool.created[0].destroy).not.toHaveBeenCalled();
+    });
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('retires each connection pinned by concurrent statements once', async () => {
+    const pool = fakePool();
+    await withProxyPinScope(async () => {
+      await Promise.all(
+        [1, 2, 3].map(() =>
+          execSQLWithConnection(
+            oversized,
+            { pool: DbPoolName.READ, acquire: pool.acquire },
+            { ids: manyIds }
+          )
+        )
+      );
+    });
+    expect(pool.created).toHaveLength(3);
+    for (const driver of pool.created) {
+      expect(driver.destroy).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('retires pinned connections when the request fails', async () => {
+    const pool = fakePool();
+    const failure = new Error('handler failed');
+    await expect(
+      withProxyPinScope(async () => {
+        await execSQLWithConnection(
+          oversized,
+          { pool: DbPoolName.READ, acquire: pool.acquire },
+          { ids: manyIds }
+        );
+        throw failure;
+      })
+    ).rejects.toBe(failure);
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a pinned transaction connection to the pool until request end', async () => {
+    const pool = fakePool();
+    await withProxyPinScope(async () => {
+      await execNativeTransactionally(
+        async ({ connection }) => {
+          await execSQLWithParams(oversized, connection, false, {
+            ids: manyIds
+          });
+        },
+        await pool.acquire()
+      );
+      expect(pool.created[0].release).toHaveBeenCalledTimes(1);
+      expect(pool.created[0].destroy).not.toHaveBeenCalled();
+      // A later statement in the same request reuses it.
+      await execSQLWithConnection(
+        'select 1',
+        { pool: DbPoolName.WRITE, acquire: pool.acquire },
+        {}
+      );
+      expect(pool.created).toHaveLength(1);
+    });
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps ordinary connections pooled across the request end', async () => {
+    const pool = fakePool();
+    await withProxyPinScope(async () => {
+      await execSQLWithConnection(
+        'select 1',
+        { pool: DbPoolName.READ, acquire: pool.acquire },
+        {}
+      );
+    });
+    expect(pool.created[0].destroy).not.toHaveBeenCalled();
+  });
+
+  it('still retires a budgeted session right after its transaction', async () => {
+    const pool = fakePool();
+    await withProxyPinScope(async () => {
+      const connection = await pool.acquire();
+      const driver = pool.created[0];
+      const query = connection.query.bind(connection);
+      (connection as unknown as { query: unknown }).query = (
+        input: QueryInput,
+        callback: Callback
+      ) => {
+        const sql = typeof input === 'string' ? input : input.sql;
+        if (!sql.startsWith('SELECT @@SESSION'))
+          return query(input as never, callback as never);
+        setImmediate(() =>
+          callback(null, [{ execution_millis: '0', lock_seconds: '50' }])
+        );
+        return { sql };
+      };
+      await execBudgetedNativeTransactionally(
+        async () => 'committed',
+        async () => connection,
+        {
+          deadlineMonotonicMillis: performance.now() + 2_000,
+          maxStatementMillis: 500,
+          finalizationReserveMillis: 500,
+          lockWaitSeconds: 1
+        }
+      );
+      expect(driver.destroy).toHaveBeenCalledTimes(1);
+    });
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
   });
 });
