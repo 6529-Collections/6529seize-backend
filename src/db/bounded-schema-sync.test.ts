@@ -23,11 +23,13 @@ const SESSION_TIMEOUT = 31536000;
 function fakeDataSource({
   plan = [],
   lockedTimes = new Map<string, number>(),
-  failWith
+  failWith,
+  sessionTimeoutRows = [{ timeout: SESSION_TIMEOUT }]
 }: {
   plan?: { query: string; parameters?: unknown[] }[];
   lockedTimes?: Map<string, number>;
   failWith?: Map<string, unknown>;
+  sessionTimeoutRows?: unknown[];
 } = {}) {
   const statements: { sql: string; parameters?: unknown[] }[] = [];
   const queryRunner = {
@@ -36,7 +38,7 @@ function fakeDataSource({
     query: jest.fn(async (sql: string, parameters?: unknown[]) => {
       statements.push({ sql, parameters });
       if (sql.startsWith('select @@session.lock_wait_timeout'))
-        return [{ timeout: SESSION_TIMEOUT }];
+        return sessionTimeoutRows;
       const remaining = lockedTimes.get(sql) ?? 0;
       if (remaining > 0) {
         lockedTimes.set(sql, remaining - 1);
@@ -211,4 +213,13 @@ describe('synchronizeSchemaBounded', () => {
       2
     );
   });
+
+  it.each([[[]], [[{ timeout: null }]], [[{ timeout: 'x' }]]])(
+    "restores MySQL's default wait when the session value reads back as %j",
+    async (rows) => {
+      const fake = fakeDataSource({ sessionTimeoutRows: rows });
+      await synchronizeSchemaBounded(fake.dataSource, { sleep: noSleep });
+      expectSessionRestoredAndReleased(fake);
+    }
+  );
 });

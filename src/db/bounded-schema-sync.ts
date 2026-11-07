@@ -54,8 +54,18 @@ function statementTarget(sql: string): string {
   return match?.[1] ?? 'unknown table';
 }
 
-function emitLockTimeoutMetric(target: string, final: boolean): void {
-  // Outside Lambda the [SCHEMA_SYNC_LOCK_TIMEOUT] log is the signal.
+/** MySQL's own default, used if the session value can't be read back. */
+const MYSQL_DEFAULT_LOCK_WAIT_SECONDS = 31536000;
+
+/**
+ * EMF metric, labelled like the DB proxy metrics (staging, else prod).
+ * Outside Lambda the matching log line is the signal.
+ */
+function emitMetric(
+  name: 'SchemaSyncLockTimeout' | 'SchemaSyncFailed',
+  outcome: string,
+  table: string
+): void {
   if (!process.env.AWS_LAMBDA_FUNCTION_NAME) return;
   try {
     process.stdout.write(
@@ -66,16 +76,16 @@ function emitLockTimeoutMetric(target: string, final: boolean): void {
             {
               Namespace: '6529/SchemaSync',
               Dimensions: [['Environment', 'Outcome']],
-              Metrics: [{ Name: 'SchemaSyncLockTimeout', Unit: 'Count' }]
+              Metrics: [{ Name: name, Unit: 'Count' }]
             }
           ]
         },
         Environment: (process.env.SENTRY_ENVIRONMENT ?? '').includes('staging')
           ? 'staging'
           : 'prod',
-        Outcome: final ? 'gave_up' : 'retried',
-        SchemaSyncLockTimeout: 1,
-        table: target
+        Outcome: outcome,
+        [name]: 1,
+        table
       })}\n`
     );
   } catch {
@@ -119,7 +129,9 @@ export async function synchronizeSchemaBounded(
     const restoreLockWait = await shortenLockWait(queryRunner);
     try {
       // synchronize() creates TypeORM's own metadata table first, if any
-      // entity needs it (generated columns); the plan writes to it.
+      // entity needs it (generated columns); the plan writes to it. This
+      // calls a protected TypeORM 0.3 method: on a TypeORM upgrade, re-check
+      // it and log() here (bounded-schema-sync.db.test.ts pins the behaviour).
       await withLockRetry(
         () => builder['createMetadataTableIfNecessary'](queryRunner),
         'typeorm_metadata',
@@ -142,6 +154,11 @@ export async function synchronizeSchemaBounded(
       await restoreLockWait();
     }
   } catch (error) {
+    emitMetric(
+      'SchemaSyncFailed',
+      error instanceof SchemaSyncLockedError ? 'locked' : 'error',
+      planned[applied] ? statementTarget(planned[applied].query) : 'none'
+    );
     if (planned.length) {
       logger.error('[SCHEMA_SYNC_FAILED]', {
         applied: planned.slice(0, applied).map((it) => shortSql(it.query)),
@@ -160,17 +177,18 @@ export async function synchronizeSchemaBounded(
 async function shortenLockWait(
   queryRunner: QueryRunner
 ): Promise<() => Promise<void>> {
-  const [{ timeout }] = await queryRunner.query(
+  const rows: { timeout?: unknown }[] | undefined = await queryRunner.query(
     'select @@session.lock_wait_timeout as timeout'
   );
+  const read = Number(rows?.[0]?.timeout);
+  const timeout =
+    Number.isInteger(read) && read > 0 ? read : MYSQL_DEFAULT_LOCK_WAIT_SECONDS;
   await queryRunner.query('set session lock_wait_timeout = ?', [
     SCHEMA_SYNC_LOCK_WAIT_SECONDS
   ]);
   return async () => {
     try {
-      await queryRunner.query('set session lock_wait_timeout = ?', [
-        Number(timeout)
-      ]);
+      await queryRunner.query('set session lock_wait_timeout = ?', [timeout]);
     } catch (error) {
       logger.warn('[SCHEMA_SYNC_LOCK_WAIT_RESTORE_FAILED]', {
         error: error instanceof Error ? error.message : String(error)
@@ -190,7 +208,11 @@ async function withLockRetry<T>(
     } catch (error) {
       if (!isLockWaitTimeout(error)) throw error;
       const final = attempt >= SCHEMA_SYNC_ATTEMPTS;
-      emitLockTimeoutMetric(target, final);
+      emitMetric(
+        'SchemaSyncLockTimeout',
+        final ? 'gave_up' : 'retried',
+        target
+      );
       logger.warn('[SCHEMA_SYNC_LOCK_TIMEOUT]', {
         table: target,
         attempt,

@@ -200,7 +200,9 @@ export async function connect(
     }
     logger.error(`DB INIT ERROR: ${error}`);
   }
-  if (syncEntities && AppDataSource.isInitialized) {
+  if (syncEntities) {
+    if (!AppDataSource.isInitialized)
+      throw new Error('Schema sync needs an initialized data source');
     try {
       await synchronizeSchemaBounded(AppDataSource);
     } catch (error) {
