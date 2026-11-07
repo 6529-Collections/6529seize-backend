@@ -101,6 +101,9 @@ describeWithSeed(
         drop('n-legacy-winner', 'native', 'WINNER'),
         drop('n-chat', 'native', 'CHAT', 'author-b'),
         drop('n-other-author', 'native', 'COMPETITION', 'author-c'),
+        drop('n-pending-participatory', 'native', 'PARTICIPATORY'),
+        drop('n-pending-winner', 'native', 'WINNER', 'author-b'),
+        drop('n-pending-competition', 'native', 'COMPETITION'),
         drop('u-active', 'unpublished', 'COMPETITION'),
         drop('u-legacy-winner', 'unpublished', 'WINNER', 'author-b'),
         drop('l-participatory', 'legacy', 'PARTICIPATORY'),
@@ -119,6 +122,11 @@ describeWithSeed(
         entry('native', 'n-winner-stored-participatory', 'WINNER'),
         entry('native', 'n-other-author', 'ACTIVE'),
         entry('native', 'n-deleted-drop', 'ACTIVE'),
+        // A status the view does not map: the drop keeps its stored type,
+        // except a stored COMPETITION drop, which the view shows as CHAT.
+        entry('native', 'n-pending-participatory', 'PENDING'),
+        entry('native', 'n-pending-winner', 'PENDING'),
+        entry('native', 'n-pending-competition', 'PENDING'),
         entry('unpublished', 'u-active', 'ACTIVE')
       ]
     }
@@ -177,6 +185,7 @@ describeWithSeed(
         'author-a:n-active-competition',
         'author-a:n-active-participatory',
         'author-a:n-legacy-participatory',
+        'author-a:n-pending-participatory',
         'author-c:n-other-author'
       ]);
       expect(
@@ -184,7 +193,8 @@ describeWithSeed(
       ).toEqual([
         'author-a:n-legacy-winner',
         'author-a:n-winner',
-        'author-a:n-winner-stored-participatory'
+        'author-a:n-winner-stored-participatory',
+        'author-b:n-pending-winner'
       ]);
     });
 

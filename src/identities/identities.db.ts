@@ -58,6 +58,26 @@ export interface WaveMentionSearchCandidate {
   readonly level_raw: number;
 }
 
+/**
+ * The main stage wave's drops of one type by the profiles in :profileIds.
+ * Only drop_type needs the legacy compatibility projection: inside the
+ * legacy GET facade it comes from base tables with the view's rows (see
+ * legacyTypedDropsSql), because reading the view defeats the index.
+ * Run outside the facade so the base tables are not rewritten.
+ */
+function mainStageTypedDropsSql(
+  dropType: DropType.PARTICIPATORY | DropType.WINNER
+): string {
+  return isLegacyCompetitionGetFacadeScope()
+    ? legacyTypedDropsSql(dropType, {
+        profileIds: ':profileIds',
+        waveId: ':mainStageWaveId'
+      })
+    : `select author_id as profile_id, id as drop_id from ${DROPS_TABLE}
+      where author_id in (:profileIds) and wave_id = :mainStageWaveId
+        and drop_type = '${dropType}'`;
+}
+
 export class IdentitiesDb extends LazyDbAccessCompatibleService {
   async getEverythingRelatedToIdentitiesByAddresses(
     addresses: string[],
@@ -1376,25 +1396,13 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!profileIds.length) {
       return {};
     }
-    // Only drop_type needs the compatibility projection. Inside the legacy
-    // GET facade it comes from base tables with the view's rows (see
-    // legacyTypedDropsSql); reading the view itself defeats the index.
-    const legacyTyped = isLegacyCompetitionGetFacadeScope();
     const results = await withoutLegacyCompetitionGetFacade(() =>
       this.db.execute<{
         profile_id: string;
         drop_id: string;
       }>(
         `
-      ${
-        legacyTyped
-          ? legacyTypedDropsSql(DropType.PARTICIPATORY, {
-              profileIds: ':profileIds',
-              waveId: ':mainStageWaveId'
-            })
-          : `select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
-      and drop_type = '${DropType.PARTICIPATORY}'`
-      }
+      ${mainStageTypedDropsSql(DropType.PARTICIPATORY)}
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('ACTIVE')}) native_entry
       where submitter_id in (:profileIds)
       union select invitation.profile_id, invitation.drop_id
@@ -1435,25 +1443,13 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!profileIds.length) {
       return {};
     }
-    // Only drop_type needs the compatibility projection. Inside the legacy
-    // GET facade it comes from base tables with the view's rows (see
-    // legacyTypedDropsSql); reading the view itself defeats the index.
-    const legacyTyped = isLegacyCompetitionGetFacadeScope();
     const results = await withoutLegacyCompetitionGetFacade(() =>
       this.db.execute<{
         profile_id: string;
         drop_id: string;
       }>(
         `
-      ${
-        legacyTyped
-          ? legacyTypedDropsSql(DropType.WINNER, {
-              profileIds: ':profileIds',
-              waveId: ':mainStageWaveId'
-            })
-          : `select author_id as profile_id, id as drop_id from ${DROPS_TABLE} where author_id in (:profileIds) and wave_id = :mainStageWaveId
-      and drop_type = '${DropType.WINNER}'`
-      }
+      ${mainStageTypedDropsSql(DropType.WINNER)}
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('WINNER')}) native_entry
       where submitter_id in (:profileIds)
       union select invitation.profile_id, invitation.drop_id
