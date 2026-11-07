@@ -4,7 +4,7 @@ import { cacheKey } from '@/api/api-helpers';
 import { cacheRequest, type RequestCacheOptions } from '@/api/request-cache';
 import type { ApiWave } from '@/api/generated/models/ApiWave';
 import { Logger } from '@/logging';
-import { evictKeyFromRedisCache, getRedisCacheKeyForPath } from '@/redis';
+import { evictKeyFromRedisCache } from '@/redis';
 
 /**
  * How long an anonymous `GET /waves/:id` response is shared. Anonymous
@@ -18,6 +18,15 @@ const SHAREABLE = 'shareableAnonymousWave';
 const ANON_WAVE_KEY_SUFFIX = '__ANON_WAVE';
 const AUTH_COOKIE_NAMES = new Set(['wallet-auth', '__host-wallet-auth']);
 const logger = Logger.get('WAVE_RESPONSE_CACHE');
+const ROUTE_LABEL = 'GET /api/waves/:id';
+
+/**
+ * The cache key for one request URL. Reads and evictions both build the key
+ * here, so an eviction always hits the entry a read stored.
+ */
+export function anonymousWaveCacheKey(url: string): string {
+  return `${cacheKey({ originalUrl: url } as Request)}${ANON_WAVE_KEY_SUFFIX}`;
+}
 
 /** Any request signal that could identify the viewer. */
 export function carriesIdentity(req: Request): boolean {
@@ -89,7 +98,7 @@ export function markShareableWaveResponse(
  */
 export const anonymousWaveResponseCacheOptions: RequestCacheOptions = {
   ttl: ANONYMOUS_WAVE_RESPONSE_TTL,
-  key: (req: Request) => `${cacheKey(req)}${ANON_WAVE_KEY_SUFFIX}`,
+  key: (req: Request) => anonymousWaveCacheKey(req.originalUrl || req.url),
   shouldCacheResponse: (_req, res) =>
     res.statusCode === 200 && res.locals[SHAREABLE] === true
 };
@@ -124,7 +133,7 @@ export function recordWaveCacheOutcome(outcome: CacheOutcome): void {
           ]
         },
         Environment: metricEnvironment(),
-        Route: 'GET /waves/:id',
+        Route: ROUTE_LABEL,
         CacheHit: outcome === 'hit' ? 1 : 0,
         CacheMiss: outcome === 'miss' ? 1 : 0,
         CacheBypass: outcome === 'bypass' ? 1 : 0
@@ -168,9 +177,7 @@ export async function invalidateAnonymousWaveResponse(
   waveId: string
 ): Promise<void> {
   try {
-    await evictKeyFromRedisCache(
-      `${getRedisCacheKeyForPath(`/api/waves/${waveId}`)}${ANON_WAVE_KEY_SUFFIX}`
-    );
+    await evictKeyFromRedisCache(anonymousWaveCacheKey(`/api/waves/${waveId}`));
   } catch (error) {
     logger.warn('Failed to evict the anonymous wave response', error);
   }

@@ -11,9 +11,7 @@ jest.mock('@/redis', () => ({
   }),
   evictKeyFromRedisCache: jest.fn(async (key: string) => {
     mockCacheStore.delete(key);
-  }),
-  getRedisCacheKeyForPath: (path: string) =>
-    `__SEIZE_CACHE_${process.env.NODE_ENV}__${path}`
+  })
 }));
 const mockTtls: unknown[] = [];
 
@@ -27,6 +25,7 @@ import {
   ANONYMOUS_WAVE_RESPONSE_TTL,
   anonymousWaveResponseCache,
   carriesIdentity,
+  anonymousWaveCacheKey,
   carriesViewerState,
   invalidateAnonymousWaveResponse,
   markShareableWaveResponse
@@ -243,6 +242,7 @@ describe('anonymous GET /waves/:id response cache', () => {
       // for a verified token.
       if (req.headers['x-test-verified'] === 'yes') {
         req.user = { wallet: '0xviewer', role: null };
+        res.locals.testViewer = '0xviewer';
       }
       next();
     });
@@ -255,7 +255,7 @@ describe('anonymous GET /waves/:id response cache', () => {
           res.status(404).json({ error: 'Wave not found' });
           return;
         }
-        const viewer = req.user ? '0xviewer' : null;
+        const viewer: string | null = res.locals.testViewer ?? null;
         const wave =
           req.params.id === 'leaky'
             ? anonymousWave({ pinned: true })
@@ -289,7 +289,7 @@ describe('anonymous GET /waves/:id response cache', () => {
           return null;
         }
       })
-      .filter((record) => record?.Route === 'GET /waves/:id')
+      .filter((record) => record?.Route === 'GET /api/waves/:id')
       .map((record) =>
         record.CacheHit ? 'hit' : record.CacheMiss ? 'miss' : 'bypass'
       );
@@ -378,6 +378,15 @@ describe('anonymous GET /waves/:id response cache', () => {
       expect(cached.xCache).toBe('HIT');
       expect(handlerCalls).toBe(1);
     });
+  });
+
+  it('builds the eviction key exactly as a read of the plain URL stores it', async () => {
+    await withServer(async (base) => {
+      await fetch(`${base}/api/waves/wave-9`);
+    });
+    expect(Array.from(mockCacheStore.keys())).toEqual([
+      anonymousWaveCacheKey('/api/waves/wave-9')
+    ]);
   });
 
   it('evicts the anonymous body when the wave is updated or deleted', async () => {
