@@ -2,7 +2,7 @@
 
 The market collectors preserve OpenSea listings and offers for The Memes,
 Meme Lab, Gradients and each indexed NextGen project. This supplies quoted
-market depth and an auditable history for later economic analysis.
+market depth and a rolling auditable history; see [Retention](#retention).
 
 ## Capture and storage
 
@@ -150,9 +150,37 @@ rule is enabled and targets the same function, remove only that function's
 target from the older rule, and read back both rules. Preserve all other
 targets on shared rules.
 
-Archives are retained without an automatic deletion policy. Monitor snapshot
-count and compressed byte growth, reconciliation backlog and oldest due retry,
-and last completed capture per partition. Combined compressed archives are
+## Retention
+
+Each `marketStatsLoop` run ends with a retention pass for its own contract,
+even when the refresh failed. Within a four-minute budget it deletes, in small
+batches:
+
+- snapshots completed more than 14 days ago, except the latest snapshot per
+  collection and any snapshot still referenced by current orders;
+- reconciliation rows whose `next_attempt_at` is more than 7 days old. These
+  are resolved rows, or pending rows that waited unprocessed for the whole
+  window; retried rows keep moving `next_attempt_at` forward;
+- events observed more than 30 days ago, except every event for an order still
+  in the live book. The depth API applies an order's latest terminal event
+  regardless of age.
+
+Each table is limited to 100,000 deleted rows per run, so a backlog drains over
+several runs. The activity feed hides market events older than 30 days and
+reports `market_history_started_at` no earlier than that cutoff. On-chain sales
+and transfers come from `transactions` and are unaffected.
+
+InnoDB reuses the freed pages for new rows, so table files stop growing but do
+not shrink. Rebuild a table (`OPTIMIZE TABLE`) only when the space must return
+to the volume, and only with free storage at least equal to its retained size.
+
+Before this policy, roughly 1M events, 90K reconciliation rows and 300
+snapshots a day accumulated without deletion. In October 2026 they filled the
+staging database's storage.
+
+Monitor snapshot count and compressed byte growth, reconciliation backlog and
+oldest due retry, and last completed capture per partition. The collectors log
+a retention summary per run. Combined compressed archives are
 limited to 6 MiB per snapshot, with 4 MiB per archive. This keeps driver
 hex-encoding below a conservative 16 MiB SQL packet budget, including headroom.
 Oversize capture fails visibly instead of truncating depth.
