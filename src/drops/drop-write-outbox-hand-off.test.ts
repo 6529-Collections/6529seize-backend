@@ -3,6 +3,7 @@ import {
   handOffDropWriteOutbox
 } from './drop-write-outbox.hand-off';
 import { sweepDropWriteOutbox } from '../dropWriteOutboxLoop/sweep';
+import { Logger } from '@/logging';
 
 describe('post outbox hand-off (waves 1.8)', () => {
   it('hands nothing off without an outbox row', async () => {
@@ -57,9 +58,22 @@ describe('post outbox hand-off (waves 1.8)', () => {
 });
 
 describe('sweepDropWriteOutbox', () => {
+  let errors: jest.SpyInstance;
+  beforeEach(() => {
+    errors = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  const reported = (name: string) =>
+    errors.mock.calls.filter(([, error]) => (error as Error)?.name === name)
+      .length;
+
   it('processes due rows and stops when a batch makes no progress', async () => {
     const db = {
       oldestPendingAt: jest.fn().mockResolvedValue(null),
+      quarantineExhausted: jest.fn().mockResolvedValue(0),
       findDue: jest
         .fn()
         .mockResolvedValueOnce([1, 2, 3])
@@ -79,16 +93,39 @@ describe('sweepDropWriteOutbox', () => {
     ).resolves.toEqual({ processed: 1, skipped: 1, failed: 2 });
     // The second batch made no progress, so the sweep stopped there.
     expect(db.findDue).toHaveBeenCalledTimes(2);
+    expect(reported('DropWriteOutbox.BACKLOG')).toBe(0);
+    expect(reported('DropWriteOutbox.QUARANTINED')).toBe(0);
   });
 
   it('reports a backlog older than five minutes', async () => {
     const now = Date.now();
     const db = {
       oldestPendingAt: jest.fn().mockResolvedValue(now - 6 * 60_000),
+      quarantineExhausted: jest.fn().mockResolvedValue(0),
       findDue: jest.fn().mockResolvedValue([])
     };
     await expect(
       sweepDropWriteOutbox({ db, processor: { process: jest.fn() } })
     ).resolves.toEqual({ processed: 0, skipped: 0, failed: 0 });
+    expect(reported('DropWriteOutbox.BACKLOG')).toBe(1);
+    // Leased (in-flight) rows are not a backlog: the query is lease-aware.
+    expect(db.oldestPendingAt).toHaveBeenCalledWith({ leaseMs: 60_000 });
+  });
+
+  it('reports newly quarantined rows once', async () => {
+    const db = {
+      oldestPendingAt: jest.fn().mockResolvedValue(null),
+      quarantineExhausted: jest
+        .fn()
+        .mockResolvedValueOnce(2)
+        .mockResolvedValueOnce(0),
+      findDue: jest.fn().mockResolvedValue([])
+    };
+    const processor = { process: jest.fn() };
+
+    await sweepDropWriteOutbox({ db, processor });
+    await sweepDropWriteOutbox({ db, processor });
+
+    expect(reported('DropWriteOutbox.QUARANTINED')).toBe(1);
   });
 });

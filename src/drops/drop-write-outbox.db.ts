@@ -6,6 +6,12 @@ import { Time } from '@/time';
 
 export type DropWriteOperation = 'CREATE' | 'UPDATE';
 
+/**
+ * A row claimed this many times without finishing is quarantined: the
+ * sweeper stops retrying it and reports it once, for an operator.
+ */
+export const DROP_WRITE_OUTBOX_MAX_ATTEMPTS = 10;
+
 export interface DropWriteOutboxRow {
   readonly id: number;
   readonly drop_id: string;
@@ -150,9 +156,14 @@ export class DropWriteOutboxDb extends LazyDbAccessCompatibleService {
       `select id from ${DROP_WRITE_OUTBOX_TABLE}
        where created_at < :createdBefore
          and (claimed_at is null or claimed_at < :expiredBefore)
+         and attempts < :maxAttempts
        order by id asc
        limit ${Math.max(1, Math.floor(limit))}`,
-      { createdBefore: now - olderThanMs, expiredBefore: now - leaseMs },
+      {
+        createdBefore: now - olderThanMs,
+        expiredBefore: now - leaseMs,
+        maxAttempts: DROP_WRITE_OUTBOX_MAX_ATTEMPTS
+      },
       {
         wrappedConnection: ctx.connection,
         forcePool: DbPoolName.WRITE
@@ -161,13 +172,50 @@ export class DropWriteOutboxDb extends LazyDbAccessCompatibleService {
     return rows.map((row) => Number(row.id));
   }
 
-  async oldestPendingAt(ctx: RequestContext = {}): Promise<number | null> {
+  /**
+   * The oldest row that is waiting on the sweeper: not leased by a live
+   * processor and not quarantined. In-flight work does not count.
+   */
+  async oldestPendingAt(
+    { leaseMs }: { leaseMs: number },
+    ctx: RequestContext = {}
+  ): Promise<number | null> {
     const row = await this.db.oneOrNull<{ created_at: number | null }>(
-      `select min(created_at) as created_at from ${DROP_WRITE_OUTBOX_TABLE}`,
-      undefined,
+      `select min(created_at) as created_at from ${DROP_WRITE_OUTBOX_TABLE}
+       where (claimed_at is null or claimed_at < :expiredBefore)
+         and attempts < :maxAttempts`,
+      {
+        expiredBefore: Time.currentMillis() - leaseMs,
+        maxAttempts: DROP_WRITE_OUTBOX_MAX_ATTEMPTS
+      },
       { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
     );
     return row?.created_at == null ? null : Number(row.created_at);
+  }
+
+  /**
+   * Marks rows that used up their attempts, once their last lease is over,
+   * and returns how many were newly marked, so each is reported once.
+   */
+  async quarantineExhausted(
+    { leaseMs }: { leaseMs: number },
+    ctx: RequestContext = {}
+  ): Promise<number> {
+    const now = Time.currentMillis();
+    const result = await this.db.execute(
+      `update ${DROP_WRITE_OUTBOX_TABLE}
+       set quarantined_at = :now
+       where attempts >= :maxAttempts
+         and quarantined_at is null
+         and (claimed_at is null or claimed_at < :expiredBefore)`,
+      {
+        now,
+        expiredBefore: now - leaseMs,
+        maxAttempts: DROP_WRITE_OUTBOX_MAX_ATTEMPTS
+      },
+      { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+    );
+    return this.db.getAffectedRows(result);
   }
 }
 

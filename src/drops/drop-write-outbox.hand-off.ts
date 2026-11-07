@@ -33,6 +33,7 @@ export function asDropWriteOutboxJob(
   return {
     v: 1,
     kind: DROP_WRITE_OUTBOX_JOB_KIND,
+    // Informational only (queue age); a missing or bad value reads as 0.
     enqueued_at: Number(job.enqueued_at) || 0,
     outbox_id: outboxId,
     drop_id: job.drop_id,

@@ -182,6 +182,10 @@ import {
   CompetitionEntryDropHooks,
   competitionEntryDropHooks
 } from '@/competitions/competition-entry-drop-hooks';
+import {
+  waveDropMetricsRefreshService,
+  WaveDropMetricsDirtyRefreshReason
+} from '@/drops/wave-drop-metrics-refresh.service';
 
 const TENOR_CHAT_LINK_ORIGIN = 'https://media.tenor.com';
 const GIPHY_CHAT_LINK_HOST_REGEX = /^media\d*\.giphy\.com$/;
@@ -1262,9 +1266,12 @@ export class CreateOrUpdateDropUseCase {
     ctx: RequestContext & { connection: ConnectionWrapper<any> }
   ): Promise<number[]> {
     const { payload } = row;
+    const [drop, wave] = await Promise.all([
+      this.dropsDb.findDropById(row.drop_id, ctx.connection),
+      this.wavesApiDb.findById(row.wave_id, ctx.connection)
+    ]);
     if (payload.record_created_drop) {
-      // Rollups and the wave metrics delta always apply: a delete that ran
-      // first has already subtracted this drop from them.
+      // The hourly rollups count creations, so they always apply.
       await this.recordCreatedDropRollups(
         {
           authorId: row.author_id,
@@ -1273,24 +1280,31 @@ export class CreateOrUpdateDropUseCase {
         },
         ctx
       );
-      await this.dropsDb.applyInsertedDropMetricsDelta(
-        {
-          wave_id: row.wave_id,
-          author_id: row.author_id,
-          drop_type: payload.drop_type
-        },
-        ctx
-      );
+      if (drop) {
+        await this.dropsDb.applyInsertedDropMetricsDelta(
+          {
+            wave_id: row.wave_id,
+            author_id: row.author_id,
+            drop_type: payload.drop_type
+          },
+          ctx
+        );
+      } else {
+        // Deleted before its outbox ran: the delete already subtracted a
+        // drop the counts never had. Let the authoritative resync recount
+        // the wave from its drops instead of adding a delta.
+        await waveDropMetricsRefreshService.markWaveDropMetricsDirtyBestEffort(
+          [row.wave_id],
+          WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
+          ctx
+        );
+      }
     }
     await waveScoreService.markWaveScoresDirtyBestEffort(
       [row.wave_id],
       WaveScoreDirtyRefreshReason.DROP_CHANGED,
       ctx
     );
-    const [drop, wave] = await Promise.all([
-      this.dropsDb.findDropById(row.drop_id, ctx.connection),
-      this.wavesApiDb.findById(row.wave_id, ctx.connection)
-    ]);
     // A drop deleted before its outbox ran gets no notifications; the delete
     // already removed any that existed.
     if (!drop || !wave) {

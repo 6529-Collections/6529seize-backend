@@ -170,11 +170,20 @@ export class DropWriteOutboxProcessor {
         }`
       );
     }
-    await waveScoreService.requestWaveScoreRefreshBestEffort(
-      [row.wave_id],
-      WaveScoreDirtyRefreshReason.DROP_CHANGED,
-      ctx
-    );
+    try {
+      await waveScoreService.requestWaveScoreRefreshBestEffort(
+        [row.wave_id],
+        WaveScoreDirtyRefreshReason.DROP_CHANGED,
+        ctx
+      );
+    } catch (error) {
+      // The work has committed; the dirty mark already queues the refresh.
+      this.logger.warn(
+        `Post outbox ${row.id}: wave score refresh request failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
   }
 }
 

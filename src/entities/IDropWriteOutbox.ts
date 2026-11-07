@@ -46,4 +46,11 @@ export class DropWriteOutboxEntity {
 
   @Column({ type: 'varchar', length: 500, nullable: true, default: null })
   readonly last_error!: string | null;
+
+  /**
+   * Set once the row has used up its attempts: the sweeper stops retrying it
+   * and reports it once. Reset `attempts` and this to retry it.
+   */
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly quarantined_at!: number | null;
 }

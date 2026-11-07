@@ -35,14 +35,19 @@ export async function sweepDropWriteOutbox({
   deadlineMs = 40_000,
   now = () => Date.now()
 }: {
-  db?: Pick<DropWriteOutboxDb, 'findDue' | 'oldestPendingAt'>;
+  db?: Pick<
+    DropWriteOutboxDb,
+    'findDue' | 'oldestPendingAt' | 'quarantineExhausted'
+  >;
   processor?: Pick<DropWriteOutboxProcessor, 'process'>;
   batchSize?: number;
   deadlineMs?: number;
   now?: () => number;
 } = {}): Promise<SweepResult> {
   const deadline = now() + deadlineMs;
-  const oldest = await db.oldestPendingAt();
+  const oldest = await db.oldestPendingAt({
+    leaseMs: DROP_WRITE_OUTBOX_LEASE_MS
+  });
   if (oldest !== null && now() - oldest > DROP_WRITE_OUTBOX_BACKLOG_ALERT_MS) {
     const error = new Error(
       'Committed drop writes have waited over five minutes for their outbox work'
@@ -78,6 +83,18 @@ export async function sweepDropWriteOutbox({
     }
     // Rows that failed or are leased elsewhere stay due; stop rather than spin.
     if (!progressed || ids.length < batchSize) break;
+  }
+  // A row that keeps failing is retried up to the attempt limit, then
+  // quarantined and reported once, not failed (and alarmed) every minute.
+  const quarantined = await db.quarantineExhausted({
+    leaseMs: DROP_WRITE_OUTBOX_LEASE_MS
+  });
+  if (quarantined > 0) {
+    const error = new Error(
+      `${quarantined} post outbox row(s) used up their attempts and were quarantined`
+    );
+    error.name = 'DropWriteOutbox.QUARANTINED';
+    logger.error(error.message, error);
   }
   logger.info({ processed, skipped, failed });
   return { processed, skipped, failed };

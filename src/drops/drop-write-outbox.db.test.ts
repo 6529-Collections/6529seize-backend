@@ -1,15 +1,18 @@
 import 'reflect-metadata';
 import {
-  DROPS_TABLE,
   DROP_WRITE_OUTBOX_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   METRIC_ROLLUP_HOUR_TABLE,
   PUSH_NOTIFICATION_OUTBOX_TABLE,
+  WAVE_DROP_METRICS_REFRESH_REQUESTS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE
 } from '@/constants';
 import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
+import { deleteDrop } from '@/drops/delete-drop.use-case';
+import { waveDropMetricsRefreshService } from '@/drops/wave-drop-metrics-refresh.service';
+import { Logger } from '@/logging';
 import { CreateOrUpdateDropModel } from '@/drops/create-or-update-drop.model';
 import { DropType } from '@/entities/IDrop';
 import { WaveType } from '@/entities/IWave';
@@ -17,7 +20,10 @@ import { pushNotificationOutboxDb } from '@/notifications/push-notification-outb
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
-import { DropWriteOutboxDb } from './drop-write-outbox.db';
+import {
+  DROP_WRITE_OUTBOX_MAX_ATTEMPTS,
+  DropWriteOutboxDb
+} from './drop-write-outbox.db';
 import { DropWriteOutboxProcessor } from './drop-write-outbox.processor';
 import { sweepDropWriteOutbox } from '../dropWriteOutboxLoop/sweep';
 
@@ -358,17 +364,121 @@ describeWithSeed(
       expect(takeover.sendPush).toHaveBeenCalledTimes(1);
     });
 
-    it('applies the counts but sends nothing for a drop deleted before its outbox ran', async () => {
+    it('sends nothing and re-counts, not increments, the wave for a drop deleted before its outbox ran', async () => {
+      await write(post(outboxWave.id, 'kept'), false);
       const result = await write(post(outboxWave.id, 'deleted'), true);
-      await sqlExecutor.execute(`delete from ${DROPS_TABLE} where id = :id`, {
-        id: result.drop_id
-      });
+      // The real delete: it subtracts the drop from the wave metrics (which
+      // never had it) and marks the wave for a re-count.
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        deleteDrop.execute(
+          { drop_id: result.drop_id, deletion_purpose: 'SYSTEM_DELETE' },
+          { connection }
+        )
+      );
+      // Worst order: the re-count runs before the outbox row.
+      await waveDropMetricsRefreshService.refreshDropMetricsForWaveIds([
+        outboxWave.id
+      ]);
+      expect(await waveTotals(outboxWave.id)).toEqual({ wave: 1, dropper: 1 });
+      await sqlExecutor.execute(
+        `delete from ${WAVE_DROP_METRICS_REFRESH_REQUESTS_TABLE}`
+      );
+      const rollupBefore = await dropRollup();
       const { processor, sendPush } = processorWith();
 
       expect(await processor.process(result.outbox_id!)).toBe('processed');
+
       expect(await notificationsFor(result.drop_id)).toBe(0);
       expect(sendPush).not.toHaveBeenCalled();
+      // No +1 for a drop that is gone; the wave is marked for a re-count.
       expect(await waveTotals(outboxWave.id)).toEqual({ wave: 1, dropper: 1 });
+      expect(
+        await count(
+          `select count(*) as cnt from ${WAVE_DROP_METRICS_REFRESH_REQUESTS_TABLE}
+           where wave_id = :waveId`,
+          { waveId: outboxWave.id }
+        )
+      ).toBe(1);
+      // The hourly rollups count creations, so this one still counts.
+      expect(await dropRollup()).toBe(rollupBefore + 1);
+      expect(await outboxRows()).toBe(0);
+    });
+
+    it('quarantines a row that keeps failing and reports it once', async () => {
+      const result = await write(post(outboxWave.id, 'poison'), true);
+      await ageRows();
+      await sqlExecutor.execute(
+        `update ${DROP_WRITE_OUTBOX_TABLE} set attempts = :attempts`,
+        { attempts: DROP_WRITE_OUTBOX_MAX_ATTEMPTS - 1 }
+      );
+      const { processor } = processorWith({
+        useCase: () => ({
+          applyDropWriteOutbox: async () => {
+            throw new Error('poison');
+          }
+        })
+      });
+      const errors = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      const quarantineReports = () =>
+        errors.mock.calls.filter(
+          ([, error]) =>
+            (error as Error)?.name === 'DropWriteOutbox.QUARANTINED'
+        ).length;
+
+      // The last attempt fails, and the row is quarantined and reported.
+      expect(await sweepDropWriteOutbox({ processor })).toEqual({
+        processed: 0,
+        skipped: 0,
+        failed: 1
+      });
+      expect(quarantineReports()).toBe(1);
+      const row = await sqlExecutor.oneOrNull<{
+        attempts: number;
+        quarantined_at: number | null;
+        last_error: string | null;
+      }>(
+        `select attempts, quarantined_at, last_error from ${DROP_WRITE_OUTBOX_TABLE}
+         where id = :id`,
+        { id: result.outbox_id }
+      );
+      expect(Number(row?.attempts)).toBe(DROP_WRITE_OUTBOX_MAX_ATTEMPTS);
+      expect(row?.quarantined_at).not.toBeNull();
+      expect(row?.last_error).toBe('poison');
+
+      // Later sweeps leave it alone: no retry, no new report, no backlog.
+      expect(await sweepDropWriteOutbox({ processor })).toEqual({
+        processed: 0,
+        skipped: 0,
+        failed: 0
+      });
+      expect(quarantineReports()).toBe(1);
+      expect(
+        await new DropWriteOutboxDb(() => sqlExecutor).oldestPendingAt({
+          leaseMs: 60_000
+        })
+      ).toBeNull();
+      expect(await outboxRows()).toBe(1);
+    });
+
+    it('does not count a leased row as backlog', async () => {
+      const result = await write(post(outboxWave.id, 'leased'), true);
+      await ageRows();
+      const outboxDb = new DropWriteOutboxDb(() => sqlExecutor);
+      expect(
+        await outboxDb.claim({
+          id: result.outbox_id!,
+          token: 'live-holder',
+          leaseMs: 60_000
+        })
+      ).toBe(true);
+
+      expect(await outboxDb.oldestPendingAt({ leaseMs: 60_000 })).toBeNull();
+      await expireLeases();
+      expect(await outboxDb.oldestPendingAt({ leaseMs: 60_000 })).toEqual(
+        expect.any(Number)
+      );
     });
   }
 );
