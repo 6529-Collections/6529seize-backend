@@ -20,6 +20,41 @@ function row(clientDropId: string, dropId: string, authorId = 'author-1') {
 const ID_A = '11111111-1111-4111-8111-111111111111';
 const ID_B = '22222222-2222-4222-8222-222222222222';
 
+/** Captures a promise's outcome at once, so an early rejection is never unhandled. */
+function settle<T>(
+  promise: Promise<T>
+): Promise<
+  { status: 'fulfilled'; value: T } | { status: 'rejected'; reason: unknown }
+> {
+  return promise.then(
+    (value) => ({ status: 'fulfilled' as const, value }),
+    (reason: unknown) => ({ status: 'rejected' as const, reason })
+  );
+}
+
+/**
+ * Barrier on the database's own state: resolves once some transaction is
+ * blocked waiting for a row lock, i.e. the duplicate claim is parked on the
+ * first claim's key. Polls instead of guessing a delay.
+ */
+async function untilAClaimWaitsForALock(): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const row = await sqlExecutor.oneOrNull<{ waiting: number }>(
+      `select count(*) as waiting from information_schema.innodb_trx
+       where trx_state = 'LOCK WAIT'
+         and trx_mysql_thread_id in (
+           select id from information_schema.processlist where db = database()
+         )`
+    );
+    if (Number(row?.waiting ?? 0) > 0) return;
+    if (Date.now() > deadline) {
+      throw new Error('The duplicate claim never waited for the first claim');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((r) => (resolve = r));
@@ -92,20 +127,32 @@ describeWithSeed(
       );
       await firstClaimed.promise;
       let secondSettled = false;
-      const second = sqlExecutor
-        .executeNativeQueriesInTransaction((connection) =>
-          repo.insert(row(ID_A, 'drop-b'), { connection })
-        )
-        .finally(() => {
-          secondSettled = true;
-        });
+      const second = settle(
+        sqlExecutor
+          .executeNativeQueriesInTransaction((connection) =>
+            repo.insert(row(ID_A, 'drop-b'), { connection })
+          )
+          .finally(() => {
+            secondSettled = true;
+          })
+      );
 
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      expect(secondSettled).toBe(false);
-      releaseFirst.resolve();
+      const firstOutcome = settle(first);
+      try {
+        // The duplicate is parked on the first claim's key, not finished.
+        await untilAClaimWaitsForALock();
+        expect(secondSettled).toBe(false);
+      } finally {
+        // Never leave the first transaction open: it would block the reset.
+        releaseFirst.resolve();
+      }
 
-      await first;
-      await expect(second).rejects.toBeInstanceOf(DropClientIdTakenError);
+      expect(await firstOutcome).toMatchObject({ status: 'fulfilled' });
+      const outcome = await second;
+      expect(outcome.status).toBe('rejected');
+      expect(
+        outcome.status === 'rejected' ? outcome.reason : undefined
+      ).toBeInstanceOf(DropClientIdTakenError);
     });
 
     it('lets the duplicate through when the first attempt rolls back', async () => {
@@ -120,13 +167,23 @@ describeWithSeed(
         }
       );
       await firstClaimed.promise;
-      const second = sqlExecutor.executeNativeQueriesInTransaction(
-        (connection) => repo.insert(row(ID_A, 'drop-b'), { connection })
+      const firstOutcome = settle(first);
+      const second = settle(
+        sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+          repo.insert(row(ID_A, 'drop-b'), { connection })
+        )
       );
-      releaseFirst.resolve();
+      try {
+        await untilAClaimWaitsForALock();
+      } finally {
+        releaseFirst.resolve();
+      }
 
-      await expect(first).rejects.toThrow('first attempt failed');
-      await second;
+      expect(await firstOutcome).toMatchObject({
+        status: 'rejected',
+        reason: expect.objectContaining({ message: 'first attempt failed' })
+      });
+      expect(await second).toMatchObject({ status: 'fulfilled' });
       await expect(
         repo.find({ authorId: 'author-1', clientDropId: ID_A }, {})
       ).resolves.toMatchObject({ drop_id: 'drop-b' });
