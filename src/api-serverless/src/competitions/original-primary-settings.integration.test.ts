@@ -556,7 +556,7 @@ describeWithSeed(
           },
           ctx
         )
-      ).rejects.toThrow('no active decision pause');
+      ).rejects.toThrow('no active results pause');
       expect((await selected()).config_version).toBe(
         competition.config_version
       );
@@ -603,7 +603,7 @@ describeWithSeed(
           },
           ctx
         )
-      ).rejects.toThrow('A decision pause already covers this interval');
+      ).rejects.toThrow('A results pause already covers this interval');
       const resumed = await service.action(
         wave.id,
         competition.id,

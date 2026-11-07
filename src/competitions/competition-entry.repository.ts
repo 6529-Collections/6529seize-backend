@@ -232,9 +232,7 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
     // even if a legacy caller already established a repeatable-read snapshot.
     const current = await this.findEntries(dropId, true, ctx);
     if (current.some((entry) => !ids.includes(entry.competition_id)))
-      competitionConflict(
-        'Competition membership changed. Retry the drop change'
-      );
+      competitionConflict('Decision membership changed. Retry the drop change');
     return current;
   }
 
@@ -251,9 +249,7 @@ export class CompetitionEntryRepository extends LazyDbAccessCompatibleService {
       ctx
     );
     if (occupied.length)
-      competitionConflict(
-        'A competition drop belongs to exactly one competition'
-      );
+      competitionConflict('A decision drop belongs to exactly one decision');
   }
 
   public async countActive(

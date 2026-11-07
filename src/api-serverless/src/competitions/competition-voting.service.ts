@@ -89,7 +89,7 @@ export class CompetitionVotingService {
           entryId,
           tx
         );
-        if (!entry) throw new NotFoundException('Competition entry not found');
+        if (!entry) throw new NotFoundException('Decision entry not found');
         if (entry.status !== CompetitionEntryStatus.ACTIVE)
           competitionConflict('Only active entries accept votes');
         await verifyCompetitionSignature(
@@ -200,7 +200,7 @@ export class CompetitionVotingService {
       competitionId,
       ctx
     );
-    if (!record) throw new NotFoundException('Competition not found');
+    if (!record) throw new NotFoundException('Decision not found');
     const reader = new NativeCompetitionReader(competitionRepository, ctx);
     return reader.getCompetition(record, Date.now());
   }
