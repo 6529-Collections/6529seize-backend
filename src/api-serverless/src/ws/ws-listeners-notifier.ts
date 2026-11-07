@@ -1471,9 +1471,12 @@ export class WsListenersNotifier {
 
   async notifyAboutNftLinkUpdate(
     nftLinkData: ApiNftLinkData,
-    ctx: RequestContext
+    ctx: RequestContext,
+    { legacyBroadcast = true }: { legacyBroadcast?: boolean } = {}
   ) {
     if (this.usesOutbox) await this.wakeOutbox!();
+    // An unchanged refresh (#2336) only wakes the outbox for capable clients.
+    if (!legacyBroadcast) return;
 
     ctx.timer?.start(`${this.constructor.name}->notifyAboutNftLinkUpdate`);
     const message = JSON.stringify(nftLinkUpdatedMessage(nftLinkData));

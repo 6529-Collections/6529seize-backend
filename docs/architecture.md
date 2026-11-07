@@ -989,6 +989,16 @@ frames for capable clients. Legacy connections retain immediate NFT broadcasts;
 a producer deadline cannot discard capable-client committed delivery intent.
 See [WebSocket outbound delivery](./websocket-outbound-delivery.md).
 
+A refresh broadcasts `MEDIA_LINK_UPDATED` only when the client frame changed:
+it compares the frame built from the row it locked with the frame built from
+the updated row, leaving out `last_successfully_updated`. That timestamp counts
+as a change only when the previous success is unknown or at least a day old, so
+clients' 3-day stale badge stays correct. Each decision emits
+`MediaLinkUpdateSent` or `MediaLinkUpdateSkipped` in `6529/NftLinkRefresher`.
+On this branch the check gates only the legacy direct broadcast: the refresh
+transaction still captures the outbox event, and an unchanged refresh still
+wakes `websocketOutboundHandler`, so capable clients keep their delivery.
+
 ### NFT market depth and activity
 
 `marketStatsLoop` legacy price pagination and market-depth REST requests share
