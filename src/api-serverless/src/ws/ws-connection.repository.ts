@@ -4,10 +4,7 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '../../../sql-executor';
-import {
-  WSConnectionEntity,
-  WsConnectionPurpose
-} from '../../../entities/IWSConnection';
+import { WSConnectionEntity } from '../../../entities/IWSConnection';
 import {
   DROP_VOTER_STATE_TABLE,
   DROPS_TABLE,
@@ -37,6 +34,7 @@ import {
   WsTransactionDiagnostics
 } from '@/api/ws/ws-transaction-diagnostics';
 import { WsDiagnosticOperation } from '@/api/ws/ws-operation-diagnostics';
+import { broadcastPurposeFilterSql } from '@/ws-delivery/ws-connection-purpose';
 
 type NotificationSubscription = { identityId: string; jwtExpiry: number };
 
@@ -55,7 +53,7 @@ function purposeFilterSql(
 ): string {
   return options.includeTypingSockets
     ? '1 = 1'
-    : `(${alias}.purpose is null or ${alias}.purpose <> '${WsConnectionPurpose.TYPING}')`;
+    : broadcastPurposeFilterSql(alias);
 }
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
@@ -868,7 +866,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   async findAllByWaveId(waveId: string): Promise<WSConnectionEntity[]> {
     return this.db.execute<WSConnectionEntity>(
       `
-    select * from ${WS_CONNECTIONS_TABLE} where wave_id = :waveId
+    select * from ${WS_CONNECTIONS_TABLE} ws
+    where wave_id = :waveId and ${purposeFilterSql()}
     `,
       { waveId }
     );
