@@ -197,6 +197,8 @@ describe('DropCreationApiService.createDrop with client_drop_id (R11-5)', () => 
         id: 'new-drop',
         client_drop_id: CLIENT_DROP_ID
       }),
+      expect.anything(),
+      // The 1.5 gap marker options (#2338).
       expect.anything()
     );
   });

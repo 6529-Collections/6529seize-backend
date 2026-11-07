@@ -110,6 +110,61 @@ describe('reply after commit (waves 1.1)', () => {
     expect(h.queue.enqueue).not.toHaveBeenCalled();
   });
 
+  describe('gap markers (waves 1.5)', () => {
+    const frameOf = (message: string) => JSON.parse(message);
+
+    it.each([
+      ['a previous serial', 41],
+      ['null for the first drop', null]
+    ])('puts %s on a new drop frame', async (_label, prevSerialNo) => {
+      const h = harness({ recipients: [recipient(0), recipient(1)] });
+      await h.notifier.notifyAboutDropUpdate(
+        createDrop(),
+        {},
+        { prevSerialNo }
+      );
+      for (const [{ message }] of h.appWebSockets.send.mock.calls) {
+        const frame = frameOf(message);
+        expect(frame.type).toBe(WsMessageType.DROP_UPDATE);
+        expect(frame).toHaveProperty('prev_serial_no', prevSerialNo);
+      }
+    });
+
+    it('leaves it off updates that are not new drops', async () => {
+      const h = harness({ recipients: [recipient(0)] });
+      await h.notifier.notifyAboutDropUpdate(createDrop(), {});
+      await h.notifier.notifyAboutDropRatingUpdate(createDrop(), {});
+      await h.notifier.notifyAboutDropReactionUpdate(createDrop(), {});
+      for (const [{ message }] of h.appWebSockets.send.mock.calls) {
+        expect(frameOf(message)).not.toHaveProperty('prev_serial_no');
+      }
+    });
+
+    it('carries it through queued chunks to the worker frame', async () => {
+      const recipients = Array.from({ length: 6 }, (_, i) => recipient(i));
+      const h = harness({ recipients });
+      await h.notifier.notifyAboutDropUpdate(
+        createDrop(),
+        {},
+        {
+          prevSerialNo: 41
+        }
+      );
+      const jobs = h.queue.enqueue.mock.calls[0][0] as DropFramesJob[];
+      expect(jobs.length).toBeGreaterThan(0);
+      expect(jobs.every((job) => job.prev_serial_no === 41)).toBe(true);
+
+      const worker = harness({ recipients: [] });
+      await worker.notifier.deliverQueuedDropFrames(jobs[0]);
+      const [[queuedCall]] = worker.appWebSockets.send.mock.calls;
+      const [[inlineCall]] = h.appWebSockets.send.mock.calls;
+      expect(frameOf(queuedCall.message).prev_serial_no).toBe(41);
+      expect(frameBody(queuedCall.message)).toEqual(
+        frameBody(inlineCall.message)
+      );
+    });
+  });
+
   it('sends open-wave viewers inline and queues the rest in ordered chunks', async () => {
     const recipients = [
       recipient(0),

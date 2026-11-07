@@ -129,6 +129,8 @@ interface DropFrames {
   readonly authorIdsByDropId: ReadonlyMap<string, string>;
   readonly updateType: DropMessageType;
   readonly reason?: string;
+  /** Gap marker for a new drop's DROP_UPDATE (waves 1.5). */
+  readonly prevSerialNo?: number | null;
 }
 
 interface AsyncFanoutSplit {
@@ -363,12 +365,15 @@ export function serializeDropMessageForRecipient(
   inputDrop: ApiDrop,
   creditLeft: number,
   updateType: DropMessageType,
-  reason?: string
+  reason?: string,
+  prevSerialNo?: number | null
 ): string {
   const recipientDrop = removeDropsAuthRequestContext(inputDrop, creditLeft);
   let fullMessage: string;
   if (updateType === WsMessageType.DROP_UPDATE) {
-    fullMessage = JSON.stringify(dropUpdateMessage(recipientDrop, reason));
+    fullMessage = JSON.stringify(
+      dropUpdateMessage(recipientDrop, reason, prevSerialNo)
+    );
   } else if (updateType === WsMessageType.DROP_RATING_UPDATE) {
     fullMessage = JSON.stringify(dropRatingUpdateMessage(recipientDrop));
   } else {
@@ -491,6 +496,7 @@ export function createDropPayloadSerializer({
   creditLefts,
   updateType,
   reason,
+  prevSerialNo,
   onSerialized
 }: {
   audienceDrop: ApiDrop;
@@ -500,6 +506,8 @@ export function createDropPayloadSerializer({
   creditLefts: Readonly<Record<string, number>>;
   updateType: DropMessageType;
   reason?: string;
+  /** Gap marker for a new drop's DROP_UPDATE (waves 1.5). */
+  prevSerialNo?: number | null;
   onSerialized?: () => void;
 }): (profileId: string | null) => string {
   const moderationAuthors = moderationRelevantAuthorIds(
@@ -530,7 +538,8 @@ export function createDropPayloadSerializer({
       anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
       creditLeft,
       updateType,
-      reason
+      reason,
+      prevSerialNo
     );
     onSerialized?.();
     payloads.set(key, payload);
@@ -742,10 +751,18 @@ export class WsListenersNotifier {
     }
   }
 
+  /**
+   * `prevSerialNo`: pass it for a new drop only (waves 1.5 gap marker). It
+   * is the serial of the previous surviving drop in the wave, or null.
+   */
   async notifyAboutDropUpdate(
     inputDrop: ApiDrop,
     ctx: RequestContext,
-    options: { reason?: string; useSystemBroadcastAudience?: boolean } = {}
+    options: {
+      reason?: string;
+      useSystemBroadcastAudience?: boolean;
+      prevSerialNo?: number | null;
+    } = {}
   ): Promise<void> {
     await this.notifyDropMessage(
       inputDrop,
@@ -775,10 +792,12 @@ export class WsListenersNotifier {
     updateType: DropMessageType,
     {
       reason,
-      useSystemBroadcastAudience = false
+      useSystemBroadcastAudience = false,
+      prevSerialNo
     }: {
       reason?: string;
       useSystemBroadcastAudience?: boolean;
+      prevSerialNo?: number | null;
     } = {}
   ): Promise<void> {
     if (this.usesOutbox) await this.wakeOutbox!();
@@ -825,7 +844,11 @@ export class WsListenersNotifier {
         hiddenDropIds,
         authorIdsByDropId,
         updateType,
-        reason
+        reason,
+        ...(updateType === WsMessageType.DROP_UPDATE &&
+        prevSerialNo !== undefined
+          ? { prevSerialNo }
+          : {})
       };
       const split = await this.splitForAsyncFanout(
         onlineProfiles,
@@ -900,6 +923,9 @@ export class WsListenersNotifier {
       {
         update_type: frames.updateType,
         ...(frames.reason === undefined ? {} : { reason: frames.reason }),
+        ...(frames.prevSerialNo === undefined
+          ? {}
+          : { prev_serial_no: frames.prevSerialNo }),
         server_received_at: serverReceivedAt,
         enqueued_at: Date.now(),
         drop: frames.audienceDrop,
@@ -975,7 +1001,10 @@ export class WsListenersNotifier {
       hiddenDropIds: new Set(job.hidden_drop_ids),
       authorIdsByDropId: new Map(job.author_ids_by_drop_id),
       updateType: job.update_type,
-      reason: job.reason
+      reason: job.reason,
+      ...(job.prev_serial_no === undefined
+        ? {}
+        : { prevSerialNo: job.prev_serial_no })
     };
     const recipients = job.recipients.map(queuedToRecipient);
     try {

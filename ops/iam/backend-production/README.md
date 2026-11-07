@@ -136,9 +136,13 @@ environment-specific CloudFormation stack, deployment-bucket prefix, log group
 and alarms, the `wave-fanout` and `wave-fanout-dlq` queues, and SQS
 event-source mappings whose function is `waveFanoutWorker`. It has no schedule
 and grants no application-bucket access. Mapping reads (`GetEventSourceMapping`,
-`ListTags`) use the mapping wildcard because the mapping id exists only after
-creation; no mapping tag writes are granted. Replace the wildcard with the exact
-mapping ARN after the first deployment if preferred.
+`ListTags`) and tag writes (`TagResource`, `UntagResource`) use the mapping
+wildcard because the mapping id exists only after creation. The tag writes are
+required: Serverless tags the SQS event-source mapping when CloudFormation
+creates it, and without them a fresh deploy fails creating
+`WaveFanoutWorkerEventSourceMappingSQSWaveFanoutQueue` (seen on staging,
+2026-11-07). Replace the wildcard with the exact mapping ARN after the first
+deployment if preferred.
 
 Rollout order: install this policy, deploy `waveFanoutWorker` (creates the
 queue), deploy `api`, then set `WS_ASYNC_FANOUT=true` on `seizeAPI`. The
