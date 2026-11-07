@@ -35,14 +35,21 @@ function attachable(
   if (!upload) return false;
   const mimeType =
     media.mime_type === 'image/jpg' ? 'image/jpeg' : media.mime_type;
-  return (
+  const sameMedia =
     upload.public_url === media.url &&
     upload.profile_id === model.author_id &&
-    getPublishedDropMediaMimeType(upload.declared_mime_type) === mimeType &&
+    getPublishedDropMediaMimeType(upload.declared_mime_type) === mimeType;
+  if (publishedDropId !== null) {
+    // A replay of a request that already published. That attempt attached
+    // exactly the ids it kept, in the same transaction, so this reproduces
+    // its decision whatever the upload's status has become since. A replay
+    // only compares fingerprints; it never writes.
+    return sameMedia && upload.drop_id === publishedDropId;
+  }
+  return (
+    sameMedia &&
     ATTACHABLE_STATUSES.has(upload.status) &&
-    (upload.drop_id === null ||
-      upload.drop_id === model.drop_id ||
-      upload.drop_id === publishedDropId) &&
+    (upload.drop_id === null || upload.drop_id === model.drop_id) &&
     (upload.wave_id === null || upload.wave_id === model.wave_id)
   );
 }
@@ -58,8 +65,12 @@ function attachable(
  * posts today starts failing (proxy uploads, for example, stay unlinked).
  *
  * `publishedDropId` is the drop an earlier attempt of the same request
- * published (a moderation replay). Its uploads are attached to that drop,
- * and must resolve as they did then so the replay's fingerprint matches.
+ * published (a moderation replay). The ids resolve exactly as that attempt
+ * resolved them, so the replay's fingerprint, which covers the model, still
+ * matches.
+ *
+ * Request and model media line up by position: the API mappers map parts
+ * and media one to one, in order.
  */
 export async function withOwnedMediaUploadIds(
   model: CreateOrUpdateDropModel,
