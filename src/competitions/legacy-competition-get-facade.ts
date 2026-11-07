@@ -1,4 +1,5 @@
 import { withCompetitionSchemaConnection } from './competition-schema';
+import { DB_TEXT_COLLATION } from '@/db/db-collation';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { INDEFINITE_COMPETITION_PAUSE_END } from './competition-phase';
 import {
@@ -217,7 +218,7 @@ function json(
     ? `cast(${nullable} as signed)`
     : kind === 'json'
       ? `if(json_type(${raw})='NULL', null, ${raw})`
-      : `convert(${nullable} using utf8mb4) collate utf8mb4_unicode_ci`;
+      : `convert(${nullable} using utf8mb4) collate ${DB_TEXT_COLLATION}`;
 }
 
 const waveFields: Readonly<Record<string, string>> = {
@@ -332,9 +333,9 @@ function nativeSelects(table: string): {
           where not exists(select 1 from ${owners} where c.legacy_wave_id=w.id and ${nativePrimary})) hub_nfts`,
         fields: {
           wave_id: 'hub_nfts.wave_id',
-          // JSON_TABLE inherits the session collation; the frozen source used Unicode CI.
-          contract:
-            'convert(hub_nfts.contract using utf8mb4) collate utf8mb4_unicode_ci',
+          // JSON_TABLE output is not a table column; pin it to the column
+          // collation so joins on tdh_nft.contract keep the primary key.
+          contract: `convert(hub_nfts.contract using utf8mb4) collate ${DB_TEXT_COLLATION}`,
           token_id: 'hub_nfts.token_id'
         }
       };

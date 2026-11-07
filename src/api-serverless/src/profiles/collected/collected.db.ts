@@ -1,3 +1,4 @@
+import { DB_TEXT_COLLATION } from '@/db/db-collation';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -24,10 +25,10 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
     return await this.db.execute(
       `
         SELECT 
-          CAST(IF(n.contract = '${MEMES_CONTRACT}', '${CollectionType.MEMES}', '${CollectionType.GRADIENTS}') AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS collection,
+          CAST(IF(n.contract = '${MEMES_CONTRACT}', '${CollectionType.MEMES}', '${CollectionType.GRADIENTS}') AS CHAR CHARACTER SET utf8mb4) COLLATE ${DB_TEXT_COLLATION} AS collection,
           n.id AS token_id,
-          CAST(n.name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS name,
-          CAST(jt.value AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS season,
+          CAST(n.name AS CHAR CHARACTER SET utf8mb4) COLLATE ${DB_TEXT_COLLATION} AS name,
+          CAST(jt.value AS CHAR CHARACTER SET utf8mb4) COLLATE ${DB_TEXT_COLLATION} AS season,
           n.thumbnail
         FROM ${NFTS_TABLE} n
         LEFT JOIN JSON_TABLE(
@@ -42,10 +43,10 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
         UNION ALL
 
         SELECT 
-          CAST('${CollectionType.MEMELAB}' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS collection,
+          CAST('${CollectionType.MEMELAB}' AS CHAR CHARACTER SET utf8mb4) COLLATE ${DB_TEXT_COLLATION} AS collection,
           id AS token_id,
-          CAST(name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS name,
-          CAST(NULL AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS season,
+          CAST(name AS CHAR CHARACTER SET utf8mb4) COLLATE ${DB_TEXT_COLLATION} AS name,
+          CAST(NULL AS CHAR CHARACTER SET utf8mb4) COLLATE ${DB_TEXT_COLLATION} AS season,
           thumbnail
         FROM nfts_meme_lab
         WHERE contract = '${MEMELAB_CONTRACT}'
@@ -53,10 +54,10 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
         UNION ALL
 
         SELECT 
-          CAST('${CollectionType.NEXTGEN}' AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS collection,
+          CAST('${CollectionType.NEXTGEN}' AS CHAR CHARACTER SET utf8mb4) COLLATE ${DB_TEXT_COLLATION} AS collection,
           token.id AS token_id,
-          CAST(token.name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS name,
-          CAST(token.collection_name AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS season,
+          CAST(token.name AS CHAR CHARACTER SET utf8mb4) COLLATE ${DB_TEXT_COLLATION} AS name,
+          CAST(token.collection_name AS CHAR CHARACTER SET utf8mb4) COLLATE ${DB_TEXT_COLLATION} AS season,
           COALESCE(token.thumbnail_url, token.image_url) AS thumbnail
         FROM nextgen_tokens token
       `
