@@ -1161,6 +1161,10 @@ describe('DropCreationApiService.createDrop reply after commit (1.1)', () => {
 
 describe('DropCreationApiService.createDrop after-commit pipeline', () => {
   const env = { ...process.env };
+  const defaultDropAfterCommitStagesForTest = () => ({
+    readCommittedDrop: async ({ inTransactionDrop }: any) => inTransactionDrop,
+    processOutbox: async () => undefined
+  });
 
   beforeEach(() => {
     (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
@@ -1178,19 +1182,28 @@ describe('DropCreationApiService.createDrop after-commit pipeline', () => {
     jest.clearAllMocks();
   });
 
-  function makeService(stages: object, order: string[]) {
+  function makeService(
+    stages: object,
+    order: string[],
+    findPreviousSerialNo = jest.fn().mockResolvedValue(41)
+  ) {
     return new DropCreationApiService(
       {
-        findDropByIdOrThrow: jest
-          .fn()
-          .mockResolvedValue({ id: 'drop-1', wave_id: 'wave-1', v: 'tx' })
+        findDropByIdOrThrow: jest.fn().mockResolvedValue({
+          id: 'drop-1',
+          wave_id: 'wave-1',
+          wave: { id: 'wave-1' },
+          serial_no: 42,
+          v: 'tx'
+        })
       } as never,
       {
         executeNativeQueriesInTransaction: jest.fn(async (callback) => {
           const result = await callback({});
           order.push('committed');
           return result;
-        })
+        }),
+        findPreviousSerialNo
       } as never,
       {
         createDropApiToUseCaseModel: jest
@@ -1279,6 +1292,63 @@ describe('DropCreationApiService.createDrop after-commit pipeline', () => {
       expect(returned).toMatchObject({ id: 'drop-1', v: 'writer' });
     }
   );
+
+  it.each([false, true])(
+    'passes the gap marker read after commit to the drop frames (async=%s)',
+    async (asyncFanout) => {
+      if (asyncFanout) process.env.WS_ASYNC_FANOUT = 'true';
+      else delete process.env.WS_ASYNC_FANOUT;
+      const findPreviousSerialNo = jest.fn().mockResolvedValue(41);
+      const service = makeService(
+        defaultDropAfterCommitStagesForTest(),
+        [],
+        findPreviousSerialNo
+      );
+      await create(service);
+      expect(findPreviousSerialNo).toHaveBeenCalledWith(
+        { waveId: 'wave-1', serialNo: 42 },
+        expect.anything()
+      );
+      const notifier = (service as any).wsListenersNotifier;
+      expect(notifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'drop-1' }),
+        expect.anything(),
+        { prevSerialNo: 41 }
+      );
+    }
+  );
+
+  it('passes null for the first drop of a wave', async () => {
+    const service = makeService(
+      defaultDropAfterCommitStagesForTest(),
+      [],
+      jest.fn().mockResolvedValue(null)
+    );
+    await create(service);
+    expect(
+      (service as any).wsListenersNotifier.notifyAboutDropUpdate
+    ).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      prevSerialNo: null
+    });
+  });
+
+  it('sends without a gap marker when its read fails, and still succeeds', async () => {
+    const service = makeService(
+      defaultDropAfterCommitStagesForTest(),
+      [],
+      jest.fn().mockRejectedValue(new Error('read failed'))
+    );
+    const warn = jest.fn();
+    (service as any).logger = { warn, error: jest.fn() };
+    await expect(create(service)).resolves.toMatchObject({ id: 'drop-1' });
+    expect(
+      (service as any).wsListenersNotifier.notifyAboutDropUpdate
+    ).toHaveBeenCalledWith(expect.anything(), expect.anything(), {});
+    expect(warn).toHaveBeenCalledWith(
+      'Gap marker read failed for drop drop-1; sending without it',
+      expect.any(Error)
+    );
+  });
 
   it('logs an outbox hand-off failure without failing the committed POST', async () => {
     const order: string[] = [];

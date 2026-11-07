@@ -165,6 +165,25 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * The serial of the drop before `serialNo` in the wave, or null (waves 1.5
+   * gap marker). It reads the primary so it sees the drop just committed, and
+   * uses idx_drop_wave_serial_no.
+   */
+  async findPreviousSerialNo(
+    { waveId, serialNo }: { waveId: string; serialNo: number },
+    ctx: RequestContext
+  ): Promise<number | null> {
+    const row = await this.db.oneOrNull<{ prev: number | string | null }>(
+      `select max(serial_no) as prev from ${DROPS_TABLE}
+       where wave_id = :waveId and serial_no < :serialNo`,
+      { waveId, serialNo },
+      { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
+    );
+    const prev = row?.prev;
+    return prev === null || prev === undefined ? null : Number(prev);
+  }
+
   async findAuthorWaveParticipationByDropContexts(
     dropContexts: Pick<DropEntity, 'wave_id' | 'author_id'>[],
     ctx: RequestContext
