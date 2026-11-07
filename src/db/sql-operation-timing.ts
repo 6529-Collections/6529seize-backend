@@ -20,7 +20,7 @@ export class SqlOperationTiming {
   private pendingLogged = false;
 
   constructor(
-    private readonly pool: DbPoolName | 'supplied',
+    readonly pool: DbPoolName | 'supplied',
     private readonly describeQuery: () => string
   ) {
     this.stage = pool === 'supplied' ? 'sql_setup' : 'acquisition';

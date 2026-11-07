@@ -104,7 +104,11 @@ describe('idempotent API submission preflights', () => {
       expect(
         response.headers.get('access-control-allow-credentials')
       ).toBeNull();
-      expect(response.headers.get('access-control-expose-headers')).toBeNull();
+      // Public routes expose only the request id (C52 request ids), never
+      // the credentialed auth headers.
+      expect(response.headers.get('access-control-expose-headers')).toBe(
+        'X-Request-Id'
+      );
       expect(downstream).not.toHaveBeenCalled();
     }
   );

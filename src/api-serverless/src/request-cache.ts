@@ -173,12 +173,22 @@ export function isRequestCacheEntry(
   );
 }
 
+// Per-response headers that must never be stored or replayed: the request
+// id belongs to the request being answered, not to the one that filled the
+// cache (it would point at another request's server logs).
+const PER_RESPONSE_HEADERS = new Set([
+  'content-length',
+  'content-encoding',
+  'x-request-id'
+]);
+
 function applyCachedHeaders(
   res: Response,
   headers: Record<string, string | number | string[]>
 ) {
   Object.entries(headers).forEach(([header, value]) => {
-    if (header.toLowerCase() === 'content-length') {
+    const headerName = header.toLowerCase();
+    if (headerName === 'content-length' || headerName === 'x-request-id') {
       return;
     }
     res.setHeader(header, value as any);
@@ -194,8 +204,7 @@ function sanitizeHeaders(
     if (value === undefined) {
       return accumulator;
     }
-    const headerName = header.toLowerCase();
-    if (headerName === 'content-length' || headerName === 'content-encoding') {
+    if (PER_RESPONSE_HEADERS.has(header.toLowerCase())) {
       return accumulator;
     }
     accumulator[header] = value as string | number | string[];

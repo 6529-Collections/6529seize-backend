@@ -1576,6 +1576,26 @@ must not read request context from a reused socket: that socket can have been
 opened by another request. Queries outside the compatibility scope retain numeric
 BIGINT values, including when they reuse a socket opened inside that scope.
 
+API pools reach MySQL through RDS Proxy. The proxy pins a client session to one
+database connection for the session's life after a statement over 16 KB or an
+untracked `SET SESSION`, and warm Lambda containers keep pooled sessions open.
+The API therefore measures each formatted statement and marks a connection
+pinned once a statement exceeds 16,000 bytes. Each Lambda invocation runs in a
+pin scope: pinned connections keep returning to the pool, so the rest of the
+invocation reuses them, and the scope destroys the idle ones when the
+invocation ends; one still borrowed then is re-checked at later invocation
+ends. A pinned connection released outside an open scope, such as background
+work that outlives its invocation, is destroyed at release. A connection whose
+destroy fails is taken out of the pool's idle list and never released again.
+Budgeted API transactions, which set session timeouts, destroy their
+connection after COMMIT or ROLLBACK instead of restoring the timeouts. Each
+disposal emits the `6529/DbProxy` `ProxyPinnedSessionRetired` metric (`When`
+is `release` or `request_end`) with a value-free statement fingerprint, and
+each invocation that pinned emits `ProxyPinnedSessionsRetiredPerRequest`.
+Long inlined `IN` lists that can be split per value use
+`querySqlInListChunks`, which keeps each statement's list near 12 KB. Loop mode
+is unchanged; loops disconnect after each invocation.
+
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
 
 The operational `wallet-transfer-analysis` CLI derives undeclared Memes wallet

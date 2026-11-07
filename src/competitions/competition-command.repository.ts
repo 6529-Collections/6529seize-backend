@@ -144,7 +144,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
         { competitionId, waveId },
         options(ctx)
       );
-      if (!row) throw new NotFoundException('Competition not found');
+      if (!row) throw new NotFoundException('Decision not found');
       return row;
     });
   }
@@ -246,8 +246,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
         { competitionId, version },
         { wrappedConnection: ctx.connection }
       );
-      if (!row)
-        throw new NotFoundException('Competition configuration not found');
+      if (!row) throw new NotFoundException('Decision configuration not found');
       return typeof row.config === 'string'
         ? (JSON.parse(row.config) as T)
         : row.config;
@@ -430,7 +429,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
         options(ctx)
       );
       if (overlapping)
-        competitionConflict('A decision pause already covers this interval');
+        competitionConflict('A results pause already covers this interval');
       const source = await this.db.oneOrNull<{ next_id: number }>(
         `select coalesce(max(legacy_source_id),0)+1 as next_id from ${COMPETITION_PAUSES_TABLE} where competition_id=:competitionId`,
         { competitionId },
@@ -460,7 +459,7 @@ export class CompetitionCommandRepository extends LazyDbAccessCompatibleService 
         { competitionId, now },
         options(ctx)
       );
-      if (!pause) competitionConflict('There is no active decision pause');
+      if (!pause) competitionConflict('There is no active results pause');
       await this.db.execute(
         `UPDATE ${COMPETITION_PAUSES_TABLE} SET end_time = :now WHERE id = :id`,
         { id: pause.id, now },

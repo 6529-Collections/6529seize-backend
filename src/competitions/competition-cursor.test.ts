@@ -31,22 +31,22 @@ describe('CompetitionCursorCodec', () => {
         direction: 'ASC',
         sort: 'won_at'
       })
-    ).toThrow('Invalid competition cursor');
+    ).toThrow('Invalid decision cursor');
     expect(() =>
       codec.decode(old, 'competition:a:winners', {
         direction: 'DESC',
         sort: 'won_at'
       })
-    ).toThrow('Invalid competition cursor');
+    ).toThrow('Invalid decision cursor');
   });
 
   it('rejects reuse with different filters or resources', () => {
     const cursor = codec.encode('entries:a', { direction: 'ASC' }, 20);
     expect(() =>
       codec.decode(cursor, 'entries:a', { direction: 'DESC' })
-    ).toThrow('Invalid competition cursor');
+    ).toThrow('Invalid decision cursor');
     expect(() =>
       codec.decode(cursor, 'entries:b', { direction: 'ASC' })
-    ).toThrow('Invalid competition cursor');
+    ).toThrow('Invalid decision cursor');
   });
 });

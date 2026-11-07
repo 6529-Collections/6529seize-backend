@@ -32,8 +32,10 @@ const HAND_WRITTEN_ROUTE_SOURCE_LINE_DRIFT = 250;
 
 // The address-only Alchemy migration retains this route as an uncached 410.
 // Keep checking its mount/auth and every other baseline cache expectation.
+// GET /api/waves/:id shares anonymous responses for 15 s (#2340).
 const ACCEPTED_ROUTE_CACHE_CHANGES = new Map<string, ManifestRoute['cache']>([
-  ['/alchemy-proxy/collections', 'uncached']
+  ['/alchemy-proxy/collections', 'uncached'],
+  ['/api/waves/:id', 'cached']
 ]);
 
 const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([
@@ -44,6 +46,12 @@ const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([
   [
     '/api/waves/:id/subwaves',
     'src/api-serverless/src/generated/routes/openapi-generated.routes.ts:938'
+  ],
+  // requestLogMiddleware moved out of app.ts (request ids), shifting the
+  // hand-written routes up; this one now sits nearer the catch-all '' GET.
+  [
+    '/api/recent_tdh_history/:consolidation_key',
+    'src/api-serverless/src/app.ts:1323'
   ]
 ]);
 
