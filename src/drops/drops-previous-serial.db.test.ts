@@ -48,7 +48,7 @@ describeWithSeed(
       ).resolves.toBeNull();
     });
 
-    it('returns a number even though MySQL returns BIGINT max() as text', async () => {
+    it('returns the serial as a number, whatever type the driver uses', async () => {
       const previous = await db.findPreviousSerialNo(
         { waveId: 'wave-b', serialNo: 13 },
         {}
