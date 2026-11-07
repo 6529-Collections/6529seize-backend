@@ -459,7 +459,8 @@ export class AppWebSockets {
     durableUpdates = false,
     ws,
     recoveryCapable = false,
-    purpose = null
+    purpose = null,
+    clientVersion = null
   }: {
     identityId: string;
     connectionId: string;
@@ -468,6 +469,8 @@ export class AppWebSockets {
     ws?: WebSocket;
     recoveryCapable?: boolean;
     purpose?: WsConnectionPurpose | null;
+    /** The client's declared frontend build (validated git SHA). */
+    clientVersion?: string | null;
   }) {
     this.logger.info(
       `Registering socket for client ${identityId} (connectionId: ${connectionId})`
@@ -488,7 +491,9 @@ export class AppWebSockets {
         connection_id: connectionId,
         wave_id: null,
         durable_updates: durableUpdates,
-        purpose
+        purpose,
+        // Only sockets that declare a build carry one; others are unchanged.
+        ...(clientVersion ? { client_version: clientVersion } : {})
       },
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
       {}

@@ -1,4 +1,5 @@
 import type {} from '../../typeorm-index-options';
+import { clientVersionFromQuery } from '@/ws-client-versions/ws-client-versions';
 import { app, ensureInitialized } from './app';
 import * as sentryContext from '../../sentry.context';
 import type {
@@ -240,6 +241,9 @@ async function wsHandler(
   switch (routeKey) {
     case '$connect':
       try {
+        const clientVersion = clientVersionFromQuery(
+          event.queryStringParameters
+        );
         await appWebSockets.register({
           identityId,
           connectionId: connectionId!,
@@ -248,6 +252,7 @@ async function wsHandler(
             event.queryStringParameters?.[DELIVERY_CAPABILITY_QUERY]
           ),
           purpose: connectionPurposeFromQuery(event.queryStringParameters),
+          ...(clientVersion ? { clientVersion } : {}),
           ...(event.queryStringParameters?.recovery_capability ===
           WS_RECOVERY_CAPABILITY
             ? { recoveryCapable: true }

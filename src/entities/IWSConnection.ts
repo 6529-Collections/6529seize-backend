@@ -32,4 +32,10 @@ export class WSConnectionEntity {
   readonly durable_updates?: boolean;
   @Column({ type: 'varchar', length: 16, nullable: true, default: null })
   readonly purpose?: WsConnectionPurpose | null;
+  /**
+   * The frontend build (git SHA) the client declared with `client_version=`
+   * on `$connect`, for build-adoption metrics. Null when not declared.
+   */
+  @Column({ type: 'varchar', length: 40, nullable: true, default: null })
+  readonly client_version?: string | null;
 }
