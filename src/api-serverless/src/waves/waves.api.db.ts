@@ -3967,6 +3967,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     param: { waveId: string; serialLimit: number },
     ctx: RequestContext
   ): Promise<{ serial_no: number; created_at: number } | null> {
+    // Without a limit, read the tail of (wave_id, serial_no) directly.
+    const limited = param.serialLimit < Number.MAX_SAFE_INTEGER;
     const row = await this.db.oneOrNull<{
       serial_no: number | string;
       created_at: number | string;
@@ -3974,7 +3976,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       `select serial_no, created_at
        from ${DROPS_TABLE}
        where wave_id = :waveId
-         and serial_no <= :serialLimit
+         ${limited ? 'and serial_no <= :serialLimit' : ''}
        order by serial_no desc
        limit 1`,
       param,
@@ -4012,21 +4014,36 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         return { changed: false, watermark: toReadWatermark(stored) };
       }
       const now = Time.currentMillis();
+      // The version moves only when this write moves the watermark, so a
+      // concurrent read that already advanced it leaves the version alone.
+      // MySQL applies these assignments in order: the version is computed
+      // from the stored values before they change.
       await this.db.execute(
         `insert into ${WAVE_READER_METRICS_TABLE}
            (wave_id, reader_id, latest_read_timestamp, latest_read_serial_no, unread_state_version)
          values
            (:waveId, :readerId, :now, :serialNo, 1)
          on duplicate key update
+           unread_state_version = unread_state_version + if(
+             coalesce(latest_read_serial_no, -1) < :serialNo
+               or latest_read_timestamp < :latestCreatedAt,
+             1,
+             0
+           ),
            latest_read_timestamp = greatest(latest_read_timestamp, :now),
-           latest_read_serial_no = greatest(coalesce(latest_read_serial_no, 0), :serialNo),
-           unread_state_version = unread_state_version + 1`,
-        { ...param, now, serialNo: latest.serial_no },
+           latest_read_serial_no = greatest(coalesce(latest_read_serial_no, 0), :serialNo)`,
+        {
+          ...param,
+          now,
+          serialNo: latest.serial_no,
+          latestCreatedAt: latest.created_at
+        },
         { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       );
+      const after = await this.findWaveReadWatermark(param, ctx);
       return {
-        changed: true,
-        watermark: toReadWatermark(await this.findWaveReadWatermark(param, ctx))
+        changed: !!after && (!stored || after.version !== stored.version),
+        watermark: toReadWatermark(after)
       };
     } finally {
       ctx.timer?.stop(timerLabel);
@@ -4079,6 +4096,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   /**
    * Mark-unread for an ordinary wave: moves the watermark to just before the
    * drop and bumps the version, so READ_STATE can carry it to other devices.
+   * This is an absolute set to that drop, as the legacy mark-unread was, not
+   * a monotonic move: do not "fix" it to greatest()/least().
    */
   async setWaveReadWatermarkBeforeDrop(
     param: {

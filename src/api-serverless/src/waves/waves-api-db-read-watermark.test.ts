@@ -191,6 +191,63 @@ describeWithSeed(
       expect(counter.writes).toBe(40 + 2);
     });
 
+    it('bumps the version once when two devices read at the same time', async () => {
+      const first = await repo.advanceWaveReadWatermark(
+        { waveId: chatWave.id, readerId: reader },
+        ctx
+      );
+      await addDrop(chatWave.id, 4);
+
+      const results = await Promise.all([
+        repo.advanceWaveReadWatermark(
+          { waveId: chatWave.id, readerId: reader },
+          ctx
+        ),
+        repo.advanceWaveReadWatermark(
+          { waveId: chatWave.id, readerId: reader },
+          ctx
+        )
+      ]);
+
+      // Both may report a change, but they converge on one version step.
+      expect(results.some((it) => it.changed)).toBe(true);
+      const final = await repo.findWaveReadWatermark(
+        { waveId: chatWave.id, readerId: reader },
+        ctx
+      );
+      expect(final).toMatchObject({
+        latest_read_serial_no: 4,
+        version: first.watermark!.version + 1
+      });
+    });
+
+    it('bumps a DM version once when two devices read through the same drop', async () => {
+      const first = await repo.advanceDirectMessageReadWatermark(
+        { waveId: dmWave.id, readerId: reader, readThroughSerialNo: 101 },
+        ctx
+      );
+
+      await Promise.all([
+        repo.advanceDirectMessageReadWatermark(
+          { waveId: dmWave.id, readerId: reader, readThroughSerialNo: 103 },
+          ctx
+        ),
+        repo.advanceDirectMessageReadWatermark(
+          { waveId: dmWave.id, readerId: reader, readThroughSerialNo: 103 },
+          ctx
+        )
+      ]);
+
+      const final = await repo.findWaveReadWatermark(
+        { waveId: dmWave.id, readerId: reader },
+        ctx
+      );
+      expect(final).toMatchObject({
+        latest_read_serial_no: 103,
+        version: first.watermark!.version + 1
+      });
+    });
+
     it('upgrades a legacy timestamp-only row once', async () => {
       await sqlExecutor.execute(
         `insert into ${WAVE_READER_METRICS_TABLE} (wave_id, reader_id, latest_read_timestamp)

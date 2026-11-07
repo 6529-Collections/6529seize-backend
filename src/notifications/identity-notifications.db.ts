@@ -449,6 +449,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
    * Marks a wave's unread notifications read and returns how many changed.
    * A non-locking check first skips the UPDATE, and the next-key locks it
    * would take on this reader's notification range, when nothing is unread.
+   * The count is advisory: two concurrent marks may split it. It only gates
+   * the badge refresh and IDENTITY_NOTIFICATIONS_CHANGED.
    */
   async markUnreadWaveNotificationsAsRead(
     waveId: string,
