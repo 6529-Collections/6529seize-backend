@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { DROP_CLIENT_IDS_TABLE } from '@/constants';
-import { sqlExecutor } from '@/sql-executor';
+import { ConnectionWrapper, sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { DropClientIdsDb, DropClientIdTakenError } from './drop-client-ids.db';
 
@@ -32,27 +32,64 @@ function settle<T>(
   );
 }
 
+/** The server's id for a transaction's own connection. */
+async function connectionIdOf(
+  connection: ConnectionWrapper<unknown>
+): Promise<number> {
+  const row = await sqlExecutor.oneOrNull<{ id: number | string }>(
+    'select connection_id() as id',
+    undefined,
+    { wrappedConnection: connection }
+  );
+  return Number(row?.id);
+}
+
 /**
- * Barrier on the database's own state: resolves once some transaction is
- * blocked waiting for a row lock, i.e. the duplicate claim is parked on the
- * first claim's key. Polls instead of guessing a delay.
+ * Barrier on the database's own state: resolves once the transaction on
+ * connection `threadId` (the duplicate claim) is blocked waiting for a row
+ * lock, i.e. parked on the first claim's key. It follows that one connection
+ * by id instead of scanning every transaction through the process list, and
+ * reports what that connection was doing if it never waits.
  */
-async function untilAClaimWaitsForALock(): Promise<void> {
+async function untilWaitingForALock(threadId: number): Promise<void> {
   const deadline = Date.now() + 20_000;
   for (;;) {
-    const row = await sqlExecutor.oneOrNull<{ waiting: number }>(
-      `select count(*) as waiting from information_schema.innodb_trx
-       where trx_state = 'LOCK WAIT'
-         and trx_mysql_thread_id in (
-           select id from information_schema.processlist where db = database()
-         )`
+    const trx = await sqlExecutor.oneOrNull<{ trx_state: string }>(
+      `select trx_state from information_schema.innodb_trx
+       where trx_mysql_thread_id = :threadId`,
+      { threadId }
     );
-    if (Number(row?.waiting ?? 0) > 0) return;
+    if (trx?.trx_state === 'LOCK WAIT') return;
     if (Date.now() > deadline) {
-      throw new Error('The duplicate claim never waited for the first claim');
+      const thread = await sqlExecutor.oneOrNull(
+        `select command, state, time, info from information_schema.processlist
+         where id = :threadId`,
+        { threadId }
+      );
+      throw new Error(
+        `The duplicate claim never waited for the first claim: transaction ${JSON.stringify(
+          trx
+        )}, connection ${JSON.stringify(thread)}`
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+/**
+ * Starts the duplicate claim of `clientDropId` in its own transaction and
+ * resolves with its connection id once the claim is about to insert.
+ */
+function startDuplicateClaim(clientDropId: string, dropId: string) {
+  let threadId!: (id: number) => void;
+  const started = new Promise<number>((resolve) => (threadId = resolve));
+  const claim = sqlExecutor.executeNativeQueriesInTransaction(
+    async (connection) => {
+      threadId(await connectionIdOf(connection));
+      return repo.insert(row(clientDropId, dropId), { connection });
+    }
+  );
+  return { started, claim };
 }
 
 function deferred() {
@@ -127,20 +164,17 @@ describeWithSeed(
       );
       await firstClaimed.promise;
       let secondSettled = false;
+      const duplicate = startDuplicateClaim(ID_A, 'drop-b');
       const second = settle(
-        sqlExecutor
-          .executeNativeQueriesInTransaction((connection) =>
-            repo.insert(row(ID_A, 'drop-b'), { connection })
-          )
-          .finally(() => {
-            secondSettled = true;
-          })
+        duplicate.claim.finally(() => {
+          secondSettled = true;
+        })
       );
 
       const firstOutcome = settle(first);
       try {
         // The duplicate is parked on the first claim's key, not finished.
-        await untilAClaimWaitsForALock();
+        await untilWaitingForALock(await duplicate.started);
         expect(secondSettled).toBe(false);
       } finally {
         // Never leave the first transaction open: it would block the reset.
@@ -168,13 +202,11 @@ describeWithSeed(
       );
       await firstClaimed.promise;
       const firstOutcome = settle(first);
-      const second = settle(
-        sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-          repo.insert(row(ID_A, 'drop-b'), { connection })
-        )
-      );
+      const duplicate = startDuplicateClaim(ID_A, 'drop-b');
+      const second = settle(duplicate.claim);
       try {
-        await untilAClaimWaitsForALock();
+        // The duplicate must block on the first claim before it can succeed.
+        await untilWaitingForALock(await duplicate.started);
       } finally {
         releaseFirst.resolve();
       }

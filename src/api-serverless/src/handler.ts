@@ -35,6 +35,7 @@ import {
   setWebSocketDiagnosticOperation,
   withWebSocketOperationDiagnostics
 } from '@/api/ws/ws-operation-diagnostics';
+import { withProxyPinScope } from '@/db/proxy-session-pinning';
 
 const serverlessHttp = require('serverless-http');
 const logger = Logger.get('API_HANDLER');
@@ -57,41 +58,49 @@ export const handler = sentryContext.wrapLambdaHandler(
   async (
     event: APIGatewayEvent,
     context: Context
-  ): Promise<APIGatewayProxyResult> => {
-    const path = (event as any).rawPath ?? event.path ?? 'n/a';
-    const method = event.httpMethod ?? 'n/a';
-    logger.info(
-      `[HTTP_ENTRY] [METHOD ${method}] [PATH ${path}] [REQUEST_ID ${
-        event.requestContext?.requestId ?? context.awsRequestId
-      }]`
-    );
-
-    await ensureInitialized();
-
-    logger.info(
-      `[HTTP_READY] [METHOD ${method}] [PATH ${path}] [REQUEST_ID ${
-        event.requestContext?.requestId ?? context.awsRequestId
-      }]`
-    );
-
-    if (event.requestContext && event.requestContext.routeKey) {
-      return withWebSocketOperationDiagnostics(
-        {
-          routeKey: event.requestContext.routeKey,
-          connectionId: event.requestContext.connectionId ?? '',
-          lambdaRequestId: context.awsRequestId,
-          gatewayRequestId: event.requestContext.requestId
-        },
-        async () => operationalResponse(await wsHandler(event))
-      );
-    } else {
-      return normalizeSetCookieResponse(
-        event,
-        operationalResponse(await httpHandler(event, context))
-      );
-    }
-  }
+  ): Promise<APIGatewayProxyResult> =>
+    // DB sessions pinned by RDS Proxy during this invocation stay reusable
+    // until it ends, then are destroyed so idle containers hold none.
+    withProxyPinScope(() => handleInvocation(event, context))
 );
+
+async function handleInvocation(
+  event: APIGatewayEvent,
+  context: Context
+): Promise<APIGatewayProxyResult> {
+  const path = (event as any).rawPath ?? event.path ?? 'n/a';
+  const method = event.httpMethod ?? 'n/a';
+  logger.info(
+    `[HTTP_ENTRY] [METHOD ${method}] [PATH ${path}] [REQUEST_ID ${
+      event.requestContext?.requestId ?? context.awsRequestId
+    }]`
+  );
+
+  await ensureInitialized();
+
+  logger.info(
+    `[HTTP_READY] [METHOD ${method}] [PATH ${path}] [REQUEST_ID ${
+      event.requestContext?.requestId ?? context.awsRequestId
+    }]`
+  );
+
+  if (event.requestContext && event.requestContext.routeKey) {
+    return withWebSocketOperationDiagnostics(
+      {
+        routeKey: event.requestContext.routeKey,
+        connectionId: event.requestContext.connectionId ?? '',
+        lambdaRequestId: context.awsRequestId,
+        gatewayRequestId: event.requestContext.requestId
+      },
+      async () => operationalResponse(await wsHandler(event))
+    );
+  } else {
+    return normalizeSetCookieResponse(
+      event,
+      operationalResponse(await httpHandler(event, context))
+    );
+  }
+}
 
 function normalizeSetCookieResponse(
   event: APIGatewayEvent,

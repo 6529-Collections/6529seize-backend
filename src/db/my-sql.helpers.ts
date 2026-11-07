@@ -20,6 +20,14 @@ import {
   withSqlBudgetQueryOptions,
   SqlExecutionBudgetExceededError
 } from '@/db/sql-execution-budget';
+import {
+  markProxySessionPinned,
+  oversizedStatementBytes,
+  ProxyPinPool,
+  releaseOrRetireProxySession,
+  retireProxySession,
+  sqlFingerprint
+} from '@/db/proxy-session-pinning';
 
 const logger = Logger.get('MYSQL_HELPERS');
 
@@ -213,7 +221,8 @@ export async function execNativeTransactionally<T>(
     }
     throw e;
   } finally {
-    connection.release();
+    // A statement in this transaction may have pinned the proxy session.
+    releaseOrRetireProxySession(connection, 'TRANSACTION');
   }
   // Cache invalidations and similar effects must not see the transaction
   // before other readers can: run them only after COMMIT, never on rollback.
@@ -237,7 +246,13 @@ export async function execBudgetedNativeTransactionally<T>(
         return {
           handle: connection,
           physical: connection,
-          release: () => connection.release()
+          release: () => releaseOrRetireProxySession(connection, 'TRANSACTION'),
+          // Budget session variables pin the RDS Proxy session; retire it
+          // instead of restoring the variables and returning it to the pool.
+          retire: () =>
+            retireProxySession(connection, 'TRANSACTION', {
+              reason: 'session_settings'
+            })
         };
       },
       budget,
@@ -325,9 +340,17 @@ export async function execSQLWithParams<T>(
     options,
     () =>
       new Promise((resolve, reject) => {
+        // mysql formats synchronously inside query(), so this measures this
+        // statement's final SQL before any other statement can reuse the hook.
+        let measured = false;
+        let statementBytes: number | null = null;
         connection.config.queryFormat = function (query, values) {
-          if (!values) return query;
-          return prepareStatement(query, values);
+          const formatted = values ? prepareStatement(query, values) : query;
+          if (!measured) {
+            measured = true;
+            statementBytes = oversizedStatementBytes(formatted);
+          }
+          return formatted;
         };
         const timer = Time.now();
         timing?.queryStarted();
@@ -344,9 +367,18 @@ export async function execSQLWithParams<T>(
               `SQL query took ${queryTook.toMillis()} ms to execute: ${queryDescription}`
             );
           }
-          if (closeConnection) {
-            connection?.release();
-          }
+          settleProxySession({
+            connection,
+            sql,
+            // mysql always formats through queryFormat; the template fallback
+            // only covers drivers that skip it and cannot see bound values.
+            statementBytes: measured
+              ? statementBytes
+              : oversizedStatementBytes(sql),
+            privateFamily,
+            closeConnection,
+            pool: timing?.pool
+          });
           if (err) {
             let description: string;
             if (err instanceof SqlExecutionBudgetExceededError)
@@ -383,6 +415,41 @@ export async function execSQLWithParams<T>(
         );
       })
   );
+}
+
+/**
+ * An oversized statement pins the proxy session even when it fails. A
+ * connection borrowed for this statement is retired now; a caller-owned or
+ * transaction connection is retired when its owner releases it.
+ */
+function settleProxySession({
+  connection,
+  sql,
+  statementBytes,
+  privateFamily,
+  closeConnection,
+  pool
+}: {
+  connection: mysql.PoolConnection;
+  sql: string;
+  statementBytes: number | null;
+  privateFamily: PrivateQueryFamily | null;
+  closeConnection: boolean;
+  pool: DbPoolName | 'supplied' | undefined;
+}): void {
+  if (statementBytes !== null) {
+    markProxySessionPinned(connection, {
+      reason: 'oversized_statement',
+      fingerprint: privateFamily
+        ? `[private ${privateFamily} query]`
+        : sqlFingerprint(sql),
+      statementBytes
+    });
+  }
+  if (closeConnection) {
+    const label: ProxyPinPool = pool === DbPoolName.READ ? 'READ' : 'WRITE';
+    releaseOrRetireProxySession(connection, label);
+  }
 }
 
 function prepareStatement(query: string, values: Record<string, any>) {
