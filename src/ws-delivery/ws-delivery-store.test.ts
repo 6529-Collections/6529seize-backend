@@ -223,4 +223,27 @@ describe('shared WebSocket recovery in real Redis', () => {
       )
     ).toBe(0);
   });
+  it('sends script hashes and recovers when Redis lost its script cache (1.2)', async () => {
+    const evalSha = jest.spyOn(mockClient, 'evalSha');
+    const evalFull = jest.spyOn(mockClient, 'eval');
+    try {
+      // First use after a flush: EVALSHA misses, EVAL runs and caches it.
+      await mockClient.scriptFlush();
+      await firstWorker.claim('connection-1', 'first', false, now);
+      expect(evalSha).toHaveBeenCalledTimes(1);
+      expect(evalFull).toHaveBeenCalledTimes(1);
+      // The finish script misses once too; the second claim is a pure hit.
+      await expect(finish('first', 'sent', now + 1)).resolves.toBe(false);
+      await firstWorker.claim('connection-1', 'second', false, now + 2);
+      expect(evalSha).toHaveBeenCalledTimes(3);
+      expect(evalFull).toHaveBeenCalledTimes(2);
+      expect(await firstWorker.snapshot(now + 2)).toMatchObject({
+        attempted: 2,
+        sent: 1
+      });
+    } finally {
+      evalSha.mockRestore();
+      evalFull.mockRestore();
+    }
+  });
 });

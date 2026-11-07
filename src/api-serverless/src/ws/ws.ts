@@ -20,6 +20,7 @@ import { isLegacyWsQueryTokenEnabled } from '../auth/auth-session-v2';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { describeWebSocketSendFailure } from './ws-send-diagnostics';
 import {
+  DeliveryBatch,
   webSocketDelivery,
   WebSocketDeliveryResult,
   WebSocketDeliveryDeferredError
@@ -65,6 +66,7 @@ abstract class ClientConnections {
     message: string;
     abortSignal?: AbortSignal;
     recovery?: boolean;
+    batch?: DeliveryBatch;
   }): Promise<WebSocketDeliveryResult>;
   abstract closeClient(
     connectionId: string,
@@ -147,12 +149,14 @@ class ApiGatewayClientConnections extends ClientConnections {
     connectionId,
     message,
     abortSignal,
-    recovery
+    recovery,
+    batch
   }: {
     connectionId: string;
     message: string;
     abortSignal?: AbortSignal;
     recovery?: boolean;
+    batch?: DeliveryBatch;
   }): Promise<WebSocketDeliveryResult> {
     let terminalError: unknown;
     const result = await webSocketDelivery.deliver({
@@ -160,6 +164,7 @@ class ApiGatewayClientConnections extends ClientConnections {
       message,
       recovery,
       signal: abortSignal,
+      batch,
       close: () => this.closeClient(connectionId, true),
       send: async () => {
         let response: unknown;
@@ -254,6 +259,7 @@ export class AppWebSockets {
     legacyOnly?: boolean;
     deliveryCapability?: typeof DURABLE_UPDATES_CAPABILITY;
     recovery?: boolean;
+    batch?: DeliveryBatch;
   }): Promise<WebSocketDeliveryResult> {
     input.abortSignal?.throwIfAborted();
     // Authentication acknowledgements must follow the control operation inline,
@@ -395,13 +401,15 @@ export class AppWebSockets {
     message,
     skipStaleConnectionCheck = false,
     abortSignal,
-    recovery
+    recovery,
+    batch
   }: {
     connectionId: string;
     message: string;
     skipStaleConnectionCheck?: boolean;
     abortSignal?: AbortSignal;
     recovery?: boolean;
+    batch?: DeliveryBatch;
   }): Promise<WebSocketDeliveryResult> {
     // An expired invocation goes directly to the sender's reported deadline
     // failure; do not spend the remaining budget looking up unsendable work.
@@ -425,7 +433,8 @@ export class AppWebSockets {
         connectionId,
         message,
         abortSignal,
-        recovery
+        recovery,
+        batch
       });
       if (result.status === 'gone')
         await this.wsConnectionRepository.deleteByConnectionId(
