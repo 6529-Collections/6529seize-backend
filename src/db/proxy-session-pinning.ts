@@ -59,7 +59,23 @@ interface ProxyPinScope {
   readonly pinned: Map<PoolConnection, ProxyPinPool>;
 }
 
+declare const proxyPinScopeBrand: unique symbol;
+/** The request scope current where a statement was issued (or none). */
+export interface ProxyPinScopeRef {
+  readonly [proxyPinScopeBrand]: true;
+}
+
 const scopes = new AsyncLocalStorage<ProxyPinScope>();
+
+/**
+ * Captures the request scope at the call site. mysql runs query callbacks in
+ * the async context of the socket, which belongs to whichever invocation
+ * opened the connection, so a release from a callback must use the scope
+ * captured when the statement was issued.
+ */
+export function captureProxyPinScope(): ProxyPinScopeRef | null {
+  return (scopes.getStore() ?? null) as ProxyPinScopeRef | null;
+}
 
 /**
  * Returns the UTF-8 size of a statement that exceeds the pinning threshold, or
@@ -163,11 +179,13 @@ export function retireProxySession(
  * Ends a borrow. Unpinned connections, and pinned ones inside an open request
  * scope, return to the pool; the scope retires pinned ones at request end. A
  * pinned connection released outside an open scope is retired now. A
- * quarantined connection is never released.
+ * quarantined connection is never released. Pass `issuedIn` when releasing
+ * from a driver callback; it defaults to the current async context.
  */
 export function releaseOrRetireProxySession(
   connection: PoolConnection,
-  pool: ProxyPinPool
+  pool: ProxyPinPool,
+  issuedIn: ProxyPinScopeRef | null = captureProxyPinScope()
 ): void {
   if (quarantined.has(connection)) return;
   const pin = pinnedSessions.get(connection);
@@ -175,7 +193,7 @@ export function releaseOrRetireProxySession(
     connection.release();
     return;
   }
-  const scope = scopes.getStore();
+  const scope = issuedIn as unknown as ProxyPinScope | null;
   if (scope && !scope.closed) {
     scope.pinned.set(connection, pool);
     deferredPins.delete(connection);
