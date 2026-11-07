@@ -514,6 +514,56 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     });
   }
 
+  /**
+   * Marks a wave's unread notifications read and returns how many changed.
+   * A non-locking check first skips the UPDATE, and the next-key locks it
+   * would take on this reader's notification range, when nothing is unread.
+   * The count is advisory: two concurrent marks may split it. It only gates
+   * the badge refresh and IDENTITY_NOTIFICATIONS_CHANGED.
+   */
+  async markUnreadWaveNotificationsAsRead(
+    waveId: string,
+    identityId: string,
+    ctx: RequestContext
+  ): Promise<number> {
+    const timer = `${this.constructor.name}->markUnreadWaveNotificationsAsRead`;
+    ctx.timer?.start(timer);
+    try {
+      const unread = await this.db.oneOrNull<{ found: number }>(
+        `
+          select 1 as found from ${IDENTITY_NOTIFICATIONS_TABLE}
+          where wave_id = :wave_id
+            and identity_id = :identity_id
+            and read_at is null
+          limit 1
+        `,
+        { wave_id: waveId, identity_id: identityId },
+        ctx.connection
+          ? { wrappedConnection: ctx.connection }
+          : { forcePool: DbPoolName.WRITE }
+      );
+      if (!unread) return 0;
+      const result = await this.db.execute(
+        `
+          update ${IDENTITY_NOTIFICATIONS_TABLE}
+          set read_at = :read_at
+          where wave_id = :wave_id
+            and identity_id = :identity_id
+            and read_at is null
+        `,
+        {
+          wave_id: waveId,
+          identity_id: identityId,
+          read_at: Time.currentMillis()
+        },
+        { wrappedConnection: ctx.connection }
+      );
+      return this.db.getAffectedRows(result);
+    } finally {
+      ctx.timer?.stop(timer);
+    }
+  }
+
   async findNotifications(
     param: {
       identity_id: string;
