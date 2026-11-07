@@ -245,6 +245,10 @@ export async function handleGetTelemetryPublicStats(
       'start must begin a complete week (Monday) or month (day 01) in the past'
     );
   }
+  // Daily totals are per-day values for complete past days only (never
+  // today, never cumulative or rolling), so a day's published value cannot
+  // change between requests and overlapping `days` windows cannot be
+  // subtracted. Keep it that way if new daily metrics are added.
   const daily: DayRange = {
     from: shiftDay(today, -query.days),
     to: shiftDay(today, -1)

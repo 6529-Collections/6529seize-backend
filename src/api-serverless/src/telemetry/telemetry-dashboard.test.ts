@@ -154,6 +154,15 @@ describe('completePeriod', () => {
       from: '2026-02-01',
       to: '2026-02-28'
     });
+    expect(completePeriod('month', '2026-01-15')).toEqual({
+      from: '2025-12-01',
+      to: '2025-12-31'
+    });
+    // 2027-01-02 is a Saturday; the last complete ISO week spans the year.
+    expect(completePeriod('week', '2027-01-02')).toEqual({
+      from: '2026-12-21',
+      to: '2026-12-27'
+    });
   });
 
   it('only accepts aligned, finished periods', () => {
