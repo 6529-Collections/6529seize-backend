@@ -38,6 +38,13 @@ import {
 } from '@/api/ws/ws-transaction-diagnostics';
 import { WsDiagnosticOperation } from '@/api/ws/ws-operation-diagnostics';
 import { broadcastPurposeFilterSql } from '@/ws-delivery/ws-connection-purpose';
+import {
+  FollowerAudience,
+  followerAudienceConditionSql,
+  followerAudienceParams,
+  isFollowerAudienceEnabled,
+  ungroupedFollowerAudienceSql
+} from '@/api/ws/ws-audience';
 
 type NotificationSubscription = { identityId: string; jwtExpiry: number };
 
@@ -156,6 +163,30 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         );
       }
     );
+  }
+
+  /**
+   * Records the wave the tab has open (SET_OPEN_WAVE, waves 1.3). Delivery
+   * only reads it with WS_AUDIENCE_FOLLOWERS on. Before dbMigrationsLoop has
+   * added the column this is a no-op, never an error for the client.
+   */
+  public async updateOpenWaveId(
+    params: { connectionId: string; waveId: string | null },
+    ctx: RequestContext
+  ): Promise<void> {
+    try {
+      await this.db.execute(
+        `update ${WS_CONNECTIONS_TABLE} set open_wave_id = :waveId where connection_id = :connectionId`,
+        params,
+        { wrappedConnection: ctx.connection }
+      );
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      if (code !== 'ER_BAD_FIELD_ERROR') throw error;
+      this.logger.warn(
+        'ws_connections.open_wave_id is missing; ignoring SET_OPEN_WAVE'
+      );
+    }
   }
 
   public async updateWaveId(
@@ -497,8 +528,10 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       parent_id: string | null;
       parent_parent_id: string | null;
       parent_group_id: string | null;
+      is_direct_message: number | boolean | null;
     }>(
       `select w.visibility_group_id, w.parent_wave_id, p.id as parent_id,
+              w.is_direct_message,
               p.parent_wave_id as parent_parent_id,
               p.visibility_group_id as parent_group_id
        from ${legacyGetView(WAVES_TABLE)} w left join ${legacyGetView(WAVES_TABLE)} p on p.id = w.parent_wave_id
@@ -513,15 +546,30 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     ) {
       return [];
     }
-    const getRecipients = (groupId: string | null) =>
+    const getRecipients = (
+      groupId: string | null,
+      audience: FollowerAudience | null = null
+    ) =>
       systemBroadcast
         ? this.getGroupRecipientsForSystemBroadcast(
-            { groupId, waveId },
+            { groupId, waveId, audience },
             ctx,
             options
           )
-        : this.getGroupRecipients({ groupId, waveId }, ctx, options);
-    const recipients = await getRecipients(wave.visibility_group_id);
+        : this.getGroupRecipients({ groupId, waveId, audience }, ctx, options);
+    // Waves 1.3: the narrower audience, except for typing (its own rules)
+    // and DMs (every member always gets the frame). The parent-group pass
+    // below stays a pure visibility check.
+    const audience =
+      isFollowerAudienceEnabled() &&
+      !options.includeTypingSockets &&
+      !wave.is_direct_message
+        ? await this.findFollowerAudience(
+            { waveId, parentWaveId: wave.parent_wave_id },
+            ctx
+          )
+        : null;
+    const recipients = await getRecipients(wave.visibility_group_id, audience);
     if (
       !wave.parent_group_id ||
       wave.parent_group_id === wave.visibility_group_id
@@ -535,6 +583,31 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     return recipients.filter((recipient) =>
       permitted.has(recipient.connectionId)
     );
+  }
+
+  /**
+   * The waves whose followers are this wave's audience (waves 1.3): the wave,
+   * its parent, and its subwaves. One indexed read (waves.parent_wave_id).
+   */
+  private async findFollowerAudience(
+    { waveId, parentWaveId }: { waveId: string; parentWaveId: string | null },
+    ctx: RequestContext
+  ): Promise<FollowerAudience> {
+    const subwaves = parentWaveId
+      ? []
+      : await this.db.execute<{ id: string }>(
+          `select id from ${legacyGetView(WAVES_TABLE)} where parent_wave_id = :waveId`,
+          { waveId },
+          { wrappedConnection: ctx.connection }
+        );
+    return {
+      waveId,
+      followTargets: [
+        waveId,
+        ...(parentWaveId ? [parentWaveId] : []),
+        ...subwaves.map((it) => it.id)
+      ]
+    };
   }
 
   /**
@@ -579,10 +652,12 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   private async getGroupRecipients(
     {
       groupId,
-      waveId
+      waveId,
+      audience = null
     }: {
       groupId: string | null;
       waveId: string;
+      audience?: FollowerAudience | null;
     },
     ctx: RequestContext,
     options: WaveRecipientOptions = {}
@@ -599,14 +674,19 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           profile_id: string | null;
           wave_id: string | null;
         }>(
-          `select
+          audience
+            ? ungroupedFollowerAudienceSql({
+                table: WS_CONNECTIONS_TABLE,
+                purposeFilter: purposeFilterSql(options)
+              })
+            : `select
         ws.connection_id as connection_id,
         ws.identity_id as profile_id,
         ws.wave_id as wave_id
       from ${WS_CONNECTIONS_TABLE} ws
       where (ws.wave_id = :waveId or ws.wave_id is null)
         and ${purposeFilterSql(options)}`,
-          { waveId }
+          audience ? followerAudienceParams(audience) : { waveId }
         )
         .then((res) =>
           res.map((it) => ({
@@ -640,9 +720,13 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       from ${WS_CONNECTIONS_TABLE} ws
       join ${UserGroupsService.GENERATED_VIEW} cm
       on ws.identity_id = cm.profile_id
-      where ${purposeFilterSql(options)}
+      where ${purposeFilterSql(options)}${
+        audience ? `\n        and ${followerAudienceConditionSql('ws')}` : ''
+      }
     `;
-    const sqlParams = viewResult.params;
+    const sqlParams = audience
+      ? { ...viewResult.params, ...followerAudienceParams(audience) }
+      : viewResult.params;
     const result = await this.db
       .execute<{
         connection_id: string;
@@ -667,7 +751,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
    * Missing groups yield no recipients; ungrouped waves use the regular path.
    */
   private async getGroupRecipientsForSystemBroadcast(
-    params: { groupId: string | null; waveId: string },
+    params: {
+      groupId: string | null;
+      waveId: string;
+      audience?: FollowerAudience | null;
+    },
     ctx: RequestContext,
     options: WaveRecipientOptions = {}
   ): Promise<
@@ -676,6 +764,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     if (params.groupId === null) {
       return await this.getGroupRecipients(params, ctx, options);
     }
+    const audience = params.audience ?? null;
     const viewResult =
       await this.userGroupsService.getSqlAndParamsByGroupIdForSystemBroadcast(
         params.groupId,
@@ -694,9 +783,13 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       from ${WS_CONNECTIONS_TABLE} ws
       join ${UserGroupsService.GENERATED_VIEW} cm
       on ws.identity_id = cm.profile_id
-      where ${purposeFilterSql(options)}
+      where ${purposeFilterSql(options)}${
+        audience ? `\n        and ${followerAudienceConditionSql('ws')}` : ''
+      }
     `;
-    const sqlParams = viewResult.params;
+    const sqlParams = audience
+      ? { ...viewResult.params, ...followerAudienceParams(audience) }
+      : viewResult.params;
     const result = await this.db
       .execute<{
         connection_id: string;

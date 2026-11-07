@@ -48,7 +48,8 @@ jest.mock('./ws/ws', () => ({
     send: jest.fn(),
     register: jest.fn(),
     deregister: jest.fn(),
-    updateActiveWaveForConnection: jest.fn()
+    updateActiveWaveForConnection: jest.fn(),
+    updateOpenWaveForConnection: jest.fn()
   },
   authenticateWebSocketJwtOrGetByConnectionId: jest.fn(),
   authenticateNotificationIdentityTokens: jest.fn(),
@@ -153,6 +154,47 @@ describe('handler websocket auth', () => {
         durableUpdates,
         purpose: null
       });
+    }
+  );
+
+  it.each([
+    ['a uuid', '7d3a1b52-1c86-4f0e-9a51-3f6a1d0c2b9e', 200, true],
+    ['null (no wave open)', null, 200, true],
+    ['an invalid id', 'not-a-uuid', 400, false]
+  ])(
+    'records the app socket open wave from SET_OPEN_WAVE with %s',
+    async (_label, waveId, statusCode, recorded) => {
+      appWebSocketsMock.updateOpenWaveForConnection.mockClear();
+      const response = await handler(
+        {
+          httpMethod: 'POST',
+          requestContext: {
+            routeKey: '$default',
+            connectionId: 'connection-1',
+            requestId: 'request-1'
+          },
+          body: JSON.stringify({ type: 'SET_OPEN_WAVE', wave_id: waveId })
+        } as unknown as APIGatewayEvent,
+        { awsRequestId: 'lambda-request-1' } as Context,
+        jest.fn()
+      );
+      expect(response).toMatchObject({ statusCode });
+      if (recorded) {
+        expect(
+          appWebSocketsMock.updateOpenWaveForConnection
+        ).toHaveBeenCalledWith(
+          { connectionId: 'connection-1', openWaveId: waveId },
+          {}
+        );
+      } else {
+        expect(
+          appWebSocketsMock.updateOpenWaveForConnection
+        ).not.toHaveBeenCalled();
+      }
+      // It never changes what the socket is subscribed to.
+      expect(
+        appWebSocketsMock.updateActiveWaveForConnection
+      ).not.toHaveBeenCalled();
     }
   );
 

@@ -249,6 +249,40 @@ describe('WsConnectionRepository', () => {
   describe('typing-purpose sockets (0.12a)', () => {
     const purposeFilter = "(ws.purpose is null or ws.purpose <> 'TYPING')";
 
+    it('ignores SET_OPEN_WAVE until the open_wave_id column exists, and rethrows other errors', async () => {
+      const missing = Object.assign(new Error('Unknown column open_wave_id'), {
+        code: 'ER_BAD_FIELD_ERROR'
+      });
+      const execute = jest
+        .fn()
+        .mockRejectedValueOnce(missing)
+        .mockRejectedValueOnce(
+          Object.assign(new Error('lock'), { code: 'ER_LOCK_WAIT_TIMEOUT' })
+        )
+        .mockResolvedValue([]);
+      const repo = new WsConnectionRepository(
+        () => ({ execute }) as any,
+        {} as any
+      );
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+
+      await expect(
+        repo.updateOpenWaveId({ connectionId: 'c1', waveId: 'w1' }, {})
+      ).resolves.toBeUndefined();
+      await expect(
+        repo.updateOpenWaveId({ connectionId: 'c1', waveId: 'w1' }, {})
+      ).rejects.toMatchObject({ code: 'ER_LOCK_WAIT_TIMEOUT' });
+      await repo.updateOpenWaveId({ connectionId: 'c1', waveId: null }, {});
+      expect(execute.mock.calls[2]).toEqual([
+        `update ${WS_CONNECTIONS_TABLE} set open_wave_id = :waveId where connection_id = :connectionId`,
+        { connectionId: 'c1', waveId: null },
+        { wrappedConnection: undefined }
+      ]);
+      warn.mockRestore();
+    });
+
     it('inserts the purpose column only for sockets that declare one', async () => {
       const execute = jest.fn().mockResolvedValue([]);
       const repo = new WsConnectionRepository(
