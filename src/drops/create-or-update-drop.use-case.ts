@@ -1,3 +1,5 @@
+import { afterCommit } from '@/db/after-commit';
+import { inSequence } from '@/db/in-sequence';
 import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
 import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
 import {
@@ -1144,20 +1146,18 @@ export class CreateOrUpdateDropUseCase {
           { connection, timer }
         );
       }
-      await Promise.all([
-        this.metricsRecorder.recordDrop(
-          {
-            identityId: authorId,
-            waveId: validatedModel.wave_id,
-            dropType: validatedModel.drop_type
-          },
-          { timer, connection }
-        ),
-        this.metricsRecorder.recordActiveIdentity(
-          { identityId: authorId },
-          { timer, connection }
-        )
-      ]);
+      // Never inside the post's transaction: see recordCreatedDropAfterCommit.
+      // A rolled-back post records nothing.
+      const createdDrop = {
+        identityId: authorId,
+        waveId: validatedModel.wave_id,
+        dropType: validatedModel.drop_type
+      };
+      await afterCommit(connection, () =>
+        this.metricsRecorder.recordCreatedDropAfterCommit(createdDrop, {
+          timer
+        })
+      );
     }
     await this.artCurationTokenWatchService.registerDrop(
       {
@@ -2390,158 +2390,174 @@ export class CreateOrUpdateDropUseCase {
         `Drops which have already won a prize can not be edited`
       );
     }
-    await Promise.all([
-      this.dropsDb.insertDrop(
-        {
-          id: dropId,
-          author_id: authorId,
-          title: model.title,
-          parts_count: parts.length,
-          wave_id: model.wave_id,
-          reply_to_drop_id: model.reply_to?.drop_id ?? null,
-          reply_to_part_id: model.reply_to?.drop_part_id ?? null,
-          created_at: createdAt,
-          updated_at: updatedAt,
-          serial_no: serialNo,
-          drop_type: isNativeEntryContent
-            ? DropType.COMPETITION
-            : model.drop_type,
-          signature: model.signature,
-          hide_link_preview: model.hide_link_preview,
-          is_additional_action_promised: model.is_additional_action_promised
-        },
-        connection,
-        { deferMetrics: true }
-      ),
-      this.identitySubscriptionsDb.addIdentitySubscription(
-        {
-          subscriber_id: authorId,
-          target_id: dropId.toString(),
-          target_type: ActivityEventTargetType.DROP,
-          target_action: ActivityEventAction.DROP_REPLIED,
-          wave_id: wave.id,
-          subscribed_to_all_drops: false
-        },
-        connection,
-        timer
-      ),
-      this.recordDropCreatedActivity({ model, wave }, { timer, connection }),
-      profileActivityLogsDb.insert(
-        {
-          profile_id: authorId,
-          target_id: dropId.toString(),
-          contents: JSON.stringify({
-            drop_id: dropId,
-            proxy_id: model.proxy_id
-          }),
-          type: ProfileActivityLogType.DROP_CREATED,
-          proxy_id: model.proxy_id ?? null,
-          additional_data_1: model.drop_type,
-          additional_data_2: wave.id
-        },
-        connection,
-        timer
-      ),
-      this.insertMentionsInDrop(resolvedMentionedUsers.mentionEntities, {
-        timer,
-        connection
-      }),
-      this.dropsDb.insertMentionedWaves(
-        model.mentioned_waves?.map<Omit<DropMentionedWaveEntity, 'id'>>(
-          (mentionedWave) => ({
-            drop_id: dropId,
-            wave_id: mentionedWave.wave_id,
-            wave_name_in_content: mentionedWave.wave_name_in_content
-          })
+    // One statement at a time: see inSequence.
+    await inSequence([
+      () =>
+        this.dropsDb.insertDrop(
+          {
+            id: dropId,
+            author_id: authorId,
+            title: model.title,
+            parts_count: parts.length,
+            wave_id: model.wave_id,
+            reply_to_drop_id: model.reply_to?.drop_id ?? null,
+            reply_to_part_id: model.reply_to?.drop_part_id ?? null,
+            created_at: createdAt,
+            updated_at: updatedAt,
+            serial_no: serialNo,
+            drop_type: isNativeEntryContent
+              ? DropType.COMPETITION
+              : model.drop_type,
+            signature: model.signature,
+            hide_link_preview: model.hide_link_preview,
+            is_additional_action_promised: model.is_additional_action_promised
+          },
+          connection,
+          { deferMetrics: true }
         ),
-        { connection, timer }
-      ),
-      this.dropsDb.insertDropGroupMentions(
-        model.mentioned_groups.map<DropGroupMentionEntity>(
-          (mentionedGroup) => ({
-            drop_id: dropId,
-            mentioned_group: mentionedGroup
-          })
+      () =>
+        this.identitySubscriptionsDb.addIdentitySubscription(
+          {
+            subscriber_id: authorId,
+            target_id: dropId.toString(),
+            target_type: ActivityEventTargetType.DROP,
+            target_action: ActivityEventAction.DROP_REPLIED,
+            wave_id: wave.id,
+            subscribed_to_all_drops: false
+          },
+          connection,
+          timer
         ),
-        { connection, timer }
-      ),
-      this.dropsDb.insertReferencedNfts(
-        Object.values(
-          model.referenced_nfts.reduce<Record<string, DropReferencedNftModel>>(
-            (acc, it) => {
-              acc[JSON.stringify(it)] = it;
-              return acc;
-            },
-            {} as Record<string, DropReferencedNftModel>
-          )
-        ).map((it) => ({
-          drop_id: dropId,
-          contract: it.contract,
-          token: it.token,
-          name: it.name,
-          wave_id: wave.id
-        })),
-        connection,
-        timer
-      ),
-      this.dropsDb.insertDropMetadata(
-        model.metadata.map((it) => ({
-          ...it,
-          drop_id: dropId,
-          wave_id: wave.id
-        })),
-        connection,
-        timer
-      ),
-      this.dropsDb.insertDropMedia(
-        parts
-          .map(
+      () =>
+        this.recordDropCreatedActivity({ model, wave }, { timer, connection }),
+      () =>
+        profileActivityLogsDb.insert(
+          {
+            profile_id: authorId,
+            target_id: dropId.toString(),
+            contents: JSON.stringify({
+              drop_id: dropId,
+              proxy_id: model.proxy_id
+            }),
+            type: ProfileActivityLogType.DROP_CREATED,
+            proxy_id: model.proxy_id ?? null,
+            additional_data_1: model.drop_type,
+            additional_data_2: wave.id
+          },
+          connection,
+          timer
+        ),
+      () =>
+        this.insertMentionsInDrop(resolvedMentionedUsers.mentionEntities, {
+          timer,
+          connection
+        }),
+      () =>
+        this.dropsDb.insertMentionedWaves(
+          model.mentioned_waves?.map<Omit<DropMentionedWaveEntity, 'id'>>(
+            (mentionedWave) => ({
+              drop_id: dropId,
+              wave_id: mentionedWave.wave_id,
+              wave_name_in_content: mentionedWave.wave_name_in_content
+            })
+          ),
+          { connection, timer }
+        ),
+      () =>
+        this.dropsDb.insertDropGroupMentions(
+          model.mentioned_groups.map<DropGroupMentionEntity>(
+            (mentionedGroup) => ({
+              drop_id: dropId,
+              mentioned_group: mentionedGroup
+            })
+          ),
+          { connection, timer }
+        ),
+      () =>
+        this.dropsDb.insertReferencedNfts(
+          Object.values(
+            model.referenced_nfts.reduce<
+              Record<string, DropReferencedNftModel>
+            >(
+              (acc, it) => {
+                acc[JSON.stringify(it)] = it;
+                return acc;
+              },
+              {} as Record<string, DropReferencedNftModel>
+            )
+          ).map((it) => ({
+            drop_id: dropId,
+            contract: it.contract,
+            token: it.token,
+            name: it.name,
+            wave_id: wave.id
+          })),
+          connection,
+          timer
+        ),
+      () =>
+        this.dropsDb.insertDropMetadata(
+          model.metadata.map((it) => ({
+            ...it,
+            drop_id: dropId,
+            wave_id: wave.id
+          })),
+          connection,
+          timer
+        ),
+      () =>
+        this.dropsDb.insertDropMedia(
+          parts
+            .map(
+              (part, index) =>
+                part.media?.map<Omit<DropMediaEntity, 'id'>>((media) => ({
+                  ...media,
+                  media_upload_id: media.media_upload_id ?? null,
+                  drop_id: dropId,
+                  drop_part_id: index + 1,
+                  wave_id: wave.id
+                })) ?? []
+            )
+            .flat(),
+          connection,
+          timer
+        ),
+      () =>
+        this.attachmentsDb.insertDropAttachments(
+          parts.flatMap(
             (part, index) =>
-              part.media?.map<Omit<DropMediaEntity, 'id'>>((media) => ({
-                ...media,
-                media_upload_id: media.media_upload_id ?? null,
+              part.attachments?.map<DropAttachmentEntity>((attachment) => ({
                 drop_id: dropId,
                 drop_part_id: index + 1,
+                attachment_id: attachment.attachment_id,
                 wave_id: wave.id
               })) ?? []
-          )
-          .flat(),
-        connection,
-        timer
-      ),
-      this.attachmentsDb.insertDropAttachments(
-        parts.flatMap(
-          (part, index) =>
-            part.attachments?.map<DropAttachmentEntity>((attachment) => ({
-              drop_id: dropId,
-              drop_part_id: index + 1,
-              attachment_id: attachment.attachment_id,
-              wave_id: wave.id
-            })) ?? []
+          ),
+          connection,
+          timer
         ),
-        connection,
-        timer
-      ),
-      this.dropsDb.insertDropParts(
-        parts.map<DropPartEntity>((part, index) => ({
-          drop_id: dropId,
-          drop_part_id: index + 1,
-          content: part.content ?? null,
-          quoted_drop_id: part.quoted_drop?.drop_id ?? null,
-          quoted_drop_part_id: part.quoted_drop?.drop_part_id ?? null,
-          wave_id: wave.id
-        })),
-        connection,
-        timer
-      ),
-      this.dropNftLinksDb.replaceDropLinks(
-        {
-          dropId,
-          links: dropNftLinks,
-          createdAt: Time.currentMillis()
-        },
-        { connection, timer }
-      )
+      () =>
+        this.dropsDb.insertDropParts(
+          parts.map<DropPartEntity>((part, index) => ({
+            drop_id: dropId,
+            drop_part_id: index + 1,
+            content: part.content ?? null,
+            quoted_drop_id: part.quoted_drop?.drop_id ?? null,
+            quoted_drop_part_id: part.quoted_drop?.drop_part_id ?? null,
+            wave_id: wave.id
+          })),
+          connection,
+          timer
+        ),
+      () =>
+        this.dropNftLinksDb.replaceDropLinks(
+          {
+            dropId,
+            links: dropNftLinks,
+            createdAt: Time.currentMillis()
+          },
+          { connection, timer }
+        )
     ]);
     await this.dropMediaUploadsDb.attachUploadsToDrop({
       mediaUploadIds: parts
