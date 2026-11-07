@@ -64,6 +64,10 @@ import {
 } from '@/api/device-signing/device-signed-writes.service';
 import { withStoredAuthorSignature } from '@/api/device-signing/author-signed-drop-response';
 import { DeviceEventKind } from '@/api/device-signing/device-event';
+import {
+  isReadStateSyncEnabled,
+  readStateNotifier
+} from '@/api/notifications/read-state-sync';
 
 const router = asyncRouter();
 const logger = Logger.get('DropsRoutes');
@@ -806,6 +810,17 @@ router.post(
         },
         { timer }
       );
+    } else if (isReadStateSyncEnabled()) {
+      // Keep the serial watermark in step so the next read moves it forward.
+      await wavesApiDb.setWaveReadWatermarkBeforeDrop(
+        {
+          waveId,
+          readerId: identityId,
+          dropSerialNo: drop.serial_no,
+          dropCreatedAt: drop.created_at
+        },
+        { timer }
+      );
     } else {
       await wavesApiDb.setWaveReaderMetricLatestReadTimestamp(
         waveId,
@@ -819,11 +834,37 @@ router.post(
       waveId
     });
     const ctx = { timer };
+    const syncReadState = isReadStateSyncEnabled();
+    // Resolved once for both frames.
+    const recipients =
+      syncReadState || wave?.is_direct_message
+        ? await wsListenersNotifier.findConnectedNotificationRecipients([
+            identityId
+          ])
+        : [];
+    // Mark-unread moves the watermark back; other devices follow it. DM
+    // state goes first, as in the read path, then READ_STATE.
+    const sendReadState = async () => {
+      if (!syncReadState || !recipients.length) return;
+      const watermark = await wavesApiDb.findWaveReadWatermark(
+        { waveId, readerId: identityId },
+        ctx
+      );
+      if (watermark) {
+        await readStateNotifier.notify(
+          {
+            profile_id: identityId,
+            wave_id: waveId,
+            latest_read_serial_no: watermark.latest_read_serial_no ?? 0,
+            latest_read_timestamp: watermark.latest_read_timestamp,
+            version: watermark.version
+          },
+          recipients
+        );
+      }
+    };
     if (wave?.is_direct_message) {
-      const dmRecipients =
-        await wsListenersNotifier.findConnectedNotificationRecipients([
-          identityId
-        ]);
+      const dmRecipients = recipients;
       const dmUnreadState = (
         await wavesApiDb.findDmUnreadConversationStates(
           { identityId, waveIds: [waveId] },
@@ -837,6 +878,7 @@ router.post(
           dmRecipients
         );
       }
+      await sendReadState();
       return res.send({
         your_unread_drops_count: dmUnreadState?.unread_count ?? 0,
         first_unread_drop_serial_no:
@@ -844,6 +886,7 @@ router.post(
         dm_unread_state: dmUnreadState ?? null
       });
     }
+    await sendReadState();
     const unreadSummaries =
       await wavesApiDb.findIdentityUnreadDropsSummaryByWaveId(
         { identityId, waveIds: [waveId] },
