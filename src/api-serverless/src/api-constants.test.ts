@@ -26,6 +26,7 @@ describe('api CORS constants', () => {
   it('keeps public API CORS open for browser-based third-party apps', () => {
     expect(corsOptions.origin).toBe('*');
     expect(corsOptions).not.toHaveProperty('credentials');
+    expect(corsOptions.exposedHeaders).toContain('X-Request-Id');
   });
 
   it('allows artwork version headers only for approved browser origins', () => {
@@ -216,7 +217,7 @@ describe('session refresh retry headers', () => {
       ).toMatchObject({
         origin: 'https://6529.io',
         credentials: true,
-        exposedHeaders: ['Retry-After', 'X-RateLimit-Reset']
+        exposedHeaders: ['Retry-After', 'X-RateLimit-Reset', 'X-Request-Id']
       });
     }
   );
