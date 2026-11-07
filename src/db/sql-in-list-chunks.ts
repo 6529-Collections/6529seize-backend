@@ -7,6 +7,15 @@ import * as mysql from 'mysql';
  */
 export const SQL_IN_LIST_CHUNK_BYTES = 12_000;
 
+/** Bytes the driver inlines for these values as one comma-separated list. */
+export function sqlInListBytes(values: readonly (string | number)[]): number {
+  return Array.from(new Set(values)).reduce<number>(
+    (total, value, index) =>
+      total + Buffer.byteLength(mysql.escape(value), 'utf8') + (index ? 2 : 0),
+    0
+  );
+}
+
 /**
  * Splits distinct values (first-occurrence order) into chunks whose escaped,
  * comma-separated literal list stays within maxBytes. A single value larger

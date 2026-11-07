@@ -1,4 +1,5 @@
 import { AsyncResource } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import { ConnectionWrapper, SqlTransactionOptions } from '../sql-executor';
 import * as mysql from 'mysql';
 import { PoolConnection, TypeCast } from 'mysql';
@@ -449,7 +450,7 @@ function settleProxySession({
     markProxySessionPinned(connection, {
       reason: 'oversized_statement',
       fingerprint: privateFamily
-        ? `[private ${privateFamily} query]`
+        ? privateFingerprint(privateFamily, sql)
         : sqlFingerprint(sql),
       statementBytes
     });
@@ -458,6 +459,18 @@ function settleProxySession({
     const label: ProxyPinPool = pool === DbPoolName.READ ? 'READ' : 'WRITE';
     releaseOrRetireProxySession(connection, label, pinScope);
   }
+}
+
+/**
+ * Private families never log statement text. A short hash of the scrubbed
+ * template (no literals, no bound values) still tells query shapes apart.
+ */
+function privateFingerprint(family: PrivateQueryFamily, sql: string): string {
+  const shape = createHash('sha256')
+    .update(sqlFingerprint(sql))
+    .digest('hex')
+    .slice(0, 8);
+  return `[private ${family} query #${shape}]`;
 }
 
 function prepareStatement(query: string, values: Record<string, any>) {

@@ -166,16 +166,27 @@ describe('RDS Proxy pin containment outside a request scope', () => {
     expect(driver.release).not.toHaveBeenCalled();
   });
 
-  it('labels private statement families without their SQL', async () => {
+  it('labels private statement families with a value-free shape hash', async () => {
     const records = captureEmf();
-    const driver = fakeConnection();
-    await execSQLWithParams(
-      'select * from e2ee_devices where id in (:ids)',
-      driver.connection,
-      true,
-      { ids: manyIds }
+    const run = async (sql: string, ids: string[]) => {
+      const driver = fakeConnection();
+      await execSQLWithParams(sql, driver.connection, true, { ids });
+    };
+    const shape = 'select * from e2ee_devices where id in (:ids)';
+    await run(shape, manyIds);
+    await run(
+      shape,
+      manyIds.map((id) => id.replace(/^0/, 'f'))
     );
-    expect(records()[0].fingerprint).toBe('[private e2ee messaging query]');
+    await run('select id from e2ee_devices where id in (:ids)', manyIds);
+    const [first, sameShape, otherShape] = records().map(
+      (record) => record.fingerprint as string
+    );
+    expect(first).toMatch(/^\[private e2ee messaging query #[0-9a-f]{8}\]$/);
+    // Bound values never change the hash; a different template does.
+    expect(sameShape).toBe(first);
+    expect(otherShape).not.toBe(first);
+    expect(JSON.stringify(records())).not.toContain('e2ee_devices');
   });
 
   it('defers a transaction connection to transaction release', async () => {
