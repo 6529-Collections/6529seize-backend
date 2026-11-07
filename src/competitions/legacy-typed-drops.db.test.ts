@@ -9,6 +9,7 @@ import { legacyTypedDropsSql } from '@/competitions/legacy-typed-drops';
 import { DropType } from '@/entities/IDrop';
 import { WaveType } from '@/entities/IWave';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
+import { identitiesDb } from '@/identities/identities.db';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
@@ -197,6 +198,37 @@ describeWithSeed(
         'author-b:n-pending-winner'
       ]);
     });
+
+    it.each([
+      ['getActiveMainStageDropIds', DropType.PARTICIPATORY],
+      ['getMainStageWinnerDropIds', DropType.WINNER]
+    ] as const)(
+      '%s returns the view rows inside the facade',
+      async (method, dropType) => {
+        const previous = process.env.MAIN_STAGE_WAVE_ID;
+        process.env.MAIN_STAGE_WAVE_ID = 'native';
+        try {
+          // The facade scope must be read before the query switches it off.
+          const grouped = await withLegacyCompetitionGetFacade(() =>
+            identitiesDb[method](AUTHORS, {})
+          );
+          const flat = Object.entries(grouped)
+            .flatMap(([profileId, dropIds]) =>
+              dropIds.map((dropId) => `${profileId}:${dropId}`)
+            )
+            .sort((a, b) => a.localeCompare(b));
+          expect(flat).toEqual(
+            sorted(await viewRows(dropType, 'native', AUTHORS))
+          );
+          // Outside the facade the stored types apply, which differ here.
+          const outside = await identitiesDb[method](AUTHORS, {});
+          expect(outside).not.toEqual(grouped);
+        } finally {
+          if (previous === undefined) delete process.env.MAIN_STAGE_WAVE_ID;
+          else process.env.MAIN_STAGE_WAVE_ID = previous;
+        }
+      }
+    );
 
     it('lists the same wave contributors as the view, inside the facade', async () => {
       const waveIds = ['native', 'unpublished', 'legacy'];

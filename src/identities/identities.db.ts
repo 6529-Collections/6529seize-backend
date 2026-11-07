@@ -63,12 +63,15 @@ export interface WaveMentionSearchCandidate {
  * Only drop_type needs the legacy compatibility projection: inside the
  * legacy GET facade it comes from base tables with the view's rows (see
  * legacyTypedDropsSql), because reading the view defeats the index.
- * Run outside the facade so the base tables are not rewritten.
+ * Call it before entering withoutLegacyCompetitionGetFacade (it reads the
+ * caller's scope), and run the SQL inside it so the base tables are not
+ * rewritten.
  */
 function mainStageTypedDropsSql(
-  dropType: DropType.PARTICIPATORY | DropType.WINNER
+  dropType: DropType.PARTICIPATORY | DropType.WINNER,
+  legacyFacade: boolean
 ): string {
-  return isLegacyCompetitionGetFacadeScope()
+  return legacyFacade
     ? legacyTypedDropsSql(dropType, {
         profileIds: ':profileIds',
         waveId: ':mainStageWaveId'
@@ -1396,13 +1399,18 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!profileIds.length) {
       return {};
     }
+    // Decided in the caller's scope, before the facade is switched off.
+    const typedDrops = mainStageTypedDropsSql(
+      DropType.PARTICIPATORY,
+      isLegacyCompetitionGetFacadeScope()
+    );
     const results = await withoutLegacyCompetitionGetFacade(() =>
       this.db.execute<{
         profile_id: string;
         drop_id: string;
       }>(
         `
-      ${mainStageTypedDropsSql(DropType.PARTICIPATORY)}
+      ${typedDrops}
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('ACTIVE')}) native_entry
       where submitter_id in (:profileIds)
       union select invitation.profile_id, invitation.drop_id
@@ -1443,13 +1451,18 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!profileIds.length) {
       return {};
     }
+    // Decided in the caller's scope, before the facade is switched off.
+    const typedDrops = mainStageTypedDropsSql(
+      DropType.WINNER,
+      isLegacyCompetitionGetFacadeScope()
+    );
     const results = await withoutLegacyCompetitionGetFacade(() =>
       this.db.execute<{
         profile_id: string;
         drop_id: string;
       }>(
         `
-      ${mainStageTypedDropsSql(DropType.WINNER)}
+      ${typedDrops}
       union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('WINNER')}) native_entry
       where submitter_id in (:profileIds)
       union select invitation.profile_id, invitation.drop_id
