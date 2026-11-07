@@ -193,3 +193,26 @@ quota (or after consolidating the two existing worker inline policies into one
 managed policy). Validate with Access Analyzer, simulate the worker operations
 and unrelated-resource denials, then deploy `waveFanoutWorker` through the
 ordinary GitHub workflow before enabling `WS_ASYNC_FANOUT` on `seizeAPI`.
+
+## Post outbox sweeper
+
+`DropWriteOutboxLoopDeployment.json` enrolls only `dropWriteOutboxLoop`
+(waves 1.8) in this environment. It permits the sweeper function and its
+versions, its environment-specific CloudFormation stack, the
+`dropwriteoutboxloop*-serverlessdeploy*` deployment-bucket prefix, its log
+group, its named schedule (`dropWriteOutboxLoop-<stage>`) and its single OOM
+alarm. It has no queue: the worker side of the outbox reuses the existing
+`wave-fanout` queue and `waveFanoutWorker`, so no further SQS grant is needed.
+It grants no application-bucket access.
+
+Install it like `WaveFanoutWorkerDeployment.json`: as a customer-managed policy
+on this environment's existing GitHub deployment role, through the
+administrative identity, after Access Analyzer validation and a simulation of
+the sweeper operations plus unrelated-resource and other-environment denials.
+The trust policy, runtime role and existing attachments are unchanged.
+
+Rollout order: install this policy, deploy `dbMigrationsLoop` (creates
+`drop_write_outbox`), `waveFanoutWorker` (registers the `drop_write_outbox`
+job kind), `dropWriteOutboxLoop`, then `api`, and only then set
+`WS_POST_OUTBOX=true` on `seizeAPI`. With the flag off nothing writes outbox
+rows and the sweeper finds none, so the order is safe to stop at any step.

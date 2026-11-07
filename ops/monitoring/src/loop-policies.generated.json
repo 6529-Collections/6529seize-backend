@@ -143,6 +143,18 @@
       ]
     },
     {
+      "service": "dropWriteOutboxLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 360,
+      "freshSeconds": 180,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
       "service": "ethPriceLoop",
       "intervalSeconds": 300,
       "reservedConcurrency": 1,
@@ -888,6 +900,18 @@
       "delaySeconds": 600,
       "stallSeconds": 1200,
       "freshSeconds": 1020,
+      "operations": [
+        "processing"
+      ]
+    },
+    {
+      "service": "dropWriteOutboxLoop",
+      "intervalSeconds": 60,
+      "reservedConcurrency": 1,
+      "expectedOverlap": true,
+      "delaySeconds": 600,
+      "stallSeconds": 360,
+      "freshSeconds": 180,
       "operations": [
         "processing"
       ]
