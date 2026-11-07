@@ -1,5 +1,6 @@
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import 'reflect-metadata';
+import { synchronizeSchemaBounded } from '@/db/bounded-schema-sync';
 import { enqueueTransfersWithManager } from './transactions/transfer-reconciliation.db';
 import {
   DataSource,
@@ -176,7 +177,8 @@ export async function connect(
       ? (selection.database ?? undefined)
       : process.env.DB_NAME,
     entities: entities,
-    synchronize: syncEntities,
+    // Synchronized below with bounded metadata-lock waits, never here.
+    synchronize: false,
     logging: false,
     charset: 'utf8mb4',
     timezone: 'Etc/UTC'
@@ -197,6 +199,18 @@ export async function connect(
       throw error;
     }
     logger.error(`DB INIT ERROR: ${error}`);
+  }
+  if (syncEntities) {
+    if (!AppDataSource.isInitialized)
+      throw new Error('Schema sync needs an initialized data source');
+    try {
+      await synchronizeSchemaBounded(AppDataSource);
+    } catch (error) {
+      // Fail the run rather than continue on a partly synchronized schema;
+      // the next run plans again from the live schema.
+      await AppDataSource.destroy().catch(() => undefined);
+      throw error;
+    }
   }
   class DbImpl extends SqlExecutor {
     async execute(

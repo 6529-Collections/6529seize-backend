@@ -1,3 +1,4 @@
+import { DB_TEXT_COLLATION } from '@/db/db-collation';
 import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_VOTES_TABLE,
@@ -42,7 +43,7 @@ function creditSource(competition: Pick<Competition, 'voting'>): {
       )) nft
       left join ${IDENTITIES_TABLE} i on i.profile_id = spending.profile_id
       left join ${TDH_NFT_TABLE} t on t.consolidation_key = i.consolidation_key
-        and t.contract = convert(nft.contract using utf8mb4) collate utf8mb4_unicode_ci
+        and t.contract = convert(nft.contract using utf8mb4) collate ${DB_TEXT_COLLATION}
         and t.id = nft.token_id
       group by spending.profile_id, nft.contract, nft.token_id
     ) nft_credit group by profile_id`,

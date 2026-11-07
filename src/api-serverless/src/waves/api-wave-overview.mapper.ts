@@ -148,10 +148,16 @@ export class ApiWaveOverviewMapper {
       const rootWaveIds = relatedEntities
         .filter((wave) => wave.parent_wave_id === null)
         .map((wave) => wave.id);
+      const creatorIds = collections.distinct(
+        relatedEntities
+          .map((wave) => wave.created_by)
+          .filter((profileId): profileId is string => !!profileId)
+      );
 
       const [
         metricsByWaveId,
         staticContextsByWaveId,
+        profilesById,
         displayByWaveId,
         subscribedActionsByWaveId,
         pinnedWaveIds,
@@ -164,6 +170,10 @@ export class ApiWaveOverviewMapper {
       ] = await Promise.all([
         this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
         this.findStaticOverviewContextsByWaveId(relatedEntities, ctx),
+        // Per request: creator profiles carry the viewer's subscriptions.
+        creatorIds.length
+          ? this.identityFetcher.getOverviewsByIds(creatorIds, ctx)
+          : Promise.resolve({} as Record<string, ApiProfileMin>),
         contextProfileId
           ? this.directMessageWaveDisplayService.resolveWaveDisplayByWaveIdForContext(
               {
@@ -240,8 +250,7 @@ export class ApiWaveOverviewMapper {
       ]);
       const {
         descriptionDropPartOnesByDropId,
-        descriptionDropPartOneMediaByDropId,
-        profilesById
+        descriptionDropPartOneMediaByDropId
       } = this.getStaticOverviewLookupMaps({
         waveEntities: relatedEntities,
         staticContextsByWaveId
@@ -307,14 +316,18 @@ export class ApiWaveOverviewMapper {
       return await this.loadStaticOverviewContextsByWaveId(entities, ctx);
     }
 
-    const { cachedByWaveId, uncachedWaveIds, cacheKeysByWaveId } =
-      await readWaveOverviewStaticCache(entities);
+    const {
+      cachedByWaveId,
+      uncachedWaveIds,
+      cacheKeysByWaveId,
+      versionedKeysByWaveId
+    } = await readWaveOverviewStaticCache(entities);
     const uncachedWaveIdSet = new Set(uncachedWaveIds);
     const uncachedEntities = entities.filter((wave) =>
       uncachedWaveIdSet.has(wave.id)
     );
     const loadedByWaveId = await withInFlightWaveOverviewStaticCacheRead({
-      cacheKeysByWaveId,
+      versionedKeysByWaveId,
       waveIds: uncachedWaveIds,
       getValue: async () => {
         const loaded = await this.loadStaticOverviewContextsByWaveId(
@@ -344,32 +357,21 @@ export class ApiWaveOverviewMapper {
     const descriptionDropIds = collections.distinct(
       waveEntities.map((wave) => wave.description_drop_id)
     );
-    const creatorIds = collections.distinct(
-      waveEntities
-        .map((wave) => wave.created_by)
-        .filter((profileId): profileId is string => !!profileId)
-    );
     const [
       descriptionDropPartOnesByDropId,
-      descriptionDropPartOneMediaByDropId,
-      profilesById
+      descriptionDropPartOneMediaByDropId
     ] = await Promise.all([
       this.dropsDb.getDropPartOnes(descriptionDropIds, ctx),
-      this.dropsDb.getDropPartOneMedia(descriptionDropIds, ctx),
-      creatorIds.length
-        ? this.identityFetcher.getOverviewsByIds(creatorIds, ctx)
-        : Promise.resolve({} as Record<string, ApiProfileMin>)
+      this.dropsDb.getDropPartOneMedia(descriptionDropIds, ctx)
     ]);
 
     return waveEntities.reduce(
       (acc, wave) => {
-        const creatorId = wave.created_by;
         acc[wave.id] = {
           descriptionDropPartOne:
             descriptionDropPartOnesByDropId[wave.description_drop_id] ?? null,
           descriptionDropPartOneMedia:
-            descriptionDropPartOneMediaByDropId[wave.description_drop_id] ?? [],
-          creator: creatorId ? (profilesById[creatorId] ?? null) : null
+            descriptionDropPartOneMediaByDropId[wave.description_drop_id] ?? []
         };
         return acc;
       },
@@ -386,7 +388,6 @@ export class ApiWaveOverviewMapper {
   }): {
     descriptionDropPartOnesByDropId: Record<string, DropPartEntity>;
     descriptionDropPartOneMediaByDropId: Record<string, DropMediaEntity[]>;
-    profilesById: Record<string, ApiProfileMin>;
   } {
     return waveEntities.reduce(
       (acc, wave) => {
@@ -402,9 +403,6 @@ export class ApiWaveOverviewMapper {
           acc.descriptionDropPartOneMediaByDropId[wave.description_drop_id] =
             staticContext.descriptionDropPartOneMedia;
         }
-        if (staticContext.creator && wave.created_by) {
-          acc.profilesById[wave.created_by] = staticContext.creator;
-        }
         return acc;
       },
       {
@@ -412,8 +410,7 @@ export class ApiWaveOverviewMapper {
         descriptionDropPartOneMediaByDropId: {} as Record<
           string,
           DropMediaEntity[]
-        >,
-        profilesById: {} as Record<string, ApiProfileMin>
+        >
       }
     );
   }

@@ -533,7 +533,7 @@ export class NativeCompetitionRuntimeService {
         competition.decisions.next_decision_time ?? time
       ).map((score) => [score.entry.id, score.rating])
     );
-    await this.repository.saveLeaderboard(
+    const changed = await this.repository.saveLeaderboard(
       competition.id,
       scores.map((score, index) => {
         const previous = scores[index - 1];
@@ -551,8 +551,13 @@ export class NativeCompetitionRuntimeService {
         };
       }),
       time,
-      ctx
+      ctx,
+      { timeLocked }
     );
+    // Both loops refresh every published competition on a timer (every
+    // minute, every 5 minutes). An unchanged snapshot sends nothing: each
+    // event goes to every socket that can see the wave, and viewers refetch.
+    if (!changed) return;
     await this.repository.enqueueEvent(
       {
         key: `leaderboard:${time}`,

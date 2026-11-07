@@ -7,8 +7,15 @@ export async function withCompetitionSchemaConnection<T>(
   db: SqlExecutor,
   action: (
     ctx: RequestContext & Required<Pick<RequestContext, 'connection'>>
-  ) => Promise<T>
+  ) => Promise<T>,
+  lockWaitSeconds = 5
 ): Promise<T> {
+  if (
+    !Number.isInteger(lockWaitSeconds) ||
+    lockWaitSeconds < 1 ||
+    lockWaitSeconds > 31536000
+  )
+    throw new Error('Invalid metadata lock wait');
   return db.executeNativeQueriesInTransaction(async (connection) => {
     const options = { wrappedConnection: connection };
     const previous = await db.oneOrNull<{ timeout: number }>(
@@ -17,7 +24,11 @@ export async function withCompetitionSchemaConnection<T>(
       options
     );
     if (!previous) throw new Error('Unable to inspect metadata lock timeout');
-    await db.execute('set session lock_wait_timeout=5', {}, options);
+    await db.execute(
+      'set session lock_wait_timeout=:lockWaitSeconds',
+      { lockWaitSeconds },
+      options
+    );
     try {
       return await action({ connection });
     } finally {
