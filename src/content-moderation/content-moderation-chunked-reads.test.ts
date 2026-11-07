@@ -178,6 +178,25 @@ describe('ContentModerationDb chunked IN-list reads', () => {
     expect(visible).toHaveLength(drops.filter((_, i) => i % 40 !== 0).length);
   });
 
+  it('keeps a short side of the blocked-pair filter whole', async () => {
+    const { repo, statements } = repoRecording();
+    // One recipient's page: a single blocker and 900 actors.
+    const notifications = drops.map((drop) => ({
+      identity_id: uuid('bbbbbbbb', 0),
+      additional_identity_id: drop.author_id
+    }));
+    const visible = await repo.filterBlockedNotificationRows(notifications);
+    expectAllUnderPinLimit(statements);
+    const pairReads = statements.filter(({ params }) => 'blockerIds' in params);
+    // 900 actor ids (~36 KB) need 4 reads at the full budget; splitting the
+    // budget in half for both lists would take 6.
+    expect(pairReads).toHaveLength(4);
+    for (const { params } of pairReads) {
+      expect(params.blockerIds).toEqual([uuid('bbbbbbbb', 0)]);
+    }
+    expect(visible).toHaveLength(drops.length - 1);
+  });
+
   it('reads viewer contexts for a large audience from bounded statements', async () => {
     const { repo, statements } = repoRecording();
     const viewerProfileIds = drops.map((_, i) => uuid('cccccccc', i));

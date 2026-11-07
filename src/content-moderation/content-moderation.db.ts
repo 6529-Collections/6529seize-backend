@@ -42,7 +42,8 @@ import { anonymousCompetitionEntrySql } from '@/competitions/competition-anonymi
 import { DbPoolName } from '@/db-query.options';
 import {
   querySqlInListChunks,
-  SQL_IN_LIST_CHUNK_BYTES
+  SQL_IN_LIST_CHUNK_BYTES,
+  sqlInListBytes
 } from '@/db/sql-in-list-chunks';
 import {
   anonymousNotificationActorDropId,
@@ -693,9 +694,14 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
     if (!blockerIds.length || !actorIds.length) {
       return notifications;
     }
-    // Each row is one (blocker, blocked) pair: chunking both lists and
-    // querying every chunk pair returns exactly the single-statement rows.
-    const halfBudget = SQL_IN_LIST_CHUNK_BYTES / 2;
+    // Each row is one (blocker, blocked) pair: querying every pair of chunks
+    // returns exactly the single-statement rows. Usually one side is short
+    // (one recipient's page, or one actor's fan-out); it then stays whole and
+    // the other side gets the rest of the budget, so no pair product arises.
+    const [blockerBudget, actorBudget] = this.pairChunkBudgets(
+      sqlInListBytes(blockerIds),
+      sqlInListBytes(actorIds)
+    );
     const rows = await this.inListChunks(
       actorIds,
       connection,
@@ -717,9 +723,9 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
               { blockerIds: blockerChunk, actorIds: actorChunk },
               this.connectionOptions(connection)
             ),
-          halfBudget
+          blockerBudget
         ),
-      halfBudget
+      actorBudget
     );
     const blockedPairs = new Set(
       rows.map((row) => `${row.blocker_profile_id}:${row.blocked_profile_id}`)
@@ -2357,6 +2363,19 @@ export class ContentModerationDb extends LazyDbAccessCompatibleService {
 
   private connectionOptions(connection?: ConnectionWrapper<any>) {
     return connection ? { wrappedConnection: connection } : undefined;
+  }
+
+  /** Per-list budgets for a statement with two IN lists. */
+  private pairChunkBudgets(
+    firstBytes: number,
+    secondBytes: number
+  ): [number, number] {
+    const half = SQL_IN_LIST_CHUNK_BYTES / 2;
+    if (firstBytes <= half)
+      return [firstBytes || 1, SQL_IN_LIST_CHUNK_BYTES - firstBytes];
+    if (secondBytes <= half)
+      return [SQL_IN_LIST_CHUNK_BYTES - secondBytes, secondBytes || 1];
+    return [half, half];
   }
 
   /**
