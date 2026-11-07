@@ -8,6 +8,11 @@ import { waveScoreService } from '@/api/waves/wave-score.service';
 import { invalidateWaveUnreadCacheForWave } from '@/api/waves/wave-unread-cache';
 import { DbPoolName } from '@/db-query.options';
 import { WaveApiService } from './wave.api.service';
+import { wavesChangedNotifier } from '@/api/waves/waves-changed.notifier';
+
+jest.mock('@/api/waves/waves-changed.notifier', () => ({
+  wavesChangedNotifier: { notify: jest.fn() }
+}));
 
 jest.mock('@/api/waves/wave-score.service', () => ({
   waveScoreService: {
@@ -281,6 +286,12 @@ describe('WaveApiService direct-message creation unread synchronization', () => 
         [dmUnreadState],
         [{ connectionId: 'connection-1', identityId: 'recipient-1' }]
       );
+      // Waves 1.3: the creator follows the new DM and the other member was
+      // added to it.
+      expect(wavesChangedNotifier.notify).toHaveBeenCalledWith([
+        { profileId: 'creator-1', waveIds: ['wave-1'], reason: 'FOLLOWED' },
+        { profileId: 'recipient-1', waveIds: ['wave-1'], reason: 'ADDED' }
+      ]);
     }
   );
 });

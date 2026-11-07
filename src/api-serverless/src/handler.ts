@@ -370,6 +370,23 @@ async function wsHandler(
               body: JSON.stringify({ message: 'OK' })
             };
           }
+          case WsMessageType.SET_OPEN_WAVE: {
+            const waveId = message.wave_id?.toString() ?? null;
+            if (waveId && !ids.isValidUuid(waveId)) {
+              return {
+                statusCode: 400,
+                body: JSON.stringify({ message: 'Invalid wave id' })
+              };
+            }
+            await appWebSockets.updateOpenWaveForConnection(
+              { connectionId: connectionId!, openWaveId: waveId },
+              {}
+            );
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ message: 'OK' })
+            };
+          }
           case WsMessageType.USER_IS_TYPING: {
             isTypingMessage = true;
             const waveId = message.wave_id?.toString();
