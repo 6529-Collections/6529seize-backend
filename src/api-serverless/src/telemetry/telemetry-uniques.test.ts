@@ -1,5 +1,6 @@
 import {
   anonymousVisitorHash,
+  finalizeAnonymousVisitors,
   maybeFlushAnonymousVisitors,
   recordAnonymousVisitors,
   resetTelemetryUniquesForTests
@@ -163,6 +164,16 @@ describe('recordAnonymousVisitors', () => {
     await maybeFlushAnonymousVisitors(NOW);
     await maybeFlushAnonymousVisitors(new Date(NOW.getTime() + 1000));
     expect(mockUpserts).toEqual([['2026-11-06', 'anonymous_visitors', 42]]);
+  });
+
+  it('finalizes a finished day from the daily job, without the flush throttle', async () => {
+    mockPfCount = 11;
+    await maybeFlushAnonymousVisitors(NOW);
+    await finalizeAnonymousVisitors('2026-11-05');
+    expect(mockUpserts).toEqual([
+      ['2026-11-06', 'anonymous_visitors', 11],
+      ['2026-11-05', 'anonymous_visitors', 11]
+    ]);
   });
 
   it('also finalizes yesterday shortly after midnight', async () => {
