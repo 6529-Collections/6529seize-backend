@@ -1,13 +1,26 @@
 import express, { NextFunction, Request, Response } from 'express';
 import { Logger } from '@/logging';
 import { TELEMETRY_MAX_BATCH_BYTES } from '@/api/telemetry/telemetry.schema';
-import { sanitizeTelemetryBatch } from '@/api/telemetry/telemetry-sanitizer';
+import {
+  sanitizeTelemetryBatch,
+  TelemetryEvent
+} from '@/api/telemetry/telemetry-sanitizer';
 import { aggregateTelemetryEvents } from '@/api/telemetry/telemetry-aggregation';
 import { writeTelemetryIncrements } from '@/api/telemetry/telemetry.db';
-import { getTelemetryViewer } from '@/api/telemetry/telemetry-edge';
-import { getTelemetryDailySalt } from '@/api/telemetry/telemetry-daily-salt';
+import {
+  getTelemetryViewer,
+  TelemetryViewer
+} from '@/api/telemetry/telemetry-edge';
+import {
+  getTelemetryDailySalt,
+  TelemetryDailySalt
+} from '@/api/telemetry/telemetry-daily-salt';
 import { isTelemetryRateLimited } from '@/api/telemetry/telemetry-rate-limit';
-import { maybeRunTelemetryRetention } from '@/api/telemetry/telemetry-retention';
+import { maybeRunTelemetryDailyJobs } from '@/api/telemetry/telemetry-retention';
+import {
+  maybeFlushAnonymousVisitors,
+  recordAnonymousVisitors
+} from '@/api/telemetry/telemetry-uniques';
 
 /**
  * First-party telemetry collector, mounted at `/api/e` ahead of the global
@@ -47,6 +60,21 @@ function errorName(error: unknown): string {
   return error instanceof Error ? error.name : 'Error';
 }
 
+/** Daily uniques are best effort: a Redis hiccup never fails the beacon. */
+async function recordUniques(
+  events: TelemetryEvent[],
+  viewer: TelemetryViewer,
+  salt: TelemetryDailySalt,
+  now: Date
+): Promise<void> {
+  try {
+    await recordAnonymousVisitors(events, viewer, salt, now);
+    await maybeFlushAnonymousVisitors(now);
+  } catch (error) {
+    logger.warn(`Telemetry uniques not recorded: ${errorName(error)}`);
+  }
+}
+
 export async function handleTelemetryBatch(
   req: Request,
   res: Response
@@ -78,7 +106,8 @@ export async function handleTelemetryBatch(
     });
     await writeTelemetryIncrements(salt.day, increments);
   }
-  await maybeRunTelemetryRetention(now);
+  await recordUniques(events, viewer, salt, now);
+  await maybeRunTelemetryDailyJobs(now);
   res.status(204).end();
 }
 

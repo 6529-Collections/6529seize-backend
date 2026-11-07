@@ -82,9 +82,43 @@ describe('requireTelemetryEdge', () => {
     expect(response.status).toBe(200);
   });
 
-  it('passes requests through when no secret is configured (local)', async () => {
-    delete process.env.TELEMETRY_EDGE_SECRET;
-    expect((await post('/api/e')).status).toBe(204);
+  describe('without a configured edge secret', () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+
+    afterEach(() => {
+      process.env.NODE_ENV = originalNodeEnv;
+    });
+
+    it.each(['production', 'staging', '', undefined])(
+      'fails closed for NODE_ENV %p (no open public write endpoint)',
+      async (nodeEnv) => {
+        delete process.env.TELEMETRY_EDGE_SECRET;
+        if (nodeEnv === undefined) {
+          delete process.env.NODE_ENV;
+        } else {
+          process.env.NODE_ENV = nodeEnv;
+        }
+        expect((await post('/api/e')).status).toBe(403);
+        expect(
+          (
+            await post('/api/e/diag', {
+              'x-6529-edge-auth': 'anything',
+              'cloudfront-viewer-country': 'US'
+            })
+          ).status
+        ).toBe(403);
+        expect(reachedRoute).toBe(0);
+      }
+    );
+
+    it.each(['local', 'test'])(
+      'accepts requests for local development (NODE_ENV %p)',
+      async (nodeEnv) => {
+        delete process.env.TELEMETRY_EDGE_SECRET;
+        process.env.NODE_ENV = nodeEnv;
+        expect((await post('/api/e')).status).toBe(204);
+      }
+    );
   });
 });
 
