@@ -71,9 +71,9 @@ const leafFields = {
   status: fc.constantFrom(...STATUSES)
 };
 
-/** Drop trees up to three levels deep, with quotes and reply targets. */
-const treeArb: fc.Arbitrary<Tree> = fc.memo<Tree>((depth) =>
-  depth <= 1
+/** Drop trees up to `depth` levels deep, with quotes and reply targets. */
+function treeOfDepth(depth: number): fc.Arbitrary<Tree> {
+  return depth <= 1
     ? fc.record({
         ...leafFields,
         quotes: fc.constant([] as Tree[]),
@@ -81,26 +81,12 @@ const treeArb: fc.Arbitrary<Tree> = fc.memo<Tree>((depth) =>
       })
     : fc.record({
         ...leafFields,
-        quotes: fc.array(treeArb_(depth - 1), { maxLength: 2 }),
-        reply: fc.option(treeArb_(depth - 1), { nil: null })
-      })
-)(3);
-
-function treeArb_(depth: number): fc.Arbitrary<Tree> {
-  return fc.memo<Tree>((n) =>
-    n <= 1
-      ? fc.record({
-          ...leafFields,
-          quotes: fc.constant([] as Tree[]),
-          reply: fc.constant(null)
-        })
-      : fc.record({
-          ...leafFields,
-          quotes: fc.array(treeArb_(n - 1), { maxLength: 2 }),
-          reply: fc.option(treeArb_(n - 1), { nil: null })
-        })
-  )(depth);
+        quotes: fc.array(treeOfDepth(depth - 1), { maxLength: 2 }),
+        reply: fc.option(treeOfDepth(depth - 1), { nil: null })
+      });
 }
+
+const treeArb = treeOfDepth(3);
 
 const viewerContextArb = fc.record({
   author_blocked: fc.boolean(),

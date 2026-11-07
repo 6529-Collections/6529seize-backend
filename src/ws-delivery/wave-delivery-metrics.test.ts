@@ -1,6 +1,7 @@
 import {
   DropPostHops,
   EMF_MAX_VALUES,
+  emitWaveJobMetrics,
   FanoutMeasurement,
   sampleValues,
   serverReceivedAtFromTimer,
@@ -69,12 +70,15 @@ describe('wave delivery metrics', () => {
       expect(record._aws.CloudWatchMetrics[0].Namespace).toBe(
         WAVE_DELIVERY_NAMESPACE
       );
+      // The coarse set keeps the pre-1.1 metric streams continuous.
       expect(record._aws.CloudWatchMetrics[0].Dimensions).toEqual([
-        ['Environment', 'FrameType']
+        ['Environment', 'FrameType'],
+        ['Environment', 'FrameType', 'Stage']
       ]);
       expect(record).toMatchObject({
         Environment: 'staging',
         FrameType: 'DROP_UPDATE',
+        Stage: 'inline',
         event: 'WAVE_FANOUT',
         drop_id: 'drop-1',
         wave_id: 'wave-1',
@@ -93,6 +97,41 @@ describe('wave delivery metrics', () => {
         fanout_resync_pending: 1,
         fanout_failed: 0
       });
+    } finally {
+      emf.restore();
+    }
+  });
+
+  it('tags a worker fan-out with the async stage in the detail set only', () => {
+    const emf = captureEmf();
+    try {
+      const measurement = new FanoutMeasurement(
+        'DROP_UPDATE',
+        null,
+        Date.now,
+        'async'
+      );
+      measurement.queryDone(1);
+      measurement.emit();
+      const [record] = emf.lines();
+      expect(record.Stage).toBe('async');
+      expect(record._aws.CloudWatchMetrics[0].Dimensions).toEqual([
+        ['Environment', 'FrameType'],
+        ['Environment', 'FrameType', 'Stage']
+      ]);
+    } finally {
+      emf.restore();
+    }
+  });
+
+  it('keeps one dimension set for records without detail dimensions', () => {
+    const emf = captureEmf();
+    try {
+      emitWaveJobMetrics('drop_frames', 'processed', 12);
+      const [record] = emf.lines();
+      expect(record._aws.CloudWatchMetrics[0].Dimensions).toEqual([
+        ['Environment', 'JobKind']
+      ]);
     } finally {
       emf.restore();
     }

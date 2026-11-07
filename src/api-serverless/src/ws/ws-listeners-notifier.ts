@@ -53,6 +53,18 @@ import { NotFoundException, UnauthorisedException } from '@/exceptions';
 import { isExpectedClientError } from '@/operational-errors';
 import { typingFailureDetails } from './ws-typing-failure';
 import { forEachWebSocketRecipient } from '@/api/ws/ws-send-scheduler';
+import {
+  buildDropFramesJobs,
+  DropFramesJob,
+  QueuedRecipient
+} from '@/ws-delivery/wave-fanout-job';
+import {
+  fanoutChunkSize,
+  inlineFanoutLimit,
+  isAsyncFanoutEnabled,
+  WaveFanoutQueue,
+  waveFanoutQueue
+} from '@/ws-delivery/wave-fanout-queue';
 import { DeliveryBatch, DeliveryMetricsBatch } from '@/ws-delivery/ws-delivery';
 import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import {
@@ -96,6 +108,47 @@ function sendOutcome(result: unknown): FanoutSendOutcome {
 export interface NotificationConnectionRecipient {
   readonly connectionId: string;
   readonly identityId: string;
+}
+
+/**
+ * A wave fan-out recipient. Staging (#2111): recipient rows carry no stored
+ * JWT expiry, because every send re-reads the connection row; queued jobs
+ * therefore carry 0, which nothing on this branch reads.
+ */
+interface WaveRecipient {
+  readonly connectionId: string;
+  readonly profileId: string | null;
+  readonly wave_id: string | null;
+  readonly jwtExpiry?: number;
+}
+
+/** The audience-wide inputs of one drop frame. */
+interface DropFrames {
+  readonly audienceDrop: ApiDrop;
+  readonly hiddenDropIds: ReadonlySet<string>;
+  readonly authorIdsByDropId: ReadonlyMap<string, string>;
+  readonly updateType: DropMessageType;
+  readonly reason?: string;
+}
+
+interface AsyncFanoutSplit {
+  readonly inline: WaveRecipient[];
+  readonly deferred: WaveRecipient[];
+}
+
+function queuedToRecipient(recipient: QueuedRecipient): WaveRecipient {
+  return {
+    connectionId: recipient.c,
+    profileId: recipient.p,
+    jwtExpiry: recipient.e,
+    wave_id: null
+  };
+}
+
+interface FanoutSend {
+  readonly connectionId: string;
+  /** Resolved when the scheduler reaches this send, so payloads stay lazy. */
+  readonly message: () => string;
 }
 
 const normalizedErrorForLog = (error: unknown): string => {
@@ -495,7 +548,8 @@ export class WsListenersNotifier {
       ContentModerationDb,
       'getViewerContextsForDrop'
     > = contentModerationDb,
-    private readonly wakeOutbox?: () => Promise<void>
+    private readonly wakeOutbox?: () => Promise<void>,
+    private readonly fanoutQueue: WaveFanoutQueue = waveFanoutQueue
   ) {}
 
   private get usesOutbox(): boolean {
@@ -766,47 +820,34 @@ export class WsListenersNotifier {
       );
       const { hiddenDropIds, authorIdsByDropId } =
         await this.getBroadcastAnonymity(audienceDrop, ctx);
-      const creditLefts = await this.getCreditLeftsForOnlineProfiles(
-        onlineProfiles,
-        inputDrop
-      );
-      const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
-        {
-          dropId: inputDrop.id,
-          authorProfileId:
-            authorIdsByDropId.get(inputDrop.id) ?? inputDrop.author.id,
-          viewerProfileIds: onlineProfiles
-            .map(({ profileId }) => profileId)
-            .filter((profileId): profileId is string => profileId !== null)
-        },
-        ctx.connection
-      );
-      const payloadFor = createDropPayloadSerializer({
+      const frames: DropFrames = {
         audienceDrop,
         hiddenDropIds,
         authorIdsByDropId,
-        viewerContexts,
-        creditLefts,
         updateType,
-        reason,
-        onSerialized: () => measurement.serialized()
-      });
-      measurement.prepareDone();
-      await this.withDeliveryBatch((batch) =>
-        forEachWebSocketRecipient(
+        reason
+      };
+      const split = await this.splitForAsyncFanout(
+        onlineProfiles,
+        inputDrop.wave.id,
+        ctx
+      );
+      if (!split) {
+        await this.deliverDropFrames(
+          frames,
           onlineProfiles,
-          ({ connectionId, profileId }) => {
-            // AppWebSockets.send re-reads the connection row before sending.
-            measurement.connectionRead();
-            return this.sendMeasured(
-              connectionId,
-              payloadFor(profileId),
-              serverReceivedAt,
-              measurement,
-              batch
-            );
-          }
-        )
+          serverReceivedAt,
+          measurement,
+          ctx
+        );
+        return;
+      }
+      await this.deliverWithAsyncFanout(
+        frames,
+        split,
+        serverReceivedAt,
+        measurement,
+        ctx
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, updateType, inputDrop, e);
@@ -817,6 +858,227 @@ export class WsListenersNotifier {
         wave_id: inputDrop.wave?.id ?? null
       });
     }
+  }
+
+  /**
+   * Waves 1.1: with `WS_ASYNC_FANOUT` on and an audience larger than the
+   * inline budget, the request sends to at most `WS_INLINE_FANOUT_MAX`
+   * recipients itself, open-wave viewers first, and queues the rest for the
+   * wave fan-out worker. Returns null when everything goes inline.
+   */
+  private async splitForAsyncFanout(
+    recipients: readonly WaveRecipient[],
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<AsyncFanoutSplit | null> {
+    if (!isAsyncFanoutEnabled()) return null;
+    const limit = inlineFanoutLimit();
+    if (recipients.length <= limit) return null;
+    // A tab with the wave open has a socket subscribed to it (the typing
+    // socket today, the app socket from 1.4); its app socket is a viewer too.
+    const viewingProfileIds =
+      await this.wsConnectionRepository.findProfileIdsViewingWave(waveId, ctx);
+    const isViewer = (recipient: WaveRecipient) =>
+      recipient.wave_id === waveId ||
+      (recipient.profileId !== null &&
+        viewingProfileIds.has(recipient.profileId));
+    const ordered = [
+      ...recipients.filter(isViewer),
+      ...recipients.filter((recipient) => !isViewer(recipient))
+    ];
+    return { inline: ordered.slice(0, limit), deferred: ordered.slice(limit) };
+  }
+
+  private async deliverWithAsyncFanout(
+    frames: DropFrames,
+    split: AsyncFanoutSplit,
+    serverReceivedAt: number | null,
+    measurement: FanoutMeasurement,
+    ctx: RequestContext
+  ): Promise<void> {
+    const { jobs, unqueueable } = buildDropFramesJobs(
+      {
+        update_type: frames.updateType,
+        ...(frames.reason === undefined ? {} : { reason: frames.reason }),
+        server_received_at: serverReceivedAt,
+        enqueued_at: Date.now(),
+        drop: frames.audienceDrop,
+        hidden_drop_ids: Array.from(frames.hiddenDropIds),
+        author_ids_by_drop_id: Array.from(frames.authorIdsByDropId.entries())
+      },
+      split.deferred.map(({ connectionId, profileId, jwtExpiry }) => ({
+        c: connectionId,
+        p: profileId,
+        e: jwtExpiry ?? 0
+      })),
+      fanoutChunkSize()
+    );
+    // The inline sends and the hand-off run together; both are awaited.
+    const enqueueStartedAt = Date.now();
+    const [, rejected] = await Promise.all([
+      this.deliverDropFrames(
+        frames,
+        split.inline,
+        serverReceivedAt,
+        measurement,
+        ctx
+      ),
+      this.fanoutQueue.enqueue(jobs).then((notAccepted) => {
+        const rejectedRecipients = notAccepted.reduce(
+          (total, job) =>
+            total + (job.kind === 'drop_frames' ? job.recipients.length : 0),
+          0
+        );
+        measurement.handedOff(
+          split.deferred.length - unqueueable.length - rejectedRecipients,
+          Date.now() - enqueueStartedAt
+        );
+        return notAccepted;
+      })
+    ]);
+    // Whatever the queue did not accept is sent here, never dropped.
+    const fallback = [
+      ...unqueueable,
+      ...rejected.flatMap((job) =>
+        job.kind === 'drop_frames' ? job.recipients : []
+      )
+    ];
+    if (!fallback.length) return;
+    measurement.fellBack(fallback.length);
+    await this.deliverDropFrames(
+      frames,
+      fallback.map(queuedToRecipient),
+      serverReceivedAt,
+      measurement,
+      ctx
+    );
+  }
+
+  /**
+   * Worker side of 1.1: sends one queued chunk. Payload inputs that depend
+   * on the recipient (viewer context, credit left) are read here, once per
+   * chunk. A failure before any send is rethrown so SQS retries the chunk;
+   * once sends have started, failures are logged instead, because a retry
+   * would repeat frames to recipients that already have them.
+   */
+  async deliverQueuedDropFrames(job: DropFramesJob): Promise<void> {
+    const startedAt = Date.now();
+    const measurement = new FanoutMeasurement(
+      job.update_type,
+      job.server_received_at,
+      Date.now,
+      'async'
+    );
+    measurement.queryDone(job.recipients.length);
+    const frames: DropFrames = {
+      audienceDrop: job.drop,
+      hiddenDropIds: new Set(job.hidden_drop_ids),
+      authorIdsByDropId: new Map(job.author_ids_by_drop_id),
+      updateType: job.update_type,
+      reason: job.reason
+    };
+    const recipients = job.recipients.map(queuedToRecipient);
+    try {
+      const sends = await this.prepareDropFrames(
+        frames,
+        recipients,
+        measurement,
+        {}
+      );
+      try {
+        await this.sendToAll(sends, job.server_received_at, measurement);
+      } catch (error) {
+        logDropNotificationFailure(
+          this.logger,
+          `${job.update_type} queued chunk ${job.chunk}`,
+          job.drop,
+          error
+        );
+      }
+    } finally {
+      measurement.emit({
+        drop_id: job.drop.id,
+        wave_id: job.drop.wave?.id ?? null,
+        chunk: job.chunk,
+        queue_wait_ms: startedAt - job.enqueued_at
+      });
+    }
+  }
+
+  /** Reads per-recipient payload inputs once, then sends. */
+  private async deliverDropFrames(
+    frames: DropFrames,
+    recipients: readonly WaveRecipient[],
+    serverReceivedAt: number | null,
+    measurement: FanoutMeasurement,
+    ctx: RequestContext
+  ): Promise<void> {
+    const sends = await this.prepareDropFrames(
+      frames,
+      recipients,
+      measurement,
+      ctx
+    );
+    await this.sendToAll(sends, serverReceivedAt, measurement);
+  }
+
+  private async prepareDropFrames(
+    frames: DropFrames,
+    recipients: readonly WaveRecipient[],
+    measurement: FanoutMeasurement,
+    ctx: RequestContext
+  ): Promise<FanoutSend[]> {
+    const { audienceDrop, authorIdsByDropId } = frames;
+    const creditLefts = await this.getCreditLeftsForOnlineProfiles(
+      [...recipients],
+      audienceDrop
+    );
+    const viewerContexts = await this.moderationDb.getViewerContextsForDrop(
+      {
+        dropId: audienceDrop.id,
+        authorProfileId:
+          authorIdsByDropId.get(audienceDrop.id) ?? audienceDrop.author.id,
+        viewerProfileIds: recipients
+          .map(({ profileId }) => profileId)
+          .filter((profileId): profileId is string => profileId !== null)
+      },
+      ctx.connection
+    );
+    const payloadFor = createDropPayloadSerializer({
+      ...frames,
+      viewerContexts,
+      creditLefts,
+      onSerialized: () => measurement.serialized()
+    });
+    measurement.prepareDone();
+    return recipients.map(({ connectionId, profileId }) => ({
+      connectionId,
+      message: () => payloadFor(profileId)
+    }));
+  }
+
+  /**
+   * Sends one frame per recipient through #2111's send scheduler, with
+   * bookkeeping and delivery metrics batched for the fan-out.
+   */
+  private async sendToAll(
+    sends: readonly FanoutSend[],
+    serverReceivedAt: number | null,
+    measurement: FanoutMeasurement
+  ): Promise<void> {
+    await this.withDeliveryBatch((batch) =>
+      forEachWebSocketRecipient(sends, (send) => {
+        // AppWebSockets.send re-reads the connection row before sending.
+        measurement.connectionRead();
+        return this.sendMeasured(
+          send.connectionId,
+          send.message(),
+          serverReceivedAt,
+          measurement,
+          batch
+        );
+      })
+    );
   }
 
   /**
@@ -834,7 +1096,17 @@ export class WsListenersNotifier {
     try {
       await run(batch);
     } finally {
-      await Promise.allSettled(settlements);
+      const settled = await Promise.allSettled(settlements);
+      const failed = settled.filter(
+        (result) => result.status === 'rejected'
+      ).length;
+      if (failed) {
+        this.logger.warn({
+          code: 'WS_DELIVERY_BOOKKEEPING_FAILED',
+          failed,
+          total: settled.length
+        });
+      }
       batch.metrics.flush();
     }
   }

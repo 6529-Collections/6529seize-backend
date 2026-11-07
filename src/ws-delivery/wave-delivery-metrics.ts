@@ -14,6 +14,11 @@ type EmfUnit = 'Milliseconds' | 'Count';
 
 interface EmfRecord {
   readonly dimensions: Record<string, string>;
+  /**
+   * Published as a second, finer dimension set, so the coarse metric stream
+   * (and dashboards on it) stays continuous when a dimension is added.
+   */
+  readonly detailDimensions?: Record<string, string>;
   readonly metrics: Record<string, { unit: EmfUnit; value: number | number[] }>;
   readonly properties?: Record<string, string | number | boolean | null>;
 }
@@ -34,6 +39,13 @@ function writeEmf(record: EmfRecord): void {
     Environment: deliveryEnvironment(),
     ...record.dimensions
   };
+  const detail = record.detailDimensions ?? {};
+  const dimensionSets = Object.keys(detail).length
+    ? [
+        Object.keys(dimensions),
+        [...Object.keys(dimensions), ...Object.keys(detail)]
+      ]
+    : [Object.keys(dimensions)];
   const metricValues: Record<string, number | number[]> = {};
   const definitions: { Name: string; Unit: EmfUnit }[] = [];
   for (const [name, { unit, value }] of Object.entries(record.metrics)) {
@@ -53,12 +65,13 @@ function writeEmf(record: EmfRecord): void {
           CloudWatchMetrics: [
             {
               Namespace: WAVE_DELIVERY_NAMESPACE,
-              Dimensions: [Object.keys(dimensions)],
+              Dimensions: dimensionSets,
               Metrics: definitions
             }
           ]
         },
         ...dimensions,
+        ...detail,
         ...(record.properties ?? {}),
         ...metricValues
       })}\n`
@@ -82,6 +95,9 @@ export function sampleValues(values: readonly number[], max: number): number[] {
   );
 }
 
+/** Where a fan-out ran: inside the request, or in the 1.1 worker. */
+export type FanoutStage = 'inline' | 'async';
+
 export type FanoutSendOutcome =
   | 'sent'
   | 'resync_pending'
@@ -101,6 +117,9 @@ export class FanoutMeasurement {
   private recipients = 0;
   private serializations = 0;
   private connectionReads = 0;
+  private handedOffRecipients = 0;
+  private handOffMs: number | null = null;
+  private fellBackRecipients = 0;
   private firstSettledAt: number | null = null;
   private lastSettledAt: number | null = null;
   private readonly sendDurations: number[] = [];
@@ -115,7 +134,8 @@ export class FanoutMeasurement {
   constructor(
     private readonly frameType: string,
     private readonly serverReceivedAt: number | null,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly stage: FanoutStage = 'inline'
   ) {
     this.startedAt = now();
   }
@@ -125,8 +145,20 @@ export class FanoutMeasurement {
     this.recipients = recipients;
   }
 
+  /** Records the first preparation only; later batches reuse its timing. */
   prepareDone(): void {
-    this.prepareMs = this.now() - this.startedAt - (this.queryMs ?? 0);
+    this.prepareMs ??= this.now() - this.startedAt - (this.queryMs ?? 0);
+  }
+
+  /** Recipients accepted by the queue for the worker, and the hand-off time. */
+  handedOff(recipients: number, milliseconds: number): void {
+    this.handedOffRecipients += recipients;
+    this.handOffMs = milliseconds;
+  }
+
+  /** Recipients the queue did not accept, sent inline instead. */
+  fellBack(recipients: number): void {
+    this.fellBackRecipients += recipients;
   }
 
   serialized(): void {
@@ -151,6 +183,7 @@ export class FanoutMeasurement {
       at === null ? Number.NaN : at - this.startedAt;
     writeEmf({
       dimensions: { FrameType: this.frameType },
+      detailDimensions: { Stage: this.stage },
       metrics: {
         fanout_recipients: { unit: 'Count', value: this.recipients },
         fanout_query_ms: { unit: 'Milliseconds', value: this.queryMs ?? NaN },
@@ -186,6 +219,15 @@ export class FanoutMeasurement {
           unit: 'Count',
           value: this.connectionReads
         },
+        fanout_handed_off: {
+          unit: 'Count',
+          value: this.handedOffRecipients
+        },
+        fanout_hand_off_ms: {
+          unit: 'Milliseconds',
+          value: this.handOffMs ?? Number.NaN
+        },
+        fanout_fell_back: { unit: 'Count', value: this.fellBackRecipients },
         fanout_sent: { unit: 'Count', value: this.outcomes.sent },
         fanout_resync_pending: {
           unit: 'Count',
@@ -200,6 +242,29 @@ export class FanoutMeasurement {
       properties: { event: 'WAVE_FANOUT', ...properties }
     });
   }
+}
+
+/** One queued wave job's outcome, by job kind (waves 1.1 worker). */
+export function emitWaveJobMetrics(
+  kind: string,
+  outcome: 'processed' | 'failed',
+  queueAgeMs: number | null
+): void {
+  writeEmf({
+    dimensions: { JobKind: kind },
+    metrics: {
+      wave_job_processed: {
+        unit: 'Count',
+        value: outcome === 'processed' ? 1 : 0
+      },
+      wave_job_failed: { unit: 'Count', value: outcome === 'failed' ? 1 : 0 },
+      wave_job_queue_age_ms: {
+        unit: 'Milliseconds',
+        value: queueAgeMs ?? Number.NaN
+      }
+    },
+    properties: { event: 'WAVE_JOB' }
+  });
 }
 
 /** Server-side hops of one drop POST, emitted as one EMF record. */
