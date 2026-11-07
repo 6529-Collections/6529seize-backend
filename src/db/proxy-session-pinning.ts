@@ -12,8 +12,9 @@ import { loggerContext } from '@/logger-context';
  *
  * Inside a request scope a pinned connection keeps returning to the pool, so
  * later statements of the same request reuse it without reconnecting; the
- * scope destroys it when the request ends. Outside a scope (or after it ended)
- * a pinned connection is destroyed when it is released.
+ * scope retires it when the request ends. Outside a scope (or after it ended)
+ * a pinned connection is retired when it is released. A retired connection
+ * never returns to the pool.
  *
  * The threshold leaves headroom below the proxy limit for protocol framing.
  */
@@ -34,10 +35,24 @@ export interface ProxySessionPin {
 /** When a pinned session was retired: at its own release or at request end. */
 export type ProxyPinRetirement = 'release' | 'request_end';
 
+/**
+ * `destroyed`: the driver closed it. `quarantined`: destroy threw, so it was
+ * taken out of the pool's idle list and will never be released again; mysql
+ * drops it from the pool when its socket ends.
+ */
+export type ProxyRetireOutcome = 'destroyed' | 'quarantined';
+
 const FINGERPRINT_CHARS = 120;
 const METRIC_NAMESPACE = '6529/DbProxy';
 const logger = Logger.get('DB_PROXY_PINNING');
 const pinnedSessions = new WeakMap<object, ProxySessionPin>();
+const quarantined = new WeakSet<object>();
+/**
+ * Pinned connections still borrowed when their request ended. Every later
+ * request end re-checks them, so one released without passing through this
+ * module still gets retired. Bounded by the pools' connection limits.
+ */
+const deferredPins = new Map<PoolConnection, ProxyPinPool>();
 
 interface ProxyPinScope {
   closed: boolean;
@@ -57,16 +72,30 @@ export function oversizedStatementBytes(sql: string): number | null {
   return bytes > PROXY_PIN_STATEMENT_BYTES ? bytes : null;
 }
 
-// One left-to-right pass, so a quote inside a comment (or the reverse) cannot
-// shift literal boundaries and expose a value.
-const SQL_FINGERPRINT_TOKEN =
-  /\/\*[\s\S]*?\*\/|--[^\n]*|#[^\n]*|'(?:[^'\\]|\\[\s\S])*'|"(?:[^"\\]|\\[\s\S])*"|`(?:[^`]|``)*`|\b0x[0-9a-f]+\b|\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/gi;
+// One left-to-right alternation, so a quote inside a comment (or the reverse)
+// cannot shift literal boundaries and expose a value.
+const SQL_FINGERPRINT_TOKEN = new RegExp(
+  [
+    /\/\*[\s\S]*?\*\//, // block comment
+    /--[^\n]*/, // line comment
+    /#[^\n]*/, // line comment
+    /'(?:[^'\\]|\\[\s\S])*'/, // single-quoted literal
+    /"(?:[^"\\]|\\[\s\S])*"/, // double-quoted literal
+    /`(?:[^`]|``)*`/, // quoted identifier (kept)
+    /\b0x[0-9a-f]+\b/, // hex literal
+    /\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/ // numeric literal
+  ]
+    .map((token) => token.source)
+    .join('|'),
+  'gi'
+);
 
 /**
  * Low-cardinality statement label for diagnostics: comments removed, string,
  * hex and numeric literals replaced with `?`, literal lists collapsed. Pass
  * the statement template, not the formatted SQL; inlined values are scrubbed
- * either way. Anything after an unterminated quote is dropped.
+ * either way. Anything after an unterminated quote is dropped before the
+ * length cap, so a cut can never expose part of a literal.
  */
 export function sqlFingerprint(sql: string): string {
   const scrubbed = sql
@@ -97,31 +126,50 @@ export function isProxySessionPinned(connection: object): boolean {
 }
 
 /**
- * Destroys a borrowed pooled connection so the proxy frees its pinned database
- * connection now. mysql removes a destroyed connection from its pool, and the
- * pool opens a replacement on demand. Throws if the driver cannot destroy it;
- * the caller owns the fallback and the pin mark stays in place.
+ * Takes a pooled connection out of circulation so the proxy frees its pinned
+ * database connection. It is destroyed (mysql removes it from its pool and
+ * opens a replacement on demand). If destroy throws, the connection may be
+ * half-closed, so it is quarantined instead of ever being released again.
+ * Never throws.
  */
 export function retireProxySession(
   connection: PoolConnection,
   pool: ProxyPinPool,
   pin: ProxySessionPin,
   when: ProxyPinRetirement = 'release'
-): void {
-  connection.destroy();
+): ProxyRetireOutcome {
   pinnedSessions.delete(connection);
+  deferredPins.delete(connection);
+  try {
+    connection.destroy();
+  } catch {
+    quarantine(connection);
+    try {
+      logger.warn('[DB_PROXY_PIN_RETIRE_FAILED]', {
+        pool,
+        reason: pin.reason,
+        when
+      });
+    } catch {
+      // Logging cannot undo the quarantine.
+    }
+    return 'quarantined';
+  }
   recordProxySessionRetired(pool, pin, when);
+  return 'destroyed';
 }
 
 /**
  * Ends a borrow. Unpinned connections, and pinned ones inside an open request
  * scope, return to the pool; the scope retires pinned ones at request end. A
- * pinned connection released outside an open scope is destroyed now.
+ * pinned connection released outside an open scope is retired now. A
+ * quarantined connection is never released.
  */
 export function releaseOrRetireProxySession(
   connection: PoolConnection,
   pool: ProxyPinPool
 ): void {
+  if (quarantined.has(connection)) return;
   const pin = pinnedSessions.get(connection);
   if (!pin) {
     connection.release();
@@ -130,22 +178,18 @@ export function releaseOrRetireProxySession(
   const scope = scopes.getStore();
   if (scope && !scope.closed) {
     scope.pinned.set(connection, pool);
+    deferredPins.delete(connection);
     connection.release();
     return;
   }
-  try {
-    retireProxySession(connection, pool, pin);
-  } catch {
-    // A pinned session that cannot be destroyed is no worse than before.
-    connection.release();
-  }
+  retireProxySession(connection, pool, pin);
 }
 
 /**
  * Runs one request or invocation in a pin scope. When it settles, also on
- * error, pinned connections idle in their pool are destroyed. One still
- * borrowed (background work) keeps its pin mark and is destroyed at its next
- * release, which then happens outside an open scope.
+ * error, pinned connections idle in their pool are retired. One still borrowed
+ * (background work) is never touched mid-query: it is retired at its next
+ * release outside an open scope, or by a later request end once it is idle.
  */
 export async function withProxyPinScope<T>(work: () => Promise<T>): Promise<T> {
   const scope: ProxyPinScope = { closed: false, pinned: new Map() };
@@ -158,42 +202,59 @@ export async function withProxyPinScope<T>(work: () => Promise<T>): Promise<T> {
 
 function retireScopePins(scope: ProxyPinScope): void {
   scope.closed = true;
-  if (!scope.pinned.size) return;
+  const candidates = new Map([
+    ...Array.from(deferredPins),
+    ...Array.from(scope.pinned)
+  ]);
+  scope.pinned.clear();
+  if (!candidates.size) return;
   let retired = 0;
   let deferred = 0;
-  for (const [connection, pool] of Array.from(scope.pinned)) {
+  for (const [connection, pool] of Array.from(candidates)) {
     const pin = pinnedSessions.get(connection);
-    if (!pin) continue;
-    if (!isIdleInPool(connection)) {
+    const state = pin ? poolState(connection) : 'gone';
+    if (!pin || state === 'gone') {
+      // Already retired, or dropped by the driver: nothing left to hand out.
+      pinnedSessions.delete(connection);
+      deferredPins.delete(connection);
+    } else if (state === 'borrowed') {
+      deferredPins.set(connection, pool);
       deferred++;
-      continue;
-    }
-    try {
+    } else {
       retireProxySession(connection, pool, pin, 'request_end');
       retired++;
-    } catch {
-      deferred++;
     }
   }
-  scope.pinned.clear();
-  recordRequestRetirements(retired, deferred);
+  if (retired || deferred) recordRequestRetirements(retired, deferred);
 }
 
 /**
  * mysql 2.x keeps released connections in `pool._freeConnections` (see
- * Pool#releaseConnection). Anything else, including an unknown driver shape,
- * counts as borrowed and is left alone.
+ * Pool#releaseConnection) and clears `_pool` when it drops a connection. Any
+ * other shape counts as borrowed, so it is never destroyed mid-query.
  */
-function isIdleInPool(connection: PoolConnection): boolean {
+function poolState(connection: PoolConnection): 'idle' | 'borrowed' | 'gone' {
+  const pool = (connection as unknown as { _pool?: unknown })._pool;
+  if (!pool) return 'gone';
+  return idleList(connection)?.includes(connection) ? 'idle' : 'borrowed';
+}
+
+function idleList(connection: PoolConnection): unknown[] | undefined {
   const pool = (connection as unknown as { _pool?: unknown })._pool as
     | { _freeConnections?: unknown }
     | null
     | undefined;
-  return (
-    !!pool &&
-    Array.isArray(pool._freeConnections) &&
-    pool._freeConnections.includes(connection)
-  );
+  return Array.isArray(pool?._freeConnections)
+    ? pool._freeConnections
+    : undefined;
+}
+
+function quarantine(connection: PoolConnection): void {
+  quarantined.add(connection);
+  // An idle connection must not be handed to the next borrower.
+  const idle = idleList(connection);
+  const index = idle ? idle.indexOf(connection) : -1;
+  if (idle && index !== -1) idle.splice(index, 1);
 }
 
 function metricEnvironment(): string {

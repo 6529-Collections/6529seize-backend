@@ -67,8 +67,9 @@ export interface SqlBudgetConnection {
   readonly release: () => void | Promise<void>;
   /**
    * Optional disposal of a session whose budget variables were set, used
-   * instead of restoring them (RDS Proxy pins such sessions). It must destroy
-   * the physical connection synchronously or throw; on throw, the variables are
+   * instead of restoring them (RDS Proxy pins such sessions). It must
+   * synchronously take the physical connection out of circulation (destroy it,
+   * or guarantee it is never reused) or throw; on throw, the variables are
    * restored as usual. `release` still runs afterwards for adapter bookkeeping.
    */
   readonly retire?: () => void;

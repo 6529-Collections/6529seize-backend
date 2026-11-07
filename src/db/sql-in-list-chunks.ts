@@ -46,9 +46,12 @@ export interface SqlInListChunkOptions {
 
 /**
  * Runs one statement per IN-list chunk (concurrently by default) and
- * concatenates rows in chunk order. Only for statements whose rows each depend
- * on a single listed value: no ORDER BY, LIMIT or aggregate spanning values.
- * Callers that need an order map rows by key.
+ * concatenates rows in chunk order. Values are deduplicated first, which is
+ * exact for `IN` but drops positional or duplicate semantics. Only for
+ * statements whose rows each depend on a single listed value: no ORDER BY,
+ * LIMIT or aggregate spanning values. Callers that need an order map rows by
+ * key. Concurrent chunks each borrow a pool connection, so keep lists bounded
+ * (a 1,000-UUID list is 4 chunks) or use `sequential`.
  */
 export async function querySqlInListChunks<T extends string | number, R>(
   values: readonly T[],
@@ -60,9 +63,9 @@ export async function querySqlInListChunks<T extends string | number, R>(
     const results = await Promise.all(chunks.map((chunk) => query(chunk)));
     return results.flat();
   }
-  const rows: R[] = [];
-  for (const chunk of chunks) {
-    rows.push(...(await query(chunk)));
-  }
-  return rows;
+  return chunks.reduce<Promise<R[]>>(
+    (previous, chunk) =>
+      previous.then(async (rows) => rows.concat(await query(chunk))),
+    Promise.resolve([])
+  );
 }

@@ -343,6 +343,8 @@ export async function execSQLWithParams<T>(
           settleProxySession({
             connection,
             sql,
+            // mysql always formats through queryFormat; the template fallback
+            // only covers drivers that skip it and cannot see bound values.
             statementBytes: measured
               ? statementBytes
               : oversizedStatementBytes(sql),

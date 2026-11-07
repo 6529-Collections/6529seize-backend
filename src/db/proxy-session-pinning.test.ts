@@ -131,24 +131,45 @@ describe('proxy session disposal', () => {
     expect(isProxySessionPinned(connection)).toBe(false);
   });
 
-  it('falls back to release when the driver cannot destroy', () => {
+  it('quarantines instead of releasing when destroy throws on release', () => {
     const { connection, release, destroy } = fakeConnection(
       new Error('no socket')
     );
     markProxySessionPinned(connection, { reason: 'oversized_statement' });
-    releaseOrRetireProxySession(connection, 'WRITE');
+    expect(() =>
+      releaseOrRetireProxySession(connection, 'WRITE')
+    ).not.toThrow();
     expect(destroy).toHaveBeenCalledTimes(1);
-    expect(release).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+    // A later release of the same object still never returns it to the pool.
+    releaseOrRetireProxySession(connection, 'WRITE');
+    expect(release).not.toHaveBeenCalled();
   });
 
-  it('lets direct retirement failures reach the caller', () => {
-    const failure = new Error('no socket');
-    const { connection } = fakeConnection(failure);
-    expect(() =>
+  it('keeps telemetry failures out of the release path', () => {
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'seizeAPI';
+    jest.spyOn(process.stdout, 'write').mockImplementation(() => {
+      throw new Error('stdout closed');
+    });
+    const { connection, destroy } = fakeConnection();
+    markProxySessionPinned(connection, { reason: 'oversized_statement' });
+    expect(() => releaseOrRetireProxySession(connection, 'READ')).not.toThrow();
+    expect(destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a quarantine instead of throwing when destroy fails', () => {
+    const { connection } = fakeConnection(new Error('no socket'));
+    expect(
       retireProxySession(connection, 'TRANSACTION', {
         reason: 'session_settings'
       })
-    ).toThrow(failure);
+    ).toBe('quarantined');
+    const healthy = fakeConnection();
+    expect(
+      retireProxySession(healthy.connection, 'TRANSACTION', {
+        reason: 'session_settings'
+      })
+    ).toBe('destroyed');
   });
 
   it('emits one value-free EMF record per retirement inside Lambda', () => {
@@ -187,7 +208,7 @@ describe('proxy session disposal', () => {
 });
 
 /** mysql 2.x pool shape: released connections wait in `_freeConnections`. */
-function fakePool() {
+function fakePool(options: { failDestroy?: boolean } = {}) {
   const pool = { _freeConnections: [] as PoolConnection[] };
   const created: ReturnType<typeof fakeConnection>[] = [];
   const acquire = (): PoolConnection => {
@@ -200,6 +221,7 @@ function fakePool() {
       pool._freeConnections.push(driver.connection);
     });
     driver.destroy.mockImplementation(() => {
+      if (options.failDestroy) throw new Error('no socket');
       const index = pool._freeConnections.indexOf(driver.connection);
       if (index !== -1) pool._freeConnections.splice(index, 1);
       connection._pool = null;
@@ -207,7 +229,7 @@ function fakePool() {
     created.push(driver);
     return driver.connection;
   };
-  return { acquire, created };
+  return { acquire, created, idle: pool._freeConnections };
 }
 
 function pinnedStatement(connection: PoolConnection): void {
@@ -330,6 +352,69 @@ describe('request-scoped retirement', () => {
         deferred: 0
       })
     ]);
+  });
+
+  it('quarantines an idle pinned connection whose destroy throws at request end', async () => {
+    const pool = fakePool({ failDestroy: true });
+    let pinned: PoolConnection | undefined;
+    await withProxyPinScope(async () => {
+      pinned = pool.acquire();
+      pinnedStatement(pinned);
+      expect(pool.idle).toEqual([pinned]);
+    });
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+    // Taken out of the idle list: the next borrower gets a new connection.
+    expect(pool.idle).toEqual([]);
+    expect(pool.acquire()).not.toBe(pinned);
+    // And it is never released back, even by a stray owner.
+    releaseOrRetireProxySession(pinned!, 'READ');
+    expect(pool.created[0].release).toHaveBeenCalledTimes(1);
+    expect(pool.idle).toEqual([]);
+  });
+
+  it('retires a deferred pin at a later request end even if released elsewhere', async () => {
+    const pool = fakePool();
+    let borrowed: PoolConnection | undefined;
+    await withProxyPinScope(async () => {
+      pinnedStatement(pool.acquire());
+      borrowed = pool.acquire();
+    });
+    expect(pool.created[0].destroy).not.toHaveBeenCalled();
+    // Released straight to the pool, bypassing this module.
+    borrowed!.release();
+    expect(pool.idle).toEqual([borrowed]);
+    // A later request that pinned nothing still sweeps the deferred pin.
+    await withProxyPinScope(async () => undefined);
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+    expect(isProxySessionPinned(borrowed!)).toBe(false);
+  });
+
+  it('lets a later request adopt a deferred pin released inside it', async () => {
+    const pool = fakePool();
+    let borrowed: PoolConnection | undefined;
+    await withProxyPinScope(async () => {
+      pinnedStatement(pool.acquire());
+      borrowed = pool.acquire();
+    });
+    await withProxyPinScope(async () => {
+      releaseOrRetireProxySession(borrowed!, 'READ');
+      expect(pool.created[0].destroy).not.toHaveBeenCalled();
+    });
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops tracking a deferred pin the driver dropped', async () => {
+    const pool = fakePool();
+    let borrowed: PoolConnection | undefined;
+    await withProxyPinScope(async () => {
+      pinnedStatement(pool.acquire());
+      borrowed = pool.acquire();
+    });
+    // The driver removed it from the pool (fatal error or socket end).
+    (borrowed as unknown as { _pool: unknown })._pool = null;
+    await withProxyPinScope(async () => undefined);
+    expect(pool.created[0].destroy).not.toHaveBeenCalled();
+    expect(isProxySessionPinned(borrowed!)).toBe(false);
   });
 
   it('recognizes idle connections in a real mysql pool', async () => {

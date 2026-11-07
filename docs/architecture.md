@@ -1576,8 +1576,10 @@ The API therefore measures each formatted statement and marks a connection
 pinned once a statement exceeds 16,000 bytes. Each Lambda invocation runs in a
 pin scope: pinned connections keep returning to the pool, so the rest of the
 invocation reuses them, and the scope destroys the idle ones when the
-invocation ends. A pinned connection released outside an open scope, such as
-background work that outlives its invocation, is destroyed at release.
+invocation ends; one still borrowed then is re-checked at later invocation
+ends. A pinned connection released outside an open scope, such as background
+work that outlives its invocation, is destroyed at release. A connection whose
+destroy fails is taken out of the pool's idle list and never released again.
 Budgeted API transactions, which set session timeouts, destroy their
 connection after COMMIT or ROLLBACK instead of restoring the timeouts. Each
 disposal emits the `6529/DbProxy` `ProxyPinnedSessionRetired` metric (`When`

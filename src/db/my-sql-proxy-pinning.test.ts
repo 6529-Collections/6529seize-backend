@@ -133,6 +133,18 @@ describe('RDS Proxy pin containment outside a request scope', () => {
     expect(driver.release).not.toHaveBeenCalled();
   });
 
+  it('never releases a pooled connection whose destroy throws', async () => {
+    const driver = fakeConnection();
+    driver.destroy.mockImplementation(() => {
+      throw new Error('no socket');
+    });
+    await execSQLWithParams(oversized, driver.connection, true, {
+      ids: manyIds
+    });
+    expect(driver.destroy).toHaveBeenCalledTimes(1);
+    expect(driver.release).not.toHaveBeenCalled();
+  });
+
   it('still retires a pooled connection when the oversized statement fails', async () => {
     const driver = fakeConnection(() => ({
       error: Object.assign(new Error('parse'), { code: 'ER_PARSE_ERROR' })
@@ -250,6 +262,26 @@ describe('budgeted API transactions', () => {
         Reason: 'session_settings'
       })
     ]);
+  });
+
+  it('neither restores nor releases a session whose destroy throws', async () => {
+    const driver = fakeConnection(sessionRows);
+    driver.destroy.mockImplementation(() => {
+      throw new Error('no socket');
+    });
+    await expect(
+      execBudgetedNativeTransactionally(
+        async () => 'committed',
+        async () => driver.connection,
+        budget()
+      )
+    ).resolves.toBe('committed');
+    const commit = driver.statements.indexOf('COMMIT');
+    expect(
+      driver.statements.slice(commit).some((sql) => sql.startsWith('SET'))
+    ).toBe(false);
+    expect(driver.destroy).toHaveBeenCalledTimes(1);
+    expect(driver.release).not.toHaveBeenCalled();
   });
 
   it('keeps deadlock retry eligibility after an acknowledged ROLLBACK', async () => {
