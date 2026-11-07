@@ -14,7 +14,10 @@ import { WsListenersNotifier } from '@/api/ws/ws-listeners-notifier';
 import { WsMessageType } from '@/api/ws/ws-message';
 import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { ApiDropType } from '@/api/generated/models/ApiDropType';
-import { WS_CONNECTIONS_TABLE } from '@/constants';
+import {
+  WS_CONNECTIONS_TABLE,
+  WS_NOTIFICATION_SUBSCRIPTIONS_TABLE
+} from '@/constants';
 
 const reader = anIdentity({ level_raw: 0, tdh: 20 });
 const author = anIdentity({ level_raw: 0, tdh: 20 });
@@ -54,6 +57,30 @@ describeWithSeed(
       ).toEqual([
         { connectionId: 'expired', jwtExpiry: 1 },
         { connectionId: 'live', jwtExpiry: FAR_FUTURE }
+      ]);
+    });
+
+    it('returns one row with the connection expiry when a socket is reachable twice', async () => {
+      await sqlExecutor.execute(
+        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id)
+         values ('both', :live, :reader)`,
+        { live: FAR_FUTURE, reader: reader.profile_id }
+      );
+      await sqlExecutor.execute(
+        `insert into ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE} (connection_id, identity_id, jwt_expiry)
+         values ('both', :reader, :shorter)`,
+        { reader: reader.profile_id, shorter: FAR_FUTURE - 100 }
+      );
+      expect(
+        await repo.findNotificationConnectionIdsByIdentityIds([
+          reader.profile_id!
+        ])
+      ).toEqual([
+        {
+          connectionId: 'both',
+          identityId: reader.profile_id,
+          jwtExpiry: FAR_FUTURE
+        }
       ]);
     });
 
@@ -105,12 +132,19 @@ describeWithSeed(
           }),
           {}
         );
-        await new Promise((resolve) => setTimeout(resolve, 200));
-
         const drops = (connectionId: string) =>
           received[connectionId].filter(
             (frame) => JSON.parse(frame).type === WsMessageType.DROP_UPDATE
           );
+        // Local frames arrive on the next turns of the event loop.
+        for (
+          let waited = 0;
+          waited < 2000 &&
+          (drops('live-1').length < 1 || drops('live-2').length < 1);
+          waited += 10
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
         expect(drops('live-1')).toHaveLength(1);
         expect(drops('live-2')).toHaveLength(1);
         expect(drops('expired')).toHaveLength(0);

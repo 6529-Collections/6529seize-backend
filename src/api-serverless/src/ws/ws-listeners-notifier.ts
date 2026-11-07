@@ -803,7 +803,17 @@ export class WsListenersNotifier {
         { concurrency: WS_SEND_CONCURRENCY_CAP }
       );
     } finally {
-      await Promise.allSettled(settlements);
+      const settled = await Promise.allSettled(settlements);
+      const failed = settled.filter(
+        (result) => result.status === 'rejected'
+      ).length;
+      if (failed) {
+        this.logger.warn({
+          code: 'WS_DELIVERY_BOOKKEEPING_FAILED',
+          failed,
+          total: settled.length
+        });
+      }
       batch.metrics.flush();
     }
   }
