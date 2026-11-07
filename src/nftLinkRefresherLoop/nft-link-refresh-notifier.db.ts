@@ -1,6 +1,7 @@
 import { WS_CONNECTIONS_TABLE } from '@/constants/db-tables';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
 import { RequestContext } from '@/request.context';
+import { broadcastPurposeFilterSql } from '@/ws-delivery/ws-connection-purpose';
 
 export interface NftLinkNotificationRecipient {
   readonly connection_id: string;
@@ -17,7 +18,8 @@ export class NftLinkRefreshNotifierDb extends LazyDbAccessCompatibleService {
     try {
       return await this.db.execute<NftLinkNotificationRecipient>(
         `select /*+ MAX_EXECUTION_TIME(3000) */ connection_id, max(jwt_expiry) as jwt_expiry
-         from ${WS_CONNECTIONS_TABLE} where jwt_expiry > unix_timestamp() ${legacyOnly ? 'and durable_updates = false' : ''}
+         from ${WS_CONNECTIONS_TABLE} ws
+         where jwt_expiry > unix_timestamp() and ${broadcastPurposeFilterSql()} ${legacyOnly ? 'and durable_updates = false' : ''}
          group by connection_id`,
         {},
         { wrappedConnection: ctx.connection }

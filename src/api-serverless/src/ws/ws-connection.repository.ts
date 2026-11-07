@@ -5,10 +5,7 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '../../../sql-executor';
-import {
-  WSConnectionEntity,
-  WsConnectionPurpose
-} from '../../../entities/IWSConnection';
+import { WSConnectionEntity } from '../../../entities/IWSConnection';
 import {
   ATTACHMENTS_TABLE,
   DROP_ATTACHMENTS_TABLE,
@@ -40,6 +37,7 @@ import {
   WsTransactionDiagnostics
 } from '@/api/ws/ws-transaction-diagnostics';
 import { WsDiagnosticOperation } from '@/api/ws/ws-operation-diagnostics';
+import { broadcastPurposeFilterSql } from '@/ws-delivery/ws-connection-purpose';
 
 type NotificationSubscription = { identityId: string; jwtExpiry: number };
 
@@ -58,7 +56,7 @@ function purposeFilterSql(
 ): string {
   return options.includeTypingSockets
     ? '1 = 1'
-    : `(${alias}.purpose is null or ${alias}.purpose <> '${WsConnectionPurpose.TYPING}')`;
+    : broadcastPurposeFilterSql(alias);
 }
 
 export class WsConnectionRepository extends LazyDbAccessCompatibleService {
@@ -875,7 +873,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   async findAllByWaveId(waveId: string): Promise<WSConnectionEntity[]> {
     return this.db.execute<WSConnectionEntity>(
       `
-    select * from ${WS_CONNECTIONS_TABLE} where wave_id = :waveId
+    select * from ${WS_CONNECTIONS_TABLE} ws
+    where wave_id = :waveId and ${purposeFilterSql()}
     `,
       { waveId }
     );
@@ -1015,7 +1014,12 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     return row !== null;
   }
 
-  /** Select one delivery audience without changing identity/subscription authorization. */
+  /**
+   * Select one delivery audience without changing identity/subscription
+   * authorization. It only narrows connection ids its caller already chose,
+   * so the caller's audience query owns the typing-purpose filter (typing
+   * broadcasts must keep their typing sockets here).
+   */
   async filterConnectionIdsByDeliveryMode(
     connectionIds: readonly string[],
     durable: boolean,
@@ -1023,7 +1027,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   ): Promise<string[]> {
     if (!connectionIds.length) return [];
     const rows = await this.db.execute<{ connection_id: string }>(
-      `select distinct connection_id from ${WS_CONNECTIONS_TABLE}
+      `select distinct connection_id /* not a broadcast audience */ from ${WS_CONNECTIONS_TABLE}
        where connection_id in (:connectionIds)
          and durable_updates = :durable`,
       { connectionIds: Array.from(new Set(connectionIds)), durable },
