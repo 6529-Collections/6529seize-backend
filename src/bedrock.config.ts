@@ -5,7 +5,7 @@ export const DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID =
 export const DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID =
   'us.anthropic.claude-sonnet-5-5';
 export const DEFAULT_HELP_BOT_BEDROCK_MODEL_ID =
-  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID;
+  DEFAULT_CLAUDE_SONNET_5_5_BEDROCK_MODEL_ID;
 
 function readTrimmedEnv(name: string): string | null {
   return env.getStringOrNull(name)?.trim() || null;

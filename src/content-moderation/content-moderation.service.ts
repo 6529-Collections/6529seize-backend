@@ -10,10 +10,6 @@ import {
   reportReviewOutcome
 } from './moderation-review.types';
 import {
-  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
-  getConfiguredBedrockAnthropicModelId
-} from '@/bedrock.config';
-import {
   ContentModerationRecommendation,
   ContentReportReason,
   ContentReportStatus,
@@ -30,7 +26,8 @@ import { RequestContext } from '@/request.context';
 import {
   contentModerationAiService,
   ContentModerationAiService,
-  CONTENT_MODERATION_POLICY_VERSION
+  CONTENT_MODERATION_POLICY_VERSION,
+  getContentModerationBedrockModelId
 } from './content-moderation-ai.service';
 import {
   contentModerationDb,
@@ -174,10 +171,7 @@ export class ContentModerationService {
         ...assessment,
         report: { id: report.id, reason: input.reason, notes: input.notes }
       },
-      model: getConfiguredBedrockAnthropicModelId(
-        'CONTENT_MODERATION_BEDROCK_MODEL_ID',
-        DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
-      ),
+      model: getContentModerationBedrockModelId(),
       fallback:
         assessment.category === 'CLASSIFIER_UNAVAILABLE' ? 'HUMAN_REVIEW' : null
     });

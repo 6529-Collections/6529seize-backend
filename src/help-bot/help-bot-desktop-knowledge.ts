@@ -1,9 +1,12 @@
 import type { HelpBotKnowledgeRecord } from './help-bot.knowledge';
 
 export const MAX_DESKTOP_ANSWER_CHARACTERS = 6000;
-export const MAX_DESKTOP_ANSWER_TOKENS = 1600;
+// Token caps are sized for the Claude Sonnet 5.5 tokenizer, which uses about
+// 30% more tokens than Sonnet 4.5 for the same text. The character limits
+// above remain the length guard.
+export const MAX_DESKTOP_ANSWER_TOKENS = 2400;
 export const MAX_DESKTOP_BRIEF_CHARACTERS = 1200;
-export const MAX_DESKTOP_BRIEF_TOKENS = 350;
+export const MAX_DESKTOP_BRIEF_TOKENS = 525;
 
 export function isDesktopKnowledgeRecord(
   record: HelpBotKnowledgeRecord

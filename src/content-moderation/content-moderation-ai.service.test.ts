@@ -2,17 +2,37 @@ import { ContentReportReason } from '@/entities/IContentModeration';
 import { TextEncoder } from 'node:util';
 import { ContentModerationAiService } from './content-moderation-ai.service';
 
-function createService(response: Record<string, unknown>) {
+function createServiceWithBody(body: Record<string, unknown>) {
   const send = jest.fn().mockResolvedValue({
-    body: new TextEncoder().encode(
-      JSON.stringify({ content: [{ text: JSON.stringify(response) }] })
-    )
+    body: new TextEncoder().encode(JSON.stringify(body))
   });
   return {
     send,
     service: new ContentModerationAiService(() => ({ send }) as any)
   };
 }
+
+function createService(response: Record<string, unknown>) {
+  return createServiceWithBody({
+    content: [{ type: 'text', text: JSON.stringify(response) }],
+    stop_reason: 'end_turn'
+  });
+}
+
+function readRequestBody(send: jest.Mock): Record<string, unknown> {
+  return JSON.parse(send.mock.calls[0]?.[0].input.body) as Record<
+    string,
+    unknown
+  >;
+}
+
+const ALLOWED_REPORT = {
+  recommendation: 'NO_VIOLATION_DETECTED',
+  category: 'NONE',
+  confidence: 0.1,
+  rationale: 'Allowed',
+  evidence: []
+};
 
 describe('ContentModerationAiService', () => {
   const originalModelId = process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID;
@@ -185,5 +205,123 @@ describe('ContentModerationAiService', () => {
 
     expect(send.mock.calls[0]?.[0].input.modelId).toBe('runtime-model-id');
     expect(send.mock.calls[0]?.[1]?.abortSignal).toBeInstanceOf(AbortSignal);
+  });
+  it('sends Claude Sonnet 5.5 low effort and a JSON schema', async () => {
+    process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID =
+      'us.anthropic.claude-sonnet-5-5';
+    const { send, service } = createService(ALLOWED_REPORT);
+
+    await service.assessReportedContent({
+      reason: ContentReportReason.OTHER,
+      content: { text: 'ordinary content' }
+    });
+
+    expect(send.mock.calls[0]?.[0].input.modelId).toBe(
+      'us.anthropic.claude-sonnet-5-5'
+    );
+    const body = readRequestBody(send);
+    expect(body).toMatchObject({
+      output_config: {
+        effort: 'low',
+        format: {
+          type: 'json_schema',
+          schema: {
+            required: expect.arrayContaining(['recommendation', 'category']),
+            additionalProperties: false
+          }
+        }
+      }
+    });
+    expect(body).not.toHaveProperty('temperature');
+    expect(body).not.toHaveProperty('top_k');
+  });
+
+  it('constrains pre-publication output to the outcome schema', async () => {
+    process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID =
+      'us.anthropic.claude-sonnet-5-5';
+    const { send, service } = createService({
+      outcome: 'ALLOW',
+      category: 'NONE',
+      confidence: 0.99,
+      rationale: 'Clearly labelled test data'
+    });
+
+    await service.assessPrePublication({
+      signal: 'STRUCTURED_SENSITIVE_DATA',
+      content: 'Stripe sandbox test card: 4242 4242 4242 4242'
+    });
+
+    expect(readRequestBody(send)).toMatchObject({
+      output_config: {
+        format: {
+          schema: {
+            properties: { outcome: { enum: ['ALLOW', 'REJECT'] } }
+          }
+        }
+      }
+    });
+  });
+
+  it('keeps the Sonnet 4.5 deterministic payload by default', async () => {
+    delete process.env.CONTENT_MODERATION_BEDROCK_MODEL_ID;
+    const { send, service } = createService(ALLOWED_REPORT);
+
+    await service.assessReportedContent({
+      reason: ContentReportReason.OTHER,
+      content: { text: 'ordinary content' }
+    });
+
+    expect(send.mock.calls[0]?.[0].input.modelId).toBe(
+      'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
+    );
+    const body = readRequestBody(send);
+    expect(body).toMatchObject({ temperature: 0, top_k: 1 });
+    expect(body).not.toHaveProperty('output_config');
+  });
+
+  it('reads the assessment from the text block after a thinking block', async () => {
+    const { service } = createServiceWithBody({
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig' },
+        { type: 'text', text: JSON.stringify(ALLOWED_REPORT) }
+      ],
+      stop_reason: 'end_turn'
+    });
+
+    await expect(
+      service.assessReportedContent({
+        reason: ContentReportReason.OTHER,
+        content: { text: 'ordinary content' }
+      })
+    ).resolves.toMatchObject({ category: 'NONE' });
+  });
+
+  it('treats a model refusal as an evaluator failure', async () => {
+    const { service } = createServiceWithBody({
+      content: [],
+      stop_reason: 'refusal',
+      stop_details: { type: 'refusal', category: 'general_harms' }
+    });
+
+    await expect(
+      service.assessPrePublication({
+        signal: 'EXPLICIT_THREAT_PATTERN',
+        content: 'submitted content'
+      })
+    ).rejects.toThrow('Bedrock model declined the request (general_harms)');
+  });
+
+  it('treats a truncated assessment as an evaluator failure', async () => {
+    const { service } = createServiceWithBody({
+      content: [{ type: 'text', text: '{"outcome":"ALLOW","category":' }],
+      stop_reason: 'max_tokens'
+    });
+
+    await expect(
+      service.assessPrePublication({
+        signal: 'EXPLICIT_THREAT_PATTERN',
+        content: 'submitted content'
+      })
+    ).rejects.toThrow('Moderation evaluator response was truncated');
   });
 });

@@ -6,11 +6,14 @@ import {
 } from './help-bot-desktop-knowledge';
 import { getBedrockClient } from '@/bedrock';
 import {
+  buildBedrockAnthropicBody,
+  parseBedrockAnthropicReply
+} from '@/bedrock-anthropic';
+import {
   BedrockRuntimeClient,
   InvokeModelCommand,
   InvokeModelCommandInput
 } from '@aws-sdk/client-bedrock-runtime';
-import { TextDecoder } from 'node:util';
 import { HelpBotLlmRenderer } from './help-bot.answerer';
 import {
   HELP_BOT_BEDROCK_TIMEOUT_MS,
@@ -19,15 +22,11 @@ import {
 import { HelpBotKnowledgeRecord } from './help-bot.knowledge';
 import { HelpBotPublicDataQueryPlan } from './help-bot-public-data.service';
 
-interface AnthropicTextBlock {
-  readonly type?: string;
-  readonly text?: string;
-}
-
-interface AnthropicResponse {
-  readonly content?: AnthropicTextBlock[];
-  readonly stop_reason?: string;
-}
+// Sized for the Claude Sonnet 5.5 tokenizer, which uses about 30% more tokens
+// than Sonnet 4.5 for the same text; the prompts set the intended length.
+const MAX_ANSWER_TOKENS = 400;
+const MAX_STREAM_ANSWER_TOKENS = 480;
+const MAX_PUBLIC_DATA_PLAN_TOKENS = 320;
 
 const TONE_GUIDANCE =
   'Mirror the user tone lightly: if the question is casual or playful, you may be a little warmer or more playful; if it is formal, stay formal. Keep it useful, accurate, and not overfamiliar.';
@@ -180,35 +179,27 @@ function buildInvokeModelInput(
     modelId,
     contentType: 'application/json',
     accept: 'application/json',
-    body: JSON.stringify({
-      anthropic_version: 'bedrock-2023-05-31',
-      max_tokens: maxTokens,
-      messages: [
-        {
-          role: 'user',
-          content: [{ type: 'text', text: prompt }]
-        }
-      ],
-      temperature: 0.2,
-      top_k: 20
+    body: buildBedrockAnthropicBody({
+      modelId,
+      prompt,
+      maxTokens,
+      effort: 'low',
+      legacySampling: { temperature: 0.2, top_k: 20 }
     })
   };
 }
 
 function parseAnthropicResponse(
-  jsonString: string,
+  body: Uint8Array,
   rejectTokenLimitedResponse: boolean
 ): string {
-  const parsed = JSON.parse(jsonString) as AnthropicResponse;
-  if (rejectTokenLimitedResponse && parsed.stop_reason === 'max_tokens') {
+  const reply = parseBedrockAnthropicReply(body);
+  if (rejectTokenLimitedResponse && reply.stopReason === 'max_tokens') {
     throw new Error('Bedrock answer stopped before completion at max_tokens');
   }
-  const text = parsed.content
-    ?.map((block) => (block.type === 'text' ? (block.text ?? '') : ''))
-    .join('')
-    .trim();
+  const text = reply.text.trim();
   if (!text) {
-    throw new Error(`Unexpected empty response from Bedrock: ${jsonString}`);
+    throw new Error(`Unexpected empty response from Bedrock: ${reply.raw}`);
   }
   return text;
 }
@@ -259,13 +250,13 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
   }): Promise<string> {
     const isStreamKnowledge = input.record.kind === 'public_review_knowledge';
     const isDesktopKnowledge = isDesktopKnowledgeRecord(input.record);
-    let maxTokens = 220;
+    let maxTokens = MAX_ANSWER_TOKENS;
     if (isDesktopKnowledge) {
       maxTokens = wantsDetailedDesktopAnswer(input.question)
         ? MAX_DESKTOP_ANSWER_TOKENS
         : MAX_DESKTOP_BRIEF_TOKENS;
     } else if (isStreamKnowledge) {
-      maxTokens = 320;
+      maxTokens = MAX_STREAM_ANSWER_TOKENS;
     }
     return this.invokePrompt(
       buildPrompt(input),
@@ -284,7 +275,7 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
     return parsePublicDataQueryPlan(
       await this.invokePrompt(
         buildPublicDataPlanningPrompt(input),
-        320,
+        MAX_PUBLIC_DATA_PLAN_TOKENS,
         input.signal
       )
     );
@@ -300,7 +291,7 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
   }): Promise<string> {
     return this.invokePrompt(
       buildPublicDataAnswerPrompt(input),
-      220,
+      MAX_ANSWER_TOKENS,
       input.signal
     );
   }
@@ -331,10 +322,7 @@ export class HelpBotBedrockRenderer implements HelpBotLlmRenderer {
       if (!response.body) {
         throw new Error('Unexpected empty response body from Bedrock');
       }
-      return parseAnthropicResponse(
-        new TextDecoder().decode(response.body),
-        rejectTokenLimitedResponse
-      );
+      return parseAnthropicResponse(response.body, rejectTokenLimitedResponse);
     } finally {
       clearTimeout(timeout);
       externalSignal?.removeEventListener('abort', abortFromExternalSignal);

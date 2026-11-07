@@ -1,4 +1,8 @@
 import {
+  buildBedrockAnthropicBody,
+  parseBedrockAnthropicReply
+} from '@/bedrock-anthropic';
+import {
   DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID,
   getConfiguredBedrockAnthropicModelId
 } from '@/bedrock.config';
@@ -12,7 +16,6 @@ import {
   ContentReportReason,
   PrePublicationCheckOutcome
 } from '@/entities/IContentModeration';
-import { TextDecoder } from 'node:util';
 
 export const CONTENT_MODERATION_POLICY_VERSION = 'content-moderation-2026-08-2';
 export const PRE_PUBLICATION_EVALUATOR_VERSION =
@@ -21,6 +24,17 @@ export const REPORTED_CONTENT_EVALUATOR_VERSION =
   'reported-content-evaluator-2026-08-2';
 export const CONTENT_MODERATION_BEDROCK_MODEL_ID_ENV =
   'CONTENT_MODERATION_BEDROCK_MODEL_ID';
+export const DEFAULT_CONTENT_MODERATION_BEDROCK_MODEL_ID =
+  DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID;
+
+// Secrets are loaded after modules are imported in Lambda runtimes, so the
+// service-specific override must be resolved at request time.
+export function getContentModerationBedrockModelId(): string {
+  return getConfiguredBedrockAnthropicModelId(
+    CONTENT_MODERATION_BEDROCK_MODEL_ID_ENV,
+    DEFAULT_CONTENT_MODERATION_BEDROCK_MODEL_ID
+  );
+}
 
 const BEDROCK_REQUEST_TIMEOUT_MS = 15_000;
 let contentModerationBedrockClient: BedrockRuntimeClient | undefined;
@@ -62,22 +76,59 @@ const CONTENT_MODERATION_CATEGORIES = [
   'ILLEGAL_CONTENT'
 ] as const;
 
-function buildInvokeModelInput(prompt: string): InvokeModelCommandInput {
+const REPORTED_ASSESSMENT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'recommendation',
+    'category',
+    'confidence',
+    'rationale',
+    'evidence'
+  ],
+  properties: {
+    recommendation: {
+      type: 'string',
+      enum: Object.values(ContentModerationRecommendation)
+    },
+    category: { type: 'string', enum: [...CONTENT_MODERATION_CATEGORIES] },
+    confidence: { type: 'number' },
+    rationale: { type: 'string' },
+    evidence: { type: 'array', items: { type: 'string' } }
+  }
+};
+
+const PRE_PUBLICATION_ASSESSMENT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['outcome', 'category', 'confidence', 'rationale'],
+  properties: {
+    outcome: {
+      type: 'string',
+      enum: Object.values(PrePublicationCheckOutcome)
+    },
+    category: { type: 'string', enum: [...CONTENT_MODERATION_CATEGORIES] },
+    confidence: { type: 'number' },
+    rationale: { type: 'string' }
+  }
+};
+
+function buildInvokeModelInput(
+  prompt: string,
+  jsonSchema: Record<string, unknown>
+): InvokeModelCommandInput {
+  const modelId = getContentModerationBedrockModelId();
   return {
-    // Secrets are loaded after modules are imported in Lambda runtimes, so the
-    // service-specific override must be resolved at request time.
-    modelId: getConfiguredBedrockAnthropicModelId(
-      CONTENT_MODERATION_BEDROCK_MODEL_ID_ENV,
-      DEFAULT_CLAUDE_SONNET_4_5_BEDROCK_MODEL_ID
-    ),
+    modelId,
     contentType: 'application/json',
     accept: 'application/json',
-    body: JSON.stringify({
-      anthropic_version: 'bedrock-2023-05-31',
-      max_tokens: 1200,
-      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-      temperature: 0,
-      top_k: 1
+    body: buildBedrockAnthropicBody({
+      modelId,
+      prompt,
+      maxTokens: 1200,
+      effort: 'low',
+      jsonSchema,
+      legacySampling: { temperature: 0, top_k: 1 }
     })
   };
 }
@@ -171,7 +222,8 @@ Use URGENT_QUARANTINE only for an imminent safety risk or an unmistakable severe
 Report reason: ${JSON.stringify(input.reason)}
 Reported content: ${JSON.stringify(input.content)}
 Parent context: ${JSON.stringify(input.parentContext ?? null)}
-    `.trim()
+    `.trim(),
+      REPORTED_ASSESSMENT_SCHEMA
     );
     const parsed = extractJsonObject(response);
     const recommendation = assertString(
@@ -224,7 +276,8 @@ Context examples for STRUCTURED_SENSITIVE_DATA:
 - "My SSN is 123-45-6789" is REJECT with category SENSITIVE_PRIVATE_INFORMATION because the surrounding text presents the identifier as genuine private information.
 
 Untrusted submission: ${JSON.stringify(input.content)}
-    `.trim()
+    `.trim(),
+      PRE_PUBLICATION_ASSESSMENT_SCHEMA
     );
     const parsed = extractJsonObject(response);
     const outcome = assertString(parsed.outcome, 'outcome');
@@ -246,20 +299,22 @@ Untrusted submission: ${JSON.stringify(input.content)}
     };
   }
 
-  private async prompt(prompt: string): Promise<string> {
+  private async prompt(
+    prompt: string,
+    jsonSchema: Record<string, unknown>
+  ): Promise<string> {
     const response = await this.getClient().send(
-      new InvokeModelCommand(buildInvokeModelInput(prompt)),
+      new InvokeModelCommand(buildInvokeModelInput(prompt, jsonSchema)),
       { abortSignal: AbortSignal.timeout(BEDROCK_REQUEST_TIMEOUT_MS) }
     );
-    const body = new TextDecoder().decode(response.body);
-    const parsed = JSON.parse(body) as {
-      readonly content?: ReadonlyArray<{ readonly text?: unknown }>;
-    };
-    const text = parsed.content?.[0]?.text;
-    if (typeof text !== 'string') {
+    const reply = parseBedrockAnthropicReply(response.body);
+    if (reply.stopReason === 'max_tokens') {
+      throw new Error('Moderation evaluator response was truncated');
+    }
+    if (!reply.text) {
       throw new TypeError('Unexpected response from moderation evaluator');
     }
-    return text;
+    return reply.text;
   }
 }
 

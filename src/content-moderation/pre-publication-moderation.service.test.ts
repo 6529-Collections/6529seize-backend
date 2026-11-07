@@ -9,6 +9,7 @@ import {
   PrePublicationModerationService
 } from './pre-publication-moderation.service';
 import { ModerationReviewDb } from './moderation-review.db';
+import { BedrockAnthropicRefusalError } from '@/bedrock-anthropic';
 
 function createService() {
   const moderationDb = {
@@ -181,9 +182,14 @@ describe('PrePublicationModerationService', () => {
     expect(aiService.assessPrePublication).not.toHaveBeenCalled();
   });
 
-  it('fails open when the AI evaluator is unavailable', async () => {
+  it.each([
+    ['unavailable', new Error('unavailable')],
+    ['refusing', new BedrockAnthropicRefusalError('general_harms')],
+    ['truncated', new Error('Moderation evaluator response was truncated')],
+    ['empty', new TypeError('Unexpected response from moderation evaluator')]
+  ])('fails open when the AI evaluator is %s', async (_label, error) => {
     const { service, moderationDb, aiService } = createService();
-    aiService.assessPrePublication.mockRejectedValue(new Error('unavailable'));
+    aiService.assessPrePublication.mockRejectedValue(error);
 
     await expect(
       service.evaluate(input('I will kill you'), {})
