@@ -199,6 +199,32 @@ describe('withOwnedMediaUploadIds (R11-2)', () => {
     expect(idsOf(fresh)[0]).toBeNull();
   });
 
+  it('resolves a replay exactly as the published attempt did, whatever the status is now', async () => {
+    const resolveReplay = (overrides: Partial<DropMediaUploadEntity>) =>
+      withOwnedMediaUploadIds(
+        model(),
+        request(['u-a']),
+        { publishedDropId: 'drop-1' },
+        { findById: jest.fn(async () => upload('u-a', overrides)) }
+      ).then((result) => idsOf(result)[0]);
+
+    // The published attempt kept it (and so attached it); it failed later.
+    expect(
+      await resolveReplay({
+        drop_id: 'drop-1',
+        wave_id: 'wave-1',
+        status: DropMediaUploadStatus.FAILED
+      })
+    ).toBe('u-a');
+    // The published attempt did not keep it, so it was never attached.
+    expect(await resolveReplay({ drop_id: null })).toBeNull();
+    expect(await resolveReplay({ drop_id: 'other-drop' })).toBeNull();
+    // Still never another author's upload.
+    expect(
+      await resolveReplay({ drop_id: 'drop-1', profile_id: 'someone-else' })
+    ).toBeNull();
+  });
+
   it('does not touch the database when no media names an upload', async () => {
     const db = { findById: jest.fn() };
     const original = model();
