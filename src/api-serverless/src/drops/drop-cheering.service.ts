@@ -21,15 +21,24 @@ import {
 } from '../ws/ws-listeners-notifier';
 import { DropsApiService, dropsService } from './drops.api.service';
 import { reactionsService, ReactionsService } from './reactions.service';
+import {
+  dropBroadcastCoalescer,
+  DropBroadcastCoalescer
+} from '@/api/drops/drop-broadcast-coalescer';
+import { findCommittedDropOnWriter } from '@/api/drops/drop-writer-read';
+import { Logger } from '@/logging';
 
 export class DropCheeringService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly reactionsService: ReactionsService,
     private readonly voteForDrop: VoteForDropUseCase,
     private readonly waveQuickVoteDb: WaveQuickVoteDb,
     private readonly wsListenersNotifier: WsListenersNotifier,
-    private readonly dropsService: DropsApiService
+    private readonly dropsService: DropsApiService,
+    private readonly broadcastCoalescer: DropBroadcastCoalescer = dropBroadcastCoalescer
   ) {}
 
   async updateCheers(
@@ -158,8 +167,35 @@ export class DropCheeringService {
     if (!drop) {
       return;
     }
+    // The rating frame's per-recipient credit_left is still read from the
+    // replica, so this wait stays until that lookup moves to the writer.
     await giveReadReplicaTimeToCatchUp();
-    await this.wsListenersNotifier.notifyAboutDropRatingUpdate(drop, ctx);
+    const dropId = drop.id;
+    // The vote's transaction has ended; nothing after this may use its
+    // connection.
+    const postCommitCtx: RequestContext = { ...ctx, connection: undefined };
+    try {
+      await this.broadcastCoalescer.broadcast({
+        kind: 'RATING',
+        dropId,
+        send: async (phase) =>
+          this.wsListenersNotifier.notifyAboutDropRatingUpdate(
+            phase === 'trailing'
+              ? await findCommittedDropOnWriter(
+                  { dropId, db: this.dropsDb, dropsService: this.dropsService },
+                  postCommitCtx
+                )
+              : drop,
+            postCommitCtx
+          )
+      });
+    } catch (error) {
+      // The vote has committed; a failed broadcast must not fail the request.
+      this.logger.error(
+        `Rating broadcast failed after commit for drop ${dropId}`,
+        error
+      );
+    }
   }
 
   private async clearSkipsIfRoundCompleted(

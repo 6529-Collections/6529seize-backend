@@ -18,6 +18,11 @@ import { profileActivityLogsDb } from '@/profileActivityLogs/profile-activity-lo
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { Logger } from '@/logging';
 import { BadRequestException, ForbiddenException } from '@/exceptions';
+import {
+  DropBroadcastCoalescer,
+  DropBroadcastOutcome,
+  DropBroadcastPhase
+} from '@/api/drops/drop-broadcast-coalescer';
 
 describe('ReactionsService', () => {
   const latestActivityAt = new Date('2026-06-29T00:00:00.000Z');
@@ -187,7 +192,11 @@ describe('ReactionsService', () => {
       },
       'group-1'
     );
-    expect(giveReadReplicaTimeToCatchUp).toHaveBeenCalled();
+    expect(giveReadReplicaTimeToCatchUp).not.toHaveBeenCalled();
+    expect(dropsService.findDropByIdOrThrow).toHaveBeenCalledWith(
+      { dropId: dropEntity.id, skipEligibilityCheck: true },
+      { ...ctx, connection }
+    );
     expect(
       wsListenersNotifier.notifyAboutDropReactionUpdate
     ).toHaveBeenCalledWith(drop, ctx);
@@ -286,7 +295,11 @@ describe('ReactionsService', () => {
       undefined,
       undefined
     );
-    expect(giveReadReplicaTimeToCatchUp).toHaveBeenCalled();
+    expect(giveReadReplicaTimeToCatchUp).not.toHaveBeenCalled();
+    expect(dropsService.findDropByIdOrThrow).toHaveBeenCalledWith(
+      { dropId: dropEntity.id, skipEligibilityCheck: true },
+      { ...ctx, connection }
+    );
     expect(
       wsListenersNotifier.notifyAboutDropReactionUpdate
     ).toHaveBeenCalledWith(drop, ctx);
@@ -399,5 +412,157 @@ describe('ReactionsService', () => {
     expect(
       wsListenersNotifier.notifyAboutDropReactionUpdate
     ).toHaveBeenCalledWith(drop, ctx);
+  });
+
+  describe('reaction broadcast (waves plan 1.6)', () => {
+    function withCoalescer(
+      behave: (
+        send: (phase: DropBroadcastPhase) => Promise<void>
+      ) => Promise<DropBroadcastOutcome>
+    ) {
+      const coalescer = {
+        broadcast: jest.fn(({ send }) => behave(send))
+      } as unknown as DropBroadcastCoalescer;
+      return {
+        coalescer,
+        service: new ReactionsService(
+          reactionsDb,
+          wavesDb,
+          dropsDb,
+          userGroupsService,
+          userNotifier,
+          wsListenersNotifier,
+          dropsService,
+          metricsRecorder,
+          coalescer
+        )
+      };
+    }
+
+    it('reads the committed drop on the writer in its own read-committed transaction', async () => {
+      (reactionsDb.addReaction as jest.Mock).mockResolvedValue(true);
+      const transactionOptions: unknown[] = [];
+      (
+        reactionsDb.executeNativeQueriesInTransaction as jest.Mock
+      ).mockImplementation(async (callback, options) => {
+        transactionOptions.push(options);
+        return await callback(connection);
+      });
+
+      await service.addReaction(dropEntity.id, 'profile-1', ':+1:', ctx as any);
+
+      // The mutation keeps its default isolation; the read that follows it
+      // runs separately, after commit.
+      expect(transactionOptions).toEqual([
+        undefined,
+        { isolationLevel: 'READ COMMITTED' }
+      ]);
+      expect(giveReadReplicaTimeToCatchUp).not.toHaveBeenCalled();
+    });
+
+    it('broadcasts through the per-drop coalescer', async () => {
+      (reactionsDb.addReaction as jest.Mock).mockResolvedValue(true);
+      const { coalescer, service: coalescing } = withCoalescer(async (send) => {
+        await send('leading');
+        return 'leading';
+      });
+
+      await coalescing.addReaction(
+        dropEntity.id,
+        'profile-1',
+        ':+1:',
+        ctx as any
+      );
+
+      expect(coalescer.broadcast).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'REACTION', dropId: dropEntity.id })
+      );
+      expect(
+        wsListenersNotifier.notifyAboutDropReactionUpdate
+      ).toHaveBeenCalledWith(drop, ctx);
+    });
+
+    it('re-reads the drop for a trailing broadcast', async () => {
+      (reactionsDb.removeReaction as jest.Mock).mockResolvedValue(true);
+      const later = { id: dropEntity.id, reactions: ['later'] } as any;
+      (dropsService.findDropByIdOrThrow as jest.Mock)
+        .mockResolvedValueOnce(drop)
+        .mockResolvedValueOnce(later);
+      const { service: coalescing } = withCoalescer(async (send) => {
+        await send('trailing');
+        return 'trailing';
+      });
+
+      const result = await coalescing.removeReaction(
+        dropEntity.id,
+        'profile-1',
+        ctx as any
+      );
+
+      expect(result).toBe(drop);
+      expect(dropsService.findDropByIdOrThrow).toHaveBeenCalledTimes(2);
+      expect(
+        wsListenersNotifier.notifyAboutDropReactionUpdate
+      ).toHaveBeenCalledWith(later, ctx);
+    });
+
+    it('returns the committed drop without sending when the update was coalesced', async () => {
+      (reactionsDb.addReaction as jest.Mock).mockResolvedValue(true);
+      const { service: coalescing } = withCoalescer(async () => 'coalesced');
+
+      const result = await coalescing.addReaction(
+        dropEntity.id,
+        'profile-1',
+        ':+1:',
+        ctx as any
+      );
+
+      expect(result).toBe(drop);
+      expect(
+        wsListenersNotifier.notifyAboutDropReactionUpdate
+      ).not.toHaveBeenCalled();
+      expect(userNotifier.notifyOfDropReaction).toHaveBeenCalled();
+    });
+
+    it('does not fail a committed reaction when the trailing re-read fails', async () => {
+      (reactionsDb.addReaction as jest.Mock).mockResolvedValue(true);
+      (dropsService.findDropByIdOrThrow as jest.Mock)
+        .mockResolvedValueOnce(drop)
+        .mockRejectedValueOnce(new Error('writer unavailable'));
+      const { service: coalescing } = withCoalescer(async (send) => {
+        await send('trailing');
+        return 'trailing';
+      });
+
+      await expect(
+        coalescing.addReaction(dropEntity.id, 'profile-1', ':+1:', ctx as any)
+      ).resolves.toBe(drop);
+    });
+
+    it('neither sleeps nor coalesces inside a caller-owned transaction', async () => {
+      (reactionsDb.addReaction as jest.Mock).mockResolvedValue(true);
+      jest.spyOn(profileActivityLogsDb, 'insert').mockResolvedValue(undefined);
+      const { coalescer, service: coalescing } = withCoalescer(
+        async () => 'coalesced'
+      );
+      const callerCtx = { connection } as any;
+
+      await coalescing.addReaction(
+        dropEntity.id,
+        'profile-1',
+        ':+1:',
+        callerCtx
+      );
+
+      expect(giveReadReplicaTimeToCatchUp).not.toHaveBeenCalled();
+      expect(coalescer.broadcast).not.toHaveBeenCalled();
+      expect(dropsService.findDropByIdOrThrow).toHaveBeenCalledWith(
+        { dropId: dropEntity.id, skipEligibilityCheck: true },
+        callerCtx
+      );
+      expect(
+        wsListenersNotifier.notifyAboutDropReactionUpdate
+      ).toHaveBeenCalledWith(drop, callerCtx);
+    });
   });
 });
