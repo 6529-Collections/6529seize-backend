@@ -416,7 +416,10 @@ export class DropCreationApiService {
       dailyActivityCreditRequestEnqueued
     } = created;
     // After-commit pipeline, in this order (waves 1.1 + 1.8):
-    // 1. the committed drop as the writer sees it;
+    // 1. the committed drop as the writer sees it, then its gap marker
+    //    (waves 1.5): the wave's previous surviving serial, read after commit.
+    //    The marker uses the committed drop: with the 1.8 drop write outbox
+    //    there is no in-transaction copy.
     const drop = await hops.time('post_commit_read_ms', () =>
       this.afterCommitStages.readCommittedDrop(
         { dropId: committedDropId, inTransactionDrop: transactionDrop },
@@ -429,6 +432,10 @@ export class DropCreationApiService {
     if (clientDrop) {
       drop.client_drop_id = clientDrop.clientDropId;
     }
+    const prevSerialNo = await hops.time('post_commit_prev_serial_ms', () =>
+      this.findPrevSerialNo(drop, ctx)
+    );
+    const gapMarker = prevSerialNo === undefined ? {} : { prevSerialNo };
     // 2. delivery: frames, plus (with WS_ASYNC_FANOUT) the worker hand-off;
     const delivery = isAsyncFanoutEnabled()
       ? this.replyAfterCommit(
@@ -443,7 +450,7 @@ export class DropCreationApiService {
             dm_unread_recipient_ids: dmUnreadRecipientIds,
             collaborator_ids: createDropRequest.collaborator_ids ?? []
           },
-          { drop, dailyActivityCreditRequestEnqueued, hops },
+          { drop, gapMarker, dailyActivityCreditRequestEnqueued, hops },
           ctx
         )
       : this.deliverCreatedDropInline(
@@ -455,7 +462,8 @@ export class DropCreationApiService {
             pendingPushNotificationIds,
             dmUnreadRecipientIds,
             dailyActivityCreditRequestEnqueued,
-            hops
+            hops,
+            gapMarker
           },
           ctx
         );
@@ -473,6 +481,29 @@ export class DropCreationApiService {
     );
     hops.emit({ drop_id: drop.id, wave_id: createModel.wave_id });
     return drop;
+  }
+
+  /**
+   * The gap marker of a new drop (waves 1.5). Best effort: if the read
+   * fails, the frame goes out without a marker (clients then see no gap)
+   * rather than failing the committed POST.
+   */
+  private async findPrevSerialNo(
+    drop: ApiDrop,
+    ctx: RequestContext
+  ): Promise<number | null | undefined> {
+    try {
+      return await this.dropsDb.findPreviousSerialNo(
+        { waveId: drop.wave.id, serialNo: drop.serial_no },
+        { timer: ctx.timer }
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Gap marker read failed for drop ${drop.id}; sending without it`,
+        error
+      );
+      return undefined;
+    }
   }
 
   /**
@@ -511,7 +542,8 @@ export class DropCreationApiService {
       pendingPushNotificationIds,
       dmUnreadRecipientIds,
       dailyActivityCreditRequestEnqueued,
-      hops
+      hops,
+      gapMarker
     }: {
       drop: ApiDrop;
       waveId: string;
@@ -521,6 +553,7 @@ export class DropCreationApiService {
       dmUnreadRecipientIds: string[];
       dailyActivityCreditRequestEnqueued: boolean;
       hops: DropPostHops;
+      gapMarker: { prevSerialNo?: number | null };
     },
     ctx: RequestContext
   ): Promise<void> {
@@ -547,7 +580,7 @@ export class DropCreationApiService {
     );
     void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
     await hops.time('post_commit_fanout_ms', () =>
-      this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx)
+      this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, gapMarker)
     );
     if (collaboratorIds.length) {
       await hops.time('post_commit_collaborators_ms', () =>
@@ -577,10 +610,12 @@ export class DropCreationApiService {
     effects: DropCreatedEffectsJob,
     {
       drop,
+      gapMarker,
       dailyActivityCreditRequestEnqueued,
       hops
     }: {
       drop: ApiDrop;
+      gapMarker: { prevSerialNo?: number | null };
       dailyActivityCreditRequestEnqueued: boolean;
       hops: DropPostHops;
     },
@@ -597,7 +632,7 @@ export class DropCreationApiService {
     void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
     const [, notAccepted] = await Promise.all([
       hops.time('post_commit_fanout_ms', () =>
-        this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx)
+        this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, gapMarker)
       ),
       hops.time('post_commit_hand_off_ms', () =>
         this.fanoutQueue.enqueue([effects])

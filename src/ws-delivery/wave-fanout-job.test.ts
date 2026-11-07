@@ -97,6 +97,22 @@ describe('wave fan-out jobs', () => {
     });
   });
 
+  it('accepts an integer or null gap marker on a chunk and rejects anything else', () => {
+    const [job] = buildDropFramesJobs(base(), recipients(1), 10).jobs;
+    expect(asDropFramesJob({ ...job, prev_serial_no: 41 }).prev_serial_no).toBe(
+      41
+    );
+    expect(
+      asDropFramesJob({ ...job, prev_serial_no: null }).prev_serial_no
+    ).toBeNull();
+    expect(() => asDropFramesJob({ ...job, prev_serial_no: '41' })).toThrow(
+      'Malformed'
+    );
+    expect(() => asDropFramesJob({ ...job, prev_serial_no: 4.5 })).toThrow(
+      'Malformed'
+    );
+  });
+
   it('reads job envelopes and validates the built-in kinds strictly', () => {
     const [job] = buildDropFramesJobs(base(), recipients(2), 10).jobs;
     const envelope = parseWaveJobEnvelope(JSON.stringify(job));

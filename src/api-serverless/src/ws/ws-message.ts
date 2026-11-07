@@ -41,6 +41,12 @@ export interface WsMessage<MESSAGE_DATA> {
   type: WsMessageType;
   data: MESSAGE_DATA;
   reason?: string;
+  /**
+   * Gap marker (waves 1.5) on new-drop DROP_UPDATE frames: the serial of the
+   * previous surviving drop in the wave, read after commit, or null for the
+   * wave's first drop. Absent on edits and other updates.
+   */
+  prev_serial_no?: number | null;
 }
 
 export const DROP_UPDATE_REASON_POLL_RESPONSE = 'POLL_RESPONSE';
@@ -101,7 +107,8 @@ export type DropUpdateRefType =
 
 export function dropUpdateMessage(
   data: ApiDrop,
-  reason?: string
+  reason?: string,
+  prevSerialNo?: number | null
 ): WsMessage<ApiDrop> {
   const message: WsMessage<ApiDrop> = {
     type: WsMessageType.DROP_UPDATE,
@@ -109,6 +116,9 @@ export function dropUpdateMessage(
   };
   if (reason !== undefined) {
     message.reason = reason;
+  }
+  if (prevSerialNo !== undefined) {
+    message.prev_serial_no = prevSerialNo;
   }
   return message;
 }

@@ -26,6 +26,8 @@ export interface DropFramesJob {
   readonly kind: 'drop_frames';
   readonly update_type: DropUpdateRefType;
   readonly reason?: string;
+  /** Gap marker of a new drop's DROP_UPDATE (waves 1.5); absent otherwise. */
+  readonly prev_serial_no?: number | null;
   readonly server_received_at: number | null;
   readonly enqueued_at: number;
   /** 0-based position of this chunk, so open-wave viewers go out first. */
@@ -138,7 +140,12 @@ export function asDropFramesJob(job: Record<string, unknown>): DropFramesJob {
     typeof frames.drop.id !== 'string' ||
     !Array.isArray(frames.recipients) ||
     !Array.isArray(frames.hidden_drop_ids) ||
-    !Array.isArray(frames.author_ids_by_drop_id)
+    !Array.isArray(frames.author_ids_by_drop_id) ||
+    !(
+      frames.prev_serial_no === undefined ||
+      frames.prev_serial_no === null ||
+      Number.isSafeInteger(frames.prev_serial_no)
+    )
   )
     throw new Error('Malformed drop_frames job');
   return { ...frames, kind: 'drop_frames' } as DropFramesJob;
