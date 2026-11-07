@@ -82,6 +82,11 @@ export async function provisionWorkerDatabases({
       )}.* TO ${mysql.escape(appUser)}@'%'`
     );
   }
+  // Concurrency tests wait on information_schema.innodb_trx (LOCK WAIT) as a
+  // deterministic barrier instead of sleeping; reading it needs PROCESS.
+  await executeRootQuery(
+    `GRANT PROCESS ON *.* TO ${mysql.escape(appUser)}@'%'`
+  );
   await executeRootQuery('FLUSH PRIVILEGES');
 }
 
