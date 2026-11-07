@@ -44,6 +44,11 @@ import {
 } from '../auth/auth';
 import { userGroupsService } from '../community-members/user-groups.service';
 import { dropsService } from '../drops/drops.api.service';
+import {
+  anonymousWaveResponseCache,
+  invalidateAnonymousWaveResponse,
+  markShareableWaveResponse
+} from './wave-response-cache';
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
@@ -254,6 +259,7 @@ router.post(
       request,
       requestContext
     );
+    await invalidateAnonymousWaveResponse(req.params.id);
     await giveReadReplicaTimeToCatchUp();
     res.send(wave);
   }
@@ -282,6 +288,7 @@ router.use('/:id/rep', waveRepRoutes);
 router.get(
   '/:id',
   maybeAuthenticatedUser(),
+  anonymousWaveResponseCache(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiWave>>
@@ -303,7 +310,7 @@ router.get(
       group_ids_user_is_eligible_for,
       { authenticationContext, timer }
     );
-
+    markShareableWaveResponse(res, profileId, wave);
     res.send(wave);
   }
 );
@@ -319,6 +326,7 @@ router.delete(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     await waveApiService.deleteWave(id, { authenticationContext, timer });
+    await invalidateAnonymousWaveResponse(id);
     res.send({});
   }
 );
