@@ -267,7 +267,16 @@ export class DropCreationApiService {
       })
     );
     const committedAt = hops.elapsed();
-    // After-commit pipeline, in this order (waves 1.1 + 1.8):
+    // After-commit pipeline (waves 1.1 + 1.8). The outbox hand-off (stage 3)
+    // needs only ids known at commit, so it starts now and runs during the
+    // read rather than alongside delivery's own queue send. It never rejects.
+    const handedOff = this.handOffOutbox(
+      committedDropId,
+      createModel.wave_id,
+      outboxId,
+      hops,
+      ctx
+    );
     // 1. the committed drop as the writer sees it;
     const drop = await hops.time('post_commit_read_ms', () =>
       this.afterCommitStages.readCommittedDrop(
@@ -308,12 +317,9 @@ export class DropCreationApiService {
           },
           ctx
         );
-    // 3. the outbox hand-off, started with delivery. Both are awaited, and
-    //    a delivery failure is rethrown only after the hand-off has settled.
-    const [delivered] = await Promise.allSettled([
-      delivery,
-      this.handOffOutbox(drop, createModel.wave_id, outboxId, hops, ctx)
-    ]);
+    // 3. the outbox hand-off, started at commit. Both are awaited, and a
+    //    delivery failure is rethrown only after the hand-off has settled.
+    const [delivered] = await Promise.allSettled([delivery, handedOff]);
     if (delivered.status === 'rejected') throw delivered.reason;
     hops.set('drop_post_commit_ms', hops.elapsed() - committedAt);
     hops.set(
@@ -329,7 +335,7 @@ export class DropCreationApiService {
    * failure is logged and never fails the already-committed POST.
    */
   private async handOffOutbox(
-    drop: ApiDrop,
+    dropId: string,
     waveId: string,
     outboxId: number | null,
     hops: DropPostHops,
@@ -337,14 +343,11 @@ export class DropCreationApiService {
   ): Promise<void> {
     try {
       await hops.time('post_commit_outbox_ms', () =>
-        this.afterCommitStages.processOutbox(
-          { dropId: drop.id, waveId, outboxId },
-          ctx
-        )
+        this.afterCommitStages.processOutbox({ dropId, waveId, outboxId }, ctx)
       );
     } catch (error) {
       this.logger.error(
-        `Failed to hand off post-commit outbox work for drop ${drop.id}`,
+        `Failed to hand off post-commit outbox work for drop ${dropId}`,
         error
       );
     }

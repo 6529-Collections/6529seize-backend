@@ -10,6 +10,7 @@ import { helpBotDailyActivityCreditQueueService } from '@/help-bot/help-bot-dail
 import { handOffDropWriteOutbox } from '@/drops/drop-write-outbox.hand-off';
 import { poolForUnboundQuery } from '@/db/primary-read-scope';
 import { DbPoolName } from '@/db-query.options';
+import { Logger } from '@/logging';
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForWave: jest.fn().mockResolvedValue(undefined)
@@ -64,8 +65,10 @@ describe('DropCreationApiService.createDrop with the post outbox (1.8)', () => {
       connection: unknown;
       onPrimary: boolean;
     }[] = [];
+    const handOffsBeforeRead: number[] = [];
     const dropsService = {
       findDropByIdOrThrow: jest.fn(async (_query, ctx) => {
+        handOffsBeforeRead.push(queue.enqueue.mock.calls.length);
         reads.push({
           inWriteTransaction: inTransaction && transactions.length === 1,
           connection: ctx.connection,
@@ -126,7 +129,7 @@ describe('DropCreationApiService.createDrop with the post outbox (1.8)', () => {
         },
         { timer: undefined } as never
       );
-    return { create, execute, queue, reads, dropsDb };
+    return { create, execute, queue, reads, dropsDb, handOffsBeforeRead };
   }
 
   it('changes nothing with the flag off', async () => {
@@ -187,6 +190,41 @@ describe('DropCreationApiService.createDrop with the post outbox (1.8)', () => {
     // request sends none: no double send.
     expect(sendIdentityPushNotifications).not.toHaveBeenCalledWith(
       expect.arrayContaining([expect.any(Number)])
+    );
+  });
+
+  it('starts the outbox hand-off at commit, before the read, and awaits it before replying', async () => {
+    const { create, queue, handOffsBeforeRead } = setup({ outbox: true });
+    let accept!: () => void;
+    queue.enqueue.mockImplementation(
+      () => new Promise((resolve) => (accept = () => resolve([])))
+    );
+    let replied = false;
+    const post = create().then(() => (replied = true));
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // The hand-off was already sent when the read ran.
+    expect(handOffsBeforeRead).toEqual([1]);
+    // The POST still waits for SQS to accept it.
+    expect(replied).toBe(false);
+    accept();
+    await post;
+    expect(replied).toBe(true);
+  });
+
+  it('logs a failed hand-off and still answers the POST when the read succeeds', async () => {
+    const { create, queue } = setup({ outbox: true });
+    queue.enqueue.mockRejectedValue(new Error('sqs down'));
+    const errors = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+
+    await expect(create()).resolves.toMatchObject({ id: 'drop-1' });
+
+    // Exactly as before: one error log, and the row is left to the sweeper.
+    expect(errors).toHaveBeenCalledWith(
+      'Failed to hand off post-commit outbox work for drop drop-1',
+      expect.objectContaining({ message: 'sqs down' })
     );
   });
 

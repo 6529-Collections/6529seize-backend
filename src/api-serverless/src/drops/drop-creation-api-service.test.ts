@@ -1233,7 +1233,7 @@ describe('DropCreationApiService.createDrop after-commit pipeline', () => {
     );
 
   it.each([false, true])(
-    'reads the committed drop first, then delivers it and hands off the outbox (async=%s)',
+    'hands off the outbox at commit, then reads and delivers the drop (async=%s)',
     async (asyncFanout) => {
       if (asyncFanout) process.env.WS_ASYNC_FANOUT = 'true';
       else delete process.env.WS_ASYNC_FANOUT;
@@ -1264,15 +1264,17 @@ describe('DropCreationApiService.createDrop after-commit pipeline', () => {
         returned = drop;
       });
       await new Promise((resolve) => setTimeout(resolve, 10));
-      // Stage 3 started with delivery and the POST waits for it.
+      // Stage 3 started at commit (waves 1.8), and the POST waits for it.
       expect(returned).toBeNull();
       finishOutbox();
       await post;
 
       expect(order).toEqual([
         'committed',
-        'read:drop-1:tx',
+        // The hand-off needs only ids known at commit, so it overlaps the
+        // read instead of competing with delivery's own queue send.
         'outbox-start:drop-1:wave-1',
+        'read:drop-1:tx',
         'deliver:writer',
         'outbox-done'
       ]);
