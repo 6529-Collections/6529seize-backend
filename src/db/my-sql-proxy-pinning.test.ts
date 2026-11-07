@@ -1,3 +1,4 @@
+import { AsyncResource } from 'node:async_hooks';
 import { performance } from 'node:perf_hooks';
 import type { PoolConnection } from 'mysql';
 import { DbPoolName } from '@/db-query.options';
@@ -16,10 +17,15 @@ import {
 type Callback = (error: unknown, rows?: unknown) => void;
 type QueryInput = string | { sql: string; values?: Record<string, unknown> };
 
-/** Emulates mysql: query() formats synchronously through config.queryFormat. */
+/**
+ * Emulates mysql: query() formats synchronously through config.queryFormat,
+ * and callbacks run in the async context of the socket, i.e. of whichever
+ * request opened the connection, not of the request that issued the query.
+ */
 function fakeConnection(
   respond: (sql: string) => { error?: unknown; rows?: unknown } = () => ({})
 ) {
+  const socket = new AsyncResource('FakeMysqlSocket');
   const statements: string[] = [];
   const release = jest.fn();
   const destroy = jest.fn();
@@ -36,7 +42,11 @@ function fakeConnection(
         : sql;
       statements.push(formatted);
       const { error, rows } = respond(formatted);
-      setImmediate(() => callback(error ?? null, rows ?? [{ ok: 1 }]));
+      setImmediate(() =>
+        socket.runInAsyncScope(() =>
+          callback(error ?? null, rows ?? [{ ok: 1 }])
+        )
+      );
       return { sql: formatted };
     },
     beginTransaction(callback?: (error?: Error) => void) {
@@ -353,6 +363,31 @@ describe('RDS Proxy pin containment inside a request scope', () => {
       }
       expect(pool.created).toHaveLength(1);
       expect(pool.created[0].release).toHaveBeenCalledTimes(6);
+      expect(pool.created[0].destroy).not.toHaveBeenCalled();
+    });
+    expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a connection opened by an earlier request reusable until this request ends', async () => {
+    const pool = fakePool();
+    // An earlier invocation opens the connection, so its socket callbacks run
+    // in that (now closed) invocation's context.
+    await withProxyPinScope(async () => {
+      await execSQLWithConnection(
+        'select 1',
+        { pool: DbPoolName.READ, acquire: pool.acquire },
+        {}
+      );
+    });
+    await withProxyPinScope(async () => {
+      for (let i = 0; i < 3; i++) {
+        await execSQLWithConnection(
+          oversized,
+          { pool: DbPoolName.READ, acquire: pool.acquire },
+          { ids: manyIds }
+        );
+      }
+      expect(pool.created).toHaveLength(1);
       expect(pool.created[0].destroy).not.toHaveBeenCalled();
     });
     expect(pool.created[0].destroy).toHaveBeenCalledTimes(1);
