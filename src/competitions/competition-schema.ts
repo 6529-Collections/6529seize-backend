@@ -10,7 +10,11 @@ export async function withCompetitionSchemaConnection<T>(
   ) => Promise<T>,
   lockWaitSeconds = 5
 ): Promise<T> {
-  if (!Number.isInteger(lockWaitSeconds) || lockWaitSeconds < 1)
+  if (
+    !Number.isInteger(lockWaitSeconds) ||
+    lockWaitSeconds < 1 ||
+    lockWaitSeconds > 31536000
+  )
     throw new Error('Invalid metadata lock wait');
   return db.executeNativeQueriesInTransaction(async (connection) => {
     const options = { wrappedConnection: connection };

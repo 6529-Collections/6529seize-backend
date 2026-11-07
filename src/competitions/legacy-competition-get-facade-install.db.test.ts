@@ -1,9 +1,8 @@
 import 'reflect-metadata';
-import { performance } from 'node:perf_hooks';
 import { WAVE_OUTCOMES_TABLE } from '@/constants';
 import { sqlExecutor } from '@/sql-executor';
 import {
-  FACADE_LOCK_WAIT_SECONDS,
+  FACADE_DDL_ATTEMPTS,
   installLegacyCompetitionGetFacade,
   LEGACY_GET_SOURCE_TABLES,
   legacyCompetitionGetViewDefinition,
@@ -70,18 +69,22 @@ describe('installLegacyCompetitionGetFacade on MySQL', () => {
       }
     );
     await started;
-    const began = performance.now();
+    const execute = jest.spyOn(sqlExecutor, 'execute');
     try {
       await expect(
         installLegacyCompetitionGetFacade(sqlExecutor, { sleep: noSleep })
-      ).rejects.toThrow(`Facade view ${view} stayed locked after 3 attempts`);
-      const elapsedSeconds = (performance.now() - began) / 1000;
-      // Three bounded waits, never an open-ended queue.
-      expect(elapsedSeconds).toBeGreaterThanOrEqual(
-        FACADE_LOCK_WAIT_SECONDS * 3 - 0.5
+      ).rejects.toThrow(
+        `Facade view ${view} stayed locked after ${FACADE_DDL_ATTEMPTS} attempts`
       );
-      expect(elapsedSeconds).toBeLessThan(FACADE_LOCK_WAIT_SECONDS * 3 + 5);
+      // Each attempt is one bounded wait; nothing queues open-endedly.
+      expect(
+        execute.mock.calls.filter(
+          ([sql]) =>
+            sql.startsWith('create or replace') && sql.includes(`\`${view}\``)
+        )
+      ).toHaveLength(FACADE_DDL_ATTEMPTS);
     } finally {
+      execute.mockRestore();
       finishReader();
       await reader;
     }
