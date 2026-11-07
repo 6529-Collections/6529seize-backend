@@ -7,6 +7,11 @@ import { Logger } from '../logging';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { SqlOperationTiming } from '@/db/sql-operation-timing';
 import {
+  closeAfterCommitScope,
+  openAfterCommitScope,
+  runAfterCommitCallbacks
+} from '@/db/after-commit';
+import {
   isLegacyCompetitionGetFacadeScope,
   LEGACY_GET_BOOLEAN_FIELDS
 } from '@/competitions/legacy-competition-get-facade';
@@ -175,6 +180,7 @@ export async function execNativeTransactionally<T>(
       if (!accepted) connection.release();
     }
   }
+  let committed: { result: T; afterCommit: (() => unknown)[] };
   try {
     if (options?.isolationLevel) {
       await beginIsolatedTransaction(connection, options);
@@ -184,17 +190,20 @@ export async function execNativeTransactionally<T>(
       // requires its own compatibility validation and deployment inventory.
       connection.beginTransaction();
     }
+    openAfterCommitScope(connection);
     const result = await executable({ connection: connection });
-    return await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       connection.commit((err: any) => {
         if (err) {
           reject(err);
         } else {
-          resolve(result);
+          resolve();
         }
       });
     });
+    committed = { result, afterCommit: closeAfterCommitScope(connection) };
   } catch (e) {
+    closeAfterCommitScope(connection);
     if (options?.isolationLevel) {
       await new Promise<void>((resolve) =>
         connection.rollback(() => resolve())
@@ -206,6 +215,10 @@ export async function execNativeTransactionally<T>(
   } finally {
     connection.release();
   }
+  // Cache invalidations and similar effects must not see the transaction
+  // before other readers can: run them only after COMMIT, never on rollback.
+  await runAfterCommitCallbacks(committed.afterCommit);
+  return committed.result;
 }
 
 export function execBudgetedNativeTransactionally<T>(
