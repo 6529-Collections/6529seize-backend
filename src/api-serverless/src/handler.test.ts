@@ -8,6 +8,11 @@ import {
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 import { NotFoundException, UnauthorisedException } from '../../exceptions';
+import type { PoolConnection } from 'mysql';
+import {
+  markProxySessionPinned,
+  releaseOrRetireProxySession
+} from '@/db/proxy-session-pinning';
 
 const mockHttpHandler = jest.fn();
 
@@ -450,6 +455,40 @@ describe('handler http responses', () => {
     );
 
     expect(result).toBe(httpResponse);
+  });
+
+  it('retires RDS Proxy sessions pinned during the invocation when it ends', async () => {
+    const pool = { _freeConnections: [] as unknown[] };
+    const connection = {
+      _pool: pool,
+      release: jest.fn((): void => {
+        pool._freeConnections.push(connection);
+      }),
+      destroy: jest.fn()
+    };
+    mockHttpHandler.mockImplementation(async () => {
+      markProxySessionPinned(connection, { reason: 'oversized_statement' });
+      releaseOrRetireProxySession(
+        connection as unknown as PoolConnection,
+        'READ'
+      );
+      // Still reusable by later statements of the same invocation.
+      expect(connection.destroy).not.toHaveBeenCalled();
+      return { statusCode: 200, headers: {}, body: '{}' };
+    });
+
+    await handler(
+      {
+        httpMethod: 'GET',
+        path: '/api/waves',
+        requestContext: { requestId: 'request-pin' }
+      } as unknown as APIGatewayEvent,
+      { awsRequestId: 'lambda-request-pin' } as Context,
+      jest.fn()
+    );
+
+    expect(connection.release).toHaveBeenCalledTimes(1);
+    expect(connection.destroy).toHaveBeenCalledTimes(1);
   });
 
   it('normalizes a single Set-Cookie header into repeated-cookie fields', async () => {
