@@ -185,8 +185,32 @@ conversion). The fixture addresses are synthetic.
 6529 run sanctions:list -- build --in specs/sanctions-list-v1/fixtures/inputs --out <dir>
 ```
 
+```bash
+6529 run sanctions:list -- publish --in <inputs dir> --bucket <bucket> --region <region> --kms-key <key id or alias>
+6529 run sanctions:list -- verify --url https://<host>/sanctions/v1 --keyid <0x signer address>
+```
+
 `fetch` writes `<dir>/<source>/<file>` and `inputs.json` (url, sha256, bytes,
 fetched_at; plus the Korean document check). `build` refuses any input whose
 bytes no longer match `inputs.json`. It writes `sanctions-list.v1.json` and
 `build-report.json`, and diffs against `--previous <payload>` when one is
 given.
+
+## 8. Publishing layout
+
+Releases are published under `<host>/sanctions/v1/`:
+
+| Path | Written by | Cache |
+|---|---|---|
+| `keys.json` (trust root, `6529.sanctions-keys.v1`) | an administrator only | 5 min |
+| `releases/<seq>/sanctions-list.v1.json` and `release.json` | publisher | immutable |
+| `diffs/<prev>-<seq>.json` (public added/removed per source) | publisher | immutable |
+| `latest/sanctions-list.v1.json` and `latest/release.json` | publisher | 5 min |
+| `index.json` (`6529.sanctions-index.v1`, every release) | publisher | 5 min |
+| `status.json` (`6529.sanctions-status.v1`, last check) | publisher | 1 min |
+
+The publisher signs with an AWS KMS secp256k1 key (EIP-191, low-s, recovery
+id chosen to reproduce the key's address) and verifies the release before
+writing. It writes immutable files before the `latest` pointers. An unchanged
+build only refreshes `status.json`. Clients pin the trust root in code; the
+published `keys.json` is a convenience copy that must match it.
