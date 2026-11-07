@@ -990,6 +990,58 @@ describeWithSeed(
       }
     });
 
+    async function leaderboardEvents(): Promise<number> {
+      const row = await sqlExecutor.oneOrNull<{ count: number }>(
+        `select count(*) as count from ${COMPETITION_OUTBOX_TABLE} where competition_id=:rankId and json_unquote(json_extract(event,'$.event_type'))='COMPETITION_LEADERBOARD_UPDATED'`,
+        { rankId }
+      );
+      return Number(row?.count ?? 0);
+    }
+
+    it('queues a leaderboard update only when the saved leaderboard changes', async () => {
+      const before = await leaderboardEvents();
+      await vote(rankId, rankEntry, 10, 500);
+      await service.refreshCompetition(rankId, 600);
+      expect(await leaderboardEvents()).toBe(before + 1);
+
+      // The timer loops refresh every minute: unchanged sends nothing.
+      await service.refreshCompetition(rankId, 660);
+      await service.refreshCompetition(rankId, 720);
+      expect(await leaderboardEvents()).toBe(before + 1);
+
+      // A vote that changes the standings sends exactly one more.
+      await vote(rankId, secondRankEntry, 20, 730, 'other');
+      await service.refreshCompetition(rankId, 780);
+      await service.refreshCompetition(rankId, 840);
+      expect(await leaderboardEvents()).toBe(before + 2);
+    });
+
+    it('counts time-locked rating drift as a change but not the restamped snapshot time', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.time_lock_ms', 1000) where id = :rankId`,
+        { rankId }
+      );
+      const before = await leaderboardEvents();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+      // The weighted rating keeps rising until the lock has passed.
+      await service.refreshCompetition(rankId, 700);
+      expect(await leaderboardEvents()).toBe(before + 2);
+
+      await service.refreshCompetition(rankId, 2000);
+      const settled = await leaderboardEvents();
+      // Fully weighted: later refreshes only restamp ordering and publish
+      // times, which clients do not see as a change.
+      await service.refreshCompetition(rankId, 2100);
+      await service.refreshCompetition(rankId, 2200);
+      expect(await leaderboardEvents()).toBe(settled);
+      const saved = await sqlExecutor.execute<{ published_at: number }>(
+        `select published_at from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} where competition_id=:rankId and entry_id=:rankEntry`,
+        { rankId, rankEntry }
+      );
+      expect(saved.map((row) => Number(row.published_at))).toEqual([2200]);
+    });
+
     it('uses scheduled historical weighted votes when execution is late and archives each voter independently', async () => {
       await sqlExecutor.execute(
         `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.time_lock_ms', 1000) where id = :rankId`,
