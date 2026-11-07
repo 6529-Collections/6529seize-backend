@@ -351,6 +351,24 @@ describe('SQL operation timing', () => {
     );
   });
 
+  it('keeps an operation started outside a request out of request totals', async () => {
+    const sql = emptyRequestSqlTotals();
+    const fixture = connectionFixture();
+    const acquired = deferred<PoolConnection>();
+    const operation = execSQLWithConnection('SELECT id FROM profiles', {
+      pool: DbPoolName.READ,
+      acquire: () => acquired.promise
+    });
+    loggerContext.run({ requestId: 'later-request', sql }, () => {
+      acquired.resolve(fixture.connection);
+    });
+    await jest.advanceTimersByTimeAsync(10);
+    fixture.succeed();
+
+    await expect(operation).resolves.toEqual([{ id: 'ok' }]);
+    expect(sql).toEqual(emptyRequestSqlTotals());
+  });
+
   it('cleans up after a synchronous acquisition exception', async () => {
     const failure = new Error('synchronous failure');
     await expect(

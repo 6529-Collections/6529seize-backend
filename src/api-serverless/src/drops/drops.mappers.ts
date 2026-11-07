@@ -756,44 +756,44 @@ export class DropsMappers {
           contextProfileId ?? null
         )
     );
-    ctx.timer?.start('dropsWithoutWaves.mentionedWavesAndQuotes');
     const [
       mentionedWaveEntities,
       mentionedWaveCreditNftsByWaveId,
       pinnedMentionedWaveIds,
       identityWaveIds,
       visibleQuotedDropIds
-    ] = await Promise.all([
-      mentionedWaveIds.length
-        ? this.wavesApiDb.findWavesByIdsEligibleForRead(
-            mentionedWaveIds,
-            groupIdsUserIsEligibleFor,
-            ctx.connection
-          )
-        : Promise.resolve([]),
-      this.wavesApiDb.findWaveVotingCreditNftsByWaveIds(
-        mentionedWaveIds,
-        ctx.connection
-      ),
-      this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
-        {
-          waveIds: mentionedWaveIds,
-          profileId: contextProfileId
-        },
-        { connection: ctx.connection }
-      ),
-      profileWavesDb.findSelectedWaveIdsByWaveIds(mentionedWaveIds, ctx),
-      this.findQuotedDropIdsVisibleToContext(
-        {
-          dropsParts,
-          allEntities,
-          deletedDrops,
-          groupIdsUserIsEligibleFor
-        },
-        ctx.connection
-      )
-    ]);
-    ctx.timer?.stop('dropsWithoutWaves.mentionedWavesAndQuotes');
+    ] = await timed('mentionedWavesAndQuotes', () =>
+      Promise.all([
+        mentionedWaveIds.length
+          ? this.wavesApiDb.findWavesByIdsEligibleForRead(
+              mentionedWaveIds,
+              groupIdsUserIsEligibleFor,
+              ctx.connection
+            )
+          : Promise.resolve([]),
+        this.wavesApiDb.findWaveVotingCreditNftsByWaveIds(
+          mentionedWaveIds,
+          ctx.connection
+        ),
+        this.wavesApiDb.whichOfWavesArePinnedByGivenProfile(
+          {
+            waveIds: mentionedWaveIds,
+            profileId: contextProfileId
+          },
+          { connection: ctx.connection }
+        ),
+        profileWavesDb.findSelectedWaveIdsByWaveIds(mentionedWaveIds, ctx),
+        this.findQuotedDropIdsVisibleToContext(
+          {
+            dropsParts,
+            allEntities,
+            deletedDrops,
+            groupIdsUserIsEligibleFor
+          },
+          ctx.connection
+        )
+      ])
+    );
     const mentionedWaveDisplayByWaveId = await timed(
       'mentionedWaveDisplay',
       () =>

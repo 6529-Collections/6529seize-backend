@@ -73,7 +73,9 @@ export class SqlOperationTiming {
   }
 
   private addToRequestTotals() {
-    // The context copy shares the request's totals object.
+    // Totals belong to the request the operation started in: the context copy
+    // shares that request's totals object, which is never reassigned. Outside
+    // a request (loops, startup) there are none and this is a no-op.
     const totals = this.context.sql;
     if (!totals) return;
     const now = performance.now();
