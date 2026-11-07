@@ -851,7 +851,7 @@ export class WaveApiService {
     const decisionStrategy = wave.decisions_strategy;
     if (wave.type !== WaveType.APPROVE && decisionStrategy === null) {
       throw new BadRequestException(
-        `Can't add pauses to wave without a decision strategy`
+        `Can't add pauses to wave without a results strategy`
       );
     }
     const nextDecisionTime = wave.next_decision_time
@@ -859,7 +859,7 @@ export class WaveApiService {
       : null;
     if (wave.type !== WaveType.APPROVE && !nextDecisionTime) {
       throw new BadRequestException(
-        `Can't add pauses to wave without a next decision time`
+        `Can't add pauses to wave without a next result time`
       );
     }
     const proposedEndTime = Time.millis(model.end_time);
@@ -868,7 +868,7 @@ export class WaveApiService {
     }
     if (nextDecisionTime?.isInPast()) {
       throw new BadRequestException(
-        `Can't modify pauses of a wave with unresolved decisions`
+        `Can't modify pauses of a wave with pending results`
       );
     }
     const currentPauses = await this.wavesApiDb.getWavePauses(wave.id, ctx);
@@ -919,12 +919,12 @@ export class WaveApiService {
       : null;
     if (wave.type !== WaveType.APPROVE && !nextDecisionTime) {
       throw new BadRequestException(
-        `Can't add pauses to wave without a next decision time`
+        `Can't add pauses to wave without a next result time`
       );
     }
     if (nextDecisionTime?.isInPast()) {
       throw new BadRequestException(
-        `Can't modify pauses of a wave with unresolved decisions`
+        `Can't modify pauses of a wave with pending results`
       );
     }
     const currentPauses = await this.wavesApiDb.getWavePauses(wave.id, ctx);
@@ -1379,7 +1379,7 @@ export class WaveApiService {
     if (decisionStrategy !== null) {
       if (request.wave.type !== ApiWaveType.Rank) {
         throw new BadRequestException(
-          `Only waves of type RANK support a decision strategy.`
+          `Only waves of type RANK support a results strategy.`
         );
       }
       if (
@@ -1387,7 +1387,7 @@ export class WaveApiService {
         !decisionStrategy.subsequent_decisions.length
       ) {
         throw new BadRequestException(
-          `On rolling decision strategy subsequent decisions is mandatory`
+          `On rolling results strategy subsequent results are mandatory`
         );
       }
     }
@@ -2054,7 +2054,7 @@ export class WaveApiService {
           waveEntity.next_decision_time < Time.currentMillis()
         ) {
           throw new ForbiddenException(
-            `Wave has unresolved decisions and can't be edited at the moment. Try again later`
+            `Wave has pending results and can't be edited at the moment. Try again later`
           );
         }
 
@@ -2139,7 +2139,7 @@ export class WaveApiService {
       waveBeforeUpdate.next_decision_time < currentMillis
     ) {
       throw new ForbiddenException(
-        `Wave has unresolved decisions and can't be edited at the moment. Try again later`
+        `Wave has pending results and can't be edited at the moment. Try again later`
       );
     }
     if (

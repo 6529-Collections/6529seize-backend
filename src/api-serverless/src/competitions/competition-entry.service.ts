@@ -137,7 +137,7 @@ export class CompetitionEntryService {
     await visibleCompetitionWave(waveId, ctx);
     if (!request.drop || 'drop_id' in request || 'drop_content_hash' in request)
       throw new BadRequestException(
-        'Competition entries require a new dedicated submission; existing drops cannot be entered'
+        'Decision entries require a new dedicated submission; existing drops cannot be entered'
       );
     const command = { action: 'ENTRY_CREATE', waveId, competitionId, request };
     const saved =
@@ -210,7 +210,7 @@ export class CompetitionEntryService {
       limit !== null &&
       (await this.entries.countActive(competitionId, actor, tx)) >= limit
     )
-      throw new ForbiddenException('Competition entry limit reached');
+      throw new ForbiddenException('Decision entry limit reached');
     const model = prepared.model;
     await moderationReviewDb.lockProfile(actor, tx);
     await prePublicationModerationService.assertPostingAllowed(actor, tx);
@@ -266,7 +266,7 @@ export class CompetitionEntryService {
       drop.drop_type !== DropType.COMPETITION
     )
       throw new BadRequestException(
-        'Entry content must be your dedicated competition drop in this wave'
+        'Entry content must be your dedicated decision drop in this wave'
       );
     const entry: CompetitionEntry = {
       id: record.legacy_wave_id
@@ -348,7 +348,7 @@ export class CompetitionEntryService {
         ))
     )
       throw new BadRequestException(
-        'Entry content must be a new competition submission in this wave'
+        'Entry content must be a new decision submission in this wave'
       );
     if (
       input.signature ||
@@ -358,7 +358,7 @@ export class CompetitionEntryService {
       input.poll
     )
       throw new BadRequestException(
-        'Use the competition signature; entry content cannot include a legacy signature or poll'
+        'Use the decision signature; entry content cannot include a legacy signature or poll'
       );
     const drop = getValidatedByJoiOrThrow(input, NewDropSchema);
     if (
@@ -410,7 +410,7 @@ export class CompetitionEntryService {
     if (!memberships.length && drop.drop_type !== DropType.COMPETITION)
       return { competition: null, entry: null };
     if (memberships.length !== 1 || memberships[0].wave_id !== waveId)
-      throw new NotFoundException('Competition entry not found');
+      throw new NotFoundException('Decision entry not found');
     const membership = memberships[0];
     const entry = await competitionService.getEntry(
       waveId,

@@ -49,7 +49,7 @@ export class CompetitionHistoryRepository extends LazyDbAccessCompatibleService 
       if (history) {
         throw new CustomApiCompliantException(
           409,
-          'This wave contains competition history and cannot be deleted. Archive its competitions instead.'
+          'This wave contains decision history and cannot be deleted. Archive its decisions instead.'
         );
       }
     } finally {

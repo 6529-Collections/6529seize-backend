@@ -553,7 +553,7 @@ describeWithSeed(
         ).rejects.toThrow('existing drops cannot be entered');
         await expect(
           repository.assertDropAvailable(entry.drop_id, randomUUID(), {})
-        ).rejects.toThrow('exactly one competition');
+        ).rejects.toThrow('exactly one decision');
       }
       expect(
         await sqlExecutor.execute(

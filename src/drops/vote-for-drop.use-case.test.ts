@@ -46,7 +46,7 @@ it.each([null])(
       .mocked(competitionRepository.lockOriginalPrimary)
       .mockResolvedValue(record as never);
     await expect(service.execute(model, ctx)).rejects.toThrow(
-      'This drop does not belong to a competition'
+      'This drop does not belong to a decision'
     );
     expect(voteForMigratedLegacyEntry).not.toHaveBeenCalled();
   }

@@ -147,7 +147,7 @@ describeWithSeed('Original primary native rule update policy', [], () => {
       ]
     });
     await expect(validate(nextConfig(), competition, proxy)).rejects.toThrow(
-      'Legacy competition settings cannot be changed by proxies'
+      'Legacy decision settings cannot be changed by proxies'
     );
   });
 
@@ -155,7 +155,7 @@ describeWithSeed('Original primary native rule update policy', [], () => {
     const next = nextConfig();
     next.rules.type = ApiCompetitionRulesInputTypeEnum.Approve;
     await expect(validate(next)).rejects.toThrow(
-      'Original competition type cannot change'
+      'Original decision type cannot change'
     );
   });
 
@@ -239,7 +239,7 @@ describeWithSeed('Original primary native rule update policy', [], () => {
         ...competition,
         decisions: { ...competition.decisions, next_decision_time: now - 1 }
       })
-    ).rejects.toThrow('unresolved decisions');
+    ).rejects.toThrow('pending results');
   });
 
   it('counts only this competition completed decisions when checking max winners', async () => {

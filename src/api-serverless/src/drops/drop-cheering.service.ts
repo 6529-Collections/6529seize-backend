@@ -73,9 +73,7 @@ export class DropCheeringService {
                 (entry) => entry.competition_id !== originalPrimary?.id
               )
             )
-              throw new ForbiddenException(
-                'Vote through the competition entry'
-              );
+              throw new ForbiddenException('Vote through the decision entry');
             const dropEntity =
               await this.dropsDb.findDropByIdWithEligibilityCheck(
                 dropId,
@@ -141,9 +139,7 @@ export class DropCheeringService {
                 break;
               }
               case DropType.COMPETITION:
-                throw new ForbiddenException(
-                  'Vote through the competition entry'
-                );
+                throw new ForbiddenException('Vote through the decision entry');
               case DropType.WINNER: {
                 throw new BadRequestException(
                   `This drop has already been declared as winner and doesn't accept new votes`
