@@ -13,13 +13,20 @@ import {
   dropUpdateMessage,
   dmUnreadStateChangedMessage,
   dropUpdateRefMessage,
+  DELIVERY_TIMESTAMPS_RESERVED_BYTES,
   DROP_UPDATE_MAX_UTF8_BYTES,
   DropUpdateRefType,
   WsMessageType,
   nftLinkUpdatedMessage,
   identityNotificationsChangedMessage,
-  userIsTypingMessage
+  userIsTypingMessage,
+  withDeliveryTimestamps
 } from './ws-message';
+import {
+  FanoutMeasurement,
+  FanoutSendOutcome,
+  serverReceivedAtFromTimer
+} from '@/ws-delivery/wave-delivery-metrics';
 import { ApiDropWithoutWave } from '../generated/models/ApiDropWithoutWave';
 import { ApiQuotedDropResponse } from '@/api/generated/models/ApiQuotedDropResponse';
 import { ApiDropType } from '../generated/models/ApiDropType';
@@ -64,6 +71,24 @@ const dropNotificationIdentityForLog = (drop: ApiDrop): string =>
   )} serial_no=${scalarForLog(drop.serial_no)}`;
 
 const DROP_DELETE_NOTIFICATION_BATCH_SIZE = 100;
+
+const SEND_OUTCOMES: ReadonlySet<string> = new Set([
+  'sent',
+  'resync_pending',
+  'gone',
+  'failed'
+]);
+
+/** Older transport adapters and test doubles resolve without a status. */
+function sendOutcome(result: unknown): FanoutSendOutcome {
+  const status =
+    result && typeof result === 'object'
+      ? Reflect.get(result, 'status')
+      : undefined;
+  return typeof status === 'string' && SEND_OUTCOMES.has(status)
+    ? (status as FanoutSendOutcome)
+    : 'sent';
+}
 
 export interface NotificationConnectionRecipient {
   readonly connectionId: string;
@@ -294,7 +319,11 @@ export function serializeDropMessageForRecipient(
     fullMessage = JSON.stringify(dropReactionUpdateMessage(recipientDrop));
   }
 
-  if (Buffer.byteLength(fullMessage, 'utf8') <= DROP_UPDATE_MAX_UTF8_BYTES) {
+  if (
+    Buffer.byteLength(fullMessage, 'utf8') +
+      DELIVERY_TIMESTAMPS_RESERVED_BYTES <=
+    DROP_UPDATE_MAX_UTF8_BYTES
+  ) {
     return fullMessage;
   }
 
@@ -550,6 +579,8 @@ export class WsListenersNotifier {
       }[updateType]
     }`;
     ctx.timer?.start(timerName);
+    const serverReceivedAt = serverReceivedAtFromTimer(ctx.timer);
+    const measurement = new FanoutMeasurement(updateType, serverReceivedAt);
     try {
       const onlineProfiles = useSystemBroadcastAudience
         ? await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast(
@@ -566,6 +597,7 @@ export class WsListenersNotifier {
             },
             ctx
           );
+      measurement.queryDone(onlineProfiles.length);
       if (!onlineProfiles.length) return;
       const audienceDrop = await this.restrictQuotesToWaveAudience(
         inputDrop,
@@ -588,6 +620,7 @@ export class WsListenersNotifier {
         },
         ctx.connection
       );
+      measurement.prepareDone();
       await Promise.all(
         onlineProfiles.map(({ connectionId, profileId }) => {
           const recipientDrop = applyGlobalModerationForRecipient(
@@ -602,21 +635,52 @@ export class WsListenersNotifier {
                   author_blocked: false,
                   drop_hidden: false
                 });
-          return this.appWebSockets.send({
+          const message = serializeDropMessageForRecipient(
+            anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
+            profileId === null ? 0 : (creditLefts[profileId] ?? 0),
+            updateType,
+            reason
+          );
+          measurement.serialized();
+          // AppWebSockets.send re-reads the connection row before sending.
+          measurement.connectionRead();
+          return this.sendMeasured(
             connectionId,
-            message: serializeDropMessageForRecipient(
-              anonymizeDropBroadcast(recipientDrop, hiddenDropIds),
-              profileId === null ? 0 : (creditLefts[profileId] ?? 0),
-              updateType,
-              reason
-            )
-          });
+            message,
+            serverReceivedAt,
+            measurement
+          );
         })
       );
     } catch (e) {
       logDropNotificationFailure(this.logger, updateType, inputDrop, e);
     } finally {
       ctx.timer?.stop(timerName);
+      measurement.emit({
+        drop_id: inputDrop.id,
+        wave_id: inputDrop.wave?.id ?? null
+      });
+    }
+  }
+
+  /** Stamps delivery times on the frame and records the send's outcome. */
+  private async sendMeasured(
+    connectionId: string,
+    message: string,
+    serverReceivedAt: number | null,
+    measurement: FanoutMeasurement
+  ): Promise<unknown> {
+    const sentAt = Date.now();
+    try {
+      const result = await this.appWebSockets.send({
+        connectionId,
+        message: withDeliveryTimestamps(message, { serverReceivedAt, sentAt })
+      });
+      measurement.sendSettled(sentAt, sendOutcome(result));
+      return result;
+    } catch (error) {
+      measurement.sendSettled(sentAt, 'error');
+      throw error;
     }
   }
 
@@ -644,7 +708,10 @@ export class WsListenersNotifier {
           {
             authenticationContext:
               AuthenticationContext.fromProfileId(identityId)
-          }
+          },
+          // Typing rides on sockets subscribed to this wave, including the
+          // typing-purpose socket that is left out of every other frame.
+          { includeTypingSockets: true }
         )
         .then((res) => res.filter((it) => it.wave_id === waveId));
       // Group metadata visibility alone is insufficient: the sender must also
@@ -813,17 +880,25 @@ export class WsListenersNotifier {
     if (!dropInfos.length) {
       return;
     }
+    const firstDrop = dropInfos[0];
     const timerName = `${this.constructor.name}->notifyAboutDropDeletes`;
     ctx.timer?.start(timerName);
+    const serverReceivedAt = serverReceivedAtFromTimer(ctx.timer);
+    const measurement = new FanoutMeasurement(
+      WsMessageType.DROP_DELETE,
+      serverReceivedAt
+    );
     try {
       const onlineClients =
         await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
           {
             groupId: visibility_group_id,
-            waveId: dropInfos[0]!.wave_id
+            waveId: firstDrop.wave_id
           },
           ctx
         );
+      measurement.queryDone(onlineClients.length * dropInfos.length);
+      measurement.prepareDone();
       const connectionIds = onlineClients.map((it) => it.connectionId);
       let pendingSends: Promise<unknown>[] = [];
       const sendFailures: unknown[] = [];
@@ -838,8 +913,17 @@ export class WsListenersNotifier {
       };
       for (const dropInfo of dropInfos) {
         const message = JSON.stringify(dropDeleteMessage(dropInfo));
+        measurement.serialized();
         for (const connectionId of connectionIds) {
-          pendingSends.push(this.appWebSockets.send({ connectionId, message }));
+          measurement.connectionRead();
+          pendingSends.push(
+            this.sendMeasured(
+              connectionId,
+              message,
+              serverReceivedAt,
+              measurement
+            )
+          );
           if (pendingSends.length === DROP_DELETE_NOTIFICATION_BATCH_SIZE) {
             await flushPendingSends();
           }
@@ -851,6 +935,10 @@ export class WsListenersNotifier {
       }
     } finally {
       ctx.timer?.stop(timerName);
+      measurement.emit({
+        drop_id: dropInfos.length === 1 ? firstDrop.drop_id : null,
+        wave_id: firstDrop.wave_id
+      });
     }
   }
 
