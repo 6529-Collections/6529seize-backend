@@ -16,9 +16,11 @@ import {
   SqlExecutionBudgetExceededError
 } from '@/db/sql-execution-budget';
 import {
+  captureProxyPinScope,
   markProxySessionPinned,
   oversizedStatementBytes,
   ProxyPinPool,
+  ProxyPinScopeRef,
   releaseOrRetireProxySession,
   retireProxySession,
   sqlFingerprint
@@ -317,6 +319,9 @@ export async function execSQLWithParams<T>(
         // statement's final SQL before any other statement can reuse the hook.
         let measured = false;
         let statementBytes: number | null = null;
+        // The driver invokes onResult in the socket's async context, not this
+        // request's; capture the request's pin scope now.
+        const pinScope = captureProxyPinScope();
         connection.config.queryFormat = function (query, values) {
           const formatted = values ? prepareStatement(query, values) : query;
           if (!measured) {
@@ -350,7 +355,8 @@ export async function execSQLWithParams<T>(
               : oversizedStatementBytes(sql),
             privateFamily,
             closeConnection,
-            pool: timing?.pool
+            pool: timing?.pool,
+            pinScope
           });
           if (err) {
             let description: string;
@@ -401,7 +407,8 @@ function settleProxySession({
   statementBytes,
   privateFamily,
   closeConnection,
-  pool
+  pool,
+  pinScope
 }: {
   connection: mysql.PoolConnection;
   sql: string;
@@ -409,6 +416,7 @@ function settleProxySession({
   privateFamily: PrivateQueryFamily | null;
   closeConnection: boolean;
   pool: DbPoolName | 'supplied' | undefined;
+  pinScope: ProxyPinScopeRef | null;
 }): void {
   if (statementBytes !== null) {
     markProxySessionPinned(connection, {
@@ -421,7 +429,7 @@ function settleProxySession({
   }
   if (closeConnection) {
     const label: ProxyPinPool = pool === DbPoolName.READ ? 'READ' : 'WRITE';
-    releaseOrRetireProxySession(connection, label);
+    releaseOrRetireProxySession(connection, label, pinScope);
   }
 }
 
