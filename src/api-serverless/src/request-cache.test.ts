@@ -37,6 +37,12 @@ async function withServer<T>(
     req.user = viewers.get(req.headers.authorization ?? '');
     next();
   });
+  let requestCounter = 0;
+  app.use((_req, res, next) => {
+    requestCounter += 1;
+    res.setHeader('X-Request-Id', `request-${requestCounter}`);
+    next();
+  });
   app.get('/data', cacheRequest(options), (req: Request, res: Response) => {
     calls++;
     const user = req.user as
@@ -80,6 +86,7 @@ async function get(baseUrl: string, authorization?: string) {
   });
   return {
     cache: response.headers.get('x-cache'),
+    requestId: response.headers.get('x-request-id'),
     body: (await response.json()) as {
       viewer: string | null;
       role: string | null;
@@ -90,6 +97,20 @@ async function get(baseUrl: string, authorization?: string) {
 describe('cacheRequest', () => {
   beforeEach(() => {
     mockCacheStore.clear();
+  });
+
+  it('never stores or replays the request id of the response that filled the cache', async () => {
+    await withServer({}, async (baseUrl) => {
+      const first = await get(baseUrl);
+      expect(first.requestId).toBe('request-1');
+      await waitForCacheEntries(1);
+      expect(Array.from(mockCacheStore.values()).join('')).not.toMatch(
+        /x-request-id/i
+      );
+      const second = await get(baseUrl);
+      expect(second.cache).toBe('HIT');
+      expect(second.requestId).toBe('request-2');
+    });
   });
 
   it('shares one cache entry per URL when not auth dependent', async () => {
