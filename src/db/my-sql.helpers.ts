@@ -221,25 +221,39 @@ export async function execNativeTransactionally<T>(
   return committed.result;
 }
 
-export function execBudgetedNativeTransactionally<T>(
+export async function execBudgetedNativeTransactionally<T>(
   executable: (
     connection: ConnectionWrapper<mysql.PoolConnection>
   ) => Promise<T>,
   acquire: () => Promise<mysql.PoolConnection>,
   budget: NonNullable<SqlTransactionOptions['executionBudget']>
 ): Promise<T> {
-  return executeBudgetedSqlTransaction(
-    async () => {
-      const connection = await acquire();
-      return {
-        handle: connection,
-        physical: connection,
-        release: () => connection.release()
-      };
-    },
-    budget,
-    (handle) => executable({ connection: handle as mysql.PoolConnection })
-  );
+  let scoped: object | undefined;
+  let result: T;
+  try {
+    result = await executeBudgetedSqlTransaction(
+      async () => {
+        const connection = await acquire();
+        return {
+          handle: connection,
+          physical: connection,
+          release: () => connection.release()
+        };
+      },
+      budget,
+      (handle) => {
+        scoped = handle;
+        openAfterCommitScope(handle);
+        return executable({ connection: handle as mysql.PoolConnection });
+      }
+    );
+  } catch (e) {
+    if (scoped) closeAfterCommitScope(scoped);
+    throw e;
+  }
+  // Resolving means the COMMIT was acknowledged (see the budget executor).
+  await runAfterCommitCallbacks(scoped ? closeAfterCommitScope(scoped) : []);
+  return result;
 }
 
 async function beginIsolatedTransaction(

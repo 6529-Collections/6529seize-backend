@@ -139,9 +139,8 @@ describe('Redis Cluster slot safety', () => {
   });
 
   it('keeps each multi-key script family in one slot', async () => {
-    const { eligibleGroupsLeaseKeys } = await import(
-      '@/api/community-members/eligible-groups-lease'
-    );
+    const { eligibleGroupsLeaseKeys } =
+      await import('@/api/community-members/eligible-groups-lease');
     const keys = eligibleGroupsLeaseKeys('profile-1');
     expect(
       new Set([keys.result, keys.lease, keys.invalidation].map(keySlot)).size

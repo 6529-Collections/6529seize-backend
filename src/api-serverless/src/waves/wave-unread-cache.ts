@@ -54,7 +54,45 @@ export function distinctWaveUnreadReaderWaves(
 }
 
 const logger = Logger.get('WAVE_UNREAD_CACHE');
-const CACHE_TTL = Time.minutes(5);
+
+/**
+ * Summary TTL when `WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS` is unset. Short on
+ * purpose for the first rollout: a writer Lambda deployed before the
+ * after-commit bumps existed can leave a summary stale for at most this long.
+ * Raise it by env once every drop writer is current.
+ */
+export const WAVE_UNREAD_SUMMARY_CACHE_TTL_DEFAULT_SECONDS = 60;
+export const WAVE_UNREAD_SUMMARY_CACHE_TTL_MIN_SECONDS = 5;
+export const WAVE_UNREAD_SUMMARY_CACHE_TTL_MAX_SECONDS = 3600;
+const warnedTtlValues = new Set<string>();
+
+/**
+ * `WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS`, read on use so a Lambda
+ * configuration change applies without a redeploy. Unset or blank uses the
+ * default; whole numbers are clamped to 5–3600; anything else uses the
+ * default. Both corrections log a warning once per value.
+ */
+export function waveUnreadSummaryCacheTtlSeconds(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  const raw = env.WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS?.trim();
+  if (!raw) return WAVE_UNREAD_SUMMARY_CACHE_TTL_DEFAULT_SECONDS;
+  const requested = /^[+-]?\d+$/.test(raw) ? Number(raw) : null;
+  const applied =
+    requested === null
+      ? WAVE_UNREAD_SUMMARY_CACHE_TTL_DEFAULT_SECONDS
+      : Math.min(
+          WAVE_UNREAD_SUMMARY_CACHE_TTL_MAX_SECONDS,
+          Math.max(WAVE_UNREAD_SUMMARY_CACHE_TTL_MIN_SECONDS, requested)
+        );
+  if (applied !== requested && !warnedTtlValues.has(raw)) {
+    warnedTtlValues.add(raw);
+    logger.warn(
+      `Invalid WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS=${JSON.stringify(raw)}; using ${applied} instead`
+    );
+  }
+  return applied;
+}
 // v2: versions are "<epoch ms>.<random>" strings written with SET, not INCR
 // counters, and the reader-global version is part of every key.
 const CACHE_KEY_PREFIX = 'cache_6529_wave_unread_summary_v2';
@@ -63,7 +101,7 @@ const READER_VERSION_KEY_PREFIX = 'cache_6529_wave_unread_reader_version_v2';
 const READER_GLOBAL_VERSION_KEY_PREFIX =
   'cache_6529_wave_unread_reader_global_version_v2';
 /** Version keys outlive every summary that can still be keyed on them. */
-const VERSION_TTL = Time.days(7);
+export const WAVE_UNREAD_VERSION_TTL = Time.days(7);
 const inFlightSummaryMissReads = new Map<
   string,
   Promise<Record<string, WaveUnreadSummary>>
@@ -213,12 +251,13 @@ export async function writeWaveUnreadSummaryCache({
   summariesByWaveId: Record<string, WaveUnreadSummary>;
   cacheKeysByWaveId: Record<string, string>;
 }): Promise<void> {
+  const ttl = Time.seconds(waveUnreadSummaryCacheTtlSeconds());
   try {
     await Promise.all(
       Object.entries(summariesByWaveId).map(async ([waveId, summary]) => {
         const cacheKey = cacheKeysByWaveId[waveId];
         if (cacheKey) {
-          await redisSetJson(cacheKey, summary, CACHE_TTL);
+          await redisSetJson(cacheKey, summary, ttl);
         }
       })
     );
@@ -265,14 +304,14 @@ export async function withInFlightWaveUnreadSummaryCacheMiss({
 
 /**
  * Moves a version key (see wave-cache-version.ts). Fails open (logged): the
- * 5-minute summary TTL bounds the damage of a lost bump.
+ * summary TTL bounds the damage of a lost bump.
  */
 async function bumpVersion(
   key: string,
   context: Record<string, string>
 ): Promise<void> {
   try {
-    await bumpCacheVersion(key, VERSION_TTL);
+    await bumpCacheVersion(key, WAVE_UNREAD_VERSION_TTL);
   } catch (error) {
     logger.warn('Failed to invalidate wave unread cache', {
       ...context,

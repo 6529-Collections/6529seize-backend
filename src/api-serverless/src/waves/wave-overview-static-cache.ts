@@ -35,12 +35,12 @@ export interface WaveOverviewStaticCacheReadResult {
 }
 
 const logger = Logger.get('WAVE_OVERVIEW_STATIC_CACHE');
-const CACHE_TTL = Time.seconds(30);
+export const WAVE_OVERVIEW_STATIC_CACHE_TTL = Time.seconds(30);
 // v2: viewer-neutral entries (no creator) keyed on the description drop's
 // content version.
 const CACHE_KEY_PREFIX = 'cache_6529_wave_overview_static_v2';
 const DROP_CONTENT_VERSION_KEY_PREFIX = 'cache_6529_drop_content_version_v1';
-const DROP_CONTENT_VERSION_TTL = Time.days(1);
+export const DROP_CONTENT_VERSION_TTL = Time.days(1);
 /** Media still being uploaded or processed changes without a drop write. */
 const SETTLED_MEDIA_STATUSES: ReadonlySet<DropMediaUploadStatus> = new Set([
   DropMediaUploadStatus.READY,
@@ -155,7 +155,11 @@ export async function writeWaveOverviewStaticCache({
       Object.entries(entriesByWaveId).map(async ([waveId, entry]) => {
         const cacheKey = cacheKeysByWaveId[waveId];
         if (cacheKey && hasSettledMedia(entry)) {
-          await redisSetJson(cacheKey, viewerNeutral(entry), CACHE_TTL);
+          await redisSetJson(
+            cacheKey,
+            viewerNeutral(entry),
+            WAVE_OVERVIEW_STATIC_CACHE_TTL
+          );
         }
       })
     );

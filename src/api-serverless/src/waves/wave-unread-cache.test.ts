@@ -11,6 +11,9 @@ import {
   invalidateWaveUnreadCacheForWave,
   invalidateWaveUnreadCacheForWaveAfterCommit,
   readWaveUnreadSummaryCache,
+  WAVE_UNREAD_SUMMARY_CACHE_TTL_MAX_SECONDS,
+  WAVE_UNREAD_VERSION_TTL,
+  waveUnreadSummaryCacheTtlSeconds,
   withInFlightWaveUnreadSummaryCacheMiss,
   writeWaveUnreadSummaryCache
 } from './wave-unread-cache';
@@ -158,6 +161,49 @@ describe('wave unread cache', () => {
     );
   });
 
+  it('stores summaries for 60 s unless the TTL env says otherwise', async () => {
+    const original = process.env.WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS;
+    const write = () =>
+      writeWaveUnreadSummaryCache({
+        summariesByWaveId: {
+          'wave-1': { unread_drops_count: 1, first_unread_drop_serial_no: 1 }
+        },
+        cacheKeysByWaveId: { 'wave-1': 'cache-key-1' }
+      });
+    try {
+      delete process.env.WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS;
+      await write();
+      process.env.WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS = '300';
+      await write();
+      expect(
+        redisSetJsonMock.mock.calls.map(([, , ttl]) => ttl?.toSeconds())
+      ).toEqual([60, 300]);
+    } finally {
+      if (original === undefined) {
+        delete process.env.WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS;
+      } else {
+        process.env.WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS = original;
+      }
+    }
+  });
+
+  it.each([
+    [undefined, 60],
+    ['', 60],
+    [' 120 ', 120],
+    ['1', 5],
+    ['999999', 3600],
+    ['-3', 5],
+    ['1.5', 60],
+    ['five', 60]
+  ])('reads WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS=%p as %p s', (raw, ttl) => {
+    expect(
+      waveUnreadSummaryCacheTtlSeconds(
+        raw === undefined ? {} : { WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS: raw }
+      )
+    ).toBe(ttl);
+  });
+
   it('coalesces concurrent misses only for the same versions', async () => {
     const summaries = {
       'wave-1': { unread_drops_count: 2, first_unread_drop_serial_no: 12 }
@@ -242,5 +288,12 @@ describe('wave unread cache', () => {
     // Outside a transaction it bumps at once.
     await invalidateWaveUnreadCacheForWaveAfterCommit('wave-3', undefined);
     expect(redis.set).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps versions far longer than the longest allowed summary TTL', () => {
+    // An expired version reads as "0" again: no summary may outlive it.
+    expect(WAVE_UNREAD_VERSION_TTL.toSeconds()).toBeGreaterThan(
+      100 * WAVE_UNREAD_SUMMARY_CACHE_TTL_MAX_SECONDS
+    );
   });
 });

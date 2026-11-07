@@ -2,7 +2,9 @@ import { getRedisClient, redisGetMany, redisSetJson } from '@/redis';
 import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { CACHE_VERSION_SETTLE_MS } from './wave-cache-version';
 import {
+  DROP_CONTENT_VERSION_TTL,
   invalidateWaveOverviewStaticCacheForDrops,
+  WAVE_OVERVIEW_STATIC_CACHE_TTL,
   readWaveOverviewStaticCache,
   withInFlightWaveOverviewStaticCacheRead,
   writeWaveOverviewStaticCache
@@ -206,5 +208,12 @@ describe('wave overview static cache', () => {
       `${DROP_V}:d1`,
       `${DROP_V}:d2`
     ]);
+  });
+
+  it('keeps drop content versions far longer than any entry keyed on them', () => {
+    // An expired version reads as "0" again: no entry may outlive it.
+    expect(DROP_CONTENT_VERSION_TTL.toSeconds()).toBeGreaterThan(
+      100 * WAVE_OVERVIEW_STATIC_CACHE_TTL.toSeconds()
+    );
   });
 });
