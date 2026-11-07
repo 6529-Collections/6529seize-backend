@@ -91,6 +91,61 @@ export type NativeDecisionAward = NativeAward & {
   readonly entry_id: string;
 };
 
+export type NativeLeaderboardRow = {
+  readonly entry: NativeRuntimeEntry;
+  readonly rating: number;
+  readonly rank: number;
+  readonly overThresholdSince: number | null;
+  readonly orderingTime?: number;
+  readonly decisionRating?: number;
+};
+
+type StoredLeaderboardRow = {
+  readonly entry_id: string;
+  readonly drop_id: string;
+  readonly rating: number | string;
+  readonly real_time_rating: number | string;
+  readonly rank: number | string | null;
+  readonly decision_rating: number | string | null;
+  readonly over_threshold_since: number | string | null;
+  readonly ordering_time: number | string | null;
+  readonly published_at: number | string | null;
+};
+
+function sameNumber(
+  stored: number | string | null | undefined,
+  next: number | null | undefined
+): boolean {
+  if (stored === null || stored === undefined)
+    return next === null || next === undefined;
+  return next !== null && next !== undefined && Number(stored) === next;
+}
+
+/**
+ * Whether saving `row` changes what clients read from the stored row. In a
+ * time-locked competition every refresh restamps `ordering_time` and
+ * `published_at` with the snapshot time, so those count only when a row is
+ * first published; elsewhere `ordering_time` breaks rating ties and counts.
+ */
+function leaderboardRowChanged(
+  stored: StoredLeaderboardRow | undefined,
+  row: NativeLeaderboardRow,
+  now: number,
+  timeLocked: boolean
+): boolean {
+  if (!stored) return true;
+  if (timeLocked && stored.published_at === null) return true;
+  return (
+    stored.drop_id !== row.entry.drop_id ||
+    !sameNumber(stored.rating, row.rating) ||
+    !sameNumber(stored.real_time_rating, row.entry.real_time_rating) ||
+    !sameNumber(stored.rank, row.rank) ||
+    !sameNumber(stored.decision_rating, row.decisionRating ?? row.rating) ||
+    !sameNumber(stored.over_threshold_since, row.overThresholdSince) ||
+    (!timeLocked && !sameNumber(stored.ordering_time, row.orderingTime ?? now))
+  );
+}
+
 function safeAggregateRating(value: number | string): number {
   const rating = Number(value);
   if (!Number.isSafeInteger(rating))
@@ -394,20 +449,36 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     );
   }
 
+  /**
+   * Saves the leaderboard snapshot and resolves whether it changed what
+   * clients read: an entry added, removed, or with a different rating,
+   * real-time rating, rank, decision rating, threshold time or tie order.
+   * Callers send COMPETITION_LEADERBOARD_UPDATED only when it did.
+   */
   public async saveLeaderboard(
     competitionId: string,
-    entries: readonly {
-      entry: NativeRuntimeEntry;
-      rating: number;
-      rank: number;
-      overThresholdSince: number | null;
-      orderingTime?: number;
-      decisionRating?: number;
-    }[],
+    entries: readonly NativeLeaderboardRow[],
     now: number,
-    ctx: RequestContext
-  ): Promise<void> {
+    ctx: RequestContext,
+    { timeLocked = false }: { timeLocked?: boolean } = {}
+  ): Promise<boolean> {
     this.requireTransaction(ctx);
+    const stored = new Map(
+      (
+        await this.query<StoredLeaderboardRow>(
+          'readLeaderboard',
+          `select entry_id, drop_id, rating, real_time_rating, \`rank\`, decision_rating,
+            over_threshold_since, ordering_time, published_at
+          from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}
+          where competition_id = :competitionId`,
+          { competitionId },
+          ctx
+        )
+      ).map((row) => [row.entry_id, row])
+    );
+    const changed = entries.some((row) =>
+      leaderboardRowChanged(stored.get(row.entry.id), row, now, timeLocked)
+    );
     await readSequentially(
       collections.chunkArray([...entries], 100),
       async (page) => {
@@ -479,7 +550,7 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
         );
       }
     );
-    await this.query(
+    const removed = await this.query<unknown>(
       'saveLeaderboard',
       `delete lb from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE} lb
       left join ${COMPETITION_ENTRIES_TABLE} e on e.id = lb.entry_id and e.competition_id = lb.competition_id
@@ -488,6 +559,7 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       { competitionId },
       ctx
     );
+    return changed || this.db.getAffectedRows(removed) > 0;
   }
 
   public async listPauses(
