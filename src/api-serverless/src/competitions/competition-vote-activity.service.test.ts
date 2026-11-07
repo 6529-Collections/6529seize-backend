@@ -142,8 +142,8 @@ it('does not expose primary-wave logs through a separate native competition', as
 it('masks unreadable competitions before querying any history', async () => {
   jest
     .mocked(competitionService.getCompetition)
-    .mockRejectedValue(new NotFoundException('Competition not found'));
-  await expect(read()).rejects.toThrow('Competition not found');
+    .mockRejectedValue(new NotFoundException('Decision not found'));
+  await expect(read()).rejects.toThrow('Decision not found');
   expect(
     competitionRepository.findCompetitionRecordById
   ).not.toHaveBeenCalled();
@@ -154,7 +154,7 @@ it('rejects a child from another wave without querying its history', async () =>
   jest
     .mocked(competitionRepository.findCompetitionRecordById)
     .mockResolvedValue({ wave_id: 'other-wave' } as CompetitionRecord);
-  await expect(read()).rejects.toThrow('Competition not found');
+  await expect(read()).rejects.toThrow('Decision not found');
   expect(competitionVoteActivityRepository.list).not.toHaveBeenCalled();
 });
 

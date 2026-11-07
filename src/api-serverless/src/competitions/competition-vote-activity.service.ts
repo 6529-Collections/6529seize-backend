@@ -24,7 +24,7 @@ export async function listCompetitionVoteActivity(
     ctx
   );
   if (!record || record.wave_id !== waveId)
-    throw new NotFoundException('Competition not found');
+    throw new NotFoundException('Decision not found');
   const rows = await competitionVoteActivityRepository.list(
     competitionId,
     offset,
