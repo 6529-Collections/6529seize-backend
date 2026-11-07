@@ -1,11 +1,5 @@
 import { Request } from 'express';
 import { isIP } from 'node:net';
-import { Logger } from '../../../logging';
-import axios from 'axios';
-import * as mcache from 'memory-cache';
-import { Time } from '../../../time';
-
-const logger = Logger.get('API_POLICIES');
 
 const EU_EEA_COUNTRIES = [
   'AT', // Austria
@@ -44,7 +38,6 @@ export const isLocalhost = (ip: string) => {
   return ip === '127.0.0.1' || ip === '::1';
 };
 
-const FINDIP_API_BASE_URL = 'https://api.findip.net/';
 const IPV4_MAPPED_IPV6_PREFIX = '::ffff:';
 // Plain IPv4/IPv6 literals only: no zone identifiers, ports or separators.
 const IP_LITERAL_CHARACTERS = /^[0-9a-f.:]+$/i;
@@ -69,45 +62,6 @@ export function normalizeIp(value: unknown): string {
     }
   }
   return isIP(value) ? value : '';
-}
-
-function buildFindIpUrl(ip: string): string {
-  const url = new URL(FINDIP_API_BASE_URL);
-  url.pathname = `/${ip}/`;
-  url.searchParams.set('token', process.env.FINDIP_API_TOKEN ?? '');
-  return url.toString();
-}
-
-export async function getIpInfo(ip: string): Promise<{
-  city_name: string;
-  country_name: string;
-  country: string;
-} | null> {
-  const normalizedIp = normalizeIp(ip);
-  if (!normalizedIp) {
-    return null;
-  }
-  try {
-    const key = 'ipInfo_' + normalizedIp;
-    const cacheHit = mcache.get(key);
-    if (cacheHit) {
-      return JSON.parse(cacheHit);
-    }
-    const response = await axios.get(buildFindIpUrl(normalizedIp), {
-      timeout: 3000
-    });
-    const data = response.data;
-    const resp = {
-      city_name: data?.city?.names?.en,
-      country_name: data?.country?.names?.en,
-      country: data?.country?.iso_code
-    };
-    mcache.put(key, JSON.stringify(resp), Time.days(1).toMillis());
-    return resp;
-  } catch (error) {
-    logger.error(error);
-    return null;
-  }
 }
 
 /**
