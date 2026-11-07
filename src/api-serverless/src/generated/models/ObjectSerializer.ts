@@ -797,6 +797,9 @@ export * from '../models/ApiTdhSeasonOnePartialKey';
 export * from '../models/ApiTdhSeasonOnePartialRule';
 export * from '../models/ApiTdhSeasonScheduleRule';
 export * from '../models/ApiTdhSeasonSetRule';
+export * from '../models/ApiTelemetryBatch';
+export * from '../models/ApiTelemetryEvent';
+export * from '../models/ApiTelemetryHealthCounters';
 export * from '../models/ApiToggleHideLinkPreviewRequest';
 export * from '../models/ApiTokenTdh';
 export * from '../models/ApiTokenTdhRank';
@@ -1784,6 +1787,9 @@ import { ApiTdhSeasonOnePartialKey } from '../models/ApiTdhSeasonOnePartialKey';
 import { ApiTdhSeasonOnePartialRule    } from '../models/ApiTdhSeasonOnePartialRule';
 import { ApiTdhSeasonScheduleRule } from '../models/ApiTdhSeasonScheduleRule';
 import { ApiTdhSeasonSetRule } from '../models/ApiTdhSeasonSetRule';
+import { ApiTelemetryBatch, ApiTelemetryBatchVEnum    } from '../models/ApiTelemetryBatch';
+import { ApiTelemetryEvent, ApiTelemetryEventVEnum  , ApiTelemetryEventTEnum   , ApiTelemetryEventDeviceEnum  , ApiTelemetryEventPlatformEnum     , ApiTelemetryEventBrowserEnum              } from '../models/ApiTelemetryEvent';
+import { ApiTelemetryHealthCounters } from '../models/ApiTelemetryHealthCounters';
 import { ApiToggleHideLinkPreviewRequest } from '../models/ApiToggleHideLinkPreviewRequest';
 import { ApiTokenTdh } from '../models/ApiTokenTdh';
 import { ApiTokenTdhRank } from '../models/ApiTokenTdhRank';
@@ -2241,6 +2247,12 @@ let enumsMap: Set<string> = new Set<string>([
     "ApiSubscriptionCoverageUnknownReason",
     "ApiSubwavesSort",
     "ApiTdhSeasonOnePartialKey",
+    "ApiTelemetryBatchVEnum",
+    "ApiTelemetryEventVEnum",
+    "ApiTelemetryEventTEnum",
+    "ApiTelemetryEventDeviceEnum",
+    "ApiTelemetryEventPlatformEnum",
+    "ApiTelemetryEventBrowserEnum",
     "ApiUpcomingMemeSubscriptionStatusSourceEnum",
     "ApiUpdateProfilePreferencesDirectMessagePolicyEnum",
     "ApiUpdateProfilePreferencesNotificationLevelEnum",
@@ -3007,6 +3019,9 @@ let typeMap: {[index: string]: any} = {
     "ApiTdhSeasonOnePartialRule": ApiTdhSeasonOnePartialRule,
     "ApiTdhSeasonScheduleRule": ApiTdhSeasonScheduleRule,
     "ApiTdhSeasonSetRule": ApiTdhSeasonSetRule,
+    "ApiTelemetryBatch": ApiTelemetryBatch,
+    "ApiTelemetryEvent": ApiTelemetryEvent,
+    "ApiTelemetryHealthCounters": ApiTelemetryHealthCounters,
     "ApiToggleHideLinkPreviewRequest": ApiToggleHideLinkPreviewRequest,
     "ApiTokenTdh": ApiTokenTdh,
     "ApiTokenTdhRank": ApiTokenTdhRank,
