@@ -301,13 +301,18 @@ describe('WsListenersNotifier', () => {
       }));
 
     it('sends through a capped pool with each recipient expiry and one payload', async () => {
+      // Every send waits on a gate, so the pool's cap is actually reached.
+      let open!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        open = resolve;
+      });
       let active = 0;
       let maximum = 0;
       const appWebSockets = {
         send: jest.fn(async () => {
           active++;
           maximum = Math.max(maximum, active);
-          await new Promise((resolve) => setTimeout(resolve, 1));
+          await gate;
           active--;
           return { status: 'sent' };
         })
@@ -321,13 +326,24 @@ describe('WsListenersNotifier', () => {
         } as never
       );
 
-      await notifier.notifyAboutDropUpdate(createDrop('hello'), {});
+      const fanout = notifier.notifyAboutDropUpdate(createDrop('hello'), {});
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(appWebSockets.send).toHaveBeenCalledTimes(WS_SEND_CONCURRENCY_CAP);
+      expect(active).toBe(WS_SEND_CONCURRENCY_CAP);
+      open();
+      await fanout;
 
       expect(appWebSockets.send).toHaveBeenCalledTimes(200);
       expect(maximum).toBe(WS_SEND_CONCURRENCY_CAP);
       const calls = appWebSockets.send.mock.calls as unknown as [
-        { jwtExpiry: number; message: string; batch: unknown }
+        {
+          connectionId: string;
+          jwtExpiry: number;
+          message: string;
+          batch: unknown;
+        }
       ][];
+      expect(new Set(calls.map(([call]) => call.connectionId)).size).toBe(200);
       expect(calls.every(([call]) => call.jwtExpiry === 4102444800)).toBe(true);
       expect(calls.every(([call]) => call.batch === calls[0][0].batch)).toBe(
         true
@@ -341,6 +357,36 @@ describe('WsListenersNotifier', () => {
         })
       );
       expect(bodies.size).toBe(1);
+    });
+
+    it('logs rejected bookkeeping once per fan-out without failing it', async () => {
+      const appWebSockets = {
+        send: jest.fn(async ({ batch }) => {
+          batch.defer(Promise.reject(new Error('redis down')));
+          return { status: 'sent' };
+        })
+      };
+      const notifier = new WsListenersNotifier(
+        appWebSockets as never,
+        {
+          getCurrentlyOnlineCommunityMemberConnectionIds: jest
+            .fn()
+            .mockResolvedValue(recipients(3))
+        } as never
+      );
+      const warn = jest.fn();
+      (notifier as any).logger = { warn, error: jest.fn() };
+
+      await expect(
+        notifier.notifyAboutDropUpdate(createDrop('hello'), {})
+      ).resolves.toBeUndefined();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith({
+        code: 'WS_DELIVERY_BOOKKEEPING_FAILED',
+        failed: 3,
+        total: 3
+      });
     });
 
     it('awaits deferred bookkeeping before the fan-out returns', async () => {

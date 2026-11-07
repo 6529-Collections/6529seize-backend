@@ -224,26 +224,31 @@ describe('shared WebSocket recovery in real Redis', () => {
     ).toBe(0);
   });
   it('sends script hashes and recovers when Redis lost its script cache (1.2)', async () => {
+    // Warm: the claim script is loaded (SCRIPT LOAD) and run by hash.
+    await firstWorker.claim('connection-1', 'first', false, now);
     const evalSha = jest.spyOn(mockClient, 'evalSha');
     const evalFull = jest.spyOn(mockClient, 'eval');
+    const load = jest.spyOn(mockClient, 'scriptLoad');
     try {
-      // First use after a flush: EVALSHA misses, EVAL runs and caches it.
-      await mockClient.scriptFlush();
-      await firstWorker.claim('connection-1', 'first', false, now);
+      await firstWorker.claim('connection-1', 'second', false, now + 1);
       expect(evalSha).toHaveBeenCalledTimes(1);
+      expect(evalFull).not.toHaveBeenCalled();
+      expect(load).not.toHaveBeenCalled();
+      // Redis lost its scripts: NOSCRIPT falls back to EVAL once...
+      await mockClient.scriptFlush();
+      await firstWorker.claim('connection-1', 'third', false, now + 2);
       expect(evalFull).toHaveBeenCalledTimes(1);
-      // The finish script misses once too; the second claim is a pure hit.
-      await expect(finish('first', 'sent', now + 1)).resolves.toBe(false);
-      await firstWorker.claim('connection-1', 'second', false, now + 2);
-      expect(evalSha).toHaveBeenCalledTimes(3);
-      expect(evalFull).toHaveBeenCalledTimes(2);
-      expect(await firstWorker.snapshot(now + 2)).toMatchObject({
-        attempted: 2,
-        sent: 1
+      // ...and the next call reloads the hash instead of sending the script.
+      await firstWorker.claim('connection-1', 'fourth', false, now + 3);
+      expect(evalFull).toHaveBeenCalledTimes(1);
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(await firstWorker.snapshot(now + 3)).toMatchObject({
+        attempted: 4
       });
     } finally {
       evalSha.mockRestore();
       evalFull.mockRestore();
+      load.mockRestore();
     }
   });
 });
