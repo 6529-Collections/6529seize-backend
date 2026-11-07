@@ -1,4 +1,5 @@
 import {
+  CORS_PREFLIGHT_MAX_AGE_SECONDS,
   corsOptions,
   getCorsOptionsForRequest,
   isWebAuthCredentialOriginAllowed
@@ -28,6 +29,34 @@ describe('api CORS constants', () => {
     expect(corsOptions).not.toHaveProperty('credentials');
     expect(corsOptions.exposedHeaders).toContain('X-Request-Id');
   });
+
+  it('caches preflights for the two-hour browser maximum', () => {
+    expect(CORS_PREFLIGHT_MAX_AGE_SECONDS).toBe(7200);
+    expect(corsOptions.maxAge).toBe(7200);
+  });
+
+  it.each([
+    ['default', '/api/drops', 'https://6529.io'],
+    ['idempotent submission', '/api/market/operations', 'https://6529.io'],
+    ['credentialed web auth', '/api/auth/session-refresh', 'https://6529.io'],
+    [
+      'rejected credentialed origin',
+      '/api/auth/session-refresh',
+      'https://evil.example'
+    ],
+    [
+      'artwork documentation',
+      '/api/artwork-documentation/works',
+      'https://6529.io'
+    ]
+  ])(
+    'keeps the preflight max age on the %s variant',
+    (_variant, path, origin) => {
+      expect(getCorsOptionsForRequest(path, origin, 'api.6529.io').maxAge).toBe(
+        CORS_PREFLIGHT_MAX_AGE_SECONDS
+      );
+    }
+  );
 
   it('allows artwork version headers only for approved browser origins', () => {
     expect(
