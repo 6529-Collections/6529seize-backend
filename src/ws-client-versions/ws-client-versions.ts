@@ -1,6 +1,7 @@
 import { WS_CONNECTIONS_TABLE } from '@/constants';
 import { Logger } from '@/logging';
 import { dbSupplier, LazyDbAccessCompatibleService } from '@/sql-executor';
+import { broadcastPurposeFilterSql } from '@/ws-delivery/ws-connection-purpose';
 
 /**
  * Which frontend builds hold live sockets. A client may declare its build on
@@ -73,17 +74,18 @@ export function summarizeClientVersions(
 
 export class WsClientVersionsDb extends LazyDbAccessCompatibleService {
   /**
-   * Connected sockets per declared build. Typing-only sockets are left out,
-   * so this counts one socket per open app.
+   * Connected sockets per declared build. Typing-only sockets are left out
+   * (the same filter as broadcast audiences), so this counts one socket per
+   * open app, and sockets with any future non-typing purpose still count.
    */
   async countPrimarySocketsByClientVersion(): Promise<
     { client_version: string | null; sockets: number }[]
   > {
     return this.db.execute(
-      `select client_version, count(*) as sockets
-       from ${WS_CONNECTIONS_TABLE}
-       where purpose is null
-       group by client_version`
+      `select ws.client_version, count(*) as sockets
+       from ${WS_CONNECTIONS_TABLE} ws
+       where ${broadcastPurposeFilterSql('ws')}
+       group by ws.client_version`
     );
   }
 }
@@ -95,7 +97,9 @@ const logger = Logger.get('WS_CLIENT_VERSIONS');
 /**
  * One gauge per run: `ConnectedSockets` by `ClientVersion` (top builds,
  * `other`, `none`) plus the total, as EMF log lines (no CloudWatch API
- * call or IAM change). Best effort: a failure is logged, never thrown.
+ * call or IAM change). Best effort: a failure is logged, never thrown. If a
+ * log write fails part-way, the lines already written stay; one missed
+ * minute of a gauge is acceptable.
  */
 export async function recordClientVersionGauge({
   db = wsClientVersionsDb,

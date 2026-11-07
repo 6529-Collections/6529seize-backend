@@ -236,7 +236,6 @@ async function wsHandler(
           jwtExpiry,
           purpose: connectionPurposeFromQuery(event.queryStringParameters),
           ...(clientVersion ? { clientVersion } : {}),
-
           ...(event.queryStringParameters?.recovery_capability ===
           WS_RECOVERY_CAPABILITY
             ? { recoveryCapable: true }

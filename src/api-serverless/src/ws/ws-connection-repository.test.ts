@@ -10,7 +10,10 @@ import {
 import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
-import { WsConnectionRepository } from './ws-connection.repository';
+import {
+  resetClientVersionColumnWarningForTests,
+  WsConnectionRepository
+} from './ws-connection.repository';
 import { WsConnectionPurpose } from '@/entities/IWSConnection';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 
@@ -229,6 +232,103 @@ describe('WsConnectionRepository', () => {
         connection_id: 'typing',
         purpose: WsConnectionPurpose.TYPING
       });
+    });
+
+    it('never fails a connect when the client_version column is missing', async () => {
+      resetClientVersionColumnWarningForTests();
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      const missingColumn = Object.assign(
+        new Error(
+          "ER_BAD_FIELD_ERROR: Unknown column 'client_version' in 'field list'"
+        ),
+        { code: 'ER_BAD_FIELD_ERROR' }
+      );
+      const execute = jest.fn(async (sql: string) => {
+        if (String(sql).includes('client_version')) throw missingColumn;
+        return [];
+      });
+      const repo = new WsConnectionRepository(
+        () =>
+          ({
+            execute,
+            executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+              callback({ connection: {} })
+            )
+          }) as any,
+        {} as any
+      );
+      const connect = (connectionId: string) =>
+        repo.save(
+          {
+            identity_id: 'profile-1',
+            jwt_expiry: 123,
+            wave_id: null,
+            connection_id: connectionId,
+            purpose: null,
+            client_version: 'abc1234'
+          },
+          [],
+          {}
+        );
+
+      await expect(connect('first')).resolves.toBeUndefined();
+      await expect(connect('second')).resolves.toBeUndefined();
+
+      const inserts = execute.mock.calls
+        .map(([sql]) => String(sql))
+        .filter((sql) => sql.startsWith(`insert into ${WS_CONNECTIONS_TABLE}`));
+      // Each connect tried with the build, then registered without it.
+      expect(inserts).toEqual([
+        expect.stringContaining('client_version'),
+        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
+        expect.stringContaining('client_version'),
+        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`
+      ]);
+      // Logged once, not per connect.
+      expect(
+        warn.mock.calls.filter(([message]) =>
+          String(message).includes('client_version is missing')
+        )
+      ).toHaveLength(1);
+      warn.mockRestore();
+    });
+
+    it('still fails a connect on any other insert error', async () => {
+      const execute = jest.fn(async (sql: string) => {
+        if (String(sql).startsWith(`insert into ${WS_CONNECTIONS_TABLE}`)) {
+          throw Object.assign(new Error('ER_DUP_ENTRY'), {
+            code: 'ER_DUP_ENTRY'
+          });
+        }
+        return [];
+      });
+      const repo = new WsConnectionRepository(
+        () =>
+          ({
+            execute,
+            executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+              callback({ connection: {} })
+            )
+          }) as any,
+        {} as any
+      );
+
+      await expect(
+        repo.save(
+          {
+            identity_id: 'profile-1',
+            jwt_expiry: 123,
+            wave_id: null,
+            connection_id: 'dup',
+            purpose: null,
+            client_version: 'abc1234'
+          },
+          [],
+          {}
+        )
+      ).rejects.toMatchObject({ code: 'ER_DUP_ENTRY' });
     });
 
     it('inserts client_version only for sockets that declare a build', async () => {
