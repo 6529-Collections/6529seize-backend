@@ -1,5 +1,7 @@
 import { withCompetitionSchemaConnection } from './competition-schema';
 import { DB_TEXT_COLLATION } from '@/db/db-collation';
+import { randomUUID } from 'node:crypto';
+import { Logger } from '@/logging';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { INDEFINITE_COMPETITION_PAUSE_END } from './competition-phase';
 import {
@@ -31,7 +33,7 @@ import {
   WAVE_OUTCOME_DISTRIBUTION_ITEMS_TABLE,
   WINNER_DROP_VOTER_VOTES_TABLE
 } from '@/constants/db-tables';
-import type { SqlExecutor } from '@/sql-executor';
+import type { ConnectionWrapper, SqlExecutor } from '@/sql-executor';
 import {
   WAVE_HUB_PARTICIPATION_FIELDS,
   WAVE_HUB_VOTING_FIELDS
@@ -566,17 +568,147 @@ export function legacyCompetitionGetViewDefinition(table: string): string {
     .join(',')} from ${native.from}`;
 }
 
-/** Additive views installed before native-only readers are deployed. */
+/**
+ * Replacing a hot view takes an exclusive metadata lock. While it waits behind
+ * a running reader, every new reader of that view queues behind it, so each
+ * replacement waits at most this long and is retried a bounded number of
+ * times; the run fails rather than stalling the API.
+ */
+export const FACADE_LOCK_WAIT_SECONDS = 2;
+export const FACADE_REPLACE_RETRY_DELAYS_MS: readonly number[] = [1000, 3000];
+const ER_LOCK_WAIT_TIMEOUT = 1205;
+
+export interface LegacyCompetitionGetFacadeInstall {
+  readonly replaced: string[];
+  readonly unchanged: string[];
+}
+
+interface InstalledViewDefinition {
+  readonly view_definition: string;
+  readonly security_type: string;
+  readonly character_set_client: string;
+  readonly collation_connection: string;
+}
+
+function isLockWaitTimeout(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    (('errno' in error && error.errno === ER_LOCK_WAIT_TIMEOUT) ||
+      ('code' in error && error.code === 'ER_LOCK_WAIT_TIMEOUT'))
+  );
+}
+
+/** Additive views installed before native-only readers are deployed.
+ * Only views whose definition changed are replaced (see isFacadeViewCurrent),
+ * so routine migration runs take no locks on the hot views. */
 export async function installLegacyCompetitionGetFacade(
-  db: SqlExecutor
-): Promise<void> {
-  await withCompetitionSchemaConnection(db, async ({ connection }) => {
-    for (const table of LEGACY_GET_SOURCE_TABLES) {
-      await db.execute(
-        `create or replace sql security invoker view \`${legacyGetView(table)}\` as ${legacyCompetitionGetViewDefinition(table)}`,
-        {},
-        { wrappedConnection: connection }
-      );
-    }
+  db: SqlExecutor,
+  options: { sleep?: (ms: number) => Promise<void> } = {}
+): Promise<LegacyCompetitionGetFacadeInstall> {
+  const sleep =
+    options.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const result: LegacyCompetitionGetFacadeInstall = {
+    replaced: [],
+    unchanged: []
+  };
+  await withCompetitionSchemaConnection(
+    db,
+    async ({ connection }) => {
+      const queryOptions = { wrappedConnection: connection };
+      for (const table of LEGACY_GET_SOURCE_TABLES) {
+        const view = legacyGetView(table);
+        const definition = legacyCompetitionGetViewDefinition(table);
+        if (await isFacadeViewCurrent(db, queryOptions, view, definition)) {
+          result.unchanged.push(view);
+          continue;
+        }
+        await replaceFacadeView(db, queryOptions, view, definition, sleep);
+        result.replaced.push(view);
+      }
+    },
+    FACADE_LOCK_WAIT_SECONDS
+  );
+  Logger.get('LEGACY_COMPETITION_GET_FACADE').info('[FACADE_VIEWS_INSTALLED]', {
+    replaced: result.replaced,
+    unchanged: result.unchanged.length
   });
+  return result;
+}
+
+async function readInstalledView(
+  db: SqlExecutor,
+  queryOptions: { wrappedConnection: ConnectionWrapper<unknown> },
+  view: string
+): Promise<InstalledViewDefinition | null> {
+  return db.oneOrNull<InstalledViewDefinition>(
+    `select view_definition as view_definition, security_type as security_type,
+            character_set_client as character_set_client,
+            collation_connection as collation_connection
+     from information_schema.views
+     where table_schema = database() and table_name = :view`,
+    { view },
+    queryOptions
+  );
+}
+
+/**
+ * MySQL stores a normalized view definition, so compare like with like: create
+ * the desired definition under a throwaway name (no lock on the live view),
+ * read both normalized forms back, and drop the throwaway view.
+ */
+async function isFacadeViewCurrent(
+  db: SqlExecutor,
+  queryOptions: { wrappedConnection: ConnectionWrapper<unknown> },
+  view: string,
+  definition: string
+): Promise<boolean> {
+  const installed = await readInstalledView(db, queryOptions, view);
+  if (!installed) return false;
+  const candidate = `lgf_candidate_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+  try {
+    await db.execute(
+      `create sql security invoker view \`${candidate}\` as ${definition}`,
+      {},
+      queryOptions
+    );
+    const desired = await readInstalledView(db, queryOptions, candidate);
+    return (
+      !!desired &&
+      desired.view_definition === installed.view_definition &&
+      desired.security_type === installed.security_type &&
+      desired.character_set_client === installed.character_set_client &&
+      desired.collation_connection === installed.collation_connection
+    );
+  } finally {
+    await db.execute(`drop view if exists \`${candidate}\``, {}, queryOptions);
+  }
+}
+
+async function replaceFacadeView(
+  db: SqlExecutor,
+  queryOptions: { wrappedConnection: ConnectionWrapper<unknown> },
+  view: string,
+  definition: string,
+  sleep: (ms: number) => Promise<void>
+): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await db.execute(
+        `create or replace sql security invoker view \`${view}\` as ${definition}`,
+        {},
+        queryOptions
+      );
+      return;
+    } catch (error) {
+      const delay = FACADE_REPLACE_RETRY_DELAYS_MS[attempt];
+      if (!isLockWaitTimeout(error)) throw error;
+      if (delay === undefined)
+        throw new Error(
+          `Facade view ${view} stayed locked after ${attempt + 1} attempts of ${FACADE_LOCK_WAIT_SECONDS}s; not replaced`
+        );
+      await sleep(delay);
+    }
+  }
 }
