@@ -1,0 +1,82 @@
+<?xml version="1.0" standalone="yes"?>
+<sdnList xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/XML">
+  <publshInformation>
+    <Publish_Date>01/15/2026</Publish_Date>
+    <Record_Count>3</Record_Count>
+  </publshInformation>
+  <sdnEntry>
+    <uid>1001</uid>
+    <lastName>TEST ENTITY ONE</lastName>
+    <sdnType>Entity</sdnType>
+    <programList>
+      <program>DPRK3</program>
+      <program>CYBER2</program>
+    </programList>
+    <idList>
+      <id>
+        <uid>1</uid>
+        <idType>Digital Currency Address - ETH</idType>
+        <idNumber>0xAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa</idNumber>
+      </id>
+      <id>
+        <uid>2</uid>
+        <idType>Digital Currency Address - USDT</idType>
+        <idNumber>0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</idNumber>
+      </id>
+      <id>
+        <uid>3</uid>
+        <idType>Digital Currency Address - XBT</idType>
+        <idNumber>bc1qtestaddressnotevm000000000000000000000</idNumber>
+      </id>
+      <id>
+        <uid>4</uid>
+        <idType>Digital Currency Address - TRX</idType>
+        <idNumber>TTestTronAddressNotEvm00000000000000</idNumber>
+      </id>
+      <id>
+        <uid>5</uid>
+        <idType>Digital Currency Address - ETH</idType>
+        <idNumber> 0x2222222222222222222222222222222222222222 </idNumber>
+      </id>
+      <id>
+        <uid>6</uid>
+        <idType>Digital Currency Address - ETH</idType>
+        <idNumber>0x1234</idNumber>
+      </id>
+      <id>
+        <uid>7</uid>
+        <idType>Registration Number</idType>
+        <idNumber>0x3333333333333333333333333333333333333333</idNumber>
+      </id>
+    </idList>
+  </sdnEntry>
+  <sdnEntry>
+    <uid>1002</uid>
+    <firstName>Jane</firstName>
+    <lastName>DOE</lastName>
+    <sdnType>Individual</sdnType>
+    <programList>
+      <program>CYBER2</program>
+    </programList>
+    <idList>
+      <id>
+        <uid>8</uid>
+        <idType>Digital Currency Address - ETH</idType>
+        <idNumber>0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</idNumber>
+      </id>
+      <id>
+        <uid>9</uid>
+        <idType>Digital Currency Address - USDC</idType>
+        <idNumber>0x3333333333333333333333333333333333333333</idNumber>
+      </id>
+    </idList>
+  </sdnEntry>
+  <sdnEntry>
+    <uid>1003</uid>
+    <lastName>NO CRYPTO &amp; CO.</lastName>
+    <sdnType>Entity</sdnType>
+    <programList>
+      <program>CUBA</program>
+    </programList>
+  </sdnEntry>
+</sdnList>

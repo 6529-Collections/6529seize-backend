@@ -1,0 +1,55 @@
+{
+  "description": "Release envelope vector. Test keys only: private key = keccak256(utf8(test_key_seed)). Never use them for anything real.",
+  "test_key_seed": "6529-sanctions-test-key-1",
+  "other_key_seed": "6529-sanctions-test-key-2",
+  "payload_utf8": "{\"schema\":\"6529.sanctions-list.v1\",\"test\":true}",
+  "signing_message_utf8": "{\"_type\":\"6529.sanctions-list.release\",\"expires_at\":\"2026-01-29T06:15:00Z\",\"payload\":{\"bytes\":47,\"cid\":\"bafkreibs2tiv73ic2b2tl6xgvvesbbkxtw5ka7lg2ynso67n4lhvwhoubi\",\"path\":\"sanctions-list.v1.json\",\"sha256\":\"32d4d15fed02d07535fae6ad492085579dbaa07d66d61b277bede2cf5b1dd40a\"},\"policy\":{\"id\":\"6529.io/sanctions-policy\",\"version\":\"1\"},\"previous\":{\"sequence\":1,\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"},\"published_at\":\"2026-01-15T06:15:00Z\",\"sequence\":2,\"spec_version\":\"1\"}",
+  "envelope": {
+    "signed": {
+      "_type": "6529.sanctions-list.release",
+      "spec_version": "1",
+      "sequence": 2,
+      "published_at": "2026-01-15T06:15:00Z",
+      "expires_at": "2026-01-29T06:15:00Z",
+      "payload": {
+        "path": "sanctions-list.v1.json",
+        "sha256": "32d4d15fed02d07535fae6ad492085579dbaa07d66d61b277bede2cf5b1dd40a",
+        "bytes": 47,
+        "cid": "bafkreibs2tiv73ic2b2tl6xgvvesbbkxtw5ka7lg2ynso67n4lhvwhoubi"
+      },
+      "previous": {
+        "sequence": 1,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "policy": {
+        "id": "6529.io/sanctions-policy",
+        "version": "1"
+      }
+    },
+    "signatures": [
+      {
+        "keyid": "0x153dac7c6f679e5f8eba1a46f54904fe735dd28f",
+        "method": "eip191-secp256k1",
+        "sig": "0xc9a9ae5dba7799cbac72b1a81bb49fd5e62dfdcc10e3bc5265e4ef5a92fb23444be48324f51e28a323376174e9483397fe17c8844bcccd73233cbdd164edcbb91c"
+      }
+    ]
+  },
+  "keys": {
+    "schema": "6529.sanctions-keys.v1",
+    "roles": {
+      "sanctions": {
+        "threshold": 1,
+        "keys": [
+          {
+            "keyid": "0x153dac7c6f679e5f8eba1a46f54904fe735dd28f",
+            "method": "eip191-secp256k1"
+          }
+        ]
+      }
+    }
+  },
+  "other_signer": {
+    "address": "0xc0b5f1908292183559f677a3fb4c1cc657f43746",
+    "sig": "0x96b4a718718e263b34e02905431a78adf8b7f90442965eecfb41e395e0c8c92248e636cf4f74ad037f49df542482a32e2cd7c2fca6fd9a08daa8c40c611322c21c"
+  }
+}

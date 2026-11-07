@@ -1,0 +1,6 @@
+{"total":4,"items":[
+{"contentType":"cryptocurrencyWallet","name":"w1","id":"w1","properties":{"walletAddress":"0xEeEeEeEeEeEeEeEeEeEeEeEeEeEeEeEeEeEeEeEe, TR2nTbTestTron","coinType":"Ethereum","designatedOperatives":[{"id":"p1","name":"Test Operative"}],"designatedOrganizations":[{"id":"o1","name":"Test Organization"}],"network":null}},
+{"contentType":"cryptocurrencyWallet","name":"w2","id":"w2","properties":{"walletAddress":"0xffffffffffffffffffffffffffffffffffffffff","coinType":"ETH","designatedOperatives":null,"designatedOrganizations":null,"network":null}},
+{"contentType":"cryptocurrencyWallet","name":"962788680555","id":"w3","properties":{"walletAddress":"962788680555","coinType":"Binance account","designatedOperatives":null,"designatedOrganizations":null}},
+{"contentType":"cryptocurrencyWallet","name":"w4","id":"w4","properties":{"walletAddress":"0x1212121212121212121212121212121212121212","coinType":"USDT","designatedOperatives":null,"designatedOrganizations":null}}
+]}

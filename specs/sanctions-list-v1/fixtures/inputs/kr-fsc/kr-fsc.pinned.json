@@ -1,0 +1,30 @@
+{
+  "schema": "6529.sanctions-pinned-source.v1",
+  "source": "kr-fsc",
+  "published": "2026-01-14",
+  "document": {
+    "title": "Test annex",
+    "url": "https://example.invalid/kr-annex.pdf",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "bytes": 1,
+    "format": "pdf"
+  },
+  "alternate_documents": [],
+  "review": {
+    "extracted_on": "2026-01-15",
+    "method": "test fixture",
+    "second_check": null
+  },
+  "entries": [
+    {
+      "entry_id": "738",
+      "entity": "TEST GROUP",
+      "programs": ["Test Act, art. 4(1)(2)"],
+      "listed_on": "2023-02-10",
+      "addresses": [
+        { "address": "0xAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa", "labels": ["ETH"] },
+        { "address": "0x1313131313131313131313131313131313131313", "labels": ["ETH"] }
+      ]
+    }
+  ]
+}

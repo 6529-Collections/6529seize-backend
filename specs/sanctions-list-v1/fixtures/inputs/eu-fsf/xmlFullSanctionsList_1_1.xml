@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<export xmlns="http://eu.europa.ec/fpi/fsd/export" generationDate="2026-01-20T10:00:00.000+01:00" globalFileId="1">
+    <sanctionEntity designationDate="2025-02-24" designationDetails="" unitedNationId="" euReferenceNumber="EU.1.1" logicalId="1">
+        <regulation regulationType="amendment" organisationType="council" programme="UKR" logicalId="2"/>
+        <subjectType code="enterprise" classificationCode="E"/>
+        <nameAlias firstName="" middleName="" lastName="" wholeName="Test EU Exchange" strong="true" logicalId="3">
+            <remark>Known wallet addresses:
+ETH: 0x8888888888888888888888888888888888888888
+BTC: bc1qtestnotevm
+BSC: 0x9999999999999999999999999999999999999999
+TRX: TA1hsikTestTron
+SplitTron</remark>
+        </nameAlias>
+    </sanctionEntity>
+    <sanctionEntity designationDate="" euReferenceNumber="EU.2.2" logicalId="4">
+        <nameAlias wholeName="No Wallet Entity" logicalId="5"/>
+    </sanctionEntity>
+</export>

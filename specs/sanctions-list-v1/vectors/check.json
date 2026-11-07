@@ -1,0 +1,105 @@
+{
+  "description": "Checking-function vectors (spec section 4). Every case uses 'list' below. as_of is a UTC calendar date.",
+  "list": {
+    "schema": "6529.sanctions-list.v1",
+    "builder": "6529-sanctions-builder/1",
+    "chain_family": "evm",
+    "sources": [],
+    "addresses": [
+      {
+        "address": "0x1000000000000000000000000000000000000001",
+        "listings": [
+          { "source": "us-ofac-sdn", "entry_id": "1", "entity": "Open-ended", "programs": ["CYBER2"], "labels": ["ETH"], "listed_on": null, "valid_until": null }
+        ]
+      },
+      {
+        "address": "0x1000000000000000000000000000000000000002",
+        "listings": [
+          { "source": "il-nbctf", "entry_id": "FO 02/24", "entity": null, "programs": ["FO (Forfeiture)"], "labels": ["ETH"], "listed_on": "2024-01-21", "valid_until": "2026-07-31" }
+        ]
+      },
+      {
+        "address": "0x1000000000000000000000000000000000000003",
+        "listings": [
+          { "source": "il-nbctf", "entry_id": "FO 01/25", "entity": null, "programs": ["FO (Forfeiture)"], "labels": ["ETH"], "listed_on": "2025-01-26", "valid_until": "2028-04-29" },
+          { "source": "il-nbctf", "entry_id": "FO 44/21", "entity": null, "programs": ["FO (Forfeiture)"], "labels": ["ETH"], "listed_on": "2021-06-30", "valid_until": "2024-02-22" }
+        ]
+      },
+      {
+        "address": "0x1000000000000000000000000000000000000004",
+        "listings": [
+          { "source": "eu-fsf", "entry_id": "EU.1.1", "entity": null, "programs": ["UKR"], "labels": ["ETH"], "listed_on": null, "valid_until": null },
+          { "source": "uk-fcdo", "entry_id": "TST0001", "entity": null, "programs": [], "labels": [], "listed_on": null, "valid_until": null }
+        ]
+      }
+    ],
+    "totals": { "addresses": 4, "listings": 6, "sources": 0 }
+  },
+  "is_sanctioned": [
+    { "address": "0x1000000000000000000000000000000000000001", "as_of": "2026-11-06", "expected": true },
+    { "address": "0x1000000000000000000000000000000000000001", "as_of": "1990-01-01", "expected": true },
+    { "address": " 0X1000000000000000000000000000000000000001", "as_of": "2026-11-06", "expected": false, "note": "0X prefix is not an address" },
+    { "address": " 0x1000000000000000000000000000000000000001 ", "as_of": "2026-11-06", "expected": true, "note": "whitespace is trimmed" },
+    { "address": "0x1000000000000000000000000000000000000002", "as_of": "2026-07-31", "expected": true, "note": "valid_until is inclusive" },
+    { "address": "0x1000000000000000000000000000000000000002", "as_of": "2026-08-01", "expected": false, "note": "lapsed order (ruling R4)" },
+    { "address": "0x1000000000000000000000000000000000000003", "as_of": "2026-11-06", "expected": true, "note": "one order in force is enough" },
+    { "address": "0x1000000000000000000000000000000000000003", "as_of": "2028-04-30", "expected": false },
+    { "address": "0x1000000000000000000000000000000000000004", "as_of": "2026-11-06", "expected": true },
+    { "address": "0x2000000000000000000000000000000000000000", "as_of": "2026-11-06", "expected": false },
+    { "address": "not an address", "as_of": "2026-11-06", "expected": false }
+  ],
+  "profile_status": [
+    {
+      "wallets": ["0x2000000000000000000000000000000000000000", "0x1000000000000000000000000000000000000004"],
+      "as_of": "2026-11-06",
+      "expected": { "blocked": true, "matched": [{ "address": "0x1000000000000000000000000000000000000004", "sources": ["eu-fsf", "uk-fcdo"] }] }
+    },
+    {
+      "wallets": ["0x1000000000000000000000000000000000000003", "0x1000000000000000000000000000000000000003", "0x1000000000000000000000000000000000000001"],
+      "as_of": "2026-11-06",
+      "expected": {
+        "blocked": true,
+        "matched": [
+          { "address": "0x1000000000000000000000000000000000000001", "sources": ["us-ofac-sdn"] },
+          { "address": "0x1000000000000000000000000000000000000003", "sources": ["il-nbctf"] }
+        ]
+      }
+    },
+    { "wallets": ["0x1000000000000000000000000000000000000002"], "as_of": "2026-11-06", "expected": { "blocked": false, "matched": [] } },
+    { "wallets": ["0x2000000000000000000000000000000000000000"], "as_of": "2026-11-06", "expected": { "blocked": false, "matched": [] } },
+    { "wallets": [], "as_of": "2026-11-06", "expected": { "blocked": false, "matched": [] } }
+  ],
+  "delegation": [
+    { "from": ["0x2000000000000000000000000000000000000000"], "to": ["0x3000000000000000000000000000000000000000"], "as_of": "2026-11-06", "expected": true },
+    { "from": ["0x1000000000000000000000000000000000000001"], "to": ["0x3000000000000000000000000000000000000000"], "as_of": "2026-11-06", "expected": false, "note": "from a listed wallet: no rights" },
+    { "from": ["0x2000000000000000000000000000000000000000"], "to": ["0x1000000000000000000000000000000000000001"], "as_of": "2026-11-06", "expected": false, "note": "to a listed wallet: no rights" },
+    { "from": ["0x2000000000000000000000000000000000000000", "0x1000000000000000000000000000000000000004"], "to": ["0x3000000000000000000000000000000000000000"], "as_of": "2026-11-06", "expected": false, "note": "the delegator's profile is blocked through consolidation" },
+    { "from": ["0x1000000000000000000000000000000000000002"], "to": ["0x3000000000000000000000000000000000000000"], "as_of": "2026-11-06", "expected": true, "note": "lapsed order carries no block" }
+  ],
+  "corrections": [
+    {
+      "corrections": {
+        "schema": "6529.sanctions-corrections.v1",
+        "corrections": [
+          { "address": "0x1000000000000000000000000000000000000004", "source": "eu-fsf", "entry_id": "EU.1.1", "reason": "parser_error", "case_ref": "TEST-1", "decided_on": "2026-11-06" }
+        ]
+      },
+      "checks": [
+        { "address": "0x1000000000000000000000000000000000000004", "as_of": "2026-11-06", "expected": true, "note": "still listed by uk-fcdo" }
+      ],
+      "expected_totals": { "addresses": 4, "listings": 5, "sources": 0 }
+    },
+    {
+      "corrections": {
+        "schema": "6529.sanctions-corrections.v1",
+        "corrections": [
+          { "address": "0x1000000000000000000000000000000000000001", "source": "us-ofac-sdn", "entry_id": "1", "reason": "parser_error", "case_ref": "TEST-2", "decided_on": "2026-11-06" }
+        ]
+      },
+      "checks": [
+        { "address": "0x1000000000000000000000000000000000000001", "as_of": "2026-11-06", "expected": false }
+      ],
+      "expected_totals": { "addresses": 3, "listings": 5, "sources": 0 }
+    }
+  ]
+}
