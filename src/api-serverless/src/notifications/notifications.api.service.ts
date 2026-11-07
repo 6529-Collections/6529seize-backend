@@ -186,11 +186,12 @@ export class NotificationsApiService {
         ctx
       });
     }
-    await this.identityNotificationsDb.markWaveNotificationsAsRead(
-      waveId,
-      identityId,
-      ctx
-    );
+    const markedNotifications =
+      await this.identityNotificationsDb.markWaveNotificationsAsRead(
+        waveId,
+        identityId,
+        ctx
+      );
     if (wave?.is_direct_message) {
       await this.wavesApiDb.markDirectMessageReadThroughSerial(
         { waveId, readerId: identityId, readThroughSerialNo },
@@ -235,9 +236,14 @@ export class NotificationsApiService {
         dmRecipients
       );
     }
-    await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
-      identityId
-    ]);
+    // Every socket of the profile (and its connected-account subscribers)
+    // refetches the notification count on this frame. Most open-wave reads
+    // mark nothing, so only send it when a notification actually changed.
+    if (markedNotifications > 0) {
+      await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+        identityId
+      ]);
+    }
     ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
     return requestDmUnreadState ? dmUnreadState : null;
   }
