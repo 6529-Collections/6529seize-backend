@@ -355,3 +355,4 @@ export const E2EE_REPORT_ACCESS_LOG_TABLE = 'e2ee_report_access_log';
 export const ANALYTICS_DAILY_TABLE = 'analytics_daily';
 export const VITALS_DAILY_TABLE = 'vitals_daily';
 export const HEALTH_DAILY_TABLE = 'health_daily';
+export const UNIQUES_DAILY_TABLE = 'uniques_daily';

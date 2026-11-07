@@ -2,6 +2,7 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
   ANALYTICS_DAILY_TABLE,
   HEALTH_DAILY_TABLE,
+  UNIQUES_DAILY_TABLE,
   VITALS_DAILY_TABLE
 } from '@/constants';
 
@@ -115,4 +116,24 @@ export class HealthDailyEntity {
 
   @Column({ type: 'bigint', default: 0 })
   readonly count!: number;
+}
+
+/**
+ * Daily unique and active counts (counts only, no identities):
+ * anonymous visitors from the in-memory daily-salted HyperLogLog, and
+ * signed-in / active-profile DAU, WAU and MAU from existing backend data.
+ */
+@Entity(UNIQUES_DAILY_TABLE)
+export class UniquesDailyEntity {
+  @PrimaryColumn({ type: 'date' })
+  readonly day!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 32 })
+  readonly metric!: string;
+
+  @Column({ type: 'bigint', default: 0 })
+  readonly count!: number;
+
+  @Column({ type: 'datetime', precision: 3, nullable: true, default: null })
+  readonly updated_at!: Date | null;
 }

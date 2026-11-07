@@ -4,7 +4,8 @@ import telemetryIngestRoutes, {
   handleTelemetryBatch
 } from '@/api/telemetry/telemetry-ingest.routes';
 import { resetTelemetryDailySaltForTests } from '@/api/telemetry/telemetry-daily-salt';
-import { resetTelemetryRetentionForTests } from '@/api/telemetry/telemetry-retention';
+import { resetTelemetryDailyJobsForTests } from '@/api/telemetry/telemetry-retention';
+import { resetTelemetryUniquesForTests } from '@/api/telemetry/telemetry-uniques';
 
 const mockLogLines: string[] = [];
 const mockSql: { sql: string; params: unknown }[] = [];
@@ -52,7 +53,16 @@ jest.mock('@/redis', () => ({
       }
       return null;
     },
-    get: async (key: string) => mockRedisStore.get(key) ?? null
+    get: async (key: string) => mockRedisStore.get(key) ?? null,
+    pfAdd: async (key: string, elements: string[]) => {
+      mockRedisWrites.push(['pfadd', key, elements]);
+      return 1;
+    },
+    pfCount: async () => 1,
+    expireAt: async (key: string, at: number) => {
+      mockRedisWrites.push(['expireat', key, at]);
+      return true;
+    }
   }),
   redisSortedSetAddAndCount: async (...args: unknown[]) => {
     mockRedisWrites.push(['zadd', ...args]);
@@ -148,7 +158,8 @@ describe('telemetry ingest privacy', () => {
     mockRedisStore.clear();
     mockRateLimitCount = 1;
     resetTelemetryDailySaltForTests();
-    resetTelemetryRetentionForTests();
+    resetTelemetryDailyJobsForTests();
+    resetTelemetryUniquesForTests();
     process.env.TELEMETRY_EDGE_SECRET = EDGE_SECRET;
   });
 
@@ -185,6 +196,12 @@ describe('telemetry ingest privacy', () => {
     for (const key of rateLimitKeys) {
       expect(key).toMatch(/telemetry-ingest:[0-9a-f]{32}/);
     }
+    // The daily-uniques HyperLogLog only ever receives salted hashes.
+    const visitorHashes = mockRedisWrites
+      .filter(([op]) => op === 'pfadd')
+      .flatMap(([, , elements]) => elements as string[]);
+    expect(visitorHashes).toHaveLength(1);
+    expect(visitorHashes[0]).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('ignores CloudFront headers that arrive without the edge secret', async () => {

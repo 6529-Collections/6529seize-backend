@@ -1190,6 +1190,15 @@ logged. Its rate limit is keyed on an HMAC of the viewer IP under a daily salt
 that lives only in Redis memory and expires at UTC midnight. The first request
 of each UTC day sweeps rows older than 25 months.
 
+Daily counts of people (C52 D2/C52a) are stored only as numbers in
+`uniques_daily`. Anonymous visitors: each page view's HMAC of (daily salt, IP,
+browser family, optional coarse client `fp`) goes into a per-day Redis
+HyperLogLog and is discarded; a Redis-locked flush persists the count at most
+every five minutes. Signed-in DAU/WAU/MAU are snapshotted by the same daily job
+from `wallet_auth_sessions.last_used_at` (distinct consolidated identities) and
+from the existing `ACTIVE_IDENTITY` hourly rollup (authenticated write
+activity).
+
 `GET /tdh/rules` publishes current TDH boost definitions evaluated against the
 latest completed snapshot's eligible Meme card range. The latest row in
 `tdh_blocks` is the completion marker because consolidation persists its TDH
