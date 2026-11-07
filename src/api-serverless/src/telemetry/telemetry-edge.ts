@@ -55,12 +55,19 @@ export function isTrustedTelemetryEdge(req: Request): boolean {
   return secretsMatch(secret, headerValue(req, TELEMETRY_EDGE_SECRET_HEADER));
 }
 
+function isLocalOrTestRuntime(): boolean {
+  const nodeEnv = process.env.NODE_ENV;
+  return nodeEnv === 'local' || nodeEnv === 'test';
+}
+
 /**
- * Once `TELEMETRY_EDGE_SECRET` is configured, every `/api/e` request must
- * come through the 6529.io edge: a missing or wrong secret header is answered
- * 403 before the body is read, and viewer headers are never trusted without
- * it. Without a configured secret (local development) requests pass, but
- * viewer headers are still ignored.
+ * Every `/api/e` request must come through the 6529.io edge: a missing or
+ * wrong secret header is answered 403 before the body is read, and viewer
+ * headers are never trusted without it. The collector fails closed: where
+ * `TELEMETRY_EDGE_SECRET` is not configured (for example production before
+ * its edge exists), every request is refused, so the counter tables are
+ * never an open public write endpoint. Only local and test runtimes accept
+ * requests without a secret, still ignoring viewer headers.
  */
 export function requireTelemetryEdge() {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -68,9 +75,9 @@ export function requireTelemetryEdge() {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('Cache-Control', 'no-store');
+    const secretConfigured = !!env.getStringOrNull('TELEMETRY_EDGE_SECRET');
     if (
-      !env.getStringOrNull('TELEMETRY_EDGE_SECRET') ||
-      isTrustedTelemetryEdge(req)
+      secretConfigured ? isTrustedTelemetryEdge(req) : isLocalOrTestRuntime()
     ) {
       next();
       return;
