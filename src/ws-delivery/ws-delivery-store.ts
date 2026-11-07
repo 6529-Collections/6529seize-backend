@@ -146,6 +146,44 @@ end
 return 0
 `;
 
+type ScriptOptions = { keys: string[]; arguments: string[] };
+
+function isNoScript(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith('NOSCRIPT');
+}
+
+const scriptHashes = new Map<string, Promise<string>>();
+
+/** The script's hash as Redis reports it (SCRIPT LOAD), cached per process. */
+function scriptHash(script: string): Promise<string> {
+  let hash = scriptHashes.get(script);
+  if (!hash) {
+    hash = getRedisClient()!.scriptLoad(script);
+    scriptHashes.set(script, hash);
+    hash.catch(() => scriptHashes.delete(script));
+  }
+  return hash;
+}
+
+/**
+ * Sends the 40-byte script hash instead of the ~2 KB script on every call.
+ * A Redis that lost its script cache (restart, failover) answers NOSCRIPT;
+ * EVAL then runs the script once and the hash is loaded again next time.
+ */
+async function runScript(
+  script: string,
+  options: ScriptOptions
+): Promise<unknown> {
+  const client = getRedisClient()!;
+  try {
+    return await client.evalSha(await scriptHash(script), options);
+  } catch (error) {
+    if (!isNoScript(error)) throw error;
+    scriptHashes.delete(script);
+    return client.eval(script, options);
+  }
+}
+
 export class WebSocketDeliveryStore {
   async enableReconnect(connectionId: string): Promise<void> {
     await this.bounded(async () => {
@@ -212,7 +250,7 @@ export class WebSocketDeliveryStore {
     priority = false
   ): Promise<DeliveryClaim> {
     const result = (await this.bounded(() =>
-      getRedisClient()!.eval(claimLua, {
+      runScript(claimLua, {
         keys: this.keys(connectionId, now),
         arguments: [
           String(now),
@@ -244,7 +282,7 @@ export class WebSocketDeliveryStore {
     coalesce?: boolean;
   }): Promise<boolean> {
     const result = await this.bounded(() =>
-      getRedisClient()!.eval(finishLua, {
+      runScript(finishLua, {
         keys: this.keys(input.connectionId, input.now),
         arguments: [
           String(input.now),
