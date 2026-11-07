@@ -580,6 +580,8 @@ export const FACADE_RETRY_DELAYS_MS: readonly number[] = [1000, 3000];
 export const FACADE_DDL_ATTEMPTS = FACADE_RETRY_DELAYS_MS.length + 1;
 const ER_LOCK_WAIT_TIMEOUT = 1205;
 const CANDIDATE_PREFIX = 'lgf_candidate_';
+/** LIKE pattern for CANDIDATE_PREFIX: `_` escaped so it matches literally. */
+export const CANDIDATE_LIKE_PATTERN = String.raw`lgf\_candidate\_%`;
 
 export interface LegacyCompetitionGetFacadeInstall {
   readonly replaced: string[];
@@ -698,7 +700,7 @@ async function sweepCandidateViews(
   const leftovers = await db.execute<{ name: string }>(
     `select table_name as name from information_schema.views
      where table_schema = database() and table_name like :pattern`,
-    { pattern: `${CANDIDATE_PREFIX.replace(/_/g, '\\_')}%` },
+    { pattern: CANDIDATE_LIKE_PATTERN },
     queryOptions
   );
   for (const { name } of leftovers) {

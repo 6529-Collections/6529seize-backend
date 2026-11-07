@@ -1,5 +1,6 @@
 import { SqlExecutor } from '@/sql-executor';
 import {
+  CANDIDATE_LIKE_PATTERN,
   FACADE_DDL_ATTEMPTS,
   FACADE_LOCK_WAIT_SECONDS,
   FACADE_RETRY_DELAYS_MS,
@@ -187,6 +188,15 @@ describe('installLegacyCompetitionGetFacade', () => {
     const second = fakeDatabase({ installed });
     await installLegacyCompetitionGetFacade(second.db, { sleep: noSleep });
     expect(installed.has('lgf_candidate_0123456789ab')).toBe(false);
+    expect(second.db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('table_name like :pattern'),
+      { pattern: CANDIDATE_LIKE_PATTERN },
+      expect.anything()
+    );
+  });
+
+  it('sweeps by the candidate prefix with underscores taken literally', () => {
+    expect(CANDIDATE_LIKE_PATTERN).toBe('lgf\\_candidate\\_%');
   });
 
   it('waits at most the short lock timeout and restores the session', async () => {
