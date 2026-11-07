@@ -3,7 +3,9 @@
  * deployed commit predates a required commit. Read-only: it lists functions,
  * searches their log groups for delivery EMF and asks the local git clone.
  *
- * Run from the repository root with the normal AWS credential chain:
+ * Run from the repository root with the normal AWS credential chain. The
+ * `aws` and `git` binaries are resolved once from PATH, or taken from
+ * AWS_CLI_PATH / GIT_PATH (absolute paths) when set:
  *
  *   bin/6529 exec ts-node ops/scripts/ws-sender-staleness/cli.ts \
  *     <staging|prod> <required-commit> [lookback-hours=24]
@@ -11,7 +13,10 @@
  * Exit code 1 when any sender is stale or its commit is unknown locally
  * (fetch first), so it can gate a rollout.
  */
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { findStaleSenders, type DeployedFunction } from './staleness';
 
 const REGIONS: Record<string, string> = {
@@ -21,17 +26,55 @@ const REGIONS: Record<string, string> = {
 /** Namespace of the per-send delivery EMF that every sender writes. */
 const DELIVERY_EMF = '"6529/WebSocketDelivery"';
 
+/**
+ * The absolute path of a tool, from an explicit override (`AWS_CLI_PATH`,
+ * `GIT_PATH`) or else resolved once from PATH, so every later call runs
+ * that exact binary rather than a fresh PATH lookup.
+ */
+function executable(name: string, override: string | undefined): string {
+  if (override) {
+    if (!path.isAbsolute(override) || !existsSync(override))
+      throw new Error(`${name} override must be an existing absolute path`);
+    return override;
+  }
+  const extensions =
+    process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+    if (!dir || !path.isAbsolute(dir)) continue;
+    for (const extension of extensions) {
+      const candidate = path.join(dir, name + extension);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  throw new Error(`${name} was not found on PATH`);
+}
+
+const AWS_CLI = executable('aws', process.env.AWS_CLI_PATH);
+const GIT = executable('git', process.env.GIT_PATH);
+
+const execFileAsync = promisify(execFile);
+const AWS_OPTIONS = { encoding: 'utf8' as const, maxBuffer: 64 * 1024 * 1024 };
+
 function aws(args: string[]): string {
-  return execFileSync('aws', [...args, '--output', 'json'], {
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
+  return execFileSync(AWS_CLI, [...args, '--output', 'json'], {
+    ...AWS_OPTIONS,
     stdio: ['ignore', 'pipe', 'pipe']
   });
 }
 
+/** Asynchronous, so the log searches really run several at once. */
+async function awsAsync(args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync(
+    AWS_CLI,
+    [...args, '--output', 'json'],
+    AWS_OPTIONS
+  );
+  return stdout;
+}
+
 function git(args: string[]): boolean {
   try {
-    execFileSync('git', args, { stdio: 'ignore' });
+    execFileSync(GIT, args, { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -52,7 +95,7 @@ function sendsFrames(region: string, sinceMs: number) {
   return async (functionName: string): Promise<boolean> => {
     try {
       const result = JSON.parse(
-        aws([
+        await awsAsync([
           'logs',
           'filter-log-events',
           '--region',
@@ -101,9 +144,12 @@ async function main(): Promise<number> {
     requiredCommit,
     {
       sendsFrames: sendsFrames(region, Date.now() - lookbackHours * 3_600_000),
-      knows: async (commit) => git(['cat-file', '-e', `${commit}^{commit}`]),
-      contains: async (deployed, required) =>
-        git(['merge-base', '--is-ancestor', required, deployed])
+      knows: (commit) =>
+        Promise.resolve(git(['cat-file', '-e', `${commit}^{commit}`])),
+      contains: (deployed, required) =>
+        Promise.resolve(
+          git(['merge-base', '--is-ancestor', required, deployed])
+        )
     }
   );
   for (const report of reports) {
