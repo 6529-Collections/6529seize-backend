@@ -1221,6 +1221,11 @@ short code as associated data, no sender data, hard-deleted 14 days after upload
 in the wave set as `TELEMETRY_DIAG_READER_WAVE_ID` (the dev-team chat), checked
 live against that wave's chat group on every request; unset means nobody.
 
+`GET /api/e/country` (`6529.io/e/country`) answers the viewer's country from
+the trusted `CloudFront-Viewer-Country` header (unknown: `country: null`,
+`is_eu: true`), so the cookie banner and the iOS US-only purchasing rule no
+longer need a third-party IP lookup.
+
 `GET /tdh/rules` publishes current TDH boost definitions evaluated against the
 latest completed snapshot's eligible Meme card range. The latest row in
 `tdh_blocks` is the completion marker because consolidation persists its TDH

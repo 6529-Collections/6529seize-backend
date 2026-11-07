@@ -180,8 +180,10 @@ import {
 import { registerOpenApiSpecRoutes } from './openapi-spec-routes';
 import telemetryIngestRoutes from '@/api/telemetry/telemetry-ingest.routes';
 import telemetryDiagnosticsRoutes from '@/api/telemetry/telemetry-diagnostics.routes';
+import telemetryCountryRoutes from '@/api/telemetry/telemetry-country.routes';
 import {
   TELEMETRY_BASE_PATH,
+  TELEMETRY_COUNTRY_PATH,
   TELEMETRY_DIAGNOSTICS_PATH
 } from '@/api/telemetry/telemetry-paths';
 import { requireTelemetryEdge } from '@/api/telemetry/telemetry-edge';
@@ -792,6 +794,7 @@ function wireApp() {
   app.use(TELEMETRY_BASE_PATH, requireTelemetryEdge());
   app.use(TELEMETRY_BASE_PATH, telemetryIngestRoutes);
   app.use(TELEMETRY_DIAGNOSTICS_PATH, telemetryDiagnosticsRoutes);
+  app.use(TELEMETRY_COUNTRY_PATH, telemetryCountryRoutes);
   app.use(
     express.json({
       limit: '5mb',
