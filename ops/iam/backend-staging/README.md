@@ -166,3 +166,30 @@ environment's required AWS region. It grants no application-bucket access.
 Keep the aggregate role inline-policy size below 10,240 characters. Verify the
 remote document and unrelated-resource/other-environment denials, then deploy
 through GitHub Actions and verify the disabled schedule before activation.
+
+## Wave fan-out worker
+
+`WaveFanoutWorkerDeployment.json` enrolls only `waveFanoutWorker` (waves 1.1)
+in this environment. It permits the worker function and its versions, its
+environment-specific CloudFormation stack, deployment-bucket prefix, log group
+and alarms, the `wave-fanout` and `wave-fanout-dlq` queues, and SQS
+event-source mappings whose function is `waveFanoutWorker`. It has no schedule
+and grants no application-bucket access. Mapping reads (`GetEventSourceMapping`,
+`ListTags`) use the mapping wildcard because the mapping id exists only after
+creation; no mapping tag writes are granted. Replace the wildcard with the exact
+mapping ARN after the first deployment if preferred.
+
+Rollout order: install this policy, deploy `waveFanoutWorker` (creates the
+queue), deploy `api`, then set `WS_ASYNC_FANOUT=true` on `seizeAPI`. The
+API runtime role (`lambda-vpc-role`) already holds broad SQS permissions, so
+no producer grant is needed. With the flag on but no queue, every hand-off is
+refused and the work runs inline, which is safe but slower.
+
+It is not installed yet. The role's inline policies already use 9,410 of the
+10,240 aggregate characters and it holds the default ten managed-policy
+attachments, so an administrative identity installs this document as a
+customer-managed policy after raising the role's managed-policy attachment
+quota (or after consolidating the two existing worker inline policies into one
+managed policy). Validate with Access Analyzer, simulate the worker operations
+and unrelated-resource denials, then deploy `waveFanoutWorker` through the
+ordinary GitHub workflow before enabling `WS_ASYNC_FANOUT` on `seizeAPI`.

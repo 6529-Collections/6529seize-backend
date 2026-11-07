@@ -881,6 +881,23 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Profiles with a socket subscribed to the wave, of any purpose: that is
+   * how a tab says the wave is open. Used only to prioritise inline sends.
+   */
+  async findProfileIdsViewingWave(
+    waveId: string,
+    ctx: RequestContext = {}
+  ): Promise<Set<string>> {
+    const rows = await this.db.execute<{ identity_id: string }>(
+      `/* not a broadcast audience */ select distinct identity_id from ${WS_CONNECTIONS_TABLE}
+       where wave_id = :waveId and identity_id <> :anonymous`,
+      { waveId, anonymous: ANON_USER_ID },
+      { wrappedConnection: ctx.connection }
+    );
+    return new Set(rows.map((row) => row.identity_id));
+  }
+
   async findWaveVisibilityGroupId(
     waveId: string,
     ctx: RequestContext = {}

@@ -739,6 +739,18 @@
         "lambda-errors",
         "lambda-throttles"
       ]
+    },
+    {
+      "service": "waveFanoutWorker",
+      "region": "us-east-1",
+      "functions": [
+        "waveFanoutWorker"
+      ],
+      "coverage": [
+        "structured-error-logs",
+        "lambda-errors",
+        "lambda-throttles"
+      ]
     }
   ],
   "supplementalSource": "ops/monitoring/platform-functions.json",

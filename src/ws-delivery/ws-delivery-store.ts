@@ -146,30 +146,40 @@ end
 return 0
 `;
 
-const CLAIM_SHA = createHash('sha1').update(claimLua).digest('hex');
-const FINISH_SHA = createHash('sha1').update(finishLua).digest('hex');
-
 type ScriptOptions = { keys: string[]; arguments: string[] };
 
 function isNoScript(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith('NOSCRIPT');
 }
 
+const scriptHashes = new Map<string, Promise<string>>();
+
+/** The script's hash as Redis reports it (SCRIPT LOAD), cached per process. */
+function scriptHash(script: string): Promise<string> {
+  let hash = scriptHashes.get(script);
+  if (!hash) {
+    hash = getRedisClient()!.scriptLoad(script);
+    scriptHashes.set(script, hash);
+    hash.catch(() => scriptHashes.delete(script));
+  }
+  return hash;
+}
+
 /**
  * Sends the 40-byte script hash instead of the ~2 KB script on every call.
- * A Redis that has not seen the script yet (restart, failover, first use)
- * answers NOSCRIPT; EVAL then runs it once and caches it server-side.
+ * A Redis that lost its script cache (restart, failover) answers NOSCRIPT;
+ * EVAL then runs the script once and the hash is loaded again next time.
  */
 async function runScript(
   script: string,
-  sha: string,
   options: ScriptOptions
 ): Promise<unknown> {
   const client = getRedisClient()!;
   try {
-    return await client.evalSha(sha, options);
+    return await client.evalSha(await scriptHash(script), options);
   } catch (error) {
     if (!isNoScript(error)) throw error;
+    scriptHashes.delete(script);
     return client.eval(script, options);
   }
 }
@@ -240,7 +250,7 @@ export class WebSocketDeliveryStore {
     priority = false
   ): Promise<DeliveryClaim> {
     const result = (await this.bounded(() =>
-      runScript(claimLua, CLAIM_SHA, {
+      runScript(claimLua, {
         keys: this.keys(connectionId, now),
         arguments: [
           String(now),
@@ -272,7 +282,7 @@ export class WebSocketDeliveryStore {
     coalesce?: boolean;
   }): Promise<boolean> {
     const result = await this.bounded(() =>
-      runScript(finishLua, FINISH_SHA, {
+      runScript(finishLua, {
         keys: this.keys(input.connectionId, input.now),
         arguments: [
           String(input.now),

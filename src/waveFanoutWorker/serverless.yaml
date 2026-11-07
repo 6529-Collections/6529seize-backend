@@ -1,0 +1,136 @@
+service: waveFanoutWorker
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  # More memory buys CPU: one chunk is bound by per-send SDK work.
+  memorySize: 2048
+  timeout: 15
+  architecture: arm64
+  logRetentionInDays: 60
+
+functions:
+  waveFanoutWorker:
+    handler: index.handler
+    name: waveFanoutWorker
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 30
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [WaveFanoutQueue, Arn]
+          # One chunk per invocation: chunks of one drop run in parallel.
+          batchSize: 1
+          maximumConcurrency: 25
+          functionResponseType: ReportBatchItemFailures
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      API_GATEWAY_WS_ENDPOINT: ${env:API_GATEWAY_WS_ENDPOINT}
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'waveFanoutWorker_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    WaveFanoutQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: wave-fanout
+        # Six times the function timeout, as AWS recommends for SQS sources.
+        VisibilityTimeout: 90
+        # A chunk older than this is stale chat; clients repair from REST.
+        MessageRetentionPeriod: 3600
+        SqsManagedSseEnabled: true
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [WaveFanoutDLQ, Arn]
+          maxReceiveCount: 3
+
+    WaveFanoutDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: wave-fanout-dlq
+        SqsManagedSseEnabled: true
+        MessageRetentionPeriod: 1209600
+
+    WaveFanoutDLQAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-dead-letters"
+        AlarmDescription: "Wave fan-out jobs exhausted retries. Inspect waveFanoutWorker WAVE_FANOUT_JOB_FAILED logs; clients repair missed frames from REST."
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+        Dimensions:
+          - Name: QueueName
+            Value: !GetAtt WaveFanoutDLQ.QueueName
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    WaveFanoutBacklogAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-backlog-age"
+        AlarmDescription: "Queued wave fan-out is older than 30 s: chat frames are late. Check waveFanoutWorker errors, throttles and concurrency."
+        Namespace: AWS/SQS
+        MetricName: ApproximateAgeOfOldestMessage
+        Dimensions:
+          - Name: QueueName
+            Value: !GetAtt WaveFanoutQueue.QueueName
+        Statistic: Maximum
+        Period: 60
+        EvaluationPeriods: 2
+        DatapointsToAlarm: 2
+        Threshold: 30
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+
+    WaveFanoutWorkerOOMFilter:
+      Type: AWS::Logs::MetricFilter
+      DependsOn: WaveFanoutWorkerLogGroup
+      Properties:
+        LogGroupName: /aws/lambda/waveFanoutWorker
+        FilterPattern: "Runtime.OutOfMemory"
+        MetricTransformations:
+          - MetricNamespace: "Lambda/OOM"
+            MetricName: "waveFanoutWorker_OOMErrorCount"
+            MetricValue: "1"
+            DefaultValue: 0
+
+    WaveFanoutWorkerOOMAlarm:
+      Type: AWS::CloudWatch::Alarm
+      DependsOn: WaveFanoutWorkerOOMFilter
+      Properties:
+        AlarmName: !Sub "${AWS::StackName}-waveFanoutWorker-OOM"
+        AlarmDescription: !Sub "Lambda waveFanoutWorker OutOfMemory in ${AWS::Region}"
+        Namespace: "Lambda/OOM"
+        MetricName: "waveFanoutWorker_OOMErrorCount"
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+        AlarmActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
+        OKActions:
+          - ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):cwtopic}
