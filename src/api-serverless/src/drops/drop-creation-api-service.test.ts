@@ -910,3 +910,108 @@ describe('DropCreationApiService bounded chat history purge', () => {
     }
   );
 });
+
+describe('DropCreationApiService.createDrop delivery hops (1.0)', () => {
+  const originalLambda = process.env.AWS_LAMBDA_FUNCTION_NAME;
+
+  beforeEach(() => {
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'api';
+    (sendIdentityPushNotifications as jest.Mock).mockResolvedValue(undefined);
+    jest
+      .spyOn(helpBotDailyActivityCreditQueueService, 'enqueueRequest')
+      .mockResolvedValue(false);
+    jest
+      .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+      .mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    if (originalLambda === undefined)
+      delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+    else process.env.AWS_LAMBDA_FUNCTION_NAME = originalLambda;
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  it('emits one record with the commit and every post-commit hop', async () => {
+    const stdout = jest
+      .spyOn(process.stdout, 'write')
+      .mockImplementation(() => true);
+    const service = new DropCreationApiService(
+      {
+        findDropByIdOrThrow: jest
+          .fn()
+          .mockResolvedValue({ id: 'drop-1', wave_id: 'wave-1' })
+      } as never,
+      {
+        executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+          callback({})
+        )
+      } as never,
+      {
+        createDropApiToUseCaseModel: jest
+          .fn()
+          .mockReturnValue({ wave_id: 'wave-1', drop_type: DropType.CHAT })
+      } as never,
+      {
+        preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+        preparePrePublication: jest.fn().mockResolvedValue({}),
+        execute: jest.fn().mockResolvedValue({
+          drop_id: 'drop-1',
+          pending_push_notification_ids: []
+        })
+      } as never,
+      {} as never,
+      {
+        notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined),
+        notifyAboutIdentityNotificationsChanged: jest
+          .fn()
+          .mockResolvedValue(undefined)
+      } as never,
+      { findByDropId: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never
+    );
+
+    await service.createDrop(
+      {
+        createDropRequest: { collaborator_ids: ['collaborator-1'] } as never,
+        authorId: 'author-profile',
+        representativeId: 'author-profile'
+      },
+      {
+        timer: {
+          start: jest.fn(),
+          stop: jest.fn(),
+          getTotalTimePassed: () => ({ toMillis: () => 12 })
+        }
+      } as never
+    );
+
+    const records = stdout.mock.calls
+      .map(([line]) => JSON.parse(String(line)))
+      .filter((record) => record.event === 'WAVE_DROP_POST');
+    expect(records).toHaveLength(1);
+    const [record] = records;
+    expect(record).toMatchObject({
+      FrameType: 'DROP_POST',
+      drop_id: 'drop-1',
+      wave_id: 'wave-1'
+    });
+    for (const hop of [
+      'drop_pre_commit_ms',
+      'drop_commit_ms',
+      'post_commit_wave_score_ms',
+      'post_commit_unread_cache_ms',
+      'post_commit_push_ms',
+      'post_commit_fanout_ms',
+      'post_commit_collaborators_ms',
+      'post_commit_dm_unread_ms',
+      'drop_post_commit_ms'
+    ]) {
+      expect(typeof record[hop]).toBe('number');
+    }
+    expect(record.drop_post_total_ms).toBeGreaterThanOrEqual(12);
+    expect(record).not.toHaveProperty('post_commit_daily_activity_ms');
+  });
+});
