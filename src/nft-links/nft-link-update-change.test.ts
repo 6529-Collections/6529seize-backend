@@ -80,10 +80,24 @@ function link(overrides: Partial<NftLinkEntity> = {}): NftLinkEntity {
 describe('mediaLinkUpdateDecision', () => {
   const api = (overrides: Partial<NftLinkEntity> = {}) =>
     mapNftLinkEntityToApiLink(link(overrides));
+  /** This refresh locked the row 1 s before NOW. */
+  const LOCKED_AT = NOW - 1_000;
+  const decide = (
+    previous: ReturnType<typeof api>,
+    next: ReturnType<typeof api>,
+    now: number
+  ) => mediaLinkUpdateDecision(previous, next, now, LOCKED_AT);
+
+  it('sends a row that does not show this refresh, as before', () => {
+    expect(decide(api(), api(), NOW)).toBe('unverified');
+    expect(decide(api(), api({ last_successfully_updated: null }), NOW)).toBe(
+      'unverified'
+    );
+  });
 
   it('is unchanged when only the refresh time moved', () => {
     expect(
-      mediaLinkUpdateDecision(
+      decide(
         api(),
         api({ last_successfully_updated: NOW, last_tried_to_update: NOW }),
         NOW
@@ -93,7 +107,7 @@ describe('mediaLinkUpdateDecision', () => {
 
   it('compares the client frame, so fields clients never receive do not count', () => {
     expect(
-      mediaLinkUpdateDecision(
+      decide(
         api(),
         api({
           last_successfully_updated: NOW,
@@ -133,7 +147,7 @@ describe('mediaLinkUpdateDecision', () => {
     ]
   ])('is changed for a different %s', (_label, before, after) => {
     expect(
-      mediaLinkUpdateDecision(
+      decide(
         api(before),
         api({ ...after, last_successfully_updated: NOW }),
         NOW
@@ -143,15 +157,11 @@ describe('mediaLinkUpdateDecision', () => {
 
   it('resends for freshness when the previous success is unknown or a day old', () => {
     const next = api({ last_successfully_updated: NOW });
+    expect(decide(api({ last_successfully_updated: null }), next, NOW)).toBe(
+      'freshness'
+    );
     expect(
-      mediaLinkUpdateDecision(
-        api({ last_successfully_updated: null }),
-        next,
-        NOW
-      )
-    ).toBe('freshness');
-    expect(
-      mediaLinkUpdateDecision(
+      decide(
         api({
           last_successfully_updated: NOW - MEDIA_LINK_FRESHNESS_RESEND_MS
         }),
@@ -160,7 +170,7 @@ describe('mediaLinkUpdateDecision', () => {
       )
     ).toBe('freshness');
     expect(
-      mediaLinkUpdateDecision(
+      decide(
         api({
           last_successfully_updated: NOW - MEDIA_LINK_FRESHNESS_RESEND_MS + 1
         }),
@@ -172,7 +182,7 @@ describe('mediaLinkUpdateDecision', () => {
 
   it('reads a MySQL BIGINT string timestamp', () => {
     expect(
-      mediaLinkUpdateDecision(
+      decide(
         {
           ...api(),
           last_successfully_updated: String(NOW - 60_000) as unknown as number
@@ -254,7 +264,7 @@ describe('MEDIA_LINK_UPDATED is sent only when a refresh changed it', () => {
           }
         })
         .filter((record) => record?.event === 'MEDIA_LINK_UPDATE_DECISION');
-    return { notifier, refresh, decisions, stored: () => stored };
+    return { notifier, refresh, decisions, db, stored: () => stored };
   }
 
   it('sends nothing for an unchanged refresh and counts it as skipped', async () => {
@@ -318,6 +328,18 @@ describe('MEDIA_LINK_UPDATED is sent only when a refresh changed it', () => {
       ]);
     }
   );
+
+  it('still sends when the post-update read does not show this refresh', async () => {
+    const { notifier, refresh, decisions, db } = setup(link());
+    // A read that returns the row as it was before this refresh's write.
+    const before = link();
+    db.findByCanonicalIdForNotification.mockImplementation(async () => before);
+    await refresh();
+    expect(notifier.notifyAboutNftLinkUpdate).toHaveBeenCalledTimes(1);
+    expect(decisions().map((record) => record.decision)).toEqual([
+      'unverified'
+    ]);
+  });
 
   it('sends when a failing link recovers', async () => {
     const { notifier, refresh } = setup(

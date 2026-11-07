@@ -258,7 +258,8 @@ export class NftLinkResolvingService {
         const decision = mediaLinkUpdateDecision(
           this.entityToApiLink(entity),
           data,
-          Time.currentMillis()
+          Time.currentMillis(),
+          Number(entity.is_locked_since)
         );
         recordMediaLinkUpdateDecision(decision);
         if (decision === 'unchanged') return;

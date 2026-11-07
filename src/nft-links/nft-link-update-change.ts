@@ -11,7 +11,11 @@ import { Time } from '@/time';
  */
 export const MEDIA_LINK_FRESHNESS_RESEND_MS = Time.hours(24).toMillis();
 
-export type MediaLinkUpdateDecision = 'changed' | 'freshness' | 'unchanged';
+export type MediaLinkUpdateDecision =
+  | 'changed'
+  | 'freshness'
+  | 'unverified'
+  | 'unchanged';
 
 const logger = Logger.get('NFT_LINK_UPDATE_CHANGE');
 
@@ -25,12 +29,15 @@ function clientFrameWithoutRefreshTime(data: ApiNftLinkData): string {
 /**
  * Whether a refresh changed what clients see. `previous` is the link as it
  * was before the refresh, `next` as it is after; both go through the same
- * API mapping as the broadcast frame.
+ * API mapping as the broadcast frame. `refreshStartedAt` is the lock stamp:
+ * a `next` whose success predates it was not read after this refresh's
+ * write, so it proves nothing and is sent as before.
  */
 export function mediaLinkUpdateDecision(
   previous: ApiNftLinkData,
   next: ApiNftLinkData,
-  now: number
+  now: number,
+  refreshStartedAt: number
 ): MediaLinkUpdateDecision {
   if (
     clientFrameWithoutRefreshTime(previous) !==
@@ -38,6 +45,8 @@ export function mediaLinkUpdateDecision(
   ) {
     return 'changed';
   }
+  const nextSuccess = Number(next.last_successfully_updated ?? NaN);
+  if (!(nextSuccess >= refreshStartedAt)) return 'unverified';
   const previousSuccess = Number(previous.last_successfully_updated ?? NaN);
   if (
     !Number.isFinite(previousSuccess) ||
