@@ -22,6 +22,10 @@ import { NftLinkEntity } from '@/entities/INftLink';
 import { giveReadReplicaTimeToCatchUp } from '@/api/api-helpers';
 import { ApiNftLinkData } from '@/api/generated/models/ApiNftLinkData';
 import { mapNftLinkEntityToApiLink } from '@/nft-links/nft-link-api.mapper';
+import {
+  mediaLinkUpdateDecision,
+  recordMediaLinkUpdateDecision
+} from '@/nft-links/nft-link-update-change';
 import { nftLinkMediaPreviewService } from '@/nft-links/nft-link-media-preview.service';
 import {
   getNftLinkResolutionBudget,
@@ -248,15 +252,22 @@ export class NftLinkResolvingService {
           )
       );
       if (dataAfterUpdate) {
+        const data = this.entityToApiLink(dataAfterUpdate);
+        // Every socket gets this frame, so send it only when what clients
+        // see changed since the row this refresh locked.
+        const decision = mediaLinkUpdateDecision(
+          this.entityToApiLink(entity),
+          data,
+          Time.currentMillis()
+        );
+        recordMediaLinkUpdateDecision(decision);
+        if (decision === 'unchanged') return;
         // The worker reads the primary and sends the complete cached payload.
         if (!getNftLinkResolutionBudget()) {
           await giveReadReplicaTimeToCatchUp();
         }
         await nftLinkResolutionStage('notify', () =>
-          this.wsListenersNotifier.notifyAboutNftLinkUpdate(
-            this.entityToApiLink(dataAfterUpdate),
-            ctx
-          )
+          this.wsListenersNotifier.notifyAboutNftLinkUpdate(data, ctx)
         );
       }
     } catch (notifyErr) {
