@@ -14,7 +14,7 @@ import { E2eeAckWelcomeRequest, E2eeAckWelcomeResponse, E2eeActivateBackupReques
 import { BeginMarketTransactionAttemptRequest, BeginMarketTransactionAttemptResponse, ContinueMarketOperationRequest, ContinueMarketOperationResponse, GetMarketBatchCapabilitiesRequest, GetMarketBatchCapabilitiesResponse, GetMarketOperationRequest, GetMarketOperationResponse, GetMarketOrderRequest, GetMarketOrderResponse, GetMarketOrdersRequest, GetMarketOrdersResponse, GetMyMarketOperationsRequest, GetMyMarketOperationsResponse, PreflightMarketBatchRequest, PreflightMarketBatchResponse, PrepareMarketOperationRequest, PrepareMarketOperationResponse, PublishMarketOperationRequest, PublishMarketOperationResponse, RejectMarketTransactionAttemptRequest, RejectMarketTransactionAttemptResponse, SubmitMarketOperationRequest, SubmitMarketOperationResponse } from './operations';
 import { GetModerationAccessRequest, GetModerationAccessResponse, GetModerationCheckRequest, GetModerationCheckResponse, GetModerationChecksRequest, GetModerationChecksResponse, GetModerationCountsRequest, GetModerationCountsResponse, GetModerationProfileCheckRequest, GetModerationProfileCheckResponse, GetModerationReportCheckRequest, GetModerationReportCheckResponse, GetModerationReviewCasesRequest, GetModerationReviewCasesResponse, ModerationCheckActionRequest, ModerationCheckActionResponse } from './operations';
 import { GetProfilePreferencesRequest, GetProfilePreferencesResponse, PutProfilePreferencesRequest, PutProfilePreferencesResponse } from './operations';
-import { GetTelemetryDiagnosticsBundleRequest, GetTelemetryDiagnosticsBundleResponse, ListTelemetryDiagnosticsRequest, ListTelemetryDiagnosticsResponse } from './operations';
+import { GetTelemetryDashboardRequest, GetTelemetryDashboardResponse, GetTelemetryDiagnosticsBundleRequest, GetTelemetryDiagnosticsBundleResponse, GetTelemetryPublicStatsRequest, GetTelemetryPublicStatsResponse, ListTelemetryDiagnosticsRequest, ListTelemetryDiagnosticsResponse } from './operations';
 import { handleAppendMuseumRecord, handleCreateArtworkDossierExport, handleGetArtworkArtistRecord, handleGetArtworkDossier, handleGetArtworkDossierExport, handleListMuseumRecords } from '@/api/artwork-documentation/artwork-documentation-museum.handlers';
 import { handleCancelDocumentationUpload, handleCommentDocumentationThread, handleCompleteDocumentationUpload, handleConfirmDocumentation, handleCreateDocumentationContext, handleCreateDocumentationThread, handleCreateDocumentationWork, handleDownloadDocumentationAsset, handleGetDocumentationContext, handleGetDocumentationProfiles, handleGetDocumentationPublicPreview, handleGetDocumentationRevision, handleGetDocumentationUpload, handleGetDocumentationWork, handleGrantDocumentationAccess, handleImportDocumentationSource, handleLinkDocumentationAsset, handleLinkDocumentationSource, handleListDocumentationGrants, handleListDocumentationProgram, handleListDocumentationRevisions, handleListDocumentationThreads, handleListDocumentationWorks, handlePatchDocumentationAssetLink, handlePatchDocumentationContext, handlePatchDocumentationModule, handlePatchDocumentationThread, handlePinDocumentationArtist, handlePreviewDocumentationSource, handlePreviewDocumentationUpgrade, handleReviewDocumentation, handleRevokeDocumentationAccess, handleSignDocumentationParts, handleStartDocumentationUpload, handleUnlinkDocumentationAsset, handleUpgradeDocumentationProfile } from '@/api/artwork-documentation/artwork-documentation.handlers';
 import { handleCreateCollectDailyTdhPlan } from '@/api/collect/collect-daily-tdh.handlers';
@@ -61,6 +61,7 @@ import { handleRevokePushInstallation } from '@/api/push-notifications/revoke-pu
 import { handleGetGlobalRepCategoryGivers, handleGetGlobalRepCategoryOverview, handleGetGlobalRepCategoryRatings, handleGetGlobalRepCategoryRecipients, handleGetGlobalRepCategoryWaveContributors, handleGetGlobalRepCategoryWaveOverview, handleGetGlobalRepCategoryWaves } from '@/api/rep-categories/global-rep-category.handlers';
 import { handleGetSubscriptionCoverage } from '@/api/subscriptions/get-subscription-coverage.handler';
 import { handleGetTdhRules } from '@/api/tdh/get-tdh-rules.handler';
+import { handleGetTelemetryDashboard, handleGetTelemetryPublicStats } from '@/api/telemetry/telemetry-dashboard.handlers';
 import { handleGetTelemetryDiagnosticsBundle, handleListTelemetryDiagnostics } from '@/api/telemetry/telemetry-diagnostics.handlers';
 import { handleGetActiveWaveVotes } from '@/api/waves/active-wave-votes.handler';
 import { handleDeleteMyWaveChatHistory, handlePrepareMyWaveChatHistoryPurge } from '@/api/waves/delete-my-wave-chat-history.handler';
@@ -2119,6 +2120,17 @@ router.get(
 );
 
 router.get(
+  '/telemetry/dashboard',
+  needsAuthenticatedUser(),
+  async (
+    req: GetTelemetryDashboardRequest,
+    res: Response<ApiResponse<GetTelemetryDashboardResponse>>
+  ) => {
+    res.send(await handleGetTelemetryDashboard(req));
+  }
+);
+
+router.get(
   '/telemetry/diagnostics',
   needsAuthenticatedUser(),
   async (
@@ -2137,6 +2149,17 @@ router.get(
     res: Response<ApiResponse<GetTelemetryDiagnosticsBundleResponse>>
   ) => {
     res.send(await handleGetTelemetryDiagnosticsBundle(req));
+  }
+);
+
+router.get(
+  '/telemetry/public-stats',
+  cacheRequest({ ttl: Time.seconds(300) }),
+  async (
+    req: GetTelemetryPublicStatsRequest,
+    res: Response<ApiResponse<GetTelemetryPublicStatsResponse>>
+  ) => {
+    res.send(await handleGetTelemetryPublicStats(req));
   }
 );
 

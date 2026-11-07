@@ -19298,6 +19298,108 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiTelemetryCountry"
+  /telemetry/dashboard:
+    get:
+      tags:
+        - Telemetry
+      summary: Internal first-party analytics dashboard (team only)
+      description: >-
+        Daily totals, route, flow, referrer, client and country mixes, web
+        vitals percentiles, health counters, product events and the four
+        recreated Mixpanel reports for a day range (at most 92 days). Every cell
+        under 5 is withheld.
+      operationId: getTelemetryDashboard
+      security:
+        - bearerAuth: []
+      x-6529-router:
+        enabled: true
+        auth: required
+        cache: false
+        typeImportGroup: telemetry
+        handler:
+          import: "@/api/telemetry/telemetry-dashboard.handlers"
+          name: handleGetTelemetryDashboard
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: First day (YYYY-MM-DD, UTC). Defaults to 29 days before `to`.
+          schema:
+            type: string
+        - name: to
+          in: query
+          required: false
+          description: Last day (YYYY-MM-DD, UTC). Defaults to today.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Dashboard data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTelemetryDashboard"
+        "400":
+          description: Invalid range
+        "401":
+          description: Authentication required
+        "403":
+          description: Not a current writer in the team reader wave
+  /telemetry/public-stats:
+    get:
+      tags:
+        - Telemetry
+      summary: Public site statistics
+      description: >-
+        Data for the public stats page. Daily totals for the last `days`
+        complete UTC days, and route, referrer, client, country and web vitals
+        breakdowns for one complete calendar week or month. Every count under 5
+        is withheld, and breakdowns are only published for complete,
+        non-overlapping periods. No identifiers are collected or returned.
+      operationId: getTelemetryPublicStats
+      security: []
+      x-6529-router:
+        enabled: true
+        auth: none
+        cache:
+          ttlSeconds: 300
+        typeImportGroup: telemetry
+        handler:
+          import: "@/api/telemetry/telemetry-dashboard.handlers"
+          name: handleGetTelemetryPublicStats
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - week
+              - month
+        - name: start
+          in: query
+          required: false
+          description: >-
+            First day of a complete past period (a Monday for weeks, day 01 for
+            months). Defaults to the most recent complete period.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Public statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTelemetryPublicStats"
+        "400":
+          description: Invalid period
   /transactions:
     get:
       tags:
@@ -42749,6 +42851,19 @@ components:
           maxItems: 40
           items:
             $ref: "#/components/schemas/ApiTelemetryEvent"
+    ApiTelemetryCell:
+      type: object
+      description: One aggregated count and the dimension values it is for.
+      required:
+        - dims
+        - count
+      properties:
+        dims:
+          type: object
+          additionalProperties:
+            type: string
+        count:
+          type: integer
     ApiTelemetryCountry:
       type: object
       required:
@@ -42762,6 +42877,123 @@ components:
         is_eu:
           type: boolean
           description: True for EU/EEA countries and for unknown countries.
+    ApiTelemetryDailyTotals:
+      type: object
+      description: Daily totals; null when under the small-cell threshold.
+      required:
+        - day
+        - page_views
+        - entries
+        - anonymous_visitors
+        - signed_in_dau
+        - signed_in_wau
+        - signed_in_mau
+        - active_profiles_dau
+        - active_profiles_wau
+        - active_profiles_mau
+      properties:
+        day:
+          type: string
+        page_views:
+          type: integer
+          nullable: true
+        entries:
+          type: integer
+          nullable: true
+        anonymous_visitors:
+          type: integer
+          nullable: true
+        signed_in_dau:
+          type: integer
+          nullable: true
+        signed_in_wau:
+          type: integer
+          nullable: true
+        signed_in_mau:
+          type: integer
+          nullable: true
+        active_profiles_dau:
+          type: integer
+          nullable: true
+        active_profiles_wau:
+          type: integer
+          nullable: true
+        active_profiles_mau:
+          type: integer
+          nullable: true
+    ApiTelemetryDashboard:
+      type: object
+      required:
+        - start_day
+        - end_day
+        - suppression_threshold
+        - daily
+        - top_routes
+        - route_devices
+        - route_signed_in
+        - flows
+        - referrers
+        - clients
+        - countries
+        - vitals
+        - health
+        - product_events
+        - reports
+      properties:
+        start_day:
+          type: string
+          description: First day of the range (YYYY-MM-DD, UTC).
+        end_day:
+          type: string
+          description: Last day of the range (YYYY-MM-DD, UTC).
+        suppression_threshold:
+          type: integer
+        daily:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryDailyTotals"
+        top_routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        route_devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        route_signed_in:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        flows:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        referrers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        clients:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        countries:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        vitals:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryVitalsSummary"
+        health:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        product_events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        reports:
+          $ref: "#/components/schemas/ApiTelemetryReports"
     ApiTelemetryDiagnosticsBundle:
       type: object
       required:
@@ -42984,6 +43216,167 @@ components:
           type: integer
         long_task:
           type: integer
+    ApiTelemetryPeriod:
+      type: object
+      required:
+        - type
+        - start_day
+        - end_day
+      properties:
+        type:
+          type: string
+          enum:
+            - week
+            - month
+        start_day:
+          type: string
+        end_day:
+          type: string
+    ApiTelemetryPublicStats:
+      type: object
+      required:
+        - generated_at
+        - suppression_threshold
+        - daily
+        - period
+        - top_routes
+        - referrers
+        - devices
+        - platforms
+        - browsers
+        - countries
+        - vitals
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        suppression_threshold:
+          type: integer
+        daily:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryDailyTotals"
+        period:
+          $ref: "#/components/schemas/ApiTelemetryPeriod"
+        top_routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        referrers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        platforms:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        browsers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        countries:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        vitals:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryVitalsSummary"
+    ApiTelemetryRatio:
+      type: object
+      required:
+        - name
+        - numerator
+        - denominator
+        - value
+      properties:
+        name:
+          type: string
+        numerator:
+          type: integer
+          nullable: true
+        denominator:
+          type: integer
+          nullable: true
+        value:
+          type: number
+          nullable: true
+    ApiTelemetryReports:
+      type: object
+      required:
+        - homepage_sections
+        - homepage_actions
+        - homepage_next_pages
+        - profile_sections
+        - profile_actions
+        - product_impact_counts
+        - product_impact_hourly
+        - product_impact_ratios
+        - wave_pilot
+      properties:
+        homepage_sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        homepage_actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        homepage_next_pages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        profile_sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        profile_actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        product_impact_counts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        product_impact_hourly:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+        product_impact_ratios:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryRatio"
+        wave_pilot:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiTelemetryCell"
+    ApiTelemetryVitalsSummary:
+      type: object
+      required:
+        - route
+        - metric
+        - samples
+        - p50
+        - p75
+        - p95
+      properties:
+        route:
+          type: string
+          description: Route template, or * for all routes.
+        metric:
+          type: string
+        samples:
+          type: integer
+        p50:
+          type: number
+        p75:
+          type: number
+        p95:
+          type: number
     ApiToggleHideLinkPreviewRequest:
       type: object
       properties:
