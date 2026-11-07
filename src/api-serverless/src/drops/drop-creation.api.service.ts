@@ -24,6 +24,7 @@ import {
 } from '../../../drops/create-or-update-drop.model';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { dropsMappers, DropsMappers } from './drops.mappers';
+import { withOwnedMediaUploadIds } from './drop-media-upload-refs';
 import {
   deleteDrop,
   DeleteDropUseCase
@@ -319,11 +320,23 @@ export class DropCreationApiService {
     const serverReceivedAt = serverReceivedAtFromTimer(ctx.timer);
     const proxyId =
       authorId === representativeId ? undefined : representativeId;
-    const model = this.dropsMappers.createDropApiToUseCaseModel({
-      request: createDropRequest,
+    const replay = await moderationReviewDb.savedRequest(
       authorId,
-      proxyId
-    });
+      'DROP',
+      ctx.moderationRequestId,
+      ctx
+    );
+    // R11-2: the media keeps its own upload's id, which links layout hints.
+    // A retry of a published request resolves as the first attempt did.
+    const model = await withOwnedMediaUploadIds(
+      this.dropsMappers.createDropApiToUseCaseModel({
+        request: createDropRequest,
+        authorId,
+        proxyId
+      }),
+      createDropRequest,
+      { publishedDropId: replay?.published_subject_id ?? null }
+    );
     const createModel: typeof model =
       hideLinkPreview === undefined
         ? model
@@ -331,12 +344,6 @@ export class DropCreationApiService {
             ...model,
             hide_link_preview: hideLinkPreview
           };
-    const replay = await moderationReviewDb.savedRequest(
-      authorId,
-      'DROP',
-      ctx.moderationRequestId,
-      ctx
-    );
     if (replay) {
       if (
         replay.scope.context_fingerprint !==
@@ -1236,7 +1243,7 @@ export class DropCreationApiService {
     const dropType = drop.drop_type
       ? enums.resolveOrThrow(ApiDropType, drop.drop_type)
       : ApiDropType.Chat;
-    const model: CreateOrUpdateDropModel =
+    const model: CreateOrUpdateDropModel = await withOwnedMediaUploadIds(
       this.dropsMappers.updateDropApiToUseCaseModel({
         request: {
           ...request,
@@ -1248,7 +1255,9 @@ export class DropCreationApiService {
         replyTo,
         waveId,
         dropId
-      });
+      }),
+      request
+    );
     const replay = await moderationReviewDb.savedRequest(
       authorId,
       'DROP',
