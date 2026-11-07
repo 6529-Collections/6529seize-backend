@@ -231,6 +231,40 @@ describe('WsConnectionRepository', () => {
       });
     });
 
+    it('inserts client_version only for sockets that declare a build', async () => {
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new WsConnectionRepository(
+        () =>
+          ({
+            execute,
+            executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+              callback({ connection: {} })
+            )
+          }) as any,
+        {} as any
+      );
+      await repo.save(
+        {
+          identity_id: 'profile-1',
+          jwt_expiry: 123,
+          wave_id: null,
+          connection_id: 'versioned',
+          purpose: WsConnectionPurpose.TYPING,
+          client_version: 'abc1234'
+        },
+        [],
+        {}
+      );
+
+      const [insert] = execute.mock.calls.filter(([sql]) =>
+        String(sql).startsWith(`insert into ${WS_CONNECTIONS_TABLE}`)
+      );
+      expect(insert[0]).toContain(
+        '(connection_id, jwt_expiry, identity_id, purpose, client_version) values (:connection_id, :jwt_expiry, :identity_id, :purpose, :client_version)'
+      );
+      expect(insert[1]).toMatchObject({ client_version: 'abc1234' });
+    });
+
     it.each([false, true])(
       'leaves typing sockets out of wave audiences unless asked (system=%s)',
       async (system) => {
