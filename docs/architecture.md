@@ -1569,6 +1569,19 @@ must not read request context from a reused socket: that socket can have been
 opened by another request. Queries outside the compatibility scope retain numeric
 BIGINT values, including when they reuse a socket opened inside that scope.
 
+API pools reach MySQL through RDS Proxy. The proxy pins a client session to one
+database connection for the session's life after a statement over 16 KB or an
+untracked `SET SESSION`, and warm Lambda containers keep pooled sessions open.
+The API therefore measures each formatted statement: above 16,000 bytes, a
+connection borrowed for that statement is destroyed instead of released, and a
+transaction connection is destroyed when the transaction releases it. Budgeted
+API transactions, which set session timeouts, destroy their connection instead
+of restoring the timeouts. Each disposal emits the `6529/DbProxy`
+`ProxyPinnedSessionRetired` metric with a value-free statement fingerprint.
+Long inlined `IN` lists that can be split per value use
+`querySqlInListChunks`, which keeps each statement's list near 12 KB. Loop mode
+is unchanged; loops disconnect after each invocation.
+
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
 
 The operational `wallet-transfer-analysis` CLI derives undeclared Memes wallet

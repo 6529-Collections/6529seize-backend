@@ -65,6 +65,13 @@ export interface SqlBudgetConnection {
   // Completion transfers ownership back to the pool; adapters must not defer it
   // after returning the physical connection to another borrower.
   readonly release: () => void | Promise<void>;
+  /**
+   * Optional disposal of a session whose budget variables were set, used
+   * instead of restoring them (RDS Proxy pins such sessions). It must destroy
+   * the physical connection synchronously or throw; on throw, the variables are
+   * restored as usual. `release` still runs afterwards for adapter bookkeeping.
+   */
+  readonly retire?: () => void;
   /** Actual adapter lifecycle preserves ORM transaction bookkeeping/subscribers. */
   readonly transaction?: {
     readonly begin: () => Promise<void>;
@@ -687,6 +694,22 @@ async function rollbackBudgetedTransaction(
   }
 }
 
+/**
+ * Disposes a session after its transaction outcome is settled. This is not an
+ * abort: it never marks errors connectionDestroyed, so retry decisions based on
+ * an acknowledged ROLLBACK are unchanged.
+ */
+function retireBudgetedSession(scope: SqlBudgetScope): void {
+  const retire = scope.connection.retire;
+  if (!retire || scope.destroyed) return;
+  try {
+    retire();
+    scope.destroyed = true;
+  } catch {
+    /* Restoration still returns clean session variables to the pool. */
+  }
+}
+
 async function restoreBudgetedSession(
   scope: SqlBudgetScope,
   saved: SavedSqlSession | undefined,
@@ -754,6 +777,7 @@ export async function executeBudgetedSqlTransaction<T>(
   const lease = await acquireBudgeted(acquire, budget);
   const { scope, restoreQuery } = await initializeBudgetedScope(lease, budget);
   let saved: SavedSqlSession | undefined;
+  let sessionChanged = false;
   let began = false;
   let completedWork: { result: T } | undefined;
   const query = (
@@ -775,6 +799,7 @@ export async function executeBudgetedSqlTransaction<T>(
       lock: normalizeSqlSessionInteger(raw.lock_seconds)
     };
     if (!saved.lock) throw new Error('Invalid saved SQL lock wait');
+    sessionChanged = true;
     await query(
       'SETUP',
       'SET SESSION max_execution_time = ?, innodb_lock_wait_timeout = ?',
@@ -821,6 +846,8 @@ export async function executeBudgetedSqlTransaction<T>(
     await rollbackBudgetedTransaction(scope, began, query, error);
     throw error;
   } finally {
+    // COMMIT/ROLLBACK outcomes are settled above; disposal cannot change them.
+    if (sessionChanged) retireBudgetedSession(scope);
     await restoreBudgetedSession(scope, saved, query);
     // Acknowledged commit remains known committed after restoration failure.
     restoreQuery();
