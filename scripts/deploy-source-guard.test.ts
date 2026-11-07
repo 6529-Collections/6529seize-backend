@@ -318,8 +318,6 @@ describe('generated deployment source guard', () => {
         'market-depth-publication-lock',
         'voting-credit-returns',
         'wave-score-input-index',
-        'profile-groups-collation',
-        'profile-groups-collation-revert',
         'nft-history-events',
         'nft-history-replay',
         'competition-lifecycle-events'
@@ -440,8 +438,6 @@ describe('generated deployment source guard', () => {
     'claims-media-upload',
     'nft-link-page-retry',
     'wave-score-input-index',
-    'profile-groups-collation',
-    'profile-groups-collation-revert',
     'nft-history-events',
     'nft-history-replay',
     'competition-lifecycle-events'
