@@ -4,6 +4,7 @@ import {
   DROPS_TABLE
 } from '@/constants/db-tables';
 import { DropType } from '@/entities/IDrop';
+import { LEGACY_NATIVE_PRIMARY_SQL } from '@/competitions/legacy-competition-get-facade';
 
 /**
  * Entry statuses the `legacy_get_drops` view maps to a type of its own:
@@ -11,6 +12,23 @@ import { DropType } from '@/entities/IDrop';
  * A drop with an entry in any other status keeps its stored type.
  */
 const VIEW_MAPPED_ENTRY_STATUSES = `'ACTIVE','WINNER','WITHDRAWN','DISQUALIFIED'`;
+
+/**
+ * Drops `d` shown by an entry of their wave's native primary competition
+ * with `statuses`, through competitions `c` and entries `e`.
+ */
+function nativeEntryDropsFrom(statuses: string): string {
+  return `${COMPETITIONS_TABLE} c
+      join ${COMPETITION_ENTRIES_TABLE} e on e.competition_id = c.id and e.status in (${statuses})
+      join ${DROPS_TABLE} d on d.id = e.drop_id and d.wave_id = c.legacy_wave_id`;
+}
+
+/** `d` has no native entry the view maps to a type of its own. */
+const NO_VIEW_MAPPED_ENTRY = `not exists (
+          select 1 from ${COMPETITIONS_TABLE} c
+          join ${COMPETITION_ENTRIES_TABLE} e on e.competition_id = c.id
+          where c.legacy_wave_id = d.wave_id and ${LEGACY_NATIVE_PRIMARY_SQL}
+            and e.drop_id = d.id and e.status in (${VIEW_MAPPED_ENTRY_STATUSES}))`;
 
 /**
  * The rows `legacy_get_drops` returns for
@@ -34,18 +52,50 @@ export function legacyTypedDropsSql(
 ): string {
   const status = dropType === DropType.WINNER ? 'WINNER' : 'ACTIVE';
   return `select d.author_id as profile_id, d.id as drop_id
-      from ${COMPETITIONS_TABLE} c
-      join ${COMPETITION_ENTRIES_TABLE} e on e.competition_id = c.id and e.status = '${status}'
-      join ${DROPS_TABLE} d on d.id = e.drop_id and d.wave_id = c.legacy_wave_id
-      where c.legacy_wave_id = ${params.waveId} and c.wave_id = c.legacy_wave_id
+      from ${nativeEntryDropsFrom(`'${status}'`)}
+      where c.legacy_wave_id = ${params.waveId} and ${LEGACY_NATIVE_PRIMARY_SQL}
         and d.author_id in (${params.profileIds})
     union select d.author_id as profile_id, d.id as drop_id
       from ${DROPS_TABLE} d
       where d.author_id in (${params.profileIds}) and d.wave_id = ${params.waveId}
         and d.drop_type = '${dropType}'
-        and not exists (
-          select 1 from ${COMPETITIONS_TABLE} c
-          join ${COMPETITION_ENTRIES_TABLE} e on e.competition_id = c.id
-          where c.legacy_wave_id = d.wave_id and c.legacy_wave_id = c.wave_id
-            and e.drop_id = d.id and e.status in (${VIEW_MAPPED_ENTRY_STATUSES}))`;
+        and ${NO_VIEW_MAPPED_ENTRY}`;
+}
+
+/**
+ * Per wave and author, whether `legacy_get_drops` has a PARTICIPATORY or a
+ * WINNER drop by the author in the wave, for `wave_id in (:waveIds)` and
+ * `author_id in (:authorIds)`, read from base tables so the indexes apply:
+ * (wave_id, drop_type, author_id) for stored types, and the native primary
+ * competition's (competition_id, status) entries. The view instead reads
+ * every drop by the authors in the waves: 3.1 s for 15 authors in a 488k-drop
+ * chat wave on the prod reader, against 0.04 ms here.
+ *
+ * Same rows as the view's, typed the same way (see legacyTypedDropsSql):
+ * native entries by status (ACTIVE, WINNER), then stored PARTICIPATORY and
+ * WINNER drops with no view-mapped native entry. Returns
+ * `wave_id, author_id, is_participant, is_winner` (0/1). Run it outside the
+ * legacy GET facade, so the base tables are not rewritten to the views.
+ */
+export function legacyAuthorWaveParticipationSql(params: {
+  waveIds: string;
+  authorIds: string;
+}): string {
+  return `select wave_id, author_id,
+         max(case when drop_type = '${DropType.PARTICIPATORY}' then 1 else 0 end) as is_participant,
+         max(case when drop_type = '${DropType.WINNER}' then 1 else 0 end) as is_winner
+    from (
+      select d.wave_id, d.author_id,
+             case when e.status = 'WINNER' then '${DropType.WINNER}' else '${DropType.PARTICIPATORY}' end as drop_type
+        from ${nativeEntryDropsFrom(`'ACTIVE','WINNER'`)}
+        where c.legacy_wave_id in (${params.waveIds}) and ${LEGACY_NATIVE_PRIMARY_SQL}
+          and d.author_id in (${params.authorIds})
+      union all
+      select d.wave_id, d.author_id, d.drop_type
+        from ${DROPS_TABLE} d
+        where d.wave_id in (${params.waveIds}) and d.author_id in (${params.authorIds})
+          and d.drop_type in ('${DropType.PARTICIPATORY}', '${DropType.WINNER}')
+          and ${NO_VIEW_MAPPED_ENTRY}
+    ) typed
+    group by wave_id, author_id`;
 }
