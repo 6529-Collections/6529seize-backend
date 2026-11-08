@@ -80,6 +80,7 @@ function setUp() {
       store: () => redis.store(),
       load,
       ttlSec: () => TTL_SEC,
+      freezeShared: true,
       now: () => clock.now,
       sleep: async (ms) => {
         sleeps.push(ms);

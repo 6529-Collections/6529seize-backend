@@ -12,9 +12,8 @@ export function redisKeySlot(key: string): number {
     if (close > open + 1) key = key.slice(open + 1, close);
   }
   let crc = 0;
-  const bytes = Buffer.from(key, 'utf8');
-  for (let index = 0; index < bytes.length; index++) {
-    crc ^= bytes[index] << 8;
+  for (const byte of Array.from(Buffer.from(key, 'utf8'))) {
+    crc ^= byte << 8;
     for (let bit = 0; bit < 8; bit++) {
       crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
     }

@@ -95,6 +95,11 @@ export interface WaveGroupsCatalogueDeps {
   ) => Promise<{ groups: UserGroupEntity[]; bytes: number } | null>;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
+  /**
+   * Deep-freeze the shared catalogue so a caller that changes it fails
+   * loudly. Defaults to on under Jest (or NODE_ENV=test), off otherwise.
+   */
+  readonly freezeShared?: boolean;
 }
 
 const TIMER_PREFIX =
@@ -142,10 +147,15 @@ export class WaveGroupsCatalogue {
   private readonly inFlight = new Map<string, Promise<CatalogueRead>>();
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly freezeShared: boolean;
 
   constructor(private readonly deps: WaveGroupsCatalogueDeps) {
     this.now = deps.now ?? (() => Date.now());
     this.sleep = deps.sleep ?? ((ms) => Time.millis(ms).sleep());
+    this.freezeShared =
+      deps.freezeShared ??
+      (process.env.JEST_WORKER_ID !== undefined ||
+        process.env.NODE_ENV === 'test');
   }
 
   /** Drops this process's copy (tests). */
@@ -179,13 +189,11 @@ export class WaveGroupsCatalogue {
   private currentCopy(probe: CatalogueProbe): UserGroupEntity[] | null {
     const memory = this.memory;
     const stamp = trustedStamp(probe);
-    if (
-      !memory ||
-      !stamp ||
-      memory.stamp.generation !== stamp.generation ||
-      memory.stamp.hash !== stamp.hash
-    )
-      return null;
+    if (!memory || !stamp) return null;
+    const sameContent =
+      memory.stamp.generation === stamp.generation &&
+      memory.stamp.hash === stamp.hash;
+    if (!sameContent) return null;
     // Same content republished after expiry: keep the copy, take the new time.
     if (memory.stamp.publishedAt !== stamp.publishedAt)
       this.memory = { stamp, groups: memory.groups };
@@ -208,8 +216,8 @@ export class WaveGroupsCatalogue {
     const read = this.deps.readAndParse
       ? await this.deps.readAndParse(() => store.readBlob(), timer)
       : await defaultReadAndParse(() => store.readBlob(), timer);
-    if (!read || read.bytes !== stamp.bytes) return null;
-    const groups = shared(read.groups);
+    if (read?.bytes !== stamp.bytes) return null;
+    const groups = this.shared(read.groups);
     this.memory = { stamp, groups };
     return { groups, source, redisBytes: read.bytes };
   }
@@ -222,7 +230,7 @@ export class WaveGroupsCatalogue {
   ): Promise<CatalogueRead> {
     const stale = this.staleCopyAfterExpiry(probe);
     const joined = this.inFlight.get(probe.generation);
-    if (joined) {
+    if (joined !== undefined) {
       if (stale) return stale;
       return joined;
     }
@@ -297,7 +305,7 @@ export class WaveGroupsCatalogue {
     timer?: Timer
   ): Promise<CatalogueRead> {
     const existing = this.inFlight.get(generation);
-    if (existing) {
+    if (existing !== undefined) {
       if (leaseToken)
         void store.releaseRebuildLease(leaseToken).catch(() => undefined);
       return existing;
@@ -312,6 +320,16 @@ export class WaveGroupsCatalogue {
     return rebuild;
   }
 
+  /**
+   * Marks groups shared across requests: deep-frozen when `freezeShared`, so
+   * any caller that changes the shared catalogue fails instead of corrupting
+   * other requests' eligibility.
+   */
+  private shared(groups: UserGroupEntity[]): UserGroupEntity[] {
+    if (this.freezeShared) deepFreeze(groups);
+    return groups;
+  }
+
   private async rebuild(
     store: WaveGroupsCatalogueStore,
     generation: string,
@@ -320,11 +338,11 @@ export class WaveGroupsCatalogue {
   ): Promise<CatalogueRead> {
     let published = false;
     try {
-      const groups = shared(
+      const groups = this.shared(
         await timed(timer, 'redisMissGetByIds', () => this.deps.load(timer))
       );
-      const payload = await timed(timer, 'redisJsonStringify', async () =>
-        JSON.stringify(groups)
+      const payload = await timed(timer, 'redisJsonStringify', () =>
+        Promise.resolve(JSON.stringify(groups))
       );
       const stamp: CatalogueStamp = {
         generation,
@@ -382,16 +400,6 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new CatalogueRequestAbortedError();
 }
 
-/**
- * Marks groups shared across requests. Under tests it deep-freezes them, so
- * any caller that changes the shared catalogue fails instead of corrupting
- * other requests' eligibility.
- */
-function shared(groups: UserGroupEntity[]): UserGroupEntity[] {
-  if (process.env.NODE_ENV === 'test') deepFreeze(groups);
-  return groups;
-}
-
 function deepFreeze(value: unknown): void {
   if (value === null || typeof value !== 'object' || Object.isFrozen(value))
     return;
@@ -405,8 +413,8 @@ async function defaultReadAndParse(
 ): Promise<{ groups: UserGroupEntity[]; bytes: number } | null> {
   const raw = await timed(timer, 'redisGet', read);
   if (!raw) return null;
-  const groups = await timed(timer, 'redisJsonParse', async () =>
-    JSON.parse(raw)
+  const groups = await timed(timer, 'redisJsonParse', () =>
+    Promise.resolve(JSON.parse(raw) as UserGroupEntity[])
   );
   return { groups, bytes: Buffer.byteLength(raw, 'utf8') };
 }
