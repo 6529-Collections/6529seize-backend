@@ -1,6 +1,6 @@
 import { competitionCreditNfts } from '@/competitions/competition-credit-nfts';
 import { readSequentially } from '@/competitions/competition-read-sequence';
-import { collections } from '@/collections';
+import { inListPages } from '@/db/in-list-pages';
 import {
   CompetitionCreditRepository,
   CompetitionCreditSpending,
@@ -37,6 +37,12 @@ export type CompetitionCreditBudget = {
 type BudgetCompetition = Pick<Competition, 'id' | 'wave_id' | 'voting'>;
 type BudgetEntry = Pick<CompetitionEntry, 'id' | 'drop_id'> &
   Partial<Pick<CompetitionEntry, 'status'>>;
+
+const NO_SPENDING: CompetitionCreditSpending = {
+  namespace_spent: 0,
+  entry_spent: 0,
+  current_vote: 0
+};
 
 /** A sign change can exceed the safe-number range even when both votes fit. */
 export function competitionVoteDelta(
@@ -121,6 +127,30 @@ export class CompetitionCreditService {
   ): Promise<Map<string, CompetitionCreditBudget>> {
     if (competition.voting.credit_scope !== WaveCreditScope.WAVE)
       throw new Error('Batched wave budgets require WAVE credit scope');
+    return this.getBudgetsWithoutEntry(competition, profileIds, ctx);
+  }
+
+  /**
+   * Batched DROP budgets (no entry selected): the same single-profile formula,
+   * with available credit prefetched in pages of 100 profiles. DROP scope has
+   * no competition-wide spending, so nothing else is read.
+   */
+  public async getDropBudgets(
+    competition: BudgetCompetition,
+    profileIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<Map<string, CompetitionCreditBudget>> {
+    if (competition.voting.credit_scope !== WaveCreditScope.DROP)
+      throw new Error('Batched drop budgets require DROP credit scope');
+    return this.getBudgetsWithoutEntry(competition, profileIds, ctx);
+  }
+
+  private async getBudgetsWithoutEntry(
+    competition: BudgetCompetition,
+    profileIds: readonly string[],
+    ctx: RequestContext
+  ): Promise<Map<string, CompetitionCreditBudget>> {
+    const wave = competition.voting.credit_scope === WaveCreditScope.WAVE;
     const budgets = new Map<string, CompetitionCreditBudget>();
     const profiles = Array.from(new Set(profileIds));
     const simpleCredit = [
@@ -137,60 +167,57 @@ export class CompetitionCreditService {
       });
       return budgets;
     }
-    await readSequentially(
-      collections.chunkArray(profiles, 100),
-      async (page) => {
-        const identities = new Map(
-          (await this.identities.getIdentitiesByIds(page, ctx.connection)).map(
-            (identity) => [identity.profile_id, identity]
+    await readSequentially(inListPages(profiles), async (page) => {
+      const identities = new Map(
+        (await this.identities.getIdentitiesByIds(page, ctx.connection)).map(
+          (identity) => [identity.profile_id, identity]
+        )
+      );
+      // DROP budgets without an entry never read spending.
+      const spendings = wave
+        ? await this.repository.getNamespaceSpendings(competition, page, ctx)
+        : null;
+      // Keep validation, flooring, range checks and budget construction in the
+      // same public implementation used by ordinary one-profile reads.
+      const prefetched = new CompetitionCreditService(
+        {
+          getSpending: (_competition, profileId) =>
+            Promise.resolve({
+              namespace_spent: spendings?.get(profileId) ?? 0,
+              entry_spent: 0,
+              current_vote: 0
+            }),
+          getNamespaceSpendings: this.repository.getNamespaceSpendings.bind(
+            this.repository
           )
-        );
-        const spendings = await this.repository.getNamespaceSpendings(
-          competition,
-          page,
-          ctx
-        );
-        // Keep validation, flooring, range checks and budget construction in the
-        // same public implementation used by ordinary one-profile reads.
-        const prefetched = new CompetitionCreditService(
-          {
-            getSpending: (_competition, profileId) =>
-              Promise.resolve({
-                namespace_spent: spendings.get(profileId) ?? 0,
-                entry_spent: 0,
-                current_vote: 0
-              }),
-            getNamespaceSpendings: this.repository.getNamespaceSpendings.bind(
-              this.repository
-            )
-          },
-          {
-            getIdentityByProfileId: (profileId) =>
-              Promise.resolve(identities.get(profileId) ?? null),
-            getIdentitiesByIds: this.identities.getIdentitiesByIds.bind(
+        },
+        {
+          getIdentityByProfileId: (profileId) =>
+            Promise.resolve(identities.get(profileId) ?? null),
+          getIdentitiesByIds: this.identities.getIdentitiesByIds.bind(
+            this.identities
+          ),
+          getSingleNftVotingCreditsByProfileId:
+            this.identities.getSingleNftVotingCreditsByProfileId.bind(
               this.identities
-            ),
-            getSingleNftVotingCreditsByProfileId:
-              this.identities.getSingleNftVotingCreditsByProfileId.bind(
-                this.identities
-              )
-          },
-          this.ratings
+            )
+        },
+        this.ratings
+      );
+      await readSequentially(page, async (profileId) => {
+        // A missing exact key may be a collation match, not absent data.
+        // Fall back to the original SQL lookup rather than assuming zero.
+        const source =
+          identities.has(profileId) &&
+          (spendings === null || spendings.has(profileId))
+            ? prefetched
+            : this;
+        budgets.set(
+          profileId,
+          await source.getBudget(competition, profileId, undefined, ctx)
         );
-        await readSequentially(page, async (profileId) => {
-          // A missing exact key may be a collation match, not absent data.
-          // Fall back to the original SQL lookup rather than assuming zero.
-          const source =
-            identities.has(profileId) && spendings.has(profileId)
-              ? prefetched
-              : this;
-          budgets.set(
-            profileId,
-            await source.getBudget(competition, profileId, undefined, ctx)
-          );
-        });
-      }
-    );
+      });
+    });
     return budgets;
   }
 
@@ -210,12 +237,12 @@ export class CompetitionCreditService {
       profileId,
       ctx
     );
-    const spending = await this.repository.getSpending(
-      competition,
-      profileId,
-      entry,
-      ctx
-    );
+    // A DROP budget without an entry has no spent amount and no vote range,
+    // so its spending would be read only to be discarded.
+    const spending =
+      scope === WaveCreditScope.DROP && !entry
+        ? NO_SPENDING
+        : await this.repository.getSpending(competition, profileId, entry, ctx);
     const spent =
       scope === WaveCreditScope.WAVE
         ? spending.namespace_spent
