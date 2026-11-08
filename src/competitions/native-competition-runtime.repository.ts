@@ -36,7 +36,11 @@ import {
 import { competitionRepository } from './competition.repository';
 import { NativeCompetitionReader } from './native-competition.reader';
 import { stableUuid } from './competition-id';
-import { inListPages } from '@/db/in-list-pages';
+import {
+  chunkSqlInListValues,
+  SQL_IN_LIST_CHUNK_BYTES,
+  SQL_IN_LIST_PAGE_VALUES
+} from '@/db/sql-in-list-chunks';
 import {
   NativeAward,
   NativeVotePoint
@@ -393,8 +397,8 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
 
   /**
    * `getVoterActiveVotes` for many voters, one statement per page of at most
-   * 100 voters and 12 KB of ids (inListPages), so no statement reaches the
-   * proxy pin size. Each voter's votes keep that
+   * 100 voters and 12 KB of ids, so no statement reaches the proxy pin size.
+   * Each voter's votes keep that
    * method's order. A page whose rows name a voter not exactly as requested
    * (ids equal under the column collation) is read voter by voter instead, so
    * every voter gets exactly the rows `getVoterActiveVotes` would return.
@@ -406,7 +410,11 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
   ): Promise<Map<string, { entryId: string; value: number }[]>> {
     const votes = new Map<string, { entryId: string; value: number }[]>();
     await readSequentially(
-      inListPages(Array.from(new Set(voterProfileIds))),
+      chunkSqlInListValues(
+        voterProfileIds,
+        SQL_IN_LIST_CHUNK_BYTES,
+        SQL_IN_LIST_PAGE_VALUES
+      ),
       async (page) => {
         const rows = await this.query<{
           voterProfileId: string;
@@ -421,8 +429,18 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
           { competitionId, voterProfileIds: page },
           ctx
         );
+        // Rows are keyed by voter: a row naming a voter not exactly as
+        // requested, or two requested voters equal by case (both could match
+        // one stored id), would be ambiguous. listActiveVoters' DISTINCT
+        // already returns collation-distinct ids; this guards other callers.
         const requested = new Set(page);
-        if (rows.some((row) => !requested.has(row.voterProfileId))) {
+        const caseDistinct =
+          new Set(page.map((voter) => voter.toLowerCase())).size ===
+          page.length;
+        if (
+          !caseDistinct ||
+          rows.some((row) => !requested.has(row.voterProfileId))
+        ) {
           await readSequentially(page, async (voterProfileId) => {
             votes.set(
               voterProfileId,

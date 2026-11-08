@@ -1,6 +1,10 @@
 import { competitionCreditNfts } from '@/competitions/competition-credit-nfts';
 import { readSequentially } from '@/competitions/competition-read-sequence';
-import { inListPages } from '@/db/in-list-pages';
+import {
+  chunkSqlInListValues,
+  SQL_IN_LIST_CHUNK_BYTES,
+  SQL_IN_LIST_PAGE_VALUES
+} from '@/db/sql-in-list-chunks';
 import {
   CompetitionCreditRepository,
   CompetitionCreditSpending,
@@ -167,57 +171,64 @@ export class CompetitionCreditService {
       });
       return budgets;
     }
-    await readSequentially(inListPages(profiles), async (page) => {
-      const identities = new Map(
-        (await this.identities.getIdentitiesByIds(page, ctx.connection)).map(
-          (identity) => [identity.profile_id, identity]
-        )
-      );
-      // DROP budgets without an entry never read spending.
-      const spendings = wave
-        ? await this.repository.getNamespaceSpendings(competition, page, ctx)
-        : null;
-      // Keep validation, flooring, range checks and budget construction in the
-      // same public implementation used by ordinary one-profile reads.
-      const prefetched = new CompetitionCreditService(
-        {
-          getSpending: (_competition, profileId) =>
-            Promise.resolve({
-              namespace_spent: spendings?.get(profileId) ?? 0,
-              entry_spent: 0,
-              current_vote: 0
-            }),
-          getNamespaceSpendings: this.repository.getNamespaceSpendings.bind(
-            this.repository
+    await readSequentially(
+      chunkSqlInListValues(
+        profiles,
+        SQL_IN_LIST_CHUNK_BYTES,
+        SQL_IN_LIST_PAGE_VALUES
+      ),
+      async (page) => {
+        const identities = new Map(
+          (await this.identities.getIdentitiesByIds(page, ctx.connection)).map(
+            (identity) => [identity.profile_id, identity]
           )
-        },
-        {
-          getIdentityByProfileId: (profileId) =>
-            Promise.resolve(identities.get(profileId) ?? null),
-          getIdentitiesByIds: this.identities.getIdentitiesByIds.bind(
-            this.identities
-          ),
-          getSingleNftVotingCreditsByProfileId:
-            this.identities.getSingleNftVotingCreditsByProfileId.bind(
-              this.identities
-            )
-        },
-        this.ratings
-      );
-      await readSequentially(page, async (profileId) => {
-        // A missing exact key may be a collation match, not absent data.
-        // Fall back to the original SQL lookup rather than assuming zero.
-        const source =
-          identities.has(profileId) &&
-          (spendings === null || spendings.has(profileId))
-            ? prefetched
-            : this;
-        budgets.set(
-          profileId,
-          await source.getBudget(competition, profileId, undefined, ctx)
         );
-      });
-    });
+        // DROP budgets without an entry never read spending.
+        const spendings = wave
+          ? await this.repository.getNamespaceSpendings(competition, page, ctx)
+          : null;
+        // Keep validation, flooring, range checks and budget construction in the
+        // same public implementation used by ordinary one-profile reads.
+        const prefetched = new CompetitionCreditService(
+          {
+            getSpending: (_competition, profileId) =>
+              Promise.resolve({
+                namespace_spent: spendings?.get(profileId) ?? 0,
+                entry_spent: 0,
+                current_vote: 0
+              }),
+            getNamespaceSpendings: this.repository.getNamespaceSpendings.bind(
+              this.repository
+            )
+          },
+          {
+            getIdentityByProfileId: (profileId) =>
+              Promise.resolve(identities.get(profileId) ?? null),
+            getIdentitiesByIds: this.identities.getIdentitiesByIds.bind(
+              this.identities
+            ),
+            getSingleNftVotingCreditsByProfileId:
+              this.identities.getSingleNftVotingCreditsByProfileId.bind(
+                this.identities
+              )
+          },
+          this.ratings
+        );
+        await readSequentially(page, async (profileId) => {
+          // A missing exact key may be a collation match, not absent data.
+          // Fall back to the original SQL lookup rather than assuming zero.
+          const source =
+            identities.has(profileId) &&
+            (spendings === null || spendings.has(profileId))
+              ? prefetched
+              : this;
+          budgets.set(
+            profileId,
+            await source.getBudget(competition, profileId, undefined, ctx)
+          );
+        });
+      }
+    );
     return budgets;
   }
 

@@ -1,6 +1,6 @@
 import * as mysql from 'mysql';
 import { PROXY_PIN_STATEMENT_BYTES } from '@/db/proxy-session-pinning';
-import { IN_LIST_MAX_VALUES } from '@/db/in-list-pages';
+import { SQL_IN_LIST_PAGE_VALUES as IN_LIST_MAX_VALUES } from '@/db/sql-in-list-chunks';
 import { NativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
 
 /** The executor's named-parameter expansion (my-sql.helpers prepareStatement). */
@@ -111,6 +111,26 @@ describe('getVotersActiveVotes', () => {
     expect(votes.get('voter-1')).toEqual([
       { entryId: 'single-voter-1', value: 1 }
     ]);
+  });
+
+  it('reads a page voter by voter when two requested voters differ only by case', async () => {
+    // Both would match one stored id under the collation; keyed rows could
+    // give one of them nothing.
+    const { repository, perVoter } = repositoryWith((page) =>
+      page
+        .filter((voter) => voter === 'abc')
+        .map((voter) => ({ voterProfileId: voter, entryId: 'x', value: 1 }))
+    );
+    const votes = await repository.getVotersActiveVotes(
+      'c',
+      ['abc', 'ABC'],
+      {}
+    );
+    expect(perVoter.mock.calls.map(([, voter]) => voter)).toEqual([
+      'abc',
+      'ABC'
+    ]);
+    expect(votes.get('ABC')).toEqual([{ entryId: 'single-ABC', value: 1 }]);
   });
 
   it('does not query for no voters', async () => {
