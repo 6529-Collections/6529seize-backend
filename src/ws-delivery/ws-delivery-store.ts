@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { getRedisClient } from '@/redis';
+import { withRedisDeadline } from '@/redis-command-deadline';
 
 const WINDOW_MS = 5 * 60_000;
 // Keep connection capabilities beyond AWS's two-hour lifetime, including handshake margin.
@@ -251,24 +252,24 @@ async function runScript(
   }
 }
 
-/** Fails fast when Redis is down and bounds each call to 250 ms. */
+/**
+ * Fails fast when Redis is down and bounds each call to 250 ms. A timer that
+ * fires late (frozen container, stalled event loop) does not fail a call
+ * whose reply is already there; see withRedisDeadline.
+ */
 async function bounded<T>(action: () => Promise<T>): Promise<T> {
   const client = getRedisClient();
   if (!client?.isReady) throw new Error('WebSocket recovery store unavailable');
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      action(),
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error('WebSocket recovery store timeout')),
-          250
-        );
-      })
-    ]);
-  } finally {
-    clearTimeout(timeout);
-  }
+  return withRedisDeadline(action(), {
+    operation: 'ws-delivery',
+    timeoutMs: 250,
+    timeoutError: (miss) =>
+      new Error(
+        miss === 'slow'
+          ? 'WebSocket recovery store timeout'
+          : 'WebSocket recovery store timeout (process suspended or event loop stalled)'
+      )
+  });
 }
 
 /**
