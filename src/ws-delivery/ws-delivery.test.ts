@@ -245,6 +245,32 @@ describe('shared WebSocket delivery', () => {
     expect(settled).toBe(true);
   });
 
+  it('reports each send claim wall time to the batch, before the send', async () => {
+    const events: string[] = [];
+    const claimTimes: number[] = [];
+    await expect(
+      delivery.deliver({
+        ...input,
+        send: async () => {
+          events.push('send');
+          return {};
+        },
+        batch: {
+          defer: () => undefined,
+          metrics: new DeliveryMetricsBatch(),
+          claimTimed: (milliseconds: number) => {
+            events.push('claim');
+            claimTimes.push(milliseconds);
+          }
+        }
+      })
+    ).resolves.toEqual({ status: 'sent' });
+
+    expect(events).toEqual(['claim', 'send']);
+    expect(claimTimes).toHaveLength(1);
+    expect(claimTimes[0]).toBeGreaterThanOrEqual(0);
+  });
+
   it('writes one aggregated EMF record per metrics batch (1.2)', () => {
     const lambda = process.env.AWS_LAMBDA_FUNCTION_NAME;
     process.env.AWS_LAMBDA_FUNCTION_NAME = 'api';

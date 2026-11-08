@@ -104,6 +104,8 @@ export class FanoutMeasurement {
   private firstSettledAt: number | null = null;
   private lastSettledAt: number | null = null;
   private readonly sendDurations: number[] = [];
+  private readonly claimDurations: number[] = [];
+  private readonly cpuAtStart: NodeJS.CpuUsage;
   private readonly outcomes: Record<FanoutSendOutcome, number> = {
     sent: 0,
     resync_pending: 0,
@@ -115,9 +117,13 @@ export class FanoutMeasurement {
   constructor(
     private readonly frameType: string,
     private readonly serverReceivedAt: number | null,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly cpuUsage: (
+      previous?: NodeJS.CpuUsage
+    ) => NodeJS.CpuUsage = (previous) => process.cpuUsage(previous)
   ) {
     this.startedAt = now();
+    this.cpuAtStart = cpuUsage();
   }
 
   queryDone(recipients: number): void {
@@ -137,6 +143,11 @@ export class FanoutMeasurement {
     this.connectionReads++;
   }
 
+  /** Wall time of one send's delivery claim (the Redis bookkeeping before it). */
+  claimTimed(milliseconds: number): void {
+    this.claimDurations.push(milliseconds);
+  }
+
   sendSettled(startedAt: number, outcome: FanoutSendOutcome): void {
     const settledAt = this.now();
     this.sendDurations.push(settledAt - startedAt);
@@ -147,6 +158,9 @@ export class FanoutMeasurement {
 
   emit(properties: Record<string, string | number | null> = {}): void {
     const finishedAt = this.now();
+    // Process CPU (user + system) while this fan-out ran. A Lambda serves one
+    // request at a time, so it is this fan-out's cost plus its request's.
+    const cpu = this.cpuUsage(this.cpuAtStart);
     const sinceStart = (at: number | null) =>
       at === null ? Number.NaN : at - this.startedAt;
     writeEmf({
@@ -180,6 +194,14 @@ export class FanoutMeasurement {
         fanout_per_send_ms: {
           unit: 'Milliseconds',
           value: sampleValues(this.sendDurations, EMF_MAX_VALUES)
+        },
+        fanout_cpu_ms: {
+          unit: 'Milliseconds',
+          value: Math.round((cpu.user + cpu.system) / 100) / 10
+        },
+        fanout_claim_ms: {
+          unit: 'Milliseconds',
+          value: sampleValues(this.claimDurations, EMF_MAX_VALUES)
         },
         fanout_serializations: { unit: 'Count', value: this.serializations },
         fanout_connection_reads: {
