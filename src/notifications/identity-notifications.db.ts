@@ -475,17 +475,18 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     });
   }
 
+  /** Marks the wave's unread notifications read; returns how many changed. */
   async markWaveNotificationsAsRead(
     waveId: string,
     identityId: string,
     ctx: RequestContext
-  ) {
+  ): Promise<number> {
     return withWebSocketMutation(this.db, ctx, async (ctx) => {
       const mutationResult = await (async () => {
         ctx.timer?.start(
           `${this.constructor.name}->markWaveNotificationsAsRead`
         );
-        await this.db.execute(
+        const result = await this.db.execute(
           `
         update ${IDENTITY_NOTIFICATIONS_TABLE}
         set read_at = :read_at
@@ -504,6 +505,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         ctx.timer?.stop(
           `${this.constructor.name}->markWaveNotificationsAsRead`
         );
+        return this.db.getAffectedRows(result);
       })();
       await recordWebSocketEvent(
         { type: 'identity', profileId: identityId },

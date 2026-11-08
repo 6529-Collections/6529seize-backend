@@ -613,6 +613,60 @@ describe('UserGroupsService eligibility cache', () => {
     );
   });
 
+  it('polls every 25-50 ms for a peer result and validates only a published one', async () => {
+    const sleeps: number[] = [];
+    jest.spyOn(Time.prototype, 'sleep').mockImplementation(function (
+      this: Time
+    ) {
+      sleeps.push(this.toMillis());
+      return Promise.resolve();
+    });
+    const redis = buildRedisMock();
+    let eligibleGroupsCacheReads = 0;
+    redis.get.mockImplementation((key: string) => {
+      if (key === WAVE_GROUPS_VERSION_CACHE_KEY) {
+        return Promise.resolve('7');
+      }
+      if (key === ELIGIBLE_GROUPS_CACHE_KEY) {
+        eligibleGroupsCacheReads++;
+        // The first read is the initial cache check; the peer publishes
+        // after three more polls.
+        if (eligibleGroupsCacheReads <= 4) {
+          return Promise.resolve(null);
+        }
+        return Promise.resolve(
+          JSON.stringify({
+            eligibleGroupIds: [GROUP_ID],
+            computedAtMillis: 3_000,
+            waveGroupsVersion: 7
+          })
+        );
+      }
+      return Promise.resolve(null);
+    });
+    // A peer holds the lease throughout.
+    redis.set.mockResolvedValue(null);
+    (getRedisClient as jest.Mock).mockReturnValue(redis);
+
+    const userGroupsDb = buildUserGroupsDbMock();
+    const service = buildService(userGroupsDb);
+
+    await expect(
+      service.getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).resolves.toEqual([GROUP_ID]);
+    expect(sleeps).toHaveLength(3);
+    for (const ms of sleeps) {
+      expect(ms).toBeGreaterThanOrEqual(25);
+      expect(ms).toBeLessThanOrEqual(50);
+    }
+    // Once for the initial check and once to validate the published result;
+    // the empty polls never reach the database.
+    expect(
+      userGroupsDb.getLatestProfileGroupChangeMillis
+    ).toHaveBeenCalledTimes(2);
+    expect(userGroupsDb.getAllWaveRelatedGroups).not.toHaveBeenCalled();
+  });
+
   it('returns peer-produced cache entry without sleeping when it is already present', async () => {
     const sleepSpy = jest.spyOn(Time.prototype, 'sleep');
     const redis = buildRedisMock();

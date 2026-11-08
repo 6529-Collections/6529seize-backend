@@ -778,6 +778,8 @@ router.get(
       res.send(result);
     } catch (error) {
       if (error instanceof WaveLogsUnavailableException) {
+        // The error middleware sends the 503 on this response, keeping
+        // headers already set.
         res.setHeader(
           'Retry-After',
           WAVE_LOGS_TIMEOUT_TTL.toSeconds().toString()
