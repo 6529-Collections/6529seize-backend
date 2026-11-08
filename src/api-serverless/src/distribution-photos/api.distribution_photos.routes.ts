@@ -22,7 +22,10 @@ import {
   ApiUploadPartOfMultipartUploadRequestSchema,
   createDistributionPhotoMediaPrepRequestSchema
 } from '@/api/media/media-uplodad.validators';
-import { uploadMediaService } from '@/api/media/upload-media.service';
+import {
+  DistributionPhotoScope,
+  uploadMediaService
+} from '@/api/media/upload-media.service';
 import { cacheRequest } from '@/api/request-cache';
 import { authenticateSubscriptionsAdmin } from '@/api/subscriptions/api.subscriptions.allowlist';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
@@ -31,6 +34,18 @@ import { numbers } from '@/numbers';
 import { evictRedisCacheForPathWithTimeout } from '@/redis';
 
 const router = asyncRouter();
+
+/** The card a distribution photo multipart part or completion belongs to. */
+function distributionPhotoScope(params: {
+  contract: string;
+  nft_id: string;
+}): DistributionPhotoScope {
+  const cardId = numbers.parseIntOrNull(params.nft_id);
+  if (cardId === null) {
+    throw new BadRequestException('Invalid nft_id parameter');
+  }
+  return { contract: params.contract, cardId };
+}
 const logger = Logger.get('DISTRIBUTION_PHOTOS');
 const CACHE_EVICTION_TIMEOUT_MS = 1_500;
 
@@ -214,10 +229,10 @@ router.post(
       ApiUploadPartOfMultipartUploadRequestSchema
     );
 
-    const url =
-      await uploadMediaService.getSignedUrlForPartOfMultipartUpload(
-        validatedRequest
-      );
+    const url = await uploadMediaService.getSignedUrlForPartOfMultipartUpload({
+      ...validatedRequest,
+      distributionPhoto: distributionPhotoScope(req.params)
+    });
 
     res.send({
       upload_url: url
@@ -305,8 +320,10 @@ router.post(
       ApiCompleteMultipartUploadRequestSchema
     );
 
-    const response =
-      await uploadMediaService.completeMultipartUpload(validatedRequest);
+    const response = await uploadMediaService.completeMultipartUpload({
+      ...validatedRequest,
+      distributionPhoto: distributionPhotoScope(req.params)
+    });
 
     res.send(response);
   }
