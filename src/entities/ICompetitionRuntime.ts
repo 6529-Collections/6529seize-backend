@@ -159,6 +159,12 @@ export class CompetitionOutcomeAwardEntity {
   readonly created_at!: number;
 }
 
+export const COMPETITION_OUTBOX_EVENT_TYPE_INDEX =
+  'idx_competition_outbox_competition_event_type';
+/** Must stay identical to the queries' event-type filter expression. */
+export const COMPETITION_OUTBOX_EVENT_TYPE_EXPRESSION =
+  "json_unquote(json_extract(`event`,'$.event_type'))";
+
 @Entity(COMPETITION_OUTBOX_TABLE)
 @Index('idx_competition_outbox_competition_time', [
   'competition_id',
@@ -169,6 +175,11 @@ export class CompetitionOutcomeAwardEntity {
   'next_attempt_at',
   'lease_until'
 ])
+// Installed explicitly with online DDL by dbMigrationsLoop's
+// competition-outbox-event-type-index scope.
+@Index(COMPETITION_OUTBOX_EVENT_TYPE_INDEX, ['competition_id', 'event_type'], {
+  synchronize: false
+})
 export class CompetitionOutboxEntity {
   @PrimaryColumn({ type: 'varchar', length: 36 })
   readonly id!: string;
@@ -180,6 +191,23 @@ export class CompetitionOutboxEntity {
   readonly semantic_key!: string;
   @Column({ type: 'json' })
   readonly event!: Record<string, unknown>;
+  /**
+   * The event's type, for the (competition_id, event_type) index. Queries
+   * keep filtering on the JSON expression: MySQL matches it to this column
+   * and uses the index once it exists (on utf8mb4 connections, as all of the
+   * app's pools are). VIRTUAL, so adding it is instant and nothing is stored
+   * in the row.
+   */
+  @Column({
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+    insert: false,
+    update: false,
+    generatedType: 'VIRTUAL',
+    asExpression: COMPETITION_OUTBOX_EVENT_TYPE_EXPRESSION
+  })
+  readonly event_type!: string | null;
   @Column({ type: 'bigint' })
   readonly created_at!: number;
   @Column({ type: 'bigint' })
