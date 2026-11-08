@@ -330,10 +330,14 @@ describeWithSeed(
           'select name from waves where id = :id',
           { id: wave.id }
         );
+      // One budgeted attempt per half: the unbudgeted rerun is READ COMMITTED
+      // too, so without this the READ COMMITTED half could pass unbudgeted.
+      const attempts: unknown[] = [];
       const readTwice = (readCommittedLevel: boolean) =>
         withRequestDeadline(30_000, () =>
-          runWriteTransaction((options) =>
-            sqlExecutor.executeNativeQueriesInTransaction(
+          runWriteTransaction((options) => {
+            attempts.push(options);
+            return sqlExecutor.executeNativeQueriesInTransaction(
               async (connection) => {
                 const read = () =>
                   sqlExecutor
@@ -354,8 +358,8 @@ describeWithSeed(
                 return [first, await read()];
               },
               readCommittedLevel ? readCommitted(options) : options
-            )
-          )
+            );
+          })
         );
       const original = (await name())?.name;
       const [rcFirst, rcSecond] = await readTwice(true);
@@ -364,6 +368,12 @@ describeWithSeed(
       const [rrFirst, rrSecond] = await readTwice(false);
       expect(rrFirst).toBe(`${original}-changed`);
       expect(rrSecond).toBe(rrFirst);
+      expect(attempts).toHaveLength(2);
+      for (const attempt of attempts) {
+        expect(attempt).toMatchObject({
+          executionBudget: { lockWaitSeconds: 10 }
+        });
+      }
     });
 
     it('runs a real drop delete under the READ COMMITTED budget', async () => {
