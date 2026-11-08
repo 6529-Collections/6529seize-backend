@@ -351,6 +351,31 @@ describe('stripMetadataLosslessly: WebP', () => {
   });
 });
 
+describe('stripMetadataLosslessly: WebP padding', () => {
+  it('accepts an odd final chunk without its pad byte and re-pads the output', async () => {
+    const simple = await Sharp({
+      create: { width: 5, height: 3, channels: 3, background: '#a05030' }
+    })
+      .webp({ lossless: true })
+      .toBuffer();
+    const junk = Buffer.concat([
+      Buffer.from('JUNK'),
+      Buffer.from([3, 0, 0, 0]),
+      Buffer.from('abc')
+    ]);
+    const unpadded = Buffer.concat([simple, junk]);
+    unpadded.writeUInt32LE(unpadded.length - 8, 4);
+
+    const { output, input } = stripMetadataLosslessly(unpadded, 'webp');
+
+    expect(input.metadataBlocks).toEqual(['JUNK']);
+    expect(output).toEqual(simple);
+    expect(await orientedPixelHash(output)).toEqual(
+      await orientedPixelHash(simple)
+    );
+  });
+});
+
 describe('stripMetadataLosslessly: GIF', () => {
   it('removes comments, XMP and unknown applications, keeping frames and looping', async () => {
     const gif = identifyingGif();
