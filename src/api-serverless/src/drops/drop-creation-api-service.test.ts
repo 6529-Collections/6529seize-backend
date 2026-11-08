@@ -363,6 +363,94 @@ describe('DropCreationApiService.createDrop', () => {
     }
   );
 
+  describe('after the post committed', () => {
+    function serviceWithReadBack(findDropByIdOrThrow: jest.Mock) {
+      const dropsDb = {
+        executeNativeQueriesInTransaction: jest.fn(
+          async (callback: (connection: unknown) => Promise<unknown>) =>
+            await callback({})
+        )
+      };
+      const createOrUpdateDrop = {
+        preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+        preparePrePublication: jest.fn().mockResolvedValue({
+          dropId: 'drop-1',
+          operation: 'CREATE'
+        }),
+        execute: jest.fn().mockResolvedValue({
+          drop_id: 'drop-1',
+          pending_push_notification_ids: [41]
+        })
+      };
+      const wsListenersNotifier = {
+        notifyAboutDropUpdate: jest.fn().mockResolvedValue(undefined)
+      };
+      const service = new DropCreationApiService(
+        { findDropByIdOrThrow } as never,
+        dropsDb as never,
+        {
+          createDropApiToUseCaseModel: jest.fn().mockReturnValue({
+            wave_id: 'wave-1',
+            drop_type: DropType.CHAT
+          })
+        } as never,
+        createOrUpdateDrop as never,
+        {} as never,
+        wsListenersNotifier as never,
+        { findByDropId: jest.fn().mockResolvedValue([]) } as never,
+        {} as never,
+        { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never
+      );
+      const push = jest
+        .spyOn(service as any, 'sendPendingPushNotifications')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(waveScoreService, 'requestWaveScoreRefreshBestEffort')
+        .mockResolvedValue(undefined);
+      return { service, push, wsListenersNotifier };
+    }
+
+    const create = (service: DropCreationApiService) =>
+      service.createDrop(
+        {
+          createDropRequest: {} as never,
+          authorId: 'author-profile',
+          representativeId: 'author-profile'
+        },
+        { timer: undefined } as never
+      );
+
+    it('retries the read-back once and returns the drop', async () => {
+      const findDropByIdOrThrow = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('read failed'))
+        .mockResolvedValueOnce({ id: 'drop-1', wave_id: 'wave-1' });
+      const { service } = serviceWithReadBack(findDropByIdOrThrow);
+      await expect(create(service)).resolves.toMatchObject({ id: 'drop-1' });
+      expect(findDropByIdOrThrow).toHaveBeenCalledTimes(2);
+    });
+
+    it('answers DROP_SAVED_REFRESH (409), not a failed write, when the read-back keeps failing', async () => {
+      const findDropByIdOrThrow = jest
+        .fn()
+        .mockRejectedValue(new Error('read failed'));
+      const { service, push, wsListenersNotifier } =
+        serviceWithReadBack(findDropByIdOrThrow);
+      const error = await create(service).catch((e: unknown) => e);
+      expect(error).toMatchObject({
+        code: 'DROP_SAVED_REFRESH',
+        message: 'Your drop was posted. Refresh to see it.'
+      });
+      expect((error as { getStatusCode(): number }).getStatusCode()).toBe(409);
+      // The committed drop's side effects still run.
+      expect(push).toHaveBeenCalledWith({
+        dropId: 'drop-1',
+        pendingPushNotificationIds: [41]
+      });
+      expect(wsListenersNotifier.notifyAboutDropUpdate).not.toHaveBeenCalled();
+    });
+  });
+
   it('broadcasts the writer-authoritative unread state after a direct-message drop commits', async () => {
     const connection = {} as any;
     const order: string[] = [];
