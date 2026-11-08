@@ -7,6 +7,7 @@ import {
 import { RequestContext } from '../../../request.context';
 import {
   DROP_RANK_TABLE,
+  COMPETITION_ENTRIES_TABLE,
   COMPETITIONS_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
@@ -83,6 +84,40 @@ type DropSubmissionVotingSummaryRow = Omit<
   winning_min_threshold: number | null;
   time_lock_ms: number | null;
 };
+
+/**
+ * CTEs `participant_candidates` and `participants`: the participatory drops
+ * of the waves in `neededWaves` (a CTE with a `wave_id` column), as
+ * `legacyGetView(DROPS_TABLE)` defines them, without walking every drop of
+ * those waves. A drop the view calls PARTICIPATORY has an ACTIVE entry in its
+ * wave's native-primary competition, or (no entry, or another status) a base
+ * drop_type of PARTICIPATORY; both are indexed reads. The view, read by id,
+ * then decides membership with its own rules, so the set is exactly the view's
+ * participatory drops of those waves. `participants` has id, wave_id and
+ * created_at.
+ */
+function participantDropsCtes(neededWaves: string): string {
+  return `participant_candidates AS (
+      SELECT e.drop_id AS id
+      FROM ${COMPETITION_ENTRIES_TABLE} e
+      JOIN ${COMPETITIONS_TABLE} c
+        ON c.id = e.competition_id AND c.legacy_wave_id = c.wave_id
+      WHERE c.legacy_wave_id IN (SELECT wave_id FROM ${neededWaves})
+        AND e.status = 'ACTIVE'
+      UNION
+      SELECT pd.id
+      FROM ${DROPS_TABLE} pd
+      WHERE pd.wave_id IN (SELECT wave_id FROM ${neededWaves})
+        AND pd.drop_type = '${DropType.PARTICIPATORY}'
+    ),
+    participants AS (
+      SELECT d.id, d.wave_id, d.created_at
+      FROM participant_candidates pc
+      JOIN ${legacyGetView(DROPS_TABLE)} d ON d.id = pc.id
+      WHERE d.drop_type = '${DropType.PARTICIPATORY}'
+        AND d.wave_id IN (SELECT wave_id FROM ${neededWaves})
+    )`;
+}
 
 export class DropVotingDb extends LazyDbAccessCompatibleService {
   public async getAggregateDropRankVote(
@@ -813,6 +848,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
           WITH needed_waves AS (SELECT DISTINCT wave_id
                                 FROM ${legacyGetView(DROPS_TABLE)}
                                 WHERE id IN (:dropIds)),
+               ${participantDropsCtes('needed_waves')},
                all_ranks AS (
                    SELECT d.id  AS drop_id,
                           RANK() OVER (
@@ -820,11 +856,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
                               ORDER BY CAST(IFNULL(r.vote, 0) AS SIGNED) DESC,
                                   IFNULL(r.last_increased, d.created_at)
                               ) AS rnk
-                   FROM ${legacyGetView(DROPS_TABLE)} d
+                   FROM participants d
                             LEFT JOIN ${legacyGetView(DROP_RANK_TABLE)} r
                                       ON r.drop_id = d.id
-                   WHERE d.drop_type = 'PARTICIPATORY'
-                     AND d.wave_id IN (SELECT wave_id FROM needed_waves)
                )
           SELECT * FROM all_ranks WHERE drop_id IN (:dropIds)
       `,
@@ -861,6 +895,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         from ${legacyGetView(DROPS_TABLE)}
         where id in (:dropIds)
       ),
+      ${participantDropsCtes('needed_waves')},
       weighted_waves as (
         select id as wave_id
         from ${legacyGetView(WAVES_TABLE)}
@@ -880,10 +915,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
             order by cast(ifnull(r.vote, 0) as signed) desc,
               cast(ifnull(r.timestamp, d.created_at) as signed) asc
           ) as rnk
-        from ${legacyGetView(DROPS_TABLE)} d
+        from participants d
         left join scoped_leaderboard r on r.drop_id = d.id
-        where d.drop_type = '${DropType.PARTICIPATORY}'
-          and d.wave_id in (select wave_id from weighted_waves)
+        where d.wave_id in (select wave_id from weighted_waves)
       ) drop_ranks
       where drop_id in (:dropIds)
     `;
