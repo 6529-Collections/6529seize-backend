@@ -351,3 +351,6 @@ export const ARTIST_ARTWORK_ALERTS_TABLE = 'artist_artwork_alerts';
 // Who read or changed reported encrypted messages (trust and safety audit,
 // D109). Kept apart from the E2EE block above.
 export const E2EE_REPORT_ACCESS_LOG_TABLE = 'e2ee_report_access_log';
+/** Content-addressed viewer group sets (see waves/viewer-group-sets.ts). */
+export const VIEWER_GROUP_SETS_TABLE = 'viewer_group_sets';
+export const VIEWER_GROUP_SET_MEMBERS_TABLE = 'viewer_group_set_members';
