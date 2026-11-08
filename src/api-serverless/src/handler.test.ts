@@ -39,6 +39,7 @@ jest.mock('./app', () => ({
 }));
 
 jest.mock('./ws/ws', () => ({
+  ANON_USER_ID: jest.requireActual('./ws/ws').ANON_USER_ID,
   SocketNotAvailableException:
     jest.requireActual('./ws/ws').SocketNotAvailableException,
   appWebSockets: {
@@ -746,4 +747,95 @@ describe('handler http responses', () => {
     });
     expect(result.cookies).toBeUndefined();
   });
+});
+
+describe('handler websocket PING and disconnect', () => {
+  const ping = (body: string) =>
+    ({
+      requestContext: { routeKey: '$default', connectionId: 'connection-7' },
+      body
+    }) as unknown as APIGatewayEvent;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
+      identityId: 'profile-1',
+      jwtExpiry: 4102444800,
+      purpose: null
+    });
+  });
+
+  it('answers PING with PONG on the same connection before authentication', async () => {
+    await expect(
+      handler(
+        ping(JSON.stringify({ type: 'PING', id: 'resume-01' })),
+        {} as Context,
+        jest.fn()
+      )
+    ).resolves.toEqual({
+      statusCode: 200,
+      body: JSON.stringify({ message: 'OK' })
+    });
+    expect(appWebSocketsMock.send).toHaveBeenCalledWith({
+      connectionId: 'connection-7',
+      message: JSON.stringify({ type: 'PONG', id: 'resume-01' }),
+      skipStaleConnectionCheck: true
+    });
+    expect(
+      authenticateWebSocketJwtOrGetByConnectionIdMock
+    ).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid PING without a reply or authentication', async () => {
+    const response = await handler(
+      ping(JSON.stringify({ type: 'PING', id: 'x'.repeat(33) })),
+      {} as Context,
+      jest.fn()
+    );
+    expect(response).toMatchObject({ statusCode: 400 });
+    expect(appWebSocketsMock.send).not.toHaveBeenCalled();
+    expect(
+      authenticateWebSocketJwtOrGetByConnectionIdMock
+    ).not.toHaveBeenCalled();
+  });
+
+  it('keeps other frames on the authenticated path', async () => {
+    const response = await handler(
+      ping(JSON.stringify({ type: 'PONG', id: 'resume-01' })),
+      {} as Context,
+      jest.fn()
+    );
+    expect(response).toMatchObject({ statusCode: 400 });
+    expect(authenticateWebSocketJwtOrGetByConnectionIdMock).toHaveBeenCalled();
+    expect(appWebSocketsMock.send).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['profile-1', 'TYPING', true],
+    ['$ANONONYMOUS_USER$', null, false]
+  ])(
+    'deregisters %s with its purpose, authentication and connection time',
+    async (identityId, purpose, authenticated) => {
+      authenticateWebSocketJwtOrGetByConnectionIdMock.mockResolvedValue({
+        identityId,
+        jwtExpiry: 4102444800,
+        purpose: purpose as never
+      });
+      await handler(
+        {
+          requestContext: {
+            routeKey: '$disconnect',
+            connectionId: 'connection-7',
+            connectedAt: 1700000000000
+          }
+        } as unknown as APIGatewayEvent,
+        {} as Context,
+        jest.fn()
+      );
+      expect(appWebSocketsMock.deregister).toHaveBeenCalledWith({
+        connectionId: 'connection-7',
+        disconnect: { purpose, authenticated, connectedAt: 1700000000000 }
+      });
+    }
+  );
 });

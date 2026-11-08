@@ -1,3 +1,4 @@
+import { withRequestDeadline } from '@/api/write-transaction-budget';
 import type {} from '../../typeorm-index-options';
 import { clientVersionFromQuery } from '@/ws-client-versions/ws-client-versions';
 import { app, ensureInitialized } from './app';
@@ -8,12 +9,14 @@ import type {
   Context
 } from 'aws-lambda';
 import {
+  ANON_USER_ID,
   appWebSockets,
   authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
   authenticateWebSocketToken,
   connectionPurposeFromQuery
 } from './ws/ws';
+import { pongFrame, readPingFrame, type WsPingFrame } from './ws/ws-ping';
 import { Logger } from '../../logging';
 import {
   notificationIdentitiesSyncedMessage,
@@ -96,10 +99,15 @@ async function handleInvocation(
       async () => operationalResponse(await wsHandler(event))
     );
   } else {
-    return normalizeSetCookieResponse(
-      event,
-      operationalResponse(await httpHandler(event, context))
-    );
+    // Write transactions end (and answer 503) before this Lambda times out.
+    const remaining =
+      typeof context?.getRemainingTimeInMillis === 'function'
+        ? context.getRemainingTimeInMillis()
+        : null;
+    const response = remaining
+      ? await withRequestDeadline(remaining, () => httpHandler(event, context))
+      : await httpHandler(event, context);
+    return normalizeSetCookieResponse(event, operationalResponse(response));
   }
 }
 
@@ -226,12 +234,42 @@ function removeSetCookieHeaders<T extends HeaderMap | undefined>(
   ) as T;
 }
 
+async function answerPing(
+  ping: WsPingFrame,
+  connectionId: string
+): Promise<APIGatewayProxyResult> {
+  if (ping.kind === 'invalid') {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ message: 'Invalid PING' })
+    };
+  }
+  try {
+    await appWebSockets.send({
+      connectionId,
+      message: pongFrame(ping.id),
+      skipStaleConnectionCheck: true
+    });
+    return { statusCode: 200, body: JSON.stringify({ message: 'OK' }) };
+  } catch {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ message: 'Failed to process message' })
+    };
+  }
+}
+
 async function wsHandler(
   event: APIGatewayEvent
 ): Promise<APIGatewayProxyResult> {
   const wsHandlerLogger = Logger.get('wsHandler');
   const { routeKey, connectionId } = event.requestContext;
-  const { identityId, jwtExpiry } =
+  if (routeKey === '$default') {
+    // Answered before authentication: no database read or write.
+    const ping = readPingFrame(event.body);
+    if (ping) return answerPing(ping, connectionId!);
+  }
+  const { identityId, jwtExpiry, purpose } =
     await authenticateWebSocketJwtOrGetByConnectionId(event);
   switch (routeKey) {
     case '$connect':
@@ -260,7 +298,14 @@ async function wsHandler(
         return { statusCode: 500, body: 'Failed to connect' };
       }
     case '$disconnect':
-      await appWebSockets.deregister({ connectionId: connectionId! });
+      await appWebSockets.deregister({
+        connectionId: connectionId!,
+        disconnect: {
+          purpose: purpose ?? null,
+          authenticated: identityId !== ANON_USER_ID,
+          connectedAt: event.requestContext.connectedAt
+        }
+      });
       return { statusCode: 200, body: 'Disconnected' };
     case '$default': {
       let isTypingMessage = false;

@@ -25,6 +25,10 @@ import {
 import { describeWebSocketSendFailure } from './ws-send-diagnostics';
 import { recordWebSocketAcknowledgement } from '@/api/ws/ws-operation-diagnostics';
 import { WsConnectionPurpose } from '@/entities/IWSConnection';
+import {
+  recordSocketLifecycle,
+  socketPurposeLabel
+} from './ws-socket-lifecycle';
 import type { DeliveryBatch } from '@/ws-delivery/ws-delivery';
 import {
   isKnownExpiryFenceEnabled,
@@ -312,9 +316,14 @@ export class AppWebSockets {
     /** The client's declared frontend build (validated git SHA). */
     clientVersion?: string | null;
   }) {
+    const lifecycle = {
+      purpose: socketPurposeLabel(purpose),
+      authenticated: identityId !== ANON_USER_ID
+    };
     this.logger.info(
-      `Registering socket for client ${identityId} (connectionId: ${connectionId})`
+      `Registering socket (connectionId: ${connectionId}) [purpose ${lifecycle.purpose}] [authenticated ${lifecycle.authenticated}]`
     );
+    recordSocketLifecycle({ event: 'Registered', ...lifecycle });
     if (isDevEnv()) {
       if (!ws) {
         throw new Error('Websocket is required in dec env');
@@ -341,8 +350,36 @@ export class AppWebSockets {
     if (recoveryCapable) await webSocketDelivery.enableReconnect(connectionId);
   }
 
-  async deregister({ connectionId }: { connectionId: string }) {
-    this.logger.info(`Deregistering socket for connection ${connectionId}`);
+  async deregister({
+    connectionId,
+    disconnect
+  }: {
+    connectionId: string;
+    /** Set on the gateway's `$disconnect` only: logs and counts the churn. */
+    disconnect?: {
+      readonly purpose: WsConnectionPurpose | null;
+      readonly authenticated: boolean;
+      readonly connectedAt?: number;
+    };
+  }) {
+    if (disconnect) {
+      const purpose = socketPurposeLabel(disconnect.purpose);
+      const lifetimeMs =
+        typeof disconnect.connectedAt === 'number'
+          ? Date.now() - disconnect.connectedAt
+          : null;
+      this.logger.info(
+        `Deregistering socket for connection ${connectionId} [purpose ${purpose}] [authenticated ${disconnect.authenticated}] [lifetime_ms ${lifetimeMs ?? 'n/a'}]`
+      );
+      recordSocketLifecycle({
+        event: 'Deregistered',
+        purpose,
+        authenticated: disconnect.authenticated,
+        lifetimeMs
+      });
+    } else {
+      this.logger.info(`Deregistering socket for connection ${connectionId}`);
+    }
     await ClientConnections.Get().closeClient(connectionId);
     await this.wsConnectionRepository.deleteByConnectionId(connectionId, {});
   }
@@ -494,7 +531,12 @@ function getAuthenticatedNotificationSubscriptions(
 
 export async function authenticateWebSocketJwtOrGetByConnectionId(
   event: APIGatewayEvent
-): Promise<{ identityId: string; jwtExpiry: number }> {
+): Promise<{
+  identityId: string;
+  jwtExpiry: number;
+  /** The stored socket's purpose, when the connection row was read. */
+  purpose?: WsConnectionPurpose | null;
+}> {
   const authorizationHeader =
     event.headers?.Authorization || event.headers?.authorization;
   if (!authorizationHeader) {
@@ -508,7 +550,8 @@ export async function authenticateWebSocketJwtOrGetByConnectionId(
       if (connection?.identity_id && jwtExpiry !== null) {
         return {
           identityId: connection.identity_id,
-          jwtExpiry
+          jwtExpiry,
+          purpose: connection.purpose ?? null
         };
       }
       if (connection?.identity_id) {

@@ -308,7 +308,7 @@ router.get(
           ProfileProxyActionType.READ_WAVE
         ])
         ? []
-        : await userGroupsService.getGroupsUserIsEligibleFor(profileId);
+        : await userGroupsService.getGroupsUserIsEligibleFor(profileId, timer);
     const wave = await waveApiService.findWaveByIdOrThrow(
       id,
       group_ids_user_is_eligible_for,

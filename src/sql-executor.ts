@@ -21,9 +21,19 @@ export type SqlTransactionOptions =
     }
   | {
       readonly isolationLevel: 'READ COMMITTED';
-      // Budgeted transactions retain their REPEATABLE READ contract.
-      readonly executionBudget?: never;
+      // A budgeted transaction runs at this level too (see SqlExecutionBudget).
+      readonly executionBudget?: SqlExecutionBudget;
     };
+
+/** The budget a transaction runs with, carrying its isolation level. */
+export function budgetOf(
+  options: SqlTransactionOptions | undefined
+): SqlExecutionBudget | undefined {
+  if (!options?.executionBudget) return undefined;
+  return options.isolationLevel
+    ? { ...options.executionBudget, isolationLevel: options.isolationLevel }
+    : options.executionBudget;
+}
 
 export type BulkUpsertOpts = {
   chunkSize?: number; // default 1000

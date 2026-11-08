@@ -14,17 +14,27 @@ jest.mock('@/api/api-helpers', () => ({
 import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
 import { DropCheeringService } from './drop-cheering.service';
 import { DropType } from '@/entities/IDrop';
+import { WriteBusyException } from '@/api/write-transaction-budget';
 
 function fixture(type: DropType) {
   const drop = { id: 'drop', wave_id: 'hub', drop_type: type };
+  const voteConnection = { vote: true };
+  let transactionsEnded = 0;
   const db = {
     executeNativeQueriesInTransaction: async (
       action: (connection: object) => unknown
-    ) => action({}),
+    ) => {
+      const connection = transactionsEnded === 0 ? voteConnection : {};
+      const result = await action(connection);
+      transactionsEnded++;
+      return result;
+    },
     findDropById: jest.fn(async () => drop),
     findDropByIdWithEligibilityCheck: jest.fn(async () => drop)
   };
-  const reactions = { addReaction: jest.fn() };
+  const reactions = {
+    addReaction: jest.fn(async () => ({ transactionsEnded }))
+  };
   const votes = { execute: jest.fn(async () => true) };
   const quick = {
     findNextUndiscoveredDrop: jest.fn(async () => ({ id: 'next' }))
@@ -39,7 +49,15 @@ function fixture(type: DropType) {
     ws as never,
     reader as never
   );
-  return { service, reactions, votes, ws };
+  return {
+    service,
+    reactions,
+    votes,
+    ws,
+    reader,
+    voteConnection,
+    ended: () => transactionsEnded
+  };
 }
 const request = {
   drop_id: 'drop',
@@ -62,6 +80,43 @@ it('retains ordinary chat reactions in the mixed cheering handler', async () => 
     expect.anything()
   );
   expect(votes.execute).not.toHaveBeenCalled();
+});
+it("applies a chat rating's reaction after the vote transaction, on no connection of it", async () => {
+  // The reaction path runs its own budgeted transaction; inside the vote
+  // transaction it read the drop back with overlapping statements.
+  const { service, reactions, ended } = fixture(DropType.CHAT);
+  let endedWhenCalled = -1;
+  reactions.addReaction.mockImplementation(async () => {
+    endedWhenCalled = ended();
+    return { transactionsEnded: endedWhenCalled };
+  });
+  await service.updateCheers(request, {});
+  expect(endedWhenCalled).toBe(1);
+  const ctx = (reactions.addReaction.mock.calls[0] as unknown[])[3] as {
+    connection?: unknown;
+  };
+  expect(ctx.connection).toBeUndefined();
+});
+it('fails a chat rating whole when its reaction transaction is busy: nothing was written', async () => {
+  // A chat rating writes nothing in the vote transaction (checks only); the
+  // reaction is its only write. So a busy reaction leaves no partial state:
+  // the request answers 503 + Retry-After and a retry is safe.
+  const { service, reactions, votes, ws } = fixture(DropType.CHAT);
+  const busy = new WriteBusyException();
+  reactions.addReaction.mockRejectedValue(busy);
+  await expect(service.updateCheers(request, {})).rejects.toBe(busy);
+  expect(votes.execute).not.toHaveBeenCalled();
+  expect(ws.notifyAboutDropRatingUpdate).not.toHaveBeenCalled();
+});
+it('never reads the drop inside the vote transaction', async () => {
+  for (const type of [DropType.CHAT, DropType.PARTICIPATORY]) {
+    const { service, reader, voteConnection } = fixture(type);
+    await service.updateCheers(request, {});
+    for (const call of reader.findDropByIdOrThrow.mock.calls as unknown[][])
+      expect((call[1] as { connection?: unknown }).connection).not.toBe(
+        voteConnection
+      );
+  }
 });
 it('dispatches original-primary entry cheers to the native compatible vote command', async () => {
   jest
@@ -144,9 +199,10 @@ describe('rating broadcast (waves plan 1.6)', () => {
     expect(ws.notifyAboutDropRatingUpdate).toHaveBeenCalledWith(drop, {});
   });
 
-  it('re-reads the committed drop on the writer for a trailing broadcast', async () => {
-    const { service, ws, later, transactions } = coalescingFixture(
+  it('reads the committed drop on the writer for each broadcast phase', async () => {
+    const { service, ws, drop, later, transactions } = coalescingFixture(
       async (send) => {
+        await send('leading');
         await send('trailing');
         return 'trailing';
       }
@@ -154,8 +210,18 @@ describe('rating broadcast (waves plan 1.6)', () => {
 
     await service.updateCheers(request, {});
 
-    expect(ws.notifyAboutDropRatingUpdate).toHaveBeenCalledWith(later, {});
-    expect(transactions).toContainEqual({ isolationLevel: 'READ COMMITTED' });
+    expect(ws.notifyAboutDropRatingUpdate).toHaveBeenNthCalledWith(1, drop, {});
+    expect(ws.notifyAboutDropRatingUpdate).toHaveBeenNthCalledWith(
+      2,
+      later,
+      {}
+    );
+    // The vote transaction, then one read-committed writer read per phase.
+    expect(transactions).toEqual([
+      { isolationLevel: 'READ COMMITTED' },
+      { isolationLevel: 'READ COMMITTED' },
+      { isolationLevel: 'READ COMMITTED' }
+    ]);
   });
 
   it('never hands the ended transaction connection to the broadcast', async () => {

@@ -1,6 +1,10 @@
 import { AsyncResource } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
-import { ConnectionWrapper, SqlTransactionOptions } from '../sql-executor';
+import {
+  budgetOf,
+  ConnectionWrapper,
+  SqlTransactionOptions
+} from '../sql-executor';
 import * as mysql from 'mysql';
 import { PoolConnection, TypeCast } from 'mysql';
 import { Time } from '../time';
@@ -176,7 +180,8 @@ export async function execNativeTransactionally<T>(
   connection: PoolConnection,
   options?: SqlTransactionOptions
 ): Promise<T> {
-  if (options?.executionBudget) {
+  const budget = budgetOf(options);
+  if (budget) {
     let accepted = false;
     try {
       return await execBudgetedNativeTransactionally(
@@ -185,7 +190,7 @@ export async function execNativeTransactionally<T>(
           accepted = true;
           return Promise.resolve(connection);
         },
-        options.executionBudget
+        budget
       );
     } finally {
       if (!accepted) connection.release();

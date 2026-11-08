@@ -41,7 +41,8 @@ import {
   setSqlExecutor,
   SqlExecutor,
   sqlExecutor,
-  SqlTransactionOptions
+  SqlTransactionOptions,
+  budgetOf
 } from './sql-executor';
 import { getConsolidationsSql } from './sql_helpers';
 
@@ -227,11 +228,12 @@ export async function connect() {
       executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>,
       options?: SqlTransactionOptions
     ) {
-      if (options?.executionBudget) {
+      const budget = budgetOf(options);
+      if (budget) {
         return execBudgetedNativeTransactionally(
           executable,
           () => getDbConnectionByPoolName(DbPoolName.WRITE),
-          options.executionBudget
+          budget
         );
       }
       return getDbConnectionByPoolName(DbPoolName.WRITE).then((con) =>
