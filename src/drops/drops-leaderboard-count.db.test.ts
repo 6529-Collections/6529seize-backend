@@ -252,14 +252,16 @@ const baseParams = (waveId: string): LeaderboardParams => ({
   max_price: null
 });
 
+const priceInEth = { min_price: 1, max_price: 5, price_currency: 'ETH' };
+const priceInAnyCurrency = { min_price: 1, max_price: 8 };
 const filters: [string, Partial<LeaderboardParams>][] = [
   ['no filters', {}],
   ['promised', { is_additional_action_promised: true }],
   ['not promised', { is_additional_action_promised: false }],
   ['unvoted by me', { unvoted_by_me: true }],
   ['curation', { curation_id: CURATION }],
-  ['price in ETH', { min_price: 1, max_price: 5, price_currency: 'ETH' }],
-  ['price in any currency', { min_price: 1, max_price: 8 }],
+  ['price in ETH', priceInEth],
+  ['price in any currency', priceInAnyCurrency],
   [
     'every filter',
     {
@@ -314,6 +316,19 @@ describeWithSeed('DropsDb leaderboard count', withWaves(waves), () => {
             unfiltered
         }).toEqual({ name, narrower: true });
     }
+    // Prices follow the view's type, not the stored one: active-0 and
+    // active-2 are stored as COMPETITION drops and participate through
+    // their ACTIVE entries; withdrawn and winner are stored PARTICIPATORY
+    // drops with a 3 ETH price that the view does not call participatory.
+    const priced = async (waveId: string, filter: Partial<LeaderboardParams>) =>
+      count({ ...baseParams(waveId), ...filter });
+    // active-0 (3 ETH) and legacy (3 ETH).
+    expect(await priced(big.id, priceInEth)).toBe(2);
+    expect(await priced(small.id, priceInEth)).toBe(2);
+    // active-0, active-2 (2 USD) and legacy; active-1 (9 ETH) is over.
+    expect(await priced(big.id, priceInAnyCurrency)).toBe(3);
+    // The small wave has no active-2.
+    expect(await priced(small.id, priceInAnyCurrency)).toBe(2);
   });
 
   it('follows entries withdrawn and won between two counts', async () => {
