@@ -33,7 +33,7 @@ jest.mock('@/nextgen/nextgen.db', () => ({
 }));
 
 jest.mock('@/identity-tdh-sync', () => ({
-  syncIdentitiesAfterTdh: jest.fn()
+  syncIdentitiesAfterTdhOrLeavePending: jest.fn()
 }));
 
 const mockedRetrieveConsolidationsForWallets =

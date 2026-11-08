@@ -1274,15 +1274,19 @@ A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
 - C: identity metrics (`rep`, `cic`, `tdh`, `basetdh_rate`, `level_raw`),
   recomputed from ratings and consolidated TDH in primary-key chunks, each one
   short transaction writing final values, so no reset value is ever visible.
-- D: TDH overvote revocation, against the synced identities.
+- D: TDH overvote revocation, against the synced identities, one transaction
+  per candidate competition.
 - E: the generation is marked synced.
 
-B to E run under a lease row, one run at a time. If an invocation stops after
-A, the next `delegationsLoop` or `tdhLoop` start finishes B to E, which are
-idempotent. Any transaction writing both `ratings` and `identities` takes the
-`ratings` locks first. Between A and C, readers combining TDH tables with
-identities see the previous run's identities for seconds; a vote is checked
-against the pre-run credit, as just before any run. Deploy `dbMigrationsLoop`
+B to E run under a renewed lease row, one run at a time. If an invocation
+stops after A, or B to E fail, the generation stays pending and the next
+`delegationsLoop` or `tdhLoop` start finishes B to E, which are idempotent; a
+failure is logged and sent to Sentry without stopping delegations, the TDH
+block record or the xTDH trigger. Any transaction writing both `ratings` and
+`identities` takes the `ratings` locks first. The TDH tables and identities
+are no longer updated atomically: between A and C, readers combining them see
+the previous run's identities for seconds, and a vote is checked against the
+pre-run credit, as just before any run. Deploy `dbMigrationsLoop`
 first (the marker table), then `delegationsLoop`, `tdhLoop`,
 `overRatesRevocationLoop` and `api`.
 

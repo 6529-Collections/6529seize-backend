@@ -1,6 +1,6 @@
 import { readSequentially } from '@/competitions/competition-read-sequence';
-import { ConnectionWrapper } from '@/sql-executor';
-import { Timer } from '@/time';
+import { ConnectionWrapper, sqlExecutor } from '@/sql-executor';
+import { Time, Timer } from '@/time';
 import { RequestContext } from '@/request.context';
 import { userNotifier } from '@/notifications/user.notifier';
 import { Logger } from '@/logging';
@@ -40,14 +40,57 @@ export async function revokeRepBasedDropOverVotes(
   );
 }
 
+const acceptsTdhCredit = (competition: Competition) =>
+  competition.voting.credit_type !== WaveCreditType.REP;
+
 export async function revokeTdhBasedDropWavesOverVotes(
   connection: ConnectionWrapper<unknown>
 ): Promise<void> {
-  await revokeNativeOvervotes(
-    (competition) => competition.voting.credit_type !== WaveCreditType.REP,
-    null,
-    { connection, timer: new Timer('revokeTdhBasedWavesOverVotes') }
+  await revokeNativeOvervotes(acceptsTdhCredit, null, {
+    connection,
+    timer: new Timer('revokeTdhBasedWavesOverVotes')
+  });
+}
+
+/**
+ * TDH overvote revocation after an identities sync: the same candidates and
+ * reconciliation as `revokeTdhBasedDropWavesOverVotes`, but each candidate
+ * competition in its own transaction, so its lock is held only for its own
+ * reconciliation rather than until every candidate is done.
+ */
+export async function revokeTdhBasedDropWavesOverVotesPerCompetition(): Promise<{
+  readonly candidates: number;
+  readonly slowestMs: number;
+}> {
+  let afterId = '';
+  let candidates = 0;
+  let slowestMs = 0;
+  for (;;) {
+    const ids =
+      await nativeCompetitionRuntimeRepository.findOvervoteCandidateCompetitions(
+        afterId,
+        100,
+        null,
+        {}
+      );
+    if (!ids.length) break;
+    for (const id of ids) {
+      const start = Time.now();
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        revokeCandidate(id, acceptsTdhCredit, null, {
+          connection,
+          timer: new Timer('revokeTdhBasedWavesOverVotes')
+        })
+      );
+      candidates++;
+      slowestMs = Math.max(slowestMs, start.diffFromNow().toMillis());
+    }
+    afterId = ids[ids.length - 1];
+  }
+  logger.info(
+    `[TDH OVERVOTE REVOCATION] [CANDIDATES ${candidates}] [SLOWEST COMPETITION ${slowestMs} ms]`
   );
+  return { candidates, slowestMs };
 }
 
 function isRevocable(
@@ -86,20 +129,32 @@ async function revokeNativeOvervotes(
         ctx
       );
     if (!ids.length) return;
-    await readSequentially(ids, async (id) => {
-      const unlocked = await nativeCompetitionRuntimeRepository.readCompetition(
-        id,
-        ctx
-      );
-      if (!isRevocable(unlocked, accepts)) return;
-      const competition =
-        await nativeCompetitionRuntimeRepository.lockCompetition(id, ctx);
-      if (!isRevocable(competition, accepts)) return;
-      if (profileId) await reconcileNativeVoter(competition, profileId, ctx);
-      else await reconcileTdhOvervoters(competition, ctx);
-    });
+    await readSequentially(ids, (id) =>
+      revokeCandidate(id, accepts, profileId, ctx)
+    );
     afterId = ids[ids.length - 1];
   }
+}
+
+/** Reads the candidate unlocked, locks it only if it applies, re-checks. */
+async function revokeCandidate(
+  id: string,
+  accepts: (competition: Competition) => boolean,
+  profileId: string | null,
+  ctx: RequestContext
+): Promise<void> {
+  const unlocked = await nativeCompetitionRuntimeRepository.readCompetition(
+    id,
+    ctx
+  );
+  if (!isRevocable(unlocked, accepts)) return;
+  const competition = await nativeCompetitionRuntimeRepository.lockCompetition(
+    id,
+    ctx
+  );
+  if (!isRevocable(competition, accepts)) return;
+  if (profileId) await reconcileNativeVoter(competition, profileId, ctx);
+  else await reconcileTdhOvervoters(competition, ctx);
 }
 
 async function reconcileNativeVoter(

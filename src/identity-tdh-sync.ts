@@ -4,7 +4,7 @@ import {
   waveScoreService,
   WaveScoreDirtyRefreshReason
 } from '@/api/waves/wave-score.service';
-import { revokeTdhBasedDropWavesOverVotes } from '@/drops/participation-drops-over-vote-revocation';
+import { revokeTdhBasedDropWavesOverVotesPerCompetition } from '@/drops/participation-drops-over-vote-revocation';
 import { identityConsolidationEffects } from '@/identity';
 import {
   identityMetricsSync,
@@ -15,6 +15,7 @@ import {
   identityTdhSyncStateDb
 } from '@/identity-tdh-sync-state.db';
 import { Logger } from '@/logging';
+import * as sentryContext from '@/sentry.context';
 import { sqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
 
@@ -64,7 +65,8 @@ export type IdentityTdhSyncOutcome = 'SYNCED' | 'UP_TO_DATE' | 'LEASE_HELD';
  *   merged profiles' wave subscriber counts. Its unread-cache and wave-score
  *   effects run as soon as it commits.
  * - C: identity metrics, chunk by chunk (identity-metrics-sync.ts).
- * - D: TDH-based overvote revocation, against the synced identities.
+ * - D: TDH-based overvote revocation, against the synced identities, one
+ *   transaction per candidate competition.
  * - E: the pending generation read at the start is marked synced.
  *
  * B, C and D are idempotent, so a run that stops part way is finished by the
@@ -116,9 +118,7 @@ export async function syncIdentitiesAfterTdh(
     });
     logger.info(`[C METRICS DONE] [${start.diffFromNow()}]`);
     await lease.renew();
-    await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-      revokeTdhBasedDropWavesOverVotes(connection)
-    );
+    await revokeTdhBasedDropWavesOverVotesPerCompetition();
     logger.info(`[D OVERVOTES DONE] [${start.diffFromNow()}]`);
     await lease.renew();
     await identityTdhSyncStateDb.markSynced(
@@ -133,6 +133,26 @@ export async function syncIdentitiesAfterTdh(
     await identityTdhSyncStateDb.releaseLease(owner).catch((error) => {
       logger.error(`[LEASE RELEASE FAILED] ${error}`);
     });
+  }
+}
+
+/**
+ * The sync for a loop whose other work must go on (delegations, the TDH block
+ * record, the xTDH trigger): a failure is logged and sent to Sentry, and the
+ * generation stays pending for the next loop start, instead of failing the
+ * invocation and every one after it.
+ */
+export async function syncIdentitiesAfterTdhOrLeavePending(
+  context: 'AFTER_TDH_WRITE' | 'LOOP_START'
+): Promise<IdentityTdhSyncOutcome | 'FAILED'> {
+  try {
+    return await syncIdentitiesAfterTdh();
+  } catch (error) {
+    logger.error(
+      `[IDENTITIES SYNC FAILED] [${context}] [GENERATION LEFT PENDING] ${error}`
+    );
+    sentryContext.captureException(error);
+    return 'FAILED';
   }
 }
 
@@ -164,5 +184,5 @@ export async function resumePendingIdentityTdhSync(): Promise<void> {
   logger.warn(
     `[RESUMING PENDING IDENTITIES SYNC] [GENERATION ${progress.pendingGeneration}] [SYNCED ${progress.syncedGeneration}]`
   );
-  await syncIdentitiesAfterTdh();
+  await syncIdentitiesAfterTdhOrLeavePending('LOOP_START');
 }

@@ -11,8 +11,10 @@ import { identityConsolidationEffects, ProfileIdGenerator } from '@/identity';
 import { identityMetricsSync } from '@/identity-metrics-sync';
 import {
   resumePendingIdentityTdhSync,
-  syncIdentitiesAfterTdh
+  syncIdentitiesAfterTdh,
+  syncIdentitiesAfterTdhOrLeavePending
 } from '@/identity-tdh-sync';
+import * as sentryContext from '@/sentry.context';
 import { identityTdhSyncStateDb } from '@/identity-tdh-sync-state.db';
 import { sqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
@@ -111,7 +113,7 @@ describeWithSeed(
         .mockResolvedValue(undefined as never);
       const revoke = jest.spyOn(
         overvoteRevocation,
-        'revokeTdhBasedDropWavesOverVotes'
+        'revokeTdhBasedDropWavesOverVotesPerCompetition'
       );
       // Step A committed, then the invocation stopped.
       await markPending();
@@ -167,7 +169,7 @@ describeWithSeed(
       await markPending();
       const revoke = jest.spyOn(
         overvoteRevocation,
-        'revokeTdhBasedDropWavesOverVotes'
+        'revokeTdhBasedDropWavesOverVotesPerCompetition'
       );
 
       await expect(
@@ -189,6 +191,30 @@ describeWithSeed(
         `select lease_owner from ${IDENTITY_TDH_SYNC_STATE_TABLE} where id = 'lease'`
       );
       expect(lease.lease_owner).toBe('other-invocation');
+    });
+
+    it('leaves a failed sync pending without failing the loop, and reports it', async () => {
+      await markPending();
+      const failure = new Error('metrics chunk kept failing');
+      jest.spyOn(identityMetricsSync, 'syncAll').mockRejectedValue(failure);
+      const capture = jest
+        .spyOn(sentryContext, 'captureException')
+        .mockImplementation(() => undefined);
+
+      await expect(
+        syncIdentitiesAfterTdhOrLeavePending('AFTER_TDH_WRITE')
+      ).resolves.toBe('FAILED');
+      await expect(resumePendingIdentityTdhSync()).resolves.toBeUndefined();
+
+      expect(capture).toHaveBeenCalledTimes(2);
+      expect(capture).toHaveBeenCalledWith(failure);
+      const progress = await identityTdhSyncStateDb.readProgress();
+      expect(progress.pendingGeneration).toBe(1);
+      expect(progress.syncedGeneration).toBe(0);
+      // The lease was released for the next attempt.
+      expect(
+        await identityTdhSyncStateDb.acquireLease('next-invocation', 1_000)
+      ).toBe(true);
     });
 
     it('marks only the generation it read as synced', async () => {

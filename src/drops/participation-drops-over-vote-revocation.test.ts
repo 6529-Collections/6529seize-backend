@@ -39,8 +39,10 @@ jest.mock('@/app-features', () => ({
 
 import {
   revokeRepBasedDropOverVotes,
-  revokeTdhBasedDropWavesOverVotes
+  revokeTdhBasedDropWavesOverVotes,
+  revokeTdhBasedDropWavesOverVotesPerCompetition
 } from './participation-drops-over-vote-revocation';
+import { ConnectionWrapper, setSqlExecutor } from '@/sql-executor';
 import { nativeCompetitionRuntimeRepository as runtime } from '@/competitions/native-competition-runtime.repository';
 import { nativeCompetitionRuntimeService as service } from '@/competitions/native-competition-runtime.service';
 import { competitionCreditService as credits } from '@/competitions/competition-credit.service';
@@ -184,6 +186,55 @@ it('re-checks the configuration under the lock', async () => {
   expect(runtime.lockCompetition).toHaveBeenCalledTimes(1);
   expect(competitionTdhOvervotesDb.findOvervoters).not.toHaveBeenCalled();
   expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
+});
+
+it('revokes after a sync in one transaction per candidate competition', async () => {
+  jest
+    .mocked(runtime.findOvervoteCandidateCompetitions)
+    .mockReset()
+    .mockResolvedValueOnce(['first', 'second', 'rep'])
+    .mockResolvedValue([]);
+  jest.mocked(runtime.readCompetition).mockImplementation(
+    async (id) =>
+      (id === 'rep'
+        ? {
+            ...competition,
+            id,
+            voting: { ...competition.voting, credit_type: 'REP' }
+          }
+        : { ...competition, id }) as never
+  );
+  jest
+    .mocked(runtime.lockCompetition)
+    .mockImplementation(async (id) => ({ ...competition, id }) as never);
+  jest.mocked(competitionTdhOvervotesDb.findOvervoters).mockResolvedValue([]);
+  const transactions: ConnectionWrapper<unknown>[] = [];
+  setSqlExecutor({
+    executeNativeQueriesInTransaction: async <T>(
+      executable: (connection: ConnectionWrapper<unknown>) => Promise<T>
+    ) => {
+      const connection = { connection: { transaction: transactions.length } };
+      transactions.push(connection);
+      return executable(connection);
+    }
+  } as never);
+
+  await expect(
+    revokeTdhBasedDropWavesOverVotesPerCompetition()
+  ).resolves.toMatchObject({ candidates: 3 });
+
+  // Candidates are read outside any transaction; each competition gets its own.
+  expect(runtime.findOvervoteCandidateCompetitions).toHaveBeenCalledWith(
+    '',
+    100,
+    null,
+    {}
+  );
+  expect(transactions).toHaveLength(3);
+  expect(jest.mocked(runtime.lockCompetition).mock.calls).toEqual([
+    ['first', expect.objectContaining({ connection: transactions[0] })],
+    ['second', expect.objectContaining({ connection: transactions[1] })]
+  ]);
 });
 
 it('reads REP candidates by the rating recipient', async () => {
