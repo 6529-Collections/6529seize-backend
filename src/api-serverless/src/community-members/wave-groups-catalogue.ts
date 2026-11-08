@@ -9,13 +9,19 @@ import {
   WAVE_GROUPS_CACHE_STAMP_KEY
 } from '@/redis';
 import { Time, Timer } from '@/time';
+import { ELIGIBLE_GROUPS_REQUEST_BUDGET_MS } from './eligible-groups-lease';
 
 const logger = Logger.get('WAVE_GROUPS_CATALOGUE');
 
 /** How long a rebuild may hold the single-flight lease. */
 const REBUILD_LEASE_MS = 10_000;
-/** How long a request waits for another's rebuild before rebuilding itself. */
-const PEER_WAIT_MAX_MS = 2_000;
+/**
+ * How long a request waits for another request's rebuild: as long as the
+ * eligibility request itself may take. While the rebuild lease is held the
+ * waiters keep waiting rather than adding load to a slow database; a request
+ * without an abort signal rebuilds itself after this.
+ */
+const PEER_WAIT_MAX_MS = ELIGIBLE_GROUPS_REQUEST_BUDGET_MS;
 const PEER_POLL_MIN_MS = 25;
 const PEER_POLL_JITTER_MS = 25;
 /**
@@ -111,6 +117,11 @@ function timed<T>(
  * parsing the blob every time.
  *
  * Correctness rules:
+ * - Only a stamped blob counts: its stamp names the current generation and
+ *   its size. Any other blob (unstamped, as older builds still write it, of an
+ *   older generation, or of another size) counts as missing: a request takes
+ *   the lease, rebuilds and overwrites it. An older build may rebuild with a
+ *   catalogue it loaded before an eviction; that blob is never served.
  * - After an explicit eviction (a group created, a wave created or changed),
  *   no process serves its copy again: evictions bump the generation, and a copy
  *   is current only if the stamp names the current generation and the same
@@ -121,6 +132,10 @@ function timed<T>(
  *   may serve it for at most a few seconds while one request rebuilds.
  * - A rebuild publishes only under the generation it read before loading, so a
  *   catalogue loaded before an eviction is never published after it.
+ *
+ * The groups array and its entities are shared by every request in the
+ * process: callers must not change them. Under tests they are frozen, so a
+ * change fails loudly.
  */
 export class WaveGroupsCatalogue {
   private memory: MemoryCopy | null = null;
@@ -153,7 +168,7 @@ export class WaveGroupsCatalogue {
     const probe = await timed(timer, 'catalogueProbe', () => store.probe());
     const current = this.currentCopy(probe);
     if (current) return { groups: current, source: 'memory', redisBytes: 0 };
-    if (probe.bytes > 0) {
+    if (trustedStamp(probe)) {
       const fetched = await this.fetch(store, probe, 'redis', timer);
       if (fetched) return fetched;
     }
@@ -163,13 +178,10 @@ export class WaveGroupsCatalogue {
   /** The memory copy, if the probe proves it is the published content. */
   private currentCopy(probe: CatalogueProbe): UserGroupEntity[] | null {
     const memory = this.memory;
-    const stamp = probe.stamp;
+    const stamp = trustedStamp(probe);
     if (
       !memory ||
       !stamp ||
-      probe.bytes === 0 ||
-      probe.bytes !== stamp.bytes ||
-      stamp.generation !== probe.generation ||
       memory.stamp.generation !== stamp.generation ||
       memory.stamp.hash !== stamp.hash
     )
@@ -180,27 +192,26 @@ export class WaveGroupsCatalogue {
     return memory.groups;
   }
 
+  /**
+   * Reads a blob the probe found stamped. Null when it changed since the
+   * probe (gone, or no longer the stamped size): the caller treats it as
+   * missing rather than serving bytes the stamp does not vouch for.
+   */
   private async fetch(
     store: WaveGroupsCatalogueStore,
     probe: CatalogueProbe,
     source: CatalogueSource,
     timer?: Timer
   ): Promise<CatalogueRead | null> {
+    const stamp = trustedStamp(probe);
+    if (!stamp) return null;
     const read = this.deps.readAndParse
       ? await this.deps.readAndParse(() => store.readBlob(), timer)
       : await defaultReadAndParse(() => store.readBlob(), timer);
-    if (!read) return null;
-    const stamp = probe.stamp;
-    // Keep a copy only when the stamp vouches for exactly these bytes. A blob
-    // without a stamp (an older build wrote it) or one replaced since the
-    // probe is used for this request but not kept.
-    this.memory =
-      stamp &&
-      stamp.generation === probe.generation &&
-      stamp.bytes === read.bytes
-        ? { stamp, groups: read.groups }
-        : null;
-    return { groups: read.groups, source, redisBytes: read.bytes };
+    if (!read || read.bytes !== stamp.bytes) return null;
+    const groups = shared(read.groups);
+    this.memory = { stamp, groups };
+    return { groups, source, redisBytes: read.bytes };
   }
 
   private async onMissing(
@@ -215,6 +226,7 @@ export class WaveGroupsCatalogue {
       if (stale) return stale;
       return joined;
     }
+    throwIfAborted(signal);
     const token = await store.acquireRebuildLease();
     if (token) return this.rebuildOnce(store, probe.generation, token, timer);
     if (stale) return stale;
@@ -222,14 +234,15 @@ export class WaveGroupsCatalogue {
       this.waitForPeer(store, timer, signal)
     );
     if (peer) return peer;
+    throwIfAborted(signal);
     return this.rebuildOnce(store, probe.generation, null, timer);
   }
 
   /**
    * The memory copy, when the blob is missing only because it expired: no
-   * stamp left behind (an eviction by an older build deletes only the blob),
-   * the same generation (no eviction since), and within a few seconds of the
-   * expiry.
+   * blob and no stamp left (an older build's eviction deletes only the blob;
+   * an older build's rebuild leaves an unstamped blob), the same generation
+   * (no eviction since), and within a few seconds of the expiry.
    */
   private staleCopyAfterExpiry(probe: CatalogueProbe): CatalogueRead | null {
     const memory = this.memory;
@@ -249,6 +262,11 @@ export class WaveGroupsCatalogue {
     };
   }
 
+  /**
+   * Waits for the request holding the rebuild lease to publish a stamped
+   * blob, for as long as the eligibility request may take. Takes the rebuild
+   * over as soon as the lease is free and no stamped blob is there.
+   */
   private async waitForPeer(
     store: WaveGroupsCatalogueStore,
     timer?: Timer,
@@ -257,13 +275,14 @@ export class WaveGroupsCatalogue {
     const deadline = this.now() + PEER_WAIT_MAX_MS;
     while (this.now() < deadline && !signal?.aborted) {
       await this.sleep(PEER_POLL_MIN_MS + randomInt(PEER_POLL_JITTER_MS + 1));
+      if (signal?.aborted) break;
       const probe = await store.probe();
-      if (probe.bytes > 0) {
+      if (trustedStamp(probe)) {
         const fetched = await this.fetch(store, probe, 'peer', timer);
         if (fetched) return fetched;
-        continue;
       }
-      // The rebuilding request may have failed: take the rebuild over.
+      // The rebuilding request finished without a stamped blob or failed:
+      // take the rebuild over.
       const token = await store.acquireRebuildLease();
       if (token) return this.rebuildOnce(store, probe.generation, token, timer);
     }
@@ -301,8 +320,8 @@ export class WaveGroupsCatalogue {
   ): Promise<CatalogueRead> {
     let published = false;
     try {
-      const groups = await timed(timer, 'redisMissGetByIds', () =>
-        this.deps.load(timer)
+      const groups = shared(
+        await timed(timer, 'redisMissGetByIds', () => this.deps.load(timer))
       );
       const payload = await timed(timer, 'redisJsonStringify', async () =>
         JSON.stringify(groups)
@@ -338,6 +357,46 @@ export class WaveGroupsCatalogue {
         await store.releaseRebuildLease(leaseToken).catch(() => undefined);
     }
   }
+}
+
+/** The probe's stamp, if it vouches for the blob: current generation, same size. */
+function trustedStamp(probe: CatalogueProbe): CatalogueStamp | null {
+  const stamp = probe.stamp;
+  return stamp &&
+    probe.bytes > 0 &&
+    stamp.generation === probe.generation &&
+    stamp.bytes === probe.bytes
+    ? stamp
+    : null;
+}
+
+/** The request was aborted (its eligibility budget ran out): do no more work. */
+export class CatalogueRequestAbortedError extends Error {
+  constructor() {
+    super('Wave groups catalogue request aborted');
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new CatalogueRequestAbortedError();
+}
+
+/**
+ * Marks groups shared across requests. Under tests it deep-freezes them, so
+ * any caller that changes the shared catalogue fails instead of corrupting
+ * other requests' eligibility.
+ */
+function shared(groups: UserGroupEntity[]): UserGroupEntity[] {
+  if (process.env.NODE_ENV === 'test') deepFreeze(groups);
+  return groups;
+}
+
+function deepFreeze(value: unknown): void {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value))
+    return;
+  Object.freeze(value);
+  for (const child of Object.values(value)) deepFreeze(child);
 }
 
 async function defaultReadAndParse(

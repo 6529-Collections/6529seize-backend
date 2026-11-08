@@ -88,14 +88,17 @@ function buildRedisMock(): RedisMock {
   };
 }
 
-/** Answers the catalogue probe as Redis would for this blob, and 1 otherwise. */
+/**
+ * Answers the catalogue probe as Redis would for this blob (stamped by the
+ * current build, generation 0), and 1 otherwise.
+ */
 function answerCatalogueProbe(redis: RedisMock, blob: string | null) {
+  const bytes = blob ? Buffer.byteLength(blob, 'utf8') : 0;
+  const stamp = blob
+    ? JSON.stringify({ generation: '0', hash: 'h', bytes, publishedAt: 1 })
+    : null;
   redis.eval.mockImplementation((script: string) =>
-    Promise.resolve(
-      script.includes('STRLEN')
-        ? [blob ? Buffer.byteLength(blob, 'utf8') : 0, null, null]
-        : 1
-    )
+    Promise.resolve(script.includes('STRLEN') ? [bytes, stamp, '0'] : 1)
   );
 }
 

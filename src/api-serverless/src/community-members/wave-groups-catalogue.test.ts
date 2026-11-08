@@ -275,7 +275,7 @@ describe('WaveGroupsCatalogue', () => {
     expect(redis.publishes).toBe(1);
   });
 
-  it('rebuilds itself after waiting at most 2 s for a peer', async () => {
+  it('keeps waiting while a live holder has the lease, up to the 12 s eligibility budget', async () => {
     const { redis, process, load, sleeps } = setUp();
     redis.lease = 'held-forever';
 
@@ -284,8 +284,8 @@ describe('WaveGroupsCatalogue', () => {
     });
     expect(load).toHaveBeenCalledTimes(1);
     const waited = sleeps.reduce((sum, ms) => sum + ms, 0);
-    expect(waited).toBeGreaterThanOrEqual(2_000);
-    expect(waited).toBeLessThan(2_100);
+    expect(waited).toBeGreaterThanOrEqual(12_000);
+    expect(waited).toBeLessThan(12_100);
     for (const ms of sleeps) {
       expect(ms).toBeGreaterThanOrEqual(25);
       expect(ms).toBeLessThanOrEqual(50);
@@ -308,18 +308,78 @@ describe('WaveGroupsCatalogue', () => {
       expect(ids(next.groups)).toContain('new-group');
     });
 
-    it('uses a blob an older build wrote without a stamp but does not keep it', async () => {
-      const { redis, process } = setUp();
+    it('never serves a blob an older build wrote over a stamped one: rebuilds and overwrites it', async () => {
+      const { redis, process, setDb } = setUp();
       const a = process();
       await a.get();
 
       // The older build's rebuild: SET blob only; the previous stamp remains.
       redis.blob = JSON.stringify([group('g1'), group('older-build')]);
+      setDb([group('g1'), group('current')]);
 
-      const first = await a.get();
-      expect(first.source).toBe('redis');
-      expect(ids(first.groups)).toEqual(['g1', 'older-build']);
-      await expect(a.get()).resolves.toMatchObject({ source: 'redis' });
+      const next = await a.get();
+      expect(next.source).toBe('rebuilt');
+      expect(ids(next.groups)).toEqual(['g1', 'current']);
+      expect(redis.stamp?.bytes).toBe(Buffer.byteLength(redis.blob!, 'utf8'));
+      await expect(a.get()).resolves.toMatchObject({ source: 'memory' });
+    });
+
+    it("never serves an older build's pre-eviction catalogue written between two evictions", async () => {
+      const { redis, clock, process, setDb, onSleep, load } = setUp();
+      const a = process();
+      const b = process();
+      await a.get();
+      await b.get();
+      const preEviction = JSON.stringify([group('g1')]);
+
+      // A DM is created: its group, then its wave, each evicts. An older
+      // build loaded the catalogue before the second eviction and SETs it
+      // afterwards, without a stamp.
+      setDb([group('g1'), group('new-dm-group')]);
+      redis.evict();
+      redis.evict();
+      redis.blob = preEviction;
+
+      const direct = await a.get();
+      expect(direct.source).toBe('rebuilt');
+      expect(ids(direct.groups)).toContain('new-dm-group');
+
+      // The same through the peer wait: while another request holds the
+      // lease, B waits past the unstamped blob and takes only the stamped one.
+      redis.evict();
+      redis.blob = preEviction;
+      redis.lease = 'held-by-peer';
+      const current = JSON.stringify([group('g1'), group('new-dm-group')]);
+      onSleep.push(() => undefined); // one poll sees only the unstamped blob
+      onSleep.push(() => {
+        // The peer publishes its stamped rebuild and releases the lease.
+        redis.blob = current;
+        redis.stamp = {
+          generation: String(redis.generation),
+          hash: 'peer',
+          bytes: Buffer.byteLength(current, 'utf8'),
+          publishedAt: clock.now
+        };
+        redis.lease = null;
+      });
+
+      const viaPeer = await b.get();
+      expect(viaPeer.source).toBe('peer');
+      expect(ids(viaPeer.groups)).toEqual(['g1', 'new-dm-group']);
+      expect(load).toHaveBeenCalledTimes(2); // A's two builds, none by B
+    });
+
+    it('rebuilds a blob whose size does not match its stamp instead of serving it', async () => {
+      const { redis, process, setDb } = setUp();
+      const a = process();
+      await process().get();
+
+      setDb([group('g1'), group('current')]);
+      redis.blob = JSON.stringify([group('g1'), group('other-size')]);
+
+      const next = await a.get();
+      expect(next.source).toBe('rebuilt');
+      expect(ids(next.groups)).toEqual(['g1', 'current']);
     });
   });
 
@@ -356,6 +416,31 @@ describe('WaveGroupsCatalogue', () => {
     expect(touched.length).toBeGreaterThanOrEqual(5);
     const slots = new Set(touched.flat().map(redisKeySlot));
     expect(slots.size).toBe(1);
+  });
+
+  it('does not rebuild once the eligibility request was aborted', async () => {
+    const { redis, process, load, onSleep } = setUp();
+    redis.lease = 'held-by-peer';
+    const controller = new AbortController();
+    onSleep.push(() => controller.abort());
+
+    await expect(process().get({ signal: controller.signal })).rejects.toThrow(
+      'aborted'
+    );
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it('freezes the shared catalogue under tests, so a caller cannot change it', async () => {
+    const { process } = setUp();
+    const a = process();
+    const { groups } = await a.get();
+    expect(Object.isFrozen(groups)).toBe(true);
+    expect(Object.isFrozen(groups[0])).toBe(true);
+    expect(() => {
+      (groups as UserGroupEntity[]).push(group('mutation'));
+    }).toThrow(TypeError);
+    const fromRedis = await process().get();
+    expect(Object.isFrozen(fromRedis.groups)).toBe(true);
   });
 
   it('loads from the database each time without Redis', async () => {
