@@ -11,7 +11,7 @@ import { LEGACY_NATIVE_PRIMARY_SQL } from '@/competitions/legacy-competition-get
  * ACTIVE → PARTICIPATORY, WINNER → WINNER, WITHDRAWN/DISQUALIFIED → CHAT.
  * A drop with an entry in any other status keeps its stored type.
  */
-const VIEW_MAPPED_ENTRY_STATUSES = `'ACTIVE','WINNER','WITHDRAWN','DISQUALIFIED'`;
+export const VIEW_MAPPED_ENTRY_STATUSES = `'ACTIVE','WINNER','WITHDRAWN','DISQUALIFIED'`;
 
 /**
  * Drops `d` shown by an entry of their wave's native primary competition
