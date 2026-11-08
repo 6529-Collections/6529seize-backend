@@ -1,6 +1,7 @@
 import {
   DeadlineEvent,
   DeadlineMiss,
+  LATE_TIMER_GRACE_MS,
   LATE_TIMER_MS,
   withRedisDeadline
 } from './redis-command-deadline';
@@ -125,16 +126,22 @@ describe('withRedisDeadline', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
-  it('(c) labels a late timer whose fresh budget also runs out as suspended, not slow', async () => {
+  it(`(c) labels a late timer whose ${LATE_TIMER_GRACE_MS} ms grace also runs out as suspended, not slow`, async () => {
     const { events, result } = start(new Promise<string>(() => undefined));
     freeze(2_000);
     jest.advanceTimersToNextTimer();
     await flush();
     expect(result.settled).toBe(false);
-    jest.advanceTimersByTime(500);
+    // The grace is capped: not a fresh 500 ms budget.
+    jest.advanceTimersByTime(LATE_TIMER_GRACE_MS - 1);
+    await flush();
+    expect(result.settled).toBe(false);
+    const thawedAt = Date.now();
+    jest.advanceTimersByTime(1);
     jest.runOnlyPendingTimers();
     await flush();
     expect(result.settled).toBe(true);
+    expect(Date.now() - thawedAt).toBeLessThanOrEqual(2);
     expect(result.error as Missed).toMatchObject({
       miss: 'suspended_timeout',
       lateMs: 2_000
@@ -144,7 +151,32 @@ describe('withRedisDeadline', () => {
     ]);
   });
 
-  it('gives a late timer one fresh budget only', async () => {
+  it('recovers a reply that arrives within the grace, and not one after it', async () => {
+    const inGrace = deferred<string>();
+    const late = start(inGrace.promise);
+    freeze(2_000);
+    jest.advanceTimersToNextTimer();
+    jest.advanceTimersByTime(LATE_TIMER_GRACE_MS - 10);
+    inGrace.resolve('OK');
+    await flush();
+    expect(late.result).toMatchObject({ settled: true, value: 'OK' });
+    expect(late.events.map((e) => e.outcome)).toEqual(['suspended_recovered']);
+    jest.runOnlyPendingTimers();
+
+    const afterGrace = deferred<string>();
+    const tooLate = start(afterGrace.promise);
+    freeze(2_000);
+    jest.advanceTimersToNextTimer();
+    jest.advanceTimersByTime(LATE_TIMER_GRACE_MS);
+    jest.runOnlyPendingTimers();
+    await flush();
+    afterGrace.resolve('OK');
+    await flush();
+    expect((tooLate.result.error as Missed).miss).toBe('suspended_timeout');
+    expect(tooLate.events.map((e) => e.outcome)).toEqual(['suspended_timeout']);
+  });
+
+  it('gives a late timer one grace only', async () => {
     const { result } = start(new Promise<string>(() => undefined));
     freeze(2_000);
     jest.advanceTimersToNextTimer();

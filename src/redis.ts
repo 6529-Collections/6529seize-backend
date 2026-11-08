@@ -7,6 +7,7 @@ import { redisFailureCategory } from '@/redis-recovery';
 import {
   DeadlineEvent,
   DeadlineMiss,
+  LATE_TIMER_GRACE_MS,
   recordDeadlineEvent,
   withRedisDeadline
 } from '@/redis-command-deadline';
@@ -88,7 +89,7 @@ async function runBoundedCommand<T>(
       new RedisUnavailableError(
         miss === 'slow'
           ? `Redis ${operation} timed out after ${options.commandTimeoutMs}ms`
-          : `Redis ${operation} got no reply within ${options.commandTimeoutMs}ms after its timer fired ${lateMs}ms late (process suspended or event loop stalled)`,
+          : `Redis ${operation} got no reply within a ${Math.min(LATE_TIMER_GRACE_MS, options.commandTimeoutMs)}ms grace after its timer fired ${lateMs}ms late (process suspended or event loop stalled)`,
         miss
       ),
     report: reportDeadlineEvent

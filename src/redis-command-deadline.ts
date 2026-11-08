@@ -15,15 +15,25 @@
  *   after the poll phase), so a reply that is already readable wins;
  * - treats a timer that fires more than LATE_TIMER_MS after its deadline as
  *   late: the process was suspended or stalled, and Redis was not measured.
- *   The command gets one fresh budget instead of failing;
+ *   The command gets a short grace (LATE_TIMER_GRACE_MS) instead of
+ *   failing at once;
  * - reports what happened: `slow` (Redis really missed the deadline),
  *   `suspended_recovered` (late timer, reply arrived), or
- *   `suspended_timeout` (late timer, then no reply within a fresh budget).
+ *   `suspended_timeout` (late timer, then no reply within the grace).
  *
  * A missed deadline leaves the command's outcome unknown (it may still reach
  * Redis), exactly as before: callers must never treat it as success.
  */
 export const LATE_TIMER_MS = 250;
+
+/**
+ * How long a command still gets after a late timer. Packets that reached a
+ * frozen VM are delivered within milliseconds of the thaw, so 100 ms catches
+ * them. It is deliberately not a fresh full budget: on an awaited call whose
+ * event loop stalled while Redis is also slow, that would add up to another
+ * budget (500 ms on the api) to the request.
+ */
+export const LATE_TIMER_GRACE_MS = 100;
 
 export type DeadlineMiss = 'slow' | 'suspended_timeout';
 export type DeadlineOutcome = DeadlineMiss | 'suspended_recovered';
@@ -64,14 +74,15 @@ export function withRedisDeadline<T>(
       action();
       return true;
     };
-    const arm = () => {
-      const deadline = now() + options.timeoutMs;
+    const arm = (ms: number) => {
+      const deadline = now() + ms;
       timer = setTimeout(() => {
         const overdueMs = Math.max(0, now() - deadline);
         if (lateByMs === null && overdueMs > LATE_TIMER_MS) {
-          // Suspended or stalled: Redis did not get its budget.
+          // Suspended or stalled: Redis did not get its budget. A short
+          // grace lets a reply delivered just after the thaw arrive.
           lateByMs = overdueMs;
-          arm();
+          arm(Math.min(LATE_TIMER_GRACE_MS, options.timeoutMs));
           return;
         }
         // A reply already readable is handled in the poll phase, before this.
@@ -86,9 +97,9 @@ export function withRedisDeadline<T>(
               overdueMs: late
             });
         });
-      }, options.timeoutMs);
+      }, ms);
     };
-    arm();
+    arm(options.timeoutMs);
     work.then(
       (value) => {
         if (settle(() => resolve(value)) && lateByMs !== null)

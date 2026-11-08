@@ -139,7 +139,7 @@ describe('fail-fast Redis helpers with late timers', () => {
     jest.runOnlyPendingTimers();
     await flush();
     expect(warnings()).toEqual([
-      'Redis SET got no reply within 500ms after its timer fired 2000ms late (process suspended or event loop stalled); continuing without Redis',
+      'Redis SET got no reply within a 100ms grace after its timer fired 2000ms late (process suspended or event loop stalled); continuing without Redis',
       'Redis SET timed out after 500ms; continuing without Redis'
     ]);
     expect(outcomes()).toEqual(['suspended_timeout', 'slow']);
