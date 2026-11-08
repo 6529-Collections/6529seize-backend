@@ -10,6 +10,7 @@ import {
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
+import { WAVE_LOG_INDEX, waveLogIndexReady } from './wave-log-index';
 import {
   userGroupsService,
   UserGroupsService
@@ -97,6 +98,39 @@ const mysql = require('mysql');
 /** Upper bound for reading a whole wave's activity logs. */
 export const WAVE_LOG_QUERY_BUDGET_MS = 5000;
 const PAL_TARGET_TYPE_CREATED_AT_INDEX = 'idx_pal_target_type_created_at';
+
+/**
+ * A wave's logs, one branch per requested type: each reads at most
+ * offset + limit rows in order from the (wave, type, created_at) index, and
+ * only those are merged and paged, so the cost no longer depends on how many
+ * logs the wave or the table has. Ties on created_at break on the primary
+ * key (the index's implicit last column), so each branch's top rows and the
+ * merged page are deterministic and match the scanned read.
+ */
+export function waveLogsByTypeSql(param: DropLogsQueryParams): {
+  sql: string;
+  params: Record<string, unknown>;
+} {
+  const params: Record<string, unknown> = {
+    wave_id: param.wave_id,
+    limit: param.limit,
+    offset: param.offset,
+    branch_limit: param.offset + param.limit
+  };
+  const branches = Array.from(new Set(param.log_types)).map((type, index) => {
+    params[`log_type_${index}`] = type;
+    return `(select * from ${PROFILES_ACTIVITY_LOGS_TABLE} force index (${WAVE_LOG_INDEX})
+       where additional_data_2 = :wave_id and type = :log_type_${index}
+       order by created_at ${param.sort_direction}, id ${param.sort_direction} limit :branch_limit)`;
+  });
+  return {
+    sql: `select /*+ MAX_EXECUTION_TIME(${WAVE_LOG_QUERY_BUDGET_MS}) */ * from (
+      ${branches.join(' union all ')}
+    ) wave_logs
+    order by created_at ${param.sort_direction}, id ${param.sort_direction} limit :limit offset :offset`,
+    params
+  };
+}
 
 export type CurationDropEntity = DropEntity & {
   readonly drop_priority_order: number | null;
@@ -2984,10 +3018,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   /**
    * A drop's logs are read through the (target_id, type, created_at) index,
    * so only that drop's rows are touched; left alone, the optimizer can walk
-   * the whole table's created_at index instead. A whole wave's logs have no
-   * matching index (the wave id is in additional_data_2), so that statement
-   * is capped at WAVE_LOG_QUERY_BUDGET_MS and fails with ER_QUERY_TIMEOUT
-   * rather than holding a connection for minutes.
+   * the whole table's created_at index instead.
+   *
+   * A whole wave's logs are capped at WAVE_LOG_QUERY_BUDGET_MS. Once the
+   * (wave, type, created_at) index exists, they are read per type: each type
+   * contributes its newest (or oldest) offset + limit rows straight from the
+   * index, and only those are merged and paged. Until then the statement
+   * fails with ER_QUERY_TIMEOUT rather than holding a connection for minutes.
    */
   async findDropLogEntities(
     param: DropLogsQueryParams,
@@ -2995,14 +3032,25 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<ProfileActivityLog[]> {
     ctx.timer?.start(`${this.constructor.name}->findDropLogs`);
     try {
+      if (param.drop_id) {
+        return await this.db.execute<ProfileActivityLog>(
+          `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} force index (${PAL_TARGET_TYPE_CREATED_AT_INDEX})
+           where target_id = :drop_id and additional_data_2 = :wave_id and type in (:log_types)
+           order by created_at ${param.sort_direction}, id ${param.sort_direction} limit :limit offset :offset`,
+          param,
+          { wrappedConnection: ctx.connection }
+        );
+      }
+      if (param.log_types.length && (await waveLogIndexReady(this.db))) {
+        const { sql, params } = waveLogsByTypeSql(param);
+        return await this.db.execute<ProfileActivityLog>(sql, params, {
+          wrappedConnection: ctx.connection
+        });
+      }
       return await this.db.execute<ProfileActivityLog>(
-        param.drop_id
-          ? `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} force index (${PAL_TARGET_TYPE_CREATED_AT_INDEX})
-             where target_id = :drop_id and additional_data_2 = :wave_id and type in (:log_types)
-             order by created_at ${param.sort_direction} limit :limit offset :offset`
-          : `select /*+ MAX_EXECUTION_TIME(${WAVE_LOG_QUERY_BUDGET_MS}) */ * from ${PROFILES_ACTIVITY_LOGS_TABLE}
-             where additional_data_2 = :wave_id and type in (:log_types)
-             order by created_at ${param.sort_direction} limit :limit offset :offset`,
+        `select /*+ MAX_EXECUTION_TIME(${WAVE_LOG_QUERY_BUDGET_MS}) */ * from ${PROFILES_ACTIVITY_LOGS_TABLE}
+         where additional_data_2 = :wave_id and type in (:log_types)
+         order by created_at ${param.sort_direction}, id ${param.sort_direction} limit :limit offset :offset`,
         param,
         { wrappedConnection: ctx.connection }
       );
@@ -3037,7 +3085,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         where target_id = :drop_id
           and type = :log_type
           and additional_data_2 = :wave_id
-        order by created_at ${sort_direction}
+        order by created_at ${sort_direction}, id ${sort_direction}
         limit :limit offset :offset
       `,
         {

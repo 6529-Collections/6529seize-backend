@@ -13,6 +13,7 @@ import { PageSortDirection } from '@/api/page-request';
 import { DbPoolName } from '@/db-query.options';
 import { DropType } from '@/entities/IDrop';
 import { DropsDb, LeaderboardSort, WAVE_LOG_QUERY_BUDGET_MS } from './drops.db';
+import { resetWaveLogIndexReady } from './wave-log-index';
 
 describe('DropsDb', () => {
   it('applies live wave and parent visibility before cross-wave pagination', async () => {
@@ -821,7 +822,10 @@ describe('DropsDb', () => {
       expect(params).toMatchObject({ drop_id: 'drop-1', wave_id: 'wave-1' });
     });
 
+    afterEach(() => resetWaveLogIndexReady());
+
     it("caps a whole wave's logs at the wave log budget", async () => {
+      resetWaveLogIndexReady(false);
       const execute = jest.fn().mockResolvedValue([]);
       const repo = new DropsDb(() => ({ execute }) as any);
       await repo.findDropLogEntities({ ...logParams, drop_id: null }, {});
@@ -831,6 +835,45 @@ describe('DropsDb', () => {
       );
       expect(sql).not.toContain('target_id');
       expect(sql).not.toContain('force index');
+    });
+
+    it("reads a whole wave's logs per type from the wave index once it exists", async () => {
+      resetWaveLogIndexReady(true);
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new DropsDb(() => ({ execute }) as any);
+      await repo.findDropLogEntities(
+        {
+          ...logParams,
+          drop_id: null,
+          offset: 40,
+          log_types: ['DROP_CREATED', 'DROP_VOTE_EDIT', 'DROP_CREATED']
+        },
+        {}
+      );
+      const [sql, params] = execute.mock.calls[0];
+      // One indexed top-K branch per distinct type.
+      expect(
+        sql.match(/force index \(idx_pal_wave_type_created_at\)/g)
+      ).toHaveLength(2);
+      expect(sql.match(/union all/g)).toHaveLength(1);
+      expect(sql).toContain(
+        `/*+ MAX_EXECUTION_TIME(${WAVE_LOG_QUERY_BUDGET_MS}) */`
+      );
+      expect(sql).toContain('limit :branch_limit');
+      expect(sql).toContain(
+        'order by created_at DESC, id DESC limit :limit offset :offset'
+      );
+      expect(sql).toContain(
+        'order by created_at DESC, id DESC limit :branch_limit'
+      );
+      expect(params).toEqual({
+        wave_id: 'wave-1',
+        limit: 20,
+        offset: 40,
+        branch_limit: 60,
+        log_type_0: 'DROP_CREATED',
+        log_type_1: 'DROP_VOTE_EDIT'
+      });
     });
 
     it("reads a drop's vote edits through the target index", async () => {
