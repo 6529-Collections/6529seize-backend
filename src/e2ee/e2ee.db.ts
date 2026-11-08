@@ -170,10 +170,10 @@ function suiteFilter(ciphersuites: readonly number[] | undefined): {
   readonly params: Record<string, number[]>;
 } {
   if (!ciphersuites) return { sql: '', params: {} };
-  const list = ciphersuites.length ? Array.from(new Set(ciphersuites)) : [-1];
+  if (!ciphersuites.length) return { sql: 'and 1 = 0', params: {} };
   return {
     sql: 'and ciphersuite in (:ciphersuites)',
-    params: { ciphersuites: list }
+    params: { ciphersuites: Array.from(new Set(ciphersuites)) }
   };
 }
 

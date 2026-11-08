@@ -640,6 +640,8 @@ export class E2eeDevicesService {
       if (!data.length) {
         throw e2eeErrors.badRequest(`key_packages[${index}].data is empty`);
       }
+      // Only the version and suite are read; the KeyPackage stays opaque to
+      // the server (clients validate it fully with OpenMLS before use).
       const ciphersuite = readE2eeKeyPackageCiphersuite(data);
       if (!isE2eeCiphersuite(ciphersuite)) {
         throw e2eeErrors.badRequest(
