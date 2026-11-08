@@ -327,6 +327,21 @@ export async function invalidateWaveUnreadCacheForWave(
   await bumpVersion(waveVersionKey(waveId), { waveId });
 }
 
+/**
+ * The same move as {@link invalidateWaveUnreadCacheForWave}, but it throws
+ * when Redis is not connected or refuses the write. For operator jobs that
+ * delete drops outside the api and must not leave cached unread counts
+ * behind, such as the legacy-DM purge CLI.
+ */
+export async function bumpWaveUnreadCacheVersionOrThrow(
+  waveId: string
+): Promise<void> {
+  if (!getRedisClient()) {
+    throw new Error('Redis is not connected; cannot move the unread version');
+  }
+  await bumpCacheVersion(waveVersionKey(waveId), WAVE_UNREAD_VERSION_TTL);
+}
+
 export async function invalidateWaveUnreadCacheForWaves(
   waveIds: string[]
 ): Promise<void> {

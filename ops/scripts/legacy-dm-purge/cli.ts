@@ -42,6 +42,8 @@ import {
   legacyDmDeletionCutoffIso,
   legacyDmDeletionCutoffMillis
 } from '../../../src/legacy-dm/legacy-dm-retention';
+import { getRedisClient, initRedis } from '../../../src/redis';
+import { bumpWaveUnreadCacheVersionOrThrow } from '../../../src/api-serverless/src/waves/wave-unread-cache';
 
 const MODES = ['plan', 'execute', 'media-plan', 'media-execute'] as const;
 type Mode = (typeof MODES)[number];
@@ -167,6 +169,32 @@ async function stillReferenced(
   return attachments.length > 0;
 }
 
+/**
+ * The per-wave unread-cache bump for `execute`. The api caches unread counts
+ * per reader and wave, keyed on versions in Redis, so deleting drops here
+ * must move the wave's version or the purged conversations keep showing
+ * unread counts until the cache TTL. Needs REDIS_URL (REDIS_PORT, REDIS_TLS,
+ * REDIS_PASSWORD as the api uses them) from a host that reaches the cache;
+ * LEGACY_DM_SKIP_UNREAD_BUMP=acknowledged runs without it.
+ */
+async function unreadCacheBump(
+  log: (line: string) => void
+): Promise<((waveId: string) => Promise<void>) | undefined> {
+  if (process.env.LEGACY_DM_SKIP_UNREAD_BUMP === 'acknowledged') {
+    log(
+      'unread-cache bump skipped: purged DMs can show stale unread counts until the cache TTL'
+    );
+    return undefined;
+  }
+  requireEnv('REDIS_URL');
+  await initRedis();
+  const redis = getRedisClient();
+  if (!redis) throw new Error('Redis did not initialize');
+  await redis.ping();
+  log('unread-cache bump enabled');
+  return bumpWaveUnreadCacheVersionOrThrow;
+}
+
 async function main() {
   const [modeArg, firstPath, secondArg, thirdArg, ...extra] =
     process.argv.slice(2);
@@ -260,6 +288,7 @@ async function main() {
               .map((s) => s.trim())
               .filter(Boolean);
       log(`legal holds: ${heldWaveIds.length} DM waves excluded`);
+      const onWavePurged = await unreadCacheBump(log);
       const result = await executeLegacyDmPurge(dbFor(runner), {
         heldWaveIds,
         nowMillis: Date.now(),
@@ -280,6 +309,7 @@ async function main() {
             entries.map((e) => JSON.stringify(e)).join('\n') + '\n',
             { mode: 0o600 }
           ),
+        onWavePurged,
         log
       });
       log(`rows: ${JSON.stringify(result.rows)}`);
@@ -320,6 +350,9 @@ async function main() {
   } finally {
     await runner.release();
     await source.destroy();
+    await getRedisClient()
+      ?.quit()
+      .catch(() => undefined);
   }
 }
 
