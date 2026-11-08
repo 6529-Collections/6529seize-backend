@@ -474,6 +474,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       : undefined;
   }
 
+  /**
+   * The viewer's stored group set (viewerGroupSets.stored) for a statement
+   * that inlines one copy of the groups. Undefined keeps the inlined list,
+   * the better plan, unless that list (plus the statement's other inlined
+   * lists) would pass the pinning size and the set is readable.
+   */
+  private async storedViewerGroups(
+    name: string,
+    groupIds: readonly string[],
+    otherInlinedBytes: number
+  ): Promise<ViewerGroupsCte | undefined> {
+    if (!viewerGroupsWorthSharing(groupIds, 1, otherInlinedBytes))
+      return undefined;
+    const supported = await viewerGroupsCteSupported(this.db, [
+      WAVES_TABLE,
+      legacyGetView(WAVES_TABLE)
+    ]);
+    return supported
+      ? viewerGroupSets.stored(this.db, name, groupIds)
+      : undefined;
+  }
+
   private getWaveAndParentVisibilityFilter(
     waveAlias: string,
     parentAlias: string,
@@ -1833,10 +1855,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findVisibleParentWavesByChildWaveIds`;
     ctx.timer?.start(timerKey);
     try {
+      const groups = await this.storedViewerGroups(
+        'vp_viewer_groups',
+        groupIdsUserIsEligibleFor,
+        sqlInListBytes(childWaveIds)
+      );
       const rows = await this.db.execute<
         RawWaveEntity & { child_wave_id: string }
       >(
-        `
+        `${this.withViewerGroups(groups)}
           select child.id as child_wave_id, parent.*
           from ${legacyGetView(WAVES_TABLE)} child
           join ${legacyGetView(WAVES_TABLE)} parent on parent.id = child.parent_wave_id
@@ -1845,10 +1872,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             and ${this.getWaveVisibilityFilter(
               'parent',
               groupIdsUserIsEligibleFor,
-              'groupIdsUserIsEligibleFor'
+              'groupIdsUserIsEligibleFor',
+              groups?.setSql
             )}
         `,
-        { childWaveIds, groupIdsUserIsEligibleFor },
+        { childWaveIds, groupIdsUserIsEligibleFor, ...groups?.params },
         { wrappedConnection: ctx.connection }
       );
       return rows.reduce(
@@ -1897,8 +1925,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findWaveIdsWithVisibleSubwaves`;
     ctx.timer?.start(timerKey);
     try {
+      const groups = await this.storedViewerGroups(
+        'vs_viewer_groups',
+        groupIdsUserIsEligibleFor,
+        sqlInListBytes(waveIds)
+      );
       const rows = await this.db.execute<{ wave_id: string }>(
-        `
+        `${this.withViewerGroups(groups)}
           select distinct w.parent_wave_id as wave_id
           from ${legacyGetView(WAVES_TABLE)} w
           join ${legacyGetView(WAVES_TABLE)} parent
@@ -1908,10 +1941,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             and ${this.getWaveVisibilityFilter(
               'w',
               groupIdsUserIsEligibleFor,
-              'groupIdsUserIsEligibleFor'
+              'groupIdsUserIsEligibleFor',
+              groups?.setSql
             )}
         `,
-        { waveIds, groupIdsUserIsEligibleFor },
+        { waveIds, groupIdsUserIsEligibleFor, ...groups?.params },
         { wrappedConnection: ctx.connection }
       );
       return new Set(rows.map((row) => row.wave_id));
