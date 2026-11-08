@@ -4,6 +4,7 @@ import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITIONS_TABLE,
   DROP_POLLS_TABLE,
+  DROP_REACTIONS_TABLE,
   DROPS_TABLE
 } from '@/constants';
 import { dropPollsApiService } from '@/api/drops/drop-polls.api.service';
@@ -26,6 +27,9 @@ import {
   withRequestDeadline,
   WriteBusyException
 } from '@/api/write-transaction-budget';
+import { dropCheeringService } from '@/api/drops/drop-cheering.service';
+import { dropCreationService } from '@/api/drops/drop-creation.api.service';
+import { Logger } from '@/logging';
 
 /**
  * API write transactions run with an execution budget inside a request:
@@ -374,6 +378,68 @@ describeWithSeed(
           executionBudget: { lockWaitSeconds: 10 }
         });
       }
+    });
+
+    /**
+     * Fails the test if runWriteTransaction fell back to an unbudgeted rerun,
+     * which it does when the work overlaps statements on its connection.
+     */
+    function expectNoUnbudgetedRerun() {
+      const error = jest.spyOn(Logger.get('WRITE_TRANSACTION_BUDGET'), 'error');
+      return () => {
+        expect(
+          error.mock.calls.filter(([message]) =>
+            String(message).includes('WRITE_BUDGET_CONCURRENT_STATEMENTS')
+          )
+        ).toEqual([]);
+        error.mockRestore();
+      };
+    }
+
+    it('rates a chat drop through updateCheers in budgeted transactions only', async () => {
+      const created = await budgetedPost(chatDrop('to rate'));
+      const verify = expectNoUnbudgetedRerun();
+      for (const rating of [3, -2])
+        await withRequestDeadline(30_000, () =>
+          dropCheeringService.updateCheers(
+            {
+              drop_id: created.drop_id,
+              rater_profile_id: reactor,
+              groupIdsUserIsEligibleFor: [],
+              newCheers: rating
+            },
+            {
+              authenticationContext:
+                AuthenticationContext.fromProfileId(reactor)
+            }
+          )
+        );
+      verify();
+      const reactions = await sqlExecutor.execute<{ reaction: string }>(
+        `select reaction from ${DROP_REACTIONS_TABLE} where drop_id = :dropId and profile_id = :reactor`,
+        { dropId: created.drop_id, reactor }
+      );
+      expect(reactions.map((it) => it.reaction)).toEqual([':-1:']);
+    });
+
+    it('deletes a drop through deleteDropById in one budgeted transaction', async () => {
+      const created = await budgetedPost(chatDrop('to delete via service'));
+      const verify = expectNoUnbudgetedRerun();
+      await withRequestDeadline(30_000, () =>
+        dropCreationService.deleteDropById(
+          { id: created.drop_id },
+          {
+            timer: new Timer('test'),
+            authenticationContext: AuthenticationContext.fromProfileId(author)
+          }
+        )
+      );
+      verify();
+      const left = await sqlExecutor.oneOrNull<{ n: number }>(
+        `select count(*) as n from ${DROPS_TABLE} where id = :id`,
+        { id: created.drop_id }
+      );
+      expect(Number(left?.n)).toBe(0);
     });
 
     it('runs a real drop delete under the READ COMMITTED budget', async () => {
