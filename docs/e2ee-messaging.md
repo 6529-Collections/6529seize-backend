@@ -50,8 +50,9 @@ grant naming `from` also admits `to`) is empty until the owner decides whether
 a grant for a provisional code point covers the RFC's final one.
 
 Transition window: `E2EE_SUITE_TRANSITION_START` (an ISO 8601 date-time with
-a zone on a real calendar date, or unix milliseconds from 2026 on; never
-seconds) and `E2EE_SUITE_TRANSITION_DAYS` (1-365, default 14). Unset means
+a zone on a real calendar date, or unix milliseconds; never seconds; from the
+D172 decision, 2026-11-08, on, so a well-formed typo such as `2026-01-11`
+cannot close the window at once) and `E2EE_SUITE_TRANSITION_DAYS` (1-365, default 14). Unset means
 not started. A malformed value fails safe: it is logged once as an ERROR
 (`[E2EE SUITE WINDOW CONFIG INVALID] … [USING NOT STARTED]`), counted in the
 EMF metric `6529/E2EE` `SuiteWindowConfigInvalid` to alarm on, and the
@@ -64,9 +65,13 @@ While the window is open the server accepts `0x004F` and `0x004E`. When it
 ends the server refuses `0x004F` (D172): the accepted set becomes
 `{0x004E}` (`e2eeAcceptedSuites`) for new registrations in all three grant
 forms (a v1 grant: `E2EE_BAD_GRANT` `grant_version`; a v2 set without
-`0x004E`: `E2EE_BAD_GRANT` `ciphersuites`), the SIWE combined nonce,
+`0x004E`: `E2EE_BAD_GRANT` `ciphersuites`), app device grants with an
+encryption key at `POST /device-grants` (400, instead of storing a grant
+whose device could never register), the SIWE combined nonce,
 KeyPackage uploads, listings, eligibility, claims, group creation
-(`E2EE_BAD_GRANT` `grant_version`) and roster additions (400). A v2 device
+(`E2EE_BAD_GRANT` `grant_version`) and roster additions (400; this
+includes a roster repair re-adding a `0x004F`-only device to an old group,
+consistent with old-suite groups being read-only). A v2 device
 signed for `[78, 79]` keeps only `0x004E`. Reads (logs, Welcomes, blobs) do
 not consult the policy and keep working. Cleaning up the old rows is a
 separate step that keeps groups and blobs.

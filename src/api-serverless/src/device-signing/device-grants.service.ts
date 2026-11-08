@@ -13,10 +13,22 @@ import {
 } from '@/exceptions';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { RequestContext } from '@/request.context';
+import { e2eeDeviceSuites } from '@/e2ee/e2ee-suite-policy';
+
+/** What an app grant's encrypted-messages half says about suites. */
+const mlsSuiteFieldsOf = (grant: AppDeviceGrant) =>
+  isAppDeviceGrantV2(grant)
+    ? {
+        grant_version: 2,
+        ciphersuite: Number(grant.ciphersuite),
+        ciphersuites: grant.ciphersuites ?? []
+      }
+    : { grant_version: 1, ciphersuite: Number(grant.ciphersuite) };
 import {
   AppDeviceGrant,
   findAppDeviceGrantRegistrationProblem,
   hasMlsDeviceKey,
+  isAppDeviceGrantV2,
   serializeAppDeviceGrantMessage,
   verifyAppDeviceGrant
 } from './app-device-grant';
@@ -147,6 +159,14 @@ export class DeviceGrantsService {
       throw new BadRequestException(`Invalid device grant: ${problem}`);
     }
     if (hasMlsDeviceKey(grant)) {
+      // D172: an encryption key needs a suite the server accepts now (a v1
+      // grant or a set without 0x004E is refused after the window), rather
+      // than a stored grant whose device could never register.
+      if (!e2eeDeviceSuites(mlsSuiteFieldsOf(grant), nowMs).length) {
+        throw new BadRequestException(
+          'Invalid device grant: the encrypted-messages key names no ciphersuite the server accepts now'
+        );
+      }
       await this.assertCanGrantEncryptedMessages(caller, ctx);
     }
     const signature = request.wallet_signature.toLowerCase();

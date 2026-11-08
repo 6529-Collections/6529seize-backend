@@ -309,7 +309,10 @@ describeWithSeed('E2EE delivery service', [], () => {
   /** A combined sign-in grant the login stored, then its E2EE device. */
   async function registerLoginGrantDevice(
     profile: Profile,
-    key: E2eeTestKey = randomE2eeKey()
+    key: E2eeTestKey = randomE2eeKey(),
+    suites: { ciphersuite: number } | { ciphersuites: number[] } = {
+      ciphersuite: E2EE_CIPHERSUITE
+    }
   ): Promise<{ key: E2eeTestKey; grantId: string; message: string }> {
     walletProfiles.set(profile.wallet.address.toLowerCase(), profile.id);
     await persistProfile(profile, persistedProfiles);
@@ -321,7 +324,7 @@ describeWithSeed('E2EE delivery service', [], () => {
       deviceGrant: {
         deviceKey: randomE2eeKey().publicKey,
         scopes: ['post', 'edit', 'delete', 'react'],
-        mlsDevice: { deviceKey: key.publicKey, ciphersuite: E2EE_CIPHERSUITE }
+        mlsDevice: { deviceKey: key.publicKey, ...suites }
       }
     });
     const grantId = computeDeviceGrantId(challenge.message);
@@ -1488,6 +1491,15 @@ describeWithSeed('E2EE delivery service', [], () => {
 
     describe('after the transition window closes', () => {
       const previous = process.env.E2EE_SUITE_TRANSITION_START;
+      /**
+       * The window started on 2026-11-10 (from the D172 floor on) and lasted
+       * 14 days; the clock moves to December. Devices registered before
+       * keep their 180-day grants.
+       */
+      const closeWindow = () => {
+        process.env.E2EE_SUITE_TRANSITION_START = '2026-11-10T00:00:00Z';
+        now = Date.UTC(2026, 11, 1);
+      };
       afterEach(() => {
         if (previous === undefined) {
           delete process.env.E2EE_SUITE_TRANSITION_START;
@@ -1503,7 +1515,7 @@ describeWithSeed('E2EE delivery service', [], () => {
         const bobOld = await registerDevice(bob);
         await uploadKeyPackages(bob, bobOld, 1);
         await registerDevice(alice, randomE2eeKey(), E2EE_CIPHERSUITE_AES256);
-        process.env.E2EE_SUITE_TRANSITION_START = String(now - 15 * DAY);
+        closeWindow();
 
         await expectE2eeError(registerDevice(alice), 'E2EE_BAD_GRANT');
         expect(await services.devices.getProfileDevices(bob.id)).toEqual([]);
@@ -1541,7 +1553,7 @@ describeWithSeed('E2EE delivery service', [], () => {
           rosterAdd: [bobFirst.publicKey],
           welcomeTargets: [bobFirst.publicKey]
         });
-        process.env.E2EE_SUITE_TRANSITION_START = String(now - 15 * DAY);
+        closeWindow();
 
         await expectE2eeError(createGroup(alice, aliceOld), 'E2EE_BAD_GRANT');
         const refused = await expectE2eeError(
@@ -1582,7 +1594,7 @@ describeWithSeed('E2EE delivery service', [], () => {
         expect((await eligible(AES128)).active_devices).toBe(2);
         const group = await createGroup(bob, bobOld);
 
-        process.env.E2EE_SUITE_TRANSITION_START = String(now - 15 * DAY);
+        closeWindow();
 
         // Registration: a set without 0x004E is refused; [78, 79] keeps 78.
         await expectE2eeError(
@@ -1649,6 +1661,32 @@ describeWithSeed('E2EE delivery service', [], () => {
         );
         // Renewing it as v1 keeps its own slot.
         await registerDevice(alice, v1);
+      });
+
+      it('registers sign-in grants only for 0x004E', async () => {
+        const alice = aProfile();
+        closeWindow();
+        await expectE2eeError(
+          registerLoginGrantDevice(alice),
+          'E2EE_BAD_GRANT'
+        );
+        await expectE2eeError(
+          registerLoginGrantDevice(alice, randomE2eeKey(), {
+            ciphersuites: [E2EE_CIPHERSUITE]
+          }),
+          'E2EE_BAD_GRANT'
+        );
+        const { key } = await registerLoginGrantDevice(alice, randomE2eeKey(), {
+          ciphersuites: [E2EE_CIPHERSUITE_AES256, E2EE_CIPHERSUITE]
+        });
+        expect(
+          (
+            await services.devices.getProfileDevices(
+              alice.id,
+              E2EE_CIPHERSUITE_AES256
+            )
+          ).map((device) => device.device_key)
+        ).toEqual([key.publicKey]);
       });
     });
 

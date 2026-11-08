@@ -98,10 +98,12 @@ export class E2eeSuiteTransitionConfigError extends Error {
 const START_ENV = 'E2EE_SUITE_TRANSITION_START';
 const DAYS_ENV = 'E2EE_SUITE_TRANSITION_DAYS';
 /**
- * Unix milliseconds must fall in this range. It rejects seconds (which
- * would read as January 1970 and close the window at once) and typos.
+ * The start must fall in this range: from the D172 decision (2026-11-08)
+ * on. It rejects unix seconds (which would read as January 1970) and
+ * well-formed typos such as 2026-01-11, which would close the window at
+ * once.
  */
-const MIN_START_MS = Date.UTC(2026, 0, 1);
+const MIN_START_MS = Date.UTC(2026, 10, 8);
 const MAX_START_MS = Date.UTC(2100, 0, 1);
 const MAX_TRANSITION_DAYS = 365;
 /** ISO 8601 with a time and an explicit zone, e.g. 2026-11-20T00:00:00Z. */
@@ -150,7 +152,7 @@ function parseStart(value: string | undefined): number | null {
     throw new E2eeSuiteTransitionConfigError(
       START_ENV,
       text,
-      'an ISO 8601 date-time with a zone or unix milliseconds from 2026 on'
+      'an ISO 8601 date-time with a zone or unix milliseconds from 2026-11-08 on'
     );
   }
   return ms;

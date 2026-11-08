@@ -108,6 +108,13 @@ describe('E2EE suite policy (D172)', () => {
     const days = (value: string) =>
       readE2eeSuiteTransition({ E2EE_SUITE_TRANSITION_DAYS: value });
 
+    it('accepts a start from the D172 decision (2026-11-08) on', () => {
+      expect(start('2026-11-08T00:00:00Z').startMs).toBe(Date.UTC(2026, 10, 8));
+      expect(start(String(Date.UTC(2026, 10, 8))).startMs).toBe(
+        Date.UTC(2026, 10, 8)
+      );
+    });
+
     it('refuses unix seconds, which would close the window at once', () => {
       expect(() => start(String(NOW / 1000))).toThrow(
         E2eeSuiteTransitionConfigError
@@ -122,6 +129,8 @@ describe('E2EE suite policy (D172)', () => {
       ['an impossible date', '2026-13-45T00:00:00Z'],
       ['a negative number', '-1'],
       ['a start before 2026', String(Date.UTC(2025, 11, 31))],
+      ['a well-formed typo before D172', '2026-01-11T00:00:00Z'],
+      ['a start just before D172', String(Date.UTC(2026, 10, 8) - 1)],
       ['a start after 2099', String(Date.UTC(2100, 0, 1))]
     ])('refuses %s as the start', (_label, value) => {
       expect(() => start(value)).toThrow(

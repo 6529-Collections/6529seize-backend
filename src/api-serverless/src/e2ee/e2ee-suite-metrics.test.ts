@@ -6,7 +6,8 @@ import {
 } from '@/api/e2ee/e2ee-suite-metrics';
 import { E2eeServiceDeps } from '@/api/e2ee/e2ee-context';
 
-const NOW = Date.UTC(2026, 10, 10);
+// After a window that started on 2026-11-10 (14 days).
+const NOW = Date.UTC(2026, 11, 1);
 const DAY = 24 * 60 * 60 * 1000;
 
 const rows = [
@@ -48,7 +49,7 @@ describe('E2EE suite metrics (D172)', () => {
   });
 
   it('counts v1 devices as unusable once the window has closed', async () => {
-    process.env.E2EE_SUITE_TRANSITION_START = String(NOW - 15 * DAY);
+    process.env.E2EE_SUITE_TRANSITION_START = '2026-11-10T00:00:00Z';
     expect(await takeE2eeSuiteCensus(depsWith())).toEqual({
       bySuite: { '79': 0, '78': 42 },
       byGrantVersion: { '1': 300, '2': 42 },
