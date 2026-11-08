@@ -1,14 +1,14 @@
 {
   "upstream_integrity": "sha512-7n2o3UX0rmNL+8LmVhEd3aun2LXLulcI9y02gKhKE1rgqliZgwocmwg8V+vZat3+JLHPvxABtp8Icy1sUEbd1w==",
-  "patched_archive_sha256": "626c752a5dc43ea1003ed04deb4478436fe1eb1647ccf0683340cc77b7c6eefe",
-  "patched_archive_size": 58135,
+  "patched_archive_sha256": "204385114d335027a9db3c1b2ea4abdb9e6ef071aec41cf7ba9bd825a8200880",
+  "patched_archive_size": 58943,
   "omitted_native_binaries": [
     "package/dist/index.node"
   ],
   "files": {
     "package/6529-PATCH.md": {
-      "sha256": "a21be9d0d933de5608f8d1f796d4f65f538092fc2049e25b18660995f5ab663e",
-      "size": 3396,
+      "sha256": "64495369045964fe6126e005bb59274ef4d871c7895a6c816eb86c692e965ff1",
+      "size": 3857,
       "unchanged_upstream": false
     },
     "package/Cargo.toml": {
@@ -202,8 +202,8 @@
       "unchanged_upstream": false
     },
     "package/scripts/postinstall.cjs": {
-      "sha256": "336ef22d05527b5a94c0b006816e00ec1359557f64a846960deb463b30f8b02b",
-      "size": 9893,
+      "sha256": "50a5f65256c1a1255f2d4a86e538e5e813185f836b0c9b85b04f5185732f1116",
+      "size": 12098,
       "unchanged_upstream": false
     },
     "package/src/asset.rs": {
