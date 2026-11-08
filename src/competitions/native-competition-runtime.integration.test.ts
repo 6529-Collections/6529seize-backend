@@ -818,6 +818,58 @@ describeWithSeed(
       ]);
     });
 
+    it.each([
+      ['nothing is due', 5],
+      ['an entry reaches the threshold', 80]
+    ])(
+      'gives an Approve run off the lock the same result as the locked run when %s',
+      async (_case, rating) => {
+        await vote(approveId, approveEntry, rating, 100);
+        type Outcome = Record<string, unknown[]>;
+        const rolledBack = new Error('rolled back on purpose');
+        const read = async (connection?: unknown): Promise<Outcome> => {
+          const q = (sql: string) =>
+            sqlExecutor.execute(
+              sql,
+              { approveId },
+              connection
+                ? { wrappedConnection: connection as never }
+                : undefined
+            );
+          return {
+            leaderboard: await q(
+              `select entry_id, \`rank\`, rating from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}
+               where competition_id = :approveId order by \`rank\``
+            ),
+            winners: await q(
+              `select entry_id, final_rating from ${COMPETITION_DECISION_WINNERS_TABLE}
+               where competition_id = :approveId order by entry_id`
+            ),
+            events: await q(
+              `select json_unquote(json_extract(event, '$.event_type')) as type
+               from ${COMPETITION_OUTBOX_TABLE} where competition_id = :approveId
+               order by type`
+            )
+          };
+        };
+        // The locked run, as before this path: inside a caller transaction.
+        let locked: Outcome | undefined;
+        await repository
+          .executeNativeQueriesInTransaction(async (connection) => {
+            await service.processCompetition(approveId, 1001, { connection });
+            locked = await read(connection);
+            throw rolledBack;
+          })
+          .catch((error) => {
+            if (error !== rolledBack) throw error;
+          });
+        // The decision loop's run, off the lock when nothing is due.
+        await service.processCompetition(approveId, 1001);
+        expect(await read()).toEqual(locked);
+        expect(locked!.winners).toHaveLength(rating >= 10 ? 1 : 0);
+      }
+    );
+
     it('finishes parallel Rank and Approve independently, preserves chat drops and emits immutable awards once', async () => {
       await vote(rankId, rankEntry, 80, 100);
       await vote(approveId, approveEntry, 80, 100);
