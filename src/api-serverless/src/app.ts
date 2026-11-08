@@ -1,4 +1,3 @@
-import { customErrorMiddleware } from '@/api/api-error-middleware';
 import * as db from '../../db-api';
 import { clientVersionFromQuery } from '@/ws-client-versions/ws-client-versions';
 import { ids } from '@/ids';
@@ -76,6 +75,8 @@ import {
   Strategy as JwtStrategy,
   VerifiedCallback
 } from 'passport-jwt';
+import { ApiCompliantException } from '@/exceptions';
+import { sendApiError } from '@/api/api-error-middleware';
 import * as sentryContext from '../../sentry.context';
 import { Time } from '@/time';
 import { DropType } from '@/entities/IDrop';
@@ -632,6 +633,18 @@ async function postSentryAlertDrop({
       `Failed to enqueue Sentry alert push notifications for drop ${dropId}: ${error}`
     );
   }
+}
+
+function customErrorMiddleware() {
+  return (err: Error, _: Request, res: Response, next: NextFunction) => {
+    if (err instanceof ApiCompliantException) {
+      sendApiError(err, res);
+      next();
+    } else {
+      res.status(500).send({ error: 'Something went wrong...' });
+      next(err);
+    }
+  };
 }
 
 function sentryFlusherMiddleware() {
