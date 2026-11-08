@@ -29,10 +29,7 @@ export class UserNotificationsReader {
     },
     connection?: ConnectionWrapper<any>
   ): Promise<UserNotificationsResponse> {
-    const excludedCauses =
-      param.include_competitions === true
-        ? []
-        : [IdentityNotificationCause.COMPETITION_LIFECYCLE];
+    const excludedCauses = capabilityExcludedCauses(param.include_competitions);
     const causeExclude = [
       ...(param.cause_exclude?.split(',').map((cause) => cause.trim()) ?? []),
       ...excludedCauses
@@ -63,6 +60,32 @@ export class UserNotificationsReader {
       total_unread: totalUnread
     };
   }
+
+  /** The `total_unread` of getNotificationsForIdentity, without the page. */
+  public async countUnreadForIdentity(
+    param: {
+      identity_id: string;
+      eligible_group_ids: string[];
+      include_competitions?: boolean;
+    },
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    return this.identityNotificationsDb.countUnreadNotificationsForIdentity(
+      param.identity_id,
+      param.eligible_group_ids,
+      connection,
+      { excludedCauses: capabilityExcludedCauses(param.include_competitions) }
+    );
+  }
+}
+
+/** Clients that don't opt in never see (or count) competition lifecycle rows. */
+function capabilityExcludedCauses(
+  includeCompetitions: boolean | undefined
+): IdentityNotificationCause[] {
+  return includeCompetitions === true
+    ? []
+    : [IdentityNotificationCause.COMPETITION_LIFECYCLE];
 }
 
 export const userNotificationReader = new UserNotificationsReader(
