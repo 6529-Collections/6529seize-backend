@@ -34,9 +34,9 @@ import { ids } from '../ids';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   resetViewerGroupsCteSupport,
-  viewerGroupsCte,
   viewerGroupsCteSupported
 } from '@/waves/viewer-groups-cte';
+import { viewerGroupSets } from '@/waves/viewer-group-sets';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import {
   anonymousCompetitionEntrySql,
@@ -423,7 +423,11 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     const sharedViewerGroups =
       params.viewer_eligible_group_ids.length > 0 &&
       (await viewerGroupsCteSupported(this.db, VIEWER_GROUP_COLUMN_TABLES))
-        ? viewerGroupsCte(VIEWER_GROUPS_CTE, params.viewer_eligible_group_ids)
+        ? await viewerGroupSets.source(
+            this.db,
+            VIEWER_GROUPS_CTE,
+            params.viewer_eligible_group_ids
+          )
         : undefined;
     const waveAccess = buildProfileLogReadAccessFilter(
       params.type,

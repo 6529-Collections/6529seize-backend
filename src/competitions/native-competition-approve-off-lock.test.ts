@@ -289,13 +289,17 @@ describe('waveDecisionExecutionLoop: Approve off the lock', () => {
   it.each(['decisions_due', 'changed'] as const)(
     'runs the locked Approve run once when the refresh reports %s',
     async (outcome) => {
-      const { subject, spies, repository } = loop(outcome);
+      const { subject, spies, repository, offLock } = loop(outcome);
       await subject.processCompetition('competition-1', NOW);
       expect(spies.approve).toHaveBeenCalledTimes(1);
       expect(spies.reconcile).toHaveBeenCalledTimes(2);
       expect(repository.lockCompetition).toHaveBeenCalledTimes(2);
+      // A due decision goes to the locked run at once; changed inputs are
+      // retried off the lock first.
+      const attempts = outcome === 'decisions_due' ? 1 : 3;
+      expect(offLock).toHaveBeenCalledTimes(attempts);
       expect(recordNativeCompetitionRun).toHaveBeenCalledWith(
-        expect.objectContaining({ path: 'off_lock_fallback' })
+        expect.objectContaining({ path: 'off_lock_fallback', attempts })
       );
     }
   );
