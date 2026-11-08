@@ -19,6 +19,7 @@ import {
 import { legacyAuthorWaveParticipationSql } from '@/competitions/legacy-typed-drops';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
+import { sqlInListBytes } from '@/db/sql-in-list-chunks';
 import {
   ViewerGroupsCte,
   viewerGroupsCte,
@@ -1124,12 +1125,28 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<DropEntity[]> {
     const timerLabel = `${this.constructor.name}->findVisibleDrops`;
     ctx.timer?.start(timerLabel);
-    const visibleWaveFilter = this.getVisibleWaveFilterSql(
-      group_ids_user_is_eligible_for
-    );
     try {
+      // The wave and its parent each check the groups: shared once that and
+      // the inlined id lists would reach the pinning size. Only lookups by
+      // ids or serials share: those are driven by the drops' keys. Without
+      // them the scan is driven by the index range the inlined list builds
+      // on visibility_group_id, which a shared table would lose.
+      const groups =
+        ids?.length || serial_nos?.length
+          ? await this.sharedViewerGroups(
+              'vd_viewer_groups',
+              group_ids_user_is_eligible_for,
+              sqlInListBytes(ids ?? []) + sqlInListBytes(serial_nos ?? [])
+            )
+          : undefined;
+      const visibleWaveFilter = waveReadAccessSql(
+        'w',
+        group_ids_user_is_eligible_for.length > 0,
+        'groupsUserIsEligibleFor',
+        groups?.setSql
+      );
       return await this.db.execute<DropEntity>(
-        `select d.*
+        `${groups ? `with ${groups.cteSql} ` : ''}select d.*
          from ${DROPS_TABLE} d
          ${
            parent_drop_id
@@ -1157,7 +1174,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           parent_drop_id,
           serial_nos,
           ids,
-          groupsUserIsEligibleFor: group_ids_user_is_eligible_for
+          groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
+          ...groups?.params
         },
         { wrappedConnection: ctx.connection }
       );
@@ -3630,18 +3648,20 @@ export class DropsDb extends LazyDbAccessCompatibleService {
    * statement inlines them once instead of once per visibility check.
    */
   private async sharedViewerGroups(
-    groupIds: readonly string[]
+    name: string,
+    groupIds: readonly string[],
+    otherInlinedBytes = 0
   ): Promise<ViewerGroupsCte | undefined> {
-    // Share only when two inlined copies would reach the pinning size;
-    // below that the inlined list is the cheaper plan.
-    if (!viewerGroupsWorthSharing(groupIds, 2)) return undefined;
+    // Share only when two inlined copies (plus the statement's other inlined
+    // lists) would reach the pinning size; below that the inlined list is
+    // the cheaper plan.
+    if (!viewerGroupsWorthSharing(groupIds, 2, otherInlinedBytes))
+      return undefined;
     const supported = await viewerGroupsCteSupported(this.db, [
       WAVES_TABLE,
       legacyGetView(WAVES_TABLE)
     ]);
-    return supported
-      ? viewerGroupsCte('bd_viewer_groups', groupIds)
-      : undefined;
+    return supported ? viewerGroupsCte(name, groupIds) : undefined;
   }
 
   public async findBoostedDrops(
@@ -3676,7 +3696,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<DropEntity[]> {
     try {
       ctx.timer?.start(`${this.constructor.name}->findBoostedDrops`);
-      const groups = await this.sharedViewerGroups(eligibile_groups);
+      const groups = await this.sharedViewerGroups(
+        'bd_viewer_groups',
+        eligibile_groups
+      );
       const aggregateSql = `
         select
           d.id as drop_id,
@@ -3744,7 +3767,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<number> {
     try {
       ctx.timer?.start(`${this.constructor.name}->countBoostedDrops`);
-      const groups = await this.sharedViewerGroups(eligibile_groups);
+      const groups = await this.sharedViewerGroups(
+        'bd_viewer_groups',
+        eligibile_groups
+      );
       const aggregateSql = `
         select
           d.id as drop_id,

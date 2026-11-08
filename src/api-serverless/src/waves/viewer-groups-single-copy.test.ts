@@ -156,6 +156,35 @@ const cases: [string, string, number, number, Call][] = [
         },
         {}
       )
+  ],
+  [
+    'joined root wave ids',
+    'jr_viewer_groups',
+    2,
+    1,
+    (waves, _, groupIds) =>
+      waves.findJoinedRootWaveIds(
+        { identityId: 'viewer', eligibleGroups: groupIds },
+        {}
+      )
+  ],
+  [
+    'visible drops by ids',
+    'vd_viewer_groups',
+    2,
+    0,
+    (_, drops, groupIds) =>
+      drops.findVisibleDrops(
+        {
+          limit: 51,
+          offset: 0,
+          parent_drop_id: null,
+          serial_nos: null,
+          ids: Array.from({ length: 50 }, (_, i) => uuid('40000000', i)),
+          group_ids_user_is_eligible_for: groupIds
+        },
+        {}
+      )
   ]
 ];
 
@@ -171,9 +200,9 @@ function format(sql: string, params: Record<string, unknown>): string {
 }
 
 const INLINE_GROUPS =
-  /in \(:(eligibleGroups|groupIdsUserIsEligibleFor|eligibile_groups)\)/g;
+  /in \(:(eligibleGroups|groupIdsUserIsEligibleFor|eligibile_groups|groupsUserIsEligibleFor)\)/g;
 
-describe('single-copy viewer groups, batch 2', () => {
+describe('single-copy viewer groups, batches 2 and 3', () => {
   beforeEach(() => resetViewerGroupsCteSupport());
 
   it.each(cases)(
@@ -250,6 +279,24 @@ describe('single-copy viewer groups, batch 2', () => {
       }
     }
   );
+
+  it('always inlines the groups for the latest visible drops (no ids or serials)', async () => {
+    const { db, statements } = fakeExecutor('match');
+    await new DropsDb(() => db).findVisibleDrops(
+      {
+        limit: 51,
+        offset: 0,
+        parent_drop_id: null,
+        serial_nos: null,
+        ids: null,
+        group_ids_user_is_eligible_for: groups
+      },
+      {}
+    );
+    expect(statements).toHaveLength(1);
+    expect(statements[0].sql).not.toContain('json_table');
+    expect(statements[0].sql.match(INLINE_GROUPS)).toHaveLength(2);
+  });
 
   it('always inlines the groups for active TDH voting waves (count and page)', async () => {
     const { db, statements } = fakeExecutor('match');
