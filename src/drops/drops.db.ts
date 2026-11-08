@@ -22,7 +22,8 @@ import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   ViewerGroupsCte,
   viewerGroupsCte,
-  viewerGroupsCteSupported
+  viewerGroupsCteSupported,
+  viewerGroupsWorthSharing
 } from '@/waves/viewer-groups-cte';
 import {
   userGroupsService,
@@ -3631,7 +3632,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   private async sharedViewerGroups(
     groupIds: readonly string[]
   ): Promise<ViewerGroupsCte | undefined> {
-    if (!groupIds.length) return undefined;
+    // Share only when two inlined copies would reach the pinning size;
+    // below that the inlined list is the cheaper plan.
+    if (!viewerGroupsWorthSharing(groupIds, 2)) return undefined;
     const supported = await viewerGroupsCteSupported(this.db, [
       WAVES_TABLE,
       legacyGetView(WAVES_TABLE)

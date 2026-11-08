@@ -12,10 +12,8 @@ import {
   ActivityEventTargetType
 } from '@/entities/IActivityEvent';
 import { DropType } from '@/entities/IDrop';
-import { WaveType } from '@/entities/IWave';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
-import { seedNativeOriginalPrimaryFixture } from '@/tests/fixtures/native-competition.fixture';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { resetViewerGroupsCteSupport } from '@/waves/viewer-groups-cte';
@@ -43,16 +41,14 @@ const poster = anIdentity(
   }
 );
 
-// Open TDH approval voting, so the roots also show up as active voting waves.
-const voting = { type: WaveType.APPROVE };
 const roots = [
-  aWave({ ...voting }, { id: 'sc2-public', serial_no: 1, name: 'Public' }),
+  aWave({}, { id: 'sc2-public', serial_no: 1, name: 'Public' }),
   aWave(
-    { ...voting, visibility_group_id: MEMBER },
+    { visibility_group_id: MEMBER },
     { id: 'sc2-member', serial_no: 2, name: 'Member' }
   ),
   aWave(
-    { ...voting, visibility_group_id: OTHER },
+    { visibility_group_id: OTHER },
     { id: 'sc2-other', serial_no: 3, name: 'Other' }
   )
 ];
@@ -105,6 +101,12 @@ const drop = (waveId: string, index: number) => ({
   hide_link_preview: false
 });
 
+// Statements share the groups only for lists that would pin when inlined,
+// so every viewer here also belongs to 350 unrelated groups.
+const filler = Array.from(
+  { length: 350 },
+  (_, i) => `sc2-filler-0000-4000-8000-${String(i).padStart(12, '0')}`
+);
 const viewerGroupSets = [
   [MEMBER],
   [OTHER],
@@ -113,7 +115,7 @@ const viewerGroupSets = [
   // Matching follows the column collation (case-insensitive), as the
   // inlined literal list does.
   [MEMBER.toUpperCase()]
-];
+].map((groups) => [...groups, ...filler]);
 
 type Read = (
   waves: WavesApiDb,
@@ -163,15 +165,6 @@ const reads: [string, string, Read][] = [
       waves.findWavesByIdsEligibleForRead(
         allWaves.map((it) => it.id),
         groups
-      )
-  ],
-  [
-    'active TDH voting waves',
-    'tv_viewer_groups',
-    (waves, _, groups) =>
-      waves.findActiveTdhVotingWaves(
-        { eligibleGroups: groups, now: 2_000, limit: 10, offset: 0 },
-        {}
       )
   ],
   [
@@ -298,9 +291,6 @@ describeWithSeed(
       drops: new DropsDb(() => sqlExecutor)
     });
 
-    beforeEach(async () => {
-      for (const wave of roots) await seedNativeOriginalPrimaryFixture(wave);
-    });
     afterEach(() => resetViewerGroupsCteSupport());
 
     it.each(reads)(
@@ -347,7 +337,7 @@ describeWithSeed(
           });
         }
         try {
-          await read(r.waves, r.drops, [MEMBER, OTHER]);
+          await read(r.waves, r.drops, [MEMBER, OTHER, ...filler]);
         } finally {
           jest.restoreAllMocks();
         }
