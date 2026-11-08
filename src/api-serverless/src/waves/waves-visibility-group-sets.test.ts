@@ -47,8 +47,8 @@ function apiLikeExecutor() {
     execute: async (sql: string, params: Record<string, unknown> = {}) => {
       if (sql.includes('information_schema.columns'))
         return [{ collation_name: 'utf8mb4_0900_ai_ci' }];
-      if (sql.includes('select last_used_at from viewer_group_sets'))
-        return [{ last_used_at: Date.now() }];
+      if (sql.includes('from viewer_group_sets where set_hash'))
+        return [{ last_used_at: Date.now(), created_at: 0 }];
       if (/child_wave_id|parent_wave_id as wave_id/.test(sql))
         visibility.push({
           raw: sql,

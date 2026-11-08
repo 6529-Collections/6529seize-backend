@@ -9,7 +9,11 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { Time } from '@/time';
 import { resetViewerGroupsCteSupport } from '@/waves/viewer-groups-cte';
-import { viewerGroupSetHash, viewerGroupSets } from '@/waves/viewer-group-sets';
+import {
+  VIEWER_GROUP_SET_SETTLE_MS,
+  viewerGroupSetHash,
+  viewerGroupSets
+} from '@/waves/viewer-group-sets';
 import { WavesApiDb } from './waves.api.db';
 
 // Redis SET NX for the write lease, in process.
@@ -147,6 +151,12 @@ describeWithSeed(
           )
         )[0].n
       );
+    /** Ages every stored set past the settle window, as time would. */
+    const settle = () =>
+      sqlExecutor.execute(
+        `update ${VIEWER_GROUP_SETS_TABLE} set created_at = created_at - :age`,
+        { age: VIEWER_GROUP_SET_SETTLE_MS }
+      );
     const readsStoredSet = (cte: string) =>
       statements.length > 0 &&
       statements.every(
@@ -176,7 +186,7 @@ describeWithSeed(
     });
 
     it.each(reads)(
-      '%s: with the flag on, first sight inlines and stores the set, then reads it; every result equals the flag-off read',
+      '%s: with the flag on, first sight inlines and stores the set, which is read once settled; every result equals the flag-off read',
       async (_name, cte, read) => {
         const results = new Set<string>();
         for (const groups of heavyViewers) {
@@ -190,6 +200,14 @@ describeWithSeed(
           );
           expect(inlines()).toBe(true);
           expect(await setCount()).toBe(sets + 1);
+          // Written moments ago: not read yet, as another reader may lack it.
+          expect({ groups, settling: await run(read, groups, true) }).toEqual({
+            groups,
+            settling: off
+          });
+          expect(inlines()).toBe(true);
+          expect(await setCount()).toBe(sets + 1);
+          await settle();
           // From now on the statement reads the stored set.
           expect({ groups, stored: await run(read, groups, true) }).toEqual({
             groups,
@@ -223,11 +241,13 @@ describeWithSeed(
         const offAfter = await run(read, after, false);
         expect(offAfter).not.toEqual(offBefore);
         await run(read, before, true);
+        await settle();
         expect(await run(read, before, true)).toEqual(offBefore);
         expect(readsStoredSet(cte)).toBe(true);
         // The viewer's groups change: a new hash, so first sight again.
         expect(await run(read, after, true)).toEqual(offAfter);
         expect(inlines()).toBe(true);
+        await settle();
         expect(await run(read, after, true)).toEqual(offAfter);
         expect(readsStoredSet(cte)).toBe(true);
         expect(statements[0][1][`${cte}_set`]).toBe(viewerGroupSetHash(after));
@@ -241,6 +261,7 @@ describeWithSeed(
       async (_name, cte, read) => {
         const groups = heavyViewers[0];
         await run(read, groups, true);
+        await settle();
         await run(read, groups, true);
         expect(readsStoredSet(cte)).toBe(true);
         for (const [sql, params] of statements) {
