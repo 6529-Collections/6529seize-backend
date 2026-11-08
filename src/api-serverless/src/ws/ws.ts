@@ -45,6 +45,7 @@ import {
   SocketNotAvailableException,
   DURABLE_UPDATES_CAPABILITY
 } from './ws-shared';
+import { wsGatewayAgentMaxSockets } from './ws-fanout-settings';
 export { ANON_USER_ID, SocketNotAvailableException } from './ws-shared';
 
 abstract class ClientConnections {
@@ -143,7 +144,10 @@ class ApiGatewayClientConnections extends ClientConnections {
       maxAttempts: 3,
       requestHandler: new NodeHttpHandler({
         connectionTimeout: 2000,
-        requestTimeout: 5000
+        requestTimeout: 5000,
+        // The SDK's agent already keeps connections alive; it only needs
+        // enough sockets that the fan-out pool, not the agent, bounds sends.
+        httpsAgent: { maxSockets: wsGatewayAgentMaxSockets() }
       })
     });
   }
