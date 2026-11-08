@@ -26,6 +26,11 @@ import { dbSupplier } from '@/sql-executor';
 import { nativeCompetitionRuntimeService } from '@/competitions/native-competition-runtime.service';
 import { getPublishedDropMediaMimeType } from '@/drops/drop-media-upload.config';
 import {
+  assertDropMediaPurposeAllowed,
+  findDropMediaUploadForUrl,
+  isDecisionEntryDrop
+} from '@/drops/drop-media-purpose';
+import {
   CreateOrUpdateDropModel,
   CreateOrUpdateDropPartModel,
   DropMediaModel,
@@ -138,7 +143,10 @@ import {
   dropMediaUploadsDb,
   DropMediaUploadsDb
 } from '@/drops/drop-media-uploads.db';
-import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
+import {
+  DropMediaUploadEntity,
+  DropMediaUploadStatus
+} from '@/entities/IDropMediaUpload';
 import {
   isWaveChatSlowModeActive,
   isWaveChatSlowModeExempt
@@ -1974,13 +1982,15 @@ export class CreateOrUpdateDropUseCase {
       !isNativeEntryContent &&
       model.drop_type === DropType.PARTICIPATORY &&
       wave.id === env.getStringOrNull('MAIN_STAGE_WAVE_ID');
+    const isDecisionEntry = isDecisionEntryDrop(model);
     for (const part of model.parts) {
       for (const media of part.media) {
         await this.verifyMediaReference({
           media,
           dropType: model.drop_type,
           authorId,
-          enforceMainStageLimit
+          enforceMainStageLimit,
+          isDecisionEntry
         });
       }
     }
@@ -2024,24 +2034,36 @@ export class CreateOrUpdateDropUseCase {
     media,
     dropType,
     authorId,
-    enforceMainStageLimit
+    enforceMainStageLimit,
+    isDecisionEntry
   }: {
     media: DropMediaModel;
     dropType: DropType;
     authorId: string;
     enforceMainStageLimit: boolean;
+    isDecisionEntry: boolean;
   }): Promise<void> {
     validateDropMediaAttachment({
       mimeType: media.mime_type,
       url: media.url,
       dropType
     });
-    await this.verifyDropMediaUploadReference({
+    const trackedUpload = await this.verifyDropMediaUploadReference({
       mediaUploadId: media.media_upload_id ?? null,
       mediaUrl: media.url,
       mimeType: media.mime_type,
       authorId
     });
+    if (!isDecisionEntry) {
+      // Without a media_upload_id the upload is still found from its URL, so
+      // decision-entry media cannot be reposted as chat media or a reply.
+      assertDropMediaPurposeAllowed({
+        upload:
+          trackedUpload ??
+          (await findDropMediaUploadForUrl(media.url, this.dropMediaUploadsDb)),
+        isDecisionEntry
+      });
+    }
     if (enforceMainStageLimit) {
       await validateMainStageMediaSize(media.url);
     }
@@ -2058,9 +2080,9 @@ export class CreateOrUpdateDropUseCase {
     mediaUrl: string;
     mimeType: string;
     authorId: string;
-  }): Promise<void> {
+  }): Promise<DropMediaUploadEntity | null> {
     if (!mediaUploadId) {
-      return;
+      return null;
     }
     const upload = await this.dropMediaUploadsDb.findById(mediaUploadId);
     if (!upload) {
@@ -2094,6 +2116,7 @@ export class CreateOrUpdateDropUseCase {
         `media_upload_id is not ready to attach to a drop`
       );
     }
+    return upload;
   }
 
   private async verifyAttachments(

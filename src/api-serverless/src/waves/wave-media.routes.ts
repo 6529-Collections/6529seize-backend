@@ -38,6 +38,8 @@ router.post(
       {
         content_type: req.body.content_type,
         file_name: req.body.file_name,
+        // Validated for shared clients; wave media is always chat.
+        purpose: req.body.purpose,
         author: authenticatedProfileId
       },
       MediaPrepRequestSchema

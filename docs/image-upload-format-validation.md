@@ -12,17 +12,57 @@ WebP and their strict decode limits. HEIC is not an accepted upload format. PNG 
 
 ## Privacy behavior
 
-Format validation is independent of `DROP_MEDIA_SANITIZE_IMAGES`. The API captures
-that flag in the private multipart object's `sanitize-image-metadata` metadata
-when the upload starts. Parts cannot change it. The worker honors that captured
-choice rather than consulting a potentially different worker environment:
+Format validation is independent of `DROP_MEDIA_SANITIZE_IMAGES`. The drop and
+wave multipart start request carries an optional `purpose` (`chat`, the default,
+or `decision_entry`), stored on the `drop_media_uploads` row; wave pictures are
+always `chat`. The API captures `DROP_MEDIA_SANITIZE_IMAGES && purpose != decision_entry`
+in the private multipart object's `sanitize-image-metadata` metadata when the
+upload starts. Parts cannot change it. The worker honors that captured choice
+rather than consulting a potentially different worker environment, and never
+strips a `decision_entry` upload whatever the captured flag says:
 
-- `false`: inspect the container format and publish exactly the original bytes,
-  preserving JPEG metadata/orientation and GIF frames/timing.
-- `true`: retain the existing orientation correction, re-encoding and metadata
-  stripping.
+- `decision_entry`, or `false`: inspect the container format and publish exactly
+  the original bytes, preserving metadata, orientation and GIF frames/timing.
+  The flag stays the production kill switch for chat stripping.
+- `true`: strip identifying metadata losslessly (below), falling back to the
+  existing orientation correction and re-encoding when the lossless result does
+  not verify; the fallback is logged with its reason.
 - Missing policy: retain sanitization for older in-flight private uploads.
-- AVIF: always convert to an oriented, metadata-free WebP as before.
+- AVIF: always convert to an oriented, metadata-free WebP as before, including
+  decision entries (the published format is WebP).
+
+Lossless stripping (`src/media/metadata-strip/`) rewrites only the container and
+copies image data verbatim. JPEG keeps JFIF (without its thumbnail), every
+ICC_PROFILE chunk in order, the Adobe colour-transform marker, tables and scans;
+EXIF becomes a 26-byte TIFF holding only Orientation (dropped when upright), and
+XMP, IPTC/Photoshop, comments, other application segments, embedded thumbnails
+and data after EOI are removed. PNG keeps only rendering chunks (including iCCP,
+sRGB, gAMA, cHRM, cICP and APNG chunks); text, time and private chunks are
+removed and eXIf is reduced to Orientation. WebP drops EXIF/XMP/unknown chunks,
+keeps ICCP and animation, and updates the VP8X flags and RIFF size. GIF drops
+comments and application extensions other than looping (NETSCAPE2.0,
+ANIMEXTS1.0) and the GIF ICC extension. The result must re-parse with the same
+size, orientation and byte-identical render stream and none of the removed
+blocks, and must decode with sharp to the same oriented size, frames, timing and
+pixel hash as the input. The lossless path reads sources of up to 64 MiB into
+memory and its pixel check holds up to 128 MiB of decoded pixels; larger images
+use the file-based re-encoding fallback.
+
+Chat uploads and wave pictures are published as `<upload id>.<ext>` (lower-case
+extension) in the upload's own folder, so the public URL never carries the
+uploader's file name; decision entries keep a slug of the artist's file name.
+New drop upload folders are the `drop_media_uploads` row id. Drop creation uses
+that (or the request's `media_upload_id`) to reject, with a 400, media uploaded
+as `decision_entry` on anything other than a participatory, non-reply drop, for
+every media type.
+
+Deploy `dbMigrationsLoop` (schema sync adds the nullable
+`drop_media_uploads.purpose` column, which every new upload row writes) before
+`api`. `dropMediaSanitizer` can deploy before or after `api`: an older worker
+still honours the captured flag, which is already `false` for decision entries,
+and a newer worker treats rows without a purpose as before. The frontend that
+sends `purpose` deploys after `api`, because the previous API rejects the
+unknown field.
 
 The API sets this metadata in `CreateMultipartUploadCommand`; clients receive
 only signed `UploadPartCommand` URLs for the owned key/upload ID/part number.
