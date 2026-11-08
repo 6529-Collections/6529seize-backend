@@ -25,6 +25,8 @@ export interface DeliveryBatch {
   /** Receives the post-send bookkeeping; the owner must await it. */
   readonly defer: (settlement: Promise<unknown>) => void;
   readonly metrics: DeliveryMetricsBatch;
+  /** Receives each send's claim wall time (Redis bookkeeping before it). */
+  readonly claimTimed?: (milliseconds: number) => void;
 }
 
 interface DeliveryInput {
@@ -203,7 +205,9 @@ export class WebSocketDelivery {
 
   async deliver(input: DeliveryInput): Promise<WebSocketDeliveryResult> {
     const token = randomUUID();
+    const claimStartedAt = Date.now();
     const claim = await this.claim(input, token);
+    input.batch?.claimTimed?.(Date.now() - claimStartedAt);
     if (claim && !claim.acquired) {
       record(input, 'Deferred');
       return { status: 'resync_pending' };

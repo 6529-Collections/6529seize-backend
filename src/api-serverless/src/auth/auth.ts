@@ -15,6 +15,7 @@ import { identitiesDb } from '../../../identities/identities.db';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { enums } from '../../../enums';
 import { loggerContext } from '../../../logger-context';
+import { UnauthorisedException } from '@/exceptions';
 
 export function getJwtSecret(): string {
   const jwtsecret = process.env.JWT_SECRET;
@@ -93,9 +94,12 @@ export function maybeAuthenticatedUser(): AnyRequestHandler {
 export function getAuthenticatedWalletOrNull(
   req: Request<any, any, any, any, any>
 ): string | null {
-  const user = req.user as any;
+  const user = req.user as { wallet?: unknown } | undefined;
   if (!user) {
     return null;
+  }
+  if (typeof user.wallet !== 'string' || !user.wallet) {
+    throw new UnauthorisedException('Invalid access token');
   }
   return user.wallet.toLowerCase();
 }

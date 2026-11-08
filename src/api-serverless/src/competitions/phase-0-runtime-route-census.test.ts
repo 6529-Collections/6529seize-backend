@@ -47,11 +47,14 @@ const ACCEPTED_ROUTE_SOURCE_MOVES = new Map<string, string>([
     '/api/waves/:id/subwaves',
     'src/api-serverless/src/generated/routes/openapi-generated.routes.ts:938'
   ],
-  // requestLogMiddleware moved out of app.ts (request ids), shifting the
-  // hand-written routes up; this one now sits nearer the catch-all '' GET.
+  // requestLogMiddleware and then the access-token strategy moved out of
+  // app.ts, shifting the hand-written routes up; these now sit nearer the
+  // catch-all '' GET than their baseline lines.
+  ['/api/rememes_uploads', 'src/api-serverless/src/app.ts:1267'],
+  ['/api/tdh_global_history', 'src/api-serverless/src/app.ts:1284'],
   [
     '/api/recent_tdh_history/:consolidation_key',
-    'src/api-serverless/src/app.ts:1323'
+    'src/api-serverless/src/app.ts:1303'
   ]
 ]);
 
