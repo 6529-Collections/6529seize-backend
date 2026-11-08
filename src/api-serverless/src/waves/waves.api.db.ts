@@ -37,7 +37,8 @@ import {
 import { Logger } from '@/logging';
 import {
   querySqlInListChunks,
-  SQL_IN_LIST_CHUNK_BYTES
+  SQL_IN_LIST_CHUNK_BYTES,
+  sqlInListBytes
 } from '@/db/sql-in-list-chunks';
 import {
   groupWaveVotingCreditNftsByContract,
@@ -110,6 +111,7 @@ import {
 import {
   ViewerGroupsCte,
   viewerGroupsCte,
+  viewerGroupsCteBytes,
   viewerGroupsCteSupported
 } from '@/waves/viewer-groups-cte';
 
@@ -638,7 +640,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           )}
       `;
     // Each row depends on one candidate id, so per-chunk results union
-    // exactly. The candidate list is inlined twice; the groups once.
+    // exactly. Every chunk inlines the candidate list twice and also carries
+    // the groups (two checks), so the groups take their bytes out of the
+    // list budget first. The floor caps the chunk count at twice the
+    // groupless one; above it, very large group sets still pin.
+    const groupBytes = groups
+      ? viewerGroupsCteBytes(groups, 2)
+      : 2 * sqlInListBytes(eligibleGroups);
+    const maxBytes = Math.max(
+      SQL_IN_LIST_CHUNK_BYTES / 4,
+      (SQL_IN_LIST_CHUNK_BYTES - groupBytes) / 2
+    );
     const rows = await querySqlInListChunks(
       waveIds,
       (chunk) =>
@@ -650,7 +662,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           drop_created_action: ActivityEventAction.DROP_CREATED,
           ...groups?.params
         }),
-      { maxBytes: SQL_IN_LIST_CHUNK_BYTES / 2 }
+      { maxBytes }
     );
     return new Set(rows.map((row) => row.wave_id));
   }

@@ -1,3 +1,4 @@
+import * as mysql from 'mysql';
 import { DB_TEXT_COLLATION } from '@/db/db-collation';
 import { Logger } from '@/logging';
 import { SqlExecutor } from '@/sql-executor';
@@ -43,6 +44,21 @@ export function viewerGroupsCte(
     setSql: `select /*+ NO_MERGE(${name}) SUBQUERY(MATERIALIZATION) */ id from ${name}`,
     params: { [param]: JSON.stringify(groupIds) }
   };
+}
+
+/**
+ * Statement bytes the shared table adds once the driver inlines its JSON
+ * parameter: the CTE, the escaped JSON and `references` hinted subqueries.
+ */
+export function viewerGroupsCteBytes(
+  groups: ViewerGroupsCte,
+  references: number
+): number {
+  return Object.values(groups.params).reduce(
+    (total, json) => total + Buffer.byteLength(mysql.escape(json), 'utf8'),
+    Buffer.byteLength(groups.cteSql, 'utf8') +
+      references * Buffer.byteLength(groups.setSql, 'utf8')
+  );
 }
 
 const support = new Map<string, Promise<boolean>>();
