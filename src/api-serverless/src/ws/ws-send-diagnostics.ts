@@ -14,6 +14,7 @@ const outboundTypes = new Set<string>([
   WsMessageType.NOTIFICATION_IDENTITIES_SYNCED,
   WsMessageType.IDENTITY_NOTIFICATIONS_CHANGED,
   WsMessageType.DM_UNREAD_STATE_CHANGED,
+  WsMessageType.WAVES_CHANGED,
   WsMessageType.MEDIA_LINK_UPDATED,
   WsMessageType.ATTACHMENT_STATUS_UPDATE
 ]);
