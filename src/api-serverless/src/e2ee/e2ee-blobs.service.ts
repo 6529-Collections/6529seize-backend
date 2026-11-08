@@ -272,15 +272,11 @@ export class E2eeBlobsService {
   }
 
   /**
-   * The device was in the group's roster, or another device of the same
-   * profile was: after a ciphersuite move (D172) a profile's new device keeps
-   * the history (and attachment keys) its earlier device decrypted. Only
-   * ciphertext is served; the key is in that history.
-   */
-  /**
    * The device was ever a member, or (D172) a device of the same profile was
-   * a member when the blob was made: a new device reads the attachments of
-   * conversations its earlier device belonged to, and no others.
+   * on the roster, not yet removed, when the blob was made: a re-enrolled
+   * device reads the attachments its earlier device could, and no blob made
+   * after the profile left. Only ciphertext is served; the key is in the
+   * history the device already holds.
    */
   private async mayReadGroupBlobs(
     group: string,

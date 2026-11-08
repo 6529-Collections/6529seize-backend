@@ -42,25 +42,34 @@ grant (v2) for a fresh key, and old-suite groups stay readable on the client.
 
 `src/e2ee/e2ee-suite-policy.ts` decides what a device may use:
 `e2eeDeviceSuites` = (signed set ∩ accepted suites) ∪ aliases of the signed
-set, or `{0x004F}` for a v1 grant while the window is open. A signed set may
+set (accepted: both suites while the window is open, `{0x004E}` after it),
+or `{0x004F}` for a v1 grant while the window is open. A signed set may
 name suites the server does not accept yet; they grant nothing until the
 server accepts them, and then need no new signature. `E2EE_SUITE_ALIASES` (a
 grant naming `from` also admits `to`) is empty until the owner decides whether
 a grant for a provisional code point covers the RFC's final one.
 
 Transition window: `E2EE_SUITE_TRANSITION_START` (an ISO 8601 date-time with
-a zone, or unix milliseconds from 2026 on; never seconds) and
-`E2EE_SUITE_TRANSITION_DAYS` (1-365, default 14). Unset means v1 grants are
-honoured until further notice. Any other value stops the API at start-up
-(`E2eeSuiteTransitionConfigError`), and each start logs the effective window
-(`[E2EE SUITE WINDOW START …] [END …]` or `[E2EE SUITE WINDOW NOT STARTED]`).
-When the window ends, v1 registrations are refused (`E2EE_BAD_GRANT`
-`grant_version`) and v1 devices drop out of listings, eligibility and
-claims. A v1 claimer device can then no longer claim (its set is empty, so
-its default `0x004F` is refused); v2 devices that list `0x004F` still claim
-for it while the server accepts it. A v1 device can no longer create a group
-(`E2EE_BAD_GRANT` `grant_version`) or be added to a roster (400). Cleaning up
-the old rows is a separate step that keeps groups and blobs.
+a zone on a real calendar date, or unix milliseconds from 2026 on; never
+seconds) and `E2EE_SUITE_TRANSITION_DAYS` (1-365, default 14). Unset means
+not started. A malformed value fails safe: it is logged once as an ERROR
+(`[E2EE SUITE WINDOW CONFIG INVALID] … [USING NOT STARTED]`), counted in the
+EMF metric `6529/E2EE` `SuiteWindowConfigInvalid` to alarm on, and the
+policy behaves exactly as if the start were unset (v1 honoured, both suites
+accepted); the rest of the API is unaffected. Each start logs the effective
+window (`[E2EE SUITE WINDOW START …] [END …]` or `[E2EE SUITE WINDOW NOT
+STARTED] [BOTH SUITES ACCEPTED]`).
+
+While the window is open the server accepts `0x004F` and `0x004E`. When it
+ends the server refuses `0x004F` (D172): the accepted set becomes
+`{0x004E}` (`e2eeAcceptedSuites`) for new registrations in all three grant
+forms (a v1 grant: `E2EE_BAD_GRANT` `grant_version`; a v2 set without
+`0x004E`: `E2EE_BAD_GRANT` `ciphersuites`), the SIWE combined nonce,
+KeyPackage uploads, listings, eligibility, claims, group creation
+(`E2EE_BAD_GRANT` `grant_version`) and roster additions (400). A v2 device
+signed for `[78, 79]` keeps only `0x004E`. Reads (logs, Welcomes, blobs) do
+not consult the policy and keep working. Cleaning up the old rows is a
+separate step that keeps groups and blobs.
 
 Everywhere a device is offered or used the policy applies:
 
@@ -85,10 +94,14 @@ as their one suite). `GET /e2ee/me` lists the caller's devices of every
 suite. Device keys stay Ed25519, so their size is unchanged.
 
 Attachments: a chunk read is allowed when the device was ever in the group's
-roster, or when a device of the same profile was in it at the time the blob
-was created. A re-enrolled device keeps the history (and attachment keys) its
-earlier device decrypted, and reads exactly those attachments; only
-ciphertext is served.
+roster, or when a device of the same profile was on it and not yet removed
+when the blob was created (no lower bound: an upload can start before an add
+and the message go out after it). A re-enrolled device keeps the history
+(and attachment keys) its earlier device decrypted; only ciphertext is
+served. Known gap: a `leave` proposal stamps `removed_at` when it is
+proposed, while the leaver still reads that epoch until the commit lands, so
+a blob created in between is refused on the profile path (the leaver's own
+earlier device could read it).
 
 Metrics (EMF, namespace `6529/E2EE`): `DeviceRegistrations` by `GrantVersion`
 and `Via`, and, at most every 10 minutes per process on the write path,

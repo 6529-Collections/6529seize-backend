@@ -93,10 +93,10 @@ import {
 } from '@/api/device-signing/device-grant-message';
 import { deviceGrantsService } from '@/api/device-signing/device-grants.service';
 import { MlsDeviceGrantRequest } from '@/api/device-signing/combined-device-grant';
-import { isE2eeCiphersuite } from '@/e2ee/e2ee.constants';
 import {
   decodeE2eeSuiteSet,
   E2EE_V1_GRANT_SUITE,
+  e2eeAcceptedSuites,
   isE2eeV1GrantAccepted
 } from '@/e2ee/e2ee-suite-policy';
 import { isE2eeEnabled } from '@/e2ee/e2ee-flag';
@@ -334,7 +334,11 @@ function requestedMlsSuites(
   | null {
   if (nonceRequest.mls_ciphersuites !== undefined) {
     const suites = decodeE2eeSuiteSet(nonceRequest.mls_ciphersuites);
-    return suites?.some(isE2eeCiphersuite) ? { ciphersuites: suites } : null;
+    // Accepted now: after the window, 0x004F no longer counts (D172).
+    const accepted = e2eeAcceptedSuites(Date.now());
+    return suites?.some((suite) => accepted.includes(suite))
+      ? { ciphersuites: suites }
+      : null;
   }
   const ciphersuite = nonceRequest.mls_ciphersuite;
   return ciphersuite === E2EE_V1_GRANT_SUITE &&

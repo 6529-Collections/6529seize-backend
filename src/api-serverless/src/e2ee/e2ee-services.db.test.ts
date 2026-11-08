@@ -29,6 +29,7 @@ import {
   E2EE_CIPHERSUITE,
   E2EE_CIPHERSUITE_AES256,
   E2EE_ENTRY_BUCKETS,
+  E2EE_MAX_ACTIVE_DEVICES,
   E2EE_MAX_ENTRY_AND_WELCOME_BYTES
 } from '@/e2ee/e2ee.constants';
 import { E2eeDb } from '@/e2ee/e2ee.db';
@@ -275,6 +276,28 @@ describeWithSeed('E2EE delivery service', [], () => {
     walletProfiles.set(profile.wallet.address.toLowerCase(), profile.id);
     await persistProfile(profile, persistedProfiles);
     const grant = grantFor(profile, key, ciphersuite);
+    await services.devices.registerDevice(profile.id, {
+      grant,
+      wallet_signature: await signGrant(profile, grant),
+      platform: 'web' as never
+    });
+    return key;
+  }
+
+  /** A v2 grant (D172) for an explicit suite set. */
+  async function registerV2Device(
+    profile: Profile,
+    suites: number[],
+    key: E2eeTestKey = randomE2eeKey()
+  ): Promise<E2eeTestKey> {
+    walletProfiles.set(profile.wallet.address.toLowerCase(), profile.id);
+    await persistProfile(profile, persistedProfiles);
+    const grant: E2eeDeviceGrant = {
+      ...grantFor(profile, key, suites[0]),
+      version: 2,
+      ciphersuite: suites[0],
+      ciphersuites: suites
+    };
     await services.devices.registerDevice(profile.id, {
       grant,
       wallet_signature: await signGrant(profile, grant),
@@ -1532,9 +1555,104 @@ describeWithSeed('E2EE delivery service', [], () => {
         // v2 devices still create groups.
         await createGroup(alice, aliceNew);
       });
+
+      it('then accepts only 0x004E, for v2 sets too (D172)', async () => {
+        const alice = aProfile();
+        const bob = aProfile();
+        const AES128 = E2EE_CIPHERSUITE;
+        const AES256 = E2EE_CIPHERSUITE_AES256;
+        const keys = (devices: { device_key: string }[]) =>
+          devices.map((device) => device.device_key).sort();
+        const eligible = async (ciphersuite: number) =>
+          (
+            await services.devices.checkEligibility(alice.id, {
+              profile_ids: [bob.id],
+              ciphersuite
+            })
+          ).results[0];
+        // Before: a v2 set naming only 0x004F registers, is listed for it,
+        // and takes 0x004F KeyPackages.
+        const bobOld = await registerV2Device(bob, [AES128]);
+        const bobBoth = await registerV2Device(bob, [AES256, AES128]);
+        await uploadKeyPackages(bob, bobBoth, 1, false, AES128);
+        const aliceNew = await registerDevice(alice, randomE2eeKey(), AES256);
+        expect(
+          keys(await services.devices.getProfileDevices(bob.id, AES128))
+        ).toEqual([bobOld.publicKey, bobBoth.publicKey].sort());
+        expect((await eligible(AES128)).active_devices).toBe(2);
+        const group = await createGroup(bob, bobOld);
+
+        process.env.E2EE_SUITE_TRANSITION_START = String(now - 15 * DAY);
+
+        // Registration: a set without 0x004E is refused; [78, 79] keeps 78.
+        await expectE2eeError(
+          registerV2Device(alice, [AES128]),
+          'E2EE_BAD_GRANT'
+        );
+        await registerV2Device(alice, [AES256, AES128]);
+        // Listings and eligibility: nothing for 0x004F any more.
+        expect(
+          await services.devices.getProfileDevices(bob.id, AES128)
+        ).toEqual([]);
+        expect(
+          keys(await services.devices.getProfileDevices(bob.id, AES256))
+        ).toEqual([bobBoth.publicKey]);
+        expect(await eligible(AES128)).toMatchObject({
+          status: 'NO_DEVICES',
+          active_devices: 0
+        });
+        expect(await eligible(AES256)).toMatchObject({
+          status: 'OK',
+          active_devices: 1
+        });
+        // Claims for 0x004F are refused; KeyPackages only for 0x004E.
+        await expectE2eeError(
+          services.devices.claimKeyPackages(alice.id, {
+            targets: [{ profile_id: bob.id }],
+            claimer_device_key: aliceNew.publicKey,
+            ciphersuite: AES128
+          }),
+          'E2EE_BAD_REQUEST'
+        );
+        await expectE2eeError(
+          uploadKeyPackages(bob, bobBoth, 1, false, AES128),
+          'E2EE_BAD_REQUEST'
+        );
+        await uploadKeyPackages(bob, bobBoth, 1, false, AES256);
+        // Creation and roster additions: a 0x004F-only device is refused.
+        await expectE2eeError(createGroup(bob, bobOld), 'E2EE_BAD_GRANT');
+        const aliceGroup = await createGroup(alice, aliceNew);
+        await expectE2eeError(
+          commit(alice, aliceGroup, aliceNew, {
+            rosterAdd: [bobOld.publicKey],
+            welcomeTargets: [bobOld.publicKey]
+          }),
+          'E2EE_BAD_REQUEST'
+        );
+        // Reads do not consult the policy: the old group's state is served.
+        expect(
+          (await services.groups.getGroup(bob.id, group.g, bobOld.publicKey))
+            .epoch
+        ).toBe(0);
+      });
+
+      it('renewing a v1 key with a v2 grant counts against the v2 limit', async () => {
+        const alice = aProfile();
+        const v1 = await registerDevice(alice);
+        for (let index = 0; index < E2EE_MAX_ACTIVE_DEVICES; index++) {
+          await registerDevice(alice, randomE2eeKey(), E2EE_CIPHERSUITE_AES256);
+        }
+        // The window is open: the same key under a v2 grant is a new v2 slot.
+        await expectE2eeError(
+          registerDevice(alice, v1, E2EE_CIPHERSUITE_AES256),
+          'E2EE_DEVICE_LIMIT'
+        );
+        // Renewing it as v1 keeps its own slot.
+        await registerDevice(alice, v1);
+      });
     });
 
-    it('lets a profile read blobs only from while it was a member (D172)', async () => {
+    it('lets a profile read blobs created until it was removed (D172)', async () => {
       const g = randomE2eeGroupHandle();
       const member = aProfile();
       await sqlExecutor.execute(
@@ -1545,7 +1663,9 @@ describeWithSeed('E2EE delivery service', [], () => {
         { g, key: randomE2eeKey().publicKey, profileId: member.id }
       );
       const at = (ms: number) => db.hasProfileRosterHistory(g, member.id, ms);
-      expect(await at(999)).toBe(false);
+      // A blob created before the add is still readable: the upload may
+      // start before the add and the message go out after it.
+      expect(await at(999)).toBe(true);
       expect(await at(1000)).toBe(true);
       expect(await at(3000)).toBe(true);
       expect(await at(3001)).toBe(false);

@@ -105,7 +105,7 @@ import {
   API_REDIS_FAIL_FAST_OPTIONS,
   createRetryableInitializer
 } from '@/api/app-initialization';
-import { checkE2eeSuiteTransition } from '@/e2ee/e2ee-suite-policy';
+import { describeE2eeSuiteTransition } from '@/e2ee/e2ee-suite-policy';
 import { parseTdhResultsFromDB } from '@/sql_helpers';
 import deployRoutes from '@/api/deploy/deploy.routes';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
@@ -670,8 +670,9 @@ async function initializeApp() {
   );
 
   await loadApiSecrets();
-  // D172: a malformed suite transition setting stops the start, loudly.
-  logger.info(checkE2eeSuiteTransition());
+  // D172: the effective suite window. A malformed setting is reported
+  // (ERROR log, EMF metric) and treated as not started; nothing else changes.
+  logger.info(describeE2eeSuiteTransition());
   await initRedis({ failFast: API_REDIS_FAIL_FAST_OPTIONS });
   initRateLimiting();
   passport.use(createAccessTokenStrategy(getJwtSecret()));

@@ -712,11 +712,6 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   // ----------------------------------------------------------------- devices
 
   /**
-   * Active (not revoked, not expired) device counts per profile, in one
-   * set-based query. Profiles without active devices are omitted. Admission
-   * itself (blocks, DM policy, group membership) is DirectMessageAdmissionService.
-   */
-  /**
    * Active devices grouped by what their grants say about suites, for the
    * suite census metric (D172). A small table: one row per distinct grant
    * shape.
@@ -989,10 +984,13 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Whether a device of the profile was in the group's roster at `atMs`.
-   * After a ciphersuite move (D172) a profile's new device keeps the history
-   * its earlier device decrypted, so it may fetch that group's attachments,
-   * but only those made while the profile was a member.
+   * Whether a device of the profile was in the group's roster and not yet
+   * removed at `atMs` (a blob's creation). After a ciphersuite move (D172) a
+   * profile's new device keeps the history its earlier device decrypted, so
+   * it may fetch that group's attachments. No lower bound: a blob created
+   * before a device's roster row may still reach it (an upload that spans
+   * an add, an outbox message sent after an add, a roster repair re-add),
+   * and the device rule already lets any member read older blobs.
    */
   async hasProfileRosterHistory(
     group: string,
@@ -1003,7 +1001,6 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     const row = await this.one<{ id: number }>(
       `select id from ${E2EE_GROUP_ROSTER_TABLE}
        where group_handle = :group and profile_id = :profileId
-         and added_at <= :atMs
          and (removed_at is null or removed_at >= :atMs)
        limit 1`,
       { group, profileId, atMs },

@@ -6,7 +6,9 @@ import {
   e2eeDeviceSuites,
   encodeE2eeSuiteSet,
   isCanonicalE2eeSuiteSet,
-  checkE2eeSuiteTransition,
+  currentE2eeSuiteTransition,
+  describeE2eeSuiteTransition,
+  e2eeAcceptedSuites,
   E2eeSuiteTransitionConfigError,
   isE2eeV1GrantAccepted,
   readE2eeSuiteTransition
@@ -136,12 +138,58 @@ describe('E2EE suite policy (D172)', () => {
       }
     );
 
+    it.each([
+      ['a day past the end of the month', '2026-11-31T00:00:00Z'],
+      ['February 29 in a common year', '2026-02-29T00:00:00Z'],
+      ['hour 24', '2026-11-10T24:00:00Z'],
+      ['minute 60', '2026-11-10T10:60:00Z']
+    ])('refuses %s instead of rolling it over', (_label, value) => {
+      expect(() => start(value)).toThrow(E2eeSuiteTransitionConfigError);
+    });
+
+    it('fails safe on a malformed value: reported once, treated as not started', () => {
+      const write = jest
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(() => true);
+      try {
+        const env = { E2EE_SUITE_TRANSITION_START: '1763000000' };
+        expect(currentE2eeSuiteTransition(env)).toEqual({
+          startMs: null,
+          days: 14
+        });
+        expect(currentE2eeSuiteTransition(env)).toEqual({
+          startMs: null,
+          days: 14
+        });
+        const metrics = write.mock.calls
+          .map(([line]) => String(line))
+          .filter((line) => line.includes('SuiteWindowConfigInvalid'));
+        expect(metrics).toHaveLength(1);
+        expect(JSON.parse(metrics[0])).toMatchObject({
+          SuiteWindowConfigInvalid: 1,
+          _aws: {
+            CloudWatchMetrics: [
+              expect.objectContaining({ Namespace: '6529/E2EE' })
+            ]
+          }
+        });
+        expect(describeE2eeSuiteTransition(env)).toBe(
+          '[E2EE SUITE WINDOW NOT STARTED] [BOTH SUITES ACCEPTED]'
+        );
+        expect(
+          currentE2eeSuiteTransition({ E2EE_SUITE_TRANSITION_DAYS: 'two' })
+        ).toEqual({ startMs: null, days: 14 });
+      } finally {
+        write.mockRestore();
+      }
+    });
+
     it('describes the effective window for the start-up log', () => {
-      expect(checkE2eeSuiteTransition({})).toBe(
-        '[E2EE SUITE WINDOW NOT STARTED] [V1 GRANTS HONOURED]'
+      expect(describeE2eeSuiteTransition({})).toBe(
+        '[E2EE SUITE WINDOW NOT STARTED] [BOTH SUITES ACCEPTED]'
       );
       expect(
-        checkE2eeSuiteTransition({
+        describeE2eeSuiteTransition({
           E2EE_SUITE_TRANSITION_START: '2026-11-10T00:00:00Z',
           E2EE_SUITE_TRANSITION_DAYS: '7'
         })
@@ -149,9 +197,28 @@ describe('E2EE suite policy (D172)', () => {
         '[E2EE SUITE WINDOW START 2026-11-10T00:00:00.000Z] ' +
           '[END 2026-11-17T00:00:00.000Z] [DAYS 7]'
       );
-      expect(() =>
-        checkE2eeSuiteTransition({ E2EE_SUITE_TRANSITION_START: '1763000000' })
-      ).toThrow(E2eeSuiteTransitionConfigError);
+    });
+  });
+
+  describe('accepted suites', () => {
+    it('accepts both suites while the window is open, then 0x004E only', () => {
+      expect(e2eeAcceptedSuites(NOW, OPEN)).toEqual([0x004f, 0x004e]);
+      expect(e2eeAcceptedSuites(NOW, CLOSED)).toEqual([0x004e]);
+      expect(e2eeDeviceSuites(v2([78, 79]), NOW, { transition: OPEN })).toEqual(
+        [78, 79]
+      );
+      expect(
+        e2eeDeviceSuites(v2([78, 79]), NOW, { transition: CLOSED })
+      ).toEqual([78]);
+      expect(e2eeDeviceSuites(v2([79]), NOW, { transition: CLOSED })).toEqual(
+        []
+      );
+      expect(canE2eeDeviceJoin(v2([79]), 79, NOW, { transition: OPEN })).toBe(
+        true
+      );
+      expect(canE2eeDeviceJoin(v2([79]), 79, NOW, { transition: CLOSED })).toBe(
+        false
+      );
     });
   });
 
@@ -166,7 +233,7 @@ describe('E2EE suite policy (D172)', () => {
       ).toEqual([79]);
     });
 
-    it('gives a v2 grant its accepted suites, whatever the window', () => {
+    it('gives a v2 grant its accepted suites (0x004E survives the window)', () => {
       expect(e2eeDeviceSuites(v2([78]), NOW, { transition: CLOSED })).toEqual([
         78
       ]);

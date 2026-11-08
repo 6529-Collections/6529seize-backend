@@ -308,7 +308,7 @@ export class E2eeDevicesService {
     const grant = normalizeE2eeDeviceGrant({
       ...request.grant
     } as E2eeDeviceGrant);
-    this.requireHonouredGrantVersion(grant);
+    this.requireUsableSuites(grant);
     const signature = request.wallet_signature.toLowerCase();
     const verification = await verifyE2eeDeviceGrant({
       grant,
@@ -327,11 +327,29 @@ export class E2eeDevicesService {
     };
   }
 
-  /** v1 grants (0x004F) only while the transition window is open (D172). */
-  private requireHonouredGrantVersion(grant: E2eeDeviceGrant): void {
-    if (grant.version !== 2 && !isE2eeV1GrantAccepted(this.deps.now())) {
-      throw e2eeErrors.badGrant('grant_version');
+  /**
+   * D172: a new registration must name a suite the server accepts now. v1
+   * grants (0x004F) only while the transition window is open; after it a
+   * v2 set must name 0x004E. Covers all three grant forms (both
+   * registration paths call this).
+   */
+  private requireUsableSuites(grant: E2eeDeviceGrant): void {
+    const now = this.deps.now();
+    if (grant.version !== 2) {
+      if (!isE2eeV1GrantAccepted(now)) {
+        throw e2eeErrors.badGrant('grant_version');
+      }
+      return;
     }
+    const suites = e2eeDeviceSuites(
+      {
+        grant_version: 2,
+        ciphersuite: grant.ciphersuite,
+        ciphersuites: grant.ciphersuites ?? []
+      },
+      now
+    );
+    if (!suites.length) throw e2eeErrors.badGrant('ciphersuites');
   }
 
   private async requireWalletOfCaller(
@@ -373,7 +391,7 @@ export class E2eeDevicesService {
     }
     const problem = findE2eeGrantProblem(read.grant, nowSeconds(this.deps));
     if (problem) throw e2eeErrors.badGrant(problem);
-    this.requireHonouredGrantVersion(read.grant);
+    this.requireUsableSuites(read.grant);
     return {
       grant: read.grant,
       grantId,
@@ -449,14 +467,17 @@ export class E2eeDevicesService {
         ) {
           throw e2eeErrors.deviceExists();
         }
-        const wasActive = existing
-          ? isActiveDevice(existing, atSeconds)
-          : false;
+        // A renewal keeps its slot only within its grant version: renewing
+        // a v1 key with a v2 grant moves it to the v2 count, so it counts.
+        const keepsSlot =
+          existing !== null &&
+          isActiveDevice(existing, atSeconds) &&
+          Number(existing.grant_version ?? 1) === grantVersion;
         // Counted per grant version: while v1 grants are honoured, a profile
         // at the limit can still enroll its devices on v2 before the old
         // devices expire or are revoked.
         if (
-          !wasActive &&
+          !keepsSlot &&
           (await this.db.countActiveDevices(
             callerProfileId,
             atSeconds,
@@ -780,10 +801,10 @@ export class E2eeDevicesService {
 
   /**
    * Shared DM admission (blocks, DM policy, group membership) for every
-   * profile outside `bypass`, then device availability. Profiles that already
-   * share the group with the claimer device bypass admission.
+   * profile outside `bypass`, then each profile's active devices able to
+   * join `ciphersuite` (D172). Profiles that already share the group with
+   * the claimer device bypass admission.
    */
-  /** Admission, plus each profile's active devices able to join `ciphersuite`. */
   private async evaluate(
     callerProfileId: string,
     profileIds: string[],
