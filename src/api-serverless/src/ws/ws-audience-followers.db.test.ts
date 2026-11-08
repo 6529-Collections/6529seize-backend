@@ -36,6 +36,8 @@ const follower = anIdentity({ level_raw: 0, tdh: 20 });
 const nonFollower = anIdentity({ level_raw: 0, tdh: 20 });
 const viewer = anIdentity({ level_raw: 0, tdh: 20 });
 const subwaveFollower = anIdentity({ level_raw: 0, tdh: 20 });
+const oldViewer = anIdentity({ level_raw: 0, tdh: 20 });
+const NEW_BUILD = 'abc1234';
 const everyone = aUserGroup({ level_min: 0 });
 
 const publicWave = aWave({ visibility_group_id: null });
@@ -55,7 +57,8 @@ function socket(
   identityId: string,
   waveId: string | null,
   purpose: WsConnectionPurpose | null = null,
-  openWaveId: string | null = null
+  openWaveId: string | null = null,
+  clientVersion: string | null = null
 ): WSConnectionEntity {
   return {
     connection_id: connectionId,
@@ -63,7 +66,8 @@ function socket(
     wave_id: waveId,
     jwt_expiry: 4102444800,
     purpose,
-    open_wave_id: openWaveId
+    open_wave_id: openWaveId,
+    client_version: clientVersion
   };
 }
 
@@ -84,7 +88,7 @@ const ids = (rows: { connectionId: string }[]) =>
 describeWithSeed(
   'Follower audience (waves 1.3)',
   [
-    withIdentities([follower, nonFollower, viewer, subwaveFollower]),
+    withIdentities([follower, nonFollower, viewer, subwaveFollower, oldViewer]),
     withUserGroups([everyone]),
     withWaves([publicWave, subwave, otherWave, groupWave, dmWave]),
     {
@@ -115,7 +119,28 @@ describeWithSeed(
         socket('dm-viewer', viewer.profile_id!, dmWave.id),
         // An app socket (not subscribed to any wave) that declared, with
         // SET_OPEN_WAVE, that its tab has the public wave open.
-        socket('app-open', nonFollower.profile_id!, null, null, publicWave.id)
+        socket('app-open', nonFollower.profile_id!, null, null, publicWave.id),
+        // A current build (stores client_version), not following, wave closed.
+        socket(
+          'new-closed',
+          nonFollower.profile_id!,
+          null,
+          null,
+          null,
+          NEW_BUILD
+        ),
+        socket(
+          'new-anonymous-closed',
+          ANON_USER_ID,
+          null,
+          null,
+          null,
+          NEW_BUILD
+        ),
+        // An old build viewing the public wave: its per-wave socket is
+        // subscribed to it, its app socket (which takes the drops) is not.
+        socket('old-viewer-app', oldViewer.profile_id!, null),
+        socket('old-viewer-wave', oldViewer.profile_id!, publicWave.id)
       ]
     },
     {
@@ -141,9 +166,9 @@ describeWithSeed(
       () => false
     );
     const env = process.env.WS_AUDIENCE_FOLLOWERS;
-    const withFlag = (on: boolean) => {
-      if (on) process.env.WS_AUDIENCE_FOLLOWERS = 'true';
-      else delete process.env.WS_AUDIENCE_FOLLOWERS;
+    const withFlag = (on: boolean | 'legacy-clients' | 'all') => {
+      if (on === false) delete process.env.WS_AUDIENCE_FOLLOWERS;
+      else process.env.WS_AUDIENCE_FOLLOWERS = on === true ? 'true' : on;
     };
     const recipients = (waveId: string, system = false) =>
       (system
@@ -169,8 +194,12 @@ describeWithSeed(
         'anonymous-open',
         'app-open',
         'follower-closed',
+        'new-anonymous-closed',
+        'new-closed',
         'nonfollower-closed',
         'nonfollower-open',
+        'old-viewer-app',
+        'old-viewer-wave',
         'subwave-follower-closed'
       ]);
       // A declared open wave never narrows an app socket: with the flag
@@ -185,29 +214,64 @@ describeWithSeed(
       expect(await recipients(otherWave.id)).not.toContain('app-open');
     });
 
-    it.each([false, true])(
-      'narrows a public wave to viewers and followers with the flag on (system=%s)',
-      async (system) => {
-        withFlag(true);
-        expect(await recipients(publicWave.id, system)).toEqual([
-          // Anyone with the wave open, signed in or not.
-          'anonymous-open',
-          'app-open',
-          // A follower with the wave closed.
-          'follower-closed',
-          'nonfollower-open',
-          // Following a subwave lists the parent wave too.
-          'subwave-follower-closed'
-        ]);
-        // Left out: a non-follower with the wave closed, anonymous sockets
-        // without it open, a follower viewing another wave (as today) and
-        // the typing socket.
+    // In "all" mode (also WS_AUDIENCE_FOLLOWERS=true) every socket is narrowed.
+    const narrowedForAll = [
+      // Old anonymous sockets cannot be told apart: today's audience.
+      'anonymous-closed',
+      // Anyone with the wave open, signed in or not.
+      'anonymous-open',
+      'app-open',
+      // A follower with the wave closed.
+      'follower-closed',
+      'nonfollower-open',
+      // An old build's app socket, viewing through its per-wave socket.
+      'old-viewer-app',
+      'old-viewer-wave',
+      // Following a subwave lists the parent wave too.
+      'subwave-follower-closed'
+    ];
+
+    it.each([
+      [true, false],
+      [true, true],
+      ['all' as const, false]
+    ])(
+      'narrows a public wave to viewers and followers with the flag %p (system=%p)',
+      async (flag, system) => {
+        withFlag(flag);
+        expect(await recipients(publicWave.id, system)).toEqual(narrowedForAll);
+        // Left out: non-followers with the wave closed (old or current
+        // build), a current anonymous socket without it open, a follower
+        // subscribed to another wave (as today) and the typing socket.
       }
     );
+
+    it.each([false, true])(
+      'narrows only old builds with legacy-clients (system=%p)',
+      async (system) => {
+        withFlag('legacy-clients');
+        expect(await recipients(publicWave.id, system)).toEqual(
+          [...narrowedForAll, 'new-anonymous-closed', 'new-closed'].sort(
+            (a, b) => a.localeCompare(b)
+          )
+        );
+        // Still left out: an old build that neither follows nor views it.
+        expect(await recipients(publicWave.id, system)).not.toContain(
+          'nonfollower-closed'
+        );
+      }
+    );
+
+    it('keeps an old build viewing a wave it does not follow live, and only that wave', async () => {
+      withFlag('legacy-clients');
+      expect(await recipients(publicWave.id)).toContain('old-viewer-app');
+      expect(await recipients(otherWave.id)).not.toContain('old-viewer-app');
+    });
 
     it('sends a subwave’s frames to followers of the subwave and of its parent', async () => {
       withFlag(true);
       expect(await recipients(subwave.id)).toEqual([
+        'anonymous-closed',
         'follower-closed',
         'subwave-follower-closed'
       ]);
@@ -227,6 +291,14 @@ describeWithSeed(
       // Never wider than today's visibility.
       expect(after.every((id) => before.includes(id))).toBe(true);
       expect(before).toContain('nonfollower-closed');
+
+      // legacy-clients: current builds among the members keep today's
+      // audience; old builds are narrowed as above.
+      withFlag('legacy-clients');
+      const legacy = await recipients(groupWave.id);
+      expect(legacy).toEqual(expect.arrayContaining([...after, 'new-closed']));
+      expect(legacy).not.toContain('nonfollower-closed');
+      expect(legacy.every((id) => before.includes(id))).toBe(true);
     });
 
     it('keeps every DM member in the audience', async () => {

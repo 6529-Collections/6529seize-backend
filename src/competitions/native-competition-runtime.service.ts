@@ -145,11 +145,15 @@ export class NativeCompetitionRuntimeService {
     private readonly repository: NativeCompetitionRuntimeRepository,
     private readonly credits: Pick<
       CompetitionCreditService,
-      'getBudget' | 'getWaveBudgets'
+      'getBudget' | 'getWaveBudgets' | 'getDropBudgets'
     >,
     private readonly executionRouter: CompetitionExecutionRouter
   ) {}
 
+  /**
+   * `activeVotes` are the voter's active votes when the caller already read
+   * them in this transaction (exactly what getVoterActiveVotes returns).
+   */
   public async reconcileVoterCredit(
     params: {
       competitionId: string;
@@ -158,17 +162,20 @@ export class NativeCompetitionRuntimeService {
       creditScope: string;
       occurredAt: number;
     },
-    ctx: RequestContext
+    ctx: RequestContext,
+    activeVotes?: readonly { entryId: string; value: number }[]
   ): Promise<void> {
     if (!ctx.connection)
       throw new Error(
         'Credit reconciliation requires the competition transaction lock'
       );
-    const current = await this.repository.getVoterActiveVotes(
-      params.competitionId,
-      params.voterProfileId,
-      ctx
-    );
+    const current =
+      activeVotes ??
+      (await this.repository.getVoterActiveVotes(
+        params.competitionId,
+        params.voterProfileId,
+        ctx
+      ));
     const reduced = reducedNativeVotes(
       current,
       params.availableCredit,
@@ -201,13 +208,31 @@ export class NativeCompetitionRuntimeService {
     ctx: RequestContext
   ): Promise<void> {
     const voters = await this.repository.listActiveVoters(competition.id, ctx);
+    const scope = competition.voting.credit_scope;
     const waveBudgets =
-      competition.voting.credit_scope === WaveCreditScope.WAVE
+      scope === WaveCreditScope.WAVE
         ? await this.credits.getWaveBudgets(competition, voters, ctx)
+        : null;
+    // DROP scope checks every voter's votes: read the budgets and the votes
+    // in a few paged statements instead of ~4 statements per voter. Same
+    // transaction and lock; reconciliation reads nothing it writes, so the
+    // writes (and their order) are unchanged.
+    const dropBudgets =
+      scope === WaveCreditScope.DROP
+        ? await this.credits.getDropBudgets(competition, voters, ctx)
+        : null;
+    const dropVotes =
+      scope === WaveCreditScope.DROP
+        ? await this.repository.getVotersActiveVotes(
+            competition.id,
+            voters,
+            ctx
+          )
         : null;
     await readSequentially(voters, async (voterProfileId) => {
       const budget =
         waveBudgets?.get(voterProfileId) ??
+        dropBudgets?.get(voterProfileId) ??
         (await this.credits.getBudget(
           competition,
           voterProfileId,
@@ -230,7 +255,8 @@ export class NativeCompetitionRuntimeService {
           creditScope: competition.voting.credit_scope,
           occurredAt: now
         },
-        ctx
+        ctx,
+        dropVotes?.get(voterProfileId)
       );
     });
   }

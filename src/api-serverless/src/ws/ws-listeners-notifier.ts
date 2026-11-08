@@ -782,7 +782,9 @@ export class WsListenersNotifier {
     const batch: DeliveryBatch = {
       defer: (settlement) => settlements.push(settlement),
       metrics: new DeliveryMetricsBatch(),
-      claimTimed: (milliseconds) => measurement.claimTimed(milliseconds)
+      claimTimed: (milliseconds) => measurement.claimTimed(milliseconds),
+      // One frame type per fan-out: delivery need not parse each frame.
+      frameType: measurement.frameType
     };
     try {
       await forEachConcurrent(

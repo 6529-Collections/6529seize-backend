@@ -201,9 +201,19 @@ describeWithSeed(
     const getWaveBudgets = jest.fn() as jest.MockedFunction<
       CompetitionCreditService['getWaveBudgets']
     >;
+    // DROP budgets have no shared spending: each is the single-profile budget.
+    const getDropBudgets = jest.fn(async (resource, profiles, ctx) => {
+      const budgets = new Map<string, CompetitionCreditBudget>();
+      for (const profile of profiles)
+        budgets.set(
+          profile,
+          await getBudget(resource, profile, undefined, ctx)
+        );
+      return budgets;
+    }) as jest.MockedFunction<CompetitionCreditService['getDropBudgets']>;
     const service = new NativeCompetitionRuntimeService(
       repository,
-      { getBudget, getWaveBudgets },
+      { getBudget, getWaveBudgets, getDropBudgets },
       new CompetitionExecutionRouter()
     );
 
@@ -519,6 +529,119 @@ describeWithSeed(
           { rankId }
         )
       ).toEqual([{ n: 3 }]);
+    });
+
+    it('reads many voters active votes exactly as one voter at a time', async () => {
+      await vote(rankId, rankEntry, -120, 10, 'voter-a');
+      await vote(rankId, secondRankEntry, 80, 11, 'voter-a');
+      await vote(rankId, secondRankEntry, 5, 12, 'voter-b');
+      await vote(rankId, rankEntry, 7, 13, 'voter-b');
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id=:id`,
+        { id: secondRankEntry }
+      );
+      const voters = ['voter-a', 'voter-b', 'voter-without-votes'];
+      const batched = await repository.getVotersActiveVotes(rankId, voters, {});
+      for (const voter of voters)
+        expect(batched.get(voter)).toEqual(
+          await repository.getVoterActiveVotes(rankId, voter, {})
+        );
+      expect(batched.get('voter-a')).toEqual([
+        { entryId: rankEntry, value: -120 }
+      ]);
+    });
+
+    it('makes the same DROP reconciliation writes, in the same order, as one voter at a time', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set voting_config = json_set(voting_config, '$.credit_scope', 'DROP') where id = :rankId`,
+        { rankId }
+      );
+      // voter-a: one vote over budget; voter-b: no credit at all; voter-c fits.
+      await vote(rankId, rankEntry, -120, 10, 'voter-a');
+      await vote(rankId, secondRankEntry, 80, 11, 'voter-a');
+      await vote(rankId, rankEntry, 30, 12, 'voter-b');
+      await vote(rankId, secondRankEntry, -40, 13, 'voter-b');
+      await vote(rankId, rankEntry, 90, 14, 'voter-c');
+      getBudget.mockImplementation(async (resource, profileId) => ({
+        competition_id: resource.id,
+        profile_id: profileId,
+        entry_id: null,
+        credit_type: 'TDH',
+        credit_scope: 'DROP',
+        available: profileId === 'voter-b' ? 0 : 100,
+        spent: null,
+        remaining: null,
+        current_vote: null,
+        min_vote: null,
+        max_vote: null
+      }));
+      type Outcome = { votes: unknown[]; history: unknown[] };
+      const rolledBack = new Error('rolled back on purpose');
+      /** Reconciles under the competition lock and reads what it wrote. */
+      const reconcile = async (
+        target: NativeCompetitionRuntimeService,
+        rollback: boolean
+      ): Promise<Outcome> => {
+        let outcome: Outcome | undefined;
+        await repository
+          .executeNativeQueriesInTransaction(async (connection) => {
+            const ctx = { connection };
+            const competition = await repository.lockCompetition(rankId, ctx);
+            await (
+              target as unknown as {
+                reconcileCompetitionCredit(
+                  competition: unknown,
+                  now: number,
+                  ctx: unknown
+                ): Promise<void>;
+              }
+            ).reconcileCompetitionCredit(competition, 500, ctx);
+            const read = (sql: string) =>
+              sqlExecutor.execute(
+                sql,
+                { rankId },
+                { wrappedConnection: connection }
+              );
+            outcome = {
+              votes: await read(
+                `select entry_id, voter_profile_id, value, credit_spent from ${COMPETITION_VOTES_TABLE}
+                 where competition_id = :rankId order by voter_profile_id, entry_id`
+              ),
+              history: await read(
+                `select entry_id, voter_profile_id, value, previous_value, aggregate_value, credit_delta, occurred_at
+                 from ${COMPETITION_VOTE_HISTORY_TABLE}
+                 where competition_id = :rankId and occurred_at = 500 order by sequence`
+              )
+            };
+            if (rollback) throw rolledBack;
+          })
+          .catch((error) => {
+            if (error !== rolledBack) throw error;
+          });
+        return outcome!;
+      };
+      // One voter at a time, as before: no batched budgets or votes.
+      const sequential = new NativeCompetitionRuntimeService(
+        Object.assign(Object.create(repository), {
+          getVotersActiveVotes: async () => new Map()
+        }),
+        {
+          getBudget,
+          getWaveBudgets,
+          getDropBudgets: async () => new Map()
+        },
+        new CompetitionExecutionRouter()
+      );
+      const perVoterReads = jest.spyOn(repository, 'getVoterActiveVotes');
+      const before = await reconcile(sequential, true);
+      expect(perVoterReads).toHaveBeenCalledTimes(3);
+      expect(before.history.length).toBeGreaterThan(0);
+
+      perVoterReads.mockClear();
+      const after = await reconcile(service, false);
+      expect(perVoterReads).not.toHaveBeenCalled();
+      expect(after).toEqual(before);
+      perVoterReads.mockRestore();
     });
 
     it('still reconciles independent DROP budgets without a shared-spending shortcut', async () => {

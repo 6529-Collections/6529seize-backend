@@ -3168,14 +3168,25 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findJoinedRootWaveIds`;
     ctx.timer?.start(timerKey);
     try {
+      // The root visibility check keeps the inlined list (its index range
+      // drives the scan); the followed-subwave activity's two checks share
+      // the groups once three inlined copies would reach the pinning size.
+      const groups = await this.sharedViewerGroups(
+        'jr_viewer_groups',
+        eligibleGroups,
+        { copies: 3, otherInlinedBytes: sqlInListBytes(waveIds ?? []) }
+      );
       // Membership and activity use base wave data, not competition projections.
       const rows = await withoutLegacyCompetitionGetFacade(() =>
         this.db.execute<{ id: string }>(
-          `with ${this.getFollowedSubwaveActivityCte({
-            groupIds: eligibleGroups,
-            identityParamName: 'identityId',
-            eligibleGroupsParamName: 'eligibleGroups'
-          })}
+          `with ${groups ? `${groups.cteSql},` : ''} ${this.getFollowedSubwaveActivityCte(
+            {
+              groupIds: eligibleGroups,
+              identityParamName: 'identityId',
+              eligibleGroupsParamName: 'eligibleGroups',
+              groupSetSql: groups?.setSql
+            }
+          )}
           select w.id
           from ${legacyGetView(WAVES_TABLE)} w
           left join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id
@@ -3203,7 +3214,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             eligibleGroups,
             waveIds,
             wave_target_type: ActivityEventTargetType.WAVE,
-            drop_created_action: ActivityEventAction.DROP_CREATED
+            drop_created_action: ActivityEventAction.DROP_CREATED,
+            ...groups?.params
           },
           ctx.connection ? { wrappedConnection: ctx.connection } : undefined
         )
