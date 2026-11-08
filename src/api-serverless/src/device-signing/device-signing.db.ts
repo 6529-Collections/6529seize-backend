@@ -135,6 +135,17 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async acknowledgeGrant(id: string, ctx: RequestContext): Promise<void> {
+    await this.timedExecute(
+      'acknowledgeGrant',
+      `update ${DEVICE_GRANTS_TABLE} set notice_acknowledged = true
+       where id = :id and notice_acknowledged = false`,
+      { id },
+      ctx,
+      DbPoolName.WRITE
+    );
+  }
+
   /** Sets revoked_at once; later calls keep the first revocation time. */
   async revokeGrant(
     id: string,
