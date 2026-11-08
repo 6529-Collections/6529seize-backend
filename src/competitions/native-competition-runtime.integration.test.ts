@@ -1191,6 +1191,96 @@ describeWithSeed(
       ).toBeGreaterThan(0);
     });
 
+    it('writes nothing when an entry revision resets scores during the computation', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+      const before = await savedLeaderboard();
+
+      const outcome = await service.refreshLeaderboardOffLock(
+        rankId,
+        700,
+        {},
+        {
+          afterCompute: async () => {
+            // A revision reset reaches the leaderboard only through the outbox.
+            await repository.executeNativeQueriesInTransaction(
+              async (connection) => {
+                const ctx = { connection };
+                await repository.lockCompetition(rankId, ctx);
+                await repository.enqueueEvent(
+                  {
+                    key: `entry-content:${rankEntry}:2`,
+                    event_type: 'COMPETITION_ENTRY_UPDATED',
+                    occurred_at: Date.now(),
+                    wave_id: 'shared-hub',
+                    competition_id: rankId,
+                    competition_entry_id: rankEntry,
+                    drop_id: 'rank-drop',
+                    data: { content_revision: 2 }
+                  },
+                  ctx
+                );
+              }
+            );
+          }
+        }
+      );
+
+      expect(outcome).toBe('changed');
+      expect(await savedLeaderboard()).toEqual(before);
+    });
+
+    it('falls back to the locked decision run when inputs change during its off-lock computation', async () => {
+      await timeLock();
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.next_decision_time', 1000) where id = :rankId`,
+        { rankId }
+      );
+      await vote(rankId, rankEntry, 100, 500);
+      await service.processCompetition(rankId, 600);
+      const refreshOffLock = service.refreshLeaderboardOffLock.bind(service);
+      const outcomes: string[] = [];
+      const spy = jest
+        .spyOn(service, 'refreshLeaderboardOffLock')
+        .mockImplementationOnce(async (id, now, ctx, _hooks, report) => {
+          const outcome = await refreshOffLock(
+            id,
+            now,
+            ctx,
+            {
+              afterCompute: () =>
+                vote(rankId, secondRankEntry, 50, 650, 'other')
+            },
+            report
+          );
+          outcomes.push(outcome);
+          return outcome;
+        });
+      try {
+        await service.processCompetition(rankId, 700);
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(outcomes).toEqual(['changed']);
+      // The locked run followed, so the leaderboard includes the late vote...
+      expect(
+        Number(
+          (await savedLeaderboard()).find(
+            (row) => row.entry_id === secondRankEntry
+          )?.rating
+        )
+      ).toBeGreaterThan(0);
+      // ...and nothing was due, so nothing was decided.
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_DECISIONS_TABLE} where competition_id = :rankId`,
+          { rankId }
+        )
+      ).toEqual([{ n: 0 }]);
+    });
+
     it('refreshes an undue time-locked Rank off the lock from the decision run and still decides when due', async () => {
       await timeLock();
       await sqlExecutor.execute(

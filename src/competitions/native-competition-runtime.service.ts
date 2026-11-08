@@ -450,13 +450,18 @@ export class NativeCompetitionRuntimeService {
         return 'written';
       }
     );
-    this.logger.info('native_competition_leaderboard_off_lock', {
+    const record = {
       competition_id: competitionId,
       operation: report.operation,
       outcome,
       compute_ms: computeMs,
       locked_ms: Date.now() - writeStartedAt + (report.extraLockedMs ?? 0)
-    });
+    };
+    // 'changed' sends the run to its locked fallback, so it stays visible.
+    // LOG_LEVEL_NativeCompetitionRuntimeService=debug shows every refresh.
+    if (outcome === 'changed')
+      this.logger.info('native_competition_leaderboard_off_lock', record);
+    else this.logger.debug('native_competition_leaderboard_off_lock', record);
     return outcome;
   }
 
@@ -530,18 +535,28 @@ export class NativeCompetitionRuntimeService {
           )
       );
       // A time-locked Rank with nothing due only needs its leaderboard: that
-      // is computed off the lock. If its inputs change meanwhile, the next
-      // run (or the snapshotter) refreshes it.
-      if (next === 'refresh-off-lock')
-        await this.refreshLeaderboardOffLock(
-          competitionId,
-          now,
-          ctx,
-          {},
-          {
-            operation: 'decisions',
-            extraLockedMs: Date.now() - lockedStartedAt
-          }
+      // is computed off the lock. If its inputs changed meanwhile, the locked
+      // run follows once, as before this path existed, so a busy
+      // competition's leaderboard is never older than one decision run.
+      if (next !== 'refresh-off-lock') return;
+      const outcome = await this.refreshLeaderboardOffLock(
+        competitionId,
+        now,
+        ctx,
+        {},
+        {
+          operation: 'decisions',
+          extraLockedMs: Date.now() - lockedStartedAt
+        }
+      );
+      if (outcome === 'changed')
+        await this.repository.executeNativeQueriesInTransaction((connection) =>
+          this.processCompetitionLocked(
+            competitionId,
+            now,
+            { ...ctx, connection },
+            false
+          )
         );
       return;
     }
@@ -567,8 +582,10 @@ export class NativeCompetitionRuntimeService {
     await this.emitScheduledTransitions(competition, now, ctx);
     const undue = await this.undueRank(competition, now, ctx);
     if (undue === 'static') return 'done';
-    if (undue === 'time-locked' && offLockRefresh) return 'refresh-off-lock';
     await this.reconcileCompetitionCredit(competition, now, ctx);
+    // Credit stays reconciled under the lock every run; only the time-locked
+    // leaderboard computation leaves it.
+    if (undue === 'time-locked' && offLockRefresh) return 'refresh-off-lock';
     const state = await this.loadState(competition.id, ctx);
     if (competition.type === CompetitionType.RANK)
       await this.processRank(competition, state, now, ctx);
