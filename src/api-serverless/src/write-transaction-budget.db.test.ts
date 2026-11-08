@@ -4,6 +4,7 @@ import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITIONS_TABLE,
   DROP_POLLS_TABLE,
+  DROP_REACTIONS_TABLE,
   DROPS_TABLE
 } from '@/constants';
 import { dropPollsApiService } from '@/api/drops/drop-polls.api.service';
@@ -18,11 +19,17 @@ import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { AuthenticationContext } from '@/auth-context';
 import { dropsService } from '@/api/drops/drops.api.service';
 import { reactionsService } from '@/api/drops/reactions.service';
+import { deleteDrop } from '@/drops/delete-drop.use-case';
+import { Timer } from '@/time';
 import {
+  readCommitted,
   runWriteTransaction,
   withRequestDeadline,
   WriteBusyException
 } from '@/api/write-transaction-budget';
+import { dropCheeringService } from '@/api/drops/drop-cheering.service';
+import { dropCreationService } from '@/api/drops/drop-creation.api.service';
+import { Logger } from '@/logging';
 
 /**
  * API write transactions run with an execution budget inside a request:
@@ -319,6 +326,159 @@ describeWithSeed(
           else process.env[key] = flags[index];
         });
       }
+    });
+
+    it('runs a budgeted transaction at READ COMMITTED when asked and REPEATABLE READ by default', async () => {
+      const name = () =>
+        sqlExecutor.oneOrNull<{ name: string }>(
+          'select name from waves where id = :id',
+          { id: wave.id }
+        );
+      // One budgeted attempt per half: the unbudgeted rerun is READ COMMITTED
+      // too, so without this the READ COMMITTED half could pass unbudgeted.
+      const attempts: unknown[] = [];
+      const readTwice = (readCommittedLevel: boolean) =>
+        withRequestDeadline(30_000, () =>
+          runWriteTransaction((options) => {
+            attempts.push(options);
+            return sqlExecutor.executeNativeQueriesInTransaction(
+              async (connection) => {
+                const read = () =>
+                  sqlExecutor
+                    .oneOrNull<{
+                      name: string;
+                    }>(
+                      'select name from waves where id = :id',
+                      { id: wave.id },
+                      { wrappedConnection: connection }
+                    )
+                    .then((row) => row?.name);
+                const first = await read();
+                // Another session commits a change in between.
+                await sqlExecutor.execute(
+                  'update waves set name = :name where id = :id',
+                  { id: wave.id, name: `${first}-changed` }
+                );
+                return [first, await read()];
+              },
+              readCommittedLevel ? readCommitted(options) : options
+            );
+          })
+        );
+      const original = (await name())?.name;
+      const [rcFirst, rcSecond] = await readTwice(true);
+      expect(rcFirst).toBe(original);
+      expect(rcSecond).toBe(`${original}-changed`);
+      const [rrFirst, rrSecond] = await readTwice(false);
+      expect(rrFirst).toBe(`${original}-changed`);
+      expect(rrSecond).toBe(rrFirst);
+      expect(attempts).toHaveLength(2);
+      for (const attempt of attempts) {
+        expect(attempt).toMatchObject({
+          executionBudget: { lockWaitSeconds: 10 }
+        });
+      }
+    });
+
+    /**
+     * Fails the test if runWriteTransaction fell back to an unbudgeted rerun,
+     * which it does when the work overlaps statements on its connection.
+     */
+    function expectNoUnbudgetedRerun() {
+      const error = jest.spyOn(Logger.get('WRITE_TRANSACTION_BUDGET'), 'error');
+      return () => {
+        expect(
+          error.mock.calls.filter(([message]) =>
+            String(message).includes('WRITE_BUDGET_CONCURRENT_STATEMENTS')
+          )
+        ).toEqual([]);
+        error.mockRestore();
+      };
+    }
+
+    it('rates a chat drop through updateCheers in budgeted transactions only', async () => {
+      const created = await budgetedPost(chatDrop('to rate'));
+      const verify = expectNoUnbudgetedRerun();
+      for (const rating of [3, -2])
+        await withRequestDeadline(30_000, () =>
+          dropCheeringService.updateCheers(
+            {
+              drop_id: created.drop_id,
+              rater_profile_id: reactor,
+              groupIdsUserIsEligibleFor: [],
+              newCheers: rating
+            },
+            {
+              authenticationContext:
+                AuthenticationContext.fromProfileId(reactor)
+            }
+          )
+        );
+      verify();
+      const reactions = await sqlExecutor.execute<{ reaction: string }>(
+        `select reaction from ${DROP_REACTIONS_TABLE} where drop_id = :dropId and profile_id = :reactor`,
+        { dropId: created.drop_id, reactor }
+      );
+      expect(reactions.map((it) => it.reaction)).toEqual([':-1:']);
+    });
+
+    it('deletes a drop through deleteDropById in one budgeted transaction', async () => {
+      const created = await budgetedPost(chatDrop('to delete via service'));
+      const verify = expectNoUnbudgetedRerun();
+      await withRequestDeadline(30_000, () =>
+        dropCreationService.deleteDropById(
+          { id: created.drop_id },
+          {
+            timer: new Timer('test'),
+            authenticationContext: AuthenticationContext.fromProfileId(author)
+          }
+        )
+      );
+      verify();
+      const left = await sqlExecutor.oneOrNull<{ n: number }>(
+        `select count(*) as n from ${DROPS_TABLE} where id = :id`,
+        { id: created.drop_id }
+      );
+      expect(Number(left?.n)).toBe(0);
+    });
+
+    it('runs a real drop delete under the READ COMMITTED budget', async () => {
+      const created = await budgetedPost(chatDrop('to delete'));
+      await withRequestDeadline(30_000, () =>
+        reactionsService.addReaction(created.drop_id, reactor, ':fire:', {
+          authenticationContext: AuthenticationContext.fromProfileId(reactor)
+        })
+      );
+      // One budgeted attempt: an overlapping statement would have been
+      // rejected and the delete rerun unbudgeted.
+      const attempts: unknown[] = [];
+      await withRequestDeadline(30_000, () =>
+        runWriteTransaction((options) => {
+          attempts.push(options);
+          return sqlExecutor.executeNativeQueriesInTransaction(
+            (connection) =>
+              deleteDrop.execute(
+                {
+                  drop_id: created.drop_id,
+                  deleter_identity: author,
+                  deleter_id: author,
+                  deletion_purpose: 'DELETE'
+                },
+                { timer: new Timer('test'), connection }
+              ),
+            readCommitted(options)
+          );
+        })
+      );
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({
+        executionBudget: { lockWaitSeconds: 10 }
+      });
+      const left = await sqlExecutor.oneOrNull<{ n: number }>(
+        `select count(*) as n from ${DROPS_TABLE} where id = :id`,
+        { id: created.drop_id }
+      );
+      expect(Number(left?.n)).toBe(0);
     });
 
     it('reads back the same drop after commit as inside the transaction', async () => {

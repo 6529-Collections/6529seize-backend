@@ -91,6 +91,21 @@ function writeTransactionOptions(): SqlTransactionOptions | undefined {
 }
 
 /**
+ * READ COMMITTED transaction options for paths that rely on it (votes, drop
+ * delete), with the request's budget when there is one.
+ */
+export function readCommitted(
+  options: SqlTransactionOptions | undefined
+): SqlTransactionOptions {
+  return {
+    isolationLevel: 'READ COMMITTED',
+    ...(options?.executionBudget
+      ? { executionBudget: options.executionBudget }
+      : {})
+  };
+}
+
+/**
  * The budget gave up before COMMIT was sent: the write did not happen, so
  * the client may retry it.
  */
@@ -99,12 +114,14 @@ function isWriteBusy(error: unknown): boolean {
     return (
       error.commitOutcome === 'NOT_SENT' &&
       (error.code === 'SQL_BUDGET_EXCEEDED' ||
-        error.serverCode === 'ER_LOCK_WAIT_TIMEOUT')
+        error.serverCode === 'ER_LOCK_WAIT_TIMEOUT' ||
+        error.serverCode === 'ER_LOCK_DEADLOCK')
     );
   }
-  // Unbudgeted: a lock wait timeout fails a statement before any COMMIT.
+  // Unbudgeted: a lock wait timeout fails a statement before any COMMIT, and
+  // a deadlock victim's transaction is rolled back.
   const code = (error as { code?: unknown } | null)?.code;
-  return code === 'ER_LOCK_WAIT_TIMEOUT';
+  return code === 'ER_LOCK_WAIT_TIMEOUT' || code === 'ER_LOCK_DEADLOCK';
 }
 
 /** COMMIT may have been sent without an acknowledgment. */

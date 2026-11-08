@@ -37,7 +37,8 @@ import {
 import { Logger } from '@/logging';
 import {
   querySqlInListChunks,
-  SQL_IN_LIST_CHUNK_BYTES
+  SQL_IN_LIST_CHUNK_BYTES,
+  sqlInListBytes
 } from '@/db/sql-in-list-chunks';
 import {
   groupWaveVotingCreditNftsByContract,
@@ -110,10 +111,18 @@ import {
 import {
   ViewerGroupsCte,
   viewerGroupsCte,
-  viewerGroupsCteSupported
+  viewerGroupsCteBytes,
+  viewerGroupsCteSupported,
+  viewerGroupsWorthSharing
 } from '@/waves/viewer-groups-cte';
 
 const logger = Logger.get('WAVES_API_DB');
+
+/**
+ * Smallest inlined candidate list per copy in a follow-candidate chunk, so a
+ * request runs at most twice the groupless number of chunks.
+ */
+const FOLLOW_CANDIDATE_MIN_LIST_BYTES = SQL_IN_LIST_CHUNK_BYTES / 4;
 
 type WaveHubConfiguration = Pick<
   WaveEntity,
@@ -393,14 +402,22 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   /**
    * The viewer's groups as one shared table (see viewerGroupsCte), so a
    * statement inlines them once instead of once per visibility check.
-   * Undefined without groups, or while the compared columns' collation
-   * differs.
+   * Undefined to inline them: without groups, while the compared columns'
+   * collation differs, or when `gate` says inlining `copies` lists (plus the
+   * statement's other inlined lists) stays below the pinning size (see
+   * viewerGroupsWorthSharing). Without `gate`, any groups are shared.
    */
   private async sharedViewerGroups(
     name: string,
-    groupIds: readonly string[]
+    groupIds: readonly string[],
+    gate?: { readonly copies: number; readonly otherInlinedBytes?: number }
   ): Promise<ViewerGroupsCte | undefined> {
     if (!groupIds.length) return undefined;
+    if (
+      gate &&
+      !viewerGroupsWorthSharing(groupIds, gate.copies, gate.otherInlinedBytes)
+    )
+      return undefined;
     const supported = await viewerGroupsCteSupported(this.db, [
       WAVES_TABLE,
       legacyGetView(WAVES_TABLE)
@@ -412,17 +429,25 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     waveAlias: string,
     parentAlias: string,
     groupIds: readonly string[],
-    groupIdsParamName: string
+    groupIdsParamName: string,
+    groupSetSql?: string
   ): string {
     return `${this.getWaveVisibilityFilter(
       waveAlias,
       groupIds,
-      groupIdsParamName
+      groupIdsParamName,
+      groupSetSql
     )} and (${waveAlias}.parent_wave_id is null or (${parentAlias}.id is not null and ${parentAlias}.parent_wave_id is null and ${this.getWaveVisibilityFilter(
       parentAlias,
       groupIds,
-      groupIdsParamName
+      groupIdsParamName,
+      groupSetSql
     )}))`;
+  }
+
+  /** `with <shared groups> ` for a statement, or nothing. */
+  private withViewerGroups(groups: ViewerGroupsCte | undefined): string {
+    return groups ? `with ${groups.cteSql} ` : '';
   }
 
   private getSortedEligibleGroups(eligibleGroups: readonly string[]): string[] {
@@ -592,7 +617,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!authenticated_user_id || !waveIds.length) {
       return new Set();
     }
+    // Each chunk also inlines the candidate list twice, at least
+    // FOLLOW_CANDIDATE_MIN_LIST_BYTES per copy.
+    const groups = await this.sharedViewerGroups(
+      'fc_viewer_groups',
+      eligibleGroups,
+      { copies: 2, otherInlinedBytes: 2 * FOLLOW_CANDIDATE_MIN_LIST_BYTES }
+    );
     const sql = `
+        ${this.withViewerGroups(groups)}
         select target_id as wave_id
         from ${IDENTITY_SUBSCRIPTIONS_TABLE}
         where subscriber_id = :authenticated_user_id
@@ -614,16 +647,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           and ${this.getWaveVisibilityFilter(
             'child',
             eligibleGroups,
-            'eligibleGroups'
+            'eligibleGroups',
+            groups?.setSql
           )}
           and ${this.getWaveVisibilityFilter(
             'parent',
             eligibleGroups,
-            'eligibleGroups'
+            'eligibleGroups',
+            groups?.setSql
           )}
       `;
     // Each row depends on one candidate id, so per-chunk results union
-    // exactly. The candidate list is inlined twice.
+    // exactly. Every chunk inlines the candidate list twice and also carries
+    // the groups (two checks), so the groups take their bytes out of the
+    // list budget first. The floor caps the chunk count at twice the
+    // groupless one; above it, very large group sets still pin.
+    const groupBytes = groups
+      ? viewerGroupsCteBytes(groups, 2)
+      : 2 * sqlInListBytes(eligibleGroups);
+    const maxBytes = Math.max(
+      FOLLOW_CANDIDATE_MIN_LIST_BYTES,
+      (SQL_IN_LIST_CHUNK_BYTES - groupBytes) / 2
+    );
     const rows = await querySqlInListChunks(
       waveIds,
       (chunk) =>
@@ -632,9 +677,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           waveIds: chunk,
           eligibleGroups,
           wave_target_type: ActivityEventTargetType.WAVE,
-          drop_created_action: ActivityEventAction.DROP_CREATED
+          drop_created_action: ActivityEventAction.DROP_CREATED,
+          ...groups?.params
         }),
-      { maxBytes: SQL_IN_LIST_CHUNK_BYTES / 2 }
+      { maxBytes }
     );
     return new Set(rows.map((row) => row.wave_id));
   }
@@ -1047,18 +1093,21 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   private getFollowedSubwaveActivityCte({
     groupIds,
     identityParamName,
-    eligibleGroupsParamName
+    eligibleGroupsParamName,
+    groupSetSql
   }: {
     groupIds: readonly string[];
     identityParamName: string;
     eligibleGroupsParamName: string;
+    groupSetSql?: string;
   }): string {
     return `
       followed_subwave_activity as (
         ${this.getFollowedSubwaveActivitySelect({
           groupIds,
           identityParamName,
-          eligibleGroupsParamName
+          eligibleGroupsParamName,
+          groupSetSql
         })}
       )
     `;
@@ -1205,20 +1254,26 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!ids.length) {
       return [];
     }
+    const groups = await this.sharedViewerGroups(
+      'wi_viewer_groups',
+      groupIdsUserIsEligibleFor,
+      { copies: 2, otherInlinedBytes: sqlInListBytes(ids) }
+    );
     const visibilityFilter = this.getWaveAndParentVisibilityFilter(
       'w',
       'pw',
       groupIdsUserIsEligibleFor,
-      'groupIdsUserIsEligibleFor'
+      'groupIdsUserIsEligibleFor',
+      groups?.setSql
     );
     return this.db
       .execute<RawWaveEntity>(
-        `SELECT w.*
+        `${this.withViewerGroups(groups)}SELECT w.*
          FROM ${legacyGetView(WAVES_TABLE)} w
          LEFT JOIN ${legacyGetView(WAVES_TABLE)} pw ON pw.id = w.parent_wave_id
          WHERE w.id in (:ids)
            and ${visibilityFilter}`,
-        { ids, groupIdsUserIsEligibleFor },
+        { ids, groupIdsUserIsEligibleFor, ...groups?.params },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((res) => res.map((it) => this.parseWaveEntity(it)));
@@ -1232,21 +1287,27 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     if (!ids.length) {
       return [];
     }
+    const groups = await this.sharedViewerGroups(
+      'wr_viewer_groups',
+      groupIdsUserIsEligibleFor,
+      { copies: 2, otherInlinedBytes: sqlInListBytes(ids) }
+    );
     const visibilityFilter = this.getWaveAndParentVisibilityFilter(
       'w',
       'pw',
       groupIdsUserIsEligibleFor,
-      'groupIdsUserIsEligibleFor'
+      'groupIdsUserIsEligibleFor',
+      groups?.setSql
     );
     return this.db
       .execute<RawWaveEntityWithLastDropTime>(
-        `SELECT w.*, COALESCE(wm.latest_drop_timestamp, 0) as last_drop_time
+        `${this.withViewerGroups(groups)}SELECT w.*, COALESCE(wm.latest_drop_timestamp, 0) as last_drop_time
          FROM ${legacyGetView(WAVES_TABLE)} w
          LEFT JOIN ${legacyGetView(WAVES_TABLE)} pw ON pw.id = w.parent_wave_id
          LEFT JOIN ${WAVE_METRICS_TABLE} wm ON wm.wave_id = w.id
          WHERE w.id in (:ids)
            and ${visibilityFilter}`,
-        { ids, groupIdsUserIsEligibleFor },
+        { ids, groupIdsUserIsEligibleFor, ...groups?.params },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((res) => res.map((it) => this.parseWaveEntityWithLastDropTime(it)));
@@ -1531,6 +1592,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerName = `${this.constructor.name}->findActiveTdhVotingWaves`;
     ctx.timer?.start(timerName);
     try {
+      // Always the inlined group list: this scan is driven by the index
+      // range it builds on visibility_group_id. A shared table would turn it
+      // into a full scan of waves, which costs more than a pinned session.
       const fromAndWhere = `from ${legacyGetView(WAVES_TABLE)} w
         left join ${legacyGetView(WAVES_TABLE)} parent on parent.id = w.parent_wave_id
         where coalesce(w.is_direct_message, false) = false
@@ -3185,14 +3249,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const sortExpr = useFollowedSubwaveActivity
       ? `GREATEST(${rootSortExpr}, COALESCE(fsa.latest_followed_subwave_activity_timestamp, 0))`
       : rootSortExpr;
+    // The root visibility check keeps the inlined list (its index range
+    // drives the scan); the followed-subwave activity's two checks share the
+    // groups once three inlined copies would reach the pinning size.
+    const groups = useFollowedSubwaveActivity
+      ? await this.sharedViewerGroups(
+          'ov_viewer_groups',
+          param.eligibleGroups,
+          {
+            copies: 3
+          }
+        )
+      : undefined;
+    const viewerGroupsCteSql = groups ? `${groups.cteSql},` : ``;
     const followedSubwaveActivityCte = useFollowedSubwaveActivity
       ? `${this.getFollowedSubwaveActivityCte({
           groupIds: param.eligibleGroups,
           identityParamName: 'authenticated_user_id',
-          eligibleGroupsParamName: 'eligibleGroups'
+          eligibleGroupsParamName: 'eligibleGroups',
+          groupSetSql: groups?.setSql
         })},`
       : ``;
-    const sql = `with ${followedSubwaveActivityCte} wids as (select w.id, ${sortExpr} as sort_val from ${legacyGetView(WAVES_TABLE)} w
+    const sql = `with ${viewerGroupsCteSql} ${followedSubwaveActivityCte} wids as (select w.id, ${sortExpr} as sort_val from ${legacyGetView(WAVES_TABLE)} w
     ${
       param.pinned === ApiWavesPinFilter.Pinned && param.authenticated_user_id
         ? ` join ${PINNED_WAVES_TABLE} pw on pw.wave_id = w.id and pw.profile_id = :authenticated_user_id `
@@ -3256,7 +3334,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       >(sql, {
         ...param,
         wave_target_type: ActivityEventTargetType.WAVE,
-        drop_created_action: ActivityEventAction.DROP_CREATED
+        drop_created_action: ActivityEventAction.DROP_CREATED,
+        ...groups?.params
       })
       .then((res) =>
         res.map((it) => ({
@@ -3362,14 +3441,31 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .filter((it): it is string => !!it)
       .join(' and ');
     const scoreFilters = filters ? `and ${filters}` : ``;
+    // The root visibility check keeps the inlined list (its index range
+    // drives the scan); the followed-subwave activity's two checks share the
+    // groups once three inlined copies would reach the pinning size.
+    const groups = useFollowedSubwaveActivity
+      ? await this.sharedViewerGroups(
+          'ov_viewer_groups',
+          param.eligibleGroups,
+          {
+            copies: 3,
+            // This statement's own text runs about 2 KB past the 4 KB the
+            // in-list budget leaves for it; keep a margin for optional filters.
+            otherInlinedBytes: 3_000
+          }
+        )
+      : undefined;
+    const viewerGroupsCteSql = groups ? `${groups.cteSql},` : ``;
     const followedSubwaveActivityCte = useFollowedSubwaveActivity
       ? `${this.getFollowedSubwaveActivityCte({
           groupIds: param.eligibleGroups,
           identityParamName: 'authenticated_user_id',
-          eligibleGroupsParamName: 'eligibleGroups'
+          eligibleGroupsParamName: 'eligibleGroups',
+          groupSetSql: groups?.setSql
         })},`
       : ``;
-    const sql = `with ${followedSubwaveActivityCte} wids as (
+    const sql = `with ${viewerGroupsCteSql} ${followedSubwaveActivityCte} wids as (
       select
         w.id,
         ${tierRankExpr} as tier_rank,
@@ -3443,7 +3539,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<RawWaveEntity>(sql, {
         ...param,
         wave_target_type: ActivityEventTargetType.WAVE,
-        drop_created_action: ActivityEventAction.DROP_CREATED
+        drop_created_action: ActivityEventAction.DROP_CREATED,
+        ...groups?.params
       })
       .then((res) => res.map((it) => this.parseWaveEntity(it)));
   }
@@ -4542,18 +4639,28 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(timerLabel);
     try {
       const waveFilter = waveIds ? 'and w.id in (:waveIds)' : '';
+      const groups = await this.sharedViewerGroups(
+        'dm_viewer_groups',
+        param.eligibleGroups ?? [],
+        {
+          copies: 2,
+          otherInlinedBytes:
+            sqlInListBytes(identityIds) + sqlInListBytes(waveIds ?? [])
+        }
+      );
       const visibilityFilter = param.eligibleGroups
         ? `and ${this.getWaveAndParentVisibilityFilter(
             'w',
             'parent',
             param.eligibleGroups,
-            'eligibleGroups'
+            'eligibleGroups',
+            groups?.setSql
           )}`
         : '';
       // Reader state, visibility and drop ordering use only base-table fields.
       const rows = await withoutLegacyCompetitionGetFacade(() =>
         this.db.execute<DmUnreadConversationStateRow>(
-          `with dm_reader_state as (
+          `with ${groups ? `${groups.cteSql},` : ''} dm_reader_state as (
            select r.wave_id,
                   r.reader_id,
                   r.muted,
@@ -4630,7 +4737,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           {
             identityIds,
             eligibleGroups: param.eligibleGroups ?? [],
-            waveIds: waveIds ?? []
+            waveIds: waveIds ?? [],
+            ...groups?.params
           },
           {
             wrappedConnection: ctx.connection,

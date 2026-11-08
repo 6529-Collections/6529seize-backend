@@ -6,17 +6,21 @@ jest.mock('@/logging', () => ({
 import {
   isKnownExpiryFenceEnabled,
   WS_FANOUT_CONCURRENCY_DEFAULT,
-  wsFanoutConcurrency
+  WS_FANOUT_CONCURRENCY_MAX,
+  WS_FANOUT_CONCURRENCY_MIN,
+  WS_GATEWAY_AGENT_MIN_SOCKETS,
+  wsFanoutConcurrency,
+  wsGatewayAgentMaxSockets
 } from './ws-fanout-settings';
 
 describe('wsFanoutConcurrency', () => {
   beforeEach(() => mockWarn.mockClear());
 
-  it('defaults to 16 when unset or blank, so a deploy sets nothing', () => {
-    expect(WS_FANOUT_CONCURRENCY_DEFAULT).toBe(16);
-    expect(wsFanoutConcurrency({})).toBe(16);
-    expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: '' })).toBe(16);
-    expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: '  ' })).toBe(16);
+  it('defaults to 64 when unset or blank, so a deploy sets nothing', () => {
+    expect(WS_FANOUT_CONCURRENCY_DEFAULT).toBe(64);
+    expect(wsFanoutConcurrency({})).toBe(64);
+    expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: '' })).toBe(64);
+    expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: '  ' })).toBe(64);
     expect(mockWarn).not.toHaveBeenCalled();
   });
 
@@ -50,9 +54,9 @@ describe('wsFanoutConcurrency', () => {
   it.each(['abc', '12.5', '1e3', '0x20', '64 sockets', 'NaN', 'Infinity'])(
     'uses the default for the invalid value %j and warns',
     (value) => {
-      expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: value })).toBe(16);
+      expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: value })).toBe(64);
       expect(mockWarn).toHaveBeenCalledWith(
-        expect.stringContaining('using 16 instead')
+        expect.stringContaining('using 64 instead')
       );
     }
   );
@@ -62,6 +66,39 @@ describe('wsFanoutConcurrency', () => {
       wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: 'many' });
     }
     expect(mockWarn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('wsGatewayAgentMaxSockets', () => {
+  it.each([
+    [undefined, 64],
+    ['16', 50],
+    ['32', 50],
+    ['50', 50],
+    ['64', 64],
+    ['128', 128],
+    ['1000', 128]
+  ])(
+    'sizes the agent for WS_FANOUT_CONCURRENCY=%j at %i sockets',
+    (value, expected) => {
+      expect(wsGatewayAgentMaxSockets({ WS_FANOUT_CONCURRENCY: value })).toBe(
+        expected
+      );
+    }
+  );
+
+  it('never has fewer sockets than the fan-out keeps sends in flight', () => {
+    for (
+      let width = WS_FANOUT_CONCURRENCY_MIN;
+      width <= WS_FANOUT_CONCURRENCY_MAX;
+      width++
+    ) {
+      const env = { WS_FANOUT_CONCURRENCY: String(width) };
+      expect(wsGatewayAgentMaxSockets(env)).toBe(
+        Math.max(WS_GATEWAY_AGENT_MIN_SOCKETS, wsFanoutConcurrency(env))
+      );
+      expect(wsGatewayAgentMaxSockets(env)).toBeGreaterThanOrEqual(width);
+    }
   });
 });
 

@@ -12,10 +12,16 @@ bytes. This is a locally maintained patch, not an upstream release.
 
 - Replace the installer-only `unzipper` dependency with exact `yauzl` 3.4.0.
   The reader, signer, verification settings and native SDK code are unchanged.
-- Download the matching official native release ZIP, check its pinned size and
-  SHA-256 before parsing, and extract only the expected regular-file member.
+- Install from the matching official native release ZIP, check its pinned size
+  and SHA-256 before parsing, and extract only the expected regular-file member.
   Validate the extracted native binary's size and SHA-256 before replacing
   `dist/index.node`. Downloads and extraction have time and size bounds.
+- Use a checked-in copy of that ZIP first when the installing repository has
+  one at `vendor/c2pa-node/native/<release file name>`, found by walking up from
+  the installed package. The Linux x64 ZIP is checked in, so CI and deploys do
+  not depend on GitHub release downloads. The copy passes the same pinned size
+  and SHA-256 check; a copy that fails it fails the installation (no network
+  fallback). Without a copy, the installer downloads as before.
 - Preserve the previous binary on failure; reuse an existing binary only after
   checking its size and SHA-256. Unsupported platforms fail installation.
 - Remove a publisher's bundled platform binary from the npm archive, if present.

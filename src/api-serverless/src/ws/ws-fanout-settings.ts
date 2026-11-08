@@ -7,7 +7,7 @@ import { Logger } from '@/logging';
  */
 
 /** Concurrent gateway sends per fan-out when `WS_FANOUT_CONCURRENCY` is unset. */
-export const WS_FANOUT_CONCURRENCY_DEFAULT = 16;
+export const WS_FANOUT_CONCURRENCY_DEFAULT = 64;
 export const WS_FANOUT_CONCURRENCY_MIN = 1;
 export const WS_FANOUT_CONCURRENCY_MAX = 128;
 
@@ -50,6 +50,21 @@ export function wsFanoutConcurrency(
     warnOnce('WS_FANOUT_CONCURRENCY', raw, String(applied));
   }
   return applied;
+}
+
+/** The SDK's own keep-alive agent size; raised only to fit a wider fan-out. */
+export const WS_GATEWAY_AGENT_MIN_SOCKETS = 50;
+
+/**
+ * Sockets for the gateway client's keep-alive agent: the SDK's 50, raised to
+ * the fan-out width, so the fan-out pool and not the agent bounds concurrent
+ * sends. Read once when the client is built; a Lambda configuration change
+ * starts new environments, so it follows `WS_FANOUT_CONCURRENCY`.
+ */
+export function wsGatewayAgentMaxSockets(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  return Math.max(WS_GATEWAY_AGENT_MIN_SOCKETS, wsFanoutConcurrency(env));
 }
 
 /**

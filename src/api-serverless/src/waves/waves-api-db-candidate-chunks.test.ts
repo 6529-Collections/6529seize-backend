@@ -2,6 +2,7 @@ import * as mysql from 'mysql';
 import { DbQueryOptions } from '@/db-query.options';
 import { PROXY_PIN_STATEMENT_BYTES } from '@/db/proxy-session-pinning';
 import { SqlExecutor } from '@/sql-executor';
+import { resetViewerGroupsCteSupport } from '@/waves/viewer-groups-cte';
 import { WavesApiDb } from './waves.api.db';
 
 type Params = Record<string, unknown>;
@@ -24,7 +25,8 @@ const candidateIds = Array.from(
 );
 const matching = new Set(candidateIds.filter((_, i) => i % 97 === 0));
 
-function repoRecording() {
+/** `sharedGroups`: answer the collation check so the shared table is used. */
+function repoRecording(sharedGroups = false) {
   const statements: {
     sql: string;
     params: Params;
@@ -34,6 +36,14 @@ function repoRecording() {
   let maxActive = 0;
   const execute = jest.fn(
     async (sql: string, params: Params, options?: DbQueryOptions) => {
+      // The shared viewer-group table's one-off collation check: no rows
+      // keeps the inlined group list.
+      if (sql.includes('information_schema.columns'))
+        return sharedGroups
+          ? (params.tables as string[]).map(() => ({
+              collation_name: 'utf8mb4_0900_ai_ci'
+            }))
+          : [];
       statements.push({ sql: format(sql, params), params, options });
       active++;
       maxActive = Math.max(maxActive, active);
@@ -54,6 +64,8 @@ function repoRecording() {
 }
 
 describe('wave overview candidate lookups', () => {
+  beforeEach(() => resetViewerGroupsCteSupport());
+
   it.each([
     ['findPinnedCandidateWaveIds', {}],
     ['findMutedCandidateWaveIds', {}],
@@ -80,6 +92,58 @@ describe('wave overview candidate lookups', () => {
       expect(queried).toEqual(candidateIds);
     }
   );
+
+  const groups = (count: number) =>
+    Array.from(
+      { length: count },
+      (_, i) => `10000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+
+  it.each([
+    ['the shared group table', true, 140],
+    ['the inlined group list', false, 70]
+  ])(
+    'leaves room for the viewer groups in every follow-candidate chunk (%s)',
+    async (_name, sharedGroups, groupCount) => {
+      const { repo, statements } = repoRecording(sharedGroups);
+      const result = await repo.findFollowedCandidateWaveIds({
+        authenticated_user_id: 'reader',
+        waveIds: candidateIds,
+        eligibleGroups: groups(groupCount)
+      });
+      expect(result).toEqual(matching);
+      expect(
+        statements.every(({ sql }) => sql.includes('fc_viewer_groups as ('))
+      ).toBe(sharedGroups);
+      for (const { sql } of statements) {
+        expect(Buffer.byteLength(sql)).toBeLessThanOrEqual(
+          PROXY_PIN_STATEMENT_BYTES
+        );
+      }
+      const queried = statements.flatMap(
+        ({ params }) => params.waveIds as string[]
+      );
+      expect(queried).toEqual(candidateIds);
+    }
+  );
+
+  it('keeps at most twice the groupless follow-candidate chunks for very large group sets', async () => {
+    const groupless = repoRecording(true);
+    await groupless.repo.findFollowedCandidateWaveIds({
+      authenticated_user_id: 'reader',
+      waveIds: candidateIds,
+      eligibleGroups: []
+    });
+    const many = repoRecording(true);
+    await many.repo.findFollowedCandidateWaveIds({
+      authenticated_user_id: 'reader',
+      waveIds: candidateIds,
+      eligibleGroups: groups(400)
+    });
+    expect(many.statements.length).toBeLessThanOrEqual(
+      2 * groupless.statements.length
+    );
+  });
 
   it('uses one statement for a first-page window of 250 candidates', async () => {
     const { repo, statements } = repoRecording();
