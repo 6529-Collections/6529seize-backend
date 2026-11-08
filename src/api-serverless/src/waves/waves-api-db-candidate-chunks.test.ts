@@ -34,6 +34,9 @@ function repoRecording() {
   let maxActive = 0;
   const execute = jest.fn(
     async (sql: string, params: Params, options?: DbQueryOptions) => {
+      // The shared viewer-group table's one-off collation check: no rows
+      // keeps the inlined group list these size checks were written for.
+      if (sql.includes('information_schema.columns')) return [];
       statements.push({ sql: format(sql, params), params, options });
       active++;
       maxActive = Math.max(maxActive, active);
