@@ -12,6 +12,7 @@ import { resetViewerGroupsCteSupport } from '@/waves/viewer-groups-cte';
 import {
   deleteUnusedViewerGroupSets,
   storeViewerGroupSet,
+  VIEWER_GROUP_SET_SETTLE_MS,
   viewerGroupSetHash,
   ViewerGroupSets,
   viewerGroupSets
@@ -35,6 +36,8 @@ const waves = [
   )
 ];
 const FLAG = 'FEATURE_VIEWER_GROUP_SET_TABLE';
+/** A write time far enough back that statements read the set. */
+const settled = () => Date.now() - VIEWER_GROUP_SET_SETTLE_MS;
 
 describeWithSeed('viewer group sets', withWaves(waves), () => {
   const statements: string[] = [];
@@ -73,7 +76,7 @@ describeWithSeed('viewer group sets', withWaves(waves), () => {
     const json = await read();
     expect(statements.every((sql) => sql.includes('json_table'))).toBe(true);
     expect(json).toEqual(['vgs-member', 'vgs-public']);
-    await storeViewerGroupSet(sqlExecutor, groups);
+    await storeViewerGroupSet(sqlExecutor, groups, settled());
     viewerGroupSets.reset();
     expect(await read()).toEqual(json);
     expect(statements.length).toBeGreaterThan(0);
@@ -138,7 +141,11 @@ describeWithSeed('viewer group sets', withWaves(waves), () => {
       () => true,
       () => now
     );
-    const hash = await storeViewerGroupSet(sqlExecutor, groups, now);
+    const hash = await storeViewerGroupSet(
+      sqlExecutor,
+      groups,
+      now - VIEWER_GROUP_SET_SETTLE_MS
+    );
     const source = () => sets.source(sqlExecutor, 'wi_viewer_groups', groups);
     expect((await source()).params).toEqual({ wi_viewer_groups_set: hash });
     now += Time.hours(5).toMillis();
@@ -156,6 +163,39 @@ describeWithSeed('viewer group sets', withWaves(waves), () => {
     now += Time.hours(19).toMillis() + 1;
     const after = await source();
     expect(after.cteSql).toContain('json_table');
+  });
+
+  it('reads a new set only once it has settled on every reader, and does not cache it before', async () => {
+    // The header check and the statement can run on different readers: a
+    // header visible on one says nothing about another that lags behind.
+    const written = Time.currentMillis();
+    let now = written;
+    const sets = new ViewerGroupSets(
+      async () => true,
+      () => true,
+      () => now
+    );
+    await storeViewerGroupSet(sqlExecutor, groups, written);
+    const source = () => sets.source(sqlExecutor, 'wi_viewer_groups', groups);
+    for (const age of [0, 1_000, VIEWER_GROUP_SET_SETTLE_MS - 1]) {
+      now = written + age;
+      expect((await source()).cteSql).toContain('json_table');
+    }
+    // Settling wrote nothing more: the set is as stored.
+    const [{ n: membersBefore }] = await sqlExecutor.execute<{ n: number }>(
+      `select count(*) as n from ${VIEWER_GROUP_SET_MEMBERS_TABLE}`
+    );
+    expect(Number(membersBefore)).toBe(groups.length);
+    now = written + VIEWER_GROUP_SET_SETTLE_MS;
+    expect((await source()).params).toEqual({
+      wi_viewer_groups_set: viewerGroupSetHash(groups)
+    });
+    // Now cached: a later read within the cache window needs no header.
+    await sqlExecutor.execute(`delete from ${VIEWER_GROUP_SETS_TABLE}`);
+    now += 1;
+    expect((await source()).params).toEqual({
+      wi_viewer_groups_set: viewerGroupSetHash(groups)
+    });
   });
 
   it('deletes only sets unused for 14 days, header and members together', async () => {

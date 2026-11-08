@@ -49,6 +49,17 @@ const TOUCH_EVERY = Time.days(1);
 /** Sets last used longer ago are touched before their hash is cached. */
 const TOUCH_NOW_AFTER = Time.days(2).toMillis();
 const WRITE_LEASE = Time.seconds(10);
+/**
+ * How long a newly written set waits before statements read it. The header
+ * check and the statement are separate autocommit statements, and through
+ * the proxy's reader endpoint they can run on different reader instances:
+ * a header visible on one reader says nothing about another that has not
+ * caught up, where the set would read empty and hide the viewer's waves.
+ * Production replica lag (AuroraReplicaLag) averages ~14 ms with one-minute
+ * maxima of 30-40 ms, so 5 s leaves a wide margin. Until then the request
+ * keeps the JSON copy.
+ */
+export const VIEWER_GROUP_SET_SETTLE_MS = 5_000;
 export const VIEWER_GROUP_SET_UNUSED_AFTER = Time.days(14);
 const METRIC_NAMESPACE = '6529/ViewerGroupSets';
 
@@ -287,8 +298,11 @@ export class ViewerGroupSets {
     try {
       if (!(await this.membersColumnSupported(db))) return json;
       const hash = viewerGroupSetHash(groupIds);
+      const state = await this.usable(db, hash, groupIds.length);
+      // Written moments ago: stored, but maybe not on every reader yet.
+      if (state === 'settling') return json;
       if (
-        (await this.usable(db, hash, groupIds.length)) &&
+        state === 'usable' &&
         (await this.touchIfDue(db, hash, groupIds.length))
       )
         return viewerGroupSetCte(name, hash);
@@ -327,7 +341,10 @@ export class ViewerGroupSets {
   }
 
   /**
-   * Whether the set's header is readable where statements read. A set is
+   * Whether statements can read the set: `usable` once its header is
+   * readable and it was written at least VIEWER_GROUP_SET_SETTLE_MS ago,
+   * `settling` while it is younger (not cached, so the next request checks
+   * again), `absent` without a header (or when cleanup deleted it). A set is
    * cached only while it is far from cleanup: one last used more than
    * `TOUCH_NOW_AFTER` ago is touched first (and dropped if it is gone), so a
    * cached hash always outlives the cache entry.
@@ -336,34 +353,39 @@ export class ViewerGroupSets {
     db: SqlExecutor,
     hash: string,
     groupCount: number
-  ): Promise<boolean> {
+  ): Promise<'usable' | 'settling' | 'absent'> {
     const entry = this.known.get(hash);
     const now = this.now();
-    if (entry && now - entry.seenAt < KNOWN_FOR_MS) return true;
-    const [header] = await db.execute<{ last_used_at: number }>(
-      `select last_used_at from ${VIEWER_GROUP_SETS_TABLE} where set_hash = :hash`,
+    if (entry && now - entry.seenAt < KNOWN_FOR_MS) return 'usable';
+    const [header] = await db.execute<{
+      last_used_at: number;
+      created_at: number;
+    }>(
+      `select last_used_at, created_at from ${VIEWER_GROUP_SETS_TABLE} where set_hash = :hash`,
       { hash }
     );
+    if (header && now - Number(header.created_at) < VIEWER_GROUP_SET_SETTLE_MS)
+      return 'settling';
     let touchedAt = entry?.touchedAt ?? Number.NEGATIVE_INFINITY;
     if (header && now - Number(header.last_used_at) > TOUCH_NOW_AFTER) {
       if (!(await touchViewerGroupSet(db, hash, now))) {
         recordMetric('ViewerGroupSetsGone', groupCount);
         this.known.delete(hash);
-        return false;
+        return 'absent';
       }
       recordMetric('ViewerGroupSetTouches', groupCount);
       touchedAt = now;
     }
     if (!header) {
       this.known.delete(hash);
-      return false;
+      return 'absent';
     }
     if (this.known.size >= KNOWN_MAX) {
       const oldest = this.known.keys().next().value;
       if (oldest !== undefined) this.known.delete(oldest);
     }
     this.known.set(hash, { seenAt: now, touchedAt });
-    return true;
+    return 'usable';
   }
 
   /**
