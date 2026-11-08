@@ -7,6 +7,9 @@ import * as mysql from 'mysql';
  */
 export const SQL_IN_LIST_CHUNK_BYTES = 12_000;
 
+/** Values per page for paged reads that also bound the list by count. */
+export const SQL_IN_LIST_PAGE_VALUES = 100;
+
 /** Bytes the driver inlines for these values as one comma-separated list. */
 export function sqlInListBytes(values: readonly (string | number)[]): number {
   return Array.from(new Set(values)).reduce<number>(
@@ -18,15 +21,20 @@ export function sqlInListBytes(values: readonly (string | number)[]): number {
 
 /**
  * Splits distinct values (first-occurrence order) into chunks whose escaped,
- * comma-separated literal list stays within maxBytes. A single value larger
- * than the budget forms its own chunk.
+ * comma-separated literal list stays within maxBytes and, when given, holds
+ * at most maxValues values. A single value larger than the budget forms its
+ * own chunk.
  */
 export function chunkSqlInListValues<T extends string | number>(
   values: readonly T[],
-  maxBytes: number = SQL_IN_LIST_CHUNK_BYTES
+  maxBytes: number = SQL_IN_LIST_CHUNK_BYTES,
+  maxValues: number = Number.POSITIVE_INFINITY
 ): T[][] {
   if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
     throw new RangeError('maxBytes must be a positive number');
+  }
+  if (!(maxValues >= 1)) {
+    throw new RangeError('maxValues must be at least 1');
   }
   const chunks: T[][] = [];
   let current: T[] = [];
@@ -34,7 +42,10 @@ export function chunkSqlInListValues<T extends string | number>(
   for (const value of Array.from(new Set(values))) {
     const bytes = Buffer.byteLength(mysql.escape(value), 'utf8');
     // ", " separates inlined values (my-sql.helpers prepareStatement).
-    if (current.length && currentBytes + 2 + bytes > maxBytes) {
+    if (
+      current.length &&
+      (current.length >= maxValues || currentBytes + 2 + bytes > maxBytes)
+    ) {
       chunks.push(current);
       current = [];
       currentBytes = 0;

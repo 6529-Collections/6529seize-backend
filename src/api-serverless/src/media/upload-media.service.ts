@@ -48,6 +48,12 @@ type MediaUploadSource =
 
 type SanitizerQueue = (input: { mediaUploadId: string }) => Promise<void>;
 
+/** The distribution photo a multipart upload belongs to (admin routes). */
+export interface DistributionPhotoScope {
+  readonly contract: string;
+  readonly cardId: number;
+}
+
 export class UploadMediaService {
   constructor(
     private readonly getS3: () => S3Client,
@@ -140,15 +146,22 @@ export class UploadMediaService {
     upload_id,
     key,
     part_no,
-    authenticatedProfileId
+    authenticatedProfileId,
+    distributionPhoto
   }: {
     upload_id: string;
     key: string;
     part_no: number;
     authenticatedProfileId?: string;
+    distributionPhoto?: DistributionPhotoScope;
   }): Promise<string> {
     const upload = await this.findTrackedDropMediaUpload({ key, upload_id });
-    this.assertDropMediaUploadOwner({ upload, key, authenticatedProfileId });
+    this.assertDropMediaUploadOwner({
+      upload,
+      key,
+      authenticatedProfileId,
+      distributionPhoto
+    });
     this.assertImageUploadIsTracked(key, upload);
     const bucket = upload?.ingest_bucket ?? this.getS3Bucket();
     const objectKey = upload?.ingest_key ?? key;
@@ -173,16 +186,23 @@ export class UploadMediaService {
     upload_id,
     parts,
     authenticatedProfileId,
+    distributionPhoto,
     video_poster_base64
   }: {
     upload_id: string;
     key: string;
     parts: { etag: string; part_no: number }[];
     authenticatedProfileId?: string;
+    distributionPhoto?: DistributionPhotoScope;
     video_poster_base64?: string;
   }): Promise<ApiCompleteMultipartUploadResponse> {
     const upload = await this.findTrackedDropMediaUpload({ key, upload_id });
-    this.assertDropMediaUploadOwner({ upload, key, authenticatedProfileId });
+    this.assertDropMediaUploadOwner({
+      upload,
+      key,
+      authenticatedProfileId,
+      distributionPhoto
+    });
     this.assertImageUploadIsTracked(key, upload);
     if (upload && this.isPrivateImageUpload(upload)) {
       return await this.completeSanitizedImageMultipartUpload({
@@ -295,7 +315,15 @@ export class UploadMediaService {
     card_id: number;
   }): string {
     const fileExtension = getFileExtension(file_name);
-    return `distribution/${process.env.NODE_ENV}/${contract.toLowerCase()}/${card_id}-${randomUUID()}${fileExtension}`;
+    return `${this.distributionPhotoKeyPrefix({ contract, cardId: card_id })}${randomUUID()}${fileExtension}`;
+  }
+
+  /** Every key issued for one card's distribution photos starts with this. */
+  private distributionPhotoKeyPrefix({
+    contract,
+    cardId
+  }: DistributionPhotoScope): string {
+    return `distribution/${process.env.NODE_ENV}/${contract.toLowerCase()}/${cardId}-`;
   }
 
   private createWaveMediaKey({
@@ -636,17 +664,30 @@ export class UploadMediaService {
     return key.startsWith('drops/') || key.startsWith('waves/');
   }
 
+  /**
+   * A multipart part URL or completion acts only on a key the server issued
+   * to this caller: a tracked upload of this profile, an untracked drop or
+   * wave key under this profile's author prefix, or (admin distribution
+   * routes) a key under this card's distribution prefix. Anything else is
+   * refused here, before any S3 call.
+   */
   private assertDropMediaUploadOwner({
     upload,
     key,
-    authenticatedProfileId
+    authenticatedProfileId,
+    distributionPhoto
   }: {
     upload: DropMediaUploadEntity | null;
     key: string;
     authenticatedProfileId: string | undefined;
+    distributionPhoto?: DistributionPhotoScope;
   }): void {
     if (!upload) {
-      this.assertUntrackedDropMediaKeyOwner({ key, authenticatedProfileId });
+      this.assertUntrackedDropMediaKeyOwner({
+        key,
+        authenticatedProfileId,
+        distributionPhoto
+      });
       return;
     }
     if (
@@ -659,13 +700,21 @@ export class UploadMediaService {
 
   private assertUntrackedDropMediaKeyOwner({
     key,
-    authenticatedProfileId
+    authenticatedProfileId,
+    distributionPhoto
   }: {
     key: string;
     authenticatedProfileId: string | undefined;
+    distributionPhoto?: DistributionPhotoScope;
   }): void {
     if (!this.isPotentialTrackedDropMediaKey(key)) {
-      return;
+      if (
+        distributionPhoto &&
+        key.startsWith(this.distributionPhotoKeyPrefix(distributionPhoto))
+      ) {
+        return;
+      }
+      throw new ForbiddenException('Cannot write this media upload');
     }
     if (!authenticatedProfileId) {
       throw new ForbiddenException('Cannot write this media upload');

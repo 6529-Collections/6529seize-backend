@@ -550,6 +550,81 @@ describe('UploadMediaService', () => {
     });
   });
 
+  describe('distribution photo keys', () => {
+    function distributionService() {
+      const publicS3 = {
+        send: jest.fn().mockResolvedValue({ Key: 'completed-key' })
+      };
+      const uploadsDb = {
+        findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue(null)
+      };
+      const service = new UploadMediaService(
+        () => publicS3 as unknown as S3Client,
+        () => ({ send: jest.fn() }) as unknown as S3Client,
+        uploadsDb as unknown as DropMediaUploadsDb,
+        jest.fn()
+      );
+      return { service, publicS3 };
+    }
+    const card = { contract: '0xABC', cardId: 7 };
+
+    it('completes and signs parts for a key under its card prefix', async () => {
+      const { service, publicS3 } = distributionService();
+      const key = 'distribution/test/0xabc/7-photo-uuid.jpg';
+
+      await service.getSignedUrlForPartOfMultipartUpload({
+        upload_id: 'upload-1',
+        key,
+        part_no: 1,
+        distributionPhoto: card
+      });
+      await service.completeMultipartUpload({
+        upload_id: 'upload-1',
+        key,
+        parts: [{ etag: '"etag-1"', part_no: 1 }],
+        distributionPhoto: card
+      });
+
+      expect(getSignedUrlMock).toHaveBeenCalledTimes(1);
+      expect(publicS3.send).toHaveBeenCalledTimes(1);
+      expect(publicS3.send.mock.calls[0][0].input).toMatchObject({ Key: key });
+    });
+
+    it.each([
+      ['another card', 'distribution/test/0xabc/8-photo.jpg', card],
+      ['another contract', 'distribution/test/0xdef/7-photo.jpg', card],
+      [
+        'no distribution scope',
+        'distribution/test/0xabc/7-photo.jpg',
+        undefined
+      ]
+    ])(
+      'refuses a key for %s before any S3 call',
+      async (_name, key, distributionPhoto) => {
+        const { service, publicS3 } = distributionService();
+
+        await expect(
+          service.completeMultipartUpload({
+            upload_id: 'upload-1',
+            key,
+            parts: [{ etag: '"etag-1"', part_no: 1 }],
+            distributionPhoto
+          })
+        ).rejects.toThrow('Cannot write this media upload');
+        await expect(
+          service.getSignedUrlForPartOfMultipartUpload({
+            upload_id: 'upload-1',
+            key,
+            part_no: 1,
+            distributionPhoto
+          })
+        ).rejects.toThrow('Cannot write this media upload');
+        expect(publicS3.send).not.toHaveBeenCalled();
+        expect(getSignedUrlMock).not.toHaveBeenCalled();
+      }
+    );
+  });
+
   it('rejects tracked upload part signing for another profile', async () => {
     const uploadsDb = {
       findByPublicKeyAndS3UploadId: jest.fn().mockResolvedValue({
