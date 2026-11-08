@@ -1,3 +1,4 @@
+import { runWriteTransaction } from '@/api/write-transaction-budget';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { DropsApiService, dropsService } from './drops.api.service';
@@ -313,20 +314,24 @@ export class DropCreationApiService {
     >;
     try {
       created = await hops.time('drop_commit_ms', () =>
-        this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
-          return await this.createDropWithGivenConnection(
-            {
-              model: createModel,
-              authorId,
-              preResolvedIdentityNomination,
-              prePublication,
-              requestDailyActivityCredit,
-              clientDrop
-            },
-            normalizeCreateDropPollRequest(createDropRequest.poll),
-            { timer: ctx.timer!, connection }
-          );
-        })
+        runWriteTransaction((options) =>
+          this.dropsDb.executeNativeQueriesInTransaction(
+            async (connection) =>
+              await this.createDropWithGivenConnection(
+                {
+                  model: createModel,
+                  authorId,
+                  preResolvedIdentityNomination,
+                  prePublication,
+                  requestDailyActivityCredit,
+                  clientDrop
+                },
+                normalizeCreateDropPollRequest(createDropRequest.poll),
+                { timer: ctx.timer!, connection }
+              ),
+            options
+          )
+        )
       );
     } catch (error) {
       if (!(error instanceof DropClientIdTakenError) || !clientDrop) {
@@ -346,11 +351,14 @@ export class DropCreationApiService {
     }
     const committedAt = hops.elapsed();
     const {
-      drop,
+      dropId: createdDropId,
       pendingPushNotificationIds,
       dmUnreadRecipientIds,
       dailyActivityCreditRequestEnqueued
     } = created;
+    const drop = await hops.time('post_commit_read_ms', () =>
+      this.readCreatedDrop(createdDropId, authorId, ctx.timer)
+    );
     if (clientDrop) {
       drop.client_drop_id = clientDrop.clientDropId;
     }
@@ -477,6 +485,30 @@ export class DropCreationApiService {
     return { ...drop, client_drop_id: clientDrop.clientDropId };
   }
 
+  /**
+   * The created drop as its author sees it, read after the write transaction
+   * committed, in a short read-only transaction on the writer (so it sees the
+   * new drop). Keeping the mapping reads out of the write transaction keeps
+   * its locks short and its statements sequential, as the write budget
+   * requires.
+   */
+  private async readCreatedDrop(
+    dropId: string,
+    authorId: string,
+    timer?: Timer
+  ): Promise<ApiDrop> {
+    return this.dropsDb.executeNativeQueriesInTransaction((connection) =>
+      this.dropsService.findDropByIdOrThrow(
+        { dropId, skipEligibilityCheck: true },
+        {
+          connection,
+          authenticationContext: AuthenticationContext.fromProfileId(authorId),
+          timer
+        }
+      )
+    );
+  }
+
   private async createDropWithGivenConnection(
     {
       model,
@@ -498,7 +530,7 @@ export class DropCreationApiService {
     poll: CreateDropPollRequest | null | undefined,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
   ): Promise<{
-    drop: ApiDrop;
+    dropId: string;
     pendingPushNotificationIds: number[];
     dmUnreadRecipientIds: string[];
     dailyActivityCreditRequestEnqueued: boolean;
@@ -551,19 +583,8 @@ export class DropCreationApiService {
             { timer, connection }
           )
         : false;
-    const drop = await this.dropsService.findDropByIdOrThrow(
-      {
-        dropId: drop_id,
-        skipEligibilityCheck: true
-      },
-      {
-        connection,
-        authenticationContext: AuthenticationContext.fromProfileId(authorId),
-        timer
-      }
-    );
     return {
-      drop,
+      dropId: drop_id,
       pendingPushNotificationIds: pending_push_notification_ids,
       dmUnreadRecipientIds: dm_unread_recipient_ids ?? [],
       dailyActivityCreditRequestEnqueued

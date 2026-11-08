@@ -1,3 +1,4 @@
+import { withRequestDeadline } from '@/api/write-transaction-budget';
 import type {} from '../../typeorm-index-options';
 import { app, ensureInitialized } from './app';
 import * as sentryContext from '../../sentry.context';
@@ -95,10 +96,15 @@ async function handleInvocation(
       async () => operationalResponse(await wsHandler(event))
     );
   } else {
-    return normalizeSetCookieResponse(
-      event,
-      operationalResponse(await httpHandler(event, context))
-    );
+    // Write transactions end (and answer 503) before this Lambda times out.
+    const remaining =
+      typeof context?.getRemainingTimeInMillis === 'function'
+        ? context.getRemainingTimeInMillis()
+        : null;
+    const response = remaining
+      ? await withRequestDeadline(remaining, () => httpHandler(event, context))
+      : await httpHandler(event, context);
+    return normalizeSetCookieResponse(event, operationalResponse(response));
   }
 }
 

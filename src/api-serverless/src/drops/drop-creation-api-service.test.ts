@@ -354,6 +354,9 @@ describe('DropCreationApiService.createDrop', () => {
         'drop-written',
         'daily-credit-request-written',
         'committed',
+        // The created drop is read back after commit, in its own transaction.
+        'transaction',
+        'committed',
         'daily-credit-wakeup-sent',
         'unread-cache-invalidated'
       ]);
@@ -471,6 +474,8 @@ describe('DropCreationApiService.createDrop', () => {
     ).not.toHaveBeenCalled();
     expect(order).toEqual([
       'drop-written',
+      'committed',
+      // The created drop is read back after commit, in its own transaction.
       'committed',
       'drop-broadcast',
       'unread-state-read',
