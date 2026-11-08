@@ -25,11 +25,13 @@ export function waveReadAccessSql(
 export function optionalWaveReadAccessSql(
   waveIdSql: string,
   hasEligibleGroups: boolean,
-  groupIdsParam = 'eligibleGroupIds'
+  groupIdsParam = 'eligibleGroupIds',
+  // A subquery over the same group ids, used instead of the inlined list.
+  groupSetSql?: string
 ): string {
   return `(${waveIdSql} is null or exists (
     select 1 from ${WAVES_TABLE} access_wave
     where access_wave.id = ${waveIdSql}
-      and ${waveReadAccessSql('access_wave', hasEligibleGroups, groupIdsParam)}
+      and ${waveReadAccessSql('access_wave', hasEligibleGroups, groupIdsParam, groupSetSql)}
   ))`;
 }

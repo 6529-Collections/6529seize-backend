@@ -32,9 +32,12 @@ import { Time, Timer } from '../time';
 import { RequestContext } from '../request.context';
 import { ids } from '../ids';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
-import { DB_TEXT_COLLATION } from '@/db/db-collation';
+import {
+  resetViewerGroupsCteSupport,
+  viewerGroupsCte,
+  viewerGroupsCteSupported
+} from '@/waves/viewer-groups-cte';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
-import { Logger } from '@/logging';
 import {
   anonymousCompetitionEntrySql,
   competitionAnonymityViewerId
@@ -59,74 +62,12 @@ const WAVE_ACCESS_DROP_LOG_TYPES_PARAM = 'wave_access_drop_log_types';
 const WAVE_ACCESS_RATING_EDIT_TYPE_PARAM = 'wave_access_rating_edit_type';
 const WAVE_ACCESS_WAVE_REP_MATTER_PARAM = 'wave_access_wave_rep_matter';
 const WAVE_ACCESS_GROUP_IDS_PARAM = 'wave_access_group_ids';
-const VIEWER_GROUPS_JSON_PARAM = 'pa_viewer_groups_json';
 const VIEWER_GROUPS_CTE = 'pa_viewer_groups';
-const logger = Logger.get('PROFILE_ACTIVITY_LOGS_DB');
-
-/**
- * The viewer's eligible group ids as one shared table, so the search inlines
- * them once instead of in every branch and type sub-branch (up to 3 × N × 4
- * copies, megabytes for viewers with hundreds of groups). The ids are cast
- * to the compared column's collation, so `IN (SELECT ...)` matches exactly as
- * the inlined literal list did and needs no conversion.
- */
-const VIEWER_GROUPS_CTE_SQL = `${VIEWER_GROUPS_CTE} as (
-        select convert(viewer_group.id using utf8mb4) collate ${DB_TEXT_COLLATION} as id
-        from json_table(:${VIEWER_GROUPS_JSON_PARAM}, '$[*]' columns (id varchar(200) path '$')) viewer_group
-      )`;
-/**
- * Each reference reads the groups through two hints, so the JSON is parsed
- * once per statement rather than once per checked wave row:
- * - NO_MERGE materializes the shared table once, and every reference reuses
- *   it (otherwise each reference re-reads JSON_TABLE).
- * - SUBQUERY(MATERIALIZATION) runs each `IN` once into a deduplicated,
- *   indexed table. The `IN` sits under OR, so it can't be a semijoin; without
- *   the hint the optimizer may pick a correlated EXISTS that re-reads the
- *   groups for every wave row (seen on production plans for small branches).
- */
-const VIEWER_GROUPS_SET_SQL = `select /*+ NO_MERGE(${VIEWER_GROUPS_CTE}) SUBQUERY(MATERIALIZATION) */ id from ${VIEWER_GROUPS_CTE}`;
-
-let viewerGroupsCteSupport: Promise<boolean> | undefined;
-
-/**
- * The shared table is used only while the compared columns use the collation
- * it is cast to; otherwise the search keeps the inlined list. Read once per
- * container.
- */
-function viewerGroupsCteSupported(db: SqlExecutor): Promise<boolean> {
-  viewerGroupsCteSupport ??= db
-    .execute<{ collation_name: string | null }>(
-      `select collation_name as collation_name
-       from information_schema.columns
-       where table_schema = database()
-         and column_name = 'visibility_group_id'
-         and table_name in (:tables)`,
-      { tables: [WAVES_TABLE, legacyGetView(WAVES_TABLE)] }
-    )
-    .then((rows) => {
-      const supported =
-        rows.length === 2 &&
-        rows.every((row) => row.collation_name === DB_TEXT_COLLATION);
-      if (!supported)
-        logger.warn('[VIEWER_GROUPS_CTE_DISABLED] collation mismatch', {
-          expected: DB_TEXT_COLLATION,
-          found: rows.map((row) => row.collation_name)
-        });
-      return supported;
-    })
-    .catch(() => {
-      // Retry on a later search; use the inlined list meanwhile.
-      viewerGroupsCteSupport = undefined;
-      return false;
-    });
-  return viewerGroupsCteSupport;
-}
+/** Columns the shared viewer-group table is compared with. */
+const VIEWER_GROUP_COLUMN_TABLES = [WAVES_TABLE, legacyGetView(WAVES_TABLE)];
 
 /** Test seam: forget the cached collation check, or pin its result. */
-export function resetViewerGroupsCteSupport(supported?: boolean): void {
-  viewerGroupsCteSupport =
-    supported === undefined ? undefined : Promise.resolve(supported);
-}
+export { resetViewerGroupsCteSupport };
 
 function isWaveScopedLogType(type: ProfileActivityLogType): boolean {
   return (
@@ -477,22 +418,22 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       };
     })();
 
+    // The viewer's groups go in once, as a shared table, instead of in every
+    // branch and type sub-branch (up to 3 x N x 4 copies).
     const sharedViewerGroups =
       params.viewer_eligible_group_ids.length > 0 &&
-      (await viewerGroupsCteSupported(this.db));
+      (await viewerGroupsCteSupported(this.db, VIEWER_GROUP_COLUMN_TABLES))
+        ? viewerGroupsCte(VIEWER_GROUPS_CTE, params.viewer_eligible_group_ids)
+        : undefined;
     const waveAccess = buildProfileLogReadAccessFilter(
       params.type,
       params.viewer_eligible_group_ids,
       ctx,
-      sharedViewerGroups ? VIEWER_GROUPS_SET_SQL : undefined
+      sharedViewerGroups?.setSql
     );
-    if (sharedViewerGroups) {
-      waveAccess.params[VIEWER_GROUPS_JSON_PARAM] = JSON.stringify(
-        params.viewer_eligible_group_ids
-      );
-    }
-    const viewerGroupsCte = sharedViewerGroups
-      ? `${VIEWER_GROUPS_CTE_SQL},`
+    Object.assign(waveAccess.params, sharedViewerGroups?.params);
+    const viewerGroupsCteSql = sharedViewerGroups
+      ? `${sharedViewerGroups.cteSql},`
       : '';
 
     // Build one branch that returns only (id, created_at)
@@ -606,7 +547,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
 
       // UNION only ids+created_at, then fetch rows once
       finalSql = `
-      WITH ${viewerGroupsCte} ids AS (
+      WITH ${viewerGroupsCteSql} ids AS (
         ${branches.join('\nUNION ALL\n')}
       )
       SELECT pa_logs.*
@@ -661,7 +602,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       single += ` ORDER BY pa_logs.created_at ${orderDir} LIMIT ${perBranchLimit}`;
 
       finalSql = `
-      WITH ${viewerGroupsCte} ids AS (
+      WITH ${viewerGroupsCteSql} ids AS (
         ${single}
       )
       SELECT pa_logs.*
