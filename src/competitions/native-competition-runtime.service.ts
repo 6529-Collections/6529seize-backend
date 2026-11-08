@@ -378,11 +378,42 @@ export class NativeCompetitionRuntimeService {
     )
       return;
     await this.emitScheduledTransitions(competition, now, ctx);
+    if (await this.isUndueStaticRank(competition, now, ctx)) return;
     await this.reconcileCompetitionCredit(competition, now, ctx);
     const state = await this.loadState(competition.id, ctx);
     if (competition.type === CompetitionType.RANK)
       await this.processRank(competition, state, now, ctx);
     else await this.processApprove(competition, state, now, ctx);
+  }
+
+  /**
+   * True when this run has nothing to do for a Rank competition whose
+   * leaderboard cannot move with time: no decision is due, the stored next
+   * decision time is current, and there is no time lock. Its leaderboard then
+   * changes only through votes, entries, pauses or credit, which refresh it
+   * themselves or through the leaderboard snapshotter, so the decision run
+   * skips the credit reconciliation, state load and leaderboard rewrite it
+   * would otherwise repeat every minute under the competition lock.
+   * Time-locked and Approve competitions keep the full run: their standings
+   * move with time.
+   */
+  private async isUndueStaticRank(
+    competition: Competition,
+    now: number,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    if (competition.type !== CompetitionType.RANK) return false;
+    if ((competition.decisions.time_lock_ms ?? 0) > 0) return false;
+    const progress = await this.repository.decisionProgress(
+      competition.id,
+      ctx
+    );
+    const next = nextNativeDecision(competition.decisions, progress.latest);
+    const stored = competition.decisions.next_decision_time;
+    // A stale stored time needs processRank's schedule update.
+    return (
+      next !== null && next >= now && stored !== null && Number(stored) === next
+    );
   }
 
   private async loadState(
