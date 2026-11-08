@@ -53,6 +53,20 @@ type PostCommitSideEffect = {
   readonly run: () => Promise<void>;
 };
 
+/**
+ * Reactions run their own write transaction (with the request's write
+ * budget) and read the drop and broadcast after it commits. Joining a
+ * caller's transaction is not supported: the post-write read would overlap
+ * statements on that connection, which the write budget rejects, and the
+ * broadcast would go out before the caller commits.
+ */
+function assertOwnTransaction(ctx: RequestContext): void {
+  if (ctx.connection)
+    throw new Error(
+      'Reactions run their own transaction; call this after the caller commits'
+    );
+}
+
 export class ReactionsService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -67,52 +81,6 @@ export class ReactionsService {
     private readonly metricsRecorder: MetricsRecorder,
     private readonly broadcastCoalescer: DropBroadcastCoalescer = dropBroadcastCoalescer
   ) {}
-
-  // Caller-owned transactions keep the legacy all-in-transaction behavior.
-  // HTTP reaction routes use the no-connection path so post-commit side effects
-  // cannot roll back an already durable reaction.
-  private async handleReactionInExistingTransaction(
-    dropId: string,
-    profileId: string,
-    callback: (
-      dropEntity: DropEntity,
-      groupIdsUserIsEligibleFor: string[]
-    ) => Promise<boolean>,
-    ctx: RequestContext
-  ) {
-    const groupIdsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
-        profileId,
-        ctx.timer
-      );
-    const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
-      dropId,
-      groupIdsUserIsEligibleFor,
-      ctx.connection
-    );
-    if (!dropEntity) {
-      throw new NotFoundException(`Drop ${dropId} not found`);
-    }
-    const reactionChanged = await callback(
-      dropEntity,
-      groupIdsUserIsEligibleFor
-    );
-
-    // The caller's transaction connection already sees this write, so there
-    // is no replica to wait for. Sleeping here only held the caller's locks.
-    const drop = await this.dropsService.findDropByIdOrThrow(
-      {
-        dropId: dropId,
-        skipEligibilityCheck: true
-      },
-      ctx
-    );
-
-    if (reactionChanged) {
-      await this.wsListenersNotifier.notifyAboutDropReactionUpdate(drop, ctx);
-    }
-    return drop;
-  }
 
   private async handleReactionMutation(
     dropId: string,
@@ -262,14 +230,7 @@ export class ReactionsService {
     reaction: string,
     ctx: RequestContext
   ): Promise<ApiDrop> {
-    if (ctx.connection) {
-      return await this.addReactionInExistingTransaction(
-        dropId,
-        profileId,
-        reaction,
-        ctx
-      );
-    }
+    assertOwnTransaction(ctx);
 
     const mutationResult = await runWriteTransaction((options) =>
       this.reactionsDb.executeNativeQueriesInTransaction(
@@ -362,86 +323,12 @@ export class ReactionsService {
     );
   }
 
-  private async addReactionInExistingTransaction(
-    dropId: string,
-    profileId: string,
-    reaction: string,
-    ctx: RequestContext
-  ): Promise<ApiDrop> {
-    const connection = ctx.connection;
-    if (!connection) {
-      throw new Error('addReactionInExistingTransaction requires a connection');
-    }
-
-    return await this.handleReactionInExistingTransaction(
-      dropId,
-      profileId,
-      async (dropEntity) => {
-        const wave = await this.validateReaction(dropEntity, {
-          ...ctx,
-          connection
-        });
-        const reactionChanged = await this.reactionsDb.addReaction(
-          profileId,
-          dropId,
-          dropEntity.wave_id,
-          reaction,
-          { ...ctx, connection }
-        );
-
-        if (!reactionChanged) {
-          return false;
-        }
-
-        await inSequence([
-          () =>
-            this.metricsRecorder.recordActiveIdentity(
-              { identityId: profileId },
-              ctx
-            ),
-          () =>
-            profileActivityLogsDb.insert(
-              this.buildReactionActivityLog({
-                dropEntity,
-                profileId,
-                reaction
-              }),
-              connection,
-              ctx.timer
-            ),
-          () =>
-            dropEntity.author_id === profileId
-              ? Promise.resolve()
-              : this.userNotifier.notifyOfDropReaction(
-                  {
-                    profile_id: profileId,
-                    drop_id: dropId,
-                    drop_author_id: dropEntity.author_id,
-                    reaction: reaction,
-                    wave_id: dropEntity.wave_id
-                  },
-                  wave.visibility_group_id,
-                  connection
-                )
-        ]);
-        return true;
-      },
-      ctx
-    );
-  }
-
   async removeReaction(
     dropId: string,
     profileId: string,
     ctx: RequestContext
   ): Promise<ApiDrop> {
-    if (ctx.connection) {
-      return await this.removeReactionInExistingTransaction(
-        dropId,
-        profileId,
-        ctx
-      );
-    }
+    assertOwnTransaction(ctx);
 
     const mutationResult = await runWriteTransaction((options) =>
       this.reactionsDb.executeNativeQueriesInTransaction(
@@ -500,52 +387,6 @@ export class ReactionsService {
           ctx
         )
       ],
-      ctx
-    );
-  }
-
-  private async removeReactionInExistingTransaction(
-    dropId: string,
-    profileId: string,
-    ctx: RequestContext
-  ): Promise<ApiDrop> {
-    const connection = ctx.connection;
-    if (!connection) {
-      throw new Error(
-        'removeReactionInExistingTransaction requires a connection'
-      );
-    }
-
-    return await this.handleReactionInExistingTransaction(
-      dropId,
-      profileId,
-      async (dropEntity) => {
-        await this.validateReaction(dropEntity, {
-          ...ctx,
-          connection
-        });
-        const reactionChanged = await this.reactionsDb.removeReaction(
-          profileId,
-          dropId,
-          dropEntity.wave_id,
-          { ...ctx, connection }
-        );
-
-        if (!reactionChanged) {
-          return false;
-        }
-
-        await profileActivityLogsDb.insert(
-          this.buildReactionActivityLog({
-            dropEntity,
-            profileId,
-            reaction: null
-          }),
-          connection,
-          ctx.timer
-        );
-        return true;
-      },
       ctx
     );
   }
