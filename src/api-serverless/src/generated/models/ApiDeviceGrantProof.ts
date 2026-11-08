@@ -49,10 +49,6 @@ export class ApiDeviceGrantProof {
     'created_at': number;
     'revoked_at': number | null;
     'last_used_at': number | null;
-    /**
-    * Whether the owner acknowledged the new-device notice. Returned only to the owner.
-    */
-    'notice_acknowledged'?: boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -148,12 +144,6 @@ export class ApiDeviceGrantProof {
             "baseName": "last_used_at",
             "type": "number",
             "format": "int64"
-        },
-        {
-            "name": "notice_acknowledged",
-            "baseName": "notice_acknowledged",
-            "type": "boolean",
-            "format": ""
         }    ];
 
     static getAttributeTypeMap() {

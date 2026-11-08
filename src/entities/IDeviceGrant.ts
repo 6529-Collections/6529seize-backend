@@ -52,6 +52,6 @@ export class DeviceGrantEntity {
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly last_used_at!: number | null;
 
-  @Column({ type: 'boolean', default: false })
+  @Column({ type: 'boolean', nullable: false, default: false })
   readonly notice_acknowledged?: boolean;
 }

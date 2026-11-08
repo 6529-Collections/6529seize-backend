@@ -264,7 +264,8 @@ export class DeviceGrantsService {
       const txCtx = { ...ctx, connection };
       const grant = await this.db.lockGrant(grantId, txCtx);
       if (
-        grant?.revoked_at !== null ||
+        !grant ||
+        grant.revoked_at !== null ||
         Number(grant.expires_at) <= this.now() ||
         !(await this.isCallerWallet(grant.wallet, caller, txCtx))
       ) {

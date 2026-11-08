@@ -135,15 +135,18 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** The caller holds the grant row lock and has checked ownership. */
   async acknowledgeGrant(id: string, ctx: RequestContext): Promise<void> {
-    await this.timedExecute(
+    const result = await this.timedExecute(
       'acknowledgeGrant',
-      `update ${DEVICE_GRANTS_TABLE} set notice_acknowledged = true
-       where id = :id and notice_acknowledged = false`,
+      `update ${DEVICE_GRANTS_TABLE} set notice_acknowledged = true where id = :id`,
       { id },
       ctx,
       DbPoolName.WRITE
     );
+    if (this.db.getAffectedRows(result) !== 1) {
+      throw new Error('Could not persist device grant acknowledgment');
+    }
   }
 
   /** Sets revoked_at once; later calls keep the first revocation time. */
