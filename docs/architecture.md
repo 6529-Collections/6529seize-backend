@@ -1200,6 +1200,36 @@ behind `E2EE_DMS_ENABLED` (off in production). It is a ciphertext-only
 orderer for MLS groups; see [End-to-end encrypted messaging](#end-to-end-encrypted-messaging-d109)
 below and [e2ee-messaging.md](./e2ee-messaging.md).
 
+`POST /api/e` is the first-party telemetry collector (C52), reached by
+browsers as same-origin `6529.io/e` through a CloudFront behavior that adds
+`CloudFront-Viewer-Address`/`-Country` and a secret origin header
+(`TELEMETRY_EDGE_SECRET`); edge headers are ignored without that secret. It is
+mounted ahead of the shared JSON parser and rate limiter, reads at most 8 KB of
+text, keeps only schema v1 (`telemetry.schema.ts`, published as
+`telemetry-collector.v1.schema.json`) and increments daily counter tables
+`analytics_daily`, `vitals_daily` (log-scale histogram buckets) and
+`health_daily`. No raw events, IPs, user agents or request bodies are stored or
+logged. Its rate limit is keyed on an HMAC of the viewer IP under a daily salt
+that lives only in Redis memory and expires at UTC midnight. The first request
+of each UTC day sweeps rows older than 25 months.
+
+Daily counts of people (C52 D2/C52a) are stored only as numbers in
+`uniques_daily`. Anonymous visitors: each page view's HMAC of (daily salt, IP,
+browser family, optional coarse client `fp`) goes into a per-day Redis
+HyperLogLog and is discarded; a Redis-locked flush persists the count at most
+every five minutes. Signed-in DAU/WAU/MAU are snapshotted by the same daily job
+from `wallet_auth_sessions.last_used_at` (distinct consolidated identities) and
+from the existing `ACTIVE_IDENTITY` hourly rollup (authenticated write
+activity).
+
+`POST /api/e/diag` (`6529.io/e/diag`) stores a user-sent diagnostics bundle in
+`telemetry_diagnostics`: gzip, AES-256-GCM under `TELEMETRY_DIAG_KEY` with the
+short code as associated data, no sender data, hard-deleted 14 days after upload
+(by uploads and the daily job). Bundles are read through
+`GET /api/telemetry/diagnostics[/{code}]` by profiles that can currently write
+in the wave set as `TELEMETRY_DIAG_READER_WAVE_ID` (the dev-team chat), checked
+live against that wave's chat group on every request; unset means nobody.
+
 `GET /tdh/rules` publishes current TDH boost definitions evaluated against the
 latest completed snapshot's eligible Meme card range. The latest row in
 `tdh_blocks` is the completion marker because consolidation persists its TDH

@@ -307,3 +307,10 @@ export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
 
 export { ArtistArtworkAlertEntity } from './IArtistArtworkAlert';
 export { NFTHistoryReplayJobEntity } from './INFTHistoryReplayJob';
+export {
+  AnalyticsDailyEntity,
+  HealthDailyEntity,
+  UniquesDailyEntity,
+  VitalsDailyEntity
+} from './ITelemetryDaily';
+export { TelemetryDiagnosticsEntity } from './ITelemetryDiagnostics';

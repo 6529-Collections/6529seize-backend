@@ -242,6 +242,8 @@ import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompe
 import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
+import { ApiTelemetryDiagnosticsBundle } from '@/api/generated/models/ApiTelemetryDiagnosticsBundle';
+import { ApiTelemetryDiagnosticsPage } from '@/api/generated/models/ApiTelemetryDiagnosticsPage';
 import { ApiUndiscoveredDrops } from '@/api/generated/models/ApiUndiscoveredDrops';
 import { ApiUnpublishProfileCmsPackageRequest } from '@/api/generated/models/ApiUnpublishProfileCmsPackageRequest';
 import { ApiUpdateCompetitionRequest } from '@/api/generated/models/ApiUpdateCompetitionRequest';
@@ -3301,6 +3303,38 @@ export type GetTdhRulesRequest = Request<
   ApiResponse<GetTdhRulesResponse>,
   never,
   GetTdhRulesQuery,
+  Record<string, never>
+>;
+
+export type ListTelemetryDiagnosticsPathParams = Record<string, never>;
+
+export interface ListTelemetryDiagnosticsQuery {
+  "limit"?: number;
+}
+
+export type ListTelemetryDiagnosticsResponse = ApiTelemetryDiagnosticsPage;
+
+export type ListTelemetryDiagnosticsRequest = Request<
+  ListTelemetryDiagnosticsPathParams,
+  ApiResponse<ListTelemetryDiagnosticsResponse>,
+  never,
+  ListTelemetryDiagnosticsQuery,
+  Record<string, never>
+>;
+
+export interface GetTelemetryDiagnosticsBundlePathParams {
+  "code": string;
+}
+
+export type GetTelemetryDiagnosticsBundleQuery = Record<string, never>;
+
+export type GetTelemetryDiagnosticsBundleResponse = ApiTelemetryDiagnosticsBundle;
+
+export type GetTelemetryDiagnosticsBundleRequest = Request<
+  GetTelemetryDiagnosticsBundlePathParams,
+  ApiResponse<GetTelemetryDiagnosticsBundleResponse>,
+  never,
+  GetTelemetryDiagnosticsBundleQuery,
   Record<string, never>
 >;
 
