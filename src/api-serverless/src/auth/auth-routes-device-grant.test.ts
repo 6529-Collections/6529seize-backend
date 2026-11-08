@@ -226,6 +226,47 @@ describe('wallet auth device grants', () => {
         );
       });
 
+      describe('after the transition window closes (D172)', () => {
+        let clock: jest.SpyInstance;
+
+        beforeEach(() => {
+          // The window started 2026-11-10 and lasted 14 days; it is December.
+          process.env.E2EE_SUITE_TRANSITION_START = '2026-11-10T00:00:00Z';
+          clock = jest
+            .spyOn(Date, 'now')
+            .mockReturnValue(Date.UTC(2026, 11, 1));
+        });
+
+        afterEach(() => clock.mockRestore());
+
+        const { mls_ciphersuite: _v1, ...v2Query } = combinedQuery;
+
+        it.each([
+          ['a v1 request for 0x004F', combinedQuery],
+          [
+            'a v2 set naming only 0x004F',
+            { ...v2Query, mls_ciphersuites: '79' }
+          ]
+        ])('issues the signing grant alone for %s', async (_name, query) => {
+          const parsed = new SiweMessage(
+            (await requestNonce(query)).signable_message
+          );
+          expect(parsed.resources).toHaveLength(1);
+          expect(parsed.statement).not.toContain('encrypted');
+        });
+
+        it('still grants an MLS key for a set naming 0x004E', async () => {
+          const parsed = new SiweMessage(
+            (await requestNonce({ ...v2Query, mls_ciphersuites: '78.79' }))
+              .signable_message
+          );
+          expect(parsed.resources).toHaveLength(2);
+          expect(parsed.resources?.[1]).toMatch(
+            /^urn:6529:mls-device-grant:v2:78\.79:3d4017c3/
+          );
+        });
+      });
+
       it('issues the signing grant alone for a wallet without a profile', async () => {
         getProfileIdByWalletSpy.mockResolvedValue(null);
 

@@ -4,8 +4,12 @@ import {
   verifyTypedData,
   ZeroHash
 } from 'ethers';
-import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
+import { E2EE_CIPHERSUITES } from '@/e2ee/e2ee.constants';
 import { E2eeContractWalletVerifier, E2EE_GRANT_SALT } from '@/e2ee/e2ee-grant';
+import {
+  E2EE_V1_GRANT_SUITE,
+  isCanonicalE2eeSuiteSet
+} from '@/e2ee/e2ee-suite-policy';
 import {
   describeDeviceGrantScopes,
   DeviceGrantScope,
@@ -24,10 +28,21 @@ import {
 // the same verification, expiry and revocation rules. Its stored `message`
 // is the signed typed-data message as JSON, so anyone can rebuild the digest
 // and check the wallet signature. A SIWE message never starts with "{".
+//
+// Two versions (D172): v1 (domain version "1") signs one `uint16
+// ciphersuite`, 0x004F only; v2 (domain version "2") signs `uint16[]
+// ciphersuites`, a canonical set ([] for a signing-only grant). The stored
+// JSON tells them apart by that key.
 
 export const APP_DEVICE_GRANT_DOMAIN = {
   name: '6529 Device Grant',
   version: '1',
+  salt: E2EE_GRANT_SALT
+} as const;
+
+export const APP_DEVICE_GRANT_DOMAIN_V2 = {
+  name: '6529 Device Grant',
+  version: '2',
   salt: E2EE_GRANT_SALT
 } as const;
 
@@ -41,6 +56,20 @@ export const APP_DEVICE_GRANT_TYPES = {
     { name: 'scopes', type: 'string' },
     { name: 'mlsDeviceKey', type: 'bytes32' },
     { name: 'ciphersuite', type: 'uint16' },
+    { name: 'issuedAt', type: 'uint64' },
+    { name: 'expiresAt', type: 'uint64' },
+    { name: 'origin', type: 'string' }
+  ]
+};
+
+export const APP_DEVICE_GRANT_TYPES_V2 = {
+  DeviceGrant: [
+    { name: 'statement', type: 'string' },
+    { name: 'wallet', type: 'address' },
+    { name: 'deviceKey', type: 'bytes32' },
+    { name: 'scopes', type: 'string' },
+    { name: 'mlsDeviceKey', type: 'bytes32' },
+    { name: 'ciphersuites', type: 'uint16[]' },
     { name: 'issuedAt', type: 'uint64' },
     { name: 'expiresAt', type: 'uint64' },
     { name: 'origin', type: 'string' }
@@ -66,23 +95,47 @@ export interface AppDeviceGrant {
   readonly scopes: readonly DeviceGrantScope[];
   // 0x + 64 lowercase hex, or null for a signing-only grant.
   readonly mls_device_key: string | null;
+  // v1: the MLS suite (null without an MLS key); v2: the lowest entry of
+  // `ciphersuites` (null without an MLS key).
   readonly ciphersuite: number | null;
+  // Version 2 only: the signed suite set ([] without an MLS key).
+  readonly version?: 1 | 2;
+  readonly ciphersuites?: number[];
   // Unix seconds; expires_at is minute aligned.
   readonly issued_at: number;
   readonly expires_at: number;
   readonly origin: string;
 }
 
-export interface AppDeviceGrantTypedDataMessage {
+interface AppDeviceGrantTypedDataFields {
   readonly statement: string;
   readonly wallet: string;
   readonly deviceKey: string;
   readonly scopes: string;
   readonly mlsDeviceKey: string;
-  readonly ciphersuite: number;
   readonly issuedAt: number;
   readonly expiresAt: number;
   readonly origin: string;
+}
+
+/** The signed message: v1 with `ciphersuite`, v2 with `ciphersuites`. */
+export type AppDeviceGrantTypedDataMessage = AppDeviceGrantTypedDataFields &
+  (
+    | { readonly ciphersuite: number; readonly ciphersuites?: undefined }
+    | {
+        readonly ciphersuites: readonly number[];
+        readonly ciphersuite?: undefined;
+      }
+  );
+
+export const isAppDeviceGrantV2 = (grant: Pick<AppDeviceGrant, 'version'>) =>
+  grant.version === 2;
+
+/** The EIP-712 domain and types of a signed message's version. */
+function typingOf(message: AppDeviceGrantTypedDataMessage) {
+  return message.ciphersuites === undefined
+    ? { domain: APP_DEVICE_GRANT_DOMAIN, types: APP_DEVICE_GRANT_TYPES }
+    : { domain: APP_DEVICE_GRANT_DOMAIN_V2, types: APP_DEVICE_GRANT_TYPES_V2 };
 }
 
 export const hasMlsDeviceKey = (
@@ -141,28 +194,27 @@ export function buildAppDeviceGrantMessage(
   grant: AppDeviceGrant,
   statement: string = renderAppDeviceGrantStatement(grant)
 ): AppDeviceGrantTypedDataMessage {
-  return {
+  const fields: AppDeviceGrantTypedDataFields = {
     statement,
     wallet: getAddress(grant.wallet),
     deviceKey: grant.device_key,
     scopes: grant.scopes.join(','),
     mlsDeviceKey: grant.mls_device_key ?? NO_MLS_DEVICE_KEY,
-    ciphersuite: grant.ciphersuite ?? NO_CIPHERSUITE,
     issuedAt: grant.issued_at,
     expiresAt: grant.expires_at,
     origin: grant.origin
   };
+  return isAppDeviceGrantV2(grant)
+    ? { ...fields, ciphersuites: [...(grant.ciphersuites ?? [])] }
+    : { ...fields, ciphersuite: grant.ciphersuite ?? NO_CIPHERSUITE };
 }
 
 /** The grant id: the EIP-712 digest of the grant, lowercase hex. */
 export function computeAppDeviceGrantId(
   message: AppDeviceGrantTypedDataMessage
 ): string {
-  return TypedDataEncoder.hash(
-    APP_DEVICE_GRANT_DOMAIN,
-    APP_DEVICE_GRANT_TYPES,
-    message
-  ).toLowerCase();
+  const { domain, types } = typingOf(message);
+  return TypedDataEncoder.hash(domain, types, message).toLowerCase();
 }
 
 function isPrintableAscii(value: string): boolean {
@@ -175,12 +227,32 @@ function findKeyProblem(grant: AppDeviceGrant): string | null {
   const scopes = parseDeviceScopesParam(grant.scopes.join(','));
   if (scopes?.join(',') !== grant.scopes.join(',')) return 'scopes';
   if (grant.mls_device_key === null) {
-    return grant.ciphersuite === null ? null : 'ciphersuite';
+    return grant.ciphersuite === null && !grant.ciphersuites?.length
+      ? null
+      : 'ciphersuite';
   }
   if (!isDeviceKey(grant.mls_device_key)) return 'mls_device_key_format';
   // Two keys, so revoking or losing one never silently covers the other.
   if (grant.mls_device_key === grant.device_key) return 'mls_device_key_reused';
-  return grant.ciphersuite === E2EE_CIPHERSUITE ? null : 'ciphersuite';
+  return findSuiteProblem(grant);
+}
+
+/**
+ * v1: the suite must be 0x004F. v2: a canonical set naming at least one
+ * accepted suite, with `ciphersuite` its lowest entry.
+ */
+function findSuiteProblem(grant: AppDeviceGrant): string | null {
+  if (!isAppDeviceGrantV2(grant)) {
+    return grant.ciphersuite === E2EE_V1_GRANT_SUITE ? null : 'ciphersuite';
+  }
+  const suites = grant.ciphersuites;
+  if (
+    !isCanonicalE2eeSuiteSet(suites) ||
+    !suites.some((suite) => E2EE_CIPHERSUITES.includes(suite))
+  ) {
+    return 'ciphersuites';
+  }
+  return grant.ciphersuite === suites[0] ? null : 'ciphersuite';
 }
 
 function findOriginProblem(origin: string): string | null {
@@ -251,13 +323,10 @@ export function recoversToAppGrantWallet(
   signature: string
 ): boolean {
   try {
+    const { domain, types } = typingOf(message);
     return (
-      verifyTypedData(
-        APP_DEVICE_GRANT_DOMAIN,
-        APP_DEVICE_GRANT_TYPES,
-        message,
-        signature
-      ).toLowerCase() === message.wallet.toLowerCase()
+      verifyTypedData(domain, types, message, signature).toLowerCase() ===
+      message.wallet.toLowerCase()
     );
   } catch {
     return false;
@@ -308,13 +377,17 @@ export async function verifyAppDeviceGrant({
 export function serializeAppDeviceGrantMessage(
   message: AppDeviceGrantTypedDataMessage
 ): string {
+  const suites =
+    message.ciphersuites === undefined
+      ? { ciphersuite: message.ciphersuite }
+      : { ciphersuites: message.ciphersuites };
   return JSON.stringify({
     statement: message.statement,
     wallet: message.wallet,
     deviceKey: message.deviceKey,
     scopes: message.scopes,
     mlsDeviceKey: message.mlsDeviceKey,
-    ciphersuite: message.ciphersuite,
+    ...suites,
     issuedAt: message.issuedAt,
     expiresAt: message.expiresAt,
     origin: message.origin
@@ -338,7 +411,6 @@ function readTypedMessage(
     deviceKey,
     scopes,
     mlsDeviceKey,
-    ciphersuite,
     issuedAt,
     expiresAt,
     origin
@@ -349,24 +421,42 @@ function readTypedMessage(
     typeof deviceKey !== 'string' ||
     typeof scopes !== 'string' ||
     typeof mlsDeviceKey !== 'string' ||
-    typeof ciphersuite !== 'number' ||
     typeof issuedAt !== 'number' ||
     typeof expiresAt !== 'number' ||
     typeof origin !== 'string'
   ) {
     return null;
   }
-  return {
+  const fields = {
     statement,
     wallet,
     deviceKey,
     scopes,
     mlsDeviceKey,
-    ciphersuite,
     issuedAt,
     expiresAt,
     origin
   };
+  return readSuites(fields, value);
+}
+
+/** v1 (`ciphersuite`, a number) or v2 (`ciphersuites`, numbers), not both. */
+function readSuites(
+  fields: AppDeviceGrantTypedDataFields,
+  value: Record<string, unknown>
+): AppDeviceGrantTypedDataMessage | null {
+  const { ciphersuite, ciphersuites } = value;
+  if (typeof ciphersuite === 'number' && ciphersuites === undefined) {
+    return { ...fields, ciphersuite };
+  }
+  if (
+    ciphersuite === undefined &&
+    Array.isArray(ciphersuites) &&
+    ciphersuites.every((suite) => typeof suite === 'number')
+  ) {
+    return { ...fields, ciphersuites: ciphersuites as number[] };
+  }
+  return null;
 }
 
 /**
@@ -389,15 +479,22 @@ export function parseAppDeviceGrantMessage(text: string): {
     return null;
   }
   const scopes = parseDeviceScopesParam(message.scopes);
+  const v2 = message.ciphersuites !== undefined;
   const withoutMls =
     message.mlsDeviceKey === NO_MLS_DEVICE_KEY &&
-    message.ciphersuite === NO_CIPHERSUITE;
+    (v2
+      ? message.ciphersuites.length === 0
+      : message.ciphersuite === NO_CIPHERSUITE);
+  const lowest = v2 ? message.ciphersuites[0] : message.ciphersuite;
   const grant: AppDeviceGrant = {
     wallet: message.wallet.toLowerCase(),
     device_key: message.deviceKey,
     scopes: scopes ?? [],
     mls_device_key: withoutMls ? null : message.mlsDeviceKey,
-    ciphersuite: withoutMls ? null : message.ciphersuite,
+    ciphersuite: withoutMls ? null : (lowest ?? null),
+    ...(v2
+      ? { version: 2 as const, ciphersuites: [...message.ciphersuites] }
+      : {}),
     issued_at: message.issuedAt,
     expires_at: message.expiresAt,
     origin: message.origin

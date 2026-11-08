@@ -55,8 +55,20 @@ const SIGNING: DeviceGrantTerms = {
   expiresAtSeconds: EXPIRES_AT
 };
 const MLS: MlsDeviceGrantTerms = {
+  version: 1,
   deviceKey: MLS_KEY,
   ciphersuite: 1,
+  ciphersuites: [1],
+  expiresAtSeconds: EXPIRES_AT
+};
+// Grant v2 (D172): a suite set in the resource.
+const MLS_URN_V2 =
+  'urn:6529:mls-device-grant:v2:78:3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c:1807876800';
+const MLS_V2: MlsDeviceGrantTerms = {
+  version: 2,
+  deviceKey: MLS_KEY,
+  ciphersuite: 78,
+  ciphersuites: [78],
   expiresAtSeconds: EXPIRES_AT
 };
 
@@ -104,7 +116,7 @@ describe('combined device grant', () => {
       ['a padded ciphersuite', MLS_URN.replace(':v1:1:', ':v1:01:')],
       ['a ciphersuite above uint16', MLS_URN.replace(':v1:1:', ':v1:65536:')],
       ['an unaligned expiry', MLS_URN.replace(':1807876800', ':1807876801')],
-      ['another version', MLS_URN.replace(':v1:', ':v2:')],
+      ['another version', MLS_URN.replace(':v1:', ':v3:')],
       ['a signing URN', SIGNING_URN],
       ['a trailing field', `${MLS_URN}:x`]
     ])('rejects %s', (_name, urn) => {
@@ -120,6 +132,35 @@ describe('combined device grant', () => {
     it('rejects non-strings', () => {
       expect(parseMlsDeviceGrantUrn(undefined)).toBeNull();
       expect(parseMlsDeviceGrantUrn(42)).toBeNull();
+    });
+  });
+
+  describe('MLS resource v2 (suite set)', () => {
+    it('builds and parses a one-suite set', () => {
+      expect(buildMlsDeviceGrantUrn(MLS_V2)).toBe(MLS_URN_V2);
+      expect(parseMlsDeviceGrantUrn(MLS_URN_V2)).toEqual(MLS_V2);
+    });
+
+    it('builds and parses a set of up to four, joined by "."', () => {
+      const terms: MlsDeviceGrantTerms = {
+        ...MLS_V2,
+        ciphersuites: [78, 79, 4660, 65535]
+      };
+      const urn = buildMlsDeviceGrantUrn(terms);
+      expect(urn).toContain(':v2:78.79.4660.65535:');
+      expect(parseMlsDeviceGrantUrn(urn)).toEqual(terms);
+    });
+
+    it.each([
+      ['an unsorted set', MLS_URN_V2.replace(':v2:78:', ':v2:79.78:')],
+      ['a duplicate', MLS_URN_V2.replace(':v2:78:', ':v2:78.78:')],
+      ['five entries', MLS_URN_V2.replace(':v2:78:', ':v2:1.2.3.4.5:')],
+      ['an empty set', MLS_URN_V2.replace(':v2:78:', ':v2::')],
+      ['zero', MLS_URN_V2.replace(':v2:78:', ':v2:0.78:')],
+      ['above uint16', MLS_URN_V2.replace(':v2:78:', ':v2:78.65536:')],
+      ['a comma', MLS_URN_V2.replace(':v2:78:', ':v2:78,79:')]
+    ])('rejects %s', (_name, urn) => {
+      expect(parseMlsDeviceGrantUrn(urn)).toBeNull();
     });
   });
 
