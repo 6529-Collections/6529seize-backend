@@ -2,7 +2,11 @@ import { NextFunction, Request, Response } from 'express';
 import { isCmsAgentRequest } from '@/api/profile-cms/profile-cms-agent.http';
 import { ids } from '@/ids';
 import { Logger } from '@/logging';
-import { loggerContext } from '@/logger-context';
+import { loggerContext, LoggerContextValue } from '@/logger-context';
+import {
+  emptyRequestSqlTotals,
+  formatRequestSqlTotals
+} from '@/db/sql-operation-timing';
 import { numbers } from '@/numbers';
 import { Time, Timer } from '@/time';
 
@@ -70,7 +74,11 @@ export function requestLogMiddleware() {
       response.setHeader('X-Robots-Tag', 'noindex, nofollow');
       response.setHeader('X-Content-Type-Options', 'nosniff');
     }
-    loggerContext.run({ requestId }, () => {
+    const context: LoggerContextValue = {
+      requestId,
+      sql: emptyRequestSqlTotals()
+    };
+    loggerContext.run(context, () => {
       const { method } = request;
       const url = shouldLogPathOnly(request.path)
         ? request.path
@@ -81,13 +89,18 @@ export function requestLogMiddleware() {
       response.on('close', () => {
         const { statusCode } = response;
         const tookMs = timer.getTotalTimePassed().toMillis();
+        // Pool wait vs. execution of this request's SQL. Statements on a
+        // transaction's connection add execution time but no pool wait.
+        const sql = context.sql
+          ? ` ${formatRequestSqlTotals(context.sql)}`
+          : '';
         if (timer.getTotalTimePassed().gt(getSlowRequestThreshold())) {
           requestLogger.warn(
-            `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${tookMs}] [${timer.getReport()}]`
+            `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${tookMs}]${sql} [${timer.getReport()}]`
           );
         } else {
           requestLogger.info(
-            `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${tookMs}]`
+            `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${tookMs}]${sql}`
           );
         }
       });

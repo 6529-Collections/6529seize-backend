@@ -1,4 +1,5 @@
 import { AsyncResource } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import { ConnectionWrapper, SqlTransactionOptions } from '../sql-executor';
 import * as mysql from 'mysql';
 import { PoolConnection, TypeCast } from 'mysql';
@@ -6,6 +7,11 @@ import { Time } from '../time';
 import { Logger } from '../logging';
 import { DbPoolName, DbQueryOptions } from '@/db-query.options';
 import { SqlOperationTiming } from '@/db/sql-operation-timing';
+import {
+  closeAfterCommitScope,
+  openAfterCommitScope,
+  runAfterCommitCallbacks
+} from '@/db/after-commit';
 import {
   isLegacyCompetitionGetFacadeScope,
   LEGACY_GET_BOOLEAN_FIELDS
@@ -185,6 +191,7 @@ export async function execNativeTransactionally<T>(
       if (!accepted) connection.release();
     }
   }
+  let committed: { result: T; afterCommit: (() => unknown)[] };
   try {
     if (options?.isolationLevel) {
       await beginIsolatedTransaction(connection, options);
@@ -194,17 +201,20 @@ export async function execNativeTransactionally<T>(
       // requires its own compatibility validation and deployment inventory.
       connection.beginTransaction();
     }
+    openAfterCommitScope(connection);
     const result = await executable({ connection: connection });
-    return await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       connection.commit((err: any) => {
         if (err) {
           reject(err);
         } else {
-          resolve(result);
+          resolve();
         }
       });
     });
+    committed = { result, afterCommit: closeAfterCommitScope(connection) };
   } catch (e) {
+    closeAfterCommitScope(connection);
     if (options?.isolationLevel) {
       await new Promise<void>((resolve) =>
         connection.rollback(() => resolve())
@@ -217,33 +227,51 @@ export async function execNativeTransactionally<T>(
     // A statement in this transaction may have pinned the proxy session.
     releaseOrRetireProxySession(connection, 'TRANSACTION');
   }
+  // Cache invalidations and similar effects must not see the transaction
+  // before other readers can: run them only after COMMIT, never on rollback.
+  await runAfterCommitCallbacks(committed.afterCommit);
+  return committed.result;
 }
 
-export function execBudgetedNativeTransactionally<T>(
+export async function execBudgetedNativeTransactionally<T>(
   executable: (
     connection: ConnectionWrapper<mysql.PoolConnection>
   ) => Promise<T>,
   acquire: () => Promise<mysql.PoolConnection>,
   budget: NonNullable<SqlTransactionOptions['executionBudget']>
 ): Promise<T> {
-  return executeBudgetedSqlTransaction(
-    async () => {
-      const connection = await acquire();
-      return {
-        handle: connection,
-        physical: connection,
-        release: () => releaseOrRetireProxySession(connection, 'TRANSACTION'),
-        // Budget session variables pin the RDS Proxy session; retire it
-        // instead of restoring the variables and returning it to the pool.
-        retire: () =>
-          retireProxySession(connection, 'TRANSACTION', {
-            reason: 'session_settings'
-          })
-      };
-    },
-    budget,
-    (handle) => executable({ connection: handle as mysql.PoolConnection })
-  );
+  let scoped: object | undefined;
+  let result: T;
+  try {
+    result = await executeBudgetedSqlTransaction(
+      async () => {
+        const connection = await acquire();
+        return {
+          handle: connection,
+          physical: connection,
+          release: () => releaseOrRetireProxySession(connection, 'TRANSACTION'),
+          // Budget session variables pin the RDS Proxy session; retire it
+          // instead of restoring the variables and returning it to the pool.
+          retire: () =>
+            retireProxySession(connection, 'TRANSACTION', {
+              reason: 'session_settings'
+            })
+        };
+      },
+      budget,
+      (handle) => {
+        scoped = handle;
+        openAfterCommitScope(handle);
+        return executable({ connection: handle as mysql.PoolConnection });
+      }
+    );
+  } catch (e) {
+    if (scoped) closeAfterCommitScope(scoped);
+    throw e;
+  }
+  // Resolving means the COMMIT was acknowledged (see the budget executor).
+  await runAfterCommitCallbacks(scoped ? closeAfterCommitScope(scoped) : []);
+  return result;
 }
 
 async function beginIsolatedTransaction(
@@ -422,7 +450,7 @@ function settleProxySession({
     markProxySessionPinned(connection, {
       reason: 'oversized_statement',
       fingerprint: privateFamily
-        ? `[private ${privateFamily} query]`
+        ? privateFingerprint(privateFamily, sql)
         : sqlFingerprint(sql),
       statementBytes
     });
@@ -431,6 +459,18 @@ function settleProxySession({
     const label: ProxyPinPool = pool === DbPoolName.READ ? 'READ' : 'WRITE';
     releaseOrRetireProxySession(connection, label, pinScope);
   }
+}
+
+/**
+ * Private families never log statement text. A short hash of the scrubbed
+ * template (no literals, no bound values) still tells query shapes apart.
+ */
+function privateFingerprint(family: PrivateQueryFamily, sql: string): string {
+  const shape = createHash('sha256')
+    .update(sqlFingerprint(sql))
+    .digest('hex')
+    .slice(0, 8);
+  return `[private ${family} query #${shape}]`;
 }
 
 function prepareStatement(query: string, values: Record<string, any>) {

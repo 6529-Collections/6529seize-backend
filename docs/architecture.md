@@ -973,6 +973,13 @@ including older responses without a recognizable instance ID. A listingType-only
 response keeps those legacy assets and uses an unknown market state with a view
 action, without inferring a claim price.
 
+A refresh broadcasts `MEDIA_LINK_UPDATED` only when the client frame changed:
+it compares the frame built from the row it locked with the frame built from
+the updated row, leaving out `last_successfully_updated`. That timestamp counts
+as a change only when the previous success is unknown or at least a day old, so
+clients' 3-day stale badge stays correct. Each decision emits
+`MediaLinkUpdateSent` or `MediaLinkUpdateSkipped` in `6529/NftLinkRefresher`.
+
 After persistence, a worker-specific notifier reads active WebSocket recipients
 once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
 five-second request limits, and a 15-second broadcast deadline. Notification

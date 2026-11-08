@@ -64,6 +64,8 @@ import {
   ChatHistoryPurgeScope
 } from '@/drops/chat-history-purge.db';
 import { canDeleteRepliesInWave } from '@/waves/wave-chat-replies.helpers';
+import { invalidateWaveUnreadCacheForWaveAfterCommit } from '@/api/waves/wave-unread-cache';
+import { invalidateWaveOverviewStaticCacheForDropsAfterCommit } from '@/api/waves/wave-overview-static-cache';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -172,6 +174,8 @@ export class DeleteDropUseCase {
       drops.map((drop) => drop.id),
       ctx
     );
+    // The description drop is never in a purge batch, so only unread moves.
+    await invalidateWaveUnreadCacheForWaveAfterCommit(wave.id, ctx.connection);
     await waveDropMetricsRefreshService.markWaveDropMetricsDirtyBestEffort(
       [wave.id],
       WaveDropMetricsDirtyRefreshReason.DROP_DELETED,
@@ -344,6 +348,15 @@ export class DeleteDropUseCase {
             { timer, connection }
           );
         }
+        // Edits also delete (then re-insert): both cached unread summaries and
+        // overviews built on this drop's content move once this commits.
+        await Promise.all([
+          invalidateWaveUnreadCacheForWaveAfterCommit(waveId, connection),
+          invalidateWaveOverviewStaticCacheForDropsAfterCommit(
+            [dropId],
+            connection
+          )
+        ]);
         let dmUnreadRecipientIds: string[] = [];
         if (isPermanentDelete && wave?.is_direct_message === true) {
           const currentReaderIds = await this.findCurrentDmReaderIds(wave, {

@@ -18,6 +18,20 @@ jest.mock('@/api/push-notifications/push-notifications.service', () => ({
 }));
 
 jest.mock('@/api/waves/wave-unread-cache', () => ({
+  // After-commit bumps from the DB chokepoints (drop insert/delete, reader
+  // metrics, wave insert, blocks and mutes).
+  invalidateWaveUnreadCacheForWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForWavesAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderWaveAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
+  invalidateWaveUnreadCacheForReaderAfterCommit: jest
+    .fn()
+    .mockResolvedValue(undefined),
   invalidateWaveUnreadCacheForReaderWave: jest.fn().mockResolvedValue(undefined)
 }));
 
@@ -60,7 +74,8 @@ describe('NotificationsApiService V2 notifications', () => {
       getNotificationsForIdentity: jest.fn().mockResolvedValue({
         notifications: [],
         total_unread: 0
-      })
+      }),
+      countUnreadForIdentity: jest.fn().mockResolvedValue(5)
     };
     const userGroupsService = {
       getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['group-1'])
@@ -103,6 +118,45 @@ describe('NotificationsApiService V2 notifications', () => {
       reactionsDb
     };
   }
+
+  it('counts unread notifications without loading or mapping any', async () => {
+    const {
+      service,
+      notificationsReader,
+      userGroupsService,
+      dropsService,
+      identityFetcher,
+      wavesApiDb
+    } = createService();
+    const authenticationContext = {
+      getActingAsId: () => 'profile-1'
+    } as any;
+    const timer = { start: jest.fn(), stop: jest.fn() } as any;
+
+    await expect(
+      service.getUnreadNotificationsCountV2(
+        { include_competitions: true },
+        authenticationContext,
+        { timer, authenticationContext }
+      )
+    ).resolves.toEqual({ unread_count: 5 });
+
+    expect(userGroupsService.getGroupsUserIsEligibleFor).toHaveBeenCalledWith(
+      'profile-1',
+      timer
+    );
+    expect(notificationsReader.countUnreadForIdentity).toHaveBeenCalledWith({
+      identity_id: 'profile-1',
+      eligible_group_ids: ['group-1'],
+      include_competitions: true
+    });
+    expect(
+      notificationsReader.getNotificationsForIdentity
+    ).not.toHaveBeenCalled();
+    expect(dropsService.findDropsV2ByIds).not.toHaveBeenCalled();
+    expect(identityFetcher.getApiIdentityOverviewsByIds).not.toHaveBeenCalled();
+    expect(wavesApiDb.findWavesByIds).not.toHaveBeenCalled();
+  });
 
   it.each(
     [
@@ -934,7 +988,7 @@ describe('NotificationsApiService realtime invalidation', () => {
     const identityNotificationsDb = {
       updateNotificationReadAt: jest.fn().mockResolvedValue(undefined),
       markAllNotificationsAsRead: jest.fn().mockResolvedValue(undefined),
-      markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
+      markWaveNotificationsAsRead: jest.fn().mockResolvedValue(2)
     };
     const wavesApiDb = {
       findById: jest.fn().mockResolvedValue({ is_direct_message: false }),
@@ -1064,7 +1118,7 @@ describe('NotificationsApiService realtime invalidation', () => {
         version: 9
       };
       const identityNotificationsDb = {
-        markWaveNotificationsAsRead: jest.fn().mockResolvedValue(undefined)
+        markWaveNotificationsAsRead: jest.fn().mockResolvedValue(1)
       };
       const wavesApiDb = {
         findById: jest.fn().mockResolvedValue({
@@ -1145,6 +1199,89 @@ describe('NotificationsApiService realtime invalidation', () => {
       expect(
         wsListenersNotifier.notifyAboutIdentityNotificationsChanged
       ).toHaveBeenCalledWith(['profile-1']);
+    }
+  );
+
+  it.each([
+    ['an ordinary wave', false],
+    ['a direct message', true]
+  ])(
+    'sends no notification-count frame for %s read that marks no notification',
+    async (_label, isDirectMessage) => {
+      const identityNotificationsDb = {
+        markWaveNotificationsAsRead: jest.fn().mockResolvedValue(0)
+      };
+      const dmUnreadState = {
+        profile_id: 'profile-1',
+        wave_id: 'wave-1',
+        unread_count: 0,
+        first_unread_drop_serial_no: null,
+        latest_drop_serial_no: 44,
+        latest_read_serial_no: 44,
+        version: 3
+      };
+      const wavesApiDb = {
+        findById: jest.fn().mockResolvedValue({
+          is_direct_message: isDirectMessage,
+          visibility_group_id: isDirectMessage ? 'dm-group' : null,
+          parent_wave_id: null
+        }),
+        updateWaveReaderMetricLatestReadTimestamp: jest
+          .fn()
+          .mockResolvedValue(undefined),
+        markDirectMessageReadThroughSerial: jest
+          .fn()
+          .mockResolvedValue(undefined),
+        findDmUnreadConversationStates: jest
+          .fn()
+          .mockResolvedValue([dmUnreadState])
+      };
+      const recipients = [
+        { connectionId: 'connection-1', identityId: 'profile-1' }
+      ];
+      const wsListenersNotifier = {
+        findConnectedNotificationRecipients: jest
+          .fn()
+          .mockResolvedValue(recipients),
+        notifyAboutDmUnreadStateChanged: jest.fn().mockResolvedValue(undefined),
+        notifyAboutIdentityNotificationsChanged: jest
+          .fn()
+          .mockResolvedValue(undefined)
+      };
+      const userGroupsService = {
+        getGroupsUserIsEligibleFor: jest.fn().mockResolvedValue(['dm-group'])
+      };
+      const service = new NotificationsApiService(
+        {} as any,
+        userGroupsService as any,
+        {} as any,
+        {} as any,
+        identityNotificationsDb as any,
+        {} as any,
+        wavesApiDb as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        wsListenersNotifier as any
+      );
+
+      await service.markWaveNotificationsAsRead(
+        'wave-1',
+        'profile-1',
+        {},
+        44,
+        false
+      );
+
+      expect(
+        wsListenersNotifier.notifyAboutIdentityNotificationsChanged
+      ).not.toHaveBeenCalled();
+      // The DM unread-state frame is unchanged: it carries the read position.
+      if (isDirectMessage) {
+        expect(
+          wsListenersNotifier.notifyAboutDmUnreadStateChanged
+        ).toHaveBeenCalledWith([dmUnreadState], recipients);
+      }
     }
   );
 
