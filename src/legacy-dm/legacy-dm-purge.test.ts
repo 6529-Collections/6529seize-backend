@@ -286,6 +286,55 @@ describe('executeLegacyDmPurge', () => {
     expect(deleteIndex).toBeGreaterThan(cancelIndex);
   });
 
+  it('reports each purged wave once its deletions have committed', async () => {
+    const { db, events } = fakeDb({
+      waves: [WAVE, { ...WAVE, id: 'dm-wave-2', serial_no: 6 }],
+      drops: DROPS
+    });
+    const committed: string[] = [];
+    const tracked: LegacyDmDb = {
+      ...db,
+      inTransaction: async (work) => {
+        const result = await db.inTransaction(work);
+        events.push('commit');
+        return result;
+      }
+    };
+    await executeLegacyDmPurge(tracked, {
+      nowMillis: CUTOFF,
+      cutoffMillis: CUTOFF,
+      onWavePurged: async (waveId) => {
+        committed.push(waveId);
+        events.push(`purged:${waveId}`);
+      }
+    });
+    expect(committed).toEqual(['dm-wave-1', 'dm-wave-2']);
+    // Each report follows that wave's last transaction.
+    for (const waveId of committed) {
+      const index = events.indexOf(`purged:${waveId}`);
+      expect(events[index - 1]).toBe('commit');
+    }
+  });
+
+  it('stops the run when the purged-wave report fails', async () => {
+    const { db } = fakeDb({
+      waves: [WAVE, { ...WAVE, id: 'dm-wave-2', serial_no: 6 }],
+      drops: DROPS
+    });
+    const reported: string[] = [];
+    await expect(
+      executeLegacyDmPurge(db, {
+        nowMillis: CUTOFF,
+        cutoffMillis: CUTOFF,
+        onWavePurged: async (waveId) => {
+          reported.push(waveId);
+          throw new Error('Redis is not connected');
+        }
+      })
+    ).rejects.toThrow('Redis is not connected');
+    expect(reported).toEqual(['dm-wave-1']);
+  });
+
   it('stops after maxWaves', async () => {
     const { db } = fakeDb({
       waves: [WAVE, { ...WAVE, id: 'dm-wave-2', serial_no: 6 }],
