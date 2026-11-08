@@ -225,6 +225,31 @@ const reads: [string, string, Read][] = [
       )
   ],
   [
+    'joined root wave ids',
+    'jr_viewer_groups',
+    (waves, _, groups) =>
+      waves.findJoinedRootWaveIds(
+        { identityId: viewer.profile_id!, eligibleGroups: groups },
+        {}
+      )
+  ],
+  [
+    'visible drops by ids',
+    'vd_viewer_groups',
+    (_, drops, groups) =>
+      drops.findVisibleDrops(
+        {
+          limit: 50,
+          offset: 0,
+          parent_drop_id: null,
+          serial_nos: null,
+          ids: allWaves.map((wave) => `sc2-drop-${wave.id}`),
+          group_ids_user_is_eligible_for: groups
+        },
+        {}
+      )
+  ],
+  [
     'boosted drops count',
     'bd_viewer_groups',
     (_, drops, groups) =>
@@ -243,7 +268,7 @@ const reads: [string, string, Read][] = [
 ];
 
 describeWithSeed(
-  'Single-copy viewer groups, batch 2',
+  'Single-copy viewer groups, batches 2 and 3',
   [
     withIdentities([viewer, poster]),
     withWaves(allWaves),
