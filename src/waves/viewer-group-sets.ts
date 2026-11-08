@@ -54,11 +54,15 @@ const METRIC_NAMESPACE = '6529/ViewerGroupSets';
 
 type SetLease = (key: string, ttl: Time) => Promise<boolean | null>;
 
+/** UTF-16 code unit order: the same on every container, unlike locales. */
+function compareCodeUnits(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
+}
+
 /** sha256 of the sorted, de-duplicated ids, joined by newlines. */
 export function viewerGroupSetHash(groupIds: readonly string[]): string {
-  const ids = Array.from(new Set(groupIds)).sort((a, b) =>
-    a < b ? -1 : a > b ? 1 : 0
-  );
+  const ids = Array.from(new Set(groupIds)).sort(compareCodeUnits);
   return createHash('sha256').update(ids.join('\n')).digest('hex');
 }
 
@@ -404,7 +408,7 @@ export class ViewerGroupSets {
     groupIds: readonly string[]
   ): Promise<void> {
     const pending = this.writes.get(hash);
-    if (pending) return pending;
+    if (pending !== undefined) return pending;
     const write = (async () => {
       // Single-flight across containers; without Redis nothing is written,
       // which keeps write bursts bounded.
