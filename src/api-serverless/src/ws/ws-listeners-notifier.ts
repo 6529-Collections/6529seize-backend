@@ -1095,18 +1095,20 @@ export class WsListenersNotifier {
     serverReceivedAt: number | null,
     measurement: FanoutMeasurement
   ): Promise<void> {
-    await this.withDeliveryBatch((batch) =>
-      forEachWebSocketRecipient(sends, (send) => {
-        // AppWebSockets.send re-reads the connection row before sending.
-        measurement.connectionRead();
-        return this.sendMeasured(
-          send.connectionId,
-          send.message(),
-          serverReceivedAt,
-          measurement,
-          batch
-        );
-      })
+    await this.withDeliveryBatch(
+      (batch) =>
+        forEachWebSocketRecipient(sends, (send) => {
+          // AppWebSockets.send re-reads the connection row before sending.
+          measurement.connectionRead();
+          return this.sendMeasured(
+            send.connectionId,
+            send.message(),
+            serverReceivedAt,
+            measurement,
+            batch
+          );
+        }),
+      measurement
     );
   }
 
@@ -1115,12 +1117,17 @@ export class WsListenersNotifier {
    * deferred bookkeeping is awaited before this returns.
    */
   private async withDeliveryBatch(
-    run: (batch: DeliveryBatch) => Promise<void>
+    run: (batch: DeliveryBatch) => Promise<void>,
+    measurement?: FanoutMeasurement
   ): Promise<void> {
     const settlements: Promise<unknown>[] = [];
     const batch: DeliveryBatch = {
       defer: (settlement) => settlements.push(settlement),
-      metrics: new DeliveryMetricsBatch()
+      metrics: new DeliveryMetricsBatch(),
+      ...(measurement && {
+        claimTimed: (milliseconds: number) =>
+          measurement.claimTimed(milliseconds)
+      })
     };
     try {
       await run(batch);

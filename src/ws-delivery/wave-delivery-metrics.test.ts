@@ -53,13 +53,24 @@ describe('wave delivery metrics', () => {
     const emf = captureEmf();
     try {
       const time = clock();
-      const measurement = new FanoutMeasurement('DROP_UPDATE', 900, time.now);
+      const cpu = jest
+        .fn()
+        .mockReturnValueOnce({ user: 1_000, system: 0 })
+        .mockReturnValueOnce({ user: 41_000, system: 2_400 });
+      const measurement = new FanoutMeasurement(
+        'DROP_UPDATE',
+        900,
+        time.now,
+        'inline',
+        cpu
+      );
       time.advance(4);
       measurement.queryDone(3);
       time.advance(6);
       measurement.prepareDone();
       for (const outcome of ['sent', 'gone', 'resync_pending'] as const) {
         measurement.serialized();
+        measurement.claimTimed(2);
         const sendStartedAt = time.now();
         time.advance(10);
         measurement.sendSettled(sendStartedAt, outcome);
@@ -90,6 +101,8 @@ describe('wave delivery metrics', () => {
         fanout_total_ms: 40,
         fanout_server_last_send_ms: 140,
         fanout_per_send_ms: [10, 10, 10],
+        fanout_cpu_ms: 43.4,
+        fanout_claim_ms: [2, 2, 2],
         fanout_serializations: 3,
         fanout_connection_reads: 0,
         fanout_sent: 1,
@@ -137,6 +150,27 @@ describe('wave delivery metrics', () => {
     }
   });
 
+  it('reports how many fan-outs ran at once during each one', () => {
+    const emf = captureEmf();
+    try {
+      const solo = new FanoutMeasurement('DROP_UPDATE', null);
+      solo.emit();
+      const first = new FanoutMeasurement('DROP_UPDATE', null);
+      const second = new FanoutMeasurement('DROP_REACTION_UPDATE', null);
+      second.emit();
+      // A later fan-out does not raise a finished one's overlap.
+      const third = new FanoutMeasurement('DROP_UPDATE', null);
+      third.emit();
+      first.emit();
+
+      expect(emf.lines().map((line) => line.fanout_overlap_max)).toEqual([
+        1, 2, 2, 2
+      ]);
+    } finally {
+      emf.restore();
+    }
+  });
+
   it('omits send timings for an empty audience instead of reporting zero', () => {
     const emf = captureEmf();
     try {
@@ -151,6 +185,8 @@ describe('wave delivery metrics', () => {
       expect(names).not.toContain('fanout_first_send_ms');
       expect(names).not.toContain('fanout_server_last_send_ms');
       expect(names).not.toContain('fanout_per_send_ms');
+      expect(names).not.toContain('fanout_claim_ms');
+      expect(names).toContain('fanout_cpu_ms');
     } finally {
       emf.restore();
     }

@@ -6,8 +6,14 @@ import { Logger } from '@/logging';
  * a deploy that sets nothing gets the code defaults.
  */
 
-/** Concurrent gateway sends per fan-out when `WS_FANOUT_CONCURRENCY` is unset. */
-export const WS_FANOUT_CONCURRENCY_DEFAULT = 64;
+/**
+ * Concurrent gateway sends per fan-out when `WS_FANOUT_CONCURRENCY` is unset.
+ * 64 was tried in prod (#2384) and made fan-outs slower: one container
+ * already delivers at its ceiling (~300 sends/s) at 16, so a wider pool only
+ * queued sends (per-send p50 38 -> 153 ms). `fanout_cpu_ms` and
+ * `fanout_claim_ms` on WAVE_FANOUT measure that ceiling.
+ */
+export const WS_FANOUT_CONCURRENCY_DEFAULT = 16;
 export const WS_FANOUT_CONCURRENCY_MIN = 1;
 export const WS_FANOUT_CONCURRENCY_MAX = 128;
 

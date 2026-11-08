@@ -106,6 +106,16 @@ export type FanoutSendOutcome =
   | 'error';
 
 /**
+ * Fan-outs running in this process right now. Each measurement keeps the most
+ * that ran at once during its lifetime (itself included), so a reading of
+ * `fanout_cpu_ms` can be restricted to fan-outs that ran alone. A fan-out is
+ * always emitted (the notifier emits in `finally`); entries older than any
+ * request could run are dropped defensively.
+ */
+const activeFanouts = new Set<FanoutMeasurement>();
+const FANOUT_OVERLAP_STALE_MS = 60_000;
+
+/**
  * Measures one fan-out of one frame type. Times are wall-clock milliseconds;
  * `serverReceivedAt` is when the API received the triggering request, so
  * `fanout_server_last_send_ms` is the full server-side delivery time.
@@ -123,6 +133,9 @@ export class FanoutMeasurement {
   private firstSettledAt: number | null = null;
   private lastSettledAt: number | null = null;
   private readonly sendDurations: number[] = [];
+  private readonly claimDurations: number[] = [];
+  private readonly cpuAtStart: NodeJS.CpuUsage;
+  private overlapMax = 1;
   private readonly outcomes: Record<FanoutSendOutcome, number> = {
     sent: 0,
     resync_pending: 0,
@@ -135,9 +148,21 @@ export class FanoutMeasurement {
     private readonly frameType: string,
     private readonly serverReceivedAt: number | null,
     private readonly now: () => number = Date.now,
-    private readonly stage: FanoutStage = 'inline'
+    private readonly stage: FanoutStage = 'inline',
+    private readonly cpuUsage: (
+      previous?: NodeJS.CpuUsage
+    ) => NodeJS.CpuUsage = (previous) => process.cpuUsage(previous)
   ) {
     this.startedAt = now();
+    this.cpuAtStart = cpuUsage();
+    activeFanouts.forEach((active) => {
+      if (this.startedAt - active.startedAt > FANOUT_OVERLAP_STALE_MS)
+        activeFanouts.delete(active);
+    });
+    activeFanouts.add(this);
+    activeFanouts.forEach((active) => {
+      active.overlapMax = Math.max(active.overlapMax, activeFanouts.size);
+    });
   }
 
   queryDone(recipients: number): void {
@@ -169,6 +194,11 @@ export class FanoutMeasurement {
     this.connectionReads++;
   }
 
+  /** Wall time of one send's delivery claim (the Redis bookkeeping before it). */
+  claimTimed(milliseconds: number): void {
+    this.claimDurations.push(milliseconds);
+  }
+
   sendSettled(startedAt: number, outcome: FanoutSendOutcome): void {
     const settledAt = this.now();
     this.sendDurations.push(settledAt - startedAt);
@@ -178,7 +208,11 @@ export class FanoutMeasurement {
   }
 
   emit(properties: Record<string, string | number | null> = {}): void {
+    activeFanouts.delete(this);
     const finishedAt = this.now();
+    // Process CPU (user + system) while this fan-out ran: process-wide, so it
+    // also counts overlapping fan-outs, the request's other work and GC.
+    const cpu = this.cpuUsage(this.cpuAtStart);
     const sinceStart = (at: number | null) =>
       at === null ? Number.NaN : at - this.startedAt;
     writeEmf({
@@ -214,6 +248,14 @@ export class FanoutMeasurement {
           unit: 'Milliseconds',
           value: sampleValues(this.sendDurations, EMF_MAX_VALUES)
         },
+        fanout_cpu_ms: {
+          unit: 'Milliseconds',
+          value: Math.round((cpu.user + cpu.system) / 100) / 10
+        },
+        fanout_claim_ms: {
+          unit: 'Milliseconds',
+          value: sampleValues(this.claimDurations, EMF_MAX_VALUES)
+        },
         fanout_serializations: { unit: 'Count', value: this.serializations },
         fanout_connection_reads: {
           unit: 'Count',
@@ -239,7 +281,11 @@ export class FanoutMeasurement {
           value: this.outcomes.failed + this.outcomes.error
         }
       },
-      properties: { event: 'WAVE_FANOUT', ...properties }
+      properties: {
+        event: 'WAVE_FANOUT',
+        fanout_overlap_max: this.overlapMax,
+        ...properties
+      }
     });
   }
 }
