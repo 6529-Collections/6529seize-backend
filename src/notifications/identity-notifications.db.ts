@@ -6,6 +6,12 @@ import {
 import { artistArtworkNotificationVisibleSql } from './artist-artwork-submission.db';
 import { DbPoolName } from '@/db-query.options';
 import { optionalWaveReadAccessSql } from '@/waves/wave-read-access-sql';
+import {
+  ViewerGroupsCte,
+  viewerGroupsCte,
+  viewerGroupsCteSupported
+} from '@/waves/viewer-groups-cte';
+import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import { isActivated } from '@/api/push-notifications/push-notifications.service';
 import { PushNotificationOutboxDb } from '@/notifications/push-notification-outbox.db';
 import {
@@ -15,7 +21,8 @@ import {
   DROPS_TABLE,
   IDENTITY_MUTES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
-  WAVE_READER_METRICS_TABLE
+  WAVE_READER_METRICS_TABLE,
+  WAVES_TABLE
 } from '@/constants';
 import {
   IdentityNotificationCause,
@@ -566,6 +573,26 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * The viewer's groups as one shared table (see viewerGroupsCte), so a
+   * notification read inlines them once instead of three times: the
+   * notification's own visibility, its wave and the wave's parent. Undefined
+   * without groups, or while the compared columns' collation differs.
+   */
+  private async sharedViewerGroups(
+    groupIds: string[]
+  ): Promise<ViewerGroupsCte | undefined> {
+    if (!groupIds.length) return undefined;
+    const supported = await viewerGroupsCteSupported(this.db, [
+      IDENTITY_NOTIFICATIONS_TABLE,
+      WAVES_TABLE,
+      legacyGetView(WAVES_TABLE)
+    ]);
+    return supported
+      ? viewerGroupsCte('ntf_viewer_groups', groupIds)
+      : undefined;
+  }
+
   async findNotifications(
     param: {
       identity_id: string;
@@ -582,9 +609,11 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     const causesExclude = param.cause_exclude
       ?.split(',')
       .map((it) => it.trim());
+    const groups = await this.sharedViewerGroups(param.eligible_group_ids);
     return this.db
       .execute<IdentityNotificationEntity>(
         `
+        ${groups ? `WITH ${groups.cteSql}` : ''}
         SELECT n.* FROM ${IDENTITY_NOTIFICATIONS_TABLE} n
         LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
           ON r.wave_id = n.wave_id
@@ -616,10 +645,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         )
         AND (n.visibility_group_id IS NULL ${
           param.eligible_group_ids.length
-            ? ` OR n.visibility_group_id IN (:eligible_group_ids) `
+            ? ` OR n.visibility_group_id IN (${groups?.setSql ?? ':eligible_group_ids'}) `
             : ``
         })
-        AND ${optionalWaveReadAccessSql('n.wave_id', param.eligible_group_ids.length > 0, 'eligible_group_ids')}
+        AND ${optionalWaveReadAccessSql('n.wave_id', param.eligible_group_ids.length > 0, 'eligible_group_ids', groups?.setSql)}
         ${causes ? ` AND n.cause IN (:causes)` : ``}
         ${causesExclude ? ` AND n.cause NOT IN (:causesExclude)` : ``}
         ${param.unread_only ? ` AND n.read_at IS NULL` : ``}
@@ -640,7 +669,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         )
         ORDER BY n.id DESC LIMIT :limit
       `,
-        { ...param, causes, causesExclude },
+        { ...param, causes, causesExclude, ...groups?.params },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((results) =>
@@ -701,10 +730,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     const queryOptions = connection
       ? { wrappedConnection: connection }
       : undefined;
+    const groups = await this.sharedViewerGroups(eligibleGroupIds);
 
     return this.db
       .oneOrNull<{ cnt: number }>(
         `
+        ${groups ? `WITH ${groups.cteSql}` : ''}
         SELECT COUNT(*) AS cnt
         FROM ${IDENTITY_NOTIFICATIONS_TABLE} n
         LEFT JOIN ${WAVE_READER_METRICS_TABLE} r
@@ -730,10 +761,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
             AND n.read_at IS NULL
             AND (n.visibility_group_id IS NULL ${
               eligibleGroupIds.length
-                ? ` OR n.visibility_group_id IN (:eligibleGroupIds) `
+                ? ` OR n.visibility_group_id IN (${groups?.setSql ?? ':eligibleGroupIds'}) `
                 : ``
             })
-            AND ${optionalWaveReadAccessSql('n.wave_id', eligibleGroupIds.length > 0)}
+            AND ${optionalWaveReadAccessSql('n.wave_id', eligibleGroupIds.length > 0, 'eligibleGroupIds', groups?.setSql)}
             AND COALESCE(r.muted, FALSE) = FALSE
             AND (m.id IS NULL OR ${anonymousNotificationActorSql('n')})
             AND (b.id IS NULL OR ${anonymousNotificationActorSql('n')})
@@ -752,7 +783,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         AND ${COMPETITION_NOTIFICATION_VISIBILITY_SQL}
         AND ${artistArtworkNotificationVisibleSql('n')}
       `,
-        queryParams,
+        { ...queryParams, ...groups?.params },
         options?.forcePool
           ? { ...queryOptions, forcePool: options.forcePool }
           : queryOptions

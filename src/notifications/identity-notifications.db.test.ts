@@ -16,6 +16,7 @@ import {
 import { IdentityMutesDb } from '@/api-serverless/src/identity-mutes/identity-mutes.db';
 import { ContentModerationDb } from '@/content-moderation/content-moderation.db';
 import { ProfilePreferencesDb } from '@/profile-preferences/profile-preferences.db';
+import { resetViewerGroupsCteSupport } from '@/waves/viewer-groups-cte';
 
 type IdentityMutesDbDouble = jest.Mocked<
   Pick<IdentityMutesDb, 'filterMutedNotificationRows'>
@@ -174,12 +175,16 @@ describe('IdentityNotificationsDb', () => {
     process.env.USER_NOTIFIER_ACTIVATED = 'true';
     jest.mocked(isActivated).mockReturnValue(true);
     jest.mocked(sendIdentityPushNotification).mockClear();
+    // These cases pin the inlined group list; the shared viewer-group table
+    // has its own suites (identity-notifications-shared-groups*.test.ts).
+    resetViewerGroupsCteSupport(false);
   });
 
   afterEach(() => {
     process.env.USER_NOTIFIER_ACTIVATED = originalNotifierActivated;
     process.env.NODE_ENV = originalNodeEnvironment;
     jest.restoreAllMocks();
+    resetViewerGroupsCteSupport();
   });
 
   it('does not insert a notification when the actor is muted', async () => {

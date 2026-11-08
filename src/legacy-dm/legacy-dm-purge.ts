@@ -109,6 +109,14 @@ export interface LegacyDmPurgeOptions {
   readonly heldWaveIds?: readonly string[];
   readonly maxWaves?: number;
   readonly onMedia?: (entries: LegacyDmMediaEntry[]) => void;
+  /**
+   * Runs once a wave's deletions have all committed. The CLI moves the
+   * wave's unread-cache version here, so cached unread counts stop showing
+   * the deleted drops at once instead of after the cache TTL. A failure stops
+   * the run; rerunning repeats the wave (with nothing left to delete) and
+   * the hook.
+   */
+  readonly onWavePurged?: (waveId: string) => Promise<void>;
   readonly log?: (line: string) => void;
 }
 
@@ -287,6 +295,7 @@ export async function executeLegacyDmPurge(
       await db.inTransaction((tx) =>
         purgeWaveLevel(tx, wave, add, options.onMedia)
       );
+      await options.onWavePurged?.(wave.id);
       waves += 1;
       drops += waveDrops;
       log(`wave ${wave.id}: ${waveDrops} drops deleted (${waves} waves done)`);
