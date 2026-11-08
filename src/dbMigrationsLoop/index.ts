@@ -22,6 +22,7 @@ import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 import { getDataSource } from '@/db';
+import { synchronizeSchemaBounded } from '@/db/bounded-schema-sync';
 import { CompetitionLifecycleEventEntity } from '@/entities/ICompetition';
 import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 import { dbSupplier } from '@/sql-executor';
@@ -235,7 +236,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       // Synchronization ignores tables outside the current entity registry; retirement is operator-only.
       if (!scheduledInvocation && scope === 'full') {
         await assertCompetitionSchemaSyncSafe(dbSupplier());
-        await getDataSource().synchronize();
+        await synchronizeSchemaBounded(getDataSource());
         await applyWaveScoreInputIndexSchema();
       }
       if (

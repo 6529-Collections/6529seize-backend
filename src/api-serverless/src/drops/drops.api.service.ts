@@ -95,6 +95,7 @@ import {
   ContentModerationDb
 } from '@/content-moderation/content-moderation.db';
 import { ApiDropModerationStatus } from '@/api/generated/models/ApiDropModerationStatus';
+import { withWaveLogsTimeoutGuard } from './wave-logs-timeout';
 
 export class DropsApiService {
   constructor(
@@ -1174,7 +1175,9 @@ export class DropsApiService {
     ctx: RequestContext
   ): Promise<ApiWaveLog[]> {
     await this.assertViewingEligibilityForWave(param.wave_id, ctx);
-    const logEntities = await this.dropsDb.findDropLogEntities(param, ctx);
+    const logEntities = await withWaveLogsTimeoutGuard(param, () =>
+      this.dropsDb.findDropLogEntities(param, ctx)
+    );
     const relatedProfiles = await this.findDropLogRelatedProfiles(
       logEntities,
       ctx

@@ -12,6 +12,9 @@ export const NFTS_PAGE_SIZE = 101;
 export const DISTRIBUTION_PAGE_SIZE = 250;
 export const SORT_DIRECTIONS = [PageSortDirection.ASC, PageSortDirection.DESC];
 export const CACHE_TIME_MS = Time.minutes(1).toMillis();
+// Lets browsers reuse a preflight result instead of repeating OPTIONS on
+// every authenticated request. Chrome caps the cache at 2 hours.
+export const CORS_PREFLIGHT_MAX_AGE_SECONDS = Time.hours(2).toSeconds();
 
 type ApiCorsOptions = {
   origin: string | boolean;
@@ -19,6 +22,7 @@ type ApiCorsOptions = {
   allowedHeaders: string[];
   credentials?: true;
   exposedHeaders?: string[];
+  maxAge: number;
 };
 
 export const corsOptions: ApiCorsOptions = {
@@ -33,7 +37,8 @@ export const corsOptions: ApiCorsOptions = {
     'Authorization'
   ],
   // Lets web clients read the id that matches a response to server logs.
-  exposedHeaders: ['X-Request-Id']
+  exposedHeaders: ['X-Request-Id'],
+  maxAge: CORS_PREFLIGHT_MAX_AGE_SECONDS
 };
 
 const WEB_AUTH_CREDENTIAL_ROUTE_PATHS = new Set([

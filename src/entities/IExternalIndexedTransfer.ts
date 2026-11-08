@@ -34,7 +34,9 @@ export class ExternalIndexedTransfersEntity {
   @Column({ type: 'bigint', nullable: false, default: 1 })
   readonly amount!: number;
 
-  @Column({ type: 'tinyint', width: 1, nullable: true })
+  // No display width: TypeORM can't read it back from MySQL 8, so a width
+  // here made every synchronize re-ALTER the column.
+  @Column({ type: 'tinyint', nullable: true })
   readonly is_monetary_sale!: number | null;
 
   @Column({ type: 'varchar', nullable: false, length: 66 })
@@ -43,7 +45,9 @@ export class ExternalIndexedTransfersEntity {
   @Column({ type: 'bigint', nullable: false })
   readonly time!: number;
 
-  @Column({ type: 'tinyint', nullable: false, width: 1, default: 0 })
+  // No display width: TypeORM can't read it back from MySQL 8, so a width
+  // here made every synchronize re-ALTER the column.
+  @Column({ type: 'tinyint', nullable: false, default: 0 })
   readonly sale_epoch_start!: number;
 
   @Column({
