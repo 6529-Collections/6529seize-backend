@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import {
   publicCompetitionDropSql,
   competitionAnonymityViewerId
@@ -787,10 +788,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     timer?: Timer
   ) {
     timer?.start('dropsDb->insertReferencedNfts');
-    await Promise.all(
-      references.map((reference) =>
-        this.db.execute(
-          `insert into ${DROP_REFERENCED_NFTS_TABLE} (drop_id,
+    await inSequence(
+      references.map(
+        (reference) => () =>
+          this.db.execute(
+            `insert into ${DROP_REFERENCED_NFTS_TABLE} (drop_id,
                                                       contract,
                                                       token,
                                                       name,
@@ -800,9 +802,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                    :token,
                    :name,
                    :wave_id)`,
-          reference,
-          { wrappedConnection: connection }
-        )
+            reference,
+            { wrappedConnection: connection }
+          )
       )
     );
     timer?.stop('dropsDb->insertReferencedNfts');
@@ -814,10 +816,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     timer?: Timer
   ) {
     timer?.start(`dropsDb->insertDropMetadata`);
-    await Promise.all(
-      metadatas.map((metadata) =>
-        this.db.execute(
-          `insert into ${DROP_METADATA_TABLE} (drop_id,
+    await inSequence(
+      metadatas.map(
+        (metadata) => () =>
+          this.db.execute(
+            `insert into ${DROP_METADATA_TABLE} (drop_id,
                                                data_key,
                                                data_value,
                                                wave_id)
@@ -825,9 +828,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                    :data_key,
                    :data_value,
                    :wave_id)`,
-          metadata,
-          { wrappedConnection: connection }
-        )
+            metadata,
+            { wrappedConnection: connection }
+          )
       )
     );
     timer?.stop(`dropsDb->insertDropMetadata`);
@@ -1833,14 +1836,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     timer?: Timer
   ) {
     timer?.start(`dropsDb->insertDropMedia`);
-    await Promise.all(
-      media.map((medium) =>
-        this.db.execute(
-          `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type, media_upload_id, wave_id)
+    await inSequence(
+      media.map(
+        (medium) => () =>
+          this.db.execute(
+            `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type, media_upload_id, wave_id)
            values (:drop_id, :drop_part_id, :url, :mime_type, :media_upload_id, :wave_id)`,
-          medium,
-          { wrappedConnection: connection }
-        )
+            medium,
+            { wrappedConnection: connection }
+          )
       )
     );
     timer?.stop(`dropsDb->insertDropMedia`);
@@ -1928,15 +1932,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     timer?: Timer
   ) {
     timer?.start(`dropsDb->insertDropParts`);
-    await Promise.all(
-      parts.map((part) =>
-        this.db.execute(
-          `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, quoted_drop_id, quoted_drop_part_id,
+    await inSequence(
+      parts.map(
+        (part) => () =>
+          this.db.execute(
+            `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, quoted_drop_id, quoted_drop_part_id,
                                              wave_id)
            values (:drop_id, :drop_part_id, :content, :quoted_drop_id, :quoted_drop_part_id, :wave_id)`,
-          part,
-          { wrappedConnection: connection }
-        )
+            part,
+            { wrappedConnection: connection }
+          )
       )
     );
     timer?.stop(`dropsDb->insertDropParts`);

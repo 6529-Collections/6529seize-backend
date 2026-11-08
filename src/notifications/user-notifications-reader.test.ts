@@ -95,6 +95,28 @@ describeWithSeed(
       }
     );
 
+    it.each([
+      [undefined, 2],
+      [false, 2],
+      [true, 3]
+    ])(
+      'counts unread exactly like the page total (include_competitions %s)',
+      async (include_competitions, expected) => {
+        const page = await reader.getNotificationsForIdentity({
+          ...request,
+          include_competitions
+        });
+        await expect(
+          reader.countUnreadForIdentity({
+            identity_id: request.identity_id,
+            eligible_group_ids: request.eligible_group_ids,
+            include_competitions
+          })
+        ).resolves.toBe(page.total_unread);
+        expect(page.total_unread).toBe(expected);
+      }
+    );
+
     it('includes native rows and unread count only with explicit opt-in', async () => {
       const response = await reader.getNotificationsForIdentity({
         ...request,

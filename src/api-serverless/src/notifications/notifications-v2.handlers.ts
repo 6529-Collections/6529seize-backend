@@ -1,6 +1,10 @@
 import { getAuthenticationContext } from '@/api/auth/auth';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
-import { GetNotificationsV2Request } from '@/api/generated/routes/operations';
+import { ApiNotificationsUnreadCountV2 } from '@/api/generated/models/ApiNotificationsUnreadCountV2';
+import {
+  GetNotificationsUnreadCountV2Request,
+  GetNotificationsV2Request
+} from '@/api/generated/routes/operations';
 import { notificationsApiService } from '@/api/notifications/notifications.api.service';
 import { getValidatedByJoiOrThrow } from '@/api/validation';
 import { AuthenticationContext } from '@/auth-context';
@@ -64,6 +68,33 @@ export async function handleGetNotificationsV2(
     GetNotificationsV2QuerySchema
   );
   return notificationsApiService.getNotificationsV2(
+    request,
+    authenticationContext,
+    { timer, authenticationContext }
+  );
+}
+
+const GetNotificationsUnreadCountV2QuerySchema = Joi.object<{
+  include_competitions?: boolean;
+}>({
+  include_competitions: Joi.boolean().optional()
+});
+
+/**
+ * The unread badge: same authentication, access rules and capability filter
+ * as handleGetNotificationsV2, without loading a page of notifications.
+ */
+export async function handleGetNotificationsUnreadCountV2(
+  req: GetNotificationsUnreadCountV2Request
+): Promise<ApiNotificationsUnreadCountV2> {
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  assertCanAccessNotifications(authenticationContext);
+  const request = getValidatedByJoiOrThrow(
+    req.query,
+    GetNotificationsUnreadCountV2QuerySchema
+  );
+  return notificationsApiService.getUnreadNotificationsCountV2(
     request,
     authenticationContext,
     { timer, authenticationContext }

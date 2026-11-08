@@ -2,6 +2,8 @@ import express from 'express';
 import { AddressInfo } from 'node:net';
 import { loggerContext } from '@/logger-context';
 import { requestLogMiddleware } from '@/api/request-log.middleware';
+import { DbPoolName } from '@/db-query.options';
+import { SqlOperationTiming } from '@/db/sql-operation-timing';
 
 const mockLogLines: { line: string; requestId: string | undefined }[] = [];
 
@@ -28,6 +30,17 @@ describe('requestLogMiddleware', () => {
     app.use(requestLogMiddleware());
     app.get('/api/things', (_req, res) => {
       seenInHandler.push(loggerContext.get()?.requestId);
+      res.json({ ok: true });
+    });
+    app.get('/api/with-sql', async (_req, res) => {
+      await Promise.resolve();
+      for (const pool of [DbPoolName.READ, 'supplied' as const]) {
+        const timing = new SqlOperationTiming(pool, () => 'SELECT 1');
+        if (pool !== 'supplied') timing.acquired();
+        timing.queryStarted();
+        timing.queryFinished(false);
+        timing.finish('completed');
+      }
       res.json({ ok: true });
     });
     app.post('/api/e', (_req, res) => {
@@ -75,6 +88,35 @@ describe('requestLogMiddleware', () => {
         line: expect.stringContaining('[PATH /api/things?page=2]')
       })
     ]);
+  });
+
+  it("logs the request's SQL operation count and time split", async () => {
+    await fetch(`${baseUrl}/api/with-sql`);
+    await waitForLogLine();
+    expect(mockLogLines).toEqual([
+      expect.objectContaining({
+        line: expect.stringMatching(
+          /\[TOOK_MS \d+\] \[SQL_OPS 2\] \[SQL_ACQUIRE_MS \d+\] \[SQL_ACQUIRE_MAX_MS \d+\] \[SQL_MS \d+\]$/
+        )
+      })
+    ]);
+  });
+
+  it('keeps SQL totals of concurrent requests apart', async () => {
+    await Promise.all([
+      fetch(`${baseUrl}/api/with-sql`),
+      fetch(`${baseUrl}/api/things`)
+    ]);
+    for (let attempt = 0; attempt < 50 && mockLogLines.length < 2; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const lines = mockLogLines.map(({ line }) => line);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/\[PATH \/api\/with-sql\].*\[SQL_OPS 2\]/),
+        expect.stringMatching(/\[PATH \/api\/things\].*\[SQL_OPS 0\]/)
+      ])
+    );
   });
 
   it('sets the header on error and not-found responses too', async () => {

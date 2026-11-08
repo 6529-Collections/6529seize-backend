@@ -48,6 +48,13 @@ jest.mock('@/db', () => {
   const synchronize = jest.fn().mockResolvedValue(undefined);
   return { getDataSource: () => ({ synchronize }) };
 });
+// The bounded sync has its own tests; here it stands for synchronize().
+jest.mock('@/db/bounded-schema-sync', () => ({
+  synchronizeSchemaBounded: jest.fn(
+    (dataSource: { synchronize: () => Promise<void> }) =>
+      dataSource.synchronize()
+  )
+}));
 
 jest.mock('./nft-link-page-retry-schema', () => ({
   applyNftLinkPageRetrySchema: jest.fn().mockResolvedValue(1)
