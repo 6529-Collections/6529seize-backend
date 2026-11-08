@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import {
   applyWaveHubPatch,
   waveHubAccessChanged
@@ -2152,39 +2153,41 @@ export class WaveApiService {
     ctx: RequestContextWithConnection
   ) {
     await competitionHistoryRepository.assertWaveCanBeDeleted(waveId, ctx);
-    await Promise.all([
-      this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropMentionedWavesByWaveId(waveId, ctx),
-      this.dropsDb.deleteDropGroupMentionsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropMediaByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropReferencedNftsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropMetadataByWaveId(waveId, ctx),
-      this.reactionsService.deleteReactionsByWave(waveId, ctx),
-      this.wavesApiDb.deleteDropFeedItemsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropNotificationsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropSubscriptionsByWaveId(waveId, ctx),
-      dropPollsDb.deleteByWaveId(waveId, ctx),
-      this.waveGroupNotificationSubscriptionsDb.deleteByWaveId(
-        waveId,
-        ctx.connection
-      ),
-      profileWavesDb.deleteByWaveId(waveId, ctx),
-      this.curationsDb.deleteDropCurationsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteWaveMetrics(waveId, ctx),
-      this.wavesApiDb.deleteWave(waveId, ctx),
-      this.curationsDb.deleteWaveCurationsByWaveId(waveId, ctx),
-      this.wavesApiDb.deleteDropRelations(waveId, ctx),
-      this.wavesApiDb.deleteBoosts(waveId, ctx),
-      waveMetadataDb.deleteByWaveId(waveId, ctx),
-      ratingsDb.deleteRatingsForMatter(
-        {
-          matter_target_id: waveId,
-          matter: RateMatter.WAVE_REP
-        },
-        ctx
-      )
+    await inSequence([
+      () => this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropMentionedWavesByWaveId(waveId, ctx),
+      () => this.dropsDb.deleteDropGroupMentionsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropMediaByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropReferencedNftsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropMetadataByWaveId(waveId, ctx),
+      () => this.reactionsService.deleteReactionsByWave(waveId, ctx),
+      () => this.wavesApiDb.deleteDropFeedItemsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropNotificationsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropSubscriptionsByWaveId(waveId, ctx),
+      () => dropPollsDb.deleteByWaveId(waveId, ctx),
+      () =>
+        this.waveGroupNotificationSubscriptionsDb.deleteByWaveId(
+          waveId,
+          ctx.connection
+        ),
+      () => profileWavesDb.deleteByWaveId(waveId, ctx),
+      () => this.curationsDb.deleteDropCurationsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteWaveMetrics(waveId, ctx),
+      () => this.wavesApiDb.deleteWave(waveId, ctx),
+      () => this.curationsDb.deleteWaveCurationsByWaveId(waveId, ctx),
+      () => this.wavesApiDb.deleteDropRelations(waveId, ctx),
+      () => this.wavesApiDb.deleteBoosts(waveId, ctx),
+      () => waveMetadataDb.deleteByWaveId(waveId, ctx),
+      () =>
+        ratingsDb.deleteRatingsForMatter(
+          {
+            matter_target_id: waveId,
+            matter: RateMatter.WAVE_REP
+          },
+          ctx
+        )
     ]);
   }
 
@@ -2547,15 +2550,17 @@ export class WaveApiService {
             const newVisibilityGroupId = request.visibility.scope.group_id;
             const oldVisibilityGroupId = waveBeforeUpdate.visibility_group_id;
             if (newVisibilityGroupId !== oldVisibilityGroupId) {
-              await Promise.all([
-                this.wavesApiDb.updateVisibilityInFeedEntities(
-                  { waveId, newVisibilityGroupId },
-                  ctxWithConnection
-                ),
-                this.wavesApiDb.updateVisibilityInNotifications(
-                  { waveId, newVisibilityGroupId },
-                  ctxWithConnection
-                )
+              await inSequence([
+                () =>
+                  this.wavesApiDb.updateVisibilityInFeedEntities(
+                    { waveId, newVisibilityGroupId },
+                    ctxWithConnection
+                  ),
+                () =>
+                  this.wavesApiDb.updateVisibilityInNotifications(
+                    { waveId, newVisibilityGroupId },
+                    ctxWithConnection
+                  )
               ]);
             }
             const noRightToVote =
