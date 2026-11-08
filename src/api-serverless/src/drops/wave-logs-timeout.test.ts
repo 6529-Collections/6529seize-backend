@@ -67,7 +67,7 @@ describe('withWaveLogsTimeoutGuard', () => {
       retry_after_seconds: WAVE_LOGS_TIMEOUT_TTL.toSeconds()
     });
     expect(mockedRedisSetJson).toHaveBeenCalledWith(
-      'wave-logs-timeout:wave-1:DESC:0:DROP_CREATED,DROP_VOTE_EDIT',
+      'wave-logs-timeout:wave-1:DESC:0:20:DROP_CREATED,DROP_VOTE_EDIT',
       true,
       WAVE_LOGS_TIMEOUT_TTL
     );
@@ -82,16 +82,37 @@ describe('withWaveLogsTimeoutGuard', () => {
     expect(read).not.toHaveBeenCalled();
   });
 
-  it('keys the memory by request, not by log type order', async () => {
+  it('keys the memory by request shape, not by log type order', async () => {
     await withWaveLogsTimeoutGuard(
       { ...waveRead, log_types: ['DROP_CREATED', 'DROP_VOTE_EDIT'] },
       async () => []
     );
     await withWaveLogsTimeoutGuard({ ...waveRead, offset: 20 }, async () => []);
+    await withWaveLogsTimeoutGuard({ ...waveRead, limit: 100 }, async () => []);
+    await withWaveLogsTimeoutGuard(
+      { ...waveRead, wave_id: 'a:b' },
+      async () => []
+    );
     expect(mockedRedisGet.mock.calls.map(([key]) => key)).toEqual([
-      'wave-logs-timeout:wave-1:DESC:0:DROP_CREATED,DROP_VOTE_EDIT',
-      'wave-logs-timeout:wave-1:DESC:20:DROP_CREATED,DROP_VOTE_EDIT'
+      'wave-logs-timeout:wave-1:DESC:0:20:DROP_CREATED,DROP_VOTE_EDIT',
+      'wave-logs-timeout:wave-1:DESC:20:20:DROP_CREATED,DROP_VOTE_EDIT',
+      'wave-logs-timeout:wave-1:DESC:0:100:DROP_CREATED,DROP_VOTE_EDIT',
+      'wave-logs-timeout:a%3Ab:DESC:0:20:DROP_CREATED,DROP_VOTE_EDIT'
     ]);
+  });
+
+  it('still reads when the memo cannot be checked', async () => {
+    mockedRedisGet.mockRejectedValue(new Error('redis down'));
+    await expect(
+      withWaveLogsTimeoutGuard(waveRead, async () => ['log'])
+    ).resolves.toEqual(['log']);
+  });
+
+  it('still answers a timeout with the 503 when the memo cannot be written', async () => {
+    mockedRedisSetJson.mockRejectedValue(new Error('redis down'));
+    await expect(
+      withWaveLogsTimeoutGuard(waveRead, () => Promise.reject(queryTimeout()))
+    ).rejects.toBeInstanceOf(WaveLogsUnavailableException);
   });
 
   it('passes other errors through without remembering them', async () => {
