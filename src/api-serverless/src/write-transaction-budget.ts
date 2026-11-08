@@ -73,6 +73,21 @@ function writeTransactionOptions(): SqlTransactionOptions | undefined {
   };
 }
 
+/**
+ * READ COMMITTED transaction options for paths that rely on it (votes, drop
+ * delete), with the request's budget when there is one.
+ */
+export function readCommitted(
+  options: SqlTransactionOptions | undefined
+): SqlTransactionOptions {
+  return {
+    isolationLevel: 'READ COMMITTED',
+    ...(options?.executionBudget
+      ? { executionBudget: options.executionBudget }
+      : {})
+  };
+}
+
 function isWriteBusy(error: unknown): boolean {
   if (error instanceof SqlExecutionBudgetExceededError) {
     return (
