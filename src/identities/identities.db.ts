@@ -39,6 +39,10 @@ import { appFeatures } from '../app-features';
 import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
 import { legacyTypedDropsSql } from '@/competitions/legacy-typed-drops';
 import {
+  querySqlInListChunks,
+  SQL_IN_LIST_CHUNK_BYTES
+} from '@/db/sql-in-list-chunks';
+import {
   isLegacyCompetitionGetFacadeScope,
   legacyGetView,
   withoutLegacyCompetitionGetFacade
@@ -80,6 +84,21 @@ function mainStageTypedDropsSql(
     : `select author_id as profile_id, id as drop_id from ${DROPS_TABLE}
       where author_id in (:profileIds) and wave_id = :mainStageWaveId
         and drop_type = '${dropType}'`;
+}
+
+function groupDropIdsByProfile(
+  rows: { profile_id: string; drop_id: string }[]
+): Record<string, string[]> {
+  return rows.reduce(
+    (acc, it) => {
+      if (!acc[it.profile_id]) {
+        acc[it.profile_id] = [];
+      }
+      acc[it.profile_id].push(it.drop_id);
+      return acc;
+    },
+    {} as Record<string, string[]>
+  );
 }
 
 export class IdentitiesDb extends LazyDbAccessCompatibleService {
@@ -1395,101 +1414,83 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
+  /**
+   * The main stage's drops of one type by these profiles: legacy typed
+   * drops, native entries and accepted collaborations. The statement inlines
+   * the profile list once per source, so the list is chunked to keep each
+   * statement under the RDS Proxy pinning size. Every row belongs to one
+   * listed profile, so the chunks' rows together are exactly the full query's.
+   */
+  private async findMainStageDropRows(
+    profileIds: string[],
+    dropType: DropType.PARTICIPATORY | DropType.WINNER,
+    ctx: RequestContext
+  ): Promise<{ profile_id: string; drop_id: string }[]> {
+    const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
+    const status = dropType === DropType.WINNER ? 'WINNER' : 'ACTIVE';
+    // Decided in the caller's scope, before the facade is switched off.
+    const typedDrops = mainStageTypedDropsSql(
+      dropType,
+      isLegacyCompetitionGetFacadeScope()
+    );
+    const sql = `
+      ${typedDrops}
+      union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource(status)}) native_entry
+      where submitter_id in (:profileIds)
+      union select invitation.profile_id, invitation.drop_id
+      from ${MEME_COLLABORATION_INVITATIONS_TABLE} invitation
+      join (${nativeMainStageEntriesSource(status)}) collaboration_entry on collaboration_entry.drop_id=invitation.drop_id
+      where invitation.profile_id in (:profileIds) and invitation.status='ACCEPTED'
+      `;
+    const listCopies = sql.split(':profileIds').length - 1;
+    return withoutLegacyCompetitionGetFacade(() =>
+      querySqlInListChunks(
+        profileIds,
+        (chunk) =>
+          this.db.execute<{ profile_id: string; drop_id: string }>(
+            sql,
+            { profileIds: chunk, mainStageWaveId },
+            { wrappedConnection: ctx.connection }
+          ),
+        {
+          maxBytes: Math.floor(SQL_IN_LIST_CHUNK_BYTES / listCopies),
+          // One caller-owned connection runs one statement at a time.
+          sequential: !!ctx.connection
+        }
+      )
+    );
+  }
+
   async getActiveMainStageDropIds(
     profileIds: string[],
     ctx: RequestContext
   ): Promise<Record<string, string[]>> {
-    const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
     if (!profileIds.length) {
       return {};
     }
-    // Decided in the caller's scope, before the facade is switched off.
-    const typedDrops = mainStageTypedDropsSql(
+    const results = await this.findMainStageDropRows(
+      profileIds,
       DropType.PARTICIPATORY,
-      isLegacyCompetitionGetFacadeScope()
-    );
-    const results = await withoutLegacyCompetitionGetFacade(() =>
-      this.db.execute<{
-        profile_id: string;
-        drop_id: string;
-      }>(
-        `
-      ${typedDrops}
-      union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('ACTIVE')}) native_entry
-      where submitter_id in (:profileIds)
-      union select invitation.profile_id, invitation.drop_id
-      from ${MEME_COLLABORATION_INVITATIONS_TABLE} invitation
-      join (${nativeMainStageEntriesSource('ACTIVE')}) collaboration_entry on collaboration_entry.drop_id=invitation.drop_id
-      where invitation.profile_id in (:profileIds) and invitation.status='ACCEPTED'
-      `,
-        {
-          profileIds,
-          mainStageWaveId
-        },
-        { wrappedConnection: ctx.connection }
-      )
+      ctx
     );
     const hiddenDropIds = await competitionAnonymityService.hiddenDropIds(
       results.map((row) => row.drop_id),
       ctx
     );
-    return results
-      .filter((row) => !hiddenDropIds.has(row.drop_id))
-      .reduce(
-        (acc, it) => {
-          if (!acc[it.profile_id]) {
-            acc[it.profile_id] = [];
-          }
-          acc[it.profile_id].push(it.drop_id);
-          return acc;
-        },
-        {} as Record<string, string[]>
-      );
+    return groupDropIdsByProfile(
+      results.filter((row) => !hiddenDropIds.has(row.drop_id))
+    );
   }
 
   async getMainStageWinnerDropIds(
     profileIds: string[],
     ctx: RequestContext
   ): Promise<Record<string, string[]>> {
-    const mainStageWaveId = env.getStringOrNull(`MAIN_STAGE_WAVE_ID`);
     if (!profileIds.length) {
       return {};
     }
-    // Decided in the caller's scope, before the facade is switched off.
-    const typedDrops = mainStageTypedDropsSql(
-      DropType.WINNER,
-      isLegacyCompetitionGetFacadeScope()
-    );
-    const results = await withoutLegacyCompetitionGetFacade(() =>
-      this.db.execute<{
-        profile_id: string;
-        drop_id: string;
-      }>(
-        `
-      ${typedDrops}
-      union select submitter_id as profile_id, drop_id from (${nativeMainStageEntriesSource('WINNER')}) native_entry
-      where submitter_id in (:profileIds)
-      union select invitation.profile_id, invitation.drop_id
-      from ${MEME_COLLABORATION_INVITATIONS_TABLE} invitation
-      join (${nativeMainStageEntriesSource('WINNER')}) collaboration_entry on collaboration_entry.drop_id=invitation.drop_id
-      where invitation.profile_id in (:profileIds) and invitation.status='ACCEPTED'
-      `,
-        {
-          profileIds,
-          mainStageWaveId
-        },
-        { wrappedConnection: ctx.connection }
-      )
-    );
-    return results.reduce(
-      (acc, it) => {
-        if (!acc[it.profile_id]) {
-          acc[it.profile_id] = [];
-        }
-        acc[it.profile_id].push(it.drop_id);
-        return acc;
-      },
-      {} as Record<string, string[]>
+    return groupDropIdsByProfile(
+      await this.findMainStageDropRows(profileIds, DropType.WINNER, ctx)
     );
   }
 

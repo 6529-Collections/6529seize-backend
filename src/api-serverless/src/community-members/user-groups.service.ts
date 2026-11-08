@@ -224,6 +224,13 @@ const DEFAULT_ELIGIBLE_GROUPS_CACHE_TTL_SEC = 60;
 const ELIGIBLE_GROUPS_MEMORY_CACHE_PREFIX = 'eligible-groups-v2';
 const ELIGIBLE_GROUPS_REDIS_CACHE_PREFIX = 'cache_6529_eligible_groups';
 const ELIGIBLE_GROUPS_LEASE_RENEW_MS = 1_000;
+/**
+ * How often a request waiting on another request's eligibility computation
+ * looks for its published result: 25-50 ms, jittered. A computation takes
+ * about 270 ms on average, so a longer poll mostly adds idle wait on top.
+ */
+const ELIGIBLE_GROUPS_PEER_POLL_MIN_MS = 25;
+const ELIGIBLE_GROUPS_PEER_POLL_JITTER_MS = 25;
 const eligibleGroupsPromisesByProfileId = new Map<string, Promise<string[]>>();
 const logger = Logger.get('USER_GROUPS_SERVICE');
 const DEFAULT_BENEFICIARY_GRANT_MATCH_MODE =
@@ -1182,7 +1189,10 @@ export class UserGroupsService {
       }
       const remaining = deadline - performance.now();
       if (remaining > 0) {
-        await Time.millis(Math.min(remaining, 125 + randomInt(176))).sleep();
+        const pollMs =
+          ELIGIBLE_GROUPS_PEER_POLL_MIN_MS +
+          randomInt(ELIGIBLE_GROUPS_PEER_POLL_JITTER_MS + 1);
+        await Time.millis(Math.min(remaining, pollMs)).sleep();
       }
     }
     this.eligibilityUnavailable('timeout');
@@ -1270,6 +1280,9 @@ export class UserGroupsService {
       profileId,
       timer
     );
+    // Nothing published yet: skip the database and version reads, which only
+    // validate a result, so a frequent poll stays two Redis reads.
+    if (!peerEntry || signal?.aborted) return null;
     const [currentProfileChange, currentWaveVersion, markerAfterRead] =
       await Promise.all([
         this.userGroupsDb.getLatestProfileGroupChangeMillis(profileId),
