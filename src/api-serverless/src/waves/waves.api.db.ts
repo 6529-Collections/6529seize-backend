@@ -291,6 +291,15 @@ function profileWaveActivityTimestampSql(): string {
   ), 0) else coalesce(wdm.latest_drop_timestamp, 0) end)`;
 }
 
+/**
+ * A community_groups profile_group_id (utf8mb4) compared with a
+ * profile_groups id (utf8mb3_bin until #2355). See
+ * getBlockedOneToOneDirectMessageExpression.
+ */
+function profileGroupsIdComparand(utf8mb4Expression: string): string {
+  return `convert(${utf8mb4Expression} using utf8mb3)`;
+}
+
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   private getWaveScoreSortColumn(sort: ApiWaveScoreSort): string {
     switch (sort) {
@@ -508,6 +517,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     waveAlias: string,
     readerIdParam: string
   ): string {
+    // STOPGAP until profile_groups moves to the schema collation (#2355):
+    // its ids are utf8mb3_bin and community_groups' are utf8mb4, so a plain
+    // column comparison converts the profile_groups side and scans the whole
+    // table per DM wave (5 s for a reader with blocks and 50 DMs). Converting
+    // the community_groups side keeps the profile_groups index lookup. The ids
+    // are ASCII, so the conversion is lossless. No explicit COLLATE: this form
+    // also uses the index after the migration (utf8mb3 is then converted up),
+    // so it is correct and fast in both states; remove it after #2355 runs.
+    const dmProfileGroupId = profileGroupsIdComparand(
+      'dm_group.profile_group_id'
+    );
     return `(
       ${waveAlias}.is_direct_message = true
       and ${waveAlias}.chat_group_id is not null
@@ -515,7 +535,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         select 1
         from ${USER_GROUPS_TABLE} dm_group
         join ${PROFILE_GROUPS_TABLE} blocked_member
-          on blocked_member.profile_group_id = dm_group.profile_group_id
+          on blocked_member.profile_group_id = ${dmProfileGroupId}
         join ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
           on profile_block.blocker_profile_id = :${readerIdParam}
          and profile_block.blocked_profile_id = blocked_member.profile_id
@@ -523,13 +543,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           and exists (
             select 1
             from ${PROFILE_GROUPS_TABLE} reader_member
-            where reader_member.profile_group_id = dm_group.profile_group_id
+            where reader_member.profile_group_id = ${dmProfileGroupId}
               and reader_member.profile_id = :${readerIdParam}
           )
           and 2 = (
             select count(distinct dm_member.profile_id)
             from ${PROFILE_GROUPS_TABLE} dm_member
-            where dm_member.profile_group_id = dm_group.profile_group_id
+            where dm_member.profile_group_id = ${dmProfileGroupId}
           )
       )
     )`;
