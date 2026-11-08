@@ -163,6 +163,34 @@ describeWithSeed(
       expect(syncAll).toHaveBeenCalledTimes(1);
     });
 
+    it('stops before revoking or marking synced when another run took its lease over', async () => {
+      await markPending();
+      const revoke = jest.spyOn(
+        overvoteRevocation,
+        'revokeTdhBasedDropWavesOverVotes'
+      );
+
+      await expect(
+        syncIdentitiesAfterTdh({
+          chunkRows: 3,
+          afterChunk: async (chunk) => {
+            if (chunk === 1)
+              await setLease('other-invocation', Time.currentMillis() + 60_000);
+          }
+        })
+      ).rejects.toThrow('lease was taken over');
+
+      expect(revoke).not.toHaveBeenCalled();
+      expect(
+        (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+      ).toBe(0);
+      // The stopped run leaves the new holder's lease alone.
+      const [lease] = await sqlExecutor.execute<{ lease_owner: string }>(
+        `select lease_owner from ${IDENTITY_TDH_SYNC_STATE_TABLE} where id = 'lease'`
+      );
+      expect(lease.lease_owner).toBe('other-invocation');
+    });
+
     it('marks only the generation it read as synced', async () => {
       await markPending(BLOCK);
       const original = identityMetricsSync.syncAll.bind(identityMetricsSync);

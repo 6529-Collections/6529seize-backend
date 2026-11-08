@@ -110,6 +110,10 @@ describe('IdentityMetricsSync chunks', () => {
       'update',
       'verify'
     ]);
+    // The pre-lock and the update read ratings through the same index.
+    for (const statement of db.statements.slice(2, 4)) {
+      expect(statement).toContain('force index (idx_ratings_2)');
+    }
   });
 
   it('redoes a chunk after a deadlock, a lock wait timeout or a changed row set', async () => {

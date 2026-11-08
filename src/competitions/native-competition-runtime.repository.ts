@@ -217,6 +217,7 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     voterProfileId: string | null,
     ctx: RequestContext
   ): Promise<string[]> {
+    // Both branches are constant SQL; the voter id stays a bound parameter.
     const voteFilter =
       voterProfileId === null
         ? 'v.value <> 0'

@@ -22,6 +22,37 @@ const logger = Logger.get('IDENTITY_TDH_SYNC');
 
 /** Longer than the loops' 15 minute Lambda timeout. */
 const LEASE_TTL_MS = Time.minutes(16).toMillis();
+/** How often a running sync extends its lease while it walks the chunks. */
+const LEASE_RENEW_MS = Time.minutes(1).toMillis();
+
+/** Another invocation took over the lease: stop before writing more. */
+class IdentityTdhSyncLeaseLostError extends Error {
+  constructor() {
+    super('Identities sync lease was taken over; stopping this run');
+    this.name = 'IdentityTdhSyncLeaseLostError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * Extends this run's lease, and fails the run if it no longer holds it. The
+ * TTL alone outlives a Lambda invocation; renewing keeps that true for any
+ * runtime, so two runs never do B to E at once.
+ */
+function leaseKeeper(owner: string) {
+  let renewedAt = Time.currentMillis();
+  const renew = async () => {
+    if (!(await identityTdhSyncStateDb.acquireLease(owner, LEASE_TTL_MS)))
+      throw new IdentityTdhSyncLeaseLostError();
+    renewedAt = Time.currentMillis();
+  };
+  return {
+    renew,
+    renewIfDue: async () => {
+      if (Time.currentMillis() - renewedAt >= LEASE_RENEW_MS) await renew();
+    }
+  };
+}
 
 export type IdentityTdhSyncOutcome = 'SYNCED' | 'UP_TO_DATE' | 'LEASE_HELD';
 
@@ -51,6 +82,7 @@ export async function syncIdentitiesAfterTdh(
     );
     return 'LEASE_HELD';
   }
+  const lease = leaseKeeper(owner);
   try {
     const progress = await identityTdhSyncStateDb.readProgress();
     if (progress.pendingGeneration <= progress.syncedGeneration) {
@@ -74,12 +106,21 @@ export async function syncIdentitiesAfterTdh(
       );
     }
     logger.info(`[B CONSOLIDATIONS DONE] [${start.diffFromNow()}]`);
-    await identityMetricsSync.syncAll(options);
+    await lease.renew();
+    await identityMetricsSync.syncAll({
+      ...options,
+      afterChunk: async (chunk) => {
+        await lease.renewIfDue();
+        await options.afterChunk?.(chunk);
+      }
+    });
     logger.info(`[C METRICS DONE] [${start.diffFromNow()}]`);
+    await lease.renew();
     await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
       revokeTdhBasedDropWavesOverVotes(connection)
     );
     logger.info(`[D OVERVOTES DONE] [${start.diffFromNow()}]`);
+    await lease.renew();
     await identityTdhSyncStateDb.markSynced(
       progress.pendingGeneration,
       progress.pendingBlock

@@ -12,6 +12,11 @@ const SYNCED = 'synced';
 const LEASE = 'lease';
 const ROW_IDS = [PENDING, SYNCED, LEASE];
 
+/**
+ * The rows are never deleted, so the pending generation only grows and the
+ * synced generation never passes it. "Synced" means a full B to E run started
+ * after that generation's TDH write committed.
+ */
 export interface IdentityTdhSyncProgress {
   /** Bumped by every committed consolidated-TDH transaction. */
   readonly pendingGeneration: number;
