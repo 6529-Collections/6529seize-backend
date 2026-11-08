@@ -1250,9 +1250,9 @@ describeWithSeed('E2EE delivery service', [], () => {
         byKey.devices.map((device) => device.grant.ciphersuite).sort()
       ).toEqual([78, 79]);
       // The caller's own listing shows every suite.
-      expect(keys((await services.devices.getMe(bob.id)).devices).sort()).toEqual(
-        [bobOld.publicKey, bobNew.publicKey].sort()
-      );
+      expect(
+        keys((await services.devices.getMe(bob.id)).devices).sort()
+      ).toEqual([bobOld.publicKey, bobNew.publicKey].sort());
     });
 
     it('accepts only MLS KeyPackages of the device suite', async () => {

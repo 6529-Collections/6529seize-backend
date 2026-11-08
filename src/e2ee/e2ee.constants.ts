@@ -45,13 +45,11 @@ export const E2EE_CIPHERSUITES: readonly number[] = [
  * granted for it (contract 2.1 and 3.6); widening this map is a protocol
  * decision, not an engineering one.
  */
-const E2EE_GRANT_SUITES_BY_GROUP_SUITE: ReadonlyMap<
-  number,
-  readonly number[]
-> = new Map([
-  [E2EE_CIPHERSUITE_AES128, [E2EE_CIPHERSUITE_AES128]],
-  [E2EE_CIPHERSUITE_AES256, [E2EE_CIPHERSUITE_AES256]]
-]);
+const E2EE_GRANT_SUITES_BY_GROUP_SUITE: ReadonlyMap<number, readonly number[]> =
+  new Map([
+    [E2EE_CIPHERSUITE_AES128, [E2EE_CIPHERSUITE_AES128]],
+    [E2EE_CIPHERSUITE_AES256, [E2EE_CIPHERSUITE_AES256]]
+  ]);
 
 export function isE2eeCiphersuite(value: unknown): value is number {
   return typeof value === 'number' && E2EE_CIPHERSUITES.includes(value);

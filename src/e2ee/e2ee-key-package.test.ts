@@ -19,9 +19,7 @@ describe('readE2eeKeyPackageCiphersuite', () => {
     expect(
       readE2eeKeyPackageCiphersuite(Buffer.from([0x00, 0x02, 0x00, 0x4f]))
     ).toBeNull();
-    expect(
-      readE2eeKeyPackageCiphersuite(Buffer.from('kp-not-mls'))
-    ).toBeNull();
+    expect(readE2eeKeyPackageCiphersuite(Buffer.from('kp-not-mls'))).toBeNull();
   });
 
   it('returns any uint16 suite that follows the version', () => {

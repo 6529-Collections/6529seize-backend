@@ -185,10 +185,7 @@ describe('E2EE request validation', () => {
         validateE2ee({ ...claim, ciphersuite }, e2eeClaimKeyPackagesSchema)
       ).toEqual({ ...claim, ciphersuite });
       expect(
-        validateE2ee(
-          { profile_ids: ['a'], ciphersuite },
-          e2eeEligibilitySchema
-        )
+        validateE2ee({ profile_ids: ['a'], ciphersuite }, e2eeEligibilitySchema)
       ).toEqual({ profile_ids: ['a'], ciphersuite });
     }
     expect(
