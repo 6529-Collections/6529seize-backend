@@ -73,9 +73,25 @@ export const e2eeLogQuerySchema = Joi.object({
 
 export const e2eeRegisterDeviceSchema = Joi.object({
   grant: Joi.object({
+    // 1 (or absent): one signed `ciphersuite`; 2: a signed set (D172). The
+    // grant checks (findE2eeGrantProblem) decide which values are honoured.
+    version: Joi.number().integer().valid(1, 2).optional(),
     wallet: Joi.string().pattern(E2EE_WALLET_PATTERN).required(),
     device_key: hex32().required(),
-    ciphersuite: ciphersuite().required(),
+    ciphersuite: Joi.when('version', {
+      is: 2,
+      then: Joi.number().integer().min(1).max(0xffff).required(),
+      otherwise: ciphersuite().required()
+    }),
+    ciphersuites: Joi.when('version', {
+      is: 2,
+      then: Joi.array()
+        .items(Joi.number().integer().min(1).max(0xffff))
+        .min(1)
+        .max(4)
+        .required(),
+      otherwise: Joi.forbidden()
+    }),
     issued_at: unixSeconds().required(),
     expires_at: unixSeconds().required(),
     origin: Joi.string().min(1).max(E2EE_GRANT_ORIGIN_MAX_LENGTH).required()

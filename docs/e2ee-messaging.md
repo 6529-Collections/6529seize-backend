@@ -23,28 +23,70 @@ to `0x004E` raises that floor. Both are draft code points
 (draft-ietf-mls-pq-ciphersuites TBD1 and TBD2); a renumbered RFC means
 another move.
 
-A group never changes suite, and a device joins only groups of the suite its
-grant names (`e2eeGrantSuitesFor` in `src/e2ee/e2ee.constants.ts`; widening
-that map is a protocol decision). Clients move to a new suite by enrolling
-devices and creating groups on it. While both suites are accepted:
+A group never changes suite. Owner decision D172 moves clients from `0x004F`
+to `0x004E` by re-enrolment that keeps history: each device signs one new
+grant (v2) for a fresh key, and old-suite groups stay readable on the client.
 
-- grants (`POST /e2ee/devices`, combined sign-in, app grants) may name 79 or
-  78;
+### Grant versions and the suite policy
+
+- **v1** (EIP-712 `MlsDeviceGrant`, domain version `"1"`, `uint16
+  ciphersuite`; SIWE `urn:6529:mls-device-grant:v1:<suite>:...`; app grant
+  domain version `"1"`): honoured for `0x004F` only, and only while the
+  transition window is open.
+- **v2** (domain version `"2"`, `uint16[] ciphersuites`; SIWE
+  `urn:6529:mls-device-grant:v2:<suites joined by ".">:...`; app grant domain
+  version `"2"`, `[]` without an MLS key): a canonical set of 1 to 4 code
+  points in strictly ascending order that names at least one accepted suite.
+  The statement is the same as v1. The login query parameter is
+  `mls_ciphersuites` (for example `78`).
+
+`src/e2ee/e2ee-suite-policy.ts` decides what a device may use:
+`e2eeDeviceSuites` = (signed set ∩ accepted suites) ∪ aliases of the signed
+set, or `{0x004F}` for a v1 grant while the window is open. A signed set may
+name suites the server does not accept yet; they grant nothing until the
+server accepts them, and then need no new signature. `E2EE_SUITE_ALIASES` (a
+grant naming `from` also admits `to`) is empty until the owner decides whether
+a grant for a provisional code point covers the RFC's final one.
+
+Transition window: `E2EE_SUITE_TRANSITION_START` (ISO date-time or unix ms;
+unset means v1 grants are honoured until further notice) and
+`E2EE_SUITE_TRANSITION_DAYS` (default 14). When it ends, v1 registrations are
+refused (`E2EE_BAD_GRANT` `grant_version`), v1 devices drop out of listings
+and claims, and claims for `0x004F` are refused. Cleaning up the old rows is a
+separate step that keeps groups and blobs.
+
+Everywhere a device is offered or used the policy applies:
+
 - an uploaded KeyPackage's `cipher_suite` (bytes 2-3 of the MLS 1.0
-  KeyPackage) must be one its device's grant admits, else 400;
+  KeyPackage) must be in the device's set, else 400; it is stored in
+  `e2ee_key_packages.ciphersuite`, with one last-resort KeyPackage per suite;
 - device listings by profile (`GET /e2ee/profiles/{id}/devices`,
   `POST /e2ee/devices/lookup` `profile_ids`) and eligibility take a
-  `ciphersuite` and return only devices that can join groups of it; lookups
+  `ciphersuite` and return only devices that may join groups of it; lookups
   by `device_keys` return any suite;
-- claims serve the request's `ciphersuite`, else the claimer device's grant
-  suite, and refuse a suite the claimer device cannot join;
+- claims serve KeyPackages of the request's `ciphersuite` (else the claimer
+  device's v1 suite or the lowest of its v2 set) and refuse a suite the
+  claimer device may not use;
 - requests that name no suite get 79, so clients built before `0x004E` see
-  exactly the devices they can use;
-- the 10-device limit counts per suite, so a profile at the limit can still
-  enroll on the new suite.
+  exactly the devices they can use; clients that support `0x004E` pass it;
+- the 10-device limit counts v1 and v2 devices separately, so a profile at
+  the limit can still enroll on v2.
 
-`GET /e2ee/me` lists the caller's devices of every suite. Device keys stay
-Ed25519 on both suites, so their size is unchanged.
+`e2ee_devices` stores `grant_version` and the signed set (`ciphersuites`,
+"78"); `ApiE2eeDeviceGrant` returns `version` and `ciphersuites` (v1 devices
+as their one suite). `GET /e2ee/me` lists the caller's devices of every
+suite. Device keys stay Ed25519, so their size is unchanged.
+
+Attachments: a chunk read is allowed when the device, or any device of the
+same profile, was ever in the group's roster. A re-enrolled device keeps the
+history (and attachment keys) its earlier device decrypted; only ciphertext
+is served.
+
+Metrics (EMF, namespace `6529/E2EE`): `DeviceRegistrations` by `GrantVersion`
+and `Via`, and, at most every 10 minutes per process on the write path,
+`ActiveDevices` per usable `Suite` and `ActiveDevicesByGrant` per
+`GrantVersion`. After the window closes the census logs
+`[E2EE SUITE WINDOW CLOSED] [V1 DEVICES NOT HONOURED n]`.
 
 X-Wing public keys are 1,216 bytes and its ciphertexts 1,120 bytes, so MLS
 objects are larger than under `0x0001`: a KeyPackage is about 2.7 KiB, a
@@ -158,13 +200,14 @@ human review only.
 ## Device grants and revocation
 
 `POST /e2ee/devices` rebuilds the grant statement from the signed fields,
-checks an accepted ciphersuite (79 or 78), a printable origin of at most 64 characters, minute
+checks the suite rules above (v1: 79 while the window is open; v2: a
+canonical set with an accepted suite), a printable origin of at most 64 characters, minute
 alignment, at most 181 days of lifetime, `issued_at` no more than 10 minutes
 ahead and `expires_at` in the future. It then recovers the EIP-712 signer
 (salt-only domain, no chain id). If that fails and the wallet has code on
 Ethereum mainnet, it calls EIP-1271 `isValidSignature(grant_id, signature)`
 through `verifyContractWalletSignatureHash`. The grant wallet must map to the
-caller's profile. A profile has at most 10 active devices per suite;
+caller's profile. A profile has at most 10 active devices per grant version;
 re-registering an unrevoked key of the same profile renews its grant.
 
 `POST /e2ee/devices/login-grant` (NC8) registers the MLS key that a combined

@@ -31,41 +31,16 @@ export const E2EE_CIPHERSUITE = E2EE_CIPHERSUITE_AES128;
 /**
  * Every suite the server accepts in grants and KeyPackages. Both are draft
  * code points (draft-ietf-mls-pq-ciphersuites TBD1 and TBD2): a renumbered
- * RFC means another move. Groups never change suite; clients move to a new
- * suite by enrolling devices and creating groups on it.
+ * RFC means another move. Groups never change suite; which suites a device
+ * may use is `e2eeDeviceSuites` (e2ee-suite-policy.ts).
  */
 export const E2EE_CIPHERSUITES: readonly number[] = [
   E2EE_CIPHERSUITE_AES128,
   E2EE_CIPHERSUITE_AES256
 ];
 
-/**
- * For a group suite, the grant suites whose device keys may join groups of
- * that suite (and upload KeyPackages for it). Each suite admits only devices
- * granted for it (contract 2.1 and 3.6); widening this map is a protocol
- * decision, not an engineering one.
- */
-const E2EE_GRANT_SUITES_BY_GROUP_SUITE: ReadonlyMap<number, readonly number[]> =
-  new Map([
-    [E2EE_CIPHERSUITE_AES128, [E2EE_CIPHERSUITE_AES128]],
-    [E2EE_CIPHERSUITE_AES256, [E2EE_CIPHERSUITE_AES256]]
-  ]);
-
 export function isE2eeCiphersuite(value: unknown): value is number {
   return typeof value === 'number' && E2EE_CIPHERSUITES.includes(value);
-}
-
-/** Grant suites whose devices can join a group of `groupSuite`. */
-export function e2eeGrantSuitesFor(groupSuite: number): readonly number[] {
-  return E2EE_GRANT_SUITES_BY_GROUP_SUITE.get(groupSuite) ?? [];
-}
-
-/** Whether a device granted for `grantSuite` can join `groupSuite` groups. */
-export function canE2eeDeviceJoinSuite(
-  grantSuite: number,
-  groupSuite: number
-): boolean {
-  return e2eeGrantSuitesFor(groupSuite).includes(Number(grantSuite));
 }
 
 export const E2EE_MAX_ACTIVE_DEVICES = 10;

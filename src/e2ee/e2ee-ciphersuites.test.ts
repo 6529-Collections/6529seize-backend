@@ -1,10 +1,8 @@
 import {
-  canE2eeDeviceJoinSuite,
   E2EE_CIPHERSUITE,
   E2EE_CIPHERSUITE_AES128,
   E2EE_CIPHERSUITE_AES256,
   E2EE_CIPHERSUITES,
-  e2eeGrantSuitesFor,
   isE2eeCiphersuite
 } from '@/e2ee/e2ee.constants';
 
@@ -22,15 +20,5 @@ describe('E2EE ciphersuites', () => {
 
   it('defaults requests that name no suite to 0x004F', () => {
     expect(E2EE_CIPHERSUITE).toBe(E2EE_CIPHERSUITE_AES128);
-  });
-
-  it('admits into each group suite only devices granted for it', () => {
-    expect(e2eeGrantSuitesFor(79)).toEqual([79]);
-    expect(e2eeGrantSuitesFor(78)).toEqual([78]);
-    expect(e2eeGrantSuitesFor(1)).toEqual([]);
-    expect(canE2eeDeviceJoinSuite(79, 79)).toBe(true);
-    expect(canE2eeDeviceJoinSuite(78, 78)).toBe(true);
-    expect(canE2eeDeviceJoinSuite(79, 78)).toBe(false);
-    expect(canE2eeDeviceJoinSuite(78, 79)).toBe(false);
   });
 });

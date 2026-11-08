@@ -235,7 +235,13 @@ export class E2eeBlobsService {
     await requireOwnActiveDevice(this.deps, callerProfileId, deviceKey);
     const blob = await this.db.getBlob(blobId);
     if (!blob?.complete) throw e2eeErrors.notFound('Attachment');
-    if (!(await this.db.hasRosterHistory(blob.group_handle, deviceKey))) {
+    if (
+      !(await this.mayReadGroupBlobs(
+        blob.group_handle,
+        deviceKey,
+        callerProfileId
+      ))
+    ) {
       throw e2eeErrors.notMember();
     }
     if (index >= Number(blob.chunk_count)) {
@@ -262,6 +268,23 @@ export class E2eeBlobsService {
       throw e2eeErrors.notFound('Attachment chunk');
     }
     return { data: data.toString('base64') };
+  }
+
+  /**
+   * The device was in the group's roster, or another device of the same
+   * profile was: after a ciphersuite move (D172) a profile's new device keeps
+   * the history (and attachment keys) its earlier device decrypted. Only
+   * ciphertext is served; the key is in that history.
+   */
+  private async mayReadGroupBlobs(
+    group: string,
+    deviceKey: string,
+    profileId: string
+  ): Promise<boolean> {
+    return (
+      (await this.db.hasRosterHistory(group, deviceKey)) ||
+      (await this.db.hasProfileRosterHistory(group, profileId))
+    );
   }
 
   /**

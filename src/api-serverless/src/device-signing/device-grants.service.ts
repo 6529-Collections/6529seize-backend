@@ -69,12 +69,16 @@ function toAppDeviceGrant(
   request: ApiRegisterDeviceGrantRequest
 ): AppDeviceGrant {
   const { grant } = request;
+  const v2 = grant.version === 2;
+  const ciphersuites = [...(grant.ciphersuites ?? [])];
   return {
     wallet: grant.wallet.toLowerCase(),
     device_key: grant.device_key.toLowerCase(),
     scopes: grant.scopes as DeviceGrantScope[],
     mls_device_key: grant.mls_device_key?.toLowerCase() ?? null,
-    ciphersuite: grant.ciphersuite ?? null,
+    // v2: the lowest entry of the set stands in for the single suite.
+    ciphersuite: v2 ? (ciphersuites[0] ?? null) : (grant.ciphersuite ?? null),
+    ...(v2 ? { version: 2 as const, ciphersuites } : {}),
     issued_at: grant.issued_at,
     expires_at: grant.expires_at,
     origin: grant.origin

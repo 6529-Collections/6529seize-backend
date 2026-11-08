@@ -237,6 +237,7 @@ describeWithSeed('E2EE delivery service', [], () => {
 
   const nowSeconds = () => Math.floor(now / 1000);
 
+  /** A v1 grant for 0x004F; any other suite gets a v2 grant {suite}. */
   function grantFor(
     profile: Profile,
     key: E2eeTestKey,
@@ -244,6 +245,9 @@ describeWithSeed('E2EE delivery service', [], () => {
   ): E2eeDeviceGrant {
     const issuedAt = nowSeconds();
     return {
+      ...(ciphersuite === E2EE_CIPHERSUITE
+        ? {}
+        : { version: 2 as const, ciphersuites: [ciphersuite] }),
       wallet: profile.wallet.address.toLowerCase(),
       device_key: key.publicKey,
       ciphersuite,
@@ -1407,11 +1411,94 @@ describeWithSeed('E2EE delivery service', [], () => {
       expect(toCarol.results[0].status).toBe('NO_DEVICES');
     });
 
-    it('applies the device limit per suite', async () => {
+    it('applies the device limit per grant version', async () => {
       const alice = aProfile();
       for (let i = 0; i < 10; i++) await registerDevice(alice);
       await expectE2eeError(registerDevice(alice), 'E2EE_DEVICE_LIMIT');
       await registerDevice(alice, randomE2eeKey(), E2EE_CIPHERSUITE_AES256);
+    });
+
+    it('stores a v2 grant with its suite set and returns it', async () => {
+      const alice = aProfile();
+      const key = await registerDevice(
+        alice,
+        randomE2eeKey(),
+        E2EE_CIPHERSUITE_AES256
+      );
+      const device = await services.devices.getDevice(key.publicKey);
+      expect(device.grant).toMatchObject({
+        version: 2,
+        ciphersuite: 78,
+        ciphersuites: [78]
+      });
+      const old = await registerDevice(alice);
+      expect(
+        (await services.devices.getDevice(old.publicKey)).grant
+      ).toMatchObject({
+        version: 1,
+        ciphersuite: 79,
+        ciphersuites: [79]
+      });
+    });
+
+    it('refuses a KeyPackage of a suite outside the device set', async () => {
+      const bob = aProfile();
+      const bobNew = await registerDevice(
+        bob,
+        randomE2eeKey(),
+        E2EE_CIPHERSUITE_AES256
+      );
+      await expectE2eeError(
+        services.devices.uploadKeyPackages(bob.id, bobNew.publicKey, {
+          key_packages: [
+            {
+              data: keyPackageBytes('x', E2EE_CIPHERSUITE),
+              last_resort: true,
+              expires_at: nowSeconds() + 86400
+            }
+          ]
+        }),
+        'E2EE_BAD_REQUEST'
+      );
+    });
+
+    describe('after the transition window closes', () => {
+      const previous = process.env.E2EE_SUITE_TRANSITION_START;
+      afterEach(() => {
+        if (previous === undefined) {
+          delete process.env.E2EE_SUITE_TRANSITION_START;
+        } else {
+          process.env.E2EE_SUITE_TRANSITION_START = previous;
+        }
+      });
+
+      it('refuses v1 grants and stops listing or claiming v1 devices', async () => {
+        const alice = aProfile();
+        const bob = aProfile();
+        const aliceOld = await registerDevice(alice);
+        const bobOld = await registerDevice(bob);
+        await uploadKeyPackages(bob, bobOld, 1);
+        await registerDevice(alice, randomE2eeKey(), E2EE_CIPHERSUITE_AES256);
+        process.env.E2EE_SUITE_TRANSITION_START = String(now - 15 * DAY);
+
+        await expectE2eeError(registerDevice(alice), 'E2EE_BAD_GRANT');
+        expect(await services.devices.getProfileDevices(bob.id)).toEqual([]);
+        await expectE2eeError(
+          services.devices.claimKeyPackages(alice.id, {
+            targets: [{ profile_id: bob.id }],
+            claimer_device_key: aliceOld.publicKey
+          }),
+          'E2EE_BAD_REQUEST'
+        );
+        // v2 devices are unaffected.
+        await registerDevice(bob, randomE2eeKey(), E2EE_CIPHERSUITE_AES256);
+        expect(
+          await services.devices.getProfileDevices(
+            bob.id,
+            E2EE_CIPHERSUITE_AES256
+          )
+        ).toHaveLength(1);
+      });
     });
   });
 

@@ -208,6 +208,8 @@ describe('app device grant', () => {
       ['mls_device_key_reused', { mls_device_key: SIGNING_KEY }],
       ['ciphersuite', { ciphersuite: 1 }],
       ['ciphersuite', { ciphersuite: 0x0052 }],
+      // v1 grants are honoured for 0x004F only; 0x004E needs v2 (D172).
+      ['ciphersuite', { ciphersuite: 0x004e }],
       ['ciphersuite', { ciphersuite: null }]
     ])('reports %s for the MLS key', (problem, overrides) => {
       expect(
@@ -219,12 +221,6 @@ describe('app device grant', () => {
       expect(findAppDeviceGrantProblem(signingGrant(), NOW_SECONDS)).toBeNull();
       expect(
         findAppDeviceGrantProblem(combinedGrant(), NOW_SECONDS)
-      ).toBeNull();
-      expect(
-        findAppDeviceGrantProblem(
-          combinedGrant({ ciphersuite: 0x004e }),
-          NOW_SECONDS
-        )
       ).toBeNull();
     });
 

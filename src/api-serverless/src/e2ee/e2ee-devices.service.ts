@@ -27,7 +27,6 @@ import { ApiE2eeRegisterLoginGrantDeviceRequest } from '@/api/generated/models/A
 import { ApiE2eeRevokeDeviceRequest } from '@/api/generated/models/ApiE2eeRevokeDeviceRequest';
 import { ApiE2eeUploadKeyPackagesRequest } from '@/api/generated/models/ApiE2eeUploadKeyPackagesRequest';
 import {
-  canE2eeDeviceJoinSuite,
   E2EE_CIPHERSUITE,
   E2EE_DEVICE_LISTING_WINDOW_MS,
   E2EE_MAX_ACTIVE_DEVICES,
@@ -37,9 +36,18 @@ import {
   E2EE_MAX_ONE_TIME_KEY_PACKAGES,
   E2EE_RATE_LIMITS,
   E2EE_REVOCATION_MAX_SKEW_SECONDS,
-  e2eeGrantSuitesFor,
   isE2eeCiphersuite
 } from '@/e2ee/e2ee.constants';
+import {
+  canE2eeDeviceJoin,
+  e2eeDeviceSuites,
+  encodeE2eeSuiteSet,
+  isE2eeV1GrantAccepted
+} from '@/e2ee/e2ee-suite-policy';
+import {
+  maybeRecordE2eeSuiteCensus,
+  recordE2eeDeviceRegistration
+} from '@/api/e2ee/e2ee-suite-metrics';
 import {
   E2eeClaimedKeyPackageRow,
   E2eeDeviceRow,
@@ -56,6 +64,7 @@ import {
   E2eeDeviceGrant,
   E2eeGrantVerifiedVia,
   findE2eeGrantProblem,
+  normalizeE2eeDeviceGrant,
   verifyE2eeDeviceGrant
 } from '@/e2ee/e2ee-grant';
 import {
@@ -114,11 +123,15 @@ function readSignInGrantMlsDevice(
   const parsed = parseSiweWebAuthMessage(message);
   if (!parsed?.mlsDeviceGrant) return null;
   const wallet = parsed.address.toLowerCase();
+  const mls = parsed.mlsDeviceGrant;
   return {
     grant: {
+      ...(mls.version === 2
+        ? { version: 2 as const, ciphersuites: [...mls.ciphersuites] }
+        : {}),
       wallet,
-      device_key: parsed.mlsDeviceGrant.deviceKey,
-      ciphersuite: parsed.mlsDeviceGrant.ciphersuite,
+      device_key: mls.deviceKey,
+      ciphersuite: mls.ciphersuite,
       issued_at: Math.floor(parsed.issuedAt.getTime() / 1000),
       expires_at: parsed.mlsDeviceGrant.expiresAtSeconds,
       origin: parsed.domain
@@ -144,6 +157,9 @@ function readAppGrantMlsDevice(
   const { grant } = parsed;
   return {
     grant: {
+      ...(grant.version === 2
+        ? { version: 2 as const, ciphersuites: [...(grant.ciphersuites ?? [])] }
+        : {}),
       wallet: grant.wallet,
       device_key: mlsDeviceKey,
       ciphersuite,
@@ -248,10 +264,9 @@ export class E2eeDevicesService {
       this.deps.now(),
       E2EE_DEVICE_LISTING_WINDOW_MS
     );
+    const now = this.deps.now();
     return devices
-      .filter((device) =>
-        canE2eeDeviceJoinSuite(device.ciphersuite, ciphersuite)
-      )
+      .filter((device) => canE2eeDeviceJoin(device, ciphersuite, now))
       .map(toApiE2eeDevice);
   }
 
@@ -273,8 +288,9 @@ export class E2eeDevicesService {
       ),
       this.db.getDevices(Array.from(new Set(request.device_keys ?? [])))
     ]);
+    const now = this.deps.now();
     const byProfile = listable.filter((device) =>
-      canE2eeDeviceJoinSuite(device.ciphersuite, ciphersuite)
+      canE2eeDeviceJoin(device, ciphersuite, now)
     );
     const seen = new Set<string>();
     const devices = [...byProfile, ...byKey].filter((device) => {
@@ -289,7 +305,10 @@ export class E2eeDevicesService {
     callerProfileId: string,
     request: ApiE2eeRegisterDeviceRequest
   ) {
-    const grant = { ...request.grant };
+    const grant = normalizeE2eeDeviceGrant({
+      ...request.grant
+    } as E2eeDeviceGrant);
+    this.requireHonouredGrantVersion(grant);
     const signature = request.wallet_signature.toLowerCase();
     const verification = await verifyE2eeDeviceGrant({
       grant,
@@ -306,6 +325,13 @@ export class E2eeDevicesService {
       verifiedVia: verification.verifiedVia,
       grantMessage: null
     };
+  }
+
+  /** v1 grants (0x004F) only while the transition window is open (D172). */
+  private requireHonouredGrantVersion(grant: E2eeDeviceGrant): void {
+    if (grant.version !== 2 && !isE2eeV1GrantAccepted(this.deps.now())) {
+      throw e2eeErrors.badGrant('grant_version');
+    }
   }
 
   private async requireWalletOfCaller(
@@ -347,6 +373,7 @@ export class E2eeDevicesService {
     }
     const problem = findE2eeGrantProblem(read.grant, nowSeconds(this.deps));
     if (problem) throw e2eeErrors.badGrant(problem);
+    this.requireHonouredGrantVersion(read.grant);
     return {
       grant: read.grant,
       grantId,
@@ -384,10 +411,16 @@ export class E2eeDevicesService {
     const { grant } = verified;
     const now = this.deps.now();
     const atSeconds = nowSeconds(this.deps);
+    const grantVersion = grant.version === 2 ? 2 : 1;
     const fields = {
       device_key: grant.device_key,
       wallet: grant.wallet,
       ciphersuite: grant.ciphersuite,
+      grant_version: grantVersion,
+      ciphersuites:
+        grantVersion === 2
+          ? encodeE2eeSuiteSet(grant.ciphersuites ?? [])
+          : null,
       issued_at_seconds: grant.issued_at,
       expires_at_seconds: grant.expires_at,
       origin: grant.origin,
@@ -419,8 +452,8 @@ export class E2eeDevicesService {
         const wasActive = existing
           ? isActiveDevice(existing, atSeconds)
           : false;
-        // Counted per suite: while two suites are accepted, a profile at the
-        // limit can still enroll its devices on the new suite before the old
+        // Counted per grant version: while v1 grants are honoured, a profile
+        // at the limit can still enroll its devices on v2 before the old
         // devices expire or are revoked.
         if (
           !wasActive &&
@@ -428,7 +461,7 @@ export class E2eeDevicesService {
             callerProfileId,
             atSeconds,
             connection,
-            [grant.ciphersuite]
+            grantVersion
           )) >= E2EE_MAX_ACTIVE_DEVICES
         ) {
           throw e2eeErrors.deviceLimit(E2EE_MAX_ACTIVE_DEVICES);
@@ -461,7 +494,12 @@ export class E2eeDevicesService {
       profile_id: callerProfileId,
       device_key: device.device_key
     });
+    recordE2eeDeviceRegistration({
+      grantVersion,
+      via: verified.grantMessage === null ? 'grant' : 'login_grant'
+    });
     await maybePruneE2ee(this.deps);
+    await maybeRecordE2eeSuiteCensus(this.deps);
     return toApiE2eeDevice(device);
   }
 
@@ -666,8 +704,13 @@ export class E2eeDevicesService {
         ciphersuite
       };
     });
-    if (rows.filter((row) => row.last_resort).length > 1) {
-      throw e2eeErrors.badRequest('At most one last-resort KeyPackage');
+    const lastResortSuites = rows
+      .filter((row) => row.last_resort)
+      .map((row) => row.ciphersuite);
+    if (new Set(lastResortSuites).size !== lastResortSuites.length) {
+      throw e2eeErrors.badRequest(
+        'At most one last-resort KeyPackage per ciphersuite'
+      );
     }
     return rows;
   }
@@ -685,13 +728,12 @@ export class E2eeDevicesService {
       if (!device || !isActiveDevice(device, atSeconds)) {
         throw e2eeErrors.notYourDevice();
       }
-      // A KeyPackage serves only groups its device's grant admits.
-      const foreign = rows.find(
-        (row) => !canE2eeDeviceJoinSuite(device.ciphersuite, row.ciphersuite)
-      );
+      // A KeyPackage serves only groups of a suite its device may use.
+      const suites = e2eeDeviceSuites(device, this.deps.now());
+      const foreign = rows.find((row) => !suites.includes(row.ciphersuite));
       if (foreign) {
         throw e2eeErrors.badRequest(
-          `KeyPackage ciphersuite ${foreign.ciphersuite} does not match the device grant (${Number(device.ciphersuite)})`
+          `KeyPackage ciphersuite ${foreign.ciphersuite} is not one this device may use (${suites.join(', ') || 'none'})`
         );
       }
       await this.db.deleteExpiredKeyPackagesOfDevice(
@@ -708,12 +750,17 @@ export class E2eeDevicesService {
       if (existing + added > E2EE_MAX_ONE_TIME_KEY_PACKAGES) {
         throw e2eeErrors.keyPackageLimit(E2EE_MAX_ONE_TIME_KEY_PACKAGES);
       }
-      if (rows.some((row) => row.last_resort)) {
-        await this.db.deleteLastResortKeyPackages(deviceKey, connection);
+      for (const row of rows.filter((item) => item.last_resort)) {
+        await this.db.deleteLastResortKeyPackages(
+          deviceKey,
+          row.ciphersuite,
+          connection
+        );
       }
       await this.db.insertKeyPackages(rows, connection);
     });
     await maybePruneE2ee(this.deps);
+    await maybeRecordE2eeSuiteCensus(this.deps);
     const [status] = await this.getKeyPackageStatuses([deviceKey]);
     return status;
   }
@@ -743,18 +790,23 @@ export class E2eeDevicesService {
     bypass: Set<string>,
     ciphersuite: number
   ) {
-    const [admissions, deviceCounts] = await Promise.all([
+    const [admissions, activeDevices] = await Promise.all([
       this.deps.admission.evaluate(
         callerProfileId,
         profileIds.filter((profileId) => !bypass.has(profileId))
       ),
-      this.db.getActiveDeviceCounts(
-        profileIds,
-        nowSeconds(this.deps),
-        undefined,
-        e2eeGrantSuitesFor(ciphersuite)
-      )
+      this.db.getActiveDevicesOfProfiles(profileIds, nowSeconds(this.deps))
     ]);
+    const now = this.deps.now();
+    const deviceCounts = new Map<string, number>();
+    for (const device of activeDevices) {
+      if (canE2eeDeviceJoin(device, ciphersuite, now)) {
+        deviceCounts.set(
+          device.profile_id,
+          (deviceCounts.get(device.profile_id) ?? 0) + 1
+        );
+      }
+    }
     return new Map(
       profileIds.map((profileId) => {
         const activeDevices = deviceCounts.get(profileId) ?? 0;
@@ -804,7 +856,8 @@ export class E2eeDevicesService {
   }
 
   private async claimDevicesKeyPackages(
-    devices: E2eeDeviceRow[]
+    devices: E2eeDeviceRow[],
+    ciphersuite: number
   ): Promise<Map<string, E2eeClaimedKeyPackageRow>> {
     const deviceKeys = devices.map((device) => device.device_key);
     const allowed = await filterByE2eeRateLimit(
@@ -817,6 +870,7 @@ export class E2eeDevicesService {
       (connection) =>
         this.db.claimOneTimeKeyPackages(
           deviceKeys.filter((key) => allowed.has(key)),
+          ciphersuite,
           atSeconds,
           connection
         ),
@@ -824,6 +878,7 @@ export class E2eeDevicesService {
     );
     const lastResort = await this.db.getLastResortKeyPackages(
       deviceKeys.filter((key) => !oneTime.has(key)),
+      ciphersuite,
       atSeconds
     );
     oneTime.forEach((row, deviceKey) => lastResort.set(deviceKey, row));
@@ -843,6 +898,7 @@ export class E2eeDevicesService {
       Array.from(okProfiles),
       nowSeconds(this.deps)
     );
+    const now = this.deps.now();
     const devicesByProfile = new Map<string, E2eeDeviceRow[]>();
     for (const target of request.targets) {
       if (!okProfiles.has(target.profile_id)) continue;
@@ -853,7 +909,7 @@ export class E2eeDevicesService {
           (device) =>
             device.profile_id === target.profile_id &&
             device.device_key !== request.claimer_device_key &&
-            canE2eeDeviceJoinSuite(device.ciphersuite, ciphersuite) &&
+            canE2eeDeviceJoin(device, ciphersuite, now) &&
             (!target.device_keys || wanted.has(device.device_key))
         )
       );
@@ -886,10 +942,10 @@ export class E2eeDevicesService {
       callerProfileId,
       request.claimer_device_key
     );
-    // The group suite the KeyPackages are for: the request's, else the one
-    // the claimer device is granted for.
+    // The group suite the KeyPackages are for: the request's, else the
+    // claimer device's (its v1 suite, or the lowest of its v2 set).
     const ciphersuite = request.ciphersuite ?? Number(claimer.ciphersuite);
-    if (!canE2eeDeviceJoinSuite(claimer.ciphersuite, ciphersuite)) {
+    if (!canE2eeDeviceJoin(claimer, ciphersuite, this.deps.now())) {
       throw e2eeErrors.badRequest(
         `The claimer device cannot join ciphersuite ${ciphersuite} groups`
       );
@@ -921,7 +977,8 @@ export class E2eeDevicesService {
       ciphersuite
     );
     const claimed = await this.claimDevicesKeyPackages(
-      Array.from(devicesByProfile.values()).flat()
+      Array.from(devicesByProfile.values()).flat(),
+      ciphersuite
     );
     return {
       results: profileIds.map((profileId) => {

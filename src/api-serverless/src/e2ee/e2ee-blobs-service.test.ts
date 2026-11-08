@@ -47,6 +47,7 @@ function setup(env: Record<string, string> = S3_ENV) {
     touchDevice: jest.fn(async () => undefined),
     getCurrentRoster: jest.fn(async () => [{ device_key: DEVICE }]),
     hasRosterHistory: jest.fn(async () => true),
+    hasProfileRosterHistory: jest.fn(async () => false),
     hitRateCounters: jest.fn(
       async (keys: { key: string }[]) => new Map(keys.map((k) => [k.key, 1]))
     ),
@@ -154,6 +155,24 @@ describe('E2eeBlobsService with S3 storage', () => {
     );
     const chunk = await service.getChunk(PROFILE, blob.blob_id, 1, DEVICE);
     expect(Buffer.from(chunk.data, 'base64')).toEqual(parts[1]);
+  });
+
+  it("serves a group's attachments to a device whose profile was in it (D172)", async () => {
+    const { service, db } = setup();
+    const parts = [randomBytes(16)];
+    const blob = await uploadComplete(service, parts);
+    // A new device after a ciphersuite move: never in the roster itself.
+    db.hasRosterHistory.mockResolvedValue(false);
+    db.hasProfileRosterHistory.mockResolvedValue(true);
+    const chunk = await service.getChunk(PROFILE, blob.blob_id, 0, DEVICE);
+    expect(Buffer.from(chunk.data, 'base64')).toEqual(parts[0]);
+    expect(db.hasProfileRosterHistory).toHaveBeenCalledWith(GROUP, PROFILE);
+    // Neither the device nor any device of the profile: refused.
+    db.hasProfileRosterHistory.mockResolvedValue(false);
+    await expectCode(
+      service.getChunk(PROFILE, blob.blob_id, 0, DEVICE),
+      'E2EE_NOT_MEMBER'
+    );
   });
 
   it('still enforces the live storage quota', async () => {
