@@ -107,6 +107,7 @@ import { metricsRecorder } from './metrics/MetricsRecorder';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
 import { upsertTdhInBatches } from '@/tdhLoop/tdh-persistence-batches';
 import {
+  budgetOf,
   ConnectionWrapper,
   dbSupplier,
   setSqlExecutor,
@@ -277,7 +278,9 @@ async function execNativeTransactionally<T>(
   executable: (connectionHolder: ConnectionWrapper<QueryRunner>) => Promise<T>,
   options?: SqlTransactionOptions
 ): Promise<T> {
-  if (options?.executionBudget) {
+  const budget = budgetOf(options);
+  if (budget) {
+    const isolationLevel = budget.isolationLevel ?? 'REPEATABLE READ';
     let scoped: object | undefined;
     let result: T;
     try {
@@ -291,7 +294,8 @@ async function execNativeTransactionally<T>(
               physical,
               release: () => runner.release(),
               transaction: {
-                begin: () => runner.startTransaction('REPEATABLE READ'),
+                isolationLevel,
+                begin: () => runner.startTransaction(isolationLevel),
                 commit: () => runner.commitTransaction(),
                 rollback: () => runner.rollbackTransaction()
               }
@@ -301,7 +305,7 @@ async function execNativeTransactionally<T>(
             throw error;
           }
         },
-        options.executionBudget,
+        budget,
         (handle) => {
           scoped = handle;
           openAfterCommitScope(handle);

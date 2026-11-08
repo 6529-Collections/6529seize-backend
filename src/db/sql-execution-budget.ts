@@ -8,7 +8,18 @@ export interface SqlExecutionBudget {
   readonly maxStatementMillis: number;
   readonly finalizationReserveMillis: number;
   readonly lockWaitSeconds: number;
+  /** Defaults to REPEATABLE READ, the contract of every existing caller. */
+  readonly isolationLevel?: SqlBudgetIsolationLevel;
 }
+
+export type SqlBudgetIsolationLevel = 'REPEATABLE READ' | 'READ COMMITTED';
+
+/** Whitelisted statements: the level is never interpolated from input. */
+const SET_ISOLATION_LEVEL: Readonly<Record<SqlBudgetIsolationLevel, string>> =
+  Object.freeze({
+    'REPEATABLE READ': 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ',
+    'READ COMMITTED': 'SET TRANSACTION ISOLATION LEVEL READ COMMITTED'
+  });
 
 export interface SqlStatementLimits {
   readonly deadlineMonotonicMillis: number;
@@ -75,6 +86,8 @@ export interface SqlBudgetConnection {
   readonly retire?: () => void;
   /** Actual adapter lifecycle preserves ORM transaction bookkeeping/subscribers. */
   readonly transaction?: {
+    /** The level `begin` starts at; REPEATABLE READ when not stated. */
+    readonly isolationLevel?: SqlBudgetIsolationLevel;
     readonly begin: () => Promise<void>;
     readonly commit: () => Promise<void>;
     readonly rollback: () => Promise<void>;
@@ -104,11 +117,21 @@ export function validateSqlExecutionBudget(
   ) {
     throw new Error('Invalid SQL execution budget deadline');
   }
+  if (
+    input.isolationLevel !== undefined &&
+    !Object.prototype.hasOwnProperty.call(
+      SET_ISOLATION_LEVEL,
+      input.isolationLevel
+    )
+  ) {
+    throw new Error('Invalid SQL execution budget isolation level');
+  }
   return Object.freeze({
     deadlineMonotonicMillis: input.deadlineMonotonicMillis,
     maxStatementMillis: input.maxStatementMillis,
     finalizationReserveMillis: input.finalizationReserveMillis,
-    lockWaitSeconds: input.lockWaitSeconds
+    lockWaitSeconds: input.lockWaitSeconds,
+    ...(input.isolationLevel ? { isolationLevel: input.isolationLevel } : {})
   });
 }
 
@@ -806,10 +829,22 @@ export async function executeBudgetedSqlTransaction<T>(
       'SET SESSION max_execution_time = ?, innodb_lock_wait_timeout = ?',
       [budget.maxStatementMillis, budget.lockWaitSeconds]
     );
+    const isolationLevel = budget.isolationLevel ?? 'REPEATABLE READ';
     await scope.runPhase('SETUP', async () => {
-      if (lease.transaction) await lease.transaction.begin();
-      else {
-        await query('SETUP', 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      if (lease.transaction) {
+        // This lease begins its own transaction; it must begin it at the
+        // requested level, never silently at another one.
+        if (
+          isolationLevel !==
+          (lease.transaction.isolationLevel ?? 'REPEATABLE READ')
+        )
+          throw new Error(
+            `This SQL lease cannot begin a ${isolationLevel} budgeted transaction`
+          );
+        await lease.transaction.begin();
+      } else {
+        // SET TRANSACTION (not SESSION) applies to the next transaction only.
+        await query('SETUP', SET_ISOLATION_LEVEL[isolationLevel]);
         await query('SETUP', 'START TRANSACTION');
       }
     });

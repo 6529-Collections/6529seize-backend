@@ -1,3 +1,7 @@
+import {
+  readCommitted,
+  runWriteTransaction
+} from '@/api/write-transaction-budget';
 import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
 import { withLegacyPrimaryMutation } from '@/competitions/legacy-competition-mutation';
 import { ForbiddenException } from '@/exceptions';
@@ -50,8 +54,8 @@ export class DropCheeringService {
     },
     ctx: RequestContext
   ) {
-    const drop = await this.dropsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
+    const drop = await runWriteTransaction((options) =>
+      this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
         const initial = await this.dropsDb.findDropById(
           param.drop_id,
           connection
@@ -157,8 +161,7 @@ export class DropCheeringService {
             );
           }
         );
-      },
-      { isolationLevel: 'READ COMMITTED' }
+      }, readCommitted(options))
     );
     if (!drop) {
       return;
