@@ -20,6 +20,11 @@ import { legacyAuthorWaveParticipationSql } from '@/competitions/legacy-typed-dr
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
+  ViewerGroupsCte,
+  viewerGroupsCte,
+  viewerGroupsCteSupported
+} from '@/waves/viewer-groups-cte';
+import {
   userGroupsService,
   UserGroupsService
 } from '../api-serverless/src/community-members/user-groups.service';
@@ -3619,6 +3624,23 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * The viewer's groups as one shared table (see viewerGroupsCte), so a
+   * statement inlines them once instead of once per visibility check.
+   */
+  private async sharedViewerGroups(
+    groupIds: readonly string[]
+  ): Promise<ViewerGroupsCte | undefined> {
+    if (!groupIds.length) return undefined;
+    const supported = await viewerGroupsCteSupported(this.db, [
+      WAVES_TABLE,
+      legacyGetView(WAVES_TABLE)
+    ]);
+    return supported
+      ? viewerGroupsCte('bd_viewer_groups', groupIds)
+      : undefined;
+  }
+
   public async findBoostedDrops(
     {
       wave_id,
@@ -3651,6 +3673,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<DropEntity[]> {
     try {
       ctx.timer?.start(`${this.constructor.name}->findBoostedDrops`);
+      const groups = await this.sharedViewerGroups(eligibile_groups);
       const aggregateSql = `
         select
           d.id as drop_id,
@@ -3663,13 +3686,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         JOIN ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${legacyGetView(WAVES_TABLE)} w on w.id = d.wave_id
         where p.boosted_at > :count_only_boosts_after
-        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups')}
+        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups', groups?.setSql)}
         ${author_id ? ` and d.author_id = :author_id and ${publicCompetitionDropSql('d', 'anonymityViewerId')} ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2
       `;
       const sql = `
-        with boosts_aggregate as (${aggregateSql}) select d.* from boosts_aggregate a
+        with ${groups ? `${groups.cteSql},` : ''} boosts_aggregate as (${aggregateSql}) select d.* from boosts_aggregate a
         join ${DROPS_TABLE} d on a.drop_id = d.id
         where a.includes_booster > 0
         ${min_boosts !== null ? ` and a.boosts >= :min_boosts ` : ''}
@@ -3688,7 +3711,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           min_boosts,
           order_by,
           count_only_boosts_after,
-          order
+          order,
+          ...groups?.params
         },
         { wrappedConnection: ctx.connection }
       );
@@ -3717,6 +3741,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<number> {
     try {
       ctx.timer?.start(`${this.constructor.name}->countBoostedDrops`);
+      const groups = await this.sharedViewerGroups(eligibile_groups);
       const aggregateSql = `
         select
           d.id as drop_id,
@@ -3729,13 +3754,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         join ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${legacyGetView(WAVES_TABLE)} w on w.id = d.wave_id
         where p.boosted_at > :count_only_boosts_after
-        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups')}
+        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups', groups?.setSql)}
         ${author_id ? ` and d.author_id = :author_id and ${publicCompetitionDropSql('d', 'anonymityViewerId')} ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2
       `;
       const sql = `
-        with boosts_aggregate as (${aggregateSql}) select count(a.drop_id) as cnt from boosts_aggregate a
+        with ${groups ? `${groups.cteSql},` : ''} boosts_aggregate as (${aggregateSql}) select count(a.drop_id) as cnt from boosts_aggregate a
         where a.includes_booster > 0
         ${min_boosts !== null ? ` and a.boosts >= :min_boosts ` : ''}
       `;
@@ -3748,7 +3773,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           anonymityViewerId: competitionAnonymityViewerId(ctx) ?? null,
           min_boosts,
           eligibile_groups,
-          count_only_boosts_after
+          count_only_boosts_after,
+          ...groups?.params
         },
         { wrappedConnection: ctx.connection }
       );
