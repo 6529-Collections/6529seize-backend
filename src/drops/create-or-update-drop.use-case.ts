@@ -1,3 +1,7 @@
+import {
+  waveDropMetricsRefreshService,
+  WaveDropMetricsDirtyRefreshReason
+} from '@/drops/wave-drop-metrics-refresh.service';
 import { afterCommit } from '@/db/after-commit';
 import { inSequence } from '@/db/in-sequence';
 import { assertWaveAndParentVisibleOrThrow } from '@/api/waves/wave-access.helpers';
@@ -60,6 +64,7 @@ import {
 import { assertUnreachable } from '@/assertions';
 import { randomUUID } from 'crypto';
 import {
+  DropEntity,
   DropGroupMentionEntity,
   DropMediaEntity,
   DropMentionedWaveEntity,
@@ -1170,13 +1175,15 @@ export class CreateOrUpdateDropUseCase {
       { timer, connection }
     );
     if (!preExistingDropId) {
-      await this.dropsDb.applyInsertedDropMetricsDelta(
-        {
-          wave_id: validatedModel.wave_id,
-          author_id: authorId,
-          drop_type: validatedModel.drop_type
-        },
-        { timer, connection }
+      // After commit, never inside the post's transaction: see
+      // applyCreatedDropMetricsAfterCommit.
+      const createdDrop = {
+        wave_id: validatedModel.wave_id,
+        author_id: authorId,
+        drop_type: validatedModel.drop_type
+      };
+      await afterCommit(connection, () =>
+        this.applyCreatedDropMetricsAfterCommit(createdDrop, timer)
       );
     }
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->execute`);
@@ -1195,6 +1202,35 @@ export class CreateOrUpdateDropUseCase {
       pending_push_notification_ids: pendingPushNotificationIds,
       dm_unread_recipient_ids: dmUnreadRecipientIds
     };
+  }
+
+  /**
+   * The wave's and the author's drop counters (wave_metrics and
+   * wave_dropper_metrics) for a created drop. Every post in a wave updates
+   * the same wave_metrics row, so inside the post's transaction it was locked
+   * until commit and one stalled post held up every post in that wave (prod,
+   * 2026-11-07 20:20: the root of a 3-minute stall). After commit each upsert
+   * is a short autocommit statement. If it fails, the wave is marked dirty
+   * and waveDropMetricsRefreshLoop (every minute) recounts it from the drops.
+   */
+  private async applyCreatedDropMetricsAfterCommit(
+    drop: Pick<DropEntity, 'wave_id' | 'author_id' | 'drop_type'>,
+    timer?: Timer
+  ): Promise<void> {
+    try {
+      await this.dropsDb.applyInsertedDropMetricsDelta(drop, { timer });
+    } catch (error) {
+      this.logger.warn(
+        `Created-drop wave metrics not applied; marking the wave for a recount: ${
+          (error as { code?: string } | null)?.code ?? 'error'
+        }`
+      );
+      await waveDropMetricsRefreshService.markWaveDropMetricsDirtyBestEffort(
+        [drop.wave_id],
+        WaveDropMetricsDirtyRefreshReason.DROP_CHANGED,
+        { timer }
+      );
+    }
   }
 
   private async recordDirectMessageUnreadForNewDrop(
