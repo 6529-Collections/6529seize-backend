@@ -27,7 +27,9 @@ export class ExternalIndexedOwnership721HistoryEntity {
   @Column({ type: 'bigint', nullable: false })
   readonly since_time!: number;
 
-  @Column({ type: 'tinyint', width: 1, nullable: false, default: 0 })
+  // No display width: TypeORM can't read it back from MySQL 8, so a width
+  // here made every synchronize re-ALTER the column.
+  @Column({ type: 'tinyint', nullable: false, default: 0 })
   readonly acquired_as_sale!: number;
 
   @Column({ type: 'bigint', nullable: true })
