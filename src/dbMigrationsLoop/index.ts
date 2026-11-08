@@ -33,6 +33,8 @@ import { NFTHistoryEventEntity } from '@/entities/INFTHistoryEvent';
 import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
 import { applyProfileActivityLogWaveIndexSchema } from './profile-activity-log-wave-index-schema';
+import { applyCompetitionOutboxEventTypeIndexSchema } from './competition-outbox-event-type-index-schema';
+import { CompetitionOutboxEntity } from '@/entities/ICompetitionRuntime';
 import { ProfileActivityLog } from '@/entities/IProfileActivityLog';
 import { E2eeBlobChunkEntity, E2eeBlobEntity } from '@/entities/IE2ee';
 import {
@@ -106,6 +108,7 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
       scope !== 'nft-history-replay' &&
       scope !== 'wave-score-input-index' &&
       scope !== 'profile-activity-log-wave-index' &&
+      scope !== 'competition-outbox-event-type-index' &&
       scope !== E2EE_BLOB_MIGRATION_SCOPE)
   ) {
     throw new Error('Unsupported database schema scope for this invocation');
@@ -170,6 +173,21 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
     });
     logger.info(
       `[FINISHED WAVE SCORE INPUT INDEX] added_indexes=${addedIndexes}`
+    );
+    return { schema_scope: scope };
+  }
+  if (scope === 'competition-outbox-event-type-index') {
+    const addedIndexes = await doInDbContext(
+      applyCompetitionOutboxEventTypeIndexSchema,
+      {
+        logger,
+        entities: [CompetitionOutboxEntity],
+        syncEntities: false,
+        skipRedis: true
+      }
+    );
+    logger.info(
+      `[FINISHED COMPETITION OUTBOX EVENT TYPE INDEX] added_indexes=${addedIndexes}`
     );
     return { schema_scope: scope };
   }

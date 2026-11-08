@@ -32,8 +32,13 @@ import { DropEntity } from '@/entities/IDrop';
 import { applyWaveScoreInputIndexSchema } from './wave-score-input-index-schema';
 import { applyProfileActivityLogWaveIndexSchema } from './profile-activity-log-wave-index-schema';
 import { ProfileActivityLog } from '@/entities/IProfileActivityLog';
+import { applyCompetitionOutboxEventTypeIndexSchema } from './competition-outbox-event-type-index-schema';
+import { CompetitionOutboxEntity } from '@/entities/ICompetitionRuntime';
 jest.mock('./profile-activity-log-wave-index-schema', () => ({
   applyProfileActivityLogWaveIndexSchema: jest.fn().mockResolvedValue(1)
+}));
+jest.mock('./competition-outbox-event-type-index-schema', () => ({
+  applyCompetitionOutboxEventTypeIndexSchema: jest.fn().mockResolvedValue(1)
 }));
 jest.mock('./wave-score-input-index-schema', () => ({
   applyWaveScoreInputIndexSchema: jest.fn().mockResolvedValue(1)
@@ -195,6 +200,22 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       skipRedis: true
     });
     expect(applyProfileActivityLogWaveIndexSchema).toHaveBeenCalledTimes(1);
+    expect(getDataSource().synchronize).not.toHaveBeenCalled();
+    expect(migrations.getInstance).not.toHaveBeenCalled();
+    expect(moderationReviewDb.retain).not.toHaveBeenCalled();
+  });
+
+  it('adds only the online competition outbox event type index, never in a full run', async () => {
+    await expect(
+      invoke({ schema_scope: 'competition-outbox-event-type-index' })
+    ).resolves.toEqual({ schema_scope: 'competition-outbox-event-type-index' });
+    expect(doInDbContext).toHaveBeenCalledWith(expect.any(Function), {
+      logger: expect.anything(),
+      entities: [CompetitionOutboxEntity],
+      syncEntities: false,
+      skipRedis: true
+    });
+    expect(applyCompetitionOutboxEventTypeIndexSchema).toHaveBeenCalledTimes(1);
     expect(getDataSource().synchronize).not.toHaveBeenCalled();
     expect(migrations.getInstance).not.toHaveBeenCalled();
     expect(moderationReviewDb.retain).not.toHaveBeenCalled();
