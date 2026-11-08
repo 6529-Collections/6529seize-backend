@@ -112,6 +112,15 @@ function warnRedisUnavailable(error: RedisUnavailableError) {
 
 export const WAVE_GROUPS_CACHE_KEY = 'cache_6529_wave_groups';
 export const WAVE_GROUPS_VERSION_CACHE_KEY = 'cache_6529_wave_groups_version';
+// The entity blob's complete key as a hash tag puts these in its Redis Cluster
+// slot, so one script can read or change them together with the blob.
+const WAVE_GROUPS_CACHE_TAG = `{${WAVE_GROUPS_CACHE_KEY}}`;
+/** Identifies the blob's content: generation, hash, size and publish time. */
+export const WAVE_GROUPS_CACHE_STAMP_KEY = `cache_6529_wave_groups_stamp:${WAVE_GROUPS_CACHE_TAG}`;
+/** Incremented by every explicit eviction; a rebuild publishes only under its own. */
+export const WAVE_GROUPS_CACHE_GENERATION_KEY = `cache_6529_wave_groups_generation:${WAVE_GROUPS_CACHE_TAG}`;
+/** Single-flight lease for rebuilding the blob after it is evicted or expires. */
+export const WAVE_GROUPS_CACHE_REBUILD_LEASE_KEY = `cache_6529_wave_groups_rebuild:${WAVE_GROUPS_CACHE_TAG}`;
 
 export async function redisGet<T>(key: string): Promise<T | null> {
   if (!redis) {
@@ -577,9 +586,30 @@ export async function clearWaveGroupsCache() {
     return;
   }
   await Promise.all([
-    redis.del(WAVE_GROUPS_CACHE_KEY),
+    evictWaveGroupsCatalogue(redis),
     redis.incr(WAVE_GROUPS_VERSION_CACHE_KEY)
   ]);
+}
+
+/**
+ * Deletes the entity blob and its stamp and bumps the catalogue generation in
+ * one step. Processes holding the catalogue in memory see the new generation
+ * and never serve their copy again; a rebuild that started before this
+ * eviction cannot publish, because it publishes only under the generation it
+ * read before loading.
+ */
+async function evictWaveGroupsCatalogue(client: Redis): Promise<void> {
+  await client.eval(
+    `redis.call('INCR', KEYS[2])
+     return redis.call('DEL', KEYS[1], KEYS[3])`,
+    {
+      keys: [
+        WAVE_GROUPS_CACHE_KEY,
+        WAVE_GROUPS_CACHE_GENERATION_KEY,
+        WAVE_GROUPS_CACHE_STAMP_KEY
+      ]
+    }
+  );
 }
 
 /**
@@ -594,7 +624,30 @@ export async function evictWaveGroupsEntityCache() {
   if (!redis) {
     return;
   }
-  await redis.del(WAVE_GROUPS_CACHE_KEY);
+  await evictWaveGroupsCatalogue(redis);
+}
+
+/**
+ * Waits up to maxMs for a client that is still connecting, as on a cold start
+ * whose first connection outlived its budget. True once ready; false without
+ * a client or when it is not ready in time. Never throws.
+ */
+export async function waitForRedisReady(maxMs: number): Promise<boolean> {
+  const client = redis;
+  if (!client) return false;
+  if (client.isReady) return true;
+  return new Promise<boolean>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+    const onReady = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    timer = setTimeout(() => {
+      client.off('ready', onReady);
+      resolve(client.isReady);
+    }, maxMs);
+    client.once('ready', onReady);
+  });
 }
 
 export function getRedisClient(): Redis | null {
