@@ -458,18 +458,18 @@ export class NativeCompetitionRuntimeService {
         const state = await this.loadState(competitionId, snapshotCtx);
         // An Approve decision run decides from the same state at the same
         // time; only a run with no decision to make stays off the lock.
-        const decisionsDue =
+        const approveProgress =
           report.operation === 'decisions' &&
-          competition.type === CompetitionType.APPROVE &&
-          this.approveDecisionsDue(
-            competition,
-            state,
-            await this.repository.decisionProgress(competitionId, snapshotCtx),
-            now
-          );
+          competition.type === CompetitionType.APPROVE
+            ? await this.repository.decisionProgress(competitionId, snapshotCtx)
+            : null;
+        const decisionsDue =
+          approveProgress !== null &&
+          this.approveDecisionsDue(competition, state, approveProgress, now);
         return {
           competition,
           mark,
+          approveProgress,
           decisionsDue,
           ...this.leaderboardRows(competition, state, now)
         };
@@ -508,6 +508,19 @@ export class NativeCompetitionRuntimeService {
           lockedCtx
         );
         if (mark !== computed.mark) return 'changed';
+        // "Nothing due" was decided from this decision progress; the mark
+        // covers decisions only through their entry and outbox writes.
+        if (computed.approveProgress) {
+          const progress = await this.repository.decisionProgress(
+            competitionId,
+            lockedCtx
+          );
+          if (
+            progress.completed !== computed.approveProgress.completed ||
+            progress.latest !== computed.approveProgress.latest
+          )
+            return 'changed';
+        }
         await this.writeLeaderboard(
           computed.competition,
           computed.rows,

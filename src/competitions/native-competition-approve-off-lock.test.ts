@@ -379,9 +379,27 @@ describe('refreshLeaderboardOffLock for Approve', () => {
         { operation: 'decisions' }
       )
     ).resolves.toBe('written');
-    expect(repository.decisionProgress).toHaveBeenCalledTimes(1);
+    // Read in the snapshot, and again under the lock before writing.
+    expect(repository.decisionProgress).toHaveBeenCalledTimes(2);
     expect(repository.lockCompetition).toHaveBeenCalledTimes(1);
     expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes nothing when a decision completed between the snapshot and the lock', async () => {
+    const { subject, repository, write } = refresh(false);
+    repository.decisionProgress
+      .mockResolvedValueOnce({ latest: null, completed: 0 })
+      .mockResolvedValueOnce({ latest: NOW - 1, completed: 1 });
+    await expect(
+      subject.refreshLeaderboardOffLock(
+        'competition-1',
+        NOW,
+        {},
+        {},
+        { operation: 'decisions' }
+      )
+    ).resolves.toBe('changed');
+    expect(write).not.toHaveBeenCalled();
   });
 
   it('does not look for decisions when the snapshotter refreshes', async () => {
