@@ -3,7 +3,8 @@ jest.mock('@/competitions/competition-tdh-overvotes.db', () => ({
 }));
 jest.mock('@/competitions/native-competition-runtime.repository', () => ({
   nativeCompetitionRuntimeRepository: {
-    discoverCompetitions: jest.fn(),
+    findOvervoteCandidateCompetitions: jest.fn(),
+    readCompetition: jest.fn(),
     lockCompetition: jest.fn(),
     listActiveVoters: jest.fn(),
     getVoterActiveVotes: jest.fn()
@@ -66,9 +67,10 @@ const competition = {
 beforeEach(() => {
   jest.resetAllMocks();
   jest
-    .mocked(runtime.discoverCompetitions)
+    .mocked(runtime.findOvervoteCandidateCompetitions)
     .mockResolvedValueOnce([competition.id])
     .mockResolvedValue([]);
+  jest.mocked(runtime.readCompetition).mockResolvedValue(competition as never);
   jest.mocked(runtime.lockCompetition).mockResolvedValue(competition as never);
   jest
     .mocked(competitionTdhOvervotesDb.findOvervoters)
@@ -127,8 +129,97 @@ it('does not execute disabled competitions', async () => {
   expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
 });
 
-it('limits REP reconciliation to affected native credit namespaces', async () => {
+it('reads TDH candidates without a voter and locks only candidates', async () => {
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(runtime.findOvervoteCandidateCompetitions).toHaveBeenNthCalledWith(
+    1,
+    '',
+    100,
+    null,
+    expect.objectContaining({ connection })
+  );
+  expect(runtime.findOvervoteCandidateCompetitions).toHaveBeenNthCalledWith(
+    2,
+    competition.id,
+    100,
+    null,
+    expect.objectContaining({ connection })
+  );
+  expect(runtime.lockCompetition).toHaveBeenCalledTimes(1);
+  expect(runtime.lockCompetition).toHaveBeenCalledWith(
+    competition.id,
+    expect.objectContaining({ connection })
+  );
+  expect(
+    jest.mocked(runtime.readCompetition).mock.invocationCallOrder[0]
+  ).toBeLessThan(
+    jest.mocked(runtime.lockCompetition).mock.invocationCallOrder[0]
+  );
+});
+
+it('never locks a candidate whose unlocked configuration does not apply', async () => {
+  jest.mocked(runtime.readCompetition).mockResolvedValue({
+    ...competition,
+    voting: { ...competition.voting, credit_type: 'REP' }
+  } as never);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(runtime.lockCompetition).not.toHaveBeenCalled();
+  expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
+});
+
+it('never locks a candidate that is no longer active and published', async () => {
+  jest
+    .mocked(runtime.readCompetition)
+    .mockResolvedValue({ ...competition, lifecycle: 'DRAFT' } as never);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(runtime.lockCompetition).not.toHaveBeenCalled();
+});
+
+it('re-checks the configuration under the lock', async () => {
   jest.mocked(runtime.lockCompetition).mockResolvedValue({
+    ...competition,
+    voting: { ...competition.voting, credit_type: 'REP' }
+  } as never);
+  await revokeTdhBasedDropWavesOverVotes(connection);
+  expect(runtime.lockCompetition).toHaveBeenCalledTimes(1);
+  expect(competitionTdhOvervotesDb.findOvervoters).not.toHaveBeenCalled();
+  expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
+});
+
+it('reads REP candidates by the rating recipient', async () => {
+  const repCompetition = {
+    ...competition,
+    voting: { ...competition.voting, credit_type: 'REP' }
+  };
+  jest
+    .mocked(runtime.readCompetition)
+    .mockResolvedValue(repCompetition as never);
+  jest
+    .mocked(runtime.lockCompetition)
+    .mockResolvedValue(repCompetition as never);
+  await revokeRepBasedDropOverVotes(
+    {
+      rep_recipient_id: 'voter',
+      rep_giver_id: 'creditor',
+      credit_category: 'art'
+    },
+    connection
+  );
+  expect(runtime.findOvervoteCandidateCompetitions).toHaveBeenCalledWith(
+    '',
+    100,
+    'voter',
+    expect.objectContaining({ connection })
+  );
+  expect(service.reconcileVoterCredit).toHaveBeenCalledWith(
+    expect.objectContaining({ voterProfileId: 'voter' }),
+    expect.objectContaining({ connection })
+  );
+  expect(service.refreshCompetition).toHaveBeenCalledTimes(1);
+});
+
+it('limits REP reconciliation to affected native credit namespaces', async () => {
+  const repCompetition = {
     ...competition,
     voting: {
       ...competition.voting,
@@ -136,7 +227,13 @@ it('limits REP reconciliation to affected native credit namespaces', async () =>
       credit_category: 'art',
       credit_creditor: 'creditor'
     }
-  } as never);
+  };
+  jest
+    .mocked(runtime.readCompetition)
+    .mockResolvedValue(repCompetition as never);
+  jest
+    .mocked(runtime.lockCompetition)
+    .mockResolvedValue(repCompetition as never);
   await revokeRepBasedDropOverVotes(
     {
       rep_recipient_id: 'voter',
@@ -145,6 +242,7 @@ it('limits REP reconciliation to affected native credit namespaces', async () =>
     },
     connection
   );
+  expect(runtime.lockCompetition).not.toHaveBeenCalled();
   expect(service.reconcileVoterCredit).not.toHaveBeenCalled();
 });
 

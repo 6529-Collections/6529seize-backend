@@ -50,6 +50,27 @@ export async function revokeTdhBasedDropWavesOverVotes(
   );
 }
 
+function isRevocable(
+  competition: Competition | null,
+  accepts: (competition: Competition) => boolean
+): competition is Competition {
+  return (
+    !!competition &&
+    accepts(competition) &&
+    competition.execution_mode === 'ACTIVE' &&
+    competition.lifecycle === 'PUBLISHED'
+  );
+}
+
+/**
+ * Locks only candidate competitions: those with votes this revocation could
+ * reduce, whose configuration (read without locking) it applies to. Each is
+ * re-checked under its lock, since its configuration may have changed. A
+ * competition that becomes a candidate after the unlocked read holds only
+ * votes cast since, under its own lock and against the credit current then
+ * (after a TDH sync, the synced credit); the next revocation or the
+ * vote-time credit check covers those.
+ */
 async function revokeNativeOvervotes(
   accepts: (competition: Competition) => boolean,
   profileId: string | null,
@@ -57,22 +78,23 @@ async function revokeNativeOvervotes(
 ): Promise<void> {
   let afterId = '';
   for (;;) {
-    const ids = await nativeCompetitionRuntimeRepository.discoverCompetitions(
-      afterId,
-      100,
-      ctx
-    );
+    const ids =
+      await nativeCompetitionRuntimeRepository.findOvervoteCandidateCompetitions(
+        afterId,
+        100,
+        profileId,
+        ctx
+      );
     if (!ids.length) return;
     await readSequentially(ids, async (id) => {
+      const unlocked = await nativeCompetitionRuntimeRepository.readCompetition(
+        id,
+        ctx
+      );
+      if (!isRevocable(unlocked, accepts)) return;
       const competition =
         await nativeCompetitionRuntimeRepository.lockCompetition(id, ctx);
-      if (
-        !competition ||
-        !accepts(competition) ||
-        competition.execution_mode !== 'ACTIVE' ||
-        competition.lifecycle !== 'PUBLISHED'
-      )
-        return;
+      if (!isRevocable(competition, accepts)) return;
       if (profileId) await reconcileNativeVoter(competition, profileId, ctx);
       else await reconcileTdhOvervoters(competition, ctx);
     });

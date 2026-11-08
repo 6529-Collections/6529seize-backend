@@ -15,6 +15,7 @@ const mockCalculateMemesTdh = jest.fn();
 const mockCalculateTdhEditions = jest.fn();
 const mockCalculateNftTdh = jest.fn();
 const mockSqsSendToQueueName = jest.fn();
+const mockSyncIdentitiesAfterTdh = jest.fn();
 
 jest.mock('@/db', () => ({
   fetchAllConsolidatedTdh: mockFetchAllConsolidatedTdh,
@@ -64,6 +65,10 @@ jest.mock('@/sqs', () => ({
   }
 }));
 
+jest.mock('@/identity-tdh-sync', () => ({
+  syncIdentitiesAfterTdh: mockSyncIdentitiesAfterTdh
+}));
+
 import { aTdhConsolidation } from '@/tests/fixtures/tdh_consolidation.fixture';
 import { consolidateAndPersistTDH } from './tdh_consolidation';
 
@@ -104,6 +109,7 @@ describe('TDH consolidation xTDH trigger contract', () => {
     mockPersistConsolidatedTdh.mockResolvedValue(undefined);
     mockPersistTdhBlock.mockResolvedValue(undefined);
     mockSqsSendToQueueName.mockResolvedValue(undefined);
+    mockSyncIdentitiesAfterTdh.mockResolvedValue('SYNCED');
   });
 
   it('does not directly enqueue xTDH for a full nightly consolidation', async () => {
@@ -155,6 +161,41 @@ describe('TDH consolidation xTDH trigger contract', () => {
     );
   });
 
+  it('syncs identities after the TDH commit and before the block and xTDH', async () => {
+    await consolidateAndPersistTDH(block, blockTimestamp, {
+      mode: 'PARTIAL',
+      wallets: ['0xabc'],
+      currentConsolidatedTdh: []
+    });
+
+    expect(mockSyncIdentitiesAfterTdh).toHaveBeenCalledTimes(1);
+    const order = (fn: jest.Mock) => fn.mock.invocationCallOrder[0];
+    expect(order(mockPersistConsolidatedTdh)).toBeLessThan(
+      order(mockSyncIdentitiesAfterTdh)
+    );
+    expect(order(mockSyncIdentitiesAfterTdh)).toBeLessThan(
+      order(mockPersistTdhBlock)
+    );
+    expect(order(mockSyncIdentitiesAfterTdh)).toBeLessThan(
+      order(mockSqsSendToQueueName)
+    );
+  });
+
+  it('does not write the block or enqueue xTDH when the identities sync fails', async () => {
+    mockSyncIdentitiesAfterTdh.mockRejectedValueOnce(new Error('sync failed'));
+
+    await expect(
+      consolidateAndPersistTDH(block, blockTimestamp, {
+        mode: 'PARTIAL',
+        wallets: ['0xabc'],
+        currentConsolidatedTdh: []
+      })
+    ).rejects.toThrow('sync failed');
+
+    expect(mockPersistTdhBlock).not.toHaveBeenCalled();
+    expect(mockSqsSendToQueueName).not.toHaveBeenCalled();
+  });
+
   it('does not enqueue xTDH when consolidated persistence fails', async () => {
     mockPersistConsolidatedTdh.mockRejectedValueOnce(
       new Error('persistence transaction failed')
@@ -168,6 +209,7 @@ describe('TDH consolidation xTDH trigger contract', () => {
       })
     ).rejects.toThrow('persistence transaction failed');
 
+    expect(mockSyncIdentitiesAfterTdh).not.toHaveBeenCalled();
     expect(mockPersistTdhBlock).not.toHaveBeenCalled();
     expect(mockSqsSendToQueueName).not.toHaveBeenCalled();
   });

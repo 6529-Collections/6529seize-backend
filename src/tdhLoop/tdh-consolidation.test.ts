@@ -32,6 +32,10 @@ jest.mock('@/nextgen/nextgen.db', () => ({
   fetchNextgenTokens: jest.fn()
 }));
 
+jest.mock('@/identity-tdh-sync', () => ({
+  syncIdentitiesAfterTdh: jest.fn()
+}));
+
 const mockedRetrieveConsolidationsForWallets =
   retrieveConsolidationsForWallets as jest.MockedFunction<
     typeof retrieveConsolidationsForWallets

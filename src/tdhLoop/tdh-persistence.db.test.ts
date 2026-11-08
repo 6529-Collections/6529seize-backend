@@ -25,7 +25,7 @@ import { aTdhConsolidation } from '@/tests/fixtures/tdh_consolidation.fixture';
 import { DbQueryOptions } from '@/db-query.options';
 import { insertWithoutUpdate } from '@/orm_helpers';
 import { TDH_SAVE_BATCH_SIZE } from './tdh-persistence-batches';
-import * as waveUnreadCache from '@/api/waves/wave-unread-cache';
+import { identityTdhSyncStateDb } from '@/identity-tdh-sync-state.db';
 import * as mysql from 'mysql';
 import { DataSource, QueryRunner } from 'typeorm';
 
@@ -239,18 +239,10 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
 
   beforeEach(() => {
     setSqlExecutor(new TypeOrmTestSqlExecutor(dataSource));
-    jest
-      .spyOn(
-        identityConsolidationEffects,
-        'syncIdentitiesWithTdhConsolidations'
-      )
-      .mockResolvedValue({ waveIds: [], readerWaves: [] });
-    jest
-      .spyOn(identityConsolidationEffects, 'syncIdentitiesMetrics')
-      .mockResolvedValue();
-    jest
-      .spyOn(waveUnreadCache, 'invalidateWaveUnreadCache')
-      .mockResolvedValue();
+    jest.spyOn(
+      identityConsolidationEffects,
+      'syncIdentitiesWithTdhConsolidations'
+    );
   });
 
   afterEach(() => {
@@ -261,9 +253,9 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     await dataSource.destroy();
   });
 
-  it('rolls back every TDH store when the unified transaction fails', async () => {
+  it('rolls back every TDH store and the marker when the TDH transaction fails', async () => {
     jest
-      .mocked(identityConsolidationEffects.syncIdentitiesMetrics)
+      .spyOn(identityTdhSyncStateDb, 'markPending')
       .mockRejectedValueOnce(new Error('injected transaction failure'));
 
     await expect(persistReplacement([A_C, B])).rejects.toThrow(
@@ -275,17 +267,30 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
       `SELECT SUM(boosted_tdh) AS total FROM ${TDH_NFT_TABLE}`
     );
     expect(Number(total)).toBe(50);
+    expect(await identityTdhSyncStateDb.readProgress()).toEqual({
+      pendingGeneration: 0,
+      pendingBlock: 0,
+      syncedGeneration: 0
+    });
   });
 
-  it('is idempotent when retrying after commit but before checkpoint completion', async () => {
-    jest
-      .mocked(waveUnreadCache.invalidateWaveUnreadCache)
-      .mockRejectedValueOnce(new Error('injected post-commit failure'))
-      .mockResolvedValueOnce();
+  it('commits the TDH tables with a pending identities sync marker, without syncing identities', async () => {
+    await persistReplacement([A_C, B]);
 
-    await expect(persistReplacement([A_C, B])).rejects.toThrow(
-      'injected post-commit failure'
-    );
+    // Visible from another connection: the transaction has committed.
+    await expectPersistedKeys([A_B, C]);
+    expect(await identityTdhSyncStateDb.readProgress()).toEqual({
+      pendingGeneration: 1,
+      pendingBlock: BLOCK,
+      syncedGeneration: 0
+    });
+    expect(
+      identityConsolidationEffects.syncIdentitiesWithTdhConsolidations
+    ).not.toHaveBeenCalled();
+  });
+
+  it('is idempotent when retried after the TDH commit', async () => {
+    await persistReplacement([A_C, B]);
     await expectPersistedKeys([A_B, C]);
 
     await persistReplacement([A_B, C]);
@@ -299,6 +304,10 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     );
     expect(Number(total)).toBe(60);
     expect(Number(row_count)).toBe(2);
+    // Each committed write leaves its own pending generation.
+    expect(
+      (await identityTdhSyncStateDb.readProgress()).pendingGeneration
+    ).toBe(2);
   });
 
   it('preserves key-score associations in history when input rank order differs from primary-key order', async () => {
