@@ -30,6 +30,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === 'string';
+}
+
 /**
  * Claims of a verified access token, or null when the verified payload does
  * not have the shape issueAccessToken() produces: a JSON object whose subject
@@ -49,7 +53,7 @@ export function getAccessTokenClaimsOrNull(
   if (typeof exp !== 'number' || !Number.isFinite(exp)) {
     return null;
   }
-  if (role !== undefined && typeof role !== 'string') {
+  if (!isOptionalString(role)) {
     return null;
   }
   if (NON_ACCESS_TOKEN_CLAIMS.some((claim) => payload[claim] !== undefined)) {
