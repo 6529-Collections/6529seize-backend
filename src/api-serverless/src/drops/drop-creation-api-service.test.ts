@@ -1027,12 +1027,100 @@ describe('DropCreationApiService.createDrop delivery hops (1.0)', () => {
       'post_commit_fanout_ms',
       'post_commit_collaborators_ms',
       'post_commit_dm_unread_ms',
-      'drop_post_commit_ms'
+      'drop_post_commit_ms',
+      'drop_tx_begin_ms',
+      'drop_tx_body_ms',
+      'drop_tx_commit_ms'
     ]) {
       expect(typeof record[hop]).toBe('number');
     }
     expect(record.drop_post_total_ms).toBeGreaterThanOrEqual(12);
     expect(record).not.toHaveProperty('post_commit_daily_activity_ms');
+  });
+
+  it('bumps the unread cache before the fan-out and runs the wave-score request beside it', async () => {
+    jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const events: string[] = [];
+    let fanoutStarted!: () => void;
+    const fanoutRunning = new Promise<void>((resolve) => {
+      fanoutStarted = resolve;
+    });
+    (waveScoreService.requestWaveScoreRefreshBestEffort as jest.Mock)
+      .mockReset()
+      .mockImplementation(async () => {
+        events.push('wave-score-start');
+        // Finishes only once the fan-out has started: run one after the
+        // other, the post would never complete.
+        await fanoutRunning;
+        events.push('wave-score-end');
+      });
+    (invalidateWaveUnreadCacheForWave as jest.Mock).mockImplementation(
+      async () => {
+        events.push('unread');
+      }
+    );
+    const service = new DropCreationApiService(
+      {
+        findDropByIdOrThrow: jest
+          .fn()
+          .mockResolvedValue({ id: 'drop-1', wave_id: 'wave-1' })
+      } as never,
+      {
+        executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+          callback({})
+        )
+      } as never,
+      {
+        createDropApiToUseCaseModel: jest
+          .fn()
+          .mockReturnValue({ wave_id: 'wave-1', drop_type: DropType.CHAT })
+      } as never,
+      {
+        preResolveIdentityNomination: jest.fn().mockResolvedValue(null),
+        preparePrePublication: jest.fn().mockResolvedValue({}),
+        execute: jest.fn().mockResolvedValue({
+          drop_id: 'drop-1',
+          pending_push_notification_ids: []
+        })
+      } as never,
+      {} as never,
+      {
+        notifyAboutDropUpdate: jest.fn(async () => {
+          events.push('fanout-start');
+          fanoutStarted();
+          events.push('fanout-end');
+        }),
+        notifyAboutIdentityNotificationsChanged: jest
+          .fn()
+          .mockResolvedValue(undefined)
+      } as never,
+      { findByDropId: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      { createPollForDrop: jest.fn().mockResolvedValue(undefined) } as never
+    );
+
+    await service.createDrop(
+      {
+        createDropRequest: {} as never,
+        authorId: 'author-profile',
+        representativeId: 'author-profile'
+      },
+      {
+        timer: {
+          start: jest.fn(),
+          stop: jest.fn(),
+          getTotalTimePassed: () => ({ toMillis: () => 12 })
+        }
+      } as never
+    );
+
+    expect(events).toEqual([
+      'unread',
+      'wave-score-start',
+      'fanout-start',
+      'fanout-end',
+      'wave-score-end'
+    ]);
   });
 });
 

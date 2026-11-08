@@ -311,21 +311,29 @@ export class DropCreationApiService {
     let created: Awaited<
       ReturnType<DropCreationApiService['createDropWithGivenConnection']>
     >;
+    // Splits drop_commit_ms: connection + BEGIN, the post's statements, COMMIT.
+    const transaction: { bodyStartedAt?: number; bodyEndedAt?: number } = {};
+    const transactionStartedAt = hops.elapsed();
     try {
       created = await hops.time('drop_commit_ms', () =>
         this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
-          return await this.createDropWithGivenConnection(
-            {
-              model: createModel,
-              authorId,
-              preResolvedIdentityNomination,
-              prePublication,
-              requestDailyActivityCredit,
-              clientDrop
-            },
-            normalizeCreateDropPollRequest(createDropRequest.poll),
-            { timer: ctx.timer!, connection }
-          );
+          transaction.bodyStartedAt = hops.elapsed();
+          try {
+            return await this.createDropWithGivenConnection(
+              {
+                model: createModel,
+                authorId,
+                preResolvedIdentityNomination,
+                prePublication,
+                requestDailyActivityCredit,
+                clientDrop
+              },
+              normalizeCreateDropPollRequest(createDropRequest.poll),
+              { timer: ctx.timer!, connection }
+            );
+          } finally {
+            transaction.bodyEndedAt = hops.elapsed();
+          }
         })
       );
     } catch (error) {
@@ -345,6 +353,20 @@ export class DropCreationApiService {
       return this.findClientDropRetry(claimed, clientDrop, ctx);
     }
     const committedAt = hops.elapsed();
+    if (
+      transaction.bodyStartedAt !== undefined &&
+      transaction.bodyEndedAt !== undefined
+    ) {
+      hops.set(
+        'drop_tx_begin_ms',
+        transaction.bodyStartedAt - transactionStartedAt
+      );
+      hops.set(
+        'drop_tx_body_ms',
+        transaction.bodyEndedAt - transaction.bodyStartedAt
+      );
+      hops.set('drop_tx_commit_ms', committedAt - transaction.bodyEndedAt);
+    }
     const {
       drop,
       pendingPushNotificationIds,
@@ -359,13 +381,8 @@ export class DropCreationApiService {
         this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx)
       );
     }
-    await hops.time('post_commit_wave_score_ms', () =>
-      waveScoreService.requestWaveScoreRefreshBestEffort(
-        [createModel.wave_id],
-        WaveScoreDirtyRefreshReason.DROP_CHANGED,
-        ctx
-      )
-    );
+    // Before the fan-out: a frame must not reach a client that then reads a
+    // cached unread count the new drop has not invalidated yet.
     await hops.time('post_commit_unread_cache_ms', () =>
       invalidateWaveUnreadCacheForWave(createModel.wave_id)
     );
@@ -376,9 +393,20 @@ export class DropCreationApiService {
       })
     );
     void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
-    await hops.time('post_commit_fanout_ms', () =>
-      this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx)
-    );
+    // The wave-score request is independent of the frames (best effort, never
+    // throws), so it runs beside the fan-out instead of before it.
+    await Promise.all([
+      hops.time('post_commit_wave_score_ms', () =>
+        waveScoreService.requestWaveScoreRefreshBestEffort(
+          [createModel.wave_id],
+          WaveScoreDirtyRefreshReason.DROP_CHANGED,
+          ctx
+        )
+      ),
+      hops.time('post_commit_fanout_ms', () =>
+        this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx)
+      )
+    ]);
     const collaboratorIds = createDropRequest.collaborator_ids ?? [];
     if (collaboratorIds.length) {
       await hops.time('post_commit_collaborators_ms', () =>
