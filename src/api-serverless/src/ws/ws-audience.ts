@@ -77,9 +77,14 @@ function followersSql({ driving }: { driving: boolean }): string {
             and s.target_action = :audienceTargetAction`;
 }
 
-/** Signed-in identities with a socket subscribed to the wave (wave_id index). */
+/**
+ * Signed-in identities with a socket subscribed to the wave (wave_id index).
+ * It selects identities, not recipients: a typing socket on the wave still
+ * means its identity is viewing it, and the recipient sockets are selected
+ * (and typing sockets left out) by the query this is part of.
+ */
 function identitiesViewingSql(): string {
-  return `select v.identity_id
+  return `select /* not a broadcast audience */ v.identity_id
           from ${WS_CONNECTIONS_TABLE} v
           where v.wave_id = :audienceWaveId
             and v.identity_id <> :audienceAnonymous`;
