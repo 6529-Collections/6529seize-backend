@@ -3,7 +3,10 @@ import {
   legacyCompetitionEntryId,
   legacyCompetitionId
 } from '@/competitions/competition-id';
-import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
+import {
+  legacyGetView,
+  withLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
 import {
   COMPETITION_ENTRIES_TABLE,
   COMPETITION_ENTRY_RUNTIME_TABLE,
@@ -229,7 +232,19 @@ async function seedWave(waveId: string, ranked: 'runtime' | 'leaderboard') {
 }
 
 describeWithSeed('DropVotingDb rank participants', withWaves(waves), () => {
-  const repo = new DropVotingDb(() => sqlExecutor);
+  // Called as the API calls them: inside the legacy facade scope, where the
+  // executor rewrites base legacy tables into their views.
+  const inner = new DropVotingDb(() => sqlExecutor);
+  const repo = {
+    getParticipationDropsRealtimeRanks: (ids: string[], ctx: object) =>
+      withLegacyCompetitionGetFacade(() =>
+        inner.getParticipationDropsRealtimeRanks(ids, ctx)
+      ),
+    getTimeLockedDropsWeightedVotes: (ids: string[], ctx: object) =>
+      withLegacyCompetitionGetFacade(() =>
+        inner.getTimeLockedDropsWeightedVotes(ids, ctx)
+      )
+  };
 
   beforeEach(async () => {
     for (const wave of waves) await seedNativeOriginalPrimaryFixture(wave);

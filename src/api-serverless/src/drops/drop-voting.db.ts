@@ -1,4 +1,7 @@
-import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
+import {
+  legacyGetView,
+  withoutLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
 import { CompetitionRepository } from '@/competitions/competition.repository';
 import {
   dbSupplier,
@@ -95,6 +98,11 @@ type DropSubmissionVotingSummaryRow = Omit<
  * then decides membership with its own rules, so the set is exactly the view's
  * participatory drops of those waves. `participants` has id, wave_id and
  * created_at.
+ *
+ * Run the statement with withoutLegacyCompetitionGetFacade: inside the API's
+ * facade scope the executor rewrites a base `drops` after FROM into its view,
+ * which would turn the indexed candidate read back into a walk over every
+ * drop of the wave. Every view this SQL needs is named explicitly.
  */
 function participantDropsCtes(neededWaves: string): string {
   return `participant_candidates AS (
@@ -843,8 +851,10 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(
       `${this.constructor.name}->getParticipationDropsRealtimeRanks`
     );
-    const results = await this.db.execute<{ drop_id: string; rnk: number }>(
-      `
+    // Outside the facade rewrite: see participantDropsCtes.
+    const results = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{ drop_id: string; rnk: number }>(
+        `
           WITH needed_waves AS (SELECT DISTINCT wave_id
                                 FROM ${legacyGetView(DROPS_TABLE)}
                                 WHERE id IN (:dropIds)),
@@ -862,8 +872,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
                )
           SELECT * FROM all_ranks WHERE drop_id IN (:dropIds)
       `,
-      { dropIds },
-      { wrappedConnection: ctx.connection }
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      )
     );
     ctx.timer?.stop(
       `${this.constructor.name}->getParticipationDropsRealtimeRanks`
@@ -921,10 +932,13 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       ) drop_ranks
       where drop_id in (:dropIds)
     `;
-    const results = await this.db.execute<{ drop_id: string; rnk: number }>(
-      sql,
-      { dropIds },
-      { wrappedConnection: ctx.connection }
+    // Outside the facade rewrite: see participantDropsCtes.
+    const results = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.execute<{ drop_id: string; rnk: number }>(
+        sql,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      )
     );
     ctx.timer?.stop(
       `${this.constructor.name}->getTimeLockedDropsWeightedVotes`
