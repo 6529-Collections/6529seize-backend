@@ -110,6 +110,27 @@ describe('wave delivery metrics', () => {
     }
   });
 
+  it('reports how many fan-outs ran at once during each one', () => {
+    const emf = captureEmf();
+    try {
+      const solo = new FanoutMeasurement('DROP_UPDATE', null);
+      solo.emit();
+      const first = new FanoutMeasurement('DROP_UPDATE', null);
+      const second = new FanoutMeasurement('DROP_REACTION_UPDATE', null);
+      second.emit();
+      // A later fan-out does not raise a finished one's overlap.
+      const third = new FanoutMeasurement('DROP_UPDATE', null);
+      third.emit();
+      first.emit();
+
+      expect(emf.lines().map((line) => line.fanout_overlap_max)).toEqual([
+        1, 2, 2, 2
+      ]);
+    } finally {
+      emf.restore();
+    }
+  });
+
   it('omits send timings for an empty audience instead of reporting zero', () => {
     const emf = captureEmf();
     try {
