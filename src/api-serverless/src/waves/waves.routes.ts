@@ -45,6 +45,10 @@ import {
 import { userGroupsService } from '../community-members/user-groups.service';
 import { dropsService } from '../drops/drops.api.service';
 import {
+  WAVE_LOGS_TIMEOUT_TTL,
+  WaveLogsUnavailableException
+} from '../drops/wave-logs-timeout';
+import {
   anonymousWaveResponseCache,
   invalidateAnonymousWaveResponse,
   markShareableWaveResponse
@@ -759,18 +763,30 @@ router.get(
     if (logTypes.length === 0) {
       logTypes = [...DROP_LOG_TYPES];
     }
-    const result = await dropsService.findWaveLogs(
-      {
-        ...params,
-        wave_id: id,
-        log_types: logTypes
-      },
-      {
-        authenticationContext,
-        timer
+    try {
+      const result = await dropsService.findWaveLogs(
+        {
+          ...params,
+          wave_id: id,
+          log_types: logTypes
+        },
+        {
+          authenticationContext,
+          timer
+        }
+      );
+      res.send(result);
+    } catch (error) {
+      if (error instanceof WaveLogsUnavailableException) {
+        // The error middleware sends the 503 on this response, keeping
+        // headers already set.
+        res.setHeader(
+          'Retry-After',
+          WAVE_LOGS_TIMEOUT_TTL.toSeconds().toString()
+        );
       }
-    );
-    res.send(result);
+      throw error;
+    }
   }
 );
 

@@ -5,7 +5,12 @@ import {
 } from '@/constants/db-tables';
 import { legacyCompetitionId } from '@/competitions/competition-id';
 import { withLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
-import { legacyTypedDropsSql } from '@/competitions/legacy-typed-drops';
+import {
+  legacyAuthorWaveParticipationSql,
+  legacyTypedDropsSql
+} from '@/competitions/legacy-typed-drops';
+import { dropsDb } from '@/drops/drops.db';
+import fc from 'fast-check';
 import { DropType } from '@/entities/IDrop';
 import { WaveType } from '@/entities/IWave';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
@@ -229,6 +234,143 @@ describeWithSeed(
         }
       }
     );
+
+    const WAVES = ['native', 'unpublished', 'legacy'];
+    const PEOPLE = [...AUTHORS, 'author-none'];
+
+    /** What the drop mapper read through the view before: 1/0 per pair. */
+    const viewParticipation = async (waveIds: string[], authorIds: string[]) =>
+      (
+        await sqlExecutor.execute<{
+          wave_id: string;
+          author_id: string;
+          is_participant: number;
+          is_winner: number;
+        }>(
+          `select wave_id, author_id,
+                  max(case when drop_type = 'PARTICIPATORY' then 1 else 0 end) as is_participant,
+                  max(case when drop_type = 'WINNER' then 1 else 0 end) as is_winner
+             from legacy_get_drops
+            where wave_id in (:waveIds) and author_id in (:authorIds)
+              and drop_type in ('PARTICIPATORY', 'WINNER')
+            group by wave_id, author_id`,
+          { waveIds, authorIds }
+        )
+      )
+        .map(
+          (row) =>
+            `${row.wave_id}:${row.author_id}:${Number(row.is_participant)}${Number(row.is_winner)}`
+        )
+        .sort((a, b) => a.localeCompare(b));
+
+    const baseParticipation = async (waveIds: string[], authorIds: string[]) =>
+      (
+        await sqlExecutor.execute<{
+          wave_id: string;
+          author_id: string;
+          is_participant: number;
+          is_winner: number;
+        }>(
+          legacyAuthorWaveParticipationSql({
+            waveIds: ':waveIds',
+            authorIds: ':authorIds'
+          }),
+          { waveIds, authorIds }
+        )
+      )
+        .map(
+          (row) =>
+            `${row.wave_id}:${row.author_id}:${Number(row.is_participant)}${Number(row.is_winner)}`
+        )
+        .sort((a, b) => a.localeCompare(b));
+
+    it('returns the view participation for every wave and author combination', async () => {
+      const subsets = <T>(items: T[]): T[][] =>
+        items
+          .reduce<
+            T[][]
+          >((acc, item) => [...acc, ...acc.map((set) => [...set, item])], [[]])
+          .filter((set) => set.length > 0);
+      for (const waveIds of subsets(WAVES)) {
+        for (const authorIds of subsets(PEOPLE)) {
+          expect({
+            waveIds,
+            authorIds,
+            rows: await baseParticipation(waveIds, authorIds)
+          }).toEqual({
+            waveIds,
+            authorIds,
+            rows: await viewParticipation(waveIds, authorIds)
+          });
+        }
+      }
+    });
+
+    it('matches the view for random wave and author lists, duplicates included', async () => {
+      await fc.assert(
+        fc.asyncProperty(
+          fc.array(fc.constantFrom(...WAVES), { minLength: 1, maxLength: 5 }),
+          fc.array(fc.constantFrom(...PEOPLE), { minLength: 1, maxLength: 6 }),
+          async (waveIds, authorIds) => {
+            expect(await baseParticipation(waveIds, authorIds)).toEqual(
+              await viewParticipation(waveIds, authorIds)
+            );
+          }
+        ),
+        { numRuns: 40 }
+      );
+    });
+
+    it('pins the native wave flags the view computes from entry status', async () => {
+      expect(await baseParticipation(WAVES, PEOPLE)).toEqual([
+        // Legacy wave: stored types only.
+        'legacy:author-a:10',
+        'legacy:author-b:01',
+        // author-a: ACTIVE and WINNER entries, plus stored PARTICIPATORY and
+        // WINNER drops without a mapped entry.
+        'native:author-a:11',
+        // author-b: only a stored WINNER whose entry status the view ignores.
+        'native:author-b:01',
+        // author-c: a stored COMPETITION drop promoted by its ACTIVE entry.
+        'native:author-c:10',
+        // The unpublished competition is still the wave's native primary one:
+        // the view maps its ACTIVE entry regardless of lifecycle.
+        'unpublished:author-a:10',
+        'unpublished:author-b:01'
+      ]);
+    });
+
+    it('findAuthorWaveParticipationByDropContexts returns the view flags inside the facade', async () => {
+      const contexts = WAVES.flatMap((wave_id) =>
+        PEOPLE.map((author_id) => ({ wave_id, author_id }))
+      );
+      const inside = await withLegacyCompetitionGetFacade(() =>
+        dropsDb.findAuthorWaveParticipationByDropContexts(contexts, {})
+      );
+      const flat = (
+        result: Record<
+          string,
+          Record<string, { is_participant: boolean; is_winner: boolean }>
+        >
+      ) =>
+        Object.entries(result)
+          .flatMap(([waveId, byAuthor]) =>
+            Object.entries(byAuthor)
+              .filter(([, flags]) => flags.is_participant || flags.is_winner)
+              .map(
+                ([authorId, flags]) =>
+                  `${waveId}:${authorId}:${Number(flags.is_participant)}${Number(flags.is_winner)}`
+              )
+          )
+          .sort((a, b) => a.localeCompare(b));
+      expect(flat(inside)).toEqual(await viewParticipation(WAVES, PEOPLE));
+      // Outside the facade the stored types apply, which differ here.
+      const outside = await dropsDb.findAuthorWaveParticipationByDropContexts(
+        contexts,
+        {}
+      );
+      expect(flat(outside)).not.toEqual(flat(inside));
+    });
 
     it('lists the same wave contributors as the view, inside the facade', async () => {
       const waveIds = ['native', 'unpublished', 'legacy'];

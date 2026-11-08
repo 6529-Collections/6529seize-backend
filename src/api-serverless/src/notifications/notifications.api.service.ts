@@ -26,6 +26,7 @@ import { ApiIdentityOverview } from '@/api/generated/models/ApiIdentityOverview'
 import { ApiNotificationAdditionalContextV2 } from '@/api/generated/models/ApiNotificationAdditionalContextV2';
 import { ApiNotificationV2 } from '@/api/generated/models/ApiNotificationV2';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
+import { ApiNotificationsUnreadCountV2 } from '@/api/generated/models/ApiNotificationsUnreadCountV2';
 import { ApiSubscriptionCoverageStatus } from '@/api/generated/models/ApiSubscriptionCoverageStatus';
 import { ApiWaveOverview } from '@/api/generated/models/ApiWaveOverview';
 import {
@@ -186,11 +187,12 @@ export class NotificationsApiService {
         ctx
       });
     }
-    await this.identityNotificationsDb.markWaveNotificationsAsRead(
-      waveId,
-      identityId,
-      ctx
-    );
+    const markedNotifications =
+      await this.identityNotificationsDb.markWaveNotificationsAsRead(
+        waveId,
+        identityId,
+        ctx
+      );
     if (wave?.is_direct_message) {
       await this.wavesApiDb.markDirectMessageReadThroughSerial(
         { waveId, readerId: identityId, readThroughSerialNo },
@@ -235,9 +237,14 @@ export class NotificationsApiService {
         dmRecipients
       );
     }
-    await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
-      identityId
-    ]);
+    // Every socket of the profile (and its connected-account subscribers)
+    // refetches the notification count on this frame. Most open-wave reads
+    // mark nothing, so only send it when a notification actually changed.
+    if (markedNotifications > 0) {
+      await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+        identityId
+      ]);
+    }
     ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
     return requestDmUnreadState ? dmUnreadState : null;
   }
@@ -305,6 +312,26 @@ export class NotificationsApiService {
     return {
       notifications: apiNotifications,
       unread_count: notifications.total_unread
+    };
+  }
+
+  public async getUnreadNotificationsCountV2(
+    param: { include_competitions?: boolean },
+    authenticationContext: AuthenticationContext,
+    ctx: RequestContext
+  ): Promise<ApiNotificationsUnreadCountV2> {
+    const identityId = authenticationContext.getActingAsId()!;
+    const eligible_group_ids =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        identityId,
+        ctx.timer
+      );
+    return {
+      unread_count: await this.notificationsReader.countUnreadForIdentity({
+        identity_id: identityId,
+        eligible_group_ids,
+        include_competitions: param.include_competitions
+      })
     };
   }
 

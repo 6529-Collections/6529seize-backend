@@ -42,6 +42,23 @@ export function withRequestDeadline<T>(
   );
 }
 
+/**
+ * COMMIT may or may not have happened. No Retry-After: retrying a post could
+ * duplicate it, so the client should refetch first.
+ */
+export class WriteOutcomeUnknownException extends ApiCompliantException {
+  constructor() {
+    super(
+      "We couldn't confirm that this was saved. Refresh before trying again.",
+      'WRITE_OUTCOME_UNKNOWN'
+    );
+  }
+
+  getStatusCode(): number {
+    return 503;
+  }
+}
+
 export class WriteBusyException extends ApiCompliantException {
   readonly retryAfterSeconds = WRITE_BUSY_RETRY_AFTER_SECONDS;
 
@@ -88,15 +105,54 @@ export function readCommitted(
   };
 }
 
+/**
+ * The budget gave up before COMMIT was sent: the write did not happen, so
+ * the client may retry it.
+ */
 function isWriteBusy(error: unknown): boolean {
   if (error instanceof SqlExecutionBudgetExceededError) {
     return (
-      error.code === 'SQL_BUDGET_EXCEEDED' ||
-      error.serverCode === 'ER_LOCK_WAIT_TIMEOUT'
+      error.commitOutcome === 'NOT_SENT' &&
+      (error.code === 'SQL_BUDGET_EXCEEDED' ||
+        error.serverCode === 'ER_LOCK_WAIT_TIMEOUT')
     );
   }
+  // Unbudgeted: a lock wait timeout fails a statement before any COMMIT.
   const code = (error as { code?: unknown } | null)?.code;
   return code === 'ER_LOCK_WAIT_TIMEOUT';
+}
+
+/** COMMIT may have been sent without an acknowledgment. */
+function isOutcomeUnknown(error: unknown): boolean {
+  return (
+    error instanceof SqlExecutionBudgetExceededError &&
+    error.commitOutcome !== 'NOT_SENT'
+  );
+}
+
+/**
+ * Two statements overlapped on the budgeted connection: rejected before
+ * COMMIT, so the transaction rolled back. A write path that still issues
+ * statements concurrently is a bug to fix; until then it runs unbudgeted.
+ */
+function isConcurrentStatements(error: unknown): boolean {
+  return (
+    error instanceof SqlExecutionBudgetExceededError &&
+    error.code === 'SQL_CONCURRENT_STATEMENTS' &&
+    error.commitOutcome === 'NOT_SENT'
+  );
+}
+
+function budgetDetails(error: unknown) {
+  return error instanceof SqlExecutionBudgetExceededError
+    ? {
+        code: error.code,
+        phase: error.phase,
+        commit: error.commitOutcome,
+        server_code: error.serverCode ?? null,
+        connection_destroyed: error.connectionDestroyed
+      }
+    : { code: (error as { code?: unknown } | null)?.code ?? null };
 }
 
 /**
@@ -104,6 +160,9 @@ function isWriteBusy(error: unknown): boolean {
  * the options to `executeNativeQueriesInTransaction` and issue its
  * statements one at a time (a budgeted transaction rejects overlapping
  * statements on its connection).
+ * - Gave up before COMMIT: 503 WRITE_BUSY with Retry-After.
+ * - COMMIT outcome unknown: WRITE_OUTCOME_UNKNOWN, without Retry-After, so
+ *   the client refetches instead of reposting.
  */
 export async function runWriteTransaction<T>(
   run: (options: SqlTransactionOptions | undefined) => Promise<T>
@@ -112,19 +171,30 @@ export async function runWriteTransaction<T>(
   try {
     return await run(options);
   } catch (error) {
+    if (options && isConcurrentStatements(error)) {
+      logger.error('[WRITE_BUDGET_CONCURRENT_STATEMENTS] retrying unbudgeted');
+      return runUnbudgeted(run);
+    }
+    if (isOutcomeUnknown(error)) {
+      logger.error('[WRITE_OUTCOME_UNKNOWN]', budgetDetails(error));
+      throw new WriteOutcomeUnknownException();
+    }
     if (!isWriteBusy(error)) throw error;
     logger.warn('Write transaction gave up', {
       budgeted: !!options?.executionBudget,
-      ...(error instanceof SqlExecutionBudgetExceededError
-        ? {
-            code: error.code,
-            phase: error.phase,
-            commit: error.commitOutcome,
-            server_code: error.serverCode ?? null,
-            connection_destroyed: error.connectionDestroyed
-          }
-        : { code: 'ER_LOCK_WAIT_TIMEOUT' })
+      ...budgetDetails(error)
     });
+    throw new WriteBusyException();
+  }
+}
+
+async function runUnbudgeted<T>(
+  run: (options: SqlTransactionOptions | undefined) => Promise<T>
+): Promise<T> {
+  try {
+    return await run(undefined);
+  } catch (error) {
+    if (!isWriteBusy(error)) throw error;
     throw new WriteBusyException();
   }
 }

@@ -1,5 +1,6 @@
 import { withRequestDeadline } from '@/api/write-transaction-budget';
 import type {} from '../../typeorm-index-options';
+import { clientVersionFromQuery } from '@/ws-client-versions/ws-client-versions';
 import { app, ensureInitialized } from './app';
 import * as sentryContext from '../../sentry.context';
 import type {
@@ -241,11 +242,15 @@ async function wsHandler(
   switch (routeKey) {
     case '$connect':
       try {
+        const clientVersion = clientVersionFromQuery(
+          event.queryStringParameters
+        );
         await appWebSockets.register({
           identityId,
           connectionId: connectionId!,
           jwtExpiry,
           purpose: connectionPurposeFromQuery(event.queryStringParameters),
+          ...(clientVersion ? { clientVersion } : {}),
           ...(event.queryStringParameters?.recovery_capability ===
           WS_RECOVERY_CAPABILITY
             ? { recoveryCapable: true }
@@ -364,6 +369,23 @@ async function wsHandler(
                 connectionId: connectionId!,
                 activeWaveId: waveId
               },
+              {}
+            );
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ message: 'OK' })
+            };
+          }
+          case WsMessageType.SET_OPEN_WAVE: {
+            const waveId = message.wave_id?.toString() ?? null;
+            if (waveId && !ids.isValidUuid(waveId)) {
+              return {
+                statusCode: 400,
+                body: JSON.stringify({ message: 'Invalid wave id' })
+              };
+            }
+            await appWebSockets.updateOpenWaveForConnection(
+              { connectionId: connectionId!, openWaveId: waveId },
               {}
             );
             return {

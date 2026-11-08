@@ -305,7 +305,8 @@ export class AppWebSockets {
     jwtExpiry,
     ws,
     recoveryCapable = false,
-    purpose = null
+    purpose = null,
+    clientVersion = null
   }: {
     identityId: string;
     connectionId: string;
@@ -313,6 +314,8 @@ export class AppWebSockets {
     ws?: WebSocket;
     recoveryCapable?: boolean;
     purpose?: WsConnectionPurpose | null;
+    /** The client's declared frontend build (validated git SHA). */
+    clientVersion?: string | null;
   }) {
     this.logger.info(
       `Registering socket for client ${identityId} (connectionId: ${connectionId})`
@@ -332,7 +335,9 @@ export class AppWebSockets {
         jwt_expiry: jwtExpiry,
         connection_id: connectionId,
         wave_id: null,
-        purpose
+        purpose,
+        // Only sockets that declare a build carry one; others are unchanged.
+        ...(clientVersion ? { client_version: clientVersion } : {})
       },
       getAuthenticatedNotificationSubscriptions([{ identityId, jwtExpiry }]),
       {}
@@ -352,6 +357,20 @@ export class AppWebSockets {
   async closeUnavailableConnection(connectionId: string): Promise<void> {
     await ClientConnections.Get().closeClient(connectionId, true);
     await this.wsConnectionRepository.deleteByConnectionId(connectionId, {});
+  }
+
+  /** The app socket's open wave (SET_OPEN_WAVE, waves 1.3). */
+  async updateOpenWaveForConnection(
+    {
+      connectionId,
+      openWaveId
+    }: { connectionId: string; openWaveId: string | null },
+    ctx: RequestContext
+  ) {
+    await this.wsConnectionRepository.updateOpenWaveId(
+      { connectionId, waveId: openWaveId },
+      ctx
+    );
   }
 
   async updateActiveWaveForConnection(

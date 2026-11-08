@@ -7,7 +7,12 @@ import {
   DropSearchCursor,
   GLOBAL_SEARCH_QUERY_BUDGET_MS
 } from './drop-search-cursor';
-import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
+import {
+  isLegacyCompetitionGetFacadeScope,
+  legacyGetView,
+  withoutLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
+import { legacyAuthorWaveParticipationSql } from '@/competitions/legacy-typed-drops';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
@@ -93,6 +98,10 @@ import { DbPoolName } from '@/db-query.options';
 import { invalidateWaveUnreadCacheForWaveAfterCommit } from '@/api/waves/wave-unread-cache';
 
 const mysql = require('mysql');
+
+/** Upper bound for reading a whole wave's activity logs. */
+export const WAVE_LOG_QUERY_BUDGET_MS = 5000;
+const PAL_TARGET_TYPE_CREATED_AT_INDEX = 'idx_pal_target_type_created_at';
 
 export type CurationDropEntity = DropEntity & {
   readonly drop_priority_order: number | null;
@@ -201,13 +210,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         }
       }
 
-      const rows = await this.db.execute<{
+      type ParticipationRow = {
         wave_id: string;
         author_id: string;
         is_participant: number;
         is_winner: number;
-      }>(
-        `
+      };
+      const waveIds = Array.from(authorIdsByWave.keys());
+      // Inside the legacy GET facade, drop_type comes from competition
+      // entries. Reading legacy_get_drops for it scans every drop by the
+      // authors in the waves, so read base tables with the view's rows.
+      const rows = isLegacyCompetitionGetFacadeScope()
+        ? await withoutLegacyCompetitionGetFacade(() =>
+            this.db.execute<ParticipationRow>(
+              legacyAuthorWaveParticipationSql({
+                waveIds: ':wave_ids',
+                authorIds: ':author_ids'
+              }),
+              { wave_ids: waveIds, author_ids: Array.from(authorIds) },
+              { wrappedConnection: ctx.connection }
+            )
+          )
+        : await this.db.execute<ParticipationRow>(
+            `
           select wave_id,
                  author_id,
                  max(case when drop_type = :participant_type then 1 else 0 end) as is_participant,
@@ -218,14 +243,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             and drop_type in (:participant_type, :winner_type)
           group by wave_id, author_id
         `,
-        {
-          wave_ids: Array.from(authorIdsByWave.keys()),
-          author_ids: Array.from(authorIds),
-          participant_type: DropType.PARTICIPATORY,
-          winner_type: DropType.WINNER
-        },
-        { wrappedConnection: ctx.connection }
-      );
+            {
+              wave_ids: waveIds,
+              author_ids: Array.from(authorIds),
+              participant_type: DropType.PARTICIPATORY,
+              winner_type: DropType.WINNER
+            },
+            { wrappedConnection: ctx.connection }
+          );
 
       for (const row of rows) {
         const requestedParticipation = result[row.wave_id]?.[row.author_id];
@@ -2977,24 +3002,34 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return count;
   }
 
+  /**
+   * A drop's logs are read through the (target_id, type, created_at) index,
+   * so only that drop's rows are touched; left alone, the optimizer can walk
+   * the whole table's created_at index instead. A whole wave's logs have no
+   * matching index (the wave id is in additional_data_2), so that statement
+   * is capped at WAVE_LOG_QUERY_BUDGET_MS and fails with ER_QUERY_TIMEOUT
+   * rather than holding a connection for minutes.
+   */
   async findDropLogEntities(
     param: DropLogsQueryParams,
     ctx: RequestContext
   ): Promise<ProfileActivityLog[]> {
     ctx.timer?.start(`${this.constructor.name}->findDropLogs`);
-    const results = await this.db.execute<ProfileActivityLog>(
-      `
-      select * from ${PROFILES_ACTIVITY_LOGS_TABLE} where additional_data_2 = :wave_id ${
-        param.drop_id ? ` and target_id = :drop_id ` : ``
-      } and type in (:log_types) order by created_at ${
-        param.sort_direction
-      } limit :limit offset :offset
-    `,
-      param,
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop(`${this.constructor.name}->findDropLogs`);
-    return results;
+    try {
+      return await this.db.execute<ProfileActivityLog>(
+        param.drop_id
+          ? `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} force index (${PAL_TARGET_TYPE_CREATED_AT_INDEX})
+             where target_id = :drop_id and additional_data_2 = :wave_id and type in (:log_types)
+             order by created_at ${param.sort_direction} limit :limit offset :offset`
+          : `select /*+ MAX_EXECUTION_TIME(${WAVE_LOG_QUERY_BUDGET_MS}) */ * from ${PROFILES_ACTIVITY_LOGS_TABLE}
+             where additional_data_2 = :wave_id and type in (:log_types)
+             order by created_at ${param.sort_direction} limit :limit offset :offset`,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findDropLogs`);
+    }
   }
 
   async findDropVoteEditLogEntities(
@@ -3019,10 +3054,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       return await this.db.execute<ProfileActivityLog>(
         `
         select *
-        from ${PROFILES_ACTIVITY_LOGS_TABLE}
-        where additional_data_2 = :wave_id
-          and target_id = :drop_id
+        from ${PROFILES_ACTIVITY_LOGS_TABLE} force index (${PAL_TARGET_TYPE_CREATED_AT_INDEX})
+        where target_id = :drop_id
           and type = :log_type
+          and additional_data_2 = :wave_id
         order by created_at ${sort_direction}
         limit :limit offset :offset
       `,

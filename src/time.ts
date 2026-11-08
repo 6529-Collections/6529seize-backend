@@ -497,6 +497,23 @@ export class Timer {
     });
   }
 
+  /** Times `work` under `key` when there is a timer, even if it fails. */
+  public static async timed<T>(
+    timer: Timer | undefined,
+    key: string,
+    work: () => Promise<T>
+  ): Promise<T> {
+    if (!timer) {
+      return work();
+    }
+    timer.start(key);
+    try {
+      return await work();
+    } finally {
+      timer.stop(key);
+    }
+  }
+
   public static getFromRequest(
     request: Request<any, any, any, any, any>
   ): Timer {
