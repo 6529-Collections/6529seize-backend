@@ -1511,27 +1511,30 @@ export class CreateOrUpdateDropUseCase {
     const groupIdsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(authorId, timer);
 
-    const [validatedModel] = await Promise.all([
-      this.verifyWaveLimitations(
-        {
-          model,
-          groupIdsUserIsEligibleFor,
-          isDescriptionDrop,
-          preResolvedIdentityNomination,
-          preExistingGroupMentions,
-          isNativeEntryContent
-        },
-        { timer, connection }
-      ),
-      this.verifyMentionedWaves(
-        { model, groupIdsUserIsEligibleFor },
-        { timer, connection }
-      ),
-      this.verifyQuotedDrops(
-        { model, groupIdsUserIsEligibleFor },
-        { timer, connection }
-      ),
-      this.verifyReplyDrop(model, { timer, connection })
+    const [validatedModel] = await inSequence([
+      () =>
+        this.verifyWaveLimitations(
+          {
+            model,
+            groupIdsUserIsEligibleFor,
+            isDescriptionDrop,
+            preResolvedIdentityNomination,
+            preExistingGroupMentions,
+            isNativeEntryContent
+          },
+          { timer, connection }
+        ),
+      () =>
+        this.verifyMentionedWaves(
+          { model, groupIdsUserIsEligibleFor },
+          { timer, connection }
+        ),
+      () =>
+        this.verifyQuotedDrops(
+          { model, groupIdsUserIsEligibleFor },
+          { timer, connection }
+        ),
+      () => this.verifyReplyDrop(model, { timer, connection })
     ]);
     timer?.stop(`${CreateOrUpdateDropUseCase.name}->validateReferences`);
     return { validatedModel, groupIdsUserIsEligibleFor };
@@ -1583,24 +1586,26 @@ export class CreateOrUpdateDropUseCase {
       groupIdsUserIsEligibleFor,
       preExistingGroupMentions
     });
-    await Promise.all([
-      this.verifyParticipatoryLimitations(
-        {
-          isDescriptionDrop,
-          wave,
-          model,
-          isNativeEntryContent
-        },
-        { timer, connection }
-      ),
-      this.verifyMedia(
-        {
-          wave,
-          model,
-          isNativeEntryContent
-        },
-        { timer, connection }
-      )
+    await inSequence([
+      () =>
+        this.verifyParticipatoryLimitations(
+          {
+            isDescriptionDrop,
+            wave,
+            model,
+            isNativeEntryContent
+          },
+          { timer, connection }
+        ),
+      () =>
+        this.verifyMedia(
+          {
+            wave,
+            model,
+            isNativeEntryContent
+          },
+          { timer, connection }
+        )
     ]);
     const validatedModel = isNativeEntryContent
       ? model
@@ -3080,23 +3085,25 @@ export class CreateOrUpdateDropUseCase {
     const followerIdentityIds = followerRecipients.map(
       (recipient) => recipient.identity_id
     );
-    const [contributorIdentityIds, escalationIdentityIds] = await Promise.all([
-      this.resolvePermissionGroupMentionRecipients(
-        {
-          model: { ...model, mentioned_groups: contributorGroups },
-          wave,
-          followerIdentityIds
-        },
-        { timer, connection }
-      ),
-      this.resolvePermissionGroupMentionRecipients(
-        {
-          model: { ...model, mentioned_groups: escalationGroups },
-          wave,
-          followerIdentityIds
-        },
-        { timer, connection }
-      )
+    const [contributorIdentityIds, escalationIdentityIds] = await inSequence([
+      () =>
+        this.resolvePermissionGroupMentionRecipients(
+          {
+            model: { ...model, mentioned_groups: contributorGroups },
+            wave,
+            followerIdentityIds
+          },
+          { timer, connection }
+        ),
+      () =>
+        this.resolvePermissionGroupMentionRecipients(
+          {
+            model: { ...model, mentioned_groups: escalationGroups },
+            wave,
+            followerIdentityIds
+          },
+          { timer, connection }
+        )
     ]);
     const broadcastPreferenceIdentityIds = new Set(
       // has_group_mention reflects the persisted ALL key. Product semantics
@@ -3318,19 +3325,21 @@ export class CreateOrUpdateDropUseCase {
     const broadcastPreferenceGroups = this.getBroadcastPreferenceGroups(
       notificationMentionedGroups
     );
-    const [followerRecipients, relationshipNotifications] = await Promise.all([
-      this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
-        {
-          waveId: wave.id,
-          authorId,
-          mentionedGroups: broadcastPreferenceGroups
-        },
-        connection
-      ),
-      this.resolveDropRelationshipNotifications(
-        { model },
-        { timer, connection }
-      )
+    const [followerRecipients, relationshipNotifications] = await inSequence([
+      () =>
+        this.identitySubscriptionsDb.findWaveFollowersEligibleForDropNotifications(
+          {
+            waveId: wave.id,
+            authorId,
+            mentionedGroups: broadcastPreferenceGroups
+          },
+          connection
+        ),
+      () =>
+        this.resolveDropRelationshipNotifications(
+          { model },
+          { timer, connection }
+        )
     ]);
     const permissionGroupMentionIdentityIds =
       await this.resolvePreferenceAwarePermissionGroupMentionRecipients(
@@ -3439,8 +3448,8 @@ export class CreateOrUpdateDropUseCase {
       return distinctIdentityIds;
     }
 
-    const eligibleIdentitySets = await Promise.all(
-      collections.distinct(visibilityGroupIds).map(async (groupId) => {
+    const eligibleIdentitySets = await inSequence(
+      collections.distinct(visibilityGroupIds).map((groupId) => async () => {
         const eligibleIdentityIds =
           await this.userGroupsService.findIdentitiesInGroups([groupId], {
             timer,

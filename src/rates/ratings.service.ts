@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import { Request } from 'express';
 import { json2csv } from 'json-2-csv';
 import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
@@ -1073,34 +1074,35 @@ export class RatingsService {
             wallets,
             connection
           );
-        await Promise.all(
+        await inSequence(
           wallets
             .filter((wallet) => !allIdentitiesByAddresses[wallet])
-            .map((address) =>
-              this.identitiesDb.insertIdentity(
-                {
-                  consolidation_key: address,
-                  primary_address: address,
-                  profile_id: null,
-                  handle: null,
-                  normalised_handle: null,
-                  banner1: null,
-                  banner2: null,
-                  pfp: null,
-                  classification: null,
-                  sub_classification: null,
-                  cic: 0,
-                  rep: 0,
-                  tdh: 0,
-                  xtdh: 0,
-                  produced_xtdh: 0,
-                  granted_xtdh: 0,
-                  level_raw: 0,
-                  xtdh_rate: 0,
-                  basetdh_rate: 0
-                },
-                connection
-              )
+            .map(
+              (address) => () =>
+                this.identitiesDb.insertIdentity(
+                  {
+                    consolidation_key: address,
+                    primary_address: address,
+                    profile_id: null,
+                    handle: null,
+                    normalised_handle: null,
+                    banner1: null,
+                    banner2: null,
+                    pfp: null,
+                    classification: null,
+                    sub_classification: null,
+                    cic: 0,
+                    rep: 0,
+                    tdh: 0,
+                    xtdh: 0,
+                    produced_xtdh: 0,
+                    granted_xtdh: 0,
+                    level_raw: 0,
+                    xtdh_rate: 0,
+                    basetdh_rate: 0
+                  },
+                  connection
+                )
             )
         );
         allIdentitiesByAddresses =
@@ -1118,18 +1120,19 @@ export class RatingsService {
             return acc;
           }, new Set<string>())
         );
-        await Promise.all(
-          addressesThatNeedNewProfiles.map((address) =>
-            profilesService.createOrUpdateProfileWithGivenTransaction(
-              {
-                handle: `id-${address}`,
-                classification: ProfileClassification.PSEUDONYM,
-                sub_classification: null,
-                creator_or_updater_wallet: address,
-                pfp_url: null
-              },
-              { connection }
-            )
+        await inSequence(
+          addressesThatNeedNewProfiles.map(
+            (address) => () =>
+              profilesService.createOrUpdateProfileWithGivenTransaction(
+                {
+                  handle: `id-${address}`,
+                  classification: ProfileClassification.PSEUDONYM,
+                  sub_classification: null,
+                  creator_or_updater_wallet: address,
+                  pfp_url: null
+                },
+                { connection }
+              )
           )
         );
         allIdentitiesByAddresses =
@@ -1480,17 +1483,24 @@ export class RatingsService {
             0
           )
         }));
-        await Promise.all([
-          this.identitiesDb.bulkUpdateReps(repBulkUpdates, ctxWithConnection),
-          this.eventScheduler.scheduleBulkRepRatingChangedEvents(
-            events,
-            connection
-          ),
-          profileActivityLogsDb.bulkInsertProfileActivityLogs(
-            logs,
-            ctxWithConnection
-          ),
-          this.ratingsDb.bulkUpsertRatings(newRatingEntities, ctxWithConnection)
+        await inSequence([
+          () =>
+            this.identitiesDb.bulkUpdateReps(repBulkUpdates, ctxWithConnection),
+          () =>
+            this.eventScheduler.scheduleBulkRepRatingChangedEvents(
+              events,
+              connection
+            ),
+          () =>
+            profileActivityLogsDb.bulkInsertProfileActivityLogs(
+              logs,
+              ctxWithConnection
+            ),
+          () =>
+            this.ratingsDb.bulkUpsertRatings(
+              newRatingEntities,
+              ctxWithConnection
+            )
         ]);
       }
     );

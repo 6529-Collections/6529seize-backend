@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import { memeCollaborationsService } from '@/meme-collaborations/meme-collaborations.service';
 import {
   recordWebSocketEvent,
@@ -293,47 +294,60 @@ export class DeleteDropUseCase {
             isBackendDelete ? null : resolvedDeleterId,
             { timer, connection }
           );
-        await Promise.all([
-          memeCollaborationsService.closeDeleted(dropId, { timer, connection }),
-          this.dropsDb.deleteDropParts(dropId, { timer, connection }),
-          this.dropsDb.deleteDropMentions(dropId, { timer, connection }),
-          this.dropsDb.deleteDropMentionedWaves(dropId, {
-            timer,
-            connection
-          }),
-          this.dropsDb.deleteDropGroupMentions(dropId, { timer, connection }),
-          this.dropsDb.deleteDropMedia(dropId, { timer, connection }),
-          this.attachmentsDb.deleteDropAttachments(dropId, {
-            timer,
-            connection
-          }),
-          this.dropsDb.deleteDropReferencedNfts(dropId, {
-            timer,
-            connection
-          }),
-          this.dropsDb.deleteDropMetadata(dropId, { timer, connection }),
-          this.dropsDb.deleteDropEntity(dropId, { timer, connection }),
-          this.reactionsService.deleteReactionsByDrop(dropId, {
-            timer,
-            connection
-          }),
-          this.dropPollsDb.deleteByDropId(dropId, { timer, connection }),
-          this.curationsDb.deleteDropCurationsByDropId(dropId, {
-            timer,
-            connection
-          }),
+        await inSequence([
+          () =>
+            memeCollaborationsService.closeDeleted(dropId, {
+              timer,
+              connection
+            }),
+          () => this.dropsDb.deleteDropParts(dropId, { timer, connection }),
+          () => this.dropsDb.deleteDropMentions(dropId, { timer, connection }),
+          () =>
+            this.dropsDb.deleteDropMentionedWaves(dropId, {
+              timer,
+              connection
+            }),
+          () =>
+            this.dropsDb.deleteDropGroupMentions(dropId, { timer, connection }),
+          () => this.dropsDb.deleteDropMedia(dropId, { timer, connection }),
+          () =>
+            this.attachmentsDb.deleteDropAttachments(dropId, {
+              timer,
+              connection
+            }),
+          () =>
+            this.dropsDb.deleteDropReferencedNfts(dropId, {
+              timer,
+              connection
+            }),
+          () => this.dropsDb.deleteDropMetadata(dropId, { timer, connection }),
+          () => this.dropsDb.deleteDropEntity(dropId, { timer, connection }),
+          () =>
+            this.reactionsService.deleteReactionsByDrop(dropId, {
+              timer,
+              connection
+            }),
+          () => this.dropPollsDb.deleteByDropId(dropId, { timer, connection }),
+          () =>
+            this.curationsDb.deleteDropCurationsByDropId(dropId, {
+              timer,
+              connection
+            }),
           ...(isPermanentDelete
             ? [
-                this.artCurationTokenWatchService.unregisterDrop(dropId, {
-                  timer,
-                  connection
-                })
+                () =>
+                  this.artCurationTokenWatchService.unregisterDrop(dropId, {
+                    timer,
+                    connection
+                  })
               ]
             : []),
-          this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
-          this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
-          this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
-          this.dropBookmarksDb.deleteBookmarksByDropId(dropId, connection)
+          () => this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
+          () =>
+            this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
+          () =>
+            this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection }),
+          () => this.dropBookmarksDb.deleteBookmarksByDropId(dropId, connection)
         ]);
         if (isPermanentDelete) {
           await this.dropsDb.applyDeletedDropMetricsDelta(drop, {

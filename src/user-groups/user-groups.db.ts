@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import {
   ConnectionWrapper,
   dbSupplier,
@@ -699,22 +700,25 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     new_profile_id: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
-    await Promise.all([
-      this.db.execute(
-        `update ${USER_GROUPS_TABLE} set created_by = :new_profile_id where created_by = :old_profile_id`,
-        { old_profile_id, new_profile_id },
-        { wrappedConnection: connectionHolder }
-      ),
-      this.db.execute(
-        `update ${USER_GROUPS_TABLE} set cic_user = :new_profile_id where cic_user = :old_profile_id`,
-        { old_profile_id, new_profile_id },
-        { wrappedConnection: connectionHolder }
-      ),
-      this.db.execute(
-        `update ${USER_GROUPS_TABLE} set rep_user = :new_profile_id where rep_user = :old_profile_id`,
-        { old_profile_id, new_profile_id },
-        { wrappedConnection: connectionHolder }
-      )
+    await inSequence([
+      () =>
+        this.db.execute(
+          `update ${USER_GROUPS_TABLE} set created_by = :new_profile_id where created_by = :old_profile_id`,
+          { old_profile_id, new_profile_id },
+          { wrappedConnection: connectionHolder }
+        ),
+      () =>
+        this.db.execute(
+          `update ${USER_GROUPS_TABLE} set cic_user = :new_profile_id where cic_user = :old_profile_id`,
+          { old_profile_id, new_profile_id },
+          { wrappedConnection: connectionHolder }
+        ),
+      () =>
+        this.db.execute(
+          `update ${USER_GROUPS_TABLE} set rep_user = :new_profile_id where rep_user = :old_profile_id`,
+          { old_profile_id, new_profile_id },
+          { wrappedConnection: connectionHolder }
+        )
     ]);
   }
 

@@ -12,6 +12,10 @@ import {
 import { PageSortDirection } from '@/api/page-request';
 import { DbPoolName } from '@/db-query.options';
 import { DropType } from '@/entities/IDrop';
+import {
+  isLegacyCompetitionGetFacadeScope,
+  withLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
 import { DropsDb, LeaderboardSort, WAVE_LOG_QUERY_BUDGET_MS } from './drops.db';
 
 describe('DropsDb', () => {
@@ -256,6 +260,55 @@ describe('DropsDb', () => {
     expect(execute.mock.calls[0]?.[0]).toContain(
       'max(case when drop_type = :participant_type then 1 else 0 end)'
     );
+  });
+
+  it('reads participation from base tables, outside the facade, when called inside it', async () => {
+    const connection = {};
+    const facadeDuringQuery: boolean[] = [];
+    const execute = jest.fn().mockImplementation(async () => {
+      facadeDuringQuery.push(isLegacyCompetitionGetFacadeScope());
+      return [
+        {
+          wave_id: 'wave-1',
+          author_id: 'author-1',
+          is_participant: 1,
+          is_winner: 0
+        }
+      ];
+    });
+    const repo = new DropsDb(
+      () =>
+        ({
+          execute
+        }) as any
+    );
+
+    const result = await withLegacyCompetitionGetFacade(() =>
+      repo.findAuthorWaveParticipationByDropContexts(
+        [
+          { wave_id: 'wave-1', author_id: 'author-1' },
+          { wave_id: 'wave-2', author_id: 'author-2' }
+        ],
+        { connection: { connection } as any, timer: undefined }
+      )
+    );
+
+    expect(result).toEqual({
+      'wave-1': { 'author-1': { is_participant: true, is_winner: false } },
+      'wave-2': { 'author-2': { is_participant: false, is_winner: false } }
+    });
+    expect(facadeDuringQuery).toEqual([false]);
+    const [sql, params, options] = execute.mock.calls[0];
+    // Base tables with the view's typing, not legacy_get_drops.
+    expect(sql).not.toContain('legacy_get_');
+    expect(sql).toContain('union all');
+    expect(sql).toContain('d.wave_id in (:wave_ids)');
+    expect(sql).toContain('c.legacy_wave_id in (:wave_ids)');
+    expect(params).toEqual({
+      wave_ids: ['wave-1', 'wave-2'],
+      author_ids: ['author-1', 'author-2']
+    });
+    expect(options).toEqual({ wrappedConnection: { connection } });
   });
 
   it('does not query participation for an empty drop context list', async () => {

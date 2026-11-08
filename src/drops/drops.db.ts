@@ -11,7 +11,12 @@ import {
   DropSearchCursor,
   GLOBAL_SEARCH_QUERY_BUDGET_MS
 } from './drop-search-cursor';
-import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
+import {
+  isLegacyCompetitionGetFacadeScope,
+  legacyGetView,
+  withoutLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
+import { legacyAuthorWaveParticipationSql } from '@/competitions/legacy-typed-drops';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
@@ -228,13 +233,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         }
       }
 
-      const rows = await this.db.execute<{
+      type ParticipationRow = {
         wave_id: string;
         author_id: string;
         is_participant: number;
         is_winner: number;
-      }>(
-        `
+      };
+      const waveIds = Array.from(authorIdsByWave.keys());
+      // Inside the legacy GET facade, drop_type comes from competition
+      // entries. Reading legacy_get_drops for it scans every drop by the
+      // authors in the waves, so read base tables with the view's rows.
+      const rows = isLegacyCompetitionGetFacadeScope()
+        ? await withoutLegacyCompetitionGetFacade(() =>
+            this.db.execute<ParticipationRow>(
+              legacyAuthorWaveParticipationSql({
+                waveIds: ':wave_ids',
+                authorIds: ':author_ids'
+              }),
+              { wave_ids: waveIds, author_ids: Array.from(authorIds) },
+              { wrappedConnection: ctx.connection }
+            )
+          )
+        : await this.db.execute<ParticipationRow>(
+            `
           select wave_id,
                  author_id,
                  max(case when drop_type = :participant_type then 1 else 0 end) as is_participant,
@@ -245,14 +266,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             and drop_type in (:participant_type, :winner_type)
           group by wave_id, author_id
         `,
-        {
-          wave_ids: Array.from(authorIdsByWave.keys()),
-          author_ids: Array.from(authorIds),
-          participant_type: DropType.PARTICIPATORY,
-          winner_type: DropType.WINNER
-        },
-        { wrappedConnection: ctx.connection }
-      );
+            {
+              wave_ids: waveIds,
+              author_ids: Array.from(authorIds),
+              participant_type: DropType.PARTICIPATORY,
+              winner_type: DropType.WINNER
+            },
+            { wrappedConnection: ctx.connection }
+          );
 
       for (const row of rows) {
         const requestedParticipation = result[row.wave_id]?.[row.author_id];

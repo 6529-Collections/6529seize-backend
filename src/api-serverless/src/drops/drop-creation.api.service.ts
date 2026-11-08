@@ -1,3 +1,4 @@
+import { runWriteTransaction } from '@/api/write-transaction-budget';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { DropsApiService, dropsService } from './drops.api.service';
@@ -279,6 +280,23 @@ function recordClientDropOutcome(
   }
 }
 
+const POST_COMMIT_READ_RETRY_DELAY_MS = 200;
+
+/**
+ * The drop was saved but could not be read back for the response. Not a
+ * 2xx (the web inserts the response as a drop), and a status no client
+ * retries; the message tells the author not to post it again.
+ */
+class DropSavedRefreshException extends CustomApiCompliantException {
+  constructor() {
+    super(
+      409,
+      'Your drop was posted. Refresh to see it.',
+      'DROP_SAVED_REFRESH'
+    );
+  }
+}
+
 export class DropCreationApiService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -382,20 +400,24 @@ export class DropCreationApiService {
     >;
     try {
       created = await hops.time('drop_commit_ms', () =>
-        this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
-          return await this.createDropWithGivenConnection(
-            {
-              model: createModel,
-              authorId,
-              preResolvedIdentityNomination,
-              prePublication,
-              requestDailyActivityCredit,
-              clientDrop
-            },
-            normalizeCreateDropPollRequest(createDropRequest.poll),
-            { timer: ctx.timer!, connection }
-          );
-        })
+        runWriteTransaction((options) =>
+          this.dropsDb.executeNativeQueriesInTransaction(
+            async (connection) =>
+              await this.createDropWithGivenConnection(
+                {
+                  model: createModel,
+                  authorId,
+                  preResolvedIdentityNomination,
+                  prePublication,
+                  requestDailyActivityCredit,
+                  clientDrop
+                },
+                normalizeCreateDropPollRequest(createDropRequest.poll),
+                { timer: ctx.timer!, connection }
+              ),
+            options
+          )
+        )
       );
     } catch (error) {
       if (!(error instanceof DropClientIdTakenError) || !clientDrop) {
@@ -423,19 +445,34 @@ export class DropCreationApiService {
       dailyActivityCreditRequestEnqueued
     } = created;
     // After-commit pipeline, in this order (waves 1.1 + 1.8):
-    // 1. the committed drop as the writer sees it, then its gap marker
-    //    (waves 1.5): the wave's previous surviving serial, read after commit.
-    //    The marker uses the committed drop: with the 1.8 drop write outbox
-    //    there is no in-transaction copy.
+    // 1. the committed drop as the writer sees it (#2372: read after commit,
+    //    retried once), then its gap marker (waves 1.5): the wave's previous
+    //    surviving serial, read after commit.
+    // The drop is committed from here on: no failure below may look like a
+    // failed write, or the author reposts it.
     const drop = await hops.time('post_commit_read_ms', () =>
-      this.afterCommitStages.readCommittedDrop(
-        { dropId: committedDropId, inTransactionDrop: transactionDrop },
-        {
-          ...ctx,
-          authenticationContext: AuthenticationContext.fromProfileId(authorId)
-        }
+      this.readCommittedDropOrNull(
+        committedDropId,
+        transactionDrop,
+        authorId,
+        ctx
       )
     );
+    if (!drop) {
+      await this.runCreatedDropEffectsWithoutDrop(
+        {
+          dropId: committedDropId,
+          waveId: createModel.wave_id,
+          authorId,
+          collaboratorIds: createDropRequest.collaborator_ids ?? [],
+          pendingPushNotificationIds,
+          dmUnreadRecipientIds,
+          dailyActivityCreditRequestEnqueued
+        },
+        ctx
+      );
+      throw new DropSavedRefreshException();
+    }
     if (clientDrop) {
       drop.client_drop_id = clientDrop.clientDropId;
     }
@@ -683,6 +720,85 @@ export class DropCreationApiService {
   }
 
   /**
+   * The committed drop, read after commit (staging's after-commit stage):
+   * retried once after a short pause, then null (logged) rather than an
+   * error, since the drop is saved.
+   */
+  private async readCommittedDropOrNull(
+    dropId: string,
+    inTransactionDrop: ApiDrop | null,
+    authorId: string,
+    ctx: RequestContext
+  ): Promise<ApiDrop | null> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.afterCommitStages.readCommittedDrop(
+          { dropId, inTransactionDrop },
+          {
+            ...ctx,
+            authenticationContext: AuthenticationContext.fromProfileId(authorId)
+          }
+        );
+      } catch (error) {
+        if (attempt >= 2) {
+          this.logger.error('[POST_COMMIT_READ_FAILED]', {
+            drop_id: dropId,
+            code: (error as { code?: unknown } | null)?.code ?? null
+          });
+          return null;
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, POST_COMMIT_READ_RETRY_DELAY_MS)
+        );
+      }
+    }
+  }
+
+  /**
+   * A saved drop that could not be read back still gets every post-commit
+   * effect that does not need the mapped drop (only its frames are skipped).
+   */
+  private async runCreatedDropEffectsWithoutDrop(
+    {
+      dropId,
+      waveId,
+      authorId,
+      collaboratorIds,
+      pendingPushNotificationIds,
+      dmUnreadRecipientIds,
+      dailyActivityCreditRequestEnqueued
+    }: {
+      dropId: string;
+      waveId: string;
+      authorId: string;
+      collaboratorIds: string[];
+      pendingPushNotificationIds: number[];
+      dmUnreadRecipientIds: string[];
+      dailyActivityCreditRequestEnqueued: boolean;
+    },
+    ctx: RequestContext
+  ): Promise<void> {
+    if (dailyActivityCreditRequestEnqueued) {
+      await this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx);
+    }
+    await invalidateWaveUnreadCacheForWave(waveId);
+    await this.runDropCreatedEffects(
+      {
+        v: WAVE_FANOUT_JOB_VERSION,
+        kind: 'drop_created_effects',
+        enqueued_at: Date.now(),
+        drop_id: dropId,
+        wave_id: waveId,
+        author_id: authorId,
+        pending_push_notification_ids: pendingPushNotificationIds,
+        dm_unread_recipient_ids: dmUnreadRecipientIds,
+        collaborator_ids: collaboratorIds
+      },
+      ctx
+    );
+  }
+
+  /**
    * The drop an earlier attempt with the same client_drop_id created, or
    * null when the id is unused. The create route calls this before checking
    * device signatures: a retried signed envelope would otherwise be refused
@@ -835,7 +951,10 @@ export class DropCreationApiService {
           )
         : false;
     // Waves 1.8: with the outbox the response read runs after commit, on the
-    // writer, so it no longer extends the write transaction.
+    // writer, so it no longer extends the write transaction. Without it the
+    // read stays here (staging only); under the #2372 write budget its
+    // overlapping mapping reads make the post rerun unbudgeted, logged as
+    // [WRITE_BUDGET_CONCURRENT_STATEMENTS].
     const drop = useOutbox
       ? null
       : await this.dropsService.findDropByIdOrThrow(
