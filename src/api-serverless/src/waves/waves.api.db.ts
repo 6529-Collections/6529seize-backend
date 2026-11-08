@@ -110,11 +110,11 @@ import {
 } from '@/competitions/legacy-competition-get-facade';
 import {
   ViewerGroupsCte,
-  viewerGroupsCte,
   viewerGroupsCteBytes,
   viewerGroupsCteSupported,
   viewerGroupsWorthSharing
 } from '@/waves/viewer-groups-cte';
+import { viewerGroupSets } from '@/waves/viewer-group-sets';
 
 const logger = Logger.get('WAVES_API_DB');
 
@@ -422,7 +422,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       WAVES_TABLE,
       legacyGetView(WAVES_TABLE)
     ]);
-    return supported ? viewerGroupsCte(name, groupIds) : undefined;
+    return supported
+      ? viewerGroupSets.source(this.db, name, groupIds)
+      : undefined;
   }
 
   private getWaveAndParentVisibilityFilter(
