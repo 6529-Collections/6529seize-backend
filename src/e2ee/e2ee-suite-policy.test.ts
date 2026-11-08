@@ -10,6 +10,7 @@ import {
   describeE2eeSuiteTransition,
   e2eeAcceptedSuites,
   E2eeSuiteTransitionConfigError,
+  e2eeV1WindowEndMs,
   isE2eeV1GrantAccepted,
   readE2eeSuiteTransition
 } from '@/e2ee/e2ee-suite-policy';
@@ -191,6 +192,31 @@ describe('E2EE suite policy (D172)', () => {
       } finally {
         write.mockRestore();
       }
+    });
+
+    it('ends the D172 window at the announced deadline (end of December 1)', () => {
+      // The release settings: START 2026-11-09 UTC, 23 days.
+      const env = {
+        E2EE_SUITE_TRANSITION_START: '2026-11-09T00:00:00Z',
+        E2EE_SUITE_TRANSITION_DAYS: '23'
+      };
+      const transition = readE2eeSuiteTransition(env);
+      expect(e2eeV1WindowEndMs(transition)).toBe(Date.UTC(2026, 11, 2));
+      expect(describeE2eeSuiteTransition(env)).toBe(
+        '[E2EE SUITE WINDOW START 2026-11-09T00:00:00.000Z] ' +
+          '[END 2026-12-02T00:00:00.000Z] [DAYS 23]'
+      );
+      const lastMoment = Date.UTC(2026, 11, 2) - 1;
+      expect(isE2eeV1GrantAccepted(lastMoment, transition)).toBe(true);
+      expect(e2eeAcceptedSuites(lastMoment, transition)).toEqual([
+        0x004f, 0x004e
+      ]);
+      expect(isE2eeV1GrantAccepted(Date.UTC(2026, 11, 2), transition)).toBe(
+        false
+      );
+      expect(e2eeAcceptedSuites(Date.UTC(2026, 11, 2), transition)).toEqual([
+        0x004e
+      ]);
     });
 
     it('describes the effective window for the start-up log', () => {
