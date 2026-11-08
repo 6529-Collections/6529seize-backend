@@ -114,11 +114,11 @@ describe('waveDecisionExecutionLoop: undue Rank fast path', () => {
       3_000
     ],
     [
-      'an undue time-locked Rank whose inputs changed',
+      'an undue time-locked Rank whose inputs changed on every attempt',
       { time_lock_ms: 24 * HOUR },
       'changed',
       'off_lock_fallback',
-      3_000
+      9_000
     ],
     [
       'a due Rank',
@@ -264,7 +264,8 @@ describe('waveDecisionExecutionLoop: undue Rank fast path', () => {
 
     await runFromLoop();
 
-    expect(offLock).toHaveBeenCalledTimes(1);
+    // Three off-lock attempts, then the locked run once.
+    expect(offLock).toHaveBeenCalledTimes(3);
     expect(repository.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(
       2
     );

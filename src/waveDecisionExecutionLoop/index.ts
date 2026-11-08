@@ -18,7 +18,12 @@ export const handler = sentryContext.wrapLambdaHandler(
         try {
           await runCompetitionWorkerTasks([
             () =>
-              nativeCompetitionRuntimeService.processDueCompetitions({ timer }),
+              nativeCompetitionRuntimeService.processDueCompetitions({
+                timer,
+                remainingMillis: context?.getRemainingTimeInMillis
+                  ? () => context.getRemainingTimeInMillis()
+                  : undefined
+              }),
             () => competitionEventDispatcher.dispatchPending({ timer })
           ]);
         } finally {

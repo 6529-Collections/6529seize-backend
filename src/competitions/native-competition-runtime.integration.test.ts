@@ -1290,6 +1290,42 @@ describeWithSeed(
       ).toBeGreaterThan(0);
     });
 
+    it('retries off the lock after a vote lands mid-computation and writes what the locked refresh writes', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+      let attempt = 0;
+      const lockedFallback = jest.spyOn(service, 'refreshCompetition');
+      try {
+        await service.refreshLeaderboardForSnapshot(
+          rankId,
+          700,
+          {},
+          {
+            afterCompute: async () => {
+              // A vote during the first computation only.
+              if (++attempt === 1)
+                await vote(rankId, secondRankEntry, 50, 650, 'other');
+            }
+          }
+        );
+        expect(attempt).toBe(2);
+        expect(lockedFallback).not.toHaveBeenCalled();
+      } finally {
+        lockedFallback.mockRestore();
+      }
+      // The retry computed from the new vote (time-locked, so it counts
+      // only for the 50 ms it has been held at 700).
+      const retried = await savedLeaderboard();
+      expect(
+        Number(retried.find((row) => row.entry_id === secondRankEntry)?.rating)
+      ).toBeGreaterThan(0);
+      // The locked refresh of the same inputs at the same time writes the
+      // same rows.
+      await service.refreshCompetition(rankId, 700);
+      expect(await savedLeaderboard()).toEqual(retried);
+    });
+
     it('writes nothing when an entry is submitted during the computation', async () => {
       await timeLock();
       await vote(rankId, rankEntry, 100, 500);
