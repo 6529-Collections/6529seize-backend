@@ -50,7 +50,7 @@ import {
 } from '../../../notifications/user.notifier';
 import { numbers } from '../../../numbers';
 import { RequestContext } from '../../../request.context';
-import { Time } from '../../../time';
+import { Time, Timer } from '../../../time';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import {
   userGroupsService,
@@ -1634,15 +1634,24 @@ export class WaveApiService {
     sharedConfiguration = false
   ): Promise<ApiWave> {
     const authenticationContext = ctx.authenticationContext;
-    const entity = await assertWaveAndParentVisibleOrThrow({
-      wave: sharedConfiguration
-        ? await this.wavesApiDb.findWaveHubById(id, false, ctx)
-        : await this.wavesApiDb.findWaveById(id),
-      groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
-      message: `Wave ${id} not found`,
-      wavesApiDb: this.wavesApiDb,
-      ctx
-    });
+    const timerKey = `${this.constructor.name}->findWaveByIdOrThrow`;
+    const wave = await Timer.timed(ctx.timer, `${timerKey}.loadWave`, () =>
+      sharedConfiguration
+        ? this.wavesApiDb.findWaveHubById(id, false, ctx)
+        : this.wavesApiDb.findWaveById(id)
+    );
+    const entity = await Timer.timed(
+      ctx.timer,
+      `${timerKey}.assertVisible`,
+      () =>
+        assertWaveAndParentVisibleOrThrow({
+          wave,
+          groupsUserIsEligibleFor: groupIdsUserIsEligibleFor,
+          message: `Wave ${id} not found`,
+          wavesApiDb: this.wavesApiDb,
+          ctx
+        })
+    );
     const noRightToVote =
       !authenticationContext?.isUserFullyAuthenticated() ||
       (authenticationContext?.isAuthenticatedAsProxy() &&
@@ -1655,14 +1664,16 @@ export class WaveApiService {
         !authenticationContext?.hasProxyAction(
           ProfileProxyActionType.CREATE_DROP_TO_WAVE
         ));
-    return await this.waveMappers.waveEntityToApiWave(
-      {
-        waveEntity: entity,
-        groupIdsUserIsEligibleFor,
-        noRightToVote,
-        noRightToParticipate
-      },
-      ctx
+    return await Timer.timed(ctx.timer, `${timerKey}.mapWave`, () =>
+      this.waveMappers.waveEntityToApiWave(
+        {
+          waveEntity: entity,
+          groupIdsUserIsEligibleFor,
+          noRightToVote,
+          noRightToParticipate
+        },
+        ctx
+      )
     );
   }
 
