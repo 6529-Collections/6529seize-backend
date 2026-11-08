@@ -59,7 +59,7 @@ export function viewerGroupsCteSupported(
   tables: readonly string[]
 ): Promise<boolean> {
   if (pinned !== undefined) return Promise.resolve(pinned);
-  const key = [...tables].sort((a, b) => a.localeCompare(b)).join(',');
+  const key = JSON.stringify([...tables].sort((a, b) => a.localeCompare(b)));
   let check = support.get(key);
   if (!check) {
     check = db
