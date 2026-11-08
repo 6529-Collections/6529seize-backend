@@ -107,6 +107,25 @@ describe('synchronizeSchemaBounded on MySQL', () => {
     await expect(plannedStatements()).resolves.toEqual([]);
   }, 60_000);
 
+  it('converges after a run stopped between a generated column change and its bookkeeping', async () => {
+    const before = await schemaSnapshot();
+    // State left by a run that dropped the column's index and changed the
+    // column, then failed before updating typeorm_metadata.
+    await sqlExecutor.execute(
+      `drop index idx_market_depth_events_occurred on \`${MARKET_DEPTH_EVENTS_TABLE}\``
+    );
+    await sqlExecutor.execute(
+      `update typeorm_metadata set value = 'stale' where \`table\` = '${MARKET_DEPTH_EVENTS_TABLE}' and name = 'occurred_at'`
+    );
+    const result = await synchronizeSchemaBounded(dataSource, {
+      sleep: noSleep
+    });
+    expect(result.planned).toBeGreaterThan(0);
+    expect(result.applied).toBe(result.planned);
+    expect(await schemaSnapshot()).toEqual(before);
+    await expect(plannedStatements()).resolves.toEqual([]);
+  }, 60_000);
+
   it('gives up on a table held by a running transaction instead of queueing behind it', async () => {
     await sqlExecutor.execute(
       `drop index idx_missing_info on \`${DISTRIBUTION_NORMALIZED_TABLE}\``

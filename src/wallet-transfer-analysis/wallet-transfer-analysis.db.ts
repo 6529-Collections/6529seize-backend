@@ -24,6 +24,7 @@ import {
   WalletTransferAnalysisError,
   WalletDailySummary
 } from './types';
+import { isQueryTimeout } from '@/db/query-timeout';
 
 const PAIR_COLUMNS = [
   'contract',
@@ -106,15 +107,6 @@ function normalizeMetrics(row: PairMetricsRow): PairMetrics {
     result[column] = value;
   }
   return result;
-}
-
-function isQueryTimeout(error: unknown): boolean {
-  return (
-    error !== null &&
-    typeof error === 'object' &&
-    (('code' in error && error.code === 'ER_QUERY_TIMEOUT') ||
-      ('errno' in error && error.errno === 3024))
-  );
 }
 
 function reportQueryFailure(error: unknown): never {

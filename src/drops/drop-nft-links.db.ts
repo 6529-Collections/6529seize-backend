@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import { DROP_NFT_LINKS_TABLE } from '@/constants';
 import { DropNftLinkEntity } from '@/entities/IDropNftLink';
 import {
@@ -51,19 +52,20 @@ export class DropNftLinksDb extends LazyDbAccessCompatibleService {
           }, new Map<string, DropNftLinkInsertModel>())
           .values()
       );
-      await Promise.all(
-        deduplicated.map((link) =>
-          this.db.execute(
-            `insert into ${DROP_NFT_LINKS_TABLE} (drop_id, url_in_text, canonical_id, created_at)
+      await inSequence(
+        deduplicated.map(
+          (link) => () =>
+            this.db.execute(
+              `insert into ${DROP_NFT_LINKS_TABLE} (drop_id, url_in_text, canonical_id, created_at)
              values (:dropId, :url_in_text, :canonical_id, :createdAt)`,
-            {
-              dropId,
-              createdAt,
-              url_in_text: link.url_in_text,
-              canonical_id: link.canonical_id
-            },
-            { wrappedConnection: connection }
-          )
+              {
+                dropId,
+                createdAt,
+                url_in_text: link.url_in_text,
+                canonical_id: link.canonical_id
+              },
+              { wrappedConnection: connection }
+            )
         )
       );
     } finally {

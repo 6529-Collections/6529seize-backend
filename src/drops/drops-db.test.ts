@@ -12,7 +12,7 @@ import {
 import { PageSortDirection } from '@/api/page-request';
 import { DbPoolName } from '@/db-query.options';
 import { DropType } from '@/entities/IDrop';
-import { DropsDb, LeaderboardSort } from './drops.db';
+import { DropsDb, LeaderboardSort, WAVE_LOG_QUERY_BUDGET_MS } from './drops.db';
 
 describe('DropsDb', () => {
   it('applies live wave and parent visibility before cross-wave pagination', async () => {
@@ -798,5 +798,51 @@ describe('DropsDb', () => {
       )
     ).rejects.toThrow('commit URL does not match its identity');
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  describe('drop and wave activity logs', () => {
+    const logParams = {
+      wave_id: 'wave-1',
+      offset: 0,
+      limit: 20,
+      log_types: ['DROP_CREATED', 'DROP_VOTE_EDIT'],
+      sort_direction: PageSortDirection.DESC
+    };
+
+    it("reads a drop's logs through the target index, without a budget", async () => {
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new DropsDb(() => ({ execute }) as any);
+      await repo.findDropLogEntities({ ...logParams, drop_id: 'drop-1' }, {});
+      const [sql, params] = execute.mock.calls[0];
+      expect(sql).toContain('force index (idx_pal_target_type_created_at)');
+      expect(sql).toContain('target_id = :drop_id');
+      expect(sql).toContain('additional_data_2 = :wave_id');
+      expect(sql).not.toContain('MAX_EXECUTION_TIME');
+      expect(params).toMatchObject({ drop_id: 'drop-1', wave_id: 'wave-1' });
+    });
+
+    it("caps a whole wave's logs at the wave log budget", async () => {
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new DropsDb(() => ({ execute }) as any);
+      await repo.findDropLogEntities({ ...logParams, drop_id: null }, {});
+      const [sql] = execute.mock.calls[0];
+      expect(sql).toContain(
+        `/*+ MAX_EXECUTION_TIME(${WAVE_LOG_QUERY_BUDGET_MS}) */`
+      );
+      expect(sql).not.toContain('target_id');
+      expect(sql).not.toContain('force index');
+    });
+
+    it("reads a drop's vote edits through the target index", async () => {
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new DropsDb(() => ({ execute }) as any);
+      await repo.findDropVoteEditLogEntities(
+        { ...logParams, drop_id: 'drop-1' },
+        {}
+      );
+      const [sql] = execute.mock.calls[0];
+      expect(sql).toContain('force index (idx_pal_target_type_created_at)');
+      expect(sql).toContain('target_id = :drop_id');
+    });
   });
 });
