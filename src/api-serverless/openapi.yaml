@@ -19166,6 +19166,42 @@ paths:
                 $ref: "#/components/schemas/ApiTdhEditionsPage"
         "404":
           description: Identity not found
+  /e:
+    post:
+      tags:
+        - Telemetry
+      summary: Record first-party telemetry counters
+      description: >-
+        First-party analytics collector, reached as 6529.io/e through
+        CloudFront. Accepts one batch of at most 8192 bytes as text/plain
+        (sendBeacon) or application/json and returns 204. Unknown fields,
+        events, props and values are dropped rather than rejected. Only daily
+        counters are stored; the IP address, user agent, `fp` and request body
+        are never logged or stored. The full JSON Schema, including the
+        product-event registry, is telemetry-collector.v1.schema.json next to
+        the collector source.
+      operationId: recordTelemetryBatch
+      security: []
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              $ref: "#/components/schemas/ApiTelemetryBatch"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiTelemetryBatch"
+      responses:
+        "204":
+          description: Batch accepted (anything outside the schema was dropped)
+        "400":
+          description: Body is not JSON
+        "413":
+          description: Body larger than 8192 bytes
+        "429":
+          description: Too many batches from this visitor
+        "503":
+          description: Counters could not be recorded
   /transactions:
     get:
       tags:
@@ -42654,6 +42690,158 @@ components:
         bonus:
           type: number
           format: double
+    ApiTelemetryBatch:
+      type: object
+      description: First-party telemetry batch, schema version 1.
+      required:
+        - v
+        - events
+      properties:
+        v:
+          type: integer
+          enum:
+            - 1
+        events:
+          type: array
+          maxItems: 40
+          items:
+            $ref: "#/components/schemas/ApiTelemetryEvent"
+    ApiTelemetryEvent:
+      type: object
+      description: >-
+        One telemetry record. `pv` page view, `vitals` web vitals, `ev`
+        registered product event, `health` client health counters. Routes are
+        templates (for example /waves/[wave]); ids, handles, addresses and free
+        text are never sent.
+      required:
+        - v
+        - t
+        - route
+        - device
+        - platform
+      properties:
+        v:
+          type: integer
+          enum:
+            - 1
+        t:
+          type: string
+          enum:
+            - pv
+            - vitals
+            - ev
+            - health
+        route:
+          type: string
+          maxLength: 96
+        device:
+          type: string
+          enum:
+            - mobile
+            - tablet
+            - desktop
+        platform:
+          type: string
+          enum:
+            - web
+            - ios
+            - android
+            - desktop
+        page_group:
+          type: string
+          maxLength: 32
+        prev_route:
+          type: string
+          maxLength: 96
+          description: Previous in-app route template, or `entry` for an arrival.
+        referrer_domain:
+          type: string
+          maxLength: 100
+          description: External referrer hostname; only kept for entries.
+        browser:
+          type: string
+          enum:
+            - chrome
+            - safari
+            - firefox
+            - edge
+            - other
+        signed_in:
+          type: boolean
+        fp:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{8,32}$
+          description: >-
+            Optional coarse client hash used only in memory for daily unique
+            counts; never stored or logged. Omitted for EU/EEA/UK and unknown
+            countries.
+        lcp:
+          type: number
+          minimum: 0
+          maximum: 300000
+        inp:
+          type: number
+          minimum: 0
+          maximum: 300000
+        ttfb:
+          type: number
+          minimum: 0
+          maximum: 300000
+        fcp:
+          type: number
+          minimum: 0
+          maximum: 300000
+        cls:
+          type: number
+          minimum: 0
+          maximum: 100
+        name:
+          type: string
+          maxLength: 64
+          description: Registered product event name.
+        p:
+          type: object
+          description: Up to six registered enum or boolean props.
+          additionalProperties: true
+        c:
+          $ref: "#/components/schemas/ApiTelemetryHealthCounters"
+        ws_lag:
+          type: number
+          minimum: 0
+          maximum: 300000
+          description: Page p75 WebSocket receive-to-render lag in ms.
+    ApiTelemetryHealthCounters:
+      type: object
+      description: Per-page-view health counts (each 1..10000).
+      properties:
+        asset_fail:
+          type: object
+          description: Keys script, style, font, image, media, other.
+          additionalProperties:
+            type: integer
+        api_fail:
+          type: object
+          description: Keys are API endpoint templates without /api.
+          additionalProperties:
+            type: integer
+        api_slow:
+          type: object
+          description: Keys are API endpoint templates without /api.
+          additionalProperties:
+            type: integer
+        error:
+          type: object
+          description: >-
+            Keys unhandled_error, unhandled_rejection, chunk_load, boundary,
+            resource, other.
+          additionalProperties:
+            type: integer
+        ws_drop:
+          type: integer
+        ws_reconnect:
+          type: integer
+        long_task:
+          type: integer
     ApiToggleHideLinkPreviewRequest:
       type: object
       properties:
