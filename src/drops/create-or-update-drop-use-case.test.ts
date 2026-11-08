@@ -16,7 +16,10 @@ import fc from 'fast-check';
 import { identitiesDb } from '@/identities/identities.db';
 import { AuthenticationContext } from '@/auth-context';
 import { DropType } from '@/entities/IDrop';
-import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
+import {
+  DropMediaUploadPurpose,
+  DropMediaUploadStatus
+} from '@/entities/IDropMediaUpload';
 import { AttachmentStatus } from '@/entities/IAttachment';
 import { DropGroupMention } from '@/entities/IWaveGroupNotificationSubscription';
 import { WaveIdentitySubmissionDuplicates, WaveType } from '@/entities/IWave';
@@ -286,7 +289,7 @@ describe('CreateOrUpdateDropUseCase', () => {
     };
     await expect(
       (useCase as any).verifyDropMediaUploadReference(reference)
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ declared_mime_type: 'image/avif' });
     await expect(
       (useCase as any).verifyDropMediaUploadReference({
         ...reference,
@@ -326,9 +329,158 @@ describe('CreateOrUpdateDropUseCase', () => {
           mimeType: submitted,
           authorId: 'author-profile'
         })
-      ).resolves.toBeUndefined();
+      ).resolves.toMatchObject({ declared_mime_type: declared });
     }
   );
+
+  describe('decision entry media purpose', () => {
+    const uploadId = '0b7b3a9e-2f4c-4d6a-9c1e-5a8f3b2d1e4f';
+    const key = `drops/${uploadId}/Final-Artwork.png`;
+    const url = `${CLOUDFRONT_LINK}/${key}`;
+
+    function uploadsDb(purpose: DropMediaUploadPurpose | null) {
+      return {
+        findById: jest.fn(async (id: string) =>
+          id === uploadId
+            ? {
+                id,
+                purpose,
+                public_key: key,
+                public_url: url,
+                declared_mime_type: 'image/png',
+                status: DropMediaUploadStatus.READY,
+                profile_id: 'author-profile'
+              }
+            : null
+        )
+      };
+    }
+
+    function verify(
+      db: ReturnType<typeof uploadsDb>,
+      {
+        dropType,
+        replyTo = null,
+        mediaUrl = url,
+        mediaUploadId
+      }: {
+        dropType: DropType;
+        replyTo?: { drop_id: string; drop_part_id: number } | null;
+        mediaUrl?: string;
+        mediaUploadId?: string;
+      }
+    ) {
+      const useCase = createUseCaseWithMocks({ dropMediaUploadsDb: db });
+      return (useCase as any).verifyMedia(
+        {
+          wave: { id: 'wave-1', participation_required_media: [] },
+          model: {
+            author_id: 'author-profile',
+            drop_type: dropType,
+            reply_to: replyTo,
+            parts: [
+              {
+                media: [
+                  {
+                    url: mediaUrl,
+                    mime_type: 'image/png',
+                    media_upload_id: mediaUploadId ?? null
+                  }
+                ],
+                attachments: []
+              }
+            ]
+          }
+        },
+        { connection: {} }
+      );
+    }
+
+    it.each([
+      ['a chat drop', DropType.CHAT, null],
+      ['a reply', DropType.CHAT, { drop_id: 'parent', drop_part_id: 1 }],
+      [
+        'a participatory reply',
+        DropType.PARTICIPATORY,
+        { drop_id: 'parent', drop_part_id: 1 }
+      ]
+    ])(
+      'rejects decision entry media attached to %s with a clear 400',
+      async (_, dropType, replyTo) => {
+        const db = uploadsDb(DropMediaUploadPurpose.DECISION_ENTRY);
+        const verification = verify(db, { dropType, replyTo });
+        await expect(verification).rejects.toThrow(
+          'can only be attached to a decision entry'
+        );
+        await expect(verification).rejects.toMatchObject({
+          getStatusCode: expect.any(Function)
+        });
+        await expect(
+          verification.catch((error: any) => error.getStatusCode())
+        ).resolves.toBe(400);
+      }
+    );
+
+    it('finds the upload by media_upload_id as well as by URL', async () => {
+      const db = uploadsDb(DropMediaUploadPurpose.DECISION_ENTRY);
+      await expect(
+        verify(db, { dropType: DropType.CHAT, mediaUploadId: uploadId })
+      ).rejects.toThrow('can only be attached to a decision entry');
+      // The verified tracked upload is reused; no second lookup by URL.
+      expect(db.findById).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['query string', `${url}?download=1`],
+      ['percent-encoded', url.replace('Final-Artwork', 'Final%2DArtwork')]
+    ])(
+      'resolves a %s variant of the media URL to the same upload',
+      async (_, variant) => {
+        const db = uploadsDb(DropMediaUploadPurpose.DECISION_ENTRY);
+        await expect(
+          verify(db, { dropType: DropType.CHAT, mediaUrl: variant })
+        ).rejects.toThrow('can only be attached to a decision entry');
+      }
+    );
+
+    it('allows decision entry media on a decision entry without a lookup', async () => {
+      const db = uploadsDb(DropMediaUploadPurpose.DECISION_ENTRY);
+      await expect(
+        verify(db, { dropType: DropType.PARTICIPATORY })
+      ).resolves.toBeUndefined();
+      expect(db.findById).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'chat media on a decision entry',
+        DropMediaUploadPurpose.CHAT,
+        DropType.PARTICIPATORY
+      ],
+      ['chat media on a chat drop', DropMediaUploadPurpose.CHAT, DropType.CHAT],
+      ['media uploaded before purposes on a chat drop', null, DropType.CHAT]
+    ])('allows %s', async (_, purpose, dropType) => {
+      await expect(
+        verify(uploadsDb(purpose), { dropType })
+      ).resolves.toBeUndefined();
+    });
+
+    it('ignores URLs that no upload record serves', async () => {
+      const db = uploadsDb(DropMediaUploadPurpose.DECISION_ENTRY);
+      await expect(
+        verify(db, {
+          dropType: DropType.CHAT,
+          mediaUrl: `${CLOUDFRONT_LINK}/drops/${uploadId}/other-file.png`
+        })
+      ).resolves.toBeUndefined();
+      await expect(
+        verify(db, {
+          dropType: DropType.CHAT,
+          mediaUrl: `${CLOUDFRONT_LINK}/drops/author_author-profile/legacy.png`
+        })
+      ).resolves.toBeUndefined();
+    });
+  });
 
   function createIdentitySubmissionModel(identity: string) {
     return {
