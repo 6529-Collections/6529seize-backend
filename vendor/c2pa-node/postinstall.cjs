@@ -16,6 +16,14 @@ const MAX_ARCHIVE_SIZE = 64 * 1024 * 1024;
 const MAX_NATIVE_SIZE = 256 * 1024 * 1024;
 const DOWNLOAD_PREFIX =
   'https://github.com/contentauth/c2pa-js/releases/download/%40contentauth/c2pa-node%400.9.5/';
+/**
+ * Checked-in copies of pinned release archives, relative to the repository
+ * that installs this package (`vendor/c2pa-node/native/<release file name>`).
+ * Found by walking up from the installed package, so the root and any
+ * service directory (`src/<service>`) use the same copy.
+ */
+const LOCAL_ARCHIVE_DIRECTORY = path.join('vendor', 'c2pa-node', 'native');
+const LOCAL_ARCHIVE_SEARCH_DEPTH = 8;
 const SUPPORTED = new Set([
   'linux-x64',
   'linux-arm64',
@@ -117,6 +125,55 @@ function allowedRedirect(url) {
     parsed.password === '' &&
     parsed.hash === ''
   );
+}
+
+function localArchiveDirectories(packageRoot) {
+  const directories = [];
+  let current = path.resolve(packageRoot);
+  for (let level = 0; level < LOCAL_ARCHIVE_SEARCH_DEPTH; level++) {
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+    directories.push(path.join(current, LOCAL_ARCHIVE_DIRECTORY));
+  }
+  return directories;
+}
+
+/** The first checked-in copy of the asset's release archive, or null. */
+async function findLocalArchive(asset, directories) {
+  const name = asset.url.slice(DOWNLOAD_PREFIX.length);
+  for (const directory of directories) {
+    const candidate = path.join(directory, name);
+    let stat;
+    try {
+      stat = await fsp.lstat(candidate);
+    } catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') continue;
+      throw error;
+    }
+    if (!stat.isFile())
+      throw new Error('Local C2PA archive is not a regular file');
+    return candidate;
+  }
+  return null;
+}
+
+/**
+ * Copies a checked-in archive through the same pinned size and SHA-256 check
+ * as a download. A copy that does not match fails the installation: it is
+ * never used, and the network is not tried in its place.
+ */
+async function copyLocalArchive(source, asset, file, signal) {
+  try {
+    await pipeline(
+      fs.createReadStream(source),
+      integrityStream(asset.archive_size, asset.archive_sha256),
+      fs.createWriteStream(file, { flags: 'wx', mode: 0o600 }),
+      { signal }
+    );
+  } catch (error) {
+    throw new Error(`Local C2PA archive rejected: ${error.message}`);
+  }
 }
 
 async function downloadArchive(asset, file, fetchImpl, signal) {
@@ -256,7 +313,8 @@ async function install({
   platform = process.platform,
   arch = process.arch,
   fetchImpl = globalThis.fetch,
-  timeoutMs = 120000
+  timeoutMs = 120000,
+  localArchiveDirs = localArchiveDirectories(packageRoot)
 } = {}) {
   const manifestPath = path.join(packageRoot, 'scripts', 'native-assets.json');
   const manifestStat = await fsp.stat(manifestPath);
@@ -287,7 +345,9 @@ async function install({
     temporary = await fsp.mkdtemp(path.join(directory, '.c2pa-install-'));
     const archive = path.join(temporary, 'archive.zip');
     const native = path.join(temporary, 'index.node');
-    await downloadArchive(asset, archive, fetchImpl, signal);
+    const local = await findLocalArchive(asset, localArchiveDirs);
+    if (local) await copyLocalArchive(local, asset, archive, signal);
+    else await downloadArchive(asset, archive, fetchImpl, signal);
     await extractNative(archive, native, asset, signal);
     signal.throwIfAborted();
     await fsp.chmod(native, 0o644);
@@ -304,7 +364,8 @@ module.exports = {
   selectAsset,
   integrityStream,
   downloadArchive,
-  extractNative
+  extractNative,
+  localArchiveDirectories
 };
 
 if (require.main === module) {
