@@ -4,6 +4,7 @@ import {
   chunkSqlInListValues,
   querySqlInListChunks,
   SQL_IN_LIST_CHUNK_BYTES,
+  SQL_IN_LIST_PAGE_VALUES,
   sqlInListBytes
 } from './sql-in-list-chunks';
 
@@ -51,6 +52,41 @@ describe('chunkSqlInListValues', () => {
   it('rejects a non-positive budget', () => {
     expect(() => chunkSqlInListValues(['a'], 0)).toThrow(RangeError);
     expect(() => chunkSqlInListValues(['a'], Number.NaN)).toThrow(RangeError);
+    expect(() => chunkSqlInListValues(['a'], 100, 0)).toThrow(RangeError);
+  });
+
+  it('also bounds each chunk by a value count', () => {
+    const values = Array.from({ length: 205 }, (_, index) => `id-${index}`);
+    const chunks = chunkSqlInListValues(
+      values,
+      SQL_IN_LIST_CHUNK_BYTES,
+      SQL_IN_LIST_PAGE_VALUES
+    );
+    expect(chunks.map((chunk) => chunk.length)).toEqual([100, 100, 5]);
+    expect(chunks.flat()).toEqual(values);
+  });
+
+  it('closes a chunk on whichever bound comes first, at the boundary', () => {
+    // Each escapes to 2 + 2 * 98 bytes: about 60 fit the byte budget.
+    const values = Array.from(
+      { length: 150 },
+      (_, index) => `${index}`.padStart(4, '0') + "'".repeat(94)
+    );
+    const chunks = chunkSqlInListValues(
+      values,
+      SQL_IN_LIST_CHUNK_BYTES,
+      SQL_IN_LIST_PAGE_VALUES
+    );
+    expect(chunks.flat()).toEqual(values);
+    chunks.forEach((chunk, index) => {
+      expect(chunk.length).toBeLessThanOrEqual(SQL_IN_LIST_PAGE_VALUES);
+      expect(inlinedBytes(chunk)).toBeLessThanOrEqual(SQL_IN_LIST_CHUNK_BYTES);
+      const next = chunks[index + 1]?.[0];
+      if (next !== undefined && chunk.length < SQL_IN_LIST_PAGE_VALUES)
+        expect(inlinedBytes([...chunk, next])).toBeGreaterThan(
+          SQL_IN_LIST_CHUNK_BYTES
+        );
+    });
   });
 
   it('partitions distinct values in order within the byte budget', () => {
