@@ -1042,6 +1042,183 @@ describeWithSeed(
       expect(saved.map((row) => Number(row.published_at))).toEqual([2200]);
     });
 
+    async function timeLock(): Promise<void> {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.time_lock_ms', 1000) where id = :rankId`,
+        { rankId }
+      );
+    }
+
+    /** The visible leaderboard, as clients read it. */
+    async function savedLeaderboard() {
+      return sqlExecutor.execute<{
+        entry_id: string;
+        rating: number;
+        rank: number;
+        decision_rating: number;
+        ordering_time: number;
+      }>(
+        `select entry_id, rating, \`rank\`, decision_rating, ordering_time from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}
+         where competition_id = :rankId order by entry_id`,
+        { rankId }
+      );
+    }
+
+    it('refreshes a time-locked leaderboard off the lock to the rows the locked refresh writes', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await vote(rankId, secondRankEntry, 70, 1, 'other');
+
+      await expect(
+        service.refreshLeaderboardOffLock(rankId, 600)
+      ).resolves.toBe('written');
+      const offLock = await savedLeaderboard();
+      await service.refreshCompetition(rankId, 600);
+      expect(await savedLeaderboard()).toEqual(offLock);
+      expect(offLock).toHaveLength(2);
+    });
+
+    it('writes nothing when a vote lands during the computation, keeping the newer leaderboard', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+
+      const outcome = await service.refreshLeaderboardOffLock(
+        rankId,
+        700,
+        {},
+        {
+          afterCompute: async () => {
+            // The vote path refreshes the leaderboard itself, newer than the
+            // computation that is about to be written.
+            await vote(rankId, secondRankEntry, 50, 650, 'other');
+            await service.refreshCompetition(rankId, 690);
+          }
+        }
+      );
+      expect(outcome).toBe('changed');
+      const newer = await savedLeaderboard();
+      expect(
+        Number(newer.find((row) => row.entry_id === secondRankEntry)?.rating)
+      ).toBeGreaterThan(0);
+
+      // The next run computes from the new inputs and writes.
+      await expect(
+        service.refreshLeaderboardOffLock(rankId, 700)
+      ).resolves.toBe('written');
+      expect(
+        Number(
+          (await savedLeaderboard()).find(
+            (row) => row.entry_id === secondRankEntry
+          )?.rating
+        )
+      ).toBeGreaterThan(0);
+    });
+
+    it('writes nothing when an entry is submitted during the computation', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+      const before = await savedLeaderboard();
+
+      const outcome = await service.refreshLeaderboardOffLock(
+        rankId,
+        700,
+        {},
+        {
+          afterCompute: async () => {
+            await sqlExecutor.execute(
+              `insert into ${COMPETITION_ENTRIES_TABLE}
+                 (id, competition_id, wave_id, drop_id, submitter_id, status, config_version, submitted_at)
+               values (:id, :rankId, 'shared-hub', 'late-drop', 'artist', 'ACTIVE', 1, 650)`,
+              { id: randomUUID(), rankId }
+            );
+          }
+        }
+      );
+
+      expect(outcome).toBe('changed');
+      expect(await savedLeaderboard()).toEqual(before);
+    });
+
+    it('writes nothing when a pause is added during the computation', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+      const before = await savedLeaderboard();
+
+      const outcome = await service.refreshLeaderboardOffLock(
+        rankId,
+        700,
+        {},
+        {
+          afterCompute: async () => {
+            await sqlExecutor.execute(
+              `insert into ${COMPETITION_PAUSES_TABLE} (id, competition_id, start_time, end_time) values (:id, :rankId, 650, null)`,
+              { id: randomUUID(), rankId }
+            );
+          }
+        }
+      );
+
+      expect(outcome).toBe('changed');
+      expect(await savedLeaderboard()).toEqual(before);
+    });
+
+    it('falls back to the locked refresh in the snapshotter when inputs change during the computation', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+
+      await service.refreshLeaderboardForSnapshot(
+        rankId,
+        700,
+        {},
+        {
+          afterCompute: async () => {
+            await vote(rankId, secondRankEntry, 50, 650, 'other');
+          }
+        }
+      );
+
+      // The locked fallback ran, so the snapshot includes the late vote.
+      expect(
+        Number(
+          (await savedLeaderboard()).find(
+            (row) => row.entry_id === secondRankEntry
+          )?.rating
+        )
+      ).toBeGreaterThan(0);
+    });
+
+    it('refreshes an undue time-locked Rank off the lock from the decision run and still decides when due', async () => {
+      await timeLock();
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.next_decision_time', 1000) where id = :rankId`,
+        { rankId }
+      );
+      await vote(rankId, rankEntry, 100, 500);
+
+      // Not due (next decision 1000): leaderboard written, no decision.
+      await service.processCompetition(rankId, 900);
+      expect(await savedLeaderboard()).toHaveLength(2);
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_DECISIONS_TABLE} where competition_id = :rankId`,
+          { rankId }
+        )
+      ).toEqual([{ n: 0 }]);
+
+      // Due: the full locked run decides as before.
+      await service.processCompetition(rankId, 3000);
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_DECISIONS_TABLE} where competition_id = :rankId`,
+          { rankId }
+        )
+      ).toEqual([{ n: 1 }]);
+    });
+
     it('uses scheduled historical weighted votes when execution is late and archives each voter independently', async () => {
       await sqlExecutor.execute(
         `update ${COMPETITIONS_TABLE} set decision_config = json_set(decision_config, '$.time_lock_ms', 1000) where id = :rankId`,
