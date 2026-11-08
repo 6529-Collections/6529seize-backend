@@ -4,6 +4,7 @@ import { withRequestDeadline } from '@/api/write-transaction-budget';
 import { Time } from '@/time';
 import {
   VIEWER_GROUP_SET_MIN_JSON_BYTES,
+  VIEWER_GROUP_SET_SETTLE_MS,
   ViewerGroupSets,
   viewerGroupSetHash,
   viewerGroupSetJsonChunks
@@ -19,7 +20,9 @@ const small = large.slice(0, 50);
 type Call = { sql: string; params: Record<string, unknown>; tx: boolean };
 
 /**
- * Records statements. `headers` maps stored hashes to their last_used_at;
+ * Records statements. `headers` maps stored hashes to their last_used_at
+ * (their created_at is long ago unless this fake wrote them: then it is the
+ * write's time);
  * `dropMembers` stores that many fewer members than asked (INSERT IGNORE
  * dropping rows); `vanishOnTouch` deletes the header just before a touch.
  */
@@ -38,6 +41,7 @@ function fakeDb({
 } = {}) {
   const calls: Call[] = [];
   const members = new Map<string, number>();
+  const createdAt = new Map<string, number>();
   let inTx = false;
   const execute = jest.fn(
     async (sql: string, params: Record<string, unknown> = {}): Promise<any> => {
@@ -45,8 +49,17 @@ function fakeDb({
       const hash = params.hash as string;
       if (sql.includes('information_schema.columns'))
         return [{ collation_name: collation }];
-      if (sql.includes('select last_used_at from viewer_group_sets'))
-        return headers.has(hash) ? [{ last_used_at: headers.get(hash) }] : [];
+      if (
+        sql.includes('select last_used_at, created_at from viewer_group_sets')
+      )
+        return headers.has(hash)
+          ? [
+              {
+                last_used_at: headers.get(hash),
+                created_at: createdAt.get(hash) ?? 0
+              }
+            ]
+          : [];
       if (sql.includes('insert ignore into viewer_group_set_members')) {
         const ids = JSON.parse(params.json as string) as string[];
         members.set(hash, (members.get(hash) ?? 0) + ids.length);
@@ -56,6 +69,7 @@ function fakeDb({
         return [{ n: Math.max(0, (members.get(hash) ?? 0) - dropMembers) }];
       if (sql.includes('insert ignore into viewer_group_sets')) {
         headers.set(hash, params.now as number);
+        createdAt.set(hash, params.now as number);
         return [];
       }
       if (sql.includes('update viewer_group_sets')) {
@@ -173,7 +187,8 @@ describe('ViewerGroupSets.source', () => {
   it('falls back to JSON while the header is missing where it reads, and writes the set once', async () => {
     const { db, calls, headers } = fakeDb();
     const lease = jest.fn(async () => true as boolean | null);
-    const store = sets({ lease });
+    let now = NOW;
+    const store = sets({ lease, now: () => now });
     const first = await store.source(db, 'x_groups', large);
     expect(isJson(first)).toBe(true);
     // Members in chunks within budget, then the header, all in one transaction.
@@ -195,8 +210,36 @@ describe('ViewerGroupSets.source', () => {
       expect.anything()
     );
     expect(headers.has(viewerGroupSetHash(large))).toBe(true);
+    now += VIEWER_GROUP_SET_SETTLE_MS;
     const second = await store.source(db, 'x_groups', large);
     expect(isTable(second)).toBe(true);
+  });
+
+  it('does not read a set written moments ago, which another reader may not have yet', async () => {
+    const { db, calls } = fakeDb();
+    const lease = jest.fn(async () => true as boolean | null);
+    let now = NOW;
+    const store = sets({ lease, now: () => now });
+    expect(isJson(await store.source(db, 'x_groups', large))).toBe(true);
+    const writes = calls.filter((call) => call.tx).length;
+    const headerChecks = () =>
+      calls.filter((call) => call.sql.includes('select last_used_at')).length;
+    // Settling: JSON, no second write, and not cached (checked every time).
+    for (const age of [1, 1_000, VIEWER_GROUP_SET_SETTLE_MS - 1]) {
+      now = NOW + age;
+      const checks = headerChecks();
+      expect(isJson(await store.source(db, 'x_groups', large))).toBe(true);
+      expect(headerChecks()).toBe(checks + 1);
+    }
+    expect(calls.filter((call) => call.tx)).toHaveLength(writes);
+    expect(lease).toHaveBeenCalledTimes(1);
+    // Settled: read by hash, then cached.
+    now = NOW + VIEWER_GROUP_SET_SETTLE_MS;
+    expect(isTable(await store.source(db, 'x_groups', large))).toBe(true);
+    const checks = headerChecks();
+    now += 1;
+    expect(isTable(await store.source(db, 'x_groups', large))).toBe(true);
+    expect(headerChecks()).toBe(checks);
   });
 
   it('writes nothing when another container holds the write lease or Redis is unavailable', async () => {
@@ -284,7 +327,10 @@ describe('ViewerGroupSets.source', () => {
     // set is written again in full.
     expect(isJson(await store.source(db, 'x_groups', large))).toBe(true);
     expect(headers.has(hash)).toBe(true);
+    // The rebuilt set is read once it has settled.
     now += 1;
+    expect(isJson(await store.source(db, 'x_groups', large))).toBe(true);
+    now += VIEWER_GROUP_SET_SETTLE_MS;
     expect(isTable(await store.source(db, 'x_groups', large))).toBe(true);
   });
 
