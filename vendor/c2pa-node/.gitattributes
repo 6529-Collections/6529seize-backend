@@ -1,3 +1,4 @@
 LICENSE -text
 contents.json text eol=lf
 *.tgz binary
+*.zip binary

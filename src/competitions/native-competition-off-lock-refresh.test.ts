@@ -1,4 +1,9 @@
+jest.mock('./native-competition-metrics', () => ({
+  recordNativeCompetitionRun: jest.fn()
+}));
+
 import { CompetitionType } from '@/entities/ICompetition';
+import { recordNativeCompetitionRun } from './native-competition-metrics';
 import { Competition } from './competition.types';
 import { NativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
 import { NativeCompetitionRuntimeService } from './native-competition-runtime.service';
@@ -146,7 +151,10 @@ describe('refreshLeaderboardForSnapshot', () => {
         .mockResolvedValue(undefined),
       offLock: jest
         .spyOn(service, 'refreshLeaderboardOffLock')
-        .mockResolvedValue(outcome),
+        .mockImplementation(async (_id, _now, _ctx, _hooks, report) => {
+          report?.onMeasured?.({ computeMs: 2_500, writeLockedMs: 30 });
+          return outcome;
+        }),
       fallback: jest
         .spyOn(service, 'refreshCompetition')
         .mockResolvedValue(undefined)
@@ -182,4 +190,30 @@ describe('refreshLeaderboardForSnapshot', () => {
     expect(spies.lockedRefresh).toHaveBeenCalledTimes(1);
     expect(spies.offLock).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['written', 1000, 'off_lock', 2_500],
+    ['changed', 1000, 'off_lock_fallback', 2_500],
+    ['written', 0, 'locked', 0]
+  ] as const)(
+    'records one snapshot run per refresh (%s, time lock %i) as %s',
+    async (outcome, timeLockMs, path, computeMs) => {
+      (recordNativeCompetitionRun as jest.Mock).mockClear();
+      const { service } = snapshotSetUp(outcome, timeLockMs);
+
+      await service.refreshLeaderboardForSnapshot('competition-1', 1500);
+
+      expect(recordNativeCompetitionRun).toHaveBeenCalledTimes(1);
+      const [record] = (recordNativeCompetitionRun as jest.Mock).mock.calls[0];
+      expect(record).toMatchObject({
+        competitionId: 'competition-1',
+        operation: 'leaderboard',
+        path,
+        computeMs
+      });
+      expect(record.lockedMs).toBeGreaterThanOrEqual(
+        path.startsWith('off_lock') ? 30 : 0
+      );
+    }
+  );
 });
