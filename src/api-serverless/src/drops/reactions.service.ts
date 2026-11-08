@@ -1,3 +1,4 @@
+import { runWriteTransaction } from '@/api/write-transaction-budget';
 import { inSequence } from '@/db/in-sequence';
 import { RequestContext } from '../../../request.context';
 import {
@@ -270,8 +271,8 @@ export class ReactionsService {
       );
     }
 
-    const mutationResult =
-      await this.reactionsDb.executeNativeQueriesInTransaction(
+    const mutationResult = await runWriteTransaction((options) =>
+      this.reactionsDb.executeNativeQueriesInTransaction(
         async (connection) =>
           await this.handleReactionMutation(
             dropId,
@@ -313,8 +314,10 @@ export class ReactionsService {
               ...ctx,
               connection
             }
-          )
-      );
+          ),
+        options
+      )
+    );
 
     const postCommitSideEffects: PostCommitSideEffect[] = [
       {
@@ -440,8 +443,8 @@ export class ReactionsService {
       );
     }
 
-    const mutationResult =
-      await this.reactionsDb.executeNativeQueriesInTransaction(
+    const mutationResult = await runWriteTransaction((options) =>
+      this.reactionsDb.executeNativeQueriesInTransaction(
         async (connection) =>
           await this.handleReactionMutation(
             dropId,
@@ -482,8 +485,10 @@ export class ReactionsService {
               ...ctx,
               connection
             }
-          )
-      );
+          ),
+        options
+      )
+    );
 
     return await this.completeReaction(
       dropId,

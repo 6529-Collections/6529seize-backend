@@ -161,7 +161,7 @@ describe('wave unread cache', () => {
     );
   });
 
-  it('stores summaries for 60 s unless the TTL env says otherwise', async () => {
+  it('stores summaries for 600 s unless the TTL env says otherwise', async () => {
     const original = process.env.WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS;
     const write = () =>
       writeWaveUnreadSummaryCache({
@@ -173,11 +173,11 @@ describe('wave unread cache', () => {
     try {
       delete process.env.WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS;
       await write();
-      process.env.WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS = '300';
+      process.env.WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS = '60';
       await write();
       expect(
         redisSetJsonMock.mock.calls.map(([, , ttl]) => ttl?.toSeconds())
-      ).toEqual([60, 300]);
+      ).toEqual([600, 60]);
     } finally {
       if (original === undefined) {
         delete process.env.WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS;
@@ -188,14 +188,15 @@ describe('wave unread cache', () => {
   });
 
   it.each([
-    [undefined, 60],
-    ['', 60],
+    [undefined, 600],
+    ['', 600],
     [' 120 ', 120],
+    ['60', 60],
     ['1', 5],
     ['999999', 3600],
     ['-3', 5],
-    ['1.5', 60],
-    ['five', 60]
+    ['1.5', 600],
+    ['five', 600]
   ])('reads WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS=%p as %p s', (raw, ttl) => {
     expect(
       waveUnreadSummaryCacheTtlSeconds(
