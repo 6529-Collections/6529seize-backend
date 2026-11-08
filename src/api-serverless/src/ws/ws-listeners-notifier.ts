@@ -1126,7 +1126,9 @@ export class WsListenersNotifier {
       metrics: new DeliveryMetricsBatch(),
       ...(measurement && {
         claimTimed: (milliseconds: number) =>
-          measurement.claimTimed(milliseconds)
+          measurement.claimTimed(milliseconds),
+        // One frame type per fan-out: delivery need not parse each frame.
+        frameType: measurement.frameType
       })
     };
     try {

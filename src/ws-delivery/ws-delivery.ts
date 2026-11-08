@@ -34,6 +34,12 @@ export interface DeliveryBatch {
   /** Receives the post-send bookkeeping; the owner must await it. */
   readonly defer: (settlement: Promise<unknown>) => void;
   readonly metrics: DeliveryMetricsBatch;
+  /**
+   * The type of every frame in this batch, when the sender knows it (a
+   * fan-out sends one frame type). Delivery then reads it here instead of
+   * parsing each frame.
+   */
+  readonly frameType?: string;
   /** Receives each send's claim wall time (Redis bookkeeping before it). */
   readonly claimTimed?: (milliseconds: number) => void;
 }
@@ -51,15 +57,36 @@ interface DeliveryInput {
 const logger = Logger.get('WEBSOCKET_DELIVERY');
 let lastStoreFailureAt = 0;
 
+const CONTROL_ACKNOWLEDGEMENT_TYPES = new Set([
+  'AUTHENTICATED',
+  'AUTHENTICATION_FAILED',
+  'NOTIFICATION_IDENTITIES_SYNCED'
+]);
+
 function controlAcknowledgement(message: string): boolean {
   if (message.length > 2048) return false;
-  const type = describeWebSocketSendFailure(message, undefined).diagnostic
-    .frame_type;
-  return (
-    type === 'AUTHENTICATED' ||
-    type === 'AUTHENTICATION_FAILED' ||
-    type === 'NOTIFICATION_IDENTITIES_SYNCED'
+  return CONTROL_ACKNOWLEDGEMENT_TYPES.has(
+    describeWebSocketSendFailure(message, undefined).diagnostic.frame_type
   );
+}
+
+const controlAcknowledgementByInput = new WeakMap<DeliveryInput, boolean>();
+
+/**
+ * Whether this send is a control acknowledgement, decided once per send: a
+ * batch that names its frame type is never parsed, and any other frame is
+ * parsed once (claim, finish and throttling all ask).
+ */
+function isControlAcknowledgement(input: DeliveryInput): boolean {
+  const known = controlAcknowledgementByInput.get(input);
+  if (known !== undefined) return known;
+  const frameType = input.batch?.frameType;
+  const control =
+    frameType === undefined
+      ? controlAcknowledgement(input.message)
+      : CONTROL_ACKNOWLEDGEMENT_TYPES.has(frameType);
+  controlAcknowledgementByInput.set(input, control);
+  return control;
 }
 
 function reportStoreFailure(): void {
@@ -290,7 +317,7 @@ export class WebSocketDelivery {
         token,
         input.recovery ?? false,
         Date.now(),
-        controlAcknowledgement(input.message)
+        isControlAcknowledgement(input)
       );
     } catch {
       // The transport can still deliver during a Redis outage. The worker and
@@ -316,7 +343,7 @@ export class WebSocketDelivery {
         revision: claim.revision,
         now: Date.now(),
         jitter: randomInt(1_000_000) / 1_000_000,
-        coalesce: !controlAcknowledgement(input.message)
+        coalesce: !isControlAcknowledgement(input)
       });
     } catch {
       reportStoreFailure();
@@ -361,7 +388,7 @@ export class WebSocketDelivery {
     claim: DeliveryClaim | null,
     diagnostic: ReturnType<typeof describeWebSocketSendFailure>['diagnostic']
   ): Promise<WebSocketDeliveryResult> {
-    const control = controlAcknowledgement(input.message);
+    const control = isControlAcknowledgement(input);
     const firstFailure = await this.finish(input, token, claim, 'throttled');
     record(input, 'Throttled', diagnostic.sdk_attempts ?? 0);
     if (firstFailure) {

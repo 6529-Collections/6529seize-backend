@@ -145,7 +145,7 @@ export class FanoutMeasurement {
   };
 
   constructor(
-    private readonly frameType: string,
+    readonly frameType: string,
     private readonly serverReceivedAt: number | null,
     private readonly now: () => number = Date.now,
     private readonly stage: FanoutStage = 'inline',
