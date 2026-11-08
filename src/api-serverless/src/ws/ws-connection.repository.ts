@@ -724,6 +724,26 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       );
       return [];
     }
+    const result = await this.selectGroupMemberRecipients(
+      viewResult,
+      audience,
+      options
+    );
+    ctx?.timer?.stop(
+      `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
+    );
+    return result;
+  }
+
+  /**
+   * Online sockets of the group members that `viewResult` selects, narrowed
+   * to the follower audience when there is one.
+   */
+  private async selectGroupMemberRecipients(
+    viewResult: { sql: string; params: Record<string, any> },
+    audience: FollowerAudience | null,
+    options: WaveRecipientOptions
+  ): Promise<WaveRecipient[]> {
     const sql = `
       ${viewResult.sql} 
       select
@@ -743,7 +763,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     const sqlParams = audience
       ? { ...viewResult.params, ...followerAudienceParams(audience) }
       : viewResult.params;
-    const result = await this.db
+    return this.db
       .execute<{
         connection_id: string;
         profile_id: string | null;
@@ -758,10 +778,6 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           jwtExpiry: Number(it.jwt_expiry)
         }))
       );
-    ctx?.timer?.stop(
-      `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
-    );
-    return result;
   }
 
   /**
@@ -790,40 +806,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     if (viewResult === null) {
       return [];
     }
-    const sql = `
-      ${viewResult.sql} 
-      select
-        ws.connection_id as connection_id,
-        ws.identity_id as profile_id,
-        ws.wave_id as wave_id,
-        ws.jwt_expiry as jwt_expiry
-      from ${WS_CONNECTIONS_TABLE} ws
-      join ${UserGroupsService.GENERATED_VIEW} cm
-      on ws.identity_id = cm.profile_id
-      where ${purposeFilterSql(options)}${
-        audience
-          ? `\n        and ${followerAudienceConditionSql(audience.mode, 'ws')}`
-          : ''
-      }
-    `;
-    const sqlParams = audience
-      ? { ...viewResult.params, ...followerAudienceParams(audience) }
-      : viewResult.params;
-    const result = await this.db
-      .execute<{
-        connection_id: string;
-        profile_id: string | null;
-        wave_id: string | null;
-        jwt_expiry: number | string;
-      }>(sql, sqlParams)
-      .then((res) =>
-        res.map((it) => ({
-          connectionId: it.connection_id,
-          wave_id: it.wave_id,
-          profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id,
-          jwtExpiry: Number(it.jwt_expiry)
-        }))
-      );
+    const result = await this.selectGroupMemberRecipients(
+      viewResult,
+      audience,
+      options
+    );
     return result;
   }
 
