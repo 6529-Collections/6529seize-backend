@@ -29,9 +29,15 @@ describe('waveLogIndexReady', () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 
-  it('treats a failed check as missing', async () => {
-    const { db } = executorReturning(new Error('down'));
+  it('treats a failed check as missing and retries it sooner', async () => {
+    const { db, execute } = executorReturning(new Error('down'), [
+      { found: 1 }
+    ]);
     await expect(waveLogIndexReady(db, 0)).resolves.toBe(false);
+    await expect(waveLogIndexReady(db, 10_000)).resolves.toBe(false);
+    expect(execute).toHaveBeenCalledTimes(1);
+    await expect(waveLogIndexReady(db, 30_000)).resolves.toBe(true);
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
   it('shares one check between concurrent callers', async () => {

@@ -59,6 +59,10 @@ export async function applyOnlineIndex(
   spec: OnlineIndexSpec,
   source: DataSource
 ): Promise<number> {
+  // Identifiers are interpolated into DDL: internal constants only.
+  for (const name of [spec.table, spec.index, ...spec.columns])
+    if (!/^[a-z][a-z0-9_]{0,63}$/.test(name))
+      throw new Error(`Invalid identifier for ${spec.label}`);
   const quoted = spec.columns.map((column) => `\`${column}\``).join(', ');
   const addIndex = `ALTER TABLE \`${spec.table}\` ADD INDEX \`${spec.index}\` (${quoted}), ALGORITHM=INPLACE, LOCK=NONE`;
   const runner = source.createQueryRunner('master');

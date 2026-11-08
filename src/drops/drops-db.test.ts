@@ -861,7 +861,10 @@ describe('DropsDb', () => {
       );
       expect(sql).toContain('limit :branch_limit');
       expect(sql).toContain(
-        'order by created_at DESC limit :limit offset :offset'
+        'order by created_at DESC, id DESC limit :limit offset :offset'
+      );
+      expect(sql).toContain(
+        'order by created_at DESC, id DESC limit :branch_limit'
       );
       expect(params).toEqual({
         wave_id: 'wave-1',

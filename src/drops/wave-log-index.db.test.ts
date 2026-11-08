@@ -42,6 +42,9 @@ const rows = [
   log('v5', 'wave-1', DROP_VOTE_EDIT, 5),
   log('c6', 'wave-1', DROP_CREATED, 6),
   log('r7', 'wave-1', DROP_REACTED, 7),
+  // Same created_at as c6 and r7's neighbours: ties break on id.
+  log('t6a', 'wave-1', DROP_CREATED, 6),
+  log('t6b', 'wave-1', DROP_VOTE_EDIT, 6),
   log('other-c', 'wave-2', DROP_CREATED, 8),
   log('other-v', 'wave-2', DROP_VOTE_EDIT, 9)
 ];
@@ -115,6 +118,8 @@ describeWithSeed(
             [0, 3],
             [2, 3],
             [5, 5],
+            [1, 2],
+            [3, 1],
             [0, 100]
           ]) {
             const params = {
