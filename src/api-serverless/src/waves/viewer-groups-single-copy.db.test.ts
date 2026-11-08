@@ -19,6 +19,7 @@ import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { resetViewerGroupsCteSupport } from '@/waves/viewer-groups-cte';
 import {
   storeViewerGroupSet,
+  VIEWER_GROUP_SET_SETTLE_MS,
   viewerGroupSets as storedGroupSets
 } from '@/waves/viewer-group-sets';
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
@@ -348,8 +349,13 @@ describeWithSeed(
             groups,
             result: inline
           });
-          // The same groups read from the stored set.
-          await storeViewerGroupSet(sqlExecutor, groups);
+          // The same groups read from the stored set (written long enough
+          // ago to be read).
+          await storeViewerGroupSet(
+            sqlExecutor,
+            groups,
+            Date.now() - VIEWER_GROUP_SET_SETTLE_MS
+          );
           useStoredSets(true);
           r = repos();
           const stored = sorted(await read(r.waves, r.drops, groups));
@@ -379,7 +385,11 @@ describeWithSeed(
         resetViewerGroupsCteSupport();
         const viewerGroups = [MEMBER, OTHER, ...filler];
         if (source === 'stored set') {
-          await storeViewerGroupSet(sqlExecutor, viewerGroups);
+          await storeViewerGroupSet(
+            sqlExecutor,
+            viewerGroups,
+            Date.now() - VIEWER_GROUP_SET_SETTLE_MS
+          );
           useStoredSets(true);
         }
         const r = repos();
