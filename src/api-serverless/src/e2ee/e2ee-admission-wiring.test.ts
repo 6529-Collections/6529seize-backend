@@ -81,16 +81,16 @@ function createDeps(activeDevices: Record<string, number> = {}) {
         new Map(keys.map(({ key }) => [key, 1]))
     ),
     // Active 0x004F (v1) devices: one each unless activeDevices says.
-    getActiveDevicesOfProfiles: jest.fn(async (ids: readonly string[]) =>
-      ids.flatMap((id) =>
-        Array.from({ length: activeDevices[id] ?? 1 }, (_, index) => ({
-          device_key: `0x${index}`,
+    getActiveDeviceSuiteCounts: jest.fn(async (ids: readonly string[]) =>
+      ids
+        .map((id) => ({
           profile_id: id,
           grant_version: 1,
           ciphersuite: 0x004f,
-          ciphersuites: null
+          ciphersuites: null,
+          cnt: activeDevices[id] ?? 1
         }))
-      )
+        .filter((row) => row.cnt > 0)
     )
   };
   const deps = {

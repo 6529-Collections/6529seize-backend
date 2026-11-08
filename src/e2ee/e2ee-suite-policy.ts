@@ -83,32 +83,99 @@ export interface E2eeSuiteTransition {
   readonly days: number;
 }
 
-function parseInstant(value: string | undefined): number | null {
+/** A malformed transition setting; the API refuses to start with one. */
+export class E2eeSuiteTransitionConfigError extends Error {
+  constructor(name: string, value: string, expected: string) {
+    super(`${name}=${JSON.stringify(value)} is not ${expected}`);
+    this.name = 'E2eeSuiteTransitionConfigError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+const START_ENV = 'E2EE_SUITE_TRANSITION_START';
+const DAYS_ENV = 'E2EE_SUITE_TRANSITION_DAYS';
+/**
+ * Unix milliseconds must fall in this range. It rejects seconds (which
+ * would read as January 1970 and close the window at once) and typos.
+ */
+const MIN_START_MS = Date.UTC(2026, 0, 1);
+const MAX_START_MS = Date.UTC(2100, 0, 1);
+const MAX_TRANSITION_DAYS = 365;
+/** ISO 8601 with a time and an explicit zone, e.g. 2026-11-20T00:00:00Z. */
+const ISO_INSTANT =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function startMsOf(text: string): number {
+  if (/^\d+$/.test(text)) return Number(text);
+  return ISO_INSTANT.test(text) ? Date.parse(text) : Number.NaN;
+}
+
+function parseStart(value: string | undefined): number | null {
   const text = value?.trim();
   if (!text) return null;
-  const ms = /^\d+$/.test(text) ? Number(text) : Date.parse(text);
-  return Number.isFinite(ms) && ms > 0 ? ms : null;
+  const ms = startMsOf(text);
+  if (!Number.isFinite(ms) || ms < MIN_START_MS || ms >= MAX_START_MS) {
+    throw new E2eeSuiteTransitionConfigError(
+      START_ENV,
+      text,
+      'an ISO 8601 date-time with a zone or unix milliseconds from 2026 on'
+    );
+  }
+  return ms;
 }
 
 function parseDays(value: string | undefined): number {
   const text = value?.trim();
-  if (!text || !/^\d+$/.test(text)) return DEFAULT_TRANSITION_DAYS;
-  return Number(text);
+  if (!text) return DEFAULT_TRANSITION_DAYS;
+  const days = /^\d+$/.test(text) ? Number(text) : Number.NaN;
+  if (!(days >= 1 && days <= MAX_TRANSITION_DAYS)) {
+    throw new E2eeSuiteTransitionConfigError(
+      DAYS_ENV,
+      text,
+      `a whole number of days from 1 to ${MAX_TRANSITION_DAYS}`
+    );
+  }
+  return days;
 }
 
 /**
- * `E2EE_SUITE_TRANSITION_START`: an ISO date-time or unix milliseconds;
- * unset (or unreadable) means the transition has not started and v1 grants
- * are honoured until further notice. `E2EE_SUITE_TRANSITION_DAYS`: whole
- * days (default 14) after the start during which v1 grants stay honoured.
+ * `E2EE_SUITE_TRANSITION_START`: when clients started moving off 0x004F,
+ * as an ISO 8601 date-time with a zone or unix milliseconds (not seconds);
+ * unset means not started, and v1 grants are honoured until further notice.
+ * `E2EE_SUITE_TRANSITION_DAYS`: whole days (1-365, default 14) after the
+ * start during which v1 grants stay honoured. Anything else throws
+ * E2eeSuiteTransitionConfigError: the API checks it at start-up
+ * (`checkE2eeSuiteTransition`) and refuses to start.
  */
 export function readE2eeSuiteTransition(
   env: Env = process.env
 ): E2eeSuiteTransition {
   return {
-    startMs: parseInstant(env.E2EE_SUITE_TRANSITION_START),
-    days: parseDays(env.E2EE_SUITE_TRANSITION_DAYS)
+    startMs: parseStart(env[START_ENV]),
+    days: parseDays(env[DAYS_ENV])
   };
+}
+
+/** When v1 grants stop being honoured (unix ms), or null while not started. */
+export function e2eeV1WindowEndMs(
+  transition: E2eeSuiteTransition
+): number | null {
+  return transition.startMs === null
+    ? null
+    : transition.startMs + transition.days * DAY_MS;
+}
+
+/**
+ * Reads and checks the transition settings once at start-up and describes
+ * the effective window for the start-up log. Throws on a malformed value.
+ */
+export function checkE2eeSuiteTransition(env: Env = process.env): string {
+  const transition = readE2eeSuiteTransition(env);
+  const end = e2eeV1WindowEndMs(transition);
+  return transition.startMs === null || end === null
+    ? '[E2EE SUITE WINDOW NOT STARTED] [V1 GRANTS HONOURED]'
+    : `[E2EE SUITE WINDOW START ${new Date(transition.startMs).toISOString()}] ` +
+        `[END ${new Date(end).toISOString()}] [DAYS ${transition.days}]`;
 }
 
 /** Whether v1 grants (0x004F only) are still honoured at `nowMs`. */
@@ -116,10 +183,8 @@ export function isE2eeV1GrantAccepted(
   nowMs: number,
   transition: E2eeSuiteTransition = readE2eeSuiteTransition()
 ): boolean {
-  return (
-    transition.startMs === null ||
-    nowMs < transition.startMs + transition.days * DAY_MS
-  );
+  const end = e2eeV1WindowEndMs(transition);
+  return end === null || nowMs < end;
 }
 
 /** What a device row (or a grant) says about its suites. */

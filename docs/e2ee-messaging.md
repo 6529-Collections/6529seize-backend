@@ -48,12 +48,19 @@ server accepts them, and then need no new signature. `E2EE_SUITE_ALIASES` (a
 grant naming `from` also admits `to`) is empty until the owner decides whether
 a grant for a provisional code point covers the RFC's final one.
 
-Transition window: `E2EE_SUITE_TRANSITION_START` (ISO date-time or unix ms;
-unset means v1 grants are honoured until further notice) and
-`E2EE_SUITE_TRANSITION_DAYS` (default 14). When it ends, v1 registrations are
-refused (`E2EE_BAD_GRANT` `grant_version`), v1 devices drop out of listings
-and claims, and claims for `0x004F` are refused. Cleaning up the old rows is a
-separate step that keeps groups and blobs.
+Transition window: `E2EE_SUITE_TRANSITION_START` (an ISO 8601 date-time with
+a zone, or unix milliseconds from 2026 on; never seconds) and
+`E2EE_SUITE_TRANSITION_DAYS` (1-365, default 14). Unset means v1 grants are
+honoured until further notice. Any other value stops the API at start-up
+(`E2eeSuiteTransitionConfigError`), and each start logs the effective window
+(`[E2EE SUITE WINDOW START …] [END …]` or `[E2EE SUITE WINDOW NOT STARTED]`).
+When the window ends, v1 registrations are refused (`E2EE_BAD_GRANT`
+`grant_version`) and v1 devices drop out of listings, eligibility and
+claims. A v1 claimer device can then no longer claim (its set is empty, so
+its default `0x004F` is refused); v2 devices that list `0x004F` still claim
+for it while the server accepts it. A v1 device can no longer create a group
+(`E2EE_BAD_GRANT` `grant_version`) or be added to a roster (400). Cleaning up
+the old rows is a separate step that keeps groups and blobs.
 
 Everywhere a device is offered or used the policy applies:
 
@@ -77,10 +84,11 @@ Everywhere a device is offered or used the policy applies:
 as their one suite). `GET /e2ee/me` lists the caller's devices of every
 suite. Device keys stay Ed25519, so their size is unchanged.
 
-Attachments: a chunk read is allowed when the device, or any device of the
-same profile, was ever in the group's roster. A re-enrolled device keeps the
-history (and attachment keys) its earlier device decrypted; only ciphertext
-is served.
+Attachments: a chunk read is allowed when the device was ever in the group's
+roster, or when a device of the same profile was in it at the time the blob
+was created. A re-enrolled device keeps the history (and attachment keys) its
+earlier device decrypted, and reads exactly those attachments; only
+ciphertext is served.
 
 Metrics (EMF, namespace `6529/E2EE`): `DeviceRegistrations` by `GrantVersion`
 and `Via`, and, at most every 10 minutes per process on the write path,

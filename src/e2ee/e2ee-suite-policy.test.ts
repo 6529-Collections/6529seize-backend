@@ -6,6 +6,8 @@ import {
   e2eeDeviceSuites,
   encodeE2eeSuiteSet,
   isCanonicalE2eeSuiteSet,
+  checkE2eeSuiteTransition,
+  E2eeSuiteTransitionConfigError,
   isE2eeV1GrantAccepted,
   readE2eeSuiteTransition
 } from '@/e2ee/e2ee-suite-policy';
@@ -81,15 +83,75 @@ describe('E2EE suite policy (D172)', () => {
       ).toEqual({ startMs: NOW, days: 14 });
       expect(
         readE2eeSuiteTransition({
-          E2EE_SUITE_TRANSITION_START: 'not a date',
-          E2EE_SUITE_TRANSITION_DAYS: '-3'
+          E2EE_SUITE_TRANSITION_START: ' ',
+          E2EE_SUITE_TRANSITION_DAYS: ''
         })
       ).toEqual({ startMs: null, days: 14 });
+      expect(
+        readE2eeSuiteTransition({
+          E2EE_SUITE_TRANSITION_START: '2026-11-10T02:00:00+02:00'
+        }).startMs
+      ).toBe(NOW);
 
       const started = { startMs: NOW, days: 14 };
       expect(isE2eeV1GrantAccepted(NOW, OPEN)).toBe(true);
       expect(isE2eeV1GrantAccepted(NOW + 14 * DAY - 1, started)).toBe(true);
       expect(isE2eeV1GrantAccepted(NOW + 14 * DAY, started)).toBe(false);
+    });
+  });
+
+  describe('transition settings are checked, not guessed', () => {
+    const start = (value: string) =>
+      readE2eeSuiteTransition({ E2EE_SUITE_TRANSITION_START: value });
+    const days = (value: string) =>
+      readE2eeSuiteTransition({ E2EE_SUITE_TRANSITION_DAYS: value });
+
+    it('refuses unix seconds, which would close the window at once', () => {
+      expect(() => start(String(NOW / 1000))).toThrow(
+        E2eeSuiteTransitionConfigError
+      );
+      expect(start(String(NOW)).startMs).toBe(NOW);
+    });
+
+    it.each([
+      ['garbage', 'not a date'],
+      ['a date without a time', '2026-11-10'],
+      ['a time without a zone', '2026-11-10T00:00:00'],
+      ['an impossible date', '2026-13-45T00:00:00Z'],
+      ['a negative number', '-1'],
+      ['a start before 2026', String(Date.UTC(2025, 11, 31))],
+      ['a start after 2099', String(Date.UTC(2100, 0, 1))]
+    ])('refuses %s as the start', (_label, value) => {
+      expect(() => start(value)).toThrow(
+        /E2EE_SUITE_TRANSITION_START=.* is not an ISO 8601 date-time/
+      );
+    });
+
+    it.each(['0', '-3', '366', '1.5', 'two'])(
+      'refuses %s as the number of days',
+      (value) => {
+        expect(() => days(value)).toThrow(
+          /E2EE_SUITE_TRANSITION_DAYS=.* is not a whole number of days/
+        );
+      }
+    );
+
+    it('describes the effective window for the start-up log', () => {
+      expect(checkE2eeSuiteTransition({})).toBe(
+        '[E2EE SUITE WINDOW NOT STARTED] [V1 GRANTS HONOURED]'
+      );
+      expect(
+        checkE2eeSuiteTransition({
+          E2EE_SUITE_TRANSITION_START: '2026-11-10T00:00:00Z',
+          E2EE_SUITE_TRANSITION_DAYS: '7'
+        })
+      ).toBe(
+        '[E2EE SUITE WINDOW START 2026-11-10T00:00:00.000Z] ' +
+          '[END 2026-11-17T00:00:00.000Z] [DAYS 7]'
+      );
+      expect(() =>
+        checkE2eeSuiteTransition({ E2EE_SUITE_TRANSITION_START: '1763000000' })
+      ).toThrow(E2eeSuiteTransitionConfigError);
     });
   });
 

@@ -239,7 +239,8 @@ export class E2eeBlobsService {
       !(await this.mayReadGroupBlobs(
         blob.group_handle,
         deviceKey,
-        callerProfileId
+        callerProfileId,
+        Number(blob.created_at)
       ))
     ) {
       throw e2eeErrors.notMember();
@@ -276,14 +277,20 @@ export class E2eeBlobsService {
    * the history (and attachment keys) its earlier device decrypted. Only
    * ciphertext is served; the key is in that history.
    */
+  /**
+   * The device was ever a member, or (D172) a device of the same profile was
+   * a member when the blob was made: a new device reads the attachments of
+   * conversations its earlier device belonged to, and no others.
+   */
   private async mayReadGroupBlobs(
     group: string,
     deviceKey: string,
-    profileId: string
+    profileId: string,
+    blobCreatedAtMs: number
   ): Promise<boolean> {
     return (
       (await this.db.hasRosterHistory(group, deviceKey)) ||
-      (await this.db.hasProfileRosterHistory(group, profileId))
+      (await this.db.hasProfileRosterHistory(group, profileId, blobCreatedAtMs))
     );
   }
 

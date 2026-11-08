@@ -37,6 +37,11 @@ import {
 } from '@/sql-executor';
 
 export type E2eeDeviceRow = E2eeDeviceEntity;
+/** How many active devices of a profile share one suite description. */
+export type E2eeDeviceSuiteCountRow = Pick<
+  E2eeDeviceEntity,
+  'profile_id' | 'grant_version' | 'ciphersuite' | 'ciphersuites'
+> & { readonly cnt: number };
 export type E2eeGroupRow = E2eeGroupEntity;
 export type E2eeRosterRow = E2eeGroupRosterEntity;
 export type E2eeBlobRow = E2eeBlobEntity;
@@ -728,22 +733,28 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getActiveDeviceCounts(
+  /**
+   * Active devices per profile, grouped by what decides their suites (D172):
+   * a narrow count, not the rows. The caller applies the suite policy.
+   */
+  async getActiveDeviceSuiteCounts(
     profileIds: readonly string[],
     nowSeconds: number,
     connection?: Conn
-  ): Promise<Map<string, number>> {
+  ): Promise<E2eeDeviceSuiteCountRow[]> {
     const targets = inList(profileIds);
-    if (!targets.length) return new Map();
-    const rows = await this.many<{ profile_id: string; cnt: number }>(
-      `select profile_id, count(*) as cnt from ${E2EE_DEVICES_TABLE}
+    if (!targets.length) return [];
+    const rows = await this.many<E2eeDeviceSuiteCountRow>(
+      `select profile_id, grant_version, ciphersuite, ciphersuites,
+              count(*) as cnt
+       from ${E2EE_DEVICES_TABLE}
        where profile_id in (:targets) and revoked_at is null
          and expires_at_seconds > :nowSeconds
-       group by profile_id`,
+       group by profile_id, grant_version, ciphersuite, ciphersuites`,
       { targets, nowSeconds },
       connection
     );
-    return new Map(rows.map((row) => [row.profile_id, Number(row.cnt)]));
+    return rows.map((row) => ({ ...row, cnt: Number(row.cnt) }));
   }
 
   // ----------------------------------------------------------------- groups
@@ -978,19 +989,24 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Whether any device of the profile was ever in the group's roster. After
-   * a ciphersuite move (D172) a profile's new device keeps the history its
-   * earlier device decrypted, so it may fetch that group's attachments.
+   * Whether a device of the profile was in the group's roster at `atMs`.
+   * After a ciphersuite move (D172) a profile's new device keeps the history
+   * its earlier device decrypted, so it may fetch that group's attachments,
+   * but only those made while the profile was a member.
    */
   async hasProfileRosterHistory(
     group: string,
     profileId: string,
+    atMs: number,
     connection?: Conn
   ): Promise<boolean> {
     const row = await this.one<{ id: number }>(
       `select id from ${E2EE_GROUP_ROSTER_TABLE}
-       where group_handle = :group and profile_id = :profileId limit 1`,
-      { group, profileId },
+       where group_handle = :group and profile_id = :profileId
+         and added_at <= :atMs
+         and (removed_at is null or removed_at >= :atMs)
+       limit 1`,
+      { group, profileId, atMs },
       connection
     );
     return row !== null;

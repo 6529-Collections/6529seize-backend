@@ -16,6 +16,7 @@ import { E2eeTrustAndSafetyService } from '@/api/e2ee/e2ee-trust-and-safety.serv
 import {
   CONTENT_MODERATION_PROFILE_BLOCKS_TABLE,
   DEVICE_GRANTS_TABLE,
+  E2EE_GROUP_ROSTER_TABLE,
   E2EE_LOG_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
@@ -1499,6 +1500,58 @@ describeWithSeed('E2EE delivery service', [], () => {
           )
         ).toHaveLength(1);
       });
+
+      it('refuses v1 devices as group creators and as roster additions', async () => {
+        const alice = aProfile();
+        const bob = aProfile();
+        const aliceOld = await registerDevice(alice);
+        const aliceNew = await registerDevice(
+          alice,
+          randomE2eeKey(),
+          E2EE_CIPHERSUITE_AES256
+        );
+        const bobFirst = await registerDevice(bob);
+        const bobSecond = await registerDevice(bob);
+        const group = await createGroup(alice, aliceNew);
+        // While the window is open, a v1 device can still be added.
+        await commit(alice, group, aliceNew, {
+          rosterAdd: [bobFirst.publicKey],
+          welcomeTargets: [bobFirst.publicKey]
+        });
+        process.env.E2EE_SUITE_TRANSITION_START = String(now - 15 * DAY);
+
+        await expectE2eeError(createGroup(alice, aliceOld), 'E2EE_BAD_GRANT');
+        const refused = await expectE2eeError(
+          commit(alice, group, aliceNew, {
+            rosterAdd: [bobSecond.publicKey],
+            welcomeTargets: [bobSecond.publicKey]
+          }),
+          'E2EE_BAD_REQUEST'
+        );
+        expect(refused.message).toContain('has no accepted ciphersuite');
+        // v2 devices still create groups.
+        await createGroup(alice, aliceNew);
+      });
+    });
+
+    it('lets a profile read blobs only from while it was a member (D172)', async () => {
+      const g = randomE2eeGroupHandle();
+      const member = aProfile();
+      await sqlExecutor.execute(
+        `insert into ${E2EE_GROUP_ROSTER_TABLE}
+           (group_handle, device_key, profile_id, joined_epoch, removed_epoch,
+            added_at, removed_at, removal_kind)
+         values (:g, :key, :profileId, 1, 3, 1000, 3000, 'remove')`,
+        { g, key: randomE2eeKey().publicKey, profileId: member.id }
+      );
+      const at = (ms: number) => db.hasProfileRosterHistory(g, member.id, ms);
+      expect(await at(999)).toBe(false);
+      expect(await at(1000)).toBe(true);
+      expect(await at(3000)).toBe(true);
+      expect(await at(3001)).toBe(false);
+      expect(await db.hasProfileRosterHistory(g, aProfile().id, 2000)).toBe(
+        false
+      );
     });
   });
 

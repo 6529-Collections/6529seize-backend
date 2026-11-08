@@ -166,7 +166,13 @@ describe('E2eeBlobsService with S3 storage', () => {
     db.hasProfileRosterHistory.mockResolvedValue(true);
     const chunk = await service.getChunk(PROFILE, blob.blob_id, 0, DEVICE);
     expect(Buffer.from(chunk.data, 'base64')).toEqual(parts[0]);
-    expect(db.hasProfileRosterHistory).toHaveBeenCalledWith(GROUP, PROFILE);
+    // Asked for the blob's creation time: members of that moment only.
+    const created = (await db.getBlob(blob.blob_id))?.created_at;
+    expect(db.hasProfileRosterHistory).toHaveBeenCalledWith(
+      GROUP,
+      PROFILE,
+      Number(created)
+    );
     // Neither the device nor any device of the profile: refused.
     db.hasProfileRosterHistory.mockResolvedValue(false);
     await expectCode(

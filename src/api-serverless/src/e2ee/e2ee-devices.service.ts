@@ -790,20 +790,20 @@ export class E2eeDevicesService {
     bypass: Set<string>,
     ciphersuite: number
   ) {
-    const [admissions, activeDevices] = await Promise.all([
+    const [admissions, suiteCounts] = await Promise.all([
       this.deps.admission.evaluate(
         callerProfileId,
         profileIds.filter((profileId) => !bypass.has(profileId))
       ),
-      this.db.getActiveDevicesOfProfiles(profileIds, nowSeconds(this.deps))
+      this.db.getActiveDeviceSuiteCounts(profileIds, nowSeconds(this.deps))
     ]);
     const now = this.deps.now();
     const deviceCounts = new Map<string, number>();
-    for (const device of activeDevices) {
-      if (canE2eeDeviceJoin(device, ciphersuite, now)) {
+    for (const row of suiteCounts) {
+      if (canE2eeDeviceJoin(row, ciphersuite, now)) {
         deviceCounts.set(
-          device.profile_id,
-          (deviceCounts.get(device.profile_id) ?? 0) + 1
+          row.profile_id,
+          (deviceCounts.get(row.profile_id) ?? 0) + row.cnt
         );
       }
     }
