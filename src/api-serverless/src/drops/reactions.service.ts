@@ -1,3 +1,5 @@
+import { runWriteTransaction } from '@/api/write-transaction-budget';
+import { inSequence } from '@/db/in-sequence';
 import { RequestContext } from '../../../request.context';
 import {
   BadRequestException,
@@ -269,8 +271,8 @@ export class ReactionsService {
       );
     }
 
-    const mutationResult =
-      await this.reactionsDb.executeNativeQueriesInTransaction(
+    const mutationResult = await runWriteTransaction((options) =>
+      this.reactionsDb.executeNativeQueriesInTransaction(
         async (connection) =>
           await this.handleReactionMutation(
             dropId,
@@ -312,8 +314,10 @@ export class ReactionsService {
               ...ctx,
               connection
             }
-          )
-      );
+          ),
+        options
+      )
+    );
 
     const postCommitSideEffects: PostCommitSideEffect[] = [
       {
@@ -389,21 +393,23 @@ export class ReactionsService {
           return false;
         }
 
-        await Promise.all([
-          this.metricsRecorder.recordActiveIdentity(
-            { identityId: profileId },
-            ctx
-          ),
-          profileActivityLogsDb.insert(
-            this.buildReactionActivityLog({
-              dropEntity,
-              profileId,
-              reaction
-            }),
-            connection,
-            ctx.timer
-          ),
-          (() =>
+        await inSequence([
+          () =>
+            this.metricsRecorder.recordActiveIdentity(
+              { identityId: profileId },
+              ctx
+            ),
+          () =>
+            profileActivityLogsDb.insert(
+              this.buildReactionActivityLog({
+                dropEntity,
+                profileId,
+                reaction
+              }),
+              connection,
+              ctx.timer
+            ),
+          () =>
             dropEntity.author_id === profileId
               ? Promise.resolve()
               : this.userNotifier.notifyOfDropReaction(
@@ -416,7 +422,7 @@ export class ReactionsService {
                   },
                   wave.visibility_group_id,
                   connection
-                ))()
+                )
         ]);
         return true;
       },
@@ -437,8 +443,8 @@ export class ReactionsService {
       );
     }
 
-    const mutationResult =
-      await this.reactionsDb.executeNativeQueriesInTransaction(
+    const mutationResult = await runWriteTransaction((options) =>
+      this.reactionsDb.executeNativeQueriesInTransaction(
         async (connection) =>
           await this.handleReactionMutation(
             dropId,
@@ -479,8 +485,10 @@ export class ReactionsService {
               ...ctx,
               connection
             }
-          )
-      );
+          ),
+        options
+      )
+    );
 
     return await this.completeReaction(
       dropId,

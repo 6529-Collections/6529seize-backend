@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import { competitionAnonymityService } from '@/competitions/competition-anonymity';
 import {
   ConnectionWrapper,
@@ -596,13 +597,14 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
 
       await this.db.execute(sql, params, { wrappedConnection: ctx.connection });
     } else {
-      await Promise.all(
-        repBulkUpdates.map((update) =>
-          this.db.execute(
-            `update ${IDENTITIES_TABLE} set rep = rep + :newRep, level_raw = level_raw + :newRep where profile_id = :profileId`,
-            update,
-            { wrappedConnection: ctx.connection }
-          )
+      await inSequence(
+        repBulkUpdates.map(
+          (update) => () =>
+            this.db.execute(
+              `update ${IDENTITIES_TABLE} set rep = rep + :newRep, level_raw = level_raw + :newRep where profile_id = :profileId`,
+              update,
+              { wrappedConnection: ctx.connection }
+            )
         )
       );
     }
@@ -1229,17 +1231,19 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     },
     connection: ConnectionWrapper<any>
   ) {
-    await Promise.all([
-      this.db.execute(
-        `update ${PROFILES_TABLE} set primary_wallet = :primaryAddress where external_id = :profileId`,
-        param,
-        { wrappedConnection: connection }
-      ),
-      this.db.execute(
-        `update ${IDENTITIES_TABLE} set primary_address = :primaryAddress where profile_id = :profileId`,
-        param,
-        { wrappedConnection: connection }
-      )
+    await inSequence([
+      () =>
+        this.db.execute(
+          `update ${PROFILES_TABLE} set primary_wallet = :primaryAddress where external_id = :profileId`,
+          param,
+          { wrappedConnection: connection }
+        ),
+      () =>
+        this.db.execute(
+          `update ${IDENTITIES_TABLE} set primary_address = :primaryAddress where profile_id = :profileId`,
+          param,
+          { wrappedConnection: connection }
+        )
     ]);
   }
 

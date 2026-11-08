@@ -57,6 +57,9 @@ describe('hot GET query sources', () => {
     const execute = jest.fn(
       async (sql: string, _params: unknown, opts?: DbQueryOptions) => {
         await Promise.resolve();
+        // The shared viewer-group table's one-off collation check is not a
+        // hot query source; with no rows it keeps the inlined group list.
+        if (sql.includes('information_schema.columns')) return [];
         queries.push(legacyCompetitionGetSql(sql));
         options.push(opts);
         return [];
