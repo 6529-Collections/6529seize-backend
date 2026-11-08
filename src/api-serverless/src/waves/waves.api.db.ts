@@ -107,6 +107,11 @@ import {
   legacyGetView,
   waveHubSelectColumns
 } from '@/competitions/legacy-competition-get-facade';
+import {
+  ViewerGroupsCte,
+  viewerGroupsCte,
+  viewerGroupsCteSupported
+} from '@/waves/viewer-groups-cte';
 
 const logger = Logger.get('WAVES_API_DB');
 
@@ -291,6 +296,15 @@ function profileWaveActivityTimestampSql(): string {
   ), 0) else coalesce(wdm.latest_drop_timestamp, 0) end)`;
 }
 
+/**
+ * A community_groups profile_group_id (utf8mb4) compared with a
+ * profile_groups id (utf8mb3_bin until #2355). See
+ * getBlockedOneToOneDirectMessageExpression.
+ */
+function profileGroupsIdComparand(utf8mb4Expression: string): string {
+  return `convert(${utf8mb4Expression} using utf8mb3)`;
+}
+
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   private getWaveScoreSortColumn(sort: ApiWaveScoreSort): string {
     switch (sort) {
@@ -365,13 +379,33 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   private getWaveVisibilityFilter(
     alias: string,
     groupIds: readonly string[],
-    groupIdsParamName: string
+    groupIdsParamName: string,
+    // A subquery over the same group ids, used instead of the inlined list.
+    groupSetSql?: string
   ): string {
     return `(${alias}.visibility_group_id is null ${
       groupIds.length
-        ? `or ${alias}.visibility_group_id in (:${groupIdsParamName})`
+        ? `or ${alias}.visibility_group_id in (${groupSetSql ?? `:${groupIdsParamName}`})`
         : ``
     })`;
+  }
+
+  /**
+   * The viewer's groups as one shared table (see viewerGroupsCte), so a
+   * statement inlines them once instead of once per visibility check.
+   * Undefined without groups, or while the compared columns' collation
+   * differs.
+   */
+  private async sharedViewerGroups(
+    name: string,
+    groupIds: readonly string[]
+  ): Promise<ViewerGroupsCte | undefined> {
+    if (!groupIds.length) return undefined;
+    const supported = await viewerGroupsCteSupported(this.db, [
+      WAVES_TABLE,
+      legacyGetView(WAVES_TABLE)
+    ]);
+    return supported ? viewerGroupsCte(name, groupIds) : undefined;
   }
 
   private getWaveAndParentVisibilityFilter(
@@ -508,6 +542,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     waveAlias: string,
     readerIdParam: string
   ): string {
+    // STOPGAP until profile_groups moves to the schema collation (#2355):
+    // its ids are utf8mb3_bin and community_groups' are utf8mb4, so a plain
+    // column comparison converts the profile_groups side and scans the whole
+    // table per DM wave (5 s for a reader with blocks and 50 DMs). Converting
+    // the community_groups side keeps the profile_groups index lookup. The ids
+    // are ASCII, so the conversion is lossless. No explicit COLLATE: this form
+    // also uses the index after the migration (utf8mb3 is then converted up),
+    // so it is correct and fast in both states; remove it after #2355 runs.
+    const dmProfileGroupId = profileGroupsIdComparand(
+      'dm_group.profile_group_id'
+    );
     return `(
       ${waveAlias}.is_direct_message = true
       and ${waveAlias}.chat_group_id is not null
@@ -515,7 +560,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         select 1
         from ${USER_GROUPS_TABLE} dm_group
         join ${PROFILE_GROUPS_TABLE} blocked_member
-          on blocked_member.profile_group_id = dm_group.profile_group_id
+          on blocked_member.profile_group_id = ${dmProfileGroupId}
         join ${CONTENT_MODERATION_PROFILE_BLOCKS_TABLE} profile_block
           on profile_block.blocker_profile_id = :${readerIdParam}
          and profile_block.blocked_profile_id = blocked_member.profile_id
@@ -523,13 +568,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           and exists (
             select 1
             from ${PROFILE_GROUPS_TABLE} reader_member
-            where reader_member.profile_group_id = dm_group.profile_group_id
+            where reader_member.profile_group_id = ${dmProfileGroupId}
               and reader_member.profile_id = :${readerIdParam}
           )
           and 2 = (
             select count(distinct dm_member.profile_id)
             from ${PROFILE_GROUPS_TABLE} dm_member
-            where dm_member.profile_group_id = dm_group.profile_group_id
+            where dm_member.profile_group_id = ${dmProfileGroupId}
           )
       )
     )`;
@@ -941,12 +986,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     groupIds,
     identityParamName,
     eligibleGroupsParamName,
-    parentWaveIdsParamName
+    parentWaveIdsParamName,
+    groupSetSql
   }: {
     groupIds: readonly string[];
     identityParamName: string;
     eligibleGroupsParamName: string;
     parentWaveIdsParamName?: string;
+    groupSetSql?: string;
   }): string {
     return `
       select
@@ -979,12 +1026,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       where ${this.getWaveVisibilityFilter(
         'child',
         groupIds,
-        eligibleGroupsParamName
+        eligibleGroupsParamName,
+        groupSetSql
       )}
         and ${this.getWaveVisibilityFilter(
           'parent',
           groupIds,
-          eligibleGroupsParamName
+          eligibleGroupsParamName,
+          groupSetSql
         )}
         ${
           parentWaveIdsParamName
@@ -1776,6 +1825,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->findFollowedSubwaveOverviewContextsByParentWaveId`;
     ctx.timer?.start(timerKey);
     try {
+      // Both statements check child and parent visibility: two copies of the
+      // group list each, or one shared table.
+      const groups = await this.sharedViewerGroups(
+        'fs_viewer_groups',
+        eligibleGroups
+      );
+      const withGroups = groups ? `with ${groups.cteSql}` : '';
       const followedSubwaveActivityByParentWaveId =
         await withFollowedSubwaveOverviewContextCache({
           identityId,
@@ -1787,11 +1843,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             const activityRows = await withoutLegacyCompetitionGetFacade(() =>
               this.db.execute<FollowedSubwaveActivityRow>(
                 `
+                  ${withGroups}
                   ${this.getFollowedSubwaveActivitySelect({
                     groupIds: eligibleGroups,
                     identityParamName: 'identityId',
                     eligibleGroupsParamName: 'eligibleGroups',
-                    parentWaveIdsParamName: 'parentWaveIds'
+                    parentWaveIdsParamName: 'parentWaveIds',
+                    groupSetSql: groups?.setSql
                   })}
                 `,
                 {
@@ -1799,7 +1857,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   parentWaveIds,
                   eligibleGroups,
                   wave_target_type: ActivityEventTargetType.WAVE,
-                  drop_created_action: ActivityEventAction.DROP_CREATED
+                  drop_created_action: ActivityEventAction.DROP_CREATED,
+                  ...groups?.params
                 },
                 { wrappedConnection: ctx.connection }
               )
@@ -1845,6 +1904,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           return withoutLegacyCompetitionGetFacade(() =>
             this.db.execute<FollowedSubwaveUnreadRow>(
               `
+              ${withGroups}
               select
                 child.parent_wave_id,
                 count(d.id) as followed_subwave_unread_drops,
@@ -1883,12 +1943,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 and ${this.getWaveVisibilityFilter(
                   'child',
                   eligibleGroups,
-                  'eligibleGroups'
+                  'eligibleGroups',
+                  groups?.setSql
                 )}
                 and ${this.getWaveVisibilityFilter(
                   'parent',
                   eligibleGroups,
-                  'eligibleGroups'
+                  'eligibleGroups',
+                  groups?.setSql
                 )}
               group by child.parent_wave_id
             `,
@@ -1897,7 +1959,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                 parentWaveIds,
                 eligibleGroups,
                 waveTargetType: ActivityEventTargetType.WAVE,
-                dropCreatedAction: ActivityEventAction.DROP_CREATED
+                dropCreatedAction: ActivityEventAction.DROP_CREATED,
+                ...groups?.params
               },
               { wrappedConnection: ctx.connection }
             )

@@ -49,7 +49,8 @@ jest.mock('./ws/ws', () => ({
     send: jest.fn(),
     register: jest.fn(),
     deregister: jest.fn(),
-    updateActiveWaveForConnection: jest.fn()
+    updateActiveWaveForConnection: jest.fn(),
+    updateOpenWaveForConnection: jest.fn()
   },
   authenticateWebSocketJwtOrGetByConnectionId: jest.fn(),
   authenticateNotificationIdentityTokens: jest.fn(),
@@ -121,6 +122,78 @@ describe('handler websocket auth', () => {
         purpose: null,
         ...(capability === 'resync_v1' ? { recoveryCapable: true } : {})
       });
+    }
+  );
+
+  it.each([
+    ['a uuid', '7d3a1b52-1c86-4f0e-9a51-3f6a1d0c2b9e', 200, true],
+    ['null (no wave open)', null, 200, true],
+    ['an invalid id', 'not-a-uuid', 400, false]
+  ])(
+    'records the app socket open wave from SET_OPEN_WAVE with %s',
+    async (_label, waveId, statusCode, recorded) => {
+      appWebSocketsMock.updateOpenWaveForConnection.mockClear();
+      const response = await handler(
+        {
+          httpMethod: 'POST',
+          requestContext: {
+            routeKey: '$default',
+            connectionId: 'connection-1',
+            requestId: 'request-1'
+          },
+          body: JSON.stringify({ type: 'SET_OPEN_WAVE', wave_id: waveId })
+        } as unknown as APIGatewayEvent,
+        { awsRequestId: 'lambda-request-1' } as Context,
+        jest.fn()
+      );
+      expect(response).toMatchObject({ statusCode });
+      if (recorded) {
+        expect(
+          appWebSocketsMock.updateOpenWaveForConnection
+        ).toHaveBeenCalledWith(
+          { connectionId: 'connection-1', openWaveId: waveId },
+          {}
+        );
+      } else {
+        expect(
+          appWebSocketsMock.updateOpenWaveForConnection
+        ).not.toHaveBeenCalled();
+      }
+      // It never changes what the socket is subscribed to.
+      expect(
+        appWebSocketsMock.updateActiveWaveForConnection
+      ).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['abc1234', { clientVersion: 'abc1234' }],
+    ['ABCDEF0123', { clientVersion: 'abcdef0123' }],
+    ['not-a-sha', {}],
+    [undefined, {}]
+  ])(
+    'registers the declared client_version %p only when it is a hex SHA',
+    async (clientVersion, expected) => {
+      await handler(
+        {
+          httpMethod: 'GET',
+          requestContext: {
+            routeKey: '$connect',
+            connectionId: 'connection-1'
+          },
+          queryStringParameters:
+            clientVersion === undefined ? {} : { client_version: clientVersion }
+        } as unknown as APIGatewayEvent,
+        {} as Context,
+        jest.fn()
+      );
+      const registered = appWebSocketsMock.register.mock.calls.at(-1)![0];
+      expect(registered.clientVersion).toEqual(
+        (expected as { clientVersion?: string }).clientVersion
+      );
+      if (!('clientVersion' in expected)) {
+        expect(registered).not.toHaveProperty('clientVersion');
+      }
     }
   );
 

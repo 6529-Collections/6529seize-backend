@@ -1,4 +1,5 @@
 import * as db from '../../db-api';
+import { clientVersionFromQuery } from '@/ws-client-versions/ws-client-versions';
 import { ids } from '@/ids';
 
 import * as fs from 'node:fs';
@@ -74,7 +75,8 @@ import {
   Strategy as JwtStrategy,
   VerifiedCallback
 } from 'passport-jwt';
-import { ApiCompliantException, apiCompliantErrorBody } from '@/exceptions';
+import { ApiCompliantException } from '@/exceptions';
+import { sendApiError } from '@/api/api-error-middleware';
 import * as sentryContext from '../../sentry.context';
 import { Time } from '@/time';
 import { DropType } from '@/entities/IDrop';
@@ -629,7 +631,7 @@ async function postSentryAlertDrop({
 function customErrorMiddleware() {
   return (err: Error, _: Request, res: Response, next: NextFunction) => {
     if (err instanceof ApiCompliantException) {
-      res.status(err.getStatusCode()).send(apiCompliantErrorBody(err));
+      sendApiError(err, res);
       next();
     } else {
       res.status(500).send({ error: 'Something went wrong...' });
@@ -1717,12 +1719,16 @@ function wireApp() {
         const { identityId, jwtExpiry } =
           await authenticateWebSocketJwtOrGetByConnectionId(event);
         let activeIdentityId = identityId;
+        const clientVersion = clientVersionFromQuery(
+          event.queryStringParameters
+        );
         await appWebSockets.register({
           identityId,
           connectionId,
           jwtExpiry,
           ws: socket,
           purpose: connectionPurposeFromQuery(event.queryStringParameters),
+          ...(clientVersion ? { clientVersion } : {}),
           ...(event.queryStringParameters?.recovery_capability ===
           WS_RECOVERY_CAPABILITY
             ? { recoveryCapable: true }
@@ -1812,6 +1818,19 @@ function wireApp() {
                 }
                 await appWebSockets.updateActiveWaveForConnection(
                   { connectionId, activeWaveId: waveId },
+                  {}
+                );
+                socket.send(JSON.stringify({ message: 'OK' }));
+                break;
+              }
+              case WsMessageType.SET_OPEN_WAVE: {
+                const waveId = message.wave_id?.toString() ?? null;
+                if (waveId && !ids.isValidUuid(waveId)) {
+                  socket.send(JSON.stringify({ error: 'Invalid wave id' }));
+                  return;
+                }
+                await appWebSockets.updateOpenWaveForConnection(
+                  { connectionId, openWaveId: waveId },
                   {}
                 );
                 socket.send(JSON.stringify({ message: 'OK' }));

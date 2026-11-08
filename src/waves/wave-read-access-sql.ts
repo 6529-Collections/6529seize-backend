@@ -5,10 +5,13 @@ import { WAVES_TABLE } from '@/constants';
 export function waveReadAccessSql(
   waveAlias: string,
   hasEligibleGroups: boolean,
-  groupIdsParam = 'eligibleGroupIds'
+  groupIdsParam = 'eligibleGroupIds',
+  // A subquery over the same group ids, used instead of the inlined list.
+  groupSetSql?: string
 ): string {
+  const groups = groupSetSql ?? `:${groupIdsParam}`;
   const visible = (alias: string) =>
-    `(${alias}.visibility_group_id is null${hasEligibleGroups ? ` or ${alias}.visibility_group_id in (:${groupIdsParam})` : ''})`;
+    `(${alias}.visibility_group_id is null${hasEligibleGroups ? ` or ${alias}.visibility_group_id in (${groups})` : ''})`;
   return `(${visible(waveAlias)} and (
     ${waveAlias}.parent_wave_id is null or exists (
       select 1 from ${WAVES_TABLE} access_parent
@@ -22,11 +25,13 @@ export function waveReadAccessSql(
 export function optionalWaveReadAccessSql(
   waveIdSql: string,
   hasEligibleGroups: boolean,
-  groupIdsParam = 'eligibleGroupIds'
+  groupIdsParam = 'eligibleGroupIds',
+  // A subquery over the same group ids, used instead of the inlined list.
+  groupSetSql?: string
 ): string {
   return `(${waveIdSql} is null or exists (
     select 1 from ${WAVES_TABLE} access_wave
     where access_wave.id = ${waveIdSql}
-      and ${waveReadAccessSql('access_wave', hasEligibleGroups, groupIdsParam)}
+      and ${waveReadAccessSql('access_wave', hasEligibleGroups, groupIdsParam, groupSetSql)}
   ))`;
 }

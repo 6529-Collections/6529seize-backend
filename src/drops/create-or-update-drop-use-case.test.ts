@@ -525,8 +525,7 @@ describe('CreateOrUpdateDropUseCase', () => {
         },
         deleteDropUseCase,
         metricsRecorder: {
-          recordDrop: jest.fn(),
-          recordActiveIdentity: jest.fn()
+          recordCreatedDropAfterCommit: jest.fn()
         },
         artCurationTokenWatchService: { registerDrop: jest.fn() }
       });
@@ -1236,8 +1235,7 @@ describe('CreateOrUpdateDropUseCase', () => {
       })
     };
     const metricsRecorder = {
-      recordDrop: jest.fn().mockResolvedValue(undefined),
-      recordActiveIdentity: jest.fn().mockResolvedValue(undefined)
+      recordCreatedDropAfterCommit: jest.fn().mockResolvedValue(undefined)
     };
     const artCurationTokenWatchService = {
       registerDrop: jest.fn().mockResolvedValue(undefined)
@@ -1263,6 +1261,16 @@ describe('CreateOrUpdateDropUseCase', () => {
     });
 
     expect(dropsDb.findDropById).not.toHaveBeenCalled();
+    // Rollups are handed to after-commit (run at once here: the mock
+    // connection has no tracked transaction).
+    expect(metricsRecorder.recordCreatedDropAfterCommit).toHaveBeenCalledWith(
+      {
+        identityId: model.author_id,
+        waveId: model.wave_id,
+        dropType: model.drop_type
+      },
+      { timer: undefined }
+    );
   });
 
   it('sanitizes structured drop fields without touching part content', () => {

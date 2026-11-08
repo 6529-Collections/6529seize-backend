@@ -56,12 +56,15 @@ export function distinctWaveUnreadReaderWaves(
 const logger = Logger.get('WAVE_UNREAD_CACHE');
 
 /**
- * Summary TTL when `WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS` is unset. Short on
- * purpose for the first rollout: a writer Lambda deployed before the
- * after-commit bumps existed can leave a summary stale for at most this long.
- * Raise it by env once every drop writer is current.
+ * Summary TTL when `WAVE_UNREAD_SUMMARY_CACHE_TTL_SECONDS` is unset.
+ * Freshness comes from the version bumps, not the TTL: every writer moves a
+ * version after commit, so a summary is replaced as soon as its inputs
+ * change. The TTL bounds only writers that cannot bump (rare drops from Lambda
+ * builds older than the bumps). It is 10 minutes because the sidebar lists
+ * poll every 60-120 s: at 60 s an entry outlived at most one poll, which held
+ * the hit rate near 44%. Set the env to 60 to go back without a deploy.
  */
-export const WAVE_UNREAD_SUMMARY_CACHE_TTL_DEFAULT_SECONDS = 60;
+export const WAVE_UNREAD_SUMMARY_CACHE_TTL_DEFAULT_SECONDS = 600;
 export const WAVE_UNREAD_SUMMARY_CACHE_TTL_MIN_SECONDS = 5;
 export const WAVE_UNREAD_SUMMARY_CACHE_TTL_MAX_SECONDS = 3600;
 const warnedTtlValues = new Set<string>();
@@ -325,6 +328,21 @@ export async function invalidateWaveUnreadCacheForWave(
   waveId: string
 ): Promise<void> {
   await bumpVersion(waveVersionKey(waveId), { waveId });
+}
+
+/**
+ * The same move as {@link invalidateWaveUnreadCacheForWave}, but it throws
+ * when Redis is not connected or refuses the write. For operator jobs that
+ * delete drops outside the api and must not leave cached unread counts
+ * behind, such as the legacy-DM purge CLI.
+ */
+export async function bumpWaveUnreadCacheVersionOrThrow(
+  waveId: string
+): Promise<void> {
+  if (!getRedisClient()) {
+    throw new Error('Redis is not connected; cannot move the unread version');
+  }
+  await bumpCacheVersion(waveVersionKey(waveId), WAVE_UNREAD_VERSION_TTL);
 }
 
 export async function invalidateWaveUnreadCacheForWaves(
