@@ -12,7 +12,10 @@ import {
   legacyGetView,
   withoutLegacyCompetitionGetFacade
 } from '@/competitions/legacy-competition-get-facade';
-import { legacyAuthorWaveParticipationSql } from '@/competitions/legacy-typed-drops';
+import {
+  legacyAuthorWaveParticipationSql,
+  legacyParticipantCandidatesCte
+} from '@/competitions/legacy-typed-drops';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { sqlInListBytes } from '@/db/sql-in-list-chunks';
@@ -2358,13 +2361,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return trace;
   }
 
-  private getLeaderboardDropPricesCteSql(): string {
+  /** `drops`: the source of the wave's drops, aliased `d`. */
+  private getLeaderboardDropPricesCteSql(
+    drops: string = `${DROPS_TABLE} d`
+  ): string {
     return `
       drop_prices as (
         select
           d.id as drop_id,
           max(nl.price) as drop_price
-        from ${DROPS_TABLE} d
+        from ${drops}
         left join ${DROP_NFT_LINKS_TABLE} dnl on dnl.drop_id = d.id
         left join ${NFT_LINKS_TABLE} nl
           on nl.canonical_id = dnl.canonical_id
@@ -2394,7 +2400,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return params.min_price != null || params.max_price != null;
   }
 
-  private getLeaderboardPriceSqlParts(hasPriceBounds: boolean): {
+  private getLeaderboardPriceSqlParts(
+    hasPriceBounds: boolean,
+    drops?: string
+  ): {
     withClause: string;
     cteClause: string;
     joinClause: string;
@@ -2409,8 +2418,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       };
     }
     return {
-      withClause: `with ${this.getLeaderboardDropPricesCteSql()}`,
-      cteClause: `, ${this.getLeaderboardDropPricesCteSql()}`,
+      withClause: `with ${this.getLeaderboardDropPricesCteSql(drops)}`,
+      cteClause: `, ${this.getLeaderboardDropPricesCteSql(drops)}`,
       joinClause: `left join drop_prices dp on dp.drop_id = d.id`,
       filterClause: `and ${this.getLeaderboardPriceFilterSql('dp.drop_price')}`
     };
@@ -2984,7 +2993,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->countLeaderboardDrops`);
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
-    const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
+    // The view's participatory drops of the wave, read by candidate id
+    // instead of walking every drop of the wave through the view.
+    const participantDrops = `participant_candidates pc
+        join ${legacyGetView(DROPS_TABLE)} d on d.id = pc.id`;
+    const priceSql = this.getLeaderboardPriceSqlParts(
+      hasPriceBounds,
+      participantDrops
+    );
     const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
       params,
       voterId
@@ -2998,8 +3014,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const additionalActionPromiseFilter =
       this.getLeaderboardAdditionalActionPromiseFilterSql(params);
     const countSql = `
-        ${priceSql.withClause}
-        select count(*) as cnt from ${DROPS_TABLE} d
+        with ${legacyParticipantCandidatesCte('= :wave_id')}${priceSql.cteClause}
+        select count(*) as cnt from ${participantDrops}
         ${unvotedByMeSql.joinClause}
         ${priceSql.joinClause}
         where d.wave_id = :wave_id and d.drop_type = :drop_type
@@ -3008,8 +3024,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           ${unvotedByMeSql.filterClause}
           ${priceSql.filterClause}
         `;
-    const count = await this.db
-      .oneOrNull<{ cnt: number }>(
+    // Outside the facade rewrite: see legacyParticipantCandidatesCte.
+    const count = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.oneOrNull<{ cnt: number }>(
         countSql,
         {
           wave_id: params.wave_id,
@@ -3021,7 +3038,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         },
         { wrappedConnection: ctx.connection }
       )
-      .then((it) => it?.cnt ?? 0);
+    ).then((it) => it?.cnt ?? 0);
     ctx.timer?.stop(`${this.constructor.name}->countLeaderboardDrops`);
     return count;
   }
