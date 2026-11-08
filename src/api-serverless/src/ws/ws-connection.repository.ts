@@ -39,7 +39,8 @@ import {
   FollowerAudience,
   followerAudienceConditionSql,
   followerAudienceParams,
-  isFollowerAudienceEnabled,
+  followerAudienceMode,
+  FollowerAudienceMode,
   ungroupedFollowerAudienceSql
 } from '@/api/ws/ws-audience';
 
@@ -561,12 +562,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     // Waves 1.3: the narrower audience, except for typing (its own rules)
     // and DMs (every member always gets the frame). The parent-group pass
     // below stays a pure visibility check.
+    const mode = followerAudienceMode();
     const audience =
-      isFollowerAudienceEnabled() &&
-      !options.includeTypingSockets &&
-      !wave.is_direct_message
+      mode && !options.includeTypingSockets && !wave.is_direct_message
         ? await this.findFollowerAudience(
-            { waveId, parentWaveId: wave.parent_wave_id },
+            { waveId, parentWaveId: wave.parent_wave_id, mode },
             ctx
           )
         : null;
@@ -591,7 +591,15 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
    * its parent, and its subwaves. One indexed read (waves.parent_wave_id).
    */
   private async findFollowerAudience(
-    { waveId, parentWaveId }: { waveId: string; parentWaveId: string | null },
+    {
+      waveId,
+      parentWaveId,
+      mode
+    }: {
+      waveId: string;
+      parentWaveId: string | null;
+      mode: FollowerAudienceMode;
+    },
     ctx: RequestContext
   ): Promise<FollowerAudience> {
     const subwaves = parentWaveId
@@ -607,7 +615,9 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         waveId,
         ...(parentWaveId ? [parentWaveId] : []),
         ...subwaves.map((it) => it.id)
-      ]
+      ],
+      mode,
+      anonymousIdentityId: ANON_USER_ID
     };
   }
 
@@ -677,7 +687,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           audience
             ? ungroupedFollowerAudienceSql({
                 table: WS_CONNECTIONS_TABLE,
-                purposeFilter: purposeFilterSql(options)
+                purposeFilter: purposeFilterSql(options),
+                mode: audience.mode
               })
             : `select
         ws.connection_id as connection_id,
@@ -713,6 +724,26 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       );
       return [];
     }
+    const result = await this.selectGroupMemberRecipients(
+      viewResult,
+      audience,
+      options
+    );
+    ctx?.timer?.stop(
+      `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
+    );
+    return result;
+  }
+
+  /**
+   * Online sockets of the group members that `viewResult` selects, narrowed
+   * to the follower audience when there is one.
+   */
+  private async selectGroupMemberRecipients(
+    viewResult: { sql: string; params: Record<string, any> },
+    audience: FollowerAudience | null,
+    options: WaveRecipientOptions
+  ): Promise<WaveRecipient[]> {
     const sql = `
       ${viewResult.sql} 
       select
@@ -724,13 +755,15 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       join ${UserGroupsService.GENERATED_VIEW} cm
       on ws.identity_id = cm.profile_id
       where ${purposeFilterSql(options)}${
-        audience ? `\n        and ${followerAudienceConditionSql('ws')}` : ''
+        audience
+          ? `\n        and ${followerAudienceConditionSql(audience.mode, 'ws')}`
+          : ''
       }
     `;
     const sqlParams = audience
       ? { ...viewResult.params, ...followerAudienceParams(audience) }
       : viewResult.params;
-    const result = await this.db
+    return this.db
       .execute<{
         connection_id: string;
         profile_id: string | null;
@@ -745,10 +778,6 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
           jwtExpiry: Number(it.jwt_expiry)
         }))
       );
-    ctx?.timer?.stop(
-      `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
-    );
-    return result;
   }
 
   /**
@@ -777,38 +806,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     if (viewResult === null) {
       return [];
     }
-    const sql = `
-      ${viewResult.sql} 
-      select
-        ws.connection_id as connection_id,
-        ws.identity_id as profile_id,
-        ws.wave_id as wave_id,
-        ws.jwt_expiry as jwt_expiry
-      from ${WS_CONNECTIONS_TABLE} ws
-      join ${UserGroupsService.GENERATED_VIEW} cm
-      on ws.identity_id = cm.profile_id
-      where ${purposeFilterSql(options)}${
-        audience ? `\n        and ${followerAudienceConditionSql('ws')}` : ''
-      }
-    `;
-    const sqlParams = audience
-      ? { ...viewResult.params, ...followerAudienceParams(audience) }
-      : viewResult.params;
-    const result = await this.db
-      .execute<{
-        connection_id: string;
-        profile_id: string | null;
-        wave_id: string | null;
-        jwt_expiry: number | string;
-      }>(sql, sqlParams)
-      .then((res) =>
-        res.map((it) => ({
-          connectionId: it.connection_id,
-          wave_id: it.wave_id,
-          profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id,
-          jwtExpiry: Number(it.jwt_expiry)
-        }))
-      );
+    const result = await this.selectGroupMemberRecipients(
+      viewResult,
+      audience,
+      options
+    );
     return result;
   }
 
