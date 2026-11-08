@@ -1,7 +1,9 @@
 import { UserGroupEntity } from '@/entities/IUserGroup';
+import { redisKeySlot } from '@/tests/redis-key-slot';
 import {
   CatalogueProbe,
   CatalogueStamp,
+  RedisWaveGroupsCatalogueStore,
   WaveGroupsCatalogue,
   WaveGroupsCatalogueStore
 } from './wave-groups-catalogue';
@@ -319,6 +321,41 @@ describe('WaveGroupsCatalogue', () => {
       expect(ids(first.groups)).toEqual(['g1', 'older-build']);
       await expect(a.get()).resolves.toMatchObject({ source: 'redis' });
     });
+  });
+
+  it('touches only keys in one cluster slot in every Redis call', async () => {
+    // Prod Redis is cluster mode: a script whose keys span slots fails with
+    // CROSSSLOT, which would fail eligibility closed.
+    const touched: string[][] = [];
+    const client = {
+      eval: jest.fn(async (_script: string, options: { keys: string[] }) => {
+        touched.push(options.keys);
+        return 1;
+      }),
+      get: jest.fn(async (key: string) => {
+        touched.push([key]);
+        return null;
+      }),
+      set: jest.fn(async (key: string) => {
+        touched.push([key]);
+        return 'OK';
+      })
+    };
+    const store = new RedisWaveGroupsCatalogueStore(client as never);
+    await store.probe();
+    await store.readBlob();
+    const token = (await store.acquireRebuildLease())!;
+    await store.publish({
+      payload: '[]',
+      stamp: { generation: '0', hash: 'h', bytes: 2, publishedAt: 1 },
+      ttlSec: TTL_SEC,
+      leaseToken: token
+    });
+    await store.releaseRebuildLease(token);
+
+    expect(touched.length).toBeGreaterThanOrEqual(5);
+    const slots = new Set(touched.flat().map(redisKeySlot));
+    expect(slots.size).toBe(1);
   });
 
   it('loads from the database each time without Redis', async () => {

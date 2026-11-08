@@ -1,6 +1,7 @@
 jest.mock('redis', () => ({ createClient: jest.fn() }));
 
 import { EventEmitter } from 'node:events';
+import { redisKeySlot } from '@/tests/redis-key-slot';
 import { createClient } from 'redis';
 import {
   clearWaveGroupsCache,
@@ -93,21 +94,18 @@ describe('wave groups cache eviction helpers', () => {
   });
 
   it('keeps every catalogue key in the blob key cluster slot', () => {
-    // Redis Cluster hashes only the {tag} when a key has one.
-    const slotInput = (key: string) => {
-      const open = key.indexOf('{');
-      const close = key.indexOf('}', open + 1);
-      return open >= 0 && close > open + 1 ? key.slice(open + 1, close) : key;
-    };
-    const keys = [
-      WAVE_GROUPS_CACHE_KEY,
+    // Prod Redis is cluster mode: one script over keys in different slots
+    // fails with CROSSSLOT. The new keys use the blob key's full name as hash
+    // tag, so they hash exactly like the untagged blob key itself.
+    expect(redisKeySlot('somekey')).toBe(11058);
+    expect(redisKeySlot('foo{hash_tag}')).toBe(2515);
+    const slot = redisKeySlot(WAVE_GROUPS_CACHE_KEY);
+    for (const key of [
       WAVE_GROUPS_CACHE_GENERATION_KEY,
       WAVE_GROUPS_CACHE_STAMP_KEY,
       WAVE_GROUPS_CACHE_REBUILD_LEASE_KEY
-    ];
-    expect(new Set(keys.map(slotInput))).toEqual(
-      new Set([WAVE_GROUPS_CACHE_KEY])
-    );
+    ])
+      expect(redisKeySlot(key)).toBe(slot);
   });
 
   describe('waitForRedisReady', () => {

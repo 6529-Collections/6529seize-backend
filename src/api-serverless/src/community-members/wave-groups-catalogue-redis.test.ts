@@ -1,4 +1,5 @@
 import { GenericContainer, StartedTestContainer } from 'testcontainers';
+import { createClient } from 'redis';
 import {
   evictWaveGroupsEntityCache,
   getRedisClient,
@@ -13,8 +14,10 @@ import {
   RedisWaveGroupsCatalogueStore
 } from './wave-groups-catalogue';
 
-// The scripts run against a real Redis: their key handling, Lua nil/false
-// replies and the generation check are what this file pins.
+// The scripts run against a real Redis in cluster mode, as prod's ElastiCache
+// Serverless is: a script whose keys span hash slots fails there with
+// CROSSSLOT. One node owns every slot, so a plain client needs no redirects.
+// Also pinned: Lua nil/false replies, TTLs and the generation check.
 let container: StartedTestContainer;
 let store: RedisWaveGroupsCatalogueStore;
 const env = {
@@ -25,8 +28,26 @@ const env = {
 
 beforeAll(async () => {
   container = await new GenericContainer('redis:7.4.5-alpine')
+    .withCommand([
+      'redis-server',
+      '--cluster-enabled',
+      'yes',
+      '--cluster-config-file',
+      'nodes.conf'
+    ])
     .withExposedPorts(6379)
     .start();
+  const admin = createClient({
+    socket: { host: container.getHost(), port: container.getMappedPort(6379) }
+  });
+  await admin.connect();
+  await admin.sendCommand(['CLUSTER', 'ADDSLOTSRANGE', '0', '16383']);
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const info = String(await admin.sendCommand(['CLUSTER', 'INFO']));
+    if (info.includes('cluster_state:ok')) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  await admin.quit();
   delete process.env.FORCE_AVOID_REDIS;
   process.env.REDIS_URL = container.getHost();
   process.env.REDIS_PORT = String(container.getMappedPort(6379));
@@ -60,6 +81,24 @@ function stamp(payload: string, generation: string): CatalogueStamp {
     publishedAt: 1_000
   };
 }
+
+it('runs in cluster mode: a script whose keys span slots fails with CROSSSLOT', async () => {
+  await expect(
+    getRedisClient()!.eval('return 1', { keys: ['a', 'b'] })
+  ).rejects.toThrow(/CROSSSLOT/);
+});
+
+it('places every catalogue key in one slot, as CLUSTER KEYSLOT reports it', async () => {
+  const slots = await Promise.all(
+    [
+      WAVE_GROUPS_CACHE_KEY,
+      WAVE_GROUPS_CACHE_STAMP_KEY,
+      WAVE_GROUPS_CACHE_GENERATION_KEY,
+      WAVE_GROUPS_CACHE_REBUILD_LEASE_KEY
+    ].map((key) => getRedisClient()!.sendCommand(['CLUSTER', 'KEYSLOT', key]))
+  );
+  expect(new Set(slots).size).toBe(1);
+});
 
 it('probes an empty cache as missing, unstamped, generation 0', async () => {
   await expect(store.probe()).resolves.toEqual({
