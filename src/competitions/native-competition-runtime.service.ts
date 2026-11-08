@@ -58,6 +58,23 @@ export type OffLockLeaderboardRefresh =
   | 'decisions_due'
   | 'inapplicable';
 
+/**
+ * Off-lock attempts before the locked run follows. A vote landing during the
+ * computation (seconds for the largest competitions) changes the inputs; a
+ * fresh attempt usually finds them quiet, while the locked run holds the row
+ * for the whole computation.
+ */
+export const OFF_LOCK_MAX_ATTEMPTS = 3;
+/** No further attempt once this competition's run has taken this long. */
+export const OFF_LOCK_RETRY_BUDGET_MS = 20_000;
+/** Nor when the invocation has less than this left. */
+export const OFF_LOCK_RETRY_MIN_REMAINING_MS = 60_000;
+
+/** A loop invocation's remaining time, when known (Lambda context). */
+export type OffLockRunOptions = {
+  readonly remainingMillis?: () => number;
+};
+
 /** Test seam: runs between the off-lock computation and the locked write. */
 export type OffLockRefreshHooks = {
   readonly afterCompute?: () => Promise<void>;
@@ -345,13 +362,14 @@ export class NativeCompetitionRuntimeService {
 
   public async refreshNativeLeaderboards(
     timer: Timer,
-    now = Date.now()
+    now = Date.now(),
+    options: OffLockRunOptions = {}
   ): Promise<void> {
     await this.forEachNativeCompetition(
       timer,
       'leaderboard',
       (competitionId, ctx) =>
-        this.refreshLeaderboardForSnapshot(competitionId, now, ctx)
+        this.refreshLeaderboardForSnapshot(competitionId, now, ctx, {}, options)
     );
   }
 
@@ -366,7 +384,8 @@ export class NativeCompetitionRuntimeService {
     competitionId: string,
     now: number,
     ctx: RequestContext = {},
-    hooks: OffLockRefreshHooks = {}
+    hooks: OffLockRefreshHooks = {},
+    options: OffLockRunOptions = {}
   ): Promise<void> {
     if (ctx.connection) return this.refreshCompetition(competitionId, now, ctx);
     const startedAt = Date.now();
@@ -408,7 +427,7 @@ export class NativeCompetitionRuntimeService {
       return;
     }
     let computeMs = 0;
-    const outcome = await this.refreshLeaderboardOffLock(
+    const { outcome, attempts } = await this.refreshLeaderboardOffLockRetrying(
       competitionId,
       now,
       ctx,
@@ -417,10 +436,11 @@ export class NativeCompetitionRuntimeService {
         operation: 'leaderboard',
         extraLockedMs: lockedMs,
         onMeasured: (measured) => {
-          computeMs = measured.computeMs;
+          computeMs += measured.computeMs;
           lockedMs += measured.writeLockedMs;
         }
-      }
+      },
+      { startedAt, ...options }
     );
     if (outcome === 'changed') {
       const fallbackStartedAt = Date.now();
@@ -433,8 +453,47 @@ export class NativeCompetitionRuntimeService {
       path: outcome === 'changed' ? 'off_lock_fallback' : 'off_lock',
       lockedMs,
       computeMs,
-      durationMs: Date.now() - startedAt
+      durationMs: Date.now() - startedAt,
+      attempts
     });
+  }
+
+  /**
+   * refreshLeaderboardOffLock, retried while its inputs keep changing during
+   * the computation (votes arriving), up to OFF_LOCK_MAX_ATTEMPTS attempts,
+   * OFF_LOCK_RETRY_BUDGET_MS of this run, and while the invocation has
+   * OFF_LOCK_RETRY_MIN_REMAINING_MS left. Only 'changed' retries: a due
+   * Approve decision goes to the locked run at once. A final 'changed' leaves
+   * the locked run to the caller, as before.
+   */
+  private async refreshLeaderboardOffLockRetrying(
+    competitionId: string,
+    now: number,
+    ctx: RequestContext,
+    hooks: OffLockRefreshHooks,
+    report: Parameters<
+      NativeCompetitionRuntimeService['refreshLeaderboardOffLock']
+    >[4] & { readonly operation: 'leaderboard' | 'decisions' },
+    { startedAt, remainingMillis }: OffLockRunOptions & { startedAt: number }
+  ): Promise<{ outcome: OffLockLeaderboardRefresh; attempts: number }> {
+    for (let attempts = 1; ; attempts++) {
+      const outcome = await this.refreshLeaderboardOffLock(
+        competitionId,
+        now,
+        ctx,
+        hooks,
+        // The locked transactions before the first attempt count once.
+        attempts === 1 ? report : { ...report, extraLockedMs: 0 }
+      );
+      if (
+        outcome !== 'changed' ||
+        attempts >= OFF_LOCK_MAX_ATTEMPTS ||
+        Date.now() - startedAt >= OFF_LOCK_RETRY_BUDGET_MS ||
+        (remainingMillis !== undefined &&
+          remainingMillis() < OFF_LOCK_RETRY_MIN_REMAINING_MS)
+      )
+        return { outcome, attempts };
+    }
   }
 
   /**
@@ -576,12 +635,18 @@ export class NativeCompetitionRuntimeService {
 
   public async processDueCompetitions({
     now = Date.now(),
-    timer
-  }: { now?: number; timer?: Timer } = {}): Promise<void> {
+    timer,
+    remainingMillis
+  }: {
+    now?: number;
+    timer?: Timer;
+    remainingMillis?: () => number;
+  } = {}): Promise<void> {
     const failed = await this.forEachNativeCompetition(
       timer,
       'decisions',
-      (competitionId, ctx) => this.processCompetition(competitionId, now, ctx)
+      (competitionId, ctx) =>
+        this.processCompetition(competitionId, now, ctx, { remainingMillis })
     );
     reportLoopHealth({
       operation: 'native_execution',
@@ -630,7 +695,8 @@ export class NativeCompetitionRuntimeService {
   public async processCompetition(
     competitionId: string,
     now: number,
-    ctx: RequestContext = {}
+    ctx: RequestContext = {},
+    options: OffLockRunOptions = {}
   ): Promise<void> {
     if (!ctx.connection) {
       const startedAt = Date.now();
@@ -662,20 +728,22 @@ export class NativeCompetitionRuntimeService {
       // due, the locked run follows once, as before this path existed, so a
       // busy competition's leaderboard is never older than one decision run.
       let computeMs = 0;
-      const outcome = await this.refreshLeaderboardOffLock(
-        competitionId,
-        now,
-        ctx,
-        {},
-        {
-          operation: 'decisions',
-          extraLockedMs: lockedMs,
-          onMeasured: (measured) => {
-            computeMs = measured.computeMs;
-            lockedMs += measured.writeLockedMs;
-          }
-        }
-      );
+      const { outcome, attempts } =
+        await this.refreshLeaderboardOffLockRetrying(
+          competitionId,
+          now,
+          ctx,
+          {},
+          {
+            operation: 'decisions',
+            extraLockedMs: lockedMs,
+            onMeasured: (measured) => {
+              computeMs += measured.computeMs;
+              lockedMs += measured.writeLockedMs;
+            }
+          },
+          { startedAt, ...options }
+        );
       const lockedRunFollows =
         outcome === 'changed' || outcome === 'decisions_due';
       if (lockedRunFollows) {
@@ -696,7 +764,8 @@ export class NativeCompetitionRuntimeService {
         path: lockedRunFollows ? 'off_lock_fallback' : 'off_lock',
         lockedMs,
         computeMs,
-        durationMs: Date.now() - startedAt
+        durationMs: Date.now() - startedAt,
+        attempts
       });
       return;
     }
