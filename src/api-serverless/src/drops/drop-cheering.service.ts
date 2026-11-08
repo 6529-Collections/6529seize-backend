@@ -32,6 +32,12 @@ import {
 import { findCommittedDropOnWriter } from '@/api/drops/drop-writer-read';
 import { Logger } from '@/logging';
 
+/**
+ * What a committed rating changed: the drop, and the reaction a chat drop's
+ * rating becomes (applied after commit). Null when nothing changed.
+ */
+type CheerOutcome = { dropId: string; reaction: string | null } | null;
+
 export class DropCheeringService {
   private readonly logger = Logger.get(this.constructor.name);
 
@@ -54,7 +60,11 @@ export class DropCheeringService {
     },
     ctx: RequestContext
   ) {
-    const drop = await runWriteTransaction((options) =>
+    // Nothing inside this transaction reads the drop back: the response read
+    // overlaps statements on the connection, which the write budget rejects
+    // (and would then rerun the whole vote unbudgeted). The drop is read on
+    // the writer after commit instead.
+    const outcome = await runWriteTransaction((options) =>
       this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
         const initial = await this.dropsDb.findDropById(
           param.drop_id,
@@ -65,7 +75,7 @@ export class DropCheeringService {
         return withLegacyPrimaryMutation(
           initial.wave_id,
           { ...ctx, connection },
-          async (originalPrimary) => {
+          async (originalPrimary): Promise<CheerOutcome> => {
             const dropId = param.drop_id;
             const memberships =
               await competitionEntryRepository.findDropEntries(dropId, {
@@ -92,16 +102,14 @@ export class DropCheeringService {
               throw new Error('Drop ownership changed; retry the request');
             const dropType = dropEntity.drop_type;
             switch (dropType) {
-              case DropType.CHAT: {
-                const reaction = param.newCheers > 0 ? ':+1:' : ':-1:';
-                await this.reactionsService.addReaction(
+              case DropType.CHAT:
+                // A rating on a chat drop is the rater's +1/-1 reaction. It
+                // runs after this transaction, through the reaction path's own
+                // budgeted transaction and its post-commit read and broadcast.
+                return {
                   dropId,
-                  param.rater_profile_id,
-                  reaction,
-                  ctxWithConnection
-                );
-                break;
-              }
+                  reaction: param.newCheers > 0 ? ':+1:' : ':-1:'
+                };
               case DropType.PARTICIPATORY: {
                 if (param.newCheers === 0) {
                   await this.waveQuickVoteDb.insertSkip(
@@ -152,39 +160,38 @@ export class DropCheeringService {
               default:
                 assertUnreachable(dropType);
             }
-            return await this.dropsService.findDropByIdOrThrow(
-              {
-                dropId,
-                skipEligibilityCheck: true
-              },
-              ctxWithConnection
-            );
+            return { dropId, reaction: null };
           }
         );
       }, readCommitted(options))
     );
-    if (!drop) {
+    if (!outcome) {
       return;
     }
-    // The rating frame's per-recipient credit_left is still read from the
-    // replica, so this wait stays until that lookup moves to the writer.
-    await giveReadReplicaTimeToCatchUp();
-    const dropId = drop.id;
+    const { dropId } = outcome;
     // The vote's transaction has ended; nothing after this may use its
     // connection.
     const postCommitCtx: RequestContext = { ...ctx, connection: undefined };
+    if (outcome.reaction)
+      await this.reactionsService.addReaction(
+        dropId,
+        param.rater_profile_id,
+        outcome.reaction,
+        postCommitCtx
+      );
+    // The rating frame's per-recipient credit_left is still read from the
+    // replica, so this wait stays until that lookup moves to the writer.
+    await giveReadReplicaTimeToCatchUp();
     try {
       await this.broadcastCoalescer.broadcast({
         kind: 'RATING',
         dropId,
-        send: async (phase) =>
+        send: async () =>
           this.wsListenersNotifier.notifyAboutDropRatingUpdate(
-            phase === 'trailing'
-              ? await findCommittedDropOnWriter(
-                  { dropId, db: this.dropsDb, dropsService: this.dropsService },
-                  postCommitCtx
-                )
-              : drop,
+            await findCommittedDropOnWriter(
+              { dropId, db: this.dropsDb, dropsService: this.dropsService },
+              postCommitCtx
+            ),
             postCommitCtx
           )
       });
