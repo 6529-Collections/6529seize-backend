@@ -2134,7 +2134,9 @@ export interface E2eeGetProfileDevicesPathParams {
   "profile_id": string;
 }
 
-export type E2eeGetProfileDevicesQuery = Record<string, never>;
+export interface E2eeGetProfileDevicesQuery {
+  "ciphersuite"?: number;
+}
 
 export type E2eeGetProfileDevicesResponse = ApiE2eeDevice[];
 

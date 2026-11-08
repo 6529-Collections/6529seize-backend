@@ -23,7 +23,8 @@ import {
   MlsDeviceGrantRequest,
   MlsDeviceGrantTerms,
   parseMlsDeviceGrantUrn,
-  renderCombinedGrantStatement
+  renderCombinedGrantStatement,
+  toMlsDeviceGrantTermsOf
 } from '@/api/device-signing/combined-device-grant';
 import {
   getStructuredWalletSignatureAudienceForHost,
@@ -293,11 +294,10 @@ function toMlsDeviceGrantTerms(
   request: MlsDeviceGrantRequest,
   grantTerms: DeviceGrantTerms
 ): MlsDeviceGrantTerms {
-  const terms: MlsDeviceGrantTerms = {
-    deviceKey: request.deviceKey,
-    ciphersuite: request.ciphersuite,
-    expiresAtSeconds: grantTerms.expiresAtSeconds
-  };
+  const terms: MlsDeviceGrantTerms = toMlsDeviceGrantTermsOf(
+    request,
+    grantTerms.expiresAtSeconds
+  );
   // Round trip through the parser so only messages it accepts are issued.
   const parsed = parseMlsDeviceGrantUrn(buildMlsDeviceGrantUrn(terms));
   if (!parsed || !isCombinedGrantPair(grantTerms, parsed)) {

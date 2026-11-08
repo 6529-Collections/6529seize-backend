@@ -1,3 +1,4 @@
+import { decodeE2eeSuiteSet } from '@/e2ee/e2ee-suite-policy';
 import { ApiE2eeBlob } from '@/api/generated/models/ApiE2eeBlob';
 import {
   ApiE2eeDevice,
@@ -64,11 +65,26 @@ export function toApiEligibilityStatus(
   return STATUSES[status];
 }
 
+/**
+ * The grant version and its signed suites: v2 rows carry their set; v1 rows
+ * (and rows written before versions) the one suite they signed.
+ */
+function toApiGrantSuites(row: E2eeDeviceRow): {
+  version: number;
+  ciphersuites: number[];
+} {
+  const v2 = Number(row.grant_version ?? 1) === 2;
+  return v2
+    ? { version: 2, ciphersuites: decodeE2eeSuiteSet(row.ciphersuites) ?? [] }
+    : { version: 1, ciphersuites: [Number(row.ciphersuite)] };
+}
+
 export function toApiE2eeDevice(row: E2eeDeviceRow): ApiE2eeDevice {
   return {
     device_key: row.device_key,
     profile_id: row.profile_id,
     grant: {
+      ...toApiGrantSuites(row),
       wallet: row.wallet,
       device_key: row.device_key,
       ciphersuite: Number(row.ciphersuite),

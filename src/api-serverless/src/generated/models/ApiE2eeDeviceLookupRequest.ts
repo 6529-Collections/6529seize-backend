@@ -15,6 +15,10 @@ import { HttpFile } from '../http/http';
 export class ApiE2eeDeviceLookupRequest {
     'profile_ids'?: Array<string>;
     'device_keys'?: Array<string>;
+    /**
+    * The MLS group ciphersuite the caller works in: 79 (0x004F) or 78 (0x004E). Omitting ciphersuite means 0x004F; clients that support 0x004E must pass it explicitly. Limits the devices found by profile_ids; device_keys are returned whatever their suite.
+    */
+    'ciphersuite'?: number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -31,6 +35,12 @@ export class ApiE2eeDeviceLookupRequest {
             "name": "device_keys",
             "baseName": "device_keys",
             "type": "Array<string>",
+            "format": ""
+        },
+        {
+            "name": "ciphersuite",
+            "baseName": "ciphersuite",
+            "type": "number",
             "format": ""
         }    ];
 
