@@ -453,12 +453,15 @@ describeWithSeed(
     );
 
     it('saves a legacy vote under the READ COMMITTED request budget', async () => {
-      // The budget rejects overlapping statements, so this also proves the
+      // The budget rejects overlapping statements, and runWriteTransaction
+      // would then rerun the work unbudgeted. One budgeted attempt proves the
       // legacy vote path issues its statements one at a time.
+      const attempts: unknown[] = [];
       await expect(
         withRequestDeadline(30_000, () =>
-          runWriteTransaction((options) =>
-            sqlExecutor.executeNativeQueriesInTransaction(
+          runWriteTransaction((options) => {
+            attempts.push(options);
+            return sqlExecutor.executeNativeQueriesInTransaction(
               (connection) =>
                 voteForDropUseCase.execute(
                   {
@@ -471,10 +474,14 @@ describeWithSeed(
                   { connection }
                 ),
               readCommitted(options)
-            )
-          )
+            );
+          })
         )
       ).resolves.toBe(true);
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({
+        executionBudget: { lockWaitSeconds: 10 }
+      });
       expect(await acceptedVote()).toEqual([{ value: 17, credit_spent: 17 }]);
     });
 

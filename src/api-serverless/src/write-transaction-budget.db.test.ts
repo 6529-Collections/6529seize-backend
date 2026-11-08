@@ -339,7 +339,11 @@ describeWithSeed(
                   sqlExecutor
                     .oneOrNull<{
                       name: string;
-                    }>('select name from waves where id = :id', { id: wave.id }, { wrappedConnection: connection })
+                    }>(
+                      'select name from waves where id = :id',
+                      { id: wave.id },
+                      { wrappedConnection: connection }
+                    )
                     .then((row) => row?.name);
                 const first = await read();
                 // Another session commits a change in between.
@@ -369,9 +373,13 @@ describeWithSeed(
           authenticationContext: AuthenticationContext.fromProfileId(reactor)
         })
       );
+      // One budgeted attempt: an overlapping statement would have been
+      // rejected and the delete rerun unbudgeted.
+      const attempts: unknown[] = [];
       await withRequestDeadline(30_000, () =>
-        runWriteTransaction((options) =>
-          sqlExecutor.executeNativeQueriesInTransaction(
+        runWriteTransaction((options) => {
+          attempts.push(options);
+          return sqlExecutor.executeNativeQueriesInTransaction(
             (connection) =>
               deleteDrop.execute(
                 {
@@ -383,9 +391,13 @@ describeWithSeed(
                 { timer: new Timer('test'), connection }
               ),
             readCommitted(options)
-          )
-        )
+          );
+        })
       );
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({
+        executionBudget: { lockWaitSeconds: 10 }
+      });
       const left = await sqlExecutor.oneOrNull<{ n: number }>(
         `select count(*) as n from ${DROPS_TABLE} where id = :id`,
         { id: created.drop_id }
