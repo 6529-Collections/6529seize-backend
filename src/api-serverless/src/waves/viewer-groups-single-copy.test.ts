@@ -280,6 +280,24 @@ describe('single-copy viewer groups, batches 2 and 3', () => {
     }
   );
 
+  it('always inlines the groups for the latest visible drops (no ids or serials)', async () => {
+    const { db, statements } = fakeExecutor('match');
+    await new DropsDb(() => db).findVisibleDrops(
+      {
+        limit: 51,
+        offset: 0,
+        parent_drop_id: null,
+        serial_nos: null,
+        ids: null,
+        group_ids_user_is_eligible_for: groups
+      },
+      {}
+    );
+    expect(statements).toHaveLength(1);
+    expect(statements[0].sql).not.toContain('json_table');
+    expect(statements[0].sql.match(INLINE_GROUPS)).toHaveLength(2);
+  });
+
   it('always inlines the groups for active TDH voting waves (count and page)', async () => {
     const { db, statements } = fakeExecutor('match');
     await new WavesApiDb(() => db).findActiveTdhVotingWaves(

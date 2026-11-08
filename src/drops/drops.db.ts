@@ -1104,12 +1104,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(timerLabel);
     try {
       // The wave and its parent each check the groups: shared once that and
-      // the inlined id lists would reach the pinning size.
-      const groups = await this.sharedViewerGroups(
-        'vd_viewer_groups',
-        group_ids_user_is_eligible_for,
-        sqlInListBytes(ids ?? []) + sqlInListBytes(serial_nos ?? [])
-      );
+      // the inlined id lists would reach the pinning size. Only lookups by
+      // ids or serials share: those are driven by the drops' keys. Without
+      // them the scan is driven by the index range the inlined list builds
+      // on visibility_group_id, which a shared table would lose.
+      const groups =
+        ids?.length || serial_nos?.length
+          ? await this.sharedViewerGroups(
+              'vd_viewer_groups',
+              group_ids_user_is_eligible_for,
+              sqlInListBytes(ids ?? []) + sqlInListBytes(serial_nos ?? [])
+            )
+          : undefined;
       const visibleWaveFilter = waveReadAccessSql(
         'w',
         group_ids_user_is_eligible_for.length > 0,
