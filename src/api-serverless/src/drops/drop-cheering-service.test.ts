@@ -14,6 +14,7 @@ jest.mock('@/api/api-helpers', () => ({
 import { competitionEntryRepository } from '@/competitions/competition-entry.repository';
 import { DropCheeringService } from './drop-cheering.service';
 import { DropType } from '@/entities/IDrop';
+import { WriteBusyException } from '@/api/write-transaction-budget';
 
 function fixture(type: DropType) {
   const drop = { id: 'drop', wave_id: 'hub', drop_type: type };
@@ -95,6 +96,17 @@ it("applies a chat rating's reaction after the vote transaction, on no connectio
     connection?: unknown;
   };
   expect(ctx.connection).toBeUndefined();
+});
+it('fails a chat rating whole when its reaction transaction is busy: nothing was written', async () => {
+  // A chat rating writes nothing in the vote transaction (checks only); the
+  // reaction is its only write. So a busy reaction leaves no partial state:
+  // the request answers 503 + Retry-After and a retry is safe.
+  const { service, reactions, votes, ws } = fixture(DropType.CHAT);
+  const busy = new WriteBusyException();
+  reactions.addReaction.mockRejectedValue(busy);
+  await expect(service.updateCheers(request, {})).rejects.toBe(busy);
+  expect(votes.execute).not.toHaveBeenCalled();
+  expect(ws.notifyAboutDropRatingUpdate).not.toHaveBeenCalled();
 });
 it('never reads the drop inside the vote transaction', async () => {
   for (const type of [DropType.CHAT, DropType.PARTICIPATORY]) {
