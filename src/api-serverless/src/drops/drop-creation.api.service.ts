@@ -1,4 +1,7 @@
-import { runWriteTransaction } from '@/api/write-transaction-budget';
+import {
+  readCommitted,
+  runWriteTransaction
+} from '@/api/write-transaction-budget';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { DropsApiService, dropsService } from './drops.api.service';
@@ -719,19 +722,20 @@ export class DropCreationApiService {
     if (authenticationContext?.isAuthenticatedAsProxy()) {
       throw new ForbiddenException(`Proxy is not allowed to delete drops`);
     }
-    const deleteResponse = await this.dropsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        return await this.deleteDrop.execute(
-          {
-            drop_id: id,
-            deleter_identity: authenticatedProfileId,
-            deleter_id: authenticatedProfileId,
-            deletion_purpose: 'DELETE'
-          },
-          { timer: timer!, connection }
-        );
-      },
-      { isolationLevel: 'READ COMMITTED' }
+    const deleteResponse = await runWriteTransaction((options) =>
+      this.dropsDb.executeNativeQueriesInTransaction(
+        async (connection) =>
+          await this.deleteDrop.execute(
+            {
+              drop_id: id,
+              deleter_identity: authenticatedProfileId,
+              deleter_id: authenticatedProfileId,
+              deletion_purpose: 'DELETE'
+            },
+            { timer: timer!, connection }
+          ),
+        readCommitted(options)
+      )
     );
     if (deleteResponse) {
       await waveDropMetricsRefreshService.requestWaveDropMetricsRefreshBestEffort(
