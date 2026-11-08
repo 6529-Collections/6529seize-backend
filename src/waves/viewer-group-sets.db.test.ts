@@ -13,6 +13,7 @@ import {
   deleteUnusedViewerGroupSets,
   storeViewerGroupSet,
   viewerGroupSetHash,
+  ViewerGroupSets,
   viewerGroupSets
 } from '@/waves/viewer-group-sets';
 
@@ -108,6 +109,53 @@ describeWithSeed('viewer group sets', withWaves(waves), () => {
       { hash }
     );
     expect(Number(members.n)).toBe(groups.length);
+  });
+
+  it('writes no header for a set INSERT IGNORE would store incompletely', async () => {
+    // Equal under the column collation: one member row for two ids.
+    const caseVariants = [...groups, MEMBER.toUpperCase()];
+    await expect(
+      storeViewerGroupSet(sqlExecutor, caseVariants)
+    ).rejects.toThrow('stored incompletely');
+    await expect(
+      storeViewerGroupSet(sqlExecutor, [...groups, 'x'.repeat(101)])
+    ).rejects.toThrow('longer than the stored column');
+    const headers = await sqlExecutor.execute(
+      `select set_hash from ${VIEWER_GROUP_SETS_TABLE}`
+    );
+    expect(headers).toEqual([]);
+    const members = await sqlExecutor.execute(
+      `select set_hash from ${VIEWER_GROUP_SET_MEMBERS_TABLE}`
+    );
+    // The incomplete set rolled back with its transaction.
+    expect(members).toEqual([]);
+  });
+
+  it('touches a cached set daily, and drops it when cleanup deleted it', async () => {
+    let now = Time.currentMillis();
+    const sets = new ViewerGroupSets(
+      async () => true,
+      () => true,
+      () => now
+    );
+    const hash = await storeViewerGroupSet(sqlExecutor, groups, now);
+    const source = () => sets.source(sqlExecutor, 'wi_viewer_groups', groups);
+    expect((await source()).params).toEqual({ wi_viewer_groups_set: hash });
+    now += Time.hours(5).toMillis();
+    expect((await source()).params).toEqual({ wi_viewer_groups_set: hash });
+    // Cleanup deletes it while the hash is cached; the next daily touch must
+    // notice before any statement reads an empty set.
+    await sqlExecutor.execute(
+      `delete from ${VIEWER_GROUP_SETS_TABLE} where set_hash = :hash`,
+      { hash }
+    );
+    await sqlExecutor.execute(
+      `delete from ${VIEWER_GROUP_SET_MEMBERS_TABLE} where set_hash = :hash`,
+      { hash }
+    );
+    now += Time.hours(19).toMillis() + 1;
+    const after = await source();
+    expect(after.cteSql).toContain('json_table');
   });
 
   it('deletes only sets unused for 14 days, header and members together', async () => {

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import * as mysql from 'mysql';
+import { requestWriteDeadline } from '@/api/write-transaction-budget';
 import { appFeatures } from '@/app-features';
 import {
   VIEWER_GROUP_SET_MEMBERS_TABLE,
@@ -45,6 +46,8 @@ const WRITE_CHUNK_JSON_BYTES = 11_000;
 const KNOWN_FOR_MS = Time.hours(6).toMillis();
 const KNOWN_MAX = 5_000;
 const TOUCH_EVERY = Time.days(1);
+/** Sets last used longer ago are touched before their hash is cached. */
+const TOUCH_NOW_AFTER = Time.days(2).toMillis();
 const WRITE_LEASE = Time.seconds(10);
 export const VIEWER_GROUP_SET_UNUSED_AFTER = Time.days(14);
 const METRIC_NAMESPACE = '6529/ViewerGroupSets';
@@ -95,13 +98,58 @@ export function viewerGroupSetCte(name: string, hash: string): ViewerGroupsCte {
   };
 }
 
-function writeBudget(): SqlExecutionBudget {
+const GROUP_ID_MAX_LENGTH = 100;
+const WRITE_MILLIS = 1_500;
+const WRITE_MIN_MILLIS = 300;
+const WRITE_FINALIZATION_MILLIS = 200;
+
+/**
+ * A write budget of at most 1.5 s, capped at the request's write deadline
+ * when there is one; null when too little time is left to write at all.
+ */
+function writeBudget(): SqlExecutionBudget | null {
+  const now = performance.now();
+  const deadline = Math.min(
+    now + WRITE_MILLIS,
+    requestWriteDeadline() ?? Number.POSITIVE_INFINITY
+  );
+  const left = deadline - now;
+  if (left <= WRITE_MIN_MILLIS) return null;
   return {
-    deadlineMonotonicMillis: performance.now() + 1_500,
-    maxStatementMillis: 500,
-    finalizationReserveMillis: 200,
+    deadlineMonotonicMillis: deadline,
+    maxStatementMillis: Math.max(
+      1,
+      Math.min(500, Math.floor(left - WRITE_FINALIZATION_MILLIS))
+    ),
+    finalizationReserveMillis: WRITE_FINALIZATION_MILLIS,
     lockWaitSeconds: 1
   };
+}
+
+/**
+ * Sets last_used_at; false when the header is gone (cleanup deleted the
+ * set). Throws when there is no time left to write.
+ */
+async function touchViewerGroupSet(
+  db: SqlExecutor,
+  hash: string,
+  now: number
+): Promise<boolean> {
+  const budget = writeBudget();
+  if (!budget) throw new Error('No time left to touch the viewer group set');
+  return db.executeNativeQueriesInTransaction(
+    async (connection) =>
+      db.getAffectedRows(
+        await db.execute(
+          `update ${VIEWER_GROUP_SETS_TABLE}
+           set last_used_at = greatest(last_used_at, :now)
+           where set_hash = :hash`,
+          { hash, now },
+          { wrappedConnection: connection }
+        )
+      ) > 0,
+    { executionBudget: budget }
+  );
 }
 
 function metricEnvironment(): string {
@@ -114,7 +162,8 @@ type SetMetric =
   | 'ViewerGroupSetWrites'
   | 'ViewerGroupSetWriteFailures'
   | 'ViewerGroupSetWritesSkipped'
-  | 'ViewerGroupSetTouches';
+  | 'ViewerGroupSetTouches'
+  | 'ViewerGroupSetsGone';
 
 function recordMetric(metric: SetMetric, groupCount: number): void {
   try {
@@ -149,7 +198,10 @@ function recordMetric(metric: SetMetric, groupCount: number): void {
 /**
  * Writes a set (members, then its header) in one budgeted write transaction,
  * one member insert per JSON chunk so no statement pins the write proxy
- * session. Idempotent: INSERT IGNORE throughout.
+ * session. Idempotent: INSERT IGNORE throughout. The header is written only
+ * when every id is stored, so a header always means a complete set: INSERT
+ * IGNORE can drop a row silently (an over-long id, or ids equal under the
+ * column collation), and such a set rolls back and keeps the JSON copy.
  */
 export async function storeViewerGroupSet(
   db: SqlExecutor,
@@ -157,7 +209,13 @@ export async function storeViewerGroupSet(
   now = Date.now()
 ): Promise<string> {
   const ids = Array.from(new Set(groupIds));
+  // group_id is varchar(100), as are the compared visibility columns: a
+  // longer id would be stored truncated, so such a set keeps the JSON copy.
+  if (ids.some((id) => Array.from(id).length > GROUP_ID_MAX_LENGTH))
+    throw new Error('Viewer group id longer than the stored column');
   const hash = viewerGroupSetHash(ids);
+  const budget = writeBudget();
+  if (!budget) throw new Error('No time left to store the viewer group set');
   // Statements run one at a time: the write budget rejects overlaps.
   await db.executeNativeQueriesInTransaction(
     async (connection) => {
@@ -170,6 +228,13 @@ export async function storeViewerGroupSet(
           { wrappedConnection: connection }
         );
       }
+      const [stored] = await db.execute<{ n: number }>(
+        `select count(*) as n from ${VIEWER_GROUP_SET_MEMBERS_TABLE} where set_hash = :hash`,
+        { hash },
+        { wrappedConnection: connection }
+      );
+      if (Number(stored?.n) !== ids.length)
+        throw new Error('Viewer group set stored incompletely');
       await db.execute(
         `insert ignore into ${VIEWER_GROUP_SETS_TABLE} (set_hash, group_count, created_at, last_used_at)
          values (:hash, :count, :now, :now)`,
@@ -177,7 +242,7 @@ export async function storeViewerGroupSet(
         { wrappedConnection: connection }
       );
     },
-    { executionBudget: writeBudget() }
+    { executionBudget: budget }
   );
   return hash;
 }
@@ -218,10 +283,11 @@ export class ViewerGroupSets {
     try {
       if (!(await this.membersColumnSupported(db))) return json;
       const hash = viewerGroupSetHash(groupIds);
-      if (await this.usable(db, hash)) {
-        await this.touchIfDue(db, hash, groupIds.length);
+      if (
+        (await this.usable(db, hash, groupIds.length)) &&
+        (await this.touchIfDue(db, hash, groupIds.length))
+      )
         return viewerGroupSetCte(name, hash);
-      }
       await this.writeOnce(db, hash, groupIds);
     } catch (error) {
       logger.warn('[VIEWER_GROUP_SET_SKIPPED]', {
@@ -256,16 +322,35 @@ export class ViewerGroupSets {
     return this.columnSupport;
   }
 
-  /** Whether the set's header is readable where statements read. */
-  private async usable(db: SqlExecutor, hash: string): Promise<boolean> {
+  /**
+   * Whether the set's header is readable where statements read. A set is
+   * cached only while it is far from cleanup: one last used more than
+   * `TOUCH_NOW_AFTER` ago is touched first (and dropped if it is gone), so a
+   * cached hash always outlives the cache entry.
+   */
+  private async usable(
+    db: SqlExecutor,
+    hash: string,
+    groupCount: number
+  ): Promise<boolean> {
     const entry = this.known.get(hash);
     const now = this.now();
     if (entry && now - entry.seenAt < KNOWN_FOR_MS) return true;
-    const rows = await db.execute<{ present: number }>(
-      `select 1 as present from ${VIEWER_GROUP_SETS_TABLE} where set_hash = :hash`,
+    const [header] = await db.execute<{ last_used_at: number }>(
+      `select last_used_at from ${VIEWER_GROUP_SETS_TABLE} where set_hash = :hash`,
       { hash }
     );
-    if (!rows.length) {
+    let touchedAt = entry?.touchedAt ?? Number.NEGATIVE_INFINITY;
+    if (header && now - Number(header.last_used_at) > TOUCH_NOW_AFTER) {
+      if (!(await touchViewerGroupSet(db, hash, now))) {
+        recordMetric('ViewerGroupSetsGone', groupCount);
+        this.known.delete(hash);
+        return false;
+      }
+      recordMetric('ViewerGroupSetTouches', groupCount);
+      touchedAt = now;
+    }
+    if (!header) {
       this.known.delete(hash);
       return false;
     }
@@ -273,21 +358,22 @@ export class ViewerGroupSets {
       const oldest = this.known.keys().next().value;
       if (oldest !== undefined) this.known.delete(oldest);
     }
-    this.known.set(hash, {
-      seenAt: now,
-      touchedAt: entry?.touchedAt ?? Number.NEGATIVE_INFINITY
-    });
+    this.known.set(hash, { seenAt: now, touchedAt });
     return true;
   }
 
+  /**
+   * Touches a cached set at most daily. False when the touch finds the set
+   * gone: the cached hash is dropped and this request keeps the JSON copy.
+   */
   private async touchIfDue(
     db: SqlExecutor,
     hash: string,
     groupCount: number
-  ): Promise<void> {
+  ): Promise<boolean> {
     const entry = this.known.get(hash);
     const now = this.now();
-    if (!entry || now - entry.touchedAt < TOUCH_EVERY.toMillis()) return;
+    if (!entry || now - entry.touchedAt < TOUCH_EVERY.toMillis()) return true;
     entry.touchedAt = now;
     // Another container touched it today. Without Redis, touch anyway: a
     // one-row update, and a set in use must never look unused to cleanup.
@@ -295,18 +381,15 @@ export class ViewerGroupSets {
       (await this.lease(`viewer_group_set:touch:${hash}`, TOUCH_EVERY)) ===
       false
     )
-      return;
+      return true;
     try {
-      await db.executeNativeQueriesInTransaction(
-        (connection) =>
-          db.execute(
-            `update ${VIEWER_GROUP_SETS_TABLE} set last_used_at = :now where set_hash = :hash`,
-            { hash, now },
-            { wrappedConnection: connection }
-          ),
-        { executionBudget: writeBudget() }
-      );
+      if (!(await touchViewerGroupSet(db, hash, now))) {
+        recordMetric('ViewerGroupSetsGone', groupCount);
+        this.known.delete(hash);
+        return false;
+      }
       recordMetric('ViewerGroupSetTouches', groupCount);
+      return true;
     } catch (error) {
       // Re-check the header next time rather than trusting a stale touch.
       this.known.delete(hash);

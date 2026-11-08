@@ -1,5 +1,6 @@
 import * as mysql from 'mysql';
 import { SqlExecutor } from '@/sql-executor';
+import { withRequestDeadline } from '@/api/write-transaction-budget';
 import { Time } from '@/time';
 import {
   VIEWER_GROUP_SET_MIN_JSON_BYTES,
@@ -17,27 +18,52 @@ const small = large.slice(0, 50);
 
 type Call = { sql: string; params: Record<string, unknown>; tx: boolean };
 
-/** Records statements; `headers` is the set of hashes whose header exists. */
+/**
+ * Records statements. `headers` maps stored hashes to their last_used_at;
+ * `dropMembers` stores that many fewer members than asked (INSERT IGNORE
+ * dropping rows); `vanishOnTouch` deletes the header just before a touch.
+ */
 function fakeDb({
-  headers = new Set<string>(),
+  headers = new Map<string, number>(),
   collation = 'utf8mb4_0900_ai_ci',
-  failWrites = false
+  failWrites = false,
+  dropMembers = 0,
+  vanishOnTouch = false
 }: {
-  headers?: Set<string>;
+  headers?: Map<string, number>;
   collation?: string;
   failWrites?: boolean;
+  dropMembers?: number;
+  vanishOnTouch?: boolean;
 } = {}) {
   const calls: Call[] = [];
+  const members = new Map<string, number>();
   let inTx = false;
   const execute = jest.fn(
-    async (sql: string, params: Record<string, unknown> = {}) => {
+    async (sql: string, params: Record<string, unknown> = {}): Promise<any> => {
       calls.push({ sql, params, tx: inTx });
+      const hash = params.hash as string;
       if (sql.includes('information_schema.columns'))
         return [{ collation_name: collation }];
-      if (sql.includes('select 1 as present'))
-        return headers.has(params.hash as string) ? [{ present: 1 }] : [];
-      if (sql.startsWith('insert ignore into viewer_group_sets'))
-        headers.add(params.hash as string);
+      if (sql.includes('select last_used_at from viewer_group_sets'))
+        return headers.has(hash) ? [{ last_used_at: headers.get(hash) }] : [];
+      if (sql.includes('insert ignore into viewer_group_set_members')) {
+        const ids = JSON.parse(params.json as string) as string[];
+        members.set(hash, (members.get(hash) ?? 0) + ids.length);
+        return [];
+      }
+      if (sql.includes('select count(*) as n from viewer_group_set_members'))
+        return [{ n: Math.max(0, (members.get(hash) ?? 0) - dropMembers) }];
+      if (sql.includes('insert ignore into viewer_group_sets')) {
+        headers.set(hash, params.now as number);
+        return [];
+      }
+      if (sql.includes('update viewer_group_sets')) {
+        if (vanishOnTouch) headers.delete(hash);
+        if (!headers.has(hash)) return { affectedRows: 0 };
+        headers.set(hash, params.now as number);
+        return { affectedRows: 1 };
+      }
       return [];
     }
   );
@@ -57,15 +83,18 @@ function fakeDb({
   );
   const db = {
     execute,
-    executeNativeQueriesInTransaction
+    executeNativeQueriesInTransaction,
+    getAffectedRows: (result: any) => result?.affectedRows ?? 0
   } as unknown as SqlExecutor;
   return { db, calls, headers, executeNativeQueriesInTransaction };
 }
 
+const NOW = 1_000_000_000;
+
 function sets({
   lease = async () => true as boolean | null,
   enabled = true,
-  now = () => 1_000_000
+  now = () => NOW
 }: {
   lease?: (key: string, ttl: Time) => Promise<boolean | null>;
   enabled?: boolean;
@@ -128,7 +157,7 @@ describe('ViewerGroupSets.source', () => {
   it('reads a stored set by hash: the same hinted reference, one short parameter', async () => {
     const hash = viewerGroupSetHash(large);
     const { db, executeNativeQueriesInTransaction } = fakeDb({
-      headers: new Set([hash])
+      headers: new Map([[hash, NOW]])
     });
     const store = sets();
     const cte = await store.source(db, 'x_groups', large);
@@ -153,7 +182,7 @@ describe('ViewerGroupSets.source', () => {
     expect(writes.at(-1)!.sql).toContain(
       'insert ignore into viewer_group_sets'
     );
-    for (const write of writes.slice(0, -1)) {
+    for (const write of writes.slice(0, -2)) {
       expect(write.sql).toContain(
         'insert ignore into viewer_group_set_members'
       );
@@ -202,15 +231,15 @@ describe('ViewerGroupSets.source', () => {
   it('touches a used set at most daily, and re-checks the header after six hours', async () => {
     const hash = viewerGroupSetHash(large);
     const { db, calls, executeNativeQueriesInTransaction } = fakeDb({
-      headers: new Set([hash])
+      headers: new Map([[hash, NOW]])
     });
-    let now = 1_000_000;
+    let now = NOW;
     const store = sets({ now: () => now });
     await store.source(db, 'x_groups', large);
     await store.source(db, 'x_groups', large);
     expect(executeNativeQueriesInTransaction).toHaveBeenCalledTimes(1);
     const headerChecks = () =>
-      calls.filter((call) => call.sql.includes('select 1 as present')).length;
+      calls.filter((call) => call.sql.includes('select last_used_at')).length;
     expect(headerChecks()).toBe(1);
     now += Time.hours(7).toMillis();
     await store.source(db, 'x_groups', large);
@@ -219,5 +248,56 @@ describe('ViewerGroupSets.source', () => {
     now += Time.days(1).toMillis();
     await store.source(db, 'x_groups', large);
     expect(executeNativeQueriesInTransaction).toHaveBeenCalledTimes(2);
+  });
+  it('writes no header when a member was dropped, and keeps the JSON copy', async () => {
+    const { db, headers } = fakeDb({ dropMembers: 1 });
+    const store = sets();
+    expect(isJson(await store.source(db, 'x_groups', large))).toBe(true);
+    expect(headers.size).toBe(0);
+    expect(isJson(await store.source(db, 'x_groups', large))).toBe(true);
+  });
+
+  it('skips the write when the request has too little time left', async () => {
+    const { db, executeNativeQueriesInTransaction } = fakeDb();
+    // A 5.2 s request leaves 200 ms of write deadline.
+    const cte = await withRequestDeadline(5_200, () =>
+      sets().source(db, 'x_groups', large)
+    );
+    expect(isJson(cte)).toBe(true);
+    expect(executeNativeQueriesInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('never reads an empty set from a cached hash that cleanup deleted', async () => {
+    const hash = viewerGroupSetHash(large);
+    const { db, headers } = fakeDb({ headers: new Map([[hash, NOW]]) });
+    let now = NOW;
+    const store = sets({ now: () => now });
+    // Used every 5 hours: the header is re-checked every 6, touched daily.
+    for (let hours = 0; hours <= 20; hours += 5) {
+      now = NOW + Time.hours(hours).toMillis();
+      expect(isTable(await store.source(db, 'x_groups', large))).toBe(true);
+    }
+    // Cleanup deletes the set while this container still caches its hash.
+    headers.delete(hash);
+    now = NOW + Time.hours(24).toMillis() + 1;
+    // The daily touch finds it gone: JSON now, the hash is dropped and the
+    // set is written again in full.
+    expect(isJson(await store.source(db, 'x_groups', large))).toBe(true);
+    expect(headers.has(hash)).toBe(true);
+    now += 1;
+    expect(isTable(await store.source(db, 'x_groups', large))).toBe(true);
+  });
+
+  it('touches a set near cleanup before caching it, and drops it if it is gone', async () => {
+    const hash = viewerGroupSetHash(large);
+    const stale = NOW - Time.days(13).toMillis();
+    const kept = fakeDb({ headers: new Map([[hash, stale]]) });
+    expect(isTable(await sets().source(kept.db, 'x_groups', large))).toBe(true);
+    expect(kept.headers.get(hash)).toBe(NOW);
+    const gone = fakeDb({
+      headers: new Map([[hash, stale]]),
+      vanishOnTouch: true
+    });
+    expect(isJson(await sets().source(gone.db, 'x_groups', large))).toBe(true);
   });
 });

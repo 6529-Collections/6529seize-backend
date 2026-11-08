@@ -71,6 +71,11 @@ export class WriteBusyException extends ApiCompliantException {
   }
 }
 
+/** The current request's write deadline (monotonic ms), if in a request. */
+export function requestWriteDeadline(): number | undefined {
+  return requestDeadlines.getStore()?.deadlineMonotonicMillis;
+}
+
 function writeTransactionOptions(): SqlTransactionOptions | undefined {
   const scope = requestDeadlines.getStore();
   if (!scope) return undefined;
