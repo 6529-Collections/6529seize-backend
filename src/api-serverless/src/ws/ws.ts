@@ -32,11 +32,8 @@ import {
 import type { DeliveryBatch } from '@/ws-delivery/ws-delivery';
 import {
   isKnownExpiryFenceEnabled,
-  wsFanoutConcurrency
+  wsGatewayAgentMaxSockets
 } from './ws-fanout-settings';
-
-/** The SDK's own keep-alive agent size; raised only to fit a wider fan-out. */
-const GATEWAY_AGENT_MIN_SOCKETS = 50;
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -139,9 +136,7 @@ class ApiGatewayClientConnections extends ClientConnections {
         throwOnRequestTimeout: true,
         // The SDK's agent already keeps connections alive; it only needs
         // enough sockets that the fan-out pool, not the agent, bounds sends.
-        httpsAgent: {
-          maxSockets: Math.max(GATEWAY_AGENT_MIN_SOCKETS, wsFanoutConcurrency())
-        }
+        httpsAgent: { maxSockets: wsGatewayAgentMaxSockets() }
       })
     });
   }
