@@ -172,6 +172,11 @@ export class DropCheeringService {
     // The vote's transaction has ended; nothing after this may use its
     // connection.
     const postCommitCtx: RequestContext = { ...ctx, connection: undefined };
+    // Awaited here, inside the request: a transaction left running past the
+    // response could be frozen with the Lambda while holding row locks. For a
+    // chat drop the transaction above wrote nothing, so if this reaction
+    // fails (e.g. WRITE_BUSY) the whole rating fails with nothing written and
+    // a retry is safe.
     if (outcome.reaction)
       await this.reactionsService.addReaction(
         dropId,
