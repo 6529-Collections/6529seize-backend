@@ -28,6 +28,8 @@ export interface NativeCompetitionRunRecord {
   /** Leaderboard computation off the lock; 0 when there was none. */
   readonly computeMs: number;
   readonly durationMs: number;
+  /** Off-lock attempts (a vote mid-compute retries); off-lock paths only. */
+  readonly attempts?: number;
 }
 
 /**
@@ -63,6 +65,7 @@ export function recordNativeCompetitionRun(
         Operation: record.operation,
         Path: record.path,
         competition_id: record.competitionId,
+        ...(record.attempts === undefined ? {} : { Attempts: record.attempts }),
         LockedMs: record.lockedMs,
         ComputeMs: record.computeMs,
         DurationMs: record.durationMs,

@@ -6,7 +6,12 @@ import { CompetitionType } from '@/entities/ICompetition';
 import { recordNativeCompetitionRun } from './native-competition-metrics';
 import { Competition } from './competition.types';
 import { NativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
-import { NativeCompetitionRuntimeService } from './native-competition-runtime.service';
+import {
+  NativeCompetitionRuntimeService,
+  OFF_LOCK_MAX_ATTEMPTS,
+  OFF_LOCK_RETRY_BUDGET_MS,
+  OFF_LOCK_RETRY_MIN_REMAINING_MS
+} from './native-competition-runtime.service';
 import { competitionCreditService } from './competition-credit.service';
 import { CompetitionExecutionRouter } from './competition-execution.router';
 
@@ -174,11 +179,79 @@ describe('refreshLeaderboardForSnapshot', () => {
     expect(spies.fallback).not.toHaveBeenCalled();
   });
 
-  it('falls back to the locked refresh when the inputs changed', async () => {
+  it('falls back to the locked refresh when the inputs changed on every attempt', async () => {
     const { service, spies } = snapshotSetUp('changed');
 
     await service.refreshLeaderboardForSnapshot('competition-1', 1500);
 
+    expect(spies.offLock).toHaveBeenCalledTimes(OFF_LOCK_MAX_ATTEMPTS);
+    expect(spies.fallback).toHaveBeenCalledTimes(1);
+    expect(recordNativeCompetitionRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({ path: 'off_lock_fallback', attempts: 3 })
+    );
+  });
+
+  it('retries off the lock when a vote lands mid-computation, without the locked refresh', async () => {
+    const { service, spies } = snapshotSetUp('written');
+    spies.offLock.mockImplementationOnce(
+      async (_id, _now, _ctx, _hooks, report) => {
+        report?.onMeasured?.({ computeMs: 2_500, writeLockedMs: 0 });
+        return 'changed';
+      }
+    );
+
+    await service.refreshLeaderboardForSnapshot('competition-1', 1500);
+
+    expect(spies.offLock).toHaveBeenCalledTimes(2);
+    expect(spies.fallback).not.toHaveBeenCalled();
+    expect(recordNativeCompetitionRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        path: 'off_lock',
+        attempts: 2,
+        computeMs: 5_000
+      })
+    );
+    // The locked transactions before the first attempt count only once.
+    expect(spies.offLock.mock.calls[1][4]).toMatchObject({ extraLockedMs: 0 });
+  });
+
+  it('takes the locked refresh without retrying once the run used its time budget', async () => {
+    const { service, spies } = snapshotSetUp('changed');
+    const clock = jest.spyOn(Date, 'now');
+    let now = 1_000_000;
+    clock.mockImplementation(() => now);
+    spies.offLock.mockImplementation(
+      async (_id, _now, _ctx, _hooks, report) => {
+        now += OFF_LOCK_RETRY_BUDGET_MS;
+        report?.onMeasured?.({
+          computeMs: OFF_LOCK_RETRY_BUDGET_MS,
+          writeLockedMs: 0
+        });
+        return 'changed';
+      }
+    );
+    try {
+      await service.refreshLeaderboardForSnapshot('competition-1', 1500);
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(spies.offLock).toHaveBeenCalledTimes(1);
+    expect(spies.fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes the locked refresh without retrying when the invocation is nearly out of time', async () => {
+    const { service, spies } = snapshotSetUp('changed');
+
+    await service.refreshLeaderboardForSnapshot(
+      'competition-1',
+      1500,
+      {},
+      {},
+      { remainingMillis: () => OFF_LOCK_RETRY_MIN_REMAINING_MS - 1 }
+    );
+
+    expect(spies.offLock).toHaveBeenCalledTimes(1);
     expect(spies.fallback).toHaveBeenCalledTimes(1);
   });
 
@@ -193,7 +266,8 @@ describe('refreshLeaderboardForSnapshot', () => {
 
   it.each([
     ['written', 1000, 'off_lock', 2_500],
-    ['changed', 1000, 'off_lock_fallback', 2_500],
+    // Every attempt's computation counts: three, then the locked refresh.
+    ['changed', 1000, 'off_lock_fallback', 7_500],
     ['written', 0, 'locked', 0]
   ] as const)(
     'records one snapshot run per refresh (%s, time lock %i) as %s',

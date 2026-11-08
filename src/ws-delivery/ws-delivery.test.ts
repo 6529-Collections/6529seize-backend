@@ -200,6 +200,68 @@ describe('shared WebSocket delivery', () => {
     expect(store.forget).toHaveBeenCalledWith(input.connectionId);
     expect(mockError).not.toHaveBeenCalled();
   });
+  it('reads a fan-out batch frame type instead of parsing each frame', async () => {
+    const parse = jest.spyOn(JSON, 'parse');
+    try {
+      await expect(
+        delivery.deliver({
+          ...input,
+          batch: {
+            defer: () => undefined,
+            metrics: new DeliveryMetricsBatch(),
+            frameType: 'DROP_UPDATE'
+          }
+        })
+      ).resolves.toEqual({ status: 'sent' });
+      expect(parse).not.toHaveBeenCalled();
+    } finally {
+      parse.mockRestore();
+    }
+    expect(store.claim).toHaveBeenCalledWith(
+      input.connectionId,
+      expect.any(String),
+      false,
+      expect.any(Number),
+      false
+    );
+  });
+
+  it('still recognizes a control acknowledgement a batch names', async () => {
+    send.mockRejectedValue(error429);
+    await delivery.deliver({
+      ...input,
+      message: '{"type":"AUTHENTICATED","data":{}}',
+      batch: {
+        defer: () => undefined,
+        metrics: new DeliveryMetricsBatch(),
+        frameType: 'AUTHENTICATED'
+      }
+    });
+    expect(store.claim).toHaveBeenCalledWith(
+      input.connectionId,
+      expect.any(String),
+      false,
+      expect.any(Number),
+      true
+    );
+  });
+
+  it('parses an unbatched frame once for claim and finish', async () => {
+    const parse = jest.spyOn(JSON, 'parse');
+    try {
+      // A fresh send: each send is decided once (a new input per send).
+      await expect(delivery.deliver({ ...input })).resolves.toEqual({
+        status: 'sent'
+      });
+      expect(parse).toHaveBeenCalledTimes(1);
+    } finally {
+      parse.mockRestore();
+    }
+    expect(store.finish).toHaveBeenCalledWith(
+      expect.objectContaining({ coalesce: true })
+    );
+  });
+
   it('does not report an intentional deadline cancellation as an application error', async () => {
     const controller = new AbortController();
     send.mockImplementation(async () => {
@@ -243,6 +305,32 @@ describe('shared WebSocket delivery', () => {
     releaseFinish();
     await deferred[0];
     expect(settled).toBe(true);
+  });
+
+  it('reports each send claim wall time to the batch, before the send', async () => {
+    const events: string[] = [];
+    const claimTimes: number[] = [];
+    await expect(
+      delivery.deliver({
+        ...input,
+        send: async () => {
+          events.push('send');
+          return {};
+        },
+        batch: {
+          defer: () => undefined,
+          metrics: new DeliveryMetricsBatch(),
+          claimTimed: (milliseconds: number) => {
+            events.push('claim');
+            claimTimes.push(milliseconds);
+          }
+        }
+      })
+    ).resolves.toEqual({ status: 'sent' });
+
+    expect(events).toEqual(['claim', 'send']);
+    expect(claimTimes).toHaveLength(1);
+    expect(claimTimes[0]).toBeGreaterThanOrEqual(0);
   });
 
   it('writes one aggregated EMF record per metrics batch (1.2)', () => {
