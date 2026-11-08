@@ -8,9 +8,9 @@ import { DbPoolName } from '@/db-query.options';
 import { optionalWaveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
   ViewerGroupsCte,
-  viewerGroupsCte,
   viewerGroupsCteSupported
 } from '@/waves/viewer-groups-cte';
+import { viewerGroupSets } from '@/waves/viewer-group-sets';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 import { isActivated } from '@/api/push-notifications/push-notifications.service';
 import { PushNotificationOutboxDb } from '@/notifications/push-notification-outbox.db';
@@ -589,7 +589,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       legacyGetView(WAVES_TABLE)
     ]);
     return supported
-      ? viewerGroupsCte('ntf_viewer_groups', groupIds)
+      ? viewerGroupSets.source(this.db, 'ntf_viewer_groups', groupIds)
       : undefined;
   }
 

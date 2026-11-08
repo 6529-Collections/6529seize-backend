@@ -363,3 +363,7 @@ export const VITALS_DAILY_TABLE = 'vitals_daily';
 export const HEALTH_DAILY_TABLE = 'health_daily';
 export const UNIQUES_DAILY_TABLE = 'uniques_daily';
 export const TELEMETRY_DIAGNOSTICS_TABLE = 'telemetry_diagnostics';
+
+/** Content-addressed viewer group sets (see waves/viewer-group-sets.ts). */
+export const VIEWER_GROUP_SETS_TABLE = 'viewer_group_sets';
+export const VIEWER_GROUP_SET_MEMBERS_TABLE = 'viewer_group_set_members';

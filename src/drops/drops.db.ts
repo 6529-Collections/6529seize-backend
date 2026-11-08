@@ -22,10 +22,10 @@ import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { sqlInListBytes } from '@/db/sql-in-list-chunks';
 import {
   ViewerGroupsCte,
-  viewerGroupsCte,
   viewerGroupsCteSupported,
   viewerGroupsWorthSharing
 } from '@/waves/viewer-groups-cte';
+import { viewerGroupSets } from '@/waves/viewer-group-sets';
 import {
   userGroupsService,
   UserGroupsService
@@ -3661,7 +3661,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       WAVES_TABLE,
       legacyGetView(WAVES_TABLE)
     ]);
-    return supported ? viewerGroupsCte(name, groupIds) : undefined;
+    return supported
+      ? viewerGroupSets.source(this.db, name, groupIds)
+      : undefined;
   }
 
   public async findBoostedDrops(

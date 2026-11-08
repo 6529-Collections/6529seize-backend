@@ -8,7 +8,11 @@ jest.mock('@/notifications/push-notification-cancellations.db', () => ({
     deleteExpired: jest.fn().mockResolvedValue(undefined)
   }
 }));
+jest.mock('@/waves/viewer-group-sets', () => ({
+  deleteUnusedViewerGroupSets: jest.fn().mockResolvedValue(0)
+}));
 import { doInDbContext } from '@/secrets';
+import { deleteUnusedViewerGroupSets } from '@/waves/viewer-group-sets';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import * as Entities from '@/entities/entities';
@@ -336,6 +340,8 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(
         pushNotificationCancellationsDb.deleteExpired
       ).toHaveBeenCalledTimes(1);
+      // Scheduled maintenance also cleans up unused viewer group sets.
+      expect(deleteUnusedViewerGroupSets).toHaveBeenCalledTimes(1);
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(
         contentModerationDb.deleteExpiredPrePublicationChecks

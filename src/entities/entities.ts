@@ -318,3 +318,7 @@ export {
   VitalsDailyEntity
 } from './ITelemetryDaily';
 export { TelemetryDiagnosticsEntity } from './ITelemetryDiagnostics';
+export {
+  ViewerGroupSetEntity,
+  ViewerGroupSetMemberEntity
+} from './IViewerGroupSet';
