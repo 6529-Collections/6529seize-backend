@@ -25,7 +25,8 @@ function apiLikeExecutor() {
 describe('drop rank statements under the API legacy facade', () => {
   it.each([
     ['realtime ranks', 'getParticipationDropsRealtimeRanks'],
-    ['time-locked ranks', 'getTimeLockedDropsWeightedVotes']
+    ['time-locked ranks', 'getTimeLockedDropsWeightedVotes'],
+    ['submission voting summaries', 'getDropV2SubmissionVotingSummaries']
   ] as const)(
     '%s reach MySQL unrewritten, reading the base drops table for candidates',
     async (_name, method) => {
@@ -39,9 +40,15 @@ describe('drop rank statements under the API legacy facade', () => {
       expect(effective).toBe(raw);
       expect(raw).toMatch(/from\s+drops\s+pd/i);
       // The guard matters: inside the facade, that read becomes the view.
-      expect(
-        withLegacyCompetitionGetFacade(() => legacyCompetitionGetSql(raw))
-      ).toMatch(/from\s+`legacy_get_drops`\s+pd/i);
+      const rewritten = withLegacyCompetitionGetFacade(() =>
+        legacyCompetitionGetSql(raw)
+      );
+      expect(rewritten).toMatch(/from\s+`legacy_get_drops`\s+pd/i);
+      // And it is the only read the guard keeps from the rewrite: every
+      // other legacy table is already named as its view.
+      expect(rewritten.split('`legacy_get_drops` pd').join('drops pd')).toBe(
+        raw
+      );
     }
   );
 });

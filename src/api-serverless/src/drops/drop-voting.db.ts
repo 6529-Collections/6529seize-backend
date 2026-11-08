@@ -2,6 +2,7 @@ import {
   legacyGetView,
   withoutLegacyCompetitionGetFacade
 } from '@/competitions/legacy-competition-get-facade';
+import { legacyParticipantCandidatesCte } from '@/competitions/legacy-typed-drops';
 import { CompetitionRepository } from '@/competitions/competition.repository';
 import {
   dbSupplier,
@@ -10,8 +11,6 @@ import {
 import { RequestContext } from '../../../request.context';
 import {
   DROP_RANK_TABLE,
-  COMPETITION_ENTRIES_TABLE,
-  COMPETITIONS_TABLE,
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_VOTER_STATE_TABLE,
@@ -92,38 +91,19 @@ type DropSubmissionVotingSummaryRow = Omit<
  * CTEs `participant_candidates` and `participants`: the participatory drops
  * of the waves in `neededWaves` (a CTE with a `wave_id` column), as
  * `legacyGetView(DROPS_TABLE)` defines them, without walking every drop of
- * those waves. A drop the view calls PARTICIPATORY has an ACTIVE entry in its
- * wave's native-primary competition, or (no entry, or another status) a base
- * drop_type of PARTICIPATORY; both are indexed reads. The view, read by id,
- * then decides membership with its own rules, so the set is exactly the view's
- * participatory drops of those waves. `participants` has id, wave_id and
- * created_at.
- *
- * Run the statement with withoutLegacyCompetitionGetFacade: inside the API's
- * facade scope the executor rewrites a base `drops` after FROM into its view,
- * which would turn the indexed candidate read back into a walk over every
- * drop of the wave. Every view this SQL needs is named explicitly.
+ * those waves (see legacyParticipantCandidatesCte, including why the statement
+ * must run with withoutLegacyCompetitionGetFacade). `participants` has id,
+ * wave_id and created_at.
  */
 function participantDropsCtes(neededWaves: string): string {
-  return `participant_candidates AS (
-      SELECT e.drop_id AS id
-      FROM ${COMPETITION_ENTRIES_TABLE} e
-      JOIN ${COMPETITIONS_TABLE} c
-        ON c.id = e.competition_id AND c.legacy_wave_id = c.wave_id
-      WHERE c.legacy_wave_id IN (SELECT wave_id FROM ${neededWaves})
-        AND e.status = 'ACTIVE'
-      UNION
-      SELECT pd.id
-      FROM ${DROPS_TABLE} pd
-      WHERE pd.wave_id IN (SELECT wave_id FROM ${neededWaves})
-        AND pd.drop_type = '${DropType.PARTICIPATORY}'
-    ),
+  const inNeededWaves = `IN (SELECT wave_id FROM ${neededWaves})`;
+  return `${legacyParticipantCandidatesCte(inNeededWaves)},
     participants AS (
       SELECT d.id, d.wave_id, d.created_at
       FROM participant_candidates pc
       JOIN ${legacyGetView(DROPS_TABLE)} d ON d.id = pc.id
       WHERE d.drop_type = '${DropType.PARTICIPATORY}'
-        AND d.wave_id IN (SELECT wave_id FROM ${neededWaves})
+        AND d.wave_id ${inNeededWaves}
     )`;
 }
 
@@ -395,9 +375,12 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       // compatibility views repeats their native joins for every ranked drop;
       // a shared materialization can instead index its projected drop_id.
       // Winner-only waves need no live scores: their vote and place fields
-      // come from frozen decision history.
-      const rows = await this.db.execute<DropSubmissionVotingSummaryRow>(
-        `
+      // come from frozen decision history. The ranks read only the waves'
+      // participant candidates; outside the facade rewrite, see
+      // legacyParticipantCandidatesCte.
+      const rows = await withoutLegacyCompetitionGetFacade(() =>
+        this.db.execute<DropSubmissionVotingSummaryRow>(
+          `
         with target_submissions as (
           select id, wave_id, drop_type, created_at
           from ${legacyGetView(DROPS_TABLE)}
@@ -415,6 +398,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
           join ${legacyGetView(WAVES_TABLE)} w on w.id = t.wave_id
           where t.drop_type = '${DropType.PARTICIPATORY}'
         ),
+        ${legacyParticipantCandidatesCte('IN (SELECT wave_id FROM rank_waves)')},
         scoped_realtime_votes as (
           select drop_id, vote, last_increased
           from ${legacyGetView(DROP_RANK_TABLE)}
@@ -458,7 +442,8 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
                 order by cast(ifnull(r.vote, 0) as signed) desc,
                   ifnull(r.last_increased, d.created_at) asc
               ) as rnk
-            from ${legacyGetView(DROPS_TABLE)} d
+            from participant_candidates pc
+            join ${legacyGetView(DROPS_TABLE)} d on d.id = pc.id
             left join scoped_realtime_votes r on r.drop_id = d.id
             where d.drop_type = '${DropType.PARTICIPATORY}'
               and d.wave_id in (select wave_id from rank_waves where weighted = 0)
@@ -475,7 +460,8 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
                 order by cast(ifnull(lb.vote, 0) as signed) desc,
                   cast(ifnull(lb.timestamp, d.created_at) as signed) asc
               ) as rnk
-            from ${legacyGetView(DROPS_TABLE)} d
+            from participant_candidates pc
+            join ${legacyGetView(DROPS_TABLE)} d on d.id = pc.id
             left join scoped_leaderboard lb on lb.drop_id = d.id
             where d.drop_type = '${DropType.PARTICIPATORY}'
               and d.wave_id in (select wave_id from rank_waves where weighted = 1)
@@ -545,8 +531,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         left join winner_voter_counts wvc on wvc.drop_id = t.id
         left join decision_counts dc on dc.wave_id = t.wave_id
       `,
-        { dropIds, now },
-        { wrappedConnection: ctx.connection }
+          { dropIds, now },
+          { wrappedConnection: ctx.connection }
+        )
       );
       const overThresholdSinceByDropId =
         await this.getOverThresholdSinceByDropId(
