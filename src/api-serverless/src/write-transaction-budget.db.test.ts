@@ -18,7 +18,10 @@ import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { AuthenticationContext } from '@/auth-context';
 import { dropsService } from '@/api/drops/drops.api.service';
 import { reactionsService } from '@/api/drops/reactions.service';
+import { deleteDrop } from '@/drops/delete-drop.use-case';
+import { Timer } from '@/time';
 import {
+  readCommitted,
   runWriteTransaction,
   withRequestDeadline,
   WriteBusyException
@@ -319,6 +322,75 @@ describeWithSeed(
           else process.env[key] = flags[index];
         });
       }
+    });
+
+    it('runs a budgeted transaction at READ COMMITTED when asked and REPEATABLE READ by default', async () => {
+      const name = () =>
+        sqlExecutor.oneOrNull<{ name: string }>(
+          'select name from waves where id = :id',
+          { id: wave.id }
+        );
+      const readTwice = (readCommittedLevel: boolean) =>
+        withRequestDeadline(30_000, () =>
+          runWriteTransaction((options) =>
+            sqlExecutor.executeNativeQueriesInTransaction(
+              async (connection) => {
+                const read = () =>
+                  sqlExecutor
+                    .oneOrNull<{
+                      name: string;
+                    }>('select name from waves where id = :id', { id: wave.id }, { wrappedConnection: connection })
+                    .then((row) => row?.name);
+                const first = await read();
+                // Another session commits a change in between.
+                await sqlExecutor.execute(
+                  'update waves set name = :name where id = :id',
+                  { id: wave.id, name: `${first}-changed` }
+                );
+                return [first, await read()];
+              },
+              readCommittedLevel ? readCommitted(options) : options
+            )
+          )
+        );
+      const original = (await name())?.name;
+      const [rcFirst, rcSecond] = await readTwice(true);
+      expect(rcFirst).toBe(original);
+      expect(rcSecond).toBe(`${original}-changed`);
+      const [rrFirst, rrSecond] = await readTwice(false);
+      expect(rrFirst).toBe(`${original}-changed`);
+      expect(rrSecond).toBe(rrFirst);
+    });
+
+    it('runs a real drop delete under the READ COMMITTED budget', async () => {
+      const created = await budgetedPost(chatDrop('to delete'));
+      await withRequestDeadline(30_000, () =>
+        reactionsService.addReaction(created.drop_id, reactor, ':fire:', {
+          authenticationContext: AuthenticationContext.fromProfileId(reactor)
+        })
+      );
+      await withRequestDeadline(30_000, () =>
+        runWriteTransaction((options) =>
+          sqlExecutor.executeNativeQueriesInTransaction(
+            (connection) =>
+              deleteDrop.execute(
+                {
+                  drop_id: created.drop_id,
+                  deleter_identity: author,
+                  deleter_id: author,
+                  deletion_purpose: 'DELETE'
+                },
+                { timer: new Timer('test'), connection }
+              ),
+            readCommitted(options)
+          )
+        )
+      );
+      const left = await sqlExecutor.oneOrNull<{ n: number }>(
+        `select count(*) as n from ${DROPS_TABLE} where id = :id`,
+        { id: created.drop_id }
+      );
+      expect(Number(left?.n)).toBe(0);
     });
 
     it('reads back the same drop after commit as inside the transaction', async () => {

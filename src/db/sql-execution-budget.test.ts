@@ -747,3 +747,71 @@ describe('session retirement instead of restoration', () => {
     expect(driver.release).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('isolation level', () => {
+  it('runs at REPEATABLE READ by default', async () => {
+    const driver = fakeDriver();
+    await executeBudgetedSqlTransaction(
+      async () => driver.lease,
+      budget(),
+      async () => 'done'
+    );
+    expect(driver.statements).toContain(
+      'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ'
+    );
+    expect(driver.statements).not.toContain(
+      'SET TRANSACTION ISOLATION LEVEL READ COMMITTED'
+    );
+  });
+
+  it('sets READ COMMITTED right before START TRANSACTION when asked', async () => {
+    const driver = fakeDriver();
+    await executeBudgetedSqlTransaction(
+      async () => driver.lease,
+      { ...budget(), isolationLevel: 'READ COMMITTED' },
+      async () => 'done'
+    );
+    const set = driver.statements.indexOf(
+      'SET TRANSACTION ISOLATION LEVEL READ COMMITTED'
+    );
+    expect(set).toBeGreaterThan(-1);
+    expect(driver.statements[set + 1]).toBe('START TRANSACTION');
+  });
+
+  it('rejects an isolation level outside the whitelist before acquiring', async () => {
+    const acquire = jest.fn();
+    await expect(
+      executeBudgetedSqlTransaction(
+        acquire,
+        {
+          ...budget(),
+          isolationLevel: 'READ UNCOMMITTED' as never
+        },
+        async () => 'done'
+      )
+    ).rejects.toThrow('Invalid SQL execution budget isolation level');
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
+  it('refuses READ COMMITTED on a lease that begins its own transaction', async () => {
+    const driver = fakeDriver();
+    const begin = jest.fn();
+    const work = jest.fn();
+    await expect(
+      executeBudgetedSqlTransaction(
+        async () => ({
+          ...driver.lease,
+          transaction: {
+            begin,
+            commit: jest.fn(),
+            rollback: jest.fn()
+          }
+        }),
+        { ...budget(), isolationLevel: 'READ COMMITTED' },
+        work
+      )
+    ).rejects.toThrow('cannot begin a READ COMMITTED budgeted transaction');
+    expect(begin).not.toHaveBeenCalled();
+    expect(work).not.toHaveBeenCalled();
+  });
+});

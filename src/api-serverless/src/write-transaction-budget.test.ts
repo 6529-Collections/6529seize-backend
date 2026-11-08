@@ -90,3 +90,24 @@ describe('runWriteTransaction', () => {
     ).rejects.toBe(failure);
   });
 });
+
+describe('deadlock victims', () => {
+  it('answers WRITE_BUSY for a deadlock before COMMIT, budgeted or not', async () => {
+    await expect(
+      inRequest(() =>
+        runWriteTransaction(() =>
+          Promise.reject(
+            budgetError('SQL_STATEMENT_FAILED', 'NOT_SENT', 'ER_LOCK_DEADLOCK')
+          )
+        )
+      )
+    ).rejects.toBeInstanceOf(WriteBusyException);
+    await expect(
+      runWriteTransaction(() =>
+        Promise.reject(
+          Object.assign(new Error('x'), { code: 'ER_LOCK_DEADLOCK' })
+        )
+      )
+    ).rejects.toBeInstanceOf(WriteBusyException);
+  });
+});

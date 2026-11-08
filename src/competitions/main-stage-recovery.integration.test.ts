@@ -43,6 +43,11 @@ import { nativeCompetitionRuntimeService } from './native-competition-runtime.se
 import { recordNativePrimaryVoteActivity } from './competition-vote-activity.writer';
 import { competitionCreditService } from './competition-credit.service';
 import { Timer } from '@/time';
+import {
+  readCommitted,
+  runWriteTransaction,
+  withRequestDeadline
+} from '@/api/write-transaction-budget';
 
 const day = 86_400_000;
 const start = Date.UTC(2026, 9, 1, 12);
@@ -446,6 +451,32 @@ describeWithSeed(
         ).toEqual([{ real_time_rating: 29, updated_at: clock.value }]);
       }
     );
+
+    it('saves a legacy vote under the READ COMMITTED request budget', async () => {
+      // The budget rejects overlapping statements, so this also proves the
+      // legacy vote path issues its statements one at a time.
+      await expect(
+        withRequestDeadline(30_000, () =>
+          runWriteTransaction((options) =>
+            sqlExecutor.executeNativeQueriesInTransaction(
+              (connection) =>
+                voteForDropUseCase.execute(
+                  {
+                    wave_id: wave.id,
+                    drop_id: dropId,
+                    voter_id: actor,
+                    votes: 17,
+                    proxy_id: proxy
+                  },
+                  { connection }
+                ),
+              readCommitted(options)
+            )
+          )
+        )
+      ).resolves.toBe(true);
+      expect(await acceptedVote()).toEqual([{ value: 17, credit_spent: 17 }]);
+    });
 
     it.each(['native', 'legacy'] as const)(
       'reconciles reduced credit for the %s voter before validating the replacement',
