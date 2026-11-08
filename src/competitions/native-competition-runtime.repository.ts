@@ -198,6 +198,71 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     return rows.map((row) => row.id);
   }
 
+  /**
+   * The competition as of the transaction's snapshot, without locking it.
+   * For computing a leaderboard off the lock (see leaderboardInputsMark).
+   */
+  public async readCompetition(
+    competitionId: string,
+    ctx: RequestContext
+  ): Promise<Competition | null> {
+    this.requireTransaction(ctx);
+    const record = await competitionRepository.findCompetitionRecordById(
+      competitionId,
+      ctx
+    );
+    if (!record) return null;
+    return new NativeCompetitionReader(
+      competitionRepository,
+      ctx
+    ).getCompetition(record, Date.now());
+  }
+
+  /**
+   * A fingerprint of everything a leaderboard is computed from: score history,
+   * entries and their runtime ratings, pauses, the outbox (entry revisions
+   * reset scores through it) and the competition's configuration and
+   * schedule. A leaderboard computed off the lock is written only if this is
+   * unchanged under the lock.
+   *
+   * Every writer of these rows holds the competition row lock, so their
+   * commits are serialized per competition. Score history is append-only and
+   * each vote or reconciliation takes a new, higher sequence, so the highest
+   * sequence per kind is enough; the outbox is insert-only, so its latest
+   * created_at is. Both are single index probes: counting the largest
+   * competition's 233k history rows took 149 ms of the old mark's 173 ms.
+   */
+  public async leaderboardInputsMark(
+    competitionId: string,
+    ctx: RequestContext
+  ): Promise<string> {
+    this.requireTransaction(ctx);
+    const [row] = await this.query<{ mark: string }>(
+      'leaderboardInputsMark',
+      `select concat_ws('|',
+        greatest(
+          coalesce((select max(sequence) from ${COMPETITION_SCORE_HISTORY_TABLE}
+            where competition_id = :competitionId and kind = 'AGGREGATE'), 0),
+          coalesce((select max(sequence) from ${COMPETITION_SCORE_HISTORY_TABLE}
+            where competition_id = :competitionId and kind = 'VOTER'), 0)),
+        (select concat(count(*), ':', coalesce(sum(status = 'ACTIVE'), 0), ':', coalesce(max(submitted_at), 0), ':',
+            coalesce(max(withdrawn_at), 0), ':', coalesce(max(disqualified_at), 0), ':', coalesce(max(won_at), 0))
+          from ${COMPETITION_ENTRIES_TABLE} where competition_id = :competitionId),
+        (select concat(count(*), ':', coalesce(max(updated_at), 0), ':', coalesce(sum(real_time_rating), 0))
+          from ${COMPETITION_ENTRY_RUNTIME_TABLE} where competition_id = :competitionId),
+        (select concat(count(*), ':', coalesce(sum(start_time), 0), ':', coalesce(sum(coalesce(end_time, 0)), 0), ':', coalesce(sum(end_time is null), 0))
+          from ${COMPETITION_PAUSES_TABLE} where competition_id = :competitionId),
+        (select coalesce(max(created_at), 0)
+          from ${COMPETITION_OUTBOX_TABLE} where competition_id = :competitionId),
+        (select concat(config_version, ':', lifecycle, ':', coalesce(cast(decision_config as char), ''))
+          from ${COMPETITIONS_TABLE} where id = :competitionId)
+      ) as mark`,
+      { competitionId },
+      ctx
+    );
+    return String(row?.mark ?? '');
+  }
+
   public async lockCompetition(
     competitionId: string,
     ctx: RequestContext

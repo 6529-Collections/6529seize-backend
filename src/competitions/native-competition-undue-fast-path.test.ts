@@ -39,9 +39,15 @@ function competition(overrides: {
   } as unknown as Competition;
 }
 
-function setUp(subject: Competition, latestDecision: number | null = null) {
+function setUp(
+  subject: Competition,
+  latestDecision: number | null = null,
+  offLockOutcome: 'written' | 'changed' = 'written'
+) {
   const repository = {
-    executeNativeQueriesInTransaction: jest.fn(),
+    executeNativeQueriesInTransaction: jest.fn(
+      async (work: (connection: unknown) => Promise<unknown>) => work({})
+    ),
     lockCompetition: jest.fn().mockResolvedValue(subject),
     decisionProgress: jest
       .fn()
@@ -72,11 +78,16 @@ function setUp(subject: Competition, latestDecision: number | null = null) {
       .spyOn(service as any, 'processApprove')
       .mockResolvedValue(undefined)
   };
+  const offLock = jest
+    .spyOn(service, 'refreshLeaderboardOffLock')
+    .mockResolvedValue(offLockOutcome);
   const run = () =>
     service.processCompetition('competition-1', NOW, {
       connection: {} as never
     });
-  return { repository, spies, run };
+  // The decision loop calls without a transaction.
+  const runFromLoop = () => service.processCompetition('competition-1', NOW);
+  return { repository, spies, offLock, run, runFromLoop };
 }
 
 describe('waveDecisionExecutionLoop: undue Rank fast path', () => {
@@ -105,14 +116,11 @@ describe('waveDecisionExecutionLoop: undue Rank fast path', () => {
     expect(spies.rank).toHaveBeenCalledTimes(1);
   });
 
-  it('runs in full for a time-locked Rank, whose standings move with time', async () => {
-    const { repository, spies, run } = setUp(
-      competition({ time_lock_ms: 24 * HOUR })
-    );
+  it('runs a time-locked Rank in full inside a caller transaction', async () => {
+    const { spies, run } = setUp(competition({ time_lock_ms: 24 * HOUR }));
 
     await run();
 
-    expect(repository.decisionProgress).not.toHaveBeenCalled();
     expect(spies.reconcile).toHaveBeenCalledTimes(1);
     expect(spies.rank).toHaveBeenCalledTimes(1);
   });
@@ -156,5 +164,75 @@ describe('waveDecisionExecutionLoop: undue Rank fast path', () => {
 
     expect(repository.decisionProgress).not.toHaveBeenCalled();
     expect(spies.approve).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes an undue time-locked Rank off the lock from the loop', async () => {
+    const { repository, spies, offLock, runFromLoop } = setUp(
+      competition({ time_lock_ms: 24 * HOUR })
+    );
+
+    await runFromLoop();
+
+    expect(spies.transitions).toHaveBeenCalledTimes(1);
+    // Credit is still reconciled under the lock, before the off-lock refresh.
+    expect(spies.reconcile).toHaveBeenCalledTimes(1);
+    expect(spies.reconcile.mock.invocationCallOrder[0]).toBeLessThan(
+      offLock.mock.invocationCallOrder[0]
+    );
+    expect(spies.loadState).not.toHaveBeenCalled();
+    expect(spies.rank).not.toHaveBeenCalled();
+    expect(offLock).toHaveBeenCalledTimes(1);
+    expect(offLock.mock.calls[0][0]).toBe('competition-1');
+    expect(repository.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(
+      1
+    );
+  });
+
+  it('runs the locked decision run once when the inputs changed off the lock', async () => {
+    const { repository, spies, offLock, runFromLoop } = setUp(
+      competition({ time_lock_ms: 24 * HOUR }),
+      null,
+      'changed'
+    );
+
+    await runFromLoop();
+
+    expect(offLock).toHaveBeenCalledTimes(1);
+    expect(repository.executeNativeQueriesInTransaction).toHaveBeenCalledTimes(
+      2
+    );
+    expect(repository.lockCompetition).toHaveBeenCalledTimes(2);
+    // The fallback is the full run, as before the off-lock path.
+    expect(spies.reconcile).toHaveBeenCalledTimes(2);
+    expect(spies.loadState).toHaveBeenCalledTimes(1);
+    expect(spies.rank).toHaveBeenCalledTimes(1);
+    expect(spies.rank.mock.invocationCallOrder[0]).toBeGreaterThan(
+      offLock.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('does not refresh a static undue Rank at all from the loop', async () => {
+    const { spies, offLock, runFromLoop } = setUp(competition({}));
+
+    await runFromLoop();
+
+    expect(spies.rank).not.toHaveBeenCalled();
+    expect(offLock).not.toHaveBeenCalled();
+  });
+
+  it('decides a due time-locked Rank under the lock, not off it', async () => {
+    const { spies, offLock, runFromLoop } = setUp(
+      competition({
+        time_lock_ms: 24 * HOUR,
+        first_decision_time: NOW - 1,
+        next_decision_time: NOW - 1
+      })
+    );
+
+    await runFromLoop();
+
+    expect(spies.reconcile).toHaveBeenCalledTimes(1);
+    expect(spies.rank).toHaveBeenCalledTimes(1);
+    expect(offLock).not.toHaveBeenCalled();
   });
 });

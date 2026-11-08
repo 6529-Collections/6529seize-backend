@@ -24,6 +24,7 @@ import {
   nativeCompetitionRuntimeRepository,
   NativeDecisionWinner,
   NativeHistoryRow,
+  NativeLeaderboardRow,
   NativeRuntimeEntry
 } from './native-competition-runtime.repository';
 import {
@@ -43,6 +44,18 @@ type RuntimeState = {
   history: NativeHistoryRow[];
   pauses: CompetitionPause[];
 };
+
+/** Outcome of refreshing a leaderboard without holding the competition row. */
+export type OffLockLeaderboardRefresh = 'written' | 'changed' | 'inapplicable';
+
+/** Test seam: runs between the off-lock computation and the locked write. */
+export type OffLockRefreshHooks = {
+  readonly afterCompute?: () => Promise<void>;
+};
+
+function isTimeLocked(competition: Competition): boolean {
+  return (competition.decisions.time_lock_ms ?? 0) > 0;
+}
 
 type ScoredEntry = {
   entry: NativeRuntimeEntry;
@@ -301,8 +314,155 @@ export class NativeCompetitionRuntimeService {
     await this.forEachNativeCompetition(
       timer,
       'leaderboard',
-      (competitionId, ctx) => this.refreshCompetition(competitionId, now, ctx)
+      (competitionId, ctx) =>
+        this.refreshLeaderboardForSnapshot(competitionId, now, ctx)
     );
+  }
+
+  /**
+   * The snapshotter's refresh. Transitions and credit reconciliation stay
+   * under the competition lock. A time-locked competition's leaderboard is
+   * then computed off the lock (refreshLeaderboardOffLock); if its inputs
+   * changed meanwhile, the locked refresh runs as before, so the snapshot is
+   * never older than one snapshotter interval.
+   */
+  public async refreshLeaderboardForSnapshot(
+    competitionId: string,
+    now: number,
+    ctx: RequestContext = {},
+    hooks: OffLockRefreshHooks = {}
+  ): Promise<void> {
+    if (ctx.connection) return this.refreshCompetition(competitionId, now, ctx);
+    const lockedStartedAt = Date.now();
+    const offLock = await this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const lockedCtx = { ...ctx, connection };
+        const competition = await this.repository.lockCompetition(
+          competitionId,
+          lockedCtx
+        );
+        if (
+          !competition ||
+          competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
+          !this.executionRouter.isNativeExecutionAllowed(competition)
+        )
+          return false;
+        await this.emitScheduledTransitions(competition, now, lockedCtx);
+        await this.reconcileCompetitionCredit(competition, now, lockedCtx);
+        if (isTimeLocked(competition)) return true;
+        await this.refreshLeaderboardAfterCreditReconciliation(
+          competition,
+          now,
+          lockedCtx
+        );
+        return false;
+      }
+    );
+    const lockedMs = Date.now() - lockedStartedAt;
+    if (!offLock) return;
+    const outcome = await this.refreshLeaderboardOffLock(
+      competitionId,
+      now,
+      ctx,
+      hooks,
+      { operation: 'leaderboard', extraLockedMs: lockedMs }
+    );
+    if (outcome === 'changed')
+      await this.refreshCompetition(competitionId, now, ctx);
+  }
+
+  /**
+   * Refreshes a leaderboard while holding the competition row only to write
+   * it. Entries, history and pauses are read in one consistent snapshot
+   * without the lock and scored there; the write then takes the lock and
+   * proceeds only if leaderboardInputsMark is unchanged since the snapshot.
+   * Otherwise a vote, entry, pause or configuration change landed during the
+   * computation and nothing is written ('changed'): no update is lost and no
+   * stale leaderboard overwrites a newer one. Decisions never use this.
+   */
+  public async refreshLeaderboardOffLock(
+    competitionId: string,
+    now: number,
+    ctx: RequestContext = {},
+    hooks: OffLockRefreshHooks = {},
+    report: {
+      operation: 'leaderboard' | 'decisions';
+      extraLockedMs?: number;
+    } = { operation: 'leaderboard' }
+  ): Promise<OffLockLeaderboardRefresh> {
+    if (ctx.connection)
+      throw new Error('An off-lock refresh cannot join a transaction');
+    const computeStartedAt = Date.now();
+    const computed = await this.repository.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const snapshotCtx = { ...ctx, connection };
+        const competition = await this.repository.readCompetition(
+          competitionId,
+          snapshotCtx
+        );
+        if (
+          !competition ||
+          competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
+          !this.executionRouter.isNativeExecutionAllowed(competition)
+        )
+          return null;
+        const mark = await this.repository.leaderboardInputsMark(
+          competitionId,
+          snapshotCtx
+        );
+        const state = await this.loadState(competitionId, snapshotCtx);
+        return {
+          competition,
+          mark,
+          ...this.leaderboardRows(competition, state, now)
+        };
+      }
+    );
+    const computeMs = Date.now() - computeStartedAt;
+    if (!computed) return 'inapplicable';
+    await hooks.afterCompute?.();
+    const writeStartedAt = Date.now();
+    const outcome = await this.repository.executeNativeQueriesInTransaction(
+      async (connection): Promise<OffLockLeaderboardRefresh> => {
+        const lockedCtx = { ...ctx, connection };
+        const competition = await this.repository.lockCompetition(
+          competitionId,
+          lockedCtx
+        );
+        if (
+          !competition ||
+          competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
+          !this.executionRouter.isNativeExecutionAllowed(competition)
+        )
+          return 'inapplicable';
+        const mark = await this.repository.leaderboardInputsMark(
+          competitionId,
+          lockedCtx
+        );
+        if (mark !== computed.mark) return 'changed';
+        await this.writeLeaderboard(
+          computed.competition,
+          computed.rows,
+          now,
+          computed.timeLocked,
+          lockedCtx
+        );
+        return 'written';
+      }
+    );
+    const record = {
+      competition_id: competitionId,
+      operation: report.operation,
+      outcome,
+      compute_ms: computeMs,
+      locked_ms: Date.now() - writeStartedAt + (report.extraLockedMs ?? 0)
+    };
+    // 'changed' sends the run to its locked fallback, so it stays visible.
+    // LOG_LEVEL_NativeCompetitionRuntimeService=debug shows every refresh.
+    if (outcome === 'changed')
+      this.logger.info('native_competition_leaderboard_off_lock', record);
+    else this.logger.debug('native_competition_leaderboard_off_lock', record);
+    return outcome;
   }
 
   public async processDueCompetitions({
@@ -363,10 +523,52 @@ export class NativeCompetitionRuntimeService {
     now: number,
     ctx: RequestContext = {}
   ): Promise<void> {
-    if (!ctx.connection)
-      return this.repository.executeNativeQueriesInTransaction((connection) =>
-        this.processCompetition(competitionId, now, { ...ctx, connection })
+    if (!ctx.connection) {
+      const lockedStartedAt = Date.now();
+      const next = await this.repository.executeNativeQueriesInTransaction(
+        (connection) =>
+          this.processCompetitionLocked(
+            competitionId,
+            now,
+            { ...ctx, connection },
+            true
+          )
       );
+      // A time-locked Rank with nothing due only needs its leaderboard: that
+      // is computed off the lock. If its inputs changed meanwhile, the locked
+      // run follows once, as before this path existed, so a busy
+      // competition's leaderboard is never older than one decision run.
+      if (next !== 'refresh-off-lock') return;
+      const outcome = await this.refreshLeaderboardOffLock(
+        competitionId,
+        now,
+        ctx,
+        {},
+        {
+          operation: 'decisions',
+          extraLockedMs: Date.now() - lockedStartedAt
+        }
+      );
+      if (outcome === 'changed')
+        await this.repository.executeNativeQueriesInTransaction((connection) =>
+          this.processCompetitionLocked(
+            competitionId,
+            now,
+            { ...ctx, connection },
+            false
+          )
+        );
+      return;
+    }
+    await this.processCompetitionLocked(competitionId, now, ctx, false);
+  }
+
+  private async processCompetitionLocked(
+    competitionId: string,
+    now: number,
+    ctx: RequestContext,
+    offLockRefresh: boolean
+  ): Promise<'done' | 'refresh-off-lock'> {
     const competition = await this.repository.lockCompetition(
       competitionId,
       ctx
@@ -376,14 +578,19 @@ export class NativeCompetitionRuntimeService {
       competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
       !this.executionRouter.isNativeExecutionAllowed(competition)
     )
-      return;
+      return 'done';
     await this.emitScheduledTransitions(competition, now, ctx);
-    if (await this.isUndueStaticRank(competition, now, ctx)) return;
+    const undue = await this.undueRank(competition, now, ctx);
+    if (undue === 'static') return 'done';
     await this.reconcileCompetitionCredit(competition, now, ctx);
+    // Credit stays reconciled under the lock every run; only the time-locked
+    // leaderboard computation leaves it.
+    if (undue === 'time-locked' && offLockRefresh) return 'refresh-off-lock';
     const state = await this.loadState(competition.id, ctx);
     if (competition.type === CompetitionType.RANK)
       await this.processRank(competition, state, now, ctx);
     else await this.processApprove(competition, state, now, ctx);
+    return 'done';
   }
 
   /**
@@ -397,13 +604,12 @@ export class NativeCompetitionRuntimeService {
    * Time-locked and Approve competitions keep the full run: their standings
    * move with time.
    */
-  private async isUndueStaticRank(
+  private async undueRank(
     competition: Competition,
     now: number,
     ctx: RequestContext
-  ): Promise<boolean> {
-    if (competition.type !== CompetitionType.RANK) return false;
-    if ((competition.decisions.time_lock_ms ?? 0) > 0) return false;
+  ): Promise<'static' | 'time-locked' | null> {
+    if (competition.type !== CompetitionType.RANK) return null;
     const progress = await this.repository.decisionProgress(
       competition.id,
       ctx
@@ -411,9 +617,13 @@ export class NativeCompetitionRuntimeService {
     const next = nextNativeDecision(competition.decisions, progress.latest);
     const stored = competition.decisions.next_decision_time;
     // A stale stored time needs processRank's schedule update.
-    return (
-      next !== null && next >= now && stored !== null && Number(stored) === next
-    );
+    const undue =
+      next !== null &&
+      next >= now &&
+      stored !== null &&
+      Number(stored) === next;
+    if (!undue) return null;
+    return isTimeLocked(competition) ? 'time-locked' : 'static';
   }
 
   private async loadState(
@@ -542,7 +752,17 @@ export class NativeCompetitionRuntimeService {
     time: number,
     ctx: RequestContext
   ): Promise<void> {
-    const timeLocked = (competition.decisions.time_lock_ms ?? 0) > 0;
+    const { rows, timeLocked } = this.leaderboardRows(competition, state, time);
+    await this.writeLeaderboard(competition, rows, time, timeLocked, ctx);
+  }
+
+  /** The leaderboard rows for `state` at `time`: pure, no reads or writes. */
+  private leaderboardRows(
+    competition: Competition,
+    state: RuntimeState,
+    time: number
+  ): { rows: NativeLeaderboardRow[]; timeLocked: boolean } {
+    const timeLocked = isTimeLocked(competition);
     const tieTime = (score: ScoredEntry): number =>
       timeLocked ? time : (score.lastIncreasedAt ?? score.entry.submitted_at);
     const scores = this.scores(competition, state, time).sort(
@@ -564,23 +784,35 @@ export class NativeCompetitionRuntimeService {
         competition.decisions.next_decision_time ?? time
       ).map((score) => [score.entry.id, score.rating])
     );
+    const rows = scores.map((score, index) => {
+      const previous = scores[index - 1];
+      if (
+        !previous ||
+        previous.rating !== score.rating ||
+        tieTime(previous) !== tieTime(score)
+      )
+        rank = index + 1;
+      return {
+        ...score,
+        rank,
+        orderingTime: tieTime(score),
+        decisionRating: decisionRatings.get(score.entry.id) ?? score.rating
+      };
+    });
+    return { rows, timeLocked };
+  }
+
+  /** Saves leaderboard rows under the competition lock and announces a change. */
+  private async writeLeaderboard(
+    competition: Competition,
+    rows: NativeLeaderboardRow[],
+    time: number,
+    timeLocked: boolean,
+    ctx: RequestContext
+  ): Promise<void> {
     const changed = await this.repository.saveLeaderboard(
       competition.id,
-      scores.map((score, index) => {
-        const previous = scores[index - 1];
-        if (
-          !previous ||
-          previous.rating !== score.rating ||
-          tieTime(previous) !== tieTime(score)
-        )
-          rank = index + 1;
-        return {
-          ...score,
-          rank,
-          orderingTime: tieTime(score),
-          decisionRating: decisionRatings.get(score.entry.id) ?? score.rating
-        };
-      }),
+      rows,
       time,
       ctx,
       { timeLocked }
