@@ -12,7 +12,11 @@ import { RateMatter } from '@/entities/IRating';
 import { MEMES_CONTRACT } from '@/constants';
 import {
   getRedisClient,
+  waitForRedisReady,
+  WAVE_GROUPS_CACHE_GENERATION_KEY,
   WAVE_GROUPS_CACHE_KEY,
+  WAVE_GROUPS_CACHE_REBUILD_LEASE_KEY,
+  WAVE_GROUPS_CACHE_STAMP_KEY,
   WAVE_GROUPS_VERSION_CACHE_KEY
 } from '@/redis';
 import { SqlExecutor } from '@/sql-executor';
@@ -59,7 +63,8 @@ function buildGrant(overrides: Partial<XTdhGrantEntity> = {}): XTdhGrantEntity {
 
 jest.mock('@/redis', () => ({
   ...jest.requireActual('@/redis'),
-  getRedisClient: jest.fn()
+  getRedisClient: jest.fn(),
+  waitForRedisReady: jest.fn().mockResolvedValue(true)
 }));
 
 type RedisMock = {
@@ -81,6 +86,29 @@ function buildRedisMock(): RedisMock {
     del: jest.fn().mockResolvedValue(1),
     eval: jest.fn().mockResolvedValue(1)
   };
+}
+
+/**
+ * Answers the catalogue probe as Redis would for this blob (stamped by the
+ * current build, generation 0), and 1 otherwise.
+ */
+function answerCatalogueProbe(redis: RedisMock, blob: string | null) {
+  const bytes = blob ? Buffer.byteLength(blob, 'utf8') : 0;
+  const stamp = blob
+    ? JSON.stringify({ generation: '0', hash: 'h', bytes, publishedAt: 1 })
+    : null;
+  redis.eval.mockImplementation((script: string) =>
+    Promise.resolve(script.includes('STRLEN') ? [bytes, stamp, '0'] : 1)
+  );
+}
+
+/** The eval call that published the eligibility result, if any. */
+function eligibilityResultPublishes(redis: RedisMock) {
+  return redis.eval.mock.calls.filter(([, options]) =>
+    (options as { keys?: string[] } | undefined)?.keys?.includes(
+      ELIGIBLE_GROUPS_CACHE_KEY
+    )
+  );
 }
 
 function buildUserGroup(
@@ -389,10 +417,11 @@ describe('UserGroupsService eligibility cache', () => {
         NX: true
       }
     );
-    expect(redis.eval).not.toHaveBeenCalledWith(
-      expect.stringContaining("redis.call('SET', KEYS[2]"),
-      expect.anything()
-    );
+    expect(
+      eligibilityResultPublishes(redis).filter(([script]) =>
+        String(script).includes("redis.call('SET', KEYS[2]")
+      )
+    ).toEqual([]);
   });
 
   it('ignores Redis profile cache when wave groups version differs', async () => {
@@ -538,6 +567,133 @@ describe('UserGroupsService eligibility cache', () => {
     expect(userGroupsDb.getAllWaveRelatedGroups).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * A Redis mock that keeps the catalogue blob, stamp and generation the way
+   * the probe, publish and eviction scripts do.
+   */
+  function catalogueRedis() {
+    const redis = buildRedisMock();
+    const state = {
+      blob: null as string | null,
+      stamp: null as string | null,
+      generation: '0',
+      evict() {
+        state.generation = String(Number(state.generation) + 1);
+        state.blob = null;
+        state.stamp = null;
+      }
+    };
+    redis.get.mockImplementation((key: string) => {
+      if (key === WAVE_GROUPS_VERSION_CACHE_KEY) return Promise.resolve('7');
+      if (key === WAVE_GROUPS_CACHE_KEY) return Promise.resolve(state.blob);
+      return Promise.resolve(null);
+    });
+    redis.eval.mockImplementation(
+      (script: string, options?: { keys?: string[]; arguments?: string[] }) => {
+        if (script.includes('STRLEN'))
+          return Promise.resolve([
+            state.blob ? Buffer.byteLength(state.blob, 'utf8') : 0,
+            state.stamp,
+            state.generation
+          ]);
+        if (
+          options?.keys?.[1] === WAVE_GROUPS_CACHE_STAMP_KEY &&
+          options.arguments
+        ) {
+          const [generation, payload, stamp] = options.arguments;
+          if (generation !== state.generation) return Promise.resolve(0);
+          state.blob = payload;
+          state.stamp = stamp;
+        }
+        return Promise.resolve(1);
+      }
+    );
+    return { redis, state };
+  }
+
+  it('reuses the in-memory catalogue while its stamp is current, without transferring the blob', async () => {
+    const { redis } = catalogueRedis();
+    (getRedisClient as jest.Mock).mockReturnValue(redis);
+    const userGroupsDb = buildUserGroupsDbMock();
+    const service = buildService(userGroupsDb);
+
+    await expect(
+      service.getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).resolves.toEqual([GROUP_ID]);
+    mcache.clear();
+    await expect(
+      service.getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).resolves.toEqual([GROUP_ID]);
+
+    expect(userGroupsDb.getByIds).toHaveBeenCalledTimes(1);
+    expect(redis.get).not.toHaveBeenCalledWith(WAVE_GROUPS_CACHE_KEY);
+  });
+
+  it('never serves the in-memory catalogue after an explicit eviction: a new group is eligible at once', async () => {
+    const { redis, state } = catalogueRedis();
+    (getRedisClient as jest.Mock).mockReturnValue(redis);
+    const userGroupsDb = buildUserGroupsDbMock();
+    const service = buildService(userGroupsDb);
+    await expect(
+      service.getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).resolves.toEqual([GROUP_ID]);
+
+    // A wave is created with a new group the profile is listed in.
+    userGroupsDb.getAllWaveRelatedGroups.mockResolvedValue([
+      GROUP_ID,
+      'new-group'
+    ]);
+    userGroupsDb.getByIds.mockResolvedValue([
+      buildUserGroup(),
+      buildUserGroup({ id: 'new-group', profile_group_id: 'profile-group-2' })
+    ]);
+    userGroupsDb.getGroupsUserIsEligibleByIdentity.mockResolvedValue([
+      GROUP_ID,
+      'new-group'
+    ]);
+    state.evict();
+    mcache.clear();
+
+    await expect(
+      service.getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).resolves.toEqual(expect.arrayContaining([GROUP_ID, 'new-group']));
+    expect(userGroupsDb.getByIds).toHaveBeenCalledTimes(2);
+  });
+
+  it('waits briefly for a Redis client that is still connecting before reading', async () => {
+    const redis = { ...buildRedisMock(), isReady: false };
+    (getRedisClient as jest.Mock).mockReturnValue(redis);
+
+    await buildService().getGroupsUserIsEligibleFor(PROFILE_ID);
+
+    expect(waitForRedisReady).toHaveBeenCalledWith(300);
+    expect(
+      (waitForRedisReady as jest.Mock).mock.invocationCallOrder[0]
+    ).toBeLessThan(redis.get.mock.invocationCallOrder[0]);
+  });
+
+  it('does not wait for a ready Redis client', async () => {
+    (getRedisClient as jest.Mock).mockReturnValue({
+      ...buildRedisMock(),
+      isReady: true
+    });
+
+    await buildService().getGroupsUserIsEligibleFor(PROFILE_ID);
+
+    expect(waitForRedisReady).not.toHaveBeenCalled();
+  });
+
+  it('still fails closed when the client never becomes ready', async () => {
+    (waitForRedisReady as jest.Mock).mockResolvedValueOnce(false);
+    const redis = { ...buildRedisMock(), isReady: false };
+    redis.get.mockRejectedValue(new Error('client is not connected'));
+    (getRedisClient as jest.Mock).mockReturnValue(redis);
+
+    await expect(
+      buildService().getGroupsUserIsEligibleFor(PROFILE_ID)
+    ).rejects.toMatchObject({ status: 503 });
+  });
+
   it('returns 503 on a production cache miss without Redis', async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
@@ -555,16 +711,18 @@ describe('UserGroupsService eligibility cache', () => {
 
   it('skips the wave-group id scan when the wave-group entity blob is warm', async () => {
     const waveGroup = buildUserGroup();
+    const blob = JSON.stringify([waveGroup]);
     const redis = buildRedisMock();
     redis.get.mockImplementation((key: string) => {
       if (key === WAVE_GROUPS_VERSION_CACHE_KEY) {
         return Promise.resolve('7');
       }
       if (key === WAVE_GROUPS_CACHE_KEY) {
-        return Promise.resolve(JSON.stringify([waveGroup]));
+        return Promise.resolve(blob);
       }
       return Promise.resolve(null);
     });
+    answerCatalogueProbe(redis, blob);
     (getRedisClient as jest.Mock).mockReturnValue(redis);
 
     const userGroupsDb = buildUserGroupsDbMock();
@@ -591,6 +749,7 @@ describe('UserGroupsService eligibility cache', () => {
       }
       return Promise.resolve(null);
     });
+    answerCatalogueProbe(redis, null);
     (getRedisClient as jest.Mock).mockReturnValue(redis);
 
     const userGroupsDb = buildUserGroupsDbMock();
@@ -606,11 +765,34 @@ describe('UserGroupsService eligibility cache', () => {
       [GROUP_ID],
       expect.anything()
     );
+    // One rebuild under the single-flight lease, published with its stamp
+    // only under the generation it read before loading.
     expect(redis.set).toHaveBeenCalledWith(
-      WAVE_GROUPS_CACHE_KEY,
-      JSON.stringify([waveGroup]),
-      { EX: 60 }
+      WAVE_GROUPS_CACHE_REBUILD_LEASE_KEY,
+      expect.any(String),
+      { NX: true, PX: 10_000 }
     );
+    const publish = redis.eval.mock.calls.find(
+      ([, options]) =>
+        (options as { keys?: string[] } | undefined)?.keys?.includes(
+          WAVE_GROUPS_CACHE_STAMP_KEY
+        ) && String(options?.arguments?.[1]).startsWith('[')
+    );
+    expect(publish?.[1]).toEqual({
+      keys: [
+        WAVE_GROUPS_CACHE_KEY,
+        WAVE_GROUPS_CACHE_STAMP_KEY,
+        WAVE_GROUPS_CACHE_GENERATION_KEY,
+        WAVE_GROUPS_CACHE_REBUILD_LEASE_KEY
+      ],
+      arguments: [
+        '0',
+        JSON.stringify([waveGroup]),
+        expect.stringContaining('"generation":"0"'),
+        '60',
+        expect.any(String)
+      ]
+    });
   });
 
   it('polls every 25-50 ms for a peer result and validates only a published one', async () => {
