@@ -22,7 +22,7 @@ import {
   WaveSubmissionType,
   WaveType
 } from '@/entities/IWave';
-import { Time } from '@/time';
+import { Time, Timer } from '@/time';
 import { DbPoolName } from '@/db-query.options';
 import { BadRequestException, ForbiddenException } from '@/exceptions';
 
@@ -39,6 +39,56 @@ jest.mock('@/profiles/profile-waves.db', () => ({
     findSelectedWaveIdsByWaveIds: jest.fn().mockResolvedValue(new Set())
   }
 }));
+
+describe('WaveApiService findWaveByIdOrThrow timing', () => {
+  it('times the wave load, the visibility check and the mapping', async () => {
+    const wave = {
+      id: 'wave-1',
+      visibility_group_id: null,
+      parent_wave_id: null
+    };
+    const wavesApiDb = { findWaveById: jest.fn().mockResolvedValue(wave) };
+    const waveMappers = {
+      waveEntityToApiWave: jest.fn().mockResolvedValue({ id: 'wave-1' })
+    };
+    const service = new WaveApiService(
+      wavesApiDb as any,
+      {} as any,
+      waveMappers as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    const timer = new Timer('GET /api/waves/wave-1');
+
+    await expect(
+      service.findWaveByIdOrThrow('wave-1', [], {
+        authenticationContext: AuthenticationContext.notAuthenticated(),
+        timer
+      })
+    ).resolves.toEqual({ id: 'wave-1' });
+
+    const report = JSON.parse(timer.getReport()) as {
+      times: { key: string }[];
+      ongoingTimers: string[];
+    };
+    expect(report.times.map(({ key }) => key)).toEqual([
+      'WaveApiService->findWaveByIdOrThrow.loadWave',
+      'WaveApiService->findWaveByIdOrThrow.assertVisible',
+      'WaveApiService->findWaveByIdOrThrow.mapWave'
+    ]);
+    expect(report.ongoingTimers).toEqual([]);
+  });
+});
 
 describe('WaveApiService updateWave immutability', () => {
   function createService({
