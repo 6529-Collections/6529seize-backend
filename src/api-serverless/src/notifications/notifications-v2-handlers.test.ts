@@ -1,4 +1,5 @@
 const mockGetNotificationsV2 = jest.fn();
+const mockGetUnreadNotificationsCountV2 = jest.fn();
 const mockGetAuthenticationContext = jest.fn();
 const mockGetFromRequest = jest.fn();
 
@@ -8,7 +9,8 @@ jest.mock('@/api/auth/auth', () => ({
 
 jest.mock('@/api/notifications/notifications.api.service', () => ({
   notificationsApiService: {
-    getNotificationsV2: mockGetNotificationsV2
+    getNotificationsV2: mockGetNotificationsV2,
+    getUnreadNotificationsCountV2: mockGetUnreadNotificationsCountV2
   }
 }));
 
@@ -24,7 +26,10 @@ jest.mock('@/time', () => ({
 }));
 
 import { IdentityNotificationCause } from '@/entities/IIdentityNotification';
-import { handleGetNotificationsV2 } from './notifications-v2.handlers';
+import {
+  handleGetNotificationsUnreadCountV2,
+  handleGetNotificationsV2
+} from './notifications-v2.handlers';
 
 describe('handleGetNotificationsV2', () => {
   const timer = { marker: 'timer' } as any;
@@ -145,5 +150,68 @@ describe('handleGetNotificationsV2', () => {
       'Proxies cannot access notifications'
     );
     expect(mockGetNotificationsV2).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleGetNotificationsUnreadCountV2', () => {
+  const timer = { marker: 'timer' } as any;
+  const authenticationContext = {
+    getActingAsId: jest.fn(),
+    isAuthenticatedAsProxy: jest.fn()
+  } as any;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    authenticationContext.getActingAsId.mockReturnValue('profile-1');
+    authenticationContext.isAuthenticatedAsProxy.mockReturnValue(false);
+    mockGetAuthenticationContext.mockResolvedValue(authenticationContext);
+    mockGetUnreadNotificationsCountV2.mockResolvedValue({ unread_count: 7 });
+    mockGetFromRequest.mockReturnValue(timer);
+  });
+
+  it.each([
+    [{}, {}],
+    [{ include_competitions: 'true' }, { include_competitions: true }],
+    [{ include_competitions: 'false' }, { include_competitions: false }]
+  ])('returns only the unread count for query %j', async (query, expected) => {
+    const req = { query } as any;
+
+    await expect(handleGetNotificationsUnreadCountV2(req)).resolves.toEqual({
+      unread_count: 7
+    });
+    expect(mockGetAuthenticationContext).toHaveBeenCalledWith(req, timer);
+    expect(mockGetUnreadNotificationsCountV2).toHaveBeenCalledWith(
+      expected,
+      authenticationContext,
+      { timer, authenticationContext }
+    );
+    expect(mockGetNotificationsV2).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed competition opt-in', async () => {
+    await expect(
+      handleGetNotificationsUnreadCountV2({
+        query: { include_competitions: 'yes' }
+      } as any)
+    ).rejects.toThrow('"include_competitions" must be a boolean');
+    expect(mockGetUnreadNotificationsCountV2).not.toHaveBeenCalled();
+  });
+
+  it('rejects users without a profile, like the notifications list', async () => {
+    authenticationContext.getActingAsId.mockReturnValue(null);
+    await expect(
+      handleGetNotificationsUnreadCountV2({ query: {} } as any)
+    ).rejects.toThrow(
+      'You need to create a profile before you can access notifications'
+    );
+    expect(mockGetUnreadNotificationsCountV2).not.toHaveBeenCalled();
+  });
+
+  it('rejects proxy-authenticated users, like the notifications list', async () => {
+    authenticationContext.isAuthenticatedAsProxy.mockReturnValue(true);
+    await expect(
+      handleGetNotificationsUnreadCountV2({ query: {} } as any)
+    ).rejects.toThrow('Proxies cannot access notifications');
+    expect(mockGetUnreadNotificationsCountV2).not.toHaveBeenCalled();
   });
 });

@@ -206,6 +206,7 @@ import { ApiModerationCounts } from '@/api/generated/models/ApiModerationCounts'
 import { ApiModerationReviewCasePage } from '@/api/generated/models/ApiModerationReviewCasePage';
 import { ApiNftActivityPage } from '@/api/generated/models/ApiNftActivityPage';
 import { ApiNotificationsResponseV2 } from '@/api/generated/models/ApiNotificationsResponseV2';
+import { ApiNotificationsUnreadCountV2 } from '@/api/generated/models/ApiNotificationsUnreadCountV2';
 import { ApiOgMetadata } from '@/api/generated/models/ApiOgMetadata';
 import { ApiProfileCmsAgentCandidateValidation } from '@/api/generated/models/ApiProfileCmsAgentCandidateValidation';
 import { ApiProfileCmsAgentDraft } from '@/api/generated/models/ApiProfileCmsAgentDraft';
@@ -3612,6 +3613,22 @@ export type GetNotificationsV2Request = Request<
   ApiResponse<GetNotificationsV2Response>,
   never,
   GetNotificationsV2Query,
+  Record<string, never>
+>;
+
+export type GetNotificationsUnreadCountV2PathParams = Record<string, never>;
+
+export interface GetNotificationsUnreadCountV2Query {
+  "include_competitions"?: boolean;
+}
+
+export type GetNotificationsUnreadCountV2Response = ApiNotificationsUnreadCountV2;
+
+export type GetNotificationsUnreadCountV2Request = Request<
+  GetNotificationsUnreadCountV2PathParams,
+  ApiResponse<GetNotificationsUnreadCountV2Response>,
+  never,
+  GetNotificationsUnreadCountV2Query,
   Record<string, never>
 >;
 

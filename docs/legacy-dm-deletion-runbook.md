@@ -116,6 +116,7 @@ export LEGACY_DM_DB_USER=... LEGACY_DM_DB_PASSWORD=...
 export LEGACY_DM_DB_DATABASE=...
 export LEGACY_DM_PUBLIC_BUCKET=...           # AWS_6529_IMAGES_BUCKET_NAME
 export AWS_REGION=us-east-1                  # eu-west-1 for staging
+export REDIS_URL=... REDIS_PORT=6379 REDIS_TLS=true   # the api's cache, for execute
 RUN="bin/6529 exec ts-node -r tsconfig-paths/register ops/scripts/legacy-dm-purge/cli.ts"
 ```
 
@@ -150,6 +151,14 @@ $RUN execute ~/legacy-dm/prod-media.jsonl \
 3. When a hold is released, purge that conversation with
    `LEGACY_DM_PURGE_WAVES=<wave id>` (and `LEGACY_DM_HELD_WAVES=none`), then
    run §3.5 for its media.
+
+After each wave, `execute` moves that wave's unread-cache version in Redis,
+so the api stops showing unread counts for the deleted drops at once
+instead of after its unread-cache TTL (up to 10 minutes). It therefore
+needs `REDIS_URL` from a host that reaches the cache, and it stops if a
+move fails; rerunning repeats that wave's (empty) purge and the move. Only
+when the cache is unreachable, set `LEGACY_DM_SKIP_UNREAD_BUMP=acknowledged`
+and accept stale unread counts on purged DMs for up to that TTL.
 
 One DM wave at a time, transactions of at most 100 drops
 (`LEGACY_DM_PURGE_BATCH`, up to 500). Each batch appends the media it
