@@ -2,7 +2,9 @@ import * as fc from 'fast-check';
 import {
   e2eeClaimKeyPackagesSchema,
   e2eeDeviceLookupSchema,
+  e2eeEligibilitySchema,
   e2eeLogQuerySchema,
+  e2eeProfileDevicesQuerySchema,
   e2eeRegisterDeviceSchema,
   e2eeReportSchema,
   e2eeSendMessageSchema,
@@ -91,12 +93,18 @@ describe('E2EE request validation', () => {
     };
     expect(validateE2ee(registration, e2eeRegisterDeviceSchema)).toBeTruthy();
     rejects({ ...registration, platform: 'tv' }, e2eeRegisterDeviceSchema);
-    for (const ciphersuite of [1, 2]) {
+    for (const ciphersuite of [1, 2, 77, 80]) {
       rejects(
         { ...registration, grant: { ...registration.grant, ciphersuite } },
         e2eeRegisterDeviceSchema
       );
     }
+    expect(
+      validateE2ee(
+        { ...registration, grant: { ...registration.grant, ciphersuite: 78 } },
+        e2eeRegisterDeviceSchema
+      )
+    ).toBeTruthy();
     rejects(
       { ...registration, wallet_signature: '0x123' },
       e2eeRegisterDeviceSchema
@@ -130,6 +138,13 @@ describe('E2EE request validation', () => {
     ).toEqual({ profile_ids: ['a'] });
     rejects({}, e2eeDeviceLookupSchema);
     rejects({ profile_ids: [], device_keys: [] }, e2eeDeviceLookupSchema);
+    expect(
+      validateE2ee(
+        { profile_ids: ['a'], ciphersuite: 78 },
+        e2eeDeviceLookupSchema
+      )
+    ).toEqual({ profile_ids: ['a'], ciphersuite: 78 });
+    rejects({ profile_ids: ['a'], ciphersuite: 1 }, e2eeDeviceLookupSchema);
     rejects({ device_keys: ['0x12'] }, e2eeDeviceLookupSchema);
     rejects(
       { profile_ids: Array.from({ length: 201 }, (_, i) => `p${i}`) },
@@ -161,5 +176,29 @@ describe('E2EE request validation', () => {
       rejects({ ...report, reason }, e2eeReportSchema);
     }
     rejects(report, e2eeReportSchema);
+  });
+
+  it('accepts only 0x004F and 0x004E where a request names a suite', () => {
+    const claim = { targets: [{ profile_id: 'a' }], claimer_device_key: HEX32 };
+    for (const ciphersuite of [79, 78]) {
+      expect(
+        validateE2ee({ ...claim, ciphersuite }, e2eeClaimKeyPackagesSchema)
+      ).toEqual({ ...claim, ciphersuite });
+      expect(
+        validateE2ee(
+          { profile_ids: ['a'], ciphersuite },
+          e2eeEligibilitySchema
+        )
+      ).toEqual({ profile_ids: ['a'], ciphersuite });
+    }
+    expect(
+      validateE2ee({ ciphersuite: '78' }, e2eeProfileDevicesQuerySchema)
+    ).toEqual({ ciphersuite: 78 });
+    expect(validateE2ee({}, e2eeProfileDevicesQuerySchema)).toEqual({});
+    for (const ciphersuite of [0, 1, 77, 80, 0x0052]) {
+      rejects({ ...claim, ciphersuite }, e2eeClaimKeyPackagesSchema);
+      rejects({ profile_ids: ['a'], ciphersuite }, e2eeEligibilitySchema);
+      rejects({ ciphersuite }, e2eeProfileDevicesQuerySchema);
+    }
   });
 });

@@ -26,6 +26,7 @@ import { anIdentity } from '@/tests/fixtures/identity.fixture';
 import { aProfile as aProfileRow } from '@/tests/fixtures/profile.fixture';
 import {
   E2EE_CIPHERSUITE,
+  E2EE_CIPHERSUITE_AES256,
   E2EE_ENTRY_BUCKETS,
   E2EE_MAX_ENTRY_AND_WELCOME_BYTES
 } from '@/e2ee/e2ee.constants';
@@ -236,12 +237,16 @@ describeWithSeed('E2EE delivery service', [], () => {
 
   const nowSeconds = () => Math.floor(now / 1000);
 
-  function grantFor(profile: Profile, key: E2eeTestKey): E2eeDeviceGrant {
+  function grantFor(
+    profile: Profile,
+    key: E2eeTestKey,
+    ciphersuite: number = E2EE_CIPHERSUITE
+  ): E2eeDeviceGrant {
     const issuedAt = nowSeconds();
     return {
       wallet: profile.wallet.address.toLowerCase(),
       device_key: key.publicKey,
-      ciphersuite: E2EE_CIPHERSUITE,
+      ciphersuite,
       issued_at: issuedAt,
       expires_at: Math.floor(issuedAt / 60) * 60 + 180 * 86400,
       origin: 'staging.6529.io'
@@ -259,11 +264,12 @@ describeWithSeed('E2EE delivery service', [], () => {
 
   async function registerDevice(
     profile: Profile,
-    key: E2eeTestKey = randomE2eeKey()
+    key: E2eeTestKey = randomE2eeKey(),
+    ciphersuite: number = E2EE_CIPHERSUITE
   ): Promise<E2eeTestKey> {
     walletProfiles.set(profile.wallet.address.toLowerCase(), profile.id);
     await persistProfile(profile, persistedProfiles);
-    const grant = grantFor(profile, key);
+    const grant = grantFor(profile, key, ciphersuite);
     await services.devices.registerDevice(profile.id, {
       grant,
       wallet_signature: await signGrant(profile, grant),
@@ -440,20 +446,30 @@ describeWithSeed('E2EE delivery service', [], () => {
     });
   }
 
+  /** Test KeyPackage bytes: the MLS 1.0 version and suite, then a label. */
+  const keyPackageBytes = (label: string, ciphersuite = E2EE_CIPHERSUITE) =>
+    Buffer.concat([
+      Buffer.from([0x00, 0x01, ciphersuite >> 8, ciphersuite & 0xff]),
+      Buffer.from(label)
+    ]).toString('base64');
+  const keyPackageLabel = (value: string) =>
+    Buffer.from(value, 'base64').subarray(4).toString();
+
   async function uploadKeyPackages(
     profile: Profile,
     device: E2eeTestKey,
     oneTime: number,
-    lastResort = false
+    lastResort = false,
+    ciphersuite = E2EE_CIPHERSUITE
   ) {
     const keyPackages = Array.from({ length: oneTime }, (_, index) => ({
-      data: Buffer.from(`kp-${device.publicKey}-${index}`).toString('base64'),
+      data: keyPackageBytes(`kp-${device.publicKey}-${index}`, ciphersuite),
       last_resort: false,
       expires_at: nowSeconds() + 30 * 86400
     }));
     if (lastResort) {
       keyPackages.push({
-        data: Buffer.from(`last-resort-${device.publicKey}`).toString('base64'),
+        data: keyPackageBytes(`last-resort-${device.publicKey}`, ciphersuite),
         last_resort: true,
         expires_at: nowSeconds() + 90 * 86400
       });
@@ -1149,7 +1165,7 @@ describeWithSeed('E2EE delivery service', [], () => {
           targets: [{ profile_id: bob.id }],
           claimer_device_key: aliceDevice.publicKey
         });
-      const decode = (value: string) => Buffer.from(value, 'base64').toString();
+      const decode = keyPackageLabel;
       const first = (await claim()).results[0].key_packages[0];
       expect(decode(first.key_package)).toBe(`kp-${bobDevice.publicKey}-0`);
       expect(first.last_resort).toBe(false);
@@ -1190,6 +1206,161 @@ describeWithSeed('E2EE delivery service', [], () => {
         status: 'NO_DEVICES',
         key_packages: []
       });
+    });
+  });
+
+  describe('ciphersuites (0x004F and 0x004E)', () => {
+    it('lists by profile only the devices of the requested suite', async () => {
+      const alice = aProfile();
+      const bob = aProfile();
+      await registerDevice(alice);
+      const bobOld = await registerDevice(bob);
+      const bobNew = await registerDevice(
+        bob,
+        randomE2eeKey(),
+        E2EE_CIPHERSUITE_AES256
+      );
+      const keys = (devices: { device_key: string }[]) =>
+        devices.map((device) => device.device_key);
+
+      expect(keys(await services.devices.getProfileDevices(bob.id))).toEqual([
+        bobOld.publicKey
+      ]);
+      expect(
+        keys(
+          await services.devices.getProfileDevices(
+            bob.id,
+            E2EE_CIPHERSUITE_AES256
+          )
+        )
+      ).toEqual([bobNew.publicKey]);
+      const lookup = await services.devices.lookupDevices({
+        profile_ids: [bob.id],
+        ciphersuite: E2EE_CIPHERSUITE_AES256
+      });
+      expect(keys(lookup.devices)).toEqual([bobNew.publicKey]);
+      // Devices named by key come back whatever their suite.
+      const byKey = await services.devices.lookupDevices({
+        device_keys: [bobOld.publicKey, bobNew.publicKey]
+      });
+      expect(keys(byKey.devices).sort()).toEqual(
+        [bobOld.publicKey, bobNew.publicKey].sort()
+      );
+      expect(
+        byKey.devices.map((device) => device.grant.ciphersuite).sort()
+      ).toEqual([78, 79]);
+      // The caller's own listing shows every suite.
+      expect(keys((await services.devices.getMe(bob.id)).devices).sort()).toEqual(
+        [bobOld.publicKey, bobNew.publicKey].sort()
+      );
+    });
+
+    it('accepts only MLS KeyPackages of the device suite', async () => {
+      const bob = aProfile();
+      const bobOld = await registerDevice(bob);
+      const bobNew = await registerDevice(
+        bob,
+        randomE2eeKey(),
+        E2EE_CIPHERSUITE_AES256
+      );
+      const upload = (device: E2eeTestKey, data: string) =>
+        services.devices.uploadKeyPackages(bob.id, device.publicKey, {
+          key_packages: [
+            { data, last_resort: false, expires_at: nowSeconds() + 86400 }
+          ]
+        });
+      await expectE2eeError(
+        upload(bobOld, Buffer.from('not a key package').toString('base64')),
+        'E2EE_BAD_REQUEST'
+      );
+      await expectE2eeError(
+        upload(bobOld, keyPackageBytes('x', 0x0052)),
+        'E2EE_BAD_REQUEST'
+      );
+      await expectE2eeError(
+        upload(bobOld, keyPackageBytes('x', E2EE_CIPHERSUITE_AES256)),
+        'E2EE_BAD_REQUEST'
+      );
+      await expectE2eeError(
+        upload(bobNew, keyPackageBytes('x', E2EE_CIPHERSUITE)),
+        'E2EE_BAD_REQUEST'
+      );
+      expect(
+        (await upload(bobNew, keyPackageBytes('x', E2EE_CIPHERSUITE_AES256)))
+          .one_time_available
+      ).toBe(1);
+      expect(
+        (await upload(bobOld, keyPackageBytes('y', E2EE_CIPHERSUITE)))
+          .one_time_available
+      ).toBe(1);
+    });
+
+    it('claims and counts only devices that can join the suite', async () => {
+      const alice = aProfile();
+      const bob = aProfile();
+      const aliceOld = await registerDevice(alice);
+      const aliceNew = await registerDevice(
+        alice,
+        randomE2eeKey(),
+        E2EE_CIPHERSUITE_AES256
+      );
+      const bobOld = await registerDevice(bob);
+      const bobNew = await registerDevice(
+        bob,
+        randomE2eeKey(),
+        E2EE_CIPHERSUITE_AES256
+      );
+      await uploadKeyPackages(bob, bobOld, 1);
+      await uploadKeyPackages(bob, bobNew, 1, false, E2EE_CIPHERSUITE_AES256);
+      const claim = (claimer: E2eeTestKey, ciphersuite?: number) =>
+        services.devices.claimKeyPackages(alice.id, {
+          targets: [{ profile_id: bob.id }],
+          claimer_device_key: claimer.publicKey,
+          ...(ciphersuite === undefined ? {} : { ciphersuite })
+        });
+
+      const fromNew = (await claim(aliceNew)).results[0];
+      expect(fromNew.status).toBe('OK');
+      expect(
+        fromNew.key_packages.map((item) => item.device.device_key)
+      ).toEqual([bobNew.publicKey]);
+      expect(keyPackageLabel(fromNew.key_packages[0].key_package)).toBe(
+        `kp-${bobNew.publicKey}-0`
+      );
+      const fromOld = (await claim(aliceOld)).results[0];
+      expect(
+        fromOld.key_packages.map((item) => item.device.device_key)
+      ).toEqual([bobOld.publicKey]);
+      await expectE2eeError(
+        claim(aliceOld, E2EE_CIPHERSUITE_AES256),
+        'E2EE_BAD_REQUEST'
+      );
+
+      const eligibility = async (ciphersuite?: number) =>
+        (
+          await services.devices.checkEligibility(alice.id, {
+            profile_ids: [bob.id],
+            ...(ciphersuite === undefined ? {} : { ciphersuite })
+          })
+        ).results[0].active_devices;
+      expect(await eligibility()).toBe(1);
+      expect(await eligibility(E2EE_CIPHERSUITE_AES256)).toBe(1);
+
+      const carol = aProfile();
+      await registerDevice(carol);
+      const toCarol = await services.devices.claimKeyPackages(alice.id, {
+        targets: [{ profile_id: carol.id }],
+        claimer_device_key: aliceNew.publicKey
+      });
+      // Carol has only a 0x004F device, which cannot join 0x004E groups.
+      expect(toCarol.results[0].status).toBe('NO_DEVICES');
+    });
+
+    it('applies the device limit per suite', async () => {
+      const alice = aProfile();
+      for (let i = 0; i < 10; i++) await registerDevice(alice);
+      await expectE2eeError(registerDevice(alice), 'E2EE_DEVICE_LIMIT');
+      await registerDevice(alice, randomE2eeKey(), E2EE_CIPHERSUITE_AES256);
     });
   });
 

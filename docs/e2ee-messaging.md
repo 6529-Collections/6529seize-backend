@@ -9,14 +9,42 @@ cannot add a device to a group. Existing plaintext DMs are unchanged.
 The normative wire contract is the shared "E2EE DMs and groups (D109): shared
 implementation contract v1". This page describes the backend's part of it.
 
-## Ciphersuite
+## Ciphersuites
 
-The only ciphersuite is `MLS_128_MLKEM768X25519_AES128GCM_SHA256_Ed25519`
+Encrypted messages launched on `MLS_128_MLKEM768X25519_AES128GCM_SHA256_Ed25519`
 (`0x004F`, 79): X-Wing hybrid post-quantum key exchange (ML-KEM-768 with
-X25519), AES-128-GCM, SHA-256 and Ed25519 signatures. There is no fallback
-suite. `0x004F` is a draft code point (draft-ietf-mls-pq-ciphersuites); if
-the code point changes, every device re-enrolls and every group is
-re-created. Device keys stay Ed25519, so their size is unchanged.
+X25519), AES-128-GCM, SHA-256 and Ed25519 signatures. The server also
+accepts its sibling `MLS_128_MLKEM768X25519_AES256GCM_SHA384_Ed25519`
+(`0x004E`, 78): the same X-Wing key exchange and Ed25519 device keys with
+AES-256-GCM and SHA-384. Under `0x004F` the epoch secrets travel in HPKE
+sealed with AES-128-GCM (GroupSecrets in Welcomes, path secrets in
+UpdatePaths), so the system's floor is the AES-128 / SHA-256 level; moving
+to `0x004E` raises that floor. Both are draft code points
+(draft-ietf-mls-pq-ciphersuites TBD1 and TBD2); a renumbered RFC means
+another move.
+
+A group never changes suite, and a device joins only groups of the suite its
+grant names (`e2eeGrantSuitesFor` in `src/e2ee/e2ee.constants.ts`; widening
+that map is a protocol decision). Clients move to a new suite by enrolling
+devices and creating groups on it. While both suites are accepted:
+
+- grants (`POST /e2ee/devices`, combined sign-in, app grants) may name 79 or
+  78;
+- an uploaded KeyPackage's `cipher_suite` (bytes 2-3 of the MLS 1.0
+  KeyPackage) must be one its device's grant admits, else 400;
+- device listings by profile (`GET /e2ee/profiles/{id}/devices`,
+  `POST /e2ee/devices/lookup` `profile_ids`) and eligibility take a
+  `ciphersuite` and return only devices that can join groups of it; lookups
+  by `device_keys` return any suite;
+- claims serve the request's `ciphersuite`, else the claimer device's grant
+  suite, and refuse a suite the claimer device cannot join;
+- requests that name no suite get 79, so clients built before `0x004E` see
+  exactly the devices they can use;
+- the 10-device limit counts per suite, so a profile at the limit can still
+  enroll on the new suite.
+
+`GET /e2ee/me` lists the caller's devices of every suite. Device keys stay
+Ed25519 on both suites, so their size is unchanged.
 
 X-Wing public keys are 1,216 bytes and its ciphertexts 1,120 bytes, so MLS
 objects are larger than under `0x0001`: a KeyPackage is about 2.7 KiB, a
@@ -130,14 +158,14 @@ human review only.
 ## Device grants and revocation
 
 `POST /e2ee/devices` rebuilds the grant statement from the signed fields,
-checks ciphersuite 79 (`0x004F`), a printable origin of at most 64 characters, minute
+checks an accepted ciphersuite (79 or 78), a printable origin of at most 64 characters, minute
 alignment, at most 181 days of lifetime, `issued_at` no more than 10 minutes
 ahead and `expires_at` in the future. It then recovers the EIP-712 signer
 (salt-only domain, no chain id). If that fails and the wallet has code on
 Ethereum mainnet, it calls EIP-1271 `isValidSignature(grant_id, signature)`
 through `verifyContractWalletSignatureHash`. The grant wallet must map to the
-caller's profile. A profile has at most 10 active devices; re-registering an
-unrevoked key of the same profile renews its grant.
+caller's profile. A profile has at most 10 active devices per suite;
+re-registering an unrevoked key of the same profile renews its grant.
 
 `POST /e2ee/devices/login-grant` (NC8) registers the MLS key that a combined
 sign-in grant also granted (`docs/auth/wallet-auth.md`), with no second

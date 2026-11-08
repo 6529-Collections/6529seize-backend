@@ -8,11 +8,67 @@ const MIB = 1024 * KIB;
 /**
  * MLS_128_MLKEM768X25519_AES128GCM_SHA256_Ed25519 (0x004F): X-Wing hybrid
  * ML-KEM-768 + X25519 key exchange, AES-128-GCM, SHA-256, Ed25519
- * signatures. The only suite accepted; there is no fallback. 0x004F is a
- * draft code point (draft-ietf-mls-pq-ciphersuites): if it changes, every
- * device re-enrolls and every group is re-created.
+ * signatures. The suite encrypted messages launched on.
  */
-export const E2EE_CIPHERSUITE = 0x004f;
+export const E2EE_CIPHERSUITE_AES128 = 0x004f;
+
+/**
+ * MLS_128_MLKEM768X25519_AES256GCM_SHA384_Ed25519 (0x004E): the same X-Wing
+ * key exchange and Ed25519 signatures with AES-256-GCM and SHA-384. Under
+ * 0x004F the epoch secrets travel in HPKE sealed with AES-128-GCM
+ * (GroupSecrets in Welcomes, path secrets in UpdatePaths), so the system's
+ * floor is the AES-128 / SHA-256 level; 0x004E raises that floor.
+ */
+export const E2EE_CIPHERSUITE_AES256 = 0x004e;
+
+/**
+ * The suite assumed when a request names none: clients built before 0x004E
+ * was accepted only know 0x004F. Device listings, eligibility and claims
+ * default to it, so those clients see exactly the devices they can use.
+ */
+export const E2EE_CIPHERSUITE = E2EE_CIPHERSUITE_AES128;
+
+/**
+ * Every suite the server accepts in grants and KeyPackages. Both are draft
+ * code points (draft-ietf-mls-pq-ciphersuites TBD1 and TBD2): a renumbered
+ * RFC means another move. Groups never change suite; clients move to a new
+ * suite by enrolling devices and creating groups on it.
+ */
+export const E2EE_CIPHERSUITES: readonly number[] = [
+  E2EE_CIPHERSUITE_AES128,
+  E2EE_CIPHERSUITE_AES256
+];
+
+/**
+ * For a group suite, the grant suites whose device keys may join groups of
+ * that suite (and upload KeyPackages for it). Each suite admits only devices
+ * granted for it (contract 2.1 and 3.6); widening this map is a protocol
+ * decision, not an engineering one.
+ */
+const E2EE_GRANT_SUITES_BY_GROUP_SUITE: ReadonlyMap<
+  number,
+  readonly number[]
+> = new Map([
+  [E2EE_CIPHERSUITE_AES128, [E2EE_CIPHERSUITE_AES128]],
+  [E2EE_CIPHERSUITE_AES256, [E2EE_CIPHERSUITE_AES256]]
+]);
+
+export function isE2eeCiphersuite(value: unknown): value is number {
+  return typeof value === 'number' && E2EE_CIPHERSUITES.includes(value);
+}
+
+/** Grant suites whose devices can join a group of `groupSuite`. */
+export function e2eeGrantSuitesFor(groupSuite: number): readonly number[] {
+  return E2EE_GRANT_SUITES_BY_GROUP_SUITE.get(groupSuite) ?? [];
+}
+
+/** Whether a device granted for `grantSuite` can join `groupSuite` groups. */
+export function canE2eeDeviceJoinSuite(
+  grantSuite: number,
+  groupSuite: number
+): boolean {
+  return e2eeGrantSuitesFor(groupSuite).includes(Number(grantSuite));
+}
 
 export const E2EE_MAX_ACTIVE_DEVICES = 10;
 export const E2EE_GRANT_MAX_LIFETIME_SECONDS = 181 * 24 * 60 * 60;

@@ -162,6 +162,22 @@ function inList(values: readonly string[]): string[] {
 }
 
 /**
+ * An optional `ciphersuite in (...)` condition on device rows. Absent, it
+ * matches every suite; an empty list matches no device.
+ */
+function suiteFilter(ciphersuites: readonly number[] | undefined): {
+  readonly sql: string;
+  readonly params: Record<string, number[]>;
+} {
+  if (!ciphersuites) return { sql: '', params: {} };
+  const list = ciphersuites.length ? Array.from(new Set(ciphersuites)) : [-1];
+  return {
+    sql: 'and ciphersuite in (:ciphersuites)',
+    params: { ciphersuites: list }
+  };
+}
+
+/**
  * Database access for E2EE messaging. Reads outside a transaction use the
  * primary so that ordering checks never act on replica lag.
  */
@@ -301,17 +317,21 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** Active devices of a profile; with `ciphersuites`, only those suites. */
   async countActiveDevices(
     profileId: string,
     nowSeconds: number,
-    connection: Conn
+    connection: Conn,
+    ciphersuites?: readonly number[]
   ): Promise<number> {
+    const suites = suiteFilter(ciphersuites);
     const row = await this.one<{ cnt: number }>(
       `select count(*) as cnt from ${E2EE_DEVICES_TABLE}
        where profile_id = :profileId
          and revoked_at is null
-         and expires_at_seconds > :nowSeconds`,
-      { profileId, nowSeconds },
+         and expires_at_seconds > :nowSeconds
+         ${suites.sql}`,
+      { profileId, nowSeconds, ...suites.params },
       connection
     );
     return Number(row?.cnt ?? 0);
@@ -676,16 +696,19 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   async getActiveDeviceCounts(
     profileIds: readonly string[],
     nowSeconds: number,
-    connection?: Conn
+    connection?: Conn,
+    ciphersuites?: readonly number[]
   ): Promise<Map<string, number>> {
     const targets = inList(profileIds);
     if (!targets.length) return new Map();
+    const suites = suiteFilter(ciphersuites);
     const rows = await this.many<{ profile_id: string; cnt: number }>(
       `select profile_id, count(*) as cnt from ${E2EE_DEVICES_TABLE}
        where profile_id in (:targets) and revoked_at is null
          and expires_at_seconds > :nowSeconds
+         ${suites.sql}
        group by profile_id`,
-      { targets, nowSeconds },
+      { targets, nowSeconds, ...suites.params },
       connection
     );
     return new Map(rows.map((row) => [row.profile_id, Number(row.cnt)]));

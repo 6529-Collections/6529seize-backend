@@ -4,7 +4,7 @@ import {
   verifyTypedData,
   ZeroHash
 } from 'ethers';
-import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
+import { isE2eeCiphersuite } from '@/e2ee/e2ee.constants';
 import { E2eeContractWalletVerifier, E2EE_GRANT_SALT } from '@/e2ee/e2ee-grant';
 import {
   describeDeviceGrantScopes,
@@ -180,7 +180,7 @@ function findKeyProblem(grant: AppDeviceGrant): string | null {
   if (!isDeviceKey(grant.mls_device_key)) return 'mls_device_key_format';
   // Two keys, so revoking or losing one never silently covers the other.
   if (grant.mls_device_key === grant.device_key) return 'mls_device_key_reused';
-  return grant.ciphersuite === E2EE_CIPHERSUITE ? null : 'ciphersuite';
+  return isE2eeCiphersuite(grant.ciphersuite) ? null : 'ciphersuite';
 }
 
 function findOriginProblem(origin: string): string | null {

@@ -6,10 +6,10 @@ import {
   verifyTypedData
 } from 'ethers';
 import {
-  E2EE_CIPHERSUITE,
   E2EE_GRANT_MAX_FUTURE_SKEW_SECONDS,
   E2EE_GRANT_MAX_LIFETIME_SECONDS,
-  E2EE_GRANT_ORIGIN_MAX_LENGTH
+  E2EE_GRANT_ORIGIN_MAX_LENGTH,
+  isE2eeCiphersuite
 } from '@/e2ee/e2ee.constants';
 
 // Wallet-signed device grant (D109 contract v1, section 2). The server never
@@ -147,7 +147,7 @@ export function findE2eeGrantProblem(
 ): string | null {
   if (!/^0x[0-9a-f]{40}$/.test(grant.wallet)) return 'wallet_format';
   if (!/^0x[0-9a-f]{64}$/.test(grant.device_key)) return 'device_key_format';
-  if (grant.ciphersuite !== E2EE_CIPHERSUITE) return 'ciphersuite';
+  if (!isE2eeCiphersuite(grant.ciphersuite)) return 'ciphersuite';
   if (
     !grant.origin ||
     grant.origin.length > E2EE_GRANT_ORIGIN_MAX_LENGTH ||

@@ -93,7 +93,7 @@ import {
 } from '@/api/device-signing/device-grant-message';
 import { deviceGrantsService } from '@/api/device-signing/device-grants.service';
 import { MlsDeviceGrantRequest } from '@/api/device-signing/combined-device-grant';
-import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
+import { isE2eeCiphersuite } from '@/e2ee/e2ee.constants';
 import { isE2eeEnabled } from '@/e2ee/e2ee-flag';
 import { identitiesDb } from '@/identities/identities.db';
 
@@ -278,8 +278,9 @@ async function resolveRequestedDeviceGrant(
 
 /**
  * The MLS half of a combined grant request. A server with encrypted
- * messages off, or on another ciphersuite, issues the signing grant alone;
- * the client then enrolls encrypted messages with its own grant prompt.
+ * messages off, or that does not accept the requested ciphersuite, issues
+ * the signing grant alone; the client then enrolls encrypted messages with
+ * its own grant prompt.
  * So does a wallet without a profile: an MLS device can only join a
  * profile, so the key would be thrown away and granted again after the
  * profile is created.
@@ -299,7 +300,7 @@ async function resolveRequestedMlsDevice(
       'The MLS device key must differ from the signing device key'
     );
   }
-  if (!isE2eeEnabled() || ciphersuite !== E2EE_CIPHERSUITE) {
+  if (!isE2eeEnabled() || !isE2eeCiphersuite(ciphersuite)) {
     return null;
   }
   const signerProfileId = await identitiesDb.getProfileIdByWallet(

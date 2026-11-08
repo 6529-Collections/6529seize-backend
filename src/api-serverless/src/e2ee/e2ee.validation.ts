@@ -1,7 +1,7 @@
 import * as Joi from 'joi';
 import {
   E2EE_BACKUP_LIST_MAX_LIMIT,
-  E2EE_CIPHERSUITE,
+  E2EE_CIPHERSUITES,
   E2EE_DEVICE_PLATFORMS,
   E2EE_GRANT_ORIGIN_MAX_LENGTH,
   E2EE_LOG_MAX_LIMIT,
@@ -35,6 +35,11 @@ const profileId = () => Joi.string().trim().min(1).max(100);
 const unixSeconds = () =>
   Joi.number().integer().min(1).max(Number.MAX_SAFE_INTEGER);
 const deviceKeyList = (max: number) => Joi.array().items(hex32()).max(max);
+/** An accepted MLS ciphersuite (uint16), e.g. 79 (0x004F) or 78 (0x004E). */
+const ciphersuite = () =>
+  Joi.number()
+    .integer()
+    .valid(...E2EE_CIPHERSUITES);
 
 export function validateE2ee<T>(value: unknown, schema: Joi.Schema<T>): T {
   const { error, value: validated } = schema.validate(value, {
@@ -70,7 +75,7 @@ export const e2eeRegisterDeviceSchema = Joi.object({
   grant: Joi.object({
     wallet: Joi.string().pattern(E2EE_WALLET_PATTERN).required(),
     device_key: hex32().required(),
-    ciphersuite: Joi.number().integer().valid(E2EE_CIPHERSUITE).required(),
+    ciphersuite: ciphersuite().required(),
     issued_at: unixSeconds().required(),
     expires_at: unixSeconds().required(),
     origin: Joi.string().min(1).max(E2EE_GRANT_ORIGIN_MAX_LENGTH).required()
@@ -95,7 +100,8 @@ export const e2eeRegisterLoginGrantDeviceSchema = Joi.object({
 
 export const e2eeDeviceLookupSchema = Joi.object({
   profile_ids: Joi.array().items(profileId()).max(200).optional(),
-  device_keys: deviceKeyList(500).optional()
+  device_keys: deviceKeyList(500).optional(),
+  ciphersuite: ciphersuite().optional()
 })
   .or('profile_ids', 'device_keys')
   .custom(
@@ -139,7 +145,8 @@ export const e2eeClaimKeyPackagesSchema = Joi.object({
     .unique('profile_id')
     .required(),
   group: hex32().optional(),
-  claimer_device_key: hex32().required()
+  claimer_device_key: hex32().required(),
+  ciphersuite: ciphersuite().optional()
 });
 
 export const e2eeEligibilitySchema = Joi.object({
@@ -147,7 +154,12 @@ export const e2eeEligibilitySchema = Joi.object({
     .items(profileId())
     .min(1)
     .max(E2EE_MAX_ELIGIBILITY_PROFILES)
-    .required()
+    .required(),
+  ciphersuite: ciphersuite().optional()
+});
+
+export const e2eeProfileDevicesQuerySchema = Joi.object({
+  ciphersuite: ciphersuite().optional()
 });
 
 export const e2eeCreateGroupSchema = Joi.object({

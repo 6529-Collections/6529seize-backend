@@ -197,10 +197,15 @@ describe('E2EE device grant', () => {
     expect(findE2eeGrantProblem(grant, ISSUED_AT - 3600)).toBe(
       'issued_in_future'
     );
-    for (const ciphersuite of [1, 2]) {
+    for (const ciphersuite of [1, 2, 77, 80, 0x0052]) {
       expect(findE2eeGrantProblem(aGrant({ ciphersuite }), VERIFY_AT)).toBe(
         'ciphersuite'
       );
+    }
+    for (const ciphersuite of [0x004f, 0x004e]) {
+      expect(
+        findE2eeGrantProblem(aGrant({ ciphersuite }), VERIFY_AT)
+      ).toBeNull();
     }
     expect(findE2eeGrantProblem(aGrant({ origin: '' }), VERIFY_AT)).toBe(
       'origin'
