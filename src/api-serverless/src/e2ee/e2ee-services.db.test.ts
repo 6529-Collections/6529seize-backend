@@ -1255,6 +1255,57 @@ describeWithSeed('E2EE delivery service', [], () => {
       ).toEqual([bobOld.publicKey, bobNew.publicKey].sort());
     });
 
+    it('hides a 0x004E-only profile from requests that name no suite', async () => {
+      const alice = aProfile();
+      const dana = aProfile();
+      await registerDevice(alice, randomE2eeKey(), E2EE_CIPHERSUITE_AES256);
+      const danaNew = await registerDevice(
+        dana,
+        randomE2eeKey(),
+        E2EE_CIPHERSUITE_AES256
+      );
+      // Omitting ciphersuite means 0x004F: what clients built before 0x004E
+      // send. Dana is invisible and has no devices for them.
+      expect(await services.devices.getProfileDevices(dana.id)).toEqual([]);
+      expect(
+        (await services.devices.lookupDevices({ profile_ids: [dana.id] }))
+          .devices
+      ).toEqual([]);
+      const omitted = (
+        await services.devices.checkEligibility(alice.id, {
+          profile_ids: [dana.id]
+        })
+      ).results[0];
+      expect(omitted.status).toBe('NO_DEVICES');
+      expect(omitted.active_devices).toBe(0);
+
+      // Clients that support 0x004E pass it and see her device.
+      expect(
+        (
+          await services.devices.getProfileDevices(
+            dana.id,
+            E2EE_CIPHERSUITE_AES256
+          )
+        ).map((device) => device.device_key)
+      ).toEqual([danaNew.publicKey]);
+      expect(
+        (
+          await services.devices.lookupDevices({
+            profile_ids: [dana.id],
+            ciphersuite: E2EE_CIPHERSUITE_AES256
+          })
+        ).devices.map((device) => device.device_key)
+      ).toEqual([danaNew.publicKey]);
+      const named = (
+        await services.devices.checkEligibility(alice.id, {
+          profile_ids: [dana.id],
+          ciphersuite: E2EE_CIPHERSUITE_AES256
+        })
+      ).results[0];
+      expect(named.status).toBe('OK');
+      expect(named.active_devices).toBe(1);
+    });
+
     it('accepts only MLS KeyPackages of the device suite', async () => {
       const bob = aProfile();
       const bobOld = await registerDevice(bob);
