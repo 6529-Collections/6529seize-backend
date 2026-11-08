@@ -47,7 +47,16 @@ type RuntimeState = {
 };
 
 /** Outcome of refreshing a leaderboard without holding the competition row. */
-export type OffLockLeaderboardRefresh = 'written' | 'changed' | 'inapplicable';
+/**
+ * 'changed': an input changed during the computation; 'decisions_due': an
+ * Approve competition has a decision to make. Either way nothing is written
+ * and the caller runs the locked run.
+ */
+export type OffLockLeaderboardRefresh =
+  | 'written'
+  | 'changed'
+  | 'decisions_due'
+  | 'inapplicable';
 
 /** Test seam: runs between the off-lock computation and the locked write. */
 export type OffLockRefreshHooks = {
@@ -447,15 +456,38 @@ export class NativeCompetitionRuntimeService {
           snapshotCtx
         );
         const state = await this.loadState(competitionId, snapshotCtx);
+        // An Approve decision run decides from the same state at the same
+        // time; only a run with no decision to make stays off the lock.
+        const decisionsDue =
+          report.operation === 'decisions' &&
+          competition.type === CompetitionType.APPROVE &&
+          this.approveDecisionsDue(
+            competition,
+            state,
+            await this.repository.decisionProgress(competitionId, snapshotCtx),
+            now
+          );
         return {
           competition,
           mark,
+          decisionsDue,
           ...this.leaderboardRows(competition, state, now)
         };
       }
     );
     const computeMs = Date.now() - computeStartedAt;
     if (!computed) return 'inapplicable';
+    if (computed.decisionsDue) {
+      report.onMeasured?.({ computeMs, writeLockedMs: 0 });
+      this.logger.info('native_competition_leaderboard_off_lock', {
+        competition_id: competitionId,
+        operation: report.operation,
+        outcome: 'decisions_due',
+        compute_ms: computeMs,
+        locked_ms: report.extraLockedMs ?? 0
+      });
+      return 'decisions_due';
+    }
     await hooks.afterCompute?.();
     const writeStartedAt = Date.now();
     const outcome = await this.repository.executeNativeQueriesInTransaction(
@@ -585,10 +617,11 @@ export class NativeCompetitionRuntimeService {
         });
         return;
       }
-      // A time-locked Rank with nothing due only needs its leaderboard: that
-      // is computed off the lock. If its inputs changed meanwhile, the locked
-      // run follows once, as before this path existed, so a busy
-      // competition's leaderboard is never older than one decision run.
+      // A time-locked Rank with nothing due, or an Approve competition with
+      // no decision to make, only needs its leaderboard: that is computed off
+      // the lock. If its inputs changed meanwhile, or an Approve decision is
+      // due, the locked run follows once, as before this path existed, so a
+      // busy competition's leaderboard is never older than one decision run.
       let computeMs = 0;
       const outcome = await this.refreshLeaderboardOffLock(
         competitionId,
@@ -604,7 +637,9 @@ export class NativeCompetitionRuntimeService {
           }
         }
       );
-      if (outcome === 'changed') {
+      const lockedRunFollows =
+        outcome === 'changed' || outcome === 'decisions_due';
+      if (lockedRunFollows) {
         const fallbackStartedAt = Date.now();
         await this.repository.executeNativeQueriesInTransaction((connection) =>
           this.processCompetitionLocked(
@@ -619,7 +654,7 @@ export class NativeCompetitionRuntimeService {
       recordNativeCompetitionRun({
         competitionId,
         operation: 'decisions',
-        path: outcome === 'changed' ? 'off_lock_fallback' : 'off_lock',
+        path: lockedRunFollows ? 'off_lock_fallback' : 'off_lock',
         lockedMs,
         computeMs,
         durationMs: Date.now() - startedAt
@@ -649,9 +684,13 @@ export class NativeCompetitionRuntimeService {
     const undue = await this.undueRank(competition, now, ctx);
     if (undue === 'static') return 'static';
     await this.reconcileCompetitionCredit(competition, now, ctx);
-    // Credit stays reconciled under the lock every run; only the time-locked
-    // leaderboard computation leaves it.
-    if (undue === 'time-locked' && offLockRefresh) return 'refresh-off-lock';
+    // Credit stays reconciled under the lock every run; only the leaderboard
+    // computation (and, for Approve, finding that nothing is due) leaves it.
+    if (
+      offLockRefresh &&
+      (undue === 'time-locked' || competition.type === CompetitionType.APPROVE)
+    )
+      return 'refresh-off-lock';
     const state = await this.loadState(competition.id, ctx);
     if (competition.type === CompetitionType.RANK)
       await this.processRank(competition, state, now, ctx);
@@ -967,44 +1006,13 @@ export class NativeCompetitionRuntimeService {
   ): Promise<void> {
     const time = now;
     await this.refreshLeaderboard(competition, state, time, ctx);
-    if (
-      competition.voting.starts_at !== null &&
-      time < competition.voting.starts_at
-    )
-      return;
-    if (isPaused(state.pauses, time)) return;
-    const threshold = competition.decisions.winning_min_threshold;
-    if (threshold === null)
-      throw new Error('Approve competition requires a threshold');
+    if (!this.approveDecisionsOpen(competition, state, time)) return;
     const progress = await this.repository.decisionProgress(
       competition.id,
       ctx
     );
     const maxWinners = competition.decisions.max_winners;
-    const remaining =
-      maxWinners === null
-        ? state.entries.length
-        : Math.max(0, maxWinners - progress.completed);
-    const duration = competition.decisions.winning_threshold_min_duration_ms;
-    const eligible = this.scores(competition, state, time)
-      .filter(
-        (score) =>
-          score.rating >= threshold &&
-          (duration <= 0 ||
-            (score.overThresholdSince !== null &&
-              score.overThresholdSince + duration <= time))
-      )
-      .sort(
-        (a, b) =>
-          a.entry.submitted_at - b.entry.submitted_at ||
-          (competition.legacy_origin
-            ? a.entry.drop_id
-            : a.entry.id
-          ).localeCompare(
-            competition.legacy_origin ? b.entry.drop_id : b.entry.id
-          )
-      )
-      .slice(0, remaining);
+    const eligible = this.approveEligible(competition, state, progress, time);
     let scheduledAt = Math.max(time, (progress.latest ?? 0) + 1);
     let completed = progress.completed;
     for (const score of eligible) {
@@ -1024,6 +1032,76 @@ export class NativeCompetitionRuntimeService {
     }
     const ended = maxWinners !== null && completed >= maxWinners;
     if (ended) await this.endCompetition(competition, now, ctx);
+  }
+
+  /** Whether processApprove goes past its leaderboard refresh at `time`. */
+  private approveDecisionsOpen(
+    competition: Competition,
+    state: RuntimeState,
+    time: number
+  ): boolean {
+    if (
+      competition.voting.starts_at !== null &&
+      time < competition.voting.starts_at
+    )
+      return false;
+    return !isPaused(state.pauses, time);
+  }
+
+  /** The entries processApprove approves at `time`, in order. Pure. */
+  private approveEligible(
+    competition: Competition,
+    state: RuntimeState,
+    progress: { completed: number },
+    time: number
+  ): ScoredEntry[] {
+    const threshold = competition.decisions.winning_min_threshold;
+    if (threshold === null)
+      throw new Error('Approve competition requires a threshold');
+    const maxWinners = competition.decisions.max_winners;
+    const remaining =
+      maxWinners === null
+        ? state.entries.length
+        : Math.max(0, maxWinners - progress.completed);
+    const duration = competition.decisions.winning_threshold_min_duration_ms;
+    return this.scores(competition, state, time)
+      .filter(
+        (score) =>
+          score.rating >= threshold &&
+          (duration <= 0 ||
+            (score.overThresholdSince !== null &&
+              score.overThresholdSince + duration <= time))
+      )
+      .sort(
+        (a, b) =>
+          a.entry.submitted_at - b.entry.submitted_at ||
+          (competition.legacy_origin
+            ? a.entry.drop_id
+            : a.entry.id
+          ).localeCompare(
+            competition.legacy_origin ? b.entry.drop_id : b.entry.id
+          )
+      )
+      .slice(0, remaining);
+  }
+
+  /**
+   * Whether processApprove, run on `state` at `time`, would write anything
+   * besides the leaderboard (a winner, the competition's end) or fail. Pure:
+   * the same inputs give processApprove's own answer.
+   */
+  private approveDecisionsDue(
+    competition: Competition,
+    state: RuntimeState,
+    progress: { completed: number },
+    time: number
+  ): boolean {
+    if (!this.approveDecisionsOpen(competition, state, time)) return false;
+    if (competition.decisions.winning_min_threshold === null) return true;
+    if (this.approveEligible(competition, state, progress, time).length)
+      return true;
+    const maxWinners = competition.decisions.max_winners;
+    return maxWinners !== null && progress.completed >= maxWinners;
   }
 
   private async endCompetition(
