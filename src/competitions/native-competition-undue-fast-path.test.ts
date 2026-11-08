@@ -1,4 +1,9 @@
+jest.mock('./native-competition-metrics', () => ({
+  recordNativeCompetitionRun: jest.fn()
+}));
+
 import { CompetitionType } from '@/entities/ICompetition';
+import { recordNativeCompetitionRun } from './native-competition-metrics';
 import { Competition } from './competition.types';
 import { NativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
 import { NativeCompetitionRuntimeService } from './native-competition-runtime.service';
@@ -80,7 +85,10 @@ function setUp(
   };
   const offLock = jest
     .spyOn(service, 'refreshLeaderboardOffLock')
-    .mockResolvedValue(offLockOutcome);
+    .mockImplementation(async (_id, _now, _ctx, _hooks, report) => {
+      report?.onMeasured?.({ computeMs: 3_000, writeLockedMs: 40 });
+      return offLockOutcome;
+    });
   const run = () =>
     service.processCompetition('competition-1', NOW, {
       connection: {} as never
@@ -91,6 +99,65 @@ function setUp(
 }
 
 describe('waveDecisionExecutionLoop: undue Rank fast path', () => {
+  beforeEach(() => (recordNativeCompetitionRun as jest.Mock).mockClear());
+
+  const recorded = () =>
+    (recordNativeCompetitionRun as jest.Mock).mock.calls.map(([it]) => it);
+
+  it.each([
+    ['a static undue Rank', {}, 'written', 'static', 0],
+    [
+      'an undue time-locked Rank',
+      { time_lock_ms: 24 * HOUR },
+      'written',
+      'off_lock',
+      3_000
+    ],
+    [
+      'an undue time-locked Rank whose inputs changed',
+      { time_lock_ms: 24 * HOUR },
+      'changed',
+      'off_lock_fallback',
+      3_000
+    ],
+    [
+      'a due Rank',
+      { first_decision_time: NOW - 1, next_decision_time: NOW - 1 },
+      'written',
+      'locked',
+      0
+    ]
+  ] as const)(
+    'records the decision path of %s with its row-lock time',
+    async (_name, overrides, outcome, path, computeMs) => {
+      const { runFromLoop } = setUp(competition(overrides), null, outcome);
+
+      await runFromLoop();
+
+      expect(recorded()).toEqual([
+        expect.objectContaining({
+          competitionId: 'competition-1',
+          operation: 'decisions',
+          path,
+          computeMs
+        })
+      ]);
+      const [{ lockedMs, durationMs }] = recorded();
+      expect(lockedMs).toBeGreaterThanOrEqual(
+        path.startsWith('off_lock') ? 40 : 0
+      );
+      expect(durationMs).toBeGreaterThanOrEqual(0);
+    }
+  );
+
+  it('records nothing for a run inside a caller transaction', async () => {
+    const { run } = setUp(competition({ time_lock_ms: 24 * HOUR }));
+
+    await run();
+
+    expect(recordNativeCompetitionRun).not.toHaveBeenCalled();
+  });
+
   it('skips credit, state and leaderboard work for a static Rank with nothing due', async () => {
     const { repository, spies, run } = setUp(competition({}));
 

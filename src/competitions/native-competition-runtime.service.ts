@@ -1,3 +1,4 @@
+import { recordNativeCompetitionRun } from './native-competition-metrics';
 import {
   CompetitionCreditService,
   competitionCreditService
@@ -333,9 +334,9 @@ export class NativeCompetitionRuntimeService {
     hooks: OffLockRefreshHooks = {}
   ): Promise<void> {
     if (ctx.connection) return this.refreshCompetition(competitionId, now, ctx);
-    const lockedStartedAt = Date.now();
-    const offLock = await this.repository.executeNativeQueriesInTransaction(
-      async (connection) => {
+    const startedAt = Date.now();
+    const next = await this.repository.executeNativeQueriesInTransaction(
+      async (connection): Promise<'skipped' | 'locked' | 'off_lock'> => {
         const lockedCtx = { ...ctx, connection };
         const competition = await this.repository.lockCompetition(
           competitionId,
@@ -346,29 +347,59 @@ export class NativeCompetitionRuntimeService {
           competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
           !this.executionRouter.isNativeExecutionAllowed(competition)
         )
-          return false;
+          return 'skipped';
         await this.emitScheduledTransitions(competition, now, lockedCtx);
         await this.reconcileCompetitionCredit(competition, now, lockedCtx);
-        if (isTimeLocked(competition)) return true;
+        if (isTimeLocked(competition)) return 'off_lock';
         await this.refreshLeaderboardAfterCreditReconciliation(
           competition,
           now,
           lockedCtx
         );
-        return false;
+        return 'locked';
       }
     );
-    const lockedMs = Date.now() - lockedStartedAt;
-    if (!offLock) return;
+    let lockedMs = Date.now() - startedAt;
+    if (next === 'skipped') return;
+    if (next === 'locked') {
+      recordNativeCompetitionRun({
+        competitionId,
+        operation: 'leaderboard',
+        path: 'locked',
+        lockedMs,
+        computeMs: 0,
+        durationMs: Date.now() - startedAt
+      });
+      return;
+    }
+    let computeMs = 0;
     const outcome = await this.refreshLeaderboardOffLock(
       competitionId,
       now,
       ctx,
       hooks,
-      { operation: 'leaderboard', extraLockedMs: lockedMs }
+      {
+        operation: 'leaderboard',
+        extraLockedMs: lockedMs,
+        onMeasured: (measured) => {
+          computeMs = measured.computeMs;
+          lockedMs += measured.writeLockedMs;
+        }
+      }
     );
-    if (outcome === 'changed')
+    if (outcome === 'changed') {
+      const fallbackStartedAt = Date.now();
       await this.refreshCompetition(competitionId, now, ctx);
+      lockedMs += Date.now() - fallbackStartedAt;
+    }
+    recordNativeCompetitionRun({
+      competitionId,
+      operation: 'leaderboard',
+      path: outcome === 'changed' ? 'off_lock_fallback' : 'off_lock',
+      lockedMs,
+      computeMs,
+      durationMs: Date.now() - startedAt
+    });
   }
 
   /**
@@ -388,6 +419,11 @@ export class NativeCompetitionRuntimeService {
     report: {
       operation: 'leaderboard' | 'decisions';
       extraLockedMs?: number;
+      /** Receives the computation and this refresh's own locked write. */
+      onMeasured?: (measured: {
+        computeMs: number;
+        writeLockedMs: number;
+      }) => void;
     } = { operation: 'leaderboard' }
   ): Promise<OffLockLeaderboardRefresh> {
     if (ctx.connection)
@@ -450,12 +486,14 @@ export class NativeCompetitionRuntimeService {
         return 'written';
       }
     );
+    const writeLockedMs = Date.now() - writeStartedAt;
+    report.onMeasured?.({ computeMs, writeLockedMs });
     const record = {
       competition_id: competitionId,
       operation: report.operation,
       outcome,
       compute_ms: computeMs,
-      locked_ms: Date.now() - writeStartedAt + (report.extraLockedMs ?? 0)
+      locked_ms: writeLockedMs + (report.extraLockedMs ?? 0)
     };
     // 'changed' sends the run to its locked fallback, so it stays visible.
     // LOG_LEVEL_NativeCompetitionRuntimeService=debug shows every refresh.
@@ -524,7 +562,7 @@ export class NativeCompetitionRuntimeService {
     ctx: RequestContext = {}
   ): Promise<void> {
     if (!ctx.connection) {
-      const lockedStartedAt = Date.now();
+      const startedAt = Date.now();
       const next = await this.repository.executeNativeQueriesInTransaction(
         (connection) =>
           this.processCompetitionLocked(
@@ -534,11 +572,24 @@ export class NativeCompetitionRuntimeService {
             true
           )
       );
+      let lockedMs = Date.now() - startedAt;
+      if (next === 'skipped') return;
+      if (next !== 'refresh-off-lock') {
+        recordNativeCompetitionRun({
+          competitionId,
+          operation: 'decisions',
+          path: next,
+          lockedMs,
+          computeMs: 0,
+          durationMs: Date.now() - startedAt
+        });
+        return;
+      }
       // A time-locked Rank with nothing due only needs its leaderboard: that
       // is computed off the lock. If its inputs changed meanwhile, the locked
       // run follows once, as before this path existed, so a busy
       // competition's leaderboard is never older than one decision run.
-      if (next !== 'refresh-off-lock') return;
+      let computeMs = 0;
       const outcome = await this.refreshLeaderboardOffLock(
         competitionId,
         now,
@@ -546,10 +597,15 @@ export class NativeCompetitionRuntimeService {
         {},
         {
           operation: 'decisions',
-          extraLockedMs: Date.now() - lockedStartedAt
+          extraLockedMs: lockedMs,
+          onMeasured: (measured) => {
+            computeMs = measured.computeMs;
+            lockedMs += measured.writeLockedMs;
+          }
         }
       );
-      if (outcome === 'changed')
+      if (outcome === 'changed') {
+        const fallbackStartedAt = Date.now();
         await this.repository.executeNativeQueriesInTransaction((connection) =>
           this.processCompetitionLocked(
             competitionId,
@@ -558,6 +614,16 @@ export class NativeCompetitionRuntimeService {
             false
           )
         );
+        lockedMs += Date.now() - fallbackStartedAt;
+      }
+      recordNativeCompetitionRun({
+        competitionId,
+        operation: 'decisions',
+        path: outcome === 'changed' ? 'off_lock_fallback' : 'off_lock',
+        lockedMs,
+        computeMs,
+        durationMs: Date.now() - startedAt
+      });
       return;
     }
     await this.processCompetitionLocked(competitionId, now, ctx, false);
@@ -568,7 +634,7 @@ export class NativeCompetitionRuntimeService {
     now: number,
     ctx: RequestContext,
     offLockRefresh: boolean
-  ): Promise<'done' | 'refresh-off-lock'> {
+  ): Promise<'skipped' | 'static' | 'locked' | 'refresh-off-lock'> {
     const competition = await this.repository.lockCompetition(
       competitionId,
       ctx
@@ -578,10 +644,10 @@ export class NativeCompetitionRuntimeService {
       competition.lifecycle !== CompetitionLifecycle.PUBLISHED ||
       !this.executionRouter.isNativeExecutionAllowed(competition)
     )
-      return 'done';
+      return 'skipped';
     await this.emitScheduledTransitions(competition, now, ctx);
     const undue = await this.undueRank(competition, now, ctx);
-    if (undue === 'static') return 'done';
+    if (undue === 'static') return 'static';
     await this.reconcileCompetitionCredit(competition, now, ctx);
     // Credit stays reconciled under the lock every run; only the time-locked
     // leaderboard computation leaves it.
@@ -590,7 +656,7 @@ export class NativeCompetitionRuntimeService {
     if (competition.type === CompetitionType.RANK)
       await this.processRank(competition, state, now, ctx);
     else await this.processApprove(competition, state, now, ctx);
-    return 'done';
+    return 'locked';
   }
 
   /**
