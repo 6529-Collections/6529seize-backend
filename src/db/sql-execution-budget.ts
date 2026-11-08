@@ -86,6 +86,8 @@ export interface SqlBudgetConnection {
   readonly retire?: () => void;
   /** Actual adapter lifecycle preserves ORM transaction bookkeeping/subscribers. */
   readonly transaction?: {
+    /** The level `begin` starts at; REPEATABLE READ when not stated. */
+    readonly isolationLevel?: SqlBudgetIsolationLevel;
     readonly begin: () => Promise<void>;
     readonly commit: () => Promise<void>;
     readonly rollback: () => Promise<void>;
@@ -830,11 +832,14 @@ export async function executeBudgetedSqlTransaction<T>(
     const isolationLevel = budget.isolationLevel ?? 'REPEATABLE READ';
     await scope.runPhase('SETUP', async () => {
       if (lease.transaction) {
-        // This lease begins its own transaction at the server default
-        // (REPEATABLE READ); it cannot honour another level.
-        if (isolationLevel !== 'REPEATABLE READ')
+        // This lease begins its own transaction; it must begin it at the
+        // requested level, never silently at another one.
+        if (
+          isolationLevel !==
+          (lease.transaction.isolationLevel ?? 'REPEATABLE READ')
+        )
           throw new Error(
-            'This SQL lease cannot begin a READ COMMITTED budgeted transaction'
+            `This SQL lease cannot begin a ${isolationLevel} budgeted transaction`
           );
         await lease.transaction.begin();
       } else {
