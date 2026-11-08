@@ -350,7 +350,22 @@ describeWithSeed(
             }
           )
       );
-      expect(after).toEqual(inside);
+      // The wave's counters (wave_metrics) are applied after commit (#2370),
+      // so only the wave's last drop time may be newer after commit.
+      const { wave: afterWave, ...afterRest } = after as {
+        wave: { last_drop_time: number };
+      };
+      const { wave: insideWave, ...insideRest } = inside as {
+        wave: { last_drop_time: number };
+      };
+      expect(afterRest).toEqual(insideRest);
+      expect({ ...afterWave, last_drop_time: 0 }).toEqual({
+        ...insideWave,
+        last_drop_time: 0
+      });
+      expect(afterWave.last_drop_time).toBeGreaterThanOrEqual(
+        insideWave.last_drop_time
+      );
     });
 
     it('gives up a lock wait after 10 s with 503 + Retry-After and leaves no open transaction', async () => {
