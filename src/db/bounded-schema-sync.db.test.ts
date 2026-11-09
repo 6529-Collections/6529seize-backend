@@ -128,6 +128,20 @@ describe('synchronizeSchemaBounded on MySQL', () => {
     await expect(plannedStatements()).resolves.toEqual([]);
   });
 
+  it.each([
+    COMPETITION_SCORE_RESETS_TABLE,
+    COMPETITION_SCORE_RESET_STATE_TABLE
+  ])('adds %s with one additive CREATE TABLE', async (table) => {
+    await sqlExecutor.execute(`drop table \`${table}\``);
+    const planned = await plannedStatements();
+    expect(planned).toHaveLength(1);
+    expect(planned[0]).toMatch(new RegExp(`^CREATE TABLE \`${table}\``));
+    expect(
+      await synchronizeSchemaBounded(dataSource, { sleep: noSleep })
+    ).toEqual({ planned: 1, applied: 1 });
+    expect(await plannedStatements()).toEqual([]);
+  });
+
   it('upgrades an existing identities sync marker table with one ADD COLUMN and nothing else', async () => {
     // The table as the first release created it, before walk_after.
     await sqlExecutor.execute(
@@ -147,20 +161,6 @@ describe('synchronizeSchemaBounded on MySQL', () => {
     });
     expect(result).toEqual({ planned: 1, applied: 1 });
     await expect(plannedStatements()).resolves.toEqual([]);
-  });
-
-  it.each([
-    COMPETITION_SCORE_RESETS_TABLE,
-    COMPETITION_SCORE_RESET_STATE_TABLE
-  ])('adds %s with one additive CREATE TABLE', async (table) => {
-    await sqlExecutor.execute(`drop table \`${table}\``);
-    const planned = await plannedStatements();
-    expect(planned).toHaveLength(1);
-    expect(planned[0]).toMatch(new RegExp(`^CREATE TABLE \`${table}\``));
-    expect(
-      await synchronizeSchemaBounded(dataSource, { sleep: noSleep })
-    ).toEqual({ planned: 1, applied: 1 });
-    expect(await plannedStatements()).toEqual([]);
   });
 
   it('converges after a run stopped between a generated column change and its bookkeeping', async () => {
