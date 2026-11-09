@@ -115,6 +115,8 @@ export type IdentityMetricsSyncResult = {
   readonly retries: number;
   /** The longest chunk, retries included. */
   readonly slowestChunkMs: number;
+  /** For a scoped sync: the identities its scope resolved to. */
+  readonly scopeSize?: number;
 };
 
 /** The chunk's rows changed between reading its ids and locking them. */
@@ -296,7 +298,7 @@ export class IdentityMetricsSync extends LazyDbAccessCompatibleService {
       settings.profileIdBytes
     );
     let next = 0;
-    return this.runChunks(
+    const result = await this.runChunks(
       'SCOPED',
       options,
       () => {
@@ -310,6 +312,7 @@ export class IdentityMetricsSync extends LazyDbAccessCompatibleService {
         return next < keyChunks.length;
       }
     );
+    return { ...result, scopeSize: rows.length };
   }
 
   /**

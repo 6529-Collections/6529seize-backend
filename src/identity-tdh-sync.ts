@@ -86,21 +86,29 @@ const RESUME_MINIMUM_SLICE_MS = Time.seconds(150).toMillis();
  * leaves three minutes of the 900 s Lambda limit for D, E and the loop.
  */
 const SYNC_HARD_STOP_MS = Time.minutes(12).toMillis();
+/**
+ * A scoped walk resolving to more identities than this, if stopped by the
+ * budget, falls back to a full walk (which keeps a checkpoint) at once, even
+ * before its first chunk ran: about a tenth of all identities.
+ */
+const SCOPED_WALK_MAX_IDENTITIES = 100_000;
 let invocationStartedAt: number | null = null;
 let invocationDeadline: number | null = null;
 
 /** At invocation start: the syncs of this invocation share one budget. */
 export function startIdentitySyncBudget(
-  budgetMs: number = IDENTITY_SYNC_BUDGET_MS
+  budgetMs: number = IDENTITY_SYNC_BUDGET_MS,
+  startedAt: number = Time.currentMillis()
 ): void {
-  invocationStartedAt = Time.currentMillis();
+  invocationStartedAt = startedAt;
   invocationDeadline = invocationStartedAt + budgetMs;
 }
 
 /**
  * When a sync starting `now` must stop: the invocation's budget, or, when a
- * minimum slice is asked for and the budget leaves less, `now` plus that
- * slice, but never past the hard stop.
+ * minimum slice is asked for and the budget leaves less, `now` plus the whole
+ * slice. A slice that would run past the hard stop is not shortened: the
+ * sync gets only the (spent) budget, so it does not start.
  */
 export function resolveSyncDeadline({
   now,
@@ -118,10 +126,10 @@ export function resolveSyncDeadline({
     return { deadline, floorApplied: false };
   }
   const hardStop = (startedAt ?? now) + SYNC_HARD_STOP_MS;
-  return {
-    deadline: Math.max(deadline, Math.min(now + minimumSliceMs, hardStop)),
-    floorApplied: true
-  };
+  if (now + minimumSliceMs > hardStop) {
+    return { deadline, floorApplied: false };
+  }
+  return { deadline: now + minimumSliceMs, floorApplied: true };
 }
 
 export type IdentityTdhSyncOptions = IdentityMetricsSyncOptions & {
@@ -386,9 +394,16 @@ export async function syncIdentitiesAfterTdh(
               )
           })
         : await syncScopedMetrics(plan, progress, generation, chunkHooks);
-    if (!metrics.complete && plan.mode === 'SCOPED') {
-      // Too big for one budget: walk every identity instead, which keeps a
-      // checkpoint, rather than redo this scope from the start every time.
+    if (
+      !metrics.complete &&
+      plan.mode === 'SCOPED' &&
+      (metrics.chunks > 0 ||
+        (metrics.scopeSize ?? 0) > SCOPED_WALK_MAX_IDENTITIES)
+    ) {
+      // Chunks ran and the scope still did not fit one budget (or it is
+      // huge): walk every identity instead, which keeps a checkpoint, rather
+      // than redo this scope from the start every time. A budget spent
+      // before the first chunk says nothing about the scope's size.
       await identityTdhSyncScopeDb.requireFullWalk(generation);
     }
     if (!metrics.complete || budgetSpent()) {
@@ -412,12 +427,23 @@ export async function syncIdentitiesAfterTdh(
         );
         return 'BUDGET_USED';
       }
-      await reconcileAllProfileAddresses();
+      if (budgetSpent()) {
+        logger.warn(
+          `[PROFILE ADDRESS RECONCILIATION DEFERRED] [GENERATION ${generation}] [NO BUDGET LEFT] [NEXT FULL WALK]`
+        );
+      } else {
+        await reconcileAllProfileAddresses();
+      }
     }
+    // D and E are short and finish the sync even past the deadline.
     await lease.renew();
+    const stepD = Time.now();
     await revokeTdhBasedDropWavesOverVotesPerCompetition();
-    logger.info(`[D OVERVOTES DONE] [${start.diffFromNow()}]`);
+    logger.info(
+      `[D OVERVOTES DONE] [${stepD.diffFromNow()}] [${start.diffFromNow()}]`
+    );
     await lease.renew();
+    const stepE = Time.now();
     await announceSynced(generation);
     await identityTdhSyncStateDb.markSynced({
       generation,
@@ -426,7 +452,7 @@ export async function syncIdentitiesAfterTdh(
       fullWalk: plan.mode === 'FULL'
     });
     logger.info(
-      `[IDENTITIES SYNCED] [GENERATION ${generation}] [${start.diffFromNow()}]`
+      `[IDENTITIES SYNCED] [GENERATION ${generation}] [E ${stepE.diffFromNow()}] [${start.diffFromNow()}]`
     );
     return 'SYNCED';
   } finally {

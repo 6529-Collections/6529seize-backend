@@ -38,15 +38,25 @@ describe('identities sync deadline', () => {
     ).toBe(START + minutes(8) + seconds(150));
   });
 
-  it('never runs a slice past 12 minutes into the invocation', () => {
+  it('gives no shortened slice near the 12-minute stop: the spent budget stands, so the sync does not start', () => {
+    // A whole slice fits: it ends exactly at the stop.
     expect(
       resolveSyncDeadline({
-        now: START + minutes(11),
+        now: START + minutes(9) + seconds(30),
         startedAt: START,
         budgetDeadline: START + minutes(5),
         minimumSliceMs: seconds(150)
       })
     ).toEqual({ deadline: START + minutes(12), floorApplied: true });
+    // It does not: no floor, and the deadline has passed.
+    expect(
+      resolveSyncDeadline({
+        now: START + minutes(11) + seconds(59),
+        startedAt: START,
+        budgetDeadline: START + minutes(5),
+        minimumSliceMs: seconds(150)
+      })
+    ).toEqual({ deadline: START + minutes(5), floorApplied: false });
   });
 
   it('gives no floor without a minimum slice', () => {

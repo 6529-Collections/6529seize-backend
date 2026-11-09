@@ -8,6 +8,7 @@ import {
   RATINGS_TABLE
 } from '@/constants';
 import { identitiesService } from '@/api/identities/identities.service';
+import { identitiesDb } from '@/identities/identities.db';
 import { identityConsolidationEffects, ProfileIdGenerator } from '@/identity';
 import { identityMetricsSync } from '@/identity-metrics-sync';
 import {
@@ -551,6 +552,70 @@ describeWithSeed(
       }
     });
 
+    it('does not start B when less than the minimum slice is left before the 12-minute stop', async () => {
+      await afterAFinishedSync();
+      await partialTdhWrite(MERGE_KEYS);
+      const merge = jest.spyOn(
+        identityConsolidationEffects,
+        'syncIdentitiesWithTdhConsolidations'
+      );
+      // 11 min 59 s into an invocation whose work used the budget.
+      startIdentitySyncBudget(
+        Time.minutes(5).toMillis(),
+        Time.currentMillis() -
+          Time.minutes(11).toMillis() -
+          Time.seconds(59).toMillis()
+      );
+      try {
+        await resumePendingIdentityTdhSync();
+
+        expect(merge).not.toHaveBeenCalled();
+        expect(
+          (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+        ).toBe(0);
+      } finally {
+        startIdentitySyncBudget(Time.hours(1).toMillis());
+      }
+      // The next invocation syncs it.
+      await resumePendingIdentityTdhSync();
+      expect(
+        (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+      ).toBe(1);
+    });
+
+    it('keeps a scoped plan when the budget ran out before its first chunk', async () => {
+      await afterAFinishedSync();
+      await partialTdhWrite(MERGE_KEYS);
+      const reference = await referenceRun();
+      let bDone = false;
+      const record = identityTdhSyncScopeDb.recordIdentitiesWritten.bind(
+        identityTdhSyncScopeDb
+      );
+      jest
+        .spyOn(identityTdhSyncScopeDb, 'recordIdentitiesWritten')
+        .mockImplementation(async (generation, written, connection) => {
+          await record(generation, written, connection);
+          bDone = true;
+        });
+
+      // The budget runs out in B: no scoped chunk runs.
+      await expect(
+        syncIdentitiesAfterTdh({ chunkRows: 3, budgetSpent: () => bDone })
+      ).resolves.toBe('BUDGET_USED');
+      expect(await identityTdhSyncScopeDb.isFullWalkRequired(0, 1)).toBe(false);
+      const walkAll = jest.spyOn(identityMetricsSync, 'syncAll');
+      const scoped = jest.spyOn(identityMetricsSync, 'syncScoped');
+
+      await resumePendingIdentityTdhSync();
+
+      expect(walkAll).not.toHaveBeenCalled();
+      expect(scoped).toHaveBeenCalledTimes(1);
+      expect(await readIdentities()).toEqual(reference.identities);
+      expect(
+        (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+      ).toBe(1);
+    });
+
     it('records a consolidation key of the longest length intact', async () => {
       const longKey = Array.from(
         { length: 10 },
@@ -609,6 +674,37 @@ describeWithSeed(
       ).toEqual({
         external_id: untouched.external_id,
         primary_wallet: '0xe10'
+      });
+    });
+
+    it('defers the all-profiles check to the next full walk when the budget is spent, and still finishes the sync', async () => {
+      await afterAFinishedSync();
+      await fullTdhWrite();
+      let rechecked = false;
+      const syncScoped =
+        identityMetricsSync.syncScoped.bind(identityMetricsSync);
+      jest
+        .spyOn(identityMetricsSync, 'syncScoped')
+        .mockImplementation(async (options) => {
+          const result = await syncScoped(options);
+          rechecked = true;
+          return result;
+        });
+      const reconcile = jest.spyOn(identitiesDb, 'syncAllProfileAddresses');
+
+      // The budget runs out right after the walk's scope recheck.
+      await expect(
+        syncIdentitiesAfterTdh({ chunkRows: 3, budgetSpent: () => rechecked })
+      ).resolves.toBe('SYNCED');
+
+      expect(rechecked).toBe(true);
+      expect(reconcile).not.toHaveBeenCalled();
+      const wallets = await readProfileWallets();
+      expect(
+        wallets.find((p) => p.external_id === untouched.external_id)
+      ).toEqual({
+        external_id: untouched.external_id,
+        primary_wallet: untouched.primary_wallet
       });
     });
 
