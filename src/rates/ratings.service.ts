@@ -1483,7 +1483,14 @@ export class RatingsService {
             0
           )
         }));
+        // Ratings before identities, as every rating path: the identities
+        // metrics sync locks in that order too (identity-metrics-sync.ts).
         await inSequence([
+          () =>
+            this.ratingsDb.bulkUpsertRatings(
+              newRatingEntities,
+              ctxWithConnection
+            ),
           () =>
             this.identitiesDb.bulkUpdateReps(repBulkUpdates, ctxWithConnection),
           () =>
@@ -1494,11 +1501,6 @@ export class RatingsService {
           () =>
             profileActivityLogsDb.bulkInsertProfileActivityLogs(
               logs,
-              ctxWithConnection
-            ),
-          () =>
-            this.ratingsDb.bulkUpsertRatings(
-              newRatingEntities,
               ctxWithConnection
             )
         ]);

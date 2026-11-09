@@ -21,6 +21,7 @@ import type {
   SNSEvent
 } from 'aws-lambda';
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
+import { fallbackNotice } from './fallback.js';
 import {
   EVENT_TYPE,
   Alert,
@@ -733,11 +734,26 @@ export async function forwardFallback(event: SNSEvent): Promise<void> {
   // This temporary fallback is intentionally independent of Discord but still needs the source account.
   const client = new SNSClient({ region: topic.split(':')[3], maxAttempts: 3 });
   for (const row of event.Records) {
+    const notice = fallbackNotice(row.Sns);
+    console.log(
+      JSON.stringify({
+        code: 'MONITORING_FALLBACK',
+        phase: 'PUBLISHING',
+        ...notice.context
+      })
+    );
     await client.send(
       new PublishCommand({
         TopicArn: topic,
-        Subject: '6529 monitoring needs attention',
-        Message: `The independent monitoring pipeline needs attention. Reference ${hash(row.Sns.MessageId)}. Inspect its CloudWatch alarms, queues and archive.`
+        Subject: notice.subject,
+        Message: notice.message
+      })
+    );
+    console.log(
+      JSON.stringify({
+        code: 'MONITORING_FALLBACK',
+        phase: 'PUBLISHED',
+        ...notice.context
       })
     );
   }

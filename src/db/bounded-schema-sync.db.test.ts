@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import {
   DISTRIBUTION_NORMALIZED_TABLE,
   EXTERNAL_INDEXED_TRANSFERS_TABLE,
+  IDENTITY_TDH_SYNC_STATE_TABLE,
   MARKET_DEPTH_EVENTS_TABLE,
   NFTS_HISTORY_REPLAY_JOBS_TABLE
 } from '@/constants';
@@ -106,6 +107,24 @@ describe('synchronizeSchemaBounded on MySQL', () => {
     expect(await schemaSnapshot()).toEqual(bySynchronize);
     await expect(plannedStatements()).resolves.toEqual([]);
   }, 60_000);
+
+  it('adds the identities sync marker table with one CREATE TABLE and nothing else', async () => {
+    await sqlExecutor.execute(
+      `drop table \`${IDENTITY_TDH_SYNC_STATE_TABLE}\``
+    );
+
+    const planned = await plannedStatements();
+    expect(planned).toHaveLength(1);
+    expect(planned[0]).toMatch(
+      new RegExp(`^CREATE TABLE \`${IDENTITY_TDH_SYNC_STATE_TABLE}\``)
+    );
+
+    const result = await synchronizeSchemaBounded(dataSource, {
+      sleep: noSleep
+    });
+    expect(result).toEqual({ planned: 1, applied: 1 });
+    await expect(plannedStatements()).resolves.toEqual([]);
+  });
 
   it('converges after a run stopped between a generated column change and its bookkeeping', async () => {
     const before = await schemaSnapshot();

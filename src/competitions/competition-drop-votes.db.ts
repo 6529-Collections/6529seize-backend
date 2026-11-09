@@ -122,5 +122,55 @@ export class CompetitionDropVotesDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
   }
+
+  async allVoters(entry: CompetitionEntry, ctx: RequestContext) {
+    const { table, filter } = this.source(entry);
+    return this.db.execute<{ voter_id: string; vote: number }>(
+      `select voter_profile_id as voter_id, value as vote from ${table}
+       where competition_id=:competitionId and entry_id=:entryId ${filter} and value<>0
+       order by value desc, voter_profile_id asc`,
+      this.params(entry),
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async distribution(entry: CompetitionEntry, ctx: RequestContext) {
+    const { table, filter } = this.source(entry);
+    const rows = await this.db.execute<{
+      drop_id: string;
+      voter_id: string;
+      vote: number;
+      positive_total: number;
+      negative_total: number;
+    }>(
+      `with votes as (
+         select voter_profile_id as voter_id, value as vote from ${table}
+         where competition_id=:competitionId and entry_id=:entryId ${filter} and value<>0
+       ), totals as (
+         select sum(case when vote>0 then vote else 0 end) as positive_total,
+                sum(case when vote<0 then vote else 0 end) as negative_total
+         from votes
+       ), positive_votes as (
+         select voter_id, vote from votes where vote>0
+         order by vote desc, voter_id asc limit 3
+       ), negative_votes as (
+         select voter_id, vote from votes where vote<0
+         order by vote asc, voter_id asc limit 3
+       ), top_votes as (
+         select * from positive_votes union all select * from negative_votes
+       )
+       select :dropId as drop_id, v.voter_id, v.vote, t.positive_total, t.negative_total
+       from top_votes v cross join totals t
+       order by abs(v.vote) desc, v.voter_id asc`,
+      { ...this.params(entry), dropId: entry.drop_id },
+      { wrappedConnection: ctx.connection }
+    );
+    return rows.map((row) => ({
+      ...row,
+      vote: Number(row.vote),
+      positive_total: Number(row.positive_total),
+      negative_total: Number(row.negative_total)
+    }));
+  }
 }
 export const competitionDropVotesDb = new CompetitionDropVotesDb(dbSupplier);

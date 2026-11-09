@@ -30,6 +30,7 @@ import {
   e2eeEligibilitySchema,
   e2eeGroupParamSchema,
   e2eeLogQuerySchema,
+  e2eeProfileDevicesQuerySchema,
   e2eeProfileIdParamSchema,
   e2eeRegisterDeviceSchema,
   e2eeRegisterLoginGrantDeviceSchema,
@@ -238,8 +239,13 @@ export async function handleE2eeGetProfileDevices(
   req: E2eeGetProfileDevicesRequest
 ): Promise<ApiE2eeDevice[]> {
   await e2eeCaller(req);
+  const query = body<{ ciphersuite?: number }>(
+    req.query,
+    e2eeProfileDevicesQuerySchema
+  );
   return services.devices.getProfileDevices(
-    validateE2ee(req.params.profile_id, e2eeProfileIdParamSchema)
+    validateE2ee(req.params.profile_id, e2eeProfileIdParamSchema),
+    query.ciphersuite
   );
 }
 

@@ -13,10 +13,22 @@ import {
 } from '@/exceptions';
 import { identitiesDb, IdentitiesDb } from '@/identities/identities.db';
 import { RequestContext } from '@/request.context';
+import { e2eeDeviceSuites } from '@/e2ee/e2ee-suite-policy';
+
+/** What an app grant's encrypted-messages half says about suites. */
+const mlsSuiteFieldsOf = (grant: AppDeviceGrant) =>
+  isAppDeviceGrantV2(grant)
+    ? {
+        grant_version: 2,
+        ciphersuite: Number(grant.ciphersuite),
+        ciphersuites: grant.ciphersuites ?? []
+      }
+    : { grant_version: 1, ciphersuite: Number(grant.ciphersuite) };
 import {
   AppDeviceGrant,
   findAppDeviceGrantRegistrationProblem,
   hasMlsDeviceKey,
+  isAppDeviceGrantV2,
   serializeAppDeviceGrantMessage,
   verifyAppDeviceGrant
 } from './app-device-grant';
@@ -29,7 +41,10 @@ import {
   serializeDeviceGrantScopes
 } from './device-grant-message';
 import { DeviceSigningDb, deviceSigningDb } from './device-signing.db';
-import { toApiDeviceGrant } from './device-signing.mappers';
+import {
+  toApiDeviceGrant,
+  toOwnedApiDeviceGrant
+} from './device-signing.mappers';
 
 const GRANT_ID_PATTERN = /^0x[0-9a-f]{64}$/;
 
@@ -69,12 +84,16 @@ function toAppDeviceGrant(
   request: ApiRegisterDeviceGrantRequest
 ): AppDeviceGrant {
   const { grant } = request;
+  const v2 = grant.version === 2;
+  const ciphersuites = [...(grant.ciphersuites ?? [])];
   return {
     wallet: grant.wallet.toLowerCase(),
     device_key: grant.device_key.toLowerCase(),
     scopes: grant.scopes as DeviceGrantScope[],
     mls_device_key: grant.mls_device_key?.toLowerCase() ?? null,
-    ciphersuite: grant.ciphersuite ?? null,
+    // v2: the lowest entry of the set stands in for the single suite.
+    ciphersuite: v2 ? (ciphersuites[0] ?? null) : (grant.ciphersuite ?? null),
+    ...(v2 ? { version: 2 as const, ciphersuites } : {}),
     issued_at: grant.issued_at,
     expires_at: grant.expires_at,
     origin: grant.origin
@@ -143,6 +162,14 @@ export class DeviceGrantsService {
       throw new BadRequestException(`Invalid device grant: ${problem}`);
     }
     if (hasMlsDeviceKey(grant)) {
+      // D172: an encryption key needs a suite the server accepts now (a v1
+      // grant or a set without 0x004E is refused after the window), rather
+      // than a stored grant whose device could never register.
+      if (!e2eeDeviceSuites(mlsSuiteFieldsOf(grant), nowMs).length) {
+        throw new BadRequestException(
+          'Invalid device grant: the encrypted-messages key names no ciphersuite the server accepts now'
+        );
+      }
       await this.assertCanGrantEncryptedMessages(caller, ctx);
     }
     const signature = request.wallet_signature.toLowerCase();
@@ -221,7 +248,7 @@ export class DeviceGrantsService {
     const grants = caller.profileId
       ? await this.db.findGrantsOfProfile(caller.profileId, ctx)
       : await this.db.findGrantsOfWallet(caller.wallet, ctx);
-    return grants.map(toApiDeviceGrant);
+    return grants.map(toOwnedApiDeviceGrant);
   }
 
   async renameCallerGrant(
@@ -244,7 +271,33 @@ export class DeviceGrantsService {
         throw notFound;
       }
       await this.db.renameGrant(grantId, grant.wallet, label, txCtx);
-      return toApiDeviceGrant({ ...grant, device_label: label });
+      return toOwnedApiDeviceGrant({ ...grant, device_label: label });
+    });
+  }
+
+  async acknowledgeCallerGrant(
+    grantId: string,
+    ctx: GrantCallerContext
+  ): Promise<ApiDeviceGrant> {
+    const caller = this.resolveCaller(ctx.authenticationContext);
+    const notFound = new NotFoundException(`Device grant ${grantId} not found`);
+    if (!GRANT_ID_PATTERN.test(grantId)) {
+      throw notFound;
+    }
+    return this.db.executeNativeQueriesInTransaction(async (connection) => {
+      const txCtx = { ...ctx, connection };
+      const grant = await this.db.lockGrant(grantId, txCtx);
+      if (
+        grant?.revoked_at !== null ||
+        Number(grant.expires_at) <= this.now() ||
+        !(await this.isCallerWallet(grant.wallet, caller, txCtx))
+      ) {
+        throw notFound;
+      }
+      if (!grant.notice_acknowledged) {
+        await this.db.acknowledgeGrant(grantId, txCtx);
+      }
+      return toOwnedApiDeviceGrant({ ...grant, notice_acknowledged: true });
     });
   }
 
@@ -262,14 +315,14 @@ export class DeviceGrantsService {
       throw notFound;
     }
     if (grant.revoked_at !== null) {
-      return toApiDeviceGrant(grant);
+      return toOwnedApiDeviceGrant(grant);
     }
     await this.db.revokeGrant(grantId, this.now(), ctx);
     const revoked = await this.db.findGrantById(grantId, ctx);
     if (!revoked) {
       throw notFound;
     }
-    return toApiDeviceGrant(revoked);
+    return toOwnedApiDeviceGrant(revoked);
   }
 
   private resolveCaller(authenticationContext: AuthenticationContext): {

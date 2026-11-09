@@ -182,12 +182,15 @@ describe('E2EE devices from combined sign-in grants (NC8)', () => {
     signer = alice,
     mlsKey = randomE2eeKey(),
     ciphersuite = E2EE_CIPHERSUITE,
+    ciphersuites,
     combined = true,
     issuedAt = new Date(now)
   }: {
     signer?: HDNodeWallet;
     mlsKey?: E2eeTestKey;
     ciphersuite?: number;
+    // Grant v2 (D172): a suite set instead of one suite.
+    ciphersuites?: number[];
     combined?: boolean;
     issuedAt?: Date;
   } = {}) {
@@ -200,7 +203,9 @@ describe('E2EE devices from combined sign-in grants (NC8)', () => {
         deviceKey: randomE2eeKey().publicKey,
         scopes: ['post', 'edit', 'delete', 'react'],
         mlsDevice: combined
-          ? { deviceKey: mlsKey.publicKey, ciphersuite }
+          ? ciphersuites
+            ? { deviceKey: mlsKey.publicKey, ciphersuites }
+            : { deviceKey: mlsKey.publicKey, ciphersuite }
           : null
       }
     });
@@ -329,6 +334,22 @@ describe('E2EE devices from combined sign-in grants (NC8)', () => {
   it('rejects a grant for another ciphersuite', async () => {
     const { id } = await storeLoginGrant({ ciphersuite: E2EE_CIPHERSUITE + 1 });
     await expectBadGrant(register(id), 'ciphersuite');
+  });
+
+  it('registers a v2 combined grant with its suite set (D172)', async () => {
+    const { id, mlsKey } = await storeLoginGrant({ ciphersuites: [0x004e] });
+    const device = await register(id);
+    expect(device).toMatchObject({
+      device_key: mlsKey.publicKey,
+      grant: { version: 2, ciphersuite: 0x004e, ciphersuites: [0x004e] }
+    });
+  });
+
+  it('rejects a v1 combined grant for 0x004E and a v2 set without an accepted suite', async () => {
+    const v1 = await storeLoginGrant({ ciphersuite: 0x004e });
+    await expectBadGrant(register(v1.id), 'ciphersuite');
+    const v2 = await storeLoginGrant({ ciphersuites: [4660] });
+    await expectBadGrant(register(v2.id), 'ciphersuites');
   });
 
   it('rejects an expired grant', async () => {

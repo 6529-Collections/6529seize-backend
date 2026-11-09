@@ -1449,6 +1449,22 @@ export type RegisterDeviceGrantRequest = Request<
   Record<string, never>
 >;
 
+export interface AcknowledgeDeviceGrantPathParams {
+  "grantId": string;
+}
+
+export type AcknowledgeDeviceGrantQuery = Record<string, never>;
+
+export type AcknowledgeDeviceGrantResponse = ApiDeviceGrant;
+
+export type AcknowledgeDeviceGrantRequest = Request<
+  AcknowledgeDeviceGrantPathParams,
+  ApiResponse<AcknowledgeDeviceGrantResponse>,
+  never,
+  AcknowledgeDeviceGrantQuery,
+  Record<string, never>
+>;
+
 export interface RenameDeviceGrantPathParams {
   "grantId": string;
 }
@@ -2132,7 +2148,9 @@ export interface E2eeGetProfileDevicesPathParams {
   "profile_id": string;
 }
 
-export type E2eeGetProfileDevicesQuery = Record<string, never>;
+export interface E2eeGetProfileDevicesQuery {
+  "ciphersuite"?: number;
+}
 
 export type E2eeGetProfileDevicesResponse = ApiE2eeDevice[];
 
