@@ -1,4 +1,4 @@
-import { dropMediaLayoutHints } from '@/api/drops/drop-media-layout-hints';
+import { mapDropMedia } from '@/api/drops/drop-media.mapper';
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import {
   anonymousCompetitionAuthor,
@@ -19,8 +19,6 @@ import { ConnectionWrapper } from '../../../sql-executor';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiDropPart } from '../generated/models/ApiDropPart';
-import { ApiDropMedia } from '../generated/models/ApiDropMedia';
-import { ApiDropMediaStatus } from '../generated/models/ApiDropMediaStatus';
 import { ApiDropReferencedNFT } from '../generated/models/ApiDropReferencedNFT';
 import { ApiDropMentionedUser } from '../generated/models/ApiDropMentionedUser';
 import { ApiMentionedWave } from '../generated/models/ApiMentionedWave';
@@ -58,7 +56,6 @@ import { ApiDropGroupMention } from '../generated/models/ApiDropGroupMention';
 import { dropVotingService, DropVotingService } from './drop-voting.service';
 import { dropVotingDb, DropVotingDb } from './drop-voting.db';
 import { WaveDecisionWinnerDropWithSaleEntity } from '@/entities/IWaveDecision';
-import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { ApiDropWinningContext } from '../generated/models/ApiDropWinningContext';
 import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
 import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
@@ -1542,14 +1539,7 @@ export class DropsMappers {
             media:
               (dropMedia[dropEntity.id] ?? [])
                 .filter((m) => m.drop_part_id === it.drop_part_id)
-                .map<ApiDropMedia>((it) => ({
-                  url: it.url,
-                  mime_type: it.mime_type,
-                  media_upload_id: it.media_upload_id,
-                  media_status: mapDropMediaUploadStatus(it.media_status),
-                  media_error: it.media_error ?? null,
-                  ...dropMediaLayoutHints(it)
-                })) ?? [],
+                .map(mapDropMedia) ?? [],
             attachments: (dropAttachments[dropEntity.id] ?? [])
               .filter(
                 (attachment) => attachment.drop_part_id === it.drop_part_id
@@ -1618,24 +1608,6 @@ export class DropsMappers {
         ? (rootDropNftLinksByDropId[dropEntity.id] ?? [])
         : []
     };
-  }
-}
-
-function mapDropMediaUploadStatus(
-  status: string | null | undefined
-): ApiDropMediaStatus {
-  switch (status) {
-    case ApiDropMediaStatus.Uploading:
-      return ApiDropMediaStatus.Uploading;
-    case ApiDropMediaStatus.Processing:
-    case DropMediaUploadStatus.COMPLETING:
-    case DropMediaUploadStatus.SANITIZING:
-      return ApiDropMediaStatus.Processing;
-    case ApiDropMediaStatus.Failed:
-      return ApiDropMediaStatus.Failed;
-    case ApiDropMediaStatus.Ready:
-    default:
-      return ApiDropMediaStatus.Ready;
   }
 }
 
