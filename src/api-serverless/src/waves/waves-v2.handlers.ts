@@ -422,7 +422,7 @@ export async function handleGetWaveDropsV2(
       search_strategy,
       drop_type,
       curation_id: null,
-      respect_drop_reply_collapse
+      ...(respect_drop_reply_collapse ? { respect_drop_reply_collapse } : {})
     },
     { authenticationContext, timer }
   );
