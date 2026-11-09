@@ -114,7 +114,11 @@ and elapsed duration with `native_competition_execution_failed`.
   Pausing requires a nonblank reason; the Configuration view exposes the
   competition's historic pauses, reasons and start/end times.
 - Rank and Approve store immutable winner/voter snapshots and award
-  descriptors; winning changes an entry, never its dedicated COMPETITION drop. Existing
+  descriptors. Outcomes are optional: a scheduled Rank decision without outcomes
+  selects one winner, and Approve still uses its threshold and winner limit;
+  neither creates placeholder awards. Configured Rank distributions retain their
+  existing winner counts. The frontend presents configured outcomes in Settings.
+  Winning changes an entry, never its dedicated COMPETITION drop. Existing
   automatic REP/CIC outcome behavior creates descriptors, not new rating grants.
   Original-primary PARTI/WINNER wire classifications derive from native entries;
   no physical drop lifecycle mirror is written.
