@@ -365,3 +365,7 @@ export const VIEWER_GROUP_SETS_TABLE = 'viewer_group_sets';
 export const VIEWER_GROUP_SET_MEMBERS_TABLE = 'viewer_group_set_members';
 /** Consolidated-TDH to identities sync progress (see identity-tdh-sync.ts). */
 export const IDENTITY_TDH_SYNC_STATE_TABLE = 'identity_tdh_sync_state';
+
+export const COMPETITION_SCORE_RESETS_TABLE = 'competition_score_resets';
+export const COMPETITION_SCORE_RESET_STATE_TABLE =
+  'competition_score_reset_state';

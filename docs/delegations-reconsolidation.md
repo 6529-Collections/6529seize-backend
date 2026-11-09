@@ -27,11 +27,12 @@ confirmed consolidation groups. Both chain-event processing and this action
 use the same reconsolidation function, in the same order:
 
 1. Recalculate affected wallets' TDH at the latest UTC midnight.
-2. Persist partial consolidated TDH and reconcile identities/profiles. The
-   existing partial TDH path also queues the asynchronous xTDH universe refresh.
-   The identities sync after the TDH write runs in short transactions; if it
-   fails it is logged (`[IDENTITIES SYNC FAILED]`) and left pending for the
-   next `delegationsLoop` start rather than failing the invocation.
+2. Persist partial consolidated TDH and reconcile identities/profiles.
+   The identities sync after the TDH write runs in short transactions within
+   a five-minute budget per invocation; whatever it does not finish, or a
+   failure (logged as `[IDENTITIES SYNC FAILED]`), is left pending for the next
+   `delegationsLoop` start rather than failing the invocation. The xTDH
+   recalculation is queued once the sync completes.
 3. Rebuild consolidated NFT ownership, owner balances, and activity.
 4. Reconcile subscription records.
 5. For the maintenance action, update primary addresses for all affected wallets.

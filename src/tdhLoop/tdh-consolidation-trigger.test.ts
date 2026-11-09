@@ -121,13 +121,15 @@ describe('TDH consolidation xTDH trigger contract', () => {
       [],
       [],
       [],
-      { mode: 'FULL' }
+      { mode: 'FULL' },
+      blockTimestamp
     );
-    expect(mockPersistTdhBlock).toHaveBeenCalledTimes(1);
+    // The tdh_blocks row is written inside the TDH transaction.
+    expect(mockPersistTdhBlock).not.toHaveBeenCalled();
     expect(mockSqsSendToQueueName).not.toHaveBeenCalled();
   });
 
-  it('directly enqueues xTDH once after partial persistence completes', async () => {
+  it('syncs identities after a partial write, which triggers xTDH itself', async () => {
     const wallets = ['0xabc'];
 
     await consolidateAndPersistTDH(block, blockTimestamp, {
@@ -146,53 +148,26 @@ describe('TDH consolidation xTDH trigger contract', () => {
         mode: 'PARTIAL',
         wallets,
         consolidationKeysToReplace: []
-      }
+      },
+      blockTimestamp
     );
-    expect(mockSqsSendToQueueName).toHaveBeenCalledWith({
-      queueName: 'xtdh-start.fifo',
-      message: {
-        phase: 'universe',
-        queued_at_ms: expect.any(Number)
-      }
-    });
-    expect(mockSqsSendToQueueName).toHaveBeenCalledTimes(1);
-    expect(mockPersistTdhBlock.mock.invocationCallOrder[0]).toBeLessThan(
-      mockSqsSendToQueueName.mock.invocationCallOrder[0]
-    );
-  });
-
-  it('syncs identities after the TDH commit and before the block and xTDH', async () => {
-    await consolidateAndPersistTDH(block, blockTimestamp, {
-      mode: 'PARTIAL',
-      wallets: ['0xabc'],
-      currentConsolidatedTdh: []
-    });
-
-    expect(mockSyncIdentitiesAfterTdh).toHaveBeenCalledTimes(1);
+    expect(mockSyncIdentitiesAfterTdh).toHaveBeenCalledWith('AFTER_TDH_WRITE');
     const order = (fn: jest.Mock) => fn.mock.invocationCallOrder[0];
     expect(order(mockPersistConsolidatedTdh)).toBeLessThan(
       order(mockSyncIdentitiesAfterTdh)
     );
-    expect(order(mockSyncIdentitiesAfterTdh)).toBeLessThan(
-      order(mockPersistTdhBlock)
-    );
-    expect(order(mockSyncIdentitiesAfterTdh)).toBeLessThan(
-      order(mockSqsSendToQueueName)
-    );
+    // The block is written inside the TDH transaction; xTDH is triggered by
+    // the sync once identities are synced.
+    expect(mockPersistTdhBlock).not.toHaveBeenCalled();
+    expect(mockSqsSendToQueueName).not.toHaveBeenCalled();
   });
 
-  it('still writes the block and enqueues xTDH when the identities sync is left pending', async () => {
-    mockSyncIdentitiesAfterTdh.mockResolvedValueOnce('FAILED');
+  it('leaves the identities sync of a full rewrite to delegationsLoop', async () => {
+    await consolidateAndPersistTDH(block, blockTimestamp, { mode: 'FULL' });
 
-    await consolidateAndPersistTDH(block, blockTimestamp, {
-      mode: 'PARTIAL',
-      wallets: ['0xabc'],
-      currentConsolidatedTdh: []
-    });
-
-    expect(mockSyncIdentitiesAfterTdh).toHaveBeenCalledWith('AFTER_TDH_WRITE');
-    expect(mockPersistTdhBlock).toHaveBeenCalledTimes(1);
-    expect(mockSqsSendToQueueName).toHaveBeenCalledTimes(1);
+    expect(mockPersistConsolidatedTdh).toHaveBeenCalledTimes(1);
+    expect(mockSyncIdentitiesAfterTdh).not.toHaveBeenCalled();
+    expect(mockSqsSendToQueueName).not.toHaveBeenCalled();
   });
 
   it('does not enqueue xTDH when consolidated persistence fails', async () => {
@@ -262,24 +237,8 @@ describe('TDH consolidation xTDH trigger contract', () => {
         mode: 'PARTIAL',
         wallets,
         consolidationKeysToReplace: []
-      }
+      },
+      blockTimestamp
     );
-  });
-
-  it('propagates a partial xTDH enqueue failure after persistence', async () => {
-    mockSqsSendToQueueName.mockRejectedValueOnce(
-      new Error('queue lookup failed')
-    );
-
-    await expect(
-      consolidateAndPersistTDH(block, blockTimestamp, {
-        mode: 'PARTIAL',
-        wallets: ['0xabc'],
-        currentConsolidatedTdh: []
-      })
-    ).rejects.toThrow('queue lookup failed');
-
-    expect(mockPersistConsolidatedTdh).toHaveBeenCalledTimes(1);
-    expect(mockPersistTdhBlock).toHaveBeenCalledTimes(1);
   });
 });
