@@ -2,6 +2,10 @@ import type { SNSEvent } from 'aws-lambda';
 import { hash, record } from './contract.js';
 
 type Notice = SNSEvent['Records'][number]['Sns'];
+const alarmNames = {
+  prod: /^seize-monitoring-prod-[A-Za-z0-9_-]{1,180}$/,
+  staging: /^seize-monitoring-staging-[A-Za-z0-9_-]{1,180}$/
+};
 function timestamp(value: unknown): string | undefined {
   return typeof value === 'string' &&
     value.length <= 50 &&
@@ -23,14 +27,14 @@ export function fallbackNotice(notice: Notice) {
   let eventTime = timestamp(notice.Timestamp);
   let eventCode: string | undefined;
   if (topic && notice.Message.length <= 16384) {
+    const alarmName =
+      environment === 'prod' ? alarmNames.prod : alarmNames.staging;
     try {
       const body = record(JSON.parse(notice.Message));
       const name = body.AlarmName;
       if (
         typeof name === 'string' &&
-        new RegExp(
-          `^seize-monitoring-${environment}-[A-Za-z0-9_-]{1,180}$`
-        ).test(name) &&
+        alarmName.test(name) &&
         body.AlarmArn ===
           `arn:aws:cloudwatch:${topic[1]}:${topic[2]}:alarm:${name}` &&
         ['ALARM', 'OK', 'INSUFFICIENT_DATA'].includes(

@@ -173,3 +173,48 @@ test('a blocked storage request shares the retry deadline and remains a failed o
   assert.equal(h.state()?.observedAt, 1);
   assert.equal(h.logs.at(-1)?.outcome, 'FAILED');
 });
+
+test('a final read after the deadline fails closed even if a competing writer saved newer state', async (t) => {
+  const h = harness(t);
+  let writes = 0;
+  let finalRead = false;
+  let requestSignal: AbortSignal | undefined;
+  t.mock.method(
+    ddb,
+    'send',
+    async (
+      command: GetCommand | UpdateCommand,
+      options?: { abortSignal?: AbortSignal }
+    ) => {
+      requestSignal = options?.abortSignal;
+      assert.ok(requestSignal);
+      if (command instanceof GetCommand) {
+        if (writes === 8) {
+          finalRead = true;
+          requestSignal.throwIfAborted();
+          return { Item: { observedAt: 101 } };
+        }
+        return { Item: { observedAt: writes + 1, payload: observation } };
+      }
+      writes++;
+      if (writes === 8) {
+        await new Promise<void>((resolve) => {
+          const keepAlive = setTimeout(resolve, 5000);
+          requestSignal!.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(keepAlive);
+              resolve();
+            },
+            { once: true }
+          );
+        });
+      }
+      throw collision();
+    }
+  );
+  await assert.rejects(h.run, (error) => error === requestSignal?.reason);
+  assert.equal(writes, 8);
+  assert.equal(finalRead, true);
+  assert.equal(h.logs.at(-1)?.outcome, 'FAILED');
+});

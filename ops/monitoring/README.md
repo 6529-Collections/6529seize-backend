@@ -172,6 +172,9 @@ observation hash, attempts, conflicts, elapsed milliseconds and outcome
 (`SAVED`, `SUPERSEDED`, `FAILED`). Successful uncontended writes are silent.
 Diagnostics omit the raw observation and exception messages. Use these records
 to distinguish recovered contention from an unsaved status report.
+The observation hash identifies environment/service/operation/timestamp, not
+payload content or a globally unique source event. Equal-timestamp reports share
+that correlation key, matching the existing observation-ordering contract.
 
 Fallback email includes environment, event time and a hash reference also logged
 as `MONITORING_FALLBACK` by the forwarder before and after SNS publication. Owned
