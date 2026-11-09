@@ -1300,7 +1300,11 @@ export async function persistConsolidatedTDH(
       scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined
     );
     await persistTDHBlock(block, blockTimestamp, tdh, manager);
-    await identityTdhSyncStateDb.markPending(block, qrHolder);
+    // A full rewrite (tdhLoop) leaves the sync to delegationsLoop and has its
+    // completion announced once the sync is done.
+    await identityTdhSyncStateDb.markPending(block, qrHolder, {
+      announceFull: scope.mode === 'FULL'
+    });
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);

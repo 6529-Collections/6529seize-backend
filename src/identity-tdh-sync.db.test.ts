@@ -15,6 +15,8 @@ import {
   syncIdentitiesAfterTdhOrLeavePending
 } from '@/identity-tdh-sync';
 import * as sentryContext from '@/sentry.context';
+import * as notifier from '@/notifier';
+import { sqs } from '@/sqs';
 import { identityTdhSyncStateDb } from '@/identity-tdh-sync-state.db';
 import { sqlExecutor } from '@/sql-executor';
 import { Time } from '@/time';
@@ -47,6 +49,7 @@ describeWithSeed(
   identityMetricsSyncSeeds(),
   () => {
     beforeEach(() => {
+      jest.spyOn(sqs, 'sendToQueueName').mockResolvedValue(undefined);
       let generated = 0;
       jest
         .spyOn(ProfileIdGenerator.prototype, 'generate')
@@ -236,6 +239,123 @@ describeWithSeed(
       expect(capture).not.toHaveBeenCalled();
       const progress = await identityTdhSyncStateDb.readProgress();
       expect(progress.syncedGeneration).toBe(0);
+    });
+
+    it('stops at its time budget and resumes next invocation without redoing B or chunks', async () => {
+      await markPending();
+      const merge = jest.spyOn(
+        identityConsolidationEffects,
+        'syncIdentitiesWithTdhConsolidations'
+      );
+      const revoke = jest.spyOn(
+        overvoteRevocation,
+        'revokeTdhBasedDropWavesOverVotesPerCompetition'
+      );
+      let committedChunks = 0;
+
+      await expect(
+        syncIdentitiesAfterTdh({
+          chunkRows: 3,
+          afterChunk: (chunk) => {
+            committedChunks = chunk;
+          },
+          budgetSpent: () => committedChunks >= 2
+        })
+      ).resolves.toBe('BUDGET_USED');
+
+      expect(merge).toHaveBeenCalledTimes(1);
+      expect(revoke).not.toHaveBeenCalled();
+      expect(sqs.sendToQueueName).not.toHaveBeenCalled();
+      const stopped = await identityTdhSyncStateDb.readProgress();
+      expect(stopped.syncedGeneration).toBe(0);
+      const keys = (await readIdentities()).map((row) => row.consolidation_key);
+      await expect(identityTdhSyncStateDb.readMetricsWalk()).resolves.toEqual({
+        generation: 1,
+        after: keys[5]
+      });
+
+      const syncAll = jest.spyOn(identityMetricsSync, 'syncAll');
+      await resumePendingIdentityTdhSync();
+
+      // B already committed for this generation; the walk continues.
+      expect(merge).toHaveBeenCalledTimes(1);
+      expect(syncAll.mock.calls[0][0]).toMatchObject({ startAfter: keys[5] });
+      await expect(syncAll.mock.results[0].value).resolves.toMatchObject({
+        complete: true,
+        rows: keys.length - 6
+      });
+      expect(revoke).toHaveBeenCalledTimes(1);
+      // xTDH is triggered once, after the identities are synced.
+      expect(sqs.sendToQueueName).toHaveBeenCalledTimes(1);
+      expect(
+        jest.mocked(sqs.sendToQueueName).mock.invocationCallOrder[0]
+      ).toBeGreaterThan(revoke.mock.invocationCallOrder[0]);
+      const synced = await identityTdhSyncStateDb.readProgress();
+      expect(synced.syncedGeneration).toBe(1);
+    });
+
+    it('announces a full TDH write once, only after its identities sync', async () => {
+      await identityTdhSyncStateDb.ensureRows();
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        identityTdhSyncStateDb.markPending(BLOCK, connection, {
+          announceFull: true
+        })
+      );
+      const announce = jest
+        .spyOn(notifier, 'notifyTdhCalculationsDone')
+        .mockResolvedValue(undefined);
+      expect(await identityTdhSyncStateDb.hasPendingFullAnnouncement()).toBe(
+        true
+      );
+
+      await expect(
+        syncIdentitiesAfterTdh({ chunkRows: 3, budgetSpent: () => true })
+      ).resolves.toBe('BUDGET_USED');
+      expect(announce).not.toHaveBeenCalled();
+
+      await expect(syncIdentitiesAfterTdh()).resolves.toBe('SYNCED');
+      expect(announce).toHaveBeenCalledTimes(1);
+      // The full event reaches xTDH itself; no separate partial trigger.
+      expect(sqs.sendToQueueName).not.toHaveBeenCalled();
+      expect(await identityTdhSyncStateDb.hasPendingFullAnnouncement()).toBe(
+        false
+      );
+
+      // A later partial write triggers xTDH and does not announce again.
+      await markPending(BLOCK + 1);
+      await expect(syncIdentitiesAfterTdh()).resolves.toBe('SYNCED');
+      expect(announce).toHaveBeenCalledTimes(1);
+      expect(sqs.sendToQueueName).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a full TDH announcement armed when publishing it fails', async () => {
+      await identityTdhSyncStateDb.ensureRows();
+      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+        identityTdhSyncStateDb.markPending(BLOCK, connection, {
+          announceFull: true
+        })
+      );
+      const announce = jest
+        .spyOn(notifier, 'notifyTdhCalculationsDone')
+        .mockRejectedValueOnce(new Error('SNS unavailable'))
+        .mockResolvedValue(undefined);
+
+      await expect(syncIdentitiesAfterTdh()).rejects.toThrow('SNS unavailable');
+      expect(await identityTdhSyncStateDb.hasPendingFullAnnouncement()).toBe(
+        true
+      );
+      expect(
+        (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+      ).toBe(0);
+
+      await resumePendingIdentityTdhSync();
+      expect(announce).toHaveBeenCalledTimes(2);
+      expect(await identityTdhSyncStateDb.hasPendingFullAnnouncement()).toBe(
+        false
+      );
+      expect(
+        (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+      ).toBe(1);
     });
 
     it('marks only the generation it read as synced', async () => {

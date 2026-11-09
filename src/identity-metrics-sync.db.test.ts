@@ -13,6 +13,7 @@ import {
 } from '@/identity-tdh-sync';
 import { identityTdhSyncStateDb } from '@/identity-tdh-sync-state.db';
 import { ratingsDb } from '@/rates/ratings.db';
+import { sqs } from '@/sqs';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
 import {
@@ -187,6 +188,7 @@ describeWithSeed(
   () => {
     beforeEach(() => {
       useDeterministicMergeDependencies();
+      jest.spyOn(sqs, 'sendToQueueName').mockResolvedValue(undefined);
     });
 
     afterEach(() => {
@@ -306,6 +308,62 @@ describeWithSeed(
         generation: 1,
         walk_after: keys[keys.length - 1]
       });
+    });
+
+    it('keeps identities consistent when xTDH lands while the sync is pending', async () => {
+      const reference = await referenceRun();
+      await markPending();
+      let committedChunks = 0;
+      await expect(
+        syncIdentitiesAfterTdh({
+          chunkRows: 3,
+          afterChunk: (chunk) => {
+            committedChunks = chunk;
+          },
+          budgetSpent: () => committedChunks >= 2
+        })
+      ).resolves.toBe('BUDGET_USED');
+
+      // xTDH applies between invocations, as its identity snapshot does:
+      // new xtdh, level_raw from the row's current rep and tdh. One row is
+      // already synced, one is still pending.
+      const rows = await readIdentities();
+      const touched = [rows[0], rows[rows.length - 1]];
+      for (const row of touched) {
+        await sqlExecutor.execute(
+          `update ${IDENTITIES_TABLE}
+           set xtdh = :xtdh, level_raw = rep + tdh + :xtdh
+           where consolidation_key = :key`,
+          { key: row.consolidation_key, xtdh: Number(row.xtdh) + 5 }
+        );
+      }
+
+      await resumePendingIdentityTdhSync();
+
+      const touchedKeys = new Set(touched.map((row) => row.consolidation_key));
+      const expected = reference.identities.map((row) =>
+        touchedKeys.has(row.consolidation_key)
+          ? {
+              ...row,
+              xtdh: Number(row.xtdh) + 5,
+              level_raw: Number(row.level_raw) + 5
+            }
+          : row
+      );
+      const actual = await readIdentities();
+      expect(
+        actual.map((row) => ({
+          ...row,
+          xtdh: Number(row.xtdh),
+          level_raw: Number(row.level_raw)
+        }))
+      ).toEqual(
+        expected.map((row) => ({
+          ...row,
+          xtdh: Number(row.xtdh),
+          level_raw: Number(row.level_raw)
+        }))
+      );
     });
 
     it('walks a newer generation from the first identity', async () => {

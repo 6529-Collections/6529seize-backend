@@ -49,6 +49,11 @@ export type IdentityMetricsSyncOptions = {
   readonly profileIdBytes?: number;
   /** Resume after this key (a previous run's last committed chunk). */
   readonly startAfter?: string;
+  /**
+   * Checked before each chunk: true stops the walk cleanly, between chunks,
+   * and the result reports it incomplete (a time budget).
+   */
+  readonly shouldStop?: () => boolean;
   /** Runs inside each chunk's transaction, with its last key. */
   readonly recordProgress?: (
     last: string,
@@ -68,6 +73,8 @@ type ChunkSettings = {
 };
 
 export type IdentityMetricsSyncResult = {
+  /** False when `shouldStop` ended the walk before the last identity. */
+  readonly complete: boolean;
   readonly chunks: number;
   readonly rows: number;
   readonly retries: number;
@@ -141,7 +148,12 @@ export class IdentityMetricsSync extends LazyDbAccessCompatibleService {
     let rows = 0;
     let retries = 0;
     let slowestChunkMs = 0;
+    let complete = true;
     for (;;) {
+      if (options.shouldStop?.()) {
+        complete = false;
+        break;
+      }
       const chunkStart = Time.now();
       const synced = await this.syncChunkWithRetries(
         after,
@@ -160,9 +172,9 @@ export class IdentityMetricsSync extends LazyDbAccessCompatibleService {
       await options.afterChunk?.(chunks);
     }
     logger.info(
-      `[SYNCED ${rows} IDENTITIES IN ${chunks} CHUNKS] [RETRIES ${retries}] [SLOWEST CHUNK ${slowestChunkMs} ms] [${start.diffFromNow()}]`
+      `[SYNCED ${rows} IDENTITIES IN ${chunks} CHUNKS] [${complete ? 'COMPLETE' : 'STOPPED AT BUDGET'}] [RETRIES ${retries}] [SLOWEST CHUNK ${slowestChunkMs} ms] [${start.diffFromNow()}]`
     );
-    return { chunks, rows, retries, slowestChunkMs };
+    return { complete, chunks, rows, retries, slowestChunkMs };
   }
 
   private async syncChunkWithRetries(

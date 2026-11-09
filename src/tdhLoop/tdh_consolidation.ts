@@ -20,9 +20,7 @@ import {
 } from '../entities/ITDH';
 import { Logger } from '../logging';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
-import { sqs } from '../sqs';
 import { equalIgnoreCase } from '../strings';
-import { XTDH_LOOP_PHASE } from '../xtdh/xtdh-loop-phase';
 import {
   calculateBoosts,
   calculateRanks,
@@ -37,7 +35,6 @@ import { calculateNftTDH } from './tdh_nft';
 import { syncIdentitiesAfterTdhOrLeavePending } from '../identity-tdh-sync';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
-const XTDH_LOOP_QUEUE_NAME = 'xtdh-start.fifo';
 
 export type TdhConsolidationRequest =
   | { readonly mode: 'FULL' }
@@ -316,29 +313,20 @@ export const consolidateAndPersistTDH = async (
     persistenceScope,
     blockTimestamp
   );
-  // The TDH rows and their tdh_blocks row are committed. Identities, merges,
-  // metrics and overvotes follow; a failure, or a Lambda killed mid-sync,
-  // leaves them pending for the next loop start. The partial xTDH trigger
-  // stays after the sync, so xTDH does not apply over the metrics chunks; a
-  // delegationsLoop killed before it does not advance its checkpoint and
-  // redoes the TDH write, sync and trigger on its next run.
-  await syncIdentitiesAfterTdhOrLeavePending('AFTER_TDH_WRITE');
+  // The TDH rows and their tdh_blocks row are committed. A partial write
+  // (delegationsLoop) syncs identities now, within the invocation's budget;
+  // the sync then triggers xTDH. A full rewrite (tdhLoop) leaves the sync to
+  // the next delegationsLoop start, which also announces its completion, so
+  // tdhLoop stays well inside its timeout. Anything left pending resumes at
+  // the next delegationsLoop start.
   if (request.mode === 'PARTIAL') {
-    await enqueuePartialTdhUniverseRecalculation();
+    await syncIdentitiesAfterTdhOrLeavePending('AFTER_TDH_WRITE');
+  } else {
+    logger.info(`[IDENTITIES SYNC LEFT TO DELEGATIONS LOOP] [BLOCK ${block}]`);
   }
 
   return consolidatedTdh;
 };
-
-async function enqueuePartialTdhUniverseRecalculation(): Promise<void> {
-  await sqs.sendToQueueName({
-    queueName: XTDH_LOOP_QUEUE_NAME,
-    message: {
-      phase: XTDH_LOOP_PHASE.UNIVERSE,
-      queued_at_ms: Date.now()
-    }
-  });
-}
 
 export const consolidateTDH = async (
   block: number,

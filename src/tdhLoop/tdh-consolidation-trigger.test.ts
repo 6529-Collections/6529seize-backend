@@ -129,7 +129,7 @@ describe('TDH consolidation xTDH trigger contract', () => {
     expect(mockSqsSendToQueueName).not.toHaveBeenCalled();
   });
 
-  it('directly enqueues xTDH once after partial persistence completes', async () => {
+  it('syncs identities after a partial write, which triggers xTDH itself', async () => {
     const wallets = ['0xabc'];
 
     await consolidateAndPersistTDH(block, blockTimestamp, {
@@ -151,48 +151,23 @@ describe('TDH consolidation xTDH trigger contract', () => {
       },
       blockTimestamp
     );
-    expect(mockSqsSendToQueueName).toHaveBeenCalledWith({
-      queueName: 'xtdh-start.fifo',
-      message: {
-        phase: 'universe',
-        queued_at_ms: expect.any(Number)
-      }
-    });
-    expect(mockSqsSendToQueueName).toHaveBeenCalledTimes(1);
-    expect(mockPersistConsolidatedTdh.mock.invocationCallOrder[0]).toBeLessThan(
-      mockSqsSendToQueueName.mock.invocationCallOrder[0]
-    );
-  });
-
-  it('syncs identities after the TDH commit, which carries the block, and before xTDH', async () => {
-    await consolidateAndPersistTDH(block, blockTimestamp, {
-      mode: 'PARTIAL',
-      wallets: ['0xabc'],
-      currentConsolidatedTdh: []
-    });
-
-    expect(mockSyncIdentitiesAfterTdh).toHaveBeenCalledTimes(1);
+    expect(mockSyncIdentitiesAfterTdh).toHaveBeenCalledWith('AFTER_TDH_WRITE');
     const order = (fn: jest.Mock) => fn.mock.invocationCallOrder[0];
     expect(order(mockPersistConsolidatedTdh)).toBeLessThan(
       order(mockSyncIdentitiesAfterTdh)
     );
+    // The block is written inside the TDH transaction; xTDH is triggered by
+    // the sync once identities are synced.
     expect(mockPersistTdhBlock).not.toHaveBeenCalled();
-    expect(order(mockSyncIdentitiesAfterTdh)).toBeLessThan(
-      order(mockSqsSendToQueueName)
-    );
+    expect(mockSqsSendToQueueName).not.toHaveBeenCalled();
   });
 
-  it('still enqueues xTDH when the identities sync is left pending', async () => {
-    mockSyncIdentitiesAfterTdh.mockResolvedValueOnce('FAILED');
+  it('leaves the identities sync of a full rewrite to delegationsLoop', async () => {
+    await consolidateAndPersistTDH(block, blockTimestamp, { mode: 'FULL' });
 
-    await consolidateAndPersistTDH(block, blockTimestamp, {
-      mode: 'PARTIAL',
-      wallets: ['0xabc'],
-      currentConsolidatedTdh: []
-    });
-
-    expect(mockSyncIdentitiesAfterTdh).toHaveBeenCalledWith('AFTER_TDH_WRITE');
-    expect(mockSqsSendToQueueName).toHaveBeenCalledTimes(1);
+    expect(mockPersistConsolidatedTdh).toHaveBeenCalledTimes(1);
+    expect(mockSyncIdentitiesAfterTdh).not.toHaveBeenCalled();
+    expect(mockSqsSendToQueueName).not.toHaveBeenCalled();
   });
 
   it('does not enqueue xTDH when consolidated persistence fails', async () => {
@@ -265,21 +240,5 @@ describe('TDH consolidation xTDH trigger contract', () => {
       },
       blockTimestamp
     );
-  });
-
-  it('propagates a partial xTDH enqueue failure after persistence', async () => {
-    mockSqsSendToQueueName.mockRejectedValueOnce(
-      new Error('queue lookup failed')
-    );
-
-    await expect(
-      consolidateAndPersistTDH(block, blockTimestamp, {
-        mode: 'PARTIAL',
-        wallets: ['0xabc'],
-        currentConsolidatedTdh: []
-      })
-    ).rejects.toThrow('queue lookup failed');
-
-    expect(mockPersistConsolidatedTdh).toHaveBeenCalledTimes(1);
   });
 });

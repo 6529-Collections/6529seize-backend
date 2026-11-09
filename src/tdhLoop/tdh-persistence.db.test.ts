@@ -324,6 +324,28 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('arms the completion announcement only for a full TDH rewrite', async () => {
+    await persistReplacement([A_C, B]);
+    expect(await identityTdhSyncStateDb.hasPendingFullAnnouncement()).toBe(
+      false
+    );
+
+    await persistConsolidatedTDH(
+      BLOCK,
+      newConsolidated,
+      newMemes,
+      newEditions,
+      newNft,
+      { mode: 'FULL' },
+      BLOCK_TIMESTAMP
+    );
+
+    await expectPersistedKeys([A_B, C]);
+    expect(await identityTdhSyncStateDb.hasPendingFullAnnouncement()).toBe(
+      true
+    );
+  });
+
   it('is idempotent when retried after the TDH commit', async () => {
     await persistReplacement([A_C, B]);
     await expectPersistedKeys([A_B, C]);
