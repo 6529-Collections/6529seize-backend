@@ -54,6 +54,22 @@ describe('extractMediaKeyReferences', () => {
     expect(extractMediaKeyReferences('')).toEqual([]);
   });
 
+  it.each([
+    ['trailing punctuation', `drops/a/${'.'.repeat(100_000)}x`],
+    ['punctuation without an end', `drops/a/b${'!;:.'.repeat(25_000)}`],
+    ['repeated prefixes', 'drops/'.repeat(17_000)],
+    ['prefixes inside words', 'xdrops/'.repeat(15_000)],
+    ['escaped slashes', String.raw`drops\/`.repeat(15_000)],
+    ['query markers', `waves/a/${'?#'.repeat(50_000)}`],
+    ['many short references', 'drops/a/b '.repeat(10_000)]
+  ])('scans pathological text in linear time: %s', (_name, text) => {
+    expect(text.length).toBeGreaterThanOrEqual(100_000);
+    const started = process.hrtime.bigint();
+    extractMediaKeyReferences(text);
+    const elapsedMillis = Number(process.hrtime.bigint() - started) / 1e6;
+    expect(elapsedMillis).toBeLessThan(250);
+  });
+
   it('a file name starting with a bracket still excludes its folder', () => {
     const key = `drops/${UPLOAD}/(final) art.png`;
     const references = extractMediaKeyReferences(

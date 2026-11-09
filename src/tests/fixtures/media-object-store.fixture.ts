@@ -71,7 +71,7 @@ export class InMemoryObjectStore implements MediaObjectStore {
     const object: StoredObject = {
       body: Buffer.from(body),
       headers: { ...headers, metadata: { ...headers.metadata } },
-      etag: `"${createHash('md5').update(body).digest('hex')}"`,
+      etag: `"${createHash('md5').update(body).digest('hex')}"`, // NOSONAR: test fixture imitating S3 ETag (MD5 by S3 definition); not security-sensitive.
       versionId: `v${++this.versionCounter}`,
       lastModified: this.now()
     };
@@ -132,19 +132,20 @@ export class InMemoryObjectStore implements MediaObjectStore {
     this.store(key, body, headers);
   }
 
-  async *list(prefix: string): AsyncIterable<ListedObject> {
+  list(prefix: string): AsyncIterable<ListedObject> {
     this.operations.push(`list ${prefix}`);
-    const keys = this.keys()
+    const listed = this.keys()
       .filter((key) => key.startsWith(prefix))
-      .sort((a, b) => a.localeCompare(b));
-    for (const key of keys) {
-      const object = this.latest(key)!;
-      yield {
-        key,
-        size: object.body.length,
-        lastModified: object.lastModified
-      };
-    }
+      .sort((a, b) => a.localeCompare(b))
+      .map((key) => {
+        const object = this.latest(key)!;
+        return {
+          key,
+          size: object.body.length,
+          lastModified: object.lastModified
+        };
+      });
+    return asyncIterableOf(listed);
   }
 
   async delete(key: string): Promise<void> {
@@ -182,4 +183,21 @@ export class InMemoryObjectStore implements MediaObjectStore {
   async expiringLifecycleRules(): Promise<LifecycleExpiration[] | null> {
     return this.lifecycle;
   }
+}
+
+/** A snapshot served as an async iterable, like a paginated S3 listing. */
+function asyncIterableOf<T>(items: readonly T[]): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator]() {
+      let index = 0;
+      return {
+        next: (): Promise<IteratorResult<T>> =>
+          Promise.resolve(
+            index < items.length
+              ? { value: items[index++], done: false }
+              : { value: undefined, done: true }
+          )
+      };
+    }
+  };
 }

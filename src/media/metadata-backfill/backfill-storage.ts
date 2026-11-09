@@ -173,7 +173,7 @@ export class S3MediaObjectStore implements MediaObjectStore {
           contentLanguage: head.ContentLanguage,
           expires: head.Expires?.toISOString(),
           storageClass: head.StorageClass,
-          metadata: { ...(head.Metadata ?? {}) }
+          metadata: { ...head.Metadata }
         }
       };
     } catch (error) {

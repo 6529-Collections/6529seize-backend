@@ -6,12 +6,34 @@ export const BACKFILL_KEY_PREFIXES = ['drops/', 'waves/'] as const;
 /**
  * A `drops/` or `waves/` key written into free text: a CDN URL on any host
  * (copies and aliases of the URL exist), a JSON-escaped URL or a bare key.
- * The match stops at characters that usually delimit a URL, so a key with a
- * space or bracket in its file name yields a truncated prefix of itself;
- * {@link isReferencePrefixOf} still matches that key.
+ * A reference runs to the first character that usually delimits a URL, so a
+ * key with a space or bracket in its file name yields a truncated prefix of
+ * itself; {@link isReferencePrefixOf} still matches that key. The text is
+ * user-authored, so it is scanned with `indexOf` in linear time, never with a
+ * backtracking regular expression.
  */
-const KEY_IN_TEXT =
-  /(?:^|[^A-Za-z0-9_.-])((?:drops|waves)\/[^\s"'<>()[\]{}\\,|^`]+)/g;
+/** Characters that end a reference, besides any whitespace. */
+const REFERENCE_DELIMITERS: ReadonlySet<string> = new Set([
+  '"',
+  "'",
+  '<',
+  '>',
+  '(',
+  ')',
+  '[',
+  ']',
+  '{',
+  '}',
+  String.fromCharCode(92), // backslash
+  ',',
+  '|',
+  '^',
+  '`'
+]);
+const WHITESPACE = /\s/;
+/** A reference must not continue a longer word, such as `raindrops/`. */
+const WORD_CHARACTER = /[A-Za-z0-9_.-]/;
+const TRAILING_PUNCTUATION: ReadonlySet<string> = new Set(['.', ';', ':', '!']);
 
 /**
  * `<prefix>/<folder>/...`. A reference cut off right after the folder (a file
@@ -49,7 +71,47 @@ export function isReferencePrefixOf(reference: string, key: string): boolean {
 }
 
 function trimReference(raw: string): string {
-  return raw.split(/[?#]/, 1)[0].replace(/[.;:!]+$/, '');
+  let end = raw.length;
+  for (const terminator of ['?', '#']) {
+    const at = raw.indexOf(terminator);
+    if (at >= 0 && at < end) end = at;
+  }
+  while (end > 0 && TRAILING_PUNCTUATION.has(raw[end - 1])) end--;
+  return raw.slice(0, end);
+}
+
+function isReferenceStart(text: string, at: number): boolean {
+  return at === 0 || !WORD_CHARACTER.test(text[at - 1]);
+}
+
+function isDelimiter(character: string): boolean {
+  return REFERENCE_DELIMITERS.has(character) || WHITESPACE.test(character);
+}
+
+function referenceEnd(text: string, from: number): number {
+  let end = from;
+  while (end < text.length && !isDelimiter(text[end])) end++;
+  return end;
+}
+
+/**
+ * Raw references after each `prefix` occurrence. Scanning resumes after each
+ * reference, so every character is visited a bounded number of times.
+ */
+function rawReferences(text: string, prefix: string): string[] {
+  const references: string[] = [];
+  let from = 0;
+  for (;;) {
+    const at = text.indexOf(prefix, from);
+    if (at < 0) return references;
+    if (!isReferenceStart(text, at)) {
+      from = at + 1;
+      continue;
+    }
+    const end = referenceEnd(text, at + prefix.length);
+    if (end > at + prefix.length) references.push(text.slice(at, end));
+    from = end;
+  }
 }
 
 /**
@@ -60,20 +122,17 @@ function trimReference(raw: string): string {
 export function extractMediaKeyReferences(text: string): string[] {
   if (!text) return [];
   const references = new Set<string>();
-  const unescaped = text.split('\\/').join('/');
-  const pattern = new RegExp(KEY_IN_TEXT.source, 'g');
-  for (
-    let match = pattern.exec(unescaped);
-    match !== null;
-    match = pattern.exec(unescaped)
-  ) {
-    const written = trimReference(match[1]);
-    if (!written) continue;
-    references.add(written);
-    try {
-      references.add(decodeURIComponent(written));
-    } catch {
-      // A malformed escape; the written form is still recorded.
+  const unescaped = text.split(String.raw`\/`).join('/');
+  for (const prefix of BACKFILL_KEY_PREFIXES) {
+    for (const raw of rawReferences(unescaped, prefix)) {
+      const written = trimReference(raw);
+      if (written.length <= prefix.length) continue;
+      references.add(written);
+      try {
+        references.add(decodeURIComponent(written));
+      } catch {
+        // A malformed escape; the written form is still recorded.
+      }
     }
   }
   return Array.from(references);
@@ -81,14 +140,18 @@ export function extractMediaKeyReferences(text: string): string[] {
 
 /** A JSON column may arrive as a string or as an already parsed value. */
 export function textOf(value: unknown): string {
-  if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value;
   if (Buffer.isBuffer(value)) return value.toString('utf8');
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '';
+  if (typeof value === 'object' && value !== null) {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '';
+    }
   }
+  return typeof value === 'number' || typeof value === 'boolean'
+    ? `${value}`
+    : '';
 }
 
 /**
