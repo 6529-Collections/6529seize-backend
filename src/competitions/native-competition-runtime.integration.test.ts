@@ -1121,6 +1121,32 @@ describeWithSeed(
       }
     );
 
+    it('finalizes Rank and Approve without outcomes and never creates placeholder awards', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set outcome_config = json_array() where id in (:ids)`,
+        { ids: [rankId, approveId] }
+      );
+      await vote(rankId, rankEntry, 80, 100);
+      await vote(rankId, secondRankEntry, 20, 100);
+      await vote(approveId, approveEntry, 80, 100);
+      await service.processCompetition(rankId, 1001);
+      await service.processCompetition(approveId, 1001);
+      await service.processDueCompetitions({ now: 1100 });
+      expect(
+        await sqlExecutor.execute(
+          `select competition_id, entry_id from ${COMPETITION_DECISION_WINNERS_TABLE} order by competition_id`
+        )
+      ).toEqual([
+        { competition_id: rankId, entry_id: rankEntry },
+        { competition_id: approveId, entry_id: approveEntry }
+      ]);
+      expect(
+        await sqlExecutor.execute(
+          `select count(*) as n from ${COMPETITION_OUTCOME_AWARDS_TABLE}`
+        )
+      ).toEqual([{ n: 0 }]);
+    });
+
     it('finishes parallel Rank and Approve independently, preserves chat drops and emits immutable awards once', async () => {
       await vote(rankId, rankEntry, 80, 100);
       await vote(approveId, approveEntry, 80, 100);
