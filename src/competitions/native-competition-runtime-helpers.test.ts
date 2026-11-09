@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import {
   nativeAwardsForRank,
+  nativeWinnerCount,
   nativeThresholdSince,
   nextNativeDecision,
   reducedNativeVotes,
@@ -24,6 +25,16 @@ const config: CompetitionDecisionConfig = {
 };
 
 describe('native runtime numerical rules', () => {
+  it('selects one winner without outcomes and preserves configured distributions', () => {
+    expect(nativeWinnerCount([])).toBe(1);
+    expect(nativeAwardsForRank([], 1)).toEqual([]);
+    expect(
+      nativeWinnerCount([
+        { type: 'MANUAL', description: 'Winner', distribution: [{}, {}, {}] }
+      ])
+    ).toBe(3);
+  });
+
   it('floors exact signed weighted ratings before converting large rationals to numbers', () => {
     const max = Number.MAX_SAFE_INTEGER - 1;
     const points = [
