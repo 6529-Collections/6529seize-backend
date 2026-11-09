@@ -19,11 +19,11 @@ const RDF_NS = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
 const XML_NS = 'http://www.w3.org/XML/1998/namespace';
 const X_NS = 'adobe:ns:meta/';
 export const HDRGM_NS = 'http://ns.adobe.com/hdr-gain-map/1.0/';
-export const CONTAINER_NS = 'http://ns.google.com/photos/1.0/container/';
+export const CONTAINER_NS = 'http://ns.google.com/photos/1.0/container/'; // NOSONAR: XMP namespace identifier that must match byte for byte; never fetched.
 export const CONTAINER_ITEM_NS =
-  'http://ns.google.com/photos/1.0/container/item/';
-export const APPLE_HDR_GAIN_MAP_NS = 'http://ns.apple.com/HDRGainMap/1.0/';
-export const APPLE_PIXEL_DATA_NS = 'http://ns.apple.com/pixeldatainfo/1.0/';
+  'http://ns.google.com/photos/1.0/container/item/'; // NOSONAR: XMP namespace identifier that must match byte for byte; never fetched.
+export const APPLE_HDR_GAIN_MAP_NS = 'http://ns.apple.com/HDRGainMap/1.0/'; // NOSONAR: XMP namespace identifier that must match byte for byte; never fetched.
+export const APPLE_PIXEL_DATA_NS = 'http://ns.apple.com/pixeldatainfo/1.0/'; // NOSONAR: XMP namespace identifier that must match byte for byte; never fetched.
 export const APPLE_GAIN_MAP_AUXILIARY_TYPE =
   'urn:com:apple:photo:2020:aux:hdrgainmap';
 
