@@ -14,6 +14,7 @@ import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db
 import { Competition } from '@/competitions/competition.types';
 import { wavesApiDb } from '@/api/waves/waves.api.db';
 import { competitionTdhOvervotesDb } from '@/competitions/competition-tdh-overvotes.db';
+import { isRetryableDbLockError } from '@/nextgen/nextgen-db-lock-retry';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -57,13 +58,19 @@ export async function revokeTdhBasedDropWavesOverVotes(
  * reconciliation as `revokeTdhBasedDropWavesOverVotes`, but each candidate
  * competition in its own transaction, so its lock is held only for its own
  * reconciliation rather than until every candidate is done.
+ *
+ * A candidate that hits a lock wait timeout or deadlock (a busy competition)
+ * is rolled back, logged and counted, and the others still run; it is picked
+ * up by the next revocation. Any other error fails the step.
  */
 export async function revokeTdhBasedDropWavesOverVotesPerCompetition(): Promise<{
   readonly candidates: number;
+  readonly failed: number;
   readonly slowestMs: number;
 }> {
   let afterId = '';
   let candidates = 0;
+  let failed = 0;
   let slowestMs = 0;
   for (;;) {
     const ids =
@@ -76,21 +83,29 @@ export async function revokeTdhBasedDropWavesOverVotesPerCompetition(): Promise<
     if (!ids.length) break;
     for (const id of ids) {
       const start = Time.now();
-      await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-        revokeCandidate(id, acceptsTdhCredit, null, {
-          connection,
-          timer: new Timer('revokeTdhBasedWavesOverVotes')
-        })
-      );
+      try {
+        await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
+          revokeCandidate(id, acceptsTdhCredit, null, {
+            connection,
+            timer: new Timer('revokeTdhBasedWavesOverVotes')
+          })
+        );
+      } catch (error) {
+        if (!isRetryableDbLockError(error)) throw error;
+        failed++;
+        logger.warn(
+          `[TDH OVERVOTE REVOCATION SKIPPED] [COMPETITION ${id}] [LEFT FOR THE NEXT REVOCATION] ${error}`
+        );
+      }
       candidates++;
       slowestMs = Math.max(slowestMs, start.diffFromNow().toMillis());
     }
     afterId = ids[ids.length - 1];
   }
   logger.info(
-    `[TDH OVERVOTE REVOCATION] [CANDIDATES ${candidates}] [SLOWEST COMPETITION ${slowestMs} ms]`
+    `[TDH OVERVOTE REVOCATION] candidates=${candidates} failed=${failed} slowest_competition_ms=${slowestMs}`
   );
-  return { candidates, slowestMs };
+  return { candidates, failed, slowestMs };
 }
 
 function isRevocable(

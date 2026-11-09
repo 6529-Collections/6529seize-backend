@@ -217,6 +217,27 @@ describeWithSeed(
       ).toBe(true);
     });
 
+    it('reports a lease takeover as a warning, not a failure', async () => {
+      await markPending();
+      const capture = jest
+        .spyOn(sentryContext, 'captureException')
+        .mockImplementation(() => undefined);
+
+      await expect(
+        syncIdentitiesAfterTdhOrLeavePending('AFTER_TDH_WRITE', {
+          chunkRows: 3,
+          afterChunk: async (chunk) => {
+            if (chunk === 1)
+              await setLease('other-invocation', Time.currentMillis() + 60_000);
+          }
+        })
+      ).resolves.toBe('LEASE_LOST');
+
+      expect(capture).not.toHaveBeenCalled();
+      const progress = await identityTdhSyncStateDb.readProgress();
+      expect(progress.syncedGeneration).toBe(0);
+    });
+
     it('marks only the generation it read as synced', async () => {
       await markPending(BLOCK);
       const original = identityMetricsSync.syncAll.bind(identityMetricsSync);

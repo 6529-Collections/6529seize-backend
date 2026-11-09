@@ -1275,14 +1275,16 @@ A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
   recomputed from ratings and consolidated TDH in primary-key chunks, each one
   short transaction writing final values, so no reset value is ever visible.
 - D: TDH overvote revocation, against the synced identities, one transaction
-  per candidate competition.
+  per candidate competition. A competition busy past the lock wait is skipped,
+  logged and counted (`failed=n`), and picked up by the next revocation.
 - E: the generation is marked synced.
 
 B to E run under a renewed lease row, one run at a time. If an invocation
 stops after A, or B to E fail, the generation stays pending and the next
 `delegationsLoop` or `tdhLoop` start finishes B to E, which are idempotent; a
 failure is logged and sent to Sentry without stopping delegations, the TDH
-block record or the xTDH trigger. Any transaction writing both `ratings` and
+block record or the xTDH trigger. A lease taken over by another invocation is
+logged as a warning only. Any transaction writing both `ratings` and
 `identities` takes the `ratings` locks first. The TDH tables and identities
 are no longer updated atomically: between A and C, readers combining them see
 the previous run's identities for seconds, and a vote is checked against the

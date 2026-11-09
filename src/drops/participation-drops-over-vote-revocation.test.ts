@@ -237,6 +237,71 @@ it('revokes after a sync in one transaction per candidate competition', async ()
   ]);
 });
 
+function inOwnTransactions(): ConnectionWrapper<unknown>[] {
+  const transactions: ConnectionWrapper<unknown>[] = [];
+  setSqlExecutor({
+    executeNativeQueriesInTransaction: async <T>(
+      executable: (connection: ConnectionWrapper<unknown>) => Promise<T>
+    ) => {
+      const connection = { connection: { transaction: transactions.length } };
+      transactions.push(connection);
+      return executable(connection);
+    }
+  } as never);
+  return transactions;
+}
+
+function candidates(ids: string[]) {
+  jest
+    .mocked(runtime.findOvervoteCandidateCompetitions)
+    .mockReset()
+    .mockResolvedValueOnce(ids)
+    .mockResolvedValue([]);
+  jest
+    .mocked(runtime.readCompetition)
+    .mockImplementation(async (id) => ({ ...competition, id }) as never);
+  jest.mocked(competitionTdhOvervotesDb.findOvervoters).mockResolvedValue([]);
+}
+
+it('skips a busy competition after a sync, revokes the others and reports it', async () => {
+  candidates(['first', 'busy', 'third']);
+  jest.mocked(runtime.lockCompetition).mockImplementation(async (id) => {
+    if (id === 'busy')
+      throw Object.assign(new Error('Lock wait timeout exceeded'), {
+        code: 'ER_LOCK_WAIT_TIMEOUT'
+      });
+    return { ...competition, id } as never;
+  });
+  inOwnTransactions();
+
+  await expect(
+    revokeTdhBasedDropWavesOverVotesPerCompetition()
+  ).resolves.toMatchObject({ candidates: 3, failed: 1 });
+
+  expect(
+    jest
+      .mocked(competitionTdhOvervotesDb.findOvervoters)
+      .mock.calls.map(([locked]) => locked.id)
+  ).toEqual(['first', 'third']);
+});
+
+it('fails the step on an error other than a lock wait or deadlock', async () => {
+  candidates(['first', 'broken', 'third']);
+  jest.mocked(runtime.lockCompetition).mockImplementation(async (id) => {
+    if (id === 'broken') throw new Error('bad competition config');
+    return { ...competition, id } as never;
+  });
+  inOwnTransactions();
+
+  await expect(
+    revokeTdhBasedDropWavesOverVotesPerCompetition()
+  ).rejects.toThrow('bad competition config');
+  expect(runtime.lockCompetition).not.toHaveBeenCalledWith(
+    'third',
+    expect.anything()
+  );
+});
+
 it('reads REP candidates by the rating recipient', async () => {
   const repCompetition = {
     ...competition,

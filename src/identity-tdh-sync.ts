@@ -143,11 +143,19 @@ export async function syncIdentitiesAfterTdh(
  * invocation and every one after it.
  */
 export async function syncIdentitiesAfterTdhOrLeavePending(
-  context: 'AFTER_TDH_WRITE' | 'LOOP_START'
-): Promise<IdentityTdhSyncOutcome | 'FAILED'> {
+  context: 'AFTER_TDH_WRITE' | 'LOOP_START',
+  options: IdentityMetricsSyncOptions = {}
+): Promise<IdentityTdhSyncOutcome | 'LEASE_LOST' | 'FAILED'> {
   try {
-    return await syncIdentitiesAfterTdh();
+    return await syncIdentitiesAfterTdh(options);
   } catch (error) {
+    if (error instanceof IdentityTdhSyncLeaseLostError) {
+      // Expected: another invocation now runs the sync. Not an alarm.
+      logger.warn(
+        `[IDENTITIES SYNC LEASE TAKEN OVER] [${context}] [THE NEW HOLDER CONTINUES]`
+      );
+      return 'LEASE_LOST';
+    }
     logger.error(
       `[IDENTITIES SYNC FAILED] [${context}] [GENERATION LEFT PENDING] ${error}`
     );
