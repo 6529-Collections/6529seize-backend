@@ -274,6 +274,15 @@ describeWithSeed(
           request(),
           ctx
         );
+        await withLegacyCompetitionGetFacade(async () => {
+          expect(
+            await apiDropV2Service.findVoteSummaryByDropIdOrThrow(
+              entry.drop_id,
+              ctx
+            )
+          ).toEqual({});
+        });
+        // A second allocation replaces the first and records both values.
         for (const value of [7, -3]) {
           await competitionVotingService.vote(
             wave.id,
