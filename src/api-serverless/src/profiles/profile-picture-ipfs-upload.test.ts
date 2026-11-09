@@ -8,6 +8,7 @@ import {
   identifyingPng,
   identifyingWebp
 } from '@/media/metadata-strip/fixtures/identifying-image-fixtures';
+import { identifyingUltraHdrJpeg } from '@/media/metadata-strip/fixtures/hdr-image-fixtures';
 import { stripMetadataLosslessly } from '@/media/metadata-strip/lossless-metadata-strip';
 import {
   detectProfilePictureFormat,
@@ -156,6 +157,30 @@ describe('ProfilePictureIpfsUploadService', () => {
     expect(uploader.uploadFile.mock.calls[0][0].fileBuffer).toEqual(
       stripMetadataLosslessly(jpeg, 'jpeg').output
     );
+  });
+
+  it('pins an Ultra HDR picture with its gain map and no identifying data', async () => {
+    const { service, uploader } = createService();
+    const fixture = await identifyingUltraHdrJpeg();
+
+    await service.upload({ buffer: fixture.jpeg });
+
+    const pinned: Buffer = uploader.uploadFile.mock.calls[0][0].fileBuffer;
+    expect(pinned).toEqual(
+      stripMetadataLosslessly(fixture.jpeg, 'jpeg').output
+    );
+    const text = pinned.toString('latin1');
+    for (const value of IDENTIFYING_STRINGS) {
+      expect(text).not.toContain(value);
+    }
+    expect(pinned.indexOf(fixture.thumbnail)).toBe(-1);
+    const gainMap = (await Sharp(pinned).metadata()).gainMap?.image;
+    const pixels = async (image: Buffer) =>
+      createHash('sha256')
+        .update(await Sharp(image).raw().toBuffer())
+        .digest('hex');
+    expect(gainMap).toBeDefined();
+    expect(await pixels(gainMap!)).toBe(await pixels(fixture.gainMap));
   });
 
   it('rejects, without pinning, an image whose metadata cannot be removed', async () => {

@@ -233,7 +233,10 @@ browser. Deploy `api` before the frontend that calls it. No new service,
 database schema, or migration is required. The API bundle has no image decoder,
 so the strip is verified structurally (same size and orientation, byte-identical
 image data and ICC, no removed blocks left) and an image that cannot be stripped
-that way is rejected with a 400 instead of being pinned.
+that way is rejected with a 400 instead of being pinned. JPEG HDR gain maps are
+kept under the same structural checks (byte-identical gain map image data, MPF
+offsets on its SOI, allowlisted XMP only); a gain map that does not pass them
+is dropped and the SDR image is pinned.
 
 ## Profile collecting and marketplace operations
 

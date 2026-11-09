@@ -22,10 +22,26 @@ export interface ContainerDescription {
   readonly renderDigest: string;
   /** Identifying blocks present, for example `APP1:Exif` or `tEXt`. */
   readonly metadataBlocks: readonly string[];
+  /** JPEG HDR gain map images a strip keeps, in file order. */
+  readonly gainMaps?: readonly GainMapDescription[];
+  /** Why a JPEG HDR gain map in the file cannot be kept. */
+  readonly gainMapIssue?: string;
+}
+
+export interface GainMapDescription {
+  readonly width: number;
+  readonly height: number;
+  /** See {@link ContainerDescription.renderDigest}. */
+  readonly renderDigest: string;
+}
+
+export interface StripOptions {
+  /** `drop` also removes JPEG gain maps, leaving the SDR base image. */
+  readonly gainMaps?: 'keep' | 'drop';
 }
 
 export interface FormatMetadataStripper {
-  strip(input: Buffer): Buffer;
+  strip(input: Buffer, options?: StripOptions): Buffer;
   describe(input: Buffer): ContainerDescription;
 }
 
