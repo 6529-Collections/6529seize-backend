@@ -14,6 +14,9 @@ import { IDENTITY_TDH_SYNC_SCOPE_TABLE } from '@/constants/db-tables';
  *   wrote, or whose identity step B wrote.
  * - `PROFILE`: a profile whose identity step B wrote, or a merge source or
  *   target.
+ * - `FULL_WALK_REQUIRED` (value ''): a scoped walk for this generation did
+ *   not finish within one invocation's budget; its sync walks every identity
+ *   instead, which keeps a checkpoint.
  */
 @Entity(IDENTITY_TDH_SYNC_SCOPE_TABLE)
 export class IdentityTdhSyncScopeEntity {
@@ -23,7 +26,7 @@ export class IdentityTdhSyncScopeEntity {
   @PrimaryColumn({ type: 'varchar', length: 32 })
   readonly kind!: string;
 
-  /** Same type as identities.consolidation_key. */
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  /** As long as tdh_consolidation.consolidation_key, its longest source. */
+  @PrimaryColumn({ type: 'varchar', length: 500 })
   readonly value!: string;
 }

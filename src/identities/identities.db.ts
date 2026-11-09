@@ -38,6 +38,7 @@ import { DropType } from '../entities/IDrop';
 import { appFeatures } from '../app-features';
 import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
 import { legacyTypedDropsSql } from '@/competitions/legacy-typed-drops';
+import { DbPoolName } from '@/db-query.options';
 import {
   chunkSqlInListValues,
   querySqlInListChunks,
@@ -564,6 +565,44 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
           { wrappedConnection: connection }
         );
       }
+    }
+  }
+
+  /**
+   * The all-profiles check, for any writer that leaves profiles.primary_wallet
+   * behind identities.primary_address. Run outside any transaction, so it
+   * holds no locks: discovery is a plain read in keyset pages, and each
+   * correction is its own indexed point update. Returns the profiles fixed.
+   */
+  async syncAllProfileAddresses(): Promise<number> {
+    let fixed = 0;
+    let afterProfileId: string | null = null;
+    for (;;) {
+      // external_id is a nonunique index here; the profile PK is its handle.
+      const changedProfiles: { external_id: string }[] = await this.db.execute(
+        `select distinct p.external_id
+         from ${PROFILES_TABLE} p
+         join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
+         where p.primary_wallet != i.primary_address
+           and (:afterProfileId is null or p.external_id > :afterProfileId)
+         order by p.external_id asc
+         limit 100`,
+        { afterProfileId },
+        { forcePool: DbPoolName.WRITE }
+      );
+      if (!changedProfiles.length) return fixed;
+      for (const profile of changedProfiles) {
+        const result = await this.db.execute(
+          `update ${PROFILES_TABLE} p force index (idx_profile_external_id)
+           join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
+           set p.primary_wallet = i.primary_address
+           where p.external_id = :profileId
+             and p.primary_wallet != i.primary_address`,
+          { profileId: profile.external_id }
+        );
+        if (this.db.getAffectedRows(result) > 0) fixed++;
+      }
+      afterProfileId = changedProfiles[changedProfiles.length - 1].external_id;
     }
   }
 

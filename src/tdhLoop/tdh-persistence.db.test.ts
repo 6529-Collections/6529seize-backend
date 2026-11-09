@@ -370,6 +370,43 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     ).toBe(2);
   });
 
+  it('does not record keys a partial write only rewrote with the same boosted TDH and rate', async () => {
+    // Untouched groups: a partial write rewrites them with new ranks only.
+    const unchanged = { ...consolidatedRow(['z'], 70), boosted_tdh_rate: 0 };
+    const changedBefore = {
+      ...consolidatedRow(['y'], 79),
+      boosted_tdh_rate: 0
+    };
+    await insertWithoutUpdate(dataSource.getRepository(ConsolidatedTDH), [
+      unchanged,
+      changedBefore
+    ]);
+
+    await persistConsolidatedTDH(
+      BLOCK,
+      [
+        ...newConsolidated,
+        { ...unchanged, tdh_rank: 7 },
+        { ...changedBefore, boosted_tdh: 80, tdh_rank: 8 }
+      ],
+      newMemes,
+      newEditions,
+      newNft,
+      {
+        mode: 'PARTIAL',
+        wallets: ['a', 'b', 'c'],
+        consolidationKeysToReplace: [A_C, B]
+      },
+      BLOCK_TIMESTAMP
+    );
+
+    expect(
+      (await scopeRows())
+        .filter((row) => row.kind === 'CONSOLIDATION_KEY')
+        .map((row) => row.value)
+    ).toEqual([A_B, A_C, B, C, 'y']);
+  });
+
   it('rolls the TDH rows and the marker back when recording the scope fails', async () => {
     jest
       .spyOn(identityTdhSyncScopeDb, 'recordTdhWrite')

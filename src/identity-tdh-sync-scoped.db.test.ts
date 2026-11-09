@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_TDH_SYNC_SCOPE_TABLE,
   IDENTITY_TDH_SYNC_STATE_TABLE,
@@ -11,6 +12,7 @@ import { identityConsolidationEffects, ProfileIdGenerator } from '@/identity';
 import { identityMetricsSync } from '@/identity-metrics-sync';
 import {
   resumePendingIdentityTdhSync,
+  startIdentitySyncBudget,
   syncIdentitiesAfterTdh,
   syncIdentitiesAfterTdhOrLeavePending
 } from '@/identity-tdh-sync';
@@ -379,8 +381,13 @@ describeWithSeed(
         'SYNCED'
       );
 
-      expect(scoped).not.toHaveBeenCalled();
       expect(walkAll).toHaveBeenCalledTimes(1);
+      // A scoped pass only rechecks the recorded scope after the walk.
+      expect(
+        scoped.mock.invocationCallOrder.every(
+          (order) => order > walkAll.mock.invocationCallOrder[0]
+        )
+      ).toBe(true);
       await expect(walkAll.mock.results[0].value).resolves.toMatchObject({
         complete: true,
         rows: (await readIdentities()).length
@@ -442,7 +449,7 @@ describeWithSeed(
       await expect(scopeGenerations()).resolves.toEqual([]);
     });
 
-    it('redoes a scoped walk stopped by the budget, without redoing B', async () => {
+    it('walks every identity, with a checkpoint, after a scoped walk stopped by the budget, without redoing B', async () => {
       await afterAFinishedSync();
       await partialTdhWrite(MERGE_KEYS);
       const reference = await referenceRun();
@@ -464,14 +471,97 @@ describeWithSeed(
       expect(
         (await identityTdhSyncStateDb.readProgress()).syncedGeneration
       ).toBe(0);
+      const walkAll = jest.spyOn(identityMetricsSync, 'syncAll');
+      const scoped = jest.spyOn(identityMetricsSync, 'syncScoped');
 
       await resumePendingIdentityTdhSync();
 
       expect(merge).toHaveBeenCalledTimes(1);
+      expect(walkAll).toHaveBeenCalledTimes(1);
+      expect(walkAll.mock.calls[0][0]).toMatchObject({ startAfter: '' });
+      // Only the recheck of the recorded scope after the walk.
+      expect(scoped.mock.calls.map(([call]) => call.chunkRows)).toEqual([
+        undefined
+      ]);
       expect(await readIdentities()).toEqual(reference.identities);
       expect(
         (await identityTdhSyncStateDb.readProgress()).syncedGeneration
       ).toBe(1);
+      await expect(scopeGenerations()).resolves.toEqual([]);
+    });
+
+    it('continues a full walk for a newer partial write, and rechecks what that write changed behind the walk', async () => {
+      // A full walk (no watermark yet) stops after two chunks.
+      for (const sql of OLD_ALGORITHM_SQL) await sqlExecutor.execute(sql);
+      await partialTdhWrite(MERGE_KEYS);
+      await setLastFullWalk(1);
+      let committedChunks = 0;
+      await expect(
+        syncIdentitiesAfterTdh({
+          chunkRows: 3,
+          afterChunk: (chunk) => {
+            committedChunks = chunk;
+          },
+          budgetSpent: () => committedChunks >= 2
+        })
+      ).resolves.toBe('BUDGET_USED');
+      const walked = await identityTdhSyncStateDb.readMetricsWalk();
+      expect(walked.generation).toBe(1);
+      // A newer partial write changes the TDH of a key the walk has passed.
+      const behind = (await readIdentities())[0].consolidation_key;
+      expect(behind <= walked.after).toBe(true);
+      await sqlExecutor.execute(
+        `update ${CONSOLIDATED_WALLETS_TDH_TABLE}
+         set boosted_tdh = boosted_tdh + 1000 where consolidation_key = :behind`,
+        { behind }
+      );
+      await partialTdhWrite([behind]);
+      const walkAll = jest.spyOn(identityMetricsSync, 'syncAll');
+
+      await resumePendingIdentityTdhSync();
+
+      expect(walkAll.mock.calls[0][0]).toMatchObject({
+        startAfter: walked.after
+      });
+      expect(
+        (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+      ).toBe(2);
+      walkAll.mockRestore();
+      await expectFullWalkChangesNothing();
+    });
+
+    it('gives the loop resume a minimum slice when the invocation budget is spent, but not the sync after a TDH write', async () => {
+      await afterAFinishedSync();
+      await partialTdhWrite(MERGE_KEYS);
+      startIdentitySyncBudget(0);
+      try {
+        await expect(syncIdentitiesAfterTdh()).resolves.toBe('BUDGET_USED');
+        expect(
+          (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+        ).toBe(0);
+
+        await resumePendingIdentityTdhSync();
+
+        expect(
+          (await identityTdhSyncStateDb.readProgress()).syncedGeneration
+        ).toBe(1);
+      } finally {
+        // Generous for the rest of this file's tests.
+        startIdentitySyncBudget(Time.hours(1).toMillis());
+      }
+    });
+
+    it('records a consolidation key of the longest length intact', async () => {
+      const longKey = Array.from(
+        { length: 10 },
+        (_, i) => `0x${String(i).padStart(40, '0')}`
+      ).join('-');
+      expect(longKey.length).toBeGreaterThan(400);
+      const generation = await partialTdhWrite([longKey]);
+
+      await expect(
+        identityTdhSyncScopeDb.readScope(generation - 1, generation)
+      ).resolves.toEqual({ consolidationKeys: [longKey], profileIds: [] });
     });
   }
 );
@@ -503,6 +593,23 @@ describeWithSeed(
 
     afterEach(() => {
       jest.restoreAllMocks();
+    });
+
+    it('heals a profile B did not touch with the all-profiles check after a full walk', async () => {
+      await afterAFinishedSync();
+      await fullTdhWrite();
+
+      await expect(syncIdentitiesAfterTdh({ chunkRows: 3 })).resolves.toBe(
+        'SYNCED'
+      );
+
+      const wallets = await readProfileWallets();
+      expect(
+        wallets.find((p) => p.external_id === untouched.external_id)
+      ).toEqual({
+        external_id: untouched.external_id,
+        primary_wallet: '0xe10'
+      });
     });
 
     it('checks only the profiles it touched: the same result for those, and an untouched profile is never read, locked or changed', async () => {

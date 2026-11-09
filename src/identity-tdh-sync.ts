@@ -5,6 +5,7 @@ import {
   WaveScoreDirtyRefreshReason
 } from '@/api/waves/wave-score.service';
 import { revokeTdhBasedDropWavesOverVotesPerCompetition } from '@/drops/participation-drops-over-vote-revocation';
+import { identitiesDb } from '@/identities/identities.db';
 import { identityConsolidationEffects } from '@/identity';
 import {
   IdentityMetricsScopedSyncOptions,
@@ -74,13 +75,53 @@ export type IdentityTdhSyncOutcome =
  * invocation nears the 900 s Lambda timeout however cold the pages are.
  */
 const IDENTITY_SYNC_BUDGET_MS = Time.minutes(5).toMillis();
+/**
+ * The least time delegationsLoop's resume gets, even when its delegations
+ * work used up the budget: enough for a full walk to make progress (it keeps
+ * a checkpoint), so a walk is never starved by long invocations.
+ */
+const RESUME_MINIMUM_SLICE_MS = Time.seconds(150).toMillis();
+/**
+ * No sync runs past this, from invocation start, whatever its floor: it
+ * leaves three minutes of the 900 s Lambda limit for D, E and the loop.
+ */
+const SYNC_HARD_STOP_MS = Time.minutes(12).toMillis();
+let invocationStartedAt: number | null = null;
 let invocationDeadline: number | null = null;
 
 /** At invocation start: the syncs of this invocation share one budget. */
 export function startIdentitySyncBudget(
   budgetMs: number = IDENTITY_SYNC_BUDGET_MS
 ): void {
-  invocationDeadline = Time.currentMillis() + budgetMs;
+  invocationStartedAt = Time.currentMillis();
+  invocationDeadline = invocationStartedAt + budgetMs;
+}
+
+/**
+ * When a sync starting `now` must stop: the invocation's budget, or, when a
+ * minimum slice is asked for and the budget leaves less, `now` plus that
+ * slice, but never past the hard stop.
+ */
+export function resolveSyncDeadline({
+  now,
+  startedAt,
+  budgetDeadline,
+  minimumSliceMs
+}: {
+  now: number;
+  startedAt: number | null;
+  budgetDeadline: number | null;
+  minimumSliceMs: number;
+}): { deadline: number; floorApplied: boolean } {
+  const deadline = budgetDeadline ?? now + IDENTITY_SYNC_BUDGET_MS;
+  if (minimumSliceMs <= 0 || now + minimumSliceMs <= deadline) {
+    return { deadline, floorApplied: false };
+  }
+  const hardStop = (startedAt ?? now) + SYNC_HARD_STOP_MS;
+  return {
+    deadline: Math.max(deadline, Math.min(now + minimumSliceMs, hardStop)),
+    floorApplied: true
+  };
 }
 
 export type IdentityTdhSyncOptions = IdentityMetricsSyncOptions & {
@@ -91,6 +132,8 @@ export type IdentityTdhSyncOptions = IdentityMetricsSyncOptions & {
    * call: delegationsLoop's resume after its delegations work.
    */
   readonly deferFullWalk?: boolean;
+  /** Run at least this long, past the invocation's budget if need be. */
+  readonly minimumSliceMs?: number;
 };
 
 /**
@@ -108,19 +151,27 @@ type MetricsSyncPlan =
 
 /**
  * Step C walks every identity after a write that recorded no scope (a full
- * TDH rewrite, or a write by older code), before a ratings watermark exists,
- * and once a day. Otherwise it recomputes only what the pending generations
- * changed: the consolidation keys step A wrote, the identities and merged
+ * TDH rewrite, or a write by older code), after a scoped walk that did not
+ * finish within one budget, before a ratings watermark exists, and once a
+ * day. Otherwise it recomputes only what the pending generations changed:
+ * the consolidation keys whose TDH step A changed, the identities and merged
  * profiles step B wrote, and the targets of ratings modified since the
  * previous walk started (see `syncScopedMetrics`). None of these conditions
  * change until the generation is synced, so a resumed sync plans the same
- * walk, except that a scoped one can become full once the day is up: a
- * scoped walk never moves the full walk's checkpoint, which then starts from
- * the first key.
+ * walk, except that a scoped one can become full: a scoped walk never moves
+ * the full walk's checkpoint, which then starts from the first key.
  */
 async function planMetricsSync(
   progress: IdentityTdhSyncProgress
 ): Promise<MetricsSyncPlan> {
+  if (
+    await identityTdhSyncScopeDb.isFullWalkRequired(
+      progress.syncedGeneration,
+      progress.pendingGeneration
+    )
+  ) {
+    return { mode: 'FULL', reason: 'SCOPED WALK DID NOT FINISH' };
+  }
   const recorded = await identityTdhSyncScopeDb.countRecordedGenerations(
     progress.syncedGeneration,
     progress.pendingGeneration
@@ -235,8 +286,12 @@ async function announceSynced(generation: number): Promise<void> {
 export async function syncIdentitiesAfterTdh(
   options: IdentityTdhSyncOptions = {}
 ): Promise<IdentityTdhSyncOutcome> {
-  const deadline =
-    invocationDeadline ?? Time.currentMillis() + IDENTITY_SYNC_BUDGET_MS;
+  const { deadline, floorApplied } = resolveSyncDeadline({
+    now: Time.currentMillis(),
+    startedAt: invocationStartedAt,
+    budgetDeadline: invocationDeadline,
+    minimumSliceMs: options.minimumSliceMs ?? 0
+  });
   const budgetSpent = () =>
     Time.currentMillis() >= deadline || !!options.budgetSpent?.();
   await identityTdhSyncStateDb.ensureRows();
@@ -263,6 +318,11 @@ export async function syncIdentitiesAfterTdh(
       );
       return 'FULL_WALK_DEFERRED';
     }
+    if (floorApplied) {
+      logger.warn(
+        `[IDENTITIES SYNC MINIMUM SLICE] [GENERATION ${generation}] [${planLabel}] [RUNS UNTIL ${new Date(deadline).toISOString()}, PAST THE INVOCATION BUDGET]`
+      );
+    }
     if (budgetSpent()) {
       logger.warn(
         `[IDENTITIES SYNC BUDGET USED] [GENERATION ${generation}] [NOT STARTED] [RESUMES NEXT INVOCATION]`
@@ -285,10 +345,23 @@ export async function syncIdentitiesAfterTdh(
       await syncConsolidations(generation);
       logger.info(`[B CONSOLIDATIONS DONE] [${start.diffFromNow()}]`);
       await lease.renew();
-      await identityTdhSyncStateDb.startMetricsWalk(
-        generation,
-        RATINGS_WATERMARK_MARGIN_SECONDS
-      );
+      if (
+        plan.mode === 'FULL' &&
+        (await canContinueFullWalk(walk, progress, generation))
+      ) {
+        // A newer generation does not throw away a full walk's progress:
+        // the scope recheck after the walk covers what it changed behind it.
+        startAfter = walk.after;
+        await identityTdhSyncStateDb.continueMetricsWalk(generation);
+        logger.warn(
+          `[CONTINUING METRICS WALK] [GENERATION ${walk.generation} -> ${generation}] [AFTER THE LAST COMMITTED CHUNK]`
+        );
+      } else {
+        await identityTdhSyncStateDb.startMetricsWalk(
+          generation,
+          RATINGS_WATERMARK_MARGIN_SECONDS
+        );
+      }
     }
     const chunkHooks = {
       chunkRows: options.chunkRows,
@@ -313,15 +386,34 @@ export async function syncIdentitiesAfterTdh(
               )
           })
         : await syncScopedMetrics(plan, progress, generation, chunkHooks);
+    if (!metrics.complete && plan.mode === 'SCOPED') {
+      // Too big for one budget: walk every identity instead, which keeps a
+      // checkpoint, rather than redo this scope from the start every time.
+      await identityTdhSyncScopeDb.requireFullWalk(generation);
+    }
     if (!metrics.complete || budgetSpent()) {
       logger.warn(
-        `[IDENTITIES SYNC BUDGET USED] [GENERATION ${generation}] [RESUMES NEXT INVOCATION] [${start.diffFromNow()}]`
+        `[IDENTITIES SYNC BUDGET USED] [GENERATION ${generation}] [${planLabel}] [RESUMES NEXT INVOCATION] [${start.diffFromNow()}]`
       );
       return 'BUDGET_USED';
     }
     logger.info(
       `[C METRICS DONE] [${planLabel}] [ROWS ${metrics.rows}] [UPDATED ${metrics.updated}] [${start.diffFromNow()}]`
     );
+    if (plan.mode === 'FULL') {
+      const recheck = await recheckScopeAfterFullWalk(
+        progress,
+        generation,
+        chunkHooks
+      );
+      if (!recheck.complete) {
+        logger.warn(
+          `[IDENTITIES SYNC BUDGET USED] [GENERATION ${generation}] [SCOPE RECHECK] [RESUMES NEXT INVOCATION]`
+        );
+        return 'BUDGET_USED';
+      }
+      await reconcileAllProfileAddresses();
+    }
     await lease.renew();
     await revokeTdhBasedDropWavesOverVotesPerCompetition();
     logger.info(`[D OVERVOTES DONE] [${start.diffFromNow()}]`);
@@ -341,6 +433,70 @@ export async function syncIdentitiesAfterTdh(
     await identityTdhSyncStateDb.releaseLease(owner).catch((error) => {
       logger.error(`[LEASE RELEASE FAILED] ${error}`);
     });
+  }
+}
+
+/**
+ * A full walk in progress for an older pending generation carries on for a
+ * newer one when every generation since it recorded its scope: what those
+ * changed in chunks already walked is rechecked from the scope after the
+ * walk. After a full rewrite (no scope) it starts over.
+ */
+async function canContinueFullWalk(
+  walk: { generation: number; after: string },
+  progress: IdentityTdhSyncProgress,
+  generation: number
+): Promise<boolean> {
+  if (!walk.after || walk.generation <= progress.syncedGeneration) {
+    // A scoped walk (no checkpoint), or a walk of a synced generation.
+    return false;
+  }
+  const recorded = await identityTdhSyncScopeDb.countRecordedGenerations(
+    walk.generation,
+    generation
+  );
+  return recorded === generation - walk.generation;
+}
+
+/**
+ * After a full walk: the recorded scope of the pending generations again, for
+ * keys and profiles a newer generation changed behind a continued walk. It is
+ * small, and redundant when the walk ran for one generation.
+ */
+async function recheckScopeAfterFullWalk(
+  progress: IdentityTdhSyncProgress,
+  generation: number,
+  options: Omit<
+    IdentityMetricsScopedSyncOptions,
+    'consolidationKeys' | 'profileIds'
+  >
+) {
+  const scope = await identityTdhSyncScopeDb.readScope(
+    progress.syncedGeneration,
+    generation
+  );
+  if (!scope.consolidationKeys.length && !scope.profileIds.length) {
+    return { complete: true };
+  }
+  return identityMetricsSync.syncScoped({ ...options, ...scope });
+}
+
+/**
+ * With each full walk: the all-profiles address check, outside any
+ * transaction, as a backstop for any writer that leaves a profile's
+ * primary_wallet behind its identity (step B only checks what it touched).
+ * Best effort: a failure is reported and the sync goes on.
+ */
+async function reconcileAllProfileAddresses(): Promise<void> {
+  const start = Time.now();
+  try {
+    const fixed = await identitiesDb.syncAllProfileAddresses();
+    logger.info(
+      `[PROFILE ADDRESSES RECONCILED] [FIXED ${fixed}] [${start.diffFromNow()}]`
+    );
+  } catch (error) {
+    logger.error(`[PROFILE ADDRESS RECONCILIATION FAILED] ${error}`);
+    sentryContext.captureException(error);
   }
 }
 
@@ -376,7 +532,7 @@ async function syncConsolidations(generation: number): Promise<void> {
 /**
  * The sync for a loop whose other work must go on (delegations, the TDH block
  * record, the xTDH trigger): a failure is logged and sent to Sentry, and the
- * generation stays pending for the next loop start, instead of failing the
+ * generation stays pending for the next resume, instead of failing the
  * invocation and every one after it.
  */
 export async function syncIdentitiesAfterTdhOrLeavePending(
@@ -385,9 +541,12 @@ export async function syncIdentitiesAfterTdhOrLeavePending(
 ): Promise<IdentityTdhSyncOutcome | 'LEASE_LOST' | 'FAILED'> {
   try {
     // Right after a TDH write the loop's own work is not done yet: a full
-    // walk waits for the resume at the end of the invocation.
+    // walk waits for the resume at the end of the invocation, which gets a
+    // minimum slice however long that work took.
     return await syncIdentitiesAfterTdh({
       deferFullWalk: context === 'AFTER_TDH_WRITE',
+      minimumSliceMs:
+        context === 'LOOP_RESUME' ? RESUME_MINIMUM_SLICE_MS : undefined,
       ...options
     });
   } catch (error) {

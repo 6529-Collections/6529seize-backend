@@ -164,6 +164,20 @@ export class IdentityTdhSyncStateDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * After B committed for a newer `generation`: a full walk in progress
+   * carries on after its last committed chunk instead of starting over. Its
+   * watermark stays that of its first start, which is the earlier one.
+   */
+  async continueMetricsWalk(generation: number): Promise<void> {
+    await this.db.execute(
+      `update ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       set generation = :generation, updated_at = :now
+       where id = '${METRICS_WALK}'`,
+      { generation, now: Time.currentMillis() }
+    );
+  }
+
   /** The ratings watermark the current walk establishes once synced. */
   async readWalkRatingsSince(): Promise<number> {
     const row = await this.db.oneOrNull<{ ratings_since: number | string }>(

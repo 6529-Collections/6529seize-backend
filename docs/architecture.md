@@ -1292,8 +1292,10 @@ A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
   matches the TDH rows, even if the Lambda is killed later) and a pending
   generation in `identity_tdh_sync_state`. A full rewrite (`tdhLoop`) also
   arms its "TDH calculations done" announcement. A partial write
-  (`delegationsLoop`) also records the consolidation keys it replaced or
-  wrote in `identity_tdh_sync_scope`.
+  (`delegationsLoop`) also records, in `identity_tdh_sync_scope`, the
+  consolidation keys it replaced and those whose boosted TDH or rate it
+  changed (it rewrites every row with new ranks; unchanged values are not
+  recorded).
 - B: identities for new consolidations and profile merges, with the merged
   profiles' wave subscriber counts recounted (not every wave's), and the
   primary wallets of only the profiles it touched (the identities it wrote and
@@ -1307,8 +1309,13 @@ A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
   ratings writer stamps `last_modified` with the database clock and commits
   within the Lambda limit, so no rating is missed). It walks every identity
   in primary-key order after a full rewrite (or any write that recorded no
-  scope), before the first ratings watermark, and at least every 25 hours;
-  each walk chunk records the walk's position in the same transaction.
+  scope), after a scoped walk that did not finish within one budget, before
+  the first ratings watermark, and at least every 25 hours; each walk chunk
+  records the walk's position in the same transaction. A walk in progress
+  carries on from that position for a newer partial generation, and the
+  recorded scope is rechecked after every full walk. Each full walk is
+  followed by the all-profiles primary-wallet check, outside any
+  transaction, as a backstop for writers other than B.
 - D: TDH overvote revocation, against the synced identities, one transaction
   per candidate competition. A competition busy past the lock wait is skipped,
   logged and counted (`failed=n`), and picked up by the next revocation.
@@ -1320,7 +1327,9 @@ A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
 `tdhLoop` runs only A and leaves B to E to `delegationsLoop`, which syncs
 after its own partial writes (a scoped C; a full walk waits) and resumes
 pending generations after its delegations work, also when that work fails. Each
-`delegationsLoop` invocation spends at most five minutes on the sync: it stops
+`delegationsLoop` invocation spends at most five minutes on the sync, except
+that the resume always gets at least 150 s (never past 12 minutes into the
+invocation), so long delegations work cannot starve a full walk: it stops
 cleanly between chunks or steps and the next invocation resumes, skipping B
 when it already committed for that generation and continuing after the last
 committed chunk. B to E run under a renewed lease row, one run at a time; a
@@ -1334,7 +1343,9 @@ first. The TDH tables and identities are no longer updated atomically: until C
 reaches a row, readers combining them see the previous run's identities, and
 a vote is checked against the pre-run credit, as just before any run. Deploy
 `dbMigrationsLoop` first (the marker and scope tables and their columns),
-then `delegationsLoop`, `tdhLoop`, `overRatesRevocationLoop` and `api`.
+then `api` (rating writers stamp `last_modified` with the database clock),
+`delegationsLoop`, `tdhLoop` and `overRatesRevocationLoop`. Profiles are
+created with their identity's primary address as `primary_wallet`.
 
 Winners paginate by win time, newest first; My Votes excludes completed winners
 without deleting historical allocations. Personal votes sort by signed vote value

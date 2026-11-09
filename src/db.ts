@@ -1248,6 +1248,10 @@ export async function persistConsolidatedTDH(
     const tdhMemesRepo = manager.getRepository(ConsolidatedTDHMemes);
     const tdhEditionsRepo = manager.getRepository(ConsolidatedTDHEditions);
 
+    // What identities read from these rows, before this write: the sync
+    // recomputes only the identities whose values change.
+    const identityInputsBefore =
+      scope.mode === 'PARTIAL' ? await readTdhIdentityInputs(qrHolder) : null;
     if (scope.mode === 'PARTIAL') {
       logger.info(
         `[CONSOLIDATED TDH] [DELETING ${scope.wallets.length} WALLETS]`
@@ -1308,15 +1312,17 @@ export async function persistConsolidatedTDH(
       qrHolder,
       { announceFull: scope.mode === 'FULL' }
     );
-    // A partial write records the keys it changed, so the sync recomputes
-    // only their identities. A full rewrite records nothing: its sync walks
-    // every identity.
-    if (scope.mode === 'PARTIAL') {
+    // A partial write records the keys it replaced and the keys whose
+    // boosted TDH or rate it changed (it rewrites every row, re-ranked), so
+    // the sync recomputes only their identities. A full rewrite records
+    // nothing: its sync walks every identity.
+    if (identityInputsBefore) {
+      const identityInputsAfter = await readTdhIdentityInputs(qrHolder);
       await identityTdhSyncScopeDb.recordTdhWrite(
         generation,
         [
-          ...scope.consolidationKeysToReplace,
-          ...tdh.map((it) => it.consolidation_key)
+          ...(scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : []),
+          ...changedTdhIdentityInputs(identityInputsBefore, identityInputsAfter)
         ],
         qrHolder
       );
@@ -1324,6 +1330,40 @@ export async function persistConsolidatedTDH(
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+/** Per key, the consolidated TDH values identities copy (step C). */
+async function readTdhIdentityInputs(
+  connection: ConnectionWrapper<any>
+): Promise<Map<string, string>> {
+  const rows = await dbSupplier().execute<{
+    consolidation_key: string;
+    boosted_tdh: number | string | null;
+    boosted_tdh_rate: number | string | null;
+  }>(
+    `select consolidation_key, boosted_tdh, boosted_tdh_rate
+     from ${CONSOLIDATED_WALLETS_TDH_TABLE}`,
+    undefined,
+    { wrappedConnection: connection }
+  );
+  return new Map(
+    rows.map((row) => [
+      row.consolidation_key,
+      `${row.boosted_tdh}|${row.boosted_tdh_rate}`
+    ])
+  );
+}
+
+/** Keys added, removed, or with different values. */
+function changedTdhIdentityInputs(
+  before: Map<string, string>,
+  after: Map<string, string>
+): string[] {
+  const keys = new Set([
+    ...Array.from(before.keys()),
+    ...Array.from(after.keys())
+  ]);
+  return Array.from(keys).filter((key) => before.get(key) !== after.get(key));
 }
 
 const CONSOLIDATION_DELETE_BATCH_SIZE = 100;

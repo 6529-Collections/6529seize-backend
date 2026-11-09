@@ -12,7 +12,8 @@ import {
 export enum IdentityTdhSyncScopeKind {
   SCOPE_RECORDED = 'SCOPE_RECORDED',
   CONSOLIDATION_KEY = 'CONSOLIDATION_KEY',
-  PROFILE = 'PROFILE'
+  PROFILE = 'PROFILE',
+  FULL_WALK_REQUIRED = 'FULL_WALK_REQUIRED'
 }
 
 export interface IdentityTdhSyncScope {
@@ -75,6 +76,33 @@ export class IdentityTdhSyncScopeDb extends LazyDbAccessCompatibleService {
       ],
       connection
     );
+  }
+
+  /**
+   * A scoped walk for `generation` did not finish within its budget: its
+   * sync, and that of any later generation pending with it, walks every
+   * identity instead.
+   */
+  async requireFullWalk(generation: number): Promise<void> {
+    await this.executeNativeQueriesInTransaction((connection) =>
+      this.insert(
+        generation,
+        [{ kind: IdentityTdhSyncScopeKind.FULL_WALK_REQUIRED, value: '' }],
+        connection
+      )
+    );
+  }
+
+  /** Whether a generation in (after, through] requires a full walk. */
+  async isFullWalkRequired(after: number, through: number): Promise<boolean> {
+    const row = await this.db.oneOrNull<{ n: number | string }>(
+      `select count(*) as n from ${IDENTITY_TDH_SYNC_SCOPE_TABLE}
+       where generation > :after and generation <= :through
+         and kind = '${IdentityTdhSyncScopeKind.FULL_WALK_REQUIRED}'`,
+      { after, through },
+      { forcePool: DbPoolName.WRITE }
+    );
+    return Number(row?.n ?? 0) > 0;
   }
 
   /** How many generations in (after, through] recorded their scope. */
@@ -142,17 +170,22 @@ export class IdentityTdhSyncScopeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Duplicates are no-ops, but nothing else is ignored: a value too long for
+   * the column fails the write (strict mode) instead of being truncated.
+   */
   private async insert(
     generation: number,
     rows: { kind: IdentityTdhSyncScopeKind; value: string }[],
     connection: ConnectionWrapper<any>
   ): Promise<void> {
-    await this.db.bulkInsert(
+    await this.db.bulkUpsert(
       IDENTITY_TDH_SYNC_SCOPE_TABLE,
       rows.map((row) => ({ generation, ...row })),
       ['generation', 'kind', 'value'],
+      ['kind'],
       undefined,
-      { connection, ignoreDuplicates: true, chunkSize: INSERT_CHUNK_ROWS }
+      { connection, chunkSize: INSERT_CHUNK_ROWS }
     );
   }
 }
