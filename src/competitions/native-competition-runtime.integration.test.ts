@@ -201,9 +201,19 @@ describeWithSeed(
     const getWaveBudgets = jest.fn() as jest.MockedFunction<
       CompetitionCreditService['getWaveBudgets']
     >;
+    // DROP budgets have no shared spending: each is the single-profile budget.
+    const getDropBudgets = jest.fn(async (resource, profiles, ctx) => {
+      const budgets = new Map<string, CompetitionCreditBudget>();
+      for (const profile of profiles)
+        budgets.set(
+          profile,
+          await getBudget(resource, profile, undefined, ctx)
+        );
+      return budgets;
+    }) as jest.MockedFunction<CompetitionCreditService['getDropBudgets']>;
     const service = new NativeCompetitionRuntimeService(
       repository,
-      { getBudget, getWaveBudgets },
+      { getBudget, getWaveBudgets, getDropBudgets },
       new CompetitionExecutionRouter()
     );
 
@@ -521,6 +531,119 @@ describeWithSeed(
       ).toEqual([{ n: 3 }]);
     });
 
+    it('reads many voters active votes exactly as one voter at a time', async () => {
+      await vote(rankId, rankEntry, -120, 10, 'voter-a');
+      await vote(rankId, secondRankEntry, 80, 11, 'voter-a');
+      await vote(rankId, secondRankEntry, 5, 12, 'voter-b');
+      await vote(rankId, rankEntry, 7, 13, 'voter-b');
+      await sqlExecutor.execute(
+        `update ${COMPETITION_ENTRIES_TABLE} set status='WITHDRAWN' where id=:id`,
+        { id: secondRankEntry }
+      );
+      const voters = ['voter-a', 'voter-b', 'voter-without-votes'];
+      const batched = await repository.getVotersActiveVotes(rankId, voters, {});
+      for (const voter of voters)
+        expect(batched.get(voter)).toEqual(
+          await repository.getVoterActiveVotes(rankId, voter, {})
+        );
+      expect(batched.get('voter-a')).toEqual([
+        { entryId: rankEntry, value: -120 }
+      ]);
+    });
+
+    it('makes the same DROP reconciliation writes, in the same order, as one voter at a time', async () => {
+      await sqlExecutor.execute(
+        `update ${COMPETITIONS_TABLE} set voting_config = json_set(voting_config, '$.credit_scope', 'DROP') where id = :rankId`,
+        { rankId }
+      );
+      // voter-a: one vote over budget; voter-b: no credit at all; voter-c fits.
+      await vote(rankId, rankEntry, -120, 10, 'voter-a');
+      await vote(rankId, secondRankEntry, 80, 11, 'voter-a');
+      await vote(rankId, rankEntry, 30, 12, 'voter-b');
+      await vote(rankId, secondRankEntry, -40, 13, 'voter-b');
+      await vote(rankId, rankEntry, 90, 14, 'voter-c');
+      getBudget.mockImplementation(async (resource, profileId) => ({
+        competition_id: resource.id,
+        profile_id: profileId,
+        entry_id: null,
+        credit_type: 'TDH',
+        credit_scope: 'DROP',
+        available: profileId === 'voter-b' ? 0 : 100,
+        spent: null,
+        remaining: null,
+        current_vote: null,
+        min_vote: null,
+        max_vote: null
+      }));
+      type Outcome = { votes: unknown[]; history: unknown[] };
+      const rolledBack = new Error('rolled back on purpose');
+      /** Reconciles under the competition lock and reads what it wrote. */
+      const reconcile = async (
+        target: NativeCompetitionRuntimeService,
+        rollback: boolean
+      ): Promise<Outcome> => {
+        let outcome: Outcome | undefined;
+        await repository
+          .executeNativeQueriesInTransaction(async (connection) => {
+            const ctx = { connection };
+            const competition = await repository.lockCompetition(rankId, ctx);
+            await (
+              target as unknown as {
+                reconcileCompetitionCredit(
+                  competition: unknown,
+                  now: number,
+                  ctx: unknown
+                ): Promise<void>;
+              }
+            ).reconcileCompetitionCredit(competition, 500, ctx);
+            const read = (sql: string) =>
+              sqlExecutor.execute(
+                sql,
+                { rankId },
+                { wrappedConnection: connection }
+              );
+            outcome = {
+              votes: await read(
+                `select entry_id, voter_profile_id, value, credit_spent from ${COMPETITION_VOTES_TABLE}
+                 where competition_id = :rankId order by voter_profile_id, entry_id`
+              ),
+              history: await read(
+                `select entry_id, voter_profile_id, value, previous_value, aggregate_value, credit_delta, occurred_at
+                 from ${COMPETITION_VOTE_HISTORY_TABLE}
+                 where competition_id = :rankId and occurred_at = 500 order by sequence`
+              )
+            };
+            if (rollback) throw rolledBack;
+          })
+          .catch((error) => {
+            if (error !== rolledBack) throw error;
+          });
+        return outcome!;
+      };
+      // One voter at a time, as before: no batched budgets or votes.
+      const sequential = new NativeCompetitionRuntimeService(
+        Object.assign(Object.create(repository), {
+          getVotersActiveVotes: async () => new Map()
+        }),
+        {
+          getBudget,
+          getWaveBudgets,
+          getDropBudgets: async () => new Map()
+        },
+        new CompetitionExecutionRouter()
+      );
+      const perVoterReads = jest.spyOn(repository, 'getVoterActiveVotes');
+      const before = await reconcile(sequential, true);
+      expect(perVoterReads).toHaveBeenCalledTimes(3);
+      expect(before.history.length).toBeGreaterThan(0);
+
+      perVoterReads.mockClear();
+      const after = await reconcile(service, false);
+      expect(perVoterReads).not.toHaveBeenCalled();
+      expect(after).toEqual(before);
+      perVoterReads.mockRestore();
+    });
+
     it('still reconciles independent DROP budgets without a shared-spending shortcut', async () => {
       await sqlExecutor.execute(
         `update ${COMPETITIONS_TABLE} set voting_config = json_set(voting_config, '$.credit_scope', 'DROP') where id = :rankId`,
@@ -818,6 +941,58 @@ describeWithSeed(
       ]);
     });
 
+    it.each([
+      ['nothing is due', 5],
+      ['an entry reaches the threshold', 80]
+    ])(
+      'gives an Approve run off the lock the same result as the locked run when %s',
+      async (_case, rating) => {
+        await vote(approveId, approveEntry, rating, 100);
+        type Outcome = Record<string, unknown[]>;
+        const rolledBack = new Error('rolled back on purpose');
+        const read = async (connection?: unknown): Promise<Outcome> => {
+          const q = (sql: string) =>
+            sqlExecutor.execute(
+              sql,
+              { approveId },
+              connection
+                ? { wrappedConnection: connection as never }
+                : undefined
+            );
+          return {
+            leaderboard: await q(
+              `select entry_id, \`rank\`, rating from ${COMPETITION_LEADERBOARD_ENTRIES_TABLE}
+               where competition_id = :approveId order by \`rank\``
+            ),
+            winners: await q(
+              `select entry_id, final_rating from ${COMPETITION_DECISION_WINNERS_TABLE}
+               where competition_id = :approveId order by entry_id`
+            ),
+            events: await q(
+              `select json_unquote(json_extract(event, '$.event_type')) as type
+               from ${COMPETITION_OUTBOX_TABLE} where competition_id = :approveId
+               order by type`
+            )
+          };
+        };
+        // The locked run, as before this path: inside a caller transaction.
+        let locked: Outcome | undefined;
+        await repository
+          .executeNativeQueriesInTransaction(async (connection) => {
+            await service.processCompetition(approveId, 1001, { connection });
+            locked = await read(connection);
+            throw rolledBack;
+          })
+          .catch((error) => {
+            if (error !== rolledBack) throw error;
+          });
+        // The decision loop's run, off the lock when nothing is due.
+        await service.processCompetition(approveId, 1001);
+        expect(await read()).toEqual(locked);
+        expect(locked!.winners).toHaveLength(rating >= 10 ? 1 : 0);
+      }
+    );
+
     it('finishes parallel Rank and Approve independently, preserves chat drops and emits immutable awards once', async () => {
       await vote(rankId, rankEntry, 80, 100);
       await vote(approveId, approveEntry, 80, 100);
@@ -1113,6 +1288,42 @@ describeWithSeed(
           )?.rating
         )
       ).toBeGreaterThan(0);
+    });
+
+    it('retries off the lock after a vote lands mid-computation and writes what the locked refresh writes', async () => {
+      await timeLock();
+      await vote(rankId, rankEntry, 100, 500);
+      await service.refreshCompetition(rankId, 600);
+      let attempt = 0;
+      const lockedFallback = jest.spyOn(service, 'refreshCompetition');
+      try {
+        await service.refreshLeaderboardForSnapshot(
+          rankId,
+          700,
+          {},
+          {
+            afterCompute: async () => {
+              // A vote during the first computation only.
+              if (++attempt === 1)
+                await vote(rankId, secondRankEntry, 50, 650, 'other');
+            }
+          }
+        );
+        expect(attempt).toBe(2);
+        expect(lockedFallback).not.toHaveBeenCalled();
+      } finally {
+        lockedFallback.mockRestore();
+      }
+      // The retry computed from the new vote (time-locked, so it counts
+      // only for the 50 ms it has been held at 700).
+      const retried = await savedLeaderboard();
+      expect(
+        Number(retried.find((row) => row.entry_id === secondRankEntry)?.rating)
+      ).toBeGreaterThan(0);
+      // The locked refresh of the same inputs at the same time writes the
+      // same rows.
+      await service.refreshCompetition(rankId, 700);
+      expect(await savedLeaderboard()).toEqual(retried);
     });
 
     it('writes nothing when an entry is submitted during the computation', async () => {

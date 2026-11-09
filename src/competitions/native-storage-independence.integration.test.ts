@@ -503,7 +503,8 @@ describe('application and permanent projections without obsolete competition sto
       nativeRepository,
       {
         getBudget: async () => budget,
-        getWaveBudgets: async () => new Map([['voter', budget]])
+        getWaveBudgets: async () => new Map([['voter', budget]]),
+        getDropBudgets: async () => new Map([['voter', budget]])
       },
       new CompetitionExecutionRouter()
     );

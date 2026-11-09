@@ -46,8 +46,20 @@ export class E2eeDeviceEntity {
   @Column({ type: 'varchar', length: 42 })
   readonly wallet!: string;
 
+  /** v1: the granted suite; v2: the lowest entry of `ciphersuites`. */
   @Column({ type: 'int' })
   readonly ciphersuite!: number;
+
+  /**
+   * The grant version (D172): 1, one signed `ciphersuite` (honoured for
+   * 0x004F only); 2, a signed suite set in `ciphersuites`.
+   */
+  @Column({ type: 'int', default: 1 })
+  readonly grant_version!: number;
+
+  /** v2: the signed suite set, canonical, joined by "." ("78"); v1: null. */
+  @Column({ type: 'varchar', length: 32, nullable: true, default: null })
+  readonly ciphersuites!: string | null;
 
   @Column({ type: 'bigint' })
   readonly issued_at_seconds!: number;
@@ -117,6 +129,10 @@ export class E2eeKeyPackageEntity {
 
   @Column({ type: 'boolean', default: false })
   readonly last_resort!: boolean;
+
+  /** The KeyPackage's cipher_suite, read from its bytes at upload. */
+  @Column({ type: 'int', default: 79 })
+  readonly ciphersuite!: number;
 
   @Column({ type: 'bigint' })
   readonly expires_at_seconds!: number;

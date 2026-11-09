@@ -12,6 +12,7 @@ import {
   ForbiddenException,
   NotFoundException
 } from '@/exceptions';
+import { multipartCompletionClientError } from '@/api/media/multipart-completion-errors';
 import {
   ApiCompleteMultipartUploadRequestPartSchema,
   ApiUploadPartOfMultipartUploadRequestSchema,
@@ -84,26 +85,9 @@ function mapMultipartCompletionError(error: unknown): ApiCompliantException {
   if (error instanceof ApiCompliantException) {
     return error;
   }
-  const errorName =
-    typeof (error as { name?: unknown }).name === 'string'
-      ? (error as { name: string }).name
-      : '';
-  const errorCode =
-    typeof (error as { Code?: unknown }).Code === 'string'
-      ? (error as { Code: string }).Code
-      : '';
-  const code = errorName || errorCode;
-  if (
-    [
-      'NoSuchUpload',
-      'InvalidPart',
-      'InvalidPartOrder',
-      'EntityTooSmall'
-    ].includes(code)
-  ) {
-    return new BadRequestException(
-      error instanceof Error ? error.message : 'Invalid multipart upload'
-    );
+  const clientError = multipartCompletionClientError(error);
+  if (clientError) {
+    return clientError;
   }
   return new CustomApiCompliantException(
     500,

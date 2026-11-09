@@ -63,6 +63,42 @@ export function legacyTypedDropsSql(
 }
 
 /**
+ * CTE `participant_candidates` (column `id`, distinct): a superset of the
+ * drops `legacy_get_drops` calls PARTICIPATORY in the waves matched by
+ * `wave_id <waveFilter>` (for example `= :wave_id`, or
+ * `IN (SELECT wave_id FROM needed_waves)`), read through indexes instead of
+ * walking every drop of those waves. The view calls a drop PARTICIPATORY when
+ * it has an ACTIVE entry in its wave's native primary competition, or when it
+ * has no entry in another view-mapped status and its stored type is
+ * PARTICIPATORY; the first set comes from the competition's entries, the
+ * second from the (wave_id, drop_type, …) index.
+ *
+ * Join it to the view by id and keep the view's own drop_type and wave
+ * filters: the view decides membership, so the rows are exactly the view's
+ * participatory drops of those waves, with any column the view has.
+ *
+ * Run the statement with withoutLegacyCompetitionGetFacade and name every
+ * view it needs explicitly: inside the API's facade scope the executor
+ * rewrites a base `drops` after FROM into its view, which would turn the
+ * indexed candidate read back into a walk over every drop of the wave.
+ */
+export function legacyParticipantCandidatesCte(waveFilter: string): string {
+  return `participant_candidates AS (
+      SELECT e.drop_id AS id
+      FROM ${COMPETITION_ENTRIES_TABLE} e
+      JOIN ${COMPETITIONS_TABLE} c
+        ON c.id = e.competition_id AND ${LEGACY_NATIVE_PRIMARY_SQL}
+      WHERE c.legacy_wave_id ${waveFilter}
+        AND e.status = 'ACTIVE'
+      UNION
+      SELECT pd.id
+      FROM ${DROPS_TABLE} pd
+      WHERE pd.wave_id ${waveFilter}
+        AND pd.drop_type = '${DropType.PARTICIPATORY}'
+    )`;
+}
+
+/**
  * Per wave and author, whether `legacy_get_drops` has a PARTICIPATORY or a
  * WINNER drop by the author in the wave, for `wave_id in (:waveIds)` and
  * `author_id in (:authorIds)`, read from base tables so the indexes apply:

@@ -15,7 +15,10 @@ function serviceWith(transaction: jest.Mock): E2eeGroupsService {
     getDevice: jest.fn().mockResolvedValue({
       profile_id: PROFILE,
       revoked_at: null,
-      expires_at_seconds: Number.MAX_SAFE_INTEGER
+      expires_at_seconds: Number.MAX_SAFE_INTEGER,
+      grant_version: 2,
+      ciphersuite: 0x004e,
+      ciphersuites: '78'
     }),
     hitRateCounters: jest.fn(
       async (rows: { key: string }[]) =>

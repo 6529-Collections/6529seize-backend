@@ -37,6 +37,11 @@ import {
 } from '@/sql-executor';
 
 export type E2eeDeviceRow = E2eeDeviceEntity;
+/** How many active devices of a profile share one suite description. */
+export type E2eeDeviceSuiteCountRow = Pick<
+  E2eeDeviceEntity,
+  'profile_id' | 'grant_version' | 'ciphersuite' | 'ciphersuites'
+> & { readonly cnt: number };
 export type E2eeGroupRow = E2eeGroupEntity;
 export type E2eeRosterRow = E2eeGroupRosterEntity;
 export type E2eeBlobRow = E2eeBlobEntity;
@@ -139,8 +144,17 @@ export interface E2eeClaimedKeyPackageRow {
   readonly last_resort: boolean;
 }
 
+export interface E2eeDeviceSuiteCensusRow {
+  readonly grant_version: number;
+  readonly ciphersuite: number;
+  readonly ciphersuites: string | null;
+  readonly cnt: number;
+}
+
 export interface E2eeKeyPackageInsert {
   readonly device_key: string;
+  /** The KeyPackage's cipher_suite (read from its bytes). */
+  readonly ciphersuite: number;
   readonly data: Buffer;
   readonly last_resort: boolean;
   readonly expires_at_seconds: number;
@@ -301,17 +315,24 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /**
+   * Active devices of a profile; with `grantVersion`, only devices whose
+   * grant has that version (v1 and v2 devices are limited separately while
+   * both are honoured).
+   */
   async countActiveDevices(
     profileId: string,
     nowSeconds: number,
-    connection: Conn
+    connection: Conn,
+    grantVersion?: number
   ): Promise<number> {
     const row = await this.one<{ cnt: number }>(
       `select count(*) as cnt from ${E2EE_DEVICES_TABLE}
        where profile_id = :profileId
          and revoked_at is null
-         and expires_at_seconds > :nowSeconds`,
-      { profileId, nowSeconds },
+         and expires_at_seconds > :nowSeconds
+         ${grantVersion === undefined ? '' : 'and grant_version = :grantVersion'}`,
+      { profileId, nowSeconds, grantVersion: grantVersion ?? null },
       connection
     );
     return Number(row?.cnt ?? 0);
@@ -329,13 +350,15 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   async insertDevice(device: E2eeDeviceRow, connection: Conn): Promise<void> {
     await this.write(
       `insert into ${E2EE_DEVICES_TABLE} (
-        device_key, profile_id, wallet, ciphersuite, issued_at_seconds,
+        device_key, profile_id, wallet, ciphersuite, grant_version,
+        ciphersuites, issued_at_seconds,
         expires_at_seconds, origin, grant_id, wallet_signature, verified_via,
         label, platform, created_at, updated_at, last_seen_at, revoked_at,
         revoker_device_key, revocation_signed_at_seconds, revocation_signature,
         grant_message
       ) values (
-        :device_key, :profile_id, :wallet, :ciphersuite, :issued_at_seconds,
+        :device_key, :profile_id, :wallet, :ciphersuite, :grant_version,
+        :ciphersuites, :issued_at_seconds,
         :expires_at_seconds, :origin, :grant_id, :wallet_signature,
         :verified_via, :label, :platform, :created_at, :updated_at,
         :last_seen_at, null, null, null, null, :grant_message
@@ -351,6 +374,8 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       | 'device_key'
       | 'wallet'
       | 'ciphersuite'
+      | 'grant_version'
+      | 'ciphersuites'
       | 'issued_at_seconds'
       | 'expires_at_seconds'
       | 'origin'
@@ -366,6 +391,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     await this.write(
       `update ${E2EE_DEVICES_TABLE} set
         wallet = :wallet, ciphersuite = :ciphersuite,
+        grant_version = :grant_version, ciphersuites = :ciphersuites,
         issued_at_seconds = :issued_at_seconds,
         expires_at_seconds = :expires_at_seconds, origin = :origin,
         grant_id = :grant_id, wallet_signature = :wallet_signature,
@@ -517,14 +543,17 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  /** The device's last-resort KeyPackage of one suite (one per suite). */
   async deleteLastResortKeyPackages(
     deviceKey: string,
+    ciphersuite: number,
     connection: Conn
   ): Promise<void> {
     await this.write(
       `delete from ${E2EE_KEY_PACKAGES_TABLE}
-       where device_key = :deviceKey and last_resort = true`,
-      { deviceKey },
+       where device_key = :deviceKey and last_resort = true
+         and ciphersuite = :ciphersuite`,
+      { deviceKey, ciphersuite },
       connection
     );
   }
@@ -550,13 +579,15 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       params[`d${index}`] = row.device_key;
       params[`b${index}`] = row.data;
       params[`l${index}`] = row.last_resort;
+      params[`s${index}`] = row.ciphersuite;
       params[`e${index}`] = row.expires_at_seconds;
       params[`c${index}`] = row.created_at;
-      return `(:d${index}, :b${index}, :l${index}, :e${index}, :c${index})`;
+      return `(:d${index}, :b${index}, :l${index}, :s${index}, :e${index}, :c${index})`;
     });
     await this.write(
       `insert into ${E2EE_KEY_PACKAGES_TABLE}
-        (device_key, data, last_resort, expires_at_seconds, created_at)
+        (device_key, data, last_resort, ciphersuite, expires_at_seconds,
+         created_at)
        values ${values.join(', ')}`,
       params,
       connection
@@ -580,6 +611,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
 
   private async lockOldestOneTimeKeyPackage(
     deviceKey: string,
+    ciphersuite: number,
     nowSeconds: number,
     connection: Conn
   ): Promise<E2eeClaimedKeyPackageRow | null> {
@@ -587,22 +619,25 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       `select id, device_key, to_base64(data) as data_b64, last_resort
        from ${E2EE_KEY_PACKAGES_TABLE}
        where device_key = :deviceKey and last_resort = false
+         and ciphersuite = :ciphersuite
          and expires_at_seconds > :nowSeconds
        order by id
        limit 1
        for update skip locked`,
-      { deviceKey, nowSeconds },
+      { deviceKey, ciphersuite, nowSeconds },
       connection
     );
   }
 
   /**
-   * Pops the oldest unexpired one-time KeyPackage of each device (FIFO).
-   * Runs in a READ COMMITTED transaction; rows locked by a concurrent
-   * claimer are skipped and that device falls back to a per-device pop.
+   * Pops the oldest unexpired one-time KeyPackage of `ciphersuite` of each
+   * device (FIFO). Runs in a READ COMMITTED transaction; rows locked by a
+   * concurrent claimer are skipped and that device falls back to a
+   * per-device pop.
    */
   async claimOneTimeKeyPackages(
     deviceKeys: readonly string[],
+    ciphersuite: number,
     nowSeconds: number,
     connection: Conn
   ): Promise<Map<string, E2eeClaimedKeyPackageRow>> {
@@ -611,9 +646,10 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
     const oldest = await this.many<{ id: number }>(
       `select min(id) as id from ${E2EE_KEY_PACKAGES_TABLE}
        where device_key in (:deviceKeys) and last_resort = false
+         and ciphersuite = :ciphersuite
          and expires_at_seconds > :nowSeconds
        group by device_key`,
-      { deviceKeys: inList(deviceKeys), nowSeconds },
+      { deviceKeys: inList(deviceKeys), ciphersuite, nowSeconds },
       connection
     );
     const locked = await this.lockOneTimeKeyPackagesByIds(
@@ -627,7 +663,12 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       inList(deviceKeys)
         .filter((deviceKey) => !claimed.has(deviceKey))
         .map((deviceKey) =>
-          this.lockOldestOneTimeKeyPackage(deviceKey, nowSeconds, connection)
+          this.lockOldestOneTimeKeyPackage(
+            deviceKey,
+            ciphersuite,
+            nowSeconds,
+            connection
+          )
         )
     );
     for (const row of fallbacks) {
@@ -646,6 +687,7 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
 
   async getLastResortKeyPackages(
     deviceKeys: readonly string[],
+    ciphersuite: number,
     nowSeconds: number,
     connection?: Conn
   ): Promise<Map<string, E2eeClaimedKeyPackageRow>> {
@@ -654,9 +696,10 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       `select id, device_key, to_base64(data) as data_b64, last_resort
        from ${E2EE_KEY_PACKAGES_TABLE}
        where device_key in (:deviceKeys) and last_resort = true
+         and ciphersuite = :ciphersuite
          and expires_at_seconds > :nowSeconds
        order by id desc`,
-      { deviceKeys: inList(deviceKeys), nowSeconds },
+      { deviceKeys: inList(deviceKeys), ciphersuite, nowSeconds },
       connection
     );
     const result = new Map<string, E2eeClaimedKeyPackageRow>();
@@ -669,26 +712,44 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
   // ----------------------------------------------------------------- devices
 
   /**
-   * Active (not revoked, not expired) device counts per profile, in one
-   * set-based query. Profiles without active devices are omitted. Admission
-   * itself (blocks, DM policy, group membership) is DirectMessageAdmissionService.
+   * Active devices grouped by what their grants say about suites, for the
+   * suite census metric (D172). A small table: one row per distinct grant
+   * shape.
    */
-  async getActiveDeviceCounts(
+  async getActiveDeviceSuiteCensus(
+    nowSeconds: number
+  ): Promise<E2eeDeviceSuiteCensusRow[]> {
+    return this.many<E2eeDeviceSuiteCensusRow>(
+      `select grant_version, ciphersuite, ciphersuites, count(*) as cnt
+       from ${E2EE_DEVICES_TABLE}
+       where revoked_at is null and expires_at_seconds > :nowSeconds
+       group by grant_version, ciphersuite, ciphersuites`,
+      { nowSeconds }
+    );
+  }
+
+  /**
+   * Active devices per profile, grouped by what decides their suites (D172):
+   * a narrow count, not the rows. The caller applies the suite policy.
+   */
+  async getActiveDeviceSuiteCounts(
     profileIds: readonly string[],
     nowSeconds: number,
     connection?: Conn
-  ): Promise<Map<string, number>> {
+  ): Promise<E2eeDeviceSuiteCountRow[]> {
     const targets = inList(profileIds);
-    if (!targets.length) return new Map();
-    const rows = await this.many<{ profile_id: string; cnt: number }>(
-      `select profile_id, count(*) as cnt from ${E2EE_DEVICES_TABLE}
+    if (!targets.length) return [];
+    const rows = await this.many<E2eeDeviceSuiteCountRow>(
+      `select profile_id, grant_version, ciphersuite, ciphersuites,
+              count(*) as cnt
+       from ${E2EE_DEVICES_TABLE}
        where profile_id in (:targets) and revoked_at is null
          and expires_at_seconds > :nowSeconds
-       group by profile_id`,
+       group by profile_id, grant_version, ciphersuite, ciphersuites`,
       { targets, nowSeconds },
       connection
     );
-    return new Map(rows.map((row) => [row.profile_id, Number(row.cnt)]));
+    return rows.map((row) => ({ ...row, cnt: Number(row.cnt) }));
   }
 
   // ----------------------------------------------------------------- groups
@@ -917,6 +978,32 @@ export class E2eeDb extends LazyDbAccessCompatibleService {
       `select id from ${E2EE_GROUP_ROSTER_TABLE}
        where group_handle = :group and device_key = :deviceKey limit 1`,
       { group, deviceKey },
+      connection
+    );
+    return row !== null;
+  }
+
+  /**
+   * Whether a device of the profile was in the group's roster and not yet
+   * removed at `atMs` (a blob's creation). After a ciphersuite move (D172) a
+   * profile's new device keeps the history its earlier device decrypted, so
+   * it may fetch that group's attachments. No lower bound: a blob created
+   * before a device's roster row may still reach it (an upload that spans
+   * an add, an outbox message sent after an add, a roster repair re-add),
+   * and the device rule already lets any member read older blobs.
+   */
+  async hasProfileRosterHistory(
+    group: string,
+    profileId: string,
+    atMs: number,
+    connection?: Conn
+  ): Promise<boolean> {
+    const row = await this.one<{ id: number }>(
+      `select id from ${E2EE_GROUP_ROSTER_TABLE}
+       where group_handle = :group and profile_id = :profileId
+         and (removed_at is null or removed_at >= :atMs)
+       limit 1`,
+      { group, profileId, atMs },
       connection
     );
     return row !== null;

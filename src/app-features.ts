@@ -23,6 +23,14 @@ export class AppFeatures {
     return this.isFeatureEnabled('XTDH');
   }
 
+  /**
+   * Large viewer group lists are read from viewer_group_set_members by their
+   * hash instead of travelling in each statement (waves/viewer-group-sets).
+   */
+  public isViewerGroupSetTableEnabled(): boolean {
+    return this.isFeatureEnabled('VIEWER_GROUP_SET_TABLE');
+  }
+
   public isProfileCmsWalletGalleryEnabled(): boolean {
     return (
       (process.env.FEATURE_PROFILE_CMS_WALLET_GALLERY ?? 'true') === 'true'

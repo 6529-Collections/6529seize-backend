@@ -52,7 +52,7 @@ describe('API Gateway client agent', () => {
 
     expect(mockNodeHttpHandler).toHaveBeenCalledTimes(1);
     expect(mockNodeHttpHandler).toHaveBeenCalledWith(
-      expect.objectContaining({ httpsAgent: { maxSockets: 64 } })
+      expect.objectContaining({ httpsAgent: { maxSockets: 50 } })
     );
   });
 });

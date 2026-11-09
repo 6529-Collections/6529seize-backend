@@ -70,11 +70,6 @@ import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
 import * as Joi from 'joi';
 import * as passport from 'passport';
-import {
-  ExtractJwt,
-  Strategy as JwtStrategy,
-  VerifiedCallback
-} from 'passport-jwt';
 import { ApiCompliantException } from '@/exceptions';
 import { sendApiError } from '@/api/api-error-middleware';
 import * as sentryContext from '../../sentry.context';
@@ -110,6 +105,7 @@ import {
   API_REDIS_FAIL_FAST_OPTIONS,
   createRetryableInitializer
 } from '@/api/app-initialization';
+import { describeE2eeSuiteTransition } from '@/e2ee/e2ee-suite-policy';
 import { parseTdhResultsFromDB } from '@/sql_helpers';
 import deployRoutes from '@/api/deploy/deploy.routes';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
@@ -151,7 +147,7 @@ import {
   initRateLimiting,
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
-import { ACCESS_TOKEN_ALGORITHMS } from '@/api/auth/access-token-wallet';
+import { createAccessTokenStrategy } from '@/api/auth/access-token-strategy';
 import { setNoStoreHeaders } from '@/api/response-headers';
 import { requestLogMiddleware } from '@/api/request-log.middleware';
 import {
@@ -674,27 +670,12 @@ async function initializeApp() {
   );
 
   await loadApiSecrets();
+  // D172: the effective suite window. A malformed setting is reported
+  // (ERROR log, EMF metric) and treated as not started; nothing else changes.
+  logger.info(describeE2eeSuiteTransition());
   await initRedis({ failFast: API_REDIS_FAIL_FAST_OPTIONS });
   initRateLimiting();
-  passport.use(
-    new JwtStrategy(
-      {
-        jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-        secretOrKey: getJwtSecret(),
-        algorithms: ACCESS_TOKEN_ALGORITHMS
-      },
-      function (
-        {
-          sub: wallet,
-          role,
-          exp
-        }: { sub: string; role?: string; exp?: number },
-        cb: VerifiedCallback
-      ) {
-        return cb(null, { wallet: wallet, role, exp });
-      }
-    )
-  );
+  passport.use(createAccessTokenStrategy(getJwtSecret()));
   passport.use(new AnonymousStrategy());
 }
 

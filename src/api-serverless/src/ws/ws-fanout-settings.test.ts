@@ -16,11 +16,11 @@ import {
 describe('wsFanoutConcurrency', () => {
   beforeEach(() => mockWarn.mockClear());
 
-  it('defaults to 64 when unset or blank, so a deploy sets nothing', () => {
-    expect(WS_FANOUT_CONCURRENCY_DEFAULT).toBe(64);
-    expect(wsFanoutConcurrency({})).toBe(64);
-    expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: '' })).toBe(64);
-    expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: '  ' })).toBe(64);
+  it('defaults to 16 when unset or blank, so a deploy sets nothing', () => {
+    expect(WS_FANOUT_CONCURRENCY_DEFAULT).toBe(16);
+    expect(wsFanoutConcurrency({})).toBe(16);
+    expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: '' })).toBe(16);
+    expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: '  ' })).toBe(16);
     expect(mockWarn).not.toHaveBeenCalled();
   });
 
@@ -54,9 +54,9 @@ describe('wsFanoutConcurrency', () => {
   it.each(['abc', '12.5', '1e3', '0x20', '64 sockets', 'NaN', 'Infinity'])(
     'uses the default for the invalid value %j and warns',
     (value) => {
-      expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: value })).toBe(64);
+      expect(wsFanoutConcurrency({ WS_FANOUT_CONCURRENCY: value })).toBe(16);
       expect(mockWarn).toHaveBeenCalledWith(
-        expect.stringContaining('using 64 instead')
+        expect.stringContaining('using 16 instead')
       );
     }
   );
@@ -71,7 +71,7 @@ describe('wsFanoutConcurrency', () => {
 
 describe('wsGatewayAgentMaxSockets', () => {
   it.each([
-    [undefined, 64],
+    [undefined, 50],
     ['16', 50],
     ['32', 50],
     ['50', 50],

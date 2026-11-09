@@ -17,6 +17,11 @@ import { describeWithSeed } from '@/tests/_setup/seed';
 import { anIdentity, withIdentities } from '@/tests/fixtures/identity.fixture';
 import { aWave, withWaves } from '@/tests/fixtures/wave.fixture';
 import { resetViewerGroupsCteSupport } from '@/waves/viewer-groups-cte';
+import {
+  storeViewerGroupSet,
+  VIEWER_GROUP_SET_SETTLE_MS,
+  viewerGroupSets as storedGroupSets
+} from '@/waves/viewer-group-sets';
 import { ApiWaveScoreSort } from '../generated/models/ApiWaveScoreSort';
 import { WavesApiDb } from './waves.api.db';
 
@@ -225,6 +230,31 @@ const reads: [string, string, Read][] = [
       )
   ],
   [
+    'joined root wave ids',
+    'jr_viewer_groups',
+    (waves, _, groups) =>
+      waves.findJoinedRootWaveIds(
+        { identityId: viewer.profile_id!, eligibleGroups: groups },
+        {}
+      )
+  ],
+  [
+    'visible drops by ids',
+    'vd_viewer_groups',
+    (_, drops, groups) =>
+      drops.findVisibleDrops(
+        {
+          limit: 50,
+          offset: 0,
+          parent_drop_id: null,
+          serial_nos: null,
+          ids: allWaves.map((wave) => `sc2-drop-${wave.id}`),
+          group_ids_user_is_eligible_for: groups
+        },
+        {}
+      )
+  ],
+  [
     'boosted drops count',
     'bd_viewer_groups',
     (_, drops, groups) =>
@@ -243,7 +273,7 @@ const reads: [string, string, Read][] = [
 ];
 
 describeWithSeed(
-  'Single-copy viewer groups, batch 2',
+  'Single-copy viewer groups, batches 2 and 3',
   [
     withIdentities([viewer, poster]),
     withWaves(allWaves),
@@ -291,7 +321,18 @@ describeWithSeed(
       drops: new DropsDb(() => sqlExecutor)
     });
 
-    afterEach(() => resetViewerGroupsCteSupport());
+    const FLAG = 'FEATURE_VIEWER_GROUP_SET_TABLE';
+    /** Shared groups read from viewer_group_set_members (b′) or JSON. */
+    const useStoredSets = (on: boolean) => {
+      if (on) process.env[FLAG] = 'true';
+      else delete process.env[FLAG];
+      storedGroupSets.reset();
+    };
+
+    afterEach(() => {
+      resetViewerGroupsCteSupport();
+      useStoredSets(false);
+    });
 
     it.each(reads)(
       '%s returns exactly what the inlined list does',
@@ -308,6 +349,22 @@ describeWithSeed(
             groups,
             result: inline
           });
+          // The same groups read from the stored set (written long enough
+          // ago to be read).
+          await storeViewerGroupSet(
+            sqlExecutor,
+            groups,
+            Date.now() - VIEWER_GROUP_SET_SETTLE_MS
+          );
+          useStoredSets(true);
+          r = repos();
+          const stored = sorted(await read(r.waves, r.drops, groups));
+          useStoredSets(false);
+          expect({ groups, source: 'stored set', result: stored }).toEqual({
+            groups,
+            source: 'stored set',
+            result: inline
+          });
           sawRows ||= hasRows(inline);
         }
         // The seed makes every read return something for some viewer.
@@ -316,10 +373,25 @@ describeWithSeed(
       120_000
     );
 
-    it.each(reads)(
-      '%s reads the groups once per statement',
-      async (_name, cte, read) => {
+    it.each(
+      reads.flatMap(([name, cte, read]) =>
+        (['json', 'stored set'] as const).map(
+          (source) => [name, source, cte, read] as const
+        )
+      )
+    )(
+      '%s reads the groups once per statement (%s)',
+      async (_name, source, cte, read) => {
         resetViewerGroupsCteSupport();
+        const viewerGroups = [MEMBER, OTHER, ...filler];
+        if (source === 'stored set') {
+          await storeViewerGroupSet(
+            sqlExecutor,
+            viewerGroups,
+            Date.now() - VIEWER_GROUP_SET_SETTLE_MS
+          );
+          useStoredSets(true);
+        }
         const r = repos();
         const captured: [string, Record<string, unknown>][] = [];
         // Both repositories share one executor: spy on it once.
@@ -337,7 +409,7 @@ describeWithSeed(
           });
         }
         try {
-          await read(r.waves, r.drops, [MEMBER, OTHER, ...filler]);
+          await read(r.waves, r.drops, viewerGroups);
         } finally {
           jest.restoreAllMocks();
         }
@@ -348,7 +420,11 @@ describeWithSeed(
             params
           );
           const plan = Object.values(row)[0];
-          expect(plan.match(/Materialize table function/g)).toHaveLength(1);
+          expect(plan.match(/Materialize table function/g) ?? []).toHaveLength(
+            source === 'json' ? 1 : 0
+          );
+          if (source === 'stored set')
+            expect(sql).toContain('viewer_group_set_members');
           expect(plan).toContain(`Materialize CTE ${cte}`);
           expect(plan).not.toMatch(/visibility_group_id,\s*<exists>/);
         }

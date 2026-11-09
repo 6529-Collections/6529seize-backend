@@ -227,6 +227,26 @@ export async function redisSetJson<T>(
 }
 
 /**
+ * SET key NX with a TTL: true when this call created the key, false when it
+ * already existed, null when Redis is disabled or unavailable.
+ */
+export async function redisSetIfAbsent(
+  key: string,
+  ttl: Time
+): Promise<boolean | null> {
+  if (!redis) {
+    return null;
+  }
+  return runFailOpenCommand<boolean | null>('SET NX', null, async (client) => {
+    const result = await client.set(key, '1', {
+      EX: ttl.toSeconds(),
+      NX: true
+    });
+    return result === 'OK';
+  });
+}
+
+/**
  * Return undefined while another instance owns a cold-cache refresh.
  *
  * The publish script touches `key` and `${key}:refresh-lease` together, so
