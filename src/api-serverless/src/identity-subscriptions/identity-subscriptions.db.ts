@@ -29,6 +29,13 @@ import {
   GroupMembershipSql,
   namespaceMembershipParams
 } from '@/user-groups/user-groups.db';
+import {
+  chunkSqlInListValues,
+  querySqlInListChunks,
+  SQL_IN_LIST_CHUNK_BYTES
+} from '@/db/sql-in-list-chunks';
+
+const WAVE_SUBSCRIPTIONS_RESYNC_CHUNK = 200;
 
 export type SubscriberEligibility = readonly GroupMembershipSql[] | null;
 
@@ -541,19 +548,60 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async resyncWaveSubscriptionsMetrics(connection?: ConnectionWrapper<any>) {
-    await this.db.execute(
-      `
-        update ${WAVE_METRICS_TABLE}
-        inner join (select target_id as wave_id, count(distinct subscriber_id) as followers_count
-                    from ${IDENTITY_SUBSCRIPTIONS_TABLE}
-                    where target_type = 'WAVE' and target_action = 'DROP_CREATED' group by 1) x on x.wave_id = ${WAVE_METRICS_TABLE}.wave_id
-        set ${WAVE_METRICS_TABLE}.subscribers_count = x.followers_count
-        where ${WAVE_METRICS_TABLE}.subscribers_count <> x.followers_count
-    `,
-      undefined,
-      { wrappedConnection: connection }
+  /** Waves any of these identities follows for new drops. */
+  async findFollowedWaveIds(
+    subscriberIds: string[],
+    connection: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    const rows = await querySqlInListChunks(
+      subscriberIds,
+      (ids) =>
+        this.db.execute<{ wave_id: string }>(
+          `
+            select distinct target_id as wave_id
+            from ${IDENTITY_SUBSCRIPTIONS_TABLE}
+            where target_type = 'WAVE' and target_action = 'DROP_CREATED'
+              and subscriber_id in (:ids)
+          `,
+          { ids },
+          { wrappedConnection: connection }
+        ),
+      { sequential: true }
     );
+    return Array.from(new Set(rows.map((row) => row.wave_id)));
+  }
+
+  /**
+   * Recounts the subscribers of these waves only, so a profile merge locks
+   * the merged profiles' waves rather than every wave_metrics row.
+   */
+  async resyncWaveSubscriptionsMetrics(
+    waveIds: string[],
+    connection?: ConnectionWrapper<any>
+  ) {
+    // The list appears twice in each statement.
+    const chunks = chunkSqlInListValues(
+      waveIds,
+      SQL_IN_LIST_CHUNK_BYTES / 2,
+      WAVE_SUBSCRIPTIONS_RESYNC_CHUNK
+    );
+    for (const ids of chunks) {
+      await this.db.execute(
+        `
+          update ${WAVE_METRICS_TABLE}
+          inner join (select target_id as wave_id, count(distinct subscriber_id) as followers_count
+                      from ${IDENTITY_SUBSCRIPTIONS_TABLE}
+                      where target_type = 'WAVE' and target_action = 'DROP_CREATED'
+                        and target_id in (:ids)
+                      group by 1) x on x.wave_id = ${WAVE_METRICS_TABLE}.wave_id
+          set ${WAVE_METRICS_TABLE}.subscribers_count = x.followers_count
+          where ${WAVE_METRICS_TABLE}.wave_id in (:ids)
+            and ${WAVE_METRICS_TABLE}.subscribers_count <> x.followers_count
+        `,
+        { ids },
+        { wrappedConnection: connection }
+      );
+    }
   }
 
   async getWaveSubscription(

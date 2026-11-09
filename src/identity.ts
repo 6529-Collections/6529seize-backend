@@ -11,12 +11,7 @@ import { IdentityEntity } from './entities/IIdentity';
 import { profilesService } from './profiles/profiles.service';
 import { Profile } from './entities/IProfile';
 import { Logger } from './logging';
-import {
-  CONSOLIDATED_WALLETS_TDH_TABLE,
-  IDENTITIES_TABLE,
-  RATINGS_TABLE,
-  WAVE_READER_METRICS_TABLE
-} from '@/constants';
+import { WAVE_READER_METRICS_TABLE } from '@/constants';
 import { randomUUID } from 'node:crypto';
 import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
 import {
@@ -945,6 +940,17 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
     );
   }
 
+  private mergeProfileIds(identitiesToMerge: IdentityMergeTarget[]): string[] {
+    return collections.distinct(
+      identitiesToMerge
+        .flatMap((mergeTarget) => [
+          mergeTarget.targetIdentity.profile_id,
+          ...mergeTarget.sourceIdentities.map((identity) => identity.profile_id)
+        ])
+        .filter((profileId): profileId is string => !!profileId)
+    );
+  }
+
   public async syncIdentitiesWithTdhConsolidations(
     connection: ConnectionWrapper<any>
   ): Promise<WaveUnreadCacheInvalidations> {
@@ -1185,6 +1191,15 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
         identitiesReadyForSaving,
         connection
       );
+      // Read before the merges move subscriptions: a merge can only change
+      // the subscriber counts of waves its source or target profiles follow.
+      const mergedWaveIds =
+        identitiesToMerge.length > 0
+          ? await identitySubscriptionsDb.findFollowedWaveIds(
+              this.mergeProfileIds(identitiesToMerge),
+              connection
+            )
+          : [];
       for (const identitiesToMergeElement of identitiesToMerge) {
         const toBeMerged = identitiesToMergeElement.sourceIdentities
           .map((it) => it.profile_id)
@@ -1208,8 +1223,9 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
           connection
         ))
       );
-      if (identitiesToMerge.length > 0) {
+      if (mergedWaveIds.length > 0) {
         await identitySubscriptionsDb.resyncWaveSubscriptionsMetrics(
+          mergedWaveIds,
           connection
         );
       }
@@ -1224,65 +1240,6 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
         affectedReaderWavesForUnreadCache
       )
     };
-  }
-
-  public async syncIdentitiesMetrics(connection: ConnectionWrapper<any>) {
-    logger.info(`Syncing identities metrics`);
-    const db = dbSupplier();
-    await db.execute(
-      `update ${IDENTITIES_TABLE} set rep = 0, cic = 0, tdh = 0, basetdh_rate = 0`,
-      undefined,
-      { wrappedConnection: connection }
-    );
-    await db.execute(
-      `
-    with cs as (
-        select matter_target_id as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' group by 1
-    )
-    update ${IDENTITIES_TABLE} i
-        inner join cs on cs.profile_id = i.profile_id
-    set i.rep = cs.rating
-    where cs.rating <> i.rep
-  `,
-      undefined,
-      { wrappedConnection: connection }
-    );
-    await db.execute(
-      `
-        with cs as (
-          select matter_target_id as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' group by 1
-        )
-        update ${IDENTITIES_TABLE} i
-          inner join cs on cs.profile_id = i.profile_id
-        set i.cic = cs.rating
-        where cs.rating <> i.cic
-      `,
-      undefined,
-      { wrappedConnection: connection }
-    );
-    await db.execute(
-      `
-     update ${IDENTITIES_TABLE} i
-            inner join ${CONSOLIDATED_WALLETS_TDH_TABLE} c  on c.consolidation_key = i.consolidation_key
-        set i.tdh = c.boosted_tdh, i.basetdh_rate = c.boosted_tdh_rate
-        where i.consolidation_key = c.consolidation_key
-  `,
-      undefined,
-      { wrappedConnection: connection }
-    );
-    await this.updateAllIdentitiesLevels(connection);
-    logger.info(`Syncing identities metrics done`);
-  }
-
-  public async updateAllIdentitiesLevels(connection: ConnectionWrapper<any>) {
-    const db = dbSupplier();
-    await db.execute(
-      `
-        update ${IDENTITIES_TABLE} set level_raw = (rep+tdh+xtdh) where level_raw <> (rep+tdh+xtdh)
-  `,
-      undefined,
-      { wrappedConnection: connection }
-    );
   }
 }
 

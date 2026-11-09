@@ -20,6 +20,7 @@ import {
   withTdhConsolidations
 } from '@/tests/fixtures/tdh_consolidation.fixture';
 import { IdentityConsolidationEffects, ProfileIdGenerator } from '@/identity';
+import { IdentityMetricsSync } from '@/identity-metrics-sync';
 import {
   anAddressConsolidationKeys,
   withAddressConsolidationKeys
@@ -33,57 +34,67 @@ import { Profile } from '@/entities/IProfile';
 import { ProfileActivityLog } from '@/entities/IProfileActivityLog';
 
 describeWithSeed(
-  'IdentityConsolidationEffects level calculation',
-  withIdentities([
-    anIdentity(
-      { rep: 10, tdh: 200, xtdh: 3 },
-      {
-        consolidation_key: '0x1',
-        profile_id: '0x1',
-        primary_address: '0x1',
-        handle: '0x1'
-      }
-    ),
-    anIdentity(
-      { rep: 20, tdh: 100, xtdh: 3000 },
-      {
-        consolidation_key: '0x2',
-        profile_id: '0x2',
-        primary_address: '0x2',
-        handle: '0x2'
-      }
-    ),
-    anIdentity(
-      { rep: -500, tdh: 0, xtdh: 1 },
-      {
-        consolidation_key: '0x3',
-        profile_id: '0x3',
-        primary_address: '0x3',
-        handle: '0x3'
-      }
-    )
-  ]),
-  () => {
-    let profileIdGenerator: ProfileIdGenerator;
-    let identitiesService: IdentitiesService;
-    let service: IdentityConsolidationEffects;
-
-    beforeEach(() => {
-      profileIdGenerator = mock();
-      identitiesService = mock();
-      when(profileIdGenerator.generate).mockReturnValue('generated-id');
-      service = new IdentityConsolidationEffects(
-        () => sqlExecutor,
-        profileIdGenerator,
-        identitiesService
-      );
-    });
-    it('reset levels based on TDH, XTDH and REP', async () => {
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (connection) => {
-          await service.updateAllIdentitiesLevels(connection);
+  'Identity metrics sync level calculation',
+  [
+    withIdentities([
+      anIdentity(
+        { rep: 10, tdh: 200, xtdh: 3 },
+        {
+          consolidation_key: '0x1',
+          profile_id: '0x1',
+          primary_address: '0x1',
+          handle: '0x1'
         }
-      );
+      ),
+      anIdentity(
+        { rep: 20, tdh: 100, xtdh: 3000 },
+        {
+          consolidation_key: '0x2',
+          profile_id: '0x2',
+          primary_address: '0x2',
+          handle: '0x2'
+        }
+      ),
+      anIdentity(
+        { rep: -500, tdh: 0, xtdh: 1 },
+        {
+          consolidation_key: '0x3',
+          profile_id: '0x3',
+          primary_address: '0x3',
+          handle: '0x3'
+        }
+      )
+    ]),
+    withRatings([
+      aRepRating({
+        rater_profile_id: '0x2',
+        matter_target_id: '0x1',
+        rating: 10,
+        matter_category: 'cool guy'
+      }),
+      aRepRating({
+        rater_profile_id: '0x1',
+        matter_target_id: '0x2',
+        rating: 20,
+        matter_category: 'cool guy'
+      }),
+      aRepRating({
+        rater_profile_id: '0x1',
+        matter_target_id: '0x3',
+        rating: -500,
+        matter_category: 'cool guy'
+      })
+    ]),
+    withTdhConsolidations([
+      aTdhConsolidation(['0x1'], { boosted_tdh: 200 }),
+      aTdhConsolidation(['0x2'], { boosted_tdh: 100 })
+    ])
+  ],
+  () => {
+    it('sets levels from REP, TDH and xTDH', async () => {
+      await new IdentityMetricsSync(() => sqlExecutor).syncAll({
+        chunkRows: 2
+      });
       const identities = await sqlExecutor.execute<IdentityEntity>(
         `select * from ${IDENTITIES_TABLE}`
       );
@@ -189,26 +200,10 @@ describeWithSeed(
     ])
   ],
   () => {
-    let profileIdGenerator: ProfileIdGenerator;
-    let identitiesService: IdentitiesService;
-    let service: IdentityConsolidationEffects;
-
-    beforeEach(() => {
-      profileIdGenerator = mock();
-      identitiesService = mock();
-      when(profileIdGenerator.generate).mockReturnValue('generated-id');
-      service = new IdentityConsolidationEffects(
-        () => sqlExecutor,
-        profileIdGenerator,
-        identitiesService
-      );
-    });
     it('reset levels based on TDH, TDH Rate, CIC and REP based on sources of truth', async () => {
-      await sqlExecutor.executeNativeQueriesInTransaction(
-        async (connection) => {
-          await service.syncIdentitiesMetrics(connection);
-        }
-      );
+      await new IdentityMetricsSync(() => sqlExecutor).syncAll({
+        chunkRows: 3
+      });
 
       const identities = await sqlExecutor.execute<IdentityEntity>(
         `select * from ${IDENTITIES_TABLE}`
