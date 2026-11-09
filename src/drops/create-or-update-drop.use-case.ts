@@ -1092,7 +1092,8 @@ export class CreateOrUpdateDropUseCase {
       dropId = preExistingDropId;
       const dropBeforeUpdate = await this.dropsDb.findDropById(
         dropId,
-        connection
+        connection,
+        true
       );
       if (dropBeforeUpdate === null) {
         throw new NotFoundException(`Drop ${dropId} not found`);
@@ -1140,6 +1141,7 @@ export class CreateOrUpdateDropUseCase {
           createdAt: dropBeforeUpdate.created_at,
           serialNo: dropBeforeUpdate.serial_no,
           updatedAt: Time.currentMillis(),
+          collapseReplies: dropBeforeUpdate.collapse_replies,
           wave,
           isNativeEntryContent,
           deferredNotifications: useOutbox ? deferred : undefined
@@ -2559,6 +2561,7 @@ export class CreateOrUpdateDropUseCase {
       createdAt,
       updatedAt,
       serialNo,
+      collapseReplies = false,
       isNativeEntryContent = false,
       deferredNotifications
     }: {
@@ -2567,6 +2570,7 @@ export class CreateOrUpdateDropUseCase {
       createdAt: number;
       updatedAt: number | null;
       serialNo: number | null;
+      collapseReplies?: boolean;
       isNativeEntryContent?: boolean;
       /** Waves 1.8: collect notification inputs here instead of inserting. */
       deferredNotifications?: { notifications?: DeferredDropNotifications };
@@ -2622,6 +2626,7 @@ export class CreateOrUpdateDropUseCase {
               : model.drop_type,
             signature: model.signature,
             hide_link_preview: model.hide_link_preview,
+            collapse_replies: collapseReplies && !model.reply_to,
             is_additional_action_promised: model.is_additional_action_promised
           },
           connection,

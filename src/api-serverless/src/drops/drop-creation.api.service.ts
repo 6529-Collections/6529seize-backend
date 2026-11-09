@@ -1,3 +1,4 @@
+import { findCommittedDropOnWriter } from '@/api/drops/drop-writer-read';
 import {
   readCommitted,
   runWriteTransaction
@@ -80,6 +81,7 @@ import {
 } from '@/drops/drop-client-ids.db';
 import { DropClientIdEntity } from '@/entities/IDropClientId';
 import { DropType } from '@/entities/IDrop';
+import { DROP_UPDATE_REASON_REPLY_COLLAPSE } from '@/api/ws/ws-message';
 import {
   chatHistoryPurgeDb,
   ChatHistoryPurgeDb,
@@ -1295,6 +1297,66 @@ export class DropCreationApiService {
     } finally {
       ctx.timer?.stop(timerName);
     }
+  }
+
+  async setDropReplyCollapse(
+    { dropId, collapseReplies }: { dropId: string; collapseReplies: boolean },
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
+    const authorId = ctx.authenticationContext?.getActingAsId();
+    if (!authorId || ctx.authenticationContext?.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        'Only the author can change reply placement'
+      );
+    }
+
+    const changed = await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const tx = { ...ctx, connection };
+        const visibleDrop = await this.dropsService.findViewableDropByIdOrThrow(
+          { dropId, unavailableMessage: 'Drop is unavailable' },
+          tx
+        );
+        if (visibleDrop.author_id !== authorId) {
+          throw new ForbiddenException(
+            'Only the author can change reply placement'
+          );
+        }
+        const wave = await this.wavesApiDb.findWaveByIdForUpdate(
+          visibleDrop.wave_id,
+          tx
+        );
+        const drop = await this.dropsDb.findDropById(dropId, connection, true);
+        if (!wave || !drop)
+          throw new NotFoundException(`Drop ${dropId} not found`);
+        if (
+          wave.is_direct_message ||
+          wave.chat_replies_collapsed ||
+          drop.drop_type !== DropType.CHAT ||
+          drop.reply_to_drop_id !== null
+        ) {
+          throw new BadRequestException(
+            'Reply placement can only be changed on top-level chat drops in waves with inline replies'
+          );
+        }
+        return this.dropsDb.setDropReplyCollapse(
+          { dropId, waveId: wave.id, collapseReplies },
+          tx
+        );
+      },
+      { isolationLevel: 'READ COMMITTED' }
+    );
+
+    const drop = await findCommittedDropOnWriter(
+      { dropId, db: this.dropsDb, dropsService: this.dropsService },
+      ctx
+    );
+    if (changed) {
+      await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, {
+        reason: DROP_UPDATE_REASON_REPLY_COLLAPSE
+      });
+    }
+    return drop;
   }
 
   async toggleHideLinkPreview(

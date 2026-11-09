@@ -483,7 +483,8 @@ const sharedDropColumns = [
   'reply_to_part_id',
   'signature',
   'is_additional_action_promised',
-  'hide_link_preview'
+  'hide_link_preview',
+  'collapse_replies'
 ] as const;
 export const CHAT_WAVE_COMPATIBILITY_DEFAULTS: Readonly<
   Record<string, string>

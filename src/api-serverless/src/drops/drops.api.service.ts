@@ -375,12 +375,14 @@ export class DropsApiService {
       wave_id,
       min_serial_no,
       max_serial_no,
-      limit
+      limit,
+      respect_drop_reply_collapse
     }: {
       wave_id: string;
       min_serial_no: number;
       max_serial_no: number | null;
       limit: number;
+      respect_drop_reply_collapse?: boolean;
     },
     ctx: RequestContext
   ): Promise<ApiDropId[]> {
@@ -399,7 +401,8 @@ export class DropsApiService {
         min_serial_no,
         max_serial_no: maxSerialNo,
         limit,
-        group_ids_user_is_eligible_for
+        group_ids_user_is_eligible_for,
+        respect_drop_reply_collapse
       },
       ctx
     );

@@ -1,4 +1,5 @@
 import { inSequence } from '@/db/in-sequence';
+import { collapsedDropReplyExistsSql } from '@/drops/collapsed-drop-reply.sql';
 import {
   recordWebSocketEvent,
   withWebSocketMutation
@@ -168,7 +169,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       'reply_to_part_id',
       'drop_type',
       'signature',
-      'hide_link_preview'
+      'hide_link_preview',
+      'collapse_replies'
     ]
       .map((column) => `${alias}.${column} as ${column}`)
       .join(', ');
@@ -588,6 +590,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                    signature,
                                    is_additional_action_promised,
                                    hide_link_preview,
+                                   collapse_replies,
                                    reply_to_drop_id,
                                    reply_to_part_id${
                                      newDropSerialNo !== null
@@ -605,11 +608,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                :signature,
                :is_additional_action_promised,
                :hide_link_preview,
+               :collapse_replies,
                :reply_to_drop_id,
                :reply_to_part_id
             ${newDropSerialNo !== null ? `, :serial_no` : ``})`,
 
-      { ...newDropEntity, hide_link_preview: hideLinkPreview },
+      {
+        ...newDropEntity,
+        hide_link_preview: hideLinkPreview,
+        collapse_replies: newDropEntity.collapse_replies ?? false
+      },
       { wrappedConnection: connection }
     );
     if (replyToDropId) {
@@ -860,12 +868,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findDropById(
     id: string,
-    connection?: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>,
+    forUpdate = false
   ): Promise<DropEntity | null> {
     const opts = connection ? { wrappedConnection: connection } : {};
     return this.db.oneOrNull<DropEntity>(
       `
-        select d.* from ${DROPS_TABLE} d where d.id = :id
+        select d.* from ${DROPS_TABLE} d where d.id = :id ${forUpdate ? 'for update' : ''}
         `,
       {
         id
@@ -1264,7 +1273,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       wave_id,
       curation_id,
       drop_type,
-      exclude_replies = false
+      exclude_replies = false,
+      respect_drop_reply_collapse = false
     }: {
       serial_no_limit: number | null;
       search_strategy: string;
@@ -1273,6 +1283,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       curation_id?: string | null;
       drop_type: DropType | null;
       exclude_replies?: boolean;
+      respect_drop_reply_collapse?: boolean;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
@@ -1283,9 +1294,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
-    const filters = `${curationFilter} ${
-      exclude_replies ? 'and d.reply_to_drop_id is null' : ''
-    }`;
+    // Curations are explicit selections. Only the main timeline opts into placement.
+    let replyFilter = '';
+    if (exclude_replies) {
+      replyFilter = 'and d.reply_to_drop_id is null';
+    } else if (respect_drop_reply_collapse && !curation_id) {
+      replyFilter = `and (d.reply_to_drop_id is null or not ${collapsedDropReplyExistsSql()})`;
+    }
+    const filters = `${curationFilter} ${replyFilter}`;
     const sqlForOlder = `(select d.* from ${DROPS_TABLE} d where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
     } d.wave_id = :wave_id and d.serial_no < :serial_no_limit ${filters} order by d.serial_no desc limit ${amount})`;
@@ -1327,13 +1343,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       min_serial_no,
       max_serial_no,
       limit,
-      group_ids_user_is_eligible_for
+      group_ids_user_is_eligible_for,
+      respect_drop_reply_collapse = false
     }: {
       wave_id: string;
       min_serial_no: number;
       max_serial_no: number;
       limit: number;
       group_ids_user_is_eligible_for: string[];
+      respect_drop_reply_collapse?: boolean;
     },
     ctx: RequestContext
   ): Promise<{ id: string; serial_no: number }[]> {
@@ -1343,7 +1361,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       where d.wave_id = :wave_id
         and d.serial_no >= :min_serial_no
         and d.serial_no <= :max_serial_no
-        and (d.reply_to_drop_id is null or w.chat_replies_collapsed = false)
+        and (d.reply_to_drop_id is null or (w.chat_replies_collapsed = false ${
+          respect_drop_reply_collapse
+            ? `and not ${collapsedDropReplyExistsSql()}`
+            : ''
+        }))
       order by d.serial_no asc
       limit :limit`;
     return this.db.execute(
@@ -3594,7 +3616,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   }
 
   /**
-   * Thread sizes for drops in waves with collapsed replies. drop_relations
+   * Thread sizes for drops with collapsed replies. drop_relations
    * lists every ancestor, so this counts the whole thread under each drop.
    * Drops without replies are omitted.
    */
@@ -3612,10 +3634,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         `
           select r.parent_id as drop_id, count(*) as cnt
           from ${DROP_RELATIONS_TABLE} r
-          join ${legacyGetView(WAVES_TABLE)} w
-            on w.id = r.wave_id and w.chat_replies_collapsed = true
+          join ${legacyGetView(WAVES_TABLE)} w on w.id = r.wave_id
+          join ${DROPS_TABLE} root on root.id = r.parent_id
           join ${DROPS_TABLE} d on d.id = r.child_id
           where r.parent_id in (:dropIds)
+            and (w.chat_replies_collapsed = true or
+              (root.collapse_replies = true and root.reply_to_drop_id is null))
           group by r.parent_id
         `,
         { dropIds },
@@ -3959,6 +3983,76 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       return res?.cnt ?? 0;
     } finally {
       ctx.timer?.stop(`${this.constructor.name}->countDropBoosts`);
+    }
+  }
+
+  async findIndividuallyCollapsedReplyRoots(
+    replyIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, { id: string; serial_no: number }>> {
+    if (!replyIds.length) return {};
+    const timer = `${this.constructor.name}->findIndividuallyCollapsedReplyRoots`;
+    ctx.timer?.start(timer);
+    try {
+      const roots = await this.db.execute<{
+        child_id: string;
+        id: string;
+        serial_no: number;
+      }>(
+        `select r.child_id, root.id, root.serial_no
+         from ${DROP_RELATIONS_TABLE} r
+         join ${DROPS_TABLE} root
+           on root.id = r.parent_id
+           and root.wave_id = r.wave_id
+           and root.collapse_replies = true
+           and root.reply_to_drop_id is null
+         where r.child_id in (:replyIds)`,
+        { replyIds },
+        { wrappedConnection: ctx.connection }
+      );
+      return Object.fromEntries(
+        roots.map(({ child_id, id, serial_no }) => [
+          child_id,
+          { id, serial_no }
+        ])
+      );
+    } finally {
+      ctx.timer?.stop(timer);
+    }
+  }
+
+  async setDropReplyCollapse(
+    {
+      dropId,
+      waveId,
+      collapseReplies
+    }: {
+      dropId: string;
+      waveId: string;
+      collapseReplies: boolean;
+    },
+    ctx: RequestContext
+  ): Promise<boolean> {
+    const timer = `${this.constructor.name}->setDropReplyCollapse`;
+    ctx.timer?.start(timer);
+    try {
+      const result = await this.db.execute(
+        `update ${DROPS_TABLE}
+         set collapse_replies = :collapseReplies
+         where id = :dropId and collapse_replies <> :collapseReplies`,
+        { dropId, collapseReplies },
+        { wrappedConnection: ctx.connection }
+      );
+      const changed = this.db.getAffectedRows(result) > 0;
+      if (changed && ctx.connection) {
+        await invalidateWaveUnreadCacheForWaveAfterCommit(
+          waveId,
+          ctx.connection
+        );
+      }
+      return changed;
+    } finally {
+      ctx.timer?.stop(timer);
     }
   }
 

@@ -17,6 +17,7 @@ import {
   DELIVERY_TIMESTAMPS_RESERVED_BYTES,
   DROP_UPDATE_MAX_UTF8_BYTES,
   DropUpdateRefType,
+  DropUpdateRefMessageData,
   WsMessageType,
   nftLinkUpdatedMessage,
   identityNotificationsChangedMessage,
@@ -388,22 +389,18 @@ export function serializeDropMessageForRecipient(
     return fullMessage;
   }
 
-  const refData = {
+  const refData: DropUpdateRefMessageData = {
     drop_id: inputDrop.id,
     wave_id: inputDrop.wave.id,
     author_id: inputDrop.author.id,
     serial_no: inputDrop.serial_no,
     update_type: updateType,
+    ...(inputDrop.collapsed_reply_thread
+      ? { collapsed_reply_thread_id: inputDrop.collapsed_reply_thread.id }
+      : {}),
     ...(reason !== undefined && updateType === WsMessageType.DROP_UPDATE
       ? { reason }
       : {})
-  } satisfies {
-    drop_id: string;
-    wave_id: string;
-    author_id: string;
-    serial_no: number;
-    update_type: DropUpdateRefType;
-    reason?: string;
   };
 
   return JSON.stringify(dropUpdateRefMessage(refData));
