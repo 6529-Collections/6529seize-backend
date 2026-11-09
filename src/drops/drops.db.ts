@@ -3978,6 +3978,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  async hasDropReplies(dropId: string, ctx: RequestContext): Promise<boolean> {
+    const replies = await this.db.execute(
+      `select 1
+       from ${DROP_RELATIONS_TABLE} r
+       join ${DROPS_TABLE} d on d.id = r.child_id
+       where r.parent_id = :dropId
+       limit 1`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    return replies.length > 0;
+  }
+
   async setDropReplyCollapse(
     {
       dropId,

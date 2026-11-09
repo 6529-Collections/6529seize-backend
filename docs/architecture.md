@@ -180,7 +180,9 @@ existing reply ancestry to filter descendants before paginating the chat
 timeline. Clients opt into the mixed timeline through the V2 feed and
 drop-ID pagination APIs. Individual placement keeps the existing unread and
 notification rules for inline waves. Thread reads keep returning descendants and reply
-payloads identify the top-level drop for links and live updates.
+payloads identify the top-level drop for links and live updates. Placement updates
+include whether the thread has replies, so empty toggles can update the message
+without reloading the timeline.
 
 Deploy `dbMigrationsLoop` first to synchronize the additive column and refresh
 the compatibility view, then deploy the API and the frontend.

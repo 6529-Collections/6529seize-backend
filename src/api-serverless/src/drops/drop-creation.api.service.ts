@@ -971,7 +971,7 @@ export class DropCreationApiService {
       );
     }
 
-    const changed = await this.dropsDb.executeNativeQueriesInTransaction(
+    const placement = await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const tx = { ...ctx, connection };
         const visibleDrop = await this.dropsService.findViewableDropByIdOrThrow(
@@ -1000,10 +1000,14 @@ export class DropCreationApiService {
             'Reply placement can only be changed on top-level chat drops in waves with inline replies'
           );
         }
-        return this.dropsDb.setDropReplyCollapse(
+        const changed = await this.dropsDb.setDropReplyCollapse(
           { dropId, waveId: wave.id, collapseReplies },
           tx
         );
+        return {
+          changed,
+          hasReplies: await this.dropsDb.hasDropReplies(dropId, tx)
+        };
       },
       { isolationLevel: 'READ COMMITTED' }
     );
@@ -1012,7 +1016,8 @@ export class DropCreationApiService {
       { dropId, db: this.dropsDb, dropsService: this.dropsService },
       ctx
     );
-    if (changed) {
+    drop.reply_placement_has_replies = placement.hasReplies;
+    if (placement.changed) {
       await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, {
         reason: DROP_UPDATE_REASON_REPLY_COLLAPSE
       });

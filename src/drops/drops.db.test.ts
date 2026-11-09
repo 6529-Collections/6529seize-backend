@@ -1362,6 +1362,12 @@ describeWithSeed(
               )
             ).map((drop) => drop.id);
 
+          await expect(repo.hasDropReplies('mixed-root', tx)).resolves.toBe(
+            true
+          );
+          await expect(
+            repo.hasDropReplies('mixed-nested-reply', tx)
+          ).resolves.toBe(false);
           await setCollapsed(true);
           await expect(readFeed(false)).resolves.toEqual([
             'mixed-nested-reply',
@@ -1404,6 +1410,9 @@ describeWithSeed(
             )
           ).resolves.toEqual({ 'mixed-root': 2 });
           await setCollapsed(false);
+          await expect(repo.hasDropReplies('mixed-root', tx)).resolves.toBe(
+            true
+          );
           await expect(readFeed(true)).resolves.toEqual([
             'mixed-nested-reply',
             'mixed-reply'
