@@ -209,13 +209,13 @@ export const IDENTIFYING_XMP = Buffer.from(
 
 // ----- JPEG ----------------------------------------------------------------
 
-function jpegSegment(marker: number, payload: Buffer): Buffer {
+export function jpegSegment(marker: number, payload: Buffer): Buffer {
   const header = Buffer.from([0xff, marker, 0, 0]);
   header.writeUInt16BE(payload.length + 2, 2);
   return Buffer.concat([header, payload]);
 }
 
-function iptcCityResource(): Buffer {
+export function iptcCityResource(): Buffer {
   const city = Buffer.from('Synthville IPTC', 'latin1');
   const dataset = Buffer.concat([
     Buffer.from([0x1c, 0x02, 0x5a, 0x00, city.length]),
@@ -233,7 +233,7 @@ function iptcCityResource(): Buffer {
   ]);
 }
 
-function jfifWithThumbnail(): Buffer {
+export function jfifWithThumbnail(): Buffer {
   return Buffer.concat([
     Buffer.from('JFIF\0', 'latin1'),
     Buffer.from([1, 2, 1, 0, 72, 0, 72, 2, 1]),

@@ -2,7 +2,11 @@ import { createHash } from 'node:crypto';
 import Sharp, { Metadata } from 'sharp';
 import {
   describeImageContainer,
+  extractJpegGainMaps,
+  GainMapStripOutcome,
+  logDroppedGainMap,
   LosslessStripFormat,
+  LosslessStripResult,
   LosslessStripUnsupported,
   stripMetadataLosslessly
 } from './lossless-metadata-strip';
@@ -21,6 +25,8 @@ export type PixelVerifiedStripOutcome =
       readonly kind: 'lossless';
       readonly buffer: Buffer;
       readonly removed: readonly string[];
+      /** Present only when the input carried a JPEG HDR gain map. */
+      readonly gainMaps?: GainMapStripOutcome;
     }
   | { readonly kind: 'unverified'; readonly reason: string };
 
@@ -84,21 +90,69 @@ async function decodePixels(
   };
 }
 
-function assertSamePixels(before: DecodedPixels, after: DecodedPixels) {
+function assertSamePixels(
+  before: DecodedPixels,
+  after: DecodedPixels,
+  subject = ''
+) {
   for (const field of Object.keys(before) as (keyof DecodedPixels)[]) {
     if (before[field] !== after[field]) {
       throw new LosslessStripUnsupported(
-        `Decoded ${field} changed after stripping`
+        `Decoded ${subject}${field} changed after stripping`
       );
     }
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Each kept gain map decodes to the same size and pixels as the original. */
+async function assertSameGainMapPixels(input: Buffer, output: Buffer) {
+  const before = extractJpegGainMaps(input);
+  const after = extractJpegGainMaps(output);
+  if (before.length !== after.length) {
+    throw new LosslessStripUnsupported('Gain map count changed');
+  }
+  for (let index = 0; index < before.length; index++) {
+    assertSamePixels(
+      await decodePixels(before[index], false),
+      await decodePixels(after[index], false),
+      'gain map '
+    );
+  }
+}
+
+/**
+ * Keeps gain maps only when they decode to the original pixels; otherwise the
+ * gain maps are dropped (with a warning) and the SDR base image is kept.
+ */
+async function withVerifiedGainMaps(
+  input: Buffer,
+  format: LosslessStripFormat,
+  result: LosslessStripResult
+): Promise<Pick<LosslessStripResult, 'output' | 'gainMaps'>> {
+  if (result.gainMaps?.kind !== 'kept') return result;
+  try {
+    await assertSameGainMapPixels(input, result.output);
+    return result;
+  } catch (error) {
+    const reason = `Gain map pixels did not verify: ${errorMessage(error)}`;
+    const { output } = stripMetadataLosslessly(input, format, {
+      gainMaps: 'drop'
+    });
+    logDroppedGainMap(reason);
+    return { output, gainMaps: { kind: 'dropped', reason } };
   }
 }
 
 /**
  * Lossless strip, proven twice: structurally (see stripMetadataLosslessly)
  * and by decoding input and output with sharp to the same oriented size,
- * animation and pixel hash. Any failure is reported, not thrown, so callers
- * can fall back to re-encoding.
+ * animation and pixel hash; kept JPEG gain maps must decode to the same
+ * pixels too, or they are dropped. Any failure of the image itself is
+ * reported, not thrown, so callers can fall back to re-encoding.
  */
 export async function stripMetadataWithPixelCheck(
   input: Buffer,
@@ -111,9 +165,11 @@ export async function stripMetadataWithPixelCheck(
       const { width, height } = describeImageContainer(input, 'png');
       assertFitsPixelCheck(width * height * 8);
     }
-    const { output, input: description } = stripMetadataLosslessly(
+    const result = stripMetadataLosslessly(input, format);
+    const { output, gainMaps } = await withVerifiedGainMaps(
       input,
-      format
+      format,
+      result
     );
     const animated = format === 'gif' || format === 'webp';
     const before = await decodePixels(input, animated);
@@ -122,12 +178,10 @@ export async function stripMetadataWithPixelCheck(
     return {
       kind: 'lossless',
       buffer: output,
-      removed: description.metadataBlocks
+      removed: result.input.metadataBlocks,
+      ...(gainMaps ? { gainMaps } : {})
     };
   } catch (error) {
-    return {
-      kind: 'unverified',
-      reason: error instanceof Error ? error.message : String(error)
-    };
+    return { kind: 'unverified', reason: errorMessage(error) };
   }
 }
