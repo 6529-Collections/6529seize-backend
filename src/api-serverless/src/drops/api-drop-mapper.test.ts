@@ -13,6 +13,7 @@ import { ApiDropMainType } from '@/api/generated/models/ApiDropMainType';
 import { ApiProfileClassification } from '@/api/generated/models/ApiProfileClassification';
 import { ApiSubmissionDropStatus } from '@/api/generated/models/ApiSubmissionDropStatus';
 import { ApiDropMapper } from './api-drop.mapper';
+import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 
 beforeEach(() => {
@@ -402,6 +403,11 @@ describe('ApiDropMapper', () => {
           drop_part_id: 1,
           url: 'https://example.test/image.png',
           mime_type: 'image/png',
+          media_upload_id: 'upload-1',
+          media_status: DropMediaUploadStatus.SANITIZING,
+          media_width: 927,
+          media_height: 447,
+          media_thumbhash: 'placeholder',
           wave_id: 'wave-1'
         }
       ]
@@ -437,7 +443,13 @@ describe('ApiDropMapper', () => {
       media: [
         {
           url: 'https://example.test/image.png',
-          mime_type: 'image/png'
+          mime_type: 'image/png',
+          media_upload_id: 'upload-1',
+          media_status: 'processing',
+          media_error: null,
+          width: 927,
+          height: 447,
+          thumbhash: 'placeholder'
         }
       ],
       parts_count: 1,

@@ -1,4 +1,5 @@
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
+import { mapDropMedia } from './drop-media.mapper';
 import {
   anonymousCompetitionAuthor,
   competitionAnonymityService
@@ -11,6 +12,7 @@ import {
 import { AttachmentEntity, DropAttachmentEntity } from '@/entities/IAttachment';
 import {
   DropEntity,
+  DropMediaEntity,
   DropGroupMentionEntity,
   DropMentionedWaveEntity,
   DropMentionEntity,
@@ -588,7 +590,7 @@ export class ApiDropMapper {
     drop: DropEntity;
     author: ApiDropV2['author'];
     partOne?: { content: string | null };
-    partOneMedia: { url: string; mime_type: string }[];
+    partOneMedia: DropMediaEntity[];
     dropAttachments: DropAttachmentEntity[];
     attachmentsById: Record<string, AttachmentEntity>;
     referencedNfts: DropReferencedNftEntity[];
@@ -669,10 +671,7 @@ export class ApiDropMapper {
     if (partOne?.content !== null && partOne?.content !== undefined) {
       apiDrop.content = partOne.content;
     }
-    const media = partOneMedia.map((it) => ({
-      url: it.url,
-      mime_type: it.mime_type
-    }));
+    const media = partOneMedia.map(mapDropMedia);
     if (media.length) {
       apiDrop.media = media;
     }
