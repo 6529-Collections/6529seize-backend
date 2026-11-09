@@ -142,6 +142,27 @@ describe('synchronizeSchemaBounded on MySQL', () => {
     expect(await plannedStatements()).toEqual([]);
   });
 
+  it('upgrades an existing identities sync marker table with one ADD COLUMN and nothing else', async () => {
+    // The table as the first release created it, before walk_after.
+    await sqlExecutor.execute(
+      `alter table \`${IDENTITY_TDH_SYNC_STATE_TABLE}\` drop column walk_after`
+    );
+
+    const planned = await plannedStatements();
+    expect(planned).toHaveLength(1);
+    expect(planned[0]).toMatch(
+      new RegExp(
+        `^ALTER TABLE \`${IDENTITY_TDH_SYNC_STATE_TABLE}\` ADD \`walk_after\``
+      )
+    );
+
+    const result = await synchronizeSchemaBounded(dataSource, {
+      sleep: noSleep
+    });
+    expect(result).toEqual({ planned: 1, applied: 1 });
+    await expect(plannedStatements()).resolves.toEqual([]);
+  });
+
   it('converges after a run stopped between a generated column change and its bookkeeping', async () => {
     const before = await schemaSnapshot();
     // State left by a run that dropped the column's index and changed the

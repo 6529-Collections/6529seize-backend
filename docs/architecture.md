@@ -1288,30 +1288,42 @@ lock, so other competitions' snapshot and decision runs are never blocked by it.
 A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
 `tdhLoop`) is a sequence of short transactions rather than one:
 
-- A: the TDH tables, plus a pending generation in `identity_tdh_sync_state`.
+- A: the TDH tables, their `tdh_blocks` row (so the block record always
+  matches the TDH rows, even if the Lambda is killed later) and a pending
+  generation in `identity_tdh_sync_state`. A full rewrite (`tdhLoop`) also
+  arms its "TDH calculations done" announcement.
 - B: identities for new consolidations and profile merges, with the merged
   profiles' wave subscriber counts recounted (not every wave's). Its
   unread-cache and wave-score effects run as soon as it commits.
 - C: identity metrics (`rep`, `cic`, `tdh`, `basetdh_rate`, `level_raw`),
   recomputed from ratings and consolidated TDH in primary-key chunks, each one
   short transaction writing final values, so no reset value is ever visible.
+  Each chunk records the walk's position in the same transaction.
 - D: TDH overvote revocation, against the synced identities, one transaction
   per candidate competition. A competition busy past the lock wait is skipped,
   logged and counted (`failed=n`), and picked up by the next revocation.
-- E: the generation is marked synced.
+- E: TDH consumers are told: a full rewrite's "TDH calculations done" event
+  (xTDH, over-rate revocation, wave scores) is published exactly once, any
+  other write enqueues the xTDH recalculation. Then the generation is marked
+  synced.
 
-B to E run under a renewed lease row, one run at a time. If an invocation
-stops after A, or B to E fail, the generation stays pending and the next
-`delegationsLoop` or `tdhLoop` start finishes B to E, which are idempotent; a
-failure is logged and sent to Sentry without stopping delegations, the TDH
-block record or the xTDH trigger. A lease taken over by another invocation is
-logged as a warning only. Any transaction writing both `ratings` and
-`identities` takes the `ratings` locks first. The TDH tables and identities
-are no longer updated atomically: between A and C, readers combining them see
-the previous run's identities for seconds, and a vote is checked against the
-pre-run credit, as just before any run. Deploy `dbMigrationsLoop`
-first (the marker table), then `delegationsLoop`, `tdhLoop`,
-`overRatesRevocationLoop` and `api`.
+`tdhLoop` runs only A and leaves B to E to `delegationsLoop`, which syncs
+after its own partial writes and resumes pending generations at start. Each
+`delegationsLoop` invocation spends at most five minutes on the sync: it stops
+cleanly between chunks or steps and the next invocation resumes, skipping B
+when it already committed for that generation and continuing after the last
+committed chunk. B to E run under a renewed lease row, one run at a time; a
+failure is logged and sent to Sentry, without stopping delegations, and stays
+pending. A lease taken over by another invocation is logged as a warning only.
+TDH consumers run after the identities are synced, as before; xTDH's
+`level_raw` update and C's chunks both compute from the row's current values,
+so an xTDH run that lands between invocations stays consistent. Any
+transaction writing both `ratings` and `identities` takes the `ratings` locks
+first. The TDH tables and identities are no longer updated atomically: until C
+reaches a row, readers combining them see the previous run's identities, and
+a vote is checked against the pre-run credit, as just before any run. Deploy
+`dbMigrationsLoop` first (the marker table and its columns), then
+`delegationsLoop`, `tdhLoop`, `overRatesRevocationLoop` and `api`.
 
 Winners paginate by win time, newest first; My Votes excludes completed winners
 without deleting historical allocations. Personal votes sort by signed vote value
