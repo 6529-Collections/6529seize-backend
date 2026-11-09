@@ -1,4 +1,8 @@
 import {
+  CompetitionScoreResetEntity,
+  CompetitionScoreResetStateEntity
+} from '@/entities/ICompetitionScoreReset';
+import {
   VotingCreditReleaseEntity,
   VotingCreditReleaseRecipientEntity
 } from '@/entities/IVotingCreditRelease';
@@ -234,6 +238,10 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     },
     { scope: 'claims-media-upload', entities: [MintingClaimEntity] },
     {
+      scope: 'competition-score-resets',
+      entities: [CompetitionScoreResetEntity, CompetitionScoreResetStateEntity]
+    },
+    {
       scope: 'competition-lifecycle-events',
       entities: [CompetitionLifecycleEventEntity]
     },
@@ -399,6 +407,8 @@ describe('dbMigrationsLoop explicit schema scope', () => {
     'maintenance',
     'nft-history-events',
     'nft-history-replay',
+    'competition-score-resets',
+    'competition-score-resets-backfill',
     'wallet-transfer-analysis',
     'claims-media-upload',
     'nft-link-page-retry',

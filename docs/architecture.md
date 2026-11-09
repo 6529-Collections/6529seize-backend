@@ -1467,6 +1467,20 @@ retain complete score history and use existing native update events to delimit
 the scoring revision. Current allocations, immutable decision voter snapshots,
 and awards retain their existing separate native tables.
 
+Leaderboard-only refreshes read AGGREGATE observations; decision and curation
+execution retain both streams for immutable per-voter winner snapshots. History
+reads start at active entries and use the competition/entry history index before
+sorting, avoiding the history of departed entries. `competition_score_resets`
+projects the latest full-content reset's revision and three independent sequence
+cutoffs. Reset events and their projection commit in the same transaction;
+presentation-only edits never replace a reset. The outbox stays the audit source.
+`competition_score_reset_state` records resumable backfill progress and an
+explicit reader cutover. Readers use the event-based lookup until the operator
+completes and verifies the copy and enables the projection. The operator-only
+`dbMigrationsLoop` scope can compare both readers in one snapshot and disable
+projected reads for rollback. See [score history rollout](competition-score-history-rollout.md).
+
+
 Vote Activity combines competition-scoped shared profile logs and native vote
 history. Exact `<competition-id>:<sequence>` identities deduplicate before
 pagination; equal values/timestamps never imply a duplicate. IDs, timestamps,
