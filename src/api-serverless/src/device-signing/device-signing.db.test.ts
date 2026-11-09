@@ -105,6 +105,21 @@ describeWithSeed(
       expect(Number(stored!.expires_at)).toBe(1001);
     });
 
+    it('persists an acknowledgment on a grant created without one', async () => {
+      const grant = aGrant(hex('1', 64), WALLET_A, 1);
+      await repo.insertGrant(grant, ctx);
+      await repo.executeNativeQueriesInTransaction(async (connection) => {
+        const txCtx = { ...ctx, connection };
+        const locked = await repo.lockGrant(grant.id, txCtx);
+        expect(Boolean(locked?.notice_acknowledged)).toBe(false);
+        await repo.acknowledgeGrant(grant.id, txCtx);
+      });
+
+      const [stored] = await repo.findGrantsOfProfile(PROFILE_ID, ctx);
+      expect(Boolean(stored?.notice_acknowledged)).toBe(true);
+      expect(stored?.revoked_at).toBeNull();
+    });
+
     it('lists grants of every wallet of the profile, newest first', async () => {
       await repo.insertGrant(aGrant(hex('1', 64), WALLET_A, 1), ctx);
       await repo.insertGrant(aGrant(hex('2', 64), WALLET_B, 2), ctx);

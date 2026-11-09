@@ -47,7 +47,6 @@ import {
 } from '@/constants';
 import { DbQueryOptions } from './db-query.options';
 import { writeDelegations } from '@/delegation-row';
-import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import { Artist } from './entities/IArtist';
 import {
   Consolidation,
@@ -101,7 +100,7 @@ import { Team } from './entities/ITeam';
 import { BaseTransaction, Transaction } from './entities/ITransaction';
 import { env } from './env';
 import { ethTools } from './eth-tools';
-import { identityConsolidationEffects } from './identity';
+import { identityTdhSyncStateDb } from './identity-tdh-sync-state.db';
 import { Logger } from './logging';
 import { metricsRecorder } from './metrics/MetricsRecorder';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
@@ -119,14 +118,6 @@ import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { equalIgnoreCase } from './strings';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import { Time } from './time';
-import {
-  invalidateWaveUnreadCache,
-  type WaveUnreadCacheInvalidations
-} from '@/api/waves/wave-unread-cache';
-import {
-  waveScoreService,
-  WaveScoreDirtyRefreshReason
-} from '@/api/waves/wave-score.service';
 
 const mysql = require('mysql');
 import {
@@ -1227,6 +1218,13 @@ export type ConsolidatedTdhPersistenceScope =
       readonly consolidationKeysToReplace: string[];
     };
 
+/**
+ * Step A of a consolidated-TDH run: the TDH tables and the pending identities
+ * sync marker, in one short transaction. Identities, merges, metrics and
+ * overvote revocation follow in their own transactions
+ * (`syncIdentitiesAfterTdh`); the committed marker lets the next loop
+ * invocation finish them if this one stops after A.
+ */
 export async function persistConsolidatedTDH(
   block: number,
   tdh: ConsolidatedTDH[],
@@ -1236,10 +1234,8 @@ export async function persistConsolidatedTDH(
   scope: ConsolidatedTdhPersistenceScope
 ) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
-  let unreadCacheInvalidations: WaveUnreadCacheInvalidations = {
-    waveIds: [],
-    readerWaves: []
-  };
+  // Fails before any TDH write if the marker table is missing.
+  await identityTdhSyncStateDb.ensureRows();
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
@@ -1299,22 +1295,9 @@ export async function persistConsolidatedTDH(
       scope.mode === 'PARTIAL' ? scope.wallets : undefined,
       scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined
     );
-
-    unreadCacheInvalidations =
-      await identityConsolidationEffects.syncIdentitiesWithTdhConsolidations(
-        qrHolder
-      );
-    await identityConsolidationEffects.syncIdentitiesMetrics(qrHolder);
-    await revokeTdhBasedDropWavesOverVotes(qrHolder);
+    await identityTdhSyncStateDb.markPending(block, qrHolder);
   });
 
-  await invalidateWaveUnreadCache(unreadCacheInvalidations);
-  if (unreadCacheInvalidations.waveIds.length) {
-    await waveScoreService.requestWaveScoreRefreshBestEffort(
-      unreadCacheInvalidations.waveIds,
-      WaveScoreDirtyRefreshReason.IDENTITY_CONSOLIDATION
-    );
-  }
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 

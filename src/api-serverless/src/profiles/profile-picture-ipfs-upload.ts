@@ -3,6 +3,13 @@ import {
   ipfsFileUploader
 } from '@/attachments/ipfs-file-uploader';
 import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
+import { Logger } from '@/logging';
+import {
+  LosslessStripFormat,
+  stripMetadataLosslessly
+} from '@/media/metadata-strip/lossless-metadata-strip';
+
+const logger = Logger.get('PROFILE_PICTURE_IPFS_UPLOAD');
 
 /** Matches the limit the profile editor enforces before upload. */
 export const PROFILE_PICTURE_MAX_BYTES = 2 * 1024 * 1024;
@@ -10,6 +17,7 @@ export const PROFILE_PICTURE_MAX_BYTES = 2 * 1024 * 1024;
 interface ProfilePictureFormat {
   readonly contentType: string;
   readonly extension: string;
+  readonly container: LosslessStripFormat;
   readonly matches: (bytes: Buffer) => boolean;
 }
 
@@ -30,11 +38,13 @@ const PROFILE_PICTURE_FORMATS: readonly ProfilePictureFormat[] = [
   {
     contentType: 'image/png',
     extension: 'png',
+    container: 'png',
     matches: (bytes) => bytes.subarray(0, 8).equals(PNG_SIGNATURE)
   },
   {
     contentType: 'image/jpeg',
     extension: 'jpg',
+    container: 'jpeg',
     matches: (bytes) =>
       bytes.length >= 3 &&
       bytes[0] === 0xff &&
@@ -44,12 +54,14 @@ const PROFILE_PICTURE_FORMATS: readonly ProfilePictureFormat[] = [
   {
     contentType: 'image/gif',
     extension: 'gif',
+    container: 'gif',
     matches: (bytes) =>
       hasAsciiAt(bytes, 'GIF87a') || hasAsciiAt(bytes, 'GIF89a')
   },
   {
     contentType: 'image/webp',
     extension: 'webp',
+    container: 'webp',
     matches: (bytes) =>
       hasAsciiAt(bytes, 'RIFF') && hasAsciiAt(bytes, 'WEBP', 8)
   }
@@ -57,13 +69,46 @@ const PROFILE_PICTURE_FORMATS: readonly ProfilePictureFormat[] = [
 
 export function detectProfilePictureFormat(
   bytes: Buffer
-): Pick<ProfilePictureFormat, 'contentType' | 'extension'> | null {
+): Pick<
+  ProfilePictureFormat,
+  'contentType' | 'extension' | 'container'
+> | null {
   const format = PROFILE_PICTURE_FORMATS.find((candidate) =>
     candidate.matches(bytes)
   );
   return format
-    ? { contentType: format.contentType, extension: format.extension }
+    ? {
+        contentType: format.contentType,
+        extension: format.extension,
+        container: format.container
+      }
     : null;
+}
+
+/**
+ * IPFS pins are permanent, so identifying metadata is always removed first,
+ * whatever the drop-media privacy flag says. The API bundle has no image
+ * decoder, so there is no re-encoding fallback here: the strip is verified
+ * structurally (same size and orientation, byte-identical image data and ICC
+ * profile, none of the removed blocks left), and anything that cannot be
+ * stripped that way is rejected rather than pinned.
+ */
+export function stripProfilePictureMetadata(
+  bytes: Buffer,
+  container: LosslessStripFormat
+): Buffer {
+  try {
+    return stripMetadataLosslessly(bytes, container).output;
+  } catch (error) {
+    logger.warn(
+      `Rejected a ${container} profile picture whose metadata could not be removed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    throw new BadRequestException(
+      'This profile picture could not be cleaned of its metadata. Export it again as a standard PNG, JPEG, GIF or WebP image and retry.'
+    );
+  }
 }
 
 export class ProfilePictureIpfsUploadService {
@@ -92,7 +137,7 @@ export class ProfilePictureIpfsUploadService {
     }
     const { url } = await this.uploader.uploadFile({
       fileName: `pfp.${format.extension}`,
-      fileBuffer: bytes,
+      fileBuffer: stripProfilePictureMetadata(bytes, format.container),
       contentType: format.contentType
     });
     return { pfp_url: url };

@@ -66,6 +66,7 @@ import {
 } from './reconsolidation';
 import { readReconsolidationAction } from './reconsolidation-action';
 import { DelegationsLoopHealth } from './delegations-loop-health';
+import { resumePendingIdentityTdhSync } from '../identity-tdh-sync';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -112,6 +113,8 @@ export const handler = sentryContext.wrapLambdaHandler(
             : undefined;
 
         logger.info(`[START_BLOCK ${startBlock}]`);
+        // Finish an identities sync a previous run left after its TDH write.
+        await resumePendingIdentityTdhSync();
         const health = await DelegationsLoopHealth.start(false);
         const delegationsResponse = await handleDelegations(startBlock, health);
         await persistNftDelegationBlock(

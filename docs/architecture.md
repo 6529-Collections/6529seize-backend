@@ -226,13 +226,21 @@ its separate URL guard also protects local previews, which do not use this API.
 
 Authenticated `POST /profiles/pfp/ipfs` accepts one multipart `pfp` file of at
 most 2 MiB (multer rejects larger bodies with 413), recognizes PNG, JPEG, GIF or
-WebP from the file's own bytes, and pins it with the shared IPFS uploader as a
+WebP from the file's own bytes, always strips identifying metadata with the
+lossless module in `src/media/metadata-strip/` (IPFS pins are permanent, so this
+ignores `DROP_MEDIA_SANITIZE_IMAGES`), and pins it with the shared IPFS uploader as a
 single unwrapped file (the configured `IPFS_API_UPLOAD_PATH` without
 `wrap-with-directory`). It returns `{ pfp_url: "ipfs://<cid>" }`; the caller then
 saves that URL through the existing `POST /profiles` validation. The web app
 uploads through this route instead of posting to the IPFS node from the
 browser. Deploy `api` before the frontend that calls it. No new service,
-database schema, or migration is required.
+database schema, or migration is required. The API bundle has no image decoder,
+so the strip is verified structurally (same size and orientation, byte-identical
+image data and ICC, no removed blocks left) and an image that cannot be stripped
+that way is rejected with a 400 instead of being pinned. JPEG HDR gain maps are
+kept under the same structural checks (byte-identical gain map image data, MPF
+offsets on its SOI, allowlisted XMP only); a gain map that does not pass them
+is dropped and the SDR image is pinned.
 
 ## Profile collecting and marketplace operations
 
@@ -752,7 +760,9 @@ this API support while new clients are deployed; roll back the frontend first.
 
    Other drop and wave image uploads can first land in a private ingest bucket, then `dropMediaSanitizer` strips metadata and publishes the sanitized full-size original to the public bucket before CloudFront/resizer paths serve it. Other specialized media paths include on-demand resizing, video conversion, and NextGen metadata placeholder interception. Drop-video multipart completion can accept a bounded device-generated JPEG, validate and strip its metadata, and store it before completing the original video. Conversion always keeps the existing HLS/MP4 renditions and adds bounded first-frame/one-second JPEGs only if a validated device poster is unavailable. Chat prefers the device image, then the later backend image, falling back to the first for legacy or short clips, and displays it before Play without fetching video bytes. The worker reads and expands the existing MediaConvert template without modifying it; its deployment includes template-scoped read and device-poster access policies. The API execution role also needs narrow device-poster write and pending-upload read access. Existing uploads need a separate authorized replay. See [chat video previews](chat-video-previews.md) for storage and rollout details.
    The on-demand media resizer spools each S3 source into its own temporary file before metadata inspection and conversion. A shared 256 MiB source limit rejects oversized inputs with HTTP 422. PNG uses measured 100 MP/8-bit and 64 MP/16-bit admission, a 100,000-pixel input-side limit, and disposable Sharp child processes. PNG output is capped at 4096 pixels per side, two million pixels and 10 MiB encoded; ordinary fit/orientation behavior is preserved and oversized results are fitted inside a bounded box. Each PNG child has a 256 MiB JS heap, a 30-second lifetime and a sampled 1 GiB combined parent/child RSS watchdog. These are guards with headroom under the 2 GiB Lambda allocation, not hard native allocation guarantees. Corrupt/over-limit input is permanent; timeout, allocation/worker, monitor and I/O failures remain operational. Source and output files live until upload completes and are removed after success or failure. Non-PNG codecs retain the conservative 512 MiB decoded-work estimate; animated GIF admission counts every frame. Baseline 8-bit JPEG admission accounts conservatively for the decoder shrink used by the requested resize; progressive JPEGs and other codecs retain the full-input estimate. When a GIF animation exceeds the budget, only its first frame is resized if that frame independently fits. Otherwise it remains HTTP 422. Originals are unchanged, and already-posted images can receive previews on demand without re-uploading. Resize, rotation and output contracts are preserved for ordinary accepted inputs. Multipart upload concurrency is one, and the temporary directory is removed after completion or failure. These admission limits reduce resource risk; they do not guarantee a maximum native allocation for every codec. The specific HEIF missing-compression-plugin error is returned as `422 UNSUPPORTED_CODEC`, regardless of the filename or MIME label. One operational report is claimed per original S3 key and source version (VersionId, or ETag for unversioned objects), across resize variants and Lambda instances, using an empty conditional-write marker under `_resize-rejections/v1/` in the existing source bucket. Later requests retain warning logs and the controlled response; replacing the source enables a new report. Marker failures remain operational errors. Detected HEIF/HEVC inputs now use an isolated, pinned WebAssembly HEVC decoder and explicit JPEG output, independent of the source suffix/MIME label. The child has separate source/pixel, JS heap, WASM memory and time budgets. Confirmed permanent HEVC decoder rejections use `_resize-rejections/v2/` markers keyed by source revision and decoder policy: later requests still spool/inspect the source but skip pixel decoding and return HTTP 422. Source or decoder-policy changes permit another attempt. S3/worker/timeout/allocation failures remain operational; the generic Sharp HEIF `(7.0)` error is not broadly suppressed. A source length mismatch remains operational before decoding or caching. See [media-resizer-unsupported-input.md](media-resizer-unsupported-input.md) for decoder, alert and recovery limits.
-   Drop/wave image finalization now generates and verifies both legacy `AUTOx450` and `AUTOx1080` previews using the same admission and PNG renderer as on-demand resizing before it can mark media ready. All image source handling and optional privacy stripping are file-based; full source and encoded-original buffers are not retained in the parent. PNG original stripping uses an isolated child; other original re-encodes must fit the conservative full-decode budget without preview shrink or discarded GIF frames. The original and both derivatives must be stored before the ready transition and ingest deletion. Derivative storage failures remain retryable and never imply ready. A retry regenerates the previews and overwrites the same keys; a ready-message redelivery only retries best-effort private-source deletion. Other formats retain their format/privacy transformations and existing animated-GIF first-frame fallback. The sanitizer reserves 1 GiB ephemeral storage for source, sanitized original and derivatives. Existing ready uploads are not requeued; the corrected on-demand PNG path can populate their missing derivatives without changing source/drop URLs.
+   Chat image stripping is lossless when it verifies (pixels and ICC profile unchanged, Orientation kept); decision-entry uploads are never stripped and keep the artist's file name, while chat and wave uploads get neutral `<upload id>.<ext>` public names. See [image-upload-format-validation.md](image-upload-format-validation.md).
+
+   Drop/wave image finalization now generates and verifies both legacy `AUTOx450` and `AUTOx1080` previews using the same admission and PNG renderer as on-demand resizing before it can mark media ready. All image source handling and re-encoding privacy stripping are file-based; full source and encoded-original buffers are not retained in the parent, except that lossless stripping reads sources of up to 64 MiB into memory. PNG original stripping uses an isolated child; other original re-encodes must fit the conservative full-decode budget without preview shrink or discarded GIF frames. The original and both derivatives must be stored before the ready transition and ingest deletion. Derivative storage failures remain retryable and never imply ready. A retry regenerates the previews and overwrites the same keys; a ready-message redelivery only retries best-effort private-source deletion. Other formats retain their format/privacy transformations and existing animated-GIF first-frame fallback. The sanitizer reserves 1 GiB ephemeral storage for source, sanitized original and derivatives. Existing ready uploads are not requeued; the corrected on-demand PNG path can populate their missing derivatives without changing source/drop URLs.
    The animation-preview implementation (requires `mediaResizerLoop` deployment) handles versioned GIF requests (`AUTOx450_gifv2`, and the other existing sizes with `_gifv2` appended) with animation-preserving processing instead of the legacy first-frame fallback. The suffix is removed before checking the existing size whitelist and resolving the original key, but retained in the S3 derivative key. AUTO sizes use a sequential native decode and one resize directly to bounded output dimensions; fixed crop sizes retain individually coalesced frames and a repeated-scan guard. The bounded RGBA strip is spooled before encoding; output resolution can shrink further to bound the complete animation. The deployment catalog sets this worker to 2048 MiB for CPU headroom while retaining its processing deadline and source/output safety limits. Frame timing, loop count, and transparency are retained. Admission limits cover source bytes, per-frame pixels, frame count, repeated decoder work, retained output, and processing time. An eligible original that already fits an AUTO dimension is copied unchanged. See [GIF animation previews](gif-animation-previews.md) for limits, rollout, and compatibility. Originals and legacy derivative keys are not overwritten.
    Public media objects carry `Cache-Control` set when they are written, because the media CloudFront distribution also serves the desktop app's update feeds (`6529-core-app/`, `6529-staging-core-app/`), which must not be cached long. Keys that never receive different bytes use `public, max-age=31536000, immutable`: drop, wave and distribution uploads (random id per upload; multipart uploads set it at creation), sanitized drop media, profile pictures, rememe images (write-once), device video posters and NFT link previews. Per-token NFT originals and derivatives under `images/` and `videos/` are rewritten in place when a token's media source changes, so they use `public, max-age=86400`, as do on-demand resizer outputs and upload-generated previews at those same derivative keys. Single-PUT presigned uploads and MediaConvert renditions do not set it yet.
 
@@ -1269,11 +1279,39 @@ configured NFT set. WAVE credit compares the shared total; DROP credit compares
 the largest individual allocation. Only over-limit voters enter the existing
 credit-reduction/history/notification path, and the leaderboard is rebuilt once
 after all reductions. Fully funded competitions do not reload vote history or
-rewrite leaderboards. Discovery and mutations remain in the existing TDH
-publication transaction, including delegation-driven partial recalculations and
-post-TDH over-rate cleanup. Deploy the affected consumers sequentially:
-`overRatesRevocationLoop`, `delegationsLoop`, then `tdhLoop`; their unchanged
-xTDH dependencies are already compatible. No schema or frontend rollout is needed.
+rewrite leaderboards. Revocation finds candidate competitions first, without
+locking: active and published ones holding votes it could reduce (any non-zero
+active vote for TDH; the rating recipient's active votes for REP), whose stored
+configuration it applies to. It locks only those, re-checking each under its
+lock, so other competitions' snapshot and decision runs are never blocked by it.
+
+A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
+`tdhLoop`) is a sequence of short transactions rather than one:
+
+- A: the TDH tables, plus a pending generation in `identity_tdh_sync_state`.
+- B: identities for new consolidations and profile merges, with the merged
+  profiles' wave subscriber counts recounted (not every wave's). Its
+  unread-cache and wave-score effects run as soon as it commits.
+- C: identity metrics (`rep`, `cic`, `tdh`, `basetdh_rate`, `level_raw`),
+  recomputed from ratings and consolidated TDH in primary-key chunks, each one
+  short transaction writing final values, so no reset value is ever visible.
+- D: TDH overvote revocation, against the synced identities, one transaction
+  per candidate competition. A competition busy past the lock wait is skipped,
+  logged and counted (`failed=n`), and picked up by the next revocation.
+- E: the generation is marked synced.
+
+B to E run under a renewed lease row, one run at a time. If an invocation
+stops after A, or B to E fail, the generation stays pending and the next
+`delegationsLoop` or `tdhLoop` start finishes B to E, which are idempotent; a
+failure is logged and sent to Sentry without stopping delegations, the TDH
+block record or the xTDH trigger. A lease taken over by another invocation is
+logged as a warning only. Any transaction writing both `ratings` and
+`identities` takes the `ratings` locks first. The TDH tables and identities
+are no longer updated atomically: between A and C, readers combining them see
+the previous run's identities for seconds, and a vote is checked against the
+pre-run credit, as just before any run. Deploy `dbMigrationsLoop`
+first (the marker table), then `delegationsLoop`, `tdhLoop`,
+`overRatesRevocationLoop` and `api`.
 
 Winners paginate by win time, newest first; My Votes excludes completed winners
 without deleting historical allocations. Personal votes sort by signed vote value
@@ -1434,8 +1472,14 @@ Important API responsibilities:
   a browser Ed25519 device key (`device_grants`) that then signs drop creates,
   edits, deletes and reactions; the API verifies and stores those events in
   `device_signed_events` and `drop_author_signatures` and serves them at
-  `/drops/{dropId}/signed-events`. See the device signing grants section of
-  that document.
+  `/drops/{dropId}/signed-events`. The grant owner can acknowledge a
+  new-device notice through `POST /device-grants/{grantId}/acknowledge`. The
+  acknowledgment is stored on the grant and follows the owner across devices.
+  `GET /device-grants` and the `POST` endpoints for `/device-grants/{grantId}/label`,
+  `/device-grants/{grantId}/acknowledge`, and `/device-grants/{grantId}/revoke`
+  return `notice_acknowledged`. Grant registration (`POST /device-grants`)
+  and public signature proofs omit the field. See the device signing grants
+  section of that document.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
   subscriptions, and notifications. Wallet distribution allocation reads
   combine Phase 0–2 distribution rows with Public subscription airdrops, while

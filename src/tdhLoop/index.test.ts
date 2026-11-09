@@ -44,6 +44,11 @@ jest.mock('../env', () => ({
   }
 }));
 
+const mockResumePendingIdentityTdhSync = jest.fn();
+jest.mock('../identity-tdh-sync', () => ({
+  resumePendingIdentityTdhSync: mockResumePendingIdentityTdhSync
+}));
+
 import { tdhLoop } from './index';
 
 describe('tdhLoop xTDH completion trigger', () => {
@@ -85,6 +90,15 @@ describe('tdhLoop xTDH completion trigger', () => {
     expect(mockFindNftTdh.mock.invocationCallOrder[0]).toBeLessThan(
       mockNotifyTdhCalculationsDone.mock.invocationCallOrder[0]
     );
+  });
+
+  it('finishes a pending identities sync before computing TDH', async () => {
+    await tdhLoop(true);
+
+    expect(mockResumePendingIdentityTdhSync).toHaveBeenCalledTimes(1);
+    expect(
+      mockResumePendingIdentityTdhSync.mock.invocationCallOrder[0]
+    ).toBeLessThan(mockUpdateTdh.mock.invocationCallOrder[0]);
   });
 
   it('does not publish completion when full persistence fails', async () => {

@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { stat, open } from 'node:fs/promises';
+import { stat, open, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   withResizeSourceFile,
@@ -10,6 +10,7 @@ import {
   isUnprocessableResizeInput
 } from '@/mediaResizerLoop/resize-resource-safety';
 import { sanitizePngFile } from '@/media/png-preview';
+import { stripMetadataWithPixelCheck } from '@/media/metadata-strip/pixel-verified-metadata-strip';
 import {
   prepareUploadImagePreviews,
   previewObjectKey,
@@ -40,6 +41,7 @@ import {
 } from '@/drops/drop-media-uploads.db';
 import {
   DropMediaUploadEntity,
+  DropMediaUploadPurpose,
   DropMediaUploadStatus
 } from '@/entities/IDropMediaUpload';
 import { Logger } from '@/logging';
@@ -58,7 +60,14 @@ const ALLOWED_FORMAT_MIME_TYPES = {
 
 type AllowedSharpFormat = keyof typeof ALLOWED_FORMAT_MIME_TYPES;
 type SharpInstance = ReturnType<typeof Sharp>;
+/** Told why a lossless strip could not be verified before re-encoding. */
+type LosslessFallbackReporter = (format: string, reason: string) => void;
 const SANITIZER_CLAIM_STALE_MS = Time.minutes(20).toMillis();
+/**
+ * Lossless rewriting holds the source and its output in memory; larger
+ * sources keep the file-based re-encoding path and its decode budget.
+ */
+export const LOSSLESS_STRIP_MAX_SOURCE_BYTES = 64 * 1024 * 1024;
 
 export class PermanentMediaSanitizationError extends Error {
   constructor(message: string) {
@@ -164,7 +173,10 @@ export class DropMediaSanitizerService {
     });
   }
 
-  /** Strip image metadata, applying strict conversion limits to AVIF inputs. */
+  /**
+   * Strip image metadata, losslessly when the result verifies and otherwise
+   * by re-encoding, applying strict conversion limits to AVIF inputs.
+   */
   async sanitizeBuffer({
     input,
     declaredMimeType
@@ -184,11 +196,23 @@ export class DropMediaSanitizerService {
       input,
       declaredMimeType
     );
+    const lossless = await stripMetadataWithPixelCheck(input, format);
+    if (lossless.kind === 'lossless') {
+      return { buffer: lossless.buffer, contentType };
+    }
+    this.reportLosslessFallback('in-memory image')(format, lossless.reason);
     const output = formatSharpOutput(image, format);
     return {
       buffer: await output.toBuffer(),
       contentType
     };
+  }
+
+  private reportLosslessFallback(subject: string): LosslessFallbackReporter {
+    return (format, reason) =>
+      this.logger.warn(
+        `Lossless metadata strip of ${format} ${subject} did not verify; re-encoding instead: ${reason}`
+      );
   }
 
   private async sanitizeAndPublish(
@@ -212,15 +236,17 @@ export class DropMediaSanitizerService {
       source.destroy();
       throw new Error('Image ingest source length is unavailable');
     }
-    const stripMetadata =
-      rawObject.Metadata?.[DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY] !==
-        'false' || upload.declared_mime_type.toLowerCase() === 'image/avif';
+    const stripMetadata = shouldStripImageMetadata(
+      upload,
+      rawObject.Metadata?.[DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY]
+    );
     let hints: MediaLayoutHints | null = null;
     await withResizeSourceFile(source, contentLength, async (path) => {
       const published = await preparePublishedImageFile(
         path,
         upload.declared_mime_type,
-        stripMetadata
+        stripMetadata,
+        this.reportLosslessFallback(`drop media upload ${upload.id}`)
       );
       if ((await stat(published.path)).size > DROP_MEDIA_MAX_IMAGE_BYTES)
         throw new UnprocessableResizeInput('OUTPUT_TOO_LARGE');
@@ -385,6 +411,21 @@ export class DropMediaSanitizerService {
   }
 }
 
+/**
+ * AVIF always converts (and so loses metadata). Otherwise a decision entry
+ * keeps the artist's original bytes; chat and older uploads follow the policy
+ * the API recorded on the ingest object at upload start, where a missing
+ * policy (older queued uploads) keeps stripping.
+ */
+export function shouldStripImageMetadata(
+  upload: Pick<DropMediaUploadEntity, 'declared_mime_type' | 'purpose'>,
+  ingestPolicy: string | undefined
+): boolean {
+  if (upload.declared_mime_type.toLowerCase() === 'image/avif') return true;
+  if (upload.purpose === DropMediaUploadPurpose.DECISION_ENTRY) return false;
+  return ingestPolicy !== 'false';
+}
+
 /** Verify the container format, without re-encoding or stripping original bytes. */
 async function inspectImageFormat(
   input: Buffer | string,
@@ -468,11 +509,39 @@ async function imageHeader(input: Buffer | string): Promise<Buffer> {
   }
 }
 
-/** Preserve original bytes when requested; never buffer full uploads in Node. */
+/**
+ * Strip losslessly into the output file when the result verifies; false means
+ * the caller re-encodes. Rewriting a container needs random access, so the
+ * source is read into memory, which is why it is size-bounded.
+ */
+async function stripFileLosslessly(
+  input: string,
+  output: string,
+  format: AllowedSharpFormat,
+  reportFallback: LosslessFallbackReporter
+): Promise<boolean> {
+  if ((await stat(input)).size > LOSSLESS_STRIP_MAX_SOURCE_BYTES) {
+    reportFallback(format, 'source is larger than the lossless strip limit');
+    return false;
+  }
+  const result = await stripMetadataWithPixelCheck(
+    await readFile(input),
+    format
+  );
+  if (result.kind === 'unverified') {
+    reportFallback(format, result.reason);
+    return false;
+  }
+  await writeFile(output, result.buffer);
+  return true;
+}
+
+/** Preserve original bytes when requested; previews never buffer in Node. */
 async function preparePublishedImageFile(
   input: string,
   declaredMimeType: string,
-  stripMetadata: boolean
+  stripMetadata: boolean,
+  reportFallback: LosslessFallbackReporter
 ): Promise<{ path: string; contentType: string }> {
   const output = join(dirname(input), 'sanitized');
   if (declaredMimeType.toLowerCase() === 'image/avif') {
@@ -488,16 +557,20 @@ async function preparePublishedImageFile(
       throw new PermanentMediaSanitizationError(
         'Declared PNG does not match the uploaded image. Export a complete PNG and try again.'
       );
-    return {
-      path: stripMetadata ? await sanitizePngFile(input) : input,
-      contentType: 'image/png'
-    };
+    if (!stripMetadata) return { path: input, contentType: 'image/png' };
+    if (await stripFileLosslessly(input, output, 'png', reportFallback)) {
+      return { path: output, contentType: 'image/png' };
+    }
+    return { path: await sanitizePngFile(input), contentType: 'image/png' };
   }
   const { image, format, contentType, metadata } = await inspectImageFormat(
     input,
     declaredMimeType
   );
   if (!stripMetadata) return { path: input, contentType };
+  if (await stripFileLosslessly(input, output, format, reportFallback)) {
+    return { path: output, contentType };
+  }
   // Original re-encoding cannot use preview shrink or still-frame fallback.
   assertDecodedWorkBudget(metadata, format === 'gif');
   await formatSharpOutput(image, format)

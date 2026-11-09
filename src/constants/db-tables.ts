@@ -363,3 +363,5 @@ export const E2EE_REPORT_ACCESS_LOG_TABLE = 'e2ee_report_access_log';
 /** Content-addressed viewer group sets (see waves/viewer-group-sets.ts). */
 export const VIEWER_GROUP_SETS_TABLE = 'viewer_group_sets';
 export const VIEWER_GROUP_SET_MEMBERS_TABLE = 'viewer_group_set_members';
+/** Consolidated-TDH to identities sync progress (see identity-tdh-sync.ts). */
+export const IDENTITY_TDH_SYNC_STATE_TABLE = 'identity_tdh_sync_state';

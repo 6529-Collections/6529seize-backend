@@ -4,13 +4,17 @@ import { UploadMediaService } from '@/api/media/upload-media.service';
 import { ApiDropMediaStatus } from '@/api/generated/models/ApiDropMediaStatus';
 import { S3Client } from '@aws-sdk/client-s3';
 import { DropMediaUploadsDb } from '@/drops/drop-media-uploads.db';
-import { DropMediaUploadEntity } from '@/entities/IDropMediaUpload';
+import {
+  DropMediaUploadEntity,
+  DropMediaUploadPurpose
+} from '@/entities/IDropMediaUpload';
 
 jest.mock('@aws-sdk/s3-request-presigner', () => ({
   getSignedUrl: jest.fn()
 }));
 
 const ORIGINAL_ENV = { ...process.env };
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -125,13 +129,29 @@ describe('UploadMediaService', () => {
     expect(second.upload_url).toBe('https://signed-upload-url.example');
   });
 
-  it('includes a sanitized slug of the original name in drop media keys', async () => {
+  it('gives chat drop media a neutral name: the upload id and its extension', async () => {
+    const service = makeImageUploadService();
+
+    const result = await service.getDropMediaMultipartUploadKeyAndUploadId({
+      content_type: 'image/jpeg',
+      file_name: 'Jane Doe passport 2026-11-08.JPG',
+      author_id: 'author-123'
+    });
+
+    expect(result.key).toMatch(new RegExp(`^drops/(${UUID})/\\1\\.jpg$`));
+    expect(result.key).toBe(
+      `drops/${result.media_upload_id}/${result.media_upload_id}.jpg`
+    );
+  });
+
+  it('keeps a sanitized slug of the artist file name for decision entries', async () => {
     const service = makeImageUploadService();
 
     const result = await service.getDropMediaMultipartUploadKeyAndUploadId({
       content_type: 'image/jpeg',
       file_name: 'My Vacation Photo!.JPG',
-      author_id: 'author-123'
+      author_id: 'author-123',
+      purpose: DropMediaUploadPurpose.DECISION_ENTRY
     });
 
     expect(`${CLOUDFRONT_LINK}/${result.key}`).toMatch(
@@ -141,13 +161,14 @@ describe('UploadMediaService', () => {
     );
   });
 
-  it('falls back to a UUID-only drop media key when the name has no safe characters', async () => {
+  it('falls back to a UUID-only decision entry key when the name has no safe characters', async () => {
     const service = makeImageUploadService();
 
     const result = await service.getDropMediaMultipartUploadKeyAndUploadId({
       content_type: 'image/jpeg',
       file_name: '🎉🎊.jpg',
-      author_id: 'author-123'
+      author_id: 'author-123',
+      purpose: DropMediaUploadPurpose.DECISION_ENTRY
     });
 
     expect(`${CLOUDFRONT_LINK}/${result.key}`).toMatch(
@@ -157,8 +178,17 @@ describe('UploadMediaService', () => {
     );
   });
 
-  it('includes a sanitized slug of the original name in wave media keys', async () => {
-    const service = makeImageUploadService();
+  it('gives wave pictures a neutral name under the author prefix', async () => {
+    const createUpload = jest.fn();
+    const service = new UploadMediaService(
+      () => ({ send: jest.fn() }) as any,
+      () =>
+        ({
+          send: jest.fn().mockResolvedValue({ UploadId: 'image-upload' })
+        }) as any,
+      { createUpload } as any,
+      jest.fn()
+    );
 
     const result = await service.getWaveMediaMultipartUploadKeyAndUploadId({
       content_type: 'image/png',
@@ -166,13 +196,138 @@ describe('UploadMediaService', () => {
       author_id: 'author-xyz'
     });
 
-    const uuidPattern =
-      '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-    expect(`${CLOUDFRONT_LINK}/${result.key}`).toMatch(
-      new RegExp(
-        `^${escapeRegex(CLOUDFRONT_LINK)}/waves/author_author-xyz/Banner-Image-${uuidPattern}\\.PNG$`
-      )
+    expect(result.key).toBe(
+      `waves/author_author-xyz/${result.media_upload_id}.png`
     );
+    expect(result.key).not.toContain('Banner');
+    expect(createUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: result.media_upload_id,
+        source: 'wave',
+        purpose: DropMediaUploadPurpose.CHAT
+      })
+    );
+  });
+
+  it.each(['true', 'false'])(
+    'records chat purpose and the privacy flag %s for default drop images',
+    async (enabled) => {
+      process.env.DROP_MEDIA_SANITIZE_IMAGES = enabled;
+      const ingestS3 = {
+        send: jest.fn().mockResolvedValue({ UploadId: 'upload-chat' })
+      };
+      const uploadsDb = { createUpload: jest.fn() };
+      const service = new UploadMediaService(
+        () => ({ send: jest.fn() }) as any,
+        () => ingestS3 as any,
+        uploadsDb as any,
+        jest.fn()
+      );
+
+      const result = await service.getDropMediaMultipartUploadKeyAndUploadId({
+        content_type: 'image/jpeg',
+        file_name: 'IMG_0001.jpg',
+        author_id: 'author-123'
+      });
+
+      expect(ingestS3.send.mock.calls[0][0].input.Metadata).toEqual({
+        'sanitize-image-metadata': enabled
+      });
+      expect(uploadsDb.createUpload).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: result.media_upload_id,
+          public_key: result.key,
+          purpose: DropMediaUploadPurpose.CHAT
+        })
+      );
+    }
+  );
+
+  it('never asks the sanitizer to strip decision entry images, even when stripping is on', async () => {
+    process.env.DROP_MEDIA_SANITIZE_IMAGES = 'true';
+    const ingestS3 = {
+      send: jest.fn().mockResolvedValue({ UploadId: 'upload-entry' })
+    };
+    const uploadsDb = { createUpload: jest.fn() };
+    const service = new UploadMediaService(
+      () => ({ send: jest.fn() }) as any,
+      () => ingestS3 as any,
+      uploadsDb as any,
+      jest.fn()
+    );
+
+    const result = await service.getDropMediaMultipartUploadKeyAndUploadId({
+      content_type: 'image/png',
+      file_name: 'Final Artwork v3.png',
+      author_id: 'artist',
+      purpose: DropMediaUploadPurpose.DECISION_ENTRY
+    });
+
+    expect(result.key).toBe(
+      `drops/${result.media_upload_id}/Final-Artwork-v3.png`
+    );
+    expect(ingestS3.send.mock.calls[0][0].input.Metadata).toEqual({
+      'sanitize-image-metadata': 'false'
+    });
+    expect(uploadsDb.createUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: result.media_upload_id,
+        purpose: DropMediaUploadPurpose.DECISION_ENTRY
+      })
+    );
+  });
+
+  it.each([
+    [DropMediaUploadPurpose.CHAT, /^drops\/([0-9a-f-]{36})\/\1\.mp4$/],
+    [
+      DropMediaUploadPurpose.DECISION_ENTRY,
+      /^drops\/[0-9a-f-]{36}\/Studio-Cut\.MP4$/
+    ]
+  ])(
+    'records the %s purpose for public non-image uploads under the record id',
+    async (purpose, keyPattern) => {
+      const { service, record } = makePublicUploadService();
+
+      const started = await service.getDropMediaMultipartUploadKeyAndUploadId({
+        content_type: 'video/mp4',
+        file_name: 'Studio Cut.MP4',
+        author_id: 'artist',
+        purpose
+      });
+
+      expect(started.key).toMatch(keyPattern);
+      expect(record()).toMatchObject({
+        purpose,
+        public_key: started.key,
+        s3_upload_id: 'private-video-session'
+      });
+      expect(started.key.split('/')[1]).toBe(record()?.id);
+    }
+  );
+
+  it('records purpose and a neutral name for single PUT drop media', async () => {
+    const { service, record } = makePublicUploadService();
+
+    const chat = await service.createSingedDropMediaUploadUrl({
+      content_type: 'audio/mpeg',
+      file_name: 'Voice memo Jane.MP3',
+      author_id: 'author'
+    });
+    expect(chat.media_url).toBe(
+      `${CLOUDFRONT_LINK}/drops/${record()?.id}/${record()?.id}.mp3`
+    );
+    expect(record()?.purpose).toBe(DropMediaUploadPurpose.CHAT);
+
+    const entry = await service.createSingedDropMediaUploadUrl({
+      content_type: 'audio/mpeg',
+      file_name: 'Sound Piece.mp3',
+      author_id: 'author',
+      purpose: DropMediaUploadPurpose.DECISION_ENTRY
+    });
+    expect(entry.media_url).toBe(
+      `${CLOUDFRONT_LINK}/drops/${record()?.id}/Sound-Piece.mp3`
+    );
+    expect(record()?.purpose).toBe(DropMediaUploadPurpose.DECISION_ENTRY);
   });
 
   it.each(['true', 'false', undefined])(
@@ -252,7 +407,8 @@ describe('UploadMediaService', () => {
       const result = await service.getDropMediaMultipartUploadKeyAndUploadId({
         content_type: 'image/avif',
         file_name: 'photo.AVIF',
-        author_id: 'author-123'
+        author_id: 'author-123',
+        purpose: DropMediaUploadPurpose.DECISION_ENTRY
       });
       expect(result.key).toMatch(/\/photo\.webp$/);
       expect(result.media_upload_id).toBeDefined();
@@ -273,7 +429,9 @@ describe('UploadMediaService', () => {
         file_name: 'photo.AVIF',
         author_id: 'author-123'
       });
-      expect(repeated.key).toMatch(/\/photo\.webp$/);
+      expect(repeated.key).toBe(
+        `drops/${repeated.media_upload_id}/${repeated.media_upload_id}.webp`
+      );
       expect(repeated.key).not.toBe(result.key);
       expect(repeated.media_upload_id).not.toBe(result.media_upload_id);
     }

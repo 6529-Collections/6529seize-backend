@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import sharp from 'sharp';
 import { resizeImageBufferToHeight } from '@/media/image-resize';
 import { dropMediaSanitizerService } from '@/drops/drop-media-sanitizer.service';
+import { minimalOrientationJpegExifPayload } from '@/media/metadata-strip/exif-orientation';
 
 const imagescript = require('imagescript');
 
@@ -62,19 +63,26 @@ describe('media dependency compatibility with real codecs', () => {
   it.each(['jpeg', 'png', 'webp', 'gif'])(
     'sanitizes real %s data without changing its format',
     async (format) => {
+      const input = fixture(format);
+      const before = await sharp(input, { animated: true }).metadata();
       const { buffer, contentType } =
         await dropMediaSanitizerService.sanitizeBuffer({
-          input: fixture(format),
+          input,
           declaredMimeType: `image/${format}`
         });
       expect(contentType).toBe(`image/${format}`);
       const meta = await sharp(buffer, { animated: true }).metadata();
       expect(meta.format).toBe(format);
-      for (const field of ['exif', 'xmp', 'icc', 'orientation'] as const) {
-        expect(meta[field]).toBeUndefined();
-      }
+      expect(meta.xmp).toBeUndefined();
+      // Lossless stripping keeps the colour profile and orientation only.
+      expect(meta.icc).toEqual(before.icc);
+      expect(meta.orientation).toBe(before.orientation);
+      expect(buffer.toString('latin1')).not.toContain('Compatibility fixture');
       if (format === 'jpeg') {
-        expect(meta).toMatchObject({ width: 12, height: 24 });
+        expect(meta).toMatchObject({ width: 24, height: 12, orientation: 6 });
+        expect(meta.exif).toEqual(minimalOrientationJpegExifPayload(6));
+      } else {
+        expect(meta.exif).toBeUndefined();
       }
       if (format === 'gif') {
         expect(meta).toMatchObject({ pages: 2, delay: [80, 160], loop: 2 });
