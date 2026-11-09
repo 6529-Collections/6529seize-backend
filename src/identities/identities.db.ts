@@ -571,8 +571,10 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
   /**
    * The all-profiles check, for any writer that leaves profiles.primary_wallet
    * behind identities.primary_address. Run outside any transaction, so it
-   * holds no locks: discovery is a plain read in keyset pages, and each
-   * correction is its own indexed point update. Returns the profiles fixed.
+   * holds no locks: discovery is a plain read in keyset pages on the reader
+   * (a repair: replica lag only defers a fix to the next run), and each
+   * correction is its own indexed point update on the writer, which re-checks
+   * the difference. Returns the profiles fixed.
    */
   async syncAllProfileAddresses(): Promise<number> {
     let fixed = 0;
@@ -588,7 +590,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
          order by p.external_id asc
          limit 100`,
         { afterProfileId },
-        { forcePool: DbPoolName.WRITE }
+        { forcePool: DbPoolName.READ }
       );
       if (!changedProfiles.length) return fixed;
       for (const profile of changedProfiles) {
