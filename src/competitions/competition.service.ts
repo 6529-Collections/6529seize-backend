@@ -726,7 +726,7 @@ export class CompetitionService {
     competitionId: string
   ): NotFoundException {
     return new NotFoundException(
-      `Competition ${competitionId} for wave ${waveId} not found`
+      `Decision ${competitionId} for wave ${waveId} not found`
     );
   }
 }

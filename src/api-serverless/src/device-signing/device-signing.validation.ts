@@ -39,6 +39,12 @@ export const registerDeviceGrantSchema =
         .max(0xffff)
         .allow(null)
         .optional(),
+      // v2 (D172): a canonical suite set, [] without an MLS key.
+      version: Joi.number().integer().valid(1, 2).optional(),
+      ciphersuites: Joi.array()
+        .items(Joi.number().integer().min(1).max(0xffff))
+        .max(4)
+        .optional(),
       issued_at: unixSeconds().required(),
       expires_at: unixSeconds().required(),
       origin: Joi.string()

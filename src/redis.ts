@@ -112,6 +112,15 @@ function warnRedisUnavailable(error: RedisUnavailableError) {
 
 export const WAVE_GROUPS_CACHE_KEY = 'cache_6529_wave_groups';
 export const WAVE_GROUPS_VERSION_CACHE_KEY = 'cache_6529_wave_groups_version';
+// The entity blob's complete key as a hash tag puts these in its Redis Cluster
+// slot, so one script can read or change them together with the blob.
+const WAVE_GROUPS_CACHE_TAG = `{${WAVE_GROUPS_CACHE_KEY}}`;
+/** Identifies the blob's content: generation, hash, size and publish time. */
+export const WAVE_GROUPS_CACHE_STAMP_KEY = `cache_6529_wave_groups_stamp:${WAVE_GROUPS_CACHE_TAG}`;
+/** Incremented by every explicit eviction; a rebuild publishes only under its own. */
+export const WAVE_GROUPS_CACHE_GENERATION_KEY = `cache_6529_wave_groups_generation:${WAVE_GROUPS_CACHE_TAG}`;
+/** Single-flight lease for rebuilding the blob after it is evicted or expires. */
+export const WAVE_GROUPS_CACHE_REBUILD_LEASE_KEY = `cache_6529_wave_groups_rebuild:${WAVE_GROUPS_CACHE_TAG}`;
 
 export async function redisGet<T>(key: string): Promise<T | null> {
   if (!redis) {
@@ -144,6 +153,12 @@ export async function redisGetManyByIds<T>({
   );
 }
 
+/**
+ * Reads many cache keys with single-key GETs sent together (node-redis
+ * pipelines commands issued in the same tick). Never MGET: the API cache is
+ * ElastiCache Serverless in cluster mode, which rejects a multi-key command
+ * whose keys hash to different slots with CROSSSLOT.
+ */
 export async function redisGetMany<T>(
   keys: string[]
 ): Promise<Record<string, T>> {
@@ -154,9 +169,9 @@ export async function redisGetMany<T>(
     return {};
   }
   const valuesFromRedisRaw = await runFailOpenCommand<(string | null)[]>(
-    'MGET',
+    'GET (many)',
     [],
-    (client) => client.mGet(keys)
+    (client) => Promise.all(keys.map((key) => client.get(key)))
   );
   return valuesFromRedisRaw.reduce(
     (acc: Record<string, T>, value: string | null, index: number) => {
@@ -211,7 +226,33 @@ export async function redisSetJson<T>(
   });
 }
 
-/** Return undefined while another instance owns a cold-cache refresh. */
+/**
+ * SET key NX with a TTL: true when this call created the key, false when it
+ * already existed, null when Redis is disabled or unavailable.
+ */
+export async function redisSetIfAbsent(
+  key: string,
+  ttl: Time
+): Promise<boolean | null> {
+  if (!redis) {
+    return null;
+  }
+  return runFailOpenCommand<boolean | null>('SET NX', null, async (client) => {
+    const result = await client.set(key, '1', {
+      EX: ttl.toSeconds(),
+      NX: true
+    });
+    return result === 'OK';
+  });
+}
+
+/**
+ * Return undefined while another instance owns a cold-cache refresh.
+ *
+ * The publish script touches `key` and `${key}:refresh-lease` together, so
+ * `key` must carry a hash tag (`{...}`) that puts both in one Redis Cluster
+ * slot; without one the script fails with CROSSSLOT.
+ */
 export async function redisCachedWithRefreshLease<T>(
   key: string,
   ttl: Time,
@@ -312,8 +353,7 @@ export async function evictKeyFromRedisCache(key: string): Promise<any> {
   await redis.del(key);
 }
 export async function evictAllKeysMatchingPatternFromRedisCache(
-  pattern: string,
-  singleKeyDeletes = false
+  pattern: string
 ) {
   logger.info(`Evicting all keys matching pattern: ${pattern}`);
   if (!redis) {
@@ -323,24 +363,18 @@ export async function evictAllKeysMatchingPatternFromRedisCache(
   do {
     const result = await redis.scan(cursor, { MATCH: pattern, COUNT: 1000 });
     cursor = Number(result.cursor);
-    await deleteRedisCacheKeys(result.keys, singleKeyDeletes);
+    await deleteRedisCacheKeys(result.keys);
   } while (cursor !== 0);
 }
 
-async function deleteRedisCacheKeys(
-  keys: string[],
-  singleKeyDeletes: boolean
-): Promise<void> {
+async function deleteRedisCacheKeys(keys: string[]): Promise<void> {
   const client = redis;
   if (!client || keys.length === 0) {
     return;
   }
-  if (!singleKeyDeletes) {
-    await client.del(keys);
-    return;
-  }
-  // Query variants need not share a Redis Cluster hash slot. Keep each DEL
-  // single-key and bound concurrency when a scan returns many matches.
+  // Scanned keys need not share a Redis Cluster hash slot, and a multi-key
+  // DEL across slots fails with CROSSSLOT. Keep each DEL single-key and bound
+  // concurrency when a scan returns many matches.
   for (let start = 0; start < keys.length; start += 20) {
     await Promise.all(
       keys.slice(start, start + 20).map((key) => client.del(key))
@@ -356,24 +390,18 @@ export function getRedisCacheKeyPatternForPath(path: string): string {
   return getRedisCacheKeyForPath(path);
 }
 
-export async function evictRedisCacheForPath(
-  path: string,
-  singleKeyDeletes = false
-): Promise<void> {
+export async function evictRedisCacheForPath(path: string): Promise<void> {
   await evictAllKeysMatchingPatternFromRedisCache(
-    getRedisCacheKeyPatternForPath(`${path}*`),
-    singleKeyDeletes
+    getRedisCacheKeyPatternForPath(`${path}*`)
   );
 }
 
 export async function evictRedisCacheForPathWithTimeout({
   path,
-  timeoutMs = 1_500,
-  singleKeyDeletes = false
+  timeoutMs = 1_500
 }: {
   path: string;
   timeoutMs?: number;
-  singleKeyDeletes?: boolean;
 }): Promise<{
   success: boolean;
   elapsed_ms: number;
@@ -383,10 +411,7 @@ export async function evictRedisCacheForPathWithTimeout({
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   try {
-    const evictionPromise = evictRedisCacheForPath(
-      path,
-      singleKeyDeletes
-    ).finally(() => {
+    const evictionPromise = evictRedisCacheForPath(path).finally(() => {
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
@@ -561,9 +586,30 @@ export async function clearWaveGroupsCache() {
     return;
   }
   await Promise.all([
-    redis.del(WAVE_GROUPS_CACHE_KEY),
+    evictWaveGroupsCatalogue(redis),
     redis.incr(WAVE_GROUPS_VERSION_CACHE_KEY)
   ]);
+}
+
+/**
+ * Deletes the entity blob and its stamp and bumps the catalogue generation in
+ * one step. Processes holding the catalogue in memory see the new generation
+ * and never serve their copy again; a rebuild that started before this
+ * eviction cannot publish, because it publishes only under the generation it
+ * read before loading.
+ */
+async function evictWaveGroupsCatalogue(client: Redis): Promise<void> {
+  await client.eval(
+    `redis.call('INCR', KEYS[2])
+     return redis.call('DEL', KEYS[1], KEYS[3])`,
+    {
+      keys: [
+        WAVE_GROUPS_CACHE_KEY,
+        WAVE_GROUPS_CACHE_GENERATION_KEY,
+        WAVE_GROUPS_CACHE_STAMP_KEY
+      ]
+    }
+  );
 }
 
 /**
@@ -578,7 +624,30 @@ export async function evictWaveGroupsEntityCache() {
   if (!redis) {
     return;
   }
-  await redis.del(WAVE_GROUPS_CACHE_KEY);
+  await evictWaveGroupsCatalogue(redis);
+}
+
+/**
+ * Waits up to maxMs for a client that is still connecting, as on a cold start
+ * whose first connection outlived its budget. True once ready; false without
+ * a client or when it is not ready in time. Never throws.
+ */
+export async function waitForRedisReady(maxMs: number): Promise<boolean> {
+  const client = redis;
+  if (!client) return false;
+  if (client.isReady) return true;
+  return new Promise<boolean>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined = undefined;
+    const onReady = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    timer = setTimeout(() => {
+      client.off('ready', onReady);
+      resolve(client.isReady);
+    }, maxMs);
+    client.once('ready', onReady);
+  });
 }
 
 export function getRedisClient(): Redis | null {

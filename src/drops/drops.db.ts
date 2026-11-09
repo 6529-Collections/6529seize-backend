@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import {
   publicCompetitionDropSql,
   competitionAnonymityViewerId
@@ -6,9 +7,24 @@ import {
   DropSearchCursor,
   GLOBAL_SEARCH_QUERY_BUDGET_MS
 } from './drop-search-cursor';
-import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
+import {
+  isLegacyCompetitionGetFacadeScope,
+  legacyGetView,
+  withoutLegacyCompetitionGetFacade
+} from '@/competitions/legacy-competition-get-facade';
+import {
+  legacyAuthorWaveParticipationSql,
+  legacyParticipantCandidatesCte
+} from '@/competitions/legacy-typed-drops';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
+import { sqlInListBytes } from '@/db/sql-in-list-chunks';
+import {
+  ViewerGroupsCte,
+  viewerGroupsCteSupported,
+  viewerGroupsWorthSharing
+} from '@/waves/viewer-groups-cte';
+import { viewerGroupSets } from '@/waves/viewer-group-sets';
 import {
   userGroupsService,
   UserGroupsService
@@ -89,8 +105,13 @@ import {
 } from '../sql-executor';
 import { Time, Timer } from '../time';
 import { DbPoolName } from '@/db-query.options';
+import { invalidateWaveUnreadCacheForWaveAfterCommit } from '@/api/waves/wave-unread-cache';
 
 const mysql = require('mysql');
+
+/** Upper bound for reading a whole wave's activity logs. */
+export const WAVE_LOG_QUERY_BUDGET_MS = 5000;
+const PAL_TARGET_TYPE_CREATED_AT_INDEX = 'idx_pal_target_type_created_at';
 
 export type CurationDropEntity = DropEntity & {
   readonly drop_priority_order: number | null;
@@ -199,13 +220,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         }
       }
 
-      const rows = await this.db.execute<{
+      type ParticipationRow = {
         wave_id: string;
         author_id: string;
         is_participant: number;
         is_winner: number;
-      }>(
-        `
+      };
+      const waveIds = Array.from(authorIdsByWave.keys());
+      // Inside the legacy GET facade, drop_type comes from competition
+      // entries. Reading legacy_get_drops for it scans every drop by the
+      // authors in the waves, so read base tables with the view's rows.
+      const rows = isLegacyCompetitionGetFacadeScope()
+        ? await withoutLegacyCompetitionGetFacade(() =>
+            this.db.execute<ParticipationRow>(
+              legacyAuthorWaveParticipationSql({
+                waveIds: ':wave_ids',
+                authorIds: ':author_ids'
+              }),
+              { wave_ids: waveIds, author_ids: Array.from(authorIds) },
+              { wrappedConnection: ctx.connection }
+            )
+          )
+        : await this.db.execute<ParticipationRow>(
+            `
           select wave_id,
                  author_id,
                  max(case when drop_type = :participant_type then 1 else 0 end) as is_participant,
@@ -216,14 +253,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             and drop_type in (:participant_type, :winner_type)
           group by wave_id, author_id
         `,
-        {
-          wave_ids: Array.from(authorIdsByWave.keys()),
-          author_ids: Array.from(authorIds),
-          participant_type: DropType.PARTICIPATORY,
-          winner_type: DropType.WINNER
-        },
-        { wrappedConnection: ctx.connection }
-      );
+            {
+              wave_ids: waveIds,
+              author_ids: Array.from(authorIds),
+              participant_type: DropType.PARTICIPATORY,
+              winner_type: DropType.WINNER
+            },
+            { wrappedConnection: ctx.connection }
+          );
 
       for (const row of rows) {
         const requestedParticipation = result[row.wave_id]?.[row.author_id];
@@ -375,7 +412,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                  WHEN dm.media_upload_id IS NULL THEN 'ready'
                  ELSE COALESCE(dmu.status, 'failed')
                END as media_status,
-               dmu.error_reason as media_error
+               dmu.error_reason as media_error,
+               dmu.width as media_width,
+               dmu.height as media_height,
+               dmu.thumbhash as media_thumbhash
         from ${DROP_MEDIA_TABLE} dm
              left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
         where dm.drop_id in (:dropIds)
@@ -437,7 +477,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                  WHEN dm.media_upload_id IS NULL THEN 'ready'
                  ELSE COALESCE(dmu.status, 'failed')
                END as media_status,
-               dmu.error_reason as media_error
+               dmu.error_reason as media_error,
+               dmu.width as media_width,
+               dmu.height as media_height,
+               dmu.thumbhash as media_thumbhash
         from ${DROP_MEDIA_TABLE} dm
              left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
         where dm.drop_id = :dropId
@@ -613,6 +656,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     if (!options.deferMetrics) {
       await this.applyInsertedDropMetricsDelta(newDropEntity, { connection });
     }
+    // Every drop insert (API, bots, alerts) moves the wave's cached unread
+    // summaries once its transaction commits.
+    await invalidateWaveUnreadCacheForWaveAfterCommit(waveId, connection);
   }
 
   async applyInsertedDropMetricsDelta(
@@ -741,10 +787,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     timer?: Timer
   ) {
     timer?.start('dropsDb->insertReferencedNfts');
-    await Promise.all(
-      references.map((reference) =>
-        this.db.execute(
-          `insert into ${DROP_REFERENCED_NFTS_TABLE} (drop_id,
+    await inSequence(
+      references.map(
+        (reference) => () =>
+          this.db.execute(
+            `insert into ${DROP_REFERENCED_NFTS_TABLE} (drop_id,
                                                       contract,
                                                       token,
                                                       name,
@@ -754,9 +801,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                    :token,
                    :name,
                    :wave_id)`,
-          reference,
-          { wrappedConnection: connection }
-        )
+            reference,
+            { wrappedConnection: connection }
+          )
       )
     );
     timer?.stop('dropsDb->insertReferencedNfts');
@@ -768,10 +815,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     timer?: Timer
   ) {
     timer?.start(`dropsDb->insertDropMetadata`);
-    await Promise.all(
-      metadatas.map((metadata) =>
-        this.db.execute(
-          `insert into ${DROP_METADATA_TABLE} (drop_id,
+    await inSequence(
+      metadatas.map(
+        (metadata) => () =>
+          this.db.execute(
+            `insert into ${DROP_METADATA_TABLE} (drop_id,
                                                data_key,
                                                data_value,
                                                wave_id)
@@ -779,9 +827,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                    :data_key,
                    :data_value,
                    :wave_id)`,
-          metadata,
-          { wrappedConnection: connection }
-        )
+            metadata,
+            { wrappedConnection: connection }
+          )
       )
     );
     timer?.stop(`dropsDb->insertDropMetadata`);
@@ -1057,12 +1105,28 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<DropEntity[]> {
     const timerLabel = `${this.constructor.name}->findVisibleDrops`;
     ctx.timer?.start(timerLabel);
-    const visibleWaveFilter = this.getVisibleWaveFilterSql(
-      group_ids_user_is_eligible_for
-    );
     try {
+      // The wave and its parent each check the groups: shared once that and
+      // the inlined id lists would reach the pinning size. Only lookups by
+      // ids or serials share: those are driven by the drops' keys. Without
+      // them the scan is driven by the index range the inlined list builds
+      // on visibility_group_id, which a shared table would lose.
+      const groups =
+        ids?.length || serial_nos?.length
+          ? await this.sharedViewerGroups(
+              'vd_viewer_groups',
+              group_ids_user_is_eligible_for,
+              sqlInListBytes(ids ?? []) + sqlInListBytes(serial_nos ?? [])
+            )
+          : undefined;
+      const visibleWaveFilter = waveReadAccessSql(
+        'w',
+        group_ids_user_is_eligible_for.length > 0,
+        'groupsUserIsEligibleFor',
+        groups?.setSql
+      );
       return await this.db.execute<DropEntity>(
-        `select d.*
+        `${groups ? `with ${groups.cteSql} ` : ''}select d.*
          from ${DROPS_TABLE} d
          ${
            parent_drop_id
@@ -1090,7 +1154,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           parent_drop_id,
           serial_nos,
           ids,
-          groupsUserIsEligibleFor: group_ids_user_is_eligible_for
+          groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
+          ...groups?.params
         },
         { wrappedConnection: ctx.connection }
       );
@@ -1125,7 +1190,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          LEFT JOIN (
             SELECT  drop_id,
                     JSON_ARRAYAGG(
-                            JSON_OBJECT(
+                            -- Layout hints (waves R11-2) merge in only when known:
+                            -- JSON_MERGE_PATCH drops keys whose value is null.
+                            JSON_MERGE_PATCH(
+                              JSON_OBJECT(
                                     'url',       url,
                                     'mime_type', mime_type,
                                     'media_upload_id', media_upload_id,
@@ -1134,10 +1202,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                       ELSE COALESCE(media_status, 'failed')
                                     END,
                                     'media_error', media_error
+                              ),
+                              JSON_OBJECT(
+                                    'width', IF(media_width > 0 AND media_height > 0, media_width, NULL),
+                                    'height', IF(media_width > 0 AND media_height > 0, media_height, NULL),
+                                    'thumbhash', media_thumbhash
+                              )
                             )
                     ) AS medias_json
             FROM    (
-              SELECT dm.*, dmu.status as media_status, dmu.error_reason as media_error
+              SELECT dm.*, dmu.status as media_status, dmu.error_reason as media_error,
+                     dmu.width as media_width, dmu.height as media_height,
+                     dmu.thumbhash as media_thumbhash
               FROM ${DROP_MEDIA_TABLE} dm
                    left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
             ) drop_media_with_uploads
@@ -1776,14 +1852,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     timer?: Timer
   ) {
     timer?.start(`dropsDb->insertDropMedia`);
-    await Promise.all(
-      media.map((medium) =>
-        this.db.execute(
-          `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type, media_upload_id, wave_id)
+    await inSequence(
+      media.map(
+        (medium) => () =>
+          this.db.execute(
+            `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type, media_upload_id, wave_id)
            values (:drop_id, :drop_part_id, :url, :mime_type, :media_upload_id, :wave_id)`,
-          medium,
-          { wrappedConnection: connection }
-        )
+            medium,
+            { wrappedConnection: connection }
+          )
       )
     );
     timer?.stop(`dropsDb->insertDropMedia`);
@@ -1802,7 +1879,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                 WHEN dm.media_upload_id IS NULL THEN 'ready'
                 ELSE COALESCE(dmu.status, 'failed')
               END as media_status,
-              dmu.error_reason as media_error
+              dmu.error_reason as media_error,
+              dmu.width as media_width,
+              dmu.height as media_height,
+              dmu.thumbhash as media_thumbhash
        from ${DROP_MEDIA_TABLE} dm
             left join ${DROP_MEDIA_UPLOADS_TABLE} dmu on dmu.id = dm.media_upload_id
        where dm.drop_id in (:dropIds)`,
@@ -1868,15 +1948,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     timer?: Timer
   ) {
     timer?.start(`dropsDb->insertDropParts`);
-    await Promise.all(
-      parts.map((part) =>
-        this.db.execute(
-          `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, quoted_drop_id, quoted_drop_part_id,
+    await inSequence(
+      parts.map(
+        (part) => () =>
+          this.db.execute(
+            `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, quoted_drop_id, quoted_drop_part_id,
                                              wave_id)
            values (:drop_id, :drop_part_id, :content, :quoted_drop_id, :quoted_drop_part_id, :wave_id)`,
-          part,
-          { wrappedConnection: connection }
-        )
+            part,
+            { wrappedConnection: connection }
+          )
       )
     );
     timer?.stop(`dropsDb->insertDropParts`);
@@ -2280,13 +2361,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return trace;
   }
 
-  private getLeaderboardDropPricesCteSql(): string {
+  /** `drops`: the source of the wave's drops, aliased `d`. */
+  private getLeaderboardDropPricesCteSql(
+    drops: string = `${DROPS_TABLE} d`
+  ): string {
     return `
       drop_prices as (
         select
           d.id as drop_id,
           max(nl.price) as drop_price
-        from ${DROPS_TABLE} d
+        from ${drops}
         left join ${DROP_NFT_LINKS_TABLE} dnl on dnl.drop_id = d.id
         left join ${NFT_LINKS_TABLE} nl
           on nl.canonical_id = dnl.canonical_id
@@ -2316,7 +2400,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return params.min_price != null || params.max_price != null;
   }
 
-  private getLeaderboardPriceSqlParts(hasPriceBounds: boolean): {
+  private getLeaderboardPriceSqlParts(
+    hasPriceBounds: boolean,
+    drops?: string
+  ): {
     withClause: string;
     cteClause: string;
     joinClause: string;
@@ -2331,8 +2418,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       };
     }
     return {
-      withClause: `with ${this.getLeaderboardDropPricesCteSql()}`,
-      cteClause: `, ${this.getLeaderboardDropPricesCteSql()}`,
+      withClause: `with ${this.getLeaderboardDropPricesCteSql(drops)}`,
+      cteClause: `, ${this.getLeaderboardDropPricesCteSql(drops)}`,
       joinClause: `left join drop_prices dp on dp.drop_id = d.id`,
       filterClause: `and ${this.getLeaderboardPriceFilterSql('dp.drop_price')}`
     };
@@ -2906,7 +2993,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->countLeaderboardDrops`);
     const hasPriceBounds = this.hasLeaderboardPriceBounds(params);
-    const priceSql = this.getLeaderboardPriceSqlParts(hasPriceBounds);
+    // The view's participatory drops of the wave, read by candidate id
+    // instead of walking every drop of the wave through the view.
+    const participantDrops = `participant_candidates pc
+        join ${legacyGetView(DROPS_TABLE)} d on d.id = pc.id`;
+    const priceSql = this.getLeaderboardPriceSqlParts(
+      hasPriceBounds,
+      participantDrops
+    );
     const unvotedByMeSql = this.getLeaderboardUnvotedByMeSqlParts(
       params,
       voterId
@@ -2920,8 +3014,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const additionalActionPromiseFilter =
       this.getLeaderboardAdditionalActionPromiseFilterSql(params);
     const countSql = `
-        ${priceSql.withClause}
-        select count(*) as cnt from ${DROPS_TABLE} d
+        with ${legacyParticipantCandidatesCte('= :wave_id')}${priceSql.cteClause}
+        select count(*) as cnt from ${participantDrops}
         ${unvotedByMeSql.joinClause}
         ${priceSql.joinClause}
         where d.wave_id = :wave_id and d.drop_type = :drop_type
@@ -2930,8 +3024,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           ${unvotedByMeSql.filterClause}
           ${priceSql.filterClause}
         `;
-    const count = await this.db
-      .oneOrNull<{ cnt: number }>(
+    // Outside the facade rewrite: see legacyParticipantCandidatesCte.
+    const count = await withoutLegacyCompetitionGetFacade(() =>
+      this.db.oneOrNull<{ cnt: number }>(
         countSql,
         {
           wave_id: params.wave_id,
@@ -2943,29 +3038,39 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         },
         { wrappedConnection: ctx.connection }
       )
-      .then((it) => it?.cnt ?? 0);
+    ).then((it) => it?.cnt ?? 0);
     ctx.timer?.stop(`${this.constructor.name}->countLeaderboardDrops`);
     return count;
   }
 
+  /**
+   * A drop's logs are read through the (target_id, type, created_at) index,
+   * so only that drop's rows are touched; left alone, the optimizer can walk
+   * the whole table's created_at index instead. A whole wave's logs have no
+   * matching index (the wave id is in additional_data_2), so that statement
+   * is capped at WAVE_LOG_QUERY_BUDGET_MS and fails with ER_QUERY_TIMEOUT
+   * rather than holding a connection for minutes.
+   */
   async findDropLogEntities(
     param: DropLogsQueryParams,
     ctx: RequestContext
   ): Promise<ProfileActivityLog[]> {
     ctx.timer?.start(`${this.constructor.name}->findDropLogs`);
-    const results = await this.db.execute<ProfileActivityLog>(
-      `
-      select * from ${PROFILES_ACTIVITY_LOGS_TABLE} where additional_data_2 = :wave_id ${
-        param.drop_id ? ` and target_id = :drop_id ` : ``
-      } and type in (:log_types) order by created_at ${
-        param.sort_direction
-      } limit :limit offset :offset
-    `,
-      param,
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop(`${this.constructor.name}->findDropLogs`);
-    return results;
+    try {
+      return await this.db.execute<ProfileActivityLog>(
+        param.drop_id
+          ? `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} force index (${PAL_TARGET_TYPE_CREATED_AT_INDEX})
+             where target_id = :drop_id and additional_data_2 = :wave_id and type in (:log_types)
+             order by created_at ${param.sort_direction} limit :limit offset :offset`
+          : `select /*+ MAX_EXECUTION_TIME(${WAVE_LOG_QUERY_BUDGET_MS}) */ * from ${PROFILES_ACTIVITY_LOGS_TABLE}
+             where additional_data_2 = :wave_id and type in (:log_types)
+             order by created_at ${param.sort_direction} limit :limit offset :offset`,
+        param,
+        { wrappedConnection: ctx.connection }
+      );
+    } finally {
+      ctx.timer?.stop(`${this.constructor.name}->findDropLogs`);
+    }
   }
 
   async findDropVoteEditLogEntities(
@@ -2990,10 +3095,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       return await this.db.execute<ProfileActivityLog>(
         `
         select *
-        from ${PROFILES_ACTIVITY_LOGS_TABLE}
-        where additional_data_2 = :wave_id
-          and target_id = :drop_id
+        from ${PROFILES_ACTIVITY_LOGS_TABLE} force index (${PAL_TARGET_TYPE_CREATED_AT_INDEX})
+        where target_id = :drop_id
           and type = :log_type
+          and additional_data_2 = :wave_id
         order by created_at ${sort_direction}
         limit :limit offset :offset
       `,
@@ -3532,6 +3637,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * The viewer's groups as one shared table (see viewerGroupsCte), so a
+   * statement inlines them once instead of once per visibility check.
+   */
+  private async sharedViewerGroups(
+    name: string,
+    groupIds: readonly string[],
+    otherInlinedBytes = 0
+  ): Promise<ViewerGroupsCte | undefined> {
+    // Share only when two inlined copies (plus the statement's other inlined
+    // lists) would reach the pinning size; below that the inlined list is
+    // the cheaper plan.
+    if (!viewerGroupsWorthSharing(groupIds, 2, otherInlinedBytes))
+      return undefined;
+    const supported = await viewerGroupsCteSupported(this.db, [
+      WAVES_TABLE,
+      legacyGetView(WAVES_TABLE)
+    ]);
+    return supported
+      ? viewerGroupSets.source(this.db, name, groupIds)
+      : undefined;
+  }
+
   public async findBoostedDrops(
     {
       wave_id,
@@ -3564,6 +3692,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<DropEntity[]> {
     try {
       ctx.timer?.start(`${this.constructor.name}->findBoostedDrops`);
+      const groups = await this.sharedViewerGroups(
+        'bd_viewer_groups',
+        eligibile_groups
+      );
       const aggregateSql = `
         select
           d.id as drop_id,
@@ -3576,13 +3708,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         JOIN ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${legacyGetView(WAVES_TABLE)} w on w.id = d.wave_id
         where p.boosted_at > :count_only_boosts_after
-        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups')}
+        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups', groups?.setSql)}
         ${author_id ? ` and d.author_id = :author_id and ${publicCompetitionDropSql('d', 'anonymityViewerId')} ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2
       `;
       const sql = `
-        with boosts_aggregate as (${aggregateSql}) select d.* from boosts_aggregate a
+        with ${groups ? `${groups.cteSql},` : ''} boosts_aggregate as (${aggregateSql}) select d.* from boosts_aggregate a
         join ${DROPS_TABLE} d on a.drop_id = d.id
         where a.includes_booster > 0
         ${min_boosts !== null ? ` and a.boosts >= :min_boosts ` : ''}
@@ -3601,7 +3733,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           min_boosts,
           order_by,
           count_only_boosts_after,
-          order
+          order,
+          ...groups?.params
         },
         { wrappedConnection: ctx.connection }
       );
@@ -3630,6 +3763,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ): Promise<number> {
     try {
       ctx.timer?.start(`${this.constructor.name}->countBoostedDrops`);
+      const groups = await this.sharedViewerGroups(
+        'bd_viewer_groups',
+        eligibile_groups
+      );
       const aggregateSql = `
         select
           d.id as drop_id,
@@ -3642,13 +3779,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         join ${DROP_BOOSTS_TABLE} p on p.drop_id = d.id
         join ${legacyGetView(WAVES_TABLE)} w on w.id = d.wave_id
         where p.boosted_at > :count_only_boosts_after
-        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups')}
+        and ${waveReadAccessSql('w', eligibile_groups.length > 0, 'eligibile_groups', groups?.setSql)}
         ${author_id ? ` and d.author_id = :author_id and ${publicCompetitionDropSql('d', 'anonymityViewerId')} ` : ''}
         ${wave_id ? ` and d.wave_id = :wave_id ` : ''}
         group by 1, 2
       `;
       const sql = `
-        with boosts_aggregate as (${aggregateSql}) select count(a.drop_id) as cnt from boosts_aggregate a
+        with ${groups ? `${groups.cteSql},` : ''} boosts_aggregate as (${aggregateSql}) select count(a.drop_id) as cnt from boosts_aggregate a
         where a.includes_booster > 0
         ${min_boosts !== null ? ` and a.boosts >= :min_boosts ` : ''}
       `;
@@ -3661,7 +3798,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           anonymityViewerId: competitionAnonymityViewerId(ctx) ?? null,
           min_boosts,
           eligibile_groups,
-          count_only_boosts_after
+          count_only_boosts_after,
+          ...groups?.params
         },
         { wrappedConnection: ctx.connection }
       );

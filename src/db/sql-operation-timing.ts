@@ -1,11 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { Logger } from '@/logging';
-import { loggerContext } from '@/logger-context';
+import { loggerContext, RequestSqlTotals } from '@/logger-context';
 import { DbPoolName } from '@/db-query.options';
 
 const SLOW_OPERATION_MS = 1000;
 const logger = Logger.get('MYSQL_HELPERS');
+
+export function emptyRequestSqlTotals(): RequestSqlTotals {
+  return { operations: 0, acquisitionMs: 0, maxAcquisitionMs: 0, sqlMs: 0 };
+}
+
+/** Request-log fields, parseable like `[TOOK_MS n]`. */
+export function formatRequestSqlTotals(totals: RequestSqlTotals): string {
+  return [
+    `[SQL_OPS ${totals.operations}]`,
+    `[SQL_ACQUIRE_MS ${Math.round(totals.acquisitionMs)}]`,
+    `[SQL_ACQUIRE_MAX_MS ${Math.round(totals.maxAcquisitionMs)}]`,
+    `[SQL_MS ${Math.round(totals.sqlMs)}]`
+  ].join(' ');
+}
 
 /** One pending snapshot and one terminal diagnostic at most per operation. */
 export class SqlOperationTiming {
@@ -20,7 +34,7 @@ export class SqlOperationTiming {
   private pendingLogged = false;
 
   constructor(
-    private readonly pool: DbPoolName | 'supplied',
+    readonly pool: DbPoolName | 'supplied',
     private readonly describeQuery: () => string
   ) {
     this.stage = pool === 'supplied' ? 'sql_setup' : 'acquisition';
@@ -48,12 +62,32 @@ export class SqlOperationTiming {
 
   finish(outcome: 'completed' | 'failed') {
     clearTimeout(this.pendingTimer);
+    this.addToRequestTotals();
     if (
       outcome === 'failed' ||
       this.pendingLogged ||
       performance.now() - this.started > SLOW_OPERATION_MS
     ) {
       this.log(outcome);
+    }
+  }
+
+  private addToRequestTotals() {
+    // Totals belong to the request the operation started in: the context copy
+    // shares that request's totals object, which is never reassigned. Outside
+    // a request (loops, startup) there are none and this is a no-op.
+    const totals = this.context.sql;
+    if (!totals) return;
+    const now = performance.now();
+    const acquisitionMs =
+      this.stage === 'acquisition'
+        ? now - this.started
+        : (this.acquisitionMs ?? 0);
+    totals.operations += 1;
+    totals.acquisitionMs += acquisitionMs;
+    totals.maxAcquisitionMs = Math.max(totals.maxAcquisitionMs, acquisitionMs);
+    if (this.sqlStarted !== undefined) {
+      totals.sqlMs += (this.sqlFinished ?? now) - this.sqlStarted;
     }
   }
 

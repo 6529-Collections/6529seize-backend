@@ -194,6 +194,7 @@ export const DROP_MENTIONED_GROUPS_TABLE = 'drop_mentioned_groups';
 export const DROP_POLLS_TABLE = 'drop_polls';
 export const DROP_POLL_OPTIONS_TABLE = 'drop_poll_options';
 export const DROP_POLL_VOTES_TABLE = 'drop_poll_votes';
+export const DROP_CLIENT_IDS_TABLE = 'drop_client_ids';
 export const PINNED_WAVES_TABLE = 'pinned_waves';
 export const PROFILE_WAVES_TABLE = 'profile_waves';
 export const COOKIES_CONSENT_TABLE = 'cookies_consent';
@@ -359,3 +360,6 @@ export const ARTIST_ARTWORK_ALERTS_TABLE = 'artist_artwork_alerts';
 // Who read or changed reported encrypted messages (trust and safety audit,
 // D109). Kept apart from the E2EE block above.
 export const E2EE_REPORT_ACCESS_LOG_TABLE = 'e2ee_report_access_log';
+/** Content-addressed viewer group sets (see waves/viewer-group-sets.ts). */
+export const VIEWER_GROUP_SETS_TABLE = 'viewer_group_sets';
+export const VIEWER_GROUP_SET_MEMBERS_TABLE = 'viewer_group_set_members';

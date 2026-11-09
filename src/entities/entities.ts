@@ -68,6 +68,7 @@ export { DropNftLinkEntity } from './IDropNftLink';
 export { DropBookmarkEntity } from './IDropBookmark';
 export { DropQuickVoteSkipEntity } from './IDropQuickVoteSkip';
 export { DropCurationEntity } from './IDropCuration';
+export { DropClientIdEntity } from './IDropClientId';
 export {
   DropPollEntity,
   DropPollOptionEntity,
@@ -311,3 +312,7 @@ export { ReleaseNoteRecoveryJobEntity } from './IReleaseNoteRecoveryJob';
 
 export { ArtistArtworkAlertEntity } from './IArtistArtworkAlert';
 export { NFTHistoryReplayJobEntity } from './INFTHistoryReplayJob';
+export {
+  ViewerGroupSetEntity,
+  ViewerGroupSetMemberEntity
+} from './IViewerGroupSet';

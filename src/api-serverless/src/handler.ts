@@ -1,4 +1,6 @@
+import { withRequestDeadline } from '@/api/write-transaction-budget';
 import type {} from '../../typeorm-index-options';
+import { clientVersionFromQuery } from '@/ws-client-versions/ws-client-versions';
 import { app, ensureInitialized } from './app';
 import * as sentryContext from '../../sentry.context';
 import type {
@@ -7,11 +9,14 @@ import type {
   Context
 } from 'aws-lambda';
 import {
+  ANON_USER_ID,
   appWebSockets,
   authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
-  authenticateWebSocketToken
+  authenticateWebSocketToken,
+  connectionPurposeFromQuery
 } from './ws/ws';
+import { pongFrame, readPingFrame, type WsPingFrame } from './ws/ws-ping';
 import { Logger } from '../../logging';
 import {
   notificationIdentitiesSyncedMessage,
@@ -34,6 +39,7 @@ import {
   setWebSocketDiagnosticOperation,
   withWebSocketOperationDiagnostics
 } from '@/api/ws/ws-operation-diagnostics';
+import { withProxyPinScope } from '@/db/proxy-session-pinning';
 
 const serverlessHttp = require('serverless-http');
 const logger = Logger.get('API_HANDLER');
@@ -56,41 +62,54 @@ export const handler = sentryContext.wrapLambdaHandler(
   async (
     event: APIGatewayEvent,
     context: Context
-  ): Promise<APIGatewayProxyResult> => {
-    const path = (event as any).rawPath ?? event.path ?? 'n/a';
-    const method = event.httpMethod ?? 'n/a';
-    logger.info(
-      `[HTTP_ENTRY] [METHOD ${method}] [PATH ${path}] [REQUEST_ID ${
-        event.requestContext?.requestId ?? context.awsRequestId
-      }]`
-    );
-
-    await ensureInitialized();
-
-    logger.info(
-      `[HTTP_READY] [METHOD ${method}] [PATH ${path}] [REQUEST_ID ${
-        event.requestContext?.requestId ?? context.awsRequestId
-      }]`
-    );
-
-    if (event.requestContext && event.requestContext.routeKey) {
-      return withWebSocketOperationDiagnostics(
-        {
-          routeKey: event.requestContext.routeKey,
-          connectionId: event.requestContext.connectionId ?? '',
-          lambdaRequestId: context.awsRequestId,
-          gatewayRequestId: event.requestContext.requestId
-        },
-        async () => operationalResponse(await wsHandler(event))
-      );
-    } else {
-      return normalizeSetCookieResponse(
-        event,
-        operationalResponse(await httpHandler(event, context))
-      );
-    }
-  }
+  ): Promise<APIGatewayProxyResult> =>
+    // DB sessions pinned by RDS Proxy during this invocation stay reusable
+    // until it ends, then are destroyed so idle containers hold none.
+    withProxyPinScope(() => handleInvocation(event, context))
 );
+
+async function handleInvocation(
+  event: APIGatewayEvent,
+  context: Context
+): Promise<APIGatewayProxyResult> {
+  const path = (event as any).rawPath ?? event.path ?? 'n/a';
+  const method = event.httpMethod ?? 'n/a';
+  logger.info(
+    `[HTTP_ENTRY] [METHOD ${method}] [PATH ${path}] [REQUEST_ID ${
+      event.requestContext?.requestId ?? context.awsRequestId
+    }]`
+  );
+
+  await ensureInitialized();
+
+  logger.info(
+    `[HTTP_READY] [METHOD ${method}] [PATH ${path}] [REQUEST_ID ${
+      event.requestContext?.requestId ?? context.awsRequestId
+    }]`
+  );
+
+  if (event.requestContext && event.requestContext.routeKey) {
+    return withWebSocketOperationDiagnostics(
+      {
+        routeKey: event.requestContext.routeKey,
+        connectionId: event.requestContext.connectionId ?? '',
+        lambdaRequestId: context.awsRequestId,
+        gatewayRequestId: event.requestContext.requestId
+      },
+      async () => operationalResponse(await wsHandler(event))
+    );
+  } else {
+    // Write transactions end (and answer 503) before this Lambda times out.
+    const remaining =
+      typeof context?.getRemainingTimeInMillis === 'function'
+        ? context.getRemainingTimeInMillis()
+        : null;
+    const response = remaining
+      ? await withRequestDeadline(remaining, () => httpHandler(event, context))
+      : await httpHandler(event, context);
+    return normalizeSetCookieResponse(event, operationalResponse(response));
+  }
+}
 
 function normalizeSetCookieResponse(
   event: APIGatewayEvent,
@@ -215,20 +234,55 @@ function removeSetCookieHeaders<T extends HeaderMap | undefined>(
   ) as T;
 }
 
+async function answerPing(
+  ping: WsPingFrame,
+  connectionId: string
+): Promise<APIGatewayProxyResult> {
+  if (ping.kind === 'invalid') {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ message: 'Invalid PING' })
+    };
+  }
+  try {
+    await appWebSockets.send({
+      connectionId,
+      message: pongFrame(ping.id),
+      skipStaleConnectionCheck: true
+    });
+    return { statusCode: 200, body: JSON.stringify({ message: 'OK' }) };
+  } catch {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ message: 'Failed to process message' })
+    };
+  }
+}
+
 async function wsHandler(
   event: APIGatewayEvent
 ): Promise<APIGatewayProxyResult> {
   const wsHandlerLogger = Logger.get('wsHandler');
   const { routeKey, connectionId } = event.requestContext;
-  const { identityId, jwtExpiry } =
+  if (routeKey === '$default') {
+    // Answered before authentication: no database read or write.
+    const ping = readPingFrame(event.body);
+    if (ping) return answerPing(ping, connectionId!);
+  }
+  const { identityId, jwtExpiry, purpose } =
     await authenticateWebSocketJwtOrGetByConnectionId(event);
   switch (routeKey) {
     case '$connect':
       try {
+        const clientVersion = clientVersionFromQuery(
+          event.queryStringParameters
+        );
         await appWebSockets.register({
           identityId,
           connectionId: connectionId!,
           jwtExpiry,
+          purpose: connectionPurposeFromQuery(event.queryStringParameters),
+          ...(clientVersion ? { clientVersion } : {}),
           ...(event.queryStringParameters?.recovery_capability ===
           WS_RECOVERY_CAPABILITY
             ? { recoveryCapable: true }
@@ -244,7 +298,14 @@ async function wsHandler(
         return { statusCode: 500, body: 'Failed to connect' };
       }
     case '$disconnect':
-      await appWebSockets.deregister({ connectionId: connectionId! });
+      await appWebSockets.deregister({
+        connectionId: connectionId!,
+        disconnect: {
+          purpose: purpose ?? null,
+          authenticated: identityId !== ANON_USER_ID,
+          connectedAt: event.requestContext.connectedAt
+        }
+      });
       return { statusCode: 200, body: 'Disconnected' };
     case '$default': {
       let isTypingMessage = false;
@@ -347,6 +408,23 @@ async function wsHandler(
                 connectionId: connectionId!,
                 activeWaveId: waveId
               },
+              {}
+            );
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ message: 'OK' })
+            };
+          }
+          case WsMessageType.SET_OPEN_WAVE: {
+            const waveId = message.wave_id?.toString() ?? null;
+            if (waveId && !ids.isValidUuid(waveId)) {
+              return {
+                statusCode: 400,
+                body: JSON.stringify({ message: 'Invalid wave id' })
+              };
+            }
+            await appWebSockets.updateOpenWaveForConnection(
+              { connectionId: connectionId!, openWaveId: waveId },
               {}
             );
             return {

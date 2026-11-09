@@ -101,7 +101,7 @@ describe('Native competition signature binding', () => {
         now,
         context
       )
-    ).rejects.toThrow('Invalid competition signature');
+    ).rejects.toThrow('Invalid decision signature');
     expect(competitionCommandRepository.consumeNonce).not.toHaveBeenCalled();
   });
 
@@ -110,7 +110,7 @@ describe('Native competition signature binding', () => {
     process.env.API_BASE_URL = 'https://api.staging.6529.io/api';
     await expect(
       verifyCompetitionSignature(action, signature, true, now, context)
-    ).rejects.toThrow('Invalid competition signature');
+    ).rejects.toThrow('Invalid decision signature');
     expect(competitionCommandRepository.consumeNonce).not.toHaveBeenCalled();
   });
 
@@ -162,7 +162,7 @@ describe('Native competition signature binding', () => {
         now,
         context
       )
-    ).rejects.toThrow('Invalid competition signature');
+    ).rejects.toThrow('Invalid decision signature');
   });
 
   it('canonical hashes ignore object key ordering but preserve array order', () => {

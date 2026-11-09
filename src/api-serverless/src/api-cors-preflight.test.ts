@@ -33,46 +33,40 @@ type ApiOperation = {
   'x-6529-router'?: { auth?: string };
 };
 
-describe('idempotent API submission preflights', () => {
-  let server: Server;
-  let url: string;
-  const downstream = jest.fn();
+let server: Server;
+let url: string;
+const downstream = jest.fn();
 
-  beforeAll(async () => {
-    const app = express();
-    // Use the same request-aware CORS middleware as app.ts, before auth/routes.
-    app.use(
-      cors((req, callback) =>
-        callback(
-          null,
-          getCorsOptionsForRequest(
-            req.path,
-            req.headers.origin,
-            req.headers.host
-          )
-        )
+beforeAll(async () => {
+  const app = express();
+  // Use the same request-aware CORS middleware as app.ts, before auth/routes.
+  app.use(
+    cors((req, callback) =>
+      callback(
+        null,
+        getCorsOptionsForRequest(req.path, req.headers.origin, req.headers.host)
       )
-    );
-    app.use((_req, res) => {
-      downstream();
-      res.sendStatus(401);
-    });
-    server = await new Promise<Server>((resolveServer) => {
-      const listener = app.listen(0, '127.0.0.1', () =>
-        resolveServer(listener)
-      );
-    });
-    url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    )
+  );
+  app.use((_req, res) => {
+    downstream();
+    res.sendStatus(401);
   });
-
-  beforeEach(() => downstream.mockClear());
-
-  afterAll(async () => {
-    await new Promise<void>((resolveClose, reject) =>
-      server.close((error) => (error ? reject(error) : resolveClose()))
-    );
+  server = await new Promise<Server>((resolveServer) => {
+    const listener = app.listen(0, '127.0.0.1', () => resolveServer(listener));
   });
+  url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+});
 
+beforeEach(() => downstream.mockClear());
+
+afterAll(async () => {
+  await new Promise<void>((resolveClose, reject) =>
+    server.close((error) => (error ? reject(error) : resolveClose()))
+  );
+});
+
+describe('idempotent API submission preflights', () => {
   async function preflight(path: string) {
     return fetch(`${url}${path}`, {
       method: 'OPTIONS',
@@ -104,7 +98,11 @@ describe('idempotent API submission preflights', () => {
       expect(
         response.headers.get('access-control-allow-credentials')
       ).toBeNull();
-      expect(response.headers.get('access-control-expose-headers')).toBeNull();
+      // Public routes expose only the request id (C52 request ids), never
+      // the credentialed auth headers.
+      expect(response.headers.get('access-control-expose-headers')).toBe(
+        'X-Request-Id'
+      );
       expect(downstream).not.toHaveBeenCalled();
     }
   );
@@ -211,4 +209,104 @@ describe('idempotent API submission preflights', () => {
       expect(downstream).toHaveBeenCalledTimes(1);
     }
   );
+});
+
+describe('preflight cache lifetime', () => {
+  // The test server listens on 127.0.0.1, so local web origins stand in for
+  // the production web origin on the credentialed variants.
+  const LOCAL_WEB_ORIGIN = 'http://localhost:3001';
+
+  it.each([
+    {
+      variant: 'default authenticated read',
+      path: '/api/v2/notifications?include_competitions=true&limit=1',
+      origin: 'https://6529.io',
+      method: 'GET',
+      headers: 'authorization',
+      allowOrigin: '*',
+      allowCredentials: null
+    },
+    {
+      variant: 'idempotent submission',
+      path: '/api/market/operations',
+      origin: 'https://6529.io',
+      method: 'POST',
+      headers: 'authorization,content-type,idempotency-key',
+      allowOrigin: '*',
+      allowCredentials: null
+    },
+    {
+      variant: 'credentialed web auth',
+      path: '/api/auth/session-refresh',
+      origin: LOCAL_WEB_ORIGIN,
+      method: 'POST',
+      headers: 'content-type',
+      allowOrigin: LOCAL_WEB_ORIGIN,
+      allowCredentials: 'true'
+    },
+    {
+      variant: 'artwork documentation',
+      path: '/api/artwork-documentation/works',
+      origin: LOCAL_WEB_ORIGIN,
+      method: 'PUT',
+      headers: 'authorization,content-type,if-match,idempotency-key',
+      allowOrigin: LOCAL_WEB_ORIGIN,
+      allowCredentials: null
+    }
+  ])(
+    'lets browsers cache the $variant preflight for two hours',
+    async ({
+      path,
+      origin,
+      method,
+      headers,
+      allowOrigin,
+      allowCredentials
+    }) => {
+      const response = await fetch(`${url}${path}`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: origin,
+          'Access-Control-Request-Method': method,
+          'Access-Control-Request-Headers': headers
+        }
+      });
+      expect(response.status).toBe(204);
+      expect(response.headers.get('access-control-max-age')).toBe('7200');
+      expect(response.headers.get('access-control-allow-origin')).toBe(
+        allowOrigin
+      );
+      expect(response.headers.get('access-control-allow-credentials')).toBe(
+        allowCredentials
+      );
+      expect(downstream).not.toHaveBeenCalled();
+    }
+  );
+
+  it('grants no cacheable preflight to an untrusted origin on a credentialed route', async () => {
+    const response = await fetch(`${url}/api/auth/session-refresh`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://evil.example',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type'
+      }
+    });
+    expect(response.headers.get('access-control-allow-origin')).toBeNull();
+    expect(response.headers.get('access-control-max-age')).toBeNull();
+    expect(downstream).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves simple GET responses without a preflight cache header', async () => {
+    const response = await fetch(`${url}/api/v2/notifications?limit=1`, {
+      headers: { Origin: 'https://6529.io' }
+    });
+    expect(response.status).toBe(401);
+    expect(response.headers.get('access-control-allow-origin')).toBe('*');
+    expect(response.headers.get('access-control-expose-headers')).toBe(
+      'X-Request-Id'
+    );
+    expect(response.headers.get('access-control-max-age')).toBeNull();
+    expect(downstream).toHaveBeenCalledTimes(1);
+  });
 });

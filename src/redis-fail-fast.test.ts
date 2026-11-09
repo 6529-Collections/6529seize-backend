@@ -27,7 +27,6 @@ type MockClient = {
   connect: jest.Mock;
   get: jest.Mock;
   set: jest.Mock;
-  mGet: jest.Mock;
   multi: jest.Mock;
   exec: jest.Mock;
 };
@@ -47,7 +46,6 @@ function mockRedisClient(overrides: Partial<MockClient> = {}) {
     connect: jest.fn().mockResolvedValue(undefined),
     get: jest.fn().mockResolvedValue(null),
     set: jest.fn().mockResolvedValue('OK'),
-    mGet: jest.fn().mockResolvedValue([]),
     multi: jest.fn(() => pipeline),
     exec,
     ...overrides
@@ -158,9 +156,9 @@ describe('redis fail-fast mode', () => {
     expect(client.get).toHaveBeenCalledWith('key');
   });
 
-  it('treats hanging MGET and SET as a miss and a skipped write', async () => {
+  it('treats hanging multi-key GETs and SET as a miss and a skipped write', async () => {
     mockRedisClient({
-      mGet: jest.fn(() => never()),
+      get: jest.fn(() => never()),
       set: jest.fn(() => never())
     });
     const redisModule = await import('./redis');
@@ -177,8 +175,10 @@ describe('redis fail-fast mode', () => {
 
   it('still serves values and propagates real Redis errors when connected', async () => {
     mockRedisClient({
-      get: jest.fn().mockResolvedValue(JSON.stringify({ hit: true })),
-      mGet: jest.fn().mockRejectedValue(new Error('WRONGTYPE'))
+      get: jest
+        .fn()
+        .mockResolvedValueOnce(JSON.stringify({ hit: true }))
+        .mockRejectedValue(new Error('WRONGTYPE'))
     });
     const redisModule = await import('./redis');
     await redisModule.initRedis({ failFast: FAIL_FAST });

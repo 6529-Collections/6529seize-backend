@@ -69,4 +69,16 @@ export class DropMediaUploadEntity {
 
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly completed_at!: number | null;
+
+  /** Published pixel width after EXIF orientation; null when unknown. */
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly width?: number | null;
+
+  /** Published pixel height after EXIF orientation; null when unknown. */
+  @Column({ type: 'int', nullable: true, default: null })
+  readonly height?: number | null;
+
+  /** Base64 ThumbHash placeholder; null when unknown. */
+  @Column({ type: 'varchar', length: 64, nullable: true, default: null })
+  readonly thumbhash?: string | null;
 }

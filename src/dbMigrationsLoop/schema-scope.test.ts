@@ -8,7 +8,11 @@ jest.mock('@/notifications/push-notification-cancellations.db', () => ({
     deleteExpired: jest.fn().mockResolvedValue(undefined)
   }
 }));
+jest.mock('@/waves/viewer-group-sets', () => ({
+  deleteUnusedViewerGroupSets: jest.fn().mockResolvedValue(0)
+}));
 import { doInDbContext } from '@/secrets';
+import { deleteUnusedViewerGroupSets } from '@/waves/viewer-group-sets';
 import { contentModerationDb } from '@/content-moderation/content-moderation.db';
 import { moderationReviewDb } from '@/content-moderation/moderation-review.db';
 import * as Entities from '@/entities/entities';
@@ -43,6 +47,13 @@ jest.mock('@/db', () => {
   const synchronize = jest.fn().mockResolvedValue(undefined);
   return { getDataSource: () => ({ synchronize }) };
 });
+// The bounded sync has its own tests; here it stands for synchronize().
+jest.mock('@/db/bounded-schema-sync', () => ({
+  synchronizeSchemaBounded: jest.fn(
+    (dataSource: { synchronize: () => Promise<void> }) =>
+      dataSource.synchronize()
+  )
+}));
 
 jest.mock('./nft-link-page-retry-schema', () => ({
   applyNftLinkPageRetrySchema: jest.fn().mockResolvedValue(1)
@@ -328,6 +339,8 @@ describe('dbMigrationsLoop explicit schema scope', () => {
       expect(
         pushNotificationCancellationsDb.deleteExpired
       ).toHaveBeenCalledTimes(1);
+      // Scheduled maintenance also cleans up unused viewer group sets.
+      expect(deleteUnusedViewerGroupSets).toHaveBeenCalledTimes(1);
       expect(getDataSource().synchronize).not.toHaveBeenCalled();
       expect(migrations.getInstance).not.toHaveBeenCalled();
       expect(

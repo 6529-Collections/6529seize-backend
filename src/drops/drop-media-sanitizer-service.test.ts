@@ -7,6 +7,7 @@ import {
 } from '@/drops/drop-media-sanitizer.service';
 import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
 import { Logger } from '@/logging';
+import * as mediaPlaceholder from './media-placeholder';
 
 describe('DropMediaSanitizerService', () => {
   const service = new DropMediaSanitizerService({} as any);
@@ -348,6 +349,56 @@ describe('image format validation before publication', () => {
       );
     }
   );
+
+  it.each(['jpeg', 'png', 'webp', 'gif'])(
+    'records layout hints for a ready %s upload',
+    async (format) => {
+      const input = fixture(format);
+      const metadata = await Sharp(input, { animated: true }).metadata();
+      const p = pipeline(input, `image/${format}`);
+      await p.process();
+      const expected =
+        (metadata.orientation ?? 1) >= 5
+          ? {
+              width: metadata.pageHeight ?? metadata.height,
+              height: metadata.width
+            }
+          : {
+              width: metadata.width,
+              height: metadata.pageHeight ?? metadata.height
+            };
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          toStatus: DropMediaUploadStatus.READY,
+          patch: expect.objectContaining({
+            ...expected,
+            thumbhash: expect.stringMatching(/^[A-Za-z0-9+/]+={0,2}$/)
+          })
+        })
+      );
+    }
+  );
+
+  it('still publishes an image whose layout hints cannot be computed', async () => {
+    jest
+      .spyOn(mediaPlaceholder, 'describeImage')
+      .mockRejectedValue(new Error('decoder unavailable'));
+    const warning = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    const p = pipeline(fixture('png'), 'image/png');
+
+    await p.process();
+
+    const ready = p.uploadsDb.transitionStatus.mock.calls.at(-1)![0] as {
+      toStatus: DropMediaUploadStatus;
+      patch: Record<string, unknown>;
+    };
+    expect(ready.toStatus).toBe(DropMediaUploadStatus.READY);
+    expect(ready.patch).not.toHaveProperty('width');
+    expect(ready.patch).not.toHaveProperty('thumbhash');
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('Could not compute layout hints')
+    );
+  });
 
   it.each(['true', 'legacy'])(
     'retains privacy sanitization for policy %s',

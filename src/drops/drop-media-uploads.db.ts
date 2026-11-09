@@ -23,7 +23,10 @@ const PATCHABLE_COLUMNS = [
   'drop_id',
   'wave_id',
   'updated_at',
-  'completed_at'
+  'completed_at',
+  'width',
+  'height',
+  'thumbhash'
 ] as const;
 
 type PatchableColumn = (typeof PATCHABLE_COLUMNS)[number];

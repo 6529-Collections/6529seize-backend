@@ -1,4 +1,5 @@
 import * as db from '../../db-api';
+import { clientVersionFromQuery } from '@/ws-client-versions/ws-client-versions';
 import { ids } from '@/ids';
 
 import * as fs from 'node:fs';
@@ -69,14 +70,10 @@ import * as Sentry from '@sentry/serverless';
 import { NextFunction, Request, Response } from 'express';
 import * as Joi from 'joi';
 import * as passport from 'passport';
-import {
-  ExtractJwt,
-  Strategy as JwtStrategy,
-  VerifiedCallback
-} from 'passport-jwt';
-import { ApiCompliantException, apiCompliantErrorBody } from '@/exceptions';
+import { ApiCompliantException } from '@/exceptions';
+import { sendApiError } from '@/api/api-error-middleware';
 import * as sentryContext from '../../sentry.context';
-import { Time, Timer } from '@/time';
+import { Time } from '@/time';
 import { DropType } from '@/entities/IDrop';
 import { dropsDb } from '@/drops/drops.db';
 import { identitiesDb } from '@/identities/identities.db';
@@ -102,14 +99,13 @@ import { NFT } from '@/entities/INFT';
 import { TDHBlock } from '@/entities/ITDH';
 import { Upload } from '@/entities/IUpload';
 import { env, loadLocalConfig, loadSecrets } from '@/env';
-import { loggerContext } from '@/logger-context';
 import { Logger } from '@/logging';
-import { numbers } from '@/numbers';
 import { getRedisClient, initRedis } from '@/redis';
 import {
   API_REDIS_FAIL_FAST_OPTIONS,
   createRetryableInitializer
 } from '@/api/app-initialization';
+import { describeE2eeSuiteTransition } from '@/e2ee/e2ee-suite-policy';
 import { parseTdhResultsFromDB } from '@/sql_helpers';
 import deployRoutes from '@/api/deploy/deploy.routes';
 import alchemyProxyRoutes from './alchemy-proxy/alchemy-proxy.routes';
@@ -151,10 +147,10 @@ import {
   initRateLimiting,
   rateLimitingMiddleware
 } from './rate-limiting/rate-limiting.middleware';
-import { ACCESS_TOKEN_ALGORITHMS } from '@/api/auth/access-token-wallet';
+import { createAccessTokenStrategy } from '@/api/auth/access-token-strategy';
 import { setNoStoreHeaders } from '@/api/response-headers';
+import { requestLogMiddleware } from '@/api/request-log.middleware';
 import {
-  isCmsAgentRequest,
   validateCmsAgentRawBody,
   cmsAgentErrorMiddleware,
   cmsAgentPrivateHeadersMiddleware
@@ -168,6 +164,7 @@ import {
   authenticateNotificationIdentityTokens,
   authenticateWebSocketJwtOrGetByConnectionId,
   authenticateWebSocketToken,
+  connectionPurposeFromQuery,
   mapHttpRequestToGatewayEvent
 } from './ws/ws';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
@@ -185,7 +182,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 const multer = require('multer');
 
-const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
 
 const API_PORT = 3000;
@@ -628,60 +624,10 @@ async function postSentryAlertDrop({
   }
 }
 
-function requestLogMiddleware() {
-  return (request: Request, response: Response, next: NextFunction) => {
-    const requestId =
-      request.apiGateway?.context?.awsRequestId ?? ids.uniqueShortId();
-    if (
-      request.path.startsWith('/api/artwork-documentation') ||
-      isCmsAgentRequest(request.path)
-    ) {
-      response.setHeader('X-Request-Id', requestId);
-      response.setHeader('Cache-Control', 'private, no-store');
-      response.setHeader('X-Robots-Tag', 'noindex, nofollow');
-      response.setHeader('X-Content-Type-Options', 'nosniff');
-    }
-    loggerContext.run({ requestId }, () => {
-      const { method } = request;
-      const url =
-        request.path.startsWith('/api/artwork-documentation') ||
-        isCmsAgentRequest(request.path)
-          ? request.path
-          : request.originalUrl;
-      const uqKey = `${method} ${url}`;
-      const timer = new Timer(uqKey);
-      (request as any).timer = timer;
-      response.on('close', () => {
-        const { statusCode } = response;
-        const slowRequestThresholdEnv = numbers.parseIntOrNull(
-          process.env.SLOW_API_REQUEST_THRESHOLD
-        );
-        const slowRequestThreshold = slowRequestThresholdEnv
-          ? Time.millis(slowRequestThresholdEnv)
-          : Time.seconds(1);
-        if (timer.getTotalTimePassed().gt(slowRequestThreshold)) {
-          requestLogger.warn(
-            `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
-              .getTotalTimePassed()
-              .toMillis()}] [${timer.getReport()}]`
-          );
-        } else {
-          requestLogger.info(
-            `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
-              .getTotalTimePassed()
-              .toMillis()}]`
-          );
-        }
-      });
-      next();
-    });
-  };
-}
-
 function customErrorMiddleware() {
   return (err: Error, _: Request, res: Response, next: NextFunction) => {
     if (err instanceof ApiCompliantException) {
-      res.status(err.getStatusCode()).send(apiCompliantErrorBody(err));
+      sendApiError(err, res);
       next();
     } else {
       res.status(500).send({ error: 'Something went wrong...' });
@@ -724,27 +670,12 @@ async function initializeApp() {
   );
 
   await loadApiSecrets();
+  // D172: the effective suite window. A malformed setting is reported
+  // (ERROR log, EMF metric) and treated as not started; nothing else changes.
+  logger.info(describeE2eeSuiteTransition());
   await initRedis({ failFast: API_REDIS_FAIL_FAST_OPTIONS });
   initRateLimiting();
-  passport.use(
-    new JwtStrategy(
-      {
-        jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-        secretOrKey: getJwtSecret(),
-        algorithms: ACCESS_TOKEN_ALGORITHMS
-      },
-      function (
-        {
-          sub: wallet,
-          role,
-          exp
-        }: { sub: string; role?: string; exp?: number },
-        cb: VerifiedCallback
-      ) {
-        return cb(null, { wallet: wallet, role, exp });
-      }
-    )
-  );
+  passport.use(createAccessTokenStrategy(getJwtSecret()));
   passport.use(new AnonymousStrategy());
 }
 
@@ -1769,11 +1700,16 @@ function wireApp() {
         const { identityId, jwtExpiry } =
           await authenticateWebSocketJwtOrGetByConnectionId(event);
         let activeIdentityId = identityId;
+        const clientVersion = clientVersionFromQuery(
+          event.queryStringParameters
+        );
         await appWebSockets.register({
           identityId,
           connectionId,
           jwtExpiry,
           ws: socket,
+          purpose: connectionPurposeFromQuery(event.queryStringParameters),
+          ...(clientVersion ? { clientVersion } : {}),
           ...(event.queryStringParameters?.recovery_capability ===
           WS_RECOVERY_CAPABILITY
             ? { recoveryCapable: true }
@@ -1863,6 +1799,19 @@ function wireApp() {
                 }
                 await appWebSockets.updateActiveWaveForConnection(
                   { connectionId, activeWaveId: waveId },
+                  {}
+                );
+                socket.send(JSON.stringify({ message: 'OK' }));
+                break;
+              }
+              case WsMessageType.SET_OPEN_WAVE: {
+                const waveId = message.wave_id?.toString() ?? null;
+                if (waveId && !ids.isValidUuid(waveId)) {
+                  socket.send(JSON.stringify({ error: 'Invalid wave id' }));
+                  return;
+                }
+                await appWebSockets.updateOpenWaveForConnection(
+                  { connectionId, openWaveId: waveId },
                   {}
                 );
                 socket.send(JSON.stringify({ message: 'OK' }));

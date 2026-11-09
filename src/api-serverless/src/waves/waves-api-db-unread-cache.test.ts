@@ -1,11 +1,16 @@
 import {
+  invalidateWaveUnreadCacheForReaderWaveAfterCommit,
+  invalidateWaveUnreadCacheForWaveAfterCommit,
   readWaveUnreadSummaryCache,
+  withInFlightWaveUnreadSummaryCacheMiss,
   writeWaveUnreadSummaryCache
 } from './wave-unread-cache';
 import { WavesApiDb } from './waves.api.db';
 
 jest.mock('./wave-unread-cache', () => ({
   invalidateWaveUnreadCacheForReaderWave: jest.fn(),
+  invalidateWaveUnreadCacheForReaderWaveAfterCommit: jest.fn(),
+  invalidateWaveUnreadCacheForWaveAfterCommit: jest.fn(),
   readWaveUnreadSummaryCache: jest.fn(),
   withInFlightWaveUnreadSummaryCacheMiss: jest.fn(
     async ({ getValue }: { getValue: () => Promise<unknown> }) =>
@@ -21,7 +26,8 @@ const writeWaveUnreadSummaryCacheMock = jest.mocked(
 
 function createRepo() {
   const db = {
-    execute: jest.fn()
+    execute: jest.fn(),
+    bulkInsert: jest.fn()
   };
   return {
     db,
@@ -45,6 +51,9 @@ describe('WavesApiDb unread summary cache', () => {
       },
       uncachedWaveIds: [],
       cacheKeysByWaveId: {
+        'wave-1': 'cache-key-1'
+      },
+      versionedKeysByWaveId: {
         'wave-1': 'cache-key-1'
       }
     });
@@ -80,8 +89,12 @@ describe('WavesApiDb unread summary cache', () => {
       uncachedWaveIds: ['wave-2', 'wave-3'],
       cacheKeysByWaveId: {
         'wave-1': 'cache-key-1',
+        'wave-2': 'cache-key-2'
+      },
+      versionedKeysByWaveId: {
+        'wave-1': 'cache-key-1',
         'wave-2': 'cache-key-2',
-        'wave-3': 'cache-key-3'
+        'wave-3': 'cache-key-3-settling'
       }
     });
     db.execute.mockResolvedValue([
@@ -133,9 +146,134 @@ describe('WavesApiDb unread summary cache', () => {
       },
       cacheKeysByWaveId: {
         'wave-1': 'cache-key-1',
-        'wave-2': 'cache-key-2',
-        'wave-3': 'cache-key-3'
+        'wave-2': 'cache-key-2'
       }
+    });
+    expect(
+      jest.mocked(withInFlightWaveUnreadSummaryCacheMiss)
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        versionedKeysByWaveId: {
+          'wave-1': 'cache-key-1',
+          'wave-2': 'cache-key-2',
+          'wave-3': 'cache-key-3-settling'
+        }
+      })
+    );
+  });
+
+  it('bypasses the shared cache inside a transaction', async () => {
+    const { db, repo } = createRepo();
+    const connection = { connection: {} };
+    db.execute.mockResolvedValue([]);
+
+    await expect(
+      repo.findIdentityUnreadDropsSummaryByWaveId(
+        { identityId: 'reader-1', waveIds: ['wave-1'] },
+        { connection }
+      )
+    ).resolves.toEqual({
+      'wave-1': { unread_drops_count: 0, first_unread_drop_serial_no: null }
+    });
+
+    expect(readWaveUnreadSummaryCacheMock).not.toHaveBeenCalled();
+    expect(writeWaveUnreadSummaryCacheMock).not.toHaveBeenCalled();
+    expect(db.execute).toHaveBeenCalledWith(
+      expect.stringContaining('COUNT(d.id) AS unread_drops_count'),
+      { identityId: 'reader-1', waveIds: ['wave-1'] },
+      { wrappedConnection: connection }
+    );
+  });
+
+  describe('reader metric writes move cached summaries after commit', () => {
+    const connection = { connection: {} };
+    const readerWave = { identityId: 'reader-1', waveId: 'wave-1' };
+
+    it.each([
+      [
+        'updateWaveReaderMetricLatestReadTimestamp',
+        (repo: WavesApiDb) =>
+          repo.updateWaveReaderMetricLatestReadTimestamp('wave-1', 'reader-1', {
+            connection
+          })
+      ],
+      [
+        'setWaveReaderMetricLatestReadTimestamp',
+        (repo: WavesApiDb) =>
+          repo.setWaveReaderMetricLatestReadTimestamp(
+            'wave-1',
+            'reader-1',
+            123,
+            { connection }
+          )
+      ],
+      [
+        'setDirectMessageUnreadFromSerial',
+        (repo: WavesApiDb) =>
+          repo.setDirectMessageUnreadFromSerial(
+            {
+              waveId: 'wave-1',
+              readerId: 'reader-1',
+              firstUnreadSerialNo: 5,
+              latestReadTimestamp: 123
+            },
+            { connection }
+          )
+      ],
+      [
+        'setWaveMuted',
+        (repo: WavesApiDb) =>
+          repo.setWaveMuted(
+            { waveId: 'wave-1', readerId: 'reader-1', muted: true },
+            { connection }
+          )
+      ]
+    ])('%s bumps the reader-wave version', async (_name, write) => {
+      const { db, repo } = createRepo();
+      db.execute.mockResolvedValue([]);
+
+      await write(repo);
+
+      expect(
+        jest.mocked(invalidateWaveUnreadCacheForReaderWaveAfterCommit)
+      ).toHaveBeenCalledWith(readerWave, connection);
+    });
+
+    it.each([
+      [
+        'insertMissingWaveReaderMetrics',
+        (repo: WavesApiDb) =>
+          repo.insertMissingWaveReaderMetrics(
+            {
+              waveId: 'wave-1',
+              readerIds: ['reader-1'],
+              latestReadTimestamp: 1
+            },
+            { connection }
+          )
+      ],
+      [
+        'recordDirectMessageUnreadDrop',
+        (repo: WavesApiDb) =>
+          repo.recordDirectMessageUnreadDrop(
+            {
+              waveId: 'wave-1',
+              recipientIds: ['reader-1'],
+              dropSerialNo: 3,
+              dropCreatedAt: 100
+            },
+            { connection }
+          )
+      ]
+    ])('%s bumps the wave version', async (_name, write) => {
+      const { db, repo } = createRepo();
+      db.execute.mockResolvedValue([]);
+
+      await write(repo);
+
+      expect(
+        jest.mocked(invalidateWaveUnreadCacheForWaveAfterCommit)
+      ).toHaveBeenCalledWith('wave-1', connection);
     });
   });
 });

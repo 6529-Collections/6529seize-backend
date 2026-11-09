@@ -97,7 +97,7 @@ describe.each(['API', 'LOOP'])(
       }
     });
 
-    it('uses one physical session and restores string-valued settings after acknowledged commit', async () => {
+    it('uses one physical session and returns no budget settings to the pool after acknowledged commit', async () => {
       let connectionId: number | undefined;
       let original:
         | { execution_millis: string; lock_seconds: string }
@@ -151,7 +151,10 @@ describe.each(['API', 'LOOP'])(
             primaryQueryOptions(ctx)
           )
         )[0];
-        expect(Number(restored.connection_id)).toBe(connectionId);
+        // API sessions are retired (RDS Proxy pins them); loops restore them.
+        if (adapter === 'API')
+          expect(Number(restored.connection_id)).not.toBe(connectionId);
+        else expect(Number(restored.connection_id)).toBe(connectionId);
         expect(restored.execution_millis).toBe(original!.execution_millis);
         expect(restored.lock_seconds).toBe(original!.lock_seconds);
       });
@@ -160,7 +163,7 @@ describe.each(['API', 'LOOP'])(
       ]);
     });
 
-    it('restores sessions after ordinary work failure without committing earlier writes', async () => {
+    it('returns no budget settings to the pool after ordinary work failure without committing earlier writes', async () => {
       const failure = new Error('intentional rollback');
       let connection: mysql.PoolConnection | undefined;
       let original: unknown;
@@ -184,7 +187,9 @@ describe.each(['API', 'LOOP'])(
         )
       ).rejects.toBe(failure);
       await withPrimaryTransaction(db, async (ctx) => {
-        expect(await physical(ctx, adapter)).toBe(connection);
+        if (adapter === 'API')
+          expect(await physical(ctx, adapter)).not.toBe(connection);
+        else expect(await physical(ctx, adapter)).toBe(connection);
         expect(
           await db.execute(
             'SELECT CAST(@@SESSION.max_execution_time AS CHAR) cap, CAST(@@SESSION.innodb_lock_wait_timeout AS CHAR) lock_seconds',
@@ -306,7 +311,10 @@ describe.each(['API', 'LOOP'])(
         ]);
       } finally {
         await withPrimaryTransaction(db, async (ctx) => {
-          expect(await physical(ctx, adapter)).toBe(connection);
+          // The budgeted API session was retired; a loop session is reused.
+          if (adapter === 'API')
+            expect(await physical(ctx, adapter)).not.toBe(connection);
+          else expect(await physical(ctx, adapter)).toBe(connection);
           const allowed = [
             'READ-UNCOMMITTED',
             'READ-COMMITTED',

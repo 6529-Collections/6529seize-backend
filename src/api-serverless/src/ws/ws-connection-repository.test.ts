@@ -4,12 +4,17 @@ import {
   TDH_NFT_TABLE,
   WAVE_VOTING_CREDIT_NFTS_TABLE,
   WAVES_TABLE,
+  WS_CONNECTIONS_TABLE,
   WS_NOTIFICATION_SUBSCRIPTIONS_TABLE
 } from '@/constants';
 import { WaveCreditScope, WaveCreditType } from '@/entities/IWave';
 import { CustomApiCompliantException } from '@/exceptions';
 import { Logger } from '@/logging';
-import { WsConnectionRepository } from './ws-connection.repository';
+import {
+  resetClientVersionColumnWarningForTests,
+  WsConnectionRepository
+} from './ws-connection.repository';
+import { WsConnectionPurpose } from '@/entities/IWSConnection';
 import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
 
 describe('WsConnectionRepository', () => {
@@ -30,12 +35,32 @@ describe('WsConnectionRepository', () => {
       const execute = jest
         .fn()
         .mockResolvedValueOnce([
-          { connection_id: 'child-only', profile_id: 'a', wave_id: 'wave' },
-          { connection_id: 'both', profile_id: 'b', wave_id: 'wave' }
+          {
+            connection_id: 'child-only',
+            profile_id: 'a',
+            wave_id: 'wave',
+            jwt_expiry: '4102444800'
+          },
+          {
+            connection_id: 'both',
+            profile_id: 'b',
+            wave_id: 'wave',
+            jwt_expiry: '4102444800'
+          }
         ])
         .mockResolvedValueOnce([
-          { connection_id: 'both', profile_id: 'b', wave_id: 'wave' },
-          { connection_id: 'parent-only', profile_id: 'c', wave_id: 'wave' }
+          {
+            connection_id: 'both',
+            profile_id: 'b',
+            wave_id: 'wave',
+            jwt_expiry: '4102444800'
+          },
+          {
+            connection_id: 'parent-only',
+            profile_id: 'c',
+            wave_id: 'wave',
+            jwt_expiry: '4102444800'
+          }
         ]);
       const groupQuery = jest.fn().mockResolvedValue({ sql: '', params: {} });
       const repo = new WsConnectionRepository(
@@ -53,7 +78,12 @@ describe('WsConnectionRepository', () => {
       await expect(
         method({ waveId: 'wave', groupId: null }, {})
       ).resolves.toEqual([
-        { connectionId: 'both', profileId: 'b', wave_id: 'wave' }
+        {
+          connectionId: 'both',
+          profileId: 'b',
+          wave_id: 'wave',
+          jwtExpiry: 4102444800
+        }
       ]);
       expect(groupQuery.mock.calls.map((call) => call[0])).toEqual([
         'child',
@@ -152,6 +182,306 @@ describe('WsConnectionRepository', () => {
     });
   });
 
+  describe('typing-purpose sockets (0.12a)', () => {
+    const purposeFilter = "(ws.purpose is null or ws.purpose <> 'TYPING')";
+
+    it('ignores SET_OPEN_WAVE until the open_wave_id column exists, and rethrows other errors', async () => {
+      const missing = Object.assign(new Error('Unknown column open_wave_id'), {
+        code: 'ER_BAD_FIELD_ERROR'
+      });
+      const execute = jest
+        .fn()
+        .mockRejectedValueOnce(missing)
+        .mockRejectedValueOnce(
+          Object.assign(new Error('lock'), { code: 'ER_LOCK_WAIT_TIMEOUT' })
+        )
+        .mockResolvedValue([]);
+      const repo = new WsConnectionRepository(
+        () => ({ execute }) as any,
+        {} as any
+      );
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+
+      await expect(
+        repo.updateOpenWaveId({ connectionId: 'c1', waveId: 'w1' }, {})
+      ).resolves.toBeUndefined();
+      await expect(
+        repo.updateOpenWaveId({ connectionId: 'c1', waveId: 'w1' }, {})
+      ).rejects.toMatchObject({ code: 'ER_LOCK_WAIT_TIMEOUT' });
+      await repo.updateOpenWaveId({ connectionId: 'c1', waveId: null }, {});
+      expect(execute.mock.calls[2]).toEqual([
+        `update ${WS_CONNECTIONS_TABLE} set open_wave_id = :waveId where connection_id = :connectionId`,
+        { connectionId: 'c1', waveId: null },
+        { wrappedConnection: undefined }
+      ]);
+      warn.mockRestore();
+    });
+
+    it('inserts the purpose column only for sockets that declare one', async () => {
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new WsConnectionRepository(
+        () =>
+          ({
+            execute,
+            executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+              callback({ connection: {} })
+            )
+          }) as any,
+        {} as any
+      );
+      const base = {
+        identity_id: 'profile-1',
+        jwt_expiry: 123,
+        wave_id: null
+      };
+
+      await repo.save(
+        { ...base, connection_id: 'legacy', purpose: null },
+        [],
+        {}
+      );
+      await repo.save(
+        {
+          ...base,
+          connection_id: 'typing',
+          purpose: WsConnectionPurpose.TYPING
+        },
+        [],
+        {}
+      );
+
+      const inserts = execute.mock.calls
+        .map(([sql, params]) => ({ sql: String(sql), params }))
+        .filter(({ sql }) =>
+          sql.startsWith(`insert into ${WS_CONNECTIONS_TABLE}`)
+        );
+      expect(inserts).toHaveLength(2);
+      expect(inserts[0].sql).not.toContain('purpose');
+      expect(inserts[1].sql).toContain(
+        '(connection_id, jwt_expiry, identity_id, purpose)'
+      );
+      expect(inserts[1].params).toMatchObject({
+        connection_id: 'typing',
+        purpose: WsConnectionPurpose.TYPING
+      });
+    });
+
+    it('never fails a connect when the client_version column is missing', async () => {
+      resetClientVersionColumnWarningForTests();
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      const missingColumn = Object.assign(
+        new Error(
+          "ER_BAD_FIELD_ERROR: Unknown column 'client_version' in 'field list'"
+        ),
+        { code: 'ER_BAD_FIELD_ERROR' }
+      );
+      const execute = jest.fn(async (sql: string) => {
+        if (String(sql).includes('client_version')) throw missingColumn;
+        return [];
+      });
+      const repo = new WsConnectionRepository(
+        () =>
+          ({
+            execute,
+            executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+              callback({ connection: {} })
+            )
+          }) as any,
+        {} as any
+      );
+      const connect = (connectionId: string) =>
+        repo.save(
+          {
+            identity_id: 'profile-1',
+            jwt_expiry: 123,
+            wave_id: null,
+            connection_id: connectionId,
+            purpose: null,
+            client_version: 'abc1234'
+          },
+          [],
+          {}
+        );
+
+      await expect(connect('first')).resolves.toBeUndefined();
+      await expect(connect('second')).resolves.toBeUndefined();
+
+      const inserts = execute.mock.calls
+        .map(([sql]) => String(sql))
+        .filter((sql) => sql.startsWith(`insert into ${WS_CONNECTIONS_TABLE}`));
+      // Each connect tried with the build, then registered without it.
+      expect(inserts).toEqual([
+        expect.stringContaining('client_version'),
+        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`,
+        expect.stringContaining('client_version'),
+        `insert into ${WS_CONNECTIONS_TABLE} (connection_id, jwt_expiry, identity_id) values (:connection_id, :jwt_expiry, :identity_id)`
+      ]);
+      // Logged once, not per connect.
+      expect(
+        warn.mock.calls.filter(([message]) =>
+          String(message).includes('client_version is missing')
+        )
+      ).toHaveLength(1);
+      warn.mockRestore();
+    });
+
+    it('still fails a connect on any other insert error', async () => {
+      const execute = jest.fn(async (sql: string) => {
+        if (String(sql).startsWith(`insert into ${WS_CONNECTIONS_TABLE}`)) {
+          throw Object.assign(new Error('ER_DUP_ENTRY'), {
+            code: 'ER_DUP_ENTRY'
+          });
+        }
+        return [];
+      });
+      const repo = new WsConnectionRepository(
+        () =>
+          ({
+            execute,
+            executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+              callback({ connection: {} })
+            )
+          }) as any,
+        {} as any
+      );
+
+      await expect(
+        repo.save(
+          {
+            identity_id: 'profile-1',
+            jwt_expiry: 123,
+            wave_id: null,
+            connection_id: 'dup',
+            purpose: null,
+            client_version: 'abc1234'
+          },
+          [],
+          {}
+        )
+      ).rejects.toMatchObject({ code: 'ER_DUP_ENTRY' });
+    });
+
+    it('inserts client_version only for sockets that declare a build', async () => {
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new WsConnectionRepository(
+        () =>
+          ({
+            execute,
+            executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+              callback({ connection: {} })
+            )
+          }) as any,
+        {} as any
+      );
+      await repo.save(
+        {
+          identity_id: 'profile-1',
+          jwt_expiry: 123,
+          wave_id: null,
+          connection_id: 'versioned',
+          purpose: WsConnectionPurpose.TYPING,
+          client_version: 'abc1234'
+        },
+        [],
+        {}
+      );
+
+      const [insert] = execute.mock.calls.filter(([sql]) =>
+        String(sql).startsWith(`insert into ${WS_CONNECTIONS_TABLE}`)
+      );
+      expect(insert[0]).toContain(
+        '(connection_id, jwt_expiry, identity_id, purpose, client_version) values (:connection_id, :jwt_expiry, :identity_id, :purpose, :client_version)'
+      );
+      expect(insert[1]).toMatchObject({ client_version: 'abc1234' });
+    });
+
+    it.each([false, true])(
+      'leaves typing sockets out of wave audiences unless asked (system=%s)',
+      async (system) => {
+        const oneOrNull = jest.fn().mockResolvedValue({
+          visibility_group_id: null,
+          parent_wave_id: null,
+          parent_id: null,
+          parent_parent_id: null,
+          parent_group_id: null
+        });
+        const execute = jest.fn().mockResolvedValue([]);
+        const repo = new WsConnectionRepository(
+          () => ({ oneOrNull, execute }) as never,
+          {} as never
+        );
+        const method = system
+          ? repo.getCurrentlyOnlineCommunityMemberConnectionIdsForSystemBroadcast.bind(
+              repo
+            )
+          : repo.getCurrentlyOnlineCommunityMemberConnectionIds.bind(repo);
+
+        await method({ waveId: 'wave', groupId: null }, {});
+        await method(
+          { waveId: 'wave', groupId: null },
+          {},
+          { includeTypingSockets: true }
+        );
+
+        expect(execute.mock.calls[0][0]).toContain(purposeFilter);
+        expect(execute.mock.calls[0][0]).toContain(
+          '(ws.wave_id = :waveId or ws.wave_id is null)'
+        );
+        expect(execute.mock.calls[1][0]).not.toContain('ws.purpose');
+      }
+    );
+
+    it('applies the filter to grouped wave audiences', async () => {
+      const oneOrNull = jest.fn().mockResolvedValue({
+        visibility_group_id: 'group',
+        parent_wave_id: null,
+        parent_id: null,
+        parent_parent_id: null,
+        parent_group_id: null
+      });
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new WsConnectionRepository(
+        () => ({ oneOrNull, execute }) as never,
+        {
+          getSqlAndParamsByGroupId: jest
+            .fn()
+            .mockResolvedValue({ sql: 'with cm as (select 1)', params: {} })
+        } as never
+      );
+
+      await repo.getCurrentlyOnlineCommunityMemberConnectionIds(
+        { waveId: 'wave', groupId: null },
+        {}
+      );
+
+      expect(execute.mock.calls[0][0]).toContain(`where ${purposeFilter}`);
+    });
+
+    it('leaves typing sockets out of identity and global lookups', async () => {
+      const execute = jest.fn().mockResolvedValue([]);
+      const repo = new WsConnectionRepository(
+        () => ({ execute }) as never,
+        {} as never
+      );
+
+      await repo.findConnectionIdsByIdentityId('profile-1');
+      await repo.findPrimaryConnectionIdsByIdentityIds(['profile-1']);
+      await repo.findNotificationConnectionIdsByIdentityIds(['profile-1']);
+      await repo.findAllConnectionIds();
+
+      for (const [sql] of execute.mock.calls) {
+        expect(sql).toContain(purposeFilter);
+      }
+      expect(execute.mock.calls[2][0]).toContain(
+        "(connections.purpose is null or connections.purpose <> 'TYPING')"
+      );
+    });
+  });
+
   it('runs bounded deterministic stale cleanup only for sampled connections', async () => {
     const execute = jest.fn().mockResolvedValue([]);
     const shouldCleanup = jest
@@ -183,11 +513,13 @@ describe('WsConnectionRepository', () => {
   });
 
   it('finds active primary and extra-account notification subscriptions', async () => {
-    const execute = jest
-      .fn()
-      .mockResolvedValue([
-        { connection_id: 'connection-1', identity_id: 'profile-1' }
-      ]);
+    const execute = jest.fn().mockResolvedValue([
+      {
+        connection_id: 'connection-1',
+        identity_id: 'profile-1',
+        jwt_expiry: 4102444800
+      }
+    ]);
     const repo = new WsConnectionRepository(
       () => ({ execute }) as any,
       {} as any
@@ -199,8 +531,13 @@ describe('WsConnectionRepository', () => {
         'profile-1'
       ])
     ).resolves.toEqual([
-      { connectionId: 'connection-1', identityId: 'profile-1' }
+      {
+        connectionId: 'connection-1',
+        identityId: 'profile-1',
+        jwtExpiry: 4102444800
+      }
     ]);
+    expect(execute.mock.calls[0][0]).toContain('connections.jwt_expiry');
 
     expect(execute.mock.calls[0][0]).toContain(
       `from ${WS_NOTIFICATION_SUBSCRIPTIONS_TABLE}`

@@ -61,7 +61,7 @@ async function visibleEntry(drop: DropEntity, ctx: RequestContext) {
     drop.id,
     ctx
   );
-  if (!entry) throw new NotFoundException('Competition entry not found');
+  if (!entry) throw new NotFoundException('Decision entry not found');
   return entry;
 }
 export async function competitionDropVoters(

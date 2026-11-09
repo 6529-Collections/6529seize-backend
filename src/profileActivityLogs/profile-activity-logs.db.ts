@@ -33,6 +33,12 @@ import { RequestContext } from '../request.context';
 import { ids } from '../ids';
 import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import {
+  resetViewerGroupsCteSupport,
+  viewerGroupsCteSupported
+} from '@/waves/viewer-groups-cte';
+import { viewerGroupSets } from '@/waves/viewer-group-sets';
+import { legacyGetView } from '@/competitions/legacy-competition-get-facade';
+import {
   anonymousCompetitionEntrySql,
   competitionAnonymityViewerId
 } from '@/competitions/competition-anonymity';
@@ -56,6 +62,12 @@ const WAVE_ACCESS_DROP_LOG_TYPES_PARAM = 'wave_access_drop_log_types';
 const WAVE_ACCESS_RATING_EDIT_TYPE_PARAM = 'wave_access_rating_edit_type';
 const WAVE_ACCESS_WAVE_REP_MATTER_PARAM = 'wave_access_wave_rep_matter';
 const WAVE_ACCESS_GROUP_IDS_PARAM = 'wave_access_group_ids';
+const VIEWER_GROUPS_CTE = 'pa_viewer_groups';
+/** Columns the shared viewer-group table is compared with. */
+const VIEWER_GROUP_COLUMN_TABLES = [WAVES_TABLE, legacyGetView(WAVES_TABLE)];
+
+/** Test seam: forget the cached collation check, or pin its result. */
+export { resetViewerGroupsCteSupport };
 
 function isWaveScopedLogType(type: ProfileActivityLogType): boolean {
   return (
@@ -72,10 +84,13 @@ function isWaveScopedLogType(type: ProfileActivityLogType): boolean {
  */
 export function buildProfileLogWaveAccessFilter({
   types,
-  eligibleGroupIds
+  eligibleGroupIds,
+  groupSetSql
 }: {
   types?: ProfileActivityLogType[];
   eligibleGroupIds: string[];
+  /** Read the groups from this subquery instead of inlining the list. */
+  groupSetSql?: string;
 }): { conditions: string[]; params: Record<string, any> } {
   if (types?.length && !types.some(isWaveScopedLogType)) {
     return { conditions: [], params: {} };
@@ -84,7 +99,7 @@ export function buildProfileLogWaveAccessFilter({
   const readableWave = (waveIdColumn: string) => `exists (
         select 1 from ${WAVES_TABLE} pa_log_wave
         where pa_log_wave.id = ${waveIdColumn}
-          and ${waveReadAccessSql('pa_log_wave', hasEligibleGroups, WAVE_ACCESS_GROUP_IDS_PARAM)}
+          and ${waveReadAccessSql('pa_log_wave', hasEligibleGroups, WAVE_ACCESS_GROUP_IDS_PARAM, groupSetSql)}
       )`;
   return {
     conditions: [
@@ -101,7 +116,7 @@ export function buildProfileLogWaveAccessFilter({
       [WAVE_ACCESS_DROP_LOG_TYPES_PARAM]: [...WAVE_SCOPED_DROP_LOG_TYPES],
       [WAVE_ACCESS_RATING_EDIT_TYPE_PARAM]: ProfileActivityLogType.RATING_EDIT,
       [WAVE_ACCESS_WAVE_REP_MATTER_PARAM]: RateMatter.WAVE_REP,
-      ...(hasEligibleGroups
+      ...(hasEligibleGroups && !groupSetSql
         ? { [WAVE_ACCESS_GROUP_IDS_PARAM]: eligibleGroupIds }
         : {})
     }
@@ -111,11 +126,13 @@ export function buildProfileLogWaveAccessFilter({
 function buildProfileLogReadAccessFilter(
   types: ProfileActivityLogType[] | undefined,
   eligibleGroupIds: string[],
-  ctx: RequestContext
+  ctx: RequestContext,
+  groupSetSql?: string
 ) {
   const waveAccess = buildProfileLogWaveAccessFilter({
     types: types,
-    eligibleGroupIds: eligibleGroupIds
+    eligibleGroupIds: eligibleGroupIds,
+    groupSetSql
   });
   // Profile-scoped drop logs expose their actor and raw author IDs. Keep
   // anonymous entries out of this surface before every branch's page limit.
@@ -401,11 +418,27 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       };
     })();
 
+    // The viewer's groups go in once, as a shared table, instead of in every
+    // branch and type sub-branch (up to 3 x N x 4 copies).
+    const sharedViewerGroups =
+      params.viewer_eligible_group_ids.length > 0 &&
+      (await viewerGroupsCteSupported(this.db, VIEWER_GROUP_COLUMN_TABLES))
+        ? await viewerGroupSets.source(
+            this.db,
+            VIEWER_GROUPS_CTE,
+            params.viewer_eligible_group_ids
+          )
+        : undefined;
     const waveAccess = buildProfileLogReadAccessFilter(
       params.type,
       params.viewer_eligible_group_ids,
-      ctx
+      ctx,
+      sharedViewerGroups?.setSql
     );
+    Object.assign(waveAccess.params, sharedViewerGroups?.params);
+    const viewerGroupsCteSql = sharedViewerGroups
+      ? `${sharedViewerGroups.cteSql},`
+      : '';
 
     // Build one branch that returns only (id, created_at)
     const buildIdsBranch = (
@@ -518,7 +551,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
 
       // UNION only ids+created_at, then fetch rows once
       finalSql = `
-      WITH ids AS (
+      WITH ${viewerGroupsCteSql} ids AS (
         ${branches.join('\nUNION ALL\n')}
       )
       SELECT pa_logs.*
@@ -573,7 +606,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       single += ` ORDER BY pa_logs.created_at ${orderDir} LIMIT ${perBranchLimit}`;
 
       finalSql = `
-      WITH ids AS (
+      WITH ${viewerGroupsCteSql} ids AS (
         ${single}
       )
       SELECT pa_logs.*

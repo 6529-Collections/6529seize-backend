@@ -1,10 +1,14 @@
+import {
+  readCommitted,
+  runWriteTransaction
+} from '@/api/write-transaction-budget';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { DropsApiService, dropsService } from './drops.api.service';
 import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { AuthenticationContext } from '../../../auth-context';
-import { Timer } from '../../../time';
+import { Time, Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import {
@@ -24,6 +28,7 @@ import {
 } from '../../../drops/create-or-update-drop.model';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { dropsMappers, DropsMappers } from './drops.mappers';
+import { withOwnedMediaUploadIds } from './drop-media-upload-refs';
 import {
   deleteDrop,
   DeleteDropUseCase
@@ -67,7 +72,13 @@ import {
   HelpBotDailyActivityCreditQueueService
 } from '@/help-bot/help-bot-daily-activity-credit-queue.service';
 
-import { BadRequestException } from '@/exceptions';
+import { BadRequestException, CustomApiCompliantException } from '@/exceptions';
+import {
+  dropClientIdsDb,
+  DropClientIdsDb,
+  DropClientIdTakenError
+} from '@/drops/drop-client-ids.db';
+import { DropClientIdEntity } from '@/entities/IDropClientId';
 import { DropType } from '@/entities/IDrop';
 import {
   chatHistoryPurgeDb,
@@ -79,6 +90,10 @@ import {
   readChatHistoryPurgeToken
 } from '@/api/waves/chat-history-purge-token';
 import { ApiWaveChatHistoryPurgePlan } from '@/api/generated/models/ApiWaveChatHistoryPurgePlan';
+import {
+  DropPostHops,
+  serverReceivedAtFromTimer
+} from '@/ws-delivery/wave-delivery-metrics';
 
 function normalizeCreateDropPollRequest(
   poll: ApiCreateDropPollRequest | null | undefined
@@ -93,6 +108,130 @@ function normalizeCreateDropPollRequest(
 }
 
 import { competitionEntryDropHooks } from '@/competitions/competition-entry-drop-hooks';
+
+interface ClientDrop {
+  readonly clientDropId: string;
+  readonly waveId: string;
+  readonly contentFingerprint: string;
+}
+
+/**
+ * Request fields that prove who sent a drop rather than describe it. A
+ * retry may carry fresh proofs for the same content (a new wallet nonce or
+ * device envelope), so they are not part of the fingerprint.
+ */
+const CLIENT_DROP_PROOF_FIELDS = [
+  'client_drop_id',
+  'device_signature',
+  'signature',
+  'signature_message',
+  'is_safe_signature',
+  'signer_address',
+  'author'
+] as const;
+
+/**
+ * Fingerprints the drop content exactly as the client sent it: the same for
+ * an identical retry, whatever the server derives from it and whatever
+ * fresh signature the retry carries; different as soon as wave, parts,
+ * metadata, mentions, poll or any other content field changes.
+ */
+export function clientDropFingerprint(request: ApiCreateDropRequest): string {
+  const content: Record<string, unknown> = { ...request };
+  for (const field of CLIENT_DROP_PROOF_FIELDS) {
+    delete content[field];
+  }
+  return moderationFingerprint(content);
+}
+
+const CLIENT_DROP_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function clientDropFor(request: ApiCreateDropRequest): ClientDrop | null {
+  if (request.client_drop_id === undefined || request.client_drop_id === null) {
+    return null;
+  }
+  // The route passes Joi's normalized value; re-check for other callers so a
+  // malformed id never reaches a lookup or becomes a key.
+  const clientDropId = String(request.client_drop_id).toLowerCase();
+  if (!CLIENT_DROP_ID_PATTERN.test(clientDropId)) {
+    throw new BadRequestException(
+      'client_drop_id must be a UUID in the plain 8-4-4-4-12 form'
+    );
+  }
+  return {
+    clientDropId,
+    waveId: request.wave_id,
+    contentFingerprint: clientDropFingerprint(request)
+  };
+}
+
+/**
+ * Metric environment from the deployment's own settings. Only explicit
+ * production, staging and development names map to those buckets; anything
+ * else is reported as `unknown` rather than counted as production.
+ */
+export function metricEnvironment(
+  configured: string | undefined = process.env.SENTRY_ENVIRONMENT ??
+    process.env.OPS_ENVIRONMENT ??
+    process.env.NODE_ENV
+): 'prod' | 'staging' | 'dev' | 'unknown' {
+  const value = (configured ?? '').toLowerCase();
+  if (value.includes('staging')) return 'staging';
+  if (/(^|[^a-z])(prod|production)([^a-z]|$)/.test(value)) return 'prod';
+  if (/(^|[^a-z])(dev|development|local|test)([^a-z]|$)/.test(value))
+    return 'dev';
+  return 'unknown';
+}
+
+/**
+ * One EMF count per idempotent-create outcome, so a retry storm (many
+ * `concurrent` or `replayed`) or misbehaving clients (`reused`) show up.
+ */
+function recordClientDropOutcome(
+  outcome: 'replayed' | 'concurrent' | 'reused'
+): void {
+  if (!process.env.AWS_LAMBDA_FUNCTION_NAME) return;
+  const environment = metricEnvironment();
+  try {
+    process.stdout.write(
+      `${JSON.stringify({
+        _aws: {
+          Timestamp: Date.now(),
+          CloudWatchMetrics: [
+            {
+              Namespace: '6529/DropCreate',
+              Dimensions: [['Environment', 'Outcome']],
+              Metrics: [{ Name: 'ClientDropIdOutcome', Unit: 'Count' }]
+            }
+          ]
+        },
+        Environment: environment,
+        Outcome: outcome,
+        ClientDropIdOutcome: 1
+      })}\n`
+    );
+  } catch {
+    /* Telemetry must not alter the create. */
+  }
+}
+
+const POST_COMMIT_READ_RETRY_DELAY_MS = 200;
+
+/**
+ * The drop was saved but could not be read back for the response. Not a
+ * 2xx (the web inserts the response as a drop), and a status no client
+ * retries; the message tells the author not to post it again.
+ */
+class DropSavedRefreshException extends CustomApiCompliantException {
+  constructor() {
+    super(
+      409,
+      'Your drop was posted. Refresh to see it.',
+      'DROP_SAVED_REFRESH'
+    );
+  }
+}
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(this.constructor.name);
@@ -109,7 +248,8 @@ export class DropCreationApiService {
     private readonly dropPollsApiService: DropPollsApiService,
     private readonly wavesApiDb: WavesApiDb = defaultWavesApiDb,
     private readonly dailyActivityCreditQueueService: HelpBotDailyActivityCreditQueueService = helpBotDailyActivityCreditQueueService,
-    private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb
+    private readonly purgeDb: ChatHistoryPurgeDb = chatHistoryPurgeDb,
+    private readonly clientIdsDb: DropClientIdsDb = dropClientIdsDb
   ) {}
 
   public async createDrop(
@@ -128,13 +268,27 @@ export class DropCreationApiService {
     },
     ctx: RequestContext
   ): Promise<ApiDrop> {
+    const hops = new DropPostHops();
+    const serverReceivedAt = serverReceivedAtFromTimer(ctx.timer);
     const proxyId =
       authorId === representativeId ? undefined : representativeId;
-    const model = this.dropsMappers.createDropApiToUseCaseModel({
-      request: createDropRequest,
+    const replay = await moderationReviewDb.savedRequest(
       authorId,
-      proxyId
-    });
+      'DROP',
+      ctx.moderationRequestId,
+      ctx
+    );
+    // R11-2: the media keeps its own upload's id, which links layout hints.
+    // A retry of a published request resolves as the first attempt did.
+    const model = await withOwnedMediaUploadIds(
+      this.dropsMappers.createDropApiToUseCaseModel({
+        request: createDropRequest,
+        authorId,
+        proxyId
+      }),
+      createDropRequest,
+      { publishedDropId: replay?.published_subject_id ?? null }
+    );
     const createModel: typeof model =
       hideLinkPreview === undefined
         ? model
@@ -142,12 +296,6 @@ export class DropCreationApiService {
             ...model,
             hide_link_preview: hideLinkPreview
           };
-    const replay = await moderationReviewDb.savedRequest(
-      authorId,
-      'DROP',
-      ctx.moderationRequestId,
-      ctx
-    );
     if (replay) {
       if (
         replay.scope.context_fingerprint !==
@@ -160,6 +308,18 @@ export class DropCreationApiService {
         ctx
       );
     }
+    // A retried send with the same client_drop_id returns the drop the first
+    // attempt made, before any moderation or write work (waves R11-5).
+    const clientDrop = clientDropFor(createDropRequest);
+    if (clientDrop) {
+      const replay = await this.findClientDropReplay(
+        { createDropRequest, authorId },
+        ctx
+      );
+      if (replay) {
+        return replay;
+      }
+    }
     const preResolvedIdentityNomination =
       await this.createOrUpdateDrop.preResolveIdentityNomination(createModel, {
         timer: ctx.timer
@@ -168,53 +328,263 @@ export class DropCreationApiService {
       createModel,
       ctx
     );
+    hops.set('drop_pre_commit_ms', hops.elapsed());
+    let created: Awaited<
+      ReturnType<DropCreationApiService['createDropWithGivenConnection']>
+    >;
+    // Splits drop_commit_ms: connection + BEGIN, the post's statements, COMMIT.
+    const transaction: { bodyStartedAt?: number; bodyEndedAt?: number } = {};
+    const transactionStartedAt = hops.elapsed();
+    try {
+      created = await hops.time('drop_commit_ms', () =>
+        runWriteTransaction((options) =>
+          this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
+            transaction.bodyStartedAt = hops.elapsed();
+            try {
+              return await this.createDropWithGivenConnection(
+                {
+                  model: createModel,
+                  authorId,
+                  preResolvedIdentityNomination,
+                  prePublication,
+                  requestDailyActivityCredit,
+                  clientDrop
+                },
+                normalizeCreateDropPollRequest(createDropRequest.poll),
+                { timer: ctx.timer!, connection }
+              );
+            } finally {
+              transaction.bodyEndedAt = hops.elapsed();
+            }
+          }, options)
+        )
+      );
+    } catch (error) {
+      if (!(error instanceof DropClientIdTakenError) || !clientDrop) {
+        throw error;
+      }
+      // A concurrent attempt with the same id committed first; this one
+      // rolled back and returns that attempt's drop.
+      const claimed = await this.clientIdsDb.find(
+        { authorId, clientDropId: clientDrop.clientDropId },
+        ctx
+      );
+      if (!claimed) {
+        throw error;
+      }
+      recordClientDropOutcome('concurrent');
+      return this.findClientDropRetry(claimed, clientDrop, ctx);
+    }
+    const committedAt = hops.elapsed();
+    if (
+      transaction.bodyStartedAt !== undefined &&
+      transaction.bodyEndedAt !== undefined
+    ) {
+      hops.set(
+        'drop_tx_begin_ms',
+        transaction.bodyStartedAt - transactionStartedAt
+      );
+      hops.set(
+        'drop_tx_body_ms',
+        transaction.bodyEndedAt - transaction.bodyStartedAt
+      );
+      hops.set('drop_tx_commit_ms', committedAt - transaction.bodyEndedAt);
+    }
     const {
-      drop,
+      dropId: createdDropId,
       pendingPushNotificationIds,
       dmUnreadRecipientIds,
       dailyActivityCreditRequestEnqueued
-    } = await this.dropsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        return await this.createDropWithGivenConnection(
-          {
-            model: createModel,
-            authorId,
-            preResolvedIdentityNomination,
-            prePublication,
-            requestDailyActivityCredit
-          },
-          normalizeCreateDropPollRequest(createDropRequest.poll),
-          { timer: ctx.timer!, connection }
+    } = created;
+    // The drop is committed from here on: no failure below may look like a
+    // failed write, or the author reposts it.
+    const drop = await hops.time('post_commit_read_ms', () =>
+      this.readCreatedDropOrNull(createdDropId, authorId, ctx.timer)
+    );
+    if (drop && clientDrop) {
+      drop.client_drop_id = clientDrop.clientDropId;
+    }
+    if (dailyActivityCreditRequestEnqueued) {
+      await hops.time('post_commit_daily_activity_ms', () =>
+        this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx)
+      );
+    }
+    // Before the fan-out: a frame must not reach a client that then reads a
+    // cached unread count the new drop has not invalidated yet.
+    await hops.time('post_commit_unread_cache_ms', () =>
+      invalidateWaveUnreadCacheForWave(createModel.wave_id)
+    );
+    await hops.time('post_commit_push_ms', () =>
+      this.sendPendingPushNotifications({
+        dropId: createdDropId,
+        pendingPushNotificationIds
+      })
+    );
+    void this.ensureNftLinkTrackingForDrop(createdDropId, ctx);
+    // The wave-score request is independent of the frames (best effort, never
+    // throws), so it runs beside the fan-out instead of before it.
+    await Promise.all([
+      hops.time('post_commit_wave_score_ms', () =>
+        waveScoreService.requestWaveScoreRefreshBestEffort(
+          [createModel.wave_id],
+          WaveScoreDirtyRefreshReason.DROP_CHANGED,
+          ctx
+        )
+      ),
+      drop
+        ? hops.time('post_commit_fanout_ms', () =>
+            this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx)
+          )
+        : undefined
+    ]);
+    const collaboratorIds = createDropRequest.collaborator_ids ?? [];
+    if (collaboratorIds.length) {
+      await hops.time('post_commit_collaborators_ms', () =>
+        this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
+          authorId,
+          ...collaboratorIds
+        ])
+      );
+    }
+    await hops.time('post_commit_dm_unread_ms', () =>
+      this.notifyDmUnreadStateChanged({
+        waveId: createModel.wave_id,
+        recipientIds: dmUnreadRecipientIds,
+        ctx
+      })
+    );
+    hops.set('drop_post_commit_ms', hops.elapsed() - committedAt);
+    hops.set(
+      'drop_post_total_ms',
+      serverReceivedAt === null ? hops.elapsed() : Date.now() - serverReceivedAt
+    );
+    hops.emit({ drop_id: createdDropId, wave_id: createModel.wave_id });
+    if (!drop) throw new DropSavedRefreshException();
+    return drop;
+  }
+
+  /**
+   * The created drop, read after commit: retried once after a short pause,
+   * then null (logged) rather than an error, since the drop is saved.
+   */
+  private async readCreatedDropOrNull(
+    dropId: string,
+    authorId: string,
+    timer?: Timer
+  ): Promise<ApiDrop | null> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.readCreatedDrop(dropId, authorId, timer);
+      } catch (error) {
+        if (attempt >= 2) {
+          this.logger.error('[POST_COMMIT_READ_FAILED]', {
+            drop_id: dropId,
+            code: (error as { code?: unknown } | null)?.code ?? null
+          });
+          return null;
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, POST_COMMIT_READ_RETRY_DELAY_MS)
         );
       }
-    );
-    if (dailyActivityCreditRequestEnqueued) {
-      await this.dailyActivityCreditQueueService.sendWakeupBestEffort(ctx);
     }
-    await waveScoreService.requestWaveScoreRefreshBestEffort(
-      [createModel.wave_id],
-      WaveScoreDirtyRefreshReason.DROP_CHANGED,
+  }
+
+  /**
+   * The drop an earlier attempt with the same client_drop_id created, or
+   * null when the id is unused. The create route calls this before checking
+   * device signatures: a retried signed envelope would otherwise be refused
+   * as already used, although the first attempt succeeded.
+   */
+  public async findClientDropReplay(
+    {
+      createDropRequest,
+      authorId
+    }: { createDropRequest: ApiCreateDropRequest; authorId: string },
+    ctx: RequestContext
+  ): Promise<ApiDrop | null> {
+    const clientDrop = clientDropFor(createDropRequest);
+    if (!clientDrop) {
+      return null;
+    }
+    const claimed = await this.clientIdsDb.find(
+      { authorId, clientDropId: clientDrop.clientDropId },
       ctx
     );
-    await invalidateWaveUnreadCacheForWave(createModel.wave_id);
-    await this.sendPendingPushNotifications({
-      dropId: drop.id,
-      pendingPushNotificationIds
-    });
-    void this.ensureNftLinkTrackingForDrop(drop.id, ctx);
-    await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
-    if (createDropRequest.collaborator_ids?.length) {
-      await this.wsListenersNotifier.notifyAboutIdentityNotificationsChanged([
-        authorId,
-        ...createDropRequest.collaborator_ids
-      ]);
+    if (!claimed) {
+      return null;
     }
-    await this.notifyDmUnreadStateChanged({
-      waveId: createModel.wave_id,
-      recipientIds: dmUnreadRecipientIds,
-      ctx
-    });
-    return drop;
+    recordClientDropOutcome('replayed');
+    return this.findClientDropRetry(claimed, clientDrop, ctx);
+  }
+
+  /**
+   * Answers a retried create whose client_drop_id is already claimed. Only an
+   * identical request (same wave and content) gets the original drop back.
+   */
+  private async findClientDropRetry(
+    claimed: DropClientIdEntity,
+    clientDrop: ClientDrop,
+    ctx: RequestContext
+  ): Promise<ApiDrop> {
+    if (
+      claimed.wave_id !== clientDrop.waveId ||
+      claimed.content_fingerprint !== clientDrop.contentFingerprint
+    ) {
+      recordClientDropOutcome('reused');
+      throw new CustomApiCompliantException(
+        409,
+        'client_drop_id was already used for a different drop',
+        'CLIENT_DROP_ID_REUSED'
+      );
+    }
+    let drop: ApiDrop;
+    try {
+      // Read the writer: the first attempt may have committed moments ago.
+      drop = await this.dropsDb.executeNativeQueriesInTransaction(
+        (connection) =>
+          this.dropsService.findDropByIdOrThrow(
+            { dropId: claimed.drop_id, skipEligibilityCheck: true },
+            { ...ctx, connection }
+          ),
+        { isolationLevel: 'READ COMMITTED' }
+      );
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        recordClientDropOutcome('reused');
+        throw new CustomApiCompliantException(
+          409,
+          'client_drop_id was used for a drop that no longer exists',
+          'CLIENT_DROP_ID_REUSED'
+        );
+      }
+      throw error;
+    }
+    return { ...drop, client_drop_id: clientDrop.clientDropId };
+  }
+
+  /**
+   * The created drop as its author sees it, read after the write transaction
+   * committed, in a short read-only transaction on the writer (so it sees the
+   * new drop). Keeping the mapping reads out of the write transaction keeps
+   * its locks short and its statements sequential, as the write budget
+   * requires.
+   */
+  private async readCreatedDrop(
+    dropId: string,
+    authorId: string,
+    timer?: Timer
+  ): Promise<ApiDrop> {
+    return this.dropsDb.executeNativeQueriesInTransaction((connection) =>
+      this.dropsService.findDropByIdOrThrow(
+        { dropId, skipEligibilityCheck: true },
+        {
+          connection,
+          authenticationContext: AuthenticationContext.fromProfileId(authorId),
+          timer
+        }
+      )
+    );
   }
 
   private async createDropWithGivenConnection(
@@ -223,7 +593,8 @@ export class DropCreationApiService {
       authorId,
       preResolvedIdentityNomination,
       prePublication,
-      requestDailyActivityCredit
+      requestDailyActivityCredit,
+      clientDrop = null
     }: {
       model: CreateOrUpdateDropModel;
       authorId: string;
@@ -232,11 +603,12 @@ export class DropCreationApiService {
       > | null;
       prePublication: PrePublicationPreparation;
       requestDailyActivityCredit: boolean;
+      clientDrop?: ClientDrop | null;
     },
     poll: CreateDropPollRequest | null | undefined,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
   ): Promise<{
-    drop: ApiDrop;
+    dropId: string;
     pendingPushNotificationIds: number[];
     dmUnreadRecipientIds: string[];
     dailyActivityCreditRequestEnqueued: boolean;
@@ -252,6 +624,21 @@ export class DropCreationApiService {
       preResolvedIdentityNomination,
       prePublication
     });
+    if (clientDrop && !replayed) {
+      // Claimed in the same transaction as the drop. A concurrent attempt
+      // with the same id waits on this one key and then fails.
+      await this.clientIdsDb.insert(
+        {
+          author_id: authorId,
+          client_drop_id: clientDrop.clientDropId,
+          drop_id,
+          wave_id: model.wave_id,
+          content_fingerprint: clientDrop.contentFingerprint,
+          created_at: Time.currentMillis()
+        },
+        { timer, connection }
+      );
+    }
     if (!replayed)
       await this.dropPollsApiService.createPollForDrop(
         {
@@ -274,19 +661,8 @@ export class DropCreationApiService {
             { timer, connection }
           )
         : false;
-    const drop = await this.dropsService.findDropByIdOrThrow(
-      {
-        dropId: drop_id,
-        skipEligibilityCheck: true
-      },
-      {
-        connection,
-        authenticationContext: AuthenticationContext.fromProfileId(authorId),
-        timer
-      }
-    );
     return {
-      drop,
+      dropId: drop_id,
       pendingPushNotificationIds: pending_push_notification_ids,
       dmUnreadRecipientIds: dm_unread_recipient_ids ?? [],
       dailyActivityCreditRequestEnqueued
@@ -346,19 +722,20 @@ export class DropCreationApiService {
     if (authenticationContext?.isAuthenticatedAsProxy()) {
       throw new ForbiddenException(`Proxy is not allowed to delete drops`);
     }
-    const deleteResponse = await this.dropsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        return await this.deleteDrop.execute(
-          {
-            drop_id: id,
-            deleter_identity: authenticatedProfileId,
-            deleter_id: authenticatedProfileId,
-            deletion_purpose: 'DELETE'
-          },
-          { timer: timer!, connection }
-        );
-      },
-      { isolationLevel: 'READ COMMITTED' }
+    const deleteResponse = await runWriteTransaction((options) =>
+      this.dropsDb.executeNativeQueriesInTransaction(
+        async (connection) =>
+          await this.deleteDrop.execute(
+            {
+              drop_id: id,
+              deleter_identity: authenticatedProfileId,
+              deleter_id: authenticatedProfileId,
+              deletion_purpose: 'DELETE'
+            },
+            { timer: timer!, connection }
+          ),
+        readCommitted(options)
+      )
     );
     if (deleteResponse) {
       await waveDropMetricsRefreshService.requestWaveDropMetricsRefreshBestEffort(
@@ -662,7 +1039,7 @@ export class DropCreationApiService {
       throw new ForbiddenException(`Only the author can update drop ${dropId}`);
     }
     if (drop.drop_type === DropType.COMPETITION)
-      throw new ForbiddenException('Competition submissions cannot be edited');
+      throw new ForbiddenException('Decision submissions cannot be edited');
     const waveId = drop.wave_id;
     const replyTo: DropPartIdentifierModel | null =
       drop.reply_to_drop_id !== null
@@ -676,7 +1053,7 @@ export class DropCreationApiService {
     const dropType = drop.drop_type
       ? enums.resolveOrThrow(ApiDropType, drop.drop_type)
       : ApiDropType.Chat;
-    const model: CreateOrUpdateDropModel =
+    const model: CreateOrUpdateDropModel = await withOwnedMediaUploadIds(
       this.dropsMappers.updateDropApiToUseCaseModel({
         request: {
           ...request,
@@ -688,7 +1065,9 @@ export class DropCreationApiService {
         replyTo,
         waveId,
         dropId
-      });
+      }),
+      request
+    );
     const replay = await moderationReviewDb.savedRequest(
       authorId,
       'DROP',

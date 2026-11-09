@@ -211,6 +211,18 @@ interactive-art submission model without fetching arbitrary source content on
 the server. The template applies attribute escaping before every media branch;
 its separate URL guard also protects local previews, which do not use this API.
 
+## Profile picture uploads
+
+Authenticated `POST /profiles/pfp/ipfs` accepts one multipart `pfp` file of at
+most 2 MiB (multer rejects larger bodies with 413), recognizes PNG, JPEG, GIF or
+WebP from the file's own bytes, and pins it with the shared IPFS uploader as a
+single unwrapped file (the configured `IPFS_API_UPLOAD_PATH` without
+`wrap-with-directory`). It returns `{ pfp_url: "ipfs://<cid>" }`; the caller then
+saves that URL through the existing `POST /profiles` validation. The web app
+uploads through this route instead of posting to the IPFS node from the
+browser. Deploy `api` before the frontend that calls it. No new service,
+database schema, or migration is required.
+
 ## Profile collecting and marketplace operations
 
 The API owns `/collect/*` and `/market/*`. Collecting derives versioned catalogs
@@ -961,6 +973,13 @@ including older responses without a recognizable instance ID. A listingType-only
 response keeps those legacy assets and uses an unknown market state with a view
 action, without inferring a claim price.
 
+A refresh broadcasts `MEDIA_LINK_UPDATED` only when the client frame changed:
+it compares the frame built from the row it locked with the frame built from
+the updated row, leaving out `last_successfully_updated`. That timestamp counts
+as a change only when the previous success is unknown or at least a day old, so
+clients' 3-day stale badge stays correct. Each decision emits
+`MediaLinkUpdateSent` or `MediaLinkUpdateSkipped` in `6529/NftLinkRefresher`.
+
 After persistence, a worker-specific notifier reads active WebSocket recipients
 once and sends the existing `MEDIA_LINK_UPDATED` payload with concurrency 10,
 five-second request limits, and a 15-second broadcast deadline. Notification
@@ -1160,11 +1179,15 @@ WebSocket registration and re-authentication persist the identity, JWT expiry an
 
 If authentication or notification identity sync finds that the stored connection has disappeared, the API requests transport closure and then removes orphan subscription state before returning 410. This condition does not reject the credential and sends no authentication or subscription acknowledgement. Unexpected operation, close or cleanup failures remain 5xx, with fixed action/stage warning labels alongside the existing response error envelope. The mounted web application's health check can reconnect a disconnected socket using its current token; reconnect timing depends on client lifecycle and browser scheduling. The local WebSocket adapter follows the same closure path. This defensive recovery does not establish the cause of any historical connection loss.
 
+A socket may declare its purpose once on `$connect` with `purpose=typing`, stored in nullable `ws_connections.purpose`. `WSConnectionEntity` is registered in `src/entities/entities.ts`, so the full `dbMigrationsLoop` schema sync adds the column; every connection query reads it, so `dbMigrationsLoop` must deploy before `api`. Typing-purpose sockets receive only `USER_IS_TYPING` for their subscribed wave; drop, deletion, rating, reaction, competition, attachment, notification and NFT-link broadcasts from the API leave them out, so each tab gets each of those frames once through its app socket. Sockets without a purpose keep the legacy audience rules.
+
 Typing updates use the server-authenticated connection profile when resolving private visibility groups. The sender must appear in the current child/parent membership intersection for the active wave before a typing message is sent; recipients retain the same intersection. Successful typing is acknowledged with 200, expected access failures keep client-error status, and unexpected failures emit only bounded operation-stage and error labels.
 
 Outbound WebSocket delivery uses one policy in `src/ws-delivery/`, shared by the API, background senders and the worker-specific NFT-link notifier. Final 429s retain a hashed connection identifier and bounded SDK metadata in warnings and low-cardinality EMF metrics; they do not emit per-send operational errors. Shared Redis cooldowns use exponential backoff with jitter and a short endpoint pause for broad throttling. Normal healthy sends remain concurrent. Atomic leases apply only to recovery probes. Each connection has one content-free pending refresh marker; user content and credentials are never queued. A revision prevents an in-flight recovery from acknowledging newer missed updates.
 
 The scheduled `webSocketDeliveryLoop` drains due markers every minute, rechecks stored JWT expiry, and sends `RESYNC_REQUIRED`. It never replays competition outbox events, notifications or winner effects. Updated clients invalidate active HTTP queries after a staggered delay, including after reconnect and app/tab resume. Only an isolated persistently blocked listener that advertised `recovery_capability=resync_v1` may be closed, after observing healthy peers; confirmed transport closure precedes subscription deletion. Widespread failures inhibit that close policy. Existing 410 cleanup and error reporting for non-429 provider failures remain intact. Authentication and notification-identity acknowledgements have priority; legacy failures return an explicit failed outcome and never enqueue a substitute refresh marker.
+
+Build adoption: a client may declare its frontend build on `$connect` as `client_version=<git sha>` (7–40 hex characters; anything else is ignored). It is stored on `ws_connections.client_version`. Each `webSocketDeliveryLoop` run then emits the EMF gauge `6529/WebSocket ConnectedSockets`: the primary (non-typing) sockets per `ClientVersion`, with the top 20 builds by name, `other` for the rest and `none` for undeclared sockets, plus an undimensioned total. The gauge records only builds and counts, never who is connected. It is best effort and never fails the recovery run. Deploy `dbMigrationsLoop` (adds the column) before `api`; if the column is missing, `$connect` still registers the socket without its build and logs once, so a deploy-order slip or a rollback never fails a connect.
 
 Rolling fleet counters distinguish widespread throttling, a persistent outage even with a single listener, and an old retry backlog. The recovery worker emits the `6529/WebSocketDelivery` Degraded, WorkerHealthy and Pending metrics. CloudWatch alarms report sustained degradation, worker failure/missing heartbeat and repeated recovery-store failures, with explicit operational guidance in the isolated monitor. Application metrics retain SDK retries, 429s and cooldown suppressions because API Gateway metrics may omit 429s. Redis operations are bounded; unavailable recovery state fails open for direct sends, returns an explicit failed result when retry persistence is unknown, and retains independent monitoring. Retry state is versioned, endpoint-scoped and expires after two hours and five minutes without activity; deploying the worker before producers and the additive frontend consumer preserves a compatible rollout.
 
@@ -1554,6 +1577,26 @@ columns as BIGINT, so their declared flags need explicit conversion. Field parsi
 must not read request context from a reused socket: that socket can have been
 opened by another request. Queries outside the compatibility scope retain numeric
 BIGINT values, including when they reuse a socket opened inside that scope.
+
+API pools reach MySQL through RDS Proxy. The proxy pins a client session to one
+database connection for the session's life after a statement over 16 KB or an
+untracked `SET SESSION`, and warm Lambda containers keep pooled sessions open.
+The API therefore measures each formatted statement and marks a connection
+pinned once a statement exceeds 16,000 bytes. Each Lambda invocation runs in a
+pin scope: pinned connections keep returning to the pool, so the rest of the
+invocation reuses them, and the scope destroys the idle ones when the
+invocation ends; one still borrowed then is re-checked at later invocation
+ends. A pinned connection released outside an open scope, such as background
+work that outlives its invocation, is destroyed at release. A connection whose
+destroy fails is taken out of the pool's idle list and never released again.
+Budgeted API transactions, which set session timeouts, destroy their
+connection after COMMIT or ROLLBACK instead of restoring the timeouts. Each
+disposal emits the `6529/DbProxy` `ProxyPinnedSessionRetired` metric (`When`
+is `release` or `request_end`) with a value-free statement fingerprint, and
+each invocation that pinned emits `ProxyPinnedSessionsRetiredPerRequest`.
+Long inlined `IN` lists that can be split per value use
+`querySqlInListChunks`, which keeps each statement's list near 12 KB. Loop mode
+is unchanged; loops disconnect after each invocation.
 
 The core architectural choice is that MySQL is both the system of record and the internal integration layer. This keeps the system understandable, but it makes table contracts, migrations, backfills, indexes, and worker idempotency especially important.
 

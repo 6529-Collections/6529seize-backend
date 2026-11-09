@@ -1,5 +1,11 @@
 import { refreshTransactionUsdAtWrite } from '@/eth-prices/transaction-usd';
 import 'reflect-metadata';
+import { synchronizeSchemaBounded } from '@/db/bounded-schema-sync';
+import {
+  closeAfterCommitScope,
+  openAfterCommitScope,
+  runAfterCommitCallbacks
+} from '@/db/after-commit';
 import { enqueueTransfersWithManager } from './transactions/transfer-reconciliation.db';
 import {
   DataSource,
@@ -101,6 +107,7 @@ import { metricsRecorder } from './metrics/MetricsRecorder';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
 import { upsertTdhInBatches } from '@/tdhLoop/tdh-persistence-batches';
 import {
+  budgetOf,
   ConnectionWrapper,
   dbSupplier,
   setSqlExecutor,
@@ -176,7 +183,8 @@ export async function connect(
       ? (selection.database ?? undefined)
       : process.env.DB_NAME,
     entities: entities,
-    synchronize: syncEntities,
+    // Synchronized below with bounded metadata-lock waits, never here.
+    synchronize: false,
     logging: false,
     charset: 'utf8mb4',
     timezone: 'Etc/UTC'
@@ -197,6 +205,18 @@ export async function connect(
       throw error;
     }
     logger.error(`DB INIT ERROR: ${error}`);
+  }
+  if (syncEntities) {
+    if (!AppDataSource.isInitialized)
+      throw new Error('Schema sync needs an initialized data source');
+    try {
+      await synchronizeSchemaBounded(AppDataSource);
+    } catch (error) {
+      // Fail the run rather than continue on a partly synchronized schema;
+      // the next run plans again from the live schema.
+      await AppDataSource.destroy().catch(() => undefined);
+      throw error;
+    }
   }
   class DbImpl extends SqlExecutor {
     async execute(
@@ -249,44 +269,69 @@ export function consolidateTransactions(
   return consolidatedTransactions;
 }
 
+/**
+ * Loop transactions track `afterCommit` callbacks like the api's
+ * (my-sql.helpers): they run once COMMIT is acknowledged and never after a
+ * rollback, instead of immediately while the transaction is still open.
+ */
 async function execNativeTransactionally<T>(
   executable: (connectionHolder: ConnectionWrapper<QueryRunner>) => Promise<T>,
   options?: SqlTransactionOptions
 ): Promise<T> {
-  if (options?.executionBudget) {
-    return executeBudgetedSqlTransaction(
-      async () => {
-        const runner = AppDataSource.createQueryRunner('master');
-        try {
-          const physical = (await runner.connect()) as PoolConnection;
-          return {
-            handle: runner,
-            physical,
-            release: () => runner.release(),
-            transaction: {
-              begin: () => runner.startTransaction('REPEATABLE READ'),
-              commit: () => runner.commitTransaction(),
-              rollback: () => runner.rollbackTransaction()
-            }
-          };
-        } catch (error) {
-          await runner.release();
-          throw error;
+  const budget = budgetOf(options);
+  if (budget) {
+    const isolationLevel = budget.isolationLevel ?? 'REPEATABLE READ';
+    let scoped: object | undefined;
+    let result: T;
+    try {
+      result = await executeBudgetedSqlTransaction(
+        async () => {
+          const runner = AppDataSource.createQueryRunner('master');
+          try {
+            const physical = (await runner.connect()) as PoolConnection;
+            return {
+              handle: runner,
+              physical,
+              release: () => runner.release(),
+              transaction: {
+                isolationLevel,
+                begin: () => runner.startTransaction(isolationLevel),
+                commit: () => runner.commitTransaction(),
+                rollback: () => runner.rollbackTransaction()
+              }
+            };
+          } catch (error) {
+            await runner.release();
+            throw error;
+          }
+        },
+        budget,
+        (handle) => {
+          scoped = handle;
+          openAfterCommitScope(handle);
+          return executable({ connection: handle as QueryRunner });
         }
-      },
-      options.executionBudget,
-      (handle) => executable({ connection: handle as QueryRunner })
-    );
+      );
+    } catch (error) {
+      if (scoped) closeAfterCommitScope(scoped);
+      throw error;
+    }
+    // Resolving means the COMMIT was acknowledged (see the budget executor).
+    await runAfterCommitCallbacks(scoped ? closeAfterCommitScope(scoped) : []);
+    return result;
   }
   const queryRunner = AppDataSource.createQueryRunner();
   await queryRunner.connect();
   await queryRunner.startTransaction(options?.isolationLevel);
+  openAfterCommitScope(queryRunner);
 
+  let committed: { result: T; afterCommit: (() => unknown)[] };
   try {
     const result = await executable({ connection: queryRunner });
     await queryRunner.commitTransaction();
-    return result;
+    committed = { result, afterCommit: closeAfterCommitScope(queryRunner) };
   } catch (err: any) {
+    closeAfterCommitScope(queryRunner);
     logger.error(`Database transaction failed [${err}]`);
     if (queryRunner.isTransactionActive) {
       await queryRunner.rollbackTransaction();
@@ -295,6 +340,8 @@ async function execNativeTransactionally<T>(
   } finally {
     queryRunner.release();
   }
+  await runAfterCommitCallbacks(committed.afterCommit);
+  return committed.result;
 }
 
 function prepareStatement(

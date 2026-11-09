@@ -93,7 +93,12 @@ import {
 } from '@/api/device-signing/device-grant-message';
 import { deviceGrantsService } from '@/api/device-signing/device-grants.service';
 import { MlsDeviceGrantRequest } from '@/api/device-signing/combined-device-grant';
-import { E2EE_CIPHERSUITE } from '@/e2ee/e2ee.constants';
+import {
+  decodeE2eeSuiteSet,
+  E2EE_V1_GRANT_SUITE,
+  e2eeAcceptedSuites,
+  isE2eeV1GrantAccepted
+} from '@/e2ee/e2ee-suite-policy';
 import { isE2eeEnabled } from '@/e2ee/e2ee-flag';
 import { identitiesDb } from '@/identities/identities.db';
 
@@ -114,9 +119,11 @@ interface SessionNonceQueryRequest {
   device_key?: string;
   device_key_type?: typeof DEVICE_GRANT_KEY_TYPE;
   device_scopes?: string;
-  // Combined grant: also grant this MLS device key for encrypted messages.
+  // Combined grant: also grant this MLS device key for encrypted messages,
+  // for a suite set (v2, "78" or "78.79") or one suite (v1, 0x004F only).
   mls_device_key?: string;
   mls_ciphersuite?: number;
+  mls_ciphersuites?: string;
 }
 
 interface ResolvedSessionNonceContext {
@@ -278,8 +285,9 @@ async function resolveRequestedDeviceGrant(
 
 /**
  * The MLS half of a combined grant request. A server with encrypted
- * messages off, or on another ciphersuite, issues the signing grant alone;
- * the client then enrolls encrypted messages with its own grant prompt.
+ * messages off, or that does not accept the requested ciphersuite, issues
+ * the signing grant alone; the client then enrolls encrypted messages with
+ * its own grant prompt.
  * So does a wallet without a profile: an MLS device can only join a
  * profile, so the key would be thrown away and granted again after the
  * profile is created.
@@ -290,8 +298,7 @@ async function resolveRequestedMlsDevice(
   timer: Timer
 ): Promise<MlsDeviceGrantRequest | null> {
   const deviceKey = nonceRequest.mls_device_key;
-  const ciphersuite = nonceRequest.mls_ciphersuite;
-  if (deviceKey === undefined || ciphersuite === undefined) {
+  if (deviceKey === undefined) {
     return null;
   }
   if (deviceKey === nonceRequest.device_key) {
@@ -299,7 +306,8 @@ async function resolveRequestedMlsDevice(
       'The MLS device key must differ from the signing device key'
     );
   }
-  if (!isE2eeEnabled() || ciphersuite !== E2EE_CIPHERSUITE) {
+  const suites = requestedMlsSuites(nonceRequest);
+  if (!isE2eeEnabled() || suites === null) {
     return null;
   }
   const signerProfileId = await identitiesDb.getProfileIdByWallet(
@@ -309,7 +317,34 @@ async function resolveRequestedMlsDevice(
   if (!signerProfileId) {
     return null;
   }
-  return { deviceKey, ciphersuite };
+  return { deviceKey, ...suites };
+}
+
+/**
+ * The suites a combined grant may name for this request, or null to issue
+ * the signing grant alone: a v2 set (`mls_ciphersuites`) that is canonical
+ * and names an accepted suite, or the v1 suite 0x004F while v1 grants are
+ * honoured (D172).
+ */
+function requestedMlsSuites(
+  nonceRequest: SessionNonceQueryRequest
+):
+  | { readonly ciphersuites: readonly number[] }
+  | { readonly ciphersuite: number }
+  | null {
+  if (nonceRequest.mls_ciphersuites !== undefined) {
+    const suites = decodeE2eeSuiteSet(nonceRequest.mls_ciphersuites);
+    // Accepted now: after the window, 0x004F no longer counts (D172).
+    const accepted = e2eeAcceptedSuites(Date.now());
+    return suites?.some((suite) => accepted.includes(suite))
+      ? { ciphersuites: suites }
+      : null;
+  }
+  const ciphersuite = nonceRequest.mls_ciphersuite;
+  return ciphersuite === E2EE_V1_GRANT_SUITE &&
+    isE2eeV1GrantAccepted(Date.now())
+    ? { ciphersuite }
+    : null;
 }
 
 router.post(
@@ -1345,13 +1380,28 @@ const SessionNonceQueryRequestSchema: Joi.ObjectSchema<SessionNonceQueryRequest>
     mls_device_key: Joi.string()
       .pattern(/^0x[0-9a-f]{64}$/)
       .optional(),
-    mls_ciphersuite: Joi.number().integer().min(1).max(0xffff).optional()
+    mls_ciphersuite: Joi.number().integer().min(1).max(0xffff).optional(),
+    mls_ciphersuites: Joi.string()
+      .pattern(/^\d{1,5}(\.\d{1,5}){0,3}$/)
+      .optional()
   })
     .with('device_key', 'device_key_type')
     .with('device_key_type', 'device_key')
     .with('device_scopes', 'device_key')
-    .with('mls_device_key', ['device_key', 'mls_ciphersuite'])
+    .with('mls_device_key', 'device_key')
     .with('mls_ciphersuite', 'mls_device_key')
+    .with('mls_ciphersuites', 'mls_device_key')
+    .oxor('mls_ciphersuite', 'mls_ciphersuites')
+    .custom((value: SessionNonceQueryRequest, helpers) =>
+      value.mls_device_key === undefined ||
+      value.mls_ciphersuite !== undefined ||
+      value.mls_ciphersuites !== undefined
+        ? value
+        : helpers.error('any.invalid')
+    )
+    .messages({
+      'any.invalid': 'mls_device_key needs mls_ciphersuites or mls_ciphersuite'
+    })
     .unknown(false);
 
 const ClientTypeSchema = Joi.string().valid('web', 'native', 'desktop');

@@ -1,3 +1,4 @@
+import { inSequence } from '@/db/in-sequence';
 import {
   DROP_POLL_OPTIONS_TABLE,
   DROP_POLL_VOTES_TABLE,
@@ -444,22 +445,25 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->deleteByDropId`;
     ctx.timer?.start(timerKey);
     try {
-      await Promise.all([
-        this.db.execute(
-          `delete from ${DROP_POLL_VOTES_TABLE} where drop_id = :dropId`,
-          { dropId },
-          { wrappedConnection: ctx.connection }
-        ),
-        this.db.execute(
-          `delete from ${DROP_POLL_OPTIONS_TABLE} where drop_id = :dropId`,
-          { dropId },
-          { wrappedConnection: ctx.connection }
-        ),
-        this.db.execute(
-          `delete from ${DROP_POLLS_TABLE} where drop_id = :dropId`,
-          { dropId },
-          { wrappedConnection: ctx.connection }
-        )
+      await inSequence([
+        () =>
+          this.db.execute(
+            `delete from ${DROP_POLL_VOTES_TABLE} where drop_id = :dropId`,
+            { dropId },
+            { wrappedConnection: ctx.connection }
+          ),
+        () =>
+          this.db.execute(
+            `delete from ${DROP_POLL_OPTIONS_TABLE} where drop_id = :dropId`,
+            { dropId },
+            { wrappedConnection: ctx.connection }
+          ),
+        () =>
+          this.db.execute(
+            `delete from ${DROP_POLLS_TABLE} where drop_id = :dropId`,
+            { dropId },
+            { wrappedConnection: ctx.connection }
+          )
       ]);
     } finally {
       ctx.timer?.stop(timerKey);
@@ -473,22 +477,25 @@ export class DropPollsDb extends LazyDbAccessCompatibleService {
     const timerKey = `${this.constructor.name}->deleteByWaveId`;
     ctx.timer?.start(timerKey);
     try {
-      await Promise.all([
-        this.db.execute(
-          `delete from ${DROP_POLL_VOTES_TABLE} where wave_id = :waveId`,
-          { waveId },
-          { wrappedConnection: ctx.connection }
-        ),
-        this.db.execute(
-          `delete from ${DROP_POLL_OPTIONS_TABLE} where wave_id = :waveId`,
-          { waveId },
-          { wrappedConnection: ctx.connection }
-        ),
-        this.db.execute(
-          `delete from ${DROP_POLLS_TABLE} where wave_id = :waveId`,
-          { waveId },
-          { wrappedConnection: ctx.connection }
-        )
+      await inSequence([
+        () =>
+          this.db.execute(
+            `delete from ${DROP_POLL_VOTES_TABLE} where wave_id = :waveId`,
+            { waveId },
+            { wrappedConnection: ctx.connection }
+          ),
+        () =>
+          this.db.execute(
+            `delete from ${DROP_POLL_OPTIONS_TABLE} where wave_id = :waveId`,
+            { waveId },
+            { wrappedConnection: ctx.connection }
+          ),
+        () =>
+          this.db.execute(
+            `delete from ${DROP_POLLS_TABLE} where wave_id = :waveId`,
+            { waveId },
+            { wrappedConnection: ctx.connection }
+          )
       ]);
     } finally {
       ctx.timer?.stop(timerKey);

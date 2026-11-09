@@ -44,6 +44,15 @@ import {
 } from '../auth/auth';
 import { userGroupsService } from '../community-members/user-groups.service';
 import { dropsService } from '../drops/drops.api.service';
+import {
+  WAVE_LOGS_TIMEOUT_TTL,
+  WaveLogsUnavailableException
+} from '../drops/wave-logs-timeout';
+import {
+  anonymousWaveResponseCache,
+  invalidateAnonymousWaveResponse,
+  markShareableWaveResponse
+} from './wave-response-cache';
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
@@ -254,6 +263,7 @@ router.post(
       request,
       requestContext
     );
+    await invalidateAnonymousWaveResponse(req.params.id);
     await giveReadReplicaTimeToCatchUp();
     res.send(wave);
   }
@@ -282,6 +292,7 @@ router.use('/:id/rep', waveRepRoutes);
 router.get(
   '/:id',
   maybeAuthenticatedUser(),
+  anonymousWaveResponseCache(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
     res: Response<ApiResponse<ApiWave>>
@@ -297,13 +308,13 @@ router.get(
           ProfileProxyActionType.READ_WAVE
         ])
         ? []
-        : await userGroupsService.getGroupsUserIsEligibleFor(profileId);
+        : await userGroupsService.getGroupsUserIsEligibleFor(profileId, timer);
     const wave = await waveApiService.findWaveByIdOrThrow(
       id,
       group_ids_user_is_eligible_for,
       { authenticationContext, timer }
     );
-
+    markShareableWaveResponse(res, profileId, wave);
     res.send(wave);
   }
 );
@@ -319,6 +330,7 @@ router.delete(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     await waveApiService.deleteWave(id, { authenticationContext, timer });
+    await invalidateAnonymousWaveResponse(id);
     res.send({});
   }
 );
@@ -751,18 +763,30 @@ router.get(
     if (logTypes.length === 0) {
       logTypes = [...DROP_LOG_TYPES];
     }
-    const result = await dropsService.findWaveLogs(
-      {
-        ...params,
-        wave_id: id,
-        log_types: logTypes
-      },
-      {
-        authenticationContext,
-        timer
+    try {
+      const result = await dropsService.findWaveLogs(
+        {
+          ...params,
+          wave_id: id,
+          log_types: logTypes
+        },
+        {
+          authenticationContext,
+          timer
+        }
+      );
+      res.send(result);
+    } catch (error) {
+      if (error instanceof WaveLogsUnavailableException) {
+        // The error middleware sends the 503 on this response, keeping
+        // headers already set.
+        res.setHeader(
+          'Retry-After',
+          WAVE_LOGS_TIMEOUT_TTL.toSeconds().toString()
+        );
       }
-    );
-    res.send(result);
+      throw error;
+    }
   }
 );
 

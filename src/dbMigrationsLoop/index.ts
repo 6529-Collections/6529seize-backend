@@ -22,9 +22,11 @@ import { applyClaimsMediaUploadSchema } from './claims-media-schema';
 import { NftLinkEntity } from '@/entities/INftLink';
 import { applyNftLinkPageRetrySchema } from './nft-link-page-retry-schema';
 import { getDataSource } from '@/db';
+import { synchronizeSchemaBounded } from '@/db/bounded-schema-sync';
 import { CompetitionLifecycleEventEntity } from '@/entities/ICompetition';
 import { installLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 import { dbSupplier } from '@/sql-executor';
+import { deleteUnusedViewerGroupSets } from '@/waves/viewer-group-sets';
 import { assertCompetitionSchemaSyncSafe } from '@/competitions/retired-competition-storage';
 import { MarketDepthPublicationLockEntity } from '@/entities/IMarketDepthPublicationLock';
 import { NFTHistoryReplayJobEntity } from '@/entities/INFTHistoryReplayJob';
@@ -235,7 +237,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
       // Synchronization ignores tables outside the current entity registry; retirement is operator-only.
       if (!scheduledInvocation && scope === 'full') {
         await assertCompetitionSchemaSyncSafe(dbSupplier());
-        await getDataSource().synchronize();
+        await synchronizeSchemaBounded(getDataSource());
         await applyWaveScoreInputIndexSchema();
       }
       if (
@@ -256,6 +258,12 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
         await dbmigrate.up();
       }
       await pushNotificationCancellationsDb.deleteExpired();
+      const deletedViewerGroupSets =
+        await deleteUnusedViewerGroupSets(dbSupplier());
+      if (deletedViewerGroupSets)
+        logger.info(
+          `Deleted ${deletedViewerGroupSets} unused viewer group sets`
+        );
       const deletedModerationChecks =
         await deleteExpiredContentModerationChecksInBatches(
           Time.currentMillis() - Time.days(30).toMillis()
