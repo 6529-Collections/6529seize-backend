@@ -312,3 +312,5 @@ export {
   ViewerGroupSetMemberEntity
 } from './IViewerGroupSet';
 export { IdentityTdhSyncStateEntity } from './IIdentityTdhSyncState';
+
+export * from './ICompetitionScoreReset';

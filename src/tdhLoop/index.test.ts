@@ -44,9 +44,11 @@ jest.mock('../env', () => ({
   }
 }));
 
-const mockResumePendingIdentityTdhSync = jest.fn();
-jest.mock('../identity-tdh-sync', () => ({
-  resumePendingIdentityTdhSync: mockResumePendingIdentityTdhSync
+const mockHasPendingFullAnnouncement = jest.fn();
+jest.mock('../identity-tdh-sync-state.db', () => ({
+  identityTdhSyncStateDb: {
+    hasPendingFullAnnouncement: mockHasPendingFullAnnouncement
+  }
 }));
 
 import { tdhLoop } from './index';
@@ -76,9 +78,10 @@ describe('tdhLoop xTDH completion trigger', () => {
     mockFindNftTdh.mockResolvedValue(undefined);
     mockUploadTdh.mockResolvedValue(undefined);
     mockNotifyTdhCalculationsDone.mockResolvedValue(undefined);
+    mockHasPendingFullAnnouncement.mockResolvedValue(false);
   });
 
-  it('publishes one authoritative completion event after a full nightly run', async () => {
+  it('leaves the completion event of a full nightly run to the identities sync', async () => {
     await tdhLoop(true);
 
     expect(mockConsolidateAndPersistTdh).toHaveBeenCalledWith(
@@ -86,19 +89,18 @@ describe('tdhLoop xTDH completion trigger', () => {
       blockTimestamp,
       { mode: 'FULL' }
     );
-    expect(mockNotifyTdhCalculationsDone).toHaveBeenCalledTimes(1);
-    expect(mockFindNftTdh.mock.invocationCallOrder[0]).toBeLessThan(
-      mockNotifyTdhCalculationsDone.mock.invocationCallOrder[0]
-    );
+    expect(mockFindNftTdh).toHaveBeenCalledTimes(1);
+    // Published by delegationsLoop once identities reflect this TDH.
+    expect(mockNotifyTdhCalculationsDone).not.toHaveBeenCalled();
   });
 
-  it('finishes a pending identities sync before computing TDH', async () => {
-    await tdhLoop(true);
+  it('does not repeat the event on a rerun while a full write still waits for its sync', async () => {
+    mockHasPendingFullAnnouncement.mockResolvedValue(true);
 
-    expect(mockResumePendingIdentityTdhSync).toHaveBeenCalledTimes(1);
-    expect(
-      mockResumePendingIdentityTdhSync.mock.invocationCallOrder[0]
-    ).toBeLessThan(mockUpdateTdh.mock.invocationCallOrder[0]);
+    await tdhLoop();
+
+    expect(mockConsolidateAndPersistTdh).not.toHaveBeenCalled();
+    expect(mockNotifyTdhCalculationsDone).not.toHaveBeenCalled();
   });
 
   it('does not publish completion when full persistence fails', async () => {

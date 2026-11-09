@@ -11,6 +11,9 @@ import { IDENTITY_TDH_SYNC_STATE_TABLE } from '@/constants/db-tables';
  *   TDH rows.
  * - `synced`: the highest pending generation whose identities sync finished.
  * - `lease`: which invocation is running the sync, and until when.
+ * - `metrics_walk`: how far the identities metrics walk (step C) got for
+ *   `generation`: the last committed chunk's last key, so a resumed sync
+ *   continues after it.
  */
 @Entity(IDENTITY_TDH_SYNC_STATE_TABLE)
 export class IdentityTdhSyncStateEntity {
@@ -28,6 +31,10 @@ export class IdentityTdhSyncStateEntity {
 
   @Column({ type: 'bigint', default: 0 })
   readonly lease_until!: number;
+
+  /** Same type as identities.consolidation_key. */
+  @Column({ type: 'varchar', length: 200, nullable: true, default: null })
+  readonly walk_after!: string | null;
 
   @Column({ type: 'bigint', default: 0 })
   readonly updated_at!: number;
