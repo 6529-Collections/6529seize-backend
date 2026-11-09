@@ -30,6 +30,17 @@ The resizer's HTTP API uses AWS_PROXY payload 1.0 without request templates;
 request bodies remain inside the HTTP event envelope and cannot become this
 top-level operator payload.
 
+## Decision vote detail reads
+
+The existing drop voter, vote-history, summary, and CSV endpoints resolve native
+Decision submissions using their stored `COMPETITION` type outside the legacy
+GET compatibility scope. Their entry lookup independently enforces the Decision
+and parent wave's read permissions. This keeps standalone Decisions and migrated
+original-primary Decisions on the same native vote source even when older GET
+projections present their content as `CHAT` or `PARTICIPATORY`. Winner voter
+lists and exports use the saved snapshot for that entry's decision; active RANK
+summaries use current signed allocations. No stored drop types are rewritten.
+
 ## Anonymous competition submissions
 
 Native competition participation configuration can opt into
