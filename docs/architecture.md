@@ -172,6 +172,18 @@ failure, and replaces all loaded pages together on refresh/expiry. It offers
 Retry and Load more controls alongside automatic scrolling. This adds no table,
 migration, queue or loop. Deploy `api` before the frontend in each environment.
 
+## Reply placement on a single drop
+
+The author can set reply placement on a top-level chat drop while its wave
+uses inline replies. The API saves the preference on the drop and uses
+existing reply ancestry to filter descendants before paginating the chat
+timeline. Clients opt into the mixed timeline through the V2 feed and
+drop-ID pagination APIs. Thread reads keep returning descendants and reply
+payloads identify the top-level drop for links and live updates.
+
+Deploy `dbMigrationsLoop` first to synchronize the additive column and refresh
+the compatibility view, then deploy the API and the frontend.
+
 ## Wave eligibility
 
 The maintained direct eligibility implementation serves profile-to-groups reads;

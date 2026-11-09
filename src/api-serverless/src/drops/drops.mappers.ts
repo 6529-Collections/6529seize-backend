@@ -1006,6 +1006,11 @@ export class DropsMappers {
         ([id]) => !hiddenDropIds.has(id)
       )
     );
+    const collapsedReplyRoots =
+      await this.dropsDb.findIndividuallyCollapsedReplyRoots(
+        entities.filter((drop) => drop.reply_to_drop_id).map((drop) => drop.id),
+        ctx
+      );
     return entities.map<ApiDropWithoutWave>((dropEntity) => {
       const drop = this.toDrop({
         dropEntity,
@@ -1048,6 +1053,8 @@ export class DropsMappers {
         visibleQuotedDropIds,
         authorSignedDropIds
       });
+      const collapsedReplyRoot = collapsedReplyRoots[drop.id];
+      if (collapsedReplyRoot) drop.collapsed_reply_thread = collapsedReplyRoot;
       applyCollaborationPresentation(
         drop,
         publicCollaborators,
@@ -1610,6 +1617,11 @@ export class DropsMappers {
       reactions: dropReactions.get(dropEntity.id)?.reactions ?? [],
       boosts: boostsCount[dropEntity.id] ?? 0,
       is_additional_action_promised: dropEntity.is_additional_action_promised,
+      ...(dropEntity.drop_type === DropType.CHAT &&
+      !replyToDropId &&
+      dropEntity.collapse_replies !== undefined
+        ? { collapse_replies: !!dropEntity.collapse_replies }
+        : {}),
       hide_link_preview: !!dropEntity.hide_link_preview,
       poll: dropPollsByDropId[dropEntity.id]
         ? mapDropPollToApi(dropPollsByDropId[dropEntity.id])

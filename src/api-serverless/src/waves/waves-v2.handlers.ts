@@ -83,6 +83,7 @@ type DropsFeedV2Query = {
   serial_no_limit: number | null;
   search_strategy: ApiDropSearchStrategy;
   drop_type: ApiDropType | null;
+  respect_drop_reply_collapse?: boolean;
 };
 
 type WaveMetadataPathParams = {
@@ -135,6 +136,10 @@ const DropsFeedV2QuerySchema: Joi.ObjectSchema<DropsFeedV2Query> =
       .optional()
       .default(null)
   });
+
+const WaveTimelineV2QuerySchema = DropsFeedV2QuerySchema.append({
+  respect_drop_reply_collapse: Joi.boolean().default(false)
+});
 
 const WaveMetadataPathParamsSchema: Joi.ObjectSchema<WaveMetadataPathParams> =
   Joi.object({
@@ -400,8 +405,13 @@ export async function handleGetWaveDropsV2(
   );
   const timer = Timer.getFromRequest(req);
   const authenticationContext = await getAuthenticationContext(req, timer);
-  const { limit, serial_no_limit, search_strategy, drop_type } =
-    getValidatedByJoiOrThrow(req.query, DropsFeedV2QuerySchema);
+  const {
+    limit,
+    serial_no_limit,
+    search_strategy,
+    drop_type,
+    respect_drop_reply_collapse
+  } = getValidatedByJoiOrThrow(req.query, WaveTimelineV2QuerySchema);
 
   return apiWaveV2Service.findDropsFeed(
     {
@@ -411,7 +421,8 @@ export async function handleGetWaveDropsV2(
       serial_no_limit,
       search_strategy,
       drop_type,
-      curation_id: null
+      curation_id: null,
+      respect_drop_reply_collapse
     },
     { authenticationContext, timer }
   );

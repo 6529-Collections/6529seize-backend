@@ -108,6 +108,7 @@ import { ApiDeleteMyWaveChatHistoryResponse } from '@/api/generated/models/ApiDe
 import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
 import { ApiDmDropsUnreadCount } from '@/api/generated/models/ApiDmDropsUnreadCount';
 import { ApiDmUnreadSnapshot } from '@/api/generated/models/ApiDmUnreadSnapshot';
+import { ApiDrop } from '@/api/generated/models/ApiDrop';
 import { ApiDropAndWave } from '@/api/generated/models/ApiDropAndWave';
 import { ApiDropBookmarksStatus } from '@/api/generated/models/ApiDropBookmarksStatus';
 import { ApiDropBoostV2 } from '@/api/generated/models/ApiDropBoostV2';
@@ -239,6 +240,7 @@ import { ApiSaveEulaConsentRequest } from '@/api/generated/models/ApiSaveEulaCon
 import { ApiSaveEulaConsentResponse } from '@/api/generated/models/ApiSaveEulaConsentResponse';
 import { ApiSaveProfileCmsPackageDraftRequest } from '@/api/generated/models/ApiSaveProfileCmsPackageDraftRequest';
 import { ApiSetCompetitionVoteRequest } from '@/api/generated/models/ApiSetCompetitionVoteRequest';
+import { ApiSetDropReplyCollapseRequest } from '@/api/generated/models/ApiSetDropReplyCollapseRequest';
 import { ApiSubmitProfileCmsAgentProposalRequest } from '@/api/generated/models/ApiSubmitProfileCmsAgentProposalRequest';
 import { ApiSubscriptionCoverage } from '@/api/generated/models/ApiSubscriptionCoverage';
 import { ApiTdhRules } from '@/api/generated/models/ApiTdhRules';
@@ -1636,6 +1638,22 @@ export type GetDropSignedEventsRequest = Request<
   ApiResponse<GetDropSignedEventsResponse>,
   never,
   GetDropSignedEventsQuery,
+  Record<string, never>
+>;
+
+export interface SetDropReplyCollapsePathParams {
+  "id": string;
+}
+
+export type SetDropReplyCollapseQuery = Record<string, never>;
+
+export type SetDropReplyCollapseResponse = ApiDrop;
+
+export type SetDropReplyCollapseRequest = Request<
+  SetDropReplyCollapsePathParams,
+  ApiResponse<SetDropReplyCollapseResponse>,
+  ApiSetDropReplyCollapseRequest,
+  SetDropReplyCollapseQuery,
   Record<string, never>
 >;
 
@@ -3770,6 +3788,7 @@ export interface GetWaveDropsV2Query {
   "serial_no_limit"?: number;
   "search_strategy"?: string;
   "drop_type"?: string;
+  "respect_drop_reply_collapse"?: boolean;
 }
 
 export type GetWaveDropsV2Response = ApiWaveDropsFeedV2;

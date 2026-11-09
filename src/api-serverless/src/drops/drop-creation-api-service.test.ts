@@ -96,6 +96,96 @@ function makeService({
   };
 }
 
+describe('DropCreationApiService.setDropReplyCollapse', () => {
+  function setup({
+    authorId = 'profile-1',
+    proxy = false,
+    replyTo = null as string | null,
+    waveCollapsed = false
+  } = {}) {
+    const root = {
+      id: 'drop-1',
+      author_id: authorId,
+      wave_id: 'wave-1',
+      drop_type: DropType.CHAT,
+      reply_to_drop_id: replyTo
+    };
+    const dropsService = {
+      findViewableDropByIdOrThrow: jest.fn().mockResolvedValue(root),
+      findDropByIdOrThrow: jest.fn().mockResolvedValue({ id: root.id })
+    };
+    const dropsDb = {
+      executeNativeQueriesInTransaction: jest.fn(async (callback) =>
+        callback({})
+      ),
+      findDropById: jest.fn().mockResolvedValue(root),
+      setDropReplyCollapse: jest.fn().mockResolvedValue(true)
+    };
+    const waves = {
+      findWaveByIdForUpdate: jest.fn().mockResolvedValue({
+        id: root.wave_id,
+        chat_replies_collapsed: waveCollapsed
+      })
+    };
+    const notifier = { notifyAboutDropUpdate: jest.fn() };
+    const service = new DropCreationApiService(
+      dropsService as never,
+      dropsDb as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      notifier as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      waves as never
+    );
+    const ctx = {
+      authenticationContext: {
+        getActingAsId: () => 'profile-1',
+        isAuthenticatedAsProxy: () => proxy
+      }
+    };
+    return {
+      dropsDb,
+      notifier,
+      save: (collapseReplies: boolean) =>
+        service.setDropReplyCollapse(
+          { dropId: root.id, collapseReplies },
+          ctx as never
+        )
+    };
+  }
+
+  it.each([true, false])(
+    'saves the author’s requested state %s',
+    async (collapsed) => {
+      const { dropsDb, notifier, save } = setup();
+      await save(collapsed);
+      expect(dropsDb.setDropReplyCollapse).toHaveBeenCalledWith(
+        { dropId: 'drop-1', waveId: 'wave-1', collapseReplies: collapsed },
+        expect.objectContaining({ connection: expect.anything() })
+      );
+      expect(notifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
+        { id: 'drop-1' },
+        expect.anything(),
+        { reason: 'REPLY_COLLAPSE' }
+      );
+    }
+  );
+
+  it.each([
+    [{ authorId: 'profile-2' }, 'Only the author'],
+    [{ proxy: true }, 'Only the author'],
+    [{ replyTo: 'another-drop' }, 'top-level chat drops'],
+    [{ waveCollapsed: true }, 'waves with inline replies']
+  ])('rejects ineligible settings %j', async (overrides, message) => {
+    const { dropsDb, save } = setup(overrides);
+    await expect(save(true)).rejects.toThrow(message);
+    expect(dropsDb.setDropReplyCollapse).not.toHaveBeenCalled();
+  });
+});
+
 describe('DropCreationApiService.toggleHideLinkPreview', () => {
   it('keeps legacy toggle behavior when no final state is provided', async () => {
     const { ctx, dropsDb, service, wsListenersNotifier } = makeService({

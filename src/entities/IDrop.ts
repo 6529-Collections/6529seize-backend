@@ -79,6 +79,8 @@ export class DropEntity {
   readonly is_additional_action_promised!: boolean | null;
   @Column({ type: 'boolean', default: false })
   readonly hide_link_preview?: boolean;
+  @Column({ type: 'boolean', default: false })
+  readonly collapse_replies?: boolean;
 }
 
 @Entity(DROPS_PARTS_TABLE)
