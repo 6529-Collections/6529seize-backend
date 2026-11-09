@@ -159,7 +159,10 @@ export class ApiDropV2Service {
       const dropsByIdPromise = this.apiDropMapper.mapDrops(
         pageDropEntities,
         ctx,
-        { groupIdsUserIsEligibleFor }
+        {
+          groupIdsUserIsEligibleFor,
+          ...(req.serial_nos?.length ? { includeWaveWideReplyRoots: true } : {})
+        }
       );
       const wavesByIdPromise = this.wavesApiDb
         .findWavesByIdsEligibleForRead(

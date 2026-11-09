@@ -735,6 +735,14 @@ describe('ApiDropV2Service', () => {
       },
       ctx
     );
+    expect(deps.apiDropMapper.mapDrops).toHaveBeenCalledWith(
+      [firstDrop, secondDrop],
+      ctx,
+      {
+        groupIdsUserIsEligibleFor: ['group-1'],
+        includeWaveWideReplyRoots: true
+      }
+    );
     expect(deps.wavesApiDb.findWavesByIdsEligibleForRead).toHaveBeenCalledWith(
       ['wave-1', 'wave-2'],
       ['group-1'],

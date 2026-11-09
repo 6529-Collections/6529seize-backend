@@ -130,6 +130,7 @@ const PRIORITY_METADATA_ADDITIONAL_MEDIA_KEY = 'additional_media';
 export interface ApiDropMapperOptions {
   readonly groupIdsUserIsEligibleFor?: string[];
   readonly includeLargestVote?: boolean;
+  readonly includeWaveWideReplyRoots?: boolean;
   /** Native competition readers supply their own scoped voting summary. */
   readonly includeSubmissionVoting?: boolean;
 }
@@ -368,11 +369,12 @@ export class ApiDropMapper {
           : Promise.resolve({} as Record<string, number>),
         moderationPresentationsPromise,
         this.dropsDb.countCollapsedRepliesOfGivenDrops(dropIds, ctx),
-        this.dropsDb.findIndividuallyCollapsedReplyRoots(
+        this.dropsDb.findCollapsedReplyRoots(
           entities
             .filter((drop) => drop.reply_to_drop_id)
             .map((drop) => drop.id),
-          ctx
+          ctx,
+          options.includeWaveWideReplyRoots
         ),
         this.authorSignaturesDb.findAuthorSignedDropIds(dropIds, ctx)
       ]);

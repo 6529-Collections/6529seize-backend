@@ -79,7 +79,7 @@ function createMapper(mainStageWaveId: string | null = 'main-stage-wave') {
     findMetadataByDropIds: jest.fn().mockResolvedValue([]),
     countBoostsOfGivenDrops: jest.fn().mockResolvedValue({}),
     countCollapsedRepliesOfGivenDrops: jest.fn().mockResolvedValue({}),
-    findIndividuallyCollapsedReplyRoots: jest.fn().mockResolvedValue({}),
+    findCollapsedReplyRoots: jest.fn().mockResolvedValue({}),
     whichOfGivenDropsAreBoostedByIdentity: jest
       .fn()
       .mockResolvedValue(new Set<string>()),
