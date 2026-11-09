@@ -57,7 +57,8 @@ jest.mock('./reconsolidation', () => ({
   getAffectedWalletsForAddresses: jest.fn()
 }));
 jest.mock('../identity-tdh-sync', () => ({
-  resumePendingIdentityTdhSync: jest.fn()
+  resumePendingIdentityTdhSync: jest.fn(),
+  startIdentitySyncBudget: jest.fn()
 }));
 
 import * as db from '../db';
@@ -71,7 +72,10 @@ import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
 import { handler } from './index';
-import { resumePendingIdentityTdhSync } from '../identity-tdh-sync';
+import {
+  resumePendingIdentityTdhSync,
+  startIdentitySyncBudget
+} from '../identity-tdh-sync';
 import { doInDbContext } from '../secrets';
 import {
   getAffectedWallets,
@@ -217,7 +221,9 @@ describe('delegations loop on-demand reconsolidation', () => {
       consolidateSubscriptions
     ].forEach((fn) => expect(fn).toHaveBeenCalledTimes(1));
     expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(26_000_001, 1);
-    // A pending identities sync is finished before new chain events.
+    // A pending identities sync is finished before new chain events, within
+    // the invocation's sync budget.
+    expect(startIdentitySyncBudget).toHaveBeenCalledTimes(1);
     expect(resumePendingIdentityTdhSync).toHaveBeenCalledTimes(1);
     expect(
       jest.mocked(resumePendingIdentityTdhSync).mock.invocationCallOrder[0]
