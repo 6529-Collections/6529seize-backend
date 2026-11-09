@@ -1,4 +1,6 @@
 import { UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { randomInt } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { ddb, setting, read, put, enqueue } from './aws.js';
 import { Alert, Environment, EVENT_TYPE, hash, record } from './contract.js';
 import LOOP_POLICIES from './loop-policies.generated.json' with { type: 'json' };
@@ -20,7 +22,8 @@ async function latest(
   pk: string,
   observedAt: number,
   value: Record<string, unknown>,
-  expectedAt?: number | null
+  expectedAt?: number | null,
+  abortSignal?: AbortSignal
 ): Promise<boolean> {
   const retain =
     value.active === true ||
@@ -52,7 +55,8 @@ async function latest(
             ? { ':expiry': Math.floor(Date.now() / 1000) + 45 * 86400 }
             : {})
         }
-      })
+      }),
+      { abortSignal }
     );
     return true;
   } catch (error) {
@@ -145,23 +149,82 @@ export async function receiveLoopObservation(
     throw new Error('UNAPPROVED_LOOP_OPERATION');
   if (observation.observedAt > Date.now() / 1000 + 5)
     throw new Error('FUTURE_LOOP_OBSERVATION');
+  await saveObservation(observation, policy, env);
+}
+
+function superseded(saved: Record<string, unknown> | undefined, at: number) {
+  return typeof saved?.observedAt === 'number' && saved.observedAt >= at;
+}
+
+async function saveObservation(
+  observation: LoopObservation,
+  policy: LoopPolicy,
+  env: Environment
+): Promise<void> {
   const key = observationKey(observation.service, observation.operation);
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const saved = await read(key);
-    if (
-      typeof saved?.observedAt === 'number' &&
-      saved.observedAt >= observation.observedAt
-    )
+  const abortSignal = AbortSignal.timeout(3000);
+  const startedAt = Date.now();
+  let attempts = 0;
+  let conflicts = 0;
+  const diagnostic = (outcome: 'SAVED' | 'SUPERSEDED' | 'FAILED') => {
+    if (conflicts === 0 && outcome !== 'FAILED') return;
+    try {
+      console.log(
+        JSON.stringify({
+          code: 'LOOP_OBSERVATION_WRITE',
+          schemaVersion: 1,
+          environment: env,
+          service: observation.service,
+          operation: observation.operation,
+          observationHash: hash(`${env}:${key}:${observation.observedAt}`),
+          attempts,
+          conflicts,
+          outcome,
+          elapsedMs: Date.now() - startedAt
+        })
+      );
+    } catch {
+      /* Diagnostics cannot change acknowledgement. */
+    }
+  };
+  try {
+    for (; attempts < 8; ) {
+      abortSignal.throwIfAborted();
+      const saved = await read(key, abortSignal);
+      if (superseded(saved, observation.observedAt)) {
+        diagnostic('SUPERSEDED');
+        return;
+      }
+      attempts++;
+      const accepted = await latest(
+        key,
+        observation.observedAt,
+        continuedObservation(observation, record(saved?.payload), policy),
+        typeof saved?.observedAt === 'number' ? saved.observedAt : null,
+        abortSignal
+      );
+      if (accepted) {
+        diagnostic('SAVED');
+        return;
+      }
+      conflicts++;
+      if (attempts < 8) {
+        const maximum = Math.min(250, 25 * 2 ** (attempts - 1));
+        await delay(randomInt(Math.ceil(maximum / 2), maximum + 1), undefined, {
+          signal: abortSignal
+        });
+      }
+    }
+    // The last competing writer may already have saved this or a newer status.
+    if (superseded(await read(key, abortSignal), observation.observedAt)) {
+      diagnostic('SUPERSEDED');
       return;
-    const accepted = await latest(
-      key,
-      observation.observedAt,
-      continuedObservation(observation, record(saved?.payload), policy),
-      typeof saved?.observedAt === 'number' ? saved.observedAt : null
-    );
-    if (accepted) return;
+    }
+    throw new Error('LOOP_OBSERVATION_CONFLICT');
+  } catch (error) {
+    diagnostic('FAILED');
+    throw error;
   }
-  throw new Error('LOOP_OBSERVATION_CONFLICT');
 }
 
 function pruneResolvedAlarms(alarms: Record<string, unknown>): void {
