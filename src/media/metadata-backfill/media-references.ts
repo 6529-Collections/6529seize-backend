@@ -24,7 +24,7 @@ const REFERENCE_DELIMITERS: ReadonlySet<string> = new Set([
   ']',
   '{',
   '}',
-  String.fromCharCode(92), // backslash
+  String.fromCodePoint(92), // backslash
   ',',
   '|',
   '^',
