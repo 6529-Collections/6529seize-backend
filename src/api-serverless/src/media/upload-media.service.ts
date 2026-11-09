@@ -13,11 +13,7 @@ import { ApiCreateMediaUrlResponse } from '../generated/models/ApiCreateMediaUrl
 import { ApiCompleteMultipartUploadResponse } from '../generated/models/ApiCompleteMultipartUploadResponse';
 import { ApiDropMediaStatus } from '../generated/models/ApiDropMediaStatus';
 import { ApiStartMultipartMediaUploadResponse } from '../generated/models/ApiStartMultipartMediaUploadResponse';
-import {
-  getFileExtension,
-  sanitizeFileName,
-  slugifyBaseName
-} from './sanitize-file-name';
+import { getFileExtension, slugifyBaseName } from './sanitize-file-name';
 import { CLOUDFRONT_LINK } from '@/constants';
 import { BadRequestException, ForbiddenException } from '@/exceptions';
 import {
@@ -35,6 +31,7 @@ import {
 } from '@/drops/drop-media-uploads.db';
 import {
   DropMediaUploadEntity,
+  DropMediaUploadPurpose,
   DropMediaUploadSource,
   DropMediaUploadStatus
 } from '@/entities/IDropMediaUpload';
@@ -47,6 +44,12 @@ type MediaUploadSource =
   | DropMediaUploadSource.WAVE;
 
 type SanitizerQueue = (input: { mediaUploadId: string }) => Promise<void>;
+
+/** A reserved public key and the id of its upload record (also its folder). */
+interface ReservedMediaKey {
+  readonly key: string;
+  readonly uploadId: string;
+}
 
 /** The distribution photo a multipart upload belongs to (admin routes). */
 export interface DistributionPhotoScope {
@@ -65,20 +68,24 @@ export class UploadMediaService {
   public async createSingedDropMediaUploadUrl({
     content_type,
     file_name,
-    author_id
+    author_id,
+    purpose = DropMediaUploadPurpose.CHAT
   }: {
     content_type: string;
     file_name: string;
     author_id: string;
+    purpose?: DropMediaUploadPurpose;
   }): Promise<{ upload_url: string; media_url: string; content_type: string }> {
     this.assertSinglePutImageUploadAllowed(content_type);
-    const key = this.createDropMediaKey({ file_name });
+    const { key, uploadId } = this.createDropMediaKey({ file_name, purpose });
     const result = await this.createSignedMediaUrl({ key, content_type });
     await this.recordPublicUploadOwner({
+      id: uploadId,
       key,
       contentType: content_type,
       authorId: author_id,
-      uploadId: `single-put:${randomUUID()}`,
+      s3UploadId: `single-put:${randomUUID()}`,
+      purpose,
       ready: true
     });
     return result;
@@ -94,10 +101,11 @@ export class UploadMediaService {
     content_type: string;
   }): Promise<ApiCreateMediaUrlResponse> {
     this.assertSinglePutImageUploadAllowed(content_type);
-    const key = this.createWaveMediaKey({ file_name, author_id });
+    const { key } = this.createWaveMediaKey({ file_name, author_id });
     return await this.createSignedMediaUrl({ key, content_type });
   }
 
+  /** Wave pictures are always chat media: stripped, with a neutral name. */
   async getWaveMediaMultipartUploadKeyAndUploadId({
     content_type,
     file_name,
@@ -107,13 +115,12 @@ export class UploadMediaService {
     file_name: string;
     author_id: string;
   }): Promise<ApiStartMultipartMediaUploadResponse> {
-    const key = this.createWaveMediaKey({ file_name, author_id });
-
     return await this.createMultipartUpload({
-      key,
+      ...this.createWaveMediaKey({ file_name, author_id }),
       content_type,
       author_id,
-      source: DropMediaUploadSource.WAVE
+      source: DropMediaUploadSource.WAVE,
+      purpose: DropMediaUploadPurpose.CHAT
     });
   }
 
@@ -121,24 +128,28 @@ export class UploadMediaService {
   async getDropMediaMultipartUploadKeyAndUploadId({
     content_type,
     file_name,
-    author_id
+    author_id,
+    purpose = DropMediaUploadPurpose.CHAT
   }: {
     author_id: string;
     file_name: string;
     content_type: string;
+    purpose?: DropMediaUploadPurpose;
   }): Promise<ApiStartMultipartMediaUploadResponse> {
-    const key = this.createDropMediaKey({
+    const reserved = this.createDropMediaKey({
       file_name:
         content_type === 'image/avif'
           ? file_name.replace(/\.[^.]+$/, '.webp')
-          : file_name
+          : file_name,
+      purpose
     });
 
     return await this.createMultipartUpload({
-      key,
+      ...reserved,
       content_type,
       author_id,
-      source: DropMediaUploadSource.DROP
+      source: DropMediaUploadSource.DROP,
+      purpose
     });
   }
 
@@ -326,18 +337,41 @@ export class UploadMediaService {
     return `distribution/${process.env.NODE_ENV}/${contract.toLowerCase()}/${cardId}-`;
   }
 
+  /** The author prefix stays: untracked wave keys are owner-checked by it. */
   private createWaveMediaKey({
     file_name,
     author_id
   }: {
     file_name: string;
     author_id: string;
-  }) {
-    return `waves/author_${author_id}/${sanitizeFileName(file_name)}`;
+  }): ReservedMediaKey {
+    const uploadId = randomUUID();
+    return {
+      key: `waves/author_${author_id}/${neutralMediaFileName(uploadId, file_name)}`,
+      uploadId
+    };
   }
 
-  private createDropMediaKey({ file_name }: { file_name: string }) {
+  /**
+   * Chat media gets a neutral name (`<uploadId>.<ext>`) so the public URL
+   * never reveals the uploader's file name; decision entries keep a slug of
+   * the artist's file name. The folder is the upload record's id, which lets
+   * drop creation find the record from the media URL.
+   */
+  private createDropMediaKey({
+    file_name,
+    purpose
+  }: {
+    file_name: string;
+    purpose: DropMediaUploadPurpose;
+  }): ReservedMediaKey {
     const uploadId = randomUUID();
+    if (purpose !== DropMediaUploadPurpose.DECISION_ENTRY) {
+      return {
+        key: `drops/${uploadId}/${neutralMediaFileName(uploadId, file_name)}`,
+        uploadId
+      };
+    }
     const fileExtension = getFileExtension(file_name);
     const baseName = fileExtension
       ? file_name.substring(0, file_name.length - fileExtension.length)
@@ -346,19 +380,21 @@ export class UploadMediaService {
     const sanitizedFileName = slug
       ? `${slug}${fileExtension}`
       : `${uploadId}${fileExtension}`;
-    return `drops/${uploadId}/${sanitizedFileName}`;
+    return { key: `drops/${uploadId}/${sanitizedFileName}`, uploadId };
   }
 
   private async createMultipartUpload({
     key,
+    uploadId: mediaUploadId,
     content_type,
     author_id,
-    source
-  }: {
-    key: string;
+    source,
+    purpose
+  }: ReservedMediaKey & {
     content_type: string;
     author_id: string;
     source: MediaUploadSource;
+    purpose: DropMediaUploadPurpose;
   }): Promise<ApiStartMultipartMediaUploadResponse> {
     if (!isImageMimeType(content_type)) {
       const uploadId = await this.createMultipartUploadId({
@@ -370,10 +406,12 @@ export class UploadMediaService {
       });
       if (source === DropMediaUploadSource.DROP) {
         await this.recordPublicUploadOwner({
+          id: mediaUploadId,
           key,
           contentType: content_type,
           authorId: author_id,
-          uploadId
+          s3UploadId: uploadId,
+          purpose
         });
       }
       return {
@@ -393,12 +431,14 @@ export class UploadMediaService {
       bucket: ingestBucket,
       s3: this.getIngestS3(),
       metadata: {
+        // Decision entries are never stripped, even by a sanitizer that
+        // predates the purpose column.
         [DROP_MEDIA_SANITIZE_UPLOAD_METADATA_KEY]: String(
-          isDropMediaSanitizationEnabled()
+          isDropMediaSanitizationEnabled() &&
+            purpose !== DropMediaUploadPurpose.DECISION_ENTRY
         )
       }
     });
-    const mediaUploadId = randomUUID();
     const now = Time.currentMillis();
     await this.dropMediaUploadsDb.createUpload({
       id: mediaUploadId,
@@ -416,7 +456,8 @@ export class UploadMediaService {
       wave_id: null,
       created_at: now,
       updated_at: now,
-      completed_at: null
+      completed_at: null,
+      purpose
     } satisfies DropMediaUploadEntity);
 
     return {
@@ -429,28 +470,32 @@ export class UploadMediaService {
 
   /** Random public object paths carry no profile ID; ownership stays private. */
   private async recordPublicUploadOwner({
+    id,
     key,
     contentType,
     authorId,
-    uploadId,
+    s3UploadId,
+    purpose,
     ready = false
   }: {
+    id: string;
     key: string;
     contentType: string;
     authorId: string;
-    uploadId: string;
+    s3UploadId: string;
+    purpose: DropMediaUploadPurpose;
     ready?: boolean;
   }): Promise<void> {
     const now = Time.currentMillis();
     await this.dropMediaUploadsDb.createUpload({
-      id: randomUUID(),
+      id,
       profile_id: authorId,
       source: DropMediaUploadSource.DROP,
       public_key: key,
       public_url: `${CLOUDFRONT_LINK}/${key}`,
       ingest_bucket: this.getS3Bucket(),
       ingest_key: key,
-      s3_upload_id: uploadId,
+      s3_upload_id: s3UploadId,
       declared_mime_type: contentType,
       status: ready
         ? DropMediaUploadStatus.READY
@@ -460,7 +505,8 @@ export class UploadMediaService {
       wave_id: null,
       created_at: now,
       updated_at: now,
-      completed_at: ready ? now : null
+      completed_at: ready ? now : null,
+      purpose
     });
   }
 
@@ -761,6 +807,11 @@ export class UploadMediaService {
     }
     return bucket;
   }
+}
+
+/** `<uploadId>.<ext>`: keeps the (lower-cased) extension, drops the name. */
+function neutralMediaFileName(uploadId: string, fileName: string): string {
+  return `${uploadId}${getFileExtension(fileName).toLowerCase()}`;
 }
 
 export const uploadMediaService = new UploadMediaService(getS3);

@@ -52,12 +52,12 @@ export class DropMediaUploadsDb extends LazyDbAccessCompatibleService {
         `insert into ${DROP_MEDIA_UPLOADS_TABLE}
           (id, profile_id, source, public_key, public_url, ingest_bucket, ingest_key,
            s3_upload_id, declared_mime_type, status, error_reason, drop_id, wave_id,
-           created_at, updated_at, completed_at)
+           created_at, updated_at, completed_at, purpose)
          values
           (:id, :profile_id, :source, :public_key, :public_url, :ingest_bucket, :ingest_key,
            :s3_upload_id, :declared_mime_type, :status, :error_reason, :drop_id, :wave_id,
-           :created_at, :updated_at, :completed_at)`,
-        upload,
+           :created_at, :updated_at, :completed_at, :purpose)`,
+        { ...upload, purpose: upload.purpose ?? null },
         connection ? { wrappedConnection: connection } : undefined
       );
     } finally {

@@ -5,6 +5,12 @@ import { ApiCompleteMultipartUploadRequest } from '../generated/models/ApiComple
 import { ApiCreateMediaUploadUrlRequest } from '../generated/models/ApiCreateMediaUploadUrlRequest';
 import { DANGEROUS_MEDIA_FILE_EXTENSIONS } from '@/api/media/media-mime-types';
 import { MAX_DEVICE_POSTER_BASE64_LENGTH } from '@/media/chat-video-poster';
+import { DropMediaUploadPurpose } from '@/entities/IDropMediaUpload';
+
+/** Optional; the upload services default it to chat. */
+const MediaUploadPurposeSchema = Joi.string()
+  .valid(...Object.values(DropMediaUploadPurpose))
+  .optional();
 
 export const ApiUploadPartOfMultipartUploadRequestSchema: Joi.ObjectSchema<ApiUploadPartOfMultipartUploadRequest> =
   Joi.object({
@@ -42,9 +48,11 @@ export function createMediaPrepRequestSchema({
   author: string;
   content_type: string;
   file_name: string;
+  purpose?: DropMediaUploadPurpose;
 }> {
   return Joi.object({
     author: Joi.string().required(),
+    purpose: MediaUploadPurposeSchema,
     content_type: Joi.string()
       .required()
       .valid(...allowedMimeTypes),
@@ -76,7 +84,9 @@ export function createDistributionPhotoMediaPrepRequestSchema({
     content_type: Joi.string()
       .required()
       .valid(...allowedMimeTypes),
-    file_name: Joi.string().required()
+    file_name: Joi.string().required(),
+    // Accepted from shared upload clients and ignored for distribution photos.
+    purpose: MediaUploadPurposeSchema
   });
 }
 

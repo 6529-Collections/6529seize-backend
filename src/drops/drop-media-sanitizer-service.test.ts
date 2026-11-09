@@ -1,18 +1,51 @@
 import { Readable } from 'node:stream';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { createHash } from 'node:crypto';
 import Sharp from 'sharp';
+import * as sanitizerModule from '@/drops/drop-media-sanitizer.service';
 import {
   DropMediaSanitizerService,
-  PermanentMediaSanitizationError
+  PermanentMediaSanitizationError,
+  shouldStripImageMetadata
 } from '@/drops/drop-media-sanitizer.service';
-import { DropMediaUploadStatus } from '@/entities/IDropMediaUpload';
+import {
+  DropMediaUploadPurpose,
+  DropMediaUploadStatus
+} from '@/entities/IDropMediaUpload';
 import { Logger } from '@/logging';
+import * as pixelVerifiedStrip from '@/media/metadata-strip/pixel-verified-metadata-strip';
+import { minimalOrientationTiff } from '@/media/metadata-strip/exif-orientation';
+import {
+  animatedGifFixture,
+  IDENTIFYING_STRINGS,
+  identifyingGif,
+  identifyingJpeg,
+  identifyingWebp
+} from '@/media/metadata-strip/fixtures/identifying-image-fixtures';
 import * as mediaPlaceholder from './media-placeholder';
+
+const ORIENTATION_6_EXIF = Buffer.concat([
+  Buffer.from('Exif\0\0'),
+  minimalOrientationTiff(6)
+]);
+
+async function orientedPixels(image: Buffer, animated = false) {
+  const { data, info } = await Sharp(image, { animated })
+    .rotate()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return `${info.width}x${info.height}:${createHash('sha256').update(data).digest('hex')}`;
+}
+
+function expectNoIdentifyingStrings(image: Buffer) {
+  const text = image.toString('latin1');
+  for (const value of IDENTIFYING_STRINGS) expect(text).not.toContain(value);
+}
 
 describe('DropMediaSanitizerService', () => {
   const service = new DropMediaSanitizerService({} as any);
 
-  it('strips JPEG metadata while preserving dimensions', async () => {
+  it('strips JPEG metadata losslessly while preserving dimensions and colour profile', async () => {
     const input = await Sharp({
       create: {
         width: 3,
@@ -32,7 +65,8 @@ describe('DropMediaSanitizerService', () => {
       })
       .toBuffer();
 
-    expect((await Sharp(input).metadata()).exif).toBeDefined();
+    const inputMetadata = await Sharp(input).metadata();
+    expect(inputMetadata.exif).toBeDefined();
 
     const sanitized = await service.sanitizeBuffer({
       input,
@@ -45,7 +79,36 @@ describe('DropMediaSanitizerService', () => {
     expect(metadata.height).toBe(2);
     expect(metadata.exif).toBeUndefined();
     expect(metadata.xmp).toBeUndefined();
+    // Lossless stripping keeps the embedded colour profile byte for byte.
+    expect(metadata.icc).toEqual(inputMetadata.icc);
+    expect(sanitized.buffer.toString('latin1')).not.toContain('Test Camera');
+    expect(await orientedPixels(sanitized.buffer)).toBe(
+      await orientedPixels(input)
+    );
+  });
+
+  it('falls back to re-encoding when the lossless strip does not verify', async () => {
+    jest
+      .spyOn(pixelVerifiedStrip, 'stripMetadataWithPixelCheck')
+      .mockResolvedValue({ kind: 'unverified', reason: 'synthetic failure' });
+    const warning = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    const { jpeg } = await identifyingJpeg();
+
+    const sanitized = await service.sanitizeBuffer({
+      input: jpeg,
+      declaredMimeType: 'image/jpeg'
+    });
+
+    const metadata = await Sharp(sanitized.buffer).metadata();
+    expect(metadata.exif).toBeUndefined();
     expect(metadata.icc).toBeUndefined();
+    expectNoIdentifyingStrings(sanitized.buffer);
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'did not verify; re-encoding instead: synthetic failure'
+      )
+    );
+    jest.restoreAllMocks();
   });
 
   it('converts still AVIF to WebP with orientation applied and metadata stripped', async () => {
@@ -251,7 +314,8 @@ describe('image format validation before publication', () => {
   function pipeline(
     input: Buffer,
     declaredMimeType = 'image/jpeg',
-    policy: string | undefined = 'false'
+    policy: string | undefined = 'false',
+    purpose: DropMediaUploadPurpose | null = null
   ) {
     const upload = {
       id: 'upload',
@@ -259,7 +323,8 @@ describe('image format validation before publication', () => {
       ingest_bucket: 'ingest-bucket',
       ingest_key: 'private/image.jpg',
       public_key: 'drops/author/image.jpg',
-      declared_mime_type: declaredMimeType
+      declared_mime_type: declaredMimeType,
+      purpose
     };
     let status = upload.status;
     const uploadsDb = {
@@ -418,9 +483,147 @@ describe('image format validation before publication', () => {
         'privacy-sanitized': 'true',
         'format-validated': 'true'
       });
-      expect((await Sharp(published.Body).metadata()).exif).toBeUndefined();
+      // Only the orientation survives, so the image stays upright.
+      expect((await Sharp(published.Body).metadata()).exif).toEqual(
+        ORIENTATION_6_EXIF
+      );
+      expect(published.Body.toString('latin1')).not.toContain(
+        'Compatibility fixture'
+      );
     }
   );
+
+  it.each([
+    [DropMediaUploadPurpose.CHAT, 'true'],
+    [null, 'true']
+  ])(
+    'publishes %s identifying JPEGs stripped losslessly with policy %s',
+    async (purpose, policy) => {
+      const { jpeg } = await identifyingJpeg();
+      const p = pipeline(jpeg, 'image/jpeg', policy, purpose);
+      await p.process();
+      const published = p.publicSend.mock.calls[0][0].input;
+      expect(published.Metadata).toEqual({
+        'privacy-sanitized': 'true',
+        'format-validated': 'true'
+      });
+      expectNoIdentifyingStrings(published.Body);
+      const [before, after] = await Promise.all([
+        Sharp(jpeg).metadata(),
+        Sharp(published.Body).metadata()
+      ]);
+      expect(after.icc).toEqual(before.icc);
+      expect(after.exif).toEqual(ORIENTATION_6_EXIF);
+      expect(after.xmp).toBeUndefined();
+      expect(await orientedPixels(published.Body)).toBe(
+        await orientedPixels(jpeg)
+      );
+    }
+  );
+
+  it.each([
+    ['webp', identifyingWebp],
+    ['gif', async () => identifyingGif()]
+  ])(
+    'keeps every frame of an animated chat %s while stripping it',
+    async (format, make) => {
+      const input = await make();
+      const p = pipeline(
+        input,
+        `image/${format}`,
+        'true',
+        DropMediaUploadPurpose.CHAT
+      );
+      await p.process();
+      const body = p.publicSend.mock.calls[0][0].input.Body as Buffer;
+      expectNoIdentifyingStrings(body);
+      const [before, after] = await Promise.all([
+        Sharp(input, { animated: true }).metadata(),
+        Sharp(body, { animated: true }).metadata()
+      ]);
+      expect(after).toMatchObject({
+        pages: 2,
+        loop: before.loop,
+        delay: before.delay
+      });
+      expect(after.icc).toEqual(before.icc);
+      expect(await orientedPixels(body, true)).toBe(
+        await orientedPixels(input, true)
+      );
+      if (format === 'gif') expect(body).toEqual(animatedGifFixture());
+    }
+  );
+
+  it.each(['true', 'false'])(
+    'publishes decision entry bytes unchanged with policy %s',
+    async (policy) => {
+      const { jpeg } = await identifyingJpeg();
+      const p = pipeline(
+        jpeg,
+        'image/jpeg',
+        policy,
+        DropMediaUploadPurpose.DECISION_ENTRY
+      );
+      await p.process();
+      const published = p.publicSend.mock.calls[0][0].input;
+      expect(published.Body).toEqual(jpeg);
+      expect(published.Metadata).toEqual({ 'format-validated': 'true' });
+      expect(p.uploadsDb.transitionStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ toStatus: DropMediaUploadStatus.READY })
+      );
+    }
+  );
+
+  it('publishes chat media unchanged while the privacy flag is off', async () => {
+    const { jpeg } = await identifyingJpeg();
+    const p = pipeline(
+      jpeg,
+      'image/jpeg',
+      'false',
+      DropMediaUploadPurpose.CHAT
+    );
+    await p.process();
+    expect(p.publicSend.mock.calls[0][0].input.Body).toEqual(jpeg);
+  });
+
+  it('re-encodes, without loading it, a source above the lossless size limit', async () => {
+    jest.replaceProperty(
+      sanitizerModule,
+      'LOSSLESS_STRIP_MAX_SOURCE_BYTES',
+      100
+    );
+    const lossless = jest.spyOn(
+      pixelVerifiedStrip,
+      'stripMetadataWithPixelCheck'
+    );
+    const warning = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    const { jpeg } = await identifyingJpeg();
+    const p = pipeline(jpeg, 'image/jpeg', 'true', DropMediaUploadPurpose.CHAT);
+    await p.process();
+    expect(lossless).not.toHaveBeenCalled();
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('source is larger than the lossless strip limit')
+    );
+    const published = p.publicSend.mock.calls[0][0].input;
+    expect((await Sharp(published.Body).metadata()).exif).toBeUndefined();
+    expectNoIdentifyingStrings(published.Body);
+  });
+
+  it('re-encodes a file whose lossless strip does not verify and says why', async () => {
+    jest
+      .spyOn(pixelVerifiedStrip, 'stripMetadataWithPixelCheck')
+      .mockResolvedValue({ kind: 'unverified', reason: 'synthetic failure' });
+    const warning = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    const { jpeg } = await identifyingJpeg();
+    const p = pipeline(jpeg, 'image/jpeg', 'true', DropMediaUploadPurpose.CHAT);
+    await p.process();
+    const published = p.publicSend.mock.calls[0][0].input;
+    expect((await Sharp(published.Body).metadata()).exif).toBeUndefined();
+    expectNoIdentifyingStrings(published.Body);
+    expect(warning).toHaveBeenCalledWith(
+      'Lossless metadata strip of jpeg drop media upload upload did not verify; re-encoding instead: synthetic failure'
+    );
+  });
 
   it('preserves JPEG metadata and orientation exactly with stripping disabled', async () => {
     const input = fixture('jpeg');
@@ -640,11 +843,19 @@ describe('image format validation before publication', () => {
       const original = p.publicSend.mock.calls[0][0].input;
       if (policy === 'false') expect(original.Body).toEqual(input);
       else {
-        expect(await Sharp(original.Body).metadata()).toMatchObject({
-          width: 20,
-          height: 40
+        // Stored pixels are untouched; Orientation 6 still shows it upright.
+        const metadata = await Sharp(original.Body).metadata();
+        expect(metadata).toMatchObject({
+          width: 40,
+          height: 20,
+          orientation: 6
         });
-        expect((await Sharp(original.Body).metadata()).exif).toBeUndefined();
+        // PNG eXIf holds the bare TIFF block.
+        expect(metadata.exif).toEqual(minimalOrientationTiff(6));
+        expect(original.Body.toString('latin1')).not.toContain('Synthetic');
+        expect(await orientedPixels(original.Body)).toBe(
+          await orientedPixels(input)
+        );
       }
       for (const [command] of p.publicSend.mock.calls.slice(1)) {
         expect(await Sharp(command.input.Body).metadata()).toMatchObject({
@@ -773,4 +984,26 @@ describe('image format validation before publication', () => {
     expect(errorLog).toHaveBeenCalledTimes(1);
     expect(p.publicSend).not.toHaveBeenCalled();
   });
+});
+
+describe('shouldStripImageMetadata', () => {
+  it.each([
+    ['image/jpeg', DropMediaUploadPurpose.CHAT, 'true', true],
+    ['image/jpeg', DropMediaUploadPurpose.CHAT, 'false', false],
+    ['image/jpeg', DropMediaUploadPurpose.CHAT, undefined, true],
+    ['image/jpeg', null, 'true', true],
+    ['image/jpeg', null, 'false', false],
+    ['image/jpeg', null, undefined, true],
+    ['image/png', DropMediaUploadPurpose.DECISION_ENTRY, 'true', false],
+    ['image/png', DropMediaUploadPurpose.DECISION_ENTRY, undefined, false],
+    ['image/avif', DropMediaUploadPurpose.DECISION_ENTRY, 'false', true],
+    ['image/avif', DropMediaUploadPurpose.CHAT, 'false', true]
+  ])(
+    '%s with purpose %s and policy %s strips: %s',
+    (declared_mime_type, purpose, policy, expected) => {
+      expect(
+        shouldStripImageMetadata({ declared_mime_type, purpose }, policy)
+      ).toBe(expected);
+    }
+  );
 });
