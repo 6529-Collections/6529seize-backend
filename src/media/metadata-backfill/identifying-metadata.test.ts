@@ -6,9 +6,11 @@ import {
   identifyingWebp,
   IDENTIFYING_STRINGS
 } from '@/media/metadata-strip/fixtures/identifying-image-fixtures';
+import { identifyingUltraHdrJpeg } from '@/media/metadata-strip/fixtures/hdr-image-fixtures';
 import {
   describeImageContainer,
-  LosslessStripFormat
+  LosslessStripFormat,
+  stripMetadataLosslessly
 } from '@/media/metadata-strip/lossless-metadata-strip';
 import { findIdentifyingMetadata } from './identifying-metadata';
 import { sniffImageContainer } from './image-container';
@@ -77,6 +79,23 @@ describe('findIdentifyingMetadata', () => {
     expect(
       findIdentifyingMetadata(technical, 'jpeg', metadataBlocks).categories
     ).toEqual([]);
+  });
+
+  it('judges gain map blocks on the gain map and ignores HDR structure', async () => {
+    const { jpeg } = await identifyingUltraHdrJpeg();
+    const categories = categoriesOf(jpeg, 'jpeg');
+    expect(categories).toEqual(
+      expect.arrayContaining([MetadataCategory.GPS, MetadataCategory.XMP_IPTC])
+    );
+    const { output } = stripMetadataLosslessly(jpeg, 'jpeg');
+    expect(describeImageContainer(output, 'jpeg').metadataBlocks).toEqual([]);
+    expect(
+      findIdentifyingMetadata(output, 'jpeg', ['APP2:MPF', 'APP1:XMP'])
+        .categories
+    ).toEqual([]);
+    expect(
+      findIdentifyingMetadata(output, 'jpeg', ['GainMap:COM']).categories
+    ).toEqual([MetadataCategory.OTHER]);
   });
 
   it('counts an unknown removable block as other', () => {

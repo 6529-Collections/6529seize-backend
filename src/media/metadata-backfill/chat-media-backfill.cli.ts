@@ -79,6 +79,7 @@ async function runScan(options: ScanCliOptions): Promise<void> {
   const stage = assertEnvironment(options);
   const publicStore = new S3MediaObjectStore(getS3(), publicBucket());
   const runId = options.runId ?? newRunId(new Date());
+  logger.info(`[RUN ID ${runId}]`);
   const report = new BackfillReport(
     runId,
     'scan',

@@ -77,7 +77,9 @@ export class BackfillReport {
     unchanged: {} as Counts,
     to_rewrite: 0,
     rewritten: 0,
-    failed: 0
+    failed: 0,
+    /** HDR gain map images kept by the rewrites. */
+    gain_maps_kept: 0
   };
   readonly skipped = new KeyedCounts();
   readonly failedKeys: { key: string; error: string }[] = [];
@@ -156,6 +158,7 @@ export class BackfillReport {
     }
     this.bytes.downloaded += outcome.originalSize;
     this.objects.to_rewrite++;
+    this.objects.gain_maps_kept += outcome.gainMapsKept;
     this.toRewriteKeys.add(target.key);
     this.bytes.to_rewrite_original += outcome.originalSize;
     this.bytes.to_rewrite_stripped += outcome.strippedSize;

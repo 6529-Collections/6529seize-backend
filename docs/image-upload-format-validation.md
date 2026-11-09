@@ -70,6 +70,11 @@ base image is published, as before; it never makes the upload fail or fall back
 to re-encoding. PNG keeps the cICP, mDCv and cLLi HDR chunks. AVIF still
 converts to WebP, which loses HDR.
 
+Images already published before chat stripping are handled by a separate,
+operator-run backfill that strips chat media in place with the same lossless
+module and never touches decision entries; see
+[chat media metadata backfill](chat-media-metadata-backfill.md).
+
 Chat uploads and wave pictures are published as `<upload id>.<ext>` (lower-case
 extension) in the upload's own folder, so the public URL never carries the
 uploader's file name; decision entries keep a slug of the artist's file name.

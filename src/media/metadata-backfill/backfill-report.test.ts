@@ -45,6 +45,7 @@ describe('BackfillReport', () => {
       categories: [MetadataCategory.GPS, MetadataCategory.SERIAL],
       originalSize: 100,
       strippedSize: 60,
+      gainMapsKept: 1,
       written: false
     });
     report.recordImageOutcome(target('drops/a/2.jpg'), {
@@ -67,6 +68,7 @@ describe('BackfillReport', () => {
     expect(json.objects).toMatchObject({
       inspected: 3,
       to_rewrite: 1,
+      gain_maps_kept: 1,
       skipped: { verification_failed: 1 },
       unchanged: { orientation_only: 1 }
     });

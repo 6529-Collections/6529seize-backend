@@ -1,4 +1,14 @@
-import { LosslessStripFormat } from '@/media/metadata-strip/lossless-metadata-strip';
+import {
+  APPLE_HDR_GAIN_MAP_NS,
+  APPLE_PIXEL_DATA_NS,
+  CONTAINER_ITEM_NS,
+  CONTAINER_NS,
+  HDRGM_NS
+} from '@/media/metadata-strip/gain-map-xmp';
+import {
+  extractJpegGainMaps,
+  LosslessStripFormat
+} from '@/media/metadata-strip/lossless-metadata-strip';
 import { exifTiffCategories } from './exif-identifying-tags';
 import { MetadataCategory } from './metadata-category';
 
@@ -11,6 +21,25 @@ const XMP_MAIN = Buffer.from('http://ns.adobe.com/xap/1.0/', 'latin1');
 const XMP_START = Buffer.from('<x:xmpmeta', 'latin1');
 const XMP_END = Buffer.from('</x:xmpmeta>', 'latin1');
 const MAX_XMP_PACKET_BYTES = 1024 * 1024;
+const GAIN_MAP_LABEL_PREFIX = 'GainMap:';
+/** HDR gain map structure the strip rebuilds; it identifies nothing. */
+const HDR_STRUCTURE_LABELS: ReadonlySet<string> = new Set([
+  'APP2:MPF',
+  'APP2:ISO21496-1'
+]);
+const GAIN_MAP_NAMESPACES: ReadonlySet<string> = new Set([
+  HDRGM_NS,
+  CONTAINER_NS,
+  CONTAINER_ITEM_NS,
+  APPLE_HDR_GAIN_MAP_NS,
+  APPLE_PIXEL_DATA_NS
+]);
+const XMP_FRAME_NAMESPACES: ReadonlySet<string> = new Set([
+  'adobe:ns:meta/',
+  'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+  'http://www.w3.org/XML/1998/namespace'
+]);
+const NAMESPACE_DECLARATION = /xmlns(?::[\w.-]+)?\s*=\s*["']([^"']*)["']/g;
 
 /** XMP property names, matched as text, that reveal each category. */
 const XMP_SIGNALS: ReadonlyArray<readonly [MetadataCategory, RegExp]> = [
@@ -185,19 +214,55 @@ function exifBlocks(input: Buffer, format: LosslessStripFormat): Buffer[] {
   }
 }
 
-function addXmpSignals(input: Buffer, categories: Set<MetadataCategory>): void {
+function xmpPackets(input: Buffer): string[] {
+  const packets: string[] = [];
   let from = 0;
   for (;;) {
     const start = input.indexOf(XMP_START, from);
-    if (start < 0) return;
+    if (start < 0) return packets;
     const limit = Math.min(input.length, start + MAX_XMP_PACKET_BYTES);
     const endMarker = input.subarray(start, limit).indexOf(XMP_END);
     const end = endMarker < 0 ? limit : start + endMarker;
-    const packet = input.toString('latin1', start, end);
-    for (const [category, signal] of XMP_SIGNALS) {
-      if (signal.test(packet)) categories.add(category);
-    }
+    packets.push(input.toString('latin1', start, end));
     from = end;
+  }
+}
+
+function xmpSignalCategories(packet: string): MetadataCategory[] {
+  return XMP_SIGNALS.filter(([, signal]) => signal.test(packet)).map(
+    ([category]) => category
+  );
+}
+
+/**
+ * An HDR gain map packet: it declares a gain map namespace and nothing but
+ * gain map and XMP framing namespaces, and no identifying property.
+ */
+function isGainMapOnlyPacket(packet: string): boolean {
+  const namespaces = new Set<string>();
+  const declarations = new RegExp(NAMESPACE_DECLARATION.source, 'g');
+  for (
+    let match = declarations.exec(packet);
+    match !== null;
+    match = declarations.exec(packet)
+  ) {
+    namespaces.add(match[1]);
+  }
+  const all = Array.from(namespaces);
+  return (
+    all.some((namespace) => GAIN_MAP_NAMESPACES.has(namespace)) &&
+    all.every(
+      (namespace) =>
+        GAIN_MAP_NAMESPACES.has(namespace) ||
+        XMP_FRAME_NAMESPACES.has(namespace)
+    ) &&
+    !xmpSignalCategories(packet).length
+  );
+}
+
+function addXmpSignals(input: Buffer, categories: Set<MetadataCategory>): void {
+  for (const packet of xmpPackets(input)) {
+    xmpSignalCategories(packet).forEach((category) => categories.add(category));
   }
 }
 
@@ -295,7 +360,10 @@ const addExif: LabelHandler = (input, format, categories) => {
   }
 };
 
+/** XMP identifies, unless every packet is an HDR gain map packet. */
 const addXmp: LabelHandler = (input, _format, categories) => {
+  const packets = xmpPackets(input);
+  if (packets.length && packets.every(isGainMapOnlyPacket)) return;
   categories.add(MetadataCategory.XMP_IPTC);
   addXmpSignals(input, categories);
 };
@@ -326,12 +394,35 @@ const LABEL_HANDLERS: ReadonlyMap<string, LabelHandler> = new Map<
   ['APP13', (input, _f, c) => addJpegApplicationCategories(input, APP13, c)]
 ]);
 
+function classifyLabel(
+  input: Buffer,
+  format: LosslessStripFormat,
+  label: string,
+  categories: Set<MetadataCategory>
+): void {
+  if (HDR_STRUCTURE_LABELS.has(label)) return;
+  if (label.startsWith(GAIN_MAP_LABEL_PREFIX)) {
+    // Blocks inside a kept gain map image are judged on that image alone.
+    const inner = label.slice(GAIN_MAP_LABEL_PREFIX.length);
+    const gainMaps = format === 'jpeg' ? extractJpegGainMaps(input) : [];
+    if (!gainMaps.length) categories.add(MetadataCategory.OTHER);
+    for (const gainMap of gainMaps) {
+      classifyLabel(gainMap, format, inner, categories);
+    }
+    return;
+  }
+  const handler = LABEL_HANDLERS.get(label);
+  if (handler) handler(input, format, categories);
+  else categories.add(MetadataCategory.OTHER);
+}
+
 /**
  * Classifies what the lossless strip would remove (`removedBlocks`, from the
  * strip module's container description) into identifying categories. The
  * strip module decides what is removed; this only explains it. Unrecognized
  * blocks count as `other`. A file whose removable blocks are only technical
- * EXIF tags has no categories, so it is not rewritten.
+ * EXIF tags, or HDR gain map structure the strip rebuilds, has no
+ * categories, so it is not rewritten.
  */
 export function findIdentifyingMetadata(
   input: Buffer,
@@ -340,9 +431,7 @@ export function findIdentifyingMetadata(
 ): MetadataFindings {
   const categories = new Set<MetadataCategory>();
   for (const label of Array.from(new Set(removedBlocks))) {
-    const handler = LABEL_HANDLERS.get(label);
-    if (handler) handler(input, format, categories);
-    else categories.add(MetadataCategory.OTHER);
+    classifyLabel(input, format, label, categories);
   }
   return {
     categories: Array.from(categories).sort((a, b) => a.localeCompare(b))

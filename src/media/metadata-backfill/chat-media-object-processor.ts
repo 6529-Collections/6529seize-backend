@@ -43,6 +43,8 @@ export enum ObjectSkipReason {
   UNPARSEABLE_CONTAINER = 'unparseable_container',
   /** The lossless strip or its pixel-hash check did not verify. */
   VERIFICATION_FAILED = 'verification_failed',
+  /** The strip would keep the SDR image but drop its HDR gain map. */
+  GAIN_MAP_NOT_KEPT = 'gain_map_not_kept',
   CHANGED_DURING_RUN = 'changed_during_run'
 }
 
@@ -63,6 +65,8 @@ export type ImageOutcome =
       readonly categories: MetadataCategory[];
       readonly originalSize: number;
       readonly strippedSize: number;
+      /** HDR gain map images kept in the rewritten file. */
+      readonly gainMapsKept: number;
       /** False in a dry run. */
       readonly written: boolean;
     };
@@ -205,12 +209,22 @@ export class ChatMediaObjectProcessor {
         categories
       );
     }
+    if (stripped.gainMaps?.kind === 'dropped') {
+      return skipped(
+        ObjectSkipReason.GAIN_MAP_NOT_KEPT,
+        original.length,
+        categories
+      );
+    }
+    const gainMapsKept =
+      stripped.gainMaps?.kind === 'kept' ? stripped.gainMaps.count : 0;
     if (!this.deps.writer) {
       return {
         kind: 'rewrite',
         categories,
         originalSize: original.length,
         strippedSize: stripped.buffer.length,
+        gainMapsKept,
         written: false
       };
     }
@@ -231,6 +245,7 @@ export class ChatMediaObjectProcessor {
       categories,
       originalSize: original.length,
       strippedSize: stripped.buffer.length,
+      gainMapsKept,
       written: true
     };
   }

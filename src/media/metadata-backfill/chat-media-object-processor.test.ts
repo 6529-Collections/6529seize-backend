@@ -8,7 +8,11 @@ import {
   identifyingPng,
   IDENTIFYING_STRINGS
 } from '@/media/metadata-strip/fixtures/identifying-image-fixtures';
-import { describeImageContainer } from '@/media/metadata-strip/lossless-metadata-strip';
+import { identifyingUltraHdrJpeg } from '@/media/metadata-strip/fixtures/hdr-image-fixtures';
+import {
+  describeImageContainer,
+  extractJpegGainMaps
+} from '@/media/metadata-strip/lossless-metadata-strip';
 import { InMemoryObjectStore } from '@/tests/fixtures/media-object-store.fixture';
 import { SafetyCopyLayout, SafetyCopyManifest } from './backfill-storage';
 import { ChatMediaSource, ChatMediaTarget } from './chat-media-candidates';
@@ -176,6 +180,41 @@ describe('ChatMediaObjectProcessor', () => {
     expect(outcome.kind === 'skipped' && outcome.categories).toContain(
       MetadataCategory.GPS
     );
+    expect(publicStore.bodyOf(KEY)!.equals(jpeg)).toBe(true);
+    expect(safetyStore.keys()).toEqual([]);
+  });
+
+  it('keeps an HDR gain map, and the result is clean on a second pass', async () => {
+    const { jpeg } = await identifyingUltraHdrJpeg();
+    const { publicStore, processor } = setup({ execute: true });
+    publicStore.seed(KEY, jpeg, HEADERS);
+
+    const outcome = await processor.processImage(target());
+
+    expect(outcome).toMatchObject({
+      kind: 'rewrite',
+      written: true,
+      gainMapsKept: 1
+    });
+    const stripped = publicStore.bodyOf(KEY)!;
+    expect(extractJpegGainMaps(stripped)).toHaveLength(1);
+    for (const value of IDENTIFYING_STRINGS) {
+      expect(stripped.toString('latin1')).not.toContain(value);
+    }
+    expect(await processor.processImage(target())).toMatchObject({
+      kind: 'clean'
+    });
+  });
+
+  it('skips a file whose HDR gain map would be dropped', async () => {
+    const { jpeg } = await identifyingUltraHdrJpeg({ offsetSkew: 1 });
+    const { publicStore, safetyStore, processor } = setup({ execute: true });
+    publicStore.seed(KEY, jpeg, HEADERS);
+
+    expect(await processor.processImage(target())).toMatchObject({
+      kind: 'skipped',
+      reason: ObjectSkipReason.GAIN_MAP_NOT_KEPT
+    });
     expect(publicStore.bodyOf(KEY)!.equals(jpeg)).toBe(true);
     expect(safetyStore.keys()).toEqual([]);
   });
