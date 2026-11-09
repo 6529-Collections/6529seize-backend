@@ -1006,11 +1006,12 @@ export class DropsMappers {
         ([id]) => !hiddenDropIds.has(id)
       )
     );
-    const collapsedReplyRoots =
-      await this.dropsDb.findIndividuallyCollapsedReplyRoots(
-        entities.filter((drop) => drop.reply_to_drop_id).map((drop) => drop.id),
-        ctx
-      );
+    const replyIds = entities
+      .filter((drop) => drop.reply_to_drop_id)
+      .map((drop) => drop.id);
+    const collapsedReplyRoots = replyIds.length
+      ? await this.dropsDb.findIndividuallyCollapsedReplyRoots(replyIds, ctx)
+      : {};
     return entities.map<ApiDropWithoutWave>((dropEntity) => {
       const drop = this.toDrop({
         dropEntity,
