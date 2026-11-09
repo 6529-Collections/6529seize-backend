@@ -312,5 +312,48 @@ describeWithSeed(
         await expected()
       );
     });
+
+    it('a projection failure inside enqueueEvent rolls back the edit, outbox and projection', async () => {
+      const originalProject =
+        CompetitionScoreResetRepository.prototype.projectEvent;
+      const failure = jest
+        .spyOn(CompetitionScoreResetRepository.prototype, 'projectEvent')
+        .mockImplementationOnce(async function (
+          this: CompetitionScoreResetRepository,
+          id: string,
+          ctx: RequestContext
+        ) {
+          await originalProject.call(this, id, ctx);
+          throw new Error('projection failed after writing');
+        });
+      try {
+        await expect(
+          sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+            await sqlExecutor.execute(
+              `update ${tables.COMPETITION_ENTRIES_TABLE} set submitted_at=99 where id=:active`,
+              { active },
+              { wrappedConnection: connection }
+            );
+            await event(3, undefined, 1000, { connection });
+          })
+        ).rejects.toThrow('projection failed after writing');
+        const [entry] = await sqlExecutor.execute<{ submitted_at: number }>(
+          `select submitted_at from ${tables.COMPETITION_ENTRIES_TABLE} where id=:active`,
+          { active }
+        );
+        expect(Number(entry.submitted_at)).toBe(0);
+        for (const table of [
+          tables.COMPETITION_OUTBOX_TABLE,
+          tables.COMPETITION_SCORE_RESETS_TABLE
+        ]) {
+          const [row] = await sqlExecutor.execute<{ n: number }>(
+            `select count(*) as n from ${table}`
+          );
+          expect(Number(row.n)).toBe(0);
+        }
+      } finally {
+        failure.mockRestore();
+      }
+    });
   }
 );

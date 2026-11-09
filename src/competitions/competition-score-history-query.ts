@@ -13,7 +13,10 @@ export function competitionScoreHistorySql(
   const resetSource = projected
     ? COMPETITION_SCORE_RESETS_TABLE
     : 'score_resets';
-  return `${projected ? '' : `with score_resets as (${legacyScoreResetsSql})`}
+  const preamble = projected
+    ? ''
+    : `with score_resets as (${legacyScoreResetsSql})`;
+  return `${preamble}
       select h.entry_id, h.voter_profile_id,
       if(h.kind='VOTER',h.value,0) as value,
       if(h.kind='AGGREGATE',h.value,0) as aggregate_value,

@@ -78,3 +78,19 @@ projected reads disabled: before re-enabling, repeat the full copy
 under the same operator process so resets produced by that old writer are not
 missed. Never simply re-enable a previously completed projection after old writers
 have run. Do not delete the outbox or drop either table during application rollback.
+
+`EXPLAIN ANALYZE` requires MySQL 8.0.18+ and executes each SELECT again.
+Start comparisons without `explain`; collect plans for one representative
+competition at a time outside peak load.
+
+The read-mode check deliberately stays an uncached primary-key SELECT. Product
+loads already own either the competition lock or a repeatable-read snapshot;
+standalone history calls open their own snapshot. Disabling does not remove any
+projection rows. Event and projection writes commit together, so in-flight reads
+can finish safely and subsequent loads immediately observe the rollback flag.
+
+Writers and backfill both lock the competition before any projection row. Only
+backfill locks progress; writers never request that lock, so it introduces no
+reverse dependency. A missing projected row after verified cutover means no reset,
+which is common; querying the outbox for every such absence would restore the
+original hot-path event scan.

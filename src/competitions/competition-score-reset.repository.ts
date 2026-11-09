@@ -92,6 +92,17 @@ export class CompetitionScoreResetRepository extends LazyDbAccessCompatibleServi
       ctx
     );
     if (!event) throw new Error('Score reset source event is missing');
+    // Normal edit callers already hold this lock. Acquire it here as well so
+    // every projection writer, including future callers, serializes with the
+    // backfill before touching a projection row. Writers never lock progress.
+    const competition = await this.query<{ id: string }>(
+      'lockCompetition',
+      `select id from ${COMPETITIONS_TABLE} where id=:competitionId for update`,
+      { competitionId: event.competition_id },
+      ctx
+    );
+    if (!competition.length)
+      throw new Error('Score reset competition is missing');
     await this.copy(event.competition_id, eventId, ctx);
   }
 
@@ -121,11 +132,14 @@ export class CompetitionScoreResetRepository extends LazyDbAccessCompatibleServi
         (column) => `${column}=if(${newer},values(${column}),${stored(column)})`
       )
       .join(',');
+    const sourceColumns = resetColumns
+      .map((column) => `source.${column}`)
+      .join(',');
     await this.query(
       'copy',
       `insert into ${COMPETITION_SCORE_RESETS_TABLE}
        (competition_id,entry_id,${resetColumns.join(',')})
-       select :competitionId,source.entry_id,${resetColumns.map((column) => `source.${column}`).join(',')} from (
+       select :competitionId,source.entry_id,${sourceColumns} from (
          ${legacyScoreResetsSql}${eventId === null ? '' : ' and id=:eventId'}
        ) source where reset_order=1 and entry_id is not null
        on duplicate key update ${updates}`,
@@ -178,13 +192,16 @@ export class CompetitionScoreResetRepository extends LazyDbAccessCompatibleServi
           ctx
         );
         await this.copy(competition.id, null, ctx);
+        const equalCutoffs = resetColumns
+          .map((column) => `r.${column}<=>source.${column}`)
+          .join(' and ');
         const [verification] = await this.query<{ mismatches: number }>(
           'verify',
           `select count(*) as mismatches from (${legacyScoreResetsSql}) source
          left join ${COMPETITION_SCORE_RESETS_TABLE} r
            on r.competition_id=:competitionId and r.entry_id=source.entry_id
          where source.reset_order=1 and source.entry_id is not null and
-           (r.entry_id is null or not (${resetColumns.map((column) => `r.${column}<=>source.${column}`).join(' and ')}))`,
+           (r.entry_id is null or not (${equalCutoffs}))`,
           { competitionId: competition.id },
           ctx
         );

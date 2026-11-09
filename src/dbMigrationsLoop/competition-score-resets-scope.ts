@@ -10,9 +10,8 @@ export async function runCompetitionScoreResetsScope(
 ) {
   const action = event.action ?? 'status';
   if (
-    !['status', 'backfill', 'enable', 'disable', 'compare'].includes(
-      String(action)
-    )
+    typeof action !== 'string' ||
+    !['status', 'backfill', 'enable', 'disable', 'compare'].includes(action)
   ) {
     throw new Error(
       'Expected action status, backfill, enable, disable or compare'

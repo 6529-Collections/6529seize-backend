@@ -540,6 +540,9 @@ export class NativeCompetitionRuntimeService {
           competitionId,
           snapshotCtx
         );
+        // This path only refreshes standings/checks whether a decision is due.
+        // A due approval falls back to the locked run, which reloads both
+        // streams before recording individual-voter winner snapshots.
         const state = await this.loadState(competitionId, snapshotCtx, true);
         // An Approve decision run decides from the same state at the same
         // time; only a run with no decision to make stays off the lock.

@@ -165,6 +165,9 @@ function safeAggregateRating(value: number | string): number {
 /** All state changes require the caller's competition row lock. The lock is
  * also the execution lease: it is released atomically with commit/rollback. */
 export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleService {
+  private readonly scoreResets = new CompetitionScoreResetRepository(
+    () => this.db
+  );
   private requireTransaction(ctx: RequestContext): void {
     if (!ctx.connection)
       throw new Error('Native competition runtime requires a transaction');
@@ -373,8 +376,21 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     aggregateOnly: boolean,
     ctx: RequestContext
   ): Promise<NativeHistoryRow[]> {
-    const resets = new CompetitionScoreResetRepository(() => this.db);
-    const projected = (await resets.progress(ctx)).reads_enabled;
+    if (!ctx.connection) {
+      return this.executeNativeQueriesInTransaction(
+        (connection) =>
+          this.listScoreHistory(competitionId, aggregateOnly, {
+            ...ctx,
+            connection
+          }),
+        { isolationLevel: 'REPEATABLE READ' }
+      );
+    }
+    // Product callers already hold the competition lock or own a repeatable-read
+    // snapshot. Do not cache this flag across calls: rollback must take effect
+    // immediately. Disabling never deletes projections; an in-flight reader can
+    // finish safely against its snapshot while new loads choose the legacy path.
+    const projected = (await this.scoreResets.progress(ctx)).reads_enabled;
     const rows = await this.query<NativeHistoryRow>(
       aggregateOnly ? 'listAggregateHistory' : 'listHistory',
       competitionScoreHistorySql(projected, aggregateOnly),
@@ -1055,14 +1071,12 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
         'vote_history_sequence',
         'aggregate_history_sequence',
         'voter_history_sequence'
-      ].every((field) =>
-        Object.prototype.hasOwnProperty.call(params.data ?? {}, field)
-      )
+      ].every((field) => Object.keys(params.data ?? {}).includes(field))
     ) {
-      await new CompetitionScoreResetRepository(() => this.db).projectEvent(
-        id,
-        ctx
-      );
+      // Semantic keys identify immutable facts (entry + content revision for
+      // reset edits). Preserve insert-ignore's existing first-payload-wins
+      // contract on retries: project the stored fact, never the attempted replay.
+      await this.scoreResets.projectEvent(id, ctx);
     }
     return id;
   }
