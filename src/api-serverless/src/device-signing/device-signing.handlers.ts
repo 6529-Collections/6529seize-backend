@@ -3,6 +3,7 @@ import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
 import { ApiDropSignedEvents } from '@/api/generated/models/ApiDropSignedEvents';
 import { ApiRegisterDeviceGrantRequest } from '@/api/generated/models/ApiRegisterDeviceGrantRequest';
 import {
+  AcknowledgeDeviceGrantRequest,
   GetDeviceGrantsRequest,
   GetDropSignedEventsRequest,
   RegisterDeviceGrantRequest,
@@ -57,6 +58,17 @@ export async function handleRenameDeviceGrant(
     deviceLabelRenameSchema
   );
   return deviceGrantsService.renameCallerGrant(req.params.grantId, label, {
+    timer,
+    authenticationContext
+  });
+}
+
+export async function handleAcknowledgeDeviceGrant(
+  req: AcknowledgeDeviceGrantRequest
+): Promise<ApiDeviceGrant> {
+  const timer = Timer.getFromRequest(req);
+  const authenticationContext = await getAuthenticationContext(req, timer);
+  return deviceGrantsService.acknowledgeCallerGrant(req.params.grantId, {
     timer,
     authenticationContext
   });

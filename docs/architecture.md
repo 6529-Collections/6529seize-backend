@@ -1462,8 +1462,14 @@ Important API responsibilities:
   a browser Ed25519 device key (`device_grants`) that then signs drop creates,
   edits, deletes and reactions; the API verifies and stores those events in
   `device_signed_events` and `drop_author_signatures` and serves them at
-  `/drops/{dropId}/signed-events`. See the device signing grants section of
-  that document.
+  `/drops/{dropId}/signed-events`. The grant owner can acknowledge a
+  new-device notice through `POST /device-grants/{grantId}/acknowledge`. The
+  acknowledgment is stored on the grant and follows the owner across devices.
+  `GET /device-grants` and the `POST` endpoints for `/device-grants/{grantId}/label`,
+  `/device-grants/{grantId}/acknowledge`, and `/device-grants/{grantId}/revoke`
+  return `notice_acknowledged`. Grant registration (`POST /device-grants`)
+  and public signature proofs omit the field. See the device signing grants
+  section of that document.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
   subscriptions, and notifications. Wallet distribution allocation reads
   combine Phase 0–2 distribution rows with Public subscription airdrops, while

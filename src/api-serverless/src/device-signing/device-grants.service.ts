@@ -41,7 +41,10 @@ import {
   serializeDeviceGrantScopes
 } from './device-grant-message';
 import { DeviceSigningDb, deviceSigningDb } from './device-signing.db';
-import { toApiDeviceGrant } from './device-signing.mappers';
+import {
+  toApiDeviceGrant,
+  toOwnedApiDeviceGrant
+} from './device-signing.mappers';
 
 const GRANT_ID_PATTERN = /^0x[0-9a-f]{64}$/;
 
@@ -245,7 +248,7 @@ export class DeviceGrantsService {
     const grants = caller.profileId
       ? await this.db.findGrantsOfProfile(caller.profileId, ctx)
       : await this.db.findGrantsOfWallet(caller.wallet, ctx);
-    return grants.map(toApiDeviceGrant);
+    return grants.map(toOwnedApiDeviceGrant);
   }
 
   async renameCallerGrant(
@@ -268,7 +271,33 @@ export class DeviceGrantsService {
         throw notFound;
       }
       await this.db.renameGrant(grantId, grant.wallet, label, txCtx);
-      return toApiDeviceGrant({ ...grant, device_label: label });
+      return toOwnedApiDeviceGrant({ ...grant, device_label: label });
+    });
+  }
+
+  async acknowledgeCallerGrant(
+    grantId: string,
+    ctx: GrantCallerContext
+  ): Promise<ApiDeviceGrant> {
+    const caller = this.resolveCaller(ctx.authenticationContext);
+    const notFound = new NotFoundException(`Device grant ${grantId} not found`);
+    if (!GRANT_ID_PATTERN.test(grantId)) {
+      throw notFound;
+    }
+    return this.db.executeNativeQueriesInTransaction(async (connection) => {
+      const txCtx = { ...ctx, connection };
+      const grant = await this.db.lockGrant(grantId, txCtx);
+      if (
+        grant?.revoked_at !== null ||
+        Number(grant.expires_at) <= this.now() ||
+        !(await this.isCallerWallet(grant.wallet, caller, txCtx))
+      ) {
+        throw notFound;
+      }
+      if (!grant.notice_acknowledged) {
+        await this.db.acknowledgeGrant(grantId, txCtx);
+      }
+      return toOwnedApiDeviceGrant({ ...grant, notice_acknowledged: true });
     });
   }
 
@@ -286,14 +315,14 @@ export class DeviceGrantsService {
       throw notFound;
     }
     if (grant.revoked_at !== null) {
-      return toApiDeviceGrant(grant);
+      return toOwnedApiDeviceGrant(grant);
     }
     await this.db.revokeGrant(grantId, this.now(), ctx);
     const revoked = await this.db.findGrantById(grantId, ctx);
     if (!revoked) {
       throw notFound;
     }
-    return toApiDeviceGrant(revoked);
+    return toOwnedApiDeviceGrant(revoked);
   }
 
   private resolveCaller(authenticationContext: AuthenticationContext): {

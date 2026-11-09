@@ -70,7 +70,7 @@ describe('DropSignedEventsService', () => {
     });
   });
 
-  it('returns events, the grants they reference and the current event', async () => {
+  it('returns the events and public grant proofs without owner notice state', async () => {
     const edit = anEvent({
       id: `0x${'2'.repeat(64)}`,
       kind: 2,
@@ -79,7 +79,9 @@ describe('DropSignedEventsService', () => {
     });
     jest.mocked(db.findEventsByDropId).mockResolvedValue([anEvent(), edit]);
     jest.mocked(db.findDropAuthorSignatureEventId).mockResolvedValue(edit.id);
-    jest.mocked(db.findGrantsByIds).mockResolvedValue([grant]);
+    jest
+      .mocked(db.findGrantsByIds)
+      .mockResolvedValue([{ ...grant, notice_acknowledged: true }]);
     const ctx = { timer: undefined };
 
     const result = await service.findForDrop('drop-1', ctx);
@@ -89,6 +91,7 @@ describe('DropSignedEventsService', () => {
       ctx
     );
     expect(db.findGrantsByIds).toHaveBeenCalledWith([GRANT_ID], ctx);
+    expect(result.grants[0]).not.toHaveProperty('notice_acknowledged');
     expect(result).toEqual({
       drop_id: 'drop-1',
       current_event_id: edit.id,
