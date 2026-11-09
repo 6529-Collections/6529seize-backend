@@ -48,6 +48,10 @@ beforeAll(async () => {
       )
     )
   );
+  app.get(
+    ['/api/identities/retry-profile', '/api/e2ee/devices/retry-device'],
+    (_req, res) => res.set('Retry-After', '17').sendStatus(429)
+  );
   app.use((_req, res) => {
     downstream();
     res.sendStatus(401);
@@ -63,6 +67,26 @@ beforeEach(() => downstream.mockClear());
 afterAll(async () => {
   await new Promise<void>((resolveClose, reject) =>
     server.close((error) => (error ? reject(error) : resolveClose()))
+  );
+});
+
+describe('identity lookup retry headers', () => {
+  it.each(['/api/identities/retry-profile', '/api/e2ee/devices/retry-device'])(
+    'exposes the server cooldown on a rate-limited GET %s',
+    async (path) => {
+      const response = await fetch(`${url}${path}`, {
+        headers: { Origin: 'https://6529.io' }
+      });
+      expect(response.status).toBe(429);
+      expect(response.headers.get('retry-after')).toBe('17');
+      expect(response.headers.get('access-control-expose-headers')).toBe(
+        'X-Request-Id,Retry-After'
+      );
+      expect(response.headers.get('access-control-allow-origin')).toBe('*');
+      expect(
+        response.headers.get('access-control-allow-credentials')
+      ).toBeNull();
+    }
   );
 });
 
