@@ -7,6 +7,20 @@ acceptance checks before removing the legacy CloudWatch-to-Discord subscription.
 
 ## Investigate dispatcher failures
 
+For collector `LOOP_OBSERVATION_CONFLICT` alarms, inspect
+`LOOP_OBSERVATION_WRITE` in the normal collector logs. `SAVED` and `SUPERSEDED`
+establish local contention recovery; `FAILED` retains invocation retry and the
+failure alarm. The record includes the validated service/operation and observation
+hash without source payloads. The bounded retry preserves the current record's
+ordering and stall/progress baseline. Do not mute the alarm to hide unsaved
+observations or storage failures.
+
+New fallback emails include a reference searchable in the fallback forwarder's
+`MONITORING_FALLBACK` logs. `PUBLISHING` binds the reference to sanitized alarm
+context; `PUBLISHED` proves SNS accepted the forwarder's publish, not that an email
+reached every inbox. Original references from older forwarder versions cannot
+be looked up retrospectively. Unknown SNS payloads retain a generic safe email.
+
 Confirmed grouping transaction conflicts receive bounded local retries before
 the dispatcher reports failure. Up to three application transaction sends share a
 three-second abort signal for requests and local waits; SDK retry sleeps can

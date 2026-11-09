@@ -1,7 +1,10 @@
 import {
   competitionDropVoters,
-  competitionDropVoteLogs
+  competitionDropVoteLogs,
+  competitionDropVoteDistribution,
+  competitionDropVotersCsv
 } from '@/api/competitions/competition-drop-votes.service';
+import { withoutLegacyCompetitionGetFacade } from '@/competitions/legacy-competition-get-facade';
 import { NotFoundException } from '@/exceptions';
 import { RequestContext } from '@/request.context';
 import { dropsDb, DropsDb } from '@/drops/drops.db';
@@ -259,8 +262,11 @@ export class ApiDropV2Service {
     const timerKey = `${this.constructor.name}->findVoteSummaryByDropIdOrThrow`;
     ctx.timer?.start(timerKey);
     try {
-      const dropEntity = await this.findVisibleDropByIdOrThrow(id, ctx);
-      if (dropEntity.drop_type !== DropType.PARTICIPATORY) {
+      const dropEntity = await this.findVisibleVoteDropByIdOrThrow(id, ctx);
+      if (
+        dropEntity.drop_type !== DropType.PARTICIPATORY &&
+        dropEntity.drop_type !== DropType.COMPETITION
+      ) {
         return {};
       }
       const presentation = await this.getModerationPresentation(
@@ -271,7 +277,10 @@ export class ApiDropV2Service {
         return {};
       }
 
-      const rows = await this.dropVotingDb.getDropVoteDistribution(id, ctx);
+      const rows =
+        dropEntity.drop_type === DropType.COMPETITION
+          ? await competitionDropVoteDistribution(dropEntity, ctx)
+          : await this.dropVotingDb.getDropVoteDistribution(id, ctx);
       const totals = rows[0];
       if (
         !totals ||
@@ -639,7 +648,7 @@ export class ApiDropV2Service {
     const timerKey = `${this.constructor.name}->findVoteEditLogsByDropIdOrThrow`;
     ctx.timer?.start(timerKey);
     try {
-      const dropEntity = await this.findVisibleDropByIdOrThrow(id, ctx);
+      const dropEntity = await this.findVisibleVoteDropByIdOrThrow(id, ctx);
       if (dropEntity.drop_type === DropType.COMPETITION)
         return await competitionDropVoteLogs(dropEntity, params, ctx);
 
@@ -682,7 +691,7 @@ export class ApiDropV2Service {
     const timerKey = `${this.constructor.name}->findVotersByDropIdOrThrow`;
     ctx.timer?.start(timerKey);
     try {
-      const dropEntity = await this.findVisibleDropByIdOrThrow(id, ctx);
+      const dropEntity = await this.findVisibleVoteDropByIdOrThrow(id, ctx);
       if (dropEntity.drop_type === DropType.COMPETITION)
         return await competitionDropVoters(dropEntity, params, ctx);
 
@@ -754,7 +763,10 @@ export class ApiDropV2Service {
     const timerKey = `${this.constructor.name}->findVotersCsvByDropIdOrThrow`;
     ctx.timer?.start(timerKey);
     try {
-      const dropEntity = await this.findVisibleDropByIdOrThrow(id, ctx);
+      const dropEntity = await this.findVisibleVoteDropByIdOrThrow(id, ctx);
+      if (dropEntity.drop_type === DropType.COMPETITION) {
+        return await competitionDropVotersCsv(dropEntity, ctx);
+      }
 
       const rows =
         dropEntity.drop_type === DropType.WINNER
@@ -796,6 +808,17 @@ export class ApiDropV2Service {
     } finally {
       ctx.timer?.stop(timerKey);
     }
+  }
+
+  private async findVisibleVoteDropByIdOrThrow(
+    id: string,
+    ctx: RequestContext
+  ): Promise<DropEntity> {
+    // The legacy GET view can present a native Decision submission as CHAT or
+    // PARTICIPATORY. Vote routing needs its stored type and native membership.
+    return withoutLegacyCompetitionGetFacade(() =>
+      this.findVisibleDropByIdOrThrow(id, ctx)
+    );
   }
 
   private async findVisibleDropByIdOrThrow(

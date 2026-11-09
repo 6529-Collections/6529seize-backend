@@ -157,6 +157,33 @@ own confirmed provider integration.
 
 ## Privacy and delivery contract
 
+Loop-status collection uses conditional writes to preserve observation ordering
+and stall/progress baselines. A conflicting write gets up to eight attempts with
+exponential jitter (25 ms initial cap, 250 ms maximum cap). Reads, writes and
+local waits share a three-second abort signal; SDK retry sleeps can extend elapsed
+time beyond that deadline. Each retry reads the current record, and a final read
+after the eighth conflict treats an already stored equal/newer observation as
+success. Unsaved observations, deadline failures and storage errors still fail
+the collector and retain the existing AWS asynchronous retry and failure-alarm
+paths. No alarm thresholds or admission budgets change.
+
+`LOOP_OBSERVATION_WRITE` logs identify the environment, service, operation,
+observation hash, attempts, conflicts, elapsed milliseconds and outcome
+(`SAVED`, `SUPERSEDED`, `FAILED`). Successful uncontended writes are silent.
+Diagnostics omit the raw observation and exception messages. Use these records
+to distinguish recovered contention from an unsaved status report.
+The observation hash identifies environment/service/operation/timestamp, not
+payload content or a globally unique source event. Equal-timestamp reports share
+that correlation key, matching the existing observation-ordering contract.
+
+Fallback email includes environment, event time and a hash reference also logged
+as `MONITORING_FALLBACK` by the forwarder before and after SNS publication. Owned
+monitoring alarms include their bounded name and state only when the alarm ARN
+matches the incoming topic's account, region and environment. Known internal
+failure codes retain their fixed labels; other bodies stay generic. Descriptions,
+free-form reasons, dimensions and arbitrary SNS bodies are never forwarded.
+Older generic references have no retrospective lookup mapping.
+
 The canonical `6529.ops.error.v1` envelope contains bounded service/environment,
 event ID, timestamp, severity, fixed error code, fingerprint and optional release
 and correlation ID. Application producers can add an allowlisted diagnostic:

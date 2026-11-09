@@ -1,7 +1,9 @@
 import {
   competitionDropVoteSummary,
   competitionDropVoters,
-  competitionDropVoteLogs
+  competitionDropVoteLogs,
+  competitionDropVoteDistribution,
+  competitionDropVotersCsv
 } from './competition-drop-votes.service';
 import { competitionDropVotesDb } from '@/competitions/competition-drop-votes.db';
 import { competitionEntryService } from './competition-entry.service';
@@ -26,7 +28,9 @@ jest.mock('@/competitions/competition-drop-votes.db', () => ({
     totals: jest.fn(),
     score: jest.fn(),
     voters: jest.fn(),
-    logs: jest.fn()
+    logs: jest.fn(),
+    distribution: jest.fn(),
+    allVoters: jest.fn()
   }
 }));
 const entry = {
@@ -35,7 +39,10 @@ const entry = {
   status: 'ACTIVE',
   rank: null
 } as CompetitionEntry;
-const competition = { decisions: { time_lock_ms: 0 } } as Competition;
+const competition = {
+  type: 'RANK',
+  decisions: { time_lock_ms: 0 }
+} as Competition;
 const drop = { id: 'drop', wave_id: 'wave' } as DropEntity;
 beforeEach(() => {
   jest.clearAllMocks();
@@ -175,3 +182,41 @@ it.each([0, -15])(
     );
   }
 );
+
+it('does not read distribution for approve decisions or winner snapshots', async () => {
+  for (const context of [
+    { competition: { ...competition, type: 'APPROVE' }, entry },
+    { competition, entry: { ...entry, status: 'WINNER' } }
+  ]) {
+    jest
+      .mocked(competitionEntryService.getDropContext)
+      .mockResolvedValue(context as never);
+    expect(await competitionDropVoteDistribution(drop, {})).toEqual([]);
+  }
+  expect(competitionDropVotesDb.distribution).not.toHaveBeenCalled();
+});
+
+it('rejects a native drop without a visible entry instead of returning empty voters', async () => {
+  jest
+    .mocked(competitionEntryService.getDropContext)
+    .mockResolvedValue({ entry: null, competition: null });
+  await expect(
+    competitionDropVoters(
+      drop,
+      { page: 1, page_size: 20, sort_direction: 'DESC' },
+      {}
+    )
+  ).rejects.toThrow('Decision entry not found');
+  expect(competitionDropVotesDb.voters).not.toHaveBeenCalled();
+});
+
+it('exports signed votes in database order and tolerates an unavailable profile', async () => {
+  jest.mocked(competitionDropVotesDb.allVoters).mockResolvedValue([
+    { voter_id: 'viewer', vote: 39 },
+    { voter_id: 'missing', vote: -9 }
+  ]);
+  expect(await competitionDropVotersCsv(drop, {})).toEqual([
+    { handle: '', level: 0, primary_address: '', vote: 39 },
+    { handle: '', level: 0, primary_address: '', vote: -9 }
+  ]);
+});
