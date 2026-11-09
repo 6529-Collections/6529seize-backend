@@ -1451,6 +1451,22 @@ export type RegisterDeviceGrantRequest = Request<
   Record<string, never>
 >;
 
+export interface AcknowledgeDeviceGrantPathParams {
+  "grantId": string;
+}
+
+export type AcknowledgeDeviceGrantQuery = Record<string, never>;
+
+export type AcknowledgeDeviceGrantResponse = ApiDeviceGrant;
+
+export type AcknowledgeDeviceGrantRequest = Request<
+  AcknowledgeDeviceGrantPathParams,
+  ApiResponse<AcknowledgeDeviceGrantResponse>,
+  never,
+  AcknowledgeDeviceGrantQuery,
+  Record<string, never>
+>;
+
 export interface RenameDeviceGrantPathParams {
   "grantId": string;
 }

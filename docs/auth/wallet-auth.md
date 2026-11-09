@@ -226,6 +226,10 @@ without device parameters are unchanged.
   nickname column. Any authenticated browser or app of the owner can rename
   a device; other clients see it when they refresh their lists. Rename and
   revocation use row locking so a concurrent revoke cannot leave stale labels.
+- `POST /api/device-grants/{grantId}/acknowledge` records the owner's
+  acknowledgment of an active Signed Posts grant. It is idempotent and leaves
+  the grant's permissions intact. The authenticated owner sees the state in
+  `GET /api/device-grants` from any device. Public signature proofs omit it.
 - App device grants (6529 Mobile and 6529 Desktop, whose sign-in is not a
   SIWE web session): `POST /api/device-grants` registers an EIP-712 grant the
   signed-in wallet signed outside sign-in. Domain `6529 Device Grant`,

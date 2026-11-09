@@ -147,7 +147,9 @@ describe('DeviceGrantsService', () => {
     it('lists the grants of every wallet of the profile', async () => {
       jest
         .mocked(db.findGrantsOfProfile)
-        .mockResolvedValue([aGrant({ revoked_at: NOW })]);
+        .mockResolvedValue([
+          aGrant({ revoked_at: NOW, notice_acknowledged: true })
+        ]);
 
       const grants = await service.listCallerGrants(callerContext());
 
@@ -156,7 +158,11 @@ describe('DeviceGrantsService', () => {
         expect.anything()
       );
       expect(grants).toEqual([
-        expect.objectContaining({ id: GRANT_ID, revoked_at: NOW })
+        expect.objectContaining({
+          id: GRANT_ID,
+          revoked_at: NOW,
+          notice_acknowledged: true
+        })
       ]);
       expect(grants[0]).not.toHaveProperty('message');
     });
@@ -256,6 +262,70 @@ describe('DeviceGrantsService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(db.renameGrant).not.toHaveBeenCalled();
     });
+  });
+
+  describe('acknowledgeCallerGrant', () => {
+    const connection = { connection: 'tx' };
+
+    beforeEach(() => {
+      jest
+        .mocked(db.executeNativeQueriesInTransaction)
+        .mockImplementation(async (run) => run(connection));
+      jest.mocked(db.lockGrant).mockResolvedValue(aGrant());
+      jest.mocked(identities.getIdentityByWallet).mockResolvedValue({
+        ...mock(IdentityEntity),
+        profile_id: 'profile-1'
+      });
+    });
+
+    it('acknowledges a grant once and leaves its permissions intact', async () => {
+      const ctx = callerContext();
+      const expected = { notice_acknowledged: true, revoked_at: null };
+      await expect(
+        service.acknowledgeCallerGrant(GRANT_ID, ctx)
+      ).resolves.toMatchObject(expected);
+      jest
+        .mocked(db.lockGrant)
+        .mockResolvedValue(aGrant({ notice_acknowledged: true }));
+      await expect(
+        service.acknowledgeCallerGrant(GRANT_ID, ctx)
+      ).resolves.toMatchObject(expected);
+
+      expect(db.acknowledgeGrant).toHaveBeenCalledTimes(1);
+      expect(db.acknowledgeGrant).toHaveBeenCalledWith(
+        GRANT_ID,
+        expect.objectContaining({ connection })
+      );
+      expect(db.revokeGrant).not.toHaveBeenCalled();
+    });
+
+    it('rejects another profile and proxies before writing', async () => {
+      jest.mocked(identities.getIdentityByWallet).mockResolvedValue({
+        ...mock(IdentityEntity),
+        profile_id: 'another-profile'
+      });
+      await expect(
+        service.acknowledgeCallerGrant(GRANT_ID, callerContext())
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        service.acknowledgeCallerGrant(
+          GRANT_ID,
+          callerContext({ roleProfileId: 'principal-profile' })
+        )
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(db.acknowledgeGrant).not.toHaveBeenCalled();
+    });
+
+    it.each([{ revoked_at: NOW }, { expires_at: NOW }])(
+      'rejects an inactive grant',
+      async (overrides) => {
+        jest.mocked(db.lockGrant).mockResolvedValue(aGrant(overrides));
+        await expect(
+          service.acknowledgeCallerGrant(GRANT_ID, callerContext())
+        ).rejects.toBeInstanceOf(NotFoundException);
+        expect(db.acknowledgeGrant).not.toHaveBeenCalled();
+      }
+    );
   });
 
   describe('revokeCallerGrant', () => {

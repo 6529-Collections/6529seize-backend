@@ -39,6 +39,16 @@ export function toApiDeviceGrant(entity: DeviceGrantEntity): ApiDeviceGrant {
   };
 }
 
+/** Owner-only state. Public signed-event proofs use the base mapper. */
+export function toOwnedApiDeviceGrant(
+  entity: DeviceGrantEntity
+): ApiDeviceGrant {
+  return {
+    ...toApiDeviceGrant(entity),
+    notice_acknowledged: Boolean(entity.notice_acknowledged)
+  };
+}
+
 export function toApiDeviceGrantProof(
   entity: DeviceGrantEntity
 ): ApiDeviceGrantProof {
