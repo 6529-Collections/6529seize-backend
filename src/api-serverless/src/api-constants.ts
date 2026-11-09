@@ -57,11 +57,20 @@ const MARKET_IDEMPOTENT_ROUTE =
 const MODERATED_SUBMISSION_ROUTE =
   /^\/api\/(?:drops(?:\/[^/]+)?|profiles\/[^/]+\/cic\/statements|groups\/[^/]+\/visible)\/?$/i;
 
+const IDENTITY_LOOKUP_ROUTE =
+  /^\/api\/(?:identities\/[^/]+|e2ee\/devices\/[^/]+)\/?$/i;
+
 export function getCorsOptionsForRequest(
   path: string,
   originHeader: unknown,
   apiHostHeader: unknown
 ): ApiCorsOptions {
+  if (IDENTITY_LOOKUP_ROUTE.test(path)) {
+    return {
+      ...corsOptions,
+      exposedHeaders: [...(corsOptions.exposedHeaders ?? []), 'Retry-After']
+    };
+  }
   if (path.startsWith('/api/artwork-documentation')) {
     return {
       ...corsOptions,

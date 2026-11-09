@@ -35,6 +35,27 @@ describe('api CORS constants', () => {
     expect(corsOptions.maxAge).toBe(7200);
   });
 
+  it.each(['/api/identities/profile-id', '/API/E2EE/DEVICES/device-key/'])(
+    'exposes only the lookup cooldown and request id for %s',
+    (path) => {
+      expect(
+        getCorsOptionsForRequest(path, 'https://6529.io', 'api.6529.io')
+      ).toEqual({
+        ...corsOptions,
+        exposedHeaders: ['X-Request-Id', 'Retry-After']
+      });
+    }
+  );
+
+  it.each(['/api/identities/profile-id/mute', '/api/e2ee/devices/key/groups'])(
+    'keeps adjacent route CORS unchanged for %s',
+    (path) => {
+      expect(
+        getCorsOptionsForRequest(path, 'https://6529.io', 'api.6529.io')
+      ).toEqual(corsOptions);
+    }
+  );
+
   it.each([
     ['default', '/api/drops', 'https://6529.io'],
     ['idempotent submission', '/api/market/operations', 'https://6529.io'],
