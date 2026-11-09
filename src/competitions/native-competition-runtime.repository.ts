@@ -1,3 +1,5 @@
+import { competitionScoreHistorySql } from '@/competitions/competition-score-history-query';
+import { CompetitionScoreResetRepository } from '@/competitions/competition-score-reset.repository';
 import { votingCreditReturnsDb } from '@/notifications/voting-credit-returns.db';
 import { freezeMemeCollaborationForNativeDecision } from '@/meme-collaborations/meme-collaboration-mint-selection';
 import { randomUUID } from 'node:crypto';
@@ -163,6 +165,9 @@ function safeAggregateRating(value: number | string): number {
 /** All state changes require the caller's competition row lock. The lock is
  * also the execution lease: it is released atomically with commit/rollback. */
 export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleService {
+  private readonly scoreResets = new CompetitionScoreResetRepository(
+    () => this.db
+  );
   private requireTransaction(ctx: RequestContext): void {
     if (!ctx.connection)
       throw new Error('Native competition runtime requires a transaction');
@@ -356,37 +361,39 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
     competitionId: string,
     ctx: RequestContext
   ): Promise<NativeHistoryRow[]> {
+    return this.listScoreHistory(competitionId, false, ctx);
+  }
+
+  public async listAggregateHistory(
+    competitionId: string,
+    ctx: RequestContext
+  ): Promise<NativeHistoryRow[]> {
+    return this.listScoreHistory(competitionId, true, ctx);
+  }
+
+  private async listScoreHistory(
+    competitionId: string,
+    aggregateOnly: boolean,
+    ctx: RequestContext
+  ): Promise<NativeHistoryRow[]> {
+    if (!ctx.connection) {
+      return this.executeNativeQueriesInTransaction(
+        (connection) =>
+          this.listScoreHistory(competitionId, aggregateOnly, {
+            ...ctx,
+            connection
+          }),
+        { isolationLevel: 'REPEATABLE READ' }
+      );
+    }
+    // Product callers already hold the competition lock or own a repeatable-read
+    // snapshot. Do not cache this flag across calls: rollback must take effect
+    // immediately. Disabling never deletes projections; an in-flight reader can
+    // finish safely against its snapshot while new loads choose the legacy path.
+    const projected = (await this.scoreResets.progress(ctx)).reads_enabled;
     const rows = await this.query<NativeHistoryRow>(
-      'listHistory',
-      `with score_resets as (
-        select json_unquote(json_extract(event,'$.competition_entry_id')) as entry_id,event,
-          row_number() over (
-            partition by json_unquote(json_extract(event,'$.competition_entry_id'))
-            order by cast(json_unquote(json_extract(event,'$.data.content_revision')) as unsigned) desc,
-              created_at desc,id desc
-          ) as reset_order
-        from ${COMPETITION_OUTBOX_TABLE}
-        where competition_id=:competitionId
-          and json_unquote(json_extract(event,'$.event_type'))='COMPETITION_ENTRY_UPDATED'
-          and json_contains_path(event,'all','$.data.vote_history_sequence',
-            '$.data.aggregate_history_sequence','$.data.voter_history_sequence')
-      )
-      select h.entry_id, h.voter_profile_id,
-      if(h.kind='VOTER',h.value,0) as value,
-      if(h.kind='AGGREGATE',h.value,0) as aggregate_value,
-      h.occurred_at,h.sequence,h.kind,
-      if(h.mutation_sequence is null,h.sequence,:base+h.mutation_sequence) as order_sequence
-      from ${COMPETITION_SCORE_HISTORY_TABLE} h
-      join ${COMPETITION_ENTRIES_TABLE} e on e.id = h.entry_id and e.competition_id = h.competition_id
-      left join score_resets revision_reset on revision_reset.entry_id=h.entry_id and revision_reset.reset_order=1
-      where h.competition_id = :competitionId and e.status = 'ACTIVE'
-        and (revision_reset.entry_id is null
-          or (h.mutation_sequence is not null and h.mutation_sequence>
-            cast(json_unquote(json_extract(revision_reset.event,'$.data.vote_history_sequence')) as unsigned))
-          or (h.mutation_sequence is null and h.sequence>
-            cast(json_unquote(json_extract(revision_reset.event,if(h.kind='AGGREGATE',
-              '$.data.aggregate_history_sequence','$.data.voter_history_sequence'))) as unsigned)))
-      order by h.occurred_at asc, order_sequence asc, h.kind asc`,
+      aggregateOnly ? 'listAggregateHistory' : 'listHistory',
+      competitionScoreHistorySql(projected, aggregateOnly),
       { competitionId, base: NATIVE_SCORE_SEQUENCE_BASE },
       ctx
     );
@@ -1058,6 +1065,19 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
       },
       ctx
     );
+    if (
+      params.event_type === 'COMPETITION_ENTRY_UPDATED' &&
+      [
+        'vote_history_sequence',
+        'aggregate_history_sequence',
+        'voter_history_sequence'
+      ].every((field) => Object.keys(params.data ?? {}).includes(field))
+    ) {
+      // Semantic keys identify immutable facts (entry + content revision for
+      // reset edits). Preserve insert-ignore's existing first-payload-wins
+      // contract on retries: project the stored fact, never the attempted replay.
+      await this.scoreResets.projectEvent(id, ctx);
+    }
     return id;
   }
 

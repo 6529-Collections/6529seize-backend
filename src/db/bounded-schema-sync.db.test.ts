@@ -4,6 +4,8 @@ import {
   DISTRIBUTION_NORMALIZED_TABLE,
   EXTERNAL_INDEXED_TRANSFERS_TABLE,
   IDENTITY_TDH_SYNC_STATE_TABLE,
+  COMPETITION_SCORE_RESETS_TABLE,
+  COMPETITION_SCORE_RESET_STATE_TABLE,
   MARKET_DEPTH_EVENTS_TABLE,
   NFTS_HISTORY_REPLAY_JOBS_TABLE
 } from '@/constants';
@@ -124,6 +126,20 @@ describe('synchronizeSchemaBounded on MySQL', () => {
     });
     expect(result).toEqual({ planned: 1, applied: 1 });
     await expect(plannedStatements()).resolves.toEqual([]);
+  });
+
+  it.each([
+    COMPETITION_SCORE_RESETS_TABLE,
+    COMPETITION_SCORE_RESET_STATE_TABLE
+  ])('adds %s with one additive CREATE TABLE', async (table) => {
+    await sqlExecutor.execute(`drop table \`${table}\``);
+    const planned = await plannedStatements();
+    expect(planned).toHaveLength(1);
+    expect(planned[0]).toMatch(new RegExp(`^CREATE TABLE \`${table}\``));
+    expect(
+      await synchronizeSchemaBounded(dataSource, { sleep: noSleep })
+    ).toEqual({ planned: 1, applied: 1 });
+    expect(await plannedStatements()).toEqual([]);
   });
 
   it('upgrades an existing identities sync marker table with one ADD COLUMN and nothing else', async () => {

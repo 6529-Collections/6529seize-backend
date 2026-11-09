@@ -1,4 +1,12 @@
 import {
+  CompetitionScoreResetEntity,
+  CompetitionScoreResetStateEntity
+} from '@/entities/ICompetitionScoreReset';
+import {
+  COMPETITION_SCORE_RESETS_SCOPE,
+  runCompetitionScoreResetsScope
+} from './competition-score-resets-scope';
+import {
   VotingCreditReleaseEntity,
   VotingCreditReleaseRecipientEntity
 } from '@/entities/IVotingCreditRelease';
@@ -96,6 +104,8 @@ function schemaScope(event: unknown, scheduledInvocation: boolean) {
     (scope !== 'full' &&
       scope !== 'maintenance' &&
       scope !== 'competition-lifecycle-events' &&
+      scope !== 'competition-score-resets' &&
+      scope !== COMPETITION_SCORE_RESETS_SCOPE &&
       scope !== 'wallet-transfer-analysis' &&
       scope !== 'claims-media-upload' &&
       scope !== 'nft-link-page-retry' &&
@@ -115,6 +125,22 @@ export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   const scheduledInvocation = isScheduledInvocation(event);
   const scope = schemaScope(event, scheduledInvocation);
   logger.info(`[RUNNING]`);
+  if (scope === 'competition-score-resets') {
+    await doInDbContext(() => Promise.resolve(), {
+      logger,
+      entities: [CompetitionScoreResetEntity, CompetitionScoreResetStateEntity],
+      syncEntities: true,
+      skipRedis: true
+    });
+    return { schema_scope: scope };
+  }
+  if (scope === COMPETITION_SCORE_RESETS_SCOPE) {
+    const report = await doInDbContext(
+      () => runCompetitionScoreResetsScope(event as Record<string, unknown>),
+      { logger, syncEntities: false, skipRedis: true }
+    );
+    return { schema_scope: scope, ...report };
+  }
   if (scope === 'competition-lifecycle-events') {
     await doInDbContext(() => Promise.resolve(), {
       logger,
