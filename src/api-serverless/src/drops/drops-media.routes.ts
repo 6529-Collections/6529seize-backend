@@ -85,6 +85,7 @@ router.post(
       {
         content_type: req.body.content_type,
         file_name: req.body.file_name,
+        purpose: req.body.purpose,
         author: authenticatedProfileId
       },
       MediaPrepRequestSchema
@@ -92,7 +93,8 @@ router.post(
     const response = await uploadMediaService.createSingedDropMediaUploadUrl({
       content_type: validatedRequest.content_type,
       author_id: validatedRequest.author,
-      file_name: validatedRequest.file_name
+      file_name: validatedRequest.file_name,
+      purpose: validatedRequest.purpose
     });
     res.send(response);
   }
@@ -121,7 +123,8 @@ router.post(
       await uploadMediaService.getDropMediaMultipartUploadKeyAndUploadId({
         content_type: validatedRequest.content_type,
         author_id: validatedRequest.author,
-        file_name: validatedRequest.file_name
+        file_name: validatedRequest.file_name,
+        purpose: validatedRequest.purpose
       });
 
     res.send(response);
