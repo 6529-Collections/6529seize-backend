@@ -101,7 +101,8 @@ describe('DropCreationApiService.setDropReplyCollapse', () => {
     authorId = 'profile-1',
     proxy = false,
     replyTo = null as string | null,
-    waveCollapsed = false
+    waveCollapsed = false,
+    directMessage = false
   } = {}) {
     const root = {
       id: 'drop-1',
@@ -110,13 +111,14 @@ describe('DropCreationApiService.setDropReplyCollapse', () => {
       drop_type: DropType.CHAT,
       reply_to_drop_id: replyTo
     };
+    const writerConnection = {};
     const dropsService = {
       findViewableDropByIdOrThrow: jest.fn().mockResolvedValue(root),
       findDropByIdOrThrow: jest.fn().mockResolvedValue({ id: root.id })
     };
     const dropsDb = {
       executeNativeQueriesInTransaction: jest.fn(async (callback) =>
-        callback({})
+        callback(writerConnection)
       ),
       findDropById: jest.fn().mockResolvedValue(root),
       setDropReplyCollapse: jest.fn().mockResolvedValue(true)
@@ -124,7 +126,8 @@ describe('DropCreationApiService.setDropReplyCollapse', () => {
     const waves = {
       findWaveByIdForUpdate: jest.fn().mockResolvedValue({
         id: root.wave_id,
-        chat_replies_collapsed: waveCollapsed
+        chat_replies_collapsed: waveCollapsed,
+        is_direct_message: directMessage
       })
     };
     const notifier = { notifyAboutDropUpdate: jest.fn() };
@@ -149,6 +152,8 @@ describe('DropCreationApiService.setDropReplyCollapse', () => {
     return {
       dropsDb,
       notifier,
+      dropsService,
+      writerConnection,
       save: (collapseReplies: boolean) =>
         service.setDropReplyCollapse(
           { dropId: root.id, collapseReplies },
@@ -160,11 +165,16 @@ describe('DropCreationApiService.setDropReplyCollapse', () => {
   it.each([true, false])(
     'saves the author’s requested state %s',
     async (collapsed) => {
-      const { dropsDb, notifier, save } = setup();
+      const { dropsDb, dropsService, notifier, save, writerConnection } =
+        setup();
       await save(collapsed);
       expect(dropsDb.setDropReplyCollapse).toHaveBeenCalledWith(
         { dropId: 'drop-1', waveId: 'wave-1', collapseReplies: collapsed },
         expect.objectContaining({ connection: expect.anything() })
+      );
+      expect(dropsService.findDropByIdOrThrow).toHaveBeenCalledWith(
+        { dropId: 'drop-1', skipEligibilityCheck: true },
+        expect.objectContaining({ connection: writerConnection })
       );
       expect(notifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
         { id: 'drop-1' },
@@ -174,11 +184,19 @@ describe('DropCreationApiService.setDropReplyCollapse', () => {
     }
   );
 
+  it('does not send a live update for an unchanged placement', async () => {
+    const { dropsDb, notifier, save } = setup();
+    dropsDb.setDropReplyCollapse.mockResolvedValueOnce(false);
+    await save(false);
+    expect(notifier.notifyAboutDropUpdate).not.toHaveBeenCalled();
+  });
+
   it.each([
     [{ authorId: 'profile-2' }, 'Only the author'],
     [{ proxy: true }, 'Only the author'],
     [{ replyTo: 'another-drop' }, 'top-level chat drops'],
-    [{ waveCollapsed: true }, 'waves with inline replies']
+    [{ waveCollapsed: true }, 'waves with inline replies'],
+    [{ directMessage: true }, 'waves with inline replies']
   ])('rejects ineligible settings %j', async (overrides, message) => {
     const { dropsDb, save } = setup(overrides);
     await expect(save(true)).rejects.toThrow(message);

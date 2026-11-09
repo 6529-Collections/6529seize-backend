@@ -178,7 +178,8 @@ The author can set reply placement on a top-level chat drop while its wave
 uses inline replies. The API saves the preference on the drop and uses
 existing reply ancestry to filter descendants before paginating the chat
 timeline. Clients opt into the mixed timeline through the V2 feed and
-drop-ID pagination APIs. Thread reads keep returning descendants and reply
+drop-ID pagination APIs. Individual placement keeps the existing unread and
+notification rules for inline waves. Thread reads keep returning descendants and reply
 payloads identify the top-level drop for links and live updates.
 
 Deploy `dbMigrationsLoop` first to synchronize the additive column and refresh

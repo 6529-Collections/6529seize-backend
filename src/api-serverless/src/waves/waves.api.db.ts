@@ -1,4 +1,3 @@
-import { collapsedDropReplyExistsSql } from '@/drops/collapsed-drop-reply.sql';
 import { PushNotificationCancellationsDb } from '@/notifications/push-notification-cancellations.db';
 import {
   ACTIVITY_EVENTS_TABLE,
@@ -4558,8 +4557,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               AND d.created_at > r.latest_read_timestamp
               AND r.muted = false
               -- Collapsed replies live in threads, not the main feed.
-              AND (d.reply_to_drop_id IS NULL OR
-                (w.chat_replies_collapsed = false AND NOT ${collapsedDropReplyExistsSql('d')}))
+              AND (d.reply_to_drop_id IS NULL OR w.chat_replies_collapsed = false)
             GROUP BY d.wave_id
           `,
         { identityId, waveIds },

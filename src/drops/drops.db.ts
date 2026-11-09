@@ -1271,11 +1271,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           where dc.drop_id = d.id and dc.curation_id = :curation_id
         )`
       : '';
-    const replyFilter = exclude_replies
-      ? 'and d.reply_to_drop_id is null'
-      : respect_drop_reply_collapse && !curation_id
-        ? `and (d.reply_to_drop_id is null or not ${collapsedDropReplyExistsSql('d')})`
-        : '';
+    // Curations are explicit selections. Only the main timeline opts into placement.
+    let replyFilter = '';
+    if (exclude_replies) {
+      replyFilter = 'and d.reply_to_drop_id is null';
+    } else if (respect_drop_reply_collapse && !curation_id) {
+      replyFilter = `and (d.reply_to_drop_id is null or not ${collapsedDropReplyExistsSql()})`;
+    }
     const filters = `${curationFilter} ${replyFilter}`;
     const sqlForOlder = `(select d.* from ${DROPS_TABLE} d where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
@@ -1338,7 +1340,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         and d.serial_no <= :max_serial_no
         and (d.reply_to_drop_id is null or (w.chat_replies_collapsed = false ${
           respect_drop_reply_collapse
-            ? `and not ${collapsedDropReplyExistsSql('d')}`
+            ? `and not ${collapsedDropReplyExistsSql()}`
             : ''
         }))
       order by d.serial_no asc
@@ -3613,7 +3615,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           join ${DROPS_TABLE} root on root.id = r.parent_id
           join ${DROPS_TABLE} d on d.id = r.child_id
           where r.parent_id in (:dropIds)
-            and (w.chat_replies_collapsed = true or root.collapse_replies = true)
+            and (w.chat_replies_collapsed = true or
+              (root.collapse_replies = true and root.reply_to_drop_id is null))
           group by r.parent_id
         `,
         { dropIds },

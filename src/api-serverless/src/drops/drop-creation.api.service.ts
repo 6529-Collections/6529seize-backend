@@ -1,3 +1,4 @@
+import { findCommittedDropOnWriter } from '@/api/drops/drop-writer-read';
 import {
   readCommitted,
   runWriteTransaction
@@ -1007,7 +1008,10 @@ export class DropCreationApiService {
       { isolationLevel: 'READ COMMITTED' }
     );
 
-    const drop = await this.dropsService.findDropByIdOrThrow({ dropId }, ctx);
+    const drop = await findCommittedDropOnWriter(
+      { dropId, db: this.dropsDb, dropsService: this.dropsService },
+      ctx
+    );
     if (changed) {
       await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx, {
         reason: DROP_UPDATE_REASON_REPLY_COLLAPSE

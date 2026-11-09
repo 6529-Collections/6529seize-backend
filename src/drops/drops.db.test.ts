@@ -1344,13 +1344,16 @@ describeWithSeed(
               },
               tx
             );
-          const readFeed = async (respect_drop_reply_collapse: boolean) =>
+          const readFeed = async (
+            respect_drop_reply_collapse: boolean,
+            serial_no_limit: number | null = null
+          ) =>
             (
               await repo.findLatestDropsSimple(
                 {
                   wave_id: inlineRepliesWave.id,
                   amount: 2,
-                  serial_no_limit: null,
+                  serial_no_limit,
                   search_strategy: 'FIND_OLDER',
                   drop_type: null,
                   respect_drop_reply_collapse
@@ -1368,6 +1371,7 @@ describeWithSeed(
             'mixed-root',
             'inline-reply'
           ]);
+          await expect(readFeed(true, 512)).resolves.toEqual(['inline-root']);
           await expect(
             repo.findDropIdsInWaveRange(
               {
