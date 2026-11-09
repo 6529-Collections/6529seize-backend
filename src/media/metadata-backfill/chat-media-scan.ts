@@ -17,6 +17,9 @@ import { DecisionEntryExclusions } from './decision-entry-exclusions';
 import { probeVideoLocation } from './video-location-probe';
 import { formatCursor, SCAN_PHASES, ScanCursor } from './scan-cursor';
 
+/** A systematic fault (credentials, bucket, network) stops the run early. */
+export const MAX_CONSECUTIVE_FAILURES = 25;
+
 export interface ScanOptions {
   readonly limit: number | null;
   readonly sample: number | null;
@@ -37,6 +40,8 @@ export interface ScanDeps {
   readonly report: BackfillReport;
   readonly random: () => number;
   readonly now: () => number;
+  /** Called after each page is fully handled, for report checkpoints. */
+  readonly onPageDone?: () => void;
 }
 
 interface PageItem {
@@ -64,6 +69,7 @@ export class ChatMediaScan {
   private imagesSeen = 0;
   private imagesTaken = 0;
   private lastRefresh = 0;
+  private consecutiveFailures = 0;
 
   constructor(
     private readonly deps: ScanDeps,
@@ -92,6 +98,7 @@ export class ChatMediaScan {
           after: last
         });
       }
+      this.deps.onPageDone?.();
       if (stopped) {
         completed = false;
         break;
@@ -161,21 +168,31 @@ export class ChatMediaScan {
   }
 
   private async processImages(targets: ChatMediaTarget[], sample = false) {
+    const stop = new AbortController();
     await forEachConcurrent(
       targets,
       async (target) => {
         try {
           const outcome = await this.deps.processor.processImage(target);
+          this.consecutiveFailures = 0;
           this.deps.report.recordImageOutcome(target, outcome);
           if (sample) this.deps.report.recordSample(target, outcome);
         } catch (error) {
           this.logger.warn(`Failed to process ${target.key}: ${String(error)}`);
           this.deps.report.recordFailure(target.key, error);
           if (sample) this.deps.report.recordSample(target, null);
+          if (++this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            stop.abort();
+          }
         }
       },
-      { concurrency: this.options.concurrency }
+      { concurrency: this.options.concurrency, signal: stop.signal }
     );
+    if (stop.signal.aborted) {
+      throw new Error(
+        `Stopped after ${MAX_CONSECUTIVE_FAILURES} consecutive failures; see the report`
+      );
+    }
   }
 
   private async probeVideos(videos: ChatMediaTarget[]): Promise<void> {

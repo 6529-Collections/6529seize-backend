@@ -33,6 +33,8 @@ import { DecisionEntryExclusions } from './decision-entry-exclusions';
 
 const logger = Logger.get('CHAT_MEDIA_BACKFILL');
 const EXCLUSION_REFRESH_MILLIS = 60_000;
+/** The report is also saved during a scan, so a crash keeps its cursor. */
+const REPORT_CHECKPOINT_MILLIS = 15_000;
 
 function publicBucket(): string {
   const bucket = process.env.S3_BUCKET;
@@ -135,7 +137,10 @@ async function runScan(options: ScanCliOptions): Promise<void> {
       invalidations,
       report,
       random: Math.random,
-      now: Date.now
+      now: Date.now,
+      onPageDone: throttled(REPORT_CHECKPOINT_MILLIS, () =>
+        writeReport(options, runId, report)
+      )
     },
     { ...options, exclusionRefreshMillis: EXCLUSION_REFRESH_MILLIS }
   );
@@ -143,10 +148,39 @@ async function runScan(options: ScanCliOptions): Promise<void> {
   try {
     completed = await scan.run();
   } finally {
-    await invalidations?.flush();
+    await flushRemaining(invalidations, report);
     report.finish(new Date(), completed);
     writeReport(options, runId, report);
   }
+}
+
+/** Calls `fn` at most once per interval; the final report is written separately. */
+function throttled(intervalMillis: number, fn: () => void): () => void {
+  let last = 0;
+  return () => {
+    if (Date.now() - last < intervalMillis) return;
+    last = Date.now();
+    fn();
+  };
+}
+
+/** A failed final invalidation is reported, not allowed to lose the report. */
+async function flushRemaining(
+  invalidations: InvalidationQueue | null,
+  report: BackfillReport
+): Promise<void> {
+  if (!invalidations) return;
+  try {
+    await invalidations.flush();
+  } catch (error) {
+    logger.error(
+      'Final CDN invalidation failed; rerun the invalidate command',
+      error
+    );
+  }
+  report.invalidation.paths_submitted = invalidations.submitted;
+  report.invalidation.batches = invalidations.batches;
+  report.invalidation.pending_paths = invalidations.pendingCount;
 }
 
 async function runOriginalsCommand(

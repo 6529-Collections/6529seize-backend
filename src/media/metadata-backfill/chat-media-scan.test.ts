@@ -310,6 +310,20 @@ describe('ChatMediaScan', () => {
     expect(report.selection.rows).toEqual({ archived_wave_picture: 1 });
   });
 
+  it('stops after repeated failures, keeping the last completed cursor', async () => {
+    const { scan, report, publicStore } = await scenario({ execute: false });
+    publicStore.head = async () => {
+      throw new Error('AccessDenied');
+    };
+    const failing = Array.from({ length: 30 }, (_, index) =>
+      candidate(100 + index, `drops/f${index}/x.jpg`)
+    );
+    (scan as unknown as { deps: { db: FakeDb } }).deps.db.candidates = failing;
+    await expect(scan.run()).rejects.toThrow('consecutive failures');
+    expect(report.objects.failed).toBeGreaterThanOrEqual(25);
+    expect(report.objects.failed).toBeLessThan(30);
+  });
+
   it('--sample processes a random subset and lists it for hand checks', async () => {
     const { scan, report } = await scenario({
       execute: false,

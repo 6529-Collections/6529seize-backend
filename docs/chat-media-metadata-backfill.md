@@ -165,7 +165,12 @@ NODE_ENV=production ./bin/6529 run drop-media:backfill -- purge-originals --envi
 
 Other options: `--concurrency` (1-8, default 2), `--page-size` (default 500),
 `--no-video-probe` and `--report <path>`. Run one scan at a time; conditional
-writes keep concurrent runs from overwriting each other's results.
+writes keep concurrent runs from overwriting each other's results. A scan
+saves its report after completed pages (at most every 15 seconds) and at the
+end, and stops after 25 consecutive
+object failures (for example missing permissions), so `next_cursor` survives
+an interruption; `invalidate` resubmits any CDN paths a stopped run did not
+send.
 
 The JSON report (default `drop-media-backfill-<command>-<run id>.json`)
 contains counts, object keys and reasons only: selection counts (chat images
