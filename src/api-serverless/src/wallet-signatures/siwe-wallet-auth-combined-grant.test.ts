@@ -35,8 +35,10 @@ const SIGNING: DeviceGrantTerms = {
   expiresAtSeconds: EXPIRES_AT
 };
 const MLS = {
+  version: 1 as const,
   deviceKey: MLS_KEY,
   ciphersuite: 1,
+  ciphersuites: [1],
   expiresAtSeconds: EXPIRES_AT
 };
 const SIGNING_URN = `urn:6529:device-grant:v1:ed25519:${SIGNING_KEY.slice(2)}:post.edit.delete.react:${EXPIRES_AT}`;

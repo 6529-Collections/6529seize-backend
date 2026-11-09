@@ -5,33 +5,48 @@ import {
   formatGrantExpiryDateUtc,
   isDeviceKey
 } from './device-grant-message';
+import { isCanonicalE2eeSuiteSet } from '@/e2ee/e2ee-suite-policy';
 
 // Combined sign-in grant (NC8, DN1 + DN4): one Sign-In with Ethereum message
 // grants this device's Ed25519 signing key (the DN1 resource, unchanged) and
 // its MLS signature key for end-to-end encrypted messages (a second resource).
 // The grant id stays the EIP-191 hash of the signed message, so the MLS
 // credential identity is `6529-e2ee-v1:{wallet}:{grant id}` (D109 2.3).
+//
+// Two resource versions (D172): v1 names one suite
+// (`urn:6529:mls-device-grant:v1:79:<key>:<expiry>`), v2 a canonical suite
+// set joined by "." (`urn:6529:mls-device-grant:v2:78:<key>:<expiry>`).
 
 export const MLS_DEVICE_GRANT_URN_PREFIX = 'urn:6529:mls-device-grant:v1';
+export const MLS_DEVICE_GRANT_URN_PREFIX_V2 = 'urn:6529:mls-device-grant:v2';
 
 export interface MlsDeviceGrantTerms {
+  // 1: one `ciphersuite`; 2: a suite set (`ciphersuites`).
+  readonly version: 1 | 2;
   // 0x + 64 lowercase hex: the device's MLS Ed25519 signature public key,
   // which is also its E2EE device key.
   readonly deviceKey: string;
-  // The MLS ciphersuite (uint16) the key is granted for.
+  // v1: the MLS ciphersuite (uint16) the key is granted for; v2: the
+  // lowest entry of `ciphersuites`.
   readonly ciphersuite: number;
+  // The granted suites: [ciphersuite] for v1, the signed set for v2.
+  readonly ciphersuites: readonly number[];
   // Unix seconds, minute aligned; equal to the signing grant's expiry.
   readonly expiresAtSeconds: number;
 }
 
-/** What the server asks for when it issues a combined challenge. */
-export interface MlsDeviceGrantRequest {
-  readonly deviceKey: string;
-  readonly ciphersuite: number;
-}
+/**
+ * What the server asks for when it issues a combined challenge: a v2 suite
+ * set (`ciphersuites`), or a v1 single suite (`ciphersuite`).
+ */
+export type MlsDeviceGrantRequest =
+  | { readonly deviceKey: string; readonly ciphersuite: number }
+  | { readonly deviceKey: string; readonly ciphersuites: readonly number[] };
 
 const MLS_URN_PATTERN =
   /^urn:6529:mls-device-grant:v1:([1-9]\d{0,4}):([0-9a-f]{64}):([1-9]\d{0,15})$/;
+const MLS_URN_PATTERN_V2 =
+  /^urn:6529:mls-device-grant:v2:([1-9]\d{0,4}(?:\.[1-9]\d{0,4}){0,3}):([0-9a-f]{64}):([1-9]\d{0,15})$/;
 const MAX_CIPHERSUITE = 0xffff;
 
 export function isMlsCiphersuite(value: unknown): value is number {
@@ -44,36 +59,85 @@ export function isMlsCiphersuite(value: unknown): value is number {
 }
 
 export function buildMlsDeviceGrantUrn(terms: MlsDeviceGrantTerms): string {
+  const v2 = terms.version === 2;
   return [
-    MLS_DEVICE_GRANT_URN_PREFIX,
-    terms.ciphersuite.toString(),
+    v2 ? MLS_DEVICE_GRANT_URN_PREFIX_V2 : MLS_DEVICE_GRANT_URN_PREFIX,
+    v2 ? terms.ciphersuites.join('.') : terms.ciphersuite.toString(),
     terms.deviceKey.slice(2),
     terms.expiresAtSeconds.toString()
   ].join(':');
 }
 
-/** Strict inverse of buildMlsDeviceGrantUrn. */
+/** The terms a combined challenge grants for this request. */
+export function toMlsDeviceGrantTermsOf(
+  request: MlsDeviceGrantRequest,
+  expiresAtSeconds: number
+): MlsDeviceGrantTerms {
+  if ('ciphersuites' in request) {
+    return {
+      version: 2,
+      deviceKey: request.deviceKey,
+      ciphersuite: request.ciphersuites[0] ?? 0,
+      ciphersuites: [...request.ciphersuites],
+      expiresAtSeconds
+    };
+  }
+  return {
+    version: 1,
+    deviceKey: request.deviceKey,
+    ciphersuite: request.ciphersuite,
+    ciphersuites: [request.ciphersuite],
+    expiresAtSeconds
+  };
+}
+
+function parseExpiry(raw: string): number | null {
+  const expiresAtSeconds = Number(raw);
+  return Number.isSafeInteger(expiresAtSeconds) && expiresAtSeconds % 60 === 0
+    ? expiresAtSeconds
+    : null;
+}
+
+/** Strict inverse of buildMlsDeviceGrantUrn (v1 and v2). */
 export function parseMlsDeviceGrantUrn(
   urn: unknown
 ): MlsDeviceGrantTerms | null {
   if (typeof urn !== 'string') {
     return null;
   }
-  const match = MLS_URN_PATTERN.exec(urn);
-  if (!match) {
+  const v1 = MLS_URN_PATTERN.exec(urn);
+  if (v1) {
+    const [, ciphersuiteRaw, keyHex, expiresAtRaw] = v1;
+    const ciphersuite = Number(ciphersuiteRaw);
+    const expiresAtSeconds = parseExpiry(expiresAtRaw);
+    if (!isMlsCiphersuite(ciphersuite) || expiresAtSeconds === null) {
+      return null;
+    }
+    return {
+      version: 1,
+      deviceKey: `0x${keyHex}`,
+      ciphersuite,
+      ciphersuites: [ciphersuite],
+      expiresAtSeconds
+    };
+  }
+  const v2 = MLS_URN_PATTERN_V2.exec(urn);
+  if (!v2) {
     return null;
   }
-  const [, ciphersuiteRaw, keyHex, expiresAtRaw] = match;
-  const ciphersuite = Number(ciphersuiteRaw);
-  const expiresAtSeconds = Number(expiresAtRaw);
-  if (
-    !isMlsCiphersuite(ciphersuite) ||
-    !Number.isSafeInteger(expiresAtSeconds) ||
-    expiresAtSeconds % 60 !== 0
-  ) {
+  const [, suitesRaw, keyHex, expiresAtRaw] = v2;
+  const ciphersuites = suitesRaw.split('.').map(Number);
+  const expiresAtSeconds = parseExpiry(expiresAtRaw);
+  if (!isCanonicalE2eeSuiteSet(ciphersuites) || expiresAtSeconds === null) {
     return null;
   }
-  return { deviceKey: `0x${keyHex}`, ciphersuite, expiresAtSeconds };
+  return {
+    version: 2,
+    deviceKey: `0x${keyHex}`,
+    ciphersuite: ciphersuites[0],
+    ciphersuites,
+    expiresAtSeconds
+  };
 }
 
 /**

@@ -56,6 +56,7 @@ import {
 } from '@/e2ee/e2ee-encoding';
 import { e2eeErrors } from '@/e2ee/e2ee-errors';
 import { e2eeEntriesPerGroupPerHour } from '@/e2ee/e2ee-flag';
+import { e2eeDeviceSuites } from '@/e2ee/e2ee-suite-policy';
 import { DirectMessageRefusalReason } from '@/direct-messages/direct-message-admission';
 import { ConnectionWrapper } from '@/sql-executor';
 
@@ -127,11 +128,16 @@ export class E2eeGroupsService {
     if (isZero32(request.commit_key)) {
       throw e2eeErrors.badRequest('commit_key must not be zero');
     }
-    await requireOwnActiveDevice(
+    const creator = await requireOwnActiveDevice(
       this.deps,
       callerProfileId,
       request.creator_device_key
     );
+    // D172: a device with no usable suite (a v1 grant after the transition
+    // window) can no longer start groups.
+    if (!e2eeDeviceSuites(creator, this.deps.now()).length) {
+      throw e2eeErrors.badGrant('grant_version');
+    }
     await enforceE2eeRateLimit(
       this.deps,
       E2EE_RATE_LIMITS.groupCreationsPerProfile,
@@ -455,10 +461,17 @@ export class E2eeGroupsService {
     const devices = await this.db.getDevices(toAdd, connection);
     const atSeconds = nowSeconds(this.deps);
     const byKey = new Map(devices.map((device) => [device.device_key, device]));
+    const nowMs = this.deps.now();
     const addDevices = toAdd.map((key) => {
       const device = byKey.get(key);
       if (!device || !isActiveDevice(device, atSeconds)) {
         throw e2eeErrors.badRequest(`Device ${key} is not an active device`);
+      }
+      // D172: nor one with no usable suite (a v1 grant after the window).
+      if (!e2eeDeviceSuites(device, nowMs).length) {
+        throw e2eeErrors.badRequest(
+          `Device ${key} has no accepted ciphersuite`
+        );
       }
       return device;
     });

@@ -235,7 +235,14 @@ export class E2eeBlobsService {
     await requireOwnActiveDevice(this.deps, callerProfileId, deviceKey);
     const blob = await this.db.getBlob(blobId);
     if (!blob?.complete) throw e2eeErrors.notFound('Attachment');
-    if (!(await this.db.hasRosterHistory(blob.group_handle, deviceKey))) {
+    if (
+      !(await this.mayReadGroupBlobs(
+        blob.group_handle,
+        deviceKey,
+        callerProfileId,
+        Number(blob.created_at)
+      ))
+    ) {
       throw e2eeErrors.notMember();
     }
     if (index >= Number(blob.chunk_count)) {
@@ -262,6 +269,25 @@ export class E2eeBlobsService {
       throw e2eeErrors.notFound('Attachment chunk');
     }
     return { data: data.toString('base64') };
+  }
+
+  /**
+   * The device was ever a member, or (D172) a device of the same profile was
+   * on the roster, not yet removed, when the blob was made: a re-enrolled
+   * device reads the attachments its earlier device could, and no blob made
+   * after the profile left. Only ciphertext is served; the key is in the
+   * history the device already holds.
+   */
+  private async mayReadGroupBlobs(
+    group: string,
+    deviceKey: string,
+    profileId: string,
+    blobCreatedAtMs: number
+  ): Promise<boolean> {
+    return (
+      (await this.db.hasRosterHistory(group, deviceKey)) ||
+      (await this.db.hasProfileRosterHistory(group, profileId, blobCreatedAtMs))
+    );
   }
 
   /**

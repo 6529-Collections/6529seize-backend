@@ -7,7 +7,9 @@ import { BadRequestException, ForbiddenException } from '@/exceptions';
 import { IdentitiesDb } from '@/identities/identities.db';
 import {
   APP_DEVICE_GRANT_DOMAIN,
+  APP_DEVICE_GRANT_DOMAIN_V2,
   APP_DEVICE_GRANT_TYPES,
+  APP_DEVICE_GRANT_TYPES_V2,
   AppDeviceGrant,
   buildAppDeviceGrantMessage,
   computeAppDeviceGrantId,
@@ -227,6 +229,77 @@ describe('DeviceGrantsService.registerAppGrant', () => {
       service.registerAppGrant(await signedRequest(), caller())
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(db.insertGrant).not.toHaveBeenCalled();
+  });
+
+  describe('after the transition window closes (D172)', () => {
+    // The window started 2026-11-10 and lasted 14 days; it is now December.
+    const LATER = Date.UTC(2026, 11, 1);
+    const times = {
+      issued_at: LATER / 1000,
+      expires_at: LATER / 1000 + 180 * 86400
+    };
+    let previous: string | undefined;
+
+    beforeEach(() => {
+      previous = process.env.E2EE_SUITE_TRANSITION_START;
+      process.env.E2EE_SUITE_TRANSITION_START = '2026-11-10T00:00:00Z';
+      service = new DeviceGrantsService(db, identities, () => LATER, {
+        contractWalletVerifier: contractWallet,
+        e2eeEnabled: () => e2eeEnabled
+      });
+    });
+
+    afterEach(() => {
+      if (previous === undefined) {
+        delete process.env.E2EE_SUITE_TRANSITION_START;
+      } else {
+        process.env.E2EE_SUITE_TRANSITION_START = previous;
+      }
+    });
+
+    async function signedV2(suites: number[]) {
+      const grant = grantFields({
+        ...times,
+        version: 2,
+        ciphersuite: suites[0],
+        ciphersuites: suites
+      });
+      return {
+        grant: { ...grant, scopes: [...grant.scopes] },
+        wallet_signature: await wallet.signTypedData(
+          APP_DEVICE_GRANT_DOMAIN_V2,
+          APP_DEVICE_GRANT_TYPES_V2,
+          buildAppDeviceGrantMessage(grant)
+        ),
+        device_label: '6529 Mobile'
+      } as ApiRegisterDeviceGrantRequest;
+    }
+
+    it('refuses a v1 or 0x004F-only encryption grant when it is created', async () => {
+      await expect(
+        service.registerAppGrant(await signedRequest(times), caller())
+      ).rejects.toThrow('names no ciphersuite the server accepts now');
+      await expect(
+        service.registerAppGrant(await signedV2([0x004f]), caller())
+      ).rejects.toThrow('names no ciphersuite the server accepts now');
+      expect(db.insertGrant).not.toHaveBeenCalled();
+    });
+
+    it('still stores a 0x004E encryption grant and a signing-only grant', async () => {
+      await service.registerAppGrant(
+        await signedV2([0x004e, 0x004f]),
+        caller()
+      );
+      await service.registerAppGrant(
+        await signedRequest({
+          ...times,
+          mls_device_key: null,
+          ciphersuite: null
+        }),
+        caller()
+      );
+      expect(db.insertGrant).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('grants no encrypted-messages key to a wallet without a profile', async () => {

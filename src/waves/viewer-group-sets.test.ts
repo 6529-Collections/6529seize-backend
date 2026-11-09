@@ -347,3 +347,31 @@ describe('ViewerGroupSets.source', () => {
     expect(isJson(await sets().source(gone.db, 'x_groups', large))).toBe(true);
   });
 });
+
+describe('ViewerGroupSets.stored', () => {
+  it('is undefined while the feature is off or the set is small, without touching the database', async () => {
+    const { db, calls } = fakeDb();
+    expect(await sets({ enabled: false }).stored(db, 'x_groups', large)).toBe(
+      undefined
+    );
+    expect(await sets().stored(db, 'x_groups', small)).toBe(undefined);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('writes on first sight, is undefined while the new set settles, then reads it by hash', async () => {
+    const { db, calls } = fakeDb();
+    const lease = jest.fn(async () => true as boolean | null);
+    let now = NOW;
+    const store = sets({ lease, now: () => now });
+    expect(await store.stored(db, 'x_groups', large)).toBe(undefined);
+    const writes = calls.filter((call) => call.tx).length;
+    expect(writes).toBeGreaterThan(0);
+    now += VIEWER_GROUP_SET_SETTLE_MS - 1;
+    expect(await store.stored(db, 'x_groups', large)).toBe(undefined);
+    expect(calls.filter((call) => call.tx)).toHaveLength(writes);
+    expect(lease).toHaveBeenCalledTimes(1);
+    now += 1;
+    const settled = await store.stored(db, 'x_groups', large);
+    expect(settled && isTable(settled)).toBe(true);
+  });
+});

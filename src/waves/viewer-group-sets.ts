@@ -289,18 +289,36 @@ export class ViewerGroupSets {
     name: string,
     groupIds: readonly string[]
   ): Promise<ViewerGroupsCte> {
-    const json = viewerGroupsCte(name, groupIds);
+    return (
+      (await this.stored(db, name, groupIds)) ?? viewerGroupsCte(name, groupIds)
+    );
+  }
+
+  /**
+   * The viewer's groups as a shared table for `name`, read from the stored
+   * set; undefined while there is none to read (feature off, a set below the
+   * size worth storing, or first sight, which writes the set for the next
+   * request). For statements that otherwise inline their one copy of the
+   * groups: they keep the inlined list until the set is readable. Never
+   * throws for the set store; callers have already checked the compared
+   * columns' collation (viewerGroupsCteSupported).
+   */
+  async stored(
+    db: SqlExecutor,
+    name: string,
+    groupIds: readonly string[]
+  ): Promise<ViewerGroupsCte | undefined> {
     if (
       !this.enabled() ||
       jsonBytes(groupIds) < VIEWER_GROUP_SET_MIN_JSON_BYTES
     )
-      return json;
+      return undefined;
     try {
-      if (!(await this.membersColumnSupported(db))) return json;
+      if (!(await this.membersColumnSupported(db))) return undefined;
       const hash = viewerGroupSetHash(groupIds);
       const state = await this.usable(db, hash, groupIds.length);
       // Written moments ago: stored, but maybe not on every reader yet.
-      if (state === 'settling') return json;
+      if (state === 'settling') return undefined;
       if (
         state === 'usable' &&
         (await this.touchIfDue(db, hash, groupIds.length))
@@ -312,7 +330,7 @@ export class ViewerGroupSets {
         reason: error instanceof Error ? error.message : String(error)
       });
     }
-    return json;
+    return undefined;
   }
 
   /** Test seam: forget what this container knows. */
