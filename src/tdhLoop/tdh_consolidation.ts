@@ -35,6 +35,7 @@ import { calculateTdhEditions } from './tdh_editions';
 import { getConsolidationWallets } from './consolidation-wallets';
 import { calculateMemesTdh } from './tdh_memes';
 import { calculateNftTDH } from './tdh_nft';
+import { syncIdentitiesAfterTdhOrLeavePending } from '../identity-tdh-sync';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
 const XTDH_LOOP_QUEUE_NAME = 'xtdh-start.fifo';
@@ -315,6 +316,10 @@ export const consolidateAndPersistTDH = async (
     nftTdh,
     persistenceScope
   );
+  // Identities, merges, metrics and overvotes, after the TDH commit. A failure
+  // leaves them pending for the next loop start; the TDH block and the xTDH
+  // trigger below still go out for the committed TDH.
+  await syncIdentitiesAfterTdhOrLeavePending('AFTER_TDH_WRITE');
   await persistTDHBlock(block, blockTimestamp, consolidatedTdh);
   if (request.mode === 'PARTIAL') {
     await enqueuePartialTdhUniverseRecalculation();

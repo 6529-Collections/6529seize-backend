@@ -34,6 +34,7 @@ import { Time } from '../time';
 import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
 import { consolidateAndPersistTDH } from './tdh_consolidation';
+import { resumePendingIdentityTdhSync } from '../identity-tdh-sync';
 import { uploadTDH } from './tdh_upload';
 
 const logger = Logger.get('TDH_LOOP');
@@ -71,6 +72,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 export async function tdhLoop(force?: boolean) {
+  // Finish an identities sync a previous run left after its TDH write.
+  await resumePendingIdentityTdhSync();
   await tdh(force);
   await findNftTDH();
   await notifier.notifyTdhCalculationsDone();

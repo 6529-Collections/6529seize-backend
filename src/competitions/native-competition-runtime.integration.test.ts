@@ -30,7 +30,10 @@ import {
 import { memeCollaborationsDb } from '@/meme-collaborations/meme-collaborations.db';
 import { sqlExecutor } from '@/sql-executor';
 import { describeWithSeed } from '@/tests/_setup/seed';
-import { NativeCompetitionRuntimeRepository } from './native-competition-runtime.repository';
+import {
+  NativeCompetitionRuntimeRepository,
+  nativeCompetitionRuntimeRepository
+} from './native-competition-runtime.repository';
 import { NativeCompetitionRuntimeService } from './native-competition-runtime.service';
 import { competitionRepository } from './competition.repository';
 import { CompetitionExecutionRouter } from './competition-execution.router';
@@ -45,7 +48,11 @@ import { RequestContext } from '@/request.context';
 import { competitionEventRepository } from './competition-event.repository';
 import { competitionMainStageRepository } from './competition-main-stage.repository';
 import { identitiesDb } from '@/identities/identities.db';
-import { revokeTdhBasedDropWavesOverVotes } from '@/drops/participation-drops-over-vote-revocation';
+import {
+  revokeRepBasedDropOverVotes,
+  revokeTdhBasedDropWavesOverVotes
+} from '@/drops/participation-drops-over-vote-revocation';
+import { appFeatures } from '@/app-features';
 import { nativeCompetitionRuntimeService } from './native-competition-runtime.service';
 import { userNotifier } from '@/notifications/user.notifier';
 import { metricsRecorder } from '@/metrics/MetricsRecorder';
@@ -437,6 +444,127 @@ describeWithSeed(
         refreshed.mockRestore();
         full.mockRestore();
         budget.mockRestore();
+      }
+    });
+
+    it('locks only competitions holding votes a revocation could reduce, re-checking each under its lock', async () => {
+      const repId = '10000000-0000-4000-8000-000000000003';
+      const repEntry = '20000000-0000-4000-8000-000000000004';
+      const rep = competition(repId, 'RANK');
+      const repRow = {
+        ...rep,
+        voting_config: { ...rep.voting_config, credit_type: 'REP' }
+      };
+      await sqlExecutor.execute(
+        `insert into ${COMPETITIONS_TABLE} (${Object.keys(repRow).join(',')}) values (${Object.keys(
+          repRow
+        )
+          .map((column) => `:${column}`)
+          .join(',')})`,
+        Object.fromEntries(
+          Object.entries(repRow).map(([column, value]) => [
+            column,
+            value !== null && typeof value === 'object'
+              ? JSON.stringify(value)
+              : value
+          ])
+        )
+      );
+      await sqlExecutor.execute(
+        `insert into ${COMPETITION_ENTRIES_TABLE} (id,competition_id,drop_id,wave_id,submitter_id,status,config_version,submitted_at)
+         values (:repEntry,:repId,'rep-drop','shared-hub','artist','ACTIVE',1,1)`,
+        { repEntry, repId }
+      );
+      const funded = anIdentity(
+        { tdh: 100 },
+        {
+          profile_id: 'funded',
+          consolidation_key: 'lock-funded',
+          primary_address: `0x${'f'.repeat(40)}`,
+          handle: 'funded'
+        }
+      );
+      await sqlExecutor.bulkInsert(
+        IDENTITIES_TABLE,
+        [funded],
+        Object.keys(funded)
+      );
+      // A funded vote in the TDH Rank competition and in the REP one; none
+      // in the Approve competition.
+      for (const [competitionId, entryId, value] of [
+        [rankId, rankEntry, 50],
+        [repId, repEntry, 10]
+      ] as const) {
+        await sqlExecutor.execute(
+          `insert into ${COMPETITION_VOTES_TABLE} (id,competition_id,entry_id,voter_profile_id,value,credit_spent,created_at,updated_at) values (:id,:competitionId,:entryId,'funded',:value,abs(:value),1,1)`,
+          { id: randomUUID(), competitionId, entryId, value }
+        );
+      }
+      const lock = jest.spyOn(
+        nativeCompetitionRuntimeRepository,
+        'lockCompetition'
+      );
+      const lockedIds = () => lock.mock.calls.map(([id]) => id);
+      const tryLock = (id: string) =>
+        sqlExecutor.execute(
+          `select id from ${COMPETITIONS_TABLE} where id = :id for update nowait`,
+          { id }
+        );
+      const votes = () =>
+        sqlExecutor.execute(
+          `select competition_id, value from ${COMPETITION_VOTES_TABLE} order by competition_id`
+        );
+      const before = await votes();
+      try {
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            await revokeTdhBasedDropWavesOverVotes(connection);
+            // Still inside the revocation transaction: only the TDH
+            // candidate is locked.
+            await expect(tryLock(approveId)).resolves.toHaveLength(1);
+            await expect(tryLock(repId)).resolves.toHaveLength(1);
+            await expect(tryLock(rankId)).rejects.toMatchObject({
+              errno: 3572 // ER_LOCK_NOWAIT
+            });
+          }
+        );
+        expect(lockedIds()).toEqual([rankId]);
+        expect(await votes()).toEqual(before);
+
+        // The REP path, if enabled, locks only the REP competitions the
+        // rating recipient has votes in.
+        lock.mockClear();
+        jest
+          .spyOn(appFeatures, 'isDropOvervoteRevocationEnabled')
+          .mockReturnValue(true);
+        jest
+          .spyOn(competitionCreditService, 'getBudget')
+          .mockResolvedValue({ available: 10 } as never);
+        const refresh = jest
+          .spyOn(nativeCompetitionRuntimeService, 'refreshCompetition')
+          .mockResolvedValue(undefined as never);
+        await sqlExecutor.executeNativeQueriesInTransaction(
+          async (connection) => {
+            await revokeRepBasedDropOverVotes(
+              {
+                rep_recipient_id: 'funded',
+                rep_giver_id: 'giver',
+                credit_category: 'art'
+              },
+              connection
+            );
+            await expect(tryLock(rankId)).resolves.toHaveLength(1);
+            await expect(tryLock(approveId)).resolves.toHaveLength(1);
+            await expect(tryLock(repId)).rejects.toMatchObject({
+              errno: 3572 // ER_LOCK_NOWAIT
+            });
+          }
+        );
+        expect(lockedIds()).toEqual([repId]);
+        expect(refresh).toHaveBeenCalledTimes(1);
+        expect(await votes()).toEqual(before);
+      } finally {
+        jest.restoreAllMocks();
       }
     });
 
