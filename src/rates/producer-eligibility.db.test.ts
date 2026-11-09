@@ -167,6 +167,10 @@ describeWithSeed(
       await bulkRep(5);
       expect(repWrite).toHaveBeenCalledTimes(1);
       expect(ratingWrite).toHaveBeenCalledTimes(1);
+      // Lock order: ratings before identities.
+      expect(ratingWrite.mock.invocationCallOrder[0]).toBeLessThan(
+        repWrite.mock.invocationCallOrder[0]
+      );
       expect(await repSnapshot()).toMatchObject({
         rep: { rep: 5 },
         ratings: [{ rating: 5 }]
@@ -182,11 +186,12 @@ describeWithSeed(
     });
 
     it('rolls back both real rating writes when downstream work fails', async () => {
-      const actual = ratingsDb.bulkUpsertRatings.bind(ratingsDb);
+      // Ratings are written first, then the identity delta: fail after both.
+      const actual = identitiesDb.bulkUpdateReps.bind(identitiesDb);
       jest
-        .spyOn(ratingsDb, 'bulkUpsertRatings')
-        .mockImplementation(async (ratings, ctx) => {
-          await actual(ratings, ctx);
+        .spyOn(identitiesDb, 'bulkUpdateReps')
+        .mockImplementation(async (updates, ctx) => {
+          await actual(updates, ctx);
           throw new Error('injected post-write failure');
         });
       await expect(bulkRep(5)).rejects.toThrow('injected post-write failure');

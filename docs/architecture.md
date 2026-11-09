@@ -1269,11 +1269,39 @@ configured NFT set. WAVE credit compares the shared total; DROP credit compares
 the largest individual allocation. Only over-limit voters enter the existing
 credit-reduction/history/notification path, and the leaderboard is rebuilt once
 after all reductions. Fully funded competitions do not reload vote history or
-rewrite leaderboards. Discovery and mutations remain in the existing TDH
-publication transaction, including delegation-driven partial recalculations and
-post-TDH over-rate cleanup. Deploy the affected consumers sequentially:
-`overRatesRevocationLoop`, `delegationsLoop`, then `tdhLoop`; their unchanged
-xTDH dependencies are already compatible. No schema or frontend rollout is needed.
+rewrite leaderboards. Revocation finds candidate competitions first, without
+locking: active and published ones holding votes it could reduce (any non-zero
+active vote for TDH; the rating recipient's active votes for REP), whose stored
+configuration it applies to. It locks only those, re-checking each under its
+lock, so other competitions' snapshot and decision runs are never blocked by it.
+
+A consolidated-TDH run (`persistConsolidatedTDH`, from `delegationsLoop` and
+`tdhLoop`) is a sequence of short transactions rather than one:
+
+- A: the TDH tables, plus a pending generation in `identity_tdh_sync_state`.
+- B: identities for new consolidations and profile merges, with the merged
+  profiles' wave subscriber counts recounted (not every wave's). Its
+  unread-cache and wave-score effects run as soon as it commits.
+- C: identity metrics (`rep`, `cic`, `tdh`, `basetdh_rate`, `level_raw`),
+  recomputed from ratings and consolidated TDH in primary-key chunks, each one
+  short transaction writing final values, so no reset value is ever visible.
+- D: TDH overvote revocation, against the synced identities, one transaction
+  per candidate competition. A competition busy past the lock wait is skipped,
+  logged and counted (`failed=n`), and picked up by the next revocation.
+- E: the generation is marked synced.
+
+B to E run under a renewed lease row, one run at a time. If an invocation
+stops after A, or B to E fail, the generation stays pending and the next
+`delegationsLoop` or `tdhLoop` start finishes B to E, which are idempotent; a
+failure is logged and sent to Sentry without stopping delegations, the TDH
+block record or the xTDH trigger. A lease taken over by another invocation is
+logged as a warning only. Any transaction writing both `ratings` and
+`identities` takes the `ratings` locks first. The TDH tables and identities
+are no longer updated atomically: between A and C, readers combining them see
+the previous run's identities for seconds, and a vote is checked against the
+pre-run credit, as just before any run. Deploy `dbMigrationsLoop`
+first (the marker table), then `delegationsLoop`, `tdhLoop`,
+`overRatesRevocationLoop` and `api`.
 
 Winners paginate by win time, newest first; My Votes excludes completed winners
 without deleting historical allocations. Personal votes sort by signed vote value

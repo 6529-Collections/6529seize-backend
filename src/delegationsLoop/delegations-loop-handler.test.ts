@@ -56,6 +56,9 @@ jest.mock('./reconsolidation', () => ({
   getAffectedWallets: jest.fn(),
   getAffectedWalletsForAddresses: jest.fn()
 }));
+jest.mock('../identity-tdh-sync', () => ({
+  resumePendingIdentityTdhSync: jest.fn()
+}));
 
 import * as db from '../db';
 import * as delegations from '../delegations';
@@ -68,6 +71,7 @@ import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { updateTDH } from '../tdhLoop/tdh';
 import { consolidateAndPersistTDH } from '../tdhLoop/tdh_consolidation';
 import { handler } from './index';
+import { resumePendingIdentityTdhSync } from '../identity-tdh-sync';
 import { doInDbContext } from '../secrets';
 import {
   getAffectedWallets,
@@ -213,6 +217,14 @@ describe('delegations loop on-demand reconsolidation', () => {
       consolidateSubscriptions
     ].forEach((fn) => expect(fn).toHaveBeenCalledTimes(1));
     expect(db.persistNftDelegationBlock).toHaveBeenCalledWith(26_000_001, 1);
+    // A pending identities sync is finished before new chain events.
+    expect(resumePendingIdentityTdhSync).toHaveBeenCalledTimes(1);
+    expect(
+      jest.mocked(resumePendingIdentityTdhSync).mock.invocationCallOrder[0]
+    ).toBeLessThan(
+      jest.mocked(delegations.findDelegationTransactions).mock
+        .invocationCallOrder[0]
+    );
   });
 
   it('stops the pipeline and rejects the invocation when a stage fails', async () => {

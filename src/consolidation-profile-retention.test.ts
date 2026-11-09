@@ -108,6 +108,9 @@ describe('simultaneous consolidation split and merge profile retention', () => {
         .spyOn(identitiesDb, 'updateIdentityProfile')
         .mockResolvedValue();
       jest
+        .spyOn(identitySubscriptionsDb, 'findFollowedWaveIds')
+        .mockResolvedValue([]);
+      jest
         .spyOn(identitySubscriptionsDb, 'resyncWaveSubscriptionsMetrics')
         .mockResolvedValue();
       jest

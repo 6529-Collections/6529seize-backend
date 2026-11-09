@@ -204,6 +204,43 @@ export class NativeCompetitionRuntimeRepository extends LazyDbAccessCompatibleSe
   }
 
   /**
+   * ACTIVE, PUBLISHED competitions holding votes an overvote revocation could
+   * reduce, read without locking. With a voter: that voter's votes on active
+   * entries, of any value (as `getVoterActiveVotes` reads them). Without one:
+   * any non-zero vote on an active entry (as TDH overvoter discovery reads
+   * them). A competition without such votes has nothing to revoke, so the
+   * caller locks only these, and re-checks each under its lock.
+   */
+  public async findOvervoteCandidateCompetitions(
+    afterId: string,
+    limit: number,
+    voterProfileId: string | null,
+    ctx: RequestContext
+  ): Promise<string[]> {
+    // Both branches are constant SQL; the voter id stays a bound parameter.
+    const voteFilter =
+      voterProfileId === null
+        ? 'v.value <> 0'
+        : 'v.voter_profile_id = :voterProfileId';
+    const rows = await this.query<{ id: string }>(
+      'findOvervoteCandidateCompetitions',
+      `select c.id from ${COMPETITIONS_TABLE} c
+      where c.execution_mode = 'ACTIVE' and c.lifecycle = 'PUBLISHED'
+      and c.id > :afterId
+      and exists (
+        select 1 from ${COMPETITION_VOTES_TABLE} v
+        join ${COMPETITION_ENTRIES_TABLE} e
+          on e.id = v.entry_id and e.competition_id = v.competition_id
+        where v.competition_id = c.id and e.status = 'ACTIVE' and ${voteFilter}
+      )
+      order by c.id asc limit :limit`,
+      { afterId, limit, voterProfileId },
+      ctx
+    );
+    return rows.map((row) => row.id);
+  }
+
+  /**
    * The competition as of the transaction's snapshot, without locking it.
    * For computing a leaderboard off the lock (see leaderboardInputsMark).
    */
