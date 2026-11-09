@@ -66,7 +66,10 @@ import {
 } from './reconsolidation';
 import { readReconsolidationAction } from './reconsolidation-action';
 import { DelegationsLoopHealth } from './delegations-loop-health';
-import { resumePendingIdentityTdhSync } from '../identity-tdh-sync';
+import {
+  resumePendingIdentityTdhSync,
+  startIdentitySyncBudget
+} from '../identity-tdh-sync';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -75,6 +78,8 @@ export const handler = sentryContext.wrapLambdaHandler(
     const requestedWallets = readReconsolidationAction(event);
     return await doInDbContext(
       async () => {
+        // Every identities sync in this invocation shares one time budget.
+        startIdentitySyncBudget();
         const scopeBackfill = readScopeBackfillConfig();
         if (requestedWallets) {
           if (scopeBackfill) {
