@@ -37,6 +37,12 @@ import { NotFoundException } from '@/exceptions';
 import { competitionVotingService } from './competition-voting.service';
 import { createOrUpdateDrop } from '@/drops/create-or-update-drop.use-case';
 import * as pushNotifications from '@/api/push-notifications/push-notifications.service';
+import { apiDropV2Service } from '@/api/drops/api-drop-v2.service';
+import { PageSortDirection } from '@/api/page-request';
+import {
+  withLegacyCompetitionGetFacade,
+  isLegacyCompetitionGetFacadeScope
+} from '@/competitions/legacy-competition-get-facade';
 
 const actor = 'entry-author';
 const nativeMembersId = randomUUID();
@@ -252,6 +258,80 @@ describeWithSeed(
       if (originalApiBaseUrl === undefined) delete process.env.API_BASE_URL;
       else process.env.API_BASE_URL = originalApiBaseUrl;
     });
+
+    it.each([false, true])(
+      'reads native vote details through the legacy GET scope with primary=%s',
+      async (primary) => {
+        if (primary) {
+          await sqlExecutor.execute(
+            `update ${tables.COMPETITIONS_TABLE} set legacy_wave_id=:waveId where id=:id`,
+            { waveId: wave.id, id: competitionId }
+          );
+        }
+        const entry = await service.create(
+          wave.id,
+          competitionId,
+          request(),
+          ctx
+        );
+        for (const value of [7, -3]) {
+          await competitionVotingService.vote(
+            wave.id,
+            competitionId,
+            entry.id,
+            { idempotency_key: randomUUID(), config_version: 1, value },
+            ctx
+          );
+        }
+        await withLegacyCompetitionGetFacade(async () => {
+          expect(await dropsDb.findDropById(entry.drop_id)).toMatchObject({
+            drop_type: primary ? DropType.PARTICIPATORY : DropType.CHAT
+          });
+          const voters = await apiDropV2Service.findVotersByDropIdOrThrow(
+            entry.drop_id,
+            { page: 1, page_size: 20, sort_direction: PageSortDirection.DESC },
+            ctx
+          );
+          expect(voters).toMatchObject({
+            count: 1,
+            next: false,
+            data: [{ vote: -3, voter: { id: actor } }]
+          });
+          const logs = await apiDropV2Service.findVoteEditLogsByDropIdOrThrow(
+            entry.drop_id,
+            { offset: 0, limit: 20, sort_direction: PageSortDirection.DESC },
+            ctx
+          );
+          expect(logs).toMatchObject([
+            { old_vote: 7, new_vote: -3, voter: { id: actor } },
+            { old_vote: 0, new_vote: 7, voter: { id: actor } }
+          ]);
+          expect(
+            await apiDropV2Service.findVoteSummaryByDropIdOrThrow(
+              entry.drop_id,
+              ctx
+            )
+          ).toMatchObject({
+            vote_distribution: {
+              positive_total: 0,
+              negative_total: -3,
+              positive_votes: [],
+              negative_votes: [{ vote: -3, voter: { id: actor } }]
+            }
+          });
+          expect(
+            await apiDropV2Service.findVotersCsvByDropIdOrThrow(
+              entry.drop_id,
+              ctx
+            )
+          ).toMatchObject([{ handle: 'entrant', vote: -3 }]);
+          expect(isLegacyCompetitionGetFacadeScope()).toBe(true);
+        });
+        expect(await dropsDb.findDropById(entry.drop_id)).toMatchObject({
+          drop_type: DropType.COMPETITION
+        });
+      }
+    );
 
     it.each([
       { mainStage: true, anonymous: false, expected: true },
