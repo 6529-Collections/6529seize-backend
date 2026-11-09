@@ -78,16 +78,23 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     }
   }
 
+  /**
+   * `primaryWallet` is the identity's primary address, which may differ from
+   * the creating wallet when that wallet is one of a consolidation's others:
+   * profiles.primary_wallet mirrors identities.primary_address.
+   */
   public async insertProfileRecord(
     id: string,
     {
-      command
+      command,
+      primaryWallet
     }: {
       command: CreateOrUpdateProfileCommand;
+      primaryWallet: string;
     },
     connection: ConnectionWrapper<any>
   ) {
-    const wallet = command.creator_or_updater_wallet.toLowerCase();
+    const wallet = primaryWallet.toLowerCase();
     await this.db.execute(
       `insert into ${PROFILES_TABLE}
        (handle,

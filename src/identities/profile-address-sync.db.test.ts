@@ -20,6 +20,9 @@ const orphan = {
   handle: 'orphan',
   primary_wallet: '0x4444'
 };
+const seededIds = [unchanged, changed, orphan].map(
+  (profile) => profile.external_id
+);
 
 describe('Profile address synchronization', () => {
   const seeds = [
@@ -117,7 +120,10 @@ describe('Profile address synchronization', () => {
 
   it('leaves unchanged profiles available for posting before the consolidation transaction commits', async () => {
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
-      await repo.syncProfileAddressesFromIdentitiesToProfiles(connection);
+      await repo.syncProfileAddressesFromIdentitiesToProfiles(
+        seededIds,
+        connection
+      );
       await lockUnchangedProfile(connection);
     });
 
@@ -135,7 +141,10 @@ describe('Profile address synchronization', () => {
     );
 
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
-      await repo.syncProfileAddressesFromIdentitiesToProfiles(connection);
+      await repo.syncProfileAddressesFromIdentitiesToProfiles(
+        seededIds,
+        connection
+      );
       await lockUnchangedProfile(connection);
     });
   });
@@ -144,7 +153,10 @@ describe('Profile address synchronization', () => {
     const failure = new Error('Consolidation failed');
     await expect(
       sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
-        await repo.syncProfileAddressesFromIdentitiesToProfiles(connection);
+        await repo.syncProfileAddressesFromIdentitiesToProfiles(
+          seededIds,
+          connection
+        );
         throw failure;
       })
     ).rejects.toBe(failure);
@@ -172,7 +184,7 @@ describe('Profile address synchronization', () => {
       });
     try {
       await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-        repo.syncProfileAddressesFromIdentitiesToProfiles(connection)
+        repo.syncProfileAddressesFromIdentitiesToProfiles(seededIds, connection)
       );
     } finally {
       discovery.mockRestore();
@@ -186,7 +198,10 @@ describe('Profile address synchronization', () => {
     const profiles = await seedPageProfiles();
 
     await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
-      await repo.syncProfileAddressesFromIdentitiesToProfiles(connection);
+      await repo.syncProfileAddressesFromIdentitiesToProfiles(
+        [...seededIds, ...profiles.map((profile) => profile.external_id)],
+        connection
+      );
       await lockUnchangedProfile(connection);
     });
     const updated = await sqlExecutor.execute<{ external_id: string }>(
@@ -205,18 +220,18 @@ describe('Profile address synchronization', () => {
     expect(await walletFor(orphan.external_id)).toBe(orphan.primary_wallet);
   });
 
-  it('preserves an atomic primary-address change committed behind the keyset cursor', async () => {
-    await seedPageProfiles();
+  it('preserves an atomic primary-address change committed behind the page being synchronized', async () => {
+    const profiles = await seedPageProfiles();
     const execute = sqlExecutor.execute.bind(sqlExecutor);
+    let discoveries = 0;
     let changedBehindCursor = false;
     const interleaving = jest
       .spyOn(sqlExecutor, 'execute')
       .mockImplementation(async (sql, params, options) => {
-        if (
-          !changedBehindCursor &&
-          typeof params?.afterProfileId === 'string'
-        ) {
-          expect(params.afterProfileId > unchanged.external_id).toBe(true);
+        if (Array.isArray(params?.profileIds)) discoveries++;
+        if (!changedBehindCursor && discoveries === 2) {
+          // The second page: the first one, with this profile, is done.
+          expect(params?.profileIds[0] > unchanged.external_id).toBe(true);
           changedBehindCursor = true;
           await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
             repo.updatePrimaryAddress(
@@ -232,7 +247,10 @@ describe('Profile address synchronization', () => {
       });
     try {
       await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-        repo.syncProfileAddressesFromIdentitiesToProfiles(connection)
+        repo.syncProfileAddressesFromIdentitiesToProfiles(
+          [...seededIds, ...profiles.map((profile) => profile.external_id)],
+          connection
+        )
       );
     } finally {
       interleaving.mockRestore();
@@ -251,7 +269,7 @@ describe('Profile address synchronization', () => {
     await sqlExecutor.bulkInsert(PROFILES_TABLE, [alias], Object.keys(alias));
 
     await sqlExecutor.executeNativeQueriesInTransaction((connection) =>
-      repo.syncProfileAddressesFromIdentitiesToProfiles(connection)
+      repo.syncProfileAddressesFromIdentitiesToProfiles(seededIds, connection)
     );
     const rows = await sqlExecutor.execute<{ primary_wallet: string }>(
       `SELECT primary_wallet FROM ${PROFILES_TABLE} WHERE external_id=:id`,
@@ -261,5 +279,51 @@ describe('Profile address synchronization', () => {
     expect(rows.every((row) => row.primary_wallet === replacementWallet)).toBe(
       true
     );
+  });
+
+  it('never reads, locks or changes a profile it is not given', async () => {
+    // `changed` differs from its identity, but the caller did not touch it.
+    const statements: { sql: string; params: unknown }[] = [];
+    let recording = true;
+    const execute = sqlExecutor.execute.bind(sqlExecutor);
+    const spy = jest
+      .spyOn(sqlExecutor, 'execute')
+      .mockImplementation(async (sql, params, options) => {
+        if (recording) statements.push({ sql, params });
+        return execute(sql, params, options);
+      });
+    try {
+      await sqlExecutor.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await repo.syncProfileAddressesFromIdentitiesToProfiles(
+            [unchanged.external_id, orphan.external_id],
+            connection
+          );
+          recording = false;
+          // Another transaction can take the untouched profile's row at once.
+          await sqlExecutor.executeNativeQueriesInTransaction((other) =>
+            sqlExecutor.execute(
+              `SELECT external_id FROM ${PROFILES_TABLE} WHERE external_id=:id FOR UPDATE NOWAIT`,
+              { id: changed.external_id },
+              { wrappedConnection: other }
+            )
+          );
+        }
+      );
+    } finally {
+      spy.mockRestore();
+    }
+
+    const syncStatements = statements.filter(({ sql }) =>
+      sql.includes('primary_wallet')
+    );
+    expect(syncStatements).toHaveLength(1);
+    expect(syncStatements[0].params).toEqual({
+      profileIds: [unchanged.external_id, orphan.external_id]
+    });
+    expect(JSON.stringify(statements)).not.toContain(
+      JSON.stringify(changed.external_id)
+    );
+    expect(await walletFor(changed.external_id)).toBe(changed.primary_wallet);
   });
 });

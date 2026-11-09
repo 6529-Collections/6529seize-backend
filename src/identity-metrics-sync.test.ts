@@ -26,6 +26,8 @@ const lockError = (code: string) => Object.assign(new Error(code), { code });
 /** Answers the chunk statements from an in-memory identities list. */
 class FakeExecutor extends SqlExecutor {
   public readonly statements: string[] = [];
+  /** The keys each UPDATE was scoped to (scoped chunks). */
+  public readonly updatedKeys: string[][] = [];
   /** Thrown, in order, by the next UPDATE statements. */
   public readonly updateFailures: Error[] = [];
   /** Extra rows the next verification reads return, once each. */
@@ -40,6 +42,19 @@ class FakeExecutor extends SqlExecutor {
     this.statements.push(statement);
     if (isUpdate(statement) && this.updateFailures.length) {
       throw this.updateFailures.shift();
+    }
+    if (isUpdate(statement) && params?.keys) this.updatedKeys.push(params.keys);
+    const listed =
+      /from identities\s+where (consolidation_key|profile_id) in \(/i.exec(
+        statement
+      );
+    if (listed) {
+      const values = new Set<string | null>(params?.values ?? params?.keys);
+      return this.identities.filter((row) =>
+        values.has(
+          listed[1] === 'profile_id' ? row.profile_id : row.consolidation_key
+        )
+      ) as T[];
     }
     const after = String(params?.after ?? '');
     if (/\blimit\b/i.test(statement)) {
@@ -144,6 +159,44 @@ describe('IdentityMetricsSync chunks', () => {
       new IdentityMetricsSync(() => db).syncAll({ chunkRows: 10 })
     ).rejects.toMatchObject({ code: 'ER_LOCK_DEADLOCK' });
     expect(db.statements.filter(isUpdate)).toHaveLength(5);
+  });
+
+  it('keeps scoped statements under 16 KB with long keys, and covers each listed identity once', async () => {
+    // Three-wallet consolidation keys: keys and profile ids share the budget.
+    const rows: Row[] = Array.from({ length: 900 }, (_, i) => ({
+      consolidation_key: [0, 1, 2]
+        .map((j) => `0x${String(i * 3 + j).padStart(40, '0')}`)
+        .join('-'),
+      profile_id: i % 50 === 7 ? null : randomUUID()
+    }));
+    const db = new FakeExecutor(rows);
+    const byKey = rows.slice(0, 300).map((row) => row.consolidation_key);
+    const byProfile = rows
+      .slice(250, 700)
+      .map((row) => row.profile_id)
+      .filter((profileId): profileId is string => profileId !== null);
+    const expected = new Set([
+      ...byKey,
+      ...rows
+        .slice(250, 700)
+        .filter((row) => row.profile_id !== null)
+        .map((row) => row.consolidation_key)
+    ]);
+
+    const result = await new IdentityMetricsSync(() => db).syncScoped({
+      consolidationKeys: byKey,
+      profileIds: [...byProfile, 'no-such-profile']
+    });
+
+    expect(result).toMatchObject({ complete: true, rows: expected.size });
+    for (const statement of db.statements) {
+      expect(Buffer.byteLength(statement, 'utf8')).toBeLessThan(16_000);
+    }
+    const updated = db.updatedKeys.flat();
+    expect(updated).toHaveLength(expected.size);
+    expect(new Set(updated)).toEqual(expected);
+    expect(result.chunks).toBe(db.updatedKeys.length);
+    expect(result.chunks).toBeGreaterThan(expected.size / 100);
   });
 
   it('does not retry other errors', async () => {

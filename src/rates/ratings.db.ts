@@ -906,6 +906,12 @@ from grouped_rates r
     }
   }
 
+  /**
+   * Inserts or updates the ratings. `last_modified` is the database clock on
+   * insert and on update, as in every ratings writer: the identities sync
+   * finds changed ratings by it (identity-tdh-sync.ts), so a writer must not
+   * keep an old value or stamp another clock.
+   */
   async bulkUpsertRatings(ratings: Rating[], ctx: RequestContext) {
     if (!ratings.length) {
       return;
@@ -927,14 +933,14 @@ from grouped_rates r
                 rating.matter_target_id,
                 rating.matter,
                 rating.matter_category,
-                rating.rating,
-                rating.last_modified
+                rating.rating
               ]
                 .map((it) => mysql.escape(it))
-                .join(', ')})`
+                .join(', ')}, current_timestamp)`
           )
           .join(', ')} ON DUPLICATE KEY UPDATE
-            rating = VALUES(rating);
+            rating = VALUES(rating),
+            last_modified = current_timestamp;
     `;
     await this.db.execute(sql, undefined, {
       wrappedConnection: ctx.connection

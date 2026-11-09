@@ -284,7 +284,9 @@ export class ProfilesService {
       await this.profilesDb.insertProfileRecord(
         identityId,
         {
-          command: createProfileCommand
+          command: createProfileCommand,
+          primaryWallet:
+            creatorOrUpdatorIdentityResponse.identity.primary_address
         },
         ctx.connection!
       );
