@@ -11,8 +11,10 @@ import {
   ConsolidatedTDHEditions,
   ConsolidatedTDHMemes,
   HistoricConsolidatedTDH,
-  NftTDH
+  NftTDH,
+  TDHBlock
 } from '@/entities/ITDH';
+import { computeMerkleRoot } from './tdh_merkle';
 import { identityConsolidationEffects } from '@/identity';
 import {
   ConnectionWrapper,
@@ -30,6 +32,7 @@ import * as mysql from 'mysql';
 import { DataSource, QueryRunner } from 'typeorm';
 
 const BLOCK = 99;
+const BLOCK_TIMESTAMP = new Date('2026-11-09T00:00:00Z');
 const A_C = 'a-c';
 const B = 'b';
 const A_B = 'a-b';
@@ -208,7 +211,8 @@ async function persistReplacement(replacementKeys: string[]) {
       mode: 'PARTIAL',
       wallets: ['a', 'b', 'c'],
       consolidationKeysToReplace: replacementKeys
-    }
+    },
+    BLOCK_TIMESTAMP
   );
 }
 
@@ -225,7 +229,8 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
       HistoricConsolidatedTDH,
       ConsolidatedTDHMemes,
       ConsolidatedTDHEditions,
-      NftTDH
+      NftTDH,
+      TDHBlock
     ],
     synchronize: false,
     logging: false,
@@ -272,6 +277,36 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
       pendingBlock: 0,
       syncedGeneration: 0
     });
+    // The block row rolls back with the TDH rows.
+    await expect(
+      dataSource.getRepository(TDHBlock).findOneBy({ block_number: BLOCK })
+    ).resolves.toBeNull();
+  });
+
+  it('leaves tdh_blocks matching the TDH rows when the run is killed right after the TDH commit', async () => {
+    // A run killed after step A, mid identities sync: nothing after A ran.
+    await persistReplacement([A_C, B]);
+
+    await expectPersistedKeys([A_B, C]);
+    const [latest] = await sqlExecutor.execute<{ block_number: number }>(
+      `SELECT MAX(block_number) AS block_number FROM tdh_blocks`
+    );
+    expect(Number(latest.block_number)).toBe(BLOCK);
+    const blockRow = await dataSource
+      .getRepository(TDHBlock)
+      .findOneByOrFail({ block_number: BLOCK });
+    // The merkle root is the committed rows' root, not an earlier state's.
+    expect(blockRow.merkle_root).toBe(
+      await computeMerkleRoot(BLOCK, dataSource.manager)
+    );
+    expect(new Date(blockRow.timestamp).toISOString()).toBe(
+      BLOCK_TIMESTAMP.toISOString()
+    );
+    // The identities sync is left pending for the next loop start.
+    const progress = await identityTdhSyncStateDb.readProgress();
+    expect(progress.pendingGeneration).toBeGreaterThan(
+      progress.syncedGeneration
+    );
   });
 
   it('commits the TDH tables with a pending identities sync marker, without syncing identities', async () => {
@@ -317,11 +352,19 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     }
     const before = structuredClone(rows);
 
-    await persistConsolidatedTDH(BLOCK, rows, [], [], [], {
-      mode: 'PARTIAL',
-      wallets: ['a', 'b', 'c', 'z'],
-      consolidationKeysToReplace: [A_C, B]
-    });
+    await persistConsolidatedTDH(
+      BLOCK,
+      rows,
+      [],
+      [],
+      [],
+      {
+        mode: 'PARTIAL',
+        wallets: ['a', 'b', 'c', 'z'],
+        consolidationKeysToReplace: [A_C, B]
+      },
+      BLOCK_TIMESTAMP
+    );
 
     expect(rows).toEqual(before);
     for (const entity of [ConsolidatedTDH, HistoricConsolidatedTDH]) {
@@ -399,7 +442,8 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
         mode: 'PARTIAL',
         wallets: ['a', 'b', 'c'],
         consolidationKeysToReplace: [A_C, B]
-      }
+      },
+      BLOCK_TIMESTAMP
     );
 
     await expectPersistedKeys(
@@ -444,7 +488,8 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
           mode: 'PARTIAL',
           wallets: ['a', 'b', 'c'],
           consolidationKeysToReplace: [A_C, B]
-        }
+        },
+        BLOCK_TIMESTAMP
       )
     ).rejects.toThrow();
 

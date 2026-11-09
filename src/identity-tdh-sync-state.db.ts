@@ -10,7 +10,8 @@ import { Time } from '@/time';
 const PENDING = 'pending';
 const SYNCED = 'synced';
 const LEASE = 'lease';
-const ROW_IDS = [PENDING, SYNCED, LEASE];
+const METRICS_WALK = 'metrics_walk';
+const ROW_IDS = [PENDING, SYNCED, LEASE, METRICS_WALK];
 
 /**
  * The rows are never deleted, so the pending generation only grows and the
@@ -47,7 +48,8 @@ export class IdentityTdhSyncStateDb extends LazyDbAccessCompatibleService {
          (id, generation, block, lease_owner, lease_until, updated_at)
        values ('${PENDING}', 0, 0, null, 0, 0),
               ('${SYNCED}', 0, 0, null, 0, 0),
-              ('${LEASE}', 0, 0, null, 0, 0)`
+              ('${LEASE}', 0, 0, null, 0, 0),
+              ('${METRICS_WALK}', 0, 0, null, 0, 0)`
     );
   }
 
@@ -86,6 +88,46 @@ export class IdentityTdhSyncStateDb extends LazyDbAccessCompatibleService {
       pendingBlock: Number(pending?.block ?? 0),
       syncedGeneration: Number(synced?.generation ?? 0)
     };
+  }
+
+  /**
+   * Where step C's walk for `generation` resumes: after this key, or from the
+   * first identity ('') when the stored walk belongs to another generation.
+   */
+  async metricsWalkStart(generation: number): Promise<string> {
+    const row = await this.db.oneOrNull<{
+      generation: number | string;
+      walk_after: string | null;
+    }>(
+      `select generation, walk_after from ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       where id = '${METRICS_WALK}'`,
+      undefined,
+      { forcePool: DbPoolName.WRITE }
+    );
+    if (row && Number(row.generation) === generation)
+      return row.walk_after ?? '';
+    await this.db.execute(
+      `update ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       set generation = :generation, walk_after = '', updated_at = :now
+       where id = '${METRICS_WALK}'`,
+      { generation, now: Time.currentMillis() }
+    );
+    return '';
+  }
+
+  /** In the chunk's transaction: the walk resumes after this chunk. */
+  async advanceMetricsWalk(
+    generation: number,
+    after: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<void> {
+    await this.db.execute(
+      `update ${IDENTITY_TDH_SYNC_STATE_TABLE}
+       set walk_after = :after, updated_at = :now
+       where id = '${METRICS_WALK}' and generation = :generation`,
+      { generation, after, now: Time.currentMillis() },
+      { wrappedConnection: connection }
+    );
   }
 
   /** Raises the synced generation; never lowers it. */

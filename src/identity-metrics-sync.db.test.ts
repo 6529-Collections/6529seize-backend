@@ -1,5 +1,9 @@
 import 'reflect-metadata';
-import { IDENTITIES_TABLE, RATINGS_TABLE } from '@/constants';
+import {
+  IDENTITIES_TABLE,
+  IDENTITY_TDH_SYNC_STATE_TABLE,
+  RATINGS_TABLE
+} from '@/constants';
 import { identitiesService } from '@/api/identities/identities.service';
 import { ProfileIdGenerator, identityConsolidationEffects } from '@/identity';
 import { identityMetricsSync } from '@/identity-metrics-sync';
@@ -80,6 +84,16 @@ async function referenceRun(): Promise<Reference> {
   expect(await readIdentities()).toEqual(before);
   generatedIds = 0;
   return result.reference!;
+}
+
+async function metricsWalk() {
+  const [row] = await sqlExecutor.execute<{
+    generation: number | string;
+    walk_after: string | null;
+  }>(
+    `select generation, walk_after from ${IDENTITY_TDH_SYNC_STATE_TABLE} where id = 'metrics_walk'`
+  );
+  return { generation: Number(row.generation), walk_after: row.walk_after };
 }
 
 async function markPending() {
@@ -258,6 +272,64 @@ describeWithSeed(
       expect(await readWaveSubscriberCounts()).toEqual(reference.waves);
       const synced = await identityTdhSyncStateDb.readProgress();
       expect(synced.syncedGeneration).toBe(synced.pendingGeneration);
+    });
+
+    it('resumes the walk after the last committed chunk, redoing none, and ends where the old algorithm did', async () => {
+      const reference = await referenceRun();
+      await markPending();
+      const killed = new Error('killed after chunk 3');
+      await expect(
+        syncIdentitiesAfterTdh({
+          chunkRows: 3,
+          afterChunk: (chunk) => {
+            if (chunk === 3) throw killed;
+          }
+        })
+      ).rejects.toBe(killed);
+
+      // The position committed with chunk 3: its last key, the ninth identity.
+      const keys = (await readIdentities()).map((row) => row.consolidation_key);
+      await expect(metricsWalk()).resolves.toEqual({
+        generation: 1,
+        walk_after: keys[8]
+      });
+
+      const syncAll = jest.spyOn(identityMetricsSync, 'syncAll');
+      await resumePendingIdentityTdhSync();
+
+      expect(syncAll).toHaveBeenCalledTimes(1);
+      expect(syncAll.mock.calls[0][0]).toMatchObject({ startAfter: keys[8] });
+      const resumed = await syncAll.mock.results[0].value;
+      expect(resumed.rows).toBe(keys.length - 9);
+      expect(await readIdentities()).toEqual(reference.identities);
+      await expect(metricsWalk()).resolves.toEqual({
+        generation: 1,
+        walk_after: keys[keys.length - 1]
+      });
+    });
+
+    it('walks a newer generation from the first identity', async () => {
+      await markPending();
+      const killed = new Error('killed after chunk 2');
+      await expect(
+        syncIdentitiesAfterTdh({
+          chunkRows: 3,
+          afterChunk: (chunk) => {
+            if (chunk === 2) throw killed;
+          }
+        })
+      ).rejects.toBe(killed);
+      // Another TDH write commits before the next start.
+      await markPending();
+
+      const syncAll = jest.spyOn(identityMetricsSync, 'syncAll');
+      await resumePendingIdentityTdhSync();
+
+      expect(syncAll.mock.calls[0][0]).toMatchObject({ startAfter: '' });
+      const resumed = await syncAll.mock.results[0].value;
+      expect(resumed.rows).toBe((await readIdentities()).length);
+      const progress = await identityTdhSyncStateDb.readProgress();
+      expect(progress.syncedGeneration).toBe(2);
     });
 
     it('never shows a concurrent reader a reset or partial row', async () => {

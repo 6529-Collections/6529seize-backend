@@ -1189,18 +1189,20 @@ export async function persistTDH(
   logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
+/** With a transaction's manager, the block row commits with its TDH rows. */
 export async function persistTDHBlock(
   block: number,
   timestamp: Date,
-  tdh: ConsolidatedTDH[]
+  tdh: ConsolidatedTDH[],
+  manager: EntityManager = AppDataSource.manager
 ) {
   logger.info(`[TDH BLOCK] PERSISTING BLOCK [${block}]`);
 
-  const merkleRoot = await computeMerkleRoot(block);
+  const merkleRoot = await computeMerkleRoot(block, manager);
 
   logger.info(`[TDH BLOCK] MERKLE ROOT [${merkleRoot}]`);
 
-  const repo = AppDataSource.getRepository(TDHBlock);
+  const repo = manager.getRepository(TDHBlock);
 
   await repo.delete({ block_number: block });
   await repo.insert({
@@ -1219,11 +1221,12 @@ export type ConsolidatedTdhPersistenceScope =
     };
 
 /**
- * Step A of a consolidated-TDH run: the TDH tables and the pending identities
- * sync marker, in one short transaction. Identities, merges, metrics and
- * overvote revocation follow in their own transactions
- * (`syncIdentitiesAfterTdh`); the committed marker lets the next loop
- * invocation finish them if this one stops after A.
+ * Step A of a consolidated-TDH run: the TDH tables, their `tdh_blocks` row and
+ * the pending identities sync marker, in one short transaction, so the block
+ * record always matches the TDH rows. Identities, merges, metrics and overvote
+ * revocation follow in their own transactions (`syncIdentitiesAfterTdh`); the
+ * committed marker lets the next loop invocation finish them if this one
+ * stops after A, even if it is killed.
  */
 export async function persistConsolidatedTDH(
   block: number,
@@ -1231,7 +1234,8 @@ export async function persistConsolidatedTDH(
   memesTdh: ConsolidatedTDHMemes[],
   tdhEditions: ConsolidatedTDHEditions[],
   nftTdh: NftTDH[],
-  scope: ConsolidatedTdhPersistenceScope
+  scope: ConsolidatedTdhPersistenceScope,
+  blockTimestamp: Date
 ) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
   // Fails before any TDH write if the marker table is missing.
@@ -1295,6 +1299,7 @@ export async function persistConsolidatedTDH(
       scope.mode === 'PARTIAL' ? scope.wallets : undefined,
       scope.mode === 'PARTIAL' ? scope.consolidationKeysToReplace : undefined
     );
+    await persistTDHBlock(block, blockTimestamp, tdh, manager);
     await identityTdhSyncStateDb.markPending(block, qrHolder);
   });
 

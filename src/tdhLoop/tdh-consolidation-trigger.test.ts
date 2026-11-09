@@ -121,9 +121,11 @@ describe('TDH consolidation xTDH trigger contract', () => {
       [],
       [],
       [],
-      { mode: 'FULL' }
+      { mode: 'FULL' },
+      blockTimestamp
     );
-    expect(mockPersistTdhBlock).toHaveBeenCalledTimes(1);
+    // The tdh_blocks row is written inside the TDH transaction.
+    expect(mockPersistTdhBlock).not.toHaveBeenCalled();
     expect(mockSqsSendToQueueName).not.toHaveBeenCalled();
   });
 
@@ -146,7 +148,8 @@ describe('TDH consolidation xTDH trigger contract', () => {
         mode: 'PARTIAL',
         wallets,
         consolidationKeysToReplace: []
-      }
+      },
+      blockTimestamp
     );
     expect(mockSqsSendToQueueName).toHaveBeenCalledWith({
       queueName: 'xtdh-start.fifo',
@@ -156,12 +159,12 @@ describe('TDH consolidation xTDH trigger contract', () => {
       }
     });
     expect(mockSqsSendToQueueName).toHaveBeenCalledTimes(1);
-    expect(mockPersistTdhBlock.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mockPersistConsolidatedTdh.mock.invocationCallOrder[0]).toBeLessThan(
       mockSqsSendToQueueName.mock.invocationCallOrder[0]
     );
   });
 
-  it('syncs identities after the TDH commit and before the block and xTDH', async () => {
+  it('syncs identities after the TDH commit, which carries the block, and before xTDH', async () => {
     await consolidateAndPersistTDH(block, blockTimestamp, {
       mode: 'PARTIAL',
       wallets: ['0xabc'],
@@ -173,15 +176,13 @@ describe('TDH consolidation xTDH trigger contract', () => {
     expect(order(mockPersistConsolidatedTdh)).toBeLessThan(
       order(mockSyncIdentitiesAfterTdh)
     );
-    expect(order(mockSyncIdentitiesAfterTdh)).toBeLessThan(
-      order(mockPersistTdhBlock)
-    );
+    expect(mockPersistTdhBlock).not.toHaveBeenCalled();
     expect(order(mockSyncIdentitiesAfterTdh)).toBeLessThan(
       order(mockSqsSendToQueueName)
     );
   });
 
-  it('still writes the block and enqueues xTDH when the identities sync is left pending', async () => {
+  it('still enqueues xTDH when the identities sync is left pending', async () => {
     mockSyncIdentitiesAfterTdh.mockResolvedValueOnce('FAILED');
 
     await consolidateAndPersistTDH(block, blockTimestamp, {
@@ -191,7 +192,6 @@ describe('TDH consolidation xTDH trigger contract', () => {
     });
 
     expect(mockSyncIdentitiesAfterTdh).toHaveBeenCalledWith('AFTER_TDH_WRITE');
-    expect(mockPersistTdhBlock).toHaveBeenCalledTimes(1);
     expect(mockSqsSendToQueueName).toHaveBeenCalledTimes(1);
   });
 
@@ -262,7 +262,8 @@ describe('TDH consolidation xTDH trigger contract', () => {
         mode: 'PARTIAL',
         wallets,
         consolidationKeysToReplace: []
-      }
+      },
+      blockTimestamp
     );
   });
 
@@ -280,6 +281,5 @@ describe('TDH consolidation xTDH trigger contract', () => {
     ).rejects.toThrow('queue lookup failed');
 
     expect(mockPersistConsolidatedTdh).toHaveBeenCalledTimes(1);
-    expect(mockPersistTdhBlock).toHaveBeenCalledTimes(1);
   });
 });

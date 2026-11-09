@@ -47,6 +47,13 @@ type Chunk = {
 export type IdentityMetricsSyncOptions = {
   readonly chunkRows?: number;
   readonly profileIdBytes?: number;
+  /** Resume after this key (a previous run's last committed chunk). */
+  readonly startAfter?: string;
+  /** Runs inside each chunk's transaction, with its last key. */
+  readonly recordProgress?: (
+    last: string,
+    connection: ConnectionWrapper<any>
+  ) => Promise<void>;
   /** Test hook: runs after each committed chunk (1-based). */
   readonly afterChunk?: (chunk: number) => Promise<void> | void;
   /** Test hook: runs inside a chunk once its source rows are locked. */
@@ -56,6 +63,7 @@ export type IdentityMetricsSyncOptions = {
 type ChunkSettings = {
   readonly chunkRows: number;
   readonly profileIdBytes: number;
+  readonly recordProgress?: IdentityMetricsSyncOptions['recordProgress'];
   readonly afterSourcesLocked?: (chunk: number) => Promise<void> | void;
 };
 
@@ -124,10 +132,11 @@ export class IdentityMetricsSync extends LazyDbAccessCompatibleService {
       chunkRows: options.chunkRows ?? IDENTITY_METRICS_SYNC_CHUNK_ROWS,
       profileIdBytes:
         options.profileIdBytes ?? IDENTITY_METRICS_SYNC_PROFILE_ID_BYTES,
-      afterSourcesLocked: options.afterSourcesLocked
+      afterSourcesLocked: options.afterSourcesLocked,
+      recordProgress: options.recordProgress
     };
     const start = Time.now();
-    let after = '';
+    let after = options.startAfter ?? '';
     let chunks = 0;
     let rows = 0;
     let retries = 0;
@@ -250,6 +259,8 @@ export class IdentityMetricsSync extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
     if (!sameRows(chunk.rows, locked)) throw new IdentityChunkChangedError();
+    // Commits with the chunk, so a resumed walk never skips or redoes it.
+    await settings.recordProgress?.(chunk.last, connection);
     return chunk;
   }
 

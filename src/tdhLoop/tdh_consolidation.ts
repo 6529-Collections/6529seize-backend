@@ -7,7 +7,6 @@ import {
   fetchConsolidationDisplays,
   fetchLatestTDHBlockNumber,
   persistConsolidatedTDH,
-  persistTDHBlock,
   retrieveConsolidationsForWallets,
   retrieveWalletConsolidations
 } from '../db';
@@ -314,13 +313,16 @@ export const consolidateAndPersistTDH = async (
     memesTdh,
     tdhEditions,
     nftTdh,
-    persistenceScope
+    persistenceScope,
+    blockTimestamp
   );
-  // Identities, merges, metrics and overvotes, after the TDH commit. A failure
-  // leaves them pending for the next loop start; the TDH block and the xTDH
-  // trigger below still go out for the committed TDH.
+  // The TDH rows and their tdh_blocks row are committed. Identities, merges,
+  // metrics and overvotes follow; a failure, or a Lambda killed mid-sync,
+  // leaves them pending for the next loop start. The partial xTDH trigger
+  // stays after the sync, so xTDH does not apply over the metrics chunks; a
+  // delegationsLoop killed before it does not advance its checkpoint and
+  // redoes the TDH write, sync and trigger on its next run.
   await syncIdentitiesAfterTdhOrLeavePending('AFTER_TDH_WRITE');
-  await persistTDHBlock(block, blockTimestamp, consolidatedTdh);
   if (request.mode === 'PARTIAL') {
     await enqueuePartialTdhUniverseRecalculation();
   }

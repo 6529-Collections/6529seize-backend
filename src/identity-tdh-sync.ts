@@ -64,7 +64,10 @@ export type IdentityTdhSyncOutcome = 'SYNCED' | 'UP_TO_DATE' | 'LEASE_HELD';
  * - B: identities from the new consolidations, profile merges, and the
  *   merged profiles' wave subscriber counts. Its unread-cache and wave-score
  *   effects run as soon as it commits.
- * - C: identity metrics, chunk by chunk (identity-metrics-sync.ts).
+ * - C: identity metrics, chunk by chunk (identity-metrics-sync.ts). Each
+ *   chunk records the walk's position in its own transaction, so a sync
+ *   resumed for the same generation continues after the last committed chunk;
+ *   a newer generation walks from the first identity.
  * - D: TDH-based overvote revocation, against the synced identities, one
  *   transaction per candidate competition.
  * - E: the pending generation read at the start is marked synced.
@@ -109,8 +112,18 @@ export async function syncIdentitiesAfterTdh(
     }
     logger.info(`[B CONSOLIDATIONS DONE] [${start.diffFromNow()}]`);
     await lease.renew();
+    const generation = progress.pendingGeneration;
+    const startAfter =
+      await identityTdhSyncStateDb.metricsWalkStart(generation);
+    if (startAfter)
+      logger.warn(
+        `[RESUMING METRICS WALK] [GENERATION ${generation}] [AFTER THE LAST COMMITTED CHUNK]`
+      );
     await identityMetricsSync.syncAll({
       ...options,
+      startAfter,
+      recordProgress: (last, connection) =>
+        identityTdhSyncStateDb.advanceMetricsWalk(generation, last, connection),
       afterChunk: async (chunk) => {
         await lease.renewIfDue();
         await options.afterChunk?.(chunk);
