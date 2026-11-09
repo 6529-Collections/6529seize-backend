@@ -312,3 +312,4 @@ export {
   ViewerGroupSetMemberEntity
 } from './IViewerGroupSet';
 export { IdentityTdhSyncStateEntity } from './IIdentityTdhSyncState';
+export { IdentityTdhSyncScopeEntity } from './IIdentityTdhSyncScope';

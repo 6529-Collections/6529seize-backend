@@ -101,6 +101,7 @@ import { BaseTransaction, Transaction } from './entities/ITransaction';
 import { env } from './env';
 import { ethTools } from './eth-tools';
 import { identityTdhSyncStateDb } from './identity-tdh-sync-state.db';
+import { identityTdhSyncScopeDb } from './identity-tdh-sync-scope.db';
 import { Logger } from './logging';
 import { metricsRecorder } from './metrics/MetricsRecorder';
 import { deleteAll, insertWithoutUpdate, resetRepository } from './orm_helpers';
@@ -1302,9 +1303,24 @@ export async function persistConsolidatedTDH(
     await persistTDHBlock(block, blockTimestamp, tdh, manager);
     // A full rewrite (tdhLoop) leaves the sync to delegationsLoop and has its
     // completion announced once the sync is done.
-    await identityTdhSyncStateDb.markPending(block, qrHolder, {
-      announceFull: scope.mode === 'FULL'
-    });
+    const generation = await identityTdhSyncStateDb.markPending(
+      block,
+      qrHolder,
+      { announceFull: scope.mode === 'FULL' }
+    );
+    // A partial write records the keys it changed, so the sync recomputes
+    // only their identities. A full rewrite records nothing: its sync walks
+    // every identity.
+    if (scope.mode === 'PARTIAL') {
+      await identityTdhSyncScopeDb.recordTdhWrite(
+        generation,
+        [
+          ...scope.consolidationKeysToReplace,
+          ...tdh.map((it) => it.consolidation_key)
+        ],
+        qrHolder
+      );
+    }
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);

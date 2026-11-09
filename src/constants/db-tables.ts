@@ -356,3 +356,5 @@ export const VIEWER_GROUP_SETS_TABLE = 'viewer_group_sets';
 export const VIEWER_GROUP_SET_MEMBERS_TABLE = 'viewer_group_set_members';
 /** Consolidated-TDH to identities sync progress (see identity-tdh-sync.ts). */
 export const IDENTITY_TDH_SYNC_STATE_TABLE = 'identity_tdh_sync_state';
+/** What each consolidated-TDH write changed, for the scoped metrics sync. */
+export const IDENTITY_TDH_SYNC_SCOPE_TABLE = 'identity_tdh_sync_scope';

@@ -3,6 +3,7 @@ import {
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   HISTORIC_CONSOLIDATED_WALLETS_TDH_TABLE,
+  IDENTITY_TDH_SYNC_SCOPE_TABLE,
   TDH_NFT_TABLE
 } from '@/constants';
 import { persistConsolidatedTDH } from '@/db';
@@ -28,6 +29,7 @@ import { DbQueryOptions } from '@/db-query.options';
 import { insertWithoutUpdate } from '@/orm_helpers';
 import { TDH_SAVE_BATCH_SIZE } from './tdh-persistence-batches';
 import { identityTdhSyncStateDb } from '@/identity-tdh-sync-state.db';
+import { identityTdhSyncScopeDb } from '@/identity-tdh-sync-scope.db';
 import * as mysql from 'mysql';
 import { DataSource, QueryRunner } from 'typeorm';
 
@@ -200,6 +202,18 @@ async function expectPersistedKeys(expectedKeys: string[]) {
   await expect(fetchKeys(TDH_NFT_TABLE)).resolves.toEqual(expectedKeys);
 }
 
+async function scopeRows() {
+  const rows = await sqlExecutor.execute<{
+    generation: number | string;
+    kind: string;
+    value: string;
+  }>(
+    `SELECT generation, kind, value FROM ${IDENTITY_TDH_SYNC_SCOPE_TABLE}
+     ORDER BY generation, kind, value`
+  );
+  return rows.map((row) => ({ ...row, generation: Number(row.generation) }));
+}
+
 async function persistReplacement(replacementKeys: string[]) {
   return persistConsolidatedTDH(
     BLOCK,
@@ -322,6 +336,54 @@ describeWithSeed('atomic TDH consolidation persistence', seeds, () => {
     expect(
       identityConsolidationEffects.syncIdentitiesWithTdhConsolidations
     ).not.toHaveBeenCalled();
+  });
+
+  it('records the keys a partial write replaced or wrote with the write, and nothing for a full rewrite', async () => {
+    await persistReplacement([A_C, B]);
+
+    // The replaced keys and the written ones, and the mark that this
+    // generation's scope is complete.
+    await expect(scopeRows()).resolves.toEqual([
+      { generation: 1, kind: 'CONSOLIDATION_KEY', value: A_B },
+      { generation: 1, kind: 'CONSOLIDATION_KEY', value: A_C },
+      { generation: 1, kind: 'CONSOLIDATION_KEY', value: B },
+      { generation: 1, kind: 'CONSOLIDATION_KEY', value: C },
+      { generation: 1, kind: 'SCOPE_RECORDED', value: '' }
+    ]);
+
+    await persistConsolidatedTDH(
+      BLOCK,
+      newConsolidated,
+      newMemes,
+      newEditions,
+      newNft,
+      { mode: 'FULL' },
+      BLOCK_TIMESTAMP
+    );
+
+    // The full rewrite's generation records nothing: its sync walks all.
+    expect((await scopeRows()).map((row) => row.generation)).toEqual([
+      1, 1, 1, 1, 1
+    ]);
+    expect(
+      (await identityTdhSyncStateDb.readProgress()).pendingGeneration
+    ).toBe(2);
+  });
+
+  it('rolls the TDH rows and the marker back when recording the scope fails', async () => {
+    jest
+      .spyOn(identityTdhSyncScopeDb, 'recordTdhWrite')
+      .mockRejectedValueOnce(new Error('injected scope failure'));
+
+    await expect(persistReplacement([A_C, B])).rejects.toThrow(
+      'injected scope failure'
+    );
+
+    await expectPersistedKeys([A_C, B]);
+    expect(
+      (await identityTdhSyncStateDb.readProgress()).pendingGeneration
+    ).toBe(0);
+    await expect(scopeRows()).resolves.toEqual([]);
   });
 
   it('arms the completion announcement only for a full TDH rewrite', async () => {

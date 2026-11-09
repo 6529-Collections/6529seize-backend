@@ -11,6 +11,7 @@ import { IdentityEntity } from './entities/IIdentity';
 import { profilesService } from './profiles/profiles.service';
 import { Profile } from './entities/IProfile';
 import { Logger } from './logging';
+import { Time } from './time';
 import { WAVE_READER_METRICS_TABLE } from '@/constants';
 import { randomUUID } from 'node:crypto';
 import { identitySubscriptionsDb } from '@/api/identity-subscriptions/identity-subscriptions.db';
@@ -35,8 +36,17 @@ import {
   type WaveUnreadCacheInvalidations,
   type WaveUnreadReaderWave
 } from '@/api/waves/wave-unread-cache';
+import type { IdentityTdhSyncScope } from '@/identity-tdh-sync-scope.db';
 
 const logger = Logger.get('IDENTITIES');
+
+/**
+ * Step B's cache invalidations, and the identities it wrote (by key and
+ * profile, merge sources and targets included) for the scoped metrics sync.
+ */
+export type IdentityConsolidationSyncResult = WaveUnreadCacheInvalidations & {
+  readonly written: IdentityTdhSyncScope;
+};
 
 type IdentityMergeTarget = {
   sourceIdentities: IdentityEntity[];
@@ -953,10 +963,14 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
 
   public async syncIdentitiesWithTdhConsolidations(
     connection: ConnectionWrapper<any>
-  ): Promise<WaveUnreadCacheInvalidations> {
+  ): Promise<IdentityConsolidationSyncResult> {
     logger.info(`Syncing identities with tdh_consolidations`);
     const affectedWaveIdsForUnreadCache: string[] = [];
     const affectedReaderWavesForUnreadCache: WaveUnreadReaderWave[] = [];
+    const written: IdentityTdhSyncScope = {
+      consolidationKeys: [],
+      profileIds: []
+    };
     const newConsolidations =
       await this.getUnsynchronisedConsolidationKeysWithTdhs(connection);
 
@@ -1229,8 +1243,26 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
           connection
         );
       }
+      // Only the identities written here, and the merged profiles, can have
+      // a new primary address or a re-keyed profile row: check just those.
+      written.consolidationKeys.push(
+        ...identitiesReadyForSaving.map((it) => it.consolidation_key)
+      );
+      written.profileIds.push(
+        ...collections.distinct(
+          [
+            ...identitiesReadyForSaving.map((it) => it.profile_id),
+            ...this.mergeProfileIds(identitiesToMerge)
+          ].filter((profileId): profileId is string => !!profileId)
+        )
+      );
+      const addressCheckStart = Time.now();
       await identitiesDb.syncProfileAddressesFromIdentitiesToProfiles(
+        written.profileIds,
         connection
+      );
+      logger.info(
+        `[NEW CONSOLIDATIONS ${newConsolidations.length}] [IDENTITIES WRITTEN ${identitiesReadyForSaving.length}] [MERGE TARGETS ${identitiesToMerge.length}] [PROFILE ADDRESSES CHECKED ${written.profileIds.length} IN ${addressCheckStart.diffFromNow()}]`
       );
     }
     logger.info(`Syncing identities with tdh_consolidations done!`);
@@ -1238,7 +1270,8 @@ export class IdentityConsolidationEffects extends LazyDbAccessCompatibleService 
       waveIds: collections.distinct(affectedWaveIdsForUnreadCache),
       readerWaves: distinctWaveUnreadReaderWaves(
         affectedReaderWavesForUnreadCache
-      )
+      ),
+      written
     };
   }
 }
