@@ -30,7 +30,8 @@ describe('native runtime numerical rules', () => {
     expect(nativeAwardsForRank([], 1)).toEqual([]);
     expect(
       nativeWinnerCount([
-        { type: 'MANUAL', description: 'Winner', distribution: [{}, {}, {}] }
+        { type: 'MANUAL', description: 'Winner', distribution: [{}, {}, {}] },
+        { type: 'MANUAL', description: 'Runner up', distribution: [{}, {}] }
       ])
     ).toBe(3);
   });
