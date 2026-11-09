@@ -1436,9 +1436,12 @@ Important API responsibilities:
   `device_signed_events` and `drop_author_signatures` and serves them at
   `/drops/{dropId}/signed-events`. The grant owner can acknowledge a
   new-device notice through `POST /device-grants/{grantId}/acknowledge`. The
-  acknowledgment is stored on the grant and returned through the private
-  device-grant endpoints, so it follows the owner across devices. See the
-  device signing grants section of that document.
+  acknowledgment is stored on the grant and follows the owner across devices.
+  `GET /device-grants` and the `POST` endpoints for `/device-grants/{grantId}/label`,
+  `/device-grants/{grantId}/acknowledge`, and `/device-grants/{grantId}/revoke`
+  return `notice_acknowledged`. Grant registration (`POST /device-grants`)
+  and public signature proofs omit the field. See the device signing grants
+  section of that document.
 - Public read APIs for NFTs, TDH, waves, drops, profiles, community metrics,
   subscriptions, and notifications. Wallet distribution allocation reads
   combine Phase 0–2 distribution rows with Public subscription airdrops, while
