@@ -302,7 +302,7 @@ export class NativeCompetitionRuntimeService {
       throw new Error(
         'Leaderboard refresh requires the competition transaction lock'
       );
-    const state = await this.loadState(competition.id, ctx);
+    const state = await this.loadState(competition.id, ctx, true);
     await this.refreshLeaderboard(competition, state, now, ctx);
   }
 
@@ -540,7 +540,10 @@ export class NativeCompetitionRuntimeService {
           competitionId,
           snapshotCtx
         );
-        const state = await this.loadState(competitionId, snapshotCtx);
+        // This path only refreshes standings/checks whether a decision is due.
+        // A due approval falls back to the locked run, which reloads both
+        // streams before recording individual-voter winner snapshots.
+        const state = await this.loadState(competitionId, snapshotCtx, true);
         // An Approve decision run decides from the same state at the same
         // time; only a run with no decision to make stays off the lock.
         const approveProgress =
@@ -841,11 +844,14 @@ export class NativeCompetitionRuntimeService {
 
   private async loadState(
     competitionId: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    aggregateOnly = false
   ): Promise<RuntimeState> {
     // A transaction connection is sequential; parallel queries cannot improve it.
     const entries = await this.repository.listActiveEntries(competitionId, ctx);
-    const history = await this.repository.listHistory(competitionId, ctx);
+    const history = aggregateOnly
+      ? await this.repository.listAggregateHistory(competitionId, ctx)
+      : await this.repository.listHistory(competitionId, ctx);
     const pauses = await this.repository.listPauses(competitionId, ctx);
     return { entries, history, pauses };
   }
