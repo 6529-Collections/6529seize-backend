@@ -36,7 +36,7 @@ copies image data verbatim. JPEG keeps JFIF (without its thumbnail), every
 ICC_PROFILE chunk in order, the Adobe colour-transform marker, tables and scans;
 EXIF becomes a 26-byte TIFF holding only Orientation (dropped when upright), and
 XMP, IPTC/Photoshop, comments, other application segments, embedded thumbnails
-and data after EOI are removed. PNG keeps only rendering chunks (including iCCP,
+and data after EOI are removed (HDR gain maps excepted, below). PNG keeps only rendering chunks (including iCCP,
 sRGB, gAMA, cHRM, cICP and APNG chunks); text, time and private chunks are
 removed and eXIf is reduced to Orientation. WebP drops EXIF/XMP/unknown chunks,
 keeps ICCP and animation, and updates the VP8X flags and RIFF size. GIF drops
@@ -47,6 +47,28 @@ blocks, and must decode with sharp to the same oriented size, frames, timing and
 pixel hash as the input. The lossless path reads sources of up to 64 MiB into
 memory and its pixel check holds up to 128 MiB of decoded pixels; larger images
 use the file-based re-encoding fallback.
+
+HDR gain maps in JPEG are kept, because they are not identifying. Ultra HDR
+(Adobe/Google gain map v1 XMP, ISO 21496-1) and Apple HDR JPEGs are recognised
+from the primary image's MPF index and/or Google container directory, and a
+secondary image counts as a gain map only when its own metadata says so (`hdrgm`
+gain map values, Apple's `urn:com:apple:photo:2020:aux:hdrgainmap` auxiliary
+type, or ISO 21496-1 metadata). The primary image keeps a rebuilt minimal MPF
+index (primary and gain maps only, no image UIDs), its ISO 21496-1 version block
+and a new XMP packet holding only gain map values (`hdrgm:*`, a Primary/GainMap
+container directory, Apple's `HDRGainMap:*` and `apdi:*` fields), each value
+checked against a numeric, boolean, version or fixed-URN pattern. Each gain map
+is stripped like the primary image and keeps its ISO 21496-1 metadata and gain
+map XMP values. MPF offsets and container `Item:Length` values are rewritten for
+the new layout. MPF thumbnails and previews, depth maps, portrait mattes, motion
+photo video and other secondary images are dropped. The output must re-parse
+with each gain map's render stream byte-identical, MPF offsets on each gain
+map's SOI, and nothing outside the allowlist; in the sanitizer each gain map
+must also decode with sharp to the same pixels. An unrecognised, inconsistent or
+unverified gain map structure is dropped with a warning and the verified SDR
+base image is published, as before; it never makes the upload fail or fall back
+to re-encoding. PNG keeps the cICP, mDCv and cLLi HDR chunks. AVIF still
+converts to WebP, which loses HDR.
 
 Chat uploads and wave pictures are published as `<upload id>.<ext>` (lower-case
 extension) in the upload's own folder, so the public URL never carries the

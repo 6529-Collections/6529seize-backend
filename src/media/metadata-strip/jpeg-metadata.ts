@@ -4,177 +4,52 @@ import {
   readTiffOrientation
 } from './exif-orientation';
 import {
-  assertWithin,
+  analyzeGainMaps,
+  gainMapImageSegments,
+  GainMapAnalysis,
+  gainMapMpfEntries,
+  KeptGainMaps,
+  KeptHdrSegments,
+  primaryImageSegments,
+  primaryImageSegmentsInPlace
+} from './jpeg-gain-map';
+import { buildMpfPayload, MPF_TIFF_OFFSET } from './jpeg-mpf';
+import {
+  APP0,
+  APP1,
+  APP2,
+  frameSize,
+  HdrSegmentKind,
+  JpegLayout,
+  JpegSegment,
+  jpegSegment,
+  segmentBytes,
+  segmentRole,
+  walkJpeg
+} from './jpeg-structure';
+import {
   ContainerDescription,
   FormatMetadataStripper,
+  GainMapDescription,
   LosslessStripUnsupported,
-  newRenderHash
+  newRenderHash,
+  StripOptions
 } from './metadata-strip.types';
 
-const SOI = 0xd8;
-const EOI = 0xd9;
-const SOS = 0xda;
-const APP0 = 0xe0;
-const APP1 = 0xe1;
-const APP2 = 0xe2;
-const APP14 = 0xee;
-const APP15 = 0xef;
-const COM = 0xfe;
-
-const JFIF = Buffer.from('JFIF\0', 'latin1');
-const EXIF = Buffer.from('Exif\0', 'latin1');
-const XMP = Buffer.from('http://ns.adobe.com/xap/1.0/', 'latin1');
-const ICC_PROFILE = Buffer.from('ICC_PROFILE\0', 'latin1');
-const ADOBE = Buffer.from('Adobe', 'latin1');
 /** 'JFIF\0', version, units, X/Y density and the X/Y thumbnail size. */
 const JFIF_HEADER_BYTES = 14;
+/** Marker and length bytes before a segment payload. */
+const SEGMENT_HEADER_BYTES = 4;
 
-interface JpegSegment {
-  readonly marker: number;
-  /** Offset of the marker's 0xFF, after any fill bytes. */
-  readonly start: number;
-  readonly payloadStart: number;
-  readonly payloadEnd: number;
-  /** Segment end, including entropy-coded data after a scan header. */
-  readonly end: number;
+interface ImageDescription extends GainMapDescription {
+  readonly orientation: number;
+  readonly metadataBlocks: readonly string[];
 }
 
-interface JpegLayout {
-  readonly segments: readonly JpegSegment[];
-  readonly trailingBytes: number;
-}
-
-type SegmentRole =
-  | { readonly kind: 'render' }
-  | { readonly kind: 'jfif' }
-  | { readonly kind: 'exif' }
-  | { readonly kind: 'drop'; readonly label: string };
-
-function isStandaloneMarker(marker: number): boolean {
-  return marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7);
-}
-
-function isFrameMarker(marker: number): boolean {
-  return (
-    marker >= 0xc0 &&
-    marker <= 0xcf &&
-    marker !== 0xc4 &&
-    marker !== 0xc8 &&
-    marker !== 0xcc
-  );
-}
-
-/** Position of the marker byte pair, skipping optional 0xFF fill bytes. */
-function markerStart(input: Buffer, position: number): number {
-  if (position + 1 >= input.length || input[position] !== 0xff) {
-    throw new LosslessStripUnsupported('JPEG marker expected before EOI');
-  }
-  let start = position;
-  while (start + 1 < input.length && input[start + 1] === 0xff) start++;
-  if (start + 1 >= input.length) {
-    throw new LosslessStripUnsupported('JPEG ends before EOI');
-  }
-  return start;
-}
-
-/** Entropy-coded data runs to the first marker that is not a restart marker. */
-function entropyEnd(input: Buffer, from: number): number {
-  let index = from;
-  for (;;) {
-    index = input.indexOf(0xff, index);
-    if (index < 0 || index + 1 >= input.length) {
-      throw new LosslessStripUnsupported('Unterminated JPEG scan');
-    }
-    const next = input[index + 1];
-    if (next === 0xff) {
-      index += 1;
-    } else if (next === 0x00 || (next >= 0xd0 && next <= 0xd7)) {
-      index += 2;
-    } else {
-      return index;
-    }
-  }
-}
-
-function walkJpeg(input: Buffer): JpegLayout {
-  if (input.length < 4 || input[0] !== 0xff || input[1] !== SOI) {
-    throw new LosslessStripUnsupported('Not a JPEG');
-  }
-  const segments: JpegSegment[] = [];
-  let position = 2;
-  for (;;) {
-    const start = markerStart(input, position);
-    const marker = input[start + 1];
-    if (marker === EOI || isStandaloneMarker(marker)) {
-      const end = start + 2;
-      segments.push({ marker, start, payloadStart: end, payloadEnd: end, end });
-      if (marker === EOI) {
-        return { segments, trailingBytes: input.length - end };
-      }
-      position = end;
-      continue;
-    }
-    if (marker === SOI || marker === 0x00) {
-      throw new LosslessStripUnsupported('Unexpected JPEG marker');
-    }
-    assertWithin(input, start + 4, 'JPEG segment');
-    const length = input.readUInt16BE(start + 2);
-    const payloadEnd = start + 2 + length;
-    if (length < 2) throw new LosslessStripUnsupported('Invalid JPEG segment');
-    assertWithin(input, payloadEnd, 'JPEG segment');
-    const end = marker === SOS ? entropyEnd(input, payloadEnd) : payloadEnd;
-    segments.push({ marker, start, payloadStart: start + 4, payloadEnd, end });
-    position = end;
-  }
-}
-
-function payloadStartsWith(
-  input: Buffer,
-  segment: JpegSegment,
-  signature: Buffer
-): boolean {
-  return (
-    segment.payloadEnd - segment.payloadStart >= signature.length &&
-    input
-      .subarray(segment.payloadStart, segment.payloadStart + signature.length)
-      .equals(signature)
-  );
-}
-
-function applicationSegmentRole(
-  input: Buffer,
-  segment: JpegSegment
-): SegmentRole {
-  const is = (signature: Buffer) =>
-    payloadStartsWith(input, segment, signature);
-  switch (segment.marker) {
-    case APP0:
-      return is(JFIF) ? { kind: 'jfif' } : { kind: 'drop', label: 'APP0' };
-    case APP1:
-      if (is(EXIF)) return { kind: 'exif' };
-      return { kind: 'drop', label: is(XMP) ? 'APP1:XMP' : 'APP1' };
-    case APP2:
-      return is(ICC_PROFILE)
-        ? { kind: 'render' }
-        : { kind: 'drop', label: 'APP2' };
-    case APP14:
-      return is(ADOBE) ? { kind: 'render' } : { kind: 'drop', label: 'APP14' };
-    default:
-      return { kind: 'drop', label: `APP${segment.marker - APP0}` };
-  }
-}
-
-/**
- * Pixels, tables, ICC chunks (in order) and the Adobe colour-transform marker
- * render; JFIF is kept without its thumbnail; EXIF becomes Orientation only;
- * comments and every other application segment are dropped.
- */
-function segmentRole(input: Buffer, segment: JpegSegment): SegmentRole {
-  if (segment.marker === COM) return { kind: 'drop', label: 'COM' };
-  if (segment.marker >= APP0 && segment.marker <= APP15) {
-    return applicationSegmentRole(input, segment);
-  }
-  return { kind: 'render' };
+interface StrippedImage {
+  readonly bytes: Buffer;
+  /** Offset of the kept MPF segment in `bytes`, if one was written. */
+  readonly mpfAt: number | undefined;
 }
 
 function exifTiff(input: Buffer, segment: JpegSegment): Buffer {
@@ -191,10 +66,8 @@ function jfifHasThumbnail(input: Buffer, segment: JpegSegment): boolean {
 }
 
 function jfifWithoutThumbnail(input: Buffer, segment: JpegSegment): Buffer {
-  if (!jfifHasThumbnail(input, segment)) {
-    return input.subarray(segment.start, segment.end);
-  }
-  const output = Buffer.alloc(4 + JFIF_HEADER_BYTES);
+  if (!jfifHasThumbnail(input, segment)) return segmentBytes(input, segment);
+  const output = Buffer.alloc(SEGMENT_HEADER_BYTES + JFIF_HEADER_BYTES);
   output[0] = 0xff;
   output[1] = APP0;
   output.writeUInt16BE(2 + JFIF_HEADER_BYTES, 2);
@@ -202,74 +75,250 @@ function jfifWithoutThumbnail(input: Buffer, segment: JpegSegment): Buffer {
   return output;
 }
 
-function applicationSegment(marker: number, payload: Buffer): Buffer {
-  const header = Buffer.alloc(4);
-  header[0] = 0xff;
-  header[1] = marker;
-  header.writeUInt16BE(payload.length + 2, 2);
-  return Buffer.concat([header, payload]);
+function orientationSegment(
+  input: Buffer,
+  segment: JpegSegment
+): Buffer | null {
+  const orientation = readTiffOrientation(exifTiff(input, segment));
+  return orientation === 1
+    ? null
+    : jpegSegment(APP1, minimalOrientationJpegExifPayload(orientation));
 }
 
-function strip(input: Buffer): Buffer {
-  const { segments } = walkJpeg(input);
-  const parts: Buffer[] = [input.subarray(0, 2)];
+/**
+ * Writes one image (SOI to EOI): render segments verbatim, JFIF without its
+ * thumbnail, the first EXIF reduced to Orientation, each HDR segment kind
+ * replaced at its first position by the rebuilt segment in `kept` (or
+ * dropped), and everything else dropped.
+ */
+function stripImage(
+  image: Buffer,
+  layout: JpegLayout,
+  kept: KeptHdrSegments
+): StrippedImage {
+  const parts: Buffer[] = [image.subarray(0, 2)];
+  let size = 2;
+  let mpfAt: number | undefined;
   let exifSeen = false;
-  for (const segment of segments) {
-    const role = segmentRole(input, segment);
+  const placed = new Set<HdrSegmentKind>();
+  const push = (bytes: Buffer | null | undefined) => {
+    if (!bytes) return;
+    parts.push(bytes);
+    size += bytes.length;
+  };
+  for (const segment of layout.segments) {
+    const role = segmentRole(image, segment);
     if (role.kind === 'render') {
-      parts.push(input.subarray(segment.start, segment.end));
+      push(segmentBytes(image, segment));
     } else if (role.kind === 'jfif') {
-      parts.push(jfifWithoutThumbnail(input, segment));
+      push(jfifWithoutThumbnail(image, segment));
     } else if (role.kind === 'exif' && !exifSeen) {
       exifSeen = true;
-      const orientation = readTiffOrientation(exifTiff(input, segment));
-      if (orientation !== 1) {
-        parts.push(
-          applicationSegment(
-            APP1,
-            minimalOrientationJpegExifPayload(orientation)
-          )
-        );
-      }
+      push(orientationSegment(image, segment));
+    } else if (role.kind === 'hdr' && !placed.has(role.hdr)) {
+      placed.add(role.hdr);
+      if (role.hdr === 'mpf' && kept.mpf) mpfAt = size;
+      push(kept[role.hdr]);
     }
   }
-  return Buffer.concat(parts);
+  return { bytes: Buffer.concat(parts), mpfAt };
 }
 
-function describe(input: Buffer): ContainerDescription {
-  const { segments, trailingBytes } = walkJpeg(input);
+/** Only the first segment of a kind can be kept, and only when it is exact. */
+function isKeptHdrSegment(
+  image: Buffer,
+  segment: JpegSegment,
+  expected: Buffer | undefined,
+  first: boolean
+): boolean {
+  return (
+    first &&
+    expected !== undefined &&
+    segmentBytes(image, segment).equals(expected)
+  );
+}
+
+function describeImage(
+  image: Buffer,
+  layout: JpegLayout,
+  kept: KeptHdrSegments,
+  labelPrefix = ''
+): ImageDescription {
   const metadataBlocks: string[] = [];
-  let frame: JpegSegment | undefined;
+  const checked = new Set<HdrSegmentKind>();
   let orientation: number | undefined;
   const hash = newRenderHash();
-  for (const segment of segments) {
-    const role = segmentRole(input, segment);
+  for (const segment of layout.segments) {
+    const role = segmentRole(image, segment);
     if (role.kind === 'render') {
-      hash.update(input.subarray(segment.start, segment.end));
-      if (!frame && isFrameMarker(segment.marker)) frame = segment;
+      hash.update(segmentBytes(image, segment));
     } else if (role.kind === 'jfif') {
-      if (jfifHasThumbnail(input, segment)) {
-        metadataBlocks.push('APP0:JFIF-thumbnail');
+      if (jfifHasThumbnail(image, segment)) {
+        metadataBlocks.push(`${labelPrefix}APP0:JFIF-thumbnail`);
       }
     } else if (role.kind === 'exif') {
-      const tiff = exifTiff(input, segment);
+      const tiff = exifTiff(image, segment);
       orientation ??= readTiffOrientation(tiff);
-      if (!isOrientationOnlyTiff(tiff)) metadataBlocks.push('APP1:Exif');
-    } else {
-      metadataBlocks.push(role.label);
+      if (!isOrientationOnlyTiff(tiff)) {
+        metadataBlocks.push(`${labelPrefix}APP1:Exif`);
+      }
+    } else if (
+      role.kind === 'drop' ||
+      !isKeptHdrSegment(image, segment, kept[role.hdr], !checked.has(role.hdr))
+    ) {
+      metadataBlocks.push(`${labelPrefix}${role.label}`);
     }
+    if (role.kind === 'hdr') checked.add(role.hdr);
   }
-  if (trailingBytes > 0) metadataBlocks.push('trailing-data');
-  if (!frame || frame.payloadEnd - frame.payloadStart < 5) {
-    throw new LosslessStripUnsupported('JPEG has no frame header');
-  }
+  const size = frameSize(image, layout);
+  if (!size) throw new LosslessStripUnsupported('JPEG has no frame header');
   return {
-    width: input.readUInt16BE(frame.payloadStart + 3),
-    height: input.readUInt16BE(frame.payloadStart + 1),
+    ...size,
     orientation: orientation ?? 1,
     renderDigest: hash.digest('hex'),
     metadataBlocks
   };
+}
+
+/**
+ * Strips each gain map, then the primary image with a placeholder MPF index
+ * of the final length, then writes the real MPF offsets (relative to the MPF
+ * TIFF header) once the primary image's size is known.
+ */
+function stripWithGainMaps(
+  input: Buffer,
+  layout: JpegLayout,
+  kept: KeptGainMaps
+): Buffer {
+  const gainMaps = kept.gainMaps.map(
+    (gainMap) =>
+      stripImage(gainMap.image, gainMap.layout, gainMapImageSegments(gainMap))
+        .bytes
+  );
+  const sizes = gainMaps.map((gainMap) => gainMap.length);
+  const placeholder = gainMapMpfEntries(
+    kept,
+    0,
+    sizes.map(() => 0),
+    sizes
+  );
+  const primary = stripImage(
+    input.subarray(0, layout.end),
+    layout,
+    primaryImageSegments(kept, sizes, placeholder)
+  );
+  if (primary.mpfAt !== undefined) {
+    const tiffStart = primary.mpfAt + SEGMENT_HEADER_BYTES + MPF_TIFF_OFFSET;
+    let cursor = primary.bytes.length;
+    const offsets = sizes.map((size) => {
+      const offset = cursor - tiffStart;
+      cursor += size;
+      return offset;
+    });
+    const entries = gainMapMpfEntries(
+      kept,
+      primary.bytes.length,
+      offsets,
+      sizes
+    )!;
+    jpegSegment(APP2, buildMpfPayload(entries)).copy(
+      primary.bytes,
+      primary.mpfAt
+    );
+  }
+  return Buffer.concat([primary.bytes, ...gainMaps]);
+}
+
+function strip(input: Buffer, options?: StripOptions): Buffer {
+  const layout = walkJpeg(input);
+  const analysis =
+    options?.gainMaps === 'drop' ? null : analyzeGainMaps(input, layout);
+  return analysis?.kind === 'kept'
+    ? stripWithGainMaps(input, layout, analysis)
+    : stripImage(input, layout, {}).bytes;
+}
+
+/** Bytes after the primary image that are not a kept gain map, in order. */
+function hasUncoveredTrailingData(
+  input: Buffer,
+  layout: JpegLayout,
+  kept: KeptGainMaps | null
+): boolean {
+  let cursor = layout.end;
+  for (const gainMap of kept?.gainMaps ?? []) {
+    if (gainMap.start !== cursor) return true;
+    cursor = gainMap.end;
+  }
+  return cursor !== input.length;
+}
+
+function describe(input: Buffer): ContainerDescription {
+  const layout = walkJpeg(input);
+  const analysis = analyzeGainMaps(input, layout);
+  if (analysis.kind !== 'kept') {
+    return describeLayout(input, layout, analysis, null);
+  }
+  try {
+    return describeLayout(input, layout, analysis, analysis);
+  } catch {
+    // A gain map that cannot be described is dropped; the primary decides.
+    return describeLayout(
+      input,
+      layout,
+      { kind: 'unsupported', reason: 'Gain map could not be described' },
+      null
+    );
+  }
+}
+
+function describeLayout(
+  input: Buffer,
+  layout: JpegLayout,
+  analysis: GainMapAnalysis,
+  kept: KeptGainMaps | null
+): ContainerDescription {
+  const primary = describeImage(
+    input,
+    layout,
+    kept ? primaryImageSegmentsInPlace(kept, layout) : {}
+  );
+  const gainMaps = (kept?.gainMaps ?? []).map((gainMap) =>
+    describeImage(
+      gainMap.image,
+      gainMap.layout,
+      gainMapImageSegments(gainMap),
+      'GainMap:'
+    )
+  );
+  const metadataBlocks = primary.metadataBlocks.concat(
+    ...gainMaps.map((gainMap) => gainMap.metadataBlocks)
+  );
+  if (hasUncoveredTrailingData(input, layout, kept)) {
+    metadataBlocks.push('trailing-data');
+  }
+  return {
+    width: primary.width,
+    height: primary.height,
+    orientation: primary.orientation,
+    renderDigest: primary.renderDigest,
+    metadataBlocks,
+    gainMaps: gainMaps.map(({ width, height, renderDigest }) => ({
+      width,
+      height,
+      renderDigest
+    })),
+    ...(analysis.kind === 'unsupported'
+      ? { gainMapIssue: analysis.reason }
+      : {})
+  };
+}
+
+/** The gain map images (SOI to EOI) a strip of this JPEG keeps. */
+export function jpegGainMapImages(input: Buffer): Buffer[] {
+  const analysis = analyzeGainMaps(input, walkJpeg(input));
+  return analysis.kind === 'kept'
+    ? analysis.gainMaps.map((gainMap) => gainMap.image)
+    : [];
 }
 
 export const jpegMetadataStripper: FormatMetadataStripper = {

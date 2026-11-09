@@ -272,6 +272,29 @@ describe('stripMetadataLosslessly: PNG', () => {
     ]);
   });
 
+  it('keeps the HDR signalling chunks cICP, mDCv and cLLi byte for byte', async () => {
+    const png = await identifyingPng();
+    // BT.2100 PQ full range, mastering display volume, content light level.
+    const hdrChunks = [
+      pngChunk('cICP', Buffer.from([9, 16, 0, 1])),
+      pngChunk('mDCv', Buffer.alloc(24, 7)),
+      pngChunk('cLLi', Buffer.from([0, 0, 0x27, 0x10, 0, 0, 0x03, 0xe8]))
+    ];
+    const withHdr = Buffer.concat([
+      png.subarray(0, 33),
+      ...hdrChunks,
+      png.subarray(33)
+    ]);
+
+    const { output } = stripMetadataLosslessly(withHdr, 'png');
+
+    const kept = pngChunks(output).filter(
+      (chunk) => ['cICP', 'mDCv', 'cLLi'].indexOf(chunk.type) >= 0
+    );
+    expect(kept.map((chunk) => chunk.bytes)).toEqual(hdrChunks);
+    expectNoIdentifyingStrings(output);
+  });
+
   it('refuses an unknown critical chunk it cannot safely drop', async () => {
     const png = await identifyingPng();
     const withCritical = Buffer.concat([
