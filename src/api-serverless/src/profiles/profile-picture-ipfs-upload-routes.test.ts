@@ -31,9 +31,13 @@ jest.mock('@/api/api-helpers', () => ({
 import router from './profiles.routes';
 
 const uploadFile = jest.mocked(ipfsFileUploader.uploadFile);
-const PNG = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0
-]);
+// A complete 1x1 RGBA PNG: profile pictures are parsed to strip metadata.
+const PNG = Buffer.from(
+  '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489' +
+    '0000000970485973000003e8000003e801b57b526b0000000d4944415408996330' +
+    '4e9bd9000003b501b388f521dd0000000049454e44ae426082',
+  'hex'
+);
 
 async function upload({
   bytes,

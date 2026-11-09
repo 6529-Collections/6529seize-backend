@@ -374,7 +374,8 @@ describe('video upload completion ordering', () => {
       file_name: 'My holiday.MP4'
     });
     expect(send.mock.calls[0][0]).toBeInstanceOf(CreateMultipartUploadCommand);
-    expect(started.key).toMatch(/^drops\/[0-9a-f-]{36}\/My-holiday\.MP4$/);
+    // Chat uploads get a neutral name: the upload id and the extension.
+    expect(started.key).toMatch(/^drops\/([0-9a-f-]{36})\/\1\.mp4$/);
     send.mockClear();
     send.mockResolvedValue({ Key: started.key });
     await uploads.completeMultipartUpload({

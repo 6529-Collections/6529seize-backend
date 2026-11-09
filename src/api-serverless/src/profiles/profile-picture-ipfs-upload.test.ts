@@ -1,4 +1,15 @@
+import { createHash } from 'node:crypto';
 import fc from 'fast-check';
+import Sharp from 'sharp';
+import {
+  IDENTIFYING_STRINGS,
+  identifyingGif,
+  identifyingJpeg,
+  identifyingPng,
+  identifyingWebp
+} from '@/media/metadata-strip/fixtures/identifying-image-fixtures';
+import { identifyingUltraHdrJpeg } from '@/media/metadata-strip/fixtures/hdr-image-fixtures';
+import { stripMetadataLosslessly } from '@/media/metadata-strip/lossless-metadata-strip';
 import {
   detectProfilePictureFormat,
   PROFILE_PICTURE_MAX_BYTES,
@@ -26,15 +37,16 @@ function createService() {
 
 describe('detectProfilePictureFormat', () => {
   it.each([
-    [PNG, 'image/png', 'png'],
-    [JPEG, 'image/jpeg', 'jpg'],
-    [GIF, 'image/gif', 'gif'],
-    [Buffer.from('GIF87a', 'latin1'), 'image/gif', 'gif'],
-    [WEBP, 'image/webp', 'webp']
-  ])('recognises %#', (bytes, contentType, extension) => {
+    [PNG, 'image/png', 'png', 'png'],
+    [JPEG, 'image/jpeg', 'jpg', 'jpeg'],
+    [GIF, 'image/gif', 'gif', 'gif'],
+    [Buffer.from('GIF87a', 'latin1'), 'image/gif', 'gif', 'gif'],
+    [WEBP, 'image/webp', 'webp', 'webp']
+  ])('recognises %#', (bytes, contentType, extension, container) => {
     expect(detectProfilePictureFormat(bytes)).toEqual({
       contentType,
-      extension
+      extension,
+      container
     });
   });
 
@@ -69,15 +81,119 @@ describe('detectProfilePictureFormat', () => {
 describe('ProfilePictureIpfsUploadService', () => {
   it('pins a recognised image and returns its ipfs url', async () => {
     const { service, uploader } = createService();
+    const webp = await Sharp({
+      create: { width: 4, height: 4, channels: 3, background: '#336699' }
+    })
+      .webp()
+      .toBuffer();
 
-    await expect(service.upload({ buffer: WEBP })).resolves.toEqual({
+    await expect(service.upload({ buffer: webp })).resolves.toEqual({
       pfp_url: 'ipfs://QmProfilePicture'
     });
     expect(uploader.uploadFile).toHaveBeenCalledWith({
       fileName: 'pfp.webp',
-      fileBuffer: WEBP,
+      fileBuffer: webp,
       contentType: 'image/webp'
     });
+  });
+
+  it.each([
+    ['jpg', 'image/jpeg', async () => (await identifyingJpeg()).jpeg],
+    ['png', 'image/png', identifyingPng],
+    ['webp', 'image/webp', identifyingWebp],
+    ['gif', 'image/gif', async () => identifyingGif()]
+  ])(
+    'strips identifying %s metadata before anything is pinned',
+    async (extension, contentType, make) => {
+      const original = process.env.DROP_MEDIA_SANITIZE_IMAGES;
+      process.env.DROP_MEDIA_SANITIZE_IMAGES = 'false';
+      try {
+        const { service, uploader } = createService();
+        const input = await make();
+
+        await service.upload({ buffer: input });
+
+        expect(uploader.uploadFile).toHaveBeenCalledTimes(1);
+        const pinned = uploader.uploadFile.mock.calls[0][0];
+        expect(pinned).toMatchObject({
+          fileName: `pfp.${extension}`,
+          contentType
+        });
+        const text = pinned.fileBuffer.toString('latin1');
+        for (const value of IDENTIFYING_STRINGS) {
+          expect(text).not.toContain(value);
+        }
+        const animated = extension === 'gif' || extension === 'webp';
+        const decode = async (image: Buffer) => {
+          const { data, info } = await Sharp(image, { animated })
+            .rotate()
+            .raw()
+            .toBuffer({ resolveWithObject: true });
+          return `${info.width}x${info.height}:${createHash('sha256')
+            .update(data)
+            .digest('hex')}`;
+        };
+        expect(await decode(pinned.fileBuffer)).toBe(await decode(input));
+        const [before, after] = await Promise.all([
+          Sharp(input).metadata(),
+          Sharp(pinned.fileBuffer).metadata()
+        ]);
+        expect(after.icc).toEqual(before.icc);
+        expect(after.orientation ?? 1).toBe(before.orientation ?? 1);
+      } finally {
+        if (original === undefined)
+          delete process.env.DROP_MEDIA_SANITIZE_IMAGES;
+        else process.env.DROP_MEDIA_SANITIZE_IMAGES = original;
+      }
+    }
+  );
+
+  it('pins exactly the verified lossless output', async () => {
+    const { service, uploader } = createService();
+    const { jpeg } = await identifyingJpeg();
+
+    await service.upload({ buffer: jpeg });
+
+    expect(uploader.uploadFile.mock.calls[0][0].fileBuffer).toEqual(
+      stripMetadataLosslessly(jpeg, 'jpeg').output
+    );
+  });
+
+  it('pins an Ultra HDR picture with its gain map and no identifying data', async () => {
+    const { service, uploader } = createService();
+    const fixture = await identifyingUltraHdrJpeg();
+
+    await service.upload({ buffer: fixture.jpeg });
+
+    const pinned: Buffer = uploader.uploadFile.mock.calls[0][0].fileBuffer;
+    expect(pinned).toEqual(
+      stripMetadataLosslessly(fixture.jpeg, 'jpeg').output
+    );
+    const text = pinned.toString('latin1');
+    for (const value of IDENTIFYING_STRINGS) {
+      expect(text).not.toContain(value);
+    }
+    expect(pinned.indexOf(fixture.thumbnail)).toBe(-1);
+    const gainMap = (await Sharp(pinned).metadata()).gainMap?.image;
+    const pixels = async (image: Buffer) =>
+      createHash('sha256')
+        .update(await Sharp(image).raw().toBuffer())
+        .digest('hex');
+    expect(gainMap).toBeDefined();
+    expect(await pixels(gainMap!)).toBe(await pixels(fixture.gainMap));
+  });
+
+  it('rejects, without pinning, an image whose metadata cannot be removed', async () => {
+    const { service, uploader } = createService();
+    const { jpeg } = await identifyingJpeg();
+
+    await expect(
+      service.upload({ buffer: jpeg.subarray(0, jpeg.length - 64) })
+    ).rejects.toThrow('could not be cleaned of its metadata');
+    await expect(service.upload({ buffer: JPEG })).rejects.toThrow(
+      'could not be cleaned of its metadata'
+    );
+    expect(uploader.uploadFile).not.toHaveBeenCalled();
   });
 
   it('rejects a missing or empty file', async () => {
