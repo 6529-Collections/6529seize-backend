@@ -1447,7 +1447,7 @@ import { ApiE2eeCompactBackupRequest } from '../models/ApiE2eeCompactBackupReque
 import { ApiE2eeCreateBackupRequest } from '../models/ApiE2eeCreateBackupRequest';
 import { ApiE2eeCreateBlobRequest } from '../models/ApiE2eeCreateBlobRequest';
 import { ApiE2eeCreateGroupRequest } from '../models/ApiE2eeCreateGroupRequest';
-import { ApiE2eeDevice     , ApiE2eeDeviceVerifiedViaEnum          } from '../models/ApiE2eeDevice';
+import { ApiE2eeDevice     , ApiE2eeDeviceVerifiedViaEnum           } from '../models/ApiE2eeDevice';
 import { ApiE2eeDeviceGrant } from '../models/ApiE2eeDeviceGrant';
 import { ApiE2eeDeviceGroup } from '../models/ApiE2eeDeviceGroup';
 import { ApiE2eeDeviceLookupRequest } from '../models/ApiE2eeDeviceLookupRequest';
