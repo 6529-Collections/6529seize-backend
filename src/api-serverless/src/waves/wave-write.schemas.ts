@@ -359,7 +359,7 @@ const waveSchemaBaseValidations = {
   picture: Joi.string()
     .optional()
     .allow(null)
-    .regex(/^https:\/\/d3lqz0a4bldqgf.cloudfront.net\//),
+    .regex(/^https:\/\/d3lqz0a4bldqgf\.cloudfront\.net\//),
   voting: WaveVotingSchema.required(),
   visibility: WaveVisibilitySchema.required(),
   participation: WaveParticipationSchema.required(),
