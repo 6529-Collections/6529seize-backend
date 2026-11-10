@@ -85,7 +85,6 @@ import { selectSentryAlertAllDropsSubscriberIds } from '@/api/sentry-alerts/sent
 import { asyncRouter } from './async.router';
 import { getJwtSecret } from './auth/auth';
 
-import * as awsServerlessExpressMiddleware from 'aws-serverless-express/middleware';
 import { randomUUID } from 'crypto';
 import {
   recoverUnavailableWebSocket,
@@ -101,6 +100,10 @@ import { Upload } from '@/entities/IUpload';
 import { env, loadLocalConfig, loadSecrets } from '@/env';
 import { Logger } from '@/logging';
 import { getRedisClient, initRedis } from '@/redis';
+import {
+  processSentryAlertWebhook,
+  sentryWebhookRedis
+} from '@/api/alerts/sentry-alert-webhook';
 import {
   API_REDIS_FAIL_FAST_OPTIONS,
   createRetryableInitializer
@@ -141,7 +144,7 @@ import {
 } from '@/api/github/github-webhook-event';
 import { githubIssueDropService } from './github/github-issue-drop.service';
 import { LOGO_SVG, renderHealthUI } from './health/health-ui.renderer';
-import { getHealthData } from './health/health.service';
+import { getCachedHealthData } from './health/health.service';
 import { DEFAULT_MAX_SIZE } from './page-request';
 import {
   initRateLimiting,
@@ -194,11 +197,11 @@ const logger = Logger.get('API');
 
 const API_PORT = 3000;
 const SENTRY_ALLOWED_SKEW_SECONDS = 300;
-const SENTRY_WEBHOOK_DEDUPE_TTL_SECONDS = 86400;
 const GH_WEBHOOK_DEDUPE_TTL_SECONDS = 86400;
 const WEBHOOK_PROCESSING_LOCK_TTL_SECONDS = 300;
-const SENTRY_ALERT_DROP_MAX_CONTENT_LENGTH = 30000;
-const SENTRY_ALERT_DROP_MAX_TITLE_LENGTH = 250;
+const API_PASSWORD_REQUIRED_RESPONSE = Object.freeze({
+  error: 'Unauthorized'
+});
 
 type SentryWebhookVerificationResult = {
   ok: boolean;
@@ -390,144 +393,6 @@ function verifySentryWebhook(req: any): SentryWebhookVerificationResult {
   return { ok: true };
 }
 
-function normalizeToString(value: unknown): string | null {
-  if (value === null || value === undefined) {
-    return null;
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    return String(value);
-  }
-  return null;
-}
-
-function truncateString(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.substring(0, maxLength - 3)}...`;
-}
-
-function formatSentryException(event: any): string | null {
-  const entries = Array.isArray(event?.entries) ? event.entries : [];
-  const exceptionEntry = entries.find(
-    (entry: any) => entry?.type === 'exception'
-  );
-  const exception = exceptionEntry?.data?.values?.[0];
-  if (!exception) {
-    return null;
-  }
-
-  const exceptionType = normalizeToString(exception.type);
-  const exceptionValue = normalizeToString(exception.value);
-  const stackFrames = Array.isArray(exception?.stacktrace?.frames)
-    ? exception.stacktrace.frames
-    : [];
-  const latestFrame =
-    stackFrames.length > 0 ? stackFrames[stackFrames.length - 1] : null;
-  const frameFunction = normalizeToString(latestFrame?.function);
-  const frameFile = normalizeToString(latestFrame?.filename);
-  const frameLine = normalizeToString(latestFrame?.lineno);
-  const location = [frameFile, frameLine].filter(Boolean).join(':');
-
-  const lines = [];
-  if (exceptionType || exceptionValue) {
-    lines.push([exceptionType, exceptionValue].filter(Boolean).join(': '));
-  }
-  if (frameFunction && location) {
-    lines.push(`at ${frameFunction} (${location})`);
-  } else if (frameFunction) {
-    lines.push(`at ${frameFunction}`);
-  } else if (location) {
-    lines.push(`at ${location}`);
-  }
-  if (!lines.length) {
-    return null;
-  }
-  return truncateString(lines.join('\n'), 2000);
-}
-
-function formatSentryAlertForDrop(payload: any): {
-  title: string;
-  content: string;
-  eventId: string | null;
-  issueId: string | null;
-  level: string;
-  webUrl: string | null;
-} {
-  const event = payload?.data?.event ?? {};
-  const level = (normalizeToString(event.level) ?? 'error').toUpperCase();
-  const eventTitle =
-    normalizeToString(event.title) ??
-    normalizeToString(event.message) ??
-    'Sentry alert';
-  const issueId = normalizeToString(event.issue_id);
-  const eventId = normalizeToString(event.event_id);
-  const project =
-    normalizeToString(event.project_slug) ??
-    normalizeToString(event.project_name) ??
-    normalizeToString(event.project);
-  const environment = normalizeToString(event.environment);
-  const culprit = normalizeToString(event.culprit);
-  const loggerName = normalizeToString(event.logger);
-  const transaction = normalizeToString(event.transaction);
-  const message = normalizeToString(event.message);
-  const webUrl =
-    normalizeToString(event.web_url) ??
-    normalizeToString(payload?.data?.issue?.url);
-  const exceptionPreview = formatSentryException(event);
-
-  const titlePrefix = project
-    ? `Sentry ${level} | ${project}`
-    : `Sentry ${level}`;
-  const title = truncateString(
-    `${titlePrefix}: ${eventTitle}`,
-    SENTRY_ALERT_DROP_MAX_TITLE_LENGTH
-  );
-
-  const lines = [`**${eventTitle}**`, '', `- Level: ${level}`];
-  if (project) {
-    lines.push(`- Project: ${project}`);
-  }
-  if (environment) {
-    lines.push(`- Environment: ${environment}`);
-  }
-  if (issueId) {
-    lines.push(`- Issue ID: ${issueId}`);
-  }
-  if (eventId) {
-    lines.push(`- Event ID: ${eventId}`);
-  }
-  if (culprit) {
-    lines.push(`- Culprit: ${culprit}`);
-  }
-  if (loggerName) {
-    lines.push(`- Logger: ${loggerName}`);
-  }
-  if (transaction) {
-    lines.push(`- Transaction: ${transaction}`);
-  }
-  if (webUrl) {
-    lines.push(`- URL: ${webUrl}`);
-  }
-  if (message && message !== eventTitle) {
-    lines.push(`- Message: ${message}`);
-  }
-  if (exceptionPreview) {
-    lines.push('', '**Exception**', '```', exceptionPreview, '```');
-  }
-
-  const content = truncateString(
-    lines.join('\n'),
-    SENTRY_ALERT_DROP_MAX_CONTENT_LENGTH
-  );
-
-  return { title, content, eventId, issueId, level, webUrl };
-}
-
 async function postSentryAlertDrop({
   title,
   content
@@ -694,10 +559,6 @@ async function initializeApp() {
 
 // Registers middleware and routes; runs once, after initializeApp succeeds.
 function wireApp() {
-  if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
-    // Only enabled in AWS Lambda
-    app.use(awsServerlessExpressMiddleware.eventContext());
-  }
   app.use(cmsAgentPrivateHeadersMiddleware);
   app.use(requestLogMiddleware());
   app.use(compression());
@@ -793,12 +654,8 @@ function wireApp() {
     ) {
       const auth = req.headers['x-6529-auth'];
       if (!auth || !pass.includes(auth)) {
-        logger.info(`Unauthorized request for ${req.path} auth: ${auth}`);
-        res.statusCode = 401;
-        const image = await db.fetchRandomImage();
-        return res.json({
-          image: image[0].scaled ? image[0].scaled : image[0].image
-        });
+        logger.info(`Unauthorized request for ${req.path}`);
+        return res.status(401).json(API_PASSWORD_REQUIRED_RESPONSE);
       } else {
         next();
       }
@@ -1355,7 +1212,7 @@ function wireApp() {
   });
 
   rootRouter.get('/health', async (req, res) => {
-    const healthData = await getHealthData();
+    const healthData = await getCachedHealthData();
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
@@ -1371,83 +1228,14 @@ function wireApp() {
       return res.status(verification.statusCode).send(verification.reason);
     }
 
-    const body = req.body;
-    const action = body?.action;
-    if (action !== 'triggered') {
-      return res.send({});
-    }
-
-    const formattedAlert = formatSentryAlertForDrop(body);
-    const redis = getRedisClient();
-    const cacheKey = formattedAlert.eventId
-      ? `sentry-webhook:${formattedAlert.eventId}`
-      : null;
-    const processingKey = cacheKey ? `${cacheKey}:processing` : null;
-    let lockAcquired = false;
-    if (redis && cacheKey && processingKey) {
-      const alreadyProcessed = await redis.get(cacheKey);
-      if (alreadyProcessed) {
-        logger.info(
-          `Duplicate Sentry webhook for event ${formattedAlert.eventId}, skipping`
-        );
-        return res.send({});
-      }
-      const lockWasSet = await redis.set(processingKey, '1', {
-        NX: true,
-        EX: WEBHOOK_PROCESSING_LOCK_TTL_SECONDS
-      });
-      if (!lockWasSet) {
-        logger.info(
-          `Sentry webhook for event ${formattedAlert.eventId} is already being processed, skipping`
-        );
-        return res.send({});
-      }
-      lockAcquired = true;
-    }
-
-    logger.info(
-      `Sentry alert received [level ${formattedAlert.level}] [issue ${
-        formattedAlert.issueId ?? 'unknown'
-      }] [event ${formattedAlert.eventId ?? 'unknown'}] [url ${
-        formattedAlert.webUrl ?? 'n/a'
-      }]`
-    );
-
-    try {
-      await postSentryAlertDrop({
-        title: formattedAlert.title,
-        content: formattedAlert.content
-      });
-      if (redis && cacheKey) {
-        try {
-          await redis.set(cacheKey, '1', {
-            EX: SENTRY_WEBHOOK_DEDUPE_TTL_SECONDS
-          });
-        } catch (err) {
-          logger.warn(
-            `Failed to persist Sentry dedupe key for event ${formattedAlert.eventId}: ${err}`
-          );
-        }
-      }
-      logger.info(
-        `Sentry alert posted to wave ${env.getStringOrThrow('ALERTS_WAVE_ID')}`
-      );
-    } catch (err) {
-      logger.error(`Failed to post Sentry alert drop: ${err}`);
-      return res.status(500).send('Failed to post alert');
-    } finally {
-      if (redis && processingKey && lockAcquired) {
-        try {
-          await redis.del(processingKey);
-        } catch (err) {
-          logger.warn(
-            `Failed to release Sentry processing lock for event ${formattedAlert.eventId}: ${err}`
-          );
-        }
-      }
-    }
-
-    return res.send({});
+    const result = await processSentryAlertWebhook({
+      body: req.body,
+      rawBody: req.rawBody,
+      redis: sentryWebhookRedis(getRedisClient()),
+      postDrop: postSentryAlertDrop,
+      logger
+    });
+    return res.status(result.status).send(result.body);
   });
 
   rootRouter.post('/gh-hooks', async (req: any, res: any) => {
@@ -1493,10 +1281,7 @@ function wireApp() {
     if (webhookEvent) {
       const targetKind = formatGitHubWebhookKind(webhookEvent.kind);
       const redis = getRedisClient();
-      const cacheKey = buildGitHubWebhookDedupeKey(
-        webhookEvent,
-        req.get('x-github-delivery')
-      );
+      const cacheKey = buildGitHubWebhookDedupeKey(webhookEvent);
       const processingKey = `${cacheKey}:processing`;
       let lockAcquired = false;
       if (redis) {
@@ -1566,7 +1351,7 @@ function wireApp() {
   rootRouter.use('/ci-pipeline-alerts', ciPipelineAlertRoutes);
 
   rootRouter.get('/health/ui', async (req, res) => {
-    const healthData = await getHealthData();
+    const healthData = await getCachedHealthData();
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const html = renderHealthUI(healthData, baseUrl);
 

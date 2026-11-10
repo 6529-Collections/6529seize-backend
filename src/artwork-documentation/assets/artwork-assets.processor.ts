@@ -5,7 +5,9 @@ import sharp from 'sharp';
 import { imageSize } from 'image-size';
 import {
   artworkAssetsDb,
-  ArtworkAssetsDb
+  ArtworkAssetsDb,
+  isAssetProcessingExhausted,
+  MAX_ASSET_PROCESSING_ATTEMPTS
 } from '@/artwork-documentation/assets/artwork-assets.db';
 import {
   artworkAssetStorage,
@@ -38,9 +40,6 @@ import {
   C2PA_FILE_EXTENSIONS,
   validateAssetC2pa
 } from '@/artwork-documentation/assets/artwork-assets.c2pa';
-
-const SCAN_TIMEOUT_MS = 6 * 60 * 60_000;
-const MAX_PROCESSING_ATTEMPTS = 360;
 
 export class ArtworkAssetsProcessor {
   constructor(
@@ -83,11 +82,7 @@ export class ArtworkAssetsProcessor {
         });
         return;
       }
-      if (
-        asset.attempts >= MAX_PROCESSING_ATTEMPTS ||
-        Date.now() - Number(asset.created_at) >
-          SCAN_TIMEOUT_MS + ARTWORK_UPLOAD_POLICY.upload_lifetime_ms
-      ) {
+      if (isAssetProcessingExhausted(asset, Date.now())) {
         await this.db.finishProcessing(asset, {
           state: 'failed',
           failure_code: 'ASSET_PROCESSING_TIMEOUT'
@@ -121,7 +116,7 @@ export class ArtworkAssetsProcessor {
         scan_status: status,
         failure_code: 'MALWARE_SCAN_FAILED'
       });
-    } else if (asset.attempts >= MAX_PROCESSING_ATTEMPTS) {
+    } else if (asset.attempts >= MAX_ASSET_PROCESSING_ATTEMPTS) {
       await this.db.finishProcessing(asset, {
         state: 'failed',
         failure_code: 'MALWARE_SCAN_TIMEOUT'

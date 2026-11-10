@@ -1,9 +1,8 @@
 import { Request, Response } from 'express';
-import * as mcache from 'memory-cache';
 import { Logger } from '../../../logging';
-import { CACHE_TIME_MS } from '../api-constants';
-import { cacheKey, resolveIntParam, returnCSVResult } from '../api-helpers';
+import { returnCSVResult } from '../api-helpers';
 import { asyncRouter } from '../async.router';
+import { parseCollectionReportQuery } from '@/api/collection-report-query';
 import { fetchGas, GasResponse } from './gas.db';
 
 const router = asyncRouter();
@@ -35,62 +34,26 @@ router.get(
   ) {
     const collectionType = req.params.collection_type;
     if (collectionType === 'memes' || collectionType === 'memelab') {
-      const fromBlockResolved = resolveIntParam(req.query.from_block);
-      const toBlockResolved = resolveIntParam(req.query.to_block);
-      return await returnGas(
+      const query = parseCollectionReportQuery(req.query);
+      const results = await fetchGas(
         collectionType,
-        req.query.primary === 'true',
-        req.query.artist as string,
-        req.query.from_date as string,
-        req.query.to_date as string,
-        fromBlockResolved,
-        toBlockResolved,
-        req.query.download === 'true',
-        req,
-        res
+        query.primary,
+        query.artist as string,
+        query.from_date as string,
+        query.to_date as string,
+        query.from_block,
+        query.to_block
       );
+      logger.info(
+        `[${collectionType.toUpperCase()} FROM_DATE ${query.from_date} TO_DATE ${query.to_date} - Fetched ${results.length}`
+      );
+      if (query.download) {
+        results.forEach((r) => delete r.thumbnail);
+        return returnCSVResult(`gas_${collectionType}`, results, res);
+      }
+      return res.json(results);
     } else {
       return res.status(404).send('Not found');
     }
   }
 );
-
-async function returnGas(
-  type: 'memes' | 'memelab',
-  isPrimary: boolean,
-  artist: string,
-  fromDate: string,
-  toDate: string,
-  fromBlock: number | undefined,
-  toBlock: number | undefined,
-  download: boolean,
-  req: Request,
-  res: Response
-) {
-  await fetchGas(
-    type,
-    isPrimary,
-    artist,
-    fromDate,
-    toDate,
-    fromBlock,
-    toBlock
-  ).then(async (results: GasResponse[]) => {
-    logger.info(
-      `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
-        results.length
-      }`
-    );
-
-    if (results.length > 0) {
-      mcache.put(cacheKey(req), results, CACHE_TIME_MS);
-    }
-
-    if (download) {
-      results.forEach((r) => delete r.thumbnail);
-      return returnCSVResult(`gas_${type}`, results, res);
-    } else {
-      return res.json(results);
-    }
-  });
-}

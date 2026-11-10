@@ -20,8 +20,18 @@ import {
   publicTextModel
 } from '@/content-moderation/moderation-review.service';
 import { ModerationInput } from '@/content-moderation/moderation-review.types';
+import { createHash } from 'node:crypto';
+import { redisGet, redisSetJson } from '@/redis';
+import { Time } from '@/time';
+import { Logger } from '@/logging';
+
+/** How long a classification made for an availability probe is reused. */
+const REP_PROBE_RESULT_TTL = Time.hours(1);
+const REP_PROBE_CACHE_PREFIX = 'rep-category-probe';
 
 export class AbusivenessCheckService {
+  private readonly logger = Logger.get(this.constructor.name);
+
   constructor(
     private readonly detector: AiBasedAbusivenessDetector,
     private readonly cache: AbusivenessCheckDb,
@@ -42,7 +52,80 @@ export class AbusivenessCheckService {
   ): Promise<AbusivenessDetectionResult> {
     return this.rep(text, true, ctx);
   }
-  private async rep(text: string, failOpen: boolean, ctx: RequestContext) {
+  /**
+   * Read-only availability check for a REP category. Developer overrides and
+   * stored results are honoured, but nothing is written to the moderation
+   * review tables or to the stored results that feed category suggestions;
+   * those are only written when a rating is actually submitted. A fresh
+   * classification is reused from Redis for an hour. Like the rating path,
+   * an unavailable classifier allows the phrase.
+   */
+  async probeRepPhrase(
+    text: string,
+    ctx: RequestContext = {}
+  ): Promise<AbusivenessDetectionResult> {
+    const txt = this.validRepText(text);
+    const input = this.repInput(txt, ctx);
+    const item = await this.reviews.find(input, ctx);
+    if (item?.override === 'BLOCK' || (item && activePermit(item)))
+      return {
+        text: txt,
+        status: item.override === 'BLOCK' ? 'DISALLOWED' : 'ALLOWED',
+        explanation: 'Explicit developer decision',
+        external_check_performed_at: new Date()
+      };
+    const model = publicTextModel();
+    const stored = await this.findCurrentCachedResult(
+      txt,
+      input.policy_version,
+      model,
+      true
+    );
+    if (stored) return stored;
+    const probeKey = `${REP_PROBE_CACHE_PREFIX}:${createHash('sha256')
+      .update(JSON.stringify([input.policy_version, model, txt]))
+      .digest('hex')}`;
+    const probed = await this.readProbeResult(probeKey);
+    if (probed) return probed;
+    let result: AbusivenessDetectionResult;
+    try {
+      result = await this.detector.checkRepPhraseText(txt);
+    } catch {
+      return {
+        text: txt,
+        status: 'ALLOWED',
+        explanation: null,
+        external_check_performed_at: new Date()
+      };
+    }
+    await this.writeProbeResult(probeKey, result);
+    return result;
+  }
+
+  private async readProbeResult(
+    key: string
+  ): Promise<AbusivenessDetectionResult | null> {
+    try {
+      const cached = await redisGet<AbusivenessDetectionResult>(key);
+      return cached?.status ? cached : null;
+    } catch (error) {
+      this.logger.warn('Failed to read REP probe result', error);
+      return null;
+    }
+  }
+
+  private async writeProbeResult(
+    key: string,
+    result: AbusivenessDetectionResult
+  ) {
+    try {
+      await redisSetJson(key, result, REP_PROBE_RESULT_TTL);
+    } catch (error) {
+      this.logger.warn('Failed to store REP probe result', error);
+    }
+  }
+
+  private validRepText(text: string): string {
     const txt = text.trim();
     if (!txt.length || txt.length > 100)
       throw new BadRequestException('Text must be 1-100 characters');
@@ -50,7 +133,11 @@ export class AbusivenessCheckService {
       throw new BadRequestException(
         'Rep statement contains invalid characters'
       );
-    const input: ModerationInput = {
+    return txt;
+  }
+
+  private repInput(txt: string, ctx: RequestContext): ModerationInput {
+    return {
       subject_type: 'REP_CATEGORY',
       subject_id: txt,
       author_profile_id: null,
@@ -64,6 +151,11 @@ export class AbusivenessCheckService {
       },
       evidence: { text: txt }
     };
+  }
+
+  private async rep(text: string, failOpen: boolean, ctx: RequestContext) {
+    const txt = this.validRepText(text);
+    const input = this.repInput(txt, ctx);
     return this.evaluate(
       input,
       async () => this.detector.checkRepPhraseText(txt),
