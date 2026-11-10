@@ -6,11 +6,11 @@ import { Time } from '@/time';
 const SNAPSHOT_TTL = Time.minutes(15);
 // About 2 MB of UUIDs per snapshot. Reject rather than silently omit memberships.
 const MAX_SNAPSHOT_WAVES = 50000;
-const snapshotUnavailable = () =>
+const snapshotUnavailable = (collection: string) =>
   new CustomApiCompliantException(
     503,
-    'Joined waves are temporarily unavailable. Please retry.',
-    'JOINED_WAVE_SNAPSHOT_UNAVAILABLE'
+    `${collection} waves are temporarily unavailable. Please retry.`,
+    `${collection.toUpperCase()}_WAVE_SNAPSHOT_UNAVAILABLE`
   );
 const CURSOR_PATTERN =
   /^v1\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(\d{1,12})\.(\d{1,3})$/;
@@ -45,17 +45,21 @@ export function decodeJoinedWaveCursor(cursor: string): JoinedWaveCursor {
   };
 }
 
-const snapshotKey = (profileId: string, snapshotId: string) =>
-  `joined_wave_snapshot_v1:${profileId}:${snapshotId}`;
+const snapshotKey = (
+  collection: string,
+  profileId: string,
+  snapshotId: string
+) => `${collection}_wave_snapshot_v1:${profileId}:${snapshotId}`;
 
 export class JoinedWaveSnapshotStore {
+  constructor(private readonly collection: 'joined' | 'all' = 'joined') {}
   public async create(
     profileId: string,
     waveIds: string[],
     pageSize: number
   ): Promise<JoinedWaveSnapshot> {
     if (waveIds.length > MAX_SNAPSHOT_WAVES) {
-      throw snapshotUnavailable();
+      throw snapshotUnavailable(this.collection);
     }
     const snapshot: JoinedWaveSnapshot = {
       id: randomUUID(),
@@ -65,14 +69,15 @@ export class JoinedWaveSnapshotStore {
     };
     // A complete first page has no continuation and needs no shared storage.
     if (waveIds.length <= pageSize) return snapshot;
-    const key = snapshotKey(profileId, snapshot.id);
+    const key = snapshotKey(this.collection, profileId, snapshot.id);
     try {
       await redisSetJson(key, snapshot, SNAPSHOT_TTL);
       // Cache helpers may fail open. Never return an unsaved continuation.
       const stored = await redisGet<JoinedWaveSnapshot>(key);
-      if (stored?.id !== snapshot.id) throw snapshotUnavailable();
+      if (stored?.id !== snapshot.id)
+        throw snapshotUnavailable(this.collection);
     } catch {
-      throw snapshotUnavailable();
+      throw snapshotUnavailable(this.collection);
     }
     return snapshot;
   }
@@ -84,16 +89,16 @@ export class JoinedWaveSnapshotStore {
     let snapshot: JoinedWaveSnapshot | null;
     try {
       snapshot = await redisGet<JoinedWaveSnapshot>(
-        snapshotKey(profileId, cursor.snapshotId)
+        snapshotKey(this.collection, profileId, cursor.snapshotId)
       );
     } catch {
-      throw snapshotUnavailable();
+      throw snapshotUnavailable(this.collection);
     }
     if (!snapshot || snapshot.expiresAt <= Date.now()) {
       throw new CustomApiCompliantException(
         410,
-        'Joined wave list expired. Refresh the list to continue.',
-        'JOINED_WAVE_SNAPSHOT_EXPIRED'
+        `${this.collection} wave list expired. Refresh the list to continue.`,
+        `${this.collection.toUpperCase()}_WAVE_SNAPSHOT_EXPIRED`
       );
     }
     if (
