@@ -1,0 +1,6 @@
+{
+  "environment": "staging",
+  "region": "us-east-1",
+  "changesEnabled": true,
+  "description": "Isolated IPFS infrastructure; never uses the production block bucket, identity, DNS names, or distribution. Deployment parameters are supplied through the ipfs-staging GitHub environment."
+}

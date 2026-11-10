@@ -1,5 +1,20 @@
 # Deployment
 
+## IPFS infrastructure
+
+IPFS has a separate explicit-dispatch workflow, `Manage IPFS infrastructure`, and
+an [operations/recovery runbook](../ops/ipfs/README.md). It provisions isolated
+candidate servers and persistent storage, builds the pinned Kubo/S3 runtime,
+and verifies backup/restore before publication. It is not a Lambda service in
+`Deploy a service`. No IPFS deployment runs on merge or push. The existing
+production server, data bucket, DNS, and shared media distribution remain outside
+this workflow; production changes are disabled in its checked-in policy.
+
+The future staging order is storage, compute, runtime deployment, backup/restore
+rehearsal on a second candidate, verification, then dedicated gateway publication.
+No backend Lambda or frontend redeploy is needed. Active-host updates are rejected;
+production adoption requires a separately reviewed and validated traffic handover.
+
 Agents and developers deploy with ordinary merges and the repository's GitHub
 Actions workflows. Use the phase authorized by the user; a staging request does
 not authorize production.

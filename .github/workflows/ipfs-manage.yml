@@ -1,0 +1,126 @@
+name: Manage IPFS infrastructure
+
+# No push, PR, schedule or workflow_run trigger can change infrastructure.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        required: true
+        options: [staging, prod]
+      operation:
+        type: choice
+        required: true
+        default: plan
+        options: [plan, apply, deploy, backup, restore, verify]
+      kind:
+        type: choice
+        default: storage
+        options: [storage, compute, edge]
+      slot:
+        description: 'New immutable candidate name for compute/edge stacks'
+        type: string
+        default: candidate
+      expected_source_sha:
+        description: 'Full reviewed commit SHA; must equal this dispatch commit'
+        type: string
+        required: true
+      parameters:
+        description: 'JSON infrastructure parameters; environment and data settings come from IPFS_CONFIG'
+        type: string
+        default: '{}'
+      backup_key:
+        description: 'Explicit backup object key for restore; never a private key'
+        type: string
+        default: ''
+      backup_version:
+        description: 'Exact S3 version ID recorded by the backup operation'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ipfs-manage-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  manage:
+    runs-on: ubuntu-24.04
+    environment: ipfs-${{ inputs.environment }}
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IPFS_ENVIRONMENT: ${{ inputs.environment }}
+      IPFS_OPERATION: ${{ inputs.operation }}
+      IPFS_KIND: ${{ inputs.kind }}
+      IPFS_SLOT: ${{ inputs.slot }}
+      IPFS_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+      IPFS_PARAMETERS: ${{ inputs.parameters }}
+      IPFS_BACKUP_KEY: ${{ inputs.backup_key }}
+      IPFS_BACKUP_VERSION: ${{ inputs.backup_version }}
+      IPFS_CONFIG: ${{ vars.IPFS_CONFIG }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify source, configuration and environment before AWS authentication
+        run: |
+          python3 - <<'PY'
+          import json,os,sys
+          sys.path.insert(0,'ops/ipfs')
+          from common import mutation_guard,require,validate_config
+          config=validate_config(json.loads(os.environ['IPFS_CONFIG']))
+          require(config['environment']==os.environ['IPFS_ENVIRONMENT'],'Environment mismatch')
+          # Even an offline production plan uses the reviewed branch/commit.
+          # Production mutations remain disabled in environments/prod.json.
+          if os.environ['IPFS_OPERATION']!='plan':
+              mutation_guard(config,os.environ['IPFS_SOURCE_SHA'],os.environ)
+          else:
+              branch='main' if config['environment']=='prod' else '1a-staging'
+              require(os.environ['GITHUB_REF']=='refs/heads/'+branch,'Wrong environment branch')
+              require(os.environ['GITHUB_SHA']==os.environ['IPFS_SOURCE_SHA'],'Source SHA mismatch')
+          PY
+      - name: Render an offline plan
+        if: inputs.operation == 'plan'
+        run: |
+          python3 ops/ipfs/control.py plan --environment "$IPFS_ENVIRONMENT" \
+            --kind "$IPFS_KIND" --slot "$IPFS_SLOT" --parameters "$IPFS_PARAMETERS"
+      - name: Build the pinned release
+        if: inputs.operation == 'deploy'
+        env:
+          IPFS_BUILD_OUTPUT: ${{ runner.temp }}/ipfs-release
+        run: bash ops/ipfs/build-kubo.sh
+      - name: Rehearse the exact release before upload
+        if: inputs.operation == 'deploy'
+        env:
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: |
+          python3 ops/ipfs/rehearse.py "$RUNNER_TEMP/ipfs-release"
+          tar -czf "$RUNNER_TEMP/ipfs-bundle.tar.gz" -C "$RUNNER_TEMP/ipfs-release" .
+      - name: Authenticate with the environment's dedicated IPFS OIDC role
+        if: inputs.operation != 'plan'
+        uses: aws-actions/configure-aws-credentials@e7f100cf4c008499ea8adda475de1042d6975c7b # v6.2.0
+        with:
+          role-to-assume: ${{ vars.IPFS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.IPFS_REGION }}
+          allowed-account-ids: ${{ vars.IPFS_ACCOUNT_ID }}
+          role-session-name: ipfs-${{ github.run_id }}
+      - name: Run the explicit operation
+        if: inputs.operation != 'plan'
+        env:
+          IPFS_CLOUDFORMATION_ROLE_ARN: ${{ vars.IPFS_CLOUDFORMATION_ROLE_ARN }}
+        run: |
+          arguments=()
+          if [[ "$IPFS_OPERATION" == deploy ]]; then
+            bundle_sha="$(sha256sum "$RUNNER_TEMP/ipfs-bundle.tar.gz" | cut -d' ' -f1)"
+            arguments+=(--bundle "$RUNNER_TEMP/ipfs-bundle.tar.gz" --bundle-sha256 "$bundle_sha")
+          fi
+          python3 ops/ipfs/control.py "$IPFS_OPERATION" --environment "$IPFS_ENVIRONMENT" \
+            --sha "$IPFS_SOURCE_SHA" --kind "$IPFS_KIND" --slot "$IPFS_SLOT" \
+            --parameters "$IPFS_PARAMETERS" --backup-key "$IPFS_BACKUP_KEY" \
+            --backup-version "$IPFS_BACKUP_VERSION" "${arguments[@]}"

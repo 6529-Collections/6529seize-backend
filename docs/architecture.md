@@ -2899,3 +2899,21 @@ drain old invocations for 900 seconds after the worker update and 30 seconds aft
 the API update, then synchronize that scope and deploy the frontend. The column's
 stored values are intentionally discarded; rolling back older writers requires
 recreating the nullable column first.
+## IPFS infrastructure management
+
+`ops/ipfs/` defines isolated persistent S3 storage, replaceable EC2 candidates,
+the pinned Kubo binary with its bundled S3 datastore, nginx/systemd/TLS setup,
+and logical pin/MFS/identity backup and restoration. `ipfs-ci.yml` rehearses the
+real binary with disposable loopback S3 and HTTPS fixtures. The explicit-dispatch
+`ipfs-manage.yml` workflow validates the reviewed source, environment, account,
+and candidate identity before assuming deployment authority or sending SSM work.
+
+There is no change to the application's IPFS API contract or deployed resources.
+The existing production instance and data bucket are not adopted; production
+mutations are disabled by checked-in policy. The live CloudFront distribution is
+shared with Arweave and S3 media and is not replaced by the new dedicated gateway
+template. Published candidates are sealed before DNS publication; active-daemon
+updates and restoration over a serving node are rejected. Production adoption
+and zero-downtime writer/traffic handover require a later reviewed release and
+staging evidence. See the [IPFS runbook](../ops/ipfs/README.md) for ownership,
+recovery limitations, deployment order, and the adoption prerequisites.
