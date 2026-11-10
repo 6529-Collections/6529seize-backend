@@ -584,15 +584,22 @@ flowchart TD
 `newsletterLoop` is production-only and runs directly from EventBridge at 00:00 UTC.
 It reads the previous UTC day of anonymous public wave activity from MySQL,
 including public reply/quote context, Main Stage winners, and indexed Meme and Meme Lab mints.
-Bedrock (`global.openai.gpt-6-astra` by default) composes a short newsletter;
-the configured wallet signs into the existing API to publish one formatted drop.
-Shared `prod/lambdas` secrets configure the destination, wallet, and signing key;
-any missing value makes the run a successful no-op. Scheduled retries recognize
-publication metadata on the primary DB, while manual `{}` invocations always
-produce a fresh rolling-24-hour edition. Reserved concurrency is one. Deploy only
-`newsletterLoop`, then refresh production operational monitoring to add its
-allowlist, log subscription, and platform alarms; there is no schema, API, or
-frontend dependency. Code passes
+Every collected record gets a deterministic source id and a registry entry
+built only from database rows. Bedrock (`global.openai.gpt-6-astra` by default)
+returns structured JSON that cites those ids; a validator rejects unknown ids,
+any URL or link in prose, and out-of-window citations, and the backend renders
+every link from the registry before the configured wallet signs into the
+existing API to publish one formatted drop. Each attempt is recorded in
+`newsletter_editions` (`REJECTED` with raw output and reasons, or `PUBLISHED`
+with the drop id) and published registries are materialized in
+`newsletter_edition_sources`. Shared `prod/lambdas` secrets configure the
+destination, wallet, and signing key; any missing value makes the run a
+successful no-op. Scheduled retries recognize publication metadata on the
+primary DB and a `PUBLISHED` edition row, while manual `{}` invocations always
+produce a fresh rolling-24-hour edition. Reserved concurrency is one. Deploy
+`dbMigrationsLoop` (entity sync), then `newsletterLoop`, then refresh production
+operational monitoring to add its allowlist, log subscription, and platform
+alarms; the `api` deploys the public history read below. Code passes
 through `1a-staging` without deploying this service there. See
 [public-wave newsletter operations](public-wave-newsletter.md).
 
@@ -1259,6 +1266,17 @@ but readable and contain only the caller's own scope. Clients treat them as
 opaque handles. They deliberately have no expiry so a delayed retry retains its
 original cutoff; authentication and author/wave binding remain required on every
 request.
+
+`GET /v3/community-memory/sources` is the anonymous, 60-second-cached public
+history over the newsletter's validated source records. It reads
+`newsletter_edition_sources` for `PUBLISHED` editions on the read pool, pages
+by `(time, source_id)` with an opaque cursor, and re-joins every drop-backed
+record to the live drop through the collector's public filter, so deleted,
+hidden, moderated or now-restricted content is not republished. Records carry
+edition provenance and a content fingerprint; `classification` is derived at
+read time. The handler lives in `src/api-serverless/src/community-memory/`
+with the read repository in `src/newsletter/newsletter-edition-sources.db.ts`.
+Deploy `dbMigrationsLoop` before `api`.
 
 Waves are chat, visibility and administration hubs containing zero or more native
 competitions under `/v3/waves`. Competition configuration and entry state own

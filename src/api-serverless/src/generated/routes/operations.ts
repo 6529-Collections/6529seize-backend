@@ -73,6 +73,7 @@ import { ApiCollectTdhRequest } from '@/api/generated/models/ApiCollectTdhReques
 import { ApiCollectTdhTargetPlan } from '@/api/generated/models/ApiCollectTdhTargetPlan';
 import { ApiCollectTdhTargetRequest } from '@/api/generated/models/ApiCollectTdhTargetRequest';
 import { ApiCommunityMembersPage } from '@/api/generated/models/ApiCommunityMembersPage';
+import { ApiCommunityMemorySourcePage } from '@/api/generated/models/ApiCommunityMemorySourcePage';
 import { ApiCompetition } from '@/api/generated/models/ApiCompetition';
 import { ApiCompetitionActionRequest } from '@/api/generated/models/ApiCompetitionActionRequest';
 import { ApiCompetitionAwardPage } from '@/api/generated/models/ApiCompetitionAwardPage';
@@ -4026,6 +4027,27 @@ export type GetProfileWaveActivityRequest = Request<
   ApiResponse<GetProfileWaveActivityResponse>,
   never,
   GetProfileWaveActivityQuery,
+  Record<string, never>
+>;
+
+export type ListCommunityMemorySourcesPathParams = Record<string, never>;
+
+export interface ListCommunityMemorySourcesQuery {
+  "wave_id"?: string;
+  "edition_id"?: string;
+  "from"?: string;
+  "to"?: string;
+  "cursor"?: string;
+  "limit"?: number;
+}
+
+export type ListCommunityMemorySourcesResponse = ApiCommunityMemorySourcePage;
+
+export type ListCommunityMemorySourcesRequest = Request<
+  ListCommunityMemorySourcesPathParams,
+  ApiResponse<ListCommunityMemorySourcesResponse>,
+  never,
+  ListCommunityMemorySourcesQuery,
   Record<string, never>
 >;
 
