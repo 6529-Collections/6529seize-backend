@@ -149,6 +149,13 @@ router.get(
   }
 );
 
+// GET /drops/signed-events is served by the generated OpenAPI routes, which
+// are mounted after this router; without this, '/:drop_id' below would read
+// "signed-events" as a drop id and answer 404.
+router.get('/signed-events', (_req: Request, _res: Response, next) =>
+  next('router')
+);
+
 router.get(
   '/:drop_id',
   maybeAuthenticatedUser(),

@@ -137,6 +137,39 @@ export class DropsApiService {
       .then((it) => it[0]);
   }
 
+  /**
+   * The drops among `dropIds` that findDropByIdOrThrow would return to the
+   * caller, mapped the same way; unknown and unreadable ids are left out.
+   */
+  public async findReadableDropsByIds(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<ApiDrop[]> {
+    if (!dropIds.length) {
+      return [];
+    }
+    const contextProfileId = getWaveReadContextProfileId(
+      ctx.authenticationContext
+    );
+    const group_ids_user_is_eligible_for =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
+    const dropEntities = await this.dropsDb.findDropsByIdsWithEligibilityCheck(
+      dropIds,
+      group_ids_user_is_eligible_for,
+      ctx.connection
+    );
+    if (!dropEntities.length) {
+      return [];
+    }
+    return this.dropsMappers.convertToDropFulls(
+      {
+        dropEntities,
+        authenticationContext: ctx.authenticationContext
+      },
+      ctx.connection
+    );
+  }
+
   public async findViewableDropByIdOrThrow(
     {
       dropId,
