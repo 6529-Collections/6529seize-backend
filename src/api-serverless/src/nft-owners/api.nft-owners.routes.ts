@@ -1,6 +1,7 @@
 import { Request } from 'express';
 import { resolveSortDirection, returnPaginatedResult } from '../api-helpers';
 import { asyncRouter } from '../async.router';
+import { optionalQueryString } from '@/api/query-values';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
 import { cacheRequest } from '../request-cache';
 import {
@@ -30,8 +31,8 @@ router.get(
     >,
     res: any
   ) {
-    const contract = req.query.contract;
-    const tokenId = req.query.token_id;
+    const contract = optionalQueryString(req.query, 'contract');
+    const tokenId = optionalQueryString(req.query, 'token_id');
     const sortDir = resolveSortDirection(req.query.sort_direction);
     const page = req.query.page ?? 1;
     const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
@@ -66,8 +67,8 @@ router.get(
     res: any
   ) {
     const consolidationKey = req.params.consolidation_key;
-    const contract = req.query.contract;
-    const tokenId = req.query.token_id;
+    const contract = optionalQueryString(req.query, 'contract');
+    const tokenId = optionalQueryString(req.query, 'token_id');
 
     const page = req.query.page ?? 1;
     const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;

@@ -1,4 +1,5 @@
 import { getGroupsUserIsEligibleForReadContext } from '@/api/waves/wave-access.helpers';
+import { optionalQueryString } from '@/api/query-values';
 import {
   legacyWaveCreation,
   legacyWaveHubPatch
@@ -500,7 +501,7 @@ router.get(
     const { id } = req.params;
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req);
-    const dropId = req.query.drop_id ?? null;
+    const dropId = optionalQueryString(req.query, 'drop_id') ?? null;
     const amount = numbers.parseIntOrNull(req.query.limit) ?? 200;
     const serialNoLessThan = numbers.parseIntOrNull(
       req.query.serial_no_less_than
@@ -512,11 +513,11 @@ router.get(
         ? (enums.resolve(ApiDropSearchStrategy, req.query.search_strategy) ??
           ApiDropSearchStrategy.Older)
         : ApiDropSearchStrategy.Older;
-    const drop_type_str = req.query.drop_type as string | undefined;
+    const drop_type_str = optionalQueryString(req.query, 'drop_type');
     const drop_type = drop_type_str
       ? (enums.resolve(ApiDropType, drop_type_str) ?? null)
       : null;
-    const curation_id = req.query.curation_id ?? null;
+    const curation_id = optionalQueryString(req.query, 'curation_id') ?? null;
     const result = await dropsService.findWaveDropsFeed(
       {
         wave_id: id,
