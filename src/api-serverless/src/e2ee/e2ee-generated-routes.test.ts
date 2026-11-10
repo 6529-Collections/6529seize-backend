@@ -94,6 +94,16 @@ describe('E2EE generated routes', () => {
     }
   );
 
+  it('rejects proxy sessions on the shared device notice list', async () => {
+    jest.mocked(getAuthenticationContext).mockResolvedValueOnce({
+      isAuthenticatedAsProxy: () => true
+    } as never);
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/device-security-notices`);
+      expect(response.status).toBe(403);
+    });
+  });
+
   it('rejects proxies and callers without a profile when enabled', async () => {
     process.env.E2EE_DMS_ENABLED = 'true';
     const mocked = jest.mocked(getAuthenticationContext);

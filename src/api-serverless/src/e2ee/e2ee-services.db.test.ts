@@ -549,6 +549,9 @@ describeWithSeed('E2EE delivery service', [], () => {
       const bob = aProfile();
       const key = await registerDevice(alice);
       const { key: linked } = await registerLoginGrantDevice(alice);
+      expect(
+        Boolean((await db.getDevice(linked.publicKey))?.notice_pending)
+      ).toBe(false);
       const notices = new DeviceSigningDb(() => sqlExecutor);
       const findNotices = () =>
         notices.findPendingSecurityNotices(
@@ -561,6 +564,15 @@ describeWithSeed('E2EE delivery service', [], () => {
       await expect(findNotices()).resolves.toMatchObject([
         { signing_grant_id: null, encrypted_dm_device_key: key.publicKey }
       ]);
+      await expect(
+        notices.findPendingSecurityNotices(
+          alice.id,
+          alice.wallet.address,
+          now,
+          {},
+          false
+        )
+      ).resolves.toEqual([]);
       await expect(
         services.devices.acknowledgeDeviceNotice(bob.id, key.publicKey)
       ).rejects.toBeInstanceOf(E2eeApiException);

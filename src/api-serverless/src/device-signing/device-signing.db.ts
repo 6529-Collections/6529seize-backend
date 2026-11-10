@@ -119,8 +119,11 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
     profileId: string | null,
     wallet: string,
     now: number,
-    ctx: RequestContext
+    ctx: RequestContext,
+    encryptedDmsEnabled = true
   ): Promise<DeviceSecurityNoticeRow[]> {
+    // Encrypted DM permissions belong to profiles, even when signing falls back to the wallet.
+    const showStandalone = encryptedDmsEnabled && profileId !== null;
     const signingOwner = profileId
       ? `g.wallet in (
            select a.address from ${ADDRESS_CONSOLIDATION_KEY} a
@@ -131,7 +134,8 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
     return this.timedExecute<DeviceSecurityNoticeRow>(
       'findPendingSecurityNotices',
       `select g.id as signing_grant_id, g.device_key as signing_device_key,
-              g.notice_encrypted_dm_device_key as encrypted_dm_device_key,
+              case when :profileId is not null then g.notice_encrypted_dm_device_key end
+                as encrypted_dm_device_key,
               coalesce(e.label, g.device_label) as device_label,
               g.created_at as created_at
        from ${DEVICE_GRANTS_TABLE} g
@@ -146,12 +150,18 @@ export class DeviceSigningDb extends LazyDbAccessCompatibleService {
        union all
        select null, null, e.device_key, e.label, e.created_at
        from ${E2EE_DEVICES_TABLE} e
-       where e.profile_id = :profileId and e.notice_pending = true
+       where :showStandalone and e.profile_id = :profileId and e.notice_pending = true
          and e.grant_message is null and e.revoked_at is null
          and e.expires_at_seconds > :nowSeconds
        order by created_at desc, signing_grant_id desc, encrypted_dm_device_key desc
        limit ${DEVICE_GRANTS_LIST_LIMIT}`,
-      { profileId, wallet, now, nowSeconds: Math.floor(now / 1000) },
+      {
+        profileId,
+        wallet,
+        now,
+        nowSeconds: Math.floor(now / 1000),
+        showStandalone
+      },
       ctx,
       DbPoolName.WRITE
     );

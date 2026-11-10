@@ -154,6 +154,16 @@ describeWithSeed(
         repo.findPendingSecurityNotices(null, WALLET_C, 5, ctx)
       ).resolves.toMatchObject([{ signing_grant_id: hex('4', 64) }]);
       await expect(
+        repo.findPendingSecurityNotices(PROFILE_ID, WALLET_A, 5, ctx, false)
+      ).resolves.toMatchObject([
+        { signing_grant_id: id, encrypted_dm_device_key: mlsKey }
+      ]);
+      await expect(
+        repo.findPendingSecurityNotices(null, WALLET_B, 5, ctx)
+      ).resolves.toMatchObject([
+        { signing_grant_id: id, encrypted_dm_device_key: null }
+      ]);
+      await expect(
         repo.findPendingSecurityNotices(PROFILE_ID, WALLET_A, 1002, ctx)
       ).resolves.toEqual([]);
 

@@ -267,7 +267,8 @@ export class DeviceGrantsService {
       caller.profileId,
       caller.wallet,
       this.now(),
-      ctx
+      ctx,
+      this.appGrantDeps.e2eeEnabled()
     );
     return notices.map(
       ({
