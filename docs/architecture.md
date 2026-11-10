@@ -832,8 +832,13 @@ Non-standard `trace_block` has a separate provider policy: Alchemy normally,
 or the existing mainnet 6529 trace endpoint with Alchemy fallback where selected.
 Selecting traces does not select the transaction/receipt provider. ENS no longer
 has a hidden 6529 endpoint fallback; its Universal Resolver fallback uses the
-configured ordinary provider and explicitly enables CCIP-Read for off-chain
-ENS records. Fallback errors retain their null result and emit only allowlisted
+configured ordinary provider. The shared provider (`getEthereumRpcProvider`)
+keeps CCIP-Read disabled, so request-path forward lookups and reverse lookups
+through it (identity search, ratings, drop nominations, primary-address
+changes, ENS discovery) resolve on-chain records only; off-chain names are
+filled in by ENS refresh, whose isolated provider performs CCIP-Read over the
+public-network transport. API forward lookups have a ten-second deadline.
+Fallback errors retain their null result and emit only allowlisted
 categories, separating resolver reverts from transport and off-chain failures
 without logging raw errors or revert arguments.
 

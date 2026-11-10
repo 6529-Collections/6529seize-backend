@@ -82,8 +82,10 @@ a docs-only PR.
 - Reverse ENS first uses ethers lookup, then the Universal Resolver on the
   **same** configured endpoint. The previous hard-coded 6529 ordinary fallback
   is removed; lookup misses/errors still yield no name. Configuration failures
-  remain explicit. The Universal Resolver call explicitly enables CCIP-Read;
-  allowing it at provider level alone does not enable it for a contract call.
+  remain explicit. The Universal Resolver call requests CCIP-Read, but the
+  shared provider disables it (`disableCcipRead`), so off-chain primary names
+  are resolved only by ENS refresh's isolated provider and its public-network
+  gateway transport. `createEthereumRpcProvider` callers opt in explicitly.
 - NFT history, transactions, NextGen and subscription discovery keep indexed
   calls on Alchemy while ordinary reads use the shared boundary. Pagination,
   finality gaps, checkpoints, receipt reconciliation and value conversions are

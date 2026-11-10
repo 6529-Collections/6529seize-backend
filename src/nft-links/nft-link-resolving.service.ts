@@ -40,6 +40,7 @@ import {
   RequiredNftPageNotFoundError
 } from './nft-link-page-retry';
 import { HttpError } from './lib/http';
+import { categorizeNftLinkError } from '@/nft-links/nft-link-error-category';
 import type { NftRefreshObserver } from '@/nft-links/nft-refresh-observer';
 import type { OperationalDiagnostic } from '@/operational-errors';
 
@@ -358,10 +359,8 @@ export class NftLinkResolvingService {
           lockStamp,
           attemptedAt,
           retryState,
-          message:
-            lastError instanceof Error
-              ? lastError.message
-              : 'NFT link resolution failed'
+          // A fixed category only; the upstream error text stays in logs.
+          message: categorizeNftLinkError(lastError)
         },
         ctx
       )
