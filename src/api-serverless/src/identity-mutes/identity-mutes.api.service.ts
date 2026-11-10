@@ -135,6 +135,9 @@ export class IdentityMutesApiService {
     if (!muterId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
+    if (ctx.authenticationContext?.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies cannot manage identity mutes`);
+    }
 
     const mutedIdentityId =
       await this.identityFetcher.getProfileIdByIdentityKeyOrThrow(

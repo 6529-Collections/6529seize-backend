@@ -44,6 +44,7 @@ import { identityFetcher } from '../identities/identity.fetcher';
 import { Timer } from '../../../time';
 import { authDb } from './auth.db';
 import {
+  assertSessionRoleStillGranted,
   createConnectionShare,
   createNativeSession,
   createWebSession,
@@ -1034,13 +1035,14 @@ async function resolveAuthenticatedRole(
     if (!roleId) {
       throw new BadRequestException(`Role ${role} not found`);
     }
-    const proxy = await profileProxyApiService.getProxyByGrantedByAndGrantedTo({
-      granted_to_profile_id: signingProfile,
-      granted_by_profile_id: roleId
-    });
-    if (proxy === null) {
+    const hasActiveAction =
+      await profileProxyApiService.hasAnyActiveProxyAction({
+        granted_to_profile_id: signingProfile,
+        granted_by_profile_id: roleId
+      });
+    if (!hasActiveAction) {
       throw new BadRequestException(
-        `Profile ${role} hasn't created a proxy for you, so you can't authenticate as this role.`
+        `Profile ${role} hasn't granted you any active proxy actions, so you can't authenticate as this role.`
       );
     }
     chosenRole = roleId;
@@ -1062,6 +1064,7 @@ async function resolveLegacyRefreshRole({
   readonly timer: Timer;
 }): Promise<string | null> {
   if (storedRole) {
+    await assertSessionRoleStillGranted(redeemedAddress, storedRole);
     if (requestedRole) {
       if (requestedRole === storedRole) {
         return storedRole;

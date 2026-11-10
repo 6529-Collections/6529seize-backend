@@ -244,6 +244,11 @@ router.get(
         `You need to create a profile before you can access notifications`
       );
     }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        `Proxies cannot manage wave notification subscriptions`
+      );
+    }
     const waveId = req.params.wave_id;
     if (!waveId) {
       throw new BadRequestException(`Wave ID is required`);
@@ -275,6 +280,11 @@ router.post(
         `You need to create a profile before you can access notifications`
       );
     }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        `Proxies cannot manage wave notification subscriptions`
+      );
+    }
     const waveId = req.params.wave_id;
     if (!waveId) {
       throw new BadRequestException(`Wave ID is required`);
@@ -304,6 +314,11 @@ router.delete(
     if (!authenticationContext.getActingAsId()) {
       throw new ForbiddenException(
         `You need to create a profile before you can access notifications`
+      );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        `Proxies cannot manage wave notification subscriptions`
       );
     }
     const waveId = req.params.wave_id;
