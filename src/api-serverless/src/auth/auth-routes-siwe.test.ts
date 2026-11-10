@@ -57,9 +57,12 @@ jest.mock('../identities/identity.fetcher', () => ({
   }
 }));
 
+const hasAnyActiveProxyActionMock = jest.fn();
+
 jest.mock('../proxies/proxy.api.service', () => ({
   profileProxyApiService: {
-    getProxyByGrantedByAndGrantedTo: jest.fn()
+    getProxyByGrantedByAndGrantedTo: jest.fn(),
+    hasAnyActiveProxyAction: hasAnyActiveProxyActionMock
   }
 }));
 
@@ -323,6 +326,56 @@ describe('wallet auth SIWE routes', () => {
     expect(response.send).toHaveBeenCalledWith({
       token: 'web-access-token',
       token_expiry: 123
+    });
+  });
+
+  describe('POST /session-login with a proxy role', () => {
+    beforeEach(() => {
+      getProfileIdByIdentityKeyMock.mockImplementation(
+        async ({ identityKey }: { identityKey: string }) =>
+          identityKey === 'grantor' ? 'grantor-profile' : 'signer-profile'
+      );
+    });
+
+    async function loginWithRole() {
+      const issued = issueWebChallenge();
+      const signature = await wallet.signMessage(issued.message);
+      return sessionLoginHandler(
+        makeRequest({
+          body: {
+            ...sessionLoginBody({
+              messageSignature: signature,
+              serverSignature: issued.serverSignature,
+              clientType: 'web'
+            }),
+            role: 'grantor'
+          },
+          origin: 'https://6529.io',
+          host: 'api.6529.io'
+        }),
+        makeResponse()
+      );
+    }
+
+    it('creates the session when the proxy has an active action', async () => {
+      hasAnyActiveProxyActionMock.mockResolvedValueOnce(true);
+
+      await loginWithRole();
+
+      expect(hasAnyActiveProxyActionMock).toHaveBeenCalledWith({
+        granted_to_profile_id: 'signer-profile',
+        granted_by_profile_id: 'grantor-profile'
+      });
+      expect(createWebSessionMock).toHaveBeenCalledWith(
+        expect.objectContaining({ role: 'grantor-profile' })
+      );
+    });
+
+    it('rejects the role when the proxy has no active action', async () => {
+      hasAnyActiveProxyActionMock.mockResolvedValueOnce(false);
+
+      await expect(loginWithRole()).rejects.toThrow('active proxy actions');
+      expect(createWebSessionMock).not.toHaveBeenCalled();
     });
   });
 
