@@ -48,7 +48,10 @@ waiting for a new block or periodic balance refresh after repairing old transfer
 3. Deploy `transactionsLoop` (Memes, Meme Lab and Gradients functions) and
    `nextgenContractLoop`. Producers must not run this code before schema sync.
 4. Audit stored ownership against the transfer ledger and chain for the affected
-   collection. Queue both endpoints of confirmed stale transfers in batches
+   collection with the read-only [state audit](state-audit.md) command
+   (`6529 run state-audit -- --contract <memes|gradients|memelab> --from-block N --to-block M`);
+   treat only a `clean` manifest as proof of agreement and act on
+   `differences_found` manifests. Queue both endpoints of confirmed stale transfers in batches
    of at most 100 using the maintenance request below. Wait for each wallet's
    `owners`, `activity` and `balances` requests to drain, and validate its raw
    and consolidated values. No global TDH recalculation is implied.
