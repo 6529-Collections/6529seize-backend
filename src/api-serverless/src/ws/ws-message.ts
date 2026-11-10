@@ -135,6 +135,8 @@ export interface DropUpdateRefMessageData {
   readonly serial_no: number;
   readonly update_type: DropUpdateRefType;
   readonly collapsed_reply_thread_id?: string;
+  readonly collapse_replies?: boolean;
+  readonly reply_placement_has_replies?: boolean;
   readonly reason?: string;
 }
 

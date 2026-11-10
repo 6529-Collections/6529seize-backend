@@ -70,7 +70,7 @@ function createMapper(signedDropIds: string[]) {
     getDropMedia: jest.fn().mockResolvedValue({}),
     getWinDecisionsForDrops: jest.fn().mockResolvedValue({}),
     findDeletedDrops: jest.fn().mockResolvedValue({}),
-    findIndividuallyCollapsedReplyRoots: jest.fn().mockResolvedValue({}),
+    findCollapsedReplyRoots: jest.fn().mockResolvedValue({}),
     findDropIdsOfWavesWhereNegativeVotesAreNotAllowed: jest
       .fn()
       .mockResolvedValue([]),
@@ -156,13 +156,13 @@ describe('DropsMappers author signed drops', () => {
   it('maps the collapsed root only onto the reply in a mixed batch', async () => {
     const { mapper, dropsDb } = createMapper([]);
     const root = { id: 'parent', serial_no: 2 };
-    dropsDb.findIndividuallyCollapsedReplyRoots.mockResolvedValue({
+    dropsDb.findCollapsedReplyRoots.mockResolvedValue({
       'root-reply': root
     });
 
     const [reply, parent, plainDrop] = await mapRoots(mapper);
 
-    expect(dropsDb.findIndividuallyCollapsedReplyRoots).toHaveBeenCalledWith(
+    expect(dropsDb.findCollapsedReplyRoots).toHaveBeenCalledWith(
       ['root-reply'],
       expect.anything()
     );

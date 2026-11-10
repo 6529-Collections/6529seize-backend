@@ -3986,12 +3986,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  async findIndividuallyCollapsedReplyRoots(
+  async findCollapsedReplyRoots(
     replyIds: string[],
-    ctx: RequestContext
+    ctx: RequestContext,
+    includeWaveWide = false
   ): Promise<Record<string, { id: string; serial_no: number }>> {
     if (!replyIds.length) return {};
-    const timer = `${this.constructor.name}->findIndividuallyCollapsedReplyRoots`;
+    const timer = `${this.constructor.name}->findCollapsedReplyRoots`;
     ctx.timer?.start(timer);
     try {
       const roots = await this.db.execute<{
@@ -4004,9 +4005,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${DROPS_TABLE} root
            on root.id = r.parent_id
            and root.wave_id = r.wave_id
-           and root.collapse_replies = true
            and root.reply_to_drop_id is null
-         where r.child_id in (:replyIds)`,
+         ${includeWaveWide ? `join ${legacyGetView(WAVES_TABLE)} w on w.id = r.wave_id` : ''}
+         where r.child_id in (:replyIds)
+           and (root.collapse_replies = true${includeWaveWide ? ' or w.chat_replies_collapsed = true' : ''})`,
         { replyIds },
         { wrappedConnection: ctx.connection }
       );
@@ -4019,6 +4021,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     } finally {
       ctx.timer?.stop(timer);
     }
+  }
+
+  async hasDropReplies(dropId: string, ctx: RequestContext): Promise<boolean> {
+    const replies = await this.db.execute(
+      `select 1
+       from ${DROP_RELATIONS_TABLE} r
+       join ${DROPS_TABLE} d on d.id = r.child_id
+       where r.parent_id = :dropId
+       limit 1`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    return replies.length > 0;
   }
 
   async setDropReplyCollapse(

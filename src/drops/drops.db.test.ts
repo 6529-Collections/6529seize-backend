@@ -1362,6 +1362,12 @@ describeWithSeed(
               )
             ).map((drop) => drop.id);
 
+          await expect(repo.hasDropReplies('mixed-root', tx)).resolves.toBe(
+            true
+          );
+          await expect(
+            repo.hasDropReplies('mixed-nested-reply', tx)
+          ).resolves.toBe(false);
           await setCollapsed(true);
           await expect(readFeed(false)).resolves.toEqual([
             'mixed-nested-reply',
@@ -1390,7 +1396,7 @@ describeWithSeed(
             { id: 'mixed-root', serial_no: 513 }
           ]);
           await expect(
-            repo.findIndividuallyCollapsedReplyRoots(
+            repo.findCollapsedReplyRoots(
               ['mixed-nested-reply', 'inline-reply'],
               tx
             )
@@ -1404,6 +1410,9 @@ describeWithSeed(
             )
           ).resolves.toEqual({ 'mixed-root': 2 });
           await setCollapsed(false);
+          await expect(repo.hasDropReplies('mixed-root', tx)).resolves.toBe(
+            true
+          );
           await expect(readFeed(true)).resolves.toEqual([
             'mixed-nested-reply',
             'mixed-reply'
@@ -1420,6 +1429,23 @@ describeWithSeed(
           );
         }
       );
+    });
+
+    it('resolves the top-level ancestor for a wave-wide collapsed reply', async () => {
+      const replyIds = [
+        'collapsed-nested-reply',
+        'collapsed-reply',
+        'inline-reply'
+      ];
+      await expect(
+        repo.findCollapsedReplyRoots(replyIds, ctx)
+      ).resolves.toEqual({});
+      await expect(
+        repo.findCollapsedReplyRoots(replyIds, ctx, true)
+      ).resolves.toEqual({
+        'collapsed-nested-reply': { id: 'collapsed-root', serial_no: 501 },
+        'collapsed-reply': { id: 'collapsed-root', serial_no: 501 }
+      });
     });
 
     it('counts existing thread replies only in collapsed-reply waves', async () => {

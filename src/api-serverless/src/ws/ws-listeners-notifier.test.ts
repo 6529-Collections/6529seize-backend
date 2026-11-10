@@ -1025,6 +1025,24 @@ describe('WsListenersNotifier', () => {
     });
   });
 
+  it('keeps the empty reply placement on an oversized update ref', () => {
+    const drop = {
+      ...createDrop('a'.repeat(DROP_UPDATE_MAX_UTF8_BYTES)),
+      collapse_replies: true,
+      reply_placement_has_replies: false
+    };
+    expect(
+      JSON.parse(serializeDropUpdateForRecipient(drop, 0, 'REPLY_COLLAPSE'))
+    ).toMatchObject({
+      type: WsMessageType.DROP_UPDATE_REF,
+      data: {
+        collapse_replies: true,
+        reply_placement_has_replies: false,
+        reason: 'REPLY_COLLAPSE'
+      }
+    });
+  });
+
   it('keeps rating and reaction refs distinct when they share a serial', () => {
     const content = 'a'.repeat(
       findMaximumSafeAsciiContentLength(

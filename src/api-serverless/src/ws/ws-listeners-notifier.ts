@@ -16,6 +16,7 @@ import {
   dropUpdateRefMessage,
   DELIVERY_TIMESTAMPS_RESERVED_BYTES,
   DROP_UPDATE_MAX_UTF8_BYTES,
+  DROP_UPDATE_REASON_REPLY_COLLAPSE,
   DropUpdateRefType,
   DropUpdateRefMessageData,
   WsMessageType,
@@ -397,6 +398,12 @@ export function serializeDropMessageForRecipient(
     update_type: updateType,
     ...(inputDrop.collapsed_reply_thread
       ? { collapsed_reply_thread_id: inputDrop.collapsed_reply_thread.id }
+      : {}),
+    ...(reason === DROP_UPDATE_REASON_REPLY_COLLAPSE
+      ? {
+          collapse_replies: inputDrop.collapse_replies,
+          reply_placement_has_replies: inputDrop.reply_placement_has_replies
+        }
       : {}),
     ...(reason !== undefined && updateType === WsMessageType.DROP_UPDATE
       ? { reason }

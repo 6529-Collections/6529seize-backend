@@ -99,7 +99,8 @@ describe('DropCreationApiService.setDropReplyCollapse', () => {
     proxy = false,
     replyTo = null as string | null,
     waveCollapsed = false,
-    directMessage = false
+    directMessage = false,
+    hasReplies = false
   } = {}) {
     const root = {
       id: 'drop-1',
@@ -118,6 +119,7 @@ describe('DropCreationApiService.setDropReplyCollapse', () => {
         callback(writerConnection)
       ),
       findDropById: jest.fn().mockResolvedValue(root),
+      hasDropReplies: jest.fn().mockResolvedValue(hasReplies),
       setDropReplyCollapse: jest.fn().mockResolvedValue(true)
     };
     const waves = {
@@ -162,9 +164,12 @@ describe('DropCreationApiService.setDropReplyCollapse', () => {
   it.each([true, false])(
     'saves the author’s requested state %s',
     async (collapsed) => {
-      const { dropsDb, dropsService, notifier, save, writerConnection } =
-        setup();
-      await save(collapsed);
+      const { dropsDb, dropsService, notifier, save, writerConnection } = setup(
+        { hasReplies: collapsed }
+      );
+      await expect(save(collapsed)).resolves.toMatchObject({
+        reply_placement_has_replies: collapsed
+      });
       expect(dropsDb.setDropReplyCollapse).toHaveBeenCalledWith(
         { dropId: 'drop-1', waveId: 'wave-1', collapseReplies: collapsed },
         expect.objectContaining({ connection: expect.anything() })
@@ -174,7 +179,7 @@ describe('DropCreationApiService.setDropReplyCollapse', () => {
         expect.objectContaining({ connection: writerConnection })
       );
       expect(notifier.notifyAboutDropUpdate).toHaveBeenCalledWith(
-        { id: 'drop-1' },
+        { id: 'drop-1', reply_placement_has_replies: collapsed },
         expect.anything(),
         { reason: 'REPLY_COLLAPSE' }
       );
