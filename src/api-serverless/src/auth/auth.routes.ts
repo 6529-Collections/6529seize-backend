@@ -16,6 +16,7 @@ import { asyncRouter } from '../async.router';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
   BadRequestException,
+  CustomApiCompliantException,
   UnauthorisedException
 } from '../../../exceptions';
 import { ApiNonceResponse } from '../generated/models/ApiNonceResponse';
@@ -59,6 +60,7 @@ import {
 } from './auth-session-v2';
 import {
   buildStructuredWalletSignatureMessage,
+  consumeLegacyTextChallengeNonce,
   consumeStructuredWalletSignatureNonce,
   ETHEREUM_MAINNET_CHAIN_ID,
   getDefaultStructuredWalletSignatureAudience,
@@ -86,7 +88,10 @@ import type {
   StructuredWalletSignatureSessionType
 } from '../wallet-signatures/structured-wallet-signatures';
 import type { WalletAuthClientType } from '@/entities/IWalletAuthSession';
-import { normalizeWebAppOrigin } from '../web-app-origins';
+import {
+  normalizeWebAppOrigin,
+  toRecordedRequestOrigin
+} from '../web-app-origins';
 import { Logger } from '@/logging';
 import { ApiDeviceGrant } from '@/api/generated/models/ApiDeviceGrant';
 import {
@@ -94,6 +99,7 @@ import {
   parseDeviceScopesParam
 } from '@/api/device-signing/device-grant-message';
 import { deviceGrantsService } from '@/api/device-signing/device-grants.service';
+import type { GrantRegistrationRequest } from '@/api/device-signing/grant-origins';
 import { MlsDeviceGrantRequest } from '@/api/device-signing/combined-device-grant';
 import {
   decodeE2eeSuiteSet,
@@ -103,6 +109,25 @@ import {
 } from '@/e2ee/e2ee-suite-policy';
 import { isE2eeEnabled } from '@/e2ee/e2ee-flag';
 import { identitiesDb } from '@/identities/identities.db';
+import {
+  isLegacyTextLoginDisabled,
+  isStringFormChallengeAccepted,
+  type LegacyLoginChallenge,
+  legacyLoginFormatOf,
+  signLegacyTextChallenge,
+  verifyLegacyLoginChallengeToken
+} from '@/api/auth/legacy-text-challenge';
+import {
+  recordLegacyAuthUseOnFinish,
+  setLegacyLoginFormat
+} from '@/api/auth/legacy-auth-metrics';
+import {
+  isConnectionShareRedeemLimited,
+  recordConnectionShareRedeem,
+  recordFailedConnectionShareRedeem
+} from '@/api/auth/connection-share-redeem-guard';
+import { getIp } from '@/api/policies/policies';
+import { legacyLoginAccessTokenSession } from '@/api/auth/access-token-session';
 
 const router = asyncRouter();
 const logger = Logger.get('AUTH_ROUTES');
@@ -147,6 +172,12 @@ router.get(
     req: Request<any, any, any, NonceQueryRequest, any>,
     res: Response<ApiResponse<ApiNonceResponse>>
   ) {
+    if (isLegacyTextLoginDisabled()) {
+      throw new CustomApiCompliantException(
+        410,
+        'Plain-text sign-in is disabled; use /auth/session-nonce'
+      );
+    }
     const nonceRequest = getValidatedByJoiOrThrow(
       req.query,
       NonceQueryRequestSchema
@@ -174,7 +205,7 @@ ${signerAddress}
 
 Nonce (Unique Identifier)
 ${randomUUID()}`;
-    const serverSignature = jwt.sign(nonce, getJwtSecret());
+    const serverSignature = signLegacyTextChallenge(nonce, getJwtSecret());
     res.status(200).send({
       nonce,
       server_signature: serverSignature
@@ -243,7 +274,11 @@ router.get(
       chainId: authWalletChainId,
       nonce: randomUUID(),
       action: 'login',
-      purpose: 'Sign this message to authenticate with 6529.'
+      // Native text is signed outside a browser sign-in; say so to the signer.
+      purpose:
+        nonceContext.sessionType === 'native'
+          ? 'Sign this message to authenticate with 6529. 6529.io never asks for this message in a web browser, only the 6529 Mobile app and API clients do.'
+          : 'Sign this message to authenticate with 6529.'
     });
     const serverSignature = jwt.sign(signableMessage, getJwtSecret());
     res.status(200).send({
@@ -351,6 +386,7 @@ function requestedMlsSuites(
 
 router.post(
   `/login`,
+  recordLegacyAuthUseOnFinish('login'),
   async function (
     req: Request<any, any, ApiLoginRequest, any, any>,
     res: Response<ApiResponse<ApiLoginResponse>>
@@ -360,9 +396,9 @@ router.post(
     const { server_signature, client_signature, role, client_address } =
       loginRequest;
     try {
-      const nonce = verifyServerSignature(server_signature);
+      const challenge = verifyServerSignature(server_signature, res);
       const signingAddress = await verifyClientSignature(
-        nonce,
+        challenge,
         client_signature,
         client_address ?? null
       );
@@ -371,7 +407,11 @@ router.post(
         role ?? null,
         timer
       );
-      const accessToken = issueAccessToken(signingAddress, chosenRole).token;
+      const accessToken = issueAccessToken(
+        signingAddress,
+        chosenRole,
+        legacyLoginAccessTokenSession(challenge.message)
+      ).token;
       const refreshToken = await authDb.retrieveOrGenerateRefreshToken(
         signingAddress,
         chosenRole
@@ -468,7 +508,8 @@ async function loginWithSiweSessionChallenge({
     signature: loginRequest.client_signature,
     expectedAddress: loginRequest.client_address,
     expectedChainId: getAuthWalletChainId(),
-    expectedClientOrigin: signedClientOrigin
+    expectedClientOrigin: signedClientOrigin,
+    domainScope: { apiHost: req.headers.host }
   });
   if (!verified) {
     throw new UnauthorisedException('Invalid client signature');
@@ -489,14 +530,24 @@ async function loginWithSiweSessionChallenge({
     userAgent: getUserAgent(req),
     signatureDomain: verified.domain,
     clientOrigin: signedClientOrigin,
-    apiHost: req.headers.host
+    apiHost: req.headers.host,
+    signatureFormat: 'siwe'
   });
   const deviceGrant = await storeVerifiedDeviceGrant({
     verified,
     message,
     walletSignature: loginRequest.client_signature,
     deviceLabel: loginRequest.device_label,
-    timer
+    timer,
+    registration: {
+      apiHost: req.headers.host,
+      requestOrigin: signedClientOrigin,
+      session: {
+        clientType: 'web',
+        binding: 'siwe',
+        sessionId: created.sessionId
+      }
+    }
   });
   res.setHeader('Set-Cookie', created.setCookie);
   res
@@ -518,13 +569,15 @@ async function storeVerifiedDeviceGrant({
   message,
   walletSignature,
   deviceLabel,
-  timer
+  timer,
+  registration
 }: {
   readonly verified: VerifiedSiweWebAuth;
   readonly message: string;
   readonly walletSignature: string;
   readonly deviceLabel: string | undefined;
   readonly timer: Timer;
+  readonly registration: GrantRegistrationRequest;
 }): Promise<ApiDeviceGrant | null> {
   if (!verified.deviceGrant) {
     return null;
@@ -539,7 +592,8 @@ async function storeVerifiedDeviceGrant({
         domain: verified.domain,
         chainId: verified.chainId,
         issuedAt: verified.issuedAt,
-        deviceLabel
+        deviceLabel,
+        registration
       },
       { timer }
     );
@@ -572,7 +626,8 @@ async function loginWithLegacySessionChallenge({
     message,
     signature: loginRequest.client_signature,
     expectedAddress: loginRequest.client_address,
-    parsedMessage
+    parsedMessage,
+    apiHost: req.headers.host
   });
   const chosenRole = await resolveAuthenticatedRole(
     signingAddress,
@@ -590,7 +645,13 @@ async function loginWithLegacySessionChallenge({
       address: signingAddress,
       role: chosenRole,
       userAgent: getUserAgent(req),
-      clientType: loginRequest.client_type
+      clientType: loginRequest.client_type,
+      origin: {
+        signatureFormat: 'structured',
+        signatureDomain: parsedMessage.domain,
+        clientOrigin: parsedMessage.clientOrigin ?? null,
+        requestOrigin: toRecordedRequestOrigin(req.headers.origin)
+      }
     });
     res.status(201).send(created.response);
     return;
@@ -607,7 +668,8 @@ async function loginWithLegacySessionChallenge({
     userAgent: getUserAgent(req),
     signatureDomain: parsedMessage.domain,
     clientOrigin: parsedMessage.clientOrigin,
-    apiHost: req.headers.host
+    apiHost: req.headers.host,
+    signatureFormat: 'structured'
   });
   res.setHeader('Set-Cookie', created.setCookie);
   res.status(201).send(created.response);
@@ -641,12 +703,14 @@ async function verifyLegacySessionWalletSignature({
   message,
   signature,
   expectedAddress,
-  parsedMessage
+  parsedMessage,
+  apiHost
 }: {
   readonly message: string;
   readonly signature: string;
   readonly expectedAddress: string;
   readonly parsedMessage: ParsedStructuredWalletSignatureMessage;
+  readonly apiHost: unknown;
 }): Promise<string> {
   if (!ethers.isAddress(expectedAddress)) {
     throw new BadRequestException('Invalid client address');
@@ -659,6 +723,7 @@ async function verifyLegacySessionWalletSignature({
     expectedAction: 'login',
     expectedKind: 'authentication',
     requireAllowedDomain: parsedMessage.sessionType === 'first_party_web',
+    domainScope: { apiHost },
     consumeNonce: false
   });
   if (!signingAddress) {
@@ -789,6 +854,7 @@ router.post(
 
 router.post(
   '/connection-share/legacy-desktop',
+  recordLegacyAuthUseOnFinish('legacy_desktop_link'),
   needsAuthenticatedUser(),
   async function (
     req: Request<
@@ -839,20 +905,45 @@ router.post(
       req.body,
       RedeemConnectionShareRequestSchema
     );
+    const target = redeemRequest.target_client_type;
+    const sourceIp = getIp(req);
+    if (await isConnectionShareRedeemLimited(sourceIp)) {
+      recordConnectionShareRedeem({
+        target,
+        outcome: 'limited',
+        withDeviceSetup: false
+      });
+      throw new CustomApiCompliantException(
+        429,
+        'Too many invalid connection share codes; try again later'
+      );
+    }
     const redeemed = await redeemConnectionShare({
       connectionShareCode: redeemRequest.connection_share_code,
       targetClientType: redeemRequest.target_client_type,
       userAgent: getUserAgent(req)
     });
     if (!redeemed) {
+      await recordFailedConnectionShareRedeem(sourceIp);
+      recordConnectionShareRedeem({
+        target,
+        outcome: 'refused',
+        withDeviceSetup: false
+      });
       throw new UnauthorisedException('Invalid connection share code');
     }
+    recordConnectionShareRedeem({
+      target,
+      outcome: 'ok',
+      withDeviceSetup: redeemed.response.encrypted_device_setup != null
+    });
     res.status(201).send(redeemed.response);
   }
 );
 
 router.post(
   '/redeem-refresh-token',
+  recordLegacyAuthUseOnFinish('redeem_refresh_token'),
   async function (
     req: Request<any, any, ApiRedeemRefreshTokenRequest, any, any>,
     res: Response<ApiResponse<ApiRedeemRefreshTokenResponse>>
@@ -1015,21 +1106,37 @@ async function resolveLegacyRefreshRole({
   return resolvedRole;
 }
 
-function verifyServerSignature(serverSignature: string): string {
-  const nonce = jwt.verify(serverSignature, getJwtSecret(), {
-    algorithms: ['HS256']
-  });
-  if (!nonce || typeof nonce !== 'string') {
-    throw new Error('Invalid server signature');
+function verifyServerSignature(
+  serverSignature: string,
+  res: Response<any>
+): LegacyLoginChallenge {
+  const challenge = verifyLegacyLoginChallengeToken(
+    serverSignature,
+    getJwtSecret()
+  );
+  setLegacyLoginFormat(res, legacyLoginFormatOf(challenge));
+  return challenge;
+}
+
+async function assertTextLoginChallengeAccepted(
+  challenge: LegacyLoginChallenge
+): Promise<void> {
+  if (isLegacyTextLoginDisabled()) {
+    throw new Error(
+      'Plain-text sign-in is disabled; use /auth/session-nonce and /auth/session-login'
+    );
   }
-  return nonce;
+  if (challenge.form === 'string' && !(await isStringFormChallengeAccepted())) {
+    throw new Error('Sign-in challenge expired');
+  }
 }
 
 async function verifyClientSignature(
-  nonce: string,
+  challenge: LegacyLoginChallenge,
   clientSignature: string,
   clientAddress: string | null
 ): Promise<string> {
+  const nonce = challenge.message;
   clientAddress = clientAddress?.toLowerCase() ?? null;
   if (isStructuredWalletSignatureMessage(nonce)) {
     if (!clientAddress) {
@@ -1056,6 +1163,7 @@ async function verifyClientSignature(
     return signingAddress;
   }
 
+  await assertTextLoginChallengeAccepted(challenge);
   if (isStructuredSignaturesRequired()) {
     throw new Error('Structured wallet signature required');
   }
@@ -1068,6 +1176,10 @@ async function verifyClientSignature(
   });
   if (!signingAddress) {
     throw new Error('Invalid client signature');
+  }
+  // Each plain-text challenge signs in once, like structured messages above.
+  if (!(await consumeLegacyTextChallengeNonce(nonce, challenge.expiresAtMs))) {
+    throw new Error('Invalid or consumed wallet auth challenge');
   }
   return signingAddress;
 }
@@ -1216,7 +1328,9 @@ function resolveSessionNonceContext(
       'Wallet auth web sessions require a valid Origin header'
     );
   }
-  if (!isStructuredSignatureDomainAllowed(domain)) {
+  if (
+    !isStructuredSignatureDomainAllowed(domain, { apiHost: req.headers.host })
+  ) {
     throw new BadRequestException(
       'Wallet auth web sessions require a first-party Origin'
     );

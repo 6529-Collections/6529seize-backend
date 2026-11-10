@@ -108,6 +108,16 @@ function isRetryableProviderError(error: unknown): boolean {
   ].some((snippet) => message.includes(snippet));
 }
 
+export const ENS_RESOLVE_NAME_TIMEOUT_MS = 10_000;
+export const ENS_RESOLVE_DEADLINE_CODE = 'ENS_RESOLVE_DEADLINE';
+
+function ensResolveDeadlineError(): Error {
+  // Deliberately not matched by isRetryableProviderError.
+  return Object.assign(new Error('ENS name resolution deadline exceeded'), {
+    code: ENS_RESOLVE_DEADLINE_CODE
+  });
+}
+
 async function sleep(delayMs: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
@@ -215,10 +225,31 @@ export class EthereumRpcClient {
     );
   }
 
-  async resolveName(name: string): Promise<string | null> {
-    return await this.withProviderRetries(() =>
-      this.provider.resolveName(name)
-    );
+  /**
+   * Bounded so a request path cannot wait on slow resolvers or retries for
+   * longer than ENS_RESOLVE_NAME_TIMEOUT_MS.
+   */
+  async resolveName(
+    name: string,
+    timeoutMs = ENS_RESOLVE_NAME_TIMEOUT_MS
+  ): Promise<string | null> {
+    const deadlineAt = Date.now() + timeoutMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(ensResolveDeadlineError()), timeoutMs);
+    });
+    try {
+      return await Promise.race([
+        this.withProviderRetries(() => {
+          // Stops further retries once the caller has been answered.
+          if (Date.now() >= deadlineAt) throw ensResolveDeadlineError();
+          return this.provider.resolveName(name);
+        }),
+        deadline
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 export function getEthereumRpcClient(

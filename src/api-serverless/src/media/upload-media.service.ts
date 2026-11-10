@@ -57,6 +57,8 @@ export interface DistributionPhotoScope {
   readonly cardId: number;
 }
 
+export const SINGLE_PUT_UPLOAD_URL_EXPIRY = Time.minutes(15);
+
 export class UploadMediaService {
   constructor(
     private readonly getS3: () => S3Client,
@@ -641,8 +643,12 @@ export class UploadMediaService {
       Key: key,
       ContentType: content_type
     });
+    // The signature covers Content-Type, so the PUT must send exactly the
+    // returned `content_type`. S3 checks expiry when the request starts, so
+    // a slow upload that began in time still completes.
     const signedUrl = await getSignedUrl(this.getS3(), command, {
-      expiresIn: Time.hours(1).toSeconds()
+      expiresIn: SINGLE_PUT_UPLOAD_URL_EXPIRY.toSeconds(),
+      signableHeaders: new Set(['content-type'])
     });
     return {
       upload_url: signedUrl,

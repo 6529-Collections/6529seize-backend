@@ -619,4 +619,143 @@ describe('E2EE devices from combined sign-in grants (NC8)', () => {
       expect(revokedEvents).toHaveLength(1);
     });
   });
+
+  describe('registration record and grant origin (direct EIP-712 grants)', () => {
+    const SESSION_ID = '7d0f5b5e-2c1c-4c2e-9d4b-0b3a1a2c3d4e';
+    let write: jest.SpyInstance;
+
+    beforeEach(() => {
+      delete process.env.DEVICE_GRANT_ORIGIN_POLICY;
+      write = jest
+        .spyOn(process.stdout, 'write')
+        .mockImplementation(() => true);
+    });
+
+    afterEach(() => {
+      write.mockRestore();
+    });
+
+    const registration = {
+      apiHost: 'api.staging.6529.io',
+      requestOrigin: 'http://localhost:43123',
+      session: {
+        clientType: 'desktop' as const,
+        binding: 'structured' as const,
+        sessionId: SESSION_ID
+      }
+    };
+
+    async function registerDirect(
+      origin: string,
+      request: typeof registration | null = registration
+    ) {
+      const mlsKey = randomE2eeKey();
+      const grant: E2eeDeviceGrant = {
+        wallet: alice.address.toLowerCase(),
+        device_key: mlsKey.publicKey,
+        ciphersuite: E2EE_CIPHERSUITE,
+        issued_at: START / 1000,
+        expires_at: START / 1000 + 180 * 86400,
+        origin
+      };
+      const typedData = buildE2eeGrantTypedData(grant);
+      return service.registerDevice(
+        PROFILE,
+        {
+          grant,
+          wallet_signature: await alice.signTypedData(
+            typedData.domain,
+            typedData.types,
+            typedData.message
+          ),
+          platform: 'desktop' as never
+        },
+        request
+      );
+    }
+
+    function originLines() {
+      return write.mock.calls
+        .map(([chunk]) => String(chunk))
+        .filter((line) => line.includes('6529.device_grant_origin.v1'))
+        .map((line) => JSON.parse(line));
+    }
+
+    it('records how the device was registered and logs the origin verdict', async () => {
+      const device = await registerDirect('6529 Desktop');
+
+      expect(db.devices.get(device.device_key)).toMatchObject({
+        origin: '6529 Desktop',
+        registered_client_type: 'desktop',
+        registered_binding: 'structured',
+        registered_request_origin: 'http://localhost:43123',
+        registered_session_id: SESSION_ID
+      });
+      expect(device).not.toHaveProperty('registered_client_type');
+      expect(originLines()).toEqual([
+        expect.objectContaining({
+          Route: 'e2ee_devices',
+          Verdict: 'recognized',
+          Reason: 'app_origin',
+          ClientType: 'desktop',
+          Binding: 'structured'
+        })
+      ]);
+    });
+
+    it('accepts an unrecognised origin by default', async () => {
+      const device = await registerDirect('6529.io');
+
+      expect(db.devices.has(device.device_key)).toBe(true);
+      expect(originLines()[0]).toMatchObject({
+        Verdict: 'unrecognized',
+        Reason: 'other_environment',
+        Decision: 'accepted'
+      });
+    });
+
+    it('refuses an unrecognised origin when enforcing', async () => {
+      process.env.DEVICE_GRANT_ORIGIN_POLICY = 'enforce';
+
+      await expectBadGrant(
+        registerDirect('unlisted.example'),
+        'unrecognized_origin'
+      );
+      expect(db.devices.size).toBe(0);
+    });
+
+    it('records nulls for a caller whose token has no session claims', async () => {
+      const device = await registerDirect('staging.6529.io', null);
+
+      expect(db.devices.get(device.device_key)).toMatchObject({
+        registered_client_type: null,
+        registered_binding: null,
+        registered_request_origin: null,
+        registered_session_id: null
+      });
+    });
+
+    it('records the registering session on a combined sign-in grant device', async () => {
+      const { id, mlsKey } = await storeLoginGrant();
+
+      await service.registerLoginGrantDevice(
+        PROFILE,
+        { grant_id: id, platform: 'web' as never, label: 'Chrome' },
+        {
+          apiHost: 'api.staging.6529.io',
+          requestOrigin: 'https://staging.6529.io',
+          session: { clientType: 'web', binding: 'siwe', sessionId: SESSION_ID }
+        }
+      );
+
+      expect(db.devices.get(mlsKey.publicKey)).toMatchObject({
+        registered_client_type: 'web',
+        registered_binding: 'siwe',
+        registered_request_origin: 'https://staging.6529.io',
+        registered_session_id: SESSION_ID
+      });
+      // The stored grant's origin was checked when it was stored.
+      expect(originLines()).toHaveLength(0);
+    });
+  });
 });

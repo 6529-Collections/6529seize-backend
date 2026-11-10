@@ -624,6 +624,108 @@ describeWithSeed('E2EE delivery service', [], () => {
       const bob = aProfile();
       await expectE2eeError(registerDevice(bob, keys[0]), 'E2EE_DEVICE_EXISTS');
     });
+
+    describe('device limit and idle devices', () => {
+      async function registerTen(profile: Profile): Promise<E2eeTestKey[]> {
+        const keys: E2eeTestKey[] = [];
+        for (let i = 0; i < E2EE_MAX_ACTIVE_DEVICES; i++) {
+          keys.push(await registerDevice(profile));
+        }
+        return keys;
+      }
+
+      async function use(profile: Profile, key: E2eeTestKey) {
+        await services.groups.getDeviceGroups(profile.id, key.publicKey);
+      }
+
+      it('enrolls an 11th device when one of ten has been idle for more than 30 days', async () => {
+        const alice = aProfile();
+        const keys = await registerTen(alice);
+        now += 31 * DAY;
+        for (const key of keys.slice(1)) await use(alice, key);
+
+        const eleventh = await registerDevice(alice);
+
+        const me = await services.devices.getMe(alice.id);
+        const counted = new Map(
+          me.devices.map((device) => [
+            device.device_key,
+            device.counts_toward_limit
+          ])
+        );
+        expect(counted.get(keys[0].publicKey)).toBe(false);
+        expect(counted.get(eleventh.publicKey)).toBe(true);
+        expect(
+          me.devices.filter((device) => device.counts_toward_limit)
+        ).toHaveLength(E2EE_MAX_ACTIVE_DEVICES);
+        expect(me.max_devices).toBe(E2EE_MAX_ACTIVE_DEVICES);
+        // The idle device was not revoked and still works as itself.
+        await use(alice, keys[0]);
+        expect(
+          (await services.devices.getDevice(keys[0].publicKey)).revoked_at
+        ).toBeNull();
+      });
+
+      it('refuses an 11th device when all ten were used in the last 30 days', async () => {
+        const alice = aProfile();
+        const keys = await registerTen(alice);
+        now += 31 * DAY;
+        for (const key of keys) await use(alice, key);
+
+        await expectE2eeError(registerDevice(alice), 'E2EE_DEVICE_LIMIT');
+      });
+
+      it('counts a device again once it is used after being idle', async () => {
+        const alice = aProfile();
+        const keys = await registerTen(alice);
+        now += 31 * DAY;
+        for (const key of keys.slice(1)) await use(alice, key);
+        await registerDevice(alice);
+        // The idle device resumes: eleven devices now count, so another
+        // enrolment waits, but no device loses service.
+        await use(alice, keys[0]);
+
+        await expectE2eeError(registerDevice(alice), 'E2EE_DEVICE_LIMIT');
+        await use(alice, keys[0]);
+        await use(alice, keys[1]);
+      });
+
+      it('renews an idle active device even when ten others count', async () => {
+        const alice = aProfile();
+        const keys = await registerTen(alice);
+        now += 31 * DAY;
+        for (const key of keys.slice(1)) await use(alice, key);
+        await registerDevice(alice);
+
+        await registerDevice(alice, keys[0]);
+
+        const renewed = await services.devices.getDevice(keys[0].publicKey);
+        expect(renewed.grant.issued_at).toBe(nowSeconds());
+        expect(renewed.last_seen_at).toBe(now);
+      });
+
+      it('marks revoked and expired devices as not counting', async () => {
+        const alice = aProfile();
+        const [kept, expiring] = [
+          await registerDevice(alice),
+          await registerDevice(alice)
+        ];
+        now += 179 * DAY;
+        await use(alice, kept);
+        await registerDevice(alice, kept);
+        now += 2 * DAY;
+
+        const me = await services.devices.getMe(alice.id);
+        const counted = new Map(
+          me.devices.map((device) => [
+            device.device_key,
+            device.counts_toward_limit
+          ])
+        );
+        expect(counted.get(kept.publicKey)).toBe(true);
+        expect(counted.get(expiring.publicKey)).toBe(false);
+      });
+    });
   });
 
   describe('combined sign-in grants (NC8)', () => {

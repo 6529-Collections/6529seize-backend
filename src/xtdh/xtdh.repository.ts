@@ -2829,7 +2829,7 @@ LEFT JOIN received_day rd
         update ${XTDH_GRANTS_TABLE} set grantor_id = :target where grantor_id = :source
       `,
       { source, target },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
   }
 }

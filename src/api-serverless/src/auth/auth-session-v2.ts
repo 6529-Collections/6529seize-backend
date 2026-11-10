@@ -5,8 +5,15 @@ import { BadRequestException, UnauthorisedException } from '@/exceptions';
 import { profileProxyApiService } from '@/api/proxies/proxy.api.service';
 import {
   WalletAuthClientType,
-  WalletAuthSessionEntity
+  WalletAuthSessionEntity,
+  WalletAuthSignatureFormat
 } from '@/entities/IWalletAuthSession';
+import type { AccessTokenSession } from '@/auth-context';
+import {
+  accessTokenSessionOf,
+  LEGACY_ACCESS_TOKEN_SESSION,
+  toAccessTokenSessionClaims
+} from '@/api/auth/access-token-session';
 import { ConnectionWrapper } from '@/sql-executor';
 import { Time } from '@/time';
 import { getJwtExpiry, getJwtSecret } from './auth';
@@ -28,12 +35,17 @@ import {
   ApiSessionWebResponse,
   ApiSessionWebResponseClientTypeEnum
 } from '@/api/generated/models/ApiSessionWebResponse';
+import { clientFamilyOf } from '@/api/auth/client-family';
+import { Logger } from '@/logging';
+
+const logger = Logger.get('AUTH_SESSION_V2');
 
 export const WALLET_SESSION_COOKIE_NAME = '6529_session';
 const WALLET_SESSION_ADDRESS_COOKIE_PREFIX = `${WALLET_SESSION_COOKIE_NAME}_`;
 
 const DEFAULT_SESSION_REFRESH_DAYS = 30;
 const DEFAULT_CONNECTION_SHARE_CODE_TTL_SECONDS = 5 * 60;
+const DEFAULT_CONNECTION_SHARE_SETUP_TTL_SECONDS = 2 * 60;
 const IDEMPOTENT_WEB_SESSION_REFRESH_WINDOW_MS = Time.seconds(30).toMillis();
 const IDEMPOTENT_WEB_SESSION_REFRESH_CLOCK_SKEW_MS = Time.seconds(5).toMillis();
 
@@ -51,6 +63,7 @@ type RefreshTokenSessionClientType = Exclude<WalletAuthClientType, 'web'>;
 export interface CreatedWebSession {
   readonly response: SessionV2WebResponse;
   readonly setCookie: string[];
+  readonly sessionId: string;
 }
 
 export interface CreatedNativeSession {
@@ -75,9 +88,15 @@ export interface ActiveWebSession {
 
 type AuthDbConnection = ConnectionWrapper<any>;
 
+/**
+ * Signs an access token. `session` adds the `ct`, `sb` and `sid` claims;
+ * callers outside session-v2 (legacy `/auth/login` and refresh-token
+ * redemption) get `ct: legacy`. No verifier requires these claims.
+ */
 export function issueAccessToken(
   address: string,
-  role?: string | null
+  role?: string | null,
+  session: AccessTokenSession = LEGACY_ACCESS_TOKEN_SESSION
 ): IssuedAccessToken {
   const expiresInSeconds = getJwtExpiry();
   const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
@@ -85,7 +104,8 @@ export function issueAccessToken(
     {
       id: randomUUID(),
       sub: address.toLowerCase(),
-      ...(role ? { role } : {})
+      ...(role ? { role } : {}),
+      ...toAccessTokenSessionClaims(session)
     },
     getJwtSecret(),
     {
@@ -265,7 +285,8 @@ export async function createWebSession({
   userAgent,
   signatureDomain,
   clientOrigin,
-  apiHost
+  apiHost,
+  signatureFormat = null
 }: {
   readonly address: string;
   readonly role: string | null;
@@ -273,6 +294,7 @@ export async function createWebSession({
   readonly signatureDomain: string;
   readonly clientOrigin: string;
   readonly apiHost: unknown;
+  readonly signatureFormat?: WalletAuthSignatureFormat | null;
 }): Promise<CreatedWebSession> {
   const sessionId = randomUUID();
   const secret = createOpaqueSecret();
@@ -288,9 +310,16 @@ export async function createWebSession({
     userAgentHash: userAgent ? hashPublicValue(userAgent) : null,
     signatureDomain,
     clientOrigin,
-    expiresAt
+    expiresAt,
+    signatureFormat,
+    // Web sign-in requires the request Origin to equal the signed one.
+    requestOrigin: clientOrigin
   });
-  const accessToken = issueAccessToken(session.address, session.role);
+  const accessToken = issueAccessToken(
+    session.address,
+    session.role,
+    accessTokenSessionOf(session)
+  );
   return {
     response: toWebSessionResponse(session.address, session.role, accessToken),
     setCookie: serializeSessionCookies({
@@ -300,7 +329,8 @@ export async function createWebSession({
       expiresAt,
       clientOrigin,
       apiHost
-    })
+    }),
+    sessionId
   };
 }
 
@@ -308,18 +338,21 @@ export async function createNativeSession({
   address,
   role,
   userAgent,
-  clientType = 'native'
+  clientType = 'native',
+  origin
 }: {
   readonly address: string;
   readonly role: string | null;
   readonly userAgent: string | null;
   readonly clientType?: RefreshTokenSessionClientType;
+  readonly origin?: NativeSessionOrigin;
 }): Promise<CreatedNativeSession> {
   const session = await createNativeSessionRecord({
     address,
     role,
     userAgent,
-    clientType
+    clientType,
+    origin
   });
   return { response: session.response };
 }
@@ -453,7 +486,11 @@ function toRefreshedWebSession({
   readonly clientOrigin: string | null;
   readonly apiHost: unknown;
 }): CreatedWebSession {
-  const accessToken = issueAccessToken(session.address, session.role);
+  const accessToken = issueAccessToken(
+    session.address,
+    session.role,
+    accessTokenSessionOf(session)
+  );
   return {
     response: toWebSessionResponse(session.address, session.role, accessToken),
     setCookie: serializeSessionCookies({
@@ -463,7 +500,8 @@ function toRefreshedWebSession({
       expiresAt,
       clientOrigin,
       apiHost
-    })
+    }),
+    sessionId: session.id
   };
 }
 
@@ -760,7 +798,11 @@ export async function refreshNativeSession({
     return null;
   }
   await assertSessionRoleStillGranted(current.address, current.role);
-  const accessToken = issueAccessToken(current.address, current.role);
+  const accessToken = issueAccessToken(
+    current.address,
+    current.role,
+    accessTokenSessionOf(current)
+  );
   return {
     response: {
       address: current.address,
@@ -800,7 +842,7 @@ export async function logoutWebSession({
       continue;
     }
     if (allSessions) {
-      await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
+      await signOutAllSessionsOfAddress(existing.address, now);
     } else {
       await authDb.revokeWalletAuthSession(existing.id, now);
     }
@@ -840,11 +882,25 @@ export async function logoutNativeSession({
       clientType
     );
     if (existing) {
-      await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
+      await signOutAllSessionsOfAddress(existing.address, now);
     }
     return;
   }
   await authDb.revokeWalletAuthSessionByRefreshHash(refreshTokenHash, now);
+}
+
+/**
+ * Sign out everywhere for the wallet of a verified session: revokes its
+ * session-v2 sessions and removes its legacy refresh token, so older Desktop
+ * builds holding that token are signed out too. A later legacy sign-in
+ * issues a new token.
+ */
+async function signOutAllSessionsOfAddress(
+  address: string,
+  now: Date
+): Promise<void> {
+  await authDb.revokeWalletAuthSessionsForAddress(address, now);
+  await authDb.deleteLegacyRefreshTokenForAddress(address);
 }
 
 export async function createConnectionShare({
@@ -870,7 +926,16 @@ export async function createConnectionShare({
     shareRole = null;
   }
   const connectionShareCode = createOpaqueSecret();
-  const expiresAt = getConnectionShareExpiresAt();
+  const withDeviceSetup = encryptedDeviceSetup !== null;
+  const expiresAt = getConnectionShareExpiresAt(withDeviceSetup);
+  // One live link per wallet, target and kind: a new link retires the
+  // previous one, which its source no longer shows.
+  await authDb.retireLiveWalletConnectionShares({
+    address: address.toLowerCase(),
+    targetClientType,
+    withDeviceSetup,
+    now: new Date()
+  });
   const share = await authDb.createWalletConnectionShare({
     id: randomUUID(),
     connectionShareCodeHash: hashSecret(connectionShareCode),
@@ -910,7 +975,8 @@ export async function redeemConnectionShare({
         {
           connectionShareCodeHash: hashSecret(connectionShareCode),
           targetClientType,
-          now: new Date()
+          now: new Date(),
+          clientFamily: clientFamilyOf(userAgent)
         },
         connection
       );
@@ -922,7 +988,8 @@ export async function redeemConnectionShare({
           address: share.address,
           role: share.role,
           userAgent,
-          clientType: targetClientType
+          clientType: targetClientType,
+          origin: { signatureFormat: 'share' }
         },
         connection
       );
@@ -933,6 +1000,7 @@ export async function redeemConnectionShare({
       );
       return {
         ...createdSession,
+        shareId: share.id,
         encryptedDeviceSetup: share.encrypted_device_setup ?? null
       };
     }
@@ -940,6 +1008,9 @@ export async function redeemConnectionShare({
   if (!session) {
     return null;
   }
+  logger.info(
+    `[CONNECTION SHARE REDEEMED] [SHARE ${session.shareId}] [TARGET ${targetClientType}] [DEVICE SETUP ${session.encryptedDeviceSetup === null ? 'no' : 'yes'}] [CLIENT ${clientFamilyOf(userAgent)}]`
+  );
   return {
     response: {
       address: session.response.address,
@@ -999,17 +1070,31 @@ function toWebSessionResponse(
   };
 }
 
+/**
+ * What a native or desktop session records about how it was created: the
+ * signature format, the signed challenge domain and client origin, and the
+ * request Origin. Each part is null when unknown.
+ */
+export interface NativeSessionOrigin {
+  readonly signatureFormat?: WalletAuthSignatureFormat | null;
+  readonly signatureDomain?: string | null;
+  readonly clientOrigin?: string | null;
+  readonly requestOrigin?: string | null;
+}
+
 async function createNativeSessionRecord(
   {
     address,
     role,
     userAgent,
-    clientType = 'native'
+    clientType = 'native',
+    origin = {}
   }: {
     readonly address: string;
     readonly role: string | null;
     readonly userAgent: string | null;
     readonly clientType?: RefreshTokenSessionClientType;
+    readonly origin?: NativeSessionOrigin;
   },
   connection?: AuthDbConnection
 ): Promise<CreatedNativeSession & { readonly sessionId: string }> {
@@ -1025,13 +1110,19 @@ async function createNativeSessionRecord(
       secretHash: null,
       refreshTokenHash: hashSecret(nativeRefreshToken),
       userAgentHash: userAgent ? hashPublicValue(userAgent) : null,
-      signatureDomain: null,
-      clientOrigin: null,
-      expiresAt
+      signatureDomain: origin.signatureDomain ?? null,
+      clientOrigin: origin.clientOrigin ?? null,
+      expiresAt,
+      signatureFormat: origin.signatureFormat ?? null,
+      requestOrigin: origin.requestOrigin ?? null
     },
     connection
   );
-  const accessToken = issueAccessToken(session.address, session.role);
+  const accessToken = issueAccessToken(
+    session.address,
+    session.role,
+    accessTokenSessionOf(session)
+  );
   return {
     sessionId,
     response: {
@@ -1226,11 +1317,27 @@ function getSessionRefreshExpiresAt(): Date {
   return new Date(Date.now() + Time.days(days).toMillis());
 }
 
-function getConnectionShareExpiresAt(): Date {
+/**
+ * Plain links live AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS (300 s). Links that
+ * carry device setup live AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS (120 s),
+ * never longer than plain links; a missing or non-positive value means the
+ * default.
+ */
+function getConnectionShareExpiresAt(withDeviceSetup: boolean): Date {
   const seconds =
     env.getIntOrNull('AUTH_CONNECTION_SHARE_CODE_TTL_SECONDS') ??
     DEFAULT_CONNECTION_SHARE_CODE_TTL_SECONDS;
-  return new Date(Date.now() + Time.seconds(seconds).toMillis());
+  const configuredSetupSeconds = env.getIntOrNull(
+    'AUTH_CONNECTION_SHARE_SETUP_TTL_SECONDS'
+  );
+  const setupSeconds =
+    configuredSetupSeconds !== null && configuredSetupSeconds > 0
+      ? configuredSetupSeconds
+      : DEFAULT_CONNECTION_SHARE_SETUP_TTL_SECONDS;
+  const lifetimeSeconds = withDeviceSetup
+    ? Math.min(seconds, setupSeconds)
+    : seconds;
+  return new Date(Date.now() + Time.seconds(lifetimeSeconds).toMillis());
 }
 
 function toDate(value: Date | string): Date {

@@ -13,13 +13,19 @@ export function getEthereumRpcProvider(chainId: number = 1): JsonRpcProvider {
   if (!provider || provider.destroyed) {
     // Supplying the expected chain retains ethers' network-mismatch checks.
     // Do not use staticNetwork: it would trust a misconfigured endpoint.
-    provider = createEthereumRpcProvider(chainId);
+    // Off-chain (CCIP-Read) lookups stay disabled on the shared provider:
+    // their gateway URLs come from on-chain resolver data. ENS refresh uses
+    // its own provider with a public-network gateway transport.
+    provider = createEthereumRpcProvider(chainId, { disableCcipRead: true });
     providers.set(cacheKey, provider);
   }
   return provider;
 }
 
-/** Isolated transport for callers with strict deadlines and their own lifecycle. */
+/**
+ * Isolated transport for callers with strict deadlines and their own
+ * lifecycle. CCIP-Read is off unless a caller passes `disableCcipRead: false`.
+ */
 export function createEthereumRpcProvider(
   chainId: number = 1,
   options: {
@@ -33,6 +39,6 @@ export function createEthereumRpcProvider(
   if (options.maxAttempts !== undefined)
     request.setThrottleParams({ maxAttempts: options.maxAttempts });
   const provider = new JsonRpcProvider(request, chainId);
-  provider.disableCcipRead = options.disableCcipRead ?? false;
+  provider.disableCcipRead = options.disableCcipRead ?? true;
   return provider;
 }
