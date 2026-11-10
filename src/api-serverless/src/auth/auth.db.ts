@@ -122,6 +122,13 @@ export class AuthDb extends LazyDbAccessCompatibleService {
     return this.db.getAffectedRows(result) === 1;
   }
 
+  async deleteLegacyRefreshTokenForAddress(address: string): Promise<void> {
+    await this.db.execute(
+      `delete from ${REFRESH_TOKENS_TABLE} where address = :address`,
+      { address }
+    );
+  }
+
   private async updateRefreshTokenRole(
     address: string,
     refreshToken: string,

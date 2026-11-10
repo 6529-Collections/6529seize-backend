@@ -800,7 +800,7 @@ export async function logoutWebSession({
       continue;
     }
     if (allSessions) {
-      await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
+      await signOutAllSessionsOfAddress(existing.address, now);
     } else {
       await authDb.revokeWalletAuthSession(existing.id, now);
     }
@@ -840,11 +840,25 @@ export async function logoutNativeSession({
       clientType
     );
     if (existing) {
-      await authDb.revokeWalletAuthSessionsForAddress(existing.address, now);
+      await signOutAllSessionsOfAddress(existing.address, now);
     }
     return;
   }
   await authDb.revokeWalletAuthSessionByRefreshHash(refreshTokenHash, now);
+}
+
+/**
+ * Sign out everywhere for the wallet of a verified session: revokes its
+ * session-v2 sessions and removes its legacy refresh token, so older Desktop
+ * builds holding that token are signed out too. A later legacy sign-in
+ * issues a new token.
+ */
+async function signOutAllSessionsOfAddress(
+  address: string,
+  now: Date
+): Promise<void> {
+  await authDb.revokeWalletAuthSessionsForAddress(address, now);
+  await authDb.deleteLegacyRefreshTokenForAddress(address);
 }
 
 export async function createConnectionShare({

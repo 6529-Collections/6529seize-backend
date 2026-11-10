@@ -36,6 +36,7 @@ jest.mock('./auth.db', () => ({
     revokeWalletAuthSession: jest.fn(),
     revokeWalletAuthSessionsForAddress: jest.fn(),
     revokeWalletAuthSessionByRefreshHash: jest.fn(),
+    deleteLegacyRefreshTokenForAddress: jest.fn(),
     createWalletConnectionShare: jest.fn(),
     consumeWalletConnectionShare: jest.fn(),
     markWalletConnectionShareSession: jest.fn(),
@@ -833,6 +834,9 @@ describe('auth-session-v2', () => {
       'session-b',
       expect.any(Date)
     );
+    expect(
+      authDbMock.deleteLegacyRefreshTokenForAddress
+    ).not.toHaveBeenCalled();
     expect(clearedCookies).toEqual(
       clearWalletSessionCookieForAddressAndOrigin({
         address: '0xaaa',
@@ -869,6 +873,46 @@ describe('auth-session-v2', () => {
     expect(
       authDbMock.revokeWalletAuthSessionsForAddress
     ).not.toHaveBeenCalledWith('0xbbb', expect.any(Date));
+    expect(authDbMock.deleteLegacyRefreshTokenForAddress).toHaveBeenCalledTimes(
+      1
+    );
+    expect(authDbMock.deleteLegacyRefreshTokenForAddress).toHaveBeenCalledWith(
+      '0xaaa'
+    );
+  });
+
+  it('does not sign out another wallet everywhere through a session of a different wallet', async () => {
+    authDbMock.getActiveWebSessionBySecretHash.mockResolvedValueOnce(
+      webSession({ id: 'session-b', address: '0xbbb' })
+    );
+
+    await logoutWebSession({
+      cookieHeader: `${WALLET_SESSION_COOKIE_NAME}=${encodeURIComponent('session-b.secret-b')}`,
+      address: '0xaaa',
+      allSessions: true,
+      requestOrigin: 'https://6529.io',
+      apiHost: 'api.6529.io'
+    });
+
+    expect(
+      authDbMock.revokeWalletAuthSessionsForAddress
+    ).not.toHaveBeenCalled();
+    expect(
+      authDbMock.deleteLegacyRefreshTokenForAddress
+    ).not.toHaveBeenCalled();
+  });
+
+  it('keeps the legacy refresh token on a single native sign-out', async () => {
+    await logoutNativeSession({
+      address: '0xABC',
+      nativeRefreshToken: 'valid-native-refresh-token',
+      allSessions: false
+    });
+
+    expect(authDbMock.revokeWalletAuthSessionByRefreshHash).toHaveBeenCalled();
+    expect(
+      authDbMock.deleteLegacyRefreshTokenForAddress
+    ).not.toHaveBeenCalled();
   });
 
   it('requires native refresh-token ownership before revoking all sessions', async () => {
@@ -882,6 +926,9 @@ describe('auth-session-v2', () => {
 
     expect(
       authDbMock.revokeWalletAuthSessionsForAddress
+    ).not.toHaveBeenCalled();
+    expect(
+      authDbMock.deleteLegacyRefreshTokenForAddress
     ).not.toHaveBeenCalled();
 
     authDbMock.getActiveNativeSessionByRefreshHash.mockResolvedValueOnce({
@@ -915,6 +962,9 @@ describe('auth-session-v2', () => {
     expect(authDbMock.revokeWalletAuthSessionsForAddress).toHaveBeenCalledWith(
       '0xabc',
       expect.any(Date)
+    );
+    expect(authDbMock.deleteLegacyRefreshTokenForAddress).toHaveBeenCalledWith(
+      '0xabc'
     );
   });
 
