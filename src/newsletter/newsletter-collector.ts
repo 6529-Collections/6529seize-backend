@@ -8,22 +8,37 @@ import {
   NewsletterMedia,
   NewsletterMint
 } from './newsletter.db';
+import {
+  buildSourceRegistry,
+  discussionUrl,
+  dropSourceId,
+  identitySourceId,
+  mintSourceId,
+  mintUrl,
+  profileUrl,
+  SourceRecord,
+  winnerSourceId,
+  winnerUrl
+} from './newsletter-sources';
 
-export const discussionUrl = (drop: NewsletterDrop): string =>
-  `https://6529.io/waves/${drop.wave_id}?serialNo=${drop.serial_no}`;
+export { discussionUrl } from './newsletter-sources';
 
 export interface NewsletterSource {
+  source_id: string;
   url: string;
   discussion_start: string;
+  discussion_start_source_id: string;
   wave: string;
   team_wave: boolean;
   author: string | null;
   author_url: string | null;
+  author_source_id: string | null;
   time: string;
   context_only: boolean;
   title: string | null;
   text: string[];
   quoted_messages: string[];
+  quoted_source_ids: string[];
   media: { url: string; mime_type: string }[];
 }
 
@@ -31,14 +46,18 @@ export interface NewsletterMaterial {
   window: { start: string; end: string };
   sources: NewsletterSource[];
   winners: {
+    source_id: string;
+    drop_source_id: string;
     author: string | null;
     author_url: string | null;
+    author_source_id: string | null;
     title: string | null;
     url: string;
     decision_time: string;
     ranking: number;
   }[];
   mints: {
+    source_id: string;
     collection: NewsletterMint['collection'];
     card: number;
     title: string | null;
@@ -48,6 +67,12 @@ export interface NewsletterMaterial {
     first_mint_in_window: string;
     minted_count: number;
   }[];
+}
+
+/** Model-facing material plus the backend-only registry it was built from. */
+export interface NewsletterCollection {
+  material: NewsletterMaterial;
+  registry: Map<string, SourceRecord>;
 }
 
 function groupByDrop<T extends { drop_id: string }>(
@@ -77,6 +102,12 @@ export function discussionStart(
   return root;
 }
 
+function authorSourceId(
+  drop: Pick<NewsletterDrop, 'author_id' | 'author_handle'>
+): string | null {
+  return drop.author_handle ? identitySourceId(drop.author_id) : null;
+}
+
 function sourceForDrop(
   drop: NewsletterDrop,
   drops: Map<string, NewsletterDrop>,
@@ -85,25 +116,29 @@ function sourceForDrop(
   start: number
 ): NewsletterSource {
   const content = parts.get(drop.id) ?? [];
+  const root = discussionStart(drop, drops);
+  const quoted = content.flatMap((part) => {
+    const quotedDrop = part.quoted_drop_id
+      ? drops.get(part.quoted_drop_id)
+      : undefined;
+    return quotedDrop ? [quotedDrop] : [];
+  });
   return {
+    source_id: dropSourceId(drop.id),
     url: discussionUrl(drop),
-    discussion_start: discussionUrl(discussionStart(drop, drops)),
+    discussion_start: discussionUrl(root),
+    discussion_start_source_id: dropSourceId(root.id),
     wave: drop.wave_name,
     team_wave: TEAM_WAVE_IDS.includes(drop.wave_id),
     author: drop.author_handle,
-    author_url: drop.author_handle
-      ? `https://6529.io/${encodeURIComponent(drop.author_handle)}`
-      : null,
+    author_url: drop.author_handle ? profileUrl(drop.author_handle) : null,
+    author_source_id: authorSourceId(drop),
     time: new Date(drop.created_at).toISOString(),
     context_only: drop.created_at < start,
     title: drop.title,
     text: content.flatMap((part) => (part.content ? [part.content] : [])),
-    quoted_messages: content.flatMap((part) => {
-      const quoted = part.quoted_drop_id
-        ? drops.get(part.quoted_drop_id)
-        : undefined;
-      return quoted ? [discussionUrl(quoted)] : [];
-    }),
+    quoted_messages: quoted.map((quotedDrop) => discussionUrl(quotedDrop)),
+    quoted_source_ids: quoted.map((quotedDrop) => dropSourceId(quotedDrop.id)),
     media: (media.get(drop.id) ?? []).map(({ url, mime_type }) => ({
       url,
       mime_type
@@ -112,14 +147,18 @@ function sourceForDrop(
 }
 
 export class NewsletterCollector {
-  constructor(private readonly db: NewsletterDb) {}
+  constructor(
+    private readonly db: NewsletterDb,
+    private readonly now: () => number = Date.now
+  ) {}
 
   async collect(
     window: NewsletterWindow,
     excludedWaveId: string,
     excludedAuthorId: string,
     ctx: RequestContext
-  ): Promise<NewsletterMaterial> {
+  ): Promise<NewsletterCollection> {
+    const observedAt = this.now();
     const budget = new NewsletterCollectionBudget();
     const waves = await this.db.activeWaves(window, excludedWaveId, ctx);
     budget.checkTime();
@@ -160,7 +199,16 @@ export class NewsletterCollector {
     );
     const partsByDrop = groupByDrop(parts);
     const mediaByDrop = groupByDrop(media);
-    return {
+    const registry = buildSourceRegistry({
+      drops,
+      parts: partsByDrop,
+      media: mediaByDrop,
+      winners,
+      mints,
+      windowStart: window.start,
+      observedAt
+    });
+    const material: NewsletterMaterial = {
       window: {
         start: new Date(window.start).toISOString(),
         end: new Date(window.end).toISOString()
@@ -173,31 +221,29 @@ export class NewsletterCollector {
           sourceForDrop(drop, drops, partsByDrop, mediaByDrop, window.start)
         ),
       winners: winners.map((winner) => ({
+        source_id: winnerSourceId(winner),
+        drop_source_id: dropSourceId(winner.id),
         author: winner.author_handle,
         author_url: winner.author_handle
-          ? `https://6529.io/${encodeURIComponent(winner.author_handle)}`
+          ? profileUrl(winner.author_handle)
           : null,
+        author_source_id: authorSourceId(winner),
         title: winner.title,
-        url:
-          winner.competition_id && winner.entry_id
-            ? `https://6529.io/waves/${encodeURIComponent(winner.wave_id)}/competitions/${encodeURIComponent(winner.competition_id)}?entry=${encodeURIComponent(winner.entry_id)}`
-            : discussionUrl(winner),
+        url: winnerUrl(winner),
         decision_time: new Date(winner.decision_time).toISOString(),
         ranking: winner.ranking
       })),
       mints: mints.map((mint) => ({
+        source_id: mintSourceId(mint.collection, mint.id),
         collection: mint.collection,
         card: mint.id,
         title: mint.name,
-        url: `https://6529.io/${mint.collection === 'Meme Lab' ? 'meme-lab' : 'the-memes'}/${mint.id}`,
+        url: mintUrl(mint),
         artists: mint.artist_seize_handle
           .split(',')
           .map((handle) => handle.trim())
           .filter(Boolean)
-          .map((handle) => ({
-            handle,
-            url: `https://6529.io/${encodeURIComponent(handle)}`
-          })),
+          .map((handle) => ({ handle, url: profileUrl(handle) })),
         first_mint: mint.mint_date
           ? new Date(mint.mint_date).toISOString()
           : null,
@@ -205,6 +251,7 @@ export class NewsletterCollector {
         minted_count: Number(mint.minted_count)
       }))
     };
+    return { material, registry };
   }
 
   private async readWave(

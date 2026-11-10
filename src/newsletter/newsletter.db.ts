@@ -13,6 +13,8 @@ import {
   COMPETITION_DECISIONS_TABLE,
   COMPETITIONS_TABLE,
   COMPETITION_DECISION_WINNERS_TABLE,
+  NEWSLETTER_EDITION_SOURCES_TABLE,
+  NEWSLETTER_EDITIONS_TABLE,
   WAVES_TABLE
 } from '@/constants';
 import { DbPoolName } from '@/db-query.options';
@@ -22,6 +24,12 @@ import { waveReadAccessSql } from '@/waves/wave-read-access-sql';
 import { MAIN_STAGE_WAVE_ID, NewsletterWindow } from './newsletter.config';
 import { nativeMainStageEntriesSource } from '@/competitions/competition-main-stage.repository';
 import { publicCompetitionDropSql } from '@/competitions/competition-anonymity';
+import {
+  NewsletterEditionEntity,
+  NewsletterEditionSourceEntity,
+  NewsletterEditionStatus
+} from '@/entities/INewsletterEdition';
+import { SourceRecord } from './newsletter-sources';
 
 export interface NewsletterDrop {
   id: string;
@@ -84,10 +92,57 @@ const PUBLIC_WAVE = `${waveReadAccessSql('w', false)}
   and coalesce(w.is_direct_message, 0) = 0
   and not exists (select 1 from ${WAVES_TABLE} dm_parent
     where dm_parent.id = w.parent_wave_id and dm_parent.is_direct_message = 1)`;
-const PUBLIC_DROP = `${PUBLIC_WAVE}
+/**
+ * The one public filter for newsletter drops (aliases `d` for drops, `w` for
+ * waves). The public history endpoint re-applies it at read time.
+ */
+export const PUBLIC_DROP = `${PUBLIC_WAVE}
   and ${publicCompetitionDropSql('d')}
   and not exists (select 1 from ${CONTENT_MODERATION_DROP_STATES_TABLE} moderation
     where moderation.drop_id = d.id and moderation.status <> 'VISIBLE')`;
+
+export interface NewsletterEditionRecord {
+  readonly edition_id: string;
+  readonly status: NewsletterEditionStatus;
+  readonly window_start: number;
+  readonly window_end: number;
+  readonly mode: 'scheduled' | 'manual';
+  readonly drop_id: string | null;
+  readonly raw_output: string;
+  readonly rejection_reasons: readonly string[] | null;
+  readonly sources: readonly SourceRecord[];
+}
+
+type NewsletterEditionRow = Omit<
+  NewsletterEditionEntity,
+  'window_start' | 'window_end' | 'created_at' | 'updated_at'
+> & {
+  window_start: number | string;
+  window_end: number | string;
+  created_at: number | string;
+  updated_at: number | string;
+};
+
+export function editionSourceRows(
+  editionId: string,
+  sources: readonly SourceRecord[]
+): NewsletterEditionSourceEntity[] {
+  return sources.map((source) => ({
+    edition_id: editionId,
+    source_id: source.source_id,
+    kind: source.kind,
+    drop_id: source.drop_id,
+    wave_id: source.wave_id,
+    wave_name: source.wave_name,
+    time: Date.parse(source.time),
+    collected_at: Date.parse(source.observed_at),
+    canonical_url: source.canonical_url,
+    title: source.title,
+    author_handle: source.author_handle,
+    content_fingerprint: source.content_fingerprint,
+    context_only: source.context_only
+  }));
+}
 const DROP_SELECT = `select d.id, d.serial_no, d.wave_id, w.name as wave_name,
   d.author_id, i.handle as author_handle, d.created_at, d.title, d.reply_to_drop_id
   from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id
@@ -305,6 +360,104 @@ export class NewsletterDb extends LazyDbAccessCompatibleService {
       DbPoolName.WRITE
     );
     return rows[0]?.id ?? null;
+  }
+
+  /** Reads the edition row on the primary so a retry sees the latest outcome. */
+  async findEdition(
+    editionId: string,
+    ctx: RequestContext
+  ): Promise<NewsletterEditionRecord | null> {
+    const rows = await this.query<NewsletterEditionRow>(
+      'findEdition',
+      `select * from ${NEWSLETTER_EDITIONS_TABLE} where edition_id = :editionId`,
+      { editionId },
+      ctx,
+      DbPoolName.WRITE
+    );
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      edition_id: row.edition_id,
+      status: row.status,
+      window_start: Number(row.window_start),
+      window_end: Number(row.window_end),
+      mode: row.mode,
+      drop_id: row.drop_id,
+      raw_output: row.raw_output,
+      rejection_reasons: row.rejection_reasons
+        ? (JSON.parse(row.rejection_reasons) as string[])
+        : null,
+      sources: JSON.parse(row.sources) as SourceRecord[]
+    };
+  }
+
+  /**
+   * Upserts the edition outcome. Source rows exist only for published
+   * editions: a later retry of a rejected edition replaces the whole row set.
+   */
+  async saveEdition(
+    edition: NewsletterEditionRecord,
+    ctx: RequestContext
+  ): Promise<void> {
+    const now = Date.now();
+    await this.query(
+      'saveEdition',
+      `insert into ${NEWSLETTER_EDITIONS_TABLE}
+        (edition_id, status, window_start, window_end, mode, drop_id, raw_output,
+         rejection_reasons, sources, created_at, updated_at)
+        values (:editionId, :status, :windowStart, :windowEnd, :mode, :dropId, :rawOutput,
+         :rejectionReasons, :sources, :now, :now)
+        on duplicate key update status = values(status), drop_id = values(drop_id),
+          raw_output = values(raw_output), rejection_reasons = values(rejection_reasons),
+          sources = values(sources), updated_at = values(updated_at)`,
+      {
+        editionId: edition.edition_id,
+        status: edition.status,
+        windowStart: edition.window_start,
+        windowEnd: edition.window_end,
+        mode: edition.mode,
+        dropId: edition.drop_id,
+        rawOutput: edition.raw_output,
+        rejectionReasons: edition.rejection_reasons
+          ? JSON.stringify(edition.rejection_reasons)
+          : null,
+        sources: JSON.stringify(edition.sources),
+        now
+      },
+      ctx,
+      DbPoolName.WRITE
+    );
+    await this.query(
+      'deleteEditionSources',
+      `delete from ${NEWSLETTER_EDITION_SOURCES_TABLE} where edition_id = :editionId`,
+      { editionId: edition.edition_id },
+      ctx,
+      DbPoolName.WRITE
+    );
+    if (edition.status !== NewsletterEditionStatus.Published) return;
+    const rows = editionSourceRows(edition.edition_id, edition.sources);
+    for (let i = 0; i < rows.length; i += 500) {
+      await this.db.bulkInsert(
+        NEWSLETTER_EDITION_SOURCES_TABLE,
+        rows.slice(i, i + 500),
+        [
+          'edition_id',
+          'source_id',
+          'kind',
+          'drop_id',
+          'wave_id',
+          'wave_name',
+          'time',
+          'collected_at',
+          'canonical_url',
+          'title',
+          'author_handle',
+          'content_fingerprint',
+          'context_only'
+        ],
+        ctx
+      );
+    }
   }
 }
 

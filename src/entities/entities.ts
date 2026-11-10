@@ -315,3 +315,9 @@ export { IdentityTdhSyncStateEntity } from './IIdentityTdhSyncState';
 export { IdentityTdhSyncScopeEntity } from './IIdentityTdhSyncScope';
 
 export * from './ICompetitionScoreReset';
+
+export {
+  NewsletterEditionEntity,
+  NewsletterEditionSourceEntity,
+  NewsletterEditionStatus
+} from './INewsletterEdition';

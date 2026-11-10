@@ -362,3 +362,7 @@ export const IDENTITY_TDH_SYNC_SCOPE_TABLE = 'identity_tdh_sync_scope';
 export const COMPETITION_SCORE_RESETS_TABLE = 'competition_score_resets';
 export const COMPETITION_SCORE_RESET_STATE_TABLE =
   'competition_score_reset_state';
+
+/** Newsletter editions and their validated source records (see newsletter/). */
+export const NEWSLETTER_EDITIONS_TABLE = 'newsletter_editions';
+export const NEWSLETTER_EDITION_SOURCES_TABLE = 'newsletter_edition_sources';

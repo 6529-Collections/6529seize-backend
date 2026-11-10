@@ -4,7 +4,10 @@ import {
   newsletterWindow,
   readNewsletterConfig
 } from '@/newsletter/newsletter.config';
-import { publishNewsletter } from '@/newsletter/newsletter.service';
+import {
+  NewsletterResult,
+  publishNewsletter
+} from '@/newsletter/newsletter.service';
 import { doInDbContext } from '@/secrets';
 import * as sentryContext from '@/sentry.context';
 import { Timer } from '@/time';
@@ -13,7 +16,7 @@ const logger = Logger.get('NEWSLETTER_LOOP');
 
 export async function runNewsletter(
   event: unknown
-): Promise<{ status: string; dropId?: string }> {
+): Promise<NewsletterResult | { status: 'not-production' | 'not-configured' }> {
   // Capture the deployment stage before shared mutable secrets are loaded.
   if (process.env.NEWSLETTER_STAGE !== 'prod')
     return { status: 'not-production' };
