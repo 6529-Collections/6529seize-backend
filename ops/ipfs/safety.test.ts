@@ -56,7 +56,8 @@ describe('IPFS source, environment and production isolation', () => {
     ['production DNS', { originHost: 'ipfs-origin.6529.io' }],
     ['shared media alias', { gatewayHost: 'media.6529.io' }],
     ['shared buckets', { backupsBucket: 'fixture-blocks' }],
-    ['configuration credentials', { secretKey: 'must-not-be-accepted' }]
+    ['configuration credentials', { secretKey: 'must-not-be-accepted' }],
+    ['email without a public domain', { acmeEmail: 'a@b' }]
   ])('rejects %s before using AWS', (_name, changes) => {
     expect(
       python(
@@ -127,7 +128,7 @@ describe('IPFS infrastructure and state protections', () => {
   test('SSM failure is not converted into successful deployment', () => {
     expect(
       python(
-        `import control\ncontrol.time.sleep=lambda _:None\ndef aws(*args,**kwargs):\n if args[1]=='describe-instance-information':return {'InstanceInformationList':[{'PingStatus':'Online'}]}\n if args[1]=='send-command':return {'Command':{'CommandId':'fixture'}}\n return {'CommandInvocations':[{'Status':'Success','CommandPlugins':[{'ResponseCode':1}]}]}\ncontrol.aws=aws\ntry:\n control.command(config,'ignored')\nexcept ValueError:\n print('rejected')`
+        `import control\ncontrol.time.sleep=lambda _:None\ndef aws(*args,**kwargs):\n if args[1]=='describe-instance-information':return {'InstanceInformationList':[{'PingStatus':'Online'}]}\n if args[1]=='send-command':return {'Command':{'CommandId':'fixture'}}\n return {'CommandInvocations':[{'Status':'Success','CommandPlugins':[{'ResponseCode':1}]}]}\ncontrol.aws=aws\ntry:\n control.command(config,'ignored','verify')\nexcept ValueError:\n print('rejected')`
       )
     ).toBe('rejected');
   });
@@ -206,6 +207,85 @@ describe('IPFS infrastructure and state protections', () => {
 });
 
 describe('IPFS recovery and artifact integrity', () => {
+  test('incomplete restores cannot pass publication verification', () => {
+    expect(
+      python(
+        `import host,tempfile,pathlib\nwith tempfile.TemporaryDirectory() as temporary:\n host.SETTINGS=pathlib.Path(temporary);(host.SETTINGS/'restore-session.json').write_text(json.dumps({'status':'restoring'}))\n try:\n  host.verify({})\n except ValueError as error:\n  print(str(error))`
+      )
+    ).toBe('Candidate restore is incomplete');
+  });
+
+  test('restore retries reject conflicting MFS contents before changing pins', () => {
+    expect(
+      python(
+        `from host import restore_references\ndef rpc(operation,query,**kwargs):\n if operation=='ls':return {'Objects':[{'Links':[{'Name':'entry','Hash':'expected'}]}]}\n if operation=='files/ls':return {'Entries':[{'Name':'entry'}]}\n if operation=='files/stat':return {'Hash':'conflicting'}\n raise AssertionError('Conflicting candidate performed a mutation')\ntry:\n restore_references({'schema':1,'pins':{},'mfsRoot':'root'},rpc)\nexcept ValueError:\n print('rejected')`
+      )
+    ).toBe('rejected');
+  });
+
+  test('receipts survive trailing logs and expose only the operation fields', () => {
+    const result = python(
+      `from control import parse_receipt\nprint(json.dumps(parse_receipt('setup log\\n'+json.dumps(config)+'\\ntrailing warning','backup')))`,
+      {
+        protocol: '6529.ipfs.receipt.v1',
+        operation: 'backup',
+        result: {
+          backupKey: 'staging/fixture/metadata.tar.gz',
+          versionId: 'version',
+          pinCount: 3,
+          ignoredPrivateField: 'fixture-only'
+        }
+      }
+    );
+    expect(JSON.parse(result)).toEqual({
+      backupKey: 'staging/fixture/metadata.tar.gz',
+      versionId: 'version',
+      pinCount: 3
+    });
+  });
+
+  test.each([
+    'not a receipt',
+    JSON.stringify({
+      protocol: '6529.ipfs.receipt.v1',
+      operation: 'backup',
+      result: { pinCount: 3 }
+    }),
+    JSON.stringify({
+      protocol: '6529.ipfs.receipt.v1',
+      operation: 'verify',
+      result: {}
+    })
+  ])(
+    'never reports success with a missing or mismatched receipt: %s',
+    (output) => {
+      expect(
+        python(
+          `from control import parse_receipt\ntry:\n parse_receipt(config,'backup')\nexcept ValueError:\n print('rejected')`,
+          output
+        )
+      ).toBe('rejected');
+    }
+  );
+
+  test('hashing rejects a symlink that leaves the permitted artifact directory', () => {
+    expect(
+      python(
+        `import pathlib,tempfile\nfrom common import digest\nwith tempfile.TemporaryDirectory() as temporary:\n root=pathlib.Path(temporary);allowed=root/'allowed';allowed.mkdir();outside=root/'outside';outside.write_text('fixture');link=allowed/'bundle';link.symlink_to(outside)\n try:\n  digest(link,allowed)\n except ValueError:\n  print('rejected')`
+      )
+    ).toBe('rejected');
+  });
+
+  test.each([
+    {},
+    { Objects: [] },
+    { Objects: [{}] },
+    { Objects: [{ Links: 'invalid' }] }
+  ])('rejects malformed MFS listings cleanly: %j', (listing) => {
+    const source = `from host import restore_references\ndef rpc(operation,*args,**kwargs):\n if operation=='ls':return config\n raise AssertionError('Malformed backup performed a mutation')\ntry:\n restore_references({'schema':1,'pins':{},'mfsRoot':'root'},rpc)\nexcept ValueError:\n print('rejected')`;
+    expect(python(source, listing)).toBe('rejected');
+  });
+
   test.each(['../escape', '/absolute', 'nested/../../escape'])(
     'rejects archive path %s before extracting any file',
     (name) => {
@@ -228,16 +308,16 @@ describe('IPFS recovery and artifact integrity', () => {
   test('restores direct and recursive pins and MFS entries named restored', () => {
     const calls = JSON.parse(
       python(
-        `from host import restore_references\ncalls=[]\ndef rpc(operation,query,**kwargs):\n calls.append([operation,query])\n if operation=='ls':return {'Objects':[{'Links':[{'Name':'restored'},{'Name':'nested'}]}]}\n if operation=='files/stat':return {'Hash':'root'}\nrestore_references({'schema':1,'pins':{'recursive':'recursive','direct':'direct'},'mfsRoot':'root'},rpc)\nprint(json.dumps(calls))`
+        `from host import restore_references\ncalls=[]\ndef rpc(operation,query,**kwargs):\n calls.append([operation,query])\n if operation=='pin/ls':return {'Keys':{}}\n if operation=='files/ls':return {'Entries':[]}\n if operation=='ls':return {'Objects':[{'Links':[{'Name':'restored','Hash':'child-r'},{'Name':'nested','Hash':'child-n'}]}]}\n if operation=='files/stat':return {'Hash':'root'}\nrestore_references({'schema':1,'pins':{'recursive':'recursive','direct':'direct'},'mfsRoot':'root'},rpc)\nprint(json.dumps(calls))`
       )
     );
     expect(calls).toContainEqual([
       'pin/add',
-      { arg: 'direct', recursive: 'false' }
+      { arg: 'direct', recursive: 'false', name: '' }
     ]);
     expect(calls).toContainEqual([
       'pin/add',
-      { arg: 'recursive', recursive: 'true' }
+      { arg: 'recursive', recursive: 'true', name: '' }
     ]);
     expect(calls).toContainEqual([
       'files/cp',
@@ -248,7 +328,7 @@ describe('IPFS recovery and artifact integrity', () => {
   test('fails recovery on an incorrect MFS root', () => {
     expect(
       python(
-        `from host import restore_references\ndef rpc(operation,query,**kwargs):\n if operation=='ls':return {'Objects':[{'Links':[]}]}\n if operation=='files/stat':return {'Hash':'wrong'}\ntry:\n restore_references({'schema':1,'pins':{},'mfsRoot':'expected'},rpc)\nexcept ValueError:\n print('rejected')`
+        `from host import restore_references\ndef rpc(operation,query,**kwargs):\n if operation=='pin/ls':return {'Keys':{}}\n if operation=='files/ls':return {'Entries':[]}\n if operation=='ls':return {'Objects':[{'Links':[]}]}\n if operation=='files/stat':return {'Hash':'wrong'}\ntry:\n restore_references({'schema':1,'pins':{},'mfsRoot':'expected'},rpc)\nexcept ValueError:\n print('rejected')`
       )
     ).toBe('rejected');
   });

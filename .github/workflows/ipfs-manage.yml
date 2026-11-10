@@ -47,6 +47,11 @@ concurrency:
 
 jobs:
   manage:
+    if: >-
+      github.repository == '6529-Collections/6529seize-backend' &&
+      github.sha == inputs.expected_source_sha &&
+      ((inputs.environment == 'staging' && github.ref == 'refs/heads/1a-staging') ||
+       (inputs.environment == 'prod' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
     environment: ipfs-${{ inputs.environment }}
     timeout-minutes: 180
@@ -73,23 +78,20 @@ jobs:
           python3 - <<'PY'
           import json,os,sys
           sys.path.insert(0,'ops/ipfs')
-          from common import mutation_guard,require,validate_config
+          from common import mutation_guard,require,source_guard,validate_config
           config=validate_config(json.loads(os.environ['IPFS_CONFIG']))
           require(config['environment']==os.environ['IPFS_ENVIRONMENT'],'Environment mismatch')
+          source_guard(config,os.environ['IPFS_SOURCE_SHA'],os.environ)
           # Even an offline production plan uses the reviewed branch/commit.
           # Production mutations remain disabled in environments/prod.json.
           if os.environ['IPFS_OPERATION']!='plan':
               mutation_guard(config,os.environ['IPFS_SOURCE_SHA'],os.environ)
-          else:
-              branch='main' if config['environment']=='prod' else '1a-staging'
-              require(os.environ['GITHUB_REF']=='refs/heads/'+branch,'Wrong environment branch')
-              require(os.environ['GITHUB_SHA']==os.environ['IPFS_SOURCE_SHA'],'Source SHA mismatch')
           PY
       - name: Render an offline plan
         if: inputs.operation == 'plan'
         run: |
           python3 ops/ipfs/control.py plan --environment "$IPFS_ENVIRONMENT" \
-            --kind "$IPFS_KIND" --slot "$IPFS_SLOT" --parameters "$IPFS_PARAMETERS"
+            --sha "$IPFS_SOURCE_SHA" --kind "$IPFS_KIND" --slot "$IPFS_SLOT" --parameters "$IPFS_PARAMETERS"
       - name: Build the pinned release
         if: inputs.operation == 'deploy'
         env:
@@ -117,6 +119,7 @@ jobs:
         run: |
           arguments=()
           if [[ "$IPFS_OPERATION" == deploy ]]; then
+            [[ -f "$RUNNER_TEMP/ipfs-bundle.tar.gz" ]]
             bundle_sha="$(sha256sum "$RUNNER_TEMP/ipfs-bundle.tar.gz" | cut -d' ' -f1)"
             arguments+=(--bundle "$RUNNER_TEMP/ipfs-bundle.tar.gz" --bundle-sha256 "$bundle_sha")
           fi

@@ -12,7 +12,7 @@ if subprocess.run(['systemctl','is-active','ipfs'],capture_output=True).returnco
     raise SystemExit('Daemon already active; use verify or a fresh candidate. No restart performed.')
 PY
 release_dir="/opt/6529-ipfs/releases/$IPFS_SOURCE_SHA"
-test ! -e "$release_dir"
+[[ ! -e "$release_dir" ]]
 install -d -m 700 "$release_dir"
 trap 'rm -f "$release_dir/bundle.tar.gz"' EXIT
 aws s3api get-object --region "$IPFS_REGION" --bucket "$IPFS_ARTIFACT_BUCKET" --key "$IPFS_ARTIFACT_KEY" \
@@ -23,10 +23,11 @@ root=pathlib.Path(__import__('sys').argv[1]);archive=root/'bundle.tar.gz'
 if hashlib.sha256(archive.read_bytes()).hexdigest()!=os.environ['IPFS_BUNDLE_SHA256']:
     raise SystemExit('Bundle integrity check failed')
 with tarfile.open(archive,'r:gz') as source:
-    entries=source.getmembers()
-    if sum(x.size for x in entries)>600*1024*1024:
-        raise SystemExit('Bundle too large')
-    for entry in entries:
+    entries=[];total=0
+    for entry in source:
+        entries.append(entry);total+=entry.size
+        if len(entries)>1024 or total>600*1024*1024:
+            raise SystemExit('Bundle too large')
         if not (entry.isfile() or entry.isdir()) or entry.name.startswith('/') or not (root/entry.name).resolve().is_relative_to(root):
             raise SystemExit('Unsafe bundle entry')
     source.extractall(root,members=entries,filter='data')

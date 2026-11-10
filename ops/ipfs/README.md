@@ -35,13 +35,25 @@ deletion. Automatic garbage collection is never enabled. Retention protects data
 it is not a substitute for recovery drills or an independent disaster-recovery
 copy of the S3 block store.
 
-Backups collect a stable pin inventory and MFS root through RPC, pin that root,
+Backups flush MFS, collect a stable pin inventory and MFS root through RPC, pin that root,
 and upload a checksummed private archive with node identity to versioned backup
 storage. They never copy an open LevelDB or publish private configuration as a
 GitHub artifact. Node identity is sensitive; only the host role and authorized
 recovery operators should be able to read backup objects. The role cannot delete
-backups or object versions. Retention and backup-MFS pins deliberately grow until
-a separately reviewed retention/GC policy is introduced.
+backups or object versions. The archive includes the retained root pin and pin
+names; restoration checks the exact recorded direct/recursive pin set. Retention
+and backup-MFS pins deliberately grow until a separately reviewed retention/GC
+policy is introduced. Root-private `backup-attempts/` records are written before
+pinning and updated after upload. A pending record after failure/termination
+identifies the root and attempted object key for reconciliation. Do not blindly
+unpin it: another writer may have independently pinned the same immutable root.
+
+These are observed reference snapshots, not a write-fenced transaction across
+concurrent pin and MFS changes. Uploads continue during capture. Included immutable
+roots are independently recoverable from retained storage, but a backup is not a
+cutover boundary for all writes completed afterward. Production migration still
+requires the separately validated writer fence and final state-transfer protocol
+described below.
 
 A logical backup **references content in its recorded block bucket**; it does not
 duplicate the content. Restore re-pins the recorded direct/recursive pins and
@@ -52,9 +64,16 @@ missing blocks cause verification to fail instead of claiming successful recover
 The saved identity is retained for disaster recovery but not installed by the
 candidate workflow, avoiding two live nodes with one identity.
 
-Restoration requires an empty isolated candidate and matching content storage
-and pinned runtime. A failed restore leaves that candidate unpublished; discard
-it and create a fresh one. The original server and backups remain available.
+Restoration starts on an empty isolated candidate and matching content storage
+and pinned runtime. Kubo's bootstrap empty-directory pin is allowed, and its
+content is materialized in S3 before use. A durable root-private restore journal
+binds retries to one backup key, object version, checksum, and candidate identity.
+Retries skip verified existing pins and MFS entries and resume incomplete copies;
+conflicting entries, foreign pins, or a different backup/identity are rejected.
+An incomplete restore cannot pass verification or be published. A successful
+restore can be repeated against the same unchanged candidate. If conflicting
+state needs to be replaced, create a fresh candidate; no restore path erases it.
+The original server and backups remain available throughout.
 Rollback of a published replacement means returning traffic to the prior server
 after reconciling writes; it does not mean downgrading a migrated repository with
 an older executable.
@@ -66,7 +85,8 @@ an older executable.
 ./bin/6529 exec jest --config ops/ipfs/jest.config.cjs
 python3 ops/ipfs/control.py validate
 python3 ops/ipfs/infrastructure.py compute > /tmp/ipfs-compute.json
-bash -n ops/ipfs/build-kubo.sh ops/ipfs/bootstrap.sh
+bash -n ops/ipfs/build-kubo.sh
+bash -n ops/ipfs/bootstrap.sh
 ```
 
 `ipfs-ci.yml` builds on Ubuntu 24.04 amd64 and rehearses the **exact resulting
@@ -76,6 +96,10 @@ restoration and its restart, nginx TLS, upload, range/HEAD, and restricted route
 It never assumes AWS credentials or contacts live gateways. The fixture is not a
 substitute for AWS IAM, EC2 reboot, Certbot, CloudFront, production-load, or online
 P2P testing. Those require a later authorized staging release.
+
+The rehearsal also injects an interruption after one MFS subtree has been copied,
+then retries and repeats the completed restore. Every explicit fixture pin's root
+block is retrieved, including the bootstrap directory and retained backup root.
 
 ## One-time staging bootstrap
 
@@ -176,6 +200,32 @@ them. Deployment and restore refuse active hosts; backups and verification can
 continue. Runtime changes use new candidates, not a restart of the serving node.
 Re-running installation on a partially initialized candidate is intentionally
 rejected; replace the candidate rather than guessing which state is safe to erase.
+
+SSM success must include a valid versioned operation receipt. A missing backup
+key/version, incomplete verification result, or malformed receipt fails the run
+even when SSM reports Success. Trailing log messages do not hide the receipt;
+only the operation's approved public fields are returned to GitHub.
+
+### Interrupted controllers and certificate issuance
+
+A controller timeout does not mean AWS or an SSM command rolled back. Inspect the
+recorded command ID and CloudFormation stack events/status before retrying. Wait
+for any in-progress stack operation to reach a terminal state; do not cancel
+another operator's work or delete a retained volume/bucket to unblock it. Use the
+stack outputs and read-only diagnostics to reconcile completed work. A failed
+restore can resume with the same key/version and journal; a different backup
+requires a fresh candidate. Failed infrastructure creation or installation uses
+a new immutable slot, with retained resources inventoried before later cleanup.
+
+The native rehearsal uses self-signed loopback TLS and consumes no ACME quota.
+For repeated AWS DNS/ACME troubleshooting, first use Let's Encrypt's staging
+service (`certbot --staging`) on disposable dedicated hostnames. Those certificates
+are not publicly trusted and must not be published behind CloudFront. Normal
+installation requests a publicly trusted certificate and stops on issuance
+failure; it does not repeatedly retry ACME. Recreating candidates can hit both
+duplicate-identifier and registered-domain limits. Inspect the restricted Certbot
+diagnostics and honor the CA's retry time before another real issuance attempt.
+See [Let's Encrypt rate limits](https://letsencrypt.org/docs/rate-limits/).
 
 ## Production adoption and traffic handover
 

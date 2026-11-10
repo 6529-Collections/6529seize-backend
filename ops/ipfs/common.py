@@ -1,15 +1,18 @@
 """Validation shared by offline tooling, the controller, and the managed host."""
 import hashlib
 import json
+import os
 import re
 import subprocess
 import tarfile
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PROD_BUCKET = "6529ipfs"
 PROD_INSTANCE = "i-0012c6236ad1292e8"
 PROD_HOSTS = {"ipfs.6529.io", "ipfs-origin.6529.io", "api-ipfs.6529.io", "ipfs-cache.6529.io", "media.6529.io"}
+RECEIPT_PROTOCOL = "6529.ipfs.receipt.v1"
 
 
 def require(condition, message):
@@ -21,12 +24,54 @@ def matches(pattern, value):
     return isinstance(value, str) and re.fullmatch(pattern, value) is not None
 
 
-def digest(path):
+def valid_hostname(value):
+    if not isinstance(value, str) or len(value) > 253:
+        return False
+    labels = value.split(".")
+    return len(labels) >= 2 and len(labels[-1]) >= 2 and any(c.isalpha() for c in labels[-1]) and all(
+        matches(r"[a-z0-9-]{1,63}", label) and not label.startswith("-") and not label.endswith("-")
+        for label in labels)
+
+
+def valid_email(value):
+    if not isinstance(value, str) or len(value) > 254 or value.count("@") != 1:
+        return False
+    local, domain = value.split("@")
+    return matches(r"[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}", local) and valid_hostname(domain.lower())
+
+
+def digest(path, directory):
+    resolved = Path(path).resolve()
+    base = Path(directory).resolve()
+    if not resolved.is_relative_to(base) or not resolved.is_file():
+        raise ValueError("Hash input must be a regular file under its permitted directory")
     result = hashlib.sha256()
-    with Path(path).open("rb") as source:
+    with resolved.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             result.update(chunk)
     return result.hexdigest()
+
+
+def write_private(path, value):
+    path = Path(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            os.fchmod(handle.fileno(), 0o600)
+            json.dump(value, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
 
 
 def extract(archive, destination, limit=600 * 1024 * 1024):
@@ -56,6 +101,7 @@ def aws(*args, timeout=180):
 
 
 def validate_config(config):
+    require(isinstance(config, dict), "Deployment config must be a JSON object")
     allowed = {"environment", "accountId", "region", "blocksBucket", "backupsBucket", "artifactsBucket",
                "originHost", "apiHost", "gatewayHost", "hostedZoneId", "acmeEmail", "instanceId"}
     require(not set(config).difference(allowed), "Unknown config field; credentials do not belong in deployment config")
@@ -67,11 +113,11 @@ def validate_config(config):
     require(len({config[k] for k in ("blocksBucket", "backupsBucket", "artifactsBucket")}) == 3,
             "Block, backup and artifact buckets must be separate")
     for key in ("originHost", "apiHost", "gatewayHost"):
-        require(matches(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}", config.get(key)), "Invalid " + key)
+        require(valid_hostname(config.get(key)), "Invalid " + key)
         require(config[key] not in PROD_HOSTS, "New stacks must use dedicated candidate hostnames")
     require(len({config[k] for k in ("originHost", "apiHost", "gatewayHost")}) == 3, "Hostnames must be distinct")
     require(matches(r"Z[A-Z0-9]+", config.get("hostedZoneId")), "Invalid hostedZoneId")
-    require(matches(r"[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9.-]+", config.get("acmeEmail")), "Invalid acmeEmail")
+    require(valid_email(config.get("acmeEmail")), "Invalid acmeEmail")
     if "instanceId" in config:
         require(matches(r"i-[a-f0-9]{17}", config["instanceId"]), "Invalid instanceId")
         require(config["instanceId"] != PROD_INSTANCE, "The existing production instance is not managed by this tooling")
@@ -84,14 +130,18 @@ def environment_policy(environment):
     return json.loads((ROOT / "environments" / (environment + ".json")).read_text())
 
 
-def mutation_guard(config, sha, environ):
+def source_guard(config, sha, environ):
     validate_config(config)
-    policy = environment_policy(config["environment"])
-    require(policy["changesEnabled"], "Production changes are disabled in the checked-in environment policy")
     require(matches(r"[a-f0-9]{40}", sha), "A full reviewed source SHA is required")
     branch = "main" if config["environment"] == "prod" else "1a-staging"
     require(environ.get("GITHUB_ACTIONS") == "true", "Mutations run only through GitHub Actions")
     require(environ.get("GITHUB_REPOSITORY") == "6529-Collections/6529seize-backend", "Unexpected repository")
     require(environ.get("GITHUB_REF") == "refs/heads/" + branch, "Wrong environment branch")
     require(environ.get("GITHUB_SHA") == sha, "Dispatch SHA does not match reviewed source SHA")
+
+
+def mutation_guard(config, sha, environ):
+    source_guard(config, sha, environ)
+    policy = environment_policy(config["environment"])
+    require(policy["changesEnabled"], "Production changes are disabled in the checked-in environment policy")
     return policy

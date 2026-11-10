@@ -33,7 +33,8 @@ jobs:
       - name: Validate offline templates and shell syntax
         run: |
           python3 ops/ipfs/control.py validate
-          bash -n ops/ipfs/build-kubo.sh ops/ipfs/bootstrap.sh
+          bash -n ops/ipfs/build-kubo.sh
+          bash -n ops/ipfs/bootstrap.sh
           PYTHONPYCACHEPREFIX="$RUNNER_TEMP/ipfs-pycache" python3 -m compileall -q ops/ipfs
       - name: Validate CloudFormation against AWS resource schemas
         run: |
@@ -45,6 +46,7 @@ jobs:
           "$RUNNER_TEMP/ipfs-cfn-tools/bin/cfn-lint" "$RUNNER_TEMP"/ipfs-{access,storage,compute,edge}.json
   rehearsal:
     name: IPFS pinned build and isolated restore rehearsal
+    needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:

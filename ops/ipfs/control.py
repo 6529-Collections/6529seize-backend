@@ -6,9 +6,10 @@ import os
 import shlex
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
-from common import ROOT, aws, digest, matches, mutation_guard, require, validate_config
+from common import ROOT, RECEIPT_PROTOCOL, aws, digest, matches, mutation_guard, require, source_guard, validate_config
 from infrastructure import render
 
 
@@ -35,6 +36,7 @@ def stack_name(config, kind, slot):
 
 
 def stack_parameters(config, kind, supplied):
+    require(isinstance(supplied, dict), "Infrastructure parameters must be a JSON object")
     definitions = render(kind)["Parameters"]
     values = {"Environment": config["environment"]}
     mapped = {"BlocksBucket": "blocksBucket", "BackupsBucket": "backupsBucket", "ArtifactsBucket": "artifactsBucket",
@@ -64,6 +66,8 @@ def wait_change_set(config, change_id):
         if result["Status"] == "CREATE_COMPLETE":
             return result
         if result["Status"] == "FAILED":
+            # Empty Changes can also accompany authorization/template errors;
+            # only recognized empty-update failures are successful no-ops.
             reason = result.get("StatusReason", "")
             if "didn't contain changes" in reason or "No updates are to be performed" in reason:
                 return None
@@ -82,6 +86,7 @@ def plan(config, args):
 def apply(config, args):
     document = plan(config, args)
     name = document["stackName"]
+    # AWS CLI automatically paginates list-stacks when --no-paginate is absent.
     # Describe the full stack list instead of treating an AccessDenied/error as
     # a nonexistent stack. Never fall back from failed reads to CREATE.
     existing = aws("cloudformation", "list-stacks", "--region", config["region"])["StackSummaries"]
@@ -91,14 +96,14 @@ def apply(config, args):
         instance = candidate(config, allow_active=True)
         public_ip = next(item["ParameterValue"] for item in document["parameters"] if item["ParameterKey"] == "PublicIp")
         require(public_ip == instance.get("PublicIpAddress"), "Edge must point to the verified candidate")
-        command(config, "python3 /opt/6529-ipfs/current/host.py verify")
+        command(config, "python3 /opt/6529-ipfs/current/host.py verify", "verify")
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "template.json"
         path.write_text(json.dumps(document["template"]))
         run_id = os.environ.get("GITHUB_RUN_ID", "")
         attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
         require(matches(r"[0-9]+", run_id) and matches(r"[0-9]+", attempt), "Missing Actions run identity")
-        change_name = "seize-ipfs-" + config["environment"] + "-" + args.sha + "-" + run_id + "-" + attempt
+        change_name = "seize-ipfs-" + config["environment"] + "-" + args.sha + "-" + run_id + "-" + attempt + "-" + uuid.uuid4().hex[:8]
         change_set = aws("cloudformation", "create-change-set", "--region", config["region"],
                          "--stack-name", name, "--change-set-name", change_name,
                          "--change-set-type", "UPDATE" if found else "CREATE",
@@ -114,7 +119,7 @@ def apply(config, args):
     if args.kind == "edge":
         # Seal the candidate before DNS can publish it. Even a failed edge
         # deployment cannot subsequently restore over a potentially live host.
-        command(config, "python3 /opt/6529-ipfs/current/host.py seal")
+        command(config, "python3 /opt/6529-ipfs/current/host.py seal", "seal")
         aws("ec2", "create-tags", "--region", config["region"], "--resources", config["instanceId"],
             "--tags", "Key=IpfsRole,Value=active")
     aws("cloudformation", "execute-change-set", "--region", config["region"], "--change-set-name", change_id)
@@ -126,22 +131,20 @@ def apply(config, args):
     return {"stackName": name, "outputs": result["Stacks"][0].get("Outputs", [])}
 
 
-def command(config, commands):
+def wait_ssm_online(config):
     deadline = time.monotonic() + 600
     while time.monotonic() < deadline:
         nodes = aws("ssm", "describe-instance-information", "--region", config["region"],
                     "--filters", json.dumps([{"Key": "InstanceIds", "Values": [config["instanceId"]]}]))["InstanceInformationList"]
         if len(nodes) == 1 and nodes[0]["PingStatus"] == "Online":
-            break
+            return
         time.sleep(10)
-    else:
-        raise TimeoutError("Candidate SSM Agent did not become ready")
-    result = aws("ssm", "send-command", "--region", config["region"], "--instance-ids", config["instanceId"],
-                 "--document-name", "AWS-RunShellScript", "--parameters",
-                 json.dumps({"commands": ["set -eu\numask 077\n" + commands], "executionTimeout": ["7200"]}),
-                 "--comment", "6529 IPFS candidate management")
-    command_id = result["Command"]["CommandId"]
+    raise TimeoutError("Candidate SSM Agent did not become ready")
+
+
+def wait_command(config, command_id):
     deadline = time.monotonic() + 7300
+    pending_details = 0
     while time.monotonic() < deadline:
         time.sleep(10)
         # list-command-invocations is safe before eventual-consistency delivery;
@@ -150,30 +153,78 @@ def command(config, commands):
                    "--command-id", command_id, "--details")["CommandInvocations"]
         if not rows:
             continue
+        require(len(rows) == 1, "Expected exactly one SSM target")
         status = rows[0]["Status"]
         if status in ("Pending", "InProgress", "Delayed", "Cancelling"):
             continue
         require(status == "Success", "SSM operation failed; command ID " + command_id + "; inspect restricted logs")
         plugins = rows[0].get("CommandPlugins", [])
+        if not plugins:
+            pending_details += 1
+            require(pending_details <= 3, "SSM plugin details did not become available")
+            continue
         require(len(plugins) == 1 and plugins[0].get("ResponseCode") == 0,
                 "SSM plugin failed; inspect restricted command logs")
-        result = {"commandId": command_id, "status": status}
-        try:
-            receipt = json.loads(plugins[0].get("Output", "").splitlines()[-1])
-        except (ValueError, IndexError):
-            receipt = {}
-        for key in ("backupKey", "versionId", "pinCount", "version", "uploadPinRead", "restoredPins", "mfsVerified", "independentIdentity", "role"):
-            if key in receipt:
-                result[key] = receipt[key]
-        return result
+        return plugins[0].get("Output", "")
     raise TimeoutError("SSM command still pending: " + command_id)
+
+
+def valid_receipt_field(key, value):
+    if key in ("pinCount", "restoredPins"):
+        return type(value) is int and value >= 0
+    if key in ("uploadPinRead", "mfsVerified", "independentIdentity"):
+        return value is True
+    if key == "role":
+        return value == "active"
+    return isinstance(value, str) and bool(value)
+
+
+def parse_receipt(output, operation):
+    verification_fields = ("version", "pinCount", "uploadPinRead")
+    fields = {
+        "install": verification_fields,
+        "verify": verification_fields,
+        "backup": ("backupKey", "versionId", "pinCount"),
+        "restore": ("restoredPins", "mfsVerified", "independentIdentity"),
+        "seal": ("role",),
+    }[operation]
+    for line in reversed(output.splitlines()):
+        try:
+            envelope = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(envelope, dict) or envelope.get("protocol") != RECEIPT_PROTOCOL:
+            continue
+        require(envelope.get("operation") == operation, "SSM receipt operation mismatch")
+        receipt = envelope.get("result")
+        require(isinstance(receipt, dict), "Missing SSM operation receipt")
+        require(all(key in receipt and valid_receipt_field(key, receipt[key]) for key in fields),
+                "Missing or invalid required SSM receipt fields; inspect restricted command logs")
+        return {key: receipt[key] for key in fields}
+    raise ValueError("No valid SSM operation receipt; inspect restricted command logs")
+
+
+def command(config, commands, operation):
+    wait_ssm_online(config)
+    result = aws("ssm", "send-command", "--region", config["region"], "--instance-ids", config["instanceId"],
+                 "--document-name", "AWS-RunShellScript", "--parameters",
+                 json.dumps({"commands": ["set -eu\numask 077\n" + commands], "executionTimeout": ["7200"]}),
+                 "--comment", "6529 IPFS candidate management")
+    command_id = result["Command"]["CommandId"]
+    try:
+        receipt = parse_receipt(wait_command(config, command_id), operation)
+    except ValueError as error:
+        raise ValueError(str(error) + "; command ID " + command_id) from None
+    return {"commandId": command_id, "status": "Success", **receipt}
 
 
 def host_operation(config, args):
     candidate(config, allow_active=args.operation in ("backup", "verify"))
     if args.operation == "deploy":
         require(args.bundle and matches(r"[a-f0-9]{64}", args.bundle_sha256), "A verified bundle is required")
-        require(digest(args.bundle) == args.bundle_sha256, "Bundle checksum mismatch")
+        artifact_directory = Path(os.environ["RUNNER_TEMP"]).resolve()
+        require(Path(args.bundle).resolve() == artifact_directory / "ipfs-bundle.tar.gz", "Bundle must be the runner's prepared release archive")
+        require(digest(args.bundle, artifact_directory) == args.bundle_sha256, "Bundle checksum mismatch")
         key = config["environment"] + "/" + args.sha + "/bundle-" + args.bundle_sha256 + ".tar.gz"
         result = aws("s3api", "put-object", "--region", config["region"], "--bucket", config["artifactsBucket"],
                      "--key", key, "--body", str(Path(args.bundle).resolve()), "--server-side-encryption", "AES256")
@@ -189,7 +240,7 @@ def host_operation(config, args):
             "IPFS_REGION": config["region"],
         }
         script = "cloud-init status --wait\n" + "\n".join("export " + key + "=" + shlex.quote(value) for key, value in variables.items()) + "\n" + bootstrap
-        return command(config, script)
+        return command(config, script, "install")
     backup = args.backup_key or ""
     require(not backup or (backup.startswith(config["environment"] + "/") and
                            matches(r"[a-zA-Z0-9/_.-]+", backup) and ".." not in backup), "Invalid backup key")
@@ -200,7 +251,7 @@ def host_operation(config, args):
     if args.operation == "restore":
         require(matches(r"[a-zA-Z0-9+/=_.-]+", args.backup_version), "Restore requires the exact recorded backup version")
         script += " --backup-version " + shlex.quote(args.backup_version)
-    return command(config, script)
+    return command(config, script, args.operation)
 
 
 def main():
@@ -225,6 +276,8 @@ def main():
     config = validate_config(json.loads(args.config.read_text()) if args.config else json.loads(os.environ["IPFS_CONFIG"]))
     require(config["environment"] == args.environment, "Environment selection mismatch")
     if args.operation == "plan":
+        if args.sha or os.environ.get("GITHUB_ACTIONS") == "true":
+            source_guard(config, args.sha, os.environ)
         print(json.dumps(plan(config, args), indent=2))
         return
     mutation_guard(config, args.sha, os.environ)

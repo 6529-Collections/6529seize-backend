@@ -4,10 +4,13 @@ set -euo pipefail
 ipfs_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ipfs_build="$(mktemp -d)"
 trap 'rm -rf "$ipfs_build"' EXIT
-test "$(uname -s)" = Linux
-test "$(uname -m)" = x86_64
-test "${IPFS_SOURCE_SHA:-}" = "$(git -C "$ipfs_root" rev-parse HEAD)"
-read_version() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$ipfs_root/versions.json" "$1"; }
+[[ "$(uname -s)" = Linux ]]
+[[ "$(uname -m)" = x86_64 ]]
+[[ "${IPFS_SOURCE_SHA:-}" = "$(git -C "$ipfs_root" rev-parse HEAD)" ]]
+read_version() {
+  local version_key="$1"
+  python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$ipfs_root/versions.json" "$version_key"
+}
 go_version="$(read_version goVersion)"
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
   "https://go.dev/dl/go$go_version.linux-amd64.tar.gz" -o "$ipfs_build/go.tar.gz"
@@ -20,7 +23,7 @@ git init -q "$ipfs_build/kubo"
 git -C "$ipfs_build/kubo" remote add origin https://github.com/ipfs/kubo.git
 git -C "$ipfs_build/kubo" fetch --depth=1 origin "$(read_version kuboCommit)"
 git -C "$ipfs_build/kubo" checkout --detach FETCH_HEAD
-test "$(git -C "$ipfs_build/kubo" rev-parse HEAD)" = "$(read_version kuboCommit)"
+[[ "$(git -C "$ipfs_build/kubo" rev-parse HEAD)" = "$(read_version kuboCommit)" ]]
 pushd "$ipfs_build/kubo" >/dev/null
 go get "github.com/ipfs/go-ds-s3@$(read_version s3Commit)"
 printf '\ns3ds github.com/ipfs/go-ds-s3/plugin *\n' >> plugin/loader/preload_list
@@ -29,7 +32,7 @@ go fmt ./plugin/loader
 make mod_tidy
 go mod verify
 make build
-test "$(./cmd/ipfs/ipfs version --number)" = "$(read_version kuboVersion)"
+[[ "$(./cmd/ipfs/ipfs version --number)" = "$(read_version kuboVersion)" ]]
 popd >/dev/null
 destination="${IPFS_BUILD_OUTPUT:?IPFS_BUILD_OUTPUT is required}"
 mkdir -p "$destination"

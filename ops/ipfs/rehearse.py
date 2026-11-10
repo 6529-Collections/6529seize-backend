@@ -27,11 +27,20 @@ import host
 from common import require
 
 
+API_PATH = '/api/v0/'
+LOOPBACK_HTTP = 'http://127.0.0.1:'
+API_HOST = 'api.fixture'
+ORIGIN_HOST = 'origin.fixture'
+IPFS_PREFIX = '/ipfs/'
+PAYLOAD_FILENAME = 'payload.bin'
+FILE_STAT = 'files/stat'
+
 class S3(http.server.BaseHTTPRequestHandler):
     objects = {}
     lock = threading.Lock()
 
     def log_message(self, *_args):
+        # The disposable fixture does not log HTTP headers or payloads.
         pass
 
     def send(self, status, content=b"", head=False, kind="application/octet-stream"):
@@ -56,7 +65,7 @@ class S3(http.server.BaseHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(url.query)
         if "list-type" in query:
-            root = ET.Element("ListBucketResult", xmlns="http://s3.amazonaws.com/doc/2006-03-01/")
+            root = ET.Element("ListBucketResult", xmlns="http://s3.amazonaws.com/doc/2006-03-01/")  # NOSONAR: S3 XML namespace identifier, never a network request.
             ET.SubElement(root, "Name").text = "fixture-blocks"
             ET.SubElement(root, "IsTruncated").text = "false"
             prefix = query.get("prefix", [""])[0]
@@ -120,6 +129,9 @@ class Daemon:
         self.process = None
         try:
             self.start()
+            self.rpc("files/flush", {"arg": "/"})
+            initial_root = self.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"]
+            require(self.rpc("block/get", {"arg": initial_root}, raw=True), "Bootstrap pin content is missing")
         except Exception:
             self.stop()
             self.log.close()
@@ -140,12 +152,14 @@ class Daemon:
         raise TimeoutError("Fixture daemon did not start")
 
     def rpc(self, operation, query=None, raw=False, timeout=120):
-        url = "http://127.0.0.1:" + str(self.api_port) + "/api/v0/" + operation
+        url = LOOPBACK_HTTP + str(self.api_port) + API_PATH + operation
         if query:
             url += "?" + urllib.parse.urlencode(query, doseq=True)
         with urllib.request.urlopen(urllib.request.Request(url, data=b"", method="POST"), timeout=timeout) as response:
             data = response.read()
-        return data if raw else (json.loads(data) if data else {})
+        if raw:
+            return data
+        return json.loads(data) if data else {}
 
     def cli(self, *args):
         return subprocess.check_output([str(self.binary), *args], env=self.environment, timeout=120).decode().strip()
@@ -172,7 +186,7 @@ def https_rehearsal(bundle, work, daemon, payload, cid):
         "/etc/letsencrypt/live/6529-ipfs/fullchain.pem": str(certificate),
         "/etc/letsencrypt/live/6529-ipfs/privkey.pem": str(key),
         "listen 443": "listen 127.0.0.1:" + str(tls_port),
-        "@ORIGIN_HOST@": "origin.fixture", "@API_HOST@": "api.fixture",
+        "@ORIGIN_HOST@": ORIGIN_HOST, "@API_HOST@": API_HOST,
         "127.0.0.1:5001": "127.0.0.1:" + str(daemon.api_port),
         "127.0.0.1:8080": "127.0.0.1:" + str(daemon.gateway_port),
     }
@@ -200,14 +214,15 @@ def https_rehearsal(bundle, work, daemon, payload, cid):
                     print((work / "nginx-process.log").read_text()[-6000:], file=sys.stderr)
                 require(process.poll() is None, "nginx fixture failed to start")
                 time.sleep(0.1)
-        require(json.loads(curl("api.fixture", "/health"))["Version"] == "0.43.1", "HTTPS health failed")
-        require(curl("origin.fixture", "/ipfs/" + cid) == payload, "HTTPS content mismatch")
-        require(curl("origin.fixture", "/ipfs/" + cid, "--range", "0-9") == payload[:10], "HTTPS range mismatch")
-        require(curl("api.fixture", "/api/v0/version", "-X", "POST", "-o", "/dev/null", "-w", "%{http_code}") == b"403", "Restricted RPC exposed")
-        require(curl("api.fixture", "/api/v0/files/cp", "-X", "POST", "-o", "/dev/null", "-w", "%{http_code}") == b"403", "MFS RPC exposed")
-        uploaded = json.loads(curl("api.fixture", "/api/v0/add?pin=true", "-F", "file=@" + str(work / "payload.bin"), "-H", "Origin: https://staging.6529.io"))["Hash"]
+        expected_version = json.loads((bundle / "versions.json").read_text())["kuboVersion"]
+        require(json.loads(curl(API_HOST, "/health"))["Version"] == expected_version, "HTTPS health failed")
+        require(curl(ORIGIN_HOST, IPFS_PREFIX + cid) == payload, "HTTPS content mismatch")
+        require(curl(ORIGIN_HOST, IPFS_PREFIX + cid, "--range", "0-9") == payload[:10], "HTTPS range mismatch")
+        require(curl(API_HOST, "/api/v0/version", "-X", "POST", "-o", "/dev/null", "-w", "%{http_code}") == b"403", "Restricted RPC exposed")
+        require(curl(API_HOST, "/api/v0/files/cp", "-X", "POST", "-o", "/dev/null", "-w", "%{http_code}") == b"403", "MFS RPC exposed")
+        uploaded = json.loads(curl(API_HOST, "/api/v0/add?pin=true", "-F", "file=@" + str(work / PAYLOAD_FILENAME), "-H", "Origin: https://staging.6529.io"))["Hash"]
         require(uploaded == cid, "HTTPS upload changed the CID")
-        headers = curl("origin.fixture", "/ipfs/" + cid, "-I").decode().lower()
+        headers = curl(ORIGIN_HOST, IPFS_PREFIX + cid, "-I").decode().lower()
         require("content-length: " + str(len(payload)) in headers and "immutable" in headers, "HEAD/cache header mismatch")
     finally:
         stop(process)
@@ -224,28 +239,29 @@ def main():
         work = Path(directory)
         try:
             binary = bundle / "ipfs"
-            first = Daemon(binary, work / "first", "http://127.0.0.1:" + str(server.server_port), work)
+            first = Daemon(binary, work / "first", LOOPBACK_HTTP + str(server.server_port), work)
             processes.append(first)
             payload = bytes(range(256)) * 4096
-            (work / "payload.bin").write_bytes(payload)
-            cid = first.cli("add", "-Q", str(work / "payload.bin"))
-            first.rpc("files/cp", {"arg": ["/ipfs/" + cid, "/restored"]})
+            (work / PAYLOAD_FILENAME).write_bytes(payload)
+            cid = first.cli("add", "-Q", str(work / PAYLOAD_FILENAME))
+            first.rpc("files/cp", {"arg": [IPFS_PREFIX + cid, "/restored"]})
             first.rpc("files/mkdir", {"arg": "/nested"})
-            first.rpc("files/cp", {"arg": ["/ipfs/" + cid, "/nested/payload"]})
-            direct = first.cli("block", "put", "--format=raw", str(work / "payload.bin"))
+            first.rpc("files/cp", {"arg": [IPFS_PREFIX + cid, "/nested/payload"]})
+            direct = first.cli("block", "put", "--format=raw", str(work / PAYLOAD_FILENAME))
             first.rpc("pin/add", {"arg": direct, "recursive": "false"})
             saved = {"schema": 1, "pins": {cid: "recursive", direct: "direct"},
-                     "mfsRoot": first.rpc("files/stat", {"arg": "/", "hash": "true"})["Hash"]}
+                     "mfsRoot": first.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"]}
             first_id = first.rpc("id")["ID"]
             https_rehearsal(bundle, work, first, payload, cid)
             first.stop()
             first.start()
             require(first.rpc("cat", {"arg": cid}, raw=True) == payload, "Restart lost content")
-            require(first.rpc("files/stat", {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "Restart lost MFS")
+            require(first.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "Restart lost MFS")
             # Exercise the actual backup/restore implementation. Only the S3
             # transport and systemd calls are replaced; the private archive,
             # version selection, checksum, RPC state and recovery are real.
             config = {"environment": "staging", "region": "us-east-1", "blocksBucket": "fixture-blocks", "backupsBucket": "fixture-backups"}
+            host.SETTINGS = work / "first-settings"
             archive = {}
             def aws_fixture(*args):
                 if args[:2] == ("s3api", "put-object"):
@@ -258,17 +274,17 @@ def main():
                 Path(args[-1]).write_bytes(archive["body"])
                 return {"Metadata": archive["metadata"]}
             host.aws = aws_fixture
-            host.API = "http://127.0.0.1:" + str(first.api_port) + "/api/v0/"
+            host.API = LOOPBACK_HTTP + str(first.api_port) + API_PATH
             host.REPO = first.repo
             receipt = host.backup(config)
             with tarfile.open(fileobj=io.BytesIO(archive["body"]), mode="r:gz") as source:
                 metadata = source.extractfile("state.json").read().decode()
             require('"secretKey"' not in metadata and '"accessKey"' not in metadata, "Backup leaked runtime credentials")
             first.stop()
-            second = Daemon(binary, work / "second", "http://127.0.0.1:" + str(server.server_port), work)
+            second = Daemon(binary, work / "second", LOOPBACK_HTTP + str(server.server_port), work)
             processes.append(second)
             require(second.rpc("id")["ID"] != first_id, "Restore reused the source identity")
-            host.API = "http://127.0.0.1:" + str(second.api_port) + "/api/v0/"
+            host.API = LOOPBACK_HTTP + str(second.api_port) + API_PATH
             host.REPO = second.repo
             host.SETTINGS = work / "settings"
             host.SETTINGS.mkdir()
@@ -276,14 +292,36 @@ def main():
             def systemd_fixture(*args):
                 require(args in (("systemctl", "stop", "nginx"), ("systemctl", "start", "nginx")), "Unexpected fixture host mutation")
             host.run = systemd_fixture
+            real_rpc = host.rpc
+            copies = 0
+            def interrupted_rpc(operation, *args, **kwargs):
+                nonlocal copies
+                if operation == "files/cp":
+                    copies += 1
+                    if copies == 2:
+                        raise ConnectionError("Synthetic interrupted restore")
+                return real_rpc(operation, *args, **kwargs)
+            host.rpc = interrupted_rpc
+            try:
+                host.restore(config, receipt["backupKey"], receipt["versionId"])
+            except ConnectionError:
+                require(copies == 2, "Wrong simulated failure point")
+            else:
+                raise AssertionError("Restore interruption was not exercised")
+            finally:
+                host.rpc = real_rpc
+            host.restore(config, receipt["backupKey"], receipt["versionId"])
             host.restore(config, receipt["backupKey"], receipt["versionId"])
             pins = second.rpc("pin/ls", {"type": "all"})["Keys"]
             require(all(pins[cid]["Type"] == kind for cid, kind in saved["pins"].items()), "Restore lost pin types")
+            for root_cid, entry in pins.items():
+                if entry["Type"] in ("recursive", "direct"):
+                    require(second.rpc("block/get", {"arg": root_cid}, raw=True), "Restored pin content is missing")
             require(second.rpc("cat", {"arg": cid}, raw=True) == payload, "Restored content differs")
             second.stop()
             second.start()
-            require(second.rpc("files/stat", {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "Restored MFS did not persist")
-            print(json.dumps({"passed": True, "checks": ["bundled-s3-startup", "multi-chunk-upload", "recursive-and-direct-pins", "mfs-nested-directories", "restart-persistence", "independent-identity", "private-logical-backup", "versioned-checksummed-restore", "pin-and-mfs-restoration", "restored-restart", "nginx-https", "range", "head", "restricted-rpc", "https-upload"], "awsResourcesCreated": 0}))
+            require(second.rpc(FILE_STAT, {"arg": "/", "hash": "true"})["Hash"] == saved["mfsRoot"], "Restored MFS did not persist")
+            print(json.dumps({"passed": True, "checks": ["bundled-s3-startup", "bootstrap-pin-content", "all-restored-pin-root-blocks", "multi-chunk-upload", "recursive-and-direct-pins", "mfs-nested-directories", "restart-persistence", "independent-identity", "private-logical-backup", "versioned-checksummed-restore", "pin-and-mfs-restoration", "interrupted-restore-resume", "idempotent-restore", "restored-restart", "nginx-https", "range", "head", "restricted-rpc", "https-upload"], "awsResourcesCreated": 0}))
         finally:
             for daemon in processes:
                 daemon.stop()
