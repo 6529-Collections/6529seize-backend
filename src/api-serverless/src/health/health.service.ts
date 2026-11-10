@@ -322,6 +322,43 @@ export interface HealthData {
   };
 }
 
+/** How long one computed health payload is served to every caller. */
+export const HEALTH_DATA_CACHE_TTL_MS = 5_000;
+let healthDataCache: { data: HealthData; expiresAt: number } | null = null;
+let healthDataInFlight: Promise<HealthData> | null = null;
+
+/**
+ * The health payload, computed at most once per HEALTH_DATA_CACHE_TTL_MS per
+ * process. Concurrent callers share one in-flight computation.
+ */
+export async function getCachedHealthData(
+  load: () => Promise<HealthData> = getHealthData
+): Promise<HealthData> {
+  const now = Date.now();
+  if (healthDataCache && healthDataCache.expiresAt > now) {
+    return healthDataCache.data;
+  }
+  if (!healthDataInFlight) {
+    healthDataInFlight = load()
+      .then((data) => {
+        healthDataCache = {
+          data,
+          expiresAt: Date.now() + HEALTH_DATA_CACHE_TTL_MS
+        };
+        return data;
+      })
+      .finally(() => {
+        healthDataInFlight = null;
+      });
+  }
+  return healthDataInFlight;
+}
+
+export function resetHealthDataCacheForTests() {
+  healthDataCache = null;
+  healthDataInFlight = null;
+}
+
 export async function getHealthData(): Promise<HealthData> {
   const [
     isDbHealthy,

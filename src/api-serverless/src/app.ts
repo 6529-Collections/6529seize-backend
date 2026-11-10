@@ -141,7 +141,7 @@ import {
 } from '@/api/github/github-webhook-event';
 import { githubIssueDropService } from './github/github-issue-drop.service';
 import { LOGO_SVG, renderHealthUI } from './health/health-ui.renderer';
-import { getHealthData } from './health/health.service';
+import { getCachedHealthData } from './health/health.service';
 import { DEFAULT_MAX_SIZE } from './page-request';
 import {
   initRateLimiting,
@@ -1336,7 +1336,7 @@ function wireApp() {
   });
 
   rootRouter.get('/health', async (req, res) => {
-    const healthData = await getHealthData();
+    const healthData = await getCachedHealthData();
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
@@ -1547,7 +1547,7 @@ function wireApp() {
   rootRouter.use('/ci-pipeline-alerts', ciPipelineAlertRoutes);
 
   rootRouter.get('/health/ui', async (req, res) => {
-    const healthData = await getHealthData();
+    const healthData = await getCachedHealthData();
     const baseUrl = `${req.protocol}://${req.get('host')}`;
     const html = renderHealthUI(healthData, baseUrl);
 
